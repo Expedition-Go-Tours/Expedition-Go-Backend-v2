@@ -1,0 +1,425 @@
+// Production-Ready Tour Booking Platform Schema
+// Supports: Multi-role users, Tours, Bookings, Reviews, Payments, Notifications
+// Last Updated: May 12, 2026
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ================================
+// ENUMS
+// ================================
+
+enum UserRole {
+  customer
+  supplier
+  admin
+}
+
+enum SupplierStatus {
+  PENDING         // Initial application submitted
+  UNDER_REVIEW    // Admin reviewing application
+  APPROVED        // Admin approved, can start Stripe onboarding
+  STRIPE_PENDING  // Stripe Connect account created, completing KYC
+  ACTIVE          // Fully verified and can receive payouts
+  SUSPENDED       // Temporarily suspended
+  REJECTED        // Application rejected
+}
+
+enum BookingStatus {
+  PENDING         // Payment processing
+  CONFIRMED       // Payment successful
+  CANCELLED       // Cancelled by customer
+  REFUNDED        // Refunded
+  COMPLETED       // Tour completed
+  NO_SHOW         // Customer didn't show up
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+enum NotificationType {
+  BOOKING_CONFIRMED
+  BOOKING_CANCELLED
+  PAYMENT_RECEIVED
+  REVIEW_RECEIVED
+  SUPPLIER_APPROVED
+  SUPPLIER_REJECTED
+  PAYOUT_PROCESSED
+  SYSTEM_ALERT
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  FLAGGED
+}
+
+enum TourStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+// ================================
+// CORE MODELS
+// ================================
+
+model User {
+  id           String     @id @default(cuid())
+  firebaseUid  String     @unique
+  name         String
+  email        String     @unique
+  photoURL     String     @default("")
+  phone        String?
+  roles        UserRole[] @default([customer])
+  
+  // Stripe Integration
+  stripeCustomerId String? @unique
+  
+  // Profile & Preferences
+  wishlist     String[]
+  likes        String[]
+  language     String    @default("en")
+  timezone     String    @default("UTC")
+  
+  // Account Status
+  active       Boolean   @default(true)
+  emailVerified Boolean  @default(false)
+  lastLoginAt  DateTime?
+  
+  // Supplier Information (only for suppliers)
+  supplierProfile SupplierProfile?
+  
+  // Relationships
+  tours        Tour[]
+  bookings     Booking[]
+  reviews      Review[]
+  notifications Notification[]
+  cartItems    CartItem[]
+  
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([roles])
+  @@index([email])
+  @@index([createdAt])
+  @@index([stripeCustomerId])
+}
+
+model SupplierProfile {
+  id           String        @id @default(cuid())
+  userId       String        @unique
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Status & Verification
+  status       SupplierStatus @default(PENDING)
+  stripeAccountId String?     @unique
+  
+  // Business Information
+  businessInfo Json          // Structured business details
+  operatingInfo Json         // Operating information
+  representativeInfo Json    // Representative details
+  businessDocuments Json     // Document URLs
+  payoutInfo   Json          // Payout preferences
+  compliance   Json          // Terms acceptance & verification
+  
+  // Admin Review
+  adminNotes   String?
+  reviewedBy   String?       // Admin user ID
+  reviewedAt   DateTime?
+  
+  // Statistics
+  totalEarnings Decimal      @default(0) @db.Decimal(10,2)
+  totalBookings Int          @default(0)
+  averageRating Decimal?     @db.Decimal(3,2)
+  
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([status])
+  @@index([stripeAccountId])
+  @@index([createdAt])
+}
+
+model Tour {
+  id           String      @id @default(cuid())
+  supplierId   String
+  supplier     User        @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  
+  // Basic Information
+  title        String
+  description  String
+  photos       String[]
+  status       TourStatus  @default(DRAFT)
+  
+  // Categorization (JSON structure as per your model)
+  categorization Json
+  theme        Json
+  
+  // Product Content
+  productContent Json
+  
+  // Schedules & Pricing
+  schedulesAndPricing Json
+  
+  // Booking & Tickets
+  bookingAndTickets Json
+  
+  // SEO & Marketing
+  slug         String      @unique
+  metaTitle    String?
+  metaDescription String?
+  tags         String[]
+  
+  // Statistics
+  totalBookings Int        @default(0)
+  totalRevenue Decimal     @default(0) @db.Decimal(10,2)
+  averageRating Decimal?   @db.Decimal(3,2)
+  reviewCount  Int         @default(0)
+  viewCount    Int         @default(0)
+  
+  // Relationships
+  bookings     Booking[]
+  reviews      Review[]
+  cartItems    CartItem[]
+  
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([supplierId])
+  @@index([status])
+  @@index([slug])
+  @@index([createdAt])
+  @@index([averageRating])
+}
+
+model Booking {
+  id           String        @id @default(cuid())
+  bookingNumber String       @unique // Human-readable booking reference
+  
+  // Relationships
+  customerId   String
+  customer     User          @relation(fields: [customerId], references: [id])
+  tourId       String
+  tour         Tour          @relation(fields: [tourId], references: [id])
+  
+  // Booking Details
+  status       BookingStatus @default(PENDING)
+  travelers    Json          // Traveler information
+  selectedDate DateTime
+  selectedTime String?
+  
+  // Pricing
+  subtotal     Decimal       @db.Decimal(10,2)
+  taxes        Decimal       @default(0) @db.Decimal(10,2)
+  fees         Decimal       @default(0) @db.Decimal(10,2)
+  discounts    Decimal       @default(0) @db.Decimal(10,2)
+  total        Decimal       @db.Decimal(10,2)
+  currency     String        @default("USD")
+  
+  // Commission & Payouts
+  commissionRate Decimal     @db.Decimal(5,4) // e.g., 0.1500 for 15%
+  commissionAmount Decimal   @db.Decimal(10,2)
+  supplierPayout Decimal     @db.Decimal(10,2)
+  
+  // Payment Information
+  stripePaymentIntentId String?
+  paymentStatus PaymentStatus @default(PENDING)
+  paidAt       DateTime?
+  
+  // Cancellation
+  cancellationReason String?
+  cancelledAt  DateTime?
+  refundAmount Decimal?      @db.Decimal(10,2)
+  refundedAt   DateTime?
+  
+  // Communication
+  specialRequests String?
+  supplierNotes String?
+  
+  // Relationships
+  review       Review?
+  
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([customerId])
+  @@index([tourId])
+  @@index([status])
+  @@index([selectedDate])
+  @@index([bookingNumber])
+  @@index([stripePaymentIntentId])
+}
+
+model Review {
+  id           String      @id @default(cuid())
+  
+  // Relationships
+  bookingId    String      @unique
+  booking      Booking     @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  customerId   String
+  customer     User        @relation(fields: [customerId], references: [id])
+  tourId       String
+  tour         Tour        @relation(fields: [tourId], references: [id])
+  
+  // Review Content
+  rating       Int         // 1-5 stars
+  title        String?
+  comment      String?
+  photos       String[]    // Review photos
+  
+  // Moderation
+  status       ReviewStatus @default(PENDING)
+  moderatedBy  String?     // Admin user ID
+  moderatedAt  DateTime?
+  flagReason   String?
+  
+  // Supplier Response
+  supplierResponse String?
+  supplierResponseAt DateTime?
+  
+  // Helpfulness
+  helpfulCount Int         @default(0)
+  reportCount  Int         @default(0)
+  
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([tourId])
+  @@index([customerId])
+  @@index([rating])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model CartItem {
+  id           String      @id @default(cuid())
+  
+  // Relationships
+  customerId   String
+  customer     User        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tourId       String
+  tour         Tour        @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  
+  // Selection Details
+  selectedDate DateTime
+  selectedTime String?
+  travelers    Json        // Traveler count and details
+  
+  // Pricing (calculated at time of adding to cart)
+  subtotal     Decimal     @db.Decimal(10,2)
+  total        Decimal     @db.Decimal(10,2)
+  currency     String      @default("USD")
+  
+  // Cart Management
+  expiresAt    DateTime    // Cart items expire after X hours
+  
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@unique([customerId, tourId, selectedDate, selectedTime])
+  @@index([customerId])
+  @@index([expiresAt])
+}
+
+model Notification {
+  id           String           @id @default(cuid())
+  
+  // Relationships
+  userId       String
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Notification Content
+  type         NotificationType
+  title        String
+  message      String
+  data         Json?            // Additional structured data
+  
+  // Status
+  read         Boolean          @default(false)
+  readAt       DateTime?
+  
+  // Delivery
+  emailSent    Boolean          @default(false)
+  emailSentAt  DateTime?
+  pushSent     Boolean          @default(false)
+  pushSentAt   DateTime?
+  
+  createdAt    DateTime         @default(now())
+
+  @@index([userId])
+  @@index([type])
+  @@index([read])
+  @@index([createdAt])
+}
+
+// ================================
+// SYSTEM MODELS
+// ================================
+
+model StripeEvent {
+  id           String      @id @default(cuid())
+  stripeEventId String     @unique
+  eventType    String
+  processed    Boolean     @default(false)
+  data         Json
+  
+  createdAt    DateTime    @default(now())
+
+  @@index([stripeEventId])
+  @@index([processed])
+  @@index([eventType])
+}
+
+model SystemConfig {
+  id           String      @id @default(cuid())
+  key          String      @unique
+  value        Json
+  description  String?
+  
+  updatedAt    DateTime    @updatedAt
+  updatedBy    String      // Admin user ID
+
+  @@index([key])
+}
+
+model AuditLog {
+  id           String      @id @default(cuid())
+  
+  // Actor
+  userId       String?
+  userEmail    String?
+  ipAddress    String?
+  userAgent    String?
+  
+  // Action
+  action       String      // e.g., "user.created", "booking.cancelled"
+  resource     String      // e.g., "User", "Booking"
+  resourceId   String?
+  
+  // Details
+  oldValues    Json?
+  newValues    Json?
+  metadata     Json?
+  
+  createdAt    DateTime    @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([resource])
+  @@index([createdAt])
+}

@@ -1,0 +1,770 @@
+/**
+ * Supplier Controller - Production Ready
+ * Handles supplier verification, onboarding, and management
+ * 
+ * Features:
+ * - Supplier application and verification process
+ * - Stripe Connect integration for payouts
+ * - Document upload and verification
+ * - Admin approval workflow
+ * - Supplier dashboard and analytics
+ * 
+ * @author Tour Platform Team
+ * @version 1.0.0
+ */
+
+const prisma = require('../utils/prismaClient');
+const catchAsync = require('../utils/catchAsync');
+const AppError = require('../utils/appError');
+const { createStripeConnectAccount, createOnboardingLink } = require('../utils/stripeHelpers');
+const { sendNotification } = require('../utils/notificationService');
+const { sendSupplierStatusEmail } = require('../utils/emailService');
+const { logActivity } = require('../utils/auditLogger');
+const { validateSupplierData } = require('../utils/supplierHelpers');
+
+// ================================
+// SUPPLIER APPLICATION PROCESS
+// ================================
+
+/**
+ * Submit supplier application
+ */
+exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+
+  // Check if user already has a supplier profile
+  const existingProfile = await prisma.supplierProfile.findUnique({
+    where: { userId }
+  });
+
+  if (existingProfile) {
+    return next(new AppError('Supplier application already exists', 400));
+  }
+
+  // Validate application data
+  const validationResult = validateSupplierData(req.body);
+  if (!validationResult.isValid) {
+    return next(new AppError(`Validation failed: ${validationResult.errors.join(', ')}`, 400));
+  }
+
+  const {
+    businessInfo,
+    operatingInfo,
+    representativeInfo,
+    businessDocuments,
+    payoutInfo
+  } = req.body;
+
+  // Create supplier profile with PENDING status
+  const supplierProfile = await prisma.supplierProfile.create({
+    data: {
+      userId,
+      status: 'PENDING',
+      businessInfo,
+      operatingInfo,
+      representativeInfo,
+      businessDocuments,
+      payoutInfo,
+      compliance: {
+        acceptedTerms: true,
+        agreedToPayoutTerms: true,
+        verified: false,
+        reviewStatus: 'PENDING'
+      }
+    }
+  });
+
+  // Update user roles to include supplier
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      roles: {
+        push: 'supplier'
+      }
+    }
+  });
+
+  // Send notification to admins
+  const admins = await prisma.user.findMany({
+    where: {
+      roles: {
+        has: 'admin'
+      }
+    }
+  });
+
+  for (const admin of admins) {
+    sendNotification({
+      userId: admin.id,
+      type: 'SUPPLIER_APPROVED',
+      title: 'New Supplier Application',
+      message: `${req.user.name} has applied to become a supplier`,
+      data: {
+        supplierId: userId,
+        supplierProfileId: supplierProfile.id
+      }
+    }).catch(console.error);
+  }
+
+  // Log activity
+  await logActivity({
+    userId,
+    action: 'supplier.application_submitted',
+    resource: 'SupplierProfile',
+    resourceId: supplierProfile.id,
+    metadata: {
+      businessName: businessInfo.legalBusinessName
+    }
+  });
+
+  res.status(201).json({
+    status: 'success',
+    message: 'Supplier application submitted successfully. You will be notified once reviewed.',
+    data: {
+      supplierProfile: {
+        id: supplierProfile.id,
+        status: supplierProfile.status,
+        createdAt: supplierProfile.createdAt
+      }
+    }
+  });
+});
+
+/**
+ * Get supplier application status
+ */
+exports.getApplicationStatus = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { userId },
+    select: {
+      id: true,
+      status: true,
+      adminNotes: true,
+      reviewedAt: true,
+      createdAt: true,
+      updatedAt: true
+    }
+  });
+
+  if (!supplierProfile) {
+    return next(new AppError('No supplier application found', 404));
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: { supplierProfile }
+  });
+});
+
+/**
+ * Update supplier application (only if PENDING or UNDER_REVIEW)
+ */
+exports.updateApplication = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { userId }
+  });
+
+  if (!supplierProfile) {
+    return next(new AppError('No supplier application found', 404));
+  }
+
+  if (!['PENDING', 'UNDER_REVIEW'].includes(supplierProfile.status)) {
+    return next(new AppError('Application cannot be modified in current status', 400));
+  }
+
+  // Validate update data
+  const validationResult = validateSupplierData(req.body, true); // partial validation
+  if (!validationResult.isValid) {
+    return next(new AppError(`Validation failed: ${validationResult.errors.join(', ')}`, 400));
+  }
+
+  const updateData = { ...req.body };
+  
+  // Reset status to PENDING if significant changes made
+  if (req.body.businessInfo || req.body.representativeInfo || req.body.businessDocuments) {
+    updateData.status = 'PENDING';
+    updateData.reviewedAt = null;
+    updateData.reviewedBy = null;
+    updateData.adminNotes = null;
+  }
+
+  const updatedProfile = await prisma.supplierProfile.update({
+    where: { userId },
+    data: updateData
+  });
+
+  // Log activity
+  await logActivity({
+    userId,
+    action: 'supplier.application_updated',
+    resource: 'SupplierProfile',
+    resourceId: supplierProfile.id,
+    oldValues: supplierProfile,
+    newValues: updatedProfile
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { supplierProfile: updatedProfile }
+  });
+});
+
+// ================================
+// STRIPE CONNECT ONBOARDING
+// ================================
+
+/**
+ * Start Stripe Connect onboarding (only for APPROVED suppliers)
+ */
+exports.startStripeOnboarding = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { userId }
+  });
+
+  if (!supplierProfile) {
+    return next(new AppError('Supplier profile not found', 404));
+  }
+
+  if (supplierProfile.status !== 'APPROVED') {
+    return next(new AppError('Supplier must be approved before Stripe onboarding', 403));
+  }
+
+  let stripeAccountId = supplierProfile.stripeAccountId;
+
+  // Create Stripe Connect account if doesn't exist
+  if (!stripeAccountId) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    const stripeAccount = await createStripeConnectAccount({
+      email: user.email,
+      businessProfile: supplierProfile.businessInfo,
+      individual: supplierProfile.representativeInfo
+    });
+
+    stripeAccountId = stripeAccount.id;
+
+    // Update supplier profile with Stripe account ID
+    await prisma.supplierProfile.update({
+      where: { userId },
+      data: {
+        stripeAccountId,
+        status: 'STRIPE_PENDING'
+      }
+    });
+  }
+
+  // Create onboarding link
+  const onboardingLink = await createOnboardingLink(stripeAccountId, {
+    refreshUrl: `${process.env.CLIENT_URL}/supplier/onboarding/refresh`,
+    returnUrl: `${process.env.CLIENT_URL}/supplier/onboarding/complete`
+  });
+
+  // Log activity
+  await logActivity({
+    userId,
+    action: 'supplier.stripe_onboarding_started',
+    resource: 'SupplierProfile',
+    resourceId: supplierProfile.id,
+    metadata: {
+      stripeAccountId
+    }
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      onboardingUrl: onboardingLink.url,
+      stripeAccountId
+    }
+  });
+});
+
+/**
+ * Check Stripe onboarding status
+ */
+exports.checkStripeStatus = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { userId }
+  });
+
+  if (!supplierProfile || !supplierProfile.stripeAccountId) {
+    return next(new AppError('Stripe account not found', 404));
+  }
+
+  // Get Stripe account details
+  const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+  const account = await stripe.accounts.retrieve(supplierProfile.stripeAccountId);
+
+  const onboardingComplete = account.charges_enabled && account.payouts_enabled;
+  const requiresAction = account.requirements && account.requirements.currently_due.length > 0;
+
+  // Update status if onboarding is complete
+  if (onboardingComplete && supplierProfile.status === 'STRIPE_PENDING') {
+    await prisma.supplierProfile.update({
+      where: { userId },
+      data: { status: 'ACTIVE' }
+    });
+
+    // Send notification
+    sendNotification({
+      userId,
+      type: 'SUPPLIER_APPROVED',
+      title: 'Supplier Account Activated',
+      message: 'Your supplier account is now active! You can start creating tours.',
+      data: { supplierId: userId }
+    }).catch(console.error);
+
+    // Send email
+    sendSupplierStatusEmail(req.user.email, 'ACTIVE', {
+      name: req.user.name
+    }).catch(console.error);
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      stripeAccountId: supplierProfile.stripeAccountId,
+      onboardingComplete,
+      requiresAction,
+      chargesEnabled: account.charges_enabled,
+      payoutsEnabled: account.payouts_enabled,
+      currentlyDue: account.requirements?.currently_due || [],
+      supplierStatus: onboardingComplete ? 'ACTIVE' : supplierProfile.status
+    }
+  });
+});
+
+// ================================
+// SUPPLIER DASHBOARD
+// ================================
+
+/**
+ * Get supplier dashboard data
+ */
+exports.getDashboard = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+
+  // Verify supplier is active
+  const supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { userId }
+  });
+
+  if (!supplierProfile) {
+    return next(new AppError('Supplier profile not found', 404));
+  }
+
+  const [
+    tourStats,
+    bookingStats,
+    revenueStats,
+    recentBookings,
+    recentReviews,
+    monthlyRevenue
+  ] = await Promise.all([
+    // Tour statistics
+    prisma.tour.groupBy({
+      by: ['status'],
+      where: { supplierId: userId },
+      _count: true
+    }),
+
+    // Booking statistics
+    prisma.booking.groupBy({
+      by: ['status'],
+      where: {
+        tour: { supplierId: userId }
+      },
+      _count: true
+    }),
+
+    // Revenue statistics
+    prisma.booking.aggregate({
+      where: {
+        tour: { supplierId: userId },
+        status: 'CONFIRMED'
+      },
+      _sum: {
+        supplierPayout: true,
+        total: true
+      },
+      _count: true
+    }),
+
+    // Recent bookings
+    prisma.booking.findMany({
+      where: {
+        tour: { supplierId: userId }
+      },
+      include: {
+        customer: {
+          select: {
+            name: true,
+            email: true,
+            photoURL: true
+          }
+        },
+        tour: {
+          select: {
+            title: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5
+    }),
+
+    // Recent reviews
+    prisma.review.findMany({
+      where: {
+        tour: { supplierId: userId },
+        status: 'APPROVED'
+      },
+      include: {
+        customer: {
+          select: {
+            name: true,
+            photoURL: true
+          }
+        },
+        tour: {
+          select: {
+            title: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5
+    }),
+
+    // Monthly revenue trend (last 12 months)
+    prisma.$queryRaw`
+      SELECT 
+        DATE_TRUNC('month', "selectedDate") as month,
+        COUNT(*) as bookings,
+        SUM("supplierPayout") as revenue
+      FROM "Booking" b
+      JOIN "Tour" t ON b."tourId" = t.id
+      WHERE t."supplierId" = ${userId}
+        AND b."selectedDate" >= NOW() - INTERVAL '12 months'
+        AND b."status" = 'CONFIRMED'
+      GROUP BY DATE_TRUNC('month', "selectedDate")
+      ORDER BY month DESC
+    `
+  ]);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      supplierProfile: {
+        id: supplierProfile.id,
+        status: supplierProfile.status,
+        averageRating: supplierProfile.averageRating,
+        totalEarnings: supplierProfile.totalEarnings,
+        totalBookings: supplierProfile.totalBookings
+      },
+      stats: {
+        tours: tourStats,
+        bookings: bookingStats,
+        revenue: revenueStats
+      },
+      recentActivity: {
+        bookings: recentBookings,
+        reviews: recentReviews
+      },
+      analytics: {
+        monthlyRevenue
+      }
+    }
+  });
+});
+
+/**
+ * Get supplier earnings and payout history
+ */
+exports.getEarnings = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+  const { page = 1, limit = 20, startDate, endDate } = req.query;
+
+  const where = {
+    tour: { supplierId: userId },
+    status: 'CONFIRMED'
+  };
+
+  // Add date filtering
+  if (startDate || endDate) {
+    where.selectedDate = {};
+    if (startDate) where.selectedDate.gte = new Date(startDate);
+    if (endDate) where.selectedDate.lte = new Date(endDate);
+  }
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+
+  const [earnings, totalCount, summary] = await Promise.all([
+    prisma.booking.findMany({
+      where,
+      select: {
+        id: true,
+        bookingNumber: true,
+        selectedDate: true,
+        total: true,
+        supplierPayout: true,
+        commissionAmount: true,
+        commissionRate: true,
+        currency: true,
+        paidAt: true,
+        tour: {
+          select: {
+            title: true
+          }
+        },
+        customer: {
+          select: {
+            name: true
+          }
+        }
+      },
+      orderBy: { paidAt: 'desc' },
+      skip,
+      take: parseInt(limit)
+    }),
+    prisma.booking.count({ where }),
+    prisma.booking.aggregate({
+      where,
+      _sum: {
+        supplierPayout: true,
+        commissionAmount: true,
+        total: true
+      },
+      _count: true
+    })
+  ]);
+
+  const totalPages = Math.ceil(totalCount / parseInt(limit));
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      earnings,
+      summary: {
+        totalEarnings: summary._sum.supplierPayout || 0,
+        totalCommission: summary._sum.commissionAmount || 0,
+        totalRevenue: summary._sum.total || 0,
+        totalBookings: summary._count
+      },
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages,
+        totalCount,
+        limit: parseInt(limit)
+      }
+    }
+  });
+});
+
+// ================================
+// ADMIN SUPPLIER MANAGEMENT
+// ================================
+
+/**
+ * Get all supplier applications (admin only)
+ */
+exports.getAllApplications = catchAsync(async (req, res, next) => {
+  const { status, page = 1, limit = 20 } = req.query;
+
+  const where = {};
+  if (status) where.status = status;
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+
+  const [applications, totalCount] = await Promise.all([
+    prisma.supplierProfile.findMany({
+      where,
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            photoURL: true,
+            createdAt: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: parseInt(limit)
+    }),
+    prisma.supplierProfile.count({ where })
+  ]);
+
+  const totalPages = Math.ceil(totalCount / parseInt(limit));
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      applications,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages,
+        totalCount,
+        limit: parseInt(limit)
+      }
+    }
+  });
+});
+
+/**
+ * Review supplier application (admin only)
+ */
+exports.reviewApplication = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { action, notes } = req.body; // action: 'approve', 'reject', 'request_info'
+  const adminId = req.user.id;
+
+  if (!['approve', 'reject', 'request_info'].includes(action)) {
+    return next(new AppError('Invalid review action', 400));
+  }
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { id },
+    include: {
+      user: true
+    }
+  });
+
+  if (!supplierProfile) {
+    return next(new AppError('Supplier application not found', 404));
+  }
+
+  const statusMap = {
+    approve: 'APPROVED',
+    reject: 'REJECTED',
+    request_info: 'UNDER_REVIEW'
+  };
+
+  const updatedProfile = await prisma.supplierProfile.update({
+    where: { id },
+    data: {
+      status: statusMap[action],
+      adminNotes: notes,
+      reviewedBy: adminId,
+      reviewedAt: new Date()
+    }
+  });
+
+  // Send notification to supplier
+  const notificationMessages = {
+    approve: 'Your supplier application has been approved! You can now start Stripe onboarding.',
+    reject: 'Your supplier application was not approved.',
+    request_info: 'Additional information is required for your supplier application.'
+  };
+
+  sendNotification({
+    userId: supplierProfile.userId,
+    type: action === 'approve' ? 'SUPPLIER_APPROVED' : 'SUPPLIER_REJECTED',
+    title: 'Supplier Application Update',
+    message: notificationMessages[action],
+    data: {
+      supplierId: supplierProfile.userId,
+      action,
+      notes
+    }
+  }).catch(console.error);
+
+  // Send email notification
+  sendSupplierStatusEmail(supplierProfile.user.email, statusMap[action], {
+    name: supplierProfile.user.name,
+    notes
+  }).catch(console.error);
+
+  // Log activity
+  await logActivity({
+    userId: adminId,
+    action: `supplier.${action}`,
+    resource: 'SupplierProfile',
+    resourceId: supplierProfile.id,
+    metadata: {
+      supplierId: supplierProfile.userId,
+      notes,
+      businessName: supplierProfile.businessInfo?.legalBusinessName
+    }
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { supplierProfile: updatedProfile }
+  });
+});
+
+/**
+ * Suspend/unsuspend supplier (admin only)
+ */
+exports.suspendSupplier = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { suspend, reason } = req.body; // suspend: true/false
+  const adminId = req.user.id;
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { userId: id },
+    include: {
+      user: true
+    }
+  });
+
+  if (!supplierProfile) {
+    return next(new AppError('Supplier not found', 404));
+  }
+
+  const newStatus = suspend ? 'SUSPENDED' : 'ACTIVE';
+
+  const updatedProfile = await prisma.supplierProfile.update({
+    where: { userId: id },
+    data: {
+      status: newStatus,
+      adminNotes: reason
+    }
+  });
+
+  // Send notification
+  sendNotification({
+    userId: id,
+    type: 'SYSTEM_ALERT',
+    title: suspend ? 'Account Suspended' : 'Account Reactivated',
+    message: suspend 
+      ? 'Your supplier account has been suspended.'
+      : 'Your supplier account has been reactivated.',
+    data: {
+      reason,
+      action: suspend ? 'suspended' : 'reactivated'
+    }
+  }).catch(console.error);
+
+  // Log activity
+  await logActivity({
+    userId: adminId,
+    action: suspend ? 'supplier.suspended' : 'supplier.reactivated',
+    resource: 'SupplierProfile',
+    resourceId: supplierProfile.id,
+    metadata: {
+      supplierId: id,
+      reason
+    }
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { supplierProfile: updatedProfile }
+  });
+});
+
+module.exports = exports;

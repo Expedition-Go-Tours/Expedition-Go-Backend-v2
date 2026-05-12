@@ -1,0 +1,13 @@
+node_modules
+# Keep environment variables out of version control
+.env
+
+/generated/prisma
+
+# Documentation and test files
+*.md
+!README.md
+*test*.js
+*-fixed.js
+explore-database.js
+add-test-user.js
