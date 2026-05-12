@@ -1,9 +1,11 @@
+const express = require('express');
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const admin = require('../config/firebaseAdmin');
 
 // Verify Firebase token and set firebaseUser in request
+// Updated: May 12, 2026 - Fixed roles array issue
 exports.signup = catchAsync(async (req, res, next) => {
   const authHeader = req.headers.authorization;
 
