@@ -109,7 +109,7 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
         description: 'Development server - Local development environment'
       },
       {
-        url: 'https://expedition-go-backend.onrender.com',
+        url: 'https://expedition-go-backend-v2.onrender.com',
         description: 'Production server - Live production environment'
       },
       {
