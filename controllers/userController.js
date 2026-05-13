@@ -1,4 +1,3 @@
-
 /**
  * User Controller - Production Ready
  * Handles user profile management and authentication
@@ -19,6 +18,46 @@ const AppError = require('../utils/appError');
 const admin = require('../config/firebaseAdmin');
 const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
 const { logActivity } = require('../utils/auditLogger');
+
+// ADDED: session cookie support for shared auth across travioafrica.com subdomains
+const jwt = require('jsonwebtoken');
+
+const SESSION_COOKIE_NAME = 'session';
+
+// ADDED: create a backend session token after Firebase login is verified
+const createSessionToken = (user) => {
+  return jwt.sign(
+    {
+      id: user.id,
+      firebaseUid: user.firebaseUid,
+      roles: user.roles,
+      supplierStatus: user.supplierStatus,
+      active: user.active,
+    },
+    process.env.JWT_SECRET,
+    {
+      expiresIn: '30d',
+    }
+  );
+};
+
+// ADDED: send a shared cookie that works across subdomains in production
+const sendSessionCookie = (res, token) => {
+  res.cookie(SESSION_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    domain: process.env.NODE_ENV === 'production' ? '.travioafrica.com' : undefined,
+    path: '/',
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+  });
+};
+
+// ADDED: keep login responses consistent and issue the shared session cookie
+const issueSessionCookie = (res, user) => {
+  const token = createSessionToken(user);
+  sendSessionCookie(res, token);
+};
 
 exports.getMe = (req, res, next) => {
   if (!req.user) {
@@ -184,6 +223,9 @@ exports.createMe = catchAsync(async (req, res, next) => {
   let user = await prisma.user.findUnique({ where: { firebaseUid: firebaseUser.uid } });
 
   if (user) {
+    // ADDED: issue shared session cookie even when the user already exists
+    issueSessionCookie(res, user);
+
     return res.status(200).json({ status: 'success', data: { user } });
   }
 
@@ -213,6 +255,9 @@ exports.createMe = catchAsync(async (req, res, next) => {
       roles: ['customer']
     },
   });
+
+  // ADDED: issue shared session cookie after first-time user creation
+  issueSessionCookie(res, user);
 
   // Log activity
   await logActivity({
@@ -248,6 +293,9 @@ exports.syncMe = catchAsync(async (req, res) => {
       lastLoginAt: new Date()
     },
   });
+
+  // ADDED: refresh the shared session cookie on sync/login
+  issueSessionCookie(res, user);
 
   // Log activity
   await logActivity({

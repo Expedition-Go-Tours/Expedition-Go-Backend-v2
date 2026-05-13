@@ -1,26 +1,37 @@
-
 const admin = require('../config/firebaseAdmin');
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 
+// ADDED: session-cookie support for shared auth across subdomains
+const jwt = require('jsonwebtoken');
 
-
-exports.protect = catchAsync(async (req, res, next) => {
+// ADDED: one place to read auth from either Firebase bearer token or backend session cookie
+const getAuthTokenFromRequest = (req) => {
   const authHeader = req.headers.authorization;
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.split(' ')[1];
+  }
+
+  if (req.cookies?.session) {
+    return req.cookies.session;
+  }
+
+  return null;
+};
+
+exports.protect = catchAsync(async (req, res, next) => {
+  const token = getAuthTokenFromRequest(req);
+
+  if (!token) {
     return next(
       new AppError('You are not logged in! Please log in to get access.', 401),
     );
   }
 
-  const idToken = authHeader.split(' ')[1];
-
-  // DEV MODE BYPASS (AFTER idToken is defined)
-
-
-  if (process.env.NODE_ENV === 'development' && idToken === 'test-token') {
+  // DEV MODE BYPASS (works for either request header or cookie auth path)
+  if (process.env.NODE_ENV === 'development' && token === 'test-token') {
     let user = await prisma.user.findFirst({
       where: { firebaseUid: 'dev-uid' },
     });
@@ -50,20 +61,47 @@ exports.protect = catchAsync(async (req, res, next) => {
     return next();
   }
 
-  //  REAL FIREBASE AUTH
-  let decoded;
+  // REAL FIREBASE AUTH OR BACKEND SESSION AUTH
+  let user;
+  let decodedFirebase = null;
+
+  // ADDED: first try Firebase ID token, then fall back to signed backend session cookie
   try {
-    decoded = await admin.auth().verifyIdToken(idToken);
-  } catch (err) {
+    decodedFirebase = await admin.auth().verifyIdToken(token);
+
+    user = await prisma.user.findUnique({
+      where: { firebaseUid: decodedFirebase.uid },
+    });
+
+    if (!user) {
+      return next(
+        new AppError('User not found. Please complete onboarding.', 404),
+      );
+    }
+
+    req.firebaseUser = decodedFirebase;
+    req.user = user;
+
+    if (!user.active) {
+      return next(new AppError('This account has been deactivated.', 403));
+    }
+
+    return next();
+  } catch (firebaseErr) {
+    // Firebase verification failed, so try the backend session cookie
+  }
+
+  let decodedSession;
+  try {
+    decodedSession = jwt.verify(token, process.env.JWT_SECRET);
+  } catch (sessionErr) {
     return next(
-      new AppError('Invalid or expired Firebase token. Please log in again.', 401),
+      new AppError('Invalid or expired session. Please log in again.', 401),
     );
   }
 
-  // Fetch user without the global active filter so we can explicitly handle
-  // deactivated accounts (return 403 rather than 404).
-  const user = await prisma.user.findUnique({
-    where: { firebaseUid: decoded.uid },
+  user = await prisma.user.findUnique({
+    where: { id: decodedSession.id },
   });
 
   if (!user) {
@@ -76,7 +114,14 @@ exports.protect = catchAsync(async (req, res, next) => {
     return next(new AppError('This account has been deactivated.', 403));
   }
 
-  req.firebaseUser = decoded;
+  // ADDED: synthesize firebaseUser so existing controllers still work
+  req.firebaseUser = {
+    uid: user.firebaseUid,
+    name: user.name,
+    email: user.email,
+    picture: user.photoURL || '',
+  };
+
   req.user = user;
 
   next();
