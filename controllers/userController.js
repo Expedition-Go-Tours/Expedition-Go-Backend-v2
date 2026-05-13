@@ -18,6 +18,7 @@ const AppError = require('../utils/appError');
 const admin = require('../config/firebaseAdmin');
 const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
 const { logActivity } = require('../utils/auditLogger');
+const { cloudinaryUrl } = require('../utils/imageOptimizer');
 
 // ADDED: session cookie support for shared auth across travioafrica.com subdomains
 const jwt = require('jsonwebtoken');
@@ -64,9 +65,17 @@ exports.getMe = (req, res, next) => {
     return next(new AppError('User not found', 404));
   }
 
+  // Optimize user photo
+  const optimizedUser = {
+    ...req.user,
+    photoURL: req.user.photoURL
+      ? cloudinaryUrl(req.user.photoURL, 300)
+      : req.user.photoURL,
+  };
+
   res.status(200).json({
     status: 'success',
-    data: { user: req.user },
+    data: { user: optimizedUser },
   });
 };
 

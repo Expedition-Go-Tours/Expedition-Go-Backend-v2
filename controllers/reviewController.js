@@ -19,6 +19,7 @@ const AppError = require('../utils/appError');
 const { sendNotification } = require('../utils/notificationService');
 const { logActivity } = require('../utils/auditLogger');
 const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
+const { cloudinaryUrl } = require('../utils/imageOptimizer');
 
 // ================================
 // CUSTOMER REVIEW ENDPOINTS
@@ -407,10 +408,24 @@ exports.getTourReviews = catchAsync(async (req, res, next) => {
 
   const totalPages = Math.ceil(totalCount / parseInt(limit));
 
+  // Optimize review photos
+  const optimizedReviews = reviews.map((review) => ({
+    ...review,
+    photos: Array.isArray(review.photos)
+      ? review.photos.map((url) => cloudinaryUrl(url, 600))
+      : review.photos,
+    customer: {
+      ...review.customer,
+      photoURL: review.customer.photoURL
+        ? cloudinaryUrl(review.customer.photoURL, 150)
+        : review.customer.photoURL,
+    },
+  }));
+
   res.status(200).json({
     status: 'success',
     data: {
-      reviews,
+      reviews: optimizedReviews,
       pagination: {
         currentPage: parseInt(page),
         totalPages,

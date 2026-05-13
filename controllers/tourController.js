@@ -18,6 +18,7 @@ const AppError = require('../utils/appError');
 const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
 const { createSlug, validateTourData } = require('../utils/tourHelpers');
 const { logActivity } = require('../utils/auditLogger');
+const { cloudinaryUrl } = require('../utils/imageOptimizer');
 
 // ================================
 // PUBLIC TOUR ENDPOINTS
@@ -107,6 +108,13 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
     prisma.tour.count({ where })
   ]);
 
+  const optimizedTours = tours.map((tour) => ({
+    ...tour,
+    photos: Array.isArray(tour.photos)
+      ? tour.photos.map((url) => cloudinaryUrl(url, 800))
+      : tour.photos,
+  }));
+
   // Calculate pagination metadata
   const totalPages = Math.ceil(totalCount / parseInt(limit));
   const hasNextPage = parseInt(page) < totalPages;
@@ -115,7 +123,7 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: {
-      tours,
+      tours: optimizedTours,
       pagination: {
         currentPage: parseInt(page),
         totalPages,
@@ -186,6 +194,14 @@ exports.getTour = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found', 404));
   }
 
+  // Optimize images for display
+  const optimizedTour = {
+    ...tour,
+    photos: Array.isArray(tour.photos)
+      ? tour.photos.map((url) => cloudinaryUrl(url, 1400))
+      : tour.photos,
+  };
+
   // Increment view count (async, don't wait)
   prisma.tour.update({
     where: { id: tour.id },
@@ -194,7 +210,7 @@ exports.getTour = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: { tour }
+    data: { tour: optimizedTour }
   });
 });
 
