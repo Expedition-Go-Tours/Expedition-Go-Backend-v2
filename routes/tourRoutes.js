@@ -36,39 +36,349 @@ const router = express.Router();
  *           default: 12
  *       - name: category
  *         in: query
+ *         description: Filter by main category (e.g., Cultural, Adventure, Nature)
+ *         schema:
+ *           type: string
+ *           example: Cultural
+ *       - name: subcategory
+ *         in: query
+ *         description: Filter by subcategory (e.g., Walking Tours, Hiking)
+ *         schema:
+ *           type: string
+ *           example: Walking Tours
+ *       - name: activityType
+ *         in: query
+ *         description: Filter by specific activity type
  *         schema:
  *           type: string
  *       - name: theme
  *         in: query
+ *         description: Filter by theme (searches both primary and secondary themes)
+ *         schema:
+ *           type: string
+ *           example: Nature & Wildlife
+ *       - name: primaryTheme
+ *         in: query
+ *         description: Filter by primary theme only
+ *         schema:
+ *           type: string
+ *       - name: secondaryTheme
+ *         in: query
+ *         description: Filter by secondary theme
+ *         schema:
+ *           type: string
+ *       - name: location
+ *         in: query
+ *         description: Search across city, country, region, and address
+ *         schema:
+ *           type: string
+ *           example: New York
+ *       - name: city
+ *         in: query
+ *         description: Filter by specific city
+ *         schema:
+ *           type: string
+ *           example: New York
+ *       - name: country
+ *         in: query
+ *         description: Filter by country
+ *         schema:
+ *           type: string
+ *           example: United States
+ *       - name: region
+ *         in: query
+ *         description: Filter by region
  *         schema:
  *           type: string
  *       - name: minPrice
  *         in: query
+ *         description: Minimum price filter
  *         schema:
  *           type: number
+ *           example: 20
  *       - name: maxPrice
  *         in: query
+ *         description: Maximum price filter
  *         schema:
  *           type: number
- *       - name: rating
+ *           example: 100
+ *       - name: priceRange
  *         in: query
+ *         description: Predefined price range
+ *         schema:
+ *           type: string
+ *           enum: [budget, moderate, luxury]
+ *           example: moderate
+ *       - name: currency
+ *         in: query
+ *         description: Currency for price filtering
+ *         schema:
+ *           type: string
+ *           default: USD
+ *       - name: minRating
+ *         in: query
+ *         description: Minimum average rating (0-5)
  *         schema:
  *           type: number
+ *           minimum: 0
+ *           maximum: 5
+ *           example: 4.0
+ *       - name: minReviews
+ *         in: query
+ *         description: Minimum number of reviews
+ *         schema:
+ *           type: integer
+ *           example: 10
+ *       - name: minDuration
+ *         in: query
+ *         description: Minimum duration
+ *         schema:
+ *           type: integer
+ *       - name: maxDuration
+ *         in: query
+ *         description: Maximum duration
+ *         schema:
+ *           type: integer
+ *       - name: durationType
+ *         in: query
+ *         description: Duration unit
+ *         schema:
+ *           type: string
+ *           enum: [hours, days]
+ *           default: hours
+ *       - name: availableDate
+ *         in: query
+ *         description: Filter tours available on specific date (YYYY-MM-DD)
+ *         schema:
+ *           type: string
+ *           format: date
+ *           example: "2026-06-15"
+ *       - name: dayOfWeek
+ *         in: query
+ *         description: Filter by day of week
+ *         schema:
+ *           type: string
+ *           enum: [Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday]
+ *       - name: instantConfirmation
+ *         in: query
+ *         description: Filter tours with instant confirmation
+ *         schema:
+ *           type: boolean
+ *       - name: freeCancellation
+ *         in: query
+ *         description: Filter tours with free cancellation
+ *         schema:
+ *           type: boolean
  *       - name: search
  *         in: query
+ *         description: Search in title, description, and tags
  *         schema:
  *           type: string
+ *           example: walking tour
+ *       - name: tags
+ *         in: query
+ *         description: Filter by tags (comma-separated)
+ *         schema:
+ *           type: string
+ *           example: nature,photography
+ *       - name: supplierId
+ *         in: query
+ *         description: Filter by specific supplier
+ *         schema:
+ *           type: string
+ *       - name: verifiedOnly
+ *         in: query
+ *         description: Show only verified suppliers
+ *         schema:
+ *           type: boolean
  *       - name: sortBy
  *         in: query
+ *         description: Sort field
  *         schema:
  *           type: string
- *           enum: [createdAt, rating, price, popularity]
+ *           enum: [createdAt, updatedAt, title, price, rating, reviews, bookings, popularity]
  *           default: createdAt
+ *       - name: sortOrder
+ *         in: query
+ *         description: Sort order
+ *         schema:
+ *           type: string
+ *           enum: [asc, desc]
+ *           default: desc
  *     responses:
  *       200:
  *         description: Tours retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     tours:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/Tour'
+ *                     pagination:
+ *                       type: object
+ *                       properties:
+ *                         currentPage:
+ *                           type: integer
+ *                         totalPages:
+ *                           type: integer
+ *                         totalCount:
+ *                           type: integer
+ *                         hasNextPage:
+ *                           type: boolean
+ *                         hasPrevPage:
+ *                           type: boolean
+ *                         limit:
+ *                           type: integer
+ *                     appliedFilters:
+ *                       type: object
+ *                       description: Summary of applied filters
+ *       400:
+ *         description: Invalid filter parameters
  */
 router.get('/', tourController.getAllTours);
+
+/**
+ * @swagger
+ * /tours/filters/options:
+ *   get:
+ *     summary: Get available filter options
+ *     description: |
+ *       Returns all available filter values extracted from active tours.
+ *       Use this endpoint to populate filter dropdowns and UI elements.
+ *       
+ *       **Returns:**
+ *       - Available categories, subcategories, and activity types
+ *       - Available themes (primary and secondary)
+ *       - Available locations (cities, countries, regions)
+ *       - Available tags
+ *       - Predefined price ranges
+ *       - Predefined duration ranges
+ *     tags: [Tours]
+ *     responses:
+ *       200:
+ *         description: Filter options retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     filterOptions:
+ *                       type: object
+ *                       properties:
+ *                         categories:
+ *                           type: array
+ *                           items:
+ *                             type: string
+ *                           example: ["Adventure", "Cultural", "Nature", "Food & Drink"]
+ *                         subcategories:
+ *                           type: array
+ *                           items:
+ *                             type: string
+ *                           example: ["Walking Tours", "Hiking", "City Tours", "Wine Tasting"]
+ *                         activityTypes:
+ *                           type: array
+ *                           items:
+ *                             type: string
+ *                           example: ["Guided Tour", "Self-Guided", "Private Tour"]
+ *                         themes:
+ *                           type: object
+ *                           properties:
+ *                             primary:
+ *                               type: array
+ *                               items:
+ *                                 type: string
+ *                               example: ["Nature & Wildlife", "History & Culture", "Adventure"]
+ *                             secondary:
+ *                               type: array
+ *                               items:
+ *                                 type: string
+ *                               example: ["Photography", "Family-Friendly", "Romantic"]
+ *                         locations:
+ *                           type: object
+ *                           properties:
+ *                             cities:
+ *                               type: array
+ *                               items:
+ *                                 type: string
+ *                               example: ["New York", "Paris", "Tokyo", "London"]
+ *                             countries:
+ *                               type: array
+ *                               items:
+ *                                 type: string
+ *                               example: ["United States", "France", "Japan", "United Kingdom"]
+ *                             regions:
+ *                               type: array
+ *                               items:
+ *                                 type: string
+ *                               example: ["Manhattan", "Île-de-France", "Kanto"]
+ *                         tags:
+ *                           type: array
+ *                           items:
+ *                             type: string
+ *                           example: ["nature", "photography", "family-friendly", "romantic"]
+ *                         priceRanges:
+ *                           type: array
+ *                           items:
+ *                             type: object
+ *                             properties:
+ *                               label:
+ *                                 type: string
+ *                               value:
+ *                                 type: string
+ *                               range:
+ *                                 type: string
+ *                           example:
+ *                             - label: Budget
+ *                               value: budget
+ *                               range: "$0 - $50"
+ *                             - label: Moderate
+ *                               value: moderate
+ *                               range: "$50 - $150"
+ *                             - label: Luxury
+ *                               value: luxury
+ *                               range: "$150+"
+ *                         durations:
+ *                           type: array
+ *                           items:
+ *                             type: object
+ *                             properties:
+ *                               label:
+ *                                 type: string
+ *                               value:
+ *                                 type: string
+ *                               hours:
+ *                                 type: object
+ *                               days:
+ *                                 type: object
+ *                           example:
+ *                             - label: "Short (< 3 hours)"
+ *                               value: short
+ *                               hours:
+ *                                 max: 3
+ *                             - label: "Half Day (3-6 hours)"
+ *                               value: half-day
+ *                               hours:
+ *                                 min: 3
+ *                                 max: 6
+ *       500:
+ *         description: Failed to retrieve filter options
+ */
+router.get('/filters/options', tourController.getFilterOptions);
 
 /**
  * @swagger

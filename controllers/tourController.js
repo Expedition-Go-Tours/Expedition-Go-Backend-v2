@@ -19,6 +19,12 @@ const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
 const { createSlug, validateTourData } = require('../utils/tourHelpers');
 const { logActivity } = require('../utils/auditLogger');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
+const { 
+  buildTourFilters, 
+  buildSortOptions, 
+  getAvailableFilterOptions,
+  validateFilterParams 
+} = require('../utils/tourFilterBuilder');
 
 // ================================
 // PUBLIC TOUR ENDPOINTS
@@ -32,46 +38,21 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
   const {
     page = 1,
     limit = 12,
-    category,
-    theme,
-    minPrice,
-    maxPrice,
-    rating,
-    location,
     sortBy = 'createdAt',
-    sortOrder = 'desc',
-    search
+    sortOrder = 'desc'
   } = req.query;
 
-  // Build filter conditions
-  const where = {
-    status: 'ACTIVE',
-    supplier: {
-      supplierProfile: {
-        status: 'ACTIVE'
-      }
-    }
-  };
-
-  // Add search functionality
-  if (search) {
-    where.OR = [
-      { title: { contains: search, mode: 'insensitive' } },
-      { description: { contains: search, mode: 'insensitive' } },
-      { tags: { has: search } }
-    ];
+  // Validate filter parameters
+  const validation = validateFilterParams(req.query);
+  if (!validation.isValid) {
+    return next(new AppError(`Invalid filters: ${validation.errors.join(', ')}`, 400));
   }
 
-  // Add price filtering
-  if (minPrice || maxPrice) {
-    // Note: Price filtering requires JSON path queries for complex pricing structures
-    // This is a simplified version - you may need to adjust based on your pricing model
-  }
-
-  // Add rating filtering
-  if (rating) {
-    where.averageRating = { gte: parseFloat(rating) };
-  }
+  // Build comprehensive filters
+  const where = buildTourFilters(req.query);
+  
+  // Build sort options
+  const orderBy = buildSortOptions(sortBy, sortOrder);
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
@@ -99,20 +80,25 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
           }
         }
       },
-      orderBy: {
-        [sortBy]: sortOrder
-      },
+      orderBy,
       skip,
       take: parseInt(limit)
     }),
     prisma.tour.count({ where })
   ]);
 
+  // Optimize images
   const optimizedTours = tours.map((tour) => ({
     ...tour,
     photos: Array.isArray(tour.photos)
       ? tour.photos.map((url) => cloudinaryUrl(url, 800))
       : tour.photos,
+    supplier: {
+      ...tour.supplier,
+      photoURL: tour.supplier.photoURL
+        ? cloudinaryUrl(tour.supplier.photoURL, 150)
+        : tour.supplier.photoURL,
+    },
   }));
 
   // Calculate pagination metadata
@@ -131,8 +117,34 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
         hasNextPage,
         hasPrevPage,
         limit: parseInt(limit)
+      },
+      appliedFilters: {
+        category: req.query.category,
+        theme: req.query.theme,
+        location: req.query.location,
+        priceRange: req.query.priceRange,
+        minRating: req.query.minRating,
+        search: req.query.search
       }
     }
+  });
+});
+
+
+/**
+ * Get available filter options
+ * Public endpoint - returns all available filter values for UI
+ */
+exports.getFilterOptions = catchAsync(async (req, res, next) => {
+  const filterOptions = await getAvailableFilterOptions(prisma);
+
+  if (!filterOptions) {
+    return next(new AppError('Failed to retrieve filter options', 500));
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: { filterOptions }
   });
 });
 
