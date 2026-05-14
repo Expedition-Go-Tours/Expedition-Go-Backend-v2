@@ -611,7 +611,11 @@ router.get('/supplier/my-tours', restrictTo('supplier'), tourController.getMyTou
  *                   type: string
  *                   format: binary
  *                 description: Tour photos (max 10 images, JPEG/PNG, max 5MB each)
-  *               latitude:
+ *               coverPhoto:
+ *                 type: string
+ *                 description: URL of the cover/featured image for the tour. If not provided, the first photo in the photos array is used. Should be one of the uploaded photo URLs.
+ *                 example: https://res.cloudinary.com/dfpagrtoy/image/upload/v1/tours/cover.jpg
+ *               latitude:
   *                 type: number
   *                 format: float
   *                 minimum: -90
@@ -713,6 +717,9 @@ router.post('/', restrictTo('supplier'), uploadTourPhotos, tourController.create
  *                   type: string
  *                   format: binary
  *                 description: Tour photos (max 10 images)
+ *               coverPhoto:
+ *                 type: string
+ *                 description: URL of the cover/featured image for the tour
  *               tags:
  *                 type: array
  *                 items:

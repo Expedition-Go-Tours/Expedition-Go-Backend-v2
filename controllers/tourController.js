@@ -133,6 +133,7 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
         photos: Array.isArray(tour.photos)
           ? tour.photos.map((url) => cloudinaryUrl(url, 800))
           : tour.photos,
+        coverPhoto: tour.coverPhoto ? cloudinaryUrl(tour.coverPhoto, 800) : null,
         supplier: {
           ...tour.supplier,
           photoURL: tour.supplier.photoURL
@@ -264,6 +265,7 @@ exports.getPopularByCategory = catchAsync(async (req, res, next) => {
         photos: Array.isArray(t.photos)
           ? t.photos.map(url => cloudinaryUrl(url, 800))
           : t.photos,
+        coverPhoto: t.coverPhoto ? cloudinaryUrl(t.coverPhoto, 800) : null,
         supplier: {
           ...t.supplier,
           photoURL: t.supplier.photoURL
@@ -351,6 +353,7 @@ exports.getTour = catchAsync(async (req, res, next) => {
       photos: Array.isArray(tour.photos)
         ? tour.photos.map((url) => cloudinaryUrl(url, 1400))
         : tour.photos,
+      coverPhoto: tour.coverPhoto ? cloudinaryUrl(tour.coverPhoto, 1400) : null,
     };
   }, 300);
 
@@ -403,6 +406,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
     schedulesAndPricing,
     bookingAndTickets,
     photos = [],
+    coverPhoto,
     tags = [],
     status = 'DRAFT',
     latitude,
@@ -423,6 +427,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
       schedulesAndPricing,
       bookingAndTickets,
       photos,
+      coverPhoto: coverPhoto || (photos.length > 0 ? photos[0] : null),
       tags,
       status,
       latitude,

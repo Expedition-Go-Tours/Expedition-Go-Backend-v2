@@ -165,6 +165,7 @@ model Tour {
   title        String
   description  String
   photos       String[]
+  coverPhoto   String?
   status       TourStatus  @default(DRAFT)
   
   // Categorization (JSON structure as per your model)
