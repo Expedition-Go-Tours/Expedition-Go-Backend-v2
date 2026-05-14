@@ -545,83 +545,137 @@ function generateBookingCancellationTemplate(data) {
 }
 
 function generateSupplierApprovedTemplate(data) {
-  const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <h1 style="color: #16a34a;">Welcome to Tour Platform!</h1>
-      
-      <p>Hi ${data.name},</p>
-      
-      <p>Congratulations! Your supplier application has been approved. You're now part of our tour platform community.</p>
-      
-      <div style="background: #f0fdf4; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #16a34a;">
-        <h3 style="margin-top: 0;">Next Steps</h3>
-        <ol>
-          <li>Complete your Stripe Connect onboarding to receive payments</li>
-          <li>Create your first tour listing</li>
-          <li>Set up your supplier profile</li>
-        </ol>
-      </div>
-      
-      <p><a href="${data.dashboardUrl}" style="background: #16a34a; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Access Your Dashboard</a></p>
-      
-      <p>Need help getting started? Contact us at ${data.supportEmail}</p>
-      
-      <p>Welcome aboard!<br>Tour Platform Team</p>
-    </div>
-  `;
+  const html = `<!DOCTYPE html>
+<html data-ogsc="" data-ogsb="">
+<head><meta charset="utf-8">
+<meta name="color-scheme" content="light only">
+<meta name="supported-color-schemes" content="light">
+<style>
+  html, body { margin: 0; padding: 0; background-color: #ffffff !important; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  .wrapper { width: 100%; table-layout: fixed; background-color: #ffffff !important; }
+  .main { max-width: 600px; margin: 0 auto; background-color: #ffffff !important; }
+  .head { padding: 36px 32px 12px; text-align: center; }
+  .section { padding: 14px 32px; border-bottom: 1px solid #e5e7eb; }
+  .label { font-size: 11px; font-weight: 600; color: #6b7280 !important; text-transform: uppercase; letter-spacing: 0.8px; margin: 0 0 3px; word-break: break-word; overflow-wrap: break-word; }
+  .value { font-size: 15px; font-weight: 600; color: #111827 !important; margin: 0; line-height: 1.4; }
+  .value-sm { font-size: 14px; font-weight: 400; color: #111827 !important; margin: 3px 0 0; line-height: 1.5; }
+  .btn { display: inline-block; background: #059669 !important; color: #ffffff !important; padding: 14px 36px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 15px; }
+  [data-ogsc] * { background-color: #ffffff !important; color: #111827 !important; }
+  [data-ogsc] .label { color: #6b7280 !important; }
+  [data-ogsc] .btn { background: #059669 !important; color: #ffffff !important; }
+  * { -ms-text-size-adjust: 100%; -webkit-text-size-adjust: 100%; }
+  u + .body * { background-color: #ffffff !important; color: #111827 !important; }
+  ol { margin: 8px 0 0; padding-left: 18px; }
+  ol li { padding: 4px 0; color: #111827 !important; font-size: 14px; line-height: 1.5; }
+</style>
+</head>
+<body data-ogsc="" style="margin:0;padding:0;background-color:#ffffff !important;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table class="wrapper" width="100%" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="background-color:#ffffff !important;width:100%;">
+    <tr><td align="center" bgcolor="#ffffff" style="background-color:#ffffff !important;padding:0;">
+      <table class="main" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="background-color:#ffffff !important;max-width:600px;width:100%;">
+        <tr><td bgcolor="#ffffff" style="background-color:#ffffff !important;">
+          <div class="head">
+            <img src="${process.env.LOGO_URL}" alt="Travio Africa" style="height:52px;margin-bottom:16px;">
+          </div>
+          <div style="padding:8px 32px 24px;text-align:center;border-bottom:2px dashed #d1d5db;">
+            <h1 style="font-size:22px;font-weight:700;color:#111827;margin:0 0 4px;">Welcome to Travio Africa!</h1>
+            <p style="font-size:15px;color:#059669;font-weight:600;margin:0;">Application Approved</p>
+          </div>
+          <div class="section">
+            <p style="font-size:15px;color:#111827;margin:0 0 8px;">Hi ${data.name},</p>
+            <p style="font-size:14px;color:#6b7280;margin:0;line-height:1.5;">Congratulations! Your supplier application has been approved. You're now part of the Travio Africa community.</p>
+          </div>
+          <div class="section">
+            <p class="label">Next Steps</p>
+            <ol>
+              <li><strong>Complete Stripe onboarding</strong> — Set up your payment account to receive payouts</li>
+              <li><strong>Create your first tour</strong> — List your experiences and start receiving bookings</li>
+              <li><strong>Set up your profile</strong> — Add business details, photos, and contact info</li>
+            </ol>
+          </div>
+          <div style="padding:24px 32px;text-align:center;">
+            <a href="${data.dashboardUrl}" class="btn" style="display:inline-block;background:#059669;color:#ffffff;padding:14px 36px;border-radius:6px;text-decoration:none;font-weight:600;font-size:15px;">Access Your Dashboard</a>
+          </div>
+          <div style="padding:14px 32px 24px;text-align:center;border-top:1px solid #e5e7eb;">
+            <p style="font-size:13px;color:#9ca3af;margin:0;">Need help? <a href="mailto:${data.supportEmail}" style="color:#059669;">${data.supportEmail}</a></p>
+          </div>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
 
   const text = `
-    Welcome to Tour Platform!
-    
-    Hi ${data.name},
-    
-    Your supplier application has been approved!
-    
-    Next steps:
-    1. Complete Stripe Connect onboarding
-    2. Create your first tour
-    3. Set up your profile
-    
-    Dashboard: ${data.dashboardUrl}
-    Support: ${data.supportEmail}
-  `;
+WELCOME TO TRAVIO AFRICA!
+Your supplier application has been approved.
+
+Hi ${data.name},
+
+Next steps:
+1. Complete Stripe onboarding — Set up payments
+2. Create your first tour — List your experiences
+3. Set up your profile — Add business details
+
+Dashboard: ${data.dashboardUrl}
+Support: ${data.supportEmail}`;
 
   return { html, text };
 }
 
 function generateSupplierRejectedTemplate(data) {
-  const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <h1 style="color: #dc2626;">Supplier Application Update</h1>
-      
-      <p>Hi ${data.name},</p>
-      
-      <p>Thank you for your interest in becoming a supplier on our platform. After careful review, we're unable to approve your application at this time.</p>
-      
-      ${data.notes ? `
-        <div style="background: #fef2f2; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #dc2626;">
-          <h3 style="margin-top: 0;">Feedback</h3>
-          <p>${data.notes}</p>
-        </div>
-      ` : ''}
-      
-      <p>You're welcome to reapply in the future. If you have questions about this decision, please contact us at ${data.supportEmail}</p>
-      
-      <p>Best regards,<br>Tour Platform Team</p>
-    </div>
-  `;
+  const html = `<!DOCTYPE html>
+<html data-ogsc="" data-ogsb="">
+<head><meta charset="utf-8">
+<meta name="color-scheme" content="light only">
+<meta name="supported-color-schemes" content="light">
+<style>
+  html, body { margin: 0; padding: 0; background-color: #ffffff !important; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  .wrapper { width: 100%; table-layout: fixed; background-color: #ffffff !important; }
+  .main { max-width: 600px; margin: 0 auto; background-color: #ffffff !important; }
+  .head { padding: 36px 32px 12px; text-align: center; }
+  .section { padding: 14px 32px; border-bottom: 1px solid #e5e7eb; }
+  .value-sm { font-size: 14px; font-weight: 400; color: #111827 !important; margin: 3px 0 0; line-height: 1.5; word-break: break-word; overflow-wrap: break-word; }
+  [data-ogsc] * { background-color: #ffffff !important; color: #111827 !important; }
+  * { -ms-text-size-adjust: 100%; -webkit-text-size-adjust: 100%; }
+</style>
+</head>
+<body data-ogsc="" style="margin:0;padding:0;background-color:#ffffff !important;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table class="wrapper" width="100%" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="background-color:#ffffff !important;width:100%;">
+    <tr><td align="center" bgcolor="#ffffff" style="background-color:#ffffff !important;padding:0;">
+      <table class="main" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="background-color:#ffffff !important;max-width:600px;width:100%;">
+        <tr><td bgcolor="#ffffff" style="background-color:#ffffff !important;">
+          <div class="head">
+            <img src="${process.env.LOGO_URL}" alt="Travio Africa" style="height:48px;margin-bottom:10px;">
+          </div>
+          <div style="padding:8px 32px 24px;text-align:center;border-bottom:2px dashed #d1d5db;">
+            <h1 style="font-size:22px;color:#dc2626;margin:0 0 4px;">Application Update</h1>
+            <p style="font-size:15px;color:#dc2626;font-weight:600;margin:0;">Not Approved</p>
+          </div>
+          <div class="section">
+            <p style="font-size:15px;color:#111827;margin:0 0 8px;">Hi ${data.name},</p>
+            <p style="font-size:14px;color:#6b7280;margin:0;line-height:1.5;">Thank you for your interest in becoming a supplier on Travio Africa. After careful review, we're unable to approve your application at this time.</p>
+          </div>
+          ${data.notes ? `
+          <div class="section">
+            <p style="font-size:14px;color:#111827;margin:0;line-height:1.5;background:#fef2f2;padding:16px;border-left:4px solid #dc2626;"><strong>Feedback:</strong> ${data.notes}</p>
+          </div>` : ''}
+          <div class="section" style="border-bottom:none;">
+            <p class="value-sm">You're welcome to reapply in the future. If you have questions, contact <a href="mailto:${data.supportEmail}" style="color:#2563eb;">${data.supportEmail}</a></p>
+          </div>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
 
   const text = `
-    Supplier Application Update
-    
-    Hi ${data.name},
-    
-    We're unable to approve your supplier application at this time.
-    
-    ${data.notes ? `Feedback: ${data.notes}` : ''}
-    
-    Questions? Contact: ${data.supportEmail}
-  `;
+APPLICATION UPDATE — Not Approved
+Hi ${data.name},
+We're unable to approve your supplier application.
+${data.notes ? 'Feedback: ' + data.notes : ''}
+Questions? Contact: ${data.supportEmail}`;
 
   return { html, text };
 }
