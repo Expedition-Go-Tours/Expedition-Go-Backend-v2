@@ -1855,6 +1855,11 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
               example: '2026-05-12T12:00:00.000Z',
               nullable: true
             },
+            verified: {
+              type: 'boolean',
+              description: 'Whether the reviewer has a verified booking for this tour',
+              example: true
+            },
             helpfulCount: {
               type: 'integer',
               description: 'Number of helpful votes',

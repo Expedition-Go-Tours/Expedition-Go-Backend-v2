@@ -7,6 +7,7 @@ const hpp = require('hpp');
 const morgan = require('morgan');
 const compression = require('compression');
 const cookieParser = require('cookie-parser');
+const logger = require('./utils/logger');
 
 
 const globalErrorHandler = require('./middleware/errorMiddleware');
@@ -24,12 +25,33 @@ app.use(hpp());
 app.use(compression());
 app.use(cookieParser());
 
+// Global rate limit: 100 requests per 15 min per IP
 app.use(
   '/api',
   rateLimit({
     max: 100,
     windowMs: 15 * 60 * 1000,
-    message: 'Too many requests from this IP, please try again later.',
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      status: 'fail',
+      message: 'Too many requests from this IP, please try again later.',
+    },
+  }),
+);
+
+// Stricter rate limit on auth endpoints
+app.use(
+  '/api/auth',
+  rateLimit({
+    max: 20,
+    windowMs: 15 * 60 * 1000,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      status: 'fail',
+      message: 'Too many auth attempts, please try again later.',
+    },
   }),
 );
 
@@ -59,6 +81,20 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
+// Request monitoring middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.httpLog(req.method, req.originalUrl, res.statusCode, duration, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+  });
+  next();
+});
+
+// Dev-only detailed logging
 if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
 }

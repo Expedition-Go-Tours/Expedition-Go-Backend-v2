@@ -68,6 +68,17 @@ function validateTourData(data, isPartial = false) {
     errors.push('Description must be less than 5000 characters');
   }
 
+  // Validate coordinates
+  if (data.latitude !== undefined && (typeof data.latitude !== 'number' || data.latitude < -90 || data.latitude > 90)) {
+    errors.push('Latitude must be a number between -90 and 90');
+  }
+  if (data.longitude !== undefined && (typeof data.longitude !== 'number' || data.longitude < -180 || data.longitude > 180)) {
+    errors.push('Longitude must be a number between -180 and 180');
+  }
+  if ((data.latitude !== undefined) !== (data.longitude !== undefined)) {
+    errors.push('Both latitude and longitude must be provided together');
+  }
+
   // Validate photos array
   if (data.photos && !Array.isArray(data.photos)) {
     errors.push('Photos must be an array');

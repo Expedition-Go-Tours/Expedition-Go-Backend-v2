@@ -551,6 +551,17 @@ function validateFilterParams(queryParams) {
     }
   }
 
+  // Validate geo params
+  if (queryParams.lat !== undefined || queryParams.lng !== undefined) {
+    const lat = parseFloat(queryParams.lat);
+    const lng = parseFloat(queryParams.lng);
+    if (isNaN(lat) || lat < -90 || lat > 90) errors.push('lat must be a number between -90 and 90');
+    if (isNaN(lng) || lng < -180 || lng > 180) errors.push('lng must be a number between -180 and 180');
+    if (queryParams.radius && (isNaN(parseFloat(queryParams.radius)) || parseFloat(queryParams.radius) <= 0)) {
+      errors.push('radius must be a positive number');
+    }
+  }
+
   // Validate pagination
   if (queryParams.page && (isNaN(parseInt(queryParams.page)) || parseInt(queryParams.page) < 1)) {
     errors.push('page must be a positive integer');
@@ -570,9 +581,62 @@ function validateFilterParams(queryParams) {
   };
 }
 
+/**
+ * Find tour IDs within a radius of a point using PostGIS ST_DWithin
+ * @param {Object} prisma - Prisma client
+ * @param {number} lat - Center latitude
+ * @param {number} lng - Center longitude
+ * @param {number} radiusKm - Search radius in kilometers (default 50)
+ * @returns {Promise<string[]>} Array of tour IDs within radius
+ */
+async function findNearbyTourIds(prisma, lat, lng, radiusKm = 50) {
+  const radiusMeters = radiusKm * 1000;
+  try {
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT id FROM "Tour" WHERE location_geom IS NOT NULL AND ST_DWithin(
+        location_geom,
+        ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+        $3
+      )`,
+      lng, lat, radiusMeters
+    );
+    return rows.map(r => r.id);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get distances for a list of tour IDs from a point
+ * @param {Object} prisma - Prisma client
+ * @param {number} lat - Origin latitude
+ * @param {number} lng - Origin longitude
+ * @param {string[]} tourIds - Array of tour IDs
+ * @returns {Promise<Map<string, number>>} Map of tourId -> distance in km
+ */
+async function getTourDistances(prisma, lat, lng, tourIds) {
+  if (!tourIds.length) return new Map();
+  try {
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT id, ST_DistanceSphere(
+        location_geom::geometry,
+        ST_SetSRID(ST_MakePoint($1, $2), 4326)
+      ) / 1000.0 AS distance_km
+      FROM "Tour"
+      WHERE id = ANY($3) AND location_geom IS NOT NULL`,
+      lng, lat, tourIds
+    );
+    return new Map(rows.map(r => [r.id, Math.round(parseFloat(r.distance_km) * 10) / 10]));
+  } catch {
+    return new Map();
+  }
+}
+
 module.exports = {
   buildTourFilters,
   buildSortOptions,
   getAvailableFilterOptions,
-  validateFilterParams
+  validateFilterParams,
+  findNearbyTourIds,
+  getTourDistances
 };

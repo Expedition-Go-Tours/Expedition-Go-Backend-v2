@@ -20,6 +20,9 @@ const { sendNotification } = require('../utils/notificationService');
 const { logActivity } = require('../utils/auditLogger');
 const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
+const { addApprovedRating, removeApprovedRating, updateApprovedRating, recalculateSupplierRating } = require('../utils/ratingHelper');
+const cache = require('../utils/cacheHelper');
+const crypto = require('crypto');
 
 // ================================
 // CUSTOMER REVIEW ENDPOINTS
@@ -38,12 +41,14 @@ exports.createReview = catchAsync(async (req, res, next) => {
     photos = []
   } = req.body;
 
-  // Validate booking exists and belongs to customer
+  // Validate booking exists, belongs to customer, paid and completed
   const booking = await prisma.booking.findFirst({
     where: {
       id: bookingId,
       customerId,
-      status: 'COMPLETED'
+      status: 'COMPLETED',
+      paymentStatus: 'SUCCEEDED',
+      selectedDate: { lte: new Date() }
     },
     include: {
       tour: {
@@ -63,14 +68,12 @@ exports.createReview = catchAsync(async (req, res, next) => {
     return next(new AppError('Review already exists for this booking', 400));
   }
 
-  // Validate rating
   if (!rating || rating < 1 || rating > 5) {
     return next(new AppError('Rating must be between 1 and 5', 400));
   }
 
-  // Create review in transaction
+  // Create review (auto-approved, verified badge set)
   const result = await prisma.$transaction(async (tx) => {
-    // Create the review
     const review = await tx.review.create({
       data: {
         bookingId,
@@ -80,7 +83,8 @@ exports.createReview = catchAsync(async (req, res, next) => {
         title,
         comment,
         photos,
-        status: 'PENDING' // Reviews need moderation
+        status: 'APPROVED',
+        verified: true
       },
       include: {
         customer: {
@@ -99,45 +103,10 @@ exports.createReview = catchAsync(async (req, res, next) => {
       }
     });
 
-    // Update tour statistics
-    const tourStats = await tx.review.aggregate({
-      where: {
-        tourId: booking.tourId,
-        status: 'APPROVED'
-      },
-      _avg: {
-        rating: true
-      },
-      _count: true
-    });
-
-    await tx.tour.update({
-      where: { id: booking.tourId },
-      data: {
-        averageRating: tourStats._avg.rating,
-        reviewCount: tourStats._count
-      }
-    });
-
-    // Update supplier statistics
-    const supplierStats = await tx.review.aggregate({
-      where: {
-        tour: {
-          supplierId: booking.tour.supplierId
-        },
-        status: 'APPROVED'
-      },
-      _avg: {
-        rating: true
-      }
-    });
-
-    await tx.supplierProfile.update({
-      where: { userId: booking.tour.supplierId },
-      data: {
-        averageRating: supplierStats._avg.rating
-      }
-    });
+    // Update tour stats (review is APPROVED, so it counts)
+    await addApprovedRating(tx, booking.tourId, rating);
+    // Update supplier stats
+    await recalculateSupplierRating(tx, booking.tour.supplierId);
 
     return review;
   });
@@ -187,19 +156,15 @@ exports.updateReview = catchAsync(async (req, res, next) => {
     photos
   } = req.body;
 
-  // Find review and verify ownership
   const existingReview = await prisma.review.findFirst({
-    where: {
-      id,
-      customerId
-    }
+    where: { id, customerId },
+    include: { tour: { select: { supplierId: true } } }
   });
 
   if (!existingReview) {
     return next(new AppError('Review not found or access denied', 404));
   }
 
-  // Validate rating if provided
   if (rating && (rating < 1 || rating > 5)) {
     return next(new AppError('Rating must be between 1 and 5', 400));
   }
@@ -210,32 +175,47 @@ exports.updateReview = catchAsync(async (req, res, next) => {
   if (comment !== undefined) updateData.comment = comment;
   if (photos !== undefined) updateData.photos = photos;
 
-  // Reset status to pending if content changed
-  if (rating !== undefined || title !== undefined || comment !== undefined) {
+  const ratingChanged = rating !== undefined && rating !== existingReview.rating;
+  const contentChanged = rating !== undefined || title !== undefined || comment !== undefined;
+
+  if (contentChanged) {
     updateData.status = 'PENDING';
   }
 
-  const review = await prisma.review.update({
-    where: { id },
-    data: updateData,
-    include: {
-      customer: {
-        select: {
-          id: true,
-          name: true,
-          photoURL: true
-        }
-      },
-      tour: {
-        select: {
-          id: true,
-          title: true
+  const review = await prisma.$transaction(async (tx) => {
+    const updated = await tx.review.update({
+      where: { id },
+      data: updateData,
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            photoURL: true
+          }
+        },
+        tour: {
+          select: {
+            id: true,
+            title: true
+          }
         }
       }
+    });
+
+    if (existingReview.status === 'APPROVED' && ratingChanged) {
+      await removeApprovedRating(tx, existingReview.tourId, existingReview.rating);
+      await recalculateSupplierRating(tx, existingReview.tour.supplierId);
     }
+
+    return updated;
   });
 
-  // Log activity
+  if (existingReview.status === 'APPROVED' && ratingChanged) {
+    cache.invalidateReviewCaches(existingReview.tourId).catch(() => {});
+    cache.invalidateTourCaches(existingReview.tourId).catch(() => {});
+  }
+
   await logActivity({
     userId: customerId,
     action: 'review.updated',
@@ -259,74 +239,32 @@ exports.deleteReview = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
 
   const review = await prisma.review.findFirst({
-    where: {
-      id,
-      customerId
-    },
-    include: {
-      tour: true
-    }
+    where: { id, customerId },
+    include: { tour: { select: { supplierId: true } } }
   });
 
   if (!review) {
     return next(new AppError('Review not found or access denied', 404));
   }
 
-  // Delete review photos from Cloudinary
   if (review.photos && review.photos.length > 0) {
     for (const photoUrl of review.photos) {
       await deleteCloudinaryImage(photoUrl);
     }
   }
 
-  // Delete review and update statistics
   await prisma.$transaction(async (tx) => {
-    await tx.review.delete({
-      where: { id }
-    });
+    await tx.review.delete({ where: { id } });
 
-    // Recalculate tour statistics
-    const tourStats = await tx.review.aggregate({
-      where: {
-        tourId: review.tourId,
-        status: 'APPROVED'
-      },
-      _avg: {
-        rating: true
-      },
-      _count: true
-    });
-
-    await tx.tour.update({
-      where: { id: review.tourId },
-      data: {
-        averageRating: tourStats._avg.rating,
-        reviewCount: tourStats._count
-      }
-    });
-
-    // Recalculate supplier statistics
-    const supplierStats = await tx.review.aggregate({
-      where: {
-        tour: {
-          supplierId: review.tour.supplierId
-        },
-        status: 'APPROVED'
-      },
-      _avg: {
-        rating: true
-      }
-    });
-
-    await tx.supplierProfile.update({
-      where: { userId: review.tour.supplierId },
-      data: {
-        averageRating: supplierStats._avg.rating
-      }
-    });
+    if (review.status === 'APPROVED') {
+      await removeApprovedRating(tx, review.tourId, review.rating);
+      await recalculateSupplierRating(tx, review.tour.supplierId);
+    }
   });
 
-  // Log activity
+  cache.invalidateReviewCaches(review.tourId).catch(() => {});
+  cache.invalidateTourCaches(review.tourId).catch(() => {});
+
   await logActivity({
     userId: customerId,
     action: 'review.deleted',
@@ -361,80 +299,83 @@ exports.getTourReviews = catchAsync(async (req, res, next) => {
     sortOrder = 'desc'
   } = req.query;
 
-  const where = {
-    tourId,
-    status: 'APPROVED'
-  };
+  const cacheKey = 'reviews:tour:' + tourId + ':' + crypto.createHash('md5').update(JSON.stringify(req.query)).digest('hex');
 
-  // Filter by rating if specified
-  if (rating) {
-    where.rating = parseInt(rating);
-  }
+  const result = await cache.getOrSet(cacheKey, async () => {
+    const where = {
+      tourId,
+      status: 'APPROVED'
+    };
 
-  const skip = (parseInt(page) - 1) * parseInt(limit);
-
-  const [reviews, totalCount, ratingDistribution] = await Promise.all([
-    prisma.review.findMany({
-      where,
-      include: {
-        customer: {
-          select: {
-            id: true,
-            name: true,
-            photoURL: true
-          }
-        }
-      },
-      orderBy: {
-        [sortBy]: sortOrder
-      },
-      skip,
-      take: parseInt(limit)
-    }),
-    prisma.review.count({ where }),
-    // Get rating distribution
-    prisma.review.groupBy({
-      by: ['rating'],
-      where: {
-        tourId,
-        status: 'APPROVED'
-      },
-      _count: true,
-      orderBy: {
-        rating: 'desc'
-      }
-    })
-  ]);
-
-  const totalPages = Math.ceil(totalCount / parseInt(limit));
-
-  // Optimize review photos
-  const optimizedReviews = reviews.map((review) => ({
-    ...review,
-    photos: Array.isArray(review.photos)
-      ? review.photos.map((url) => cloudinaryUrl(url, 600))
-      : review.photos,
-    customer: {
-      ...review.customer,
-      photoURL: review.customer.photoURL
-        ? cloudinaryUrl(review.customer.photoURL, 150)
-        : review.customer.photoURL,
-    },
-  }));
-
-  res.status(200).json({
-    status: 'success',
-    data: {
-      reviews: optimizedReviews,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages,
-        totalCount,
-        limit: parseInt(limit)
-      },
-      ratingDistribution
+    if (rating) {
+      where.rating = parseInt(rating);
     }
-  });
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const [reviews, totalCount, ratingDistribution] = await Promise.all([
+      prisma.review.findMany({
+        where,
+        include: {
+          customer: {
+            select: {
+              id: true,
+              name: true,
+              photoURL: true
+            }
+          }
+        },
+        orderBy: {
+          [sortBy]: sortOrder
+        },
+        skip,
+        take: parseInt(limit)
+      }),
+      prisma.review.count({ where }),
+      prisma.review.groupBy({
+        by: ['rating'],
+        where: {
+          tourId,
+          status: 'APPROVED'
+        },
+        _count: true,
+        orderBy: {
+          rating: 'desc'
+        }
+      })
+    ]);
+
+    const totalPages = Math.ceil(totalCount / parseInt(limit));
+
+    const optimizedReviews = reviews.map((review) => ({
+      ...review,
+      photos: Array.isArray(review.photos)
+        ? review.photos.map((url) => cloudinaryUrl(url, 600))
+        : review.photos,
+      customer: {
+        ...review.customer,
+        photoURL: review.customer.photoURL
+          ? cloudinaryUrl(review.customer.photoURL, 150)
+          : review.customer.photoURL,
+      },
+    }));
+
+    return {
+      status: 'success',
+      data: {
+        reviews: optimizedReviews,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages,
+          totalCount,
+          limit: parseInt(limit)
+        },
+        ratingDistribution
+      }
+    };
+  }, 300);
+
+  res.status(200).json(result);
 });
 
 /**
@@ -822,7 +763,7 @@ exports.getPendingReviews = catchAsync(async (req, res, next) => {
  */
 exports.moderateReview = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const { action, reason } = req.body; // action: 'approve', 'reject', 'flag'
+  const { action, reason } = req.body;
   const adminId = req.user.id;
 
   if (!['approve', 'reject', 'flag'].includes(action)) {
@@ -831,10 +772,7 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
 
   const review = await prisma.review.findUnique({
     where: { id },
-    include: {
-      customer: true,
-      tour: true
-    }
+    include: { tour: { select: { supplierId: true } } }
   });
 
   if (!review) {
@@ -847,39 +785,31 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
     flag: 'FLAGGED'
   };
 
-  const updatedReview = await prisma.review.update({
-    where: { id },
-    data: {
-      status: statusMap[action],
-      moderatedBy: adminId,
-      moderatedAt: new Date(),
-      flagReason: action === 'flag' ? reason : null
-    }
-  });
-
-  // Update tour statistics if approved
-  if (action === 'approve') {
-    const tourStats = await prisma.review.aggregate({
-      where: {
-        tourId: review.tourId,
-        status: 'APPROVED'
-      },
-      _avg: {
-        rating: true
-      },
-      _count: true
-    });
-
-    await prisma.tour.update({
-      where: { id: review.tourId },
+  const [updatedReview] = await prisma.$transaction(async (tx) => {
+    const updated = await tx.review.update({
+      where: { id },
       data: {
-        averageRating: tourStats._avg.rating,
-        reviewCount: tourStats._count
+        status: statusMap[action],
+        moderatedBy: adminId,
+        moderatedAt: new Date(),
+        flagReason: action === 'flag' ? reason : null
       }
     });
-  }
 
-  // Send notification to customer
+    if (action === 'approve' && review.status !== 'APPROVED') {
+      await addApprovedRating(tx, review.tourId, review.rating);
+      await recalculateSupplierRating(tx, review.tour.supplierId);
+    } else if (action !== 'approve' && review.status === 'APPROVED') {
+      await removeApprovedRating(tx, review.tourId, review.rating);
+      await recalculateSupplierRating(tx, review.tour.supplierId);
+    }
+
+    return [updated];
+  });
+
+  cache.invalidateReviewCaches(review.tourId).catch(() => {});
+  cache.invalidateTourCaches(review.tourId).catch(() => {});
+
   const notificationMessages = {
     approve: 'Your review has been approved and is now visible',
     reject: 'Your review was not approved',
@@ -898,7 +828,6 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
     }
   }).catch(console.error);
 
-  // Log activity
   await logActivity({
     userId: adminId,
     action: `review.${action}`,

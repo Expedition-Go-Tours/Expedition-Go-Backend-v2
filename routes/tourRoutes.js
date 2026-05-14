@@ -191,39 +191,63 @@ const router = express.Router();
  *         description: Show only verified suppliers
  *         schema:
  *           type: boolean
- *       - name: sortBy
- *         in: query
- *         description: Sort field
- *         schema:
- *           type: string
- *           enum: [createdAt, updatedAt, title, price, rating, reviews, bookings, popularity]
- *           default: createdAt
- *       - name: sortOrder
- *         in: query
- *         description: Sort order
- *         schema:
- *           type: string
- *           enum: [asc, desc]
- *           default: desc
- *     responses:
- *       200:
- *         description: Tours retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: object
- *                   properties:
- *                     tours:
- *                       type: array
- *                       items:
- *                         $ref: '#/components/schemas/Tour'
- *                     pagination:
+  *       - name: lat
+  *         in: query
+  *         description: Center latitude for geo-distance "near me" search (requires lng). Tours within radius km are returned with distanceKm field.
+  *         schema:
+  *           type: number
+  *           minimum: -90
+  *           maximum: 90
+  *           example: 5.6037
+  *       - name: lng
+  *         in: query
+  *         description: Center longitude for geo-distance search (requires lat)
+  *         schema:
+  *           type: number
+  *           minimum: -180
+  *           maximum: 180
+  *           example: -0.187
+  *       - name: radius
+  *         in: query
+  *         description: Search radius in kilometers (default 50). Used with lat/lng.
+  *         schema:
+  *           type: number
+  *           default: 50
+  *           example: 30
+  *       - name: sortBy
+  *         in: query
+  *         description: Sort field
+  *         schema:
+  *           type: string
+  *           enum: [createdAt, updatedAt, title, price, rating, reviews, bookings, popularity, nearest]
+  *           default: createdAt
+  *       - name: sortOrder
+  *         in: query
+  *         description: Sort order
+  *         schema:
+  *           type: string
+  *           enum: [asc, desc]
+  *           default: desc
+  *     responses:
+  *       200:
+  *         description: Tours retrieved successfully
+  *         content:
+  *           application/json:
+  *             schema:
+  *               type: object
+  *               properties:
+  *                 tours:
+  *                   type: array
+  *                   items:
+  *                     allOf:
+  *                       - $ref: '#/components/schemas/Tour'
+  *                       - type: object
+  *                         properties:
+  *                           distanceKm:
+  *                             type: number
+  *                             nullable: true
+  *                             description: Distance from search center in km (only when lat/lng provided)
+  *                     pagination:
  *                       type: object
  *                       properties:
  *                         currentPage:
@@ -526,13 +550,27 @@ router.get('/supplier/my-tours', restrictTo('supplier'), tourController.getMyTou
  *                   type: string
  *                   format: binary
  *                 description: Tour photos (max 10 images, JPEG/PNG, max 5MB each)
- *               tags:
- *                 type: array
- *                 items:
- *                   type: string
- *                 description: Search tags for the tour (comma-separated or array)
- *                 example: ["central-park","walking-tour","nyc","nature"]
- *     responses:
+  *               latitude:
+  *                 type: number
+  *                 format: float
+  *                 minimum: -90
+  *                 maximum: 90
+  *                 description: Tour location latitude for geo-search (must be provided with longitude)
+  *                 example: 40.7678
+  *               longitude:
+  *                 type: number
+  *                 format: float
+  *                 minimum: -180
+  *                 maximum: 180
+  *                 description: Tour location longitude for geo-search (must be provided with latitude)
+  *                 example: -73.9812
+  *               tags:
+  *                 type: array
+  *                 items:
+  *                   type: string
+  *                 description: Search tags for the tour (comma-separated or array)
+  *                 example: ["central-park","walking-tour","nyc","nature"]
+  *     responses:
  *       201:
  *         description: Tour created successfully
  *         content:
@@ -619,11 +657,25 @@ router.post('/', restrictTo('supplier'), uploadTourPhotos, tourController.create
  *                 items:
  *                   type: string
  *                 description: Search tags for the tour
- *               status:
- *                 type: string
- *                 enum: [DRAFT, ACTIVE, PAUSED, ARCHIVED]
- *                 description: Tour status
- *     responses:
+  *               latitude:
+  *                 type: number
+  *                 format: float
+  *                 minimum: -90
+  *                 maximum: 90
+  *                 description: Tour location latitude for geo-search
+  *                 example: 40.7678
+  *               longitude:
+  *                 type: number
+  *                 format: float
+  *                 minimum: -180
+  *                 maximum: 180
+  *                 description: Tour location longitude for geo-search
+  *                 example: -73.9812
+  *               status:
+  *                 type: string
+  *                 enum: [DRAFT, ACTIVE, PAUSED, ARCHIVED]
+  *                 description: Tour status
+  *     responses:
  *       200:
  *         description: Tour updated successfully
  *         content:

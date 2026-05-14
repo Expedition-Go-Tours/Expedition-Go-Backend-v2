@@ -186,6 +186,10 @@ model Tour {
   metaDescription String?
   tags         String[]
   
+  // Location (PostGIS coordinates)
+  latitude     Float?      // Used with PostGIS ST_DWithin for geo-search
+  longitude    Float?      // Used with PostGIS ST_DWithin for geo-search
+  
   // Statistics
   totalBookings Int        @default(0)
   totalRevenue Decimal     @default(0) @db.Decimal(10,2)
@@ -292,6 +296,9 @@ model Review {
   // Supplier Response
   supplierResponse String?
   supplierResponseAt DateTime?
+  
+  // Verified Badge
+  verified     Boolean     @default(true) // True = booking ownership verified
   
   // Helpfulness
   helpfulCount Int         @default(0)

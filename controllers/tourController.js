@@ -23,8 +23,12 @@ const {
   buildTourFilters, 
   buildSortOptions, 
   getAvailableFilterOptions,
-  validateFilterParams 
+  validateFilterParams,
+  findNearbyTourIds,
+  getTourDistances
 } = require('../utils/tourFilterBuilder');
+const cache = require('../utils/cacheHelper');
+const crypto = require('crypto');
 
 // ================================
 // PUBLIC TOUR ENDPOINTS
@@ -39,26 +43,184 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
     page = 1,
     limit = 12,
     sortBy = 'createdAt',
-    sortOrder = 'desc'
+    sortOrder = 'desc',
+    lat, lng, radius
   } = req.query;
 
-  // Validate filter parameters
   const validation = validateFilterParams(req.query);
   if (!validation.isValid) {
     return next(new AppError(`Invalid filters: ${validation.errors.join(', ')}`, 400));
   }
 
-  // Build comprehensive filters
-  const where = buildTourFilters(req.query);
-  
-  // Build sort options
-  const orderBy = buildSortOptions(sortBy, sortOrder);
+  const hasGeo = lat && lng;
+  const cacheKey = 'tours:list:' + crypto.createHash('md5').update(JSON.stringify(req.query)).digest('hex');
 
-  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const result = await cache.getOrSet(cacheKey, async () => {
+    const where = buildTourFilters(req.query);
+    const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  const [tours, totalCount] = await Promise.all([
-    prisma.tour.findMany({
-      where,
+    // Apply geo-spatial filter
+    if (hasGeo) {
+      const nearbyIds = await findNearbyTourIds(prisma, parseFloat(lat), parseFloat(lng), parseFloat(radius) || 50);
+      if (nearbyIds.length === 0) {
+        const totalPages = Math.ceil(0 / parseInt(limit));
+        return {
+          status: 'success',
+          data: {
+            tours: [],
+            pagination: {
+              currentPage: parseInt(page), totalPages, totalCount: 0,
+              hasNextPage: false, hasPrevPage: false, limit: parseInt(limit)
+            },
+            appliedFilters: {
+              category: req.query.category, theme: req.query.theme,
+              location: req.query.location, priceRange: req.query.priceRange,
+              minRating: req.query.minRating, search: req.query.search,
+              geo: { lat: parseFloat(lat), lng: parseFloat(lng), radiusKm: parseFloat(radius) || 50 }
+            }
+          }
+        };
+      }
+      where.id = { in: nearbyIds };
+    }
+
+    const orderBy = sortBy === 'nearest' && hasGeo ? { createdAt: 'desc' } : buildSortOptions(sortBy, sortOrder);
+
+    const [tours, totalCount] = await Promise.all([
+      prisma.tour.findMany({
+        where,
+        include: {
+          supplier: {
+            select: {
+              id: true,
+              name: true,
+              photoURL: true,
+              supplierProfile: {
+                select: {
+                  averageRating: true,
+                  totalBookings: true
+                }
+              }
+            }
+          },
+          _count: {
+            select: {
+              reviews: true,
+              bookings: true
+            }
+          }
+        },
+        orderBy,
+        skip,
+        take: parseInt(limit)
+      }),
+      prisma.tour.count({ where })
+    ]);
+
+    // Compute distances for geo queries
+    let distMap = new Map();
+    if (hasGeo) {
+      distMap = await getTourDistances(prisma, parseFloat(lat), parseFloat(lng), tours.map(t => t.id));
+    }
+
+    let optimizedTours = tours.map((tour) => {
+      const t = {
+        ...tour,
+        photos: Array.isArray(tour.photos)
+          ? tour.photos.map((url) => cloudinaryUrl(url, 800))
+          : tour.photos,
+        supplier: {
+          ...tour.supplier,
+          photoURL: tour.supplier.photoURL
+            ? cloudinaryUrl(tour.supplier.photoURL, 150)
+            : tour.supplier.photoURL,
+        },
+      };
+      if (hasGeo) {
+        t.distanceKm = distMap.get(tour.id) || null;
+      }
+      return t;
+    });
+
+    // Sort by nearest in application code
+    if (sortBy === 'nearest' && hasGeo) {
+      optimizedTours.sort((a, b) => (a.distanceKm || Infinity) - (b.distanceKm || Infinity));
+    }
+
+    const totalPages = Math.ceil(totalCount / parseInt(limit));
+    const hasNextPage = parseInt(page) < totalPages;
+    const hasPrevPage = parseInt(page) > 1;
+
+    const response = {
+      status: 'success',
+      data: {
+        tours: optimizedTours,
+        pagination: {
+          currentPage: parseInt(page), totalPages, totalCount,
+          hasNextPage, hasPrevPage, limit: parseInt(limit)
+        },
+        appliedFilters: {
+          category: req.query.category, theme: req.query.theme,
+          location: req.query.location, priceRange: req.query.priceRange,
+          minRating: req.query.minRating, search: req.query.search
+        }
+      }
+    };
+
+    if (hasGeo) {
+      response.data.appliedFilters.geo = {
+        lat: parseFloat(lat), lng: parseFloat(lng), radiusKm: parseFloat(radius) || 50
+      };
+    }
+
+    return response;
+  }, 300);
+
+  res.status(200).json(result);
+});
+
+
+/**
+ * Get available filter options
+ * Public endpoint - returns all available filter values for UI
+ */
+exports.getFilterOptions = catchAsync(async (req, res, next) => {
+  const result = await cache.getOrSet('tours:filters:options', async () => {
+    const filterOptions = await getAvailableFilterOptions(prisma);
+
+    if (!filterOptions) {
+      return null;
+    }
+
+    return {
+      status: 'success',
+      data: { filterOptions }
+    };
+  }, 3600);
+
+  if (!result) {
+    return next(new AppError('Failed to retrieve filter options', 500));
+  }
+
+  res.status(200).json(result);
+});
+
+/**
+ * Get single tour by ID or slug
+ * Public endpoint with view tracking
+ */
+exports.getTour = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+
+  const result = await cache.getOrSet(cache.TOUR_DETAIL_PREFIX(id), async () => {
+    const tour = await prisma.tour.findFirst({
+      where: {
+        OR: [
+          { id },
+          { slug: id }
+        ],
+        status: 'ACTIVE'
+      },
       include: {
         supplier: {
           select: {
@@ -68,10 +230,25 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
             supplierProfile: {
               select: {
                 averageRating: true,
-                totalBookings: true
+                totalBookings: true,
+                businessInfo: true
               }
             }
           }
+        },
+        reviews: {
+          where: { status: 'APPROVED' },
+          include: {
+            customer: {
+              select: {
+                id: true,
+                name: true,
+                photoURL: true
+              }
+            }
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 10
         },
         _count: {
           select: {
@@ -79,150 +256,31 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
             bookings: true
           }
         }
-      },
-      orderBy,
-      skip,
-      take: parseInt(limit)
-    }),
-    prisma.tour.count({ where })
-  ]);
-
-  // Optimize images
-  const optimizedTours = tours.map((tour) => ({
-    ...tour,
-    photos: Array.isArray(tour.photos)
-      ? tour.photos.map((url) => cloudinaryUrl(url, 800))
-      : tour.photos,
-    supplier: {
-      ...tour.supplier,
-      photoURL: tour.supplier.photoURL
-        ? cloudinaryUrl(tour.supplier.photoURL, 150)
-        : tour.supplier.photoURL,
-    },
-  }));
-
-  // Calculate pagination metadata
-  const totalPages = Math.ceil(totalCount / parseInt(limit));
-  const hasNextPage = parseInt(page) < totalPages;
-  const hasPrevPage = parseInt(page) > 1;
-
-  res.status(200).json({
-    status: 'success',
-    data: {
-      tours: optimizedTours,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages,
-        totalCount,
-        hasNextPage,
-        hasPrevPage,
-        limit: parseInt(limit)
-      },
-      appliedFilters: {
-        category: req.query.category,
-        theme: req.query.theme,
-        location: req.query.location,
-        priceRange: req.query.priceRange,
-        minRating: req.query.minRating,
-        search: req.query.search
       }
-    }
-  });
-});
+    });
 
+    if (!tour) return null;
 
-/**
- * Get available filter options
- * Public endpoint - returns all available filter values for UI
- */
-exports.getFilterOptions = catchAsync(async (req, res, next) => {
-  const filterOptions = await getAvailableFilterOptions(prisma);
+    return {
+      ...tour,
+      photos: Array.isArray(tour.photos)
+        ? tour.photos.map((url) => cloudinaryUrl(url, 1400))
+        : tour.photos,
+    };
+  }, 300);
 
-  if (!filterOptions) {
-    return next(new AppError('Failed to retrieve filter options', 500));
-  }
-
-  res.status(200).json({
-    status: 'success',
-    data: { filterOptions }
-  });
-});
-
-/**
- * Get single tour by ID or slug
- * Public endpoint with view tracking
- */
-exports.getTour = catchAsync(async (req, res, next) => {
-  const { id } = req.params;
-  
-  // Find by ID or slug
-  const tour = await prisma.tour.findFirst({
-    where: {
-      OR: [
-        { id },
-        { slug: id }
-      ],
-      status: 'ACTIVE'
-    },
-    include: {
-      supplier: {
-        select: {
-          id: true,
-          name: true,
-          photoURL: true,
-          supplierProfile: {
-            select: {
-              averageRating: true,
-              totalBookings: true,
-              businessInfo: true
-            }
-          }
-        }
-      },
-      reviews: {
-        where: { status: 'APPROVED' },
-        include: {
-          customer: {
-            select: {
-              id: true,
-              name: true,
-              photoURL: true
-            }
-          }
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 10
-      },
-      _count: {
-        select: {
-          reviews: true,
-          bookings: true
-        }
-      }
-    }
-  });
-
-  if (!tour) {
+  if (!result) {
     return next(new AppError('Tour not found', 404));
   }
 
-  // Optimize images for display
-  const optimizedTour = {
-    ...tour,
-    photos: Array.isArray(tour.photos)
-      ? tour.photos.map((url) => cloudinaryUrl(url, 1400))
-      : tour.photos,
-  };
-
-  // Increment view count (async, don't wait)
   prisma.tour.update({
-    where: { id: tour.id },
+    where: { id: result.id },
     data: { viewCount: { increment: 1 } }
   }).catch(console.error);
 
   res.status(200).json({
     status: 'success',
-    data: { tour: optimizedTour }
+    data: { tour: result }
   });
 });
 
@@ -261,10 +319,11 @@ exports.createTour = catchAsync(async (req, res, next) => {
     bookingAndTickets,
     photos = [],
     tags = [],
-    status = 'DRAFT'
+    status = 'DRAFT',
+    latitude,
+    longitude
   } = req.body;
 
-  // Generate unique slug
   const slug = await createSlug(title);
 
   const tour = await prisma.tour.create({
@@ -280,7 +339,9 @@ exports.createTour = catchAsync(async (req, res, next) => {
       bookingAndTickets,
       photos,
       tags,
-      status
+      status,
+      latitude,
+      longitude
     },
     include: {
       supplier: {
@@ -293,7 +354,8 @@ exports.createTour = catchAsync(async (req, res, next) => {
     }
   });
 
-  // Log activity
+  cache.invalidateTourCaches().catch(() => {});
+
   await logActivity({
     userId: supplierId,
     action: 'tour.created',
@@ -354,7 +416,8 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     }
   });
 
-  // Log activity
+  cache.invalidateTourCaches(id).catch(() => {});
+
   await logActivity({
     userId: supplierId,
     action: 'tour.updated',
@@ -416,7 +479,8 @@ exports.deleteTour = catchAsync(async (req, res, next) => {
     data: { status: 'ARCHIVED' }
   });
 
-  // Log activity
+  cache.invalidateTourCaches(id).catch(() => {});
+
   await logActivity({
     userId: supplierId,
     action: 'tour.deleted',

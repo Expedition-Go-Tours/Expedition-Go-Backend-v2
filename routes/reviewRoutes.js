@@ -95,9 +95,10 @@ router.use(protect);
  * /reviews:
  *   post:
  *     summary: Create review for completed booking
- *     description: |
- *       Submit a review for a completed tour booking. Reviews can only be created for bookings with COMPLETED status.
- *       You can include photos with your review (max 5 images).
+  *     description: |
+  *       Submit a review for a completed tour booking. Reviews can only be created for bookings with COMPLETED status and SUCCEEDED payment.
+  *       Reviews are automatically approved and include a verified badge since booking ownership is confirmed.
+  *       You can include photos with your review (max 5 images).
  *     tags: [Reviews]
  *     security:
  *       - bearerAuth: []

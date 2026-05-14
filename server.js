@@ -2,6 +2,7 @@ const dotenv = require('dotenv');
 const http = require('http');
 const { Server } = require('socket.io');
 const prisma = require('./utils/prismaClient');
+const { sendNotification } = require('./utils/notificationService');
 /* eslint-disable no-console */
 
 let server;
@@ -86,6 +87,75 @@ process.on('SIGINT', () => {
       if (userId) {
         socket.join(`user:${userId}`);
       }
+
+      // Supplier responds to a review via WebSocket (real-time)
+      socket.on('review:respond', async (payload, ack) => {
+        try {
+          const { reviewId, response } = payload || {};
+          if (!reviewId || !response || !response.trim()) {
+            return ack?.({ status: 'error', message: 'reviewId and response are required' });
+          }
+          if (role !== 'supplier') {
+            return ack?.({ status: 'error', message: 'Only suppliers can respond to reviews' });
+          }
+
+          // Verify review exists and belongs to supplier's tour
+          const review = await prisma.review.findFirst({
+            where: {
+              id: reviewId,
+              tour: { supplierId: userId },
+              status: 'APPROVED'
+            },
+            include: {
+              customer: { select: { id: true, name: true } },
+              tour: { select: { id: true, title: true } }
+            }
+          });
+
+          if (!review) {
+            return ack?.({ status: 'error', message: 'Review not found or access denied' });
+          }
+
+          if (review.supplierResponse) {
+            return ack?.({ status: 'error', message: 'Response already exists for this review' });
+          }
+
+          const updated = await prisma.review.update({
+            where: { id: reviewId },
+            data: {
+              supplierResponse: response,
+              supplierResponseAt: new Date()
+            },
+            include: {
+              customer: { select: { id: true, name: true, photoURL: true } },
+              tour: { select: { id: true, title: true } }
+            }
+          });
+
+          // Notify the customer in real-time
+          io.to(`user:${review.customerId}`).emit('review:response', {
+            reviewId: updated.id,
+            tourId: updated.tourId,
+            tourTitle: review.tour.title,
+            supplierResponse: updated.supplierResponse,
+            supplierResponseAt: updated.supplierResponseAt
+          });
+
+          // Also create DB notification
+          sendNotification({
+            userId: review.customerId,
+            type: 'REVIEW_RECEIVED',
+            title: 'Supplier Responded to Your Review',
+            message: `The supplier responded to your review for "${review.tour.title}"`,
+            data: { reviewId: review.id, tourId: review.tourId }
+          }).catch(() => {});
+
+          ack?.({ status: 'success', data: { review: updated } });
+        } catch (err) {
+          console.error('Socket review:respond error:', err);
+          ack?.({ status: 'error', message: 'Internal server error' });
+        }
+      });
 
       socket.on('disconnect', () => {
         console.log('Socket disconnected:', socket.id);
