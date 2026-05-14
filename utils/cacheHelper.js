@@ -32,12 +32,14 @@ async function invalidateKeys(patterns) {
 const TOUR_LIST_PREFIX = 'tours:list:*';
 const TOUR_DETAIL_PREFIX = (id) => `tours:detail:${id}`;
 const TOUR_FILTERS_KEY = 'tours:filters:options';
+const TOUR_POPULAR_KEY = 'tours:popular:by-category';
 const REVIEWS_TOUR_PREFIX = (tourId) => `reviews:tour:${tourId}:*`;
 
 async function invalidateTourCaches(tourId) {
   await invalidateKeys([
     TOUR_LIST_PREFIX,
-    TOUR_FILTERS_KEY
+    TOUR_FILTERS_KEY,
+    TOUR_POPULAR_KEY
   ]);
   if (tourId) {
     await redis.del(TOUR_DETAIL_PREFIX(tourId));
@@ -59,5 +61,6 @@ module.exports = {
   TOUR_LIST_PREFIX,
   TOUR_DETAIL_PREFIX,
   TOUR_FILTERS_KEY,
+  TOUR_POPULAR_KEY,
   REVIEWS_TOUR_PREFIX
 };

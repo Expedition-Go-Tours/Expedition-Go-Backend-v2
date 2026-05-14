@@ -181,6 +181,10 @@ function validateRepresentativeInfo(representativeInfo) {
     if (!representativeInfo.address.postalCode) errors.push('Representative postal code is required');
   }
 
+  if (representativeInfo.phoneNumber && !/^\+?[\d\s\-()]+$/.test(representativeInfo.phoneNumber)) {
+    errors.push('Invalid phone number format');
+  }
+
   if (!representativeInfo.idType || !['passport', 'drivers_license', 'national_id'].includes(representativeInfo.idType)) {
     errors.push('Valid ID type is required (passport, drivers_license, or national_id)');
   }

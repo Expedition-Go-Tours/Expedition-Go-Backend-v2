@@ -27,6 +27,8 @@ const {
   findNearbyTourIds,
   getTourDistances
 } = require('../utils/tourFilterBuilder');
+const { getPopularByCategory } = require('../utils/popularityScorer');
+const { rankTourIdsBySearch } = require('../utils/fullTextSearch');
 const cache = require('../utils/cacheHelper');
 const crypto = require('crypto');
 
@@ -42,10 +44,12 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
   const {
     page = 1,
     limit = 12,
-    sortBy = 'createdAt',
+    sortBy: rawSortBy,
     sortOrder = 'desc',
-    lat, lng, radius
+    lat, lng, radius, search
   } = req.query;
+
+  const sortBy = search && !rawSortBy ? 'relevance' : (rawSortBy || 'createdAt');
 
   const validation = validateFilterParams(req.query);
   if (!validation.isValid) {
@@ -147,6 +151,13 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
       optimizedTours.sort((a, b) => (a.distanceKm || Infinity) - (b.distanceKm || Infinity));
     }
 
+    // Re-rank by full-text search relevance
+    if (sortBy === 'relevance' && search) {
+      const orderedIds = await rankTourIdsBySearch(search, optimizedTours.map(t => t.id));
+      const idOrder = new Map(orderedIds.map((id, i) => [id, i]));
+      optimizedTours.sort((a, b) => (idOrder.get(a.id) ?? Infinity) - (idOrder.get(b.id) ?? Infinity));
+    }
+
     const totalPages = Math.ceil(totalCount / parseInt(limit));
     const hasNextPage = parseInt(page) < totalPages;
     const hasPrevPage = parseInt(page) > 1;
@@ -201,6 +212,80 @@ exports.getFilterOptions = catchAsync(async (req, res, next) => {
   if (!result) {
     return next(new AppError('Failed to retrieve filter options', 500));
   }
+
+  res.status(200).json(result);
+});
+
+/**
+ * Get popular tours grouped by category
+ * Public endpoint - scored by bookings, rating, reviews, and views
+ */
+exports.getPopularByCategory = catchAsync(async (req, res, next) => {
+  const { perCategory = 6, category: filterCategory, theme } = req.query;
+  const limit = Math.min(Math.max(parseInt(perCategory) || 6, 1), 20);
+
+  const result = await cache.getOrSet(cache.TOUR_POPULAR_KEY, async () => {
+    const tours = await prisma.tour.findMany({
+      where: { status: 'ACTIVE' },
+      include: {
+        supplier: {
+          select: {
+            id: true,
+            name: true,
+            photoURL: true,
+            supplierProfile: {
+              select: {
+                averageRating: true,
+                totalBookings: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    let filtered = tours;
+    if (filterCategory) {
+      filtered = filtered.filter(t => t.categorization?.category === filterCategory);
+    }
+    if (theme) {
+      filtered = filtered.filter(t =>
+        t.theme?.primary === theme ||
+        (Array.isArray(t.theme?.secondary) && t.theme.secondary.includes(theme))
+      );
+    }
+
+    const popular = getPopularByCategory(filtered, limit);
+
+    const optimized = {};
+    for (const [cat, tours] of Object.entries(popular)) {
+      optimized[cat] = tours.map(t => ({
+        ...t,
+        photos: Array.isArray(t.photos)
+          ? t.photos.map(url => cloudinaryUrl(url, 800))
+          : t.photos,
+        supplier: {
+          ...t.supplier,
+          photoURL: t.supplier.photoURL
+            ? cloudinaryUrl(t.supplier.photoURL, 150)
+            : t.supplier.photoURL,
+        },
+      }));
+    }
+
+    return {
+      status: 'success',
+      data: {
+        categories: optimized,
+        weights: {
+          bookings: 0.40,
+          rating: 0.25,
+          reviews: 0.20,
+          views: 0.15,
+        },
+      },
+    };
+  }, 300);
 
   res.status(200).json(result);
 });

@@ -14,6 +14,7 @@
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const prisma = require('./prismaClient');
+const { sendBookingConfirmationEmail, sendSupplierBookingNotification } = require('./emailService');
 
 /**
  * Create Stripe Connect Express account for supplier
@@ -353,6 +354,12 @@ async function handlePaymentSucceeded(paymentIntent) {
       });
     }
   });
+
+  // Send confirmation emails (non-blocking, outside transaction)
+  for (const booking of bookings) {
+    sendBookingConfirmationEmail(booking).catch(console.error);
+    sendSupplierBookingNotification(booking).catch(console.error);
+  }
 
   return { success: true, message: `${bookingIds.length} bookings confirmed` };
 }

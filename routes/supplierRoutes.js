@@ -77,10 +77,11 @@ router.use(protect);
  *                   JSON string containing legal representative information:
  *                   - fullName: Full legal name (required)
  *                   - email: Email address (required)
+ *                   - phoneNumber: Phone number (optional, used as operator contact in booking emails)
  *                   - dateOfBirth: Date of birth in YYYY-MM-DD format (required, must be 18+)
  *                   - address: Object with line1, city, state, postalCode (required)
  *                   - idType: "passport", "drivers_license", or "national_id" (required)
- *                 example: '{"fullName":"John Smith","email":"john@adventuretours.com","dateOfBirth":"1985-06-15","address":{"line1":"456 Oak Avenue","line2":"Apt 2B","city":"New York","state":"NY","postalCode":"10002"},"idType":"passport"}'
+ *                 example: '{"fullName":"John Smith","email":"john@adventuretours.com","phoneNumber":"+1-555-123-4567","dateOfBirth":"1985-06-15","address":{"line1":"456 Oak Avenue","line2":"Apt 2B","city":"New York","state":"NY","postalCode":"10002"},"idType":"passport"}'
  *               payoutInfo:
  *                 type: string
  *                 description: |

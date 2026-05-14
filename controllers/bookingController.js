@@ -17,9 +17,9 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { createPaymentIntent, calculateCommission } = require('../utils/stripeHelpers');
-const { generateBookingNumber } = require('../utils/bookingHelpers');
+const { generateBookingNumber, validateTravelerInfo } = require('../utils/bookingHelpers');
 const { sendNotification } = require('../utils/notificationService');
-const { sendBookingConfirmationEmail } = require('../utils/emailService');
+const { sendBookingConfirmationEmail, sendBookingCancellationEmail, generatePrintableTicketHtml } = require('../utils/emailService');
 const { logActivity } = require('../utils/auditLogger');
 
 // ================================
@@ -34,7 +34,6 @@ exports.addToCart = catchAsync(async (req, res, next) => {
   const {
     tourId,
     selectedDate,
-    selectedTime,
     travelers
   } = req.body;
 
@@ -59,7 +58,7 @@ exports.addToCart = catchAsync(async (req, res, next) => {
   }
 
   // Calculate pricing based on tour's pricing model
-  const pricingCalculation = calculateTourPricing(tour, travelers, selectedDate, selectedTime);
+  const pricingCalculation = calculateTourPricing(tour, travelers, selectedDate, null);
   
   if (!pricingCalculation.success) {
     return next(new AppError(pricingCalculation.error, 400));
@@ -75,7 +74,7 @@ exports.addToCart = catchAsync(async (req, res, next) => {
         customerId,
         tourId,
         selectedDate: new Date(selectedDate),
-        selectedTime: selectedTime || ''
+        selectedTime: ''
       }
     },
     update: {
@@ -88,7 +87,7 @@ exports.addToCart = catchAsync(async (req, res, next) => {
       customerId,
       tourId,
       selectedDate: new Date(selectedDate),
-      selectedTime,
+      selectedTime: '',
       travelers,
       subtotal: pricingCalculation.subtotal,
       total: pricingCalculation.total,
@@ -222,12 +221,17 @@ exports.createBooking = catchAsync(async (req, res, next) => {
   const {
     tourId,
     selectedDate,
-    selectedTime,
     travelers,
     specialRequests,
     paymentMethodId,
     useCart = false
   } = req.body;
+
+  // Validate traveler contact info
+  const travelerValidation = validateTravelerInfo(travelers);
+  if (!travelerValidation.isValid) {
+    return next(new AppError(`Traveler information: ${travelerValidation.errors.join(', ')}`, 400));
+  }
 
   let bookingItems = [];
 
@@ -285,7 +289,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       return next(new AppError('Tour not found or not available', 404));
     }
 
-    const pricingCalculation = calculateTourPricing(tour, travelers, selectedDate, selectedTime);
+    const pricingCalculation = calculateTourPricing(tour, travelers, selectedDate, null);
     
     if (!pricingCalculation.success) {
       return next(new AppError(pricingCalculation.error, 400));
@@ -295,7 +299,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       tourId: tour.id,
       tour,
       selectedDate: new Date(selectedDate),
-      selectedTime,
+      selectedTime: null,
       travelers,
       subtotal: pricingCalculation.subtotal,
       total: pricingCalculation.total,
@@ -513,6 +517,63 @@ exports.getBooking = catchAsync(async (req, res, next) => {
 });
 
 /**
+ * Get printable ticket HTML page
+ */
+exports.getBookingTicket = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+
+  const booking = await prisma.booking.findUnique({
+    where: { id },
+    include: {
+      customer: { select: { name: true, email: true } },
+      tour: {
+        select: {
+          title: true,
+          description: true,
+          photos: true,
+          productContent: true,
+          bookingAndTickets: true,
+          supplier: { select: { name: true, email: true, phone: true } }
+        }
+      }
+    }
+  });
+
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  const product = booking.tour.productContent || {};
+  const ticketData = booking.tour.bookingAndTickets || {};
+
+  const html = generatePrintableTicketHtml({
+    bookingNumber: booking.bookingNumber,
+    status: booking.status,
+    customerName: booking.customer.name,
+    tourTitle: booking.tour.title,
+    tourDescription: booking.tour.description,
+    selectedDate: booking.selectedDate,
+    selectedTime: booking.selectedTime,
+    travelers: booking.travelers,
+    total: booking.total,
+    currency: booking.currency,
+    subtotal: booking.subtotal,
+    taxes: booking.taxes,
+    meetingPoint: ticketData.meetingPoint || null,
+    checkInProcess: ticketData.checkInProcess || null,
+    cancellationPolicy: ticketData.cancellationPolicy || null,
+    included: product.included || [],
+    whatToBring: product.whatToBring || [],
+    highlights: product.highlights || [],
+    restrictions: product.restrictions || null,
+    supplierName: booking.tour.supplier.name,
+    supportEmail: process.env.SUPPORT_EMAIL
+  });
+
+  res.type('html').send(html);
+});
+
+/**
  * Cancel booking
  */
 exports.cancelBooking = catchAsync(async (req, res, next) => {
@@ -573,6 +634,9 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
 
     return updatedBooking;
   });
+
+  // Send cancellation email to customer
+  sendBookingCancellationEmail(updatedBooking, cancellationCheck.refundAmount).catch(console.error);
 
   // Send notifications
   sendNotification({

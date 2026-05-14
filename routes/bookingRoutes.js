@@ -57,17 +57,33 @@ router.get('/cart', bookingController.getCart);
  *               selectedDate:
  *                 type: string
  *                 format: date
- *               selectedTime:
- *                 type: string
  *               travelers:
  *                 type: object
+ *                 required:
+ *                   - adults
+ *                   - phoneNumber
+ *                   - location
  *                 properties:
  *                   adults:
  *                     type: integer
+ *                     description: Number of adult travelers
+ *                     example: 2
  *                   children:
  *                     type: integer
+ *                     description: Number of child travelers
+ *                     example: 1
  *                   infants:
  *                     type: integer
+ *                     description: Number of infant travelers
+ *                     example: 0
+ *                   phoneNumber:
+ *                     type: string
+ *                     description: Contact phone number / WhatsApp
+ *                     example: "+233-55-123-4567"
+ *                   location:
+ *                     type: string
+ *                     description: Customer location (city/country)
+ *                     example: "Accra, Ghana"
  *     responses:
  *       201:
  *         description: Item added to cart successfully
@@ -152,13 +168,15 @@ router.delete('/cart/clear', bookingController.clearCart);
  *                 example: "2026-05-20"
  *               selectedTime:
  *                 type: string
- *                 description: Tour time slot (optional for direct booking)
- *                 example: "10:00"
+ *                 readOnly: true
+ *                 description: Time slot is set by the tour supplier, not customer-selectable
  *               travelers:
  *                 type: object
  *                 description: Traveler information (required for direct booking)
  *                 required:
  *                   - adults
+ *                   - phoneNumber
+ *                   - location
  *                 properties:
  *                   adults:
  *                     type: integer
@@ -178,6 +196,14 @@ router.delete('/cart/clear', bookingController.clearCart);
  *                     maximum: 5
  *                     description: Number of infant travelers
  *                     example: 0
+ *                   phoneNumber:
+ *                     type: string
+ *                     description: Contact phone number / WhatsApp (required for supplier communication)
+ *                     example: "+1-555-123-4567"
+ *                   location:
+ *                     type: string
+ *                     description: Customer location (city/country)
+ *                     example: "New York, USA"
  *                   details:
  *                     type: array
  *                     description: Individual traveler details (optional)
@@ -215,11 +241,12 @@ router.delete('/cart/clear', bookingController.clearCart);
  *               value:
  *                 tourId: cmp2hql3c0001tzv0460pbckm
  *                 selectedDate: "2026-05-20"
- *                 selectedTime: "10:00"
  *                 travelers:
  *                   adults: 2
  *                   children: 1
  *                   infants: 0
+ *                   phoneNumber: "+1-555-123-4567"
+ *                   location: "New York, USA"
  *                   details:
  *                     - name: John Doe
  *                       age: 35
@@ -299,6 +326,33 @@ router.post('/', bookingController.createBooking);
  *         description: Bookings retrieved successfully
  */
 router.get('/my-bookings', bookingController.getMyBookings);
+
+/**
+ * @swagger
+ * /bookings/{id}/ticket:
+ *   get:
+ *     summary: Get printable ticket for a booking
+ *     description: Returns a print-optimized HTML ticket page with all booking and tour details
+ *     tags: [Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: HTML ticket page
+ *         content:
+ *           text/html:
+ *             schema:
+ *               type: string
+ *       404:
+ *         description: Booking not found
+ */
+router.get('/:id/ticket', bookingController.getBookingTicket);
 
 /**
  * @swagger

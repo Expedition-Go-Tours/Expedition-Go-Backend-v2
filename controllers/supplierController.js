@@ -74,13 +74,14 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
     }
   });
 
-  // Update user roles to include supplier
+  // Update user roles to include supplier and save phone
   await prisma.user.update({
     where: { id: userId },
     data: {
       roles: {
         push: 'supplier'
-      }
+      },
+      phone: req.body.representativeInfo?.phoneNumber || req.user.phone
     }
   });
 

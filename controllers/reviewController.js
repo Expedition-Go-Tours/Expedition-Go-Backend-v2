@@ -121,7 +121,8 @@ exports.createReview = catchAsync(async (req, res, next) => {
       reviewId: result.id,
       tourId: booking.tourId,
       rating
-    }
+    },
+    sendEmail: true
   }).catch(console.error);
 
   // Log activity

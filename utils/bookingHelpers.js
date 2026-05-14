@@ -43,46 +43,27 @@ async function generateBookingNumber() {
 /**
  * Validate traveler information
  */
-function validateTravelerInfo(travelers, tourRequirements) {
+function validateTravelerInfo(travelers) {
   const errors = [];
-  
+
   if (!travelers || typeof travelers !== 'object') {
     errors.push('Traveler information is required');
-    return { isValid: false, errors };
+    return { isValid: false, errors, totalTravelers: 0 };
   }
-  
-  // Check minimum travelers
+
   const totalTravelers = (travelers.adults || 0) + (travelers.children || 0) + (travelers.youth || 0);
   if (totalTravelers === 0) {
     errors.push('At least one traveler is required');
   }
-  
-  // Check maximum travelers
-  if (tourRequirements?.maxTravelersPerBooking && totalTravelers > tourRequirements.maxTravelersPerBooking) {
-    errors.push(`Maximum ${tourRequirements.maxTravelersPerBooking} travelers allowed`);
+
+  if (!travelers.phoneNumber || !/^\+?[\d\s\-()]{6,20}$/.test(travelers.phoneNumber)) {
+    errors.push('A valid phone number (WhatsApp) is required for contact');
   }
-  
-  // Validate required information based on tour requirements
-  if (tourRequirements?.travelerRequiredInformation) {
-    const required = tourRequirements.travelerRequiredInformation;
-    
-    if (required.personalInformationRequired?.fullNames && !travelers.travelerDetails) {
-      errors.push('Full names are required for all travelers');
-    }
-    
-    if (required.personalInformationRequired?.datesOfBirth && !travelers.travelerDetails) {
-      errors.push('Dates of birth are required for all travelers');
-    }
-    
-    if (required.personalInformationRequired?.passportDetails && !travelers.passportInfo) {
-      errors.push('Passport details are required for all travelers');
-    }
-    
-    if (required.arrivalDepartureInformationRequired?.flightInformation && !travelers.flightInfo) {
-      errors.push('Flight information is required');
-    }
+
+  if (!travelers.location || travelers.location.trim().length < 3) {
+    errors.push('Your location (city/country) is required');
   }
-  
+
   return {
     isValid: errors.length === 0,
     errors,

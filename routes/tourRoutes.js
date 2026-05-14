@@ -171,10 +171,10 @@ const router = express.Router();
  *           type: boolean
  *       - name: search
  *         in: query
- *         description: Search in title, description, and tags
+ *         description: Full-text search in title and description. Uses PostgreSQL tsvector ranking — results are sorted by relevance when this is provided (unless another sortBy is explicitly set).
  *         schema:
  *           type: string
- *           example: walking tour
+ *           example: luxury safari cape town
  *       - name: tags
  *         in: query
  *         description: Filter by tags (comma-separated)
@@ -219,7 +219,7 @@ const router = express.Router();
   *         description: Sort field
   *         schema:
   *           type: string
-  *           enum: [createdAt, updatedAt, title, price, rating, reviews, bookings, popularity, nearest]
+  *           enum: [createdAt, updatedAt, title, price, rating, reviews, bookings, popularity, relevance, nearest]
   *           default: createdAt
   *       - name: sortOrder
   *         in: query
@@ -403,6 +403,67 @@ router.get('/', tourController.getAllTours);
  *         description: Failed to retrieve filter options
  */
 router.get('/filters/options', tourController.getFilterOptions);
+
+/**
+ * @swagger
+ * /tours/popular/by-category:
+ *   get:
+ *     summary: Get popular tours grouped by category
+ *     description: |
+ *       Returns tours ranked by a weighted popularity score within each category.
+ *       Scoring signals: bookings (40%), rating (25%), review count (20%), view count (15%).
+ *     tags: [Tours]
+ *     parameters:
+ *       - name: perCategory
+ *         in: query
+ *         schema:
+ *           type: integer
+ *           default: 6
+ *           minimum: 1
+ *           maximum: 20
+ *         description: Number of top tours to return per category
+ *       - name: category
+ *         in: query
+ *         schema:
+ *           type: string
+ *         description: Filter to a single category
+ *       - name: theme
+ *         in: query
+ *         schema:
+ *           type: string
+ *         description: Filter by primary or secondary theme
+ *     responses:
+ *       200:
+ *         description: Popular tours retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     categories:
+ *                       type: object
+ *                       description: Object mapping category names to arrays of scored tours
+ *                       additionalProperties:
+ *                         type: array
+ *                         items:
+ *                           allOf:
+ *                             - $ref: '#/components/schemas/Tour'
+ *                             - type: object
+ *                               properties:
+ *                                 popularityScore:
+ *                                   type: number
+ *                                   description: Normalized popularity score (0-1)
+ *                     weights:
+ *                       type: object
+ *                       description: Scoring weights used in calculation
+ */
+router.get('/popular/by-category', tourController.getPopularByCategory);
 
 /**
  * @swagger

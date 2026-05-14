@@ -434,7 +434,9 @@ function buildSortOptions(sortBy = 'createdAt', sortOrder = 'desc') {
     rating: 'averageRating',
     reviews: 'reviewCount',
     bookings: 'totalBookings',
-    popularity: 'viewCount'
+    popularity: 'viewCount',
+    relevance: 'createdAt', // Re-ranked by FTS in controller
+    nearest: 'createdAt'    // Re-ranked by geo in controller
   };
 
   const field = validSortFields[sortBy] || 'createdAt';
