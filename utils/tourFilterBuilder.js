@@ -343,22 +343,18 @@ function buildPriceFilter(minPrice, maxPrice, priceRange, currency) {
 function buildDurationFilter(minDuration, maxDuration, durationType = 'hours') {
   const conditions = [];
 
+  // Convert hours/days to minutes for column comparison
+  const toMinutes = (val) => {
+    const n = parseInt(val);
+    return durationType === 'days' ? n * 1440 : n * 60;
+  };
+
   if (minDuration) {
-    conditions.push({
-      schedulesAndPricing: {
-        path: ['duration', durationType],
-        gte: parseInt(minDuration)
-      }
-    });
+    conditions.push({ durationMinutes: { gte: toMinutes(minDuration) } });
   }
 
   if (maxDuration) {
-    conditions.push({
-      schedulesAndPricing: {
-        path: ['duration', durationType],
-        lte: parseInt(maxDuration)
-      }
-    });
+    conditions.push({ durationMinutes: { lte: toMinutes(maxDuration) } });
   }
 
   return conditions.length > 0 ? { AND: conditions } : null;

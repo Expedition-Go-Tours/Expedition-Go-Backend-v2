@@ -1361,6 +1361,12 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
               nullable: true,
               example: 'Nature & Wildlife'
             },
+            durationMinutes: {
+              type: 'integer',
+              description: 'Tour duration in minutes (indexed, converted from categorization.duration.hours/days)',
+              nullable: true,
+              example: 180
+            },
             secondaryThemes: {
               type: 'array',
               description: 'Additional themes (stored in normalized TourSecondaryTheme table)',

@@ -469,6 +469,13 @@ exports.createTour = catchAsync(async (req, res, next) => {
       subcategory: parsedCategory?.subcategory || null,
       activityType: parsedCategory?.activityType || null,
       difficulty: parsedCategory?.difficulty || null,
+      durationMinutes: parsedCategory?.duration
+        ? (parsedCategory.duration.hours
+          ? parsedCategory.duration.hours * 60
+          : parsedCategory.duration.days
+            ? parsedCategory.duration.days * 1440
+            : parsedCategory.duration)
+        : null,
       primaryTheme: parsedTheme?.primary || null,
       secondaryThemes: {
         create: (parsedTheme?.secondary || []).map(t => ({ theme: t })),
@@ -542,6 +549,13 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     updateData.subcategory = cat.subcategory || null;
     updateData.activityType = cat.activityType || null;
     updateData.difficulty = cat.difficulty || null;
+    updateData.durationMinutes = cat.duration
+      ? (cat.duration.hours
+        ? cat.duration.hours * 60
+        : cat.duration.days
+          ? cat.duration.days * 1440
+          : cat.duration)
+      : null;
     // Keep the original JSON field as-is
     updateData.categorization = cat;
   }

@@ -199,6 +199,7 @@ model Tour {
   subcategory  String?     // e.g. "Walking Tours", "Hiking"
   activityType String?     // e.g. "Guided Tour", "Self-Guided"
   difficulty   String?     // e.g. "Easy", "Moderate", "Challenging", "Expert"
+  durationMinutes Int?    // Extracted from categorization.duration (hours*60 or days*1440)
 
   // Normalized theme (extracted from theme JSON)
   primaryTheme String?     // e.g. "Nature & Wildlife", "History & Culture"
@@ -233,6 +234,7 @@ model Tour {
   @@index([activityType])
   @@index([difficulty])
   @@index([primaryTheme])
+  @@index([durationMinutes])
 }
 
 model TourSecondaryTheme {
