@@ -42,11 +42,11 @@ function getConnection() {
 // Named queues — add new ones here as the platform grows
 // ---------------------------------------------------------------------------
 const QUEUE_NAMES = {
-  EVENTS:     '{analytics}:events',
-  EMAILS:     '{communications}:emails',
-  NOTIFICATIONS: '{communications}:notifications',
-  AGGREGATIONS: '{analytics}:aggregations',
-  CLEANUP:    '{system}:cleanup',
+  EVENTS:     'analytics-events',
+  EMAILS:     'communications-emails',
+  NOTIFICATIONS: 'communications-notifications',
+  AGGREGATIONS: 'analytics-aggregations',
+  CLEANUP:    'system-cleanup',
 };
 
 const DEFAULT_JOB_OPTIONS = {
