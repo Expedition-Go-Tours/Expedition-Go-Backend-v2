@@ -16,8 +16,10 @@ const AppError = require('./utils/appError');
 const app = express();
 
 let swaggerSpec;
-if (process.env.NODE_ENV === 'development') {
+try {
   swaggerSpec = require('./config/swagger');
+} catch (e) {
+  console.warn('Swagger spec generation failed:', e.message);
 }
 
 app.use(helmet());
@@ -127,7 +129,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 
 
-if (process.env.NODE_ENV === 'development' && swaggerSpec) {
+if (swaggerSpec) {
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
   app.get('/swagger.json', (req, res) => {
     res.json(swaggerSpec);
