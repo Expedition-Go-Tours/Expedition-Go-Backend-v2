@@ -454,14 +454,28 @@ async function handleAccountUpdated(account) {
 }
 
 /**
+ * Generate a Stripe Express dashboard login link for suppliers.
+ * This lets suppliers update their bank account, tax info, and view payouts.
+ */
+async function createDashboardLink(stripeAccountId) {
+  try {
+    const link = await stripe.accounts.createLoginLink(stripeAccountId);
+    return link.url;
+  } catch (error) {
+    console.error('❌ Failed to create Stripe dashboard link:', error.message);
+    throw new Error(`Failed to create dashboard link: ${error.message}`);
+  }
+}
+
+/**
  * Handle transfer creation (for tracking payouts)
  */
 async function handleTransferCreated(transfer) {
   console.log(`💰 Transfer created: ${transfer.id} for ${transfer.amount} to ${transfer.destination}`);
-  
+
   // You can add logic here to track individual payouts
   // and update supplier earnings records
-  
+
   return { success: true, message: 'Transfer logged' };
 }
 
@@ -483,5 +497,6 @@ module.exports = {
   createPaymentIntent,
   calculateCommission,
   processStripeWebhook,
-  verifyWebhookSignature
+  verifyWebhookSignature,
+  createDashboardLink,
 };

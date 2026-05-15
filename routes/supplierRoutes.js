@@ -263,6 +263,38 @@ router.post('/stripe/onboarding', supplierController.startStripeOnboarding);
  */
 router.get('/stripe/status', supplierController.checkStripeStatus);
 
+/**
+ * @swagger
+ * /suppliers/stripe/dashboard-link:
+ *   get:
+ *     summary: Get Stripe Express dashboard login link
+ *     description: |
+ *       Generates a one-time login link for the supplier's Stripe Express dashboard.
+ *       Suppliers use this to update bank accounts, tax info, and view payouts.
+ *     tags: [Suppliers]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Dashboard link generated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     dashboardUrl:
+ *                       type: string
+ *                       description: One-time Stripe Express dashboard URL
+ *       404:
+ *         description: Supplier not found or Stripe not connected
+ */
+router.get('/stripe/dashboard-link', supplierController.getStripeDashboardLink);
+
 // ================================
 // SUPPLIER DASHBOARD
 // ================================

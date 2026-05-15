@@ -16,7 +16,7 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
-const { createStripeConnectAccount, createOnboardingLink } = require('../utils/stripeHelpers');
+const { createStripeConnectAccount, createOnboardingLink, createDashboardLink } = require('../utils/stripeHelpers');
 const { sendNotification } = require('../utils/notificationService');
 const { sendSupplierStatusEmail } = require('../utils/emailService');
 const { logActivity } = require('../utils/auditLogger');
@@ -765,6 +765,29 @@ exports.suspendSupplier = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: { supplierProfile: updatedProfile }
+  });
+});
+
+/**
+ * Generate a Stripe Express dashboard login link for the supplier.
+ * This lets them update bank account, tax info, and view payout history.
+ */
+exports.getStripeDashboardLink = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { userId }
+  });
+
+  if (!supplierProfile || !supplierProfile.stripeAccountId) {
+    return next(new AppError('Supplier not found or Stripe not connected', 404));
+  }
+
+  const dashboardUrl = await createDashboardLink(supplierProfile.stripeAccountId);
+
+  res.status(200).json({
+    status: 'success',
+    data: { dashboardUrl }
   });
 });
 
