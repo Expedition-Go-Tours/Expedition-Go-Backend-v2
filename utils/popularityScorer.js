@@ -35,7 +35,7 @@ function computePopularScore(tours) {
 function groupByCategory(tours) {
   const grouped = {};
   for (const tour of tours) {
-    const category = tour.categorization?.category || 'Uncategorized';
+    const category = tour.category || 'Uncategorized';
     if (!grouped[category]) grouped[category] = [];
     grouped[category].push(tour);
   }

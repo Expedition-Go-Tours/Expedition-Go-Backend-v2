@@ -23,6 +23,7 @@ const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const { addApprovedRating, removeApprovedRating, updateApprovedRating, recalculateSupplierRating } = require('../utils/ratingHelper');
 const cache = require('../utils/cacheHelper');
 const crypto = require('crypto');
+const event = require('../utils/eventEmitter');
 
 // ================================
 // CUSTOMER REVIEW ENDPOINTS
@@ -136,6 +137,15 @@ exports.createReview = catchAsync(async (req, res, next) => {
       rating,
       bookingId
     }
+  });
+
+  event.emit({
+    name: 'review.submitted',
+    userId: customerId,
+    req,
+    resource: 'Review',
+    resourceId: result.id,
+    properties: { tourId: booking.tourId, rating, bookingId, supplierId: booking.tour.supplierId },
   });
 
   res.status(201).json({
@@ -839,6 +849,16 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
       customerId: review.customerId,
       tourId: review.tourId
     }
+  });
+
+  event.emit({
+    name: `review.${action}`,
+    userId: adminId,
+    req,
+    resource: 'Review',
+    resourceId: review.id,
+    properties: { reason, customerId: review.customerId, tourId: review.tourId, rating: review.rating },
+    source: 'web',
   });
 
   res.status(200).json({

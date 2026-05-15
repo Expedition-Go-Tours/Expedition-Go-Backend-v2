@@ -122,6 +122,7 @@ const supplierRoutes = require('./routes/supplierRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
 const authRoutes = require('./routes/authRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 
 app.use('/api/users', userRoutes);
 app.use('/api/tours', tourRoutes);
@@ -131,6 +132,7 @@ app.use('/api/suppliers', supplierRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
 
 
 if (process.env.NODE_ENV === 'development' && swaggerSpec) {

@@ -31,6 +31,7 @@ const { getPopularByCategory } = require('../utils/popularityScorer');
 const { rankTourIdsBySearch } = require('../utils/fullTextSearch');
 const cache = require('../utils/cacheHelper');
 const crypto = require('crypto');
+const event = require('../utils/eventEmitter');
 
 // ================================
 // PUBLIC TOUR ENDPOINTS
@@ -189,6 +190,30 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
   }, 300);
 
   res.status(200).json(result);
+
+  // Fire-and-forget search analytics event (never blocks response)
+  if (req.query.search || req.query.category || req.query.location || (req.query.lat && req.query.lng)) {
+    event.emit({
+      name: req.query.search ? 'search.executed' : 'browse.executed',
+      userId: req.user?.id,
+      req,
+      properties: {
+        query: req.query.search || null,
+        category: req.query.category || null,
+        location: req.query.location || null,
+        lat: req.query.lat ? parseFloat(req.query.lat) : null,
+        lng: req.query.lng ? parseFloat(req.query.lng) : null,
+        filters: {
+          theme: req.query.theme || null,
+          minRating: req.query.minRating ? parseFloat(req.query.minRating) : null,
+          priceRange: req.query.priceRange || null,
+          tags: req.query.tags?.split(',') || null,
+        },
+        resultCount: result?.data?.pagination?.totalCount || 0,
+        sortBy: req.query.sortBy || 'createdAt',
+      },
+    });
+  }
 });
 
 
@@ -366,6 +391,8 @@ exports.getTour = catchAsync(async (req, res, next) => {
     data: { viewCount: { increment: 1 } }
   }).catch(console.error);
 
+  event.emit({ name: 'tour.viewed', userId: req.user?.id, req, resource: 'Tour', resourceId: result.id });
+
   res.status(200).json({
     status: 'success',
     data: { tour: result }
@@ -415,14 +442,17 @@ exports.createTour = catchAsync(async (req, res, next) => {
 
   const slug = await createSlug(title);
 
+  const parsedCategory = typeof categorization === 'string' ? JSON.parse(categorization) : categorization;
+  const parsedTheme = typeof theme === 'string' ? JSON.parse(theme) : theme;
+
   const tour = await prisma.tour.create({
     data: {
       supplierId,
       title,
       description,
       slug,
-      categorization,
-      theme,
+      categorization: parsedCategory,
+      theme: parsedTheme,
       productContent,
       schedulesAndPricing,
       bookingAndTickets,
@@ -431,7 +461,18 @@ exports.createTour = catchAsync(async (req, res, next) => {
       tags,
       status,
       latitude,
-      longitude
+      longitude,
+      city: productContent?.location?.city || null,
+      country: productContent?.location?.country || null,
+      region: productContent?.location?.region || null,
+      category: parsedCategory?.category || null,
+      subcategory: parsedCategory?.subcategory || null,
+      activityType: parsedCategory?.activityType || null,
+      difficulty: parsedCategory?.difficulty || null,
+      primaryTheme: parsedTheme?.primary || null,
+      secondaryThemes: {
+        create: (parsedTheme?.secondary || []).map(t => ({ theme: t })),
+      },
     },
     include: {
       supplier: {
@@ -486,10 +527,44 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   }
 
   const updateData = { ...req.body };
-  
+
   // Update slug if title changed
   if (req.body.title && req.body.title !== existingTour.title) {
     updateData.slug = await createSlug(req.body.title);
+  }
+
+  // Handle categorization normalization (supports both JSON string and parsed object from multipart form)
+  if (req.body.categorization) {
+    const cat = typeof req.body.categorization === 'string'
+      ? JSON.parse(req.body.categorization)
+      : req.body.categorization;
+    updateData.category = cat.category || null;
+    updateData.subcategory = cat.subcategory || null;
+    updateData.activityType = cat.activityType || null;
+    updateData.difficulty = cat.difficulty || null;
+    // Keep the original JSON field as-is
+    updateData.categorization = cat;
+  }
+
+  // Handle theme normalization
+  if (req.body.theme) {
+    const th = typeof req.body.theme === 'string' ? JSON.parse(req.body.theme) : req.body.theme;
+    updateData.primaryTheme = th.primary || null;
+    // Keep the original JSON field as-is
+    updateData.theme = th;
+    // Replace secondary themes: delete all existing, re-create
+    updateData.secondaryThemes = {
+      deleteMany: {},
+      create: (th.secondary || []).map(t => ({ theme: t })),
+    };
+  }
+
+  // Auto-extract location fields from productContent if not sent as top-level fields
+  const pc = req.body.productContent;
+  if (pc?.location) {
+    if (req.body.city === undefined) updateData.city = pc.location.city || null;
+    if (req.body.country === undefined) updateData.country = pc.location.country || null;
+    if (req.body.region === undefined) updateData.region = pc.location.region || null;
   }
 
   const tour = await prisma.tour.update({

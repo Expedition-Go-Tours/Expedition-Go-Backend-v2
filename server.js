@@ -3,6 +3,8 @@ const http = require('http');
 const { Server } = require('socket.io');
 const prisma = require('./utils/prismaClient');
 const { sendNotification } = require('./utils/notificationService');
+const event = require('./utils/eventEmitter');
+const { registerWorkers, closeAll } = require('./utils/queue');
 /* eslint-disable no-console */
 
 let server;
@@ -26,9 +28,11 @@ const shutdown = (reason, err) => {
 
   try {
     if (server) {
-      server.close(() => process.exit(1));
+      server.close(() => {
+        closeAll().finally(() => process.exit(1));
+      });
     } else {
-      process.exit(1);
+      closeAll().finally(() => process.exit(1));
     }
   } catch {
     process.exit(1);
@@ -151,6 +155,15 @@ process.on('SIGINT', () => {
           }).catch(() => {});
 
           ack?.({ status: 'success', data: { review: updated } });
+
+          event.emit({
+            name: 'review.responded',
+            userId,
+            resource: 'Review',
+            resourceId: reviewId,
+            properties: { tourId: review.tourId, customerId: review.customerId },
+            source: 'web',
+          });
         } catch (err) {
           console.error('Socket review:respond error:', err);
           ack?.({ status: 'error', message: 'Internal server error' });
@@ -166,6 +179,10 @@ process.on('SIGINT', () => {
       console.log(`App running on port ${port}...`);
       console.log(`Environment: ${process.env.NODE_ENV}`);
     });
+
+    // Initialise background queue workers after server starts
+    registerWorkers(app);
+    console.log('[Queue] Workers registered');
   } catch (err) {
     shutdown('DATABASE CONNECTION FAILED', err);
   }

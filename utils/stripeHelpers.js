@@ -15,6 +15,7 @@
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const prisma = require('./prismaClient');
 const { sendBookingConfirmationEmail, sendSupplierBookingNotification } = require('./emailService');
+const event = require('./eventEmitter');
 
 /**
  * Create Stripe Connect Express account for supplier
@@ -359,6 +360,26 @@ async function handlePaymentSucceeded(paymentIntent) {
   for (const booking of bookings) {
     sendBookingConfirmationEmail(booking).catch(console.error);
     sendSupplierBookingNotification(booking).catch(console.error);
+  }
+
+  // Emit analytics events for each completed booking
+  for (const booking of bookings) {
+    event.emit({
+      name: 'booking.completed',
+      userId: booking.customerId,
+      resource: 'Booking',
+      resourceId: booking.id,
+      properties: {
+        tourId: booking.tourId,
+        total: parseFloat(booking.total),
+        currency: booking.currency,
+        supplierPayout: parseFloat(booking.supplierPayout),
+        commissionAmount: parseFloat(booking.commissionAmount),
+        supplierId: booking.tour?.supplierId,
+        paymentIntentId: paymentIntent.id,
+      },
+      source: 'webhook',
+    });
   }
 
   return { success: true, message: `${bookingIds.length} bookings confirmed` };

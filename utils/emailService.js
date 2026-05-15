@@ -41,11 +41,11 @@ async function sendEmail({ to, subject, template, data = {}, attachments = [] })
     };
 
     const result = await sgMail.send(msg);
-    console.log(`📧 Email sent successfully to ${to}: ${subject}`);
+    console.log(` Email sent successfully to ${to}: ${subject}`);
     
     return { success: true, messageId: result[0].headers['x-message-id'] };
   } catch (error) {
-    console.error('❌ Email sending failed:', error);
+    console.error('Email sending failed:', error);
     
     // Log email failure for debugging
     if (error.response) {
@@ -138,9 +138,9 @@ async function sendBookingCancellationEmail(booking, refundAmount = null) {
       }
     });
 
-    console.log(`✅ Booking cancellation sent for booking ${booking.bookingNumber}`);
+    console.log(` Booking cancellation sent for booking ${booking.bookingNumber}`);
   } catch (error) {
-    console.error('❌ Booking cancellation email failed:', error);
+    console.error(' Booking cancellation email failed:', error);
     throw error;
   }
 }
@@ -185,14 +185,18 @@ async function sendSupplierStatusEmail(email, status, data = {}) {
       data: {
         ...data,
         status,
+        brandName: 'Travio Africa',
+        brandSubtext: 'by Expedition-Go Tours',
+        supplierBusinessName: data.name,
+        approvalDate: new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
         supportEmail: process.env.SUPPORT_EMAIL,
         dashboardUrl: `${process.env.CLIENT_URL}/supplier/dashboard`
       }
     });
 
-    console.log(`✅ Supplier status email sent: ${status} to ${email}`);
+    console.log(` Supplier status email sent: ${status} to ${email}`);
   } catch (error) {
-    console.error('❌ Supplier status email failed:', error);
+    console.error(' Supplier status email failed:', error);
     throw error;
   }
 }
@@ -226,9 +230,9 @@ async function sendReviewNotificationEmail(review) {
       }
     });
 
-    console.log(`✅ Review notification sent to supplier for review ${review.id}`);
+    console.log(` Review notification sent to supplier for review ${review.id}`);
   } catch (error) {
-    console.error('❌ Review notification email failed:', error);
+    console.error(' Review notification email failed:', error);
     throw error;
   }
 }
@@ -256,9 +260,9 @@ async function sendPayoutNotificationEmail(supplierId, payoutData) {
       }
     });
 
-    console.log(`✅ Payout notification sent to supplier ${supplierId}`);
+    console.log(`Payout notification sent to supplier ${supplierId}`);
   } catch (error) {
-    console.error('❌ Payout notification email failed:', error);
+    console.error(' Payout notification email failed:', error);
     throw error;
   }
 }
@@ -293,8 +297,9 @@ async function sendSupplierBookingNotification(booking) {
         totalAmount: booking.total,
         currency: booking.currency,
         customerPhone: booking.travelers?.phoneNumber || '',
-        customerLocation: booking.travelers?.location || '',
-        dashboardUrl: `${process.env.CLIENT_URL}/supplier/bookings/${booking.id}`
+        customerLocation: booking.travelers?.location || customer?.location || '',
+        dashboardUrl: `${process.env.CLIENT_URL}/supplier/bookings/${booking.id}`,
+        supportEmail: process.env.SUPPORT_EMAIL
       }
     });
   } catch (error) {
@@ -337,439 +342,1115 @@ function generateBookingConfirmationTemplate(data) {
   if (data.travelers?.children) travelers.push(`${data.travelers.children} Child(ren)`);
   if (data.travelers?.infants) travelers.push(`${data.travelers.infants} Infant(s)`);
 
-  const includedHtml = (data.included || []).map(i => `<li style="padding:3px 0;color:#111827;font-size:14px;line-height:1.5;">${i}</li>`).join('');
-  const bringHtml = (data.whatToBring || []).map(b => `<li style="padding:3px 0;color:#111827;font-size:14px;line-height:1.5;">${b}</li>`).join('');
+  const includedHtml = (data.included || []).map(i => `<li style="padding:3px 0;color:#64748B;font-size:13px;line-height:1.5;">${i}</li>`).join('');
+  const bringHtml = (data.whatToBring || []).map(b => `<li style="padding:3px 0;color:#64748B;font-size:13px;line-height:1.5;">${b}</li>`).join('');
+
+  const brandName = data.brandName || 'Travio Africa';
+  const supportEmail = data.supportEmail || 'support@expeditiongo.com';
+  const logoUrl = data.logoUrl || process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
+  const year = new Date().getFullYear();
 
   const html = `<!DOCTYPE html>
-<html data-ogsc="" data-ogsb="" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
-<head><meta charset="utf-8">
-<meta name="color-scheme" content="light only">
-<meta name="supported-color-schemes" content="light">
-<style>
-  html, body { margin: 0; padding: 0; background-color: #ffffff !important; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
-  .wrapper { width: 100%; table-layout: fixed; background-color: #ffffff !important; }
-  .main { max-width: 600px; margin: 0 auto; background-color: #ffffff !important; }
-  .head { padding: 36px 32px 12px; text-align: center; }
-  .section { padding: 14px 32px; border-bottom: 1px solid #e5e7eb; }
-  .label { font-size: 11px; font-weight: 600; color: #6b7280 !important; text-transform: uppercase; letter-spacing: 0.8px; margin: 0 0 3px; word-break: break-word; overflow-wrap: break-word; }
-  .value { font-size: 15px; font-weight: 600; color: #111827 !important; margin: 0; line-height: 1.4; word-break: break-word; overflow-wrap: break-word; }
-  .value-sm { font-size: 14px; font-weight: 400; color: #111827 !important; margin: 3px 0 0; line-height: 1.5; word-break: break-word; overflow-wrap: break-word; }
-  .btn { display: inline-block; background: #2563eb !important; color: #ffffff !important; padding: 14px 36px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 15px; }
-  .btn-link { color: #2563eb !important; font-size: 13px; text-decoration: underline; }
-  .ref { font-size: 26px; font-weight: 700; color: #111827 !important; letter-spacing: 2.5px; font-family: 'Courier New', monospace; margin: 0; word-break: break-all; overflow-wrap: break-word; }
-  .footer-text { font-size: 12px; color: #9ca3af !important; margin: 0; }
-  [data-ogsc] * { background-color: #ffffff !important; color: #111827 !important; }
-  [data-ogsc] .btn { background-color: #2563eb !important; color: #ffffff !important; }
-  [data-ogsc] .btn-link { color: #2563eb !important; }
-  [data-ogsc] .label { color: #6b7280 !important; }
-  [data-ogsc] .footer-text { color: #9ca3af !important; }
-  [data-ogsc] .ref { color: #111827 !important; }
-  * { -ms-text-size-adjust: 100%; -webkit-text-size-adjust: 100%; }
-  u + .body * { background-color: #ffffff !important; color: #111827 !important; }
-</style>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>Booking Confirmed</title>
+  <style>
+    body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; background-color: #F8FAFC; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
+    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    .font-main { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  </style>
 </head>
-<body data-ogsc="" style="margin:0;padding:0;background-color:#ffffff !important;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <table class="wrapper" width="100%" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="background-color:#ffffff !important;width:100%;">
-    <tr><td align="center" bgcolor="#ffffff" style="background-color:#ffffff !important;padding:0;">
-      <table class="main" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="background-color:#ffffff !important;max-width:600px;width:100%;">
-        <tr><td bgcolor="#ffffff" style="background-color:#ffffff !important;">
-          <div class="head">
-            <img src="${process.env.LOGO_URL}" alt="Travio Africa" style="height:48px;margin-bottom:10px;">
-            <h1 style="font-size:24px;font-weight:700;color:#111827;margin:0;">Booking Confirmed</h1>
-          </div>
-          <div class="section" style="padding:20px 32px;text-align:center;border-bottom:2px dashed #d1d5db;">
-            <p class="label" style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin:0 0 4px;">Booking Reference</p>
-            <p class="ref" style="font-size:26px;font-weight:700;color:#111827;letter-spacing:2.5px;font-family:'Courier New',monospace;margin:0;">${data.bookingNumber}</p>
-          </div>
-          <div class="section">
-            <h2 style="font-size:17px;font-weight:700;color:#111827;margin:0 0 3px;">${data.tourTitle}</h2>
-            ${data.tourDescription ? `<p style="font-size:14px;color:#6b7280;margin:0;line-height:1.5;">${data.tourDescription.substring(0, 200)}</p>` : ''}
-          </div>
-          <div class="section">
-            <table width="100%" cellpadding="0" cellspacing="0">
-              <tr>
-                <td style="width:50%;padding:0 8px 0 0;vertical-align:top;">
-                  <p class="label">Date</p>
-                  <p class="value" style="font-size:15px;font-weight:600;color:#111827;margin:0;">${data.selectedDate}</p>
-                </td>
-                <td style="width:50%;padding:0 0 0 8px;vertical-align:top;">
-                  <p class="label">Time</p>
-                  <p class="value" style="font-size:15px;font-weight:600;color:#111827;margin:0;">${data.selectedTime || 'Flexible'}</p>
-                </td>
-              </tr>
-            </table>
-          </div>
-          <div class="section">
-            <p class="label">Participants</p>
-            <p class="value">${travelers.join(' &bull; ') || '1 Adult'}</p>
-          </div>
-          ${data.meetingPoint ? `
-          <div class="section">
-            <p class="label">Pickup Point</p>
-            <p class="value">${data.meetingPoint.address}</p>
-            ${data.meetingPoint.instructions ? `<p class="value-sm">${data.meetingPoint.instructions}</p>` : ''}
-            ${data.meetingPoint.coordinates ? `<p style="margin:6px 0 0;"><a href="https://maps.google.com/?q=${data.meetingPoint.coordinates.lat},${data.meetingPoint.coordinates.lng}" class="btn-link" style="color:#2563eb;font-size:13px;">View on Google Maps &rarr;</a></p>` : ''}
-          </div>` : ''}
-          ${data.checkInProcess ? `
-          <div class="section">
-            <p class="label">Check-in</p>
-            <p class="value-sm">${data.checkInProcess}</p>
-          </div>` : ''}
+<body>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+    <tr>
+      <td align="center" style="padding: 40px 16px;">
+        <table role="presentation" width="100%" style="max-width: 640px; background-color: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;" cellspacing="0" cellpadding="0" border="0">
+
+          <!-- Header -->
+          <tr>
+            <td style="padding: 40px 40px 24px 40px;">
+              <img src="${logoUrl}" alt="${brandName}" width="180" style="display: block; max-width: 180px; height: auto;">
+            </td>
+          </tr>
+
+          <!-- Title & Status -->
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="center">
+                    <h1 style="margin: 0 0 12px 0; font-size: 28px; font-weight: 800; color: #001F3F; line-height: 1.2;" class="font-main">Booking Confirmed</h1>
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;">
+                      <tr>
+                        <td bgcolor="#E6F6F0" style="border-radius: 20px; padding: 6px 16px; font-size: 14px; font-weight: 700; color: #00A669; line-height: 1;" class="font-main">
+                          &#x2713;&nbsp;&nbsp;Confirmed
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Booking Reference Block -->
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <table role="presentation" width="100%" bgcolor="#F8FAFC" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 24px 32px; text-align: center;" align="center">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Booking Reference</span>
+                    <span style="font-size: 32px; font-weight: 800; color: #001F3F; line-height: 1;" class="font-main">${data.bookingNumber}</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Tour Details Card -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;">
+              <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr><td style="padding: 32px;">
+
+                <!-- Tour Title -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding-bottom: 24px; border-bottom: 1px solid #E2E8F0;">
+                    <h3 style="margin: 0 0 4px 0; font-size: 18px; font-weight: 700; color: #001F3F; line-height: 1.4;" class="font-main">${data.tourTitle}</h3>
+                    <p style="margin: 0; font-size: 14px; color: #64748B; line-height: 1.4;" class="font-main">Your booking has been confirmed. Details below.</p>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Date -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Date</span>
+                    <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.selectedDate}</span>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Time -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Time</span>
+                    <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.selectedTime || 'Flexible'}</span>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Meeting Point -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Meeting Point</span>
+                    <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.meetingPoint?.address || 'To be confirmed'}</span>
+                    ${data.meetingPoint?.instructions ? `<p style="margin: 4px 0 0; font-size: 13px; color: #64748B; line-height: 1.4;" class="font-main">${data.meetingPoint.instructions}</p>` : ''}
+                    ${data.meetingPoint?.coordinates ? `<p style="margin: 4px 0 0;"><a href="https://maps.google.com/?q=${data.meetingPoint.coordinates.lat},${data.meetingPoint.coordinates.lng}" style="color: #00A669; font-size: 13px; text-decoration: underline; font-weight: 600;" class="font-main">View on Google Maps &rarr;</a></p>` : ''}
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Travelers -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Travelers</span>
+                    <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${travelers.join(' &bull; ') || '1 Adult'}</span>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Tour Operator -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0 24px 0;">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Tour Operator</span>
+                    <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.supplierName}</span>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Total Paid -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td>
+                    <table role="presentation" width="100%" bgcolor="#F0FDF4" style="border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td style="padding: 18px 24px;" align="left" valign="middle">
+                          <span style="display: block; font-size: 11px; font-weight: 700; color: #00A669; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;" class="font-main">Total Paid</span>
+                          <span style="font-size: 26px; font-weight: 800; color: #00A669; line-height: 1;" class="font-main">${data.currency} ${parseFloat(data.totalAmount || 0).toFixed(2)}</span>
+                          ${data.subtotal ? `
+                          <table cellpadding="0" cellspacing="0" border="0" style="margin-top: 6px;">
+                            <tr><td style="color: #64748B; font-size: 12px; padding: 1px 0;">Subtotal</td><td style="padding: 1px 0 1px 12px; color: #001F3F; font-size: 12px; font-weight: 500;">${data.currency} ${parseFloat(data.subtotal).toFixed(2)}</td></tr>
+                            ${data.taxes ? `<tr><td style="color: #64748B; font-size: 12px; padding: 1px 0;">Taxes &amp; Fees</td><td style="padding: 1px 0 1px 12px; color: #001F3F; font-size: 12px;">${data.currency} ${parseFloat(data.taxes).toFixed(2)}</td></tr>` : ''}
+                          </table>` : ''}
+                        </td>
+                        <td style="padding: 18px 24px; text-align: right;" align="right" valign="middle" width="60">
+                          <table role="presentation" width="36" height="36" bgcolor="#00A669" style="border-radius: 50%;" cellspacing="0" cellpadding="0" border="0">
+                            <tr>
+                              <td align="center" valign="middle" style="font-size: 16px; color: #ffffff; line-height: 36px;">&#x2713;</td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                </table>
+
+                </td></tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- What's Included -->
           ${includedHtml ? `
-          <div class="section">
-            <p class="label">What's Included</p>
-            <ul style="margin:4px 0 0;padding-left:18px;">${includedHtml}</ul>
-          </div>` : ''}
+          <tr>
+            <td style="padding: 0 40px 20px 40px;">
+              <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr><td style="padding: 24px;">
+                  <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;" class="font-main">What's Included</span>
+                  <ul style="margin: 0; padding-left: 16px;">${includedHtml}</ul>
+                </td></tr>
+              </table>
+            </td>
+          </tr>` : ''}
+
+          <!-- What to Bring -->
           ${bringHtml ? `
-          <div class="section">
-            <p class="label">What to Bring</p>
-            <ul style="margin:4px 0 0;padding-left:18px;">${bringHtml}</ul>
-          </div>` : ''}
-          ${data.restrictions ? `
-          <div class="section">
-            <p class="label">Important</p>
-            <p class="value-sm">${data.restrictions}</p>
-          </div>` : ''}
-          <div class="section">
-            <p class="label">Cancellation Policy</p>
-            <p class="value-sm">${data.cancellationPolicy || 'Free cancellation up to 24 hours before start time'}</p>
-          </div>
-          <div class="section" style="border-bottom:2px solid #111827;">
-            <p class="label">Price Summary</p>
-            <table width="100%" cellpadding="0" cellspacing="0">
-              <tr><td style="color:#6b7280;font-size:14px;padding:2px 0;">Subtotal</td><td style="text-align:right;color:#111827;font-size:14px;font-weight:600;padding:2px 0;">${data.currency} ${data.subtotal || data.totalAmount}</td></tr>
-              ${data.taxes ? `<tr><td style="color:#6b7280;font-size:14px;padding:2px 0;">Taxes & Fees</td><td style="text-align:right;color:#111827;font-size:14px;padding:2px 0;">${data.currency} ${data.taxes}</td></tr>` : ''}
-              <tr><td style="padding:6px 0 0;border-top:1px solid #d1d5db;font-weight:700;color:#111827;font-size:15px;">Total Charged</td><td style="text-align:right;padding:6px 0 0;border-top:1px solid #d1d5db;font-weight:700;color:#111827;font-size:15px;">${data.currency} ${data.totalAmount}</td></tr>
-            </table>
-          </div>
-          <div style="padding:24px 32px;text-align:center;">
-            <a href="${data.bookingUrl}" class="btn" style="display:inline-block;background:#2563eb;color:#ffffff;padding:14px 36px;border-radius:6px;text-decoration:none;font-weight:600;font-size:15px;">View Booking Details</a>
-            <br><br>
-            <a href="${data.ticketUrl}" class="btn-link" style="color:#2563eb;font-size:14px;">Download Printable Ticket &rarr;</a>
-          </div>
+          <tr>
+            <td style="padding: 0 40px 20px 40px;">
+              <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr><td style="padding: 24px;">
+                  <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;" class="font-main">What to Bring</span>
+                  <ul style="margin: 0; padding-left: 16px;">${bringHtml}</ul>
+                </td></tr>
+              </table>
+            </td>
+          </tr>` : ''}
+
+          <!-- Cancellation Policy -->
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr><td style="padding: 24px;">
+                  <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Cancellation Policy</span>
+                  <p style="margin: 0; font-size: 13px; color: #64748B; line-height: 1.5;" class="font-main">${data.cancellationPolicy || 'Free cancellation up to 24 hours before start time'}</p>
+                </td></tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- CTA Button -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="center">
+                    <a href="${data.bookingUrl}" target="_blank" style="display: block; width: 100%; background-color: #00A669; padding: 16px 0; text-align: center; border-radius: 10px; color: #ffffff; font-size: 16px; font-weight: 700; text-decoration: none; line-height: 1;" class="font-main">View Booking Details &nbsp;&rarr;</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Tour Operator Contact Strip -->
           ${data.supplierContact ? `
-          <div style="padding:18px 32px;text-align:center;border-top:1px solid #e5e7eb;background:#f9fafb;">
-            <p style="font-size:13px;color:#6b7280;margin:0 0 6px;">Questions? Call the operator</p>
-            <p style="font-size:20px;font-weight:700;color:#111827;margin:0;letter-spacing:0.5px;">
-              <a href="tel:${data.supplierContact.replace(/\s/g, '')}" style="color:#111827;text-decoration:none;">${data.supplierContact}</a>
-            </p>
-            <p style="font-size:12px;color:#9ca3af;margin:6px 0 0;">${data.supplierName || 'Your tour operator'}</p>
-          </div>` : ''}
-          ${data.supplierName ? `
-          <div style="padding:14px 32px;">
-            <p class="label">Organized by</p>
-            <p class="value" style="font-size:15px;">${data.supplierName}</p>
-          </div>` : ''}
-        </td></tr>
-        <tr><td style="padding:24px 32px;text-align:center;border-top:1px solid #e5e7eb;background-color:#ffffff;">
-          <p class="footer-text" style="font-size:12px;color:#9ca3af;margin:0;">Need help? <a href="mailto:${data.supportEmail}" style="color:#2563eb;text-decoration:underline;font-size:12px;">${data.supportEmail}</a></p>
-        </td></tr>
-      </table>
-    </td></tr>
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <table role="presentation" width="100%" bgcolor="#F8FAFC" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 16px 24px;" align="left" valign="middle">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;" class="font-main">Tour Operator</span>
+                    <span style="font-size: 14px; font-weight: 600; color: #001F3F;" class="font-main">${data.supplierName}</span>
+                  </td>
+                  <td style="padding: 16px 24px; text-align: right;" align="right" valign="middle">
+                    <a href="tel:${data.supplierContact}" style="color: #00A669; font-size: 14px; font-weight: 600; text-decoration: none;" class="font-main">&#x1F4DE;&nbsp; ${data.supplierContact}</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>` : ''}
+
+          <!-- Footer -->
+          <tr>
+            <td bgcolor="#001F3F" style="padding: 32px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="left" style="color: #ffffff; font-size: 14px; line-height: 1.4;" class="font-main">
+                    <strong style="color: #00A669; font-size: 14px;">Thank you for booking!</strong><br>
+                    <span style="color: #94A3B8; font-size: 13px;">${brandName} Team</span>
+                  </td>
+                  <td align="right" style="font-family: 'Caveat', 'Georgia', 'Apple Chancery', cursive; font-size: 20px; color: #ffffff; font-weight: 400;" valign="middle">
+                    Need help? <a href="mailto:${supportEmail}" style="color: #00A669; text-decoration: underline; font-weight: 600;">Contact us</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+
+        <p style="margin: 24px 0 0 0; text-align: center; font-size: 11px; color: #94A3B8; line-height: 1;" class="font-main">
+          &copy; ${year} ${brandName} by Expedition-Go Tours. All rights reserved.
+        </p>
+      </td>
+    </tr>
   </table>
 </body>
 </html>`;
 
   const text = `
-BOOKING CONFIRMED — ${data.tourTitle}
+BOOKING CONFIRMED! — ${data.tourTitle}
 Booking Ref: ${data.bookingNumber}
+Status: Confirmed
+
 Date: ${data.selectedDate}${data.selectedTime ? ' at ' + data.selectedTime : ''}
-Participants: ${travelers.join(', ') || '1 Adult'}
-Total: ${data.currency} ${data.totalAmount}
+Meeting Point: ${data.meetingPoint?.address || 'To be confirmed'}
+Travelers: ${travelers.join(', ') || '1 Adult'}
+Tour Operator: ${data.supplierName}${data.supplierContact ? ' | ' + data.supplierContact : ''}
 
-Pickup Point: ${data.meetingPoint?.address || 'See booking details'}
-Cancellation Policy: ${data.cancellationPolicy || 'Free cancellation up to 24 hours before'}
+Total Paid: ${data.currency} ${data.totalAmount}
+${data.subtotal ? `Subtotal: ${data.currency} ${data.subtotal}` : ''}${data.taxes ? `\nTaxes & Fees: ${data.currency} ${data.taxes}` : ''}
 
-View booking: ${data.bookingUrl}
-Download ticket: ${data.ticketUrl}
-Questions? ${data.supportEmail}`;
+Cancellation: ${data.cancellationPolicy || 'Free cancellation up to 24 hours before start time'}
+
+View booking details: ${data.bookingUrl}
+
+Need help? ${supportEmail}
+
+${year} ${brandName} by Expedition-Go Tours. All rights reserved.`;
 
   return { html, text };
 }
 
 function generateBookingCancellationTemplate(data) {
+  const brandName = data.brandName || 'Travio Africa';
+  const supportEmail = data.supportEmail || 'support@expeditiongo.com';
+  const logoUrl = data.logoUrl || process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
+  const year = new Date().getFullYear();
+
   const html = `<!DOCTYPE html>
-<html data-ogsc="" data-ogsb=""><head><meta charset="utf-8">
-<meta name="color-scheme" content="light only">
-<meta name="supported-color-schemes" content="light">
-<style>
-  html, body { margin: 0; padding: 0; background-color: #ffffff !important; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
-  [data-ogsc] * { background-color: #ffffff !important; color: #111827 !important; }
-  * { word-break: break-word; overflow-wrap: break-word; -ms-text-size-adjust: 100%; -webkit-text-size-adjust: 100%; }
-</style>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>Booking Cancelled</title>
+  <style>
+    body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; background-color: #F8FAFC; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
+    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    .font-main { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  </style>
 </head>
-<body style="margin:0;padding:0;background-color:#ffffff !important;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-    <table width="100%" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="background-color:#ffffff !important;max-width:600px;margin:0 auto;">
-      <tr><td bgcolor="#ffffff" style="background-color:#ffffff !important;padding:24px 24px 12px;text-align:center;border-bottom:2px solid #e5e7eb;">
-        <img src="${process.env.LOGO_URL}" alt="Travio Africa" style="height:44px;margin-bottom:8px;">
-      </td></tr>
-      <tr><td bgcolor="#ffffff" style="background-color:#ffffff !important;padding:20px 24px;">
-      <h1 style="color:#dc2626;font-size:22px;margin:0 0 16px;">Booking Cancelled</h1>
-      
-      <p style="font-size:15px;color:#111827;margin:0 0 12px;">Hi ${data.customerName},</p>
-      
-      <p style="font-size:14px;color:#111827;margin:0 0 16px;">Your booking has been cancelled as requested.</p>
-      
-      <div style="background:#fef2f2;padding:20px;border-radius:8px;margin:0 0 20px;border-left:4px solid #dc2626;">
-        <h2 style="font-size:16px;color:#111827;margin:0 0 8px;">${data.tourTitle}</h2>
-        <p style="font-size:14px;color:#111827;margin:0 0 4px;"><strong>Booking Number:</strong><br>${data.bookingNumber}</p>
-        <p style="font-size:14px;color:#111827;margin:0 0 4px;"><strong>Original Date:</strong><br>${data.selectedDate}</p>
-        ${data.cancellationReason ? `<p style="font-size:14px;color:#111827;margin:0;"><strong>Reason:</strong><br>${data.cancellationReason}</p>` : ''}
-      </div>
-      
-      ${data.refundAmount ? `
-        <div style="background:#f0fdf4;padding:20px;border-radius:8px;margin:0 0 20px;border-left:4px solid #16a34a;">
-          <h3 style="font-size:15px;color:#16a34a;margin:0 0 8px;">Refund Information</h3>
-          <p style="font-size:14px;color:#111827;margin:0;">A refund of ${data.currency} ${data.refundAmount} will be processed to your original payment method within 5-7 business days.</p>
-        </div>
-      ` : ''}
-      
-      <p style="font-size:14px;color:#111827;margin:0 0 12px;">We're sorry to see you go. If you have any questions, please contact <a href="mailto:${data.supportEmail}" style="color:#2563eb;">${data.supportEmail}</a></p>
-      </td></tr>
-    </table>
-</body></html>`;
+<body>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+    <tr>
+      <td align="center" style="padding: 40px 16px;">
+        <table role="presentation" width="100%" style="max-width: 640px; background-color: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;" cellspacing="0" cellpadding="0" border="0">
 
-  const text = `
-    Booking Cancelled
-    
-    Hi ${data.customerName},
-    
-    Your booking for "${data.tourTitle}" (${data.bookingNumber}) has been cancelled.
-    
-    ${data.refundAmount ? `Refund of ${data.currency} ${data.refundAmount} will be processed within 5-7 business days.` : ''}
-    
-    Questions? Contact: ${data.supportEmail}
-  `;
+          <!-- Header -->
+          <tr>
+            <td style="padding: 40px 40px 24px 40px;">
+              <img src="${logoUrl}" alt="${brandName}" width="180" style="display: block; max-width: 180px; height: auto;">
+            </td>
+          </tr>
 
-  return { html, text };
-}
+          <!-- Title & Status -->
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="center">
+                    <h1 style="margin: 0 0 12px 0; font-size: 28px; font-weight: 800; color: #001F3F; line-height: 1.2;" class="font-main">Booking Cancelled</h1>
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;">
+                      <tr>
+                        <td bgcolor="#FEF2F2" style="border-radius: 20px; padding: 6px 16px; font-size: 14px; font-weight: 700; color: #DC2626; line-height: 1;" class="font-main">
+                          Cancelled
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
 
-function generateSupplierApprovedTemplate(data) {
-  const html = `<!DOCTYPE html>
-<html data-ogsc="" data-ogsb="">
-<head><meta charset="utf-8">
-<meta name="color-scheme" content="light only">
-<meta name="supported-color-schemes" content="light">
-<style>
-  html, body { margin: 0; padding: 0; background-color: #ffffff !important; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
-  .wrapper { width: 100%; table-layout: fixed; background-color: #ffffff !important; }
-  .main { max-width: 600px; margin: 0 auto; background-color: #ffffff !important; }
-  .head { padding: 36px 32px 12px; text-align: center; }
-  .section { padding: 14px 32px; border-bottom: 1px solid #e5e7eb; }
-  .label { font-size: 11px; font-weight: 600; color: #6b7280 !important; text-transform: uppercase; letter-spacing: 0.8px; margin: 0 0 3px; word-break: break-word; overflow-wrap: break-word; }
-  .value { font-size: 15px; font-weight: 600; color: #111827 !important; margin: 0; line-height: 1.4; }
-  .value-sm { font-size: 14px; font-weight: 400; color: #111827 !important; margin: 3px 0 0; line-height: 1.5; }
-  .btn { display: inline-block; background: #059669 !important; color: #ffffff !important; padding: 14px 36px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 15px; }
-  [data-ogsc] * { background-color: #ffffff !important; color: #111827 !important; }
-  [data-ogsc] .label { color: #6b7280 !important; }
-  [data-ogsc] .btn { background: #059669 !important; color: #ffffff !important; }
-  * { -ms-text-size-adjust: 100%; -webkit-text-size-adjust: 100%; }
-  u + .body * { background-color: #ffffff !important; color: #111827 !important; }
-  ol { margin: 8px 0 0; padding-left: 18px; }
-  ol li { padding: 4px 0; color: #111827 !important; font-size: 14px; line-height: 1.5; }
-</style>
-</head>
-<body data-ogsc="" style="margin:0;padding:0;background-color:#ffffff !important;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <table class="wrapper" width="100%" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="background-color:#ffffff !important;width:100%;">
-    <tr><td align="center" bgcolor="#ffffff" style="background-color:#ffffff !important;padding:0;">
-      <table class="main" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="background-color:#ffffff !important;max-width:600px;width:100%;">
-        <tr><td bgcolor="#ffffff" style="background-color:#ffffff !important;">
-          <div class="head">
-            <img src="${process.env.LOGO_URL}" alt="Travio Africa" style="height:52px;margin-bottom:16px;">
-          </div>
-          <div style="padding:8px 32px 24px;text-align:center;border-bottom:2px dashed #d1d5db;">
-            <h1 style="font-size:22px;font-weight:700;color:#111827;margin:0 0 4px;">Welcome to Travio Africa!</h1>
-            <p style="font-size:15px;color:#059669;font-weight:600;margin:0;">Application Approved</p>
-          </div>
-          <div class="section">
-            <p style="font-size:15px;color:#111827;margin:0 0 8px;">Hi ${data.name},</p>
-            <p style="font-size:14px;color:#6b7280;margin:0;line-height:1.5;">Congratulations! Your supplier application has been approved. You're now part of the Travio Africa community.</p>
-          </div>
-          <div class="section">
-            <p class="label">Next Steps</p>
-            <ol>
-              <li><strong>Complete Stripe onboarding</strong> — Set up your payment account to receive payouts</li>
-              <li><strong>Create your first tour</strong> — List your experiences and start receiving bookings</li>
-              <li><strong>Set up your profile</strong> — Add business details, photos, and contact info</li>
-            </ol>
-          </div>
-          <div style="padding:24px 32px;text-align:center;">
-            <a href="${data.dashboardUrl}" class="btn" style="display:inline-block;background:#059669;color:#ffffff;padding:14px 36px;border-radius:6px;text-decoration:none;font-weight:600;font-size:15px;">Access Your Dashboard</a>
-          </div>
-          <div style="padding:14px 32px 24px;text-align:center;border-top:1px solid #e5e7eb;">
-            <p style="font-size:13px;color:#9ca3af;margin:0;">Need help? <a href="mailto:${data.supportEmail}" style="color:#059669;">${data.supportEmail}</a></p>
-          </div>
-        </td></tr>
-      </table>
-    </td></tr>
+          <!-- Booking Reference Block -->
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <table role="presentation" width="100%" bgcolor="#F8FAFC" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 24px 32px; text-align: center;" align="center">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Booking Reference</span>
+                    <span style="font-size: 32px; font-weight: 800; color: #001F3F; line-height: 1;" class="font-main">${data.bookingNumber}</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Cancellation Details Card -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;">
+              <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr><td style="padding: 32px;">
+
+                <!-- Tour Title -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding-bottom: 24px; border-bottom: 1px solid #E2E8F0;">
+                    <h3 style="margin: 0 0 4px 0; font-size: 18px; font-weight: 700; color: #001F3F; line-height: 1.4;" class="font-main">${data.tourTitle}</h3>
+                    <p style="margin: 0 0 16px 0; font-size: 14px; color: #64748B; line-height: 1.4;" class="font-main">Hi ${data.customerName}, your booking has been cancelled as requested.</p>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Date -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Original Date</span>
+                    <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.selectedDate}</span>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Reason -->
+                ${data.cancellationReason ? `
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0 24px 0;">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Reason</span>
+                    <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.cancellationReason}</span>
+                  </td>
+                </tr>
+                </table>` : ''}
+
+                ${data.refundAmount ? `
+                <!-- Refund Info -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td>
+                    <table role="presentation" width="100%" bgcolor="#F0FDF4" style="border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td style="padding: 18px 24px;" align="left" valign="middle">
+                          <span style="display: block; font-size: 11px; font-weight: 700; color: #00A669; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;" class="font-main">Refund Amount</span>
+                          <span style="font-size: 26px; font-weight: 800; color: #00A669; line-height: 1;" class="font-main">${data.currency} ${parseFloat(data.refundAmount).toFixed(2)}</span>
+                          <p style="margin: 6px 0 0; font-size: 13px; color: #475569; line-height: 1.4;" class="font-main">Processed to your original payment method within 5-7 business days.</p>
+                        </td>
+                        <td style="padding: 18px 24px; text-align: right;" align="right" valign="middle" width="60">
+                          <table role="presentation" width="36" height="36" bgcolor="#00A669" style="border-radius: 50%;" cellspacing="0" cellpadding="0" border="0">
+                            <tr>
+                              <td align="center" valign="middle" style="font-size: 16px; color: #ffffff; line-height: 36px;">&#x2713;</td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                </table>` : ''}
+
+                </td></tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Support -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;" align="center">
+              <span style="font-size: 13px; color: #64748B;" class="font-main">We're sorry to see you go. Need help? <a href="mailto:${supportEmail}" style="color: #00A669; text-decoration: none; font-weight: 600;">${supportEmail}</a></span>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td bgcolor="#001F3F" style="padding: 32px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="left" style="color: #ffffff; font-size: 14px; line-height: 1.4;" class="font-main">
+                    <strong style="color: #00A669; font-size: 14px;">Thank you for choosing us!</strong><br>
+                    <span style="color: #94A3B8; font-size: 13px;">${brandName} Team</span>
+                  </td>
+                  <td align="right" style="font-family: 'Caveat', 'Georgia', 'Apple Chancery', cursive; font-size: 20px; color: #ffffff; font-weight: 400;" valign="middle">
+                    Hope to see you again.
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+
+        <p style="margin: 24px 0 0 0; text-align: center; font-size: 11px; color: #94A3B8; line-height: 1;" class="font-main">
+          &copy; ${year} ${brandName} by Expedition-Go Tours. All rights reserved.
+        </p>
+      </td>
+    </tr>
   </table>
 </body>
 </html>`;
 
   const text = `
-WELCOME TO TRAVIO AFRICA!
-Your supplier application has been approved.
+BOOKING CANCELLED — ${data.tourTitle}
+Booking Ref: ${data.bookingNumber}
+Status: Cancelled
 
-Hi ${data.name},
+Hi ${data.customerName},
 
-Next steps:
-1. Complete Stripe onboarding — Set up payments
-2. Create your first tour — List your experiences
-3. Set up your profile — Add business details
+Your booking has been cancelled as requested.
+Original Date: ${data.selectedDate}
+${data.cancellationReason ? 'Reason: ' + data.cancellationReason : ''}
+${data.refundAmount ? 'Refund of ' + data.currency + ' ' + data.refundAmount + ' will be processed within 5-7 business days.' : ''}
 
-Dashboard: ${data.dashboardUrl}
-Support: ${data.supportEmail}`;
+Questions? Contact: ${supportEmail}
+
+${year} ${brandName} by Expedition-Go Tours. All rights reserved.`;
+
+  return { html, text };
+}
+
+function generateSupplierApprovedTemplate(data = {}) {
+  const brandName = data.brandName || 'Travio Africa';
+  const brandSubtext = data.brandSubtext || 'by Expedition-Go Tours';
+  const supplierName = data.supplierBusinessName || data.name || 'there';
+  const dashboardUrl = data.dashboardUrl || '#';
+  const supportEmail = data.supportEmail || 'support@expeditiongo.com';
+  const logoUrl = data.logoUrl || process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
+  const heroImageUrl = data.heroImageUrl || 'https://res.cloudinary.com/dxvlnwhqr/image/upload/v1747318000/email-hero-capetown.jpg';
+  const year = new Date().getFullYear();
+
+  const html = `<!DOCTYPE html>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>Welcome to ${brandName}</title>
+  <style>
+    body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; background-color: #F8FAFC; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
+    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    .font-main { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  </style>
+</head>
+<body>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+    <tr>
+      <td align="center" style="padding: 40px 16px;">
+        <table role="presentation" width="100%" style="max-width: 640px; background-color: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;" cellspacing="0" cellpadding="0" border="0">
+
+          <!-- Header -->
+          <tr>
+            <td style="padding: 40px 40px 32px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="left">
+                    <img src="${logoUrl}" alt="${brandName}" width="180" style="display: block; max-width: 180px; height: auto;">
+                  </td>
+                  <td align="right" valign="middle">
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td bgcolor="#F1F5F9" style="border-radius: 50px; padding: 6px 14px; font-size: 13px; font-weight: 600; color: #334155; line-height: 1;" class="font-main">
+                          &#x1F464;&nbsp;&nbsp;Supplier
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Hero Section (55/45 split) -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td width="55%" valign="top" style="padding-right: 20px;" align="left">
+                    <h1 style="margin: 0 0 16px 0; font-size: 32px; font-weight: 800; color: #001F3F; line-height: 1.15;" class="font-main">Welcome to<br>Travio <span style="color: #00A669;">Africa!</span></h1>
+                    <p style="margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #001F3F;" class="font-main">Hi ${supplierName},</p>
+                    <p style="margin: 0 0 8px 0; font-size: 15px; color: #334155; line-height: 1.5;" class="font-main">Congratulations! Your supplier application has been approved.</p>
+                    <p style="margin: 0; font-size: 15px; color: #334155; line-height: 1.5;" class="font-main">You're now part of our tour platform community.</p>
+                  </td>
+                  <td width="45%" valign="top" align="right">
+                    <img src="${heroImageUrl}" alt="Scenic travel destination" width="220" style="display: block; max-width: 220px; height: auto; border-radius: 30% 0% 30% 30%; border-right: 4px solid #00A669;">
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Next Steps Card -->
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <!-- Title row -->
+                <tr><td style="padding: 32px 32px 24px 32px;" align="left">
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td style="font-size: 24px; padding-right: 12px; line-height: 1;" valign="middle">&#x1F4CB;</td>
+                        <td valign="middle" align="left">
+                          <h3 style="margin: 0 0 2px 0; font-size: 18px; font-weight: 700; color: #001F3F; line-height: 1.3;" class="font-main">Your next steps</h3>
+                          <p style="margin: 0; font-size: 14px; color: #64748B; line-height: 1.3;" class="font-main">Follow these simple steps to get started on ${brandName}.</p>
+                        </td>
+                      </tr>
+                    </table>
+                  </td></tr>
+
+                <!-- 3 Steps -->
+                <tr><td style="padding: 0 32px 32px 32px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td width="33.33%" valign="top" style="padding-right: 8px;" align="left">
+                          <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                            <tr>
+                              <td width="48" height="48" bgcolor="#E6F6F0" style="border-radius: 50%; text-align: center; line-height: 48px;" align="center" valign="middle">
+                                <span style="font-size: 20px; line-height: 48px;">&#x1F4B3;</span>
+                              </td>
+                            </tr>
+                          </table>
+                          <div style="margin-top: 12px; margin-bottom: 8px;"><span style="background-color: #00A669; color: #ffffff; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; line-height: 1.4;" class="font-main">1</span></div>
+                          <h4 style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #001F3F; line-height: 1.3;" class="font-main">Set up your payment method</h4>
+                          <p style="margin: 0; font-size: 12px; color: #64748B; line-height: 1.4;" class="font-main">Set up your payment method to start receiving payments securely.</p>
+                        </td>
+                        <td width="33.33%" valign="top" style="padding-left: 4px; padding-right: 4px;" align="left">
+                          <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                            <tr>
+                              <td width="48" height="48" bgcolor="#E6F6F0" style="border-radius: 50%; text-align: center; line-height: 48px;" align="center" valign="middle">
+                                <span style="font-size: 20px; line-height: 48px;">&#x1F9F3;</span>
+                              </td>
+                            </tr>
+                          </table>
+                          <div style="margin-top: 12px; margin-bottom: 8px;"><span style="background-color: #00A669; color: #ffffff; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; line-height: 1.4;" class="font-main">2</span></div>
+                          <h4 style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #001F3F; line-height: 1.3;" class="font-main">Create your first tour listing</h4>
+                          <p style="margin: 0; font-size: 12px; color: #64748B; line-height: 1.4;" class="font-main">Add your tours and start reaching global travelers.</p>
+                        </td>
+                        <td width="33.33%" valign="top" style="padding-left: 8px;" align="left">
+                          <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                            <tr>
+                              <td width="48" height="48" bgcolor="#E6F6F0" style="border-radius: 50%; text-align: center; line-height: 48px;" align="center" valign="middle">
+                                <span style="font-size: 20px; line-height: 48px;">&#x1F464;</span>
+                              </td>
+                            </tr>
+                          </table>
+                          <div style="margin-top: 12px; margin-bottom: 8px;"><span style="background-color: #00A669; color: #ffffff; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; line-height: 1.4;" class="font-main">3</span></div>
+                          <h4 style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #001F3F; line-height: 1.3;" class="font-main">Set up your supplier profile</h4>
+                          <p style="margin: 0; font-size: 12px; color: #64748B; line-height: 1.4;" class="font-main">Tell travelers about your business and unique expertise.</p>
+                        </td>
+                      </tr>
+                    </table>
+                  </td></tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Ready-State Row -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;">
+              <table role="presentation" width="100%" bgcolor="#F0FDF4" style="border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 24px 0 24px 24px;" width="56" valign="middle" align="center">
+                    <span style="font-size: 28px; line-height: 1;">&#x1F4C8;</span>
+                  </td>
+                  <td style="padding: 24px 16px 24px 24px;" align="left" valign="middle">
+                    <h4 style="margin: 0 0 4px 0; font-size: 16px; font-weight: 700; color: #001F3F;" class="font-main">You're all set!</h4>
+                    <p style="margin: 0; font-size: 13px; color: #475569; line-height: 1.4;" class="font-main">Access your dashboard to manage your listings, bookings, and grow your business with ${brandName}.</p>
+                  </td>
+                  <td style="padding: 24px; text-align: right;" align="right" valign="middle" width="190">
+                    <a href="${dashboardUrl}" target="_blank" style="display: inline-block; background-color: #00A669; padding: 12px 20px; border-radius: 8px; color: #ffffff; font-size: 14px; font-weight: 700; text-decoration: none; white-space: nowrap;" class="font-main">Access Your Dashboard &nbsp;&rarr;</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Support -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;" align="center">
+              <span style="font-size: 13px; color: #64748B;" class="font-main">&#x1F3A7;&nbsp;&nbsp;Need help getting started? Contact <a href="mailto:${supportEmail}" style="color: #00A669; text-decoration: none; font-weight: 600;">${supportEmail}</a></span>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td bgcolor="#001F3F" style="padding: 32px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="left" style="color: #ffffff; font-size: 14px; line-height: 1.4;" class="font-main">
+                    <strong style="color: #00A669; font-size: 14px;">Welcome aboard!</strong><br>
+                    <span style="color: #94A3B8; font-size: 13px;">${brandName} Team</span>
+                  </td>
+                  <td align="right" style="font-family: 'Caveat', 'Georgia', 'Apple Chancery', cursive; font-size: 24px; color: #ffffff; font-weight: 400;" valign="middle">
+                    Let's <span style="color: #00A669;">grow</span> together.
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+
+        <p style="margin: 24px 0 0 0; text-align: center; font-size: 11px; color: #94A3B8; line-height: 1;" class="font-main">
+          &copy; ${year} ${brandName} by Expedition-Go Tours. All rights reserved.
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const text = `
+WELCOME TO ${brandName.toUpperCase()}!
+
+Hi ${supplierName},
+
+Congratulations! Your supplier application has been approved. You're now part of our tour platform community.
+
+YOUR NEXT STEPS:
+1. Set up your payment method — to start receiving payments securely
+2. Create your first tour listing — add your tours and reach global travelers
+3. Set up your supplier profile — tell travelers about your business and unique expertise
+
+Access your dashboard: ${dashboardUrl}
+
+Need help getting started? Contact us at: ${supportEmail}
+
+Welcome aboard!
+${brandName} Team
+${year} ${brandName} by Expedition-Go Tours. All rights reserved.
+Let's grow together.`;
 
   return { html, text };
 }
 
 function generateSupplierRejectedTemplate(data) {
+  const brandName = data.brandName || 'Travio Africa';
+  const brandSubtext = data.brandSubtext || 'by Expedition-Go Tours';
+  const supplierName = data.supplierBusinessName || data.name || 'there';
+  const supportEmail = data.supportEmail || 'support@expeditiongo.com';
+  const logoUrl = data.logoUrl || process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
+  const year = new Date().getFullYear();
+
   const html = `<!DOCTYPE html>
-<html data-ogsc="" data-ogsb="">
-<head><meta charset="utf-8">
-<meta name="color-scheme" content="light only">
-<meta name="supported-color-schemes" content="light">
-<style>
-  html, body { margin: 0; padding: 0; background-color: #ffffff !important; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
-  .wrapper { width: 100%; table-layout: fixed; background-color: #ffffff !important; }
-  .main { max-width: 600px; margin: 0 auto; background-color: #ffffff !important; }
-  .head { padding: 36px 32px 12px; text-align: center; }
-  .section { padding: 14px 32px; border-bottom: 1px solid #e5e7eb; }
-  .value-sm { font-size: 14px; font-weight: 400; color: #111827 !important; margin: 3px 0 0; line-height: 1.5; word-break: break-word; overflow-wrap: break-word; }
-  [data-ogsc] * { background-color: #ffffff !important; color: #111827 !important; }
-  * { -ms-text-size-adjust: 100%; -webkit-text-size-adjust: 100%; }
-</style>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>Application Update</title>
+  <style>
+    body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; background-color: #F8FAFC; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
+    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    .font-main { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  </style>
 </head>
-<body data-ogsc="" style="margin:0;padding:0;background-color:#ffffff !important;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <table class="wrapper" width="100%" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="background-color:#ffffff !important;width:100%;">
-    <tr><td align="center" bgcolor="#ffffff" style="background-color:#ffffff !important;padding:0;">
-      <table class="main" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="background-color:#ffffff !important;max-width:600px;width:100%;">
-        <tr><td bgcolor="#ffffff" style="background-color:#ffffff !important;">
-          <div class="head">
-            <img src="${process.env.LOGO_URL}" alt="Travio Africa" style="height:48px;margin-bottom:10px;">
-          </div>
-          <div style="padding:8px 32px 24px;text-align:center;border-bottom:2px dashed #d1d5db;">
-            <h1 style="font-size:22px;color:#dc2626;margin:0 0 4px;">Application Update</h1>
-            <p style="font-size:15px;color:#dc2626;font-weight:600;margin:0;">Not Approved</p>
-          </div>
-          <div class="section">
-            <p style="font-size:15px;color:#111827;margin:0 0 8px;">Hi ${data.name},</p>
-            <p style="font-size:14px;color:#6b7280;margin:0;line-height:1.5;">Thank you for your interest in becoming a supplier on Travio Africa. After careful review, we're unable to approve your application at this time.</p>
-          </div>
-          ${data.notes ? `
-          <div class="section">
-            <p style="font-size:14px;color:#111827;margin:0;line-height:1.5;background:#fef2f2;padding:16px;border-left:4px solid #dc2626;"><strong>Feedback:</strong> ${data.notes}</p>
-          </div>` : ''}
-          <div class="section" style="border-bottom:none;">
-            <p class="value-sm">You're welcome to reapply in the future. If you have questions, contact <a href="mailto:${data.supportEmail}" style="color:#2563eb;">${data.supportEmail}</a></p>
-          </div>
-        </td></tr>
-      </table>
-    </td></tr>
+<body>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+    <tr>
+      <td align="center" style="padding: 40px 16px;">
+        <table role="presentation" width="100%" style="max-width: 640px; background-color: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;" cellspacing="0" cellpadding="0" border="0">
+
+          <!-- Header -->
+          <tr>
+            <td style="padding: 40px 40px 32px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="left">
+                    <img src="${logoUrl}" alt="${brandName}" width="180" style="display: block; max-width: 180px; height: auto;">
+                  </td>
+                  <td align="right" valign="middle">
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td bgcolor="#F1F5F9" style="border-radius: 50px; padding: 6px 14px; font-size: 13px; font-weight: 600; color: #334155; line-height: 1;" class="font-main">
+                          Supplier
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Title & Status -->
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="center">
+                    <h1 style="margin: 0 0 12px 0; font-size: 28px; font-weight: 800; color: #001F3F; line-height: 1.2;" class="font-main">Application Update</h1>
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;">
+                      <tr>
+                        <td bgcolor="#FEF2F2" style="border-radius: 20px; padding: 6px 16px; font-size: 14px; font-weight: 700; color: #DC2626; line-height: 1;" class="font-main">
+                          Not Approved
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Message Card -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;">
+              <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr><td style="padding: 32px;">
+
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding-bottom: 24px; border-bottom: 1px solid #E2E8F0;">
+                    <p style="margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #001F3F;" class="font-main">Hi ${supplierName},</p>
+                    <p style="margin: 0; font-size: 15px; color: #334155; line-height: 1.5;" class="font-main">Thank you for your interest in becoming a supplier on ${brandName}. After careful review, we're unable to approve your application at this time.</p>
+                  </td>
+                </tr>
+                </table>
+
+                ${data.notes ? `
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0;">
+                    <table role="presentation" width="100%" bgcolor="#FEF2F2" style="border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                      <tr><td style="padding: 20px 24px;">
+                        <span style="display: block; font-size: 11px; font-weight: 700; color: #DC2626; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;" class="font-main">Feedback</span>
+                        <p style="margin: 0; font-size: 14px; color: #334155; line-height: 1.5;" class="font-main">${data.notes}</p>
+                      </td></tr>
+                    </table>
+                  </td>
+                </tr>
+                </table>` : ''}
+
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding-top: 8px;">
+                    <p style="margin: 0; font-size: 14px; color: #64748B; line-height: 1.5;" class="font-main">You're welcome to reapply in the future. If you have questions, please reach out to our team.</p>
+                  </td>
+                </tr>
+                </table>
+
+                </td></tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Support -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;" align="center">
+              <span style="font-size: 13px; color: #64748B;" class="font-main">Need help? Contact <a href="mailto:${supportEmail}" style="color: #00A669; text-decoration: none; font-weight: 600;">${supportEmail}</a></span>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td bgcolor="#001F3F" style="padding: 32px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="left" style="color: #ffffff; font-size: 14px; line-height: 1.4;" class="font-main">
+                    <strong style="color: #00A669; font-size: 14px;">Thank you for your interest</strong><br>
+                    <span style="color: #94A3B8; font-size: 13px;">${brandName} Team</span>
+                  </td>
+                  <td align="right" style="font-family: 'Caveat', 'Georgia', 'Apple Chancery', cursive; font-size: 20px; color: #ffffff; font-weight: 400;" valign="middle">
+                    Wishing you the best.
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+
+        <p style="margin: 24px 0 0 0; text-align: center; font-size: 11px; color: #94A3B8; line-height: 1;" class="font-main">
+          &copy; ${year} ${brandName} by Expedition-Go Tours. All rights reserved.
+        </p>
+      </td>
+    </tr>
   </table>
 </body>
 </html>`;
 
   const text = `
 APPLICATION UPDATE — Not Approved
-Hi ${data.name},
-We're unable to approve your supplier application.
+
+Hi ${supplierName},
+
+Thank you for your interest in becoming a supplier on ${brandName}. After careful review, we're unable to approve your application at this time.
+
 ${data.notes ? 'Feedback: ' + data.notes : ''}
-Questions? Contact: ${data.supportEmail}`;
+
+You're welcome to reapply in the future. Questions? Contact: ${supportEmail}
+
+${year} ${brandName} by Expedition-Go Tours. All rights reserved.`;
 
   return { html, text };
 }
 
 function generateSupplierBookingNotificationTemplate(data) {
+  const logoUrl = process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
+  const supportEmail = data.supportEmail || 'support@expeditiongo.com';
+  const year = new Date().getFullYear();
+
   const html = `<!DOCTYPE html>
-<html data-ogsc="" data-ogsb="">
-<head><meta charset="utf-8">
-<meta name="color-scheme" content="light only">
-<meta name="supported-color-schemes" content="light">
-<style>
-  html, body { margin: 0; padding: 0; background-color: #ffffff !important; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
-  .wrapper { width: 100%; table-layout: fixed; background-color: #ffffff !important; }
-  .main { max-width: 600px; margin: 0 auto; background-color: #ffffff !important; }
-  .head { padding: 36px 32px 12px; text-align: center; }
-  .section { padding: 14px 32px; border-bottom: 1px solid #e5e7eb; }
-  .label { font-size: 11px; font-weight: 600; color: #6b7280 !important; text-transform: uppercase; letter-spacing: 0.8px; margin: 0 0 3px; word-break: break-word; overflow-wrap: break-word; }
-  .value { font-size: 15px; font-weight: 600; color: #111827 !important; margin: 0; line-height: 1.4; word-break: break-word; overflow-wrap: break-word; }
-  .value-sm { font-size: 14px; font-weight: 400; color: #111827 !important; margin: 3px 0 0; line-height: 1.5; word-break: break-word; overflow-wrap: break-word; }
-  .ref { font-size: 26px; font-weight: 700; color: #111827 !important; letter-spacing: 2.5px; font-family: 'Courier New', monospace; margin: 0; word-break: break-all; overflow-wrap: break-word; }
-  .btn { display: inline-block; background: #059669 !important; color: #ffffff !important; padding: 14px 36px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 15px; }
-  [data-ogsc] * { background-color: #ffffff !important; color: #111827 !important; }
-  [data-ogsc] .label { color: #6b7280 !important; }
-  [data-ogsc] .ref { color: #111827 !important; }
-  [data-ogsc] .btn { background: #059669 !important; color: #ffffff !important; }
-  * { -ms-text-size-adjust: 100%; -webkit-text-size-adjust: 100%; }
-  u + .body * { background-color: #ffffff !important; color: #111827 !important; }
-</style>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>New Booking Received</title>
+  <style>
+    body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; background-color: #F8FAFC; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
+    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    .font-main { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  </style>
 </head>
-<body data-ogsc="" style="margin:0;padding:0;background-color:#ffffff !important;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <table class="wrapper" width="100%" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="background-color:#ffffff !important;width:100%;">
-    <tr><td align="center" bgcolor="#ffffff" style="background-color:#ffffff !important;padding:0;">
-      <table class="main" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="background-color:#ffffff !important;max-width:600px;width:100%;">
-        <tr><td bgcolor="#ffffff" style="background-color:#ffffff !important;">
-          <div class="head">
-            <img src="${process.env.LOGO_URL}" alt="Travio Africa" style="height:48px;margin-bottom:10px;">
-            <h1 style="font-size:22px;font-weight:700;color:#111827;margin:0;">New Booking Received</h1>
-          </div>
-          <div class="section" style="padding:20px 32px;text-align:center;border-bottom:2px dashed #d1d5db;">
-            <p class="label" style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin:0 0 4px;">Booking Reference</p>
-            <p class="ref" style="font-size:26px;font-weight:700;color:#111827;letter-spacing:2.5px;font-family:'Courier New',monospace;margin:0;">${data.bookingNumber}</p>
-          </div>
-          <div class="section">
-            <h2 style="font-size:17px;font-weight:700;color:#111827;margin:0;">${data.tourTitle}</h2>
-            <p style="font-size:14px;color:#6b7280;margin:4px 0 0;">A guest has booked your tour. Details below.</p>
-          </div>
-          <div class="section">
-            <p class="label">Customer</p>
-            <p class="value">${data.customerName}</p>
-          </div>
-          ${data.customerPhone ? `<div class="section"><p class="label">Phone / WhatsApp</p><p class="value">${data.customerPhone}</p></div>` : ''}
-          ${data.customerLocation ? `<div class="section"><p class="label">Location</p><p class="value">${data.customerLocation}</p></div>` : ''}
-          <div class="section">
-            <table width="100%" cellpadding="0" cellspacing="0">
-              <tr>
-                <td style="width:50%;padding:0 8px 0 0;vertical-align:top;">
-                  <p class="label">Date</p>
-                  <p class="value">${data.selectedDate}</p>
-                </td>
-                <td style="width:50%;padding:0 0 0 8px;vertical-align:top;">
-                  <p class="label">Time</p>
-                  <p class="value">${data.selectedTime || '—'}</p>
-                </td>
-              </tr>
-            </table>
-          </div>
-          <div class="section">
-            <p class="label">Travelers</p>
-            <p class="value">${data.travelerCount} guest(s)</p>
-          </div>
-          <div class="section" style="border-bottom:2px solid #111827;">
-            <p class="label">Total Paid</p>
-            <p class="value" style="font-size:18px;">${data.currency} ${data.totalAmount}</p>
-          </div>
-          <div style="padding:24px 32px;text-align:center;">
-            <a href="${data.dashboardUrl}" class="btn" style="display:inline-block;background:#059669;color:#ffffff;padding:14px 36px;border-radius:6px;text-decoration:none;font-weight:600;font-size:15px;">View in Dashboard</a>
-          </div>
-        </td></tr>
-      </table>
-    </td></tr>
+<body>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+    <tr>
+      <td align="center" style="padding: 40px 16px;">
+        <table role="presentation" width="100%" style="max-width: 640px; background-color: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;" cellspacing="0" cellpadding="0" border="0">
+
+          <!-- Header -->
+          <tr>
+            <td style="padding: 40px 40px 24px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="left">
+                    <img src="${logoUrl}" alt="Travio Africa" width="180" style="display: block; max-width: 180px; height: auto;">
+                  </td>
+                  <td align="right" valign="middle">
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td bgcolor="#F1F5F9" style="border-radius: 50px; padding: 6px 14px; font-size: 13px; font-weight: 600; color: #334155; line-height: 1;" class="font-main">
+                          &#x1F3EA;&nbsp;&nbsp;Supplier
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Title & Status -->
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="left">
+                    <h1 style="margin: 0 0 12px 0; font-size: 28px; font-weight: 800; color: #001F3F; line-height: 1.2;" class="font-main">New Booking Received</h1>
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td bgcolor="#E6F6F0" style="border-radius: 20px; padding: 6px 16px; font-size: 14px; font-weight: 700; color: #00A669; line-height: 1;" class="font-main">
+                          &#x2713;&nbsp;&nbsp;Confirmed
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Booking Reference Block -->
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <table role="presentation" width="100%" bgcolor="#F8FAFC" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 24px 32px; text-align: center;" align="center">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Booking Reference</span>
+                    <span style="font-size: 32px; font-weight: 800; color: #001F3F; line-height: 1;" class="font-main">${data.bookingNumber}</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Tour Details Card -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;">
+              <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr><td style="padding: 32px;">
+
+                <!-- Tour Title Header -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding-bottom: 24px; border-bottom: 1px solid #E2E8F0;">
+                    <h3 style="margin: 0 0 4px 0; font-size: 18px; font-weight: 700; color: #001F3F; line-height: 1.4;" class="font-main">${data.tourTitle}</h3>
+                    <p style="margin: 0; font-size: 14px; color: #64748B; line-height: 1.4;" class="font-main">A guest has booked your tour. Details below.</p>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Customer -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Customer</span>
+                    <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.customerName}</span>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Phone -->
+                ${data.customerPhone ? `
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Phone / WhatsApp</span>
+                    <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.customerPhone}</span>
+                  </td>
+                </tr>
+                </table>` : ''}
+
+                <!-- Location -->
+                ${data.customerLocation ? `
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Location</span>
+                    <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.customerLocation}</span>
+                  </td>
+                </tr>
+                </table>` : ''}
+
+                <!-- Date & Time -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td width="50%" valign="top" style="padding-right: 12px;" align="left">
+                          <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Date</span>
+                          <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.selectedDate}</span>
+                        </td>
+                        <td width="50%" valign="top" style="padding-left: 12px;" align="left">
+                          <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Time</span>
+                          <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.selectedTime || '\u2014'}</span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Travelers -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0 24px 0;">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Travelers</span>
+                    <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.travelerCount} guest(s)</span>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Total Paid -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td>
+                    <table role="presentation" width="100%" bgcolor="#F0FDF4" style="border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td style="padding: 18px 24px;" align="left" valign="middle">
+                          <span style="display: block; font-size: 11px; font-weight: 700; color: #00A669; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;" class="font-main">Total Paid</span>
+                          <span style="font-size: 26px; font-weight: 800; color: #00A669; line-height: 1;" class="font-main">${data.currency} ${data.totalAmount}</span>
+                        </td>
+                        <td style="padding: 18px 24px; text-align: right;" align="right" valign="middle" width="60">
+                          <table role="presentation" width="36" height="36" bgcolor="#00A669" style="border-radius: 50%;" cellspacing="0" cellpadding="0" border="0">
+                            <tr>
+                              <td align="center" valign="middle" style="font-size: 16px; color: #ffffff; line-height: 36px;">&#x2713;</td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                </table>
+
+                </td></tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- CTA Button -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="center">
+                    <a href="${data.dashboardUrl}" target="_blank" style="display: block; width: 100%; background-color: #00A669; padding: 16px 0; text-align: center; border-radius: 10px; color: #ffffff; font-size: 16px; font-weight: 700; text-decoration: none; line-height: 1;" class="font-main">View in Dashboard &nbsp;&rarr;</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Support -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;" align="center">
+              <span style="font-size: 13px; color: #64748B;" class="font-main">&#x1F3A7;&nbsp;&nbsp;Need help? Contact <a href="mailto:${supportEmail}" style="color: #00A669; text-decoration: none; font-weight: 600;">${supportEmail}</a></span>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td bgcolor="#001F3F" style="padding: 32px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="left" style="color: #ffffff; font-size: 14px; line-height: 1.4;" class="font-main">
+                    <strong style="color: #00A669; font-size: 14px;">Welcome aboard!</strong><br>
+                    <span style="color: #94A3B8; font-size: 13px;">Travio Africa Team</span>
+                  </td>
+                  <td align="right" style="font-family: 'Caveat', 'Georgia', 'Apple Chancery', cursive; font-size: 24px; color: #ffffff; font-weight: 400;" valign="middle">
+                    Let's <span style="color: #00A669;">grow</span> together.
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+
+        <p style="margin: 24px 0 0 0; text-align: center; font-size: 11px; color: #94A3B8; line-height: 1;" class="font-main">
+          &copy; ${year} Travio Africa by Expedition-Go Tours. All rights reserved.
+        </p>
+      </td>
+    </tr>
   </table>
 </body>
 </html>`;
 
   const text = `
-NEW BOOKING — ${data.tourTitle}
+NEW BOOKING! — ${data.tourTitle}
 Ref: ${data.bookingNumber}
+Status: Confirmed
+
 Customer: ${data.customerName}
 ${data.customerPhone ? 'Phone: ' + data.customerPhone : ''}
 ${data.customerLocation ? 'Location: ' + data.customerLocation : ''}
-Date: ${data.selectedDate}${data.selectedTime ? ' ' + data.selectedTime : ''}
+Date: ${data.selectedDate}${data.selectedTime ? ' at ' + data.selectedTime : ''}
 Travelers: ${data.travelerCount}
-Total: ${data.currency} ${data.totalAmount}
-Manage: ${data.dashboardUrl}`;
+
+Total Paid: ${data.currency} ${data.totalAmount}
+
+View in Dashboard: ${data.dashboardUrl}
+
+Need help? ${supportEmail}
+
+${year} Travio Africa by Expedition-Go Tours. All rights reserved.`;
 
   return { html, text };
 }
@@ -857,11 +1538,504 @@ function generatePrintableTicketHtml(data) {
 }
 
 // Add other template generators as needed...
-function generateSupplierUnderReviewTemplate(data) { return generateGenericNotificationTemplate(data); }
-function generateSupplierActivatedTemplate(data) { return generateGenericNotificationTemplate(data); }
-function generateSupplierSuspendedTemplate(data) { return generateGenericNotificationTemplate(data); }
-function generateReviewNotificationTemplate(data) { return generateGenericNotificationTemplate(data); }
-function generatePayoutNotificationTemplate(data) { return generateGenericNotificationTemplate(data); }
+function generateSupplierUnderReviewTemplate(data) {
+  const brandName = data.brandName || 'Travio Africa';
+  const supplierName = data.supplierBusinessName || data.name || 'there';
+  const supportEmail = data.supportEmail || 'support@expeditiongo.com';
+  const logoUrl = data.logoUrl || process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
+  const year = new Date().getFullYear();
+
+  const html = `<!DOCTYPE html>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>Additional Information Required</title>
+  <style>
+    body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; background-color: #F8FAFC; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
+    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    .font-main { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  </style>
+</head>
+<body>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+    <tr>
+      <td align="center" style="padding: 40px 16px;">
+        <table role="presentation" width="100%" style="max-width: 640px; background-color: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;" cellspacing="0" cellpadding="0" border="0">
+          <tr><td style="padding: 40px 40px 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+              <tr>
+                <td align="left"><img src="${logoUrl}" alt="${brandName}" width="180" style="display: block; max-width: 180px; height: auto;"></td>
+                <td align="right" valign="middle">
+                  <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td bgcolor="#F1F5F9" style="border-radius: 50px; padding: 6px 14px; font-size: 13px; font-weight: 600; color: #334155; line-height: 1;" class="font-main">Supplier</td></tr></table>
+                </td>
+              </tr>
+            </table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center">
+              <h1 style="margin: 0 0 12px 0; font-size: 28px; font-weight: 800; color: #001F3F; line-height: 1.2;" class="font-main">Additional Information Required</h1>
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;"><tr><td bgcolor="#FEF3C7" style="border-radius: 20px; padding: 6px 16px; font-size: 14px; font-weight: 700; color: #D97706; line-height: 1;" class="font-main">Under Review</td></tr></table>
+            </td></tr></table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 40px 40px;">
+            <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 32px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding-bottom: 24px; border-bottom: 1px solid #E2E8F0;">
+                <p style="margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #001F3F;" class="font-main">Hi ${supplierName},</p>
+                <p style="margin: 0; font-size: 15px; color: #334155; line-height: 1.5;" class="font-main">We're currently reviewing your supplier application. To complete the process, we need some additional documents from you.</p>
+              </td></tr></table>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 20px 0;">
+                <table role="presentation" width="100%" bgcolor="#FEF3C7" style="border-radius: 12px;" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 20px 24px;">
+                  <span style="display: block; font-size: 11px; font-weight: 700; color: #D97706; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;" class="font-main">Action Required</span>
+                  <p style="margin: 0; font-size: 14px; color: #334155; line-height: 1.5;" class="font-main">Please log in to your dashboard to upload the requested items. This will help us complete your review promptly.</p>
+                </td></tr></table>
+              </td></tr></table>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding-top: 8px;">
+                <p style="margin: 0; font-size: 14px; color: #64748B; line-height: 1.5;" class="font-main">If you have any questions about the required documents, don't hesitate to reach out.</p>
+              </td></tr></table>
+            </td></tr></table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 40px 40px;" align="center">
+            <span style="font-size: 13px; color: #64748B;" class="font-main">Need help? Contact <a href="mailto:${supportEmail}" style="color: #00A669; text-decoration: none; font-weight: 600;">${supportEmail}</a></span>
+          </td></tr>
+          <tr><td bgcolor="#001F3F" style="padding: 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+              <td align="left" style="color: #ffffff; font-size: 14px; line-height: 1.4;" class="font-main"><strong style="color: #00A669; font-size: 14px;">We're almost there!</strong><br><span style="color: #94A3B8; font-size: 13px;">${brandName} Team</span></td>
+              <td align="right" style="font-family: 'Caveat', 'Georgia', 'Apple Chancery', cursive; font-size: 20px; color: #ffffff; font-weight: 400;" valign="middle">Just a few more steps.</td>
+            </tr></table>
+          </td></tr>
+        </table>
+        <p style="margin: 24px 0 0 0; text-align: center; font-size: 11px; color: #94A3B8; line-height: 1;" class="font-main">&copy; ${year} ${brandName} by Expedition-Go Tours. All rights reserved.</p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const text = `ADDITIONAL INFORMATION REQUIRED\n\nHi ${supplierName},\n\nWe're reviewing your supplier application and need some additional documents.\n\nPlease log in to your dashboard to upload the requested items.\n\nQuestions? Contact: ${supportEmail}\n\n${year} ${brandName} by Expedition-Go Tours. All rights reserved.`;
+
+  return { html, text };
+}
+
+function generateSupplierActivatedTemplate(data) {
+  const brandName = data.brandName || 'Travio Africa';
+  const supplierName = data.supplierBusinessName || data.name || 'there';
+  const dashboardUrl = data.dashboardUrl || '#';
+  const supportEmail = data.supportEmail || 'support@expeditiongo.com';
+  const logoUrl = data.logoUrl || process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
+  const year = new Date().getFullYear();
+
+  const html = `<!DOCTYPE html>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>Account Activated</title>
+  <style>
+    body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; background-color: #F8FAFC; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
+    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    .font-main { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  </style>
+</head>
+<body>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+    <tr>
+      <td align="center" style="padding: 40px 16px;">
+        <table role="presentation" width="100%" style="max-width: 640px; background-color: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;" cellspacing="0" cellpadding="0" border="0">
+          <tr><td style="padding: 40px 40px 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+              <tr>
+                <td align="left"><img src="${logoUrl}" alt="${brandName}" width="180" style="display: block; max-width: 180px; height: auto;"></td>
+                <td align="right" valign="middle">
+                  <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td bgcolor="#F1F5F9" style="border-radius: 50px; padding: 6px 14px; font-size: 13px; font-weight: 600; color: #334155; line-height: 1;" class="font-main">Supplier</td></tr></table>
+                </td>
+              </tr>
+            </table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center">
+              <h1 style="margin: 0 0 12px 0; font-size: 28px; font-weight: 800; color: #001F3F; line-height: 1.2;" class="font-main">Account Activated</h1>
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;"><tr><td bgcolor="#E6F6F0" style="border-radius: 20px; padding: 6px 16px; font-size: 14px; font-weight: 700; color: #00A669; line-height: 1;" class="font-main">&#x2713;&nbsp;&nbsp;Active</td></tr></table>
+            </td></tr></table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 40px 40px;">
+            <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 32px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding-bottom: 24px; border-bottom: 1px solid #E2E8F0;">
+                <p style="margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #001F3F;" class="font-main">Hi ${supplierName},</p>
+                <p style="margin: 0; font-size: 15px; color: #334155; line-height: 1.5;" class="font-main">Your Stripe onboarding is complete. Your supplier account is now active and you can start receiving bookings and payouts.</p>
+              </td></tr></table>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 20px 0;">
+                <table role="presentation" width="100%" bgcolor="#F0FDF4" style="border-radius: 12px;" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 20px 24px;">
+                  <span style="display: block; font-size: 11px; font-weight: 700; color: #00A669; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;" class="font-main">What's Next</span>
+                  <p style="margin: 0; font-size: 14px; color: #334155; line-height: 1.5;" class="font-main">Your account is fully set up. You can now manage listings, accept bookings, and track your earnings from your dashboard.</p>
+                </td></tr></table>
+              </td></tr></table>
+            </td></tr></table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 40px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center">
+              <a href="${dashboardUrl}" target="_blank" style="display: block; width: 100%; background-color: #00A669; padding: 16px 0; text-align: center; border-radius: 10px; color: #ffffff; font-size: 16px; font-weight: 700; text-decoration: none; line-height: 1;" class="font-main">Go to Dashboard &nbsp;&rarr;</a>
+            </td></tr></table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 40px 40px;" align="center">
+            <span style="font-size: 13px; color: #64748B;" class="font-main">Need help? Contact <a href="mailto:${supportEmail}" style="color: #00A669; text-decoration: none; font-weight: 600;">${supportEmail}</a></span>
+          </td></tr>
+          <tr><td bgcolor="#001F3F" style="padding: 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+              <td align="left" style="color: #ffffff; font-size: 14px; line-height: 1.4;" class="font-main"><strong style="color: #00A669; font-size: 14px;">You're live!</strong><br><span style="color: #94A3B8; font-size: 13px;">${brandName} Team</span></td>
+              <td align="right" style="font-family: 'Caveat', 'Georgia', 'Apple Chancery', cursive; font-size: 20px; color: #ffffff; font-weight: 400;" valign="middle">Let's grow together.</td>
+            </tr></table>
+          </td></tr>
+        </table>
+        <p style="margin: 24px 0 0 0; text-align: center; font-size: 11px; color: #94A3B8; line-height: 1;" class="font-main">&copy; ${year} ${brandName} by Expedition-Go Tours. All rights reserved.</p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const text = `ACCOUNT ACTIVATED\n\nHi ${supplierName},\n\nYour Stripe onboarding is complete. Your supplier account is now active.\n\nGo to dashboard: ${dashboardUrl}\n\nQuestions? Contact: ${supportEmail}\n\n${year} ${brandName} by Expedition-Go Tours. All rights reserved.`;
+
+  return { html, text };
+}
+
+function generateSupplierSuspendedTemplate(data) {
+  const brandName = data.brandName || 'Travio Africa';
+  const supplierName = data.supplierBusinessName || data.name || 'there';
+  const supportEmail = data.supportEmail || 'support@expeditiongo.com';
+  const logoUrl = data.logoUrl || process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
+  const year = new Date().getFullYear();
+
+  const html = `<!DOCTYPE html>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>Account Suspended</title>
+  <style>
+    body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; background-color: #F8FAFC; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
+    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    .font-main { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  </style>
+</head>
+<body>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+    <tr>
+      <td align="center" style="padding: 40px 16px;">
+        <table role="presentation" width="100%" style="max-width: 640px; background-color: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;" cellspacing="0" cellpadding="0" border="0">
+          <tr><td style="padding: 40px 40px 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+              <tr>
+                <td align="left"><img src="${logoUrl}" alt="${brandName}" width="180" style="display: block; max-width: 180px; height: auto;"></td>
+                <td align="right" valign="middle">
+                  <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td bgcolor="#F1F5F9" style="border-radius: 50px; padding: 6px 14px; font-size: 13px; font-weight: 600; color: #334155; line-height: 1;" class="font-main">Supplier</td></tr></table>
+                </td>
+              </tr>
+            </table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center">
+              <h1 style="margin: 0 0 12px 0; font-size: 28px; font-weight: 800; color: #001F3F; line-height: 1.2;" class="font-main">Account Suspended</h1>
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;"><tr><td bgcolor="#FEF2F2" style="border-radius: 20px; padding: 6px 16px; font-size: 14px; font-weight: 700; color: #DC2626; line-height: 1;" class="font-main">Suspended</td></tr></table>
+            </td></tr></table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 40px 40px;">
+            <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 32px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding-bottom: 24px; border-bottom: 1px solid #E2E8F0;">
+                <p style="margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #001F3F;" class="font-main">Hi ${supplierName},</p>
+                <p style="margin: 0; font-size: 15px; color: #334155; line-height: 1.5;" class="font-main">Your supplier account has been temporarily suspended. This action was taken to ensure the security and integrity of our platform.</p>
+              </td></tr></table>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 20px 0;">
+                <table role="presentation" width="100%" bgcolor="#FEF2F2" style="border-radius: 12px;" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 20px 24px;">
+                  <span style="display: block; font-size: 11px; font-weight: 700; color: #DC2626; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;" class="font-main">What to Do</span>
+                  <p style="margin: 0; font-size: 14px; color: #334155; line-height: 1.5;" class="font-main">Please contact our support team for more information about this suspension and the steps needed to restore your account.</p>
+                </td></tr></table>
+              </td></tr></table>
+            </td></tr></table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 40px 40px;" align="center">
+            <span style="font-size: 13px; color: #64748B;" class="font-main">Contact support at <a href="mailto:${supportEmail}" style="color: #00A669; text-decoration: none; font-weight: 600;">${supportEmail}</a></span>
+          </td></tr>
+          <tr><td bgcolor="#001F3F" style="padding: 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+              <td align="left" style="color: #ffffff; font-size: 14px; line-height: 1.4;" class="font-main"><strong style="color: #00A669; font-size: 14px;">We're here to help</strong><br><span style="color: #94A3B8; font-size: 13px;">${brandName} Team</span></td>
+              <td align="right" style="font-family: 'Caveat', 'Georgia', 'Apple Chancery', cursive; font-size: 20px; color: #ffffff; font-weight: 400;" valign="middle">Let's resolve this.</td>
+            </tr></table>
+          </td></tr>
+        </table>
+        <p style="margin: 24px 0 0 0; text-align: center; font-size: 11px; color: #94A3B8; line-height: 1;" class="font-main">&copy; ${year} ${brandName} by Expedition-Go Tours. All rights reserved.</p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const text = `ACCOUNT SUSPENDED\n\nHi ${supplierName},\n\nYour supplier account has been temporarily suspended.\n\nPlease contact our support team for more information and steps to restore your account.\n\nContact: ${supportEmail}\n\n${year} ${brandName} by Expedition-Go Tours. All rights reserved.`;
+
+  return { html, text };
+}
+
+function generateReviewNotificationTemplate(data) {
+  const brandName = data.brandName || 'Travio Africa';
+  const dashboardUrl = data.reviewUrl || '#';
+  const supportEmail = data.supportEmail || 'support@expeditiongo.com';
+  const logoUrl = data.logoUrl || process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
+  const year = new Date().getFullYear();
+
+  const stars = '&#x2605;'.repeat(data.rating || 0) + '&#x2606;'.repeat(5 - (data.rating || 0));
+
+  const html = `<!DOCTYPE html>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>New Review Received</title>
+  <style>
+    body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; background-color: #F8FAFC; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
+    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    .font-main { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  </style>
+</head>
+<body>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+    <tr>
+      <td align="center" style="padding: 40px 16px;">
+        <table role="presentation" width="100%" style="max-width: 640px; background-color: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;" cellspacing="0" cellpadding="0" border="0">
+          <tr><td style="padding: 40px 40px 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+              <tr>
+                <td align="left"><img src="${logoUrl}" alt="${brandName}" width="180" style="display: block; max-width: 180px; height: auto;"></td>
+                <td align="right" valign="middle">
+                  <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td bgcolor="#F1F5F9" style="border-radius: 50px; padding: 6px 14px; font-size: 13px; font-weight: 600; color: #334155; line-height: 1;" class="font-main">Supplier</td></tr></table>
+                </td>
+              </tr>
+            </table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center">
+              <h1 style="margin: 0 0 12px 0; font-size: 28px; font-weight: 800; color: #001F3F; line-height: 1.2;" class="font-main">New Review Received</h1>
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;"><tr><td bgcolor="#FEF3C7" style="border-radius: 20px; padding: 6px 16px; font-size: 14px; font-weight: 700; color: #D97706; line-height: 1;" class="font-main">${data.rating || 0}-Star Review</td></tr></table>
+            </td></tr></table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 40px 40px;">
+            <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 32px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding-bottom: 24px; border-bottom: 1px solid #E2E8F0;">
+                <h3 style="margin: 0 0 4px 0; font-size: 18px; font-weight: 700; color: #001F3F; line-height: 1.4;" class="font-main">${data.tourTitle}</h3>
+                <p style="margin: 0; font-size: 14px; color: #64748B; line-height: 1.4;" class="font-main">${data.customerName} left a review on ${data.reviewDate}</p>
+              </td></tr></table>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Rating</span>
+                <span style="font-size: 20px; color: #F59E0B; letter-spacing: 2px;" class="font-main">${stars}</span>
+              </td></tr></table>
+              ${data.reviewTitle ? `
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Title</span>
+                <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.reviewTitle}</span>
+              </td></tr></table>` : ''}
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 20px 0;">
+                <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Comment</span>
+                <p style="margin: 0; font-size: 14px; color: #334155; line-height: 1.5;" class="font-main">${data.reviewComment || 'No comment provided.'}</p>
+              </td></tr></table>
+            </td></tr></table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 40px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center">
+              <a href="${dashboardUrl}" target="_blank" style="display: block; width: 100%; background-color: #00A669; padding: 16px 0; text-align: center; border-radius: 10px; color: #ffffff; font-size: 16px; font-weight: 700; text-decoration: none; line-height: 1;" class="font-main">View Review &nbsp;&rarr;</a>
+            </td></tr></table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 40px 40px;" align="center">
+            <span style="font-size: 13px; color: #64748B;" class="font-main">Need help? Contact <a href="mailto:${supportEmail}" style="color: #00A669; text-decoration: none; font-weight: 600;">${supportEmail}</a></span>
+          </td></tr>
+          <tr><td bgcolor="#001F3F" style="padding: 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+              <td align="left" style="color: #ffffff; font-size: 14px; line-height: 1.4;" class="font-main"><strong style="color: #00A669; font-size: 14px;">Keep up the great work!</strong><br><span style="color: #94A3B8; font-size: 13px;">${brandName} Team</span></td>
+              <td align="right" style="font-family: 'Caveat', 'Georgia', 'Apple Chancery', cursive; font-size: 20px; color: #ffffff; font-weight: 400;" valign="middle">Reviews fuel your success.</td>
+            </tr></table>
+          </td></tr>
+        </table>
+        <p style="margin: 24px 0 0 0; text-align: center; font-size: 11px; color: #94A3B8; line-height: 1;" class="font-main">&copy; ${year} ${brandName} by Expedition-Go Tours. All rights reserved.</p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const text = `NEW REVIEW — ${data.rating || 0} Stars\n\nTour: ${data.tourTitle}\nCustomer: ${data.customerName}\nDate: ${data.reviewDate}\n${data.reviewTitle ? 'Title: ' + data.reviewTitle + '\n' : ''}Comment: ${data.reviewComment || 'No comment provided.'}\n\nView review: ${dashboardUrl}\n\n${year} ${brandName} by Expedition-Go Tours. All rights reserved.`;
+
+  return { html, text };
+}
+
+function generatePayoutNotificationTemplate(data) {
+  const brandName = data.brandName || 'Travio Africa';
+  const dashboardUrl = data.dashboardUrl || '#';
+  const supportEmail = data.supportEmail || 'support@expeditiongo.com';
+  const logoUrl = data.logoUrl || process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
+  const year = new Date().getFullYear();
+
+  const html = `<!DOCTYPE html>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>Payout Processed</title>
+  <style>
+    body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; background-color: #F8FAFC; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
+    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    .font-main { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  </style>
+</head>
+<body>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+    <tr>
+      <td align="center" style="padding: 40px 16px;">
+        <table role="presentation" width="100%" style="max-width: 640px; background-color: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;" cellspacing="0" cellpadding="0" border="0">
+          <tr><td style="padding: 40px 40px 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+              <tr>
+                <td align="left"><img src="${logoUrl}" alt="${brandName}" width="180" style="display: block; max-width: 180px; height: auto;"></td>
+                <td align="right" valign="middle">
+                  <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td bgcolor="#F1F5F9" style="border-radius: 50px; padding: 6px 14px; font-size: 13px; font-weight: 600; color: #334155; line-height: 1;" class="font-main">Supplier</td></tr></table>
+                </td>
+              </tr>
+            </table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center">
+              <h1 style="margin: 0 0 12px 0; font-size: 28px; font-weight: 800; color: #001F3F; line-height: 1.2;" class="font-main">Payout Processed</h1>
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;"><tr><td bgcolor="#E6F6F0" style="border-radius: 20px; padding: 6px 16px; font-size: 14px; font-weight: 700; color: #00A669; line-height: 1;" class="font-main">&#x2713;&nbsp;&nbsp;Sent</td></tr></table>
+            </td></tr></table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 40px 40px;">
+            <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 32px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding-bottom: 24px; border-bottom: 1px solid #E2E8F0;">
+                <p style="margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #001F3F;" class="font-main">Hi ${data.supplierName},</p>
+                <p style="margin: 0; font-size: 15px; color: #334155; line-height: 1.5;" class="font-main">Your payout has been processed and is on its way to your bank account.</p>
+              </td></tr></table>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Payout ID</span>
+                <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.payoutId}</span>
+              </td></tr></table>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Date</span>
+                <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.payoutDate}</span>
+              </td></tr></table>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 20px 0;">
+                <table role="presentation" width="100%" bgcolor="#F0FDF4" style="border-radius: 12px;" cellspacing="0" cellpadding="0" border="0"><tr>
+                  <td style="padding: 18px 24px;" align="left" valign="middle">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #00A669; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;" class="font-main">Amount</span>
+                    <span style="font-size: 26px; font-weight: 800; color: #00A669; line-height: 1;" class="font-main">${data.currency} ${parseFloat(data.payoutAmount).toFixed(2)}</span>
+                  </td>
+                  <td style="padding: 18px 24px; text-align: right;" align="right" valign="middle" width="60">
+                    <table role="presentation" width="36" height="36" bgcolor="#00A669" style="border-radius: 50%;" cellspacing="0" cellpadding="0" border="0"><tr><td align="center" valign="middle" style="font-size: 16px; color: #ffffff; line-height: 36px;">&#x2713;</td></tr></table>
+                  </td>
+                </tr></table>
+              </td></tr></table>
+            </td></tr></table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 40px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center">
+              <a href="${dashboardUrl}" target="_blank" style="display: block; width: 100%; background-color: #00A669; padding: 16px 0; text-align: center; border-radius: 10px; color: #ffffff; font-size: 16px; font-weight: 700; text-decoration: none; line-height: 1;" class="font-main">View Earnings &nbsp;&rarr;</a>
+            </td></tr></table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 40px 40px;" align="center">
+            <span style="font-size: 13px; color: #64748B;" class="font-main">Need help? Contact <a href="mailto:${supportEmail}" style="color: #00A669; text-decoration: none; font-weight: 600;">${supportEmail}</a></span>
+          </td></tr>
+          <tr><td bgcolor="#001F3F" style="padding: 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+              <td align="left" style="color: #ffffff; font-size: 14px; line-height: 1.4;" class="font-main"><strong style="color: #00A669; font-size: 14px;">Enjoy your earnings!</strong><br><span style="color: #94A3B8; font-size: 13px;">${brandName} Team</span></td>
+              <td align="right" style="font-family: 'Caveat', 'Georgia', 'Apple Chancery', cursive; font-size: 20px; color: #ffffff; font-weight: 400;" valign="middle">Here's to more.</td>
+            </tr></table>
+          </td></tr>
+        </table>
+        <p style="margin: 24px 0 0 0; text-align: center; font-size: 11px; color: #94A3B8; line-height: 1;" class="font-main">&copy; ${year} ${brandName} by Expedition-Go Tours. All rights reserved.</p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const text = `PAYOUT PROCESSED\n\nHi ${data.supplierName},\n\nYour payout has been processed.\nPayout ID: ${data.payoutId}\nDate: ${data.payoutDate}\nAmount: ${data.currency} ${data.payoutAmount}\n\nView earnings: ${dashboardUrl}\n\nQuestions? Contact: ${supportEmail}\n\n${year} ${brandName} by Expedition-Go Tours. All rights reserved.`;
+
+  return { html, text };
+}
+
+function generateGenericNotificationTemplate(data) {
+  const brandName = data.brandName || 'Travio Africa';
+  const supportEmail = data.supportEmail || 'support@expeditiongo.com';
+  const logoUrl = data.logoUrl || process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
+  const actionUrl = data.actionUrl || '#';
+  const year = new Date().getFullYear();
+
+  const html = `<!DOCTYPE html>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>Notification</title>
+  <style>
+    body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; background-color: #F8FAFC; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
+    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    .font-main { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  </style>
+</head>
+<body>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+    <tr>
+      <td align="center" style="padding: 40px 16px;">
+        <table role="presentation" width="100%" style="max-width: 640px; background-color: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;" cellspacing="0" cellpadding="0" border="0">
+          <tr><td style="padding: 40px 40px 24px 40px;">
+            <img src="${logoUrl}" alt="${brandName}" width="180" style="display: block; max-width: 180px; height: auto;">
+          </td></tr>
+          <tr><td style="padding: 0 40px 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center">
+              <h1 style="margin: 0 0 12px 0; font-size: 28px; font-weight: 800; color: #001F3F; line-height: 1.2;" class="font-main">${data.title || 'Notification'}</h1>
+            </td></tr></table>
+          </td></tr>
+          <tr><td style="padding: 0 40px 40px 40px;">
+            <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 32px;">
+              <p style="margin: 0 0 16px 0; font-size: 15px; color: #334155; line-height: 1.5;" class="font-main">${data.message}</p>
+              ${data.userName ? `<p style="margin: 0; font-size: 14px; color: #64748B;" class="font-main">Hi ${data.userName},</p>` : ''}
+            </td></tr></table>
+          </td></tr>
+          ${actionUrl && actionUrl !== '#' ? `
+          <tr><td style="padding: 0 40px 40px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center">
+              <a href="${actionUrl}" target="_blank" style="display: block; width: 100%; background-color: #00A669; padding: 16px 0; text-align: center; border-radius: 10px; color: #ffffff; font-size: 16px; font-weight: 700; text-decoration: none; line-height: 1;" class="font-main">Take Action &nbsp;&rarr;</a>
+            </td></tr></table>
+          </td></tr>` : ''}
+          <tr><td style="padding: 0 40px 40px 40px;" align="center">
+            <span style="font-size: 13px; color: #64748B;" class="font-main">Need help? Contact <a href="mailto:${supportEmail}" style="color: #00A669; text-decoration: none; font-weight: 600;">${supportEmail}</a></span>
+          </td></tr>
+          <tr><td bgcolor="#001F3F" style="padding: 32px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+              <td align="left" style="color: #ffffff; font-size: 14px; line-height: 1.4;" class="font-main"><strong style="color: #00A669; font-size: 14px;">Best regards</strong><br><span style="color: #94A3B8; font-size: 13px;">${brandName} Team</span></td>
+              <td align="right" style="font-family: 'Caveat', 'Georgia', 'Apple Chancery', cursive; font-size: 20px; color: #ffffff; font-weight: 400;" valign="middle">We're here for you.</td>
+            </tr></table>
+          </td></tr>
+        </table>
+        <p style="margin: 24px 0 0 0; text-align: center; font-size: 11px; color: #94A3B8; line-height: 1;" class="font-main">&copy; ${year} ${brandName} by Expedition-Go Tours. All rights reserved.</p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const text = `${data.title || 'Notification'}\n\n${data.message}\n\n${year} ${brandName} by Expedition-Go Tours. All rights reserved.`;
+
+  return { html, text };
+}
 
 module.exports = {
   sendEmail,

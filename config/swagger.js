@@ -30,6 +30,29 @@ Production-ready tour booking platform API with comprehensive features including
 - **File uploads** with Cloudinary integration
 - **Comprehensive audit logging** for all operations
 
+## Analytics & Event Tracking
+The platform includes a production-grade analytics system:
+- **Structured event tracking** — every user action emits a named event (e.g., \`user.signed_up\`, \`tour.viewed\`, \`booking.completed\`) with typed properties
+- **Event model** — all events are persisted in the \`Event\` table with indexes optimized for funnel and time-series queries
+- **Background job processing** — BullMQ queues decouple email delivery, notifications, and scheduled aggregation from the request cycle
+- **Admin analytics dashboard** — platform-wide endpoints for revenue, booking volume, funnel analysis, CLV, search analytics, and cart abandonment
+- **Search analytics** — tracks every query, identifies zero-result searches (unmet demand), and measures search-to-booking conversion
+- **Cart abandonment tracking** — expired carts emit \`cart.abandoned\` events for real-time tracking and future reminder flows
+
+## Admin Analytics Endpoints
+All analytics endpoints require \`admin\` role and are available at \`/api/admin/analytics/*\`:
+
+| Endpoint | Purpose |
+|---|---|
+| \`/analytics/overview\` | Platform snapshot (revenue, bookings, signups, top tours/suppliers) |
+| \`/analytics/revenue-trend\` | Monthly revenue + commission (last 24 months) |
+| \`/analytics/user-growth\` | Monthly signups by role (last 24 months) |
+| \`/analytics/tour-performance\` | Paginated tour metrics (sortable, filterable) |
+| \`/analytics/funnel\` | Booking conversion funnel (view → cart → checkout → complete) |
+| \`/analytics/clv\` | Customer Lifetime Value, repeat rate, cohorts |
+| \`/analytics/search\` | Top queries, zero-result detection, search outcomes |
+| \`/analytics/cart-abandonment\` | Abandonment rate, per-tour breakdown, daily trend |
+
 ## Authentication
 All protected endpoints require a Firebase JWT token in the Authorization header:
 \`\`\`
@@ -43,6 +66,7 @@ Authorization: Bearer test-token
 
 ## Rate Limiting
 - **100 requests per 15 minutes** per IP address
+- **20 requests per 15 minutes** on auth endpoints
 - Rate limit headers included in responses
 
 ## Error Handling
@@ -82,9 +106,10 @@ Response includes pagination metadata:
 Real-time notifications are sent via WebSocket for:
 - New bookings
 - Booking status changes
-- Review submissions
+- Review submissions and supplier responses
 - Supplier status updates
 - Payment confirmations
+- Admin alerts
 
 Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
       `,
@@ -1271,6 +1296,79 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
               minimum: 0,
               example: 1543
             },
+            // Normalized location fields (extracted from productContent.location for indexed filtering)
+            latitude: {
+              type: 'number',
+              format: 'double',
+              description: 'GPS latitude for geo-spatial search',
+              nullable: true,
+              example: -33.9249
+            },
+            longitude: {
+              type: 'number',
+              format: 'double',
+              description: 'GPS longitude for geo-spatial search',
+              nullable: true,
+              example: 18.4241
+            },
+            city: {
+              type: 'string',
+              description: 'Tour city location (indexed, extracted from productContent.location.city)',
+              nullable: true,
+              example: 'Cape Town'
+            },
+            country: {
+              type: 'string',
+              description: 'Tour country location (indexed, extracted from productContent.location.country)',
+              nullable: true,
+              example: 'South Africa'
+            },
+            region: {
+              type: 'string',
+              description: 'Tour region / state (indexed, extracted from productContent.location.region)',
+              nullable: true,
+              example: 'Western Cape'
+            },
+            // Normalized categorization fields (extracted from categorization JSON for indexed filtering)
+            category: {
+              type: 'string',
+              description: 'Main tour category — e.g. Adventure, Cultural, Nature (indexed)',
+              nullable: true,
+              example: 'Adventure'
+            },
+            subcategory: {
+              type: 'string',
+              description: 'Specific tour type — e.g. Walking Tours, Hiking (indexed)',
+              nullable: true,
+              example: 'Safari'
+            },
+            activityType: {
+              type: 'string',
+              description: 'Activity format — e.g. Guided Tour, Self-Guided (indexed)',
+              nullable: true,
+              example: 'Guided Tour'
+            },
+            difficulty: {
+              type: 'string',
+              description: 'Physical difficulty — Easy, Moderate, Challenging, Expert (indexed)',
+              nullable: true,
+              enum: ['Easy', 'Moderate', 'Challenging', 'Expert'],
+              example: 'Moderate'
+            },
+            primaryTheme: {
+              type: 'string',
+              description: 'Primary theme — e.g. Nature & Wildlife, History & Culture (indexed)',
+              nullable: true,
+              example: 'Nature & Wildlife'
+            },
+            secondaryThemes: {
+              type: 'array',
+              description: 'Additional themes (stored in normalized TourSecondaryTheme table)',
+              items: {
+                type: 'string'
+              },
+              example: ['Photography', 'Adventure', 'Family-Friendly']
+            },
             createdAt: {
               type: 'string',
               format: 'date-time',
@@ -1315,7 +1413,12 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
             bookingAndTickets: { $ref: '#/components/schemas/Tour/properties/bookingAndTickets' },
             tags: { $ref: '#/components/schemas/Tour/properties/tags' },
             metaTitle: { $ref: '#/components/schemas/Tour/properties/metaTitle' },
-            metaDescription: { $ref: '#/components/schemas/Tour/properties/metaDescription' }
+            metaDescription: { $ref: '#/components/schemas/Tour/properties/metaDescription' },
+            city: { $ref: '#/components/schemas/Tour/properties/city' },
+            country: { $ref: '#/components/schemas/Tour/properties/country' },
+            region: { $ref: '#/components/schemas/Tour/properties/region' },
+            latitude: { $ref: '#/components/schemas/Tour/properties/latitude' },
+            longitude: { $ref: '#/components/schemas/Tour/properties/longitude' }
           }
         },
         // ================================
@@ -2388,6 +2491,308 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
             viewCount: 1543,
             createdAt: '2026-05-12T10:31:34.728Z',
             updatedAt: '2026-05-12T10:31:56.017Z'
+          }
+        }
+      }
+    },
+    // ================================
+    // ANALYTICS SCHEMAS
+    // ================================
+    Event: {
+      type: 'object',
+      description: 'Product analytics event for user behaviour tracking and funnel analysis',
+      properties: {
+        id: { type: 'string', description: 'Unique event identifier', example: 'cmp6z1vnu0009v7rabyjmnst5' },
+        name: { type: 'string', description: 'Dot-notation event name. e.g. "booking.completed", "tour.viewed", "search.executed"', example: 'booking.completed' },
+        userId: { type: 'string', description: 'Authenticated user who triggered the event', nullable: true, example: 'cmp2h5edn0000wrs1gfllik7m' },
+        sessionId: { type: 'string', description: 'Anonymous session fingerprint for unauthenticated tracking', nullable: true, example: 'a1b2c3d4e5f6...' },
+        resource: { type: 'string', description: 'Affected entity type', nullable: true, example: 'Booking' },
+        resourceId: { type: 'string', description: 'Affected entity primary key', nullable: true, example: 'cmp2hql3c0001tzv0460pbckm' },
+        properties: { type: 'object', description: 'Arbitrary event payload (JSON)', example: { total: 150, currency: 'USD', tourId: 'cmp2hql3c0001tzv0460pbckm' } },
+        source: { type: 'string', description: 'Origin of the event', enum: ['web', 'mobile', 'api', 'webhook', 'system'], example: 'webhook' },
+        createdAt: { type: 'string', format: 'date-time', description: 'Event timestamp' }
+      }
+    },
+    AnalyticsOverview: {
+      type: 'object',
+      description: 'Platform-wide analytics snapshot response',
+      properties: {
+        overview: {
+          type: 'object',
+          properties: {
+            revenue: {
+              type: 'object',
+              properties: {
+                today: { type: 'object', properties: { revenue: { type: 'string' }, supplierPayout: { type: 'string' }, commission: { type: 'string' } } },
+                thisWeek: { type: 'object', properties: { revenue: { type: 'string' }, supplierPayout: { type: 'string' }, commission: { type: 'string' } } },
+                thisMonth: { type: 'object', properties: { revenue: { type: 'string' }, supplierPayout: { type: 'string' }, commission: { type: 'string' } } },
+                ytd: { type: 'object', properties: { revenue: { type: 'string' }, supplierPayout: { type: 'string' }, commission: { type: 'string' } } }
+              }
+            },
+            bookings: {
+              type: 'object',
+              properties: {
+                today: { type: 'integer' }, thisWeek: { type: 'integer' },
+                thisMonth: { type: 'integer' }, ytd: { type: 'integer' }
+              }
+            },
+            signups: {
+              type: 'object',
+              properties: {
+                today: { type: 'integer' }, thisWeek: { type: 'integer' },
+                thisMonth: { type: 'integer' }, ytd: { type: 'integer' }
+              }
+            },
+            activeUsersLast30Days: { type: 'integer' }
+          }
+        },
+        topTours: { type: 'array', items: { type: 'object' } },
+        topSuppliers: { type: 'array', items: { type: 'object' } },
+        bookingStatusDistribution: { type: 'array', items: { type: 'object', properties: { status: { type: 'string' }, count: { type: 'integer' } } } },
+        eventFeed: { type: 'array', items: { '$ref': '#/components/schemas/Event' } },
+        totalEvents: { type: 'integer' }
+      }
+    },
+    FunnelStep: {
+      type: 'object',
+      properties: {
+        step: { type: 'string', enum: ['viewed', 'cart_added', 'checkout_started', 'booking_completed'], description: 'Funnel stage name' },
+        users: { type: 'integer', description: 'Unique users who reached this stage' },
+        dropOff: { type: 'string', nullable: true, description: 'Drop-off percentage from previous stage (null for first stage)', example: '25.0%' }
+      }
+    },
+    FunnelResponse: {
+      type: 'object',
+      description: 'Booking conversion funnel data',
+      properties: {
+        period: { type: 'string', example: '30d' },
+        funnel: { type: 'array', items: { '$ref': '#/components/schemas/FunnelStep' } },
+        conversionRates: {
+          type: 'object',
+          properties: {
+            viewToCart: { type: 'number', example: 60.0 },
+            cartToCheckout: { type: 'number', example: 75.0 },
+            checkoutToComplete: { type: 'number', example: 100.0 },
+            overall: { type: 'number', example: 60.0 }
+          }
+        },
+        dailyTrend: { type: 'array', items: { type: 'object' } }
+      }
+    },
+    CLVResponse: {
+      type: 'object',
+      description: 'Customer Lifetime Value & repeat booking analysis',
+      properties: {
+        overview: {
+          type: 'object',
+          properties: {
+            totalCustomers: { type: 'integer' },
+            totalBookings: { type: 'integer' },
+            avgBookingValue: { type: 'string' },
+            totalRevenue: { type: 'string' },
+            avgCLV: { type: 'number' }
+          }
+        },
+        repeatRate: {
+          type: 'object',
+          properties: {
+            totalCustomers: { type: 'integer' },
+            repeatCustomers: { type: 'integer' },
+            repeatRate: { type: 'number', description: 'Percentage of customers with 2+ bookings' },
+            avgBookingsPerCustomer: { type: 'number' }
+          }
+        },
+        distribution: {
+          type: 'array',
+          description: 'Customer distribution by number of bookings',
+          items: {
+            type: 'object',
+            properties: {
+              bookingCount: { type: 'string', example: '1' },
+              customers: { type: 'integer' },
+              percentage: { type: 'number' }
+            }
+          }
+        },
+        topCustomers: {
+          type: 'array',
+          description: 'Top 20 customers by lifetime value',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' }, name: { type: 'string' }, email: { type: 'string' },
+              totalBookings: { type: 'integer' }, totalSpent: { type: 'number' },
+              avgBookingValue: { type: 'number' }, lastBookingDate: { type: 'string', format: 'date-time' }
+            }
+          }
+        },
+        cohorts: {
+          type: 'array',
+          description: 'Monthly signup cohort performance (YTD)',
+          items: {
+            type: 'object',
+            properties: {
+              month: { type: 'string', format: 'date' }, users: { type: 'integer' },
+              bookings: { type: 'integer' }, revenue: { type: 'number' },
+              bookingsPerUser: { type: 'number' }, revenuePerUser: { type: 'number' }
+            }
+          }
+        }
+      }
+    },
+    SearchAnalyticsResponse: {
+      type: 'object',
+      description: 'Search query analytics and zero-result discovery',
+      properties: {
+        period: { type: 'string', example: '30d' },
+        overview: {
+          type: 'object',
+          properties: {
+            totalSearches: { type: 'integer' },
+            uniqueSearchers: { type: 'integer' },
+            zeroResultSearches: { type: 'integer', description: 'Searches with zero results — indicates unmet demand' },
+            zeroResultRate: { type: 'number' }
+          }
+        },
+        searchOutcome: {
+          type: 'object',
+          properties: {
+            searchers: { type: 'integer' },
+            viewersAfterSearch: { type: 'integer' },
+            bookersAfterSearch: { type: 'integer' },
+            searchToViewRate: { type: 'number' },
+            searchToBookRate: { type: 'number' }
+          }
+        },
+        topQueries: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              query: { type: 'string' }, searches: { type: 'integer' },
+              uniqueUsers: { type: 'integer' }, avgResults: { type: 'number' }
+            }
+          }
+        },
+        zeroResultQueries: {
+          type: 'array',
+          description: 'Product opportunity: queries with demand but no matching tours',
+          items: {
+            type: 'object',
+            properties: { query: { type: 'string' }, searches: { type: 'integer' }, uniqueUsers: { type: 'integer' } }
+          }
+        },
+        dailyTrend: { type: 'array', items: { type: 'object' } }
+      }
+    },
+    CartAbandonmentResponse: {
+      type: 'object',
+      description: 'Cart abandonment rate and per-tour breakdown',
+      properties: {
+        period: { type: 'string', example: '30d' },
+        overview: {
+          type: 'object',
+          properties: {
+            cartsCreated: { type: 'integer' },
+            cartsConverted: { type: 'integer' },
+            abandonmentRate: { type: 'number', description: 'Percentage of carts that never converted to bookings' }
+          }
+        },
+        byTour: {
+          type: 'array',
+          description: 'Breakdown by individual tour',
+          items: {
+            type: 'object',
+            properties: {
+              tourId: { type: 'string' }, tourTitle: { type: 'string' },
+              cartsAdded: { type: 'integer' }, converted: { type: 'integer' },
+              abandonmentRate: { type: 'number' }
+            }
+          }
+        },
+        dailyTrend: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              day: { type: 'string', format: 'date' }, cartsAdded: { type: 'integer' },
+              converted: { type: 'integer' }, abandonmentRate: { type: 'number' }
+            }
+          }
+        }
+      }
+    },
+    RevenueTrendResponse: {
+      type: 'object',
+      description: 'Monthly revenue breakdown for charting',
+      properties: {
+        months: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              month: { type: 'string', format: 'date' }, bookings: { type: 'integer' },
+              revenue: { type: 'number' }, commission: { type: 'number' },
+              supplierPayout: { type: 'number' }
+            }
+          }
+        }
+      }
+    },
+    UserGrowthResponse: {
+      type: 'object',
+      description: 'Monthly signup growth by role',
+      properties: {
+        growth: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              month: { type: 'string', format: 'date' }, total: { type: 'integer' },
+              customers: { type: 'integer' }, suppliers: { type: 'integer' }
+            }
+          }
+        }
+      }
+    },
+    TourPerformanceResponse: {
+      type: 'object',
+      description: 'Paginated tour-level performance metrics for admin',
+      allOf: [
+        { '$ref': '#/components/schemas/PaginatedResponse' },
+        {
+          type: 'object',
+          properties: {
+            tours: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' }, title: { type: 'string' }, slug: { type: 'string' },
+                  status: { type: 'string', enum: ['DRAFT', 'ACTIVE', 'PAUSED', 'ARCHIVED'] },
+                  totalBookings: { type: 'integer' }, totalRevenue: { type: 'number' },
+                  averageRating: { type: 'number' }, reviewCount: { type: 'integer' },
+                  viewCount: { type: 'integer' }, createdAt: { type: 'string', format: 'date-time' },
+                  supplier: {
+                    type: 'object',
+                    properties: { id: { type: 'string' }, name: { type: 'string' } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    PaginatedResponse: {
+      type: 'object',
+      description: 'Generic pagination metadata',
+      properties: {
+        pagination: {
+          type: 'object',
+          properties: {
+            currentPage: { type: 'integer' }, totalPages: { type: 'integer' },
+            totalCount: { type: 'integer' }, limit: { type: 'integer' }
           }
         }
       }

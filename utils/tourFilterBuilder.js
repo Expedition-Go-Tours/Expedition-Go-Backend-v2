@@ -86,70 +86,42 @@ function buildTourFilters(queryParams) {
   // ================================
   
   if (category || subcategory || activityType) {
-    const categorizationFilter = {};
-    
     if (category) {
-      categorizationFilter.path = ['category'];
-      categorizationFilter.equals = category;
-      andConditions.push({ categorization: categorizationFilter });
+      andConditions.push({ category: { equals: category, mode: 'insensitive' } });
     }
-    
     if (subcategory) {
-      andConditions.push({
-        categorization: {
-          path: ['subcategory'],
-          equals: subcategory
-        }
-      });
+      andConditions.push({ subcategory: { equals: subcategory, mode: 'insensitive' } });
     }
-    
     if (activityType) {
-      andConditions.push({
-        categorization: {
-          path: ['activityType'],
-          equals: activityType
-        }
-      });
+      andConditions.push({ activityType: { equals: activityType, mode: 'insensitive' } });
     }
   }
 
   // ================================
   // THEME FILTERS
   // ================================
-  
+
   if (theme || primaryTheme || secondaryTheme) {
     if (primaryTheme) {
-      andConditions.push({
-        theme: {
-          path: ['primary'],
-          equals: primaryTheme
-        }
-      });
+      andConditions.push({ primaryTheme: { equals: primaryTheme, mode: 'insensitive' } });
     }
-    
+
     if (secondaryTheme) {
       andConditions.push({
-        theme: {
-          path: ['secondary'],
-          array_contains: secondaryTheme
+        secondaryThemes: {
+          some: { theme: { equals: secondaryTheme, mode: 'insensitive' } }
         }
       });
     }
-    
+
     // Generic theme search (searches both primary and secondary)
     if (theme && !primaryTheme && !secondaryTheme) {
       andConditions.push({
         OR: [
+          { primaryTheme: { equals: theme, mode: 'insensitive' } },
           {
-            theme: {
-              path: ['primary'],
-              equals: theme
-            }
-          },
-          {
-            theme: {
-              path: ['secondary'],
-              array_contains: theme
+            secondaryThemes: {
+              some: { theme: { equals: theme, mode: 'insensitive' } }
             }
           }
         ]
@@ -163,27 +135,12 @@ function buildTourFilters(queryParams) {
   
   if (location || city || country || region) {
     if (location) {
-      // Search across multiple location fields
+      // Search across indexed location columns
       andConditions.push({
         OR: [
-          {
-            productContent: {
-              path: ['location', 'city'],
-              string_contains: location
-            }
-          },
-          {
-            productContent: {
-              path: ['location', 'country'],
-              string_contains: location
-            }
-          },
-          {
-            productContent: {
-              path: ['location', 'region'],
-              string_contains: location
-            }
-          },
+          { city: { contains: location, mode: 'insensitive' } },
+          { country: { contains: location, mode: 'insensitive' } },
+          { region: { contains: location, mode: 'insensitive' } },
           {
             productContent: {
               path: ['meetingPoint', 'address'],
@@ -195,30 +152,15 @@ function buildTourFilters(queryParams) {
     }
     
     if (city) {
-      andConditions.push({
-        productContent: {
-          path: ['location', 'city'],
-          equals: city
-        }
-      });
+      andConditions.push({ city: { equals: city, mode: 'insensitive' } });
     }
     
     if (country) {
-      andConditions.push({
-        productContent: {
-          path: ['location', 'country'],
-          equals: country
-        }
-      });
+      andConditions.push({ country: { equals: country, mode: 'insensitive' } });
     }
     
     if (region) {
-      andConditions.push({
-        productContent: {
-          path: ['location', 'region'],
-          equals: region
-        }
-      });
+      andConditions.push({ region: { equals: region, mode: 'insensitive' } });
     }
   }
 
@@ -454,10 +396,15 @@ async function getAvailableFilterOptions(prisma) {
     const tours = await prisma.tour.findMany({
       where: { status: 'ACTIVE' },
       select: {
-        categorization: true,
-        theme: true,
-        productContent: true,
-        tags: true
+        category: true,
+        subcategory: true,
+        activityType: true,
+        primaryTheme: true,
+        tags: true,
+        city: true,
+        country: true,
+        region: true,
+        secondaryThemes: { select: { theme: true } },
       }
     });
 
@@ -473,20 +420,20 @@ async function getAvailableFilterOptions(prisma) {
 
     tours.forEach(tour => {
       // Extract categorization
-      if (tour.categorization?.category) categories.add(tour.categorization.category);
-      if (tour.categorization?.subcategory) subcategories.add(tour.categorization.subcategory);
-      if (tour.categorization?.activityType) activityTypes.add(tour.categorization.activityType);
+      if (tour.category) categories.add(tour.category);
+      if (tour.subcategory) subcategories.add(tour.subcategory);
+      if (tour.activityType) activityTypes.add(tour.activityType);
 
       // Extract themes
-      if (tour.theme?.primary) primaryThemes.add(tour.theme.primary);
-      if (tour.theme?.secondary && Array.isArray(tour.theme.secondary)) {
-        tour.theme.secondary.forEach(t => secondaryThemes.add(t));
+      if (tour.primaryTheme) primaryThemes.add(tour.primaryTheme);
+      if (tour.secondaryThemes?.length) {
+        tour.secondaryThemes.forEach(st => secondaryThemes.add(st.theme));
       }
 
       // Extract locations
-      if (tour.productContent?.location?.city) cities.add(tour.productContent.location.city);
-      if (tour.productContent?.location?.country) countries.add(tour.productContent.location.country);
-      if (tour.productContent?.location?.region) regions.add(tour.productContent.location.region);
+      if (tour.city) cities.add(tour.city);
+      if (tour.country) countries.add(tour.country);
+      if (tour.region) regions.add(tour.region);
 
       // Extract tags
       if (tour.tags && Array.isArray(tour.tags)) {

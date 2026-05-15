@@ -21,6 +21,7 @@ const { generateBookingNumber, validateTravelerInfo } = require('../utils/bookin
 const { sendNotification } = require('../utils/notificationService');
 const { sendBookingConfirmationEmail, sendBookingCancellationEmail, generatePrintableTicketHtml } = require('../utils/emailService');
 const { logActivity } = require('../utils/auditLogger');
+const event = require('../utils/eventEmitter');
 
 // ================================
 // CART MANAGEMENT
@@ -114,6 +115,8 @@ exports.addToCart = catchAsync(async (req, res, next) => {
     status: 'success',
     data: { cartItem }
   });
+
+  event.emit({ name: 'cart.added', userId: customerId, req, resource: 'Tour', resourceId: tourId, properties: { total: pricingCalculation.total, currency: pricingCalculation.currency, travelers } });
 });
 
 /**
@@ -187,6 +190,8 @@ exports.removeFromCart = catchAsync(async (req, res, next) => {
     return next(new AppError('Cart item not found', 404));
   }
 
+  event.emit({ name: 'cart.removed', userId: customerId, req, resource: 'CartItem', resourceId: id });
+
   res.status(204).json({
     status: 'success',
     data: null
@@ -202,6 +207,8 @@ exports.clearCart = catchAsync(async (req, res, next) => {
   await prisma.cartItem.deleteMany({
     where: { customerId }
   });
+
+  event.emit({ name: 'cart.cleared', userId: customerId, req, resource: 'Cart' });
 
   res.status(204).json({
     status: 'success',
@@ -407,6 +414,27 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       message: `You have a new booking for "${booking.tour.title}"`,
       data: { bookingId: booking.id }
     }).catch(console.error);
+  }
+
+  // Emit analytics events for every created booking
+  for (const booking of result.bookings) {
+    event.emit({
+      name: 'booking.initiated',
+      userId: customerId,
+      req,
+      resource: 'Booking',
+      resourceId: booking.id,
+      properties: {
+        tourId: booking.tourId,
+        tourTitle: booking.tour.title,
+        total: parseFloat(booking.total),
+        currency: booking.currency,
+        supplierPayout: parseFloat(booking.supplierPayout),
+        commissionAmount: parseFloat(booking.commissionAmount),
+        travelerCount: (booking.travelers?.adults || 0) + (booking.travelers?.children || 0) + (booking.travelers?.infants || 0),
+        status: booking.status,
+      },
+    });
   }
 
   res.status(201).json({
@@ -656,6 +684,15 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     metadata: { reason, refundAmount: cancellationCheck.refundAmount }
   });
 
+  event.emit({
+    name: 'booking.cancelled',
+    userId: customerId,
+    req,
+    resource: 'Booking',
+    resourceId: booking.id,
+    properties: { reason, refundAmount: cancellationCheck.refundAmount, tourId: booking.tourId, total: parseFloat(booking.total) },
+  });
+
   res.status(200).json({
     status: 'success',
     data: { booking: result }
@@ -795,6 +832,15 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
     resource: 'Booking',
     resourceId: booking.id,
     metadata: { oldStatus: booking.status, newStatus: status }
+  });
+
+  event.emit({
+    name: `booking.status_${status.toLowerCase()}`,
+    userId: supplierId,
+    req,
+    resource: 'Booking',
+    resourceId: booking.id,
+    properties: { oldStatus: booking.status, newStatus: status, tourId: booking.tourId },
   });
 
   res.status(200).json({

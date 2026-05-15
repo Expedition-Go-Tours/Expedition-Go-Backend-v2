@@ -190,7 +190,19 @@ model Tour {
   // Location (PostGIS coordinates)
   latitude     Float?      // Used with PostGIS ST_DWithin for geo-search
   longitude    Float?      // Used with PostGIS ST_DWithin for geo-search
-  
+  city         String?     // Extracted from productContent.location.city for indexed filtering
+  country      String?     // Extracted from productContent.location.country for indexed filtering
+  region       String?     // Extracted from productContent.location.region for indexed filtering
+
+  // Normalized categorization (extracted from categorization JSON for indexed filtering)
+  category     String?     // e.g. "Adventure", "Cultural", "Nature"
+  subcategory  String?     // e.g. "Walking Tours", "Hiking"
+  activityType String?     // e.g. "Guided Tour", "Self-Guided"
+  difficulty   String?     // e.g. "Easy", "Moderate", "Challenging", "Expert"
+
+  // Normalized theme (extracted from theme JSON)
+  primaryTheme String?     // e.g. "Nature & Wildlife", "History & Culture"
+
   // Statistics
   totalBookings Int        @default(0)
   totalRevenue Decimal     @default(0) @db.Decimal(10,2)
@@ -202,7 +214,8 @@ model Tour {
   bookings     Booking[]
   reviews      Review[]
   cartItems    CartItem[]
-  
+  secondaryThemes TourSecondaryTheme[]
+
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
@@ -211,6 +224,26 @@ model Tour {
   @@index([slug])
   @@index([createdAt])
   @@index([averageRating])
+  @@index([city])
+  @@index([country])
+  @@index([region])
+  @@index([country, city])
+  @@index([category])
+  @@index([subcategory])
+  @@index([activityType])
+  @@index([difficulty])
+  @@index([primaryTheme])
+}
+
+model TourSecondaryTheme {
+  id     String @id @default(cuid())
+  tourId String
+  tour   Tour   @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  theme  String
+
+  @@unique([tourId, theme])
+  @@index([theme])
+  @@index([tourId])
 }
 
 model Booking {
@@ -404,6 +437,33 @@ model SystemConfig {
   updatedBy    String      // Admin user ID
 
   @@index([key])
+}
+
+// ================================
+// ANALYTICS MODELS
+// ================================
+
+model Event {
+  id           String   @id @default(cuid())
+
+  name         String   // Dot-notation event name — "booking.completed", "tour.viewed", "search.executed"
+  userId       String?  // Authenticated user who triggered the event
+  sessionId    String?  // Anonymous session for unauthenticated tracking
+
+  resource     String?  // Affected entity type — "Booking", "Tour", "Review", "User"
+  resourceId   String?  // Affected entity ID
+
+  properties   Json     // Arbitrary event payload (query params, tour IDs, amounts, etc.)
+  source       String?  // Where the event originated — "web", "mobile", "api", "webhook"
+
+  createdAt    DateTime @default(now())
+
+  @@index([name])
+  @@index([userId])
+  @@index([resource, resourceId])
+  @@index([createdAt])
+  @@index([name, createdAt])         // Coverage for time-series analytics queries
+  @@index([userId, name, createdAt]) // Coverage for user-journey / funnel queries
 }
 
 model AuditLog {

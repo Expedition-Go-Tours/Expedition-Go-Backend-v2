@@ -3,6 +3,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const admin = require('../config/firebaseAdmin');
+const event = require('../utils/eventEmitter');
 
 // ADDED: shared session auth so the user stays logged in across subdomains
 const jwt = require('jsonwebtoken');
@@ -78,6 +79,8 @@ exports.signup = catchAsync(async (req, res, next) => {
     // ADDED: issue shared session cookie in dev too, so the flow behaves the same
     issueSessionCookie(res, user);
 
+    event.emit({ name: 'user.logged_in', userId: user.id, req, resource: 'User', resourceId: user.id, properties: { method: 'dev_bypass' } });
+
     return res.status(200).json({
       status: 'success',
       data: { user },
@@ -101,8 +104,16 @@ exports.signup = catchAsync(async (req, res, next) => {
 
   // If exists → return it (idempotent)
   if (user) {
+    // Track last login time for active-user analytics
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
+
     // ADDED: issue shared session cookie for returning users too
     issueSessionCookie(res, user);
+
+    event.emit({ name: 'user.logged_in', userId: user.id, req, resource: 'User', resourceId: user.id });
 
     return res.status(200).json({
       status: 'success',
@@ -127,6 +138,8 @@ exports.signup = catchAsync(async (req, res, next) => {
   // ADDED: issue shared session cookie immediately after signup
   issueSessionCookie(res, user);
 
+  event.emit({ name: 'user.signed_up', userId: user.id, req, resource: 'User', resourceId: user.id, properties: { method: 'firebase' } });
+
   res.status(201).json({
     status: 'success',
     data: { user },
@@ -150,6 +163,8 @@ exports.logout = (req, res) => {
         : undefined,
     path: '/',
   });
+
+  event.emit({ name: 'user.logged_out', userId: req.user?.id, req });
 
   res.status(200).json({
     status: 'success',
