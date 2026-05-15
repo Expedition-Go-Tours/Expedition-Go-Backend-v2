@@ -45,9 +45,9 @@ async function logActivity({
       }
     });
 
-    console.log(`📝 Audit log: ${action} on ${resource}${resourceId ? ` (${resourceId})` : ''} by user ${userId}`);
+    console.log(` Audit log: ${action} on ${resource}${resourceId ? ` (${resourceId})` : ''} by user ${userId}`);
   } catch (error) {
-    console.error('❌ Audit logging failed:', error);
+    console.error(' Audit logging failed:', error);
     // Don't throw error to avoid breaking main functionality
   }
 }
@@ -78,9 +78,9 @@ async function logSecurityEvent({
       }
     });
 
-    console.log(`🔒 Security event: ${event} (${severity}) from ${ipAddress}`);
+    console.log(` Security event: ${event} (${severity}) from ${ipAddress}`);
   } catch (error) {
-    console.error('❌ Security logging failed:', error);
+    console.error(' Security logging failed:', error);
   }
 }
 
@@ -110,9 +110,9 @@ async function logAuthEvent({
       }
     });
 
-    console.log(`🔐 Auth event: ${event} ${success ? 'succeeded' : 'failed'} for ${userEmail || userId}`);
+    console.log(` Auth event: ${event} ${success ? 'succeeded' : 'failed'} for ${userEmail || userId}`);
   } catch (error) {
-    console.error('❌ Auth logging failed:', error);
+    console.error(' Auth logging failed:', error);
   }
 }
 
@@ -199,7 +199,7 @@ async function getAuditLogs({
       }
     };
   } catch (error) {
-    console.error('❌ Get audit logs failed:', error);
+    console.error(' Get audit logs failed:', error);
     throw error;
   }
 }

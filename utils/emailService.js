@@ -828,7 +828,7 @@ function generateSupplierApprovedTemplate(data = {}) {
   const dashboardUrl = data.dashboardUrl || '#';
   const supportEmail = data.supportEmail || 'support@expeditiongo.com';
   const logoUrl = data.logoUrl || process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
-  const heroImageUrl = data.heroImageUrl || 'https://res.cloudinary.com/dxvlnwhqr/image/upload/v1747318000/email-hero-capetown.jpg';
+  const heroImageUrl = data.heroImageUrl || process.env.HERO_IMAGE_URL || 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1747318000/email-hero-capetown.jpg';
   const year = new Date().getFullYear();
 
   const html = `<!DOCTYPE html>
