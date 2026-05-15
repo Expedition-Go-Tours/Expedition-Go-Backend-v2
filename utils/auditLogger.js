@@ -146,7 +146,7 @@ async function logPaymentEvent({
 
     console.log(`💳 Payment event: ${event} ${success ? 'succeeded' : 'failed'} - ${currency} ${amount}`);
   } catch (error) {
-    console.error('❌ Payment logging failed:', error);
+    console.error(' Payment logging failed:', error);
   }
 }
 

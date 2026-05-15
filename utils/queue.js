@@ -20,16 +20,14 @@
 const { Queue, Worker, QueueScheduler } = require('bullmq');
 const IORedis = require('ioredis');
 
-// ---------------------------------------------------------------------------
-// Redis connection (reuse same config as utils/redisClient.js)
-// ---------------------------------------------------------------------------
+
 const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 
 let connection;
 function getConnection() {
   if (!connection) {
     connection = new IORedis(REDIS_URL, {
-      maxRetriesPerRequest: null,   // BullMQ manages its own retries
+      maxRetriesPerRequest: null,   
       enableReadyCheck: false,      // Faster startup
       retryStrategy: (times) => Math.min(times * 100, 3000),
       lazyConnect: true,
@@ -38,9 +36,7 @@ function getConnection() {
   return connection;
 }
 
-// ---------------------------------------------------------------------------
-// Named queues — add new ones here as the platform grows
-// ---------------------------------------------------------------------------
+
 const QUEUE_NAMES = {
   EVENTS:     'analytics-events',
   EMAILS:     'communications-emails',
@@ -50,15 +46,13 @@ const QUEUE_NAMES = {
 };
 
 const DEFAULT_JOB_OPTIONS = {
-  attempts: 3,                      // Retry up to 3 times
+  attempts: 3,                      
   backoff: { type: 'exponential', delay: 2000 },
   removeOnComplete: { age: 24 * 3600, count: 100 },  // Keep for 1 day
-  removeOnFail: { age: 7 * 24 * 3600 },               // Keep failures for 7 days
+  removeOnFail: { age: 7 * 24 * 3600 },              
 };
 
-// ---------------------------------------------------------------------------
-// Queue factory — create or retrieve a queue instance
-// ---------------------------------------------------------------------------
+
 const queueInstances = new Map();
 
 function getQueue(queueName) {

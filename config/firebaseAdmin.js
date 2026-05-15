@@ -20,7 +20,7 @@ function getServiceAccountConfig() {
   };
 }
 
-// Development: provide a lightweight stub to avoid requiring valid service account
+// Development: use a lightweight stub that only supports the dev test-token bypass
 if (process.env.NODE_ENV === 'development') {
   console.log('Firebase admin: running in development mode — using stubbed admin');
   module.exports = {
@@ -31,6 +31,7 @@ if (process.env.NODE_ENV === 'development') {
     }),
     apps: [],
   };
+  return; // Don't initialize real Firebase in dev
 }
 
 if (!admin.apps.length) {
