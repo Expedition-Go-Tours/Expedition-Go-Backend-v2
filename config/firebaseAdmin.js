@@ -31,18 +31,17 @@ if (process.env.NODE_ENV === 'development') {
     }),
     apps: [],
   };
-  return; // Don't initialize real Firebase in dev
+} else {
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      credential: admin.credential.cert(getServiceAccountConfig()),
+    });
+
+    console.log(
+      'DEBUG: Admin SDK Project ID:',
+      admin.app().options.credential.projectId || 'Check service account JSON',
+    );
+  }
+
+  module.exports = admin;
 }
-
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(getServiceAccountConfig()),
-  });
-
-  console.log(
-    'DEBUG: Admin SDK Project ID:',
-    admin.app().options.credential.projectId || 'Check service account JSON',
-  );
-}
-
-module.exports = admin;

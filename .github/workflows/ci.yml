@@ -47,6 +47,7 @@ jobs:
           --health-retries 5
 
     env:
+      NODE_ENV: development
       DATABASE_URL: postgresql://test:test@localhost:5432/testdb
       DIRECT_URL: postgresql://test:test@localhost:5432/testdb
 

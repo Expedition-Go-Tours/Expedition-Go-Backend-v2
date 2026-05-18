@@ -1455,19 +1455,6 @@ ${year} Travio Africa by Expedition-Go Tours. All rights reserved.`;
   return { html, text };
 }
 
-function generateGenericNotificationTemplate(data) {
-  const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <h1>${data.title}</h1>
-      <p>${data.message}</p>
-      <p>Best regards,<br>Tour Platform Team</p>
-    </div>
-  `;
-
-  const text = `${data.title}\n\n${data.message}`;
-  return { html, text };
-}
-
 function generatePrintableTicketHtml(data) {
   const travelers = [];
   if (data.travelers?.adults) travelers.push(`${data.travelers.adults} Adult(s)`);
