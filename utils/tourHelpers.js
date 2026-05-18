@@ -177,7 +177,7 @@ function validatePricing(schedulesAndPricing) {
     // Validate age groups
     if (ageGroups) {
       for (const ageGroup of ageGroups) {
-        if (!ageGroup.label || !ageGroup.minAge === undefined || !ageGroup.maxAge === undefined) {
+        if (!ageGroup.label || ageGroup.minAge === undefined || ageGroup.maxAge === undefined) {
           errors.push('Age groups must have label, minAge, and maxAge');
           break;
         }

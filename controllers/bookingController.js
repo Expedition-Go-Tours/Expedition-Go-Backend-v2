@@ -664,7 +664,7 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
   });
 
   // Send cancellation email to customer
-  sendBookingCancellationEmail(updatedBooking, cancellationCheck.refundAmount).catch(console.error);
+  sendBookingCancellationEmail(booking, cancellationCheck.refundAmount).catch(console.error);
 
   // Send notifications
   sendNotification({

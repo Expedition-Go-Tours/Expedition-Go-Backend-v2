@@ -283,6 +283,8 @@ async function handlePaymentSucceeded(paymentIntent) {
     return { success: false, message: 'No bookings found' };
   }
 
+  let bookings;
+
   await prisma.$transaction(async (tx) => {
     // Update booking statuses
     const updatedBookings = await tx.booking.updateMany({
@@ -300,7 +302,7 @@ async function handlePaymentSucceeded(paymentIntent) {
     console.log(`✅ Updated ${updatedBookings.count} bookings to CONFIRMED`);
 
     // Get booking details for notifications
-    const bookings = await tx.booking.findMany({
+    bookings = await tx.booking.findMany({
       where: { id: { in: bookingIds } },
       include: {
         customer: true,

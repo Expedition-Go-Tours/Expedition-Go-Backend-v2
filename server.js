@@ -78,6 +78,10 @@ process.on('SIGINT', () => {
 
     app.set('io', io);
 
+    io.engine.on('connection_error', (err) => {
+      console.warn('Socket.IO connection error:', err.message);
+    });
+
     io.on('connection', (socket) => {
       // WARNING: Currently trusting client-side data. 
       // Suggestion: Verify JWT here before proceeding.
@@ -170,9 +174,21 @@ process.on('SIGINT', () => {
         }
       });
 
-      socket.on('disconnect', () => {
-        console.log('Socket disconnected:', socket.id);
+      socket.on('error', (err) => {
+        console.warn('Socket error:', socket.id, err.message);
       });
+
+      socket.on('disconnect', (reason) => {
+        console.log('Socket disconnected:', socket.id, reason);
+      });
+    });
+
+    server.on('clientError', (err, socket) => {
+      if (err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT') {
+        return;
+      }
+      console.warn('HTTP client error:', err.message);
+      socket.destroy(err);
     });
 
     server.listen(port, '0.0.0.0', () => {

@@ -3,11 +3,13 @@ node_modules
 .env
 
 /generated/prisma
+coverage/
 
-# Documentation and test files
+# Documentation and scratch test scripts
 *.md
 !README.md
-*test*.js
 *-fixed.js
 explore-database.js
 add-test-user.js
+create-test-user.js
+/test-*.js
