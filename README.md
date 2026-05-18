@@ -1,27 +1,48 @@
 # Expedition Go Backend v2
 
-Production-ready tour booking platform backend built with Node.js, Express, Prisma, and Firebase Authentication.
+Production-ready tour booking platform backend built with Node.js, Express, Prisma ORM, PostgreSQL (PostGIS), Firebase Authentication, and Stripe Connect.
 
-## 🚀 Features
+## Features
 
-- **Multi-role Authentication**: Customer, Supplier, and Admin roles with Firebase integration
-- **Tour Management**: Complete CRUD operations for tours with rich metadata
-- **Booking System**: Full booking lifecycle with Stripe payment integration
-- **Review System**: Customer reviews with moderation and supplier responses
-- **Supplier Onboarding**: Complete supplier application and verification workflow
-- **Notifications**: Real-time notifications for bookings, payments, and reviews
-- **Stripe Integration**: Payment processing and supplier payouts via Stripe Connect
-- **Comprehensive API Documentation**: Swagger/OpenAPI documentation at `/api-docs`
+- **Multi-role Authentication**: Customer, Supplier, and Admin roles with Firebase token verification
+- **Tour Management**: Full CRUD with rich metadata, PostGIS geo-search, categorization, and pagination
+- **Booking System**: Full lifecycle with conflict detection, Stripe Payment Intent integration, and commission splits
+- **Review System**: Customer reviews with moderation, supplier responses, and rating aggregation
+- **Supplier Onboarding**: Application workflow with Stripe Connect Express account creation
+- **Notifications**: Real-time (Socket.IO), email (SendGrid), and in-app notification service
+- **Payment Processing**: Stripe Connect with automatic commission splits and payout management
+- **Image Management**: Cloudinary upload with optimization pipeline
+- **Redis Caching**: Tour detail and filter caching with automatic invalidation
+- **Audit Logging**: Comprehensive action logging for admin monitoring
+- **API Documentation**: Swagger/OpenAPI at `/api-docs`
 
-## 📋 Prerequisites
+## Tech Stack
 
-- Node.js (v16 or higher)
-- PostgreSQL database
-- Firebase project with Admin SDK credentials
-- Stripe account for payments
-- Cloudinary account for image uploads
+| Layer | Technology |
+|-------|-----------|
+| Runtime | Node.js 20 |
+| Framework | Express |
+| Database | PostgreSQL 16 + PostGIS |
+| ORM | Prisma |
+| Auth | Firebase Admin SDK |
+| Payments | Stripe Connect |
+| Email | SendGrid |
+| Media | Cloudinary |
+| Cache | Redis (ioredis) |
+| Realtime | Socket.IO |
+| Logging | Structured JSON logger (Logtail) |
 
-## 🛠️ Installation
+## Prerequisites
+
+- Node.js 20 or higher
+- PostgreSQL 16 with PostGIS extension
+- Firebase project with Admin SDK service account
+- Stripe account with Connect enabled
+- Cloudinary account
+- Redis instance (optional, falls back gracefully)
+- SendGrid account (optional, falls back gracefully)
+
+## Installation
 
 1. **Clone the repository**
    ```bash
@@ -35,11 +56,13 @@ Production-ready tour booking platform backend built with Node.js, Express, Pris
    ```
 
 3. **Set up environment variables**
-   
-   Create a `.env` file in the root directory:
+
+   Create a `.env` file in the root directory. All third-party SDKs use lazy initialization and degrade gracefully when their keys are missing (except Firebase in production).
+
    ```env
    # Database
    DATABASE_URL=postgresql://user:password@localhost:5432/expedition_go
+   DIRECT_URL=postgresql://user:password@localhost:5432/expedition_go
 
    # Server
    PORT=5000
@@ -60,12 +83,12 @@ Production-ready tour booking platform backend built with Node.js, Express, Pris
    CLOUDINARY_API_KEY=your_api_key
    CLOUDINARY_API_SECRET=your_api_secret
 
-   # Email (Optional)
-   EMAIL_HOST=smtp.gmail.com
-   EMAIL_PORT=587
-   EMAIL_USER=your_email@gmail.com
-   EMAIL_PASSWORD=your_app_password
-   EMAIL_FROM=noreply@expeditiongo.com
+   # Redis
+   REDIS_URL=redis://localhost:6379
+
+   # SendGrid
+   SENDGRID_API_KEY=SG....
+   EMAIL_FROM="Travio Africa <noreply@travioafrica.com>"
    ```
 
 4. **Run database migrations**
@@ -83,27 +106,27 @@ Production-ready tour booking platform backend built with Node.js, Express, Pris
    npm start
    ```
 
-   The server will start at `http://localhost:5000`
+   The server starts at `http://localhost:5000`.
 
-## 📚 API Documentation
+## API Documentation
 
-Once the server is running, visit:
-- **Swagger UI**: http://localhost:5000/api-docs
-- **OpenAPI Spec**: http://localhost:5000/api-docs.json
+Once the server is running:
+- **Swagger UI**: `http://localhost:5000/api-docs`
+- **OpenAPI Spec**: `http://localhost:5000/api-docs.json`
 
-## 🔐 Authentication
+## Authentication
 
-This backend uses Firebase Authentication with custom token verification.
+This backend uses Firebase Authentication with custom token verification. Firebase Admin SDK runs in stubbed mode when `NODE_ENV=development` or when credentials are absent, allowing local development without real Firebase credentials.
 
 ### Authentication Flow
 
 1. User authenticates with Firebase on the frontend
-2. Frontend gets Firebase ID token
-3. Frontend calls `POST /api/users/signup` with the token
-4. Backend verifies token and creates/retrieves user from database
-5. Subsequent API calls include the Firebase token in the `Authorization` header
+2. Frontend retrieves Firebase ID token
+3. Frontend calls `POST /api/users/signup` with the token in the `Authorization` header
+4. Backend verifies the token and creates or retrieves the user from the database
+5. Subsequent API calls include the Firebase token: `Authorization: Bearer <token>`
 
-### Example Request
+### Example
 
 ```javascript
 const response = await fetch('http://localhost:5000/api/users/me', {
@@ -113,118 +136,162 @@ const response = await fetch('http://localhost:5000/api/users/me', {
 });
 ```
 
-## 🗂️ Project Structure
+## Project Structure
 
 ```
-├── config/              # Configuration files (Firebase, Cloudinary, Swagger)
-├── controllers/         # Request handlers
-├── middleware/          # Express middleware (auth, error handling, uploads)
-├── models/              # (Empty - using Prisma)
-├── prisma/              # Prisma schema and migrations
-├── routes/              # API route definitions
-├── utils/               # Helper functions and utilities
-├── app.js               # Express app setup
-├── server.js            # Server entry point
-└── package.json         # Dependencies and scripts
+├── config/              # Firebase, Cloudinary, Swagger configuration
+├── controllers/         # Route handlers with business logic
+├── middleware/          # Auth, error handling, file upload
+├── prisma/              # Schema, migrations, PostGIS extensions
+├── routes/              # Express route definitions
+├── utils/               # Helpers: Stripe, email, cache, logger, notifications
+├── __tests__/           # Test suites (unit, integration, API)
+├── .github/workflows/   # CI/CD pipeline
+├── app.js               # Express application setup
+├── server.js            # Entry point with graceful shutdown
+└── package.json
 ```
 
-## 🔑 Key Endpoints
+## Key Endpoints
 
 ### Authentication
-- `POST /api/users/signup` - Create/get user profile (idempotent)
-- `PATCH /api/users/sync-me` - Sync user with Firebase
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/users/signup` | Create or get user profile (idempotent) |
+| PATCH | `/api/users/sync-me` | Sync user profile with Firebase |
+| GET | `/api/users/me` | Get current user profile |
 
 ### Tours
-- `GET /api/tours` - List all tours (with filters)
-- `GET /api/tours/:id` - Get tour details
-- `POST /api/tours` - Create tour (supplier only)
-- `PATCH /api/tours/:id` - Update tour (supplier only)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/tours` | List tours (pagination, filters, geo-search) |
+| GET | `/api/tours/:id` | Get tour details |
+| POST | `/api/tours` | Create tour (supplier only) |
+| PATCH | `/api/tours/:id` | Update tour (supplier only) |
 
 ### Bookings
-- `POST /api/bookings` - Create booking
-- `GET /api/bookings/my-bookings` - Get user's bookings
-- `PATCH /api/bookings/:id/cancel` - Cancel booking
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/bookings` | Create booking with Stripe payment |
+| GET | `/api/bookings/my-bookings` | List current user's bookings |
+| PATCH | `/api/bookings/:id/cancel` | Cancel booking |
 
 ### Reviews
-- `POST /api/reviews` - Create review
-- `GET /api/reviews/tour/:tourId` - Get tour reviews
-- `PATCH /api/reviews/:id/respond` - Supplier response
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/reviews` | Submit review |
+| GET | `/api/reviews/tour/:tourId` | Get tour reviews |
+| PATCH | `/api/reviews/:id/respond` | Supplier response |
 
 ### Suppliers
-- `POST /api/suppliers/apply` - Submit supplier application
-- `GET /api/suppliers/dashboard` - Supplier dashboard data
-- `GET /api/suppliers/admin/applications` - Admin: view applications
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/suppliers/apply` | Submit supplier application |
+| GET | `/api/suppliers/dashboard` | Supplier dashboard |
+| GET | `/api/suppliers/admin/applications` | Admin: view applications |
 
-## 🧪 Development
+## Testing
 
-### Run in development mode with auto-reload
+The project includes 11 tests across 4 suites with Jest + Supertest, validated in CI against a fresh PostgreSQL container.
+
 ```bash
-npm run dev
+# Run all tests
+npm test
+
+# Run with coverage report
+npx jest --coverage
 ```
 
-### Database commands
+### Test Suites
+
+| Suite | File | Type | Coverage |
+|-------|------|------|----------|
+| AppError | `__tests__/appError.test.js` | Unit | Error class behavior |
+| User CRUD | `__tests__/user.integration.test.js` | Integration | Prisma + PostgreSQL |
+| Health | `__tests__/api/health.test.js` | API | Server availability |
+| Tours | `__tests__/api/tours.test.js` | API | Pagination, validation |
+
+### Coverage Thresholds
+
+- Branches: 3%
+- Functions: 5%
+- Lines: 10%
+- Statements: 10%
+
+## CI/CD Pipeline
+
+A three-stage GitHub Actions pipeline runs on every push to `main` and `develop`:
+
+1. **Lint** -- ESLint with Node.js + Jest globals
+2. **Test** -- Against a temporary PostGIS 16 container with `prisma migrate deploy`
+3. **Deploy** -- Triggers Render deploy hook (main branch only, gated on test success)
+
+Configuration: `.github/workflows/ci.yml`
+
+### Required GitHub Secret
+
+| Secret | Purpose |
+|--------|---------|
+| `RENDER_DEPLOY_HOOK` | URL for triggering Render deployment |
+
+All third-party SDKs (Stripe, SendGrid, Firebase, Redis, Cloudinary) gracefully degrade in CI without their environment keys.
+
+## Development
+
 ```bash
-# Create a new migration
+# Auto-reload with nodemon
+npm run dev
+
+# Create a new Prisma migration
 npx prisma migrate dev --name migration_name
 
-# Reset database (WARNING: deletes all data)
+# Reset database (deletes all data)
 npx prisma migrate reset
 
 # Open Prisma Studio (database GUI)
 npx prisma studio
 ```
 
-## 🚢 Deployment
+## Deployment
 
 ### Environment Variables
-Ensure all production environment variables are set, especially:
-- `NODE_ENV=production`
-- Production database URL
-- Production Stripe keys
-- Production Firebase credentials
+
+Set all production values on your hosting platform. Firebase Admin SDK requires real service account credentials in production (`NODE_ENV=production`).
 
 ### Database Migration
+
 ```bash
 npx prisma migrate deploy
 ```
 
-### Start Production Server
+### Start
+
 ```bash
 npm start
 ```
 
-## 🔒 Security Features
+The app runs on the port defined by the `PORT` environment variable (default: 5000).
+
+## Security
 
 - Firebase token verification on all protected routes
-- Role-based access control (RBAC)
-- Input validation and sanitization
-- SQL injection prevention via Prisma
-- Secure password handling (Firebase)
-- CORS configuration
-- Rate limiting (recommended to add)
-- Helmet.js for security headers (recommended to add)
+- Role-based access control (Customer, Supplier, Admin)
+- Input validation and sanitization on all endpoints
+- SQL injection prevention via Prisma parameterized queries
+- Stripe webhook signature verification
+- CORS with allowed origin validation
+- Structured error handling (no stack traces leaked in production)
+- Graceful shutdown with pending request draining
 
-## 🤝 Contributing
+## SDG Contribution
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+This project supports UN Sustainable Development Goal 8 (Decent Work and Economic Growth) by enabling local tour operators and guides to list and manage their offerings on a digital platform, expanding their market reach beyond traditional channels.
 
-## 📝 License
+## License
 
-This project is proprietary and confidential.
-
-## 👥 Team
-
-Expedition Go Tours Development Team
-
-## 📧 Support
-
-For support, email support@expeditiongo.com
+Proprietary and confidential.
 
 ---
 
-**Last Updated**: May 12, 2026
-**Version**: 2.0.0
+**Last Updated**: May 18, 2026
+**Version**: 2.1.0
