@@ -39,3 +39,11 @@ explore-database.js
 add-test-user.js
 create-test-user.js
 /test-*.js
+
+# Scratch / one-time scripts (keep local only)
+FINAL-AUTH-SERVICE.js
+FRONTEND-API-CLIENT.js
+fix-user-rls.js
+send-all-emails.js
+setup-rls.js
+setup-rls-policies.sql
