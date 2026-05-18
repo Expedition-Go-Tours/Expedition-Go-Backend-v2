@@ -8,6 +8,7 @@ module.exports = {
   coveragePathIgnorePatterns: ['/node_modules/', '/generated/'],
   setupFiles: ['./jest.setup.js'],
   testTimeout: 30000,
+  forceExit: true,
   coverageThreshold: {
     global: {
       branches: 3,
