@@ -15,13 +15,23 @@
 const sgMail = require('@sendgrid/mail');
 const prisma = require('./prismaClient');
 
-// Initialize SendGrid
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+// Lazy initialization: set API key on first send to avoid crash/warning
+// when env var is missing during test/CI.
+let sgMailInitialized = false;
+
+function ensureSgMail() {
+  if (sgMailInitialized) return;
+  if (process.env.SENDGRID_API_KEY) {
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+  }
+  sgMailInitialized = true;
+}
 
 /**
  * Send email using SendGrid
  */
 async function sendEmail({ to, subject, template, data = {}, attachments = [] }) {
+  ensureSgMail();
   try {
     const emailContent = generateEmailContent(template, data);
     
