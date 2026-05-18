@@ -12,7 +12,22 @@
  * @version 1.0.0
  */
 
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const stripe = new Proxy(
+  {},
+  {
+    get(_, prop) {
+      if (!process.env.STRIPE_SECRET_KEY) {
+        throw new Error(
+          'STRIPE_SECRET_KEY is required to call stripe.' + prop,
+        );
+      }
+      // lazy singleton: load real Stripe once on first property access
+      const Stripe = require('stripe');
+      const real = Stripe(process.env.STRIPE_SECRET_KEY);
+      return real[prop];
+    },
+  },
+);
 const prisma = require('./prismaClient');
 const { sendBookingConfirmationEmail, sendSupplierBookingNotification } = require('./emailService');
 const event = require('./eventEmitter');
