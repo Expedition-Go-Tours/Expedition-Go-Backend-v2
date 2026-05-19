@@ -96,10 +96,10 @@ async function createStripeConnectAccount({ email, businessProfile, individual }
 
     const account = await getStripe().accounts.create(accountData);
     
-    console.log(`✅ Stripe Connect account created: ${account.id}`);
+    console.log(` Stripe Connect account created: ${account.id}`);
     return account;
   } catch (error) {
-    console.error('❌ Stripe Connect account creation failed:', error);
+    console.error(' Stripe Connect account creation failed:', error);
     throw new Error(`Failed to create Stripe account: ${error.message}`);
   }
 }
@@ -116,10 +116,10 @@ async function createOnboardingLink(accountId, { refreshUrl, returnUrl }) {
       type: 'account_onboarding'
     });
 
-    console.log(`✅ Onboarding link created for account: ${accountId}`);
+    console.log(` Onboarding link created for account: ${accountId}`);
     return accountLink;
   } catch (error) {
-    console.error('❌ Onboarding link creation failed:', error);
+    console.error(' Onboarding link creation failed:', error);
     throw new Error(`Failed to create onboarding link: ${error.message}`);
   }
 }
@@ -186,10 +186,10 @@ async function createPaymentIntent({
 
     const paymentIntent = await getStripe().paymentIntents.create(paymentIntentData);
 
-    console.log(`✅ Payment Intent created: ${paymentIntent.id} for amount: ${amount}`);
+    console.log(` Payment Intent created: ${paymentIntent.id} for amount: ${amount}`);
     return paymentIntent;
   } catch (error) {
-    console.error('❌ Payment Intent creation failed:', error);
+    console.error(' Payment Intent creation failed:', error);
     throw new Error(`Failed to create payment: ${error.message}`);
   }
 }
@@ -227,7 +227,7 @@ function calculateCommission(bookingAmount, supplierProfile) {
  */
 async function processStripeWebhook(event) {
   try {
-    console.log(`🔔 Processing Stripe webhook: ${event.type}`);
+    console.log(` Processing Stripe webhook: ${event.type}`);
 
     // Check if event already processed (idempotency)
     const existingEvent = await prisma.stripeEvent.findUnique({
@@ -235,7 +235,7 @@ async function processStripeWebhook(event) {
     });
 
     if (existingEvent && existingEvent.processed) {
-      console.log(`⚠️ Event ${event.id} already processed, skipping`);
+      console.log(` Event ${event.id} already processed, skipping`);
       return { success: true, message: 'Event already processed' };
     }
 
@@ -271,7 +271,7 @@ async function processStripeWebhook(event) {
         break;
 
       default:
-        console.log(`ℹ️ Unhandled event type: ${event.type}`);
+        console.log(` Unhandled event type: ${event.type}`);
     }
 
     // Mark event as processed
@@ -282,7 +282,7 @@ async function processStripeWebhook(event) {
 
     return result;
   } catch (error) {
-    console.error('❌ Webhook processing failed:', error);
+    console.error(' Webhook processing failed:', error);
     throw error;
   }
 }
@@ -294,7 +294,7 @@ async function handlePaymentSucceeded(paymentIntent) {
   const bookingIds = paymentIntent.metadata.bookingIds?.split(',') || [];
   
   if (bookingIds.length === 0) {
-    console.log('⚠️ No booking IDs found in payment intent metadata');
+    console.log(' No booking IDs found in payment intent metadata');
     return { success: false, message: 'No bookings found' };
   }
 
@@ -314,7 +314,7 @@ async function handlePaymentSucceeded(paymentIntent) {
       }
     });
 
-    console.log(`✅ Updated ${updatedBookings.count} bookings to CONFIRMED`);
+    console.log(` Updated ${updatedBookings.count} bookings to CONFIRMED`);
 
     // Get booking details for notifications
     bookings = await tx.booking.findMany({
@@ -424,7 +424,7 @@ async function handlePaymentFailed(paymentIntent) {
     }
   });
 
-  console.log(`❌ Marked ${bookingIds.length} bookings as CANCELLED due to payment failure`);
+  console.log(` Marked ${bookingIds.length} bookings as CANCELLED due to payment failure`);
   return { success: true, message: `${bookingIds.length} bookings cancelled` };
 }
 
@@ -438,7 +438,7 @@ async function handleAccountUpdated(account) {
   });
 
   if (!supplierProfile) {
-    console.log(`⚠️ No supplier found for Stripe account: ${account.id}`);
+    console.log(` No supplier found for Stripe account: ${account.id}`);
     return { success: false, message: 'Supplier not found' };
   }
 
@@ -464,7 +464,7 @@ async function handleAccountUpdated(account) {
       }
     });
 
-    console.log(`✅ Supplier ${supplierProfile.userId} activated`);
+    console.log(` Supplier ${supplierProfile.userId} activated`);
   }
 
   return { success: true, message: 'Account status updated' };
@@ -479,7 +479,7 @@ async function createDashboardLink(stripeAccountId) {
     const link = await getStripe().accounts.createLoginLink(stripeAccountId);
     return link.url;
   } catch (error) {
-    console.error('❌ Failed to create Stripe dashboard link:', error.message);
+    console.error(' Failed to create Stripe dashboard link:', error.message);
     throw new Error(`Failed to create dashboard link: ${error.message}`);
   }
 }
@@ -488,7 +488,7 @@ async function createDashboardLink(stripeAccountId) {
  * Handle transfer creation (for tracking payouts)
  */
 async function handleTransferCreated(transfer) {
-  console.log(`💰 Transfer created: ${transfer.id} for ${transfer.amount} to ${transfer.destination}`);
+  console.log(` Transfer created: ${transfer.id} for ${transfer.amount} to ${transfer.destination}`);
 
   // You can add logic here to track individual payouts
   // and update supplier earnings records
@@ -503,7 +503,7 @@ function verifyWebhookSignature(payload, signature, endpointSecret) {
   try {
     return getStripe().webhooks.constructEvent(payload, signature, endpointSecret);
   } catch (error) {
-    console.error('❌ Webhook signature verification failed:', error.message);
+    console.error(' Webhook signature verification failed:', error.message);
     throw new Error('Invalid webhook signature');
   }
 }

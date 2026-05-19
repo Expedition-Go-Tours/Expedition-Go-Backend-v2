@@ -1,0 +1,159 @@
+<mxfile host="65bd71144e">
+    <diagram id="arch" name="Architecture">
+        <mxGraphModel dx="1580" dy="978" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="1100" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="title" value="Expedition Go Tours - Backend System Architecture" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=20;fontStyle=1;fontColor=#1A237E;" parent="1" vertex="1">
+                    <mxGeometry x="300" y="10" width="800" height="34" as="geometry"/>
+                </mxCell>
+                <mxCell id="l1" value="CLIENT LAYER" style="swimlane;startSize=24;rounded=1;fontSize=12;fontStyle=1;strokeColor=#1565C0;fillColor=#E3F2FD;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="60" width="600" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="c1" value="Web App (React)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1565C0;fontSize=11;" parent="l1" vertex="1">
+                    <mxGeometry x="20" y="32" width="160" height="28" as="geometry"/>
+                </mxCell>
+                <mxCell id="c2" value="Mobile App (RN)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1565C0;fontSize=11;" parent="l1" vertex="1">
+                    <mxGeometry x="200" y="32" width="160" height="28" as="geometry"/>
+                </mxCell>
+                <mxCell id="c3" value="API Clients" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1565C0;fontSize=11;" parent="l1" vertex="1">
+                    <mxGeometry x="380" y="32" width="160" height="28" as="geometry"/>
+                </mxCell>
+                <mxCell id="l2" value="EXPRESS GATEWAY" style="swimlane;startSize=24;rounded=1;fontSize=12;fontStyle=1;strokeColor=#2E7D32;fillColor=#E8F5E9;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="160" width="600" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="mw" value="Helmet -&gt; CORS -&gt; HPP -&gt; Compression -&gt; CookieParser -&gt; Morgan -&gt; RateLimit -&gt; Logger" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#A5D6A7;strokeColor=#2E7D32;fontSize=9;" parent="l2" vertex="1">
+                    <mxGeometry x="20" y="32" width="560" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="sio" value="Socket.IO (review:respond, user/admin rooms)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#A5D6A7;strokeColor=#2E7D32;fontSize=9;" parent="l2" vertex="1">
+                    <mxGeometry x="20" y="72" width="260" height="28" as="geometry"/>
+                </mxCell>
+                <mxCell id="hth" value="GET /health, GET /, GET /api-docs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#A5D6A7;strokeColor=#2E7D32;fontSize=9;" parent="l2" vertex="1">
+                    <mxGeometry x="320" y="72" width="260" height="28" as="geometry"/>
+                </mxCell>
+                <mxCell id="l3" value="AUTHENTICATION" style="swimlane;startSize=24;rounded=1;fontSize=12;fontStyle=1;strokeColor=#6A1B9A;fillColor=#F3E5F5;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="300" width="600" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="fa" value="Firebase Auth" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CE93D8;strokeColor=#6A1B9A;fontSize=10;" parent="l3" vertex="1">
+                    <mxGeometry x="15" y="30" width="150" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="jwt" value="JWT Cookies" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CE93D8;strokeColor=#6A1B9A;fontSize=10;" parent="l3" vertex="1">
+                    <mxGeometry x="180" y="30" width="150" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="rbac" value="restrictTo(admin, supplier)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CE93D8;strokeColor=#6A1B9A;fontSize=10;" parent="l3" vertex="1">
+                    <mxGeometry x="15" y="56" width="315" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="l4" value="ROUTES &gt; CONTROLLERS" style="swimlane;startSize=24;rounded=1;fontSize=12;fontStyle=1;strokeColor=#C62828;fillColor=#FFEBEE;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="410" width="600" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="rt" value="Routes: Auth | Users | Tours | Bookings | Reviews | Suppliers | Notifications | Webhooks | Admin" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EF9A9A;strokeColor=#C62828;fontSize=9;" parent="l4" vertex="1">
+                    <mxGeometry x="15" y="30" width="270" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="ct" value="Controllers: auth | user | tour | booking | review | supplier | notification | webhook | admin" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EF9A9A;strokeColor=#C62828;fontSize=9;" parent="l4" vertex="1">
+                    <mxGeometry x="300" y="30" width="280" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="errh" value="Global Error Handler (AppError | Prisma | JSON | Multer | CastError | JWT)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFCDD2;strokeColor=#C62828;fontSize=9;" parent="l4" vertex="1">
+                    <mxGeometry x="300" y="108" width="280" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="l5" value="SERVICE / UTILITY LAYER" style="swimlane;startSize=24;rounded=1;fontSize=12;fontStyle=1;strokeColor=#F57F17;fillColor=#FFF8E1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="580" width="600" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="svc1" value="catchAsync | appError | prismaClient | redisClient | cacheHelper | logger | auditLogger | eventEmitter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF9C4;strokeColor=#F57F17;fontSize=9;" parent="l5" vertex="1">
+                    <mxGeometry x="15" y="30" width="565" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="svc2" value="stripeHelpers | emailService(SendGrid) | queue(BullMQ, 5 queues) | notificationService | tourFilterBuilder | fullTextSearch" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE082;strokeColor=#F57F17;fontSize=9;" parent="l5" vertex="1">
+                    <mxGeometry x="15" y="58" width="565" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="l6" value="BACKGROUND WORKERS" style="swimlane;startSize=24;rounded=1;fontSize=12;fontStyle=1;strokeColor=#00838F;fillColor=#E0F7FA;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="700" width="600" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="w1" value="Queues: analytics-events | communications-emails | communications-notifications | analytics-aggregations | system-cleanup" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#80DEEA;strokeColor=#00838F;fontSize=9;" parent="l6" vertex="1">
+                    <mxGeometry x="15" y="30" width="565" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="w2" value="Scheduled: Cart Cleanup(5m) | Popularity Refresh(1h) | Event/Notif/Audit Cleanup(24h)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B2EBF2;strokeColor=#00838F;fontSize=9;" parent="l6" vertex="1">
+                    <mxGeometry x="15" y="56" width="565" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="l7" value="DATA STORES" style="swimlane;startSize=24;rounded=1;fontSize=12;fontStyle=1;strokeColor=#1A237E;fillColor=#E8EAF6;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="810" width="600" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="pg" value="PostgreSQL + PostGIS (via Prisma ORM)" style="cylinder;whiteSpace=wrap;html=1;fillColor=#C5CAE9;strokeColor=#1A237E;fontSize=10;" parent="l7" vertex="1">
+                    <mxGeometry x="15" y="30" width="180" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="rd" value="Redis (Cache + Queue Broker)" style="cylinder;whiteSpace=wrap;html=1;fillColor=#C5CAE9;strokeColor=#1A237E;fontSize=10;" parent="l7" vertex="1">
+                    <mxGeometry x="220" y="30" width="160" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="md" value="Prisma Models: User | Tour | Booking | Review | CartItem | Event | Notification | AuditLog" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#9FA8DA;strokeColor=#1A237E;fontSize=9;" parent="l7" vertex="1">
+                    <mxGeometry x="410" y="30" width="170" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext" value="EXTERNAL SERVICES" style="swimlane;startSize=24;rounded=1;fontSize=12;fontStyle=1;strokeColor=#D50000;fillColor=#FCE4EC;" parent="1" vertex="1">
+                    <mxGeometry x="700" y="60" width="300" height="220" as="geometry"/>
+                </mxCell>
+                <mxCell id="stripe" value="Stripe (Payment Intents + Connect + Webhooks)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F48FB1;strokeColor=#D50000;fontSize=10;" parent="ext" vertex="1">
+                    <mxGeometry x="15" y="32" width="265" height="26" as="geometry"/>
+                </mxCell>
+                <mxCell id="fbase" value="Firebase Admin (Auth Verification)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F48FB1;strokeColor=#D50000;fontSize=10;" parent="ext" vertex="1">
+                    <mxGeometry x="15" y="68" width="265" height="26" as="geometry"/>
+                </mxCell>
+                <mxCell id="sg" value="SendGrid (Transactional Emails)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F48FB1;strokeColor=#D50000;fontSize=10;" parent="ext" vertex="1">
+                    <mxGeometry x="15" y="104" width="265" height="26" as="geometry"/>
+                </mxCell>
+                <mxCell id="cld" value="Cloudinary (Image Upload / Optimization)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F48FB1;strokeColor=#D50000;fontSize=10;" parent="ext" vertex="1">
+                    <mxGeometry x="15" y="140" width="265" height="26" as="geometry"/>
+                </mxCell>
+                <mxCell id="logtail" value="Logtail (Cloud Observability)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F48FB1;strokeColor=#D50000;fontSize=10;" parent="ext" vertex="1">
+                    <mxGeometry x="15" y="176" width="265" height="26" as="geometry"/>
+                </mxCell>
+                <mxCell id="2" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" edge="1" parent="1" source="dops">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="850" y="550" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="dops" value="DEVOPS &amp; CI/CD" style="swimlane;startSize=24;rounded=1;fontSize=12;fontStyle=1;strokeColor=#37474F;fillColor=#ECEFF1;" parent="1" vertex="1">
+                    <mxGeometry x="700" y="310" width="300" height="170" as="geometry"/>
+                </mxCell>
+                <mxCell id="gha" value="GitHub Actions (ci.yml)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B0BEC5;strokeColor=#37474F;fontSize=10;" parent="dops" vertex="1">
+                    <mxGeometry x="15" y="32" width="265" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="ghap" value="Pipeline: Lint -&gt; Test + E2E -&gt; Concurrency -&gt; Deploy -&gt; Health Check" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B0BEC5;strokeColor=#37474F;fontSize=10;" parent="dops" vertex="1">
+                    <mxGeometry x="15" y="62" width="265" height="16" as="geometry"/>
+                </mxCell>
+                <mxCell id="nightly" value="Nightly Performance Tests" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B0BEC5;strokeColor=#37474F;fontSize=10;" parent="dops" vertex="1">
+                    <mxGeometry x="15" y="82" width="265" height="16" as="geometry"/>
+                </mxCell>
+                <mxCell id="render" value="Render (Hosting + PostgreSQL + Redis)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B0BEC5;strokeColor=#37474F;fontSize=10;" parent="dops" vertex="1">
+                    <mxGeometry x="15" y="108" width="265" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="jest" value="Jest + Supertest (103 tests, 12 suites)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B0BEC5;strokeColor=#37474F;fontSize=10;" parent="dops" vertex="1">
+                    <mxGeometry x="15" y="138" width="265" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="a1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1565C0;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" parent="1" source="l1" target="l2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#2E7D32;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" parent="1" source="l2" target="l3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#6A1B9A;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" parent="1" source="l3" target="l4" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#C62828;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" parent="1" source="l4" target="l5" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#F57F17;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" parent="1" source="l5" target="l6" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#00838F;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" parent="1" source="l6" target="l7" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D50000;dashed=1;exitX=1;exitY=0.4;entryX=0;entryY=0.25;" parent="1" source="l2" target="ext" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D50000;dashed=1;exitX=1;exitY=0.5;entryX=0;entryY=0.6;" parent="1" source="l5" target="ext" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="a9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#6A1B9A;dashed=1;exitX=1;exitY=0.3;entryX=0;entryY=0.15;" parent="1" source="l3" target="ext" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
