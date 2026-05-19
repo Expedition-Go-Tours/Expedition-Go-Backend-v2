@@ -2,9 +2,8 @@ const dotenv = require('dotenv');
 const http = require('http');
 const { Server } = require('socket.io');
 const prisma = require('./utils/prismaClient');
-const { sendNotification } = require('./utils/notificationService');
 const event = require('./utils/eventEmitter');
-const { registerWorkers, closeAll } = require('./utils/queue');
+const { registerWorkers, closeAll, enqueueNotification, enqueueCleanup, enqueueAggregation } = require('./utils/queue');
 /* eslint-disable no-console */
 
 let server;
@@ -149,8 +148,8 @@ process.on('SIGINT', () => {
             supplierResponseAt: updated.supplierResponseAt
           });
 
-          // Also create DB notification
-          sendNotification({
+          // Also create DB notification through the queue
+          enqueueNotification({
             userId: review.customerId,
             type: 'REVIEW_RECEIVED',
             title: 'Supplier Responded to Your Review',
@@ -198,6 +197,42 @@ process.on('SIGINT', () => {
 
     // Initialise background queue workers after server starts
     registerWorkers(app);
+
+    // ----- Scheduled maintenance jobs -----
+    const intervals = [];
+
+    // Expired cart cleanup every 5 minutes
+    intervals.push(setInterval(() => {
+      enqueueCleanup('cleanup-expired-cart').catch(() => {});
+    }, 5 * 60 * 1000));
+
+    // Popularity cache refresh every hour
+    intervals.push(setInterval(() => {
+      enqueueAggregation('refresh-popularity').catch(() => {});
+    }, 60 * 60 * 1000));
+
+    // Old event cleanup once per day
+    intervals.push(setInterval(() => {
+      enqueueAggregation('cleanup-events').catch(() => {});
+    }, 24 * 60 * 60 * 1000));
+
+    // Old notification cleanup once per day
+    intervals.push(setInterval(() => {
+      enqueueCleanup('cleanup-notifications').catch(() => {});
+    }, 24 * 60 * 60 * 1000));
+
+    // Old audit log cleanup once per day
+    intervals.push(setInterval(() => {
+      enqueueCleanup('cleanup-audit-logs').catch(() => {});
+    }, 24 * 60 * 60 * 1000));
+
+    // Run each once on startup so the first cycle isn't delayed
+    enqueueCleanup('cleanup-expired-cart').catch(() => {});
+    enqueueAggregation('refresh-popularity').catch(() => {});
+    enqueueAggregation('cleanup-events').catch(() => {});
+    enqueueCleanup('cleanup-notifications').catch(() => {});
+    enqueueCleanup('cleanup-audit-logs').catch(() => {});
+
     console.log('[Queue] Workers registered');
   } catch (err) {
     shutdown('DATABASE CONNECTION FAILED', err);

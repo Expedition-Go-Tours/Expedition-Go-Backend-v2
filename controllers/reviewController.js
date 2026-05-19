@@ -16,7 +16,7 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
-const { sendNotification } = require('../utils/notificationService');
+const { enqueueNotification } = require('../utils/queue');
 const { logActivity } = require('../utils/auditLogger');
 const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
@@ -112,8 +112,8 @@ exports.createReview = catchAsync(async (req, res, next) => {
     return review;
   });
 
-  // Send notification to supplier
-  sendNotification({
+  // Send notification to supplier through the queue
+  enqueueNotification({
     userId: booking.tour.supplierId,
     type: 'REVIEW_RECEIVED',
     title: 'New Review Received',
@@ -124,7 +124,7 @@ exports.createReview = catchAsync(async (req, res, next) => {
       rating
     },
     sendEmail: true
-  }).catch(console.error);
+  }).catch(() => {});
 
   // Log activity
   await logActivity({
@@ -494,8 +494,8 @@ exports.addSupplierResponse = catchAsync(async (req, res, next) => {
     }
   });
 
-  // Send notification to customer
-  sendNotification({
+  // Send notification to customer through the queue
+  enqueueNotification({
     userId: review.customerId,
     type: 'REVIEW_RECEIVED',
     title: 'Supplier Responded to Your Review',
@@ -504,7 +504,7 @@ exports.addSupplierResponse = catchAsync(async (req, res, next) => {
       reviewId: review.id,
       tourId: review.tourId
     }
-  }).catch(console.error);
+  }).catch(() => {});
 
   // Log activity
   await logActivity({
@@ -827,7 +827,7 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
     flag: 'Your review has been flagged for review'
   };
 
-  sendNotification({
+  enqueueNotification({
     userId: review.customerId,
     type: 'REVIEW_RECEIVED',
     title: 'Review Status Update',
@@ -837,7 +837,7 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
       action,
       reason
     }
-  }).catch(console.error);
+  }).catch(() => {});
 
   await logActivity({
     userId: adminId,

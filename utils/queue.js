@@ -94,10 +94,28 @@ async function enqueueEvent(eventData) {
 /**
  * Enqueue a transactional email.
  * Worker handles rendering + SendGrid delivery with retry.
+ * Supports typed jobs (worker fetches its own data) and raw emails.
  */
-async function enqueueEmail({ to, subject, template, data, attachments }) {
-  return emailQueue().add('email', { to, subject, template, data, attachments }, {
-    jobId: `email:${to}:${Date.now()}`,
+async function enqueueEmail(job) {
+  if (job.type) {
+    return emailQueue().add(job.type, job, {
+      jobId: `email:${job.type}:${job.bookingId || 'x'}:${Date.now()}`,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 2000 },
+    });
+  }
+  return emailQueue().add('email', job, {
+    jobId: `email:${job.to}:${Date.now()}`,
+  });
+}
+
+/**
+ * Enqueue a cleanup/maintenance job.
+ * Use job name for deduplication (only one pending per type).
+ */
+async function enqueueCleanup(jobName, payload = {}) {
+  return cleanupQueue().add(jobName, payload, {
+    jobId: `${jobName}:${Math.floor(Date.now() / 60000)}`,
   });
 }
 
@@ -131,14 +149,81 @@ function registerWorkers(app) {
 
   /* ------------------------------------------------------------------
    * EMAIL WORKER
-   * Handles SendGrid delivery with retry + back-off.
+   * Handles typed email jobs (worker fetches booking data) and raw
+   * pre-rendered emails.  Retries on SendGrid failure with back-off.
    * ------------------------------------------------------------------ */
   new Worker(
     QUEUE_NAMES.EMAILS,
     async (job) => {
-      const { to, subject, template, data, attachments } = job.data;
-      const { sendEmail } = require('./emailService');
-      await sendEmail({ to, subject, template, data, attachments });
+      const prisma = require('./prismaClient');
+
+      switch (job.data.type) {
+        case 'booking-confirmation': {
+          const { sendBookingConfirmationEmail } = require('./emailService');
+          const booking = await prisma.booking.findUnique({
+            where: { id: job.data.bookingId },
+            include: {
+              customer: { select: { id: true, name: true, email: true } },
+              tour: {
+                select: {
+                  id: true, title: true, description: true, photos: true,
+                  productContent: true, bookingAndTickets: true,
+                  supplier: { select: { name: true, email: true, phone: true } },
+                },
+              },
+            },
+          });
+          if (!booking) throw new Error(`Booking ${job.data.bookingId} not found`);
+          await sendBookingConfirmationEmail(booking);
+          break;
+        }
+
+        case 'booking-cancellation': {
+          const { sendBookingCancellationEmail } = require('./emailService');
+          const booking = await prisma.booking.findUnique({
+            where: { id: job.data.bookingId },
+            include: {
+              customer: { select: { id: true, name: true, email: true } },
+              tour: { select: { id: true, title: true } },
+            },
+          });
+          if (!booking) throw new Error(`Booking ${job.data.bookingId} not found`);
+          await sendBookingCancellationEmail(booking, job.data.refundAmount);
+          break;
+        }
+
+        case 'supplier-booking-notification': {
+          const { sendSupplierBookingNotification } = require('./emailService');
+          const booking = await prisma.booking.findUnique({
+            where: { id: job.data.bookingId },
+            include: {
+              customer: { select: { id: true, name: true, email: true, phone: true } },
+              tour: {
+                select: {
+                  id: true, title: true,
+                  supplier: { select: { id: true, name: true, email: true } },
+                },
+              },
+            },
+          });
+          if (!booking) throw new Error(`Booking ${job.data.bookingId} not found`);
+          await sendSupplierBookingNotification(booking);
+          break;
+        }
+
+        case 'supplier-status-email': {
+          const { sendSupplierStatusEmail } = require('./emailService');
+          await sendSupplierStatusEmail(job.data.email, job.data.status, job.data.data || {});
+          break;
+        }
+
+        default: {
+          // Fallback: raw email with pre-rendered content
+          const { to, subject, template, data, attachments } = job.data;
+          const { sendEmail } = require('./emailService');
+          await sendEmail({ to, subject, template, data, attachments });
+        }
+      }
     },
     { connection: conn }
   );
@@ -146,13 +231,13 @@ function registerWorkers(app) {
   /* ------------------------------------------------------------------
    * NOTIFICATION WORKER
    * Creates DB notification + pushes real-time via Socket.IO.
+   * Forwards all job data so callers can pass sendEmail, emailTemplate, etc.
    * ------------------------------------------------------------------ */
   new Worker(
     QUEUE_NAMES.NOTIFICATIONS,
     async (job) => {
-      const { userId, type, title, message, data } = job.data;
       const { sendNotification } = require('./notificationService');
-      await sendNotification({ userId, type, title, message, data });
+      await sendNotification(job.data);
     },
     { connection: conn }
   );
@@ -268,6 +353,7 @@ module.exports = {
   enqueueNotification,
   enqueueEvent,
   enqueueAggregation,
+  enqueueCleanup,
   registerWorkers,
   closeAll,
   getConnection,

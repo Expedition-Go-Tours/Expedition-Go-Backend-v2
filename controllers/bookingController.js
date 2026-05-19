@@ -18,8 +18,8 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { createPaymentIntent, calculateCommission } = require('../utils/stripeHelpers');
 const { generateBookingNumber, validateTravelerInfo } = require('../utils/bookingHelpers');
-const { sendNotification } = require('../utils/notificationService');
-const { sendBookingConfirmationEmail, sendBookingCancellationEmail, generatePrintableTicketHtml } = require('../utils/emailService');
+const { enqueueNotification, enqueueEmail } = require('../utils/queue');
+const { generatePrintableTicketHtml } = require('../utils/emailService');
 const { logActivity } = require('../utils/auditLogger');
 const event = require('../utils/eventEmitter');
 
@@ -404,16 +404,15 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     return { bookings, paymentIntent };
   });
 
-  // Send notifications (async)
+  // Send notifications through the queue (async)
   for (const booking of result.bookings) {
-    // Notify supplier
-    sendNotification({
+    enqueueNotification({
       userId: booking.tour.supplier.id,
       type: 'BOOKING_CONFIRMED',
       title: 'New Booking Received',
       message: `You have a new booking for "${booking.tour.title}"`,
       data: { bookingId: booking.id }
-    }).catch(console.error);
+    }).catch(() => {});
   }
 
   // Emit analytics events for every created booking
@@ -663,17 +662,16 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     return updatedBooking;
   });
 
-  // Send cancellation email to customer
-  sendBookingCancellationEmail(booking, cancellationCheck.refundAmount).catch(console.error);
+  // Send cancellation email + notifications through the queue
+  enqueueEmail({ type: 'booking-cancellation', bookingId: booking.id, refundAmount: cancellationCheck.refundAmount }).catch(() => {});
 
-  // Send notifications
-  sendNotification({
+  enqueueNotification({
     userId: booking.tour.supplier.id,
     type: 'BOOKING_CANCELLED',
     title: 'Booking Cancelled',
     message: `Booking for "${booking.tour.title}" has been cancelled`,
     data: { bookingId: booking.id }
-  }).catch(console.error);
+  }).catch(() => {});
 
   // Log activity
   await logActivity({
@@ -816,13 +814,13 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
   };
 
   if (statusMessages[status]) {
-    sendNotification({
+    enqueueNotification({
       userId: booking.customerId,
       type: 'BOOKING_CONFIRMED',
       title: 'Booking Update',
       message: statusMessages[status],
       data: { bookingId: booking.id }
-    }).catch(console.error);
+    }).catch(() => {});
   }
 
   // Log activity

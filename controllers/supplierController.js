@@ -17,8 +17,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { createStripeConnectAccount, createOnboardingLink, createDashboardLink } = require('../utils/stripeHelpers');
-const { sendNotification } = require('../utils/notificationService');
-const { sendSupplierStatusEmail } = require('../utils/emailService');
+const { enqueueNotification, enqueueEmail } = require('../utils/queue');
 const { logActivity } = require('../utils/auditLogger');
 const { validateSupplierData } = require('../utils/supplierHelpers');
 
@@ -95,7 +94,7 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
   });
 
   for (const admin of admins) {
-    sendNotification({
+    enqueueNotification({
       userId: admin.id,
       type: 'SUPPLIER_APPROVED',
       title: 'New Supplier Application',
@@ -104,7 +103,7 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
         supplierId: userId,
         supplierProfileId: supplierProfile.id
       }
-    }).catch(console.error);
+    }).catch(() => {});
   }
 
   // Log activity
@@ -316,19 +315,21 @@ exports.checkStripeStatus = catchAsync(async (req, res, next) => {
       data: { status: 'ACTIVE' }
     });
 
-    // Send notification
-    sendNotification({
+    // Send notification + email through the queue
+    enqueueNotification({
       userId,
       type: 'SUPPLIER_APPROVED',
       title: 'Supplier Account Activated',
       message: 'Your supplier account is now active! You can start creating tours.',
       data: { supplierId: userId }
-    }).catch(console.error);
+    }).catch(() => {});
 
-    // Send email
-    sendSupplierStatusEmail(req.user.email, 'ACTIVE', {
-      name: req.user.name
-    }).catch(console.error);
+    enqueueEmail({
+      type: 'supplier-status-email',
+      email: req.user.email,
+      status: 'ACTIVE',
+      data: { name: req.user.name }
+    }).catch(() => {});
   }
 
   res.status(200).json({
@@ -670,7 +671,7 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
     request_info: 'Additional information is required for your supplier application.'
   };
 
-  sendNotification({
+  enqueueNotification({
     userId: supplierProfile.userId,
     type: action === 'approve' ? 'SUPPLIER_APPROVED' : 'SUPPLIER_REJECTED',
     title: 'Supplier Application Update',
@@ -680,13 +681,15 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
       action,
       notes
     }
-  }).catch(console.error);
+  }).catch(() => {});
 
-  // Send email notification
-  sendSupplierStatusEmail(supplierProfile.user.email, statusMap[action], {
-    name: supplierProfile.user.name,
-    notes
-  }).catch(console.error);
+  // Send email notification through the queue
+  enqueueEmail({
+    type: 'supplier-status-email',
+    email: supplierProfile.user.email,
+    status: statusMap[action],
+    data: { name: supplierProfile.user.name, notes }
+  }).catch(() => {});
 
   // Log activity
   await logActivity({
@@ -736,8 +739,7 @@ exports.suspendSupplier = catchAsync(async (req, res, next) => {
     }
   });
 
-  // Send notification
-  sendNotification({
+  enqueueNotification({
     userId: id,
     type: 'SYSTEM_ALERT',
     title: suspend ? 'Account Suspended' : 'Account Reactivated',
@@ -748,7 +750,7 @@ exports.suspendSupplier = catchAsync(async (req, res, next) => {
       reason,
       action: suspend ? 'suspended' : 'reactivated'
     }
-  }).catch(console.error);
+  }).catch(() => {});
 
   // Log activity
   await logActivity({

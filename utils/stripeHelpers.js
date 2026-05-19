@@ -12,24 +12,24 @@
  * @version 1.0.0
  */
 
-const stripe = new Proxy(
-  {},
-  {
-    get(_, prop) {
-      if (!process.env.STRIPE_SECRET_KEY) {
-        throw new Error(
-          'STRIPE_SECRET_KEY is required to call stripe.' + prop,
-        );
-      }
-      // lazy singleton: load real Stripe once on first property access
-      const Stripe = require('stripe');
-      const real = Stripe(process.env.STRIPE_SECRET_KEY);
-      return real[prop];
-    },
-  },
-);
+const Stripe = require('stripe');
+
+let _stripe = null;
+function getStripe() {
+  if (!_stripe) {
+    if (!process.env.STRIPE_SECRET_KEY) {
+      throw new Error('STRIPE_SECRET_KEY is required to use Stripe.');
+    }
+    _stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+      apiVersion: '2025-02-24.acacia',
+      maxNetworkRetries: 2,
+      timeout: 30000,
+    });
+  }
+  return _stripe;
+}
 const prisma = require('./prismaClient');
-const { sendBookingConfirmationEmail, sendSupplierBookingNotification } = require('./emailService');
+const { enqueueEmail } = require('./queue');
 const event = require('./eventEmitter');
 
 /**
@@ -94,7 +94,7 @@ async function createStripeConnectAccount({ email, businessProfile, individual }
       }
     }
 
-    const account = await stripe.accounts.create(accountData);
+    const account = await getStripe().accounts.create(accountData);
     
     console.log(`✅ Stripe Connect account created: ${account.id}`);
     return account;
@@ -109,7 +109,7 @@ async function createStripeConnectAccount({ email, businessProfile, individual }
  */
 async function createOnboardingLink(accountId, { refreshUrl, returnUrl }) {
   try {
-    const accountLink = await stripe.accountLinks.create({
+    const accountLink = await getStripe().accountLinks.create({
       account: accountId,
       refresh_url: refreshUrl,
       return_url: returnUrl,
@@ -184,7 +184,7 @@ async function createPaymentIntent({
       };
     }
 
-    const paymentIntent = await stripe.paymentIntents.create(paymentIntentData);
+    const paymentIntent = await getStripe().paymentIntents.create(paymentIntentData);
 
     console.log(`✅ Payment Intent created: ${paymentIntent.id} for amount: ${amount}`);
     return paymentIntent;
@@ -373,10 +373,10 @@ async function handlePaymentSucceeded(paymentIntent) {
     }
   });
 
-  // Send confirmation emails (non-blocking, outside transaction)
+  // Send confirmation emails through the queue (non-blocking, outside transaction)
   for (const booking of bookings) {
-    sendBookingConfirmationEmail(booking).catch(console.error);
-    sendSupplierBookingNotification(booking).catch(console.error);
+    enqueueEmail({ type: 'booking-confirmation', bookingId: booking.id }).catch(() => {});
+    enqueueEmail({ type: 'supplier-booking-notification', bookingId: booking.id }).catch(() => {});
   }
 
   // Emit analytics events for each completed booking
@@ -476,7 +476,7 @@ async function handleAccountUpdated(account) {
  */
 async function createDashboardLink(stripeAccountId) {
   try {
-    const link = await stripe.accounts.createLoginLink(stripeAccountId);
+    const link = await getStripe().accounts.createLoginLink(stripeAccountId);
     return link.url;
   } catch (error) {
     console.error('❌ Failed to create Stripe dashboard link:', error.message);
@@ -501,7 +501,7 @@ async function handleTransferCreated(transfer) {
  */
 function verifyWebhookSignature(payload, signature, endpointSecret) {
   try {
-    return stripe.webhooks.constructEvent(payload, signature, endpointSecret);
+    return getStripe().webhooks.constructEvent(payload, signature, endpointSecret);
   } catch (error) {
     console.error('❌ Webhook signature verification failed:', error.message);
     throw new Error('Invalid webhook signature');
