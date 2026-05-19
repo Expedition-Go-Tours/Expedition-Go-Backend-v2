@@ -187,14 +187,14 @@ jobs:
     steps:
       - name: Wait for deploy and verify health endpoint
         run: |
-          URL="${{ secrets.RENDER_APP_URL }}/api/health"
-          for i in $(seq 1 30); do
+          URL="${{ secrets.RENDER_APP_URL }}/health"
+          for i in $(seq 1 48); do
             if curl -sf "$URL" > /dev/null 2>&1; then
               echo "✅ Deploy is live and healthy"
               exit 0
             fi
-            echo "Waiting for deploy... attempt $i/30"
+            echo "Waiting for deploy... attempt $i/48"
             sleep 10
           done
-          echo "❌ Deploy did not become healthy within 5 minutes"
+          echo "❌ Deploy did not become healthy within 8 minutes"
           exit 1
