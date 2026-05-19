@@ -134,6 +134,11 @@ describe('Error Middleware', () => {
   });
 
   describe('Error properties', () => {
+    const OLD_ENV = process.env.NODE_ENV;
+
+    beforeAll(() => { process.env.NODE_ENV = 'production'; });
+    afterAll(() => { process.env.NODE_ENV = OLD_ENV; });
+
     it('uses 500 if no statusCode on error', () => {
       const res = mockRes();
       const err = new Error('Plain error');
