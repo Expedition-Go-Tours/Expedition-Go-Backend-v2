@@ -7,12 +7,12 @@ on:
     branches: [main]
 
 jobs:
+  # ───────────── Stage 1: Gate (blocks deploy) ─────────────
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
@@ -27,7 +27,7 @@ jobs:
         run: npm run lint
 
   test:
-    name: Test
+    name: Unit & Middleware Tests
     needs: lint
     runs-on: ubuntu-latest
 
@@ -52,8 +52,7 @@ jobs:
       DIRECT_URL: postgresql://test:test@localhost:5432/testdb
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
@@ -70,15 +69,132 @@ jobs:
       - name: Run migrations
         run: npx prisma migrate deploy
 
-      - name: Run tests
+      - name: Run unit & middleware tests
         run: npm test
 
+  test-e2e:
+    name: E2E Tests
+    needs: lint
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgis/postgis:16-master
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://test:test@localhost:5432/testdb
+      DIRECT_URL: postgresql://test:test@localhost:5432/testdb
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run migrations
+        run: npx prisma migrate deploy
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+
+  # ───────────── Stage 2: Advisory (doesn't block deploy) ─────────────
+  test-concurrency:
+    name: Concurrency Tests
+    needs: lint
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    services:
+      postgres:
+        image: postgis/postgis:16-master
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://test:test@localhost:5432/testdb
+      DIRECT_URL: postgresql://test:test@localhost:5432/testdb
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run migrations
+        run: npx prisma migrate deploy
+
+      - name: Run concurrency tests
+        run: npm run test:concurrency
+
+  # ───────────── Stage 3: Deploy to Render ─────────────
   deploy:
     name: Deploy to Render
-    needs: test
+    needs: [test, test-e2e]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
       - name: Trigger Render deploy hook
         run: curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
+
+  # ───────────── Stage 4: Post-deploy health check ─────────────
+  health-check:
+    name: Post-deploy Health Check
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Wait for deploy and verify health endpoint
+        run: |
+          URL="${{ secrets.RENDER_APP_URL }}/api/health"
+          for i in $(seq 1 30); do
+            if curl -sf "$URL" > /dev/null 2>&1; then
+              echo "✅ Deploy is live and healthy"
+              exit 0
+            fi
+            echo "Waiting for deploy... attempt $i/30"
+            sleep 10
+          done
+          echo "❌ Deploy did not become healthy within 5 minutes"
+          exit 1
