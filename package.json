@@ -4,7 +4,11 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "jest",
+    "test": "jest --testPathIgnorePatterns __tests__/performance/ --testPathIgnorePatterns __tests__/concurrency/ --testPathIgnorePatterns __tests__/e2e/",
+    "test:load": "jest --testPathPatterns __tests__/performance/ --verbose --forceExit",
+    "test:concurrency": "jest --testPathPatterns __tests__/concurrency/ --verbose --forceExit",
+    "test:e2e": "jest --testPathPatterns __tests__/e2e/ --verbose --forceExit",
+    "test:all": "jest --verbose --forceExit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "start": "node server.js",

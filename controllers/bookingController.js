@@ -858,29 +858,25 @@ function calculateTourPricing(tour, travelers, selectedDate, selectedTime) {
   try {
     const pricing = tour.schedulesAndPricing;
     
-    // This is a simplified pricing calculation
-    // In production, you'd implement complex pricing logic based on:
-    // - Age groups
-    // - Seasonal pricing
-    // - Dynamic pricing
-    // - Promotions
+    if (!pricing || !pricing.schedules || pricing.schedules.length === 0) {
+      return { success: false, error: 'Unable to calculate pricing' };
+    }
     
     let subtotal = 0;
     const currency = pricing.currency || 'USD';
     
-    // Basic calculation - you'll need to implement based on your pricing model
-    if (pricing.schedules && pricing.schedules.length > 0) {
-      const schedule = pricing.schedules[0]; // Simplified - find matching schedule
-      if (schedule.prices && schedule.prices.length > 0) {
-        const basePrice = schedule.prices[0].retailPrice || 0;
-        subtotal = basePrice * (travelers.adults || 1);
-      }
+    const schedule = pricing.schedules[0];
+    if (!schedule.prices || schedule.prices.length === 0) {
+      return { success: false, error: 'Unable to calculate pricing' };
     }
+    
+    const basePrice = schedule.prices[0].retailPrice || 0;
+    subtotal = basePrice * (travelers.adults || 1);
     
     return {
       success: true,
       subtotal,
-      total: subtotal, // Add taxes, fees, etc. here
+      total: subtotal,
       currency
     };
   } catch (error) {
