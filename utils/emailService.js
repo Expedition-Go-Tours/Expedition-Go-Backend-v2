@@ -1209,7 +1209,7 @@ ${year} ${brandName} by Expedition-Go Tours. All rights reserved.`;
 }
 
 function generateSupplierBookingNotificationTemplate(data) {
-  const logoUrl = process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
+  const logoUrl = data.logoUrl || process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
   const supportEmail = data.supportEmail || 'support@expeditiongo.com';
   const year = new Date().getFullYear();
 
@@ -1232,15 +1232,12 @@ function generateSupplierBookingNotificationTemplate(data) {
     <tr>
       <td align="center" style="padding: 40px 16px;">
         <table role="presentation" width="100%" style="max-width: 640px; background-color: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;" cellspacing="0" cellpadding="0" border="0">
-
-          <!-- Header -->
-          <tr>
-            <td style="padding: 40px 40px 24px 40px;">
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                <tr>
-                  <td align="left">
+          <tr><td style="padding: 40px 40px 24px 40px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+              <tr>
+                <td align="left">
                     <img src="${logoUrl}" alt="Travio Africa" width="180" style="display: block; max-width: 180px; height: auto;">
-                  </td>
+                </td>
                   <td align="right" valign="middle">
                     <table role="presentation" cellspacing="0" cellpadding="0" border="0">
                       <tr>
@@ -1507,7 +1504,7 @@ function generatePrintableTicketHtml(data) {
 </style></head><body data-ogsc="" style="background:#fff !important;color:#111 !important;">
 <div class="ticket">
   <div class="header">
-    <img src="${process.env.LOGO_URL}" alt="Travio Africa" style="height:44px;margin-bottom:16px;">
+    <img src="${data.logoUrl || process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media'}" alt="Travio Africa" style="height:44px;margin-bottom:16px;">
     <div class="ref">${data.bookingNumber}</div>
     <div class="status">${data.status === 'CONFIRMED' ? 'Confirmed' : data.status}</div>
   </div>
@@ -1877,13 +1874,19 @@ function generatePayoutNotificationTemplate(data) {
   const logoUrl = data.logoUrl || process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
   const year = new Date().getFullYear();
 
+  const pageTitle = data.title || 'Payout Processed';
+  const pageMessage = data.message || 'Your payout has been processed and is on its way to your bank account.';
+  const statusLabel = data.statusLabel || 'Sent';
+  const statusColor = data.statusColor || '#E6F6F0';
+  const statusTextColor = data.statusTextColor || '#00A669';
+
   const html = `<!DOCTYPE html>
 <html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="x-apple-disable-message-reformatting">
-  <title>Payout Processed</title>
+  <title>${pageTitle}</title>
   <style>
     body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; background-color: #F8FAFC; }
     table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
@@ -1908,19 +1911,23 @@ function generatePayoutNotificationTemplate(data) {
           </td></tr>
           <tr><td style="padding: 0 40px 32px 40px;">
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center">
-              <h1 style="margin: 0 0 12px 0; font-size: 28px; font-weight: 800; color: #001F3F; line-height: 1.2;" class="font-main">Payout Processed</h1>
-              <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;"><tr><td bgcolor="#E6F6F0" style="border-radius: 20px; padding: 6px 16px; font-size: 14px; font-weight: 700; color: #00A669; line-height: 1;" class="font-main">&#x2713;&nbsp;&nbsp;Sent</td></tr></table>
+              <h1 style="margin: 0 0 12px 0; font-size: 28px; font-weight: 800; color: #001F3F; line-height: 1.2;" class="font-main">${pageTitle}</h1>
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;"><tr><td bgcolor="${statusColor}" style="border-radius: 20px; padding: 6px 16px; font-size: 14px; font-weight: 700; color: ${statusTextColor}; line-height: 1;" class="font-main">${statusLabel}</td></tr></table>
             </td></tr></table>
           </td></tr>
           <tr><td style="padding: 0 40px 40px 40px;">
             <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 32px;">
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding-bottom: 24px; border-bottom: 1px solid #E2E8F0;">
                 <p style="margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #001F3F;" class="font-main">Hi ${data.supplierName},</p>
-                <p style="margin: 0; font-size: 15px; color: #334155; line-height: 1.5;" class="font-main">Your payout has been processed and is on its way to your bank account.</p>
+                <p style="margin: 0; font-size: 15px; color: #334155; line-height: 1.5;" class="font-main">${pageMessage}</p>
               </td></tr></table>
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
                 <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Payout ID</span>
                 <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.payoutId}</span>
+              </td></tr></table>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Tour</span>
+                <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${data.tourTitle || 'N/A'}</span>
               </td></tr></table>
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
                 <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Date</span>
@@ -1961,7 +1968,7 @@ function generatePayoutNotificationTemplate(data) {
 </body>
 </html>`;
 
-  const text = `PAYOUT PROCESSED\n\nHi ${data.supplierName},\n\nYour payout has been processed.\nPayout ID: ${data.payoutId}\nDate: ${data.payoutDate}\nAmount: ${data.currency} ${data.payoutAmount}\n\nView earnings: ${dashboardUrl}\n\nQuestions? Contact: ${supportEmail}\n\n${year} ${brandName} by Expedition-Go Tours. All rights reserved.`;
+  const text = `${pageTitle.toUpperCase()}\n\nHi ${data.supplierName},\n\n${pageMessage}\nPayout ID: ${data.payoutId}\nTour: ${data.tourTitle || 'N/A'}\nDate: ${data.payoutDate}\nAmount: ${data.currency} ${data.payoutAmount}\n\nView earnings: ${dashboardUrl}\n\nQuestions? Contact: ${supportEmail}\n\n${year} ${brandName} by Expedition-Go Tours. All rights reserved.`;
 
   return { html, text };
 }

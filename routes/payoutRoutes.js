@@ -99,6 +99,50 @@ router.get('/admin/summary', restrictTo('admin'), payoutController.getPayoutSumm
 
 /**
  * @swagger
+ * /payouts/admin/export:
+ *   get:
+ *     summary: Export payouts as CSV (admin)
+ *     description: Download all payouts as a CSV file, optionally filtered by status, supplier, or date range.
+ *     tags: [Payouts]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: status
+ *         in: query
+ *         schema:
+ *           type: string
+ *           enum: [PENDING, APPROVED, PROCESSING, PAID, FAILED, CANCELLED]
+ *         description: Filter by payout status
+ *       - name: supplierId
+ *         in: query
+ *         schema:
+ *           type: string
+ *         description: Filter by supplier ID
+ *       - name: startDate
+ *         in: query
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Start date for created at filter (ISO 8601)
+ *       - name: endDate
+ *         in: query
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: End date for created at filter (ISO 8601)
+ *     responses:
+ *       200:
+ *         description: CSV file download
+ *         content:
+ *           text/csv:
+ *             schema:
+ *               type: string
+ *               format: binary
+ */
+router.get('/admin/export', restrictTo('admin'), payoutController.exportPayouts);
+
+/**
+ * @swagger
  * /payouts/admin/{id}/approve:
  *   patch:
  *     summary: Approve a pending payout (admin)

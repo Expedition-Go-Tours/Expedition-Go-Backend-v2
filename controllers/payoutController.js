@@ -169,7 +169,10 @@ exports.approvePayout = catchAsync(async (req, res, next) => {
   const payout = await prisma.payout.findUnique({
     where: { id },
     include: {
-      supplier: { select: { id: true, name: true, email: true } }
+      supplier: { select: { id: true, name: true, email: true } },
+      booking: {
+        select: { tour: { select: { title: true } } }
+      }
     }
   });
 
@@ -194,7 +197,7 @@ exports.approvePayout = catchAsync(async (req, res, next) => {
     userId: payout.supplierId,
     type: 'PAYOUT_APPROVED',
     title: 'Payout Approved',
-    message: `Your payout of ${payout.currency} ${payout.amount} has been approved and is being processed.`,
+    message: `${payout.booking?.tour?.title || 'Tour'}: Your payout of ${payout.currency} ${payout.amount} has been approved and is being processed.`,
     data: { payoutId: payout.id, amount: payout.amount }
   }).catch(() => {});
 
@@ -209,6 +212,26 @@ exports.approvePayout = catchAsync(async (req, res, next) => {
       currency: payout.currency
     }
   });
+
+  const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
+
+  enqueueEmail({
+    to: payout.supplier.email,
+    subject: 'Payout Approved - Travio Africa',
+    template: 'payout-notification',
+    data: {
+      title: 'Payout Approved',
+      message: `Your payout of ${payout.currency} ${payout.amount} has been approved and is being processed.`,
+      statusLabel: 'Approved',
+      supplierName: payout.supplier.name,
+      tourTitle: payout.booking?.tour?.title || '',
+      payoutAmount: payout.amount,
+      currency: payout.currency,
+      payoutDate: new Date().toISOString(),
+      payoutId: payout.id,
+      dashboardUrl: `${CLIENT_URL}/supplier/earnings`
+    }
+  }).catch(() => {});
 
   res.status(200).json({
     status: 'success',
@@ -228,7 +251,10 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
   const payout = await prisma.payout.findUnique({
     where: { id },
     include: {
-      supplier: { select: { id: true, name: true, email: true } }
+      supplier: { select: { id: true, name: true, email: true } },
+      booking: {
+        select: { tour: { select: { title: true } } }
+      }
     }
   });
 
@@ -283,16 +309,21 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
     data: { payoutId: payout.id, amount: payout.amount, paymentMethod, payoutMethodId: method.id }
   }).catch(() => {});
 
+  const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
+
   enqueueEmail({
-    type: 'payout-notification',
-    email: payout.supplier.email,
+    to: payout.supplier.email,
+    subject: 'Payout Released - Travio Africa',
+    template: 'payout-notification',
     data: {
-      name: payout.supplier.name,
+      supplierName: payout.supplier.name,
+      tourTitle: payout.booking?.tour?.title || '',
       payoutAmount: payout.amount,
       currency: payout.currency,
       payoutDate: new Date().toISOString(),
       payoutId: payout.id,
-      paymentMethod
+      payoutMethod: method.type.replace('_', ' '),
+      dashboardUrl: `${CLIENT_URL}/supplier/earnings`
     }
   }).catch(() => {});
 
@@ -327,7 +358,10 @@ exports.failPayout = catchAsync(async (req, res, next) => {
   const payout = await prisma.payout.findUnique({
     where: { id },
     include: {
-      supplier: { select: { id: true, name: true, email: true } }
+      supplier: { select: { id: true, name: true, email: true } },
+      booking: {
+        select: { tour: { select: { title: true } } }
+      }
     }
   });
 
@@ -355,6 +389,28 @@ exports.failPayout = catchAsync(async (req, res, next) => {
     title: 'Payout Failed',
     message: `Your payout of ${payout.currency} ${payout.amount} has failed. Please contact support.`,
     data: { payoutId: payout.id, reason }
+  }).catch(() => {});
+
+  const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
+
+  enqueueEmail({
+    to: payout.supplier.email,
+    subject: 'Payout Failed - Travio Africa',
+    template: 'payout-notification',
+    data: {
+      title: 'Payout Failed',
+      message: `Your payout of ${payout.currency} ${payout.amount} has failed. Please contact support for more information.`,
+      statusLabel: 'Failed',
+      statusColor: '#FEF2F2',
+      statusTextColor: '#DC2626',
+      supplierName: payout.supplier.name,
+      tourTitle: payout.booking?.tour?.title || '',
+      payoutAmount: payout.amount,
+      currency: payout.currency,
+      payoutDate: new Date().toISOString(),
+      payoutId: payout.id,
+      dashboardUrl: `${CLIENT_URL}/supplier/earnings`
+    }
   }).catch(() => {});
 
   await logActivity({
@@ -422,6 +478,92 @@ exports.getPayoutSummary = catchAsync(async (req, res, next) => {
       monthlyBreakdown
     }
   });
+});
+
+/**
+ * Export payouts as CSV (admin only)
+ */
+exports.exportPayouts = catchAsync(async (req, res, next) => {
+  const { status, supplierId, startDate, endDate } = req.query;
+
+  const where = {};
+  if (status) where.status = status;
+  if (supplierId) where.supplierId = supplierId;
+  if (startDate || endDate) {
+    where.createdAt = {};
+    if (startDate) where.createdAt.gte = new Date(startDate);
+    if (endDate) where.createdAt.lte = new Date(endDate);
+  }
+
+  const payouts = await prisma.payout.findMany({
+    where,
+    include: {
+      supplier: { select: { name: true, email: true } },
+      booking: {
+        select: {
+          bookingNumber: true,
+          total: true,
+          tour: { select: { title: true } }
+        }
+      },
+      payoutMethod: {
+        select: { type: true, bankName: true, mobileProvider: true, paypalEmail: true }
+      }
+    },
+    orderBy: { createdAt: 'desc' }
+  });
+
+  const headers = [
+    'ID', 'Supplier Name', 'Supplier Email', 'Booking Number',
+    'Tour Title', 'Amount', 'Currency', 'Commission', 'Status',
+    'Payment Method', 'Method Detail', 'Reference', 'Notes',
+    'Created At', 'Approved At', 'Paid At'
+  ];
+
+  const rows = payouts.map(p => {
+    let methodDetail = '';
+    if (p.payoutMethod) {
+      if (p.payoutMethod.type === 'BANK_TRANSFER') methodDetail = p.payoutMethod.bankName || '';
+      else if (p.payoutMethod.type === 'MOBILE_MONEY') methodDetail = p.payoutMethod.mobileProvider || '';
+      else if (p.payoutMethod.type === 'PAYPAL') methodDetail = p.payoutMethod.paypalEmail || '';
+    }
+
+    return [
+      p.id,
+      p.supplier.name,
+      p.supplier.email,
+      p.booking?.bookingNumber || '',
+      p.booking?.tour?.title || '',
+      p.amount.toString(),
+      p.currency,
+      p.commissionAmount.toString(),
+      p.status,
+      p.paymentMethod || '',
+      methodDetail,
+      p.reference || '',
+      p.notes || '',
+      p.createdAt.toISOString(),
+      p.approvedAt ? p.approvedAt.toISOString() : '',
+      p.paidAt ? p.paidAt.toISOString() : ''
+    ];
+  });
+
+  const csvEscape = (val) => {
+    const str = String(val);
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+
+  const csvContent = [
+    headers.join(','),
+    ...rows.map(row => row.map(csvEscape).join(','))
+  ].join('\n');
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="payouts-${new Date().toISOString().split('T')[0]}.csv"`);
+  res.status(200).send(csvContent);
 });
 
 module.exports = exports;
