@@ -124,6 +124,15 @@ function validateCategorization(categorization) {
     // Basic structure validation
     if (typeof categorization !== 'object') return false;
 
+    // Validate top-level transportMode (nested object: { air: [...], land: [...], water: [...] })
+    if (categorization.transportMode) {
+      if (typeof categorization.transportMode !== 'object' || Array.isArray(categorization.transportMode)) return false;
+      const { air, land, water } = categorization.transportMode;
+      if (air && !Array.isArray(air)) return false;
+      if (land && !Array.isArray(land)) return false;
+      if (water && !Array.isArray(water)) return false;
+    }
+
     // Validate tour categorization
     if (categorization.tour) {
       const { transportModes, duration } = categorization.tour;

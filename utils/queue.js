@@ -24,14 +24,33 @@ const IORedis = require('ioredis');
 const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 
 let connection;
+let connectionFailed = false;
+
+async function isRedisAvailable() {
+  try {
+    const conn = getConnection();
+    await conn.connect();
+    await conn.ping();
+    connectionFailed = false;
+    return true;
+  } catch {
+    connectionFailed = true;
+    return false;
+  }
+}
+
 function getConnection() {
   if (!connection) {
     connection = new IORedis(REDIS_URL, {
       maxRetriesPerRequest: null,   
       enableReadyCheck: false,      // Faster startup
-      retryStrategy: (times) => Math.min(times * 100, 3000),
+      retryStrategy: (times) => {
+        if (connectionFailed) return null; // Stop retrying if rate limited
+        return Math.min(times * 100, 3000);
+      },
       lazyConnect: true,
     });
+    connection.on('error', () => {}); // Suppress BullMQ worker noise
   }
   return connection;
 }
@@ -86,9 +105,11 @@ const cleanupQueue     = () => getQueue(QUEUE_NAMES.CLEANUP);
  * The worker flushes buffered events to the Event table on a cadence.
  */
 async function enqueueEvent(eventData) {
-  return eventQueue().add('event', eventData, {
-    jobId: `evt:${eventData.name}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
-  });
+  try {
+    return await eventQueue().add('event', eventData, {
+      jobId: `evt:${eventData.name}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+    });
+  } catch { /* Redis unavailable — skip event */ }
 }
 
 /**
@@ -97,16 +118,18 @@ async function enqueueEvent(eventData) {
  * Supports typed jobs (worker fetches its own data) and raw emails.
  */
 async function enqueueEmail(job) {
-  if (job.type) {
-    return emailQueue().add(job.type, job, {
-      jobId: `email:${job.type}:${job.bookingId || 'x'}:${Date.now()}`,
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 2000 },
+  try {
+    if (job.type) {
+      return await emailQueue().add(job.type, job, {
+        jobId: `email:${job.type}:${job.bookingId || 'x'}:${Date.now()}`,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+      });
+    }
+    return await emailQueue().add('email', job, {
+      jobId: `email:${job.to}:${Date.now()}`,
     });
-  }
-  return emailQueue().add('email', job, {
-    jobId: `email:${job.to}:${Date.now()}`,
-  });
+  } catch { /* Redis unavailable — email will be retried on next attempt */ }
 }
 
 /**
@@ -114,16 +137,20 @@ async function enqueueEmail(job) {
  * Use job name for deduplication (only one pending per type).
  */
 async function enqueueCleanup(jobName, payload = {}) {
-  return cleanupQueue().add(jobName, payload, {
-    jobId: `${jobName}:${Math.floor(Date.now() / 60000)}`,
-  });
+  try {
+    return await cleanupQueue().add(jobName, payload, {
+      jobId: `${jobName}:${Math.floor(Date.now() / 60000)}`,
+    });
+  } catch { /* Redis unavailable — skip cleanup */ }
 }
 
 /**
  * Enqueue a notification (DB + WebSocket).
  */
 async function enqueueNotification({ userId, type, title, message, data }) {
-  return notificationQueue().add('notify', { userId, type, title, message, data });
+  try {
+    return await notificationQueue().add('notify', { userId, type, title, message, data });
+  } catch { /* Redis unavailable — skip notification */ }
 }
 
 /**
@@ -131,9 +158,11 @@ async function enqueueNotification({ userId, type, title, message, data }) {
  * Use jobId with a static name to deduplicate (e.g. hourly refresh only keeps one pending).
  */
 async function enqueueAggregation(jobName, payload = {}) {
-  return aggregationQueue().add(jobName, payload, {
-    jobId: `${jobName}:${Math.floor(Date.now() / 60000)}`, // Dedup per minute
-  });
+  try {
+    return await aggregationQueue().add(jobName, payload, {
+      jobId: `${jobName}:${Math.floor(Date.now() / 60000)}`, // Dedup per minute
+    });
+  } catch { /* Redis unavailable — skip aggregation */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -147,187 +176,166 @@ async function enqueueAggregation(jobName, payload = {}) {
 function registerWorkers(app) {
   const conn = getConnection();
 
+  function createWorker(queueName, processor) {
+    const worker = new Worker(queueName, processor, { connection: conn });
+    worker.on('error', () => {}); // Suppress BullMQ noise when Redis is down
+    return worker;
+  }
+
   /* ------------------------------------------------------------------
    * EMAIL WORKER
    * Handles typed email jobs (worker fetches booking data) and raw
    * pre-rendered emails.  Retries on SendGrid failure with back-off.
    * ------------------------------------------------------------------ */
-  new Worker(
-    QUEUE_NAMES.EMAILS,
-    async (job) => {
-      const prisma = require('./prismaClient');
+  createWorker(QUEUE_NAMES.EMAILS, async (job) => {
+    const prisma = require('./prismaClient');
 
-      switch (job.data.type) {
-        case 'booking-confirmation': {
-          const { sendBookingConfirmationEmail } = require('./emailService');
-          const booking = await prisma.booking.findUnique({
-            where: { id: job.data.bookingId },
-            include: {
-              customer: { select: { id: true, name: true, email: true } },
-              tour: {
-                select: {
-                  id: true, title: true, description: true, photos: true,
-                  productContent: true, bookingAndTickets: true,
-                  supplier: { select: { name: true, email: true, phone: true } },
-                },
+    switch (job.data.type) {
+      case 'booking-confirmation': {
+        const { sendBookingConfirmationEmail } = require('./emailService');
+        const booking = await prisma.booking.findUnique({
+          where: { id: job.data.bookingId },
+          include: {
+            customer: { select: { id: true, name: true, email: true } },
+            tour: {
+              select: {
+                id: true, title: true, description: true, photos: true,
+                productContent: true, bookingAndTickets: true,
+                supplier: { select: { name: true, email: true, phone: true } },
               },
             },
-          });
-          if (!booking) throw new Error(`Booking ${job.data.bookingId} not found`);
-          await sendBookingConfirmationEmail(booking);
-          break;
-        }
-
-        case 'booking-cancellation': {
-          const { sendBookingCancellationEmail } = require('./emailService');
-          const booking = await prisma.booking.findUnique({
-            where: { id: job.data.bookingId },
-            include: {
-              customer: { select: { id: true, name: true, email: true } },
-              tour: { select: { id: true, title: true } },
-            },
-          });
-          if (!booking) throw new Error(`Booking ${job.data.bookingId} not found`);
-          await sendBookingCancellationEmail(booking, job.data.refundAmount);
-          break;
-        }
-
-        case 'supplier-booking-notification': {
-          const { sendSupplierBookingNotification } = require('./emailService');
-          const booking = await prisma.booking.findUnique({
-            where: { id: job.data.bookingId },
-            include: {
-              customer: { select: { id: true, name: true, email: true, phone: true } },
-              tour: {
-                select: {
-                  id: true, title: true,
-                  supplier: { select: { id: true, name: true, email: true } },
-                },
-              },
-            },
-          });
-          if (!booking) throw new Error(`Booking ${job.data.bookingId} not found`);
-          await sendSupplierBookingNotification(booking);
-          break;
-        }
-
-        case 'supplier-status-email': {
-          const { sendSupplierStatusEmail } = require('./emailService');
-          await sendSupplierStatusEmail(job.data.email, job.data.status, job.data.data || {});
-          break;
-        }
-
-        default: {
-          // Fallback: raw email with pre-rendered content
-          const { to, subject, template, data, attachments } = job.data;
-          const { sendEmail } = require('./emailService');
-          await sendEmail({ to, subject, template, data, attachments });
-        }
+          },
+        });
+        if (!booking) throw new Error(`Booking ${job.data.bookingId} not found`);
+        await sendBookingConfirmationEmail(booking);
+        break;
       }
-    },
-    { connection: conn }
-  );
+
+      case 'booking-cancellation': {
+        const { sendBookingCancellationEmail } = require('./emailService');
+        const booking = await prisma.booking.findUnique({
+          where: { id: job.data.bookingId },
+          include: {
+            customer: { select: { id: true, name: true, email: true } },
+            tour: { select: { id: true, title: true } },
+          },
+        });
+        if (!booking) throw new Error(`Booking ${job.data.bookingId} not found`);
+        await sendBookingCancellationEmail(booking, job.data.refundAmount);
+        break;
+      }
+
+      case 'supplier-booking-notification': {
+        const { sendSupplierBookingNotification } = require('./emailService');
+        const booking = await prisma.booking.findUnique({
+          where: { id: job.data.bookingId },
+          include: {
+            customer: { select: { id: true, name: true, email: true, phone: true } },
+            tour: {
+              select: {
+                id: true, title: true,
+                supplier: { select: { id: true, name: true, email: true } },
+              },
+            },
+          },
+        });
+        if (!booking) throw new Error(`Booking ${job.data.bookingId} not found`);
+        await sendSupplierBookingNotification(booking);
+        break;
+      }
+
+      case 'supplier-status-email': {
+        const { sendSupplierStatusEmail } = require('./emailService');
+        await sendSupplierStatusEmail(job.data.email, job.data.status, job.data.data || {});
+        break;
+      }
+
+      default: {
+        const { to, subject, template, data, attachments } = job.data;
+        const { sendEmail } = require('./emailService');
+        await sendEmail({ to, subject, template, data, attachments });
+      }
+    }
+  });
 
   /* ------------------------------------------------------------------
    * NOTIFICATION WORKER
-   * Creates DB notification + pushes real-time via Socket.IO.
-   * Forwards all job data so callers can pass sendEmail, emailTemplate, etc.
    * ------------------------------------------------------------------ */
-  new Worker(
-    QUEUE_NAMES.NOTIFICATIONS,
-    async (job) => {
-      const { sendNotification } = require('./notificationService');
-      await sendNotification(job.data);
-    },
-    { connection: conn }
-  );
+  createWorker(QUEUE_NAMES.NOTIFICATIONS, async (job) => {
+    const { sendNotification } = require('./notificationService');
+    await sendNotification(job.data);
+  });
 
   /* ------------------------------------------------------------------
    * AGGREGATION WORKER
-   * Periodic analytics refreshes (triggered by cron or scheduled jobs).
    * ------------------------------------------------------------------ */
-  new Worker(
-    QUEUE_NAMES.AGGREGATIONS,
-    async (job) => {
-      switch (job.name) {
-        case 'refresh-popularity':
-          // Invalidate popularity cache so next request recomputes
-          const cache = require('./cacheHelper');
-          await cache.invalidate(cache.TOUR_POPULAR_KEY);
-          break;
-
-        case 'cleanup-events':
-          // Archive / delete events older than retention period
-          const prisma = require('./prismaClient');
-          const cutoff = new Date();
-          cutoff.setFullYear(cutoff.getFullYear() - 2); // Keep 2 years
-          await prisma.event.deleteMany({ where: { createdAt: { lt: cutoff } } });
-          break;
-
-        default:
-          console.log('[Queue] Unknown aggregation job:', job.name);
-      }
-    },
-    { connection: conn }
-  );
+  createWorker(QUEUE_NAMES.AGGREGATIONS, async (job) => {
+    switch (job.name) {
+      case 'refresh-popularity':
+        const cache = require('./cacheHelper');
+        await cache.invalidate(cache.TOUR_POPULAR_KEY);
+        break;
+      case 'cleanup-events':
+        const prisma = require('./prismaClient');
+        const cutoff = new Date();
+        cutoff.setFullYear(cutoff.getFullYear() - 2);
+        await prisma.event.deleteMany({ where: { createdAt: { lt: cutoff } } });
+        break;
+      default:
+        console.log('[Queue] Unknown aggregation job:', job.name);
+    }
+  });
 
   /* ------------------------------------------------------------------
    * CLEANUP WORKER
-   * Scheduled maintenance jobs (old audit logs, expired cart items, etc.).
    * ------------------------------------------------------------------ */
-  new Worker(
-    QUEUE_NAMES.CLEANUP,
-    async (job) => {
-      switch (job.name) {
-        case 'cleanup-audit-logs': {
-          const { cleanupOldLogs } = require('./auditLogger');
-          await cleanupOldLogs(365);
-          break;
-        }
-        case 'cleanup-notifications': {
-          const { cleanupOldNotifications } = require('./notificationService');
-          await cleanupOldNotifications(90);
-          break;
-        }
-        case 'cleanup-expired-cart': {
-          const prisma = require('./prismaClient');
-          const event = require('./eventEmitter');
-          // Find expired items before deleting to emit abandonment events
-          const expiredItems = await prisma.cartItem.findMany({
-            where: { expiresAt: { lt: new Date() } },
-            include: { tour: { select: { title: true, supplierId: true } } },
-          });
-          const result = await prisma.cartItem.deleteMany({
-            where: { expiresAt: { lt: new Date() } },
-          });
-          // Emit abandonment event for each expired item
-          for (const item of expiredItems) {
-            event.emit({
-              name: 'cart.abandoned',
-              userId: item.customerId,
-              resource: 'Tour',
-              resourceId: item.tourId,
-              properties: {
-                tourTitle: item.tour.title,
-                supplierId: item.tour.supplierId,
-                total: parseFloat(item.total),
-                currency: item.currency,
-                expiredAt: item.expiresAt,
-              },
-              source: 'system',
-            });
-          }
-          if (result.count > 0) {
-            console.log(`[Queue] Cleaned ${result.count} expired cart items, emitted ${expiredItems.length} abandonment events`);
-          }
-          break;
-        }
-        default:
-          console.log('[Queue] Unknown cleanup job:', job.name);
+  createWorker(QUEUE_NAMES.CLEANUP, async (job) => {
+    switch (job.name) {
+      case 'cleanup-audit-logs': {
+        const { cleanupOldLogs } = require('./auditLogger');
+        await cleanupOldLogs(365);
+        break;
       }
-    },
-    { connection: conn }
-  );
+      case 'cleanup-notifications': {
+        const { cleanupOldNotifications } = require('./notificationService');
+        await cleanupOldNotifications(90);
+        break;
+      }
+      case 'cleanup-expired-cart': {
+        const prisma = require('./prismaClient');
+        const event = require('./eventEmitter');
+        const expiredItems = await prisma.cartItem.findMany({
+          where: { expiresAt: { lt: new Date() } },
+          include: { tour: { select: { title: true, supplierId: true } } },
+        });
+        const result = await prisma.cartItem.deleteMany({
+          where: { expiresAt: { lt: new Date() } },
+        });
+        for (const item of expiredItems) {
+          event.emit({
+            name: 'cart.abandoned',
+            userId: item.customerId,
+            resource: 'Tour',
+            resourceId: item.tourId,
+            properties: {
+              tourTitle: item.tour.title,
+              supplierId: item.tour.supplierId,
+              total: parseFloat(item.total),
+              currency: item.currency,
+              expiredAt: item.expiresAt,
+            },
+            source: 'system',
+          });
+        }
+        if (result.count > 0) {
+          console.log(`[Queue] Cleaned ${result.count} expired cart items, emitted ${expiredItems.length} abandonment events`);
+        }
+        break;
+      }
+      default:
+        console.log('[Queue] Unknown cleanup job:', job.name);
+    }
+  });
 
   console.log('[Queue] All workers registered');
 }
@@ -357,4 +365,5 @@ module.exports = {
   registerWorkers,
   closeAll,
   getConnection,
+  isRedisAvailable,
 };

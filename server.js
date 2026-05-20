@@ -3,7 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const prisma = require('./utils/prismaClient');
 const event = require('./utils/eventEmitter');
-const { registerWorkers, closeAll, enqueueNotification, enqueueCleanup, enqueueAggregation } = require('./utils/queue');
+const { registerWorkers, closeAll, enqueueNotification, enqueueCleanup, enqueueAggregation, isRedisAvailable } = require('./utils/queue');
 /* eslint-disable no-console */
 
 let server;
@@ -196,7 +196,12 @@ process.on('SIGINT', () => {
     });
 
     // Initialise background queue workers after server starts
-    registerWorkers(app);
+    const redisOk = await isRedisAvailable();
+    if (redisOk) {
+      registerWorkers(app);
+    } else {
+      console.warn('[Queue] Redis unavailable — skipping worker registration, queued tasks will be lost until Redis is restored');
+    }
 
     // ----- Scheduled maintenance jobs -----
     const intervals = [];

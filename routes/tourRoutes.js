@@ -569,7 +569,8 @@ router.get('/supplier/my-tours', restrictTo('supplier'), tourController.getMyTou
  *                   - subcategory: Specific type (e.g., "Walking Tours", "Hiking")
  *                   - difficulty: Tour difficulty ("Easy", "Moderate", "Challenging", "Extreme")
  *                   - duration: Duration in minutes (integer)
- *                 example: '{"category":"Cultural","subcategory":"Walking Tours","difficulty":"Easy","duration":120}'
+ *                   - transportMode: Object with air/land/water arrays (e.g., {"land":["Walking","4x4/Jeep"],"air":["Plane"]})
+ *                 example: '{"category":"Cultural","subcategory":"Walking Tours","difficulty":"Easy","duration":120,"transportMode":{"land":["Walking","4x4/Jeep"],"air":["Plane"]}}'
  *               theme:
  *                 type: string
  *                 description: |

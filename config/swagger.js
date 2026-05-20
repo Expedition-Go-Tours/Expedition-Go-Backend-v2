@@ -949,6 +949,31 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
                       example: 15
                     }
                   }
+                },
+                transportMode: {
+                  type: 'object',
+                  description: 'Transportation modes grouped by type',
+                  properties: {
+                    air: {
+                      type: 'array',
+                      description: 'Air transport modes',
+                      items: { type: 'string', enum: ['Biplane', 'Glider', 'Plane', 'Helicopter', 'Hot Air Balloon', 'Parachute'] },
+                      example: ['Plane', 'Helicopter']
+                    },
+                    land: {
+                      type: 'array',
+                      description: 'Land transport modes',
+                      items: { type: 'string', enum: ['Bicycle', 'Buggy', '4x4/Jeep', 'Bus', 'Car', 'Camel', 'Horseback', 'Motorcycle', 'Walking', 'Train', 'Scooter'] },
+                      example: ['4x4/Jeep', 'Walking']
+                    },
+                    water: {
+                      type: 'array',
+                      description: 'Water transport modes',
+                      items: { type: 'string', enum: ['Boat', 'Cruise Ship', 'Kayak', 'Raft', 'Submarine', 'Surfboard', 'Yacht', 'Ferry'] },
+                      example: ['Boat', 'Kayak']
+                    }
+                  },
+                  example: { land: ['4x4/Jeep', 'Walking'], air: ['Plane'] }
                 }
               }
             },
