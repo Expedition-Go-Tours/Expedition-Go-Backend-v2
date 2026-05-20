@@ -317,6 +317,7 @@ describe('E2E: Full User Journey', () => {
         customer: { id: 'e2e-user-1', name: 'E2E Test User', email: 'e2e@test.com' },
       }]) },
       notification: { create: jest.fn().mockResolvedValue({}) },
+      payout: { create: jest.fn().mockResolvedValue({ id: 'payout-e2e-1', status: 'PENDING' }) },
       supplierProfile: { update: jest.fn().mockResolvedValue({}) },
       tour: { update: jest.fn().mockResolvedValue({}) },
     };
@@ -397,6 +398,7 @@ describe('E2E: Full User Journey', () => {
         customer: { id: 'e2e-user-1', name: 'E2E Test User', email: 'e2e@test.com' },
       }]) },
       notification: { create: jest.fn().mockResolvedValue({}) },
+      payout: { create: jest.fn().mockResolvedValue({ id: 'payout-e2e-1', status: 'PENDING' }) },
       supplierProfile: { update: jest.fn().mockResolvedValue({}) },
       tour: { update: jest.fn().mockResolvedValue({}) },
     };

@@ -233,6 +233,7 @@ describe('Concurrency — Double Booking Prevention', () => {
     const mockTx = {
       booking: { updateMany: jest.fn().mockResolvedValue({ count: 2 }), findMany: jest.fn().mockResolvedValue([mockBooking]) },
       notification: { create: jest.fn().mockResolvedValue({}) },
+      payout: { create: jest.fn().mockResolvedValue({ id: 'payout-concur-1', status: 'PENDING' }) },
       supplierProfile: { update: jest.fn().mockResolvedValue({}) },
       tour: { update: jest.fn().mockResolvedValue({}) },
     };
