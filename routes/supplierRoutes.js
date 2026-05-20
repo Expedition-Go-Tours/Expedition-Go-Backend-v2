@@ -776,5 +776,6 @@ router.patch('/admin/applications/:id/review', restrictTo('admin'), supplierCont
  *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.patch('/admin/:id/suspend', restrictTo('admin'), supplierController.suspendSupplier);
+router.patch('/admin/:id/activate', restrictTo('admin'), supplierController.activateSupplier);
 
 module.exports = router;

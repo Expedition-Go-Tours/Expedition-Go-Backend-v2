@@ -2828,6 +2828,29 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
         }
       }
     },
+    PayoutMethod: {
+      type: 'object',
+      description: 'Supplier payout method (bank, mobile money, or PayPal)',
+      properties: {
+        id: { type: 'string' },
+        supplierId: { type: 'string' },
+        type: { type: 'string', enum: ['BANK_TRANSFER', 'MOBILE_MONEY', 'PAYPAL'] },
+        isDefault: { type: 'boolean' },
+        currency: { type: 'string', example: 'USD' },
+        bankName: { type: 'string' },
+        bankAddress: { type: 'string' },
+        accountName: { type: 'string' },
+        accountNumber: { type: 'string' },
+        routingNumber: { type: 'string' },
+        swiftCode: { type: 'string' },
+        iban: { type: 'string' },
+        mobileProvider: { type: 'string', example: 'MTN' },
+        mobileNumber: { type: 'string' },
+        paypalEmail: { type: 'string', format: 'email' },
+        verified: { type: 'boolean' },
+        createdAt: { type: 'string', format: 'date-time' }
+      }
+    },
     Payout: {
       type: 'object',
       description: 'Supplier payout record for a confirmed booking',

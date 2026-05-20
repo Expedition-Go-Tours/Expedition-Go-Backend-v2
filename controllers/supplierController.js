@@ -666,7 +666,7 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
 
   // Send notification to supplier
   const notificationMessages = {
-    approve: 'Your supplier application has been approved! You can now start Stripe onboarding.',
+    approve: 'Your supplier application has been approved! Please set up your payout methods in your account settings to start receiving payments.',
     reject: 'Your supplier application was not approved.',
     request_info: 'Additional information is required for your supplier application.'
   };
@@ -700,6 +700,64 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
     metadata: {
       supplierId: supplierProfile.userId,
       notes,
+      businessName: supplierProfile.businessInfo?.legalBusinessName
+    }
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { supplierProfile: updatedProfile }
+  });
+});
+
+/**
+ * Activate a supplier directly (admin only) — bypasses Stripe Connect
+ * Use when supplier has provided payout methods and is ready to go live
+ */
+exports.activateSupplier = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const adminId = req.user.id;
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { userId: id },
+    include: { user: true }
+  });
+
+  if (!supplierProfile) {
+    return next(new AppError('Supplier not found', 404));
+  }
+
+  if (!['APPROVED', 'STRIPE_PENDING'].includes(supplierProfile.status)) {
+    return next(new AppError('Supplier must be in APPROVED or STRIPE_PENDING status to activate', 400));
+  }
+
+  const updatedProfile = await prisma.supplierProfile.update({
+    where: { userId: id },
+    data: { status: 'ACTIVE' }
+  });
+
+  enqueueNotification({
+    userId: id,
+    type: 'SUPPLIER_APPROVED',
+    title: 'Supplier Account Activated',
+    message: 'Your supplier account is now active! You can start creating tours.',
+    data: { supplierId: id }
+  }).catch(() => {});
+
+  enqueueEmail({
+    type: 'supplier-status-email',
+    email: supplierProfile.user.email,
+    status: 'ACTIVE',
+    data: { name: supplierProfile.user.name }
+  }).catch(() => {});
+
+  await logActivity({
+    userId: adminId,
+    action: 'supplier.activated',
+    resource: 'SupplierProfile',
+    resourceId: supplierProfile.id,
+    metadata: {
+      supplierId: id,
       businessName: supplierProfile.businessInfo?.legalBusinessName
     }
   });

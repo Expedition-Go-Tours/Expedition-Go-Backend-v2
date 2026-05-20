@@ -41,6 +41,12 @@ enum PayoutStatus {
   CANCELLED       // Payout cancelled
 }
 
+enum PayoutMethodType {
+  BANK_TRANSFER
+  MOBILE_MONEY
+  PAYPAL
+}
+
 enum BookingStatus {
   PENDING         // Payment processing
   CONFIRMED       // Payment successful
@@ -119,6 +125,7 @@ model User {
   tours        Tour[]
   bookings     Booking[]
   payouts      Payout[]
+  payoutMethods PayoutMethod[]
   reviews      Review[]
   notifications Notification[]
   cartItems    CartItem[]
@@ -165,6 +172,40 @@ model SupplierProfile {
   @@index([status])
   @@index([stripeAccountId])
   @@index([createdAt])
+}
+
+model PayoutMethod {
+  id             String            @id @default(cuid())
+  supplierId     String
+  supplier       User              @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  type           PayoutMethodType
+  isDefault      Boolean           @default(false)
+  currency       String            @default("USD")
+
+  // Bank Transfer fields
+  bankName       String?
+  bankAddress    String?
+  accountName    String?
+  accountNumber  String?
+  routingNumber  String?
+  swiftCode      String?
+  iban           String?
+
+  // Mobile Money fields
+  mobileProvider String?           // e.g. "MTN", "Orange", "Airtel", "Vodafone"
+  mobileNumber   String?
+
+  // PayPal fields
+  paypalEmail    String?
+
+  // Status
+  verified       Boolean           @default(false)
+
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([supplierId])
 }
 
 model Tour {
