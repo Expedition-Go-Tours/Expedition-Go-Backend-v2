@@ -132,29 +132,9 @@ async function createPaymentIntent({
   currency = 'USD',
   customerId,
   paymentMethodId,
-  bookings,
   metadata = {}
 }) {
   try {
-    // Calculate total commission and transfers
-    let totalCommission = 0;
-    const transfers = [];
-
-    for (const booking of bookings) {
-      const supplierAccountId = booking.tour.supplier.supplierProfile.stripeAccountId;
-      const supplierPayout = Math.round(parseFloat(booking.supplierPayout) * 100); // Convert to cents
-      const commission = Math.round(parseFloat(booking.commissionAmount) * 100);
-
-      totalCommission += commission;
-
-      if (supplierAccountId && supplierPayout > 0) {
-        transfers.push({
-          destination: supplierAccountId,
-          amount: supplierPayout
-        });
-      }
-    }
-
     const paymentIntentData = {
       amount,
       currency: currency.toLowerCase(),
@@ -163,26 +143,8 @@ async function createPaymentIntent({
       confirmation_method: 'manual',
       confirm: true,
       return_url: `${process.env.CLIENT_URL}/booking/complete`,
-      metadata: {
-        ...metadata,
-        totalCommission: totalCommission.toString(),
-        bookingCount: bookings.length.toString()
-      }
+      metadata
     };
-
-    // Add application fee if there are commissions
-    if (totalCommission > 0) {
-      paymentIntentData.application_fee_amount = totalCommission;
-    }
-
-    // Add transfer data for the first supplier (Stripe limitation)
-    // For multiple suppliers, we'll handle transfers via webhooks
-    if (transfers.length === 1) {
-      paymentIntentData.transfer_data = {
-        destination: transfers[0].destination,
-        amount: transfers[0].amount
-      };
-    }
 
     const paymentIntent = await getStripe().paymentIntents.create(paymentIntentData);
 
@@ -353,7 +315,7 @@ async function handlePaymentSucceeded(paymentIntent) {
         }
       });
 
-      // Update supplier statistics
+      // Update supplier statistics (internal ledger)
       await tx.supplierProfile.update({
         where: { userId: booking.tour.supplierId },
         data: {
@@ -368,6 +330,18 @@ async function handlePaymentSucceeded(paymentIntent) {
         data: {
           totalBookings: { increment: 1 },
           totalRevenue: { increment: booking.total }
+        }
+      });
+
+      // Create Payout record (PENDING — awaits admin approval)
+      await tx.payout.create({
+        data: {
+          supplierId: booking.tour.supplierId,
+          bookingId: booking.id,
+          amount: booking.supplierPayout,
+          currency: booking.currency,
+          commissionAmount: booking.commissionAmount,
+          status: 'PENDING'
         }
       });
     }

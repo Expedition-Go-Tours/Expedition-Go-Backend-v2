@@ -2828,6 +2828,29 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
         }
       }
     },
+    Payout: {
+      type: 'object',
+      description: 'Supplier payout record for a confirmed booking',
+      properties: {
+        id: { type: 'string', description: 'Payout ID' },
+        supplierId: { type: 'string', description: 'Supplier user ID' },
+        bookingId: { type: 'string', description: 'Associated booking ID' },
+        amount: { type: 'number', description: 'Payout amount', example: 85.00 },
+        currency: { type: 'string', example: 'USD' },
+        commissionAmount: { type: 'number', description: 'Platform commission', example: 15.00 },
+        status: {
+          type: 'string',
+          enum: ['PENDING', 'APPROVED', 'PROCESSING', 'PAID', 'FAILED', 'CANCELLED']
+        },
+        approvedAt: { type: 'string', format: 'date-time' },
+        approvedBy: { type: 'string', description: 'Admin who approved' },
+        paidAt: { type: 'string', format: 'date-time' },
+        paymentMethod: { type: 'string', example: 'bank_transfer' },
+        reference: { type: 'string', description: 'Transaction reference' },
+        notes: { type: 'string' },
+        createdAt: { type: 'string', format: 'date-time' }
+      }
+    },
     security: [
       {
         bearerAuth: []

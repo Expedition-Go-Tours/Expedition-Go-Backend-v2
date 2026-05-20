@@ -370,13 +370,12 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       totalAmount += item.total;
     }
 
-    // Create Stripe PaymentIntent
+    // Create Stripe PaymentIntent (platform collects 100%, payouts handled via Payout model)
     const paymentIntent = await createPaymentIntent({
-      amount: Math.round(totalAmount * 100), // Convert to cents
+      amount: Math.round(totalAmount * 100),
       currency: bookingItems[0].currency,
       customerId: req.user.stripeCustomerId,
       paymentMethodId,
-      bookings,
       metadata: {
         customerId,
         bookingIds: bookings.map(b => b.id).join(',')

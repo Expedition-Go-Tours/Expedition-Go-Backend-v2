@@ -166,6 +166,10 @@ async function sendNotificationEmail(user, { type, title, message, data, templat
     PAYOUT_PROCESSED: {
       subject: 'Payout Processed',
       template: 'payout-notification'
+    },
+    PAYOUT_APPROVED: {
+      subject: 'Payout Approved',
+      template: 'payout-notification'
     }
   };
 
