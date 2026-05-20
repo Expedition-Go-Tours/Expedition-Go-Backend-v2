@@ -202,6 +202,8 @@ model PayoutMethod {
   // Status
   verified       Boolean           @default(false)
 
+  payouts        Payout[]          // Payouts that used this method
+
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
@@ -385,11 +387,15 @@ model Payout {
   processedBy    String?      // Admin user ID who processed
   paidAt         DateTime?
   
+  // The specific payout method used (linked record)
+  payoutMethodId String?
+  payoutMethod   PayoutMethod? @relation(fields: [payoutMethodId], references: [id])
+
   // Payment details
   paymentMethod  String?      // "bank_transfer", "mobile_money", "stripe"
   reference      String?      // Transaction reference from payment provider
   notes          String?      // Admin notes
-  
+
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -397,6 +403,7 @@ model Payout {
   @@index([status])
   @@index([createdAt])
   @@index([bookingId])
+  @@index([payoutMethodId])
 }
 
 model Review {

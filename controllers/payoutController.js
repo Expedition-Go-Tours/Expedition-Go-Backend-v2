@@ -25,6 +25,18 @@ exports.getMyPayouts = catchAsync(async (req, res, next) => {
             total: true,
             tour: { select: { title: true } }
           }
+        },
+        payoutMethod: {
+          select: {
+            id: true,
+            type: true,
+            bankName: true,
+            accountName: true,
+            accountNumber: true,
+            mobileProvider: true,
+            mobileNumber: true,
+            paypalEmail: true
+          }
         }
       },
       orderBy: { createdAt: 'desc' },
@@ -90,6 +102,19 @@ exports.getAllPayouts = catchAsync(async (req, res, next) => {
             total: true,
             paidAt: true,
             tour: { select: { title: true } }
+          }
+        },
+        payoutMethod: {
+          select: {
+            id: true,
+            type: true,
+            verified: true,
+            bankName: true,
+            accountName: true,
+            accountNumber: true,
+            mobileProvider: true,
+            mobileNumber: true,
+            paypalEmail: true
           }
         }
       },
@@ -185,11 +210,12 @@ exports.approvePayout = catchAsync(async (req, res, next) => {
 
 /**
  * Mark payout as paid (admin only) — moves APPROVED → PAID
+ * Records which specific payout method was used for a complete audit trail.
  */
 exports.releasePayout = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const adminId = req.user.id;
-  const { paymentMethod, reference, notes } = req.body;
+  const { payoutMethodId, reference, notes } = req.body;
 
   const payout = await prisma.payout.findUnique({
     where: { id },
@@ -206,17 +232,26 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
     return next(new AppError('Only approved payouts can be released', 400));
   }
 
-  // Verify supplier has a verified payout method
-  const verifiedMethod = await prisma.payoutMethod.findFirst({
-    where: { supplierId: payout.supplierId, verified: true }
-  });
-  if (!verifiedMethod) {
-    return next(new AppError('Supplier has no verified payout method. Please verify their payout method first.', 400));
+  // Resolve which payout method to use
+  let method;
+  if (payoutMethodId) {
+    method = await prisma.payoutMethod.findFirst({
+      where: { id: payoutMethodId, supplierId: payout.supplierId, verified: true }
+    });
+    if (!method) {
+      return next(new AppError('Payout method not found, does not belong to this supplier, or is not verified', 400));
+    }
+  } else {
+    method = await prisma.payoutMethod.findFirst({
+      where: { supplierId: payout.supplierId, verified: true },
+      orderBy: { isDefault: 'desc' }
+    });
+    if (!method) {
+      return next(new AppError('Supplier has no verified payout method. Please verify their payout method first.', 400));
+    }
   }
 
-  if (!paymentMethod) {
-    return next(new AppError('Payment method is required (e.g., bank_transfer, mobile_money, stripe)', 400));
-  }
+  const paymentMethod = method.type;
 
   const updated = await prisma.payout.update({
     where: { id },
@@ -225,6 +260,7 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
       paidAt: new Date(),
       processedBy: adminId,
       processedAt: new Date(),
+      payoutMethodId: method.id,
       paymentMethod,
       reference: reference || null,
       notes: notes || null
@@ -235,8 +271,8 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
     userId: payout.supplierId,
     type: 'PAYOUT_PROCESSED',
     title: 'Payout Completed',
-    message: `Your payout of ${payout.currency} ${payout.amount} has been sent via ${paymentMethod.replace('_', ' ')}.`,
-    data: { payoutId: payout.id, amount: payout.amount, paymentMethod }
+    message: `Your payout of ${payout.currency} ${payout.amount} has been sent via ${method.type.replace('_', ' ')}.`,
+    data: { payoutId: payout.id, amount: payout.amount, paymentMethod, payoutMethodId: method.id }
   }).catch(() => {});
 
   enqueueEmail({
@@ -261,6 +297,7 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
       supplierId: payout.supplierId,
       amount: payout.amount,
       paymentMethod,
+      payoutMethodId: method.id,
       reference
     }
   });
