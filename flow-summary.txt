@@ -1,0 +1,320 @@
+Here's the complete end-to-end flow of the platform:
+
+---
+
+## 1. User Sign-up & Authentication
+
+```
+User → POST /api/auth/signup
+```
+- Firebase JWT token is created client-side via Firebase Auth SDK
+- Backend creates a `User` record in PostgreSQL with `roles: ['customer']`
+- `user.integration.test.js` tests this flow against the real database
+
+**Auth middleware** (`authMiddleware.js`): Every protected endpoint verifies the Firebase JWT (`Authorization: Bearer <token>`), looks up the user by `firebaseUid`, and attaches `req.user`.
+
+---
+
+## 2. Becoming a Supplier
+
+### Step A: Apply
+
+```
+Supplier → POST /api/suppliers/apply  (multipart/form-data)
+```
+
+Body includes JSON strings for:
+- `businessInfo` — legal name, display name, business type, country, address
+- `operatingInfo` — tour categories, destinations, languages, cancellation policy
+- `representativeInfo` — full name, email, DOB, ID type
+- `payoutInfo` — bank account name, country, currency (legacy, replaced by PayoutMethod model)
+- `businessDocuments` — registration cert, tax doc, proof of address (uploaded as files)
+
+On success: Creates `SupplierProfile` with `status: PENDING`. Logs activity, enqueues notification to admin.
+
+### Step B: Admin Reviews
+
+```
+Admin → GET /api/suppliers/admin/applications  (list all)
+Admin → PATCH /api/suppliers/admin/applications/:id/review  { action: "approve"|"reject"|"request_info" }
+```
+
+Actions:
+- `approve` → status becomes `APPROVED`, notification: *"Please set up your payout methods"*
+- `reject` → status becomes `REJECTED`
+- `request_info` → status becomes `UNDER_REVIEW`
+
+### Step C: Supplier Sets Up Payout Methods (NEW Viator-style)
+
+```
+Supplier → POST /api/payout-methods
+```
+
+One of three types, validated server-side:
+- **BANK_TRANSFER**: requires `accountName`, plus `accountNumber` or `iban`, plus `swiftCode` or `routingNumber`, plus `bankName`
+- **MOBILE_MONEY**: requires `mobileProvider` (MTN, Orange, Airtel, etc.) and `mobileNumber`
+- **PAYPAL**: requires `paypalEmail`
+
+Rules:
+- First method added becomes `isDefault: true` automatically
+- Supplier can add multiple methods, set one as default
+- Deleting the default auto-assigns default to the next available
+- Methods have `verified: false` until finance team confirms them
+
+### Step D: Admin Verifies Payout Method
+
+```
+Admin → PATCH /api/payout-methods/admin/:id/verify  { verified: true }
+```
+
+Finance team manually checks the bank details / mobile money number / PayPal email, then marks as verified. This is a **gating step** — suppliers cannot publish tours or receive payouts without a verified method.
+
+### Step E: Admin Activates Supplier
+
+```
+Admin → PATCH /api/suppliers/admin/:id/activate
+```
+
+Supplier must be `APPROVED` or `STRIPE_PENDING`. Status becomes `ACTIVE`. Notification sent: *"Your supplier account is now active! You can start creating tours."*
+
+**Stripe Connect is now optional** — suppliers can go live without it.
+
+---
+
+## 3. Tour Creation
+
+```
+Supplier → POST /api/tours
+```
+
+Blocked if supplier status ≠ `ACTIVE`. Requires at least one **verified payout method** to publish (`status: 'PUBLISHED'`). Draft tours are allowed.
+
+Tour data includes:
+- **categorization**: category, subcategory, difficulty, duration, transportMode (air/land/water groups), groupSize
+- **theme**: primary theme + secondary themes
+- **productContent**: highlights, included/excluded, what to bring, location (with GPS coords)
+- **schedulesAndPricing**: pricing model (perPerson/group/perBooking), age groups, schedules with prices per age group, currency
+- **bookingAndTickets**: instant booking toggle, cancellation policy (flexible/moderate/strict), meeting point
+
+On create: generates SEO slug, normalizes categorization fields into indexed columns (category, subcategory, activityType, difficulty, durationMinutes, primaryTheme, city, country, region, lat/lng), creates `secondaryThemes` relation records. Invalidates tour caches.
+
+---
+
+## 4. Customer Books a Tour
+
+### Step A: Browse & Search (public)
+
+```
+GET /api/tours?page=1&limit=12&sortBy=createdAt&category=Adventure&lat=...&lng=...
+```
+
+Features:
+- Geo-spatial search (find tours within X km of a point)
+- Full-text search with relevance ranking
+- Filtering by category, subcategory, difficulty, duration, price range, rating, themes
+- Cached with MD5 hash query (Redis)
+
+### Step B: Add to Cart
+
+```
+Customer → POST /api/bookings/cart
+```
+
+Body: `{ tourId, selectedDate, travelers, selectedTime? }`
+
+- Validates tour exists and is ACTIVE
+- Calculates pricing server-side (retail × travelers + taxes/fees)
+- Upserts cart item (unique constraint on customerId + tourId + selectedDate + selectedTime prevents duplicates)
+- Emits `cart.added` event
+- Cart items expire after 1 hour (checked on checkout)
+
+### Booking API Endpoints Reference
+
+| Method | Endpoint | Purpose | Role |
+|---|---|---|---|
+| `POST` | `/api/bookings/cart` | Add tour to cart (upsert, no duplicates) | Customer |
+| `GET` | `/api/bookings/cart` | Get cart items with summary | Customer |
+| `DELETE` | `/api/bookings/cart/:id` | Remove single cart item | Customer |
+| `DELETE` | `/api/bookings/cart/clear` | Clear entire cart | Customer |
+| `POST` | `/api/bookings` | **Create booking** (checkout) — direct or from cart | Customer |
+| `GET` | `/api/bookings/my-bookings` | List my bookings (paginated, filterable) | Customer |
+| `GET` | `/api/bookings/:id` | Get single booking details | Customer |
+| `GET` | `/api/bookings/:id/ticket` | Get printable ticket HTML | Customer |
+| `PATCH` | `/api/bookings/:id/cancel` | Cancel booking (with refund logic) | Customer |
+| `GET` | `/api/bookings/supplier/bookings` | List bookings for my tours | Supplier |
+| `PATCH` | `/api/bookings/:id/status` | Update booking status (confirm, complete, etc.) | Supplier |
+
+### Step C: Create Booking (Checkout)
+
+```
+Customer → POST /api/bookings
+```
+
+Two modes:
+1. **Direct booking**: `{ tourId, selectedDate, travelers, paymentMethodId }`
+2. **Cart checkout**: `{ useCart: true, paymentMethodId }`
+
+Flow:
+1. Validates traveler info (name, age, ageGroup, phone required)
+2. Validates tour availability (dates, max travelers)
+3. Validates supplier is active
+4. Generates unique booking number (retry on P2002 collision)
+5. **Creates Stripe PaymentIntent** via `createPaymentIntent()` — amount is the full total, **no transfer_data or application_fee_amount** (platform collects 100%)
+6. Creates booking record(s) with status `PENDING`, paymentStatus `PROCESSING`
+7. Clears cart items
+8. Enqueues notification to customer
+9. Emits `booking.initiated` event
+
+**Returned**: `{ bookings: [...], paymentIntent: { id, client_secret } }` — frontend uses `client_secret` to confirm the payment via Stripe.js.
+
+### Step D: Payment Confirmation (Stripe Webhook)
+
+```
+Stripe → POST /api/webhooks/stripe  (signature-verified)
+```
+
+Webhook handler (`processStripeWebhook`):
+
+**`payment_intent.succeeded`:**
+1. Finds bookings by IDs from intent metadata
+2. Within a Prisma transaction:
+   - Updates bookings: `status: CONFIRMED`, `paymentStatus: SUCCEEDED`, `paidAt: now`
+   - **Creates Payout record** with `status: PENDING` for the supplier (amount = `supplierPayout`, commission = `commissionAmount`)
+   - Updates `supplierProfile.totalEarnings` and `totalBookings`
+   - Updates tour statistics
+3. Enqueues confirmation emails (customer + supplier)
+4. Emits `booking.completed` event
+
+**`payment_intent.payment_failed`:**
+- Marks bookings as CANCELLED with failed payment status
+
+**Idempotency**: Stripe events are deduplicated by `stripeEventId` unique constraint.
+
+---
+
+## 5. Payout Flow (Treasury Model)
+
+### Status Lifecycle
+
+```
+PENDING → APPROVED → PAID
+                    → FAILED
+```
+
+Admin manages payouts via:
+
+| Endpoint | Action |
+|---|---|
+| `GET /api/payouts/admin/summary` | Dashboard: pending count/total, paid this month, monthly breakdown |
+| `GET /api/payouts/admin?status=PENDING` | List payouts with supplier + booking info |
+| `PATCH /api/payouts/admin/:id/approve` | PENDING → APPROVED (finance review) |
+| `PATCH /api/payouts/admin/:id/release` | APPROVED → PAID (confirms money sent) |
+| `PATCH /api/payouts/admin/:id/fail` | APPROVED/PROCESSING → FAILED |
+
+### Release Flow (Admin Confirms Payment)
+
+```
+PATCH /api/payouts/admin/:id/release  { payoutMethodId?, reference, notes? }
+```
+
+1. Validates payout is APPROVED
+2. **Resolves payout method**:
+   - If `payoutMethodId` provided: verifies it belongs to the supplier and is verified
+   - If omitted: auto-selects the supplier's default verified method
+3. **Blocks release** if no verified method exists
+4. Records on the Payout:
+   - `payoutMethodId` → links to the specific bank account / MoMo number / PayPal
+   - `paymentMethod` → derived from method type (`BANK_TRANSFER`, `MOBILE_MONEY`, `PAYPAL`)
+   - `reference` → transaction ID from the bank/MoMo/PayPal
+   - `processedBy` → admin user ID
+   - `paidAt` → timestamp
+5. Notifies supplier: *"Your payout has been sent via Bank Transfer."*
+6. Logs activity for audit trail
+
+### Supplier View
+
+```
+GET /api/payouts/me?status=PAID
+```
+
+Returns paginated payout history with:
+- `payoutMethod` sub-object showing which method was paid to (with bank name, account name, etc.)
+- Summary: `totalEarned`, `totalPayouts`
+
+### Payout Method Management
+
+Supplier can:
+- `GET /api/payout-methods/me` — list methods
+- `POST /api/payout-methods` — add (auto-default if first)
+- `PATCH /api/payout-methods/:id` — update
+- `DELETE /api/payout-methods/:id` — delete (reassigns default)
+
+Admin can:
+- `GET /api/payout-methods/admin` — finance dashboard, filter by `hasMethod=true/false`
+- `GET /api/payout-methods/admin/suppliers/:supplierId` — view supplier's methods
+- `PATCH /api/payout-methods/admin/:id/verify` — mark as verified/unverified
+
+---
+
+## 6. Complete State Diagram
+
+```
+                      +------------------+
+                      |   User signs up  |
+                      |    (customer)    |
+                      +--------+---------+
+                               |
+              +----------------+----------------+
+              |                                 |
+              v                                 v
++----------------------------+   +----------------------------+
+|  Browse & search tours     |   |  Apply as supplier         |
+|  (public)                  |   |  -> PENDING                |
++------------+---------------+   +-------------+--------------+
+             |                               |
++------------+---------------+               |
+|  Add to cart               |               v
++------------+---------------+   +----------------------------+
+             |                   |  Admin reviews             |
++------------+---------------+   |  -> APPROVED               |
+|  Create booking (+Stripe)  |   +-------------+--------------+
++------------+---------------+                 |
+             |                                 |
++------------+---------------+                 v
+|  Frontend confirms card    |   +----------------------------+
++------------+---------------+   |  Supplier sets up payout   |
+             |                   |  methods (bank/MoMo/PP)   |
++------------+---------------+   +-------------+--------------+
+|  Stripe webhook -> CONFIRMED|                |
+|  Payout created (PENDING)  |                v
++------------+---------------+   +----------------------------+
+             |                   |  Admin verifies method     |
+             |                   +-------------+--------------+
+             |                                 |
+             |                                 v
+             |                   +----------------------------+
+             |                   |  Admin activates           |
+             |                   |  -> ACTIVE                 |
+             |                   +----------------------------+
+             |
+             v
++------------------------------------------------------+
+|  Admin payout flow:                                  |
+|  PENDING -> (finance reviews) -> APPROVED            |
+|  -> (admin sends wire/MoMo/PP) -> PAID               |
+|     with reference + payout method link              |
++------------------------------------------------------+
+```
+
+---
+
+## Key Design Decisions
+
+| Decision | Rationale |
+|---|---|
+| **Platform collects 100%** via Stripe, no auto-transfers | Platform owns customer relationship, full control over refunds/disputes |
+| **Treasury model** (admin manually releases) | Finance team verifies payout details before releasing funds; works in markets where Stripe Connect is limited |
+| **Payout record per booking** (not batched) | Fully traceable, simpler accounting, admin can still batch-process in UI |
+| **PayoutMethod as separate model** | Multiple methods per supplier, type-specific validation, default selection, verification gating |
+| **Stripe Connect optional** | Suppliers in countries without Stripe support can still get paid via MoMo or PayPal |
+| **Publish gating on verified method** | Ensures suppliers always have a valid way to receive funds before taking bookings |

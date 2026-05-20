@@ -18,8 +18,8 @@ function validatePayoutMethodData(data) {
     case 'BANK_TRANSFER':
       if (!data.accountName) errors.push('Account name is required for bank transfers');
       if (!data.accountNumber && !data.iban) errors.push('Account number or IBAN is required for bank transfers');
-      if (!data.swiftCode && !data.routingNumber) errors.push('SWIFT code or routing number is required for bank transfers');
       if (!data.bankName) errors.push('Bank name is required for bank transfers');
+      if (!data.bankCountry) errors.push('Bank country code is required (e.g., GH, NG, US)');
       break;
     case 'MOBILE_MONEY':
       if (!data.mobileProvider) errors.push('Mobile provider is required (e.g., MTN, Orange, Airtel)');
@@ -79,11 +79,14 @@ exports.addMethod = catchAsync(async (req, res, next) => {
       currency: data.currency || 'USD',
       bankName: data.bankName || null,
       bankAddress: data.bankAddress || null,
+      bankCountry: data.bankCountry || null,
       accountName: data.accountName || null,
       accountNumber: data.accountNumber || null,
       routingNumber: data.routingNumber || null,
       swiftCode: data.swiftCode || null,
       iban: data.iban || null,
+      sortCode: data.sortCode || null,
+      branchCode: data.branchCode || null,
       mobileProvider: data.mobileProvider || null,
       mobileNumber: data.mobileNumber || null,
       paypalEmail: data.paypalEmail || null
@@ -141,11 +144,14 @@ exports.updateMethod = catchAsync(async (req, res, next) => {
       currency: data.currency || undefined,
       bankName: data.bankName !== undefined ? data.bankName : undefined,
       bankAddress: data.bankAddress !== undefined ? data.bankAddress : undefined,
+      bankCountry: data.bankCountry !== undefined ? data.bankCountry : undefined,
       accountName: data.accountName !== undefined ? data.accountName : undefined,
       accountNumber: data.accountNumber !== undefined ? data.accountNumber : undefined,
       routingNumber: data.routingNumber !== undefined ? data.routingNumber : undefined,
       swiftCode: data.swiftCode !== undefined ? data.swiftCode : undefined,
       iban: data.iban !== undefined ? data.iban : undefined,
+      sortCode: data.sortCode !== undefined ? data.sortCode : undefined,
+      branchCode: data.branchCode !== undefined ? data.branchCode : undefined,
       mobileProvider: data.mobileProvider !== undefined ? data.mobileProvider : undefined,
       mobileNumber: data.mobileNumber !== undefined ? data.mobileNumber : undefined,
       paypalEmail: data.paypalEmail !== undefined ? data.paypalEmail : undefined

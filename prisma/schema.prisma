@@ -186,11 +186,14 @@ model PayoutMethod {
   // Bank Transfer fields
   bankName       String?
   bankAddress    String?
+  bankCountry    String?              // ISO 3166-1 alpha-2, e.g. GH, NG, US
   accountName    String?
   accountNumber  String?
-  routingNumber  String?
-  swiftCode      String?
-  iban           String?
+  routingNumber  String?              // ABA routing (US)
+  swiftCode      String?              // SWIFT/BIC (international)
+  iban           String?              // International Bank Account Number
+  sortCode       String?              // Sort code (UK, Ghana, etc.)
+  branchCode     String?              // Branch/bank code (Nigeria, etc.)
 
   // Mobile Money fields
   mobileProvider String?           // e.g. "MTN", "Orange", "Airtel", "Vodafone"
