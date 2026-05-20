@@ -776,6 +776,45 @@ router.patch('/admin/applications/:id/review', restrictTo('admin'), supplierCont
  *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.patch('/admin/:id/suspend', restrictTo('admin'), supplierController.suspendSupplier);
+
+/**
+ * @swagger
+ * /suppliers/admin/{id}/activate:
+ *   patch:
+ *     summary: Activate a supplier (admin)
+ *     description: |
+ *       Activates a supplier directly, bypassing Stripe Connect.
+ *       Supplier must be in APPROVED or STRIPE_PENDING status first.
+ *       Supplier should have at least one verified payout method before activation.
+ *     tags: [Suppliers]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Supplier user ID
+ *     responses:
+ *       200:
+ *         description: Supplier activated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     supplierProfile:
+ *                       $ref: '#/components/schemas/SupplierProfile'
+ *       400:
+ *         description: Supplier not in APPROVED or STRIPE_PENDING status
+ */
 router.patch('/admin/:id/activate', restrictTo('admin'), supplierController.activateSupplier);
 
 module.exports = router;

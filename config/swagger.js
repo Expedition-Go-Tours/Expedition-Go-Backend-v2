@@ -182,6 +182,14 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
       {
         name: 'Analytics',
         description: 'Business analytics and reporting'
+      },
+      {
+        name: 'Payouts',
+        description: 'Supplier payout management (treasury model)'
+      },
+      {
+        name: 'Payout Methods',
+        description: 'Supplier payout method configuration'
       }
     ],
     components: {
@@ -2865,13 +2873,82 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
           type: 'string',
           enum: ['PENDING', 'APPROVED', 'PROCESSING', 'PAID', 'FAILED', 'CANCELLED']
         },
+        payoutMethodId: { type: 'string', description: 'Linked payout method ID', nullable: true },
+        payoutMethod: {
+          type: 'object',
+          description: 'Payout method used for this release (populated)',
+          nullable: true,
+          properties: {
+            id: { type: 'string' },
+            type: { type: 'string', enum: ['BANK_TRANSFER', 'MOBILE_MONEY', 'PAYPAL'] },
+            verified: { type: 'boolean' },
+            bankName: { type: 'string' },
+            accountName: { type: 'string' },
+            accountNumber: { type: 'string' },
+            mobileProvider: { type: 'string' },
+            mobileNumber: { type: 'string' },
+            paypalEmail: { type: 'string' }
+          }
+        },
         approvedAt: { type: 'string', format: 'date-time' },
         approvedBy: { type: 'string', description: 'Admin who approved' },
+        processedAt: { type: 'string', format: 'date-time' },
+        processedBy: { type: 'string', description: 'Admin who processed' },
         paidAt: { type: 'string', format: 'date-time' },
-        paymentMethod: { type: 'string', example: 'bank_transfer' },
+        paymentMethod: { type: 'string', example: 'BANK_TRANSFER' },
         reference: { type: 'string', description: 'Transaction reference' },
         notes: { type: 'string' },
-        createdAt: { type: 'string', format: 'date-time' }
+        createdAt: { type: 'string', format: 'date-time' },
+        updatedAt: { type: 'string', format: 'date-time' }
+      }
+    },
+    PayoutMethodInput: {
+      type: 'object',
+      description: 'Add/update a payout method',
+      required: ['type'],
+      properties: {
+        type: { type: 'string', enum: ['BANK_TRANSFER', 'MOBILE_MONEY', 'PAYPAL'], description: 'Payout method type' },
+        isDefault: { type: 'boolean', description: 'Set as default method' },
+        currency: { type: 'string', example: 'USD' },
+        bankName: { type: 'string', description: 'Bank name (required for BANK_TRANSFER)' },
+        bankAddress: { type: 'string' },
+        accountName: { type: 'string', description: 'Account holder name (required for BANK_TRANSFER)' },
+        accountNumber: { type: 'string', description: 'Account number (required if no IBAN)' },
+        routingNumber: { type: 'string', description: 'Routing/ABA number (required if no SWIFT)' },
+        swiftCode: { type: 'string', description: 'SWIFT/BIC code (required if no routing)' },
+        iban: { type: 'string', description: 'IBAN (required if no account number)' },
+        mobileProvider: { type: 'string', description: 'Provider name e.g. MTN, Orange (required for MOBILE_MONEY)' },
+        mobileNumber: { type: 'string', description: 'Mobile money number (required for MOBILE_MONEY)' },
+        paypalEmail: { type: 'string', format: 'email', description: 'PayPal email (required for PAYPAL)' }
+      }
+    },
+    PayoutReleaseInput: {
+      type: 'object',
+      description: 'Release a payout — confirms payment was sent',
+      properties: {
+        payoutMethodId: { type: 'string', description: 'Specific payout method to use (defaults to default verified method)' },
+        reference: { type: 'string', description: 'Transaction ID or receipt from bank/MoMo/PayPal' },
+        notes: { type: 'string', description: 'Admin notes' }
+      }
+    },
+    PayoutFailInput: {
+      type: 'object',
+      description: 'Mark a payout as failed',
+      required: ['reason'],
+      properties: {
+        reason: { type: 'string', description: 'Reason for failure' }
+      }
+    },
+    PayoutApproveResponse: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', example: 'success' },
+        data: {
+          type: 'object',
+          properties: {
+            payout: { $ref: '#/components/schemas/Payout' }
+          }
+        }
       }
     },
     security: [
