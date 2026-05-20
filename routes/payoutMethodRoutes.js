@@ -15,5 +15,6 @@ router.delete('/:id', restrictTo('supplier'), payoutMethodController.deleteMetho
 // ── Admin routes ──
 router.get('/admin/suppliers/:supplierId', restrictTo('admin'), payoutMethodController.getSupplierMethods);
 router.get('/admin', restrictTo('admin'), payoutMethodController.getAllSuppliersMethods);
+router.patch('/admin/:id/verify', restrictTo('admin'), payoutMethodController.verifyPayoutMethod);
 
 module.exports = router;

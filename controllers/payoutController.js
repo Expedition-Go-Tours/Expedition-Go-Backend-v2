@@ -206,6 +206,14 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
     return next(new AppError('Only approved payouts can be released', 400));
   }
 
+  // Verify supplier has a verified payout method
+  const verifiedMethod = await prisma.payoutMethod.findFirst({
+    where: { supplierId: payout.supplierId, verified: true }
+  });
+  if (!verifiedMethod) {
+    return next(new AppError('Supplier has no verified payout method. Please verify their payout method first.', 400));
+  }
+
   if (!paymentMethod) {
     return next(new AppError('Payment method is required (e.g., bank_transfer, mobile_money, stripe)', 400));
   }

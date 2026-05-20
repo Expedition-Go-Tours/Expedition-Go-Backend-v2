@@ -1,6 +1,7 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
+const { enqueueNotification } = require('../utils/queue');
 const { logActivity } = require('../utils/auditLogger');
 
 const VALID_TYPES = ['BANK_TRANSFER', 'MOBILE_MONEY', 'PAYPAL'];
@@ -293,6 +294,62 @@ exports.getAllSuppliersMethods = catchAsync(async (req, res, next) => {
         limit: parseInt(limit)
       }
     }
+  });
+});
+
+/**
+ * Admin: verify a supplier's payout method
+ */
+exports.verifyPayoutMethod = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const adminId = req.user.id;
+  const { verified = true } = req.body;
+
+  const method = await prisma.payoutMethod.findUnique({
+    where: { id },
+    include: { supplier: { select: { id: true, name: true, email: true } } }
+  });
+
+  if (!method) {
+    return next(new AppError('Payout method not found', 404));
+  }
+
+  if (method.verified === verified) {
+    return next(new AppError(`Payout method is already ${verified ? 'verified' : 'unverified'}`, 400));
+  }
+
+  const updated = await prisma.payoutMethod.update({
+    where: { id },
+    data: { verified }
+  });
+
+  const action = verified ? 'payout_method.verified' : 'payout_method.unverified';
+
+  enqueueNotification({
+    userId: method.supplierId,
+    type: 'SYSTEM_ALERT',
+    title: verified ? 'Payout Method Verified' : 'Payout Method Unverified',
+    message: verified
+      ? `Your ${method.type.replace('_', ' ')} payout method has been verified by the finance team.`
+      : `Your ${method.type.replace('_', ' ')} payout method was marked as unverified. Please contact support.`,
+    data: { methodId: method.id, type: method.type, verified }
+  }).catch(() => {});
+
+  await logActivity({
+    userId: adminId,
+    action,
+    resource: 'PayoutMethod',
+    resourceId: method.id,
+    metadata: {
+      supplierId: method.supplierId,
+      type: method.type,
+      verified
+    }
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { method: updated }
   });
 });
 

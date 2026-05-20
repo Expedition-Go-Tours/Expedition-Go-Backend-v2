@@ -418,6 +418,16 @@ exports.createTour = catchAsync(async (req, res, next) => {
     return next(new AppError('Only active suppliers can create tours', 403));
   }
 
+  // Block publishing without a verified payout method
+  if (req.body.status === 'PUBLISHED') {
+    const hasVerifiedMethod = await prisma.payoutMethod.findFirst({
+      where: { supplierId, verified: true }
+    });
+    if (!hasVerifiedMethod) {
+      return next(new AppError('You must add and verify at least one payout method before publishing tours', 400));
+    }
+  }
+
   // Validate tour data
   const validationResult = validateTourData(req.body);
   if (!validationResult.isValid) {
@@ -525,6 +535,16 @@ exports.updateTour = catchAsync(async (req, res, next) => {
 
   if (!existingTour) {
     return next(new AppError('Tour not found or access denied', 404));
+  }
+
+  // Block publishing without a verified payout method
+  if (req.body.status === 'PUBLISHED' && existingTour.status !== 'PUBLISHED') {
+    const hasVerifiedMethod = await prisma.payoutMethod.findFirst({
+      where: { supplierId, verified: true }
+    });
+    if (!hasVerifiedMethod) {
+      return next(new AppError('You must add and verify at least one payout method before publishing tours', 400));
+    }
   }
 
   // Validate update data
