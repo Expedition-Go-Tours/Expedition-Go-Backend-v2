@@ -11,7 +11,8 @@
     "test:all": "jest --verbose --forceExit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "postinstall": "npx prisma generate && npx prisma migrate deploy",
+    "postinstall": "npx prisma generate",
+    "migrate": "npx prisma migrate deploy",
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
