@@ -437,6 +437,8 @@ exports.createTour = catchAsync(async (req, res, next) => {
   const {
     title,
     description,
+    metaTitle,
+    metaDescription,
     categorization,
     theme,
     productContent,
@@ -466,6 +468,8 @@ exports.createTour = catchAsync(async (req, res, next) => {
       productContent,
       schedulesAndPricing,
       bookingAndTickets,
+      metaTitle,
+      metaDescription,
       photos,
       coverPhoto: coverPhoto || (photos.length > 0 ? photos[0] : null),
       tags,
