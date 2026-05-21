@@ -494,7 +494,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
       })(),
       primaryTheme: parsedTheme?.primary || null,
       secondaryThemes: {
-        create: (parsedTheme?.secondary || []).map(t => ({ theme: t })),
+        create: [...new Set(parsedTheme?.secondary || [])].map(t => ({ theme: t })),
       },
     },
     include: {
@@ -597,7 +597,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     // Replace secondary themes: delete all existing, re-create
     updateData.secondaryThemes = {
       deleteMany: {},
-      create: (th.secondary || []).map(t => ({ theme: t })),
+      create: [...new Set(th.secondary || [])].map(t => ({ theme: t })),
     };
   }
 
