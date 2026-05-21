@@ -15,6 +15,9 @@ const AppError = require('./utils/appError');
 
 const app = express();
 
+// Trust Render proxy for correct IP detection (rate limiting, etc.)
+app.set('trust proxy', 1);
+
 let swaggerSpec;
 try {
   swaggerSpec = require('./config/swagger');
