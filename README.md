@@ -1,6 +1,6 @@
 # Expedition Go Backend v2
 
-Production-ready tour booking platform backend built with Node.js, Express, Prisma ORM, PostgreSQL (PostGIS), Firebase Authentication, and Stripe Connect.
+Production-ready tour booking platform backend built with Node.js, Express, Prisma ORM, PostgreSQL (PostGIS), Firebase Authentication, and Stripe.
 
 ## Features
 
@@ -8,9 +8,9 @@ Production-ready tour booking platform backend built with Node.js, Express, Pris
 - **Tour Management**: Full CRUD with rich metadata, PostGIS geo-search, categorization, and pagination
 - **Booking System**: Full lifecycle with conflict detection, Stripe Payment Intent integration, and commission splits
 - **Review System**: Customer reviews with moderation, supplier responses, and rating aggregation
-- **Supplier Onboarding**: Application workflow with Stripe Connect Express account creation
+- **Supplier Onboarding**: Application workflow with document upload, admin review, and payout method setup
 - **Notifications**: Real-time (Socket.IO), email (SendGrid), and in-app notification service
-- **Payment Processing**: Stripe Connect with automatic commission splits and payout management
+- **Payment Processing**: Stripe payment intents with commission calculation and manual payout management (Treasury model)
 - **Image Management**: Cloudinary upload with optimization pipeline
 - **Redis Caching**: Tour detail and filter caching with automatic invalidation
 - **Audit Logging**: Comprehensive action logging for admin monitoring
@@ -25,7 +25,7 @@ Production-ready tour booking platform backend built with Node.js, Express, Pris
 | Database | PostgreSQL 16 + PostGIS |
 | ORM | Prisma |
 | Auth | Firebase Admin SDK |
-| Payments | Stripe Connect |
+| Payments | Stripe |
 | Email | SendGrid |
 | Media | Cloudinary |
 | Cache | Redis (ioredis) |
@@ -37,7 +37,7 @@ Production-ready tour booking platform backend built with Node.js, Express, Pris
 - Node.js 20 or higher
 - PostgreSQL 16 with PostGIS extension
 - Firebase project with Admin SDK service account
-- Stripe account with Connect enabled
+- Stripe account
 - Cloudinary account
 - Redis instance (optional, falls back gracefully)
 - SendGrid account (optional, falls back gracefully)
@@ -190,6 +190,235 @@ const response = await fetch('http://localhost:5000/api/users/me', {
 | GET | `/api/suppliers/dashboard` | Supplier dashboard |
 | GET | `/api/suppliers/admin/applications` | Admin: view applications |
 
+## Supplier & Payout Flow
+
+### Stage 1: Supplier Onboarding
+
+```
+Customer wants to become a Supplier
+        │
+        ▼
+┌─────────────────────────────────────────────────┐
+│ 1. Apply (POST /api/suppliers/apply)            │
+│    Fills in: business info, documents,           │
+│    bank details, ID, etc. → Status: PENDING      │
+└──────────────────────┬──────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────┐
+│ 2. Admin Reviews Application                    │
+│    (PATCH .../applications/:id/review)           │
+│                                                 │
+│    ┌──────────┐  ┌───────────┐  ┌──────────┐   │
+│    │ APPROVE  │  │  REJECT   │  │ REQUEST  │   │
+│    │ → APPROVED │  │ → REJECTED│  │  INFO    │   │
+│    └────┬─────┘  └───────────┘  │→ UNDER_REVIEW│
+│         │                       └──────────────┘
+└─────────┴────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────┐
+│ 3. Supplier Sets Up Payout Method                │
+│    (POST /api/payout-methods)                    │
+│                                                 │
+│    Choose one:                                   │
+│    ┌──────────┐ ┌────────────┐ ┌──────────┐    │
+│    │   Bank   │ │  Mobile    │ │  PayPal  │    │
+│    │ Transfer │ │   Money    │ │          │    │
+│    └──────────┘ └────────────┘ └──────────┘    │
+└──────────────────────┬──────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────┐
+│ 4. Admin Verifies Payout Method                  │
+│    (PATCH /api/payout-methods/admin/:id/verify)  │
+│    → verified: true                              │
+│                                                 │
+│    ⚠️ Without this, supplier CANNOT publish     │
+│       tours or receive payouts                   │
+└──────────────────────┬──────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────┐
+│ 5. Admin Activates Supplier                      │
+│    (PATCH /api/suppliers/admin/:id/activate)     │
+│    → Status: ACTIVE 🟢                           │
+└──────────────────────┬──────────────────────────┘
+                       │
+                       ▼
+              SUPPLIER IS NOW ACTIVE ✅
+```
+
+### Stage 2: Tour Creation & Sales
+
+```
+ACTIVE Supplier
+       │
+       ▼
+┌──────────────────────────────────────────────┐
+│ 6. Create & Publish Tours                    │
+│    (POST /api/tours)                         │
+│                                              │
+│    🚫 Can't publish without verified         │
+│       payout method (bank/momo/paypal)       │
+└──────────────────┬──────────────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────────────┐
+│ 7. Customers Browse & Book                   │
+│                                              │
+│    Cart → Checkout → Pay via Stripe          │
+│    (platform collects 100%)                  │
+└──────────────────┬──────────────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────────────┐
+│ 8. Commission is Calculated                  │
+│                                              │
+│    Tier     │ Bookings │ Rate                │
+│    ─────────┼──────────┼──────               │
+│    Bronze   │ < 50     │ 15%                 │
+│    Silver   │ 50-100   │ 13-14%              │
+│    Gold     │ > 100    │ 12%                 │
+│                                              │
+│    Example: $100 booking, Bronze tier        │
+│    → Commission: $15 (yours)                 │
+│    → Supplier Payout: $85                    │
+└──────────────────┬──────────────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────────────┐
+│ 9. Stripe Confirms Payment                   │
+│    (Webhook: payment_intent.succeeded)        │
+│                                              │
+│    ✅ Booking → CONFIRMED                    │
+│    ✅ Payout record created → PENDING        │
+│    ✅ Supplier earnings updated              │
+└──────────────────┬──────────────────────────┘
+                   │
+                   ▼
+         PAYOUT IS NOW PENDING ⏳
+```
+
+### Stage 3: Admin Payout Process
+
+```
+Payout is PENDING
+       │
+       ▼
+┌─────────────────────────────────────────────────┐
+│ 10. Admin Reviews Pending Payouts                │
+│     (GET /api/payouts/admin?status=PENDING)      │
+│                                                  │
+│     ┌─────────┬────────┬─────────┬────────┐     │
+│     │Supplier │ Amount │ Booking │  Date  │     │
+│     ├─────────┼────────┼─────────┼────────┤     │
+│     │ John    │ $85    │  #1234  │ May 20 │     │
+│     │ Sarah   │ $170   │  #1235  │ May 19 │     │
+│     └─────────┴────────┴─────────┴────────┘     │
+└──────────────────────┬──────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────┐
+│ 11. Admin Approves Payout                       │
+│     (PATCH /api/payouts/admin/:id/approve)      │
+│     → APPROVED, Supplier notified               │
+└──────────────────────┬──────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────┐
+│ 12. Admin Releases Payment                      │
+│     (PATCH /api/payouts/admin/:id/release)      │
+│                                                  │
+│     Admin sends money via bank/MoMo/PayPal,      │
+│     records: { reference, payoutMethod }         │
+│     → PAID ✅, Supplier notified                 │
+└──────────────────────────────────────────────────┘
+```
+
+### Complete Flowchart
+
+```
+CUSTOMER           PLATFORM                 SUPPLIER
+────────           ────────                 ────────
+            ┌──────────────────┐
+            │ 1. Apply        │◄──────── Customer
+            │ → PENDING       │
+            └────────┬─────────┘
+                     │
+            ┌────────▼─────────┐
+            │ 2. Admin Review  │
+            │ → APPROVED       │
+            └────────┬─────────┘
+                     │
+            ┌────────▼─────────┐
+            │ 3. Add Payout    │◄──────── Supplier
+            │    Method        │
+            └────────┬─────────┘
+                     │
+            ┌────────▼─────────┐
+            │ 4. Admin Verifies│
+            └────────┬─────────┘
+                     │
+            ┌────────▼─────────┐
+            │ 5. Activate      │
+            │ → ACTIVE 🟢      │
+            └────────┬─────────┘
+                     │
+            ┌────────▼─────────┐
+            │ 6. Create Tour   │◄──────── Supplier
+            └────────┬─────────┘
+                     │
+┌────────┐  ┌────────▼─────────┐
+│ 7. Book│─►│ Payment via Stripe│
+│ Tour   │  │ Commission: 15%  │
+└────────┘  │ Payout: $85      │
+            └────────┬─────────┘
+                     │
+            ┌────────▼─────────┐
+            │ 8. Webhook       │
+            │ → CONFIRMED      │
+            │ → Payout PENDING │
+            └────────┬─────────┘
+                     │
+            ┌────────▼─────────┐
+            │ 9. Admin Reviews │
+            └────────┬─────────┘
+                     │
+            ┌────────▼─────────┐
+            │ 10. Admin        │
+            │     Approves     │
+            │ → APPROVED       │
+            └────────┬─────────┘
+                     │
+            ┌────────▼─────────┐
+            │ 11. Admin Sends  │─────► Money to
+            │     Money        │      Supplier
+            │     → PAID ✅    │
+            └──────────────────┘
+```
+
+### Key Rules
+
+| Rule | Why |
+|------|-----|
+| Supplier must be ACTIVE to create tours | Prevents incomplete applications from selling |
+| Verified payout method required to publish | Ensures suppliers can actually receive money |
+| Platform collects 100% via Stripe | Full control over refunds, disputes, customer experience |
+| Commission locked at booking time | Tier changes don't affect past bookings |
+| Payout created automatically on payment | No manual work — PENDING is ready for review |
+| Admin manually approves + releases | Finance double-checks before sending money |
+| Reference number recorded on release | Full audit trail for accounting |
+
+### What Happens When Things Go Wrong?
+
+| Problem | Outcome |
+|---------|---------|
+| Customer cancels | Booking → CANCELLED, payout handled manually |
+| Payout fails (wrong bank details) | Admin → FAILED, supplier fixes method, re-release |
+| Supplier is suspended | Existing payouts can still be processed |
+| No verified payout method at release | Admin is blocked — supplier must add one |
+
 ## Testing
 
 The project includes 11 tests across 4 suites with Jest + Supertest, validated in CI against a fresh PostgreSQL container.
@@ -293,5 +522,5 @@ Proprietary and confidential.
 
 ---
 
-**Last Updated**: May 18, 2026
+**Last Updated**: May 21, 2026
 **Version**: 2.1.0
