@@ -575,13 +575,15 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     updateData.subcategory = cat.subcategory || null;
     updateData.activityType = cat.activityType || null;
     updateData.difficulty = cat.difficulty || null;
-    updateData.durationMinutes = cat.duration
-      ? (cat.duration.hours
-        ? cat.duration.hours * 60
-        : cat.duration.days
-          ? cat.duration.days * 1440
-          : cat.duration)
-      : null;
+    updateData.durationMinutes = (() => {
+      const d = cat.duration;
+      if (!d) return null;
+      if (d.hours != null) return d.hours * 60;
+      if (d.days != null) return d.days * 1440;
+      if (d.weeks != null) return d.weeks * 10080;
+      if (d.minutes != null) return d.minutes;
+      return null;
+    })();
     // Keep the original JSON field as-is
     updateData.categorization = cat;
   }

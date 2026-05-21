@@ -1,0 +1,137 @@
+/*
+ * Admin Dashboard Theme Tokens
+ * Mirrors the reference design from `dashboard/reference/dashboard.css`
+ * and adds class-based dark mode (`.dark` on <html>).
+ *
+ * These tokens are scoped under `[data-admin-app]` so they never leak
+ * into the public site, except for the `.dark` variant which we toggle
+ * on <html> for the whole admin shell.
+ */
+
+[data-admin-app] {
+  --admin-bg: #f7fafc;
+  --admin-panel: #ffffff;
+  --admin-panel-2: #fbfcfe;
+  --admin-text: #0b1b36;
+  --admin-text-soft: #334155;
+  --admin-muted: #64748b;
+  --admin-brand: #0f9f7a;
+  --admin-brand-dark: #087a60;
+  --admin-brand-soft: rgba(15, 159, 122, 0.12);
+  --admin-accent: #f59e0b;
+  --admin-danger: #ef4444;
+  --admin-danger-soft: rgba(239, 68, 68, 0.12);
+  --admin-success: #12a66a;
+  --admin-success-soft: rgba(18, 166, 106, 0.12);
+  --admin-warning: #f59e0b;
+  --admin-warning-soft: rgba(245, 158, 11, 0.14);
+  --admin-info: #0b74ff;
+  --admin-info-soft: rgba(11, 116, 255, 0.12);
+  --admin-border: #e4eaf2;
+  --admin-border-soft: #eef2f7;
+  --admin-ring: rgba(15, 159, 122, 0.35);
+  --admin-shadow: 0 14px 35px rgba(10, 31, 68, 0.08);
+  --admin-shadow-soft: 0 8px 24px rgba(10, 31, 68, 0.06);
+  --admin-shadow-strong: 0 24px 60px rgba(10, 31, 68, 0.16);
+  --admin-sidebar: #03182d;
+  --admin-sidebar-2: #062b4a;
+  --admin-sidebar-text: #d8e2ef;
+  --admin-sidebar-active: #34d399;
+  --admin-radius-sm: 10px;
+  --admin-radius: 14px;
+  --admin-radius-lg: 22px;
+  --admin-radius-xl: 28px;
+
+  background:
+    radial-gradient(circle at 30% 0%, rgba(16, 185, 129, 0.08), transparent 30%),
+    radial-gradient(circle at 90% 10%, rgba(14, 165, 233, 0.08), transparent 24%),
+    var(--admin-bg);
+  color: var(--admin-text);
+  letter-spacing: -0.015em;
+  min-height: 100vh;
+}
+
+html.dark [data-admin-app] {
+  --admin-bg: #05101f;
+  --admin-panel: #0b1a2f;
+  --admin-panel-2: #0e2038;
+  --admin-text: #e2e8f0;
+  --admin-text-soft: #cbd5f5;
+  --admin-muted: #94a3b8;
+  --admin-brand: #34d399;
+  --admin-brand-dark: #10b981;
+  --admin-brand-soft: rgba(52, 211, 153, 0.16);
+  --admin-accent: #fbbf24;
+  --admin-danger: #f87171;
+  --admin-danger-soft: rgba(248, 113, 113, 0.18);
+  --admin-success: #34d399;
+  --admin-success-soft: rgba(52, 211, 153, 0.18);
+  --admin-warning: #fbbf24;
+  --admin-warning-soft: rgba(251, 191, 36, 0.18);
+  --admin-info: #60a5fa;
+  --admin-info-soft: rgba(96, 165, 250, 0.18);
+  --admin-border: rgba(148, 163, 184, 0.18);
+  --admin-border-soft: rgba(148, 163, 184, 0.1);
+  --admin-ring: rgba(52, 211, 153, 0.4);
+  --admin-shadow: 0 18px 40px rgba(2, 6, 23, 0.5);
+  --admin-shadow-soft: 0 10px 28px rgba(2, 6, 23, 0.4);
+  --admin-shadow-strong: 0 28px 70px rgba(2, 6, 23, 0.6);
+  --admin-sidebar: #02101e;
+  --admin-sidebar-2: #061a30;
+  --admin-sidebar-text: #cbd5f5;
+  --admin-sidebar-active: #34d399;
+
+  background:
+    radial-gradient(circle at 30% 0%, rgba(52, 211, 153, 0.08), transparent 30%),
+    radial-gradient(circle at 90% 10%, rgba(96, 165, 250, 0.08), transparent 24%),
+    var(--admin-bg);
+}
+
+/* Utility classes used across admin UI */
+[data-admin-app] .admin-card {
+  background: var(--admin-panel);
+  border: 1px solid var(--admin-border);
+  border-radius: var(--admin-radius-lg);
+  box-shadow: var(--admin-shadow-soft);
+}
+
+[data-admin-app] .admin-surface {
+  background: var(--admin-panel);
+  border: 1px solid var(--admin-border);
+}
+
+[data-admin-app] .admin-sidebar {
+  background:
+    radial-gradient(circle at 20% 0%, rgba(16, 185, 129, 0.28), transparent 32%),
+    linear-gradient(180deg, var(--admin-sidebar) 0%, var(--admin-sidebar-2) 48%, var(--admin-sidebar) 100%);
+  color: #fff;
+}
+
+[data-admin-app] .admin-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+[data-admin-app] .admin-scroll::-webkit-scrollbar-thumb {
+  background: var(--admin-border);
+  border-radius: 99px;
+}
+
+[data-admin-app] .admin-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes admin-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+[data-admin-app] .admin-fade-in {
+  animation: admin-fade-in 0.25s ease both;
+}
