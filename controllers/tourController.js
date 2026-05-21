@@ -483,13 +483,14 @@ exports.createTour = catchAsync(async (req, res, next) => {
       subcategory: parsedCategory?.subcategory || null,
       activityType: parsedCategory?.activityType || null,
       difficulty: parsedCategory?.difficulty || null,
-      durationMinutes: parsedCategory?.duration
-        ? (parsedCategory.duration.hours
-          ? parsedCategory.duration.hours * 60
-          : parsedCategory.duration.days
-            ? parsedCategory.duration.days * 1440
-            : parsedCategory.duration)
-        : null,
+      durationMinutes: (() => {
+        const d = parsedCategory?.duration;
+        if (!d) return null;
+        if (d.hours != null) return d.hours * 60;
+        if (d.days != null) return d.days * 1440;
+        if (d.weeks != null) return d.weeks * 10080;
+        return null;
+      })(),
       primaryTheme: parsedTheme?.primary || null,
       secondaryThemes: {
         create: (parsedTheme?.secondary || []).map(t => ({ theme: t })),

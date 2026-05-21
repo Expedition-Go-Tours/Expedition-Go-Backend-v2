@@ -41,6 +41,9 @@ module.exports = (err, req, res, next) => {
       stack: err.stack,
     });
   } else {
+    if (!err.isOperational) {
+      console.error('[ERROR]', err.name || 'Error', err.message, err.stack?.split('\n')[0]);
+    }
     res.status(err.statusCode).json({
       status: err.status,
       message: err.isOperational ? err.message : 'Something went wrong!',
