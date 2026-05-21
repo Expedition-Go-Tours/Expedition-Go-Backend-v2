@@ -8,6 +8,8 @@ module.exports = [
       'coverage/',
       'generated/',
       '*.md',
+      'Expedition-GO-Frontend-main/',
+      'Expedition-Go-Dashboard-main/',
       'FINAL-AUTH-SERVICE.js',
       'FRONTEND-API-CLIENT.js',
       'NEW_SUPPLIER_BOOKING_TEMPLATE.js',
