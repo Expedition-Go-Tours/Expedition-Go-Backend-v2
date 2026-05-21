@@ -40,6 +40,10 @@ add-test-user.js
 create-test-user.js
 /test-*.js
 
+# Frontend folders (keep in local only, not in backend repo)
+/Expedition-GO-Frontend-main/
+/Expedition-Go-Dashboard-main/
+
 # Scratch / one-time scripts (keep local only)
 FINAL-AUTH-SERVICE.js
 FRONTEND-API-CLIENT.js
