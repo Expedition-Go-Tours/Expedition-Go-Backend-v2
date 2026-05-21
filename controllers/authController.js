@@ -114,6 +114,80 @@ exports.signup = catchAsync(async (req, res, next) => {
 
 
 // ============================================================================
+// VERIFY FIREBASE TOKEN & CREATE SESSION COOKIE
+// Called by the supplier site on redirect from main site (?token=)
+// ============================================================================
+
+exports.verifyToken = catchAsync(async (req, res, next) => {
+  const { token } = req.body;
+
+  if (!token) {
+    return next(new AppError('Token is required', 400));
+  }
+
+  // Verify Firebase ID token
+  let decoded;
+  try {
+    decoded = await admin.auth().verifyIdToken(token);
+  } catch (err) {
+    return next(new AppError('Invalid or expired token', 401));
+  }
+
+  // Create Firebase session cookie (5 days)
+  const sessionCookie = await admin.auth().createSessionCookie(token, {
+    expiresIn: 60 * 60 * 24 * 5 * 1000,
+  });
+
+  // Set __session cookie (consumed by supplier site middleware)
+  res.cookie('__session', sessionCookie, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'strict',
+    maxAge: 60 * 60 * 24 * 5 * 1000,
+  });
+
+  // Find or create user in our database
+  let user = await prisma.user.findUnique({
+    where: { firebaseUid: decoded.uid },
+  });
+
+  if (!user) {
+    user = await prisma.user.create({
+      data: {
+        firebaseUid: decoded.uid,
+        name: decoded.name || decoded.email?.split('@')[0] || 'User',
+        email: decoded.email,
+        photoURL: decoded.picture || '',
+        roles: ['customer'],
+      },
+    });
+  } else {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
+  }
+
+  // Also issue our internal session cookie for existing API routes
+  const internalToken = createSessionToken(user);
+  sendSessionCookie(res, internalToken);
+
+  event.emit({
+    name: 'user.logged_in',
+    userId: user.id,
+    req,
+    resource: 'User',
+    resourceId: user.id,
+    properties: { method: 'session_cookie' },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { user },
+  });
+});
+
+// ============================================================================
 // LOGOUT USER
 // Clears shared session cookie across all subdomains
 // ============================================================================

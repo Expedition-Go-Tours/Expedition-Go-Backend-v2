@@ -6,7 +6,7 @@ const AppError = require('../utils/appError');
 // ADDED: session-cookie support for shared auth across subdomains
 const jwt = require('jsonwebtoken');
 
-// ADDED: one place to read auth from either Firebase bearer token or backend session cookie
+// ADDED: one place to read auth from Firebase bearer token, backend session cookie, or Firebase __session cookie
 const getAuthTokenFromRequest = (req) => {
   const authHeader = req.headers.authorization;
 
@@ -15,20 +15,26 @@ const getAuthTokenFromRequest = (req) => {
   }
 
   if (req.cookies?.session) {
-    return req.cookies.session;
+    return { type: 'jwt', token: req.cookies.session };
+  }
+
+  if (req.cookies?.__session) {
+    return { type: 'firebase_session', token: req.cookies.__session };
   }
 
   return null;
 };
 
 exports.protect = catchAsync(async (req, res, next) => {
-  const token = getAuthTokenFromRequest(req);
+  const auth = getAuthTokenFromRequest(req);
 
-  if (!token) {
+  if (!auth) {
     return next(
       new AppError('You are not logged in! Please log in to get access.', 401),
     );
   }
+
+  const token = typeof auth === 'string' ? auth : auth.token;
 
   // DEV MODE BYPASS (works for either request header or cookie auth path)
   if (process.env.NODE_ENV === 'development' && token === 'test-token') {
@@ -65,9 +71,13 @@ exports.protect = catchAsync(async (req, res, next) => {
   let user;
   let decodedFirebase = null;
 
-  // ADDED: first try Firebase ID token, then fall back to signed backend session cookie
+  // Try Firebase verification (ID token or session cookie)
   try {
-    decodedFirebase = await admin.auth().verifyIdToken(token);
+    if (auth.type === 'firebase_session') {
+      decodedFirebase = await admin.auth().verifySessionCookie(token, true);
+    } else {
+      decodedFirebase = await admin.auth().verifyIdToken(token);
+    }
 
     user = await prisma.user.findUnique({
       where: { firebaseUid: decodedFirebase.uid },
