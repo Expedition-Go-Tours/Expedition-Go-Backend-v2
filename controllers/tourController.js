@@ -489,6 +489,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
         if (d.hours != null) return d.hours * 60;
         if (d.days != null) return d.days * 1440;
         if (d.weeks != null) return d.weeks * 10080;
+        if (d.minutes != null) return d.minutes;
         return null;
       })(),
       primaryTheme: parsedTheme?.primary || null,
