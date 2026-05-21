@@ -16,7 +16,7 @@ if (LOGTAIL_TOKEN) {
 
 function info(message, meta) {
   if (logtail) {
-    logtail.info(message, meta).catch(() => {});
+    logtail.info(message, meta).catch((err) => console.warn('[Logger] Failed to send info:', err?.message));
   } else {
     console.log(message, meta || '');
   }
@@ -24,7 +24,7 @@ function info(message, meta) {
 
 function warn(message, meta) {
   if (logtail) {
-    logtail.warn(message, meta).catch(() => {});
+    logtail.warn(message, meta).catch((err) => console.warn('[Logger] Failed to send warn:', err?.message));
   } else {
     console.warn(message, meta || '');
   }
@@ -32,7 +32,7 @@ function warn(message, meta) {
 
 function error(message, meta) {
   if (logtail) {
-    logtail.error(message, meta).catch(() => {});
+    logtail.error(message, meta).catch((err) => console.warn('[Logger] Failed to send error:', err?.message));
   } else {
     console.error(message, meta || '');
   }
@@ -41,7 +41,7 @@ function error(message, meta) {
 function httpLog(method, url, status, responseTimeMs, meta) {
   const message = `${method} ${url} ${status} ${responseTimeMs}ms`;
   if (logtail) {
-    logtail.info(message, { method, url, status, responseTimeMs, ...meta }).catch(() => {});
+    logtail.info(message, { method, url, status, responseTimeMs, ...meta }).catch((err) => console.warn('[Logger] Failed to send httpLog:', err?.message));
   } else {
     console.log(`[${new Date().toISOString()}] ${message}`);
   }
@@ -49,7 +49,7 @@ function httpLog(method, url, status, responseTimeMs, meta) {
 
 async function flush() {
   if (logtail) {
-    try { await logtail.flush(); } catch {}
+    try { await logtail.flush(); } catch (err) { console.warn('[Logger] Flush failed:', err?.message); }
   }
 }
 

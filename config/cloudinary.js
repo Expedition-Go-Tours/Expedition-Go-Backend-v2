@@ -38,10 +38,12 @@ try {
   // eslint-disable-next-line no-console
   console.warn('Cloudinary upload dependency missing. Install multer-storage-cloudinary and multer for uploads.', e?.message || e);
 
+  console.error('[Cloudinary] CRITICAL: Cloudinary env vars missing. File uploads will fail.');
   const multer = require('multer');
   upload = multer({
     storage: multer.memoryStorage(),
   });
+  upload._cloudinaryMissing = true;
 }
 
 module.exports = upload;

@@ -1,45 +1,11 @@
-const express = require('express');
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const admin = require('../config/firebaseAdmin');
 const event = require('../utils/eventEmitter');
+const { createSessionToken } = require('../utils/createSessionToken');
+const { sendSessionCookie } = require('../utils/sendSessionCookie');
 
-// ADDED: shared session auth so the user stays logged in across subdomains
-const jwt = require('jsonwebtoken');
-
-const SESSION_COOKIE_NAME = 'session';
-
-// ADDED: create a backend session token after Firebase identity is verified
-const createSessionToken = (user) => {
-  return jwt.sign(
-    {
-      id: user.id,
-      firebaseUid: user.firebaseUid,
-      roles: user.roles,
-      supplierStatus: user.supplierStatus,
-      active: user.active,
-    },
-    process.env.JWT_SECRET,
-    {
-      expiresIn: '30d',
-    }
-  );
-};
-
-// ADDED: send a cookie that works across travioafrica.com subdomains in production
-const sendSessionCookie = (res, token) => {
-  res.cookie(SESSION_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    domain: process.env.NODE_ENV === 'production' ? '.travioafrica.com' : undefined,
-    path: '/',
-    maxAge: 30 * 24 * 60 * 60 * 1000,
-  });
-};
-
-// ADDED: small helper so signup/login paths can reuse the same cookie logic
 const issueSessionCookie = (res, user) => {
   const token = createSessionToken(user);
   sendSessionCookie(res, token);

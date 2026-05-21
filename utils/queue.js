@@ -50,7 +50,11 @@ function getConnection() {
       },
       lazyConnect: true,
     });
-    connection.on('error', () => {}); // Suppress BullMQ worker noise
+    connection.on('error', (err) => {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[Queue] Redis connection error:', err.message);
+      }
+    });
   }
   return connection;
 }
@@ -178,7 +182,11 @@ function registerWorkers(app) {
 
   function createWorker(queueName, processor) {
     const worker = new Worker(queueName, processor, { connection: conn });
-    worker.on('error', () => {}); // Suppress BullMQ noise when Redis is down
+    worker.on('error', (err) => {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[Queue] Worker error:', err.message);
+      }
+    });
     return worker;
   }
 

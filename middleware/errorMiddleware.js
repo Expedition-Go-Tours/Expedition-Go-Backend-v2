@@ -3,7 +3,7 @@ module.exports = (err, req, res, next) => {
     return next(err);
   }
 
-  res.header('Access-Control_Allow_Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Credentials', 'true');
 
   err.statusCode = err.statusCode || 500;
