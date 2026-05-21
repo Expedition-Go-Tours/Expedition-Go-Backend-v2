@@ -139,10 +139,12 @@ exports.verifyToken = catchAsync(async (req, res, next) => {
   });
 
   // Set __session cookie (consumed by supplier site middleware)
+  // sameSite: 'none' required because frontend (supplier.travioafrica.com)
+  // and backend (expedition-go-backend-v2.onrender.com) are different origins
   res.cookie('__session', sessionCookie, {
     httpOnly: true,
     secure: true,
-    sameSite: 'strict',
+    sameSite: 'none',
     maxAge: 60 * 60 * 24 * 5 * 1000,
   });
 
@@ -193,14 +195,19 @@ exports.verifyToken = catchAsync(async (req, res, next) => {
 // ============================================================================
 
 exports.logout = (req, res) => {
+  // Clear internal session cookie
   res.clearCookie('session', {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    domain:
-      process.env.NODE_ENV === 'production'
-        ? '.travioafrica.com'
-        : undefined,
+    secure: true,
+    sameSite: 'none',
+    path: '/',
+  });
+
+  // Clear Firebase session cookie
+  res.clearCookie('__session', {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
     path: '/',
   });
 
