@@ -1,0 +1,130 @@
+{
+    "status": "success",
+    "data": {
+      "tour": {
+        "_id": "507f1f77bcf86cd799439011",
+        "name": "Amazing Mountain Trek",
+        "slug": "amazing-mountain-trek",
+        "summary": "Breathtaking mountain adventure",
+        "description": "Full tour description...",
+        "price": 499,
+        "pricingOptions": {
+          "adult": 499,
+          "child": 299,
+          "senior": 399,
+          "infant": 0
+        },
+        "ageRanges": {
+          "child": "3-12 years",
+          "senior": "65+ years",
+          "infant": "0-2 years"
+        },
+        "discountPrice": 399,
+        "dealStartsAt": "2026-05-06T10:08:13.458Z",
+        "dealEndsAt": "2026-05-06T10:08:13.458Z",
+        "lastMinuteDeal": false,
+        "dealLabel": "Summer Sale",
+        "duration": "7 days",
+        "maxGroupSize": 15,
+        "difficulty": "medium",
+        "ratingsAverage": 4.5,
+        "ratingsQuantity": 23,
+        "imageCover": "tour-cover.jpg",
+        "images": [
+          "string"
+        ],
+        "startDates": [
+          "2026-05-06T10:08:13.458Z"
+        ],
+        "category": "Adventure",
+        "subCategory": "Mountain Climbing",
+        "tags": [
+          "hiking",
+          "nature",
+          "adventure"
+        ],
+        "freeCancellation": true,
+        "liveGuide": true,
+        "pickupIncluded": false,
+        "location": {
+          "type": "Point",
+          "coordinates": [
+            -118.113491,
+            34.111745
+          ],
+          "address": "Los Angeles, CA",
+          "description": "Starting point"
+        },
+        "meetingPoint": {
+          "type": "fixed",
+          "name": "Main Square Fountain",
+          "instructions": "Look for guide with red umbrella",
+          "googleMapsUrl": "https://maps.google.com/?q=34.111745,-118.113491",
+          "pickupOptions": [
+            {
+              "area": "Downtown Hotels",
+              "additionalFee": 20,
+              "pickupTime": "08:00 AM"
+            }
+          ]
+        },
+        "itinerary": [
+          {
+            "day": 1,
+            "type": "Point",
+            "coordinates": [
+              -118.113491,
+              34.111745
+            ],
+            "description": "Day 1: Arrival and orientation"
+          }
+        ],
+        "highlights": [
+          "Stunning mountain views",
+          "Expert guides",
+          "All equipment included"
+        ],
+        "includes": [
+          "Meals",
+          "Accommodation",
+          "Transportation",
+          "Guide"
+        ],
+        "notSuitableFor": [
+          "Pregnant women",
+          "People with back problems",
+          "Children under 5"
+        ],
+        "importantInfo": [
+          "Bring comfortable shoes",
+          "Weather dependent",
+          "Minimum 2 people required"
+        ],
+        "isAvailable": true,
+        "badges": {
+          "bestseller": true,
+          "newTour": false,
+          "topRated": true,
+          "likelyToSellOut": false
+        },
+        "bookingStats": {
+          "totalBookings": 150,
+          "last30DaysBookings": 25,
+          "last7DaysBookings": 8,
+          "lastBookingAt": "2026-05-06T10:08:13.458Z"
+        },
+        "activityProvider": "507f1f77bcf86cd799439011",
+        "promotion": {
+          "active": true,
+          "originalPrice": 499,
+          "discountedPrice": 399,
+          "currentPrice": 399,
+          "startsAt": "2026-05-06T10:08:13.458Z",
+          "endsAt": "2026-05-06T10:08:13.458Z",
+          "label": "Summer Sale"
+        },
+        "createdAt": "2026-05-06T10:08:13.458Z",
+        "updatedAt": "2026-05-06T10:08:13.458Z"
+      }
+    }
+  }
