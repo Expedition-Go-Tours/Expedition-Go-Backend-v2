@@ -25,8 +25,7 @@ enum UserRole {
 enum SupplierStatus {
   PENDING         // Initial application submitted
   UNDER_REVIEW    // Admin reviewing application
-  APPROVED        // Admin approved, can start Stripe onboarding
-  STRIPE_PENDING  // Stripe Connect account created, completing KYC
+  APPROVED        // Admin approved
   ACTIVE          // Fully verified and can receive payouts
   SUSPENDED       // Temporarily suspended
   REJECTED        // Application rejected
@@ -146,7 +145,6 @@ model SupplierProfile {
   
   // Status & Verification
   status       SupplierStatus @default(PENDING)
-  stripeAccountId String?     @unique
   
   // Business Information
   businessInfo Json          // Structured business details
@@ -170,7 +168,6 @@ model SupplierProfile {
   updatedAt    DateTime      @updatedAt
 
   @@index([status])
-  @@index([stripeAccountId])
   @@index([createdAt])
 }
 

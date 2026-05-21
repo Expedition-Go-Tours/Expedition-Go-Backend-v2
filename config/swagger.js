@@ -25,7 +25,7 @@ Production-ready tour booking platform API with comprehensive features including
 - **Booking system** with cart functionality and direct booking
 - **Payment processing** with Stripe integration and commission splits
 - **Review system** with supplier responses and moderation
-- **Supplier verification** with document management and Stripe Connect
+- **Supplier verification** with document management and payout methods
 - **Real-time notifications** via WebSocket
 - **File uploads** with Cloudinary integration
 - **Comprehensive audit logging** for all operations
@@ -502,16 +502,9 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
             },
             status: {
               type: 'string',
-              enum: ['PENDING', 'UNDER_REVIEW', 'APPROVED', 'STRIPE_PENDING', 'ACTIVE', 'SUSPENDED', 'REJECTED'],
+              enum: ['PENDING', 'UNDER_REVIEW', 'APPROVED', 'ACTIVE', 'SUSPENDED', 'REJECTED'],
               description: 'Supplier verification status',
               example: 'ACTIVE'
-            },
-            stripeAccountId: {
-              type: 'string',
-              description: 'Stripe Connect account ID',
-              pattern: '^acct_[a-zA-Z0-9]+$',
-              example: 'acct_1TWDVyELSpeFhPFu',
-              nullable: true
             },
             businessInfo: {
               type: 'object',
@@ -752,11 +745,6 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
                   pattern: '^[A-Z]{3}$',
                   example: 'USD'
                 },
-                stripeAccountId: {
-                  type: 'string',
-                  description: 'Stripe Connect account ID (auto-generated)',
-                  example: 'acct_1TWDVyELSpeFhPFu'
-                }
               }
             },
             compliance: {

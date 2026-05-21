@@ -353,12 +353,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
               title: true,
               supplier: {
                 select: {
-                  name: true,
-                  supplierProfile: {
-                    select: {
-                      stripeAccountId: true
-                    }
-                  }
+                  name: true
                 }
               }
             }

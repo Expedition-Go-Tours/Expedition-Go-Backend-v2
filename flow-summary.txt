@@ -75,9 +75,7 @@ Finance team manually checks the bank details / mobile money number / PayPal ema
 Admin → PATCH /api/suppliers/admin/:id/activate
 ```
 
-Supplier must be `APPROVED` or `STRIPE_PENDING`. Status becomes `ACTIVE`. Notification sent: *"Your supplier account is now active! You can start creating tours."*
-
-**Stripe Connect is now optional** — suppliers can go live without it.
+Supplier must be `APPROVED`. Status becomes `ACTIVE`. Notification sent: *"Your supplier account is now active! You can start creating tours."*
 
 ---
 
@@ -316,5 +314,4 @@ Admin can:
 | **Treasury model** (admin manually releases) | Finance team verifies payout details before releasing funds; works in markets where Stripe Connect is limited |
 | **Payout record per booking** (not batched) | Fully traceable, simpler accounting, admin can still batch-process in UI |
 | **PayoutMethod as separate model** | Multiple methods per supplier, type-specific validation, default selection, verification gating |
-| **Stripe Connect optional** | Suppliers in countries without Stripe support can still get paid via MoMo or PayPal |
 | **Publish gating on verified method** | Ensures suppliers always have a valid way to receive funds before taking bookings |

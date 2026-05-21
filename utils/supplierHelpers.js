@@ -311,14 +311,7 @@ function generateVerificationChecklist(supplierProfile) {
         { name: 'Payout currency', completed: !!supplierProfile.payoutInfo?.payoutCurrency }
       ]
     },
-    stripeOnboarding: {
-      completed: supplierProfile.status === 'ACTIVE',
-      items: [
-        { name: 'Stripe account created', completed: !!supplierProfile.stripeAccountId },
-        { name: 'KYC completed', completed: supplierProfile.status === 'ACTIVE' },
-        { name: 'Payouts enabled', completed: supplierProfile.status === 'ACTIVE' }
-      ]
-    }
+
   };
 
   // Calculate overall completion

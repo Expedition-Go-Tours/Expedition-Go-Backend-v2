@@ -193,109 +193,6 @@ router.get('/application/status', supplierController.getApplicationStatus);
 router.patch('/application', uploadSupplierDocuments, supplierController.updateApplication);
 
 // ================================
-// STRIPE CONNECT ONBOARDING
-// ================================
-
-/**
- * @swagger
- * /suppliers/stripe/onboarding:
- *   post:
- *     summary: Start Stripe Connect onboarding (only for APPROVED suppliers)
- *     tags: [Suppliers, Stripe]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Onboarding link created successfully
- *       403:
- *         description: Supplier must be approved before Stripe onboarding
- *       404:
- *         description: Supplier profile not found
- */
-router.post('/stripe/onboarding', supplierController.startStripeOnboarding);
-
-/**
- * @swagger
- * /suppliers/stripe/status:
- *   get:
- *     summary: Check Stripe onboarding status
- *     description: |
- *       Check the current status of Stripe Connect onboarding.
- *       Returns whether the account is fully onboarded and can receive payouts.
- *     tags: [Suppliers, Stripe]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Stripe status retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: object
- *                   properties:
- *                     stripeAccountId:
- *                       type: string
- *                       example: acct_1TWDVyELSpeFhPFu
- *                     chargesEnabled:
- *                       type: boolean
- *                       description: Whether the account can accept charges
- *                       example: true
- *                     payoutsEnabled:
- *                       type: boolean
- *                       description: Whether the account can receive payouts
- *                       example: true
- *                     detailsSubmitted:
- *                       type: boolean
- *                       description: Whether all required information has been submitted
- *                       example: true
- *       404:
- *         description: Stripe account not found
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- */
-router.get('/stripe/status', supplierController.checkStripeStatus);
-
-/**
- * @swagger
- * /suppliers/stripe/dashboard-link:
- *   get:
- *     summary: Get Stripe Express dashboard login link
- *     description: |
- *       Generates a one-time login link for the supplier's Stripe Express dashboard.
- *       Suppliers use this to update bank accounts, tax info, and view payouts.
- *     tags: [Suppliers]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Dashboard link generated
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                 data:
- *                   type: object
- *                   properties:
- *                     dashboardUrl:
- *                       type: string
- *                       description: One-time Stripe Express dashboard URL
- *       404:
- *         description: Supplier not found or Stripe not connected
- */
-router.get('/stripe/dashboard-link', supplierController.getStripeDashboardLink);
-
-// ================================
 // SUPPLIER DASHBOARD
 // ================================
 
@@ -535,7 +432,7 @@ router.get('/earnings', restrictTo('supplier'), supplierController.getEarnings);
  *         description: Filter by application status
  *         schema:
  *           type: string
- *           enum: [PENDING, UNDER_REVIEW, APPROVED, REJECTED, STRIPE_PENDING, ACTIVE, SUSPENDED]
+ *           enum: [PENDING, UNDER_REVIEW, APPROVED, REJECTED, ACTIVE, SUSPENDED]
  *           example: PENDING
  *       - name: page
  *         in: query
@@ -600,7 +497,7 @@ router.get('/admin/applications', restrictTo('admin'), supplierController.getAll
  *     summary: Review supplier application (admin only)
  *     description: |
  *       Admin review of supplier applications. Available actions:
- *       - **approve**: Approve the application (supplier can proceed to Stripe onboarding)
+ *       - **approve**: Approve the application
  *       - **reject**: Reject the application with reason
  *       - **request_info**: Request additional information from supplier
  *     tags: [Suppliers, Admin]
@@ -639,7 +536,7 @@ router.get('/admin/applications', restrictTo('admin'), supplierController.getAll
  *               summary: Approve application
  *               value:
  *                 action: approve
- *                 notes: All documents verified. Business registration is valid. Approved for Stripe onboarding.
+ *                 notes: All documents verified. Business registration is valid. Approved.
  *             reject:
  *               summary: Reject application
  *               value:
@@ -783,8 +680,8 @@ router.patch('/admin/:id/suspend', restrictTo('admin'), supplierController.suspe
  *   patch:
  *     summary: Activate a supplier (admin)
  *     description: |
- *       Activates a supplier directly, bypassing Stripe Connect.
- *       Supplier must be in APPROVED or STRIPE_PENDING status first.
+ *       Activates a supplier directly.
+ *       Supplier must be in APPROVED status first.
  *       Supplier should have at least one verified payout method before activation.
  *     tags: [Suppliers]
  *     security:
@@ -813,7 +710,7 @@ router.patch('/admin/:id/suspend', restrictTo('admin'), supplierController.suspe
  *                     supplierProfile:
  *                       $ref: '#/components/schemas/SupplierProfile'
  *       400:
- *         description: Supplier not in APPROVED or STRIPE_PENDING status
+ *         description: Supplier not in APPROVED status
  */
 router.patch('/admin/:id/activate', restrictTo('admin'), supplierController.activateSupplier);
 

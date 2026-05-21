@@ -16,7 +16,7 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
-const { createStripeConnectAccount, createOnboardingLink, createDashboardLink } = require('../utils/stripeHelpers');
+
 const { enqueueNotification, enqueueEmail } = require('../utils/queue');
 const { logActivity } = require('../utils/auditLogger');
 const { validateSupplierData } = require('../utils/supplierHelpers');
@@ -210,139 +210,6 @@ exports.updateApplication = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: { supplierProfile: updatedProfile }
-  });
-});
-
-// ================================
-// STRIPE CONNECT ONBOARDING
-// ================================
-
-/**
- * Start Stripe Connect onboarding (only for APPROVED suppliers)
- */
-exports.startStripeOnboarding = catchAsync(async (req, res, next) => {
-  const userId = req.user.id;
-
-  const supplierProfile = await prisma.supplierProfile.findUnique({
-    where: { userId }
-  });
-
-  if (!supplierProfile) {
-    return next(new AppError('Supplier profile not found', 404));
-  }
-
-  if (supplierProfile.status !== 'APPROVED') {
-    return next(new AppError('Supplier must be approved before Stripe onboarding', 403));
-  }
-
-  let stripeAccountId = supplierProfile.stripeAccountId;
-
-  // Create Stripe Connect account if doesn't exist
-  if (!stripeAccountId) {
-    const user = await prisma.user.findUnique({
-      where: { id: userId }
-    });
-
-    const stripeAccount = await createStripeConnectAccount({
-      email: user.email,
-      businessProfile: supplierProfile.businessInfo,
-      individual: supplierProfile.representativeInfo
-    });
-
-    stripeAccountId = stripeAccount.id;
-
-    // Update supplier profile with Stripe account ID
-    await prisma.supplierProfile.update({
-      where: { userId },
-      data: {
-        stripeAccountId,
-        status: 'STRIPE_PENDING'
-      }
-    });
-  }
-
-  // Create onboarding link
-  const onboardingLink = await createOnboardingLink(stripeAccountId, {
-    refreshUrl: `${process.env.CLIENT_URL}/supplier/onboarding/refresh`,
-    returnUrl: `${process.env.CLIENT_URL}/supplier/onboarding/complete`
-  });
-
-  // Log activity
-  await logActivity({
-    userId,
-    action: 'supplier.stripe_onboarding_started',
-    resource: 'SupplierProfile',
-    resourceId: supplierProfile.id,
-    metadata: {
-      stripeAccountId
-    }
-  });
-
-  res.status(200).json({
-    status: 'success',
-    data: {
-      onboardingUrl: onboardingLink.url,
-      stripeAccountId
-    }
-  });
-});
-
-/**
- * Check Stripe onboarding status
- */
-exports.checkStripeStatus = catchAsync(async (req, res, next) => {
-  const userId = req.user.id;
-
-  const supplierProfile = await prisma.supplierProfile.findUnique({
-    where: { userId }
-  });
-
-  if (!supplierProfile || !supplierProfile.stripeAccountId) {
-    return next(new AppError('Stripe account not found', 404));
-  }
-
-  // Get Stripe account details
-  const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-  const account = await stripe.accounts.retrieve(supplierProfile.stripeAccountId);
-
-  const onboardingComplete = account.charges_enabled && account.payouts_enabled;
-  const requiresAction = account.requirements && account.requirements.currently_due.length > 0;
-
-  // Update status if onboarding is complete
-  if (onboardingComplete && supplierProfile.status === 'STRIPE_PENDING') {
-    await prisma.supplierProfile.update({
-      where: { userId },
-      data: { status: 'ACTIVE' }
-    });
-
-    // Send notification + email through the queue
-    enqueueNotification({
-      userId,
-      type: 'SUPPLIER_APPROVED',
-      title: 'Supplier Account Activated',
-      message: 'Your supplier account is now active! You can start creating tours.',
-      data: { supplierId: userId }
-    }).catch(() => {});
-
-    enqueueEmail({
-      type: 'supplier-status-email',
-      email: req.user.email,
-      status: 'ACTIVE',
-      data: { name: req.user.name }
-    }).catch(() => {});
-  }
-
-  res.status(200).json({
-    status: 'success',
-    data: {
-      stripeAccountId: supplierProfile.stripeAccountId,
-      onboardingComplete,
-      requiresAction,
-      chargesEnabled: account.charges_enabled,
-      payoutsEnabled: account.payouts_enabled,
-      currentlyDue: account.requirements?.currently_due || [],
-      supplierStatus: onboardingComplete ? 'ACTIVE' : supplierProfile.status
-    }
   });
 });
 
@@ -711,8 +578,8 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
 });
 
 /**
- * Activate a supplier directly (admin only) — bypasses Stripe Connect
- * Use when supplier has provided payout methods and is ready to go live
+ * Activate a supplier directly (admin only)
+ * Supplier must be APPROVED and have at least one verified payout method
  */
 exports.activateSupplier = catchAsync(async (req, res, next) => {
   const { id } = req.params;
@@ -727,8 +594,8 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
     return next(new AppError('Supplier not found', 404));
   }
 
-  if (!['APPROVED', 'STRIPE_PENDING'].includes(supplierProfile.status)) {
-    return next(new AppError('Supplier must be in APPROVED or STRIPE_PENDING status to activate', 400));
+  if (supplierProfile.status !== 'APPROVED') {
+    return next(new AppError('Supplier must be in APPROVED status to activate', 400));
   }
 
   const updatedProfile = await prisma.supplierProfile.update({
@@ -825,29 +692,6 @@ exports.suspendSupplier = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: { supplierProfile: updatedProfile }
-  });
-});
-
-/**
- * Generate a Stripe Express dashboard login link for the supplier.
- * This lets them update bank account, tax info, and view payout history.
- */
-exports.getStripeDashboardLink = catchAsync(async (req, res, next) => {
-  const userId = req.user.id;
-
-  const supplierProfile = await prisma.supplierProfile.findUnique({
-    where: { userId }
-  });
-
-  if (!supplierProfile || !supplierProfile.stripeAccountId) {
-    return next(new AppError('Supplier not found or Stripe not connected', 404));
-  }
-
-  const dashboardUrl = await createDashboardLink(supplierProfile.stripeAccountId);
-
-  res.status(200).json({
-    status: 'success',
-    data: { dashboardUrl }
   });
 });
 

@@ -77,7 +77,7 @@ const mockBooking = {
       email: 'supplier@test.com',
     },
     supplierProfile: {
-      stripeAccountId: 'acct_123',
+
     },
   },
 };

@@ -61,7 +61,7 @@ const mockBooking = {
     title: 'Grand Canyon Tour',
     supplierId: 'supplier-1',
     supplier: { id: 'supplier-1', name: 'Canyon Explorers', email: 'supplier@test.com' },
-    supplierProfile: { stripeAccountId: 'acct_123' },
+    supplierProfile: {},
   },
 };
 

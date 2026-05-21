@@ -155,7 +155,7 @@ const activeTour = {
     id: 'supplier-e2e',
     name: 'E2E Supplier',
     email: 'supplier@e2e.com',
-    supplierProfile: { status: 'ACTIVE', stripeAccountId: 'acct_e2e', totalBookings: 30, averageRating: 4.5 },
+    supplierProfile: { status: 'ACTIVE', totalBookings: 30, averageRating: 4.5 },
   },
 };
 

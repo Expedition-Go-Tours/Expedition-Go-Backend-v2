@@ -69,7 +69,7 @@ const tourTemplate = {
     id: 'supplier-1',
     name: 'Canyon Explorers',
     email: 'supplier@test.com',
-    supplierProfile: { status: 'ACTIVE', stripeAccountId: 'acct_123', totalBookings: 30, averageRating: 4.5 },
+    supplierProfile: { status: 'ACTIVE', totalBookings: 30, averageRating: 4.5 },
   },
 };
 

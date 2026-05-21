@@ -33,98 +33,6 @@ const { enqueueEmail } = require('./queue');
 const event = require('./eventEmitter');
 
 /**
- * Create Stripe Connect Express account for supplier
- */
-async function createStripeConnectAccount({ email, businessProfile, individual }) {
-  try {
-    const accountData = {
-      type: 'express',
-      country: businessProfile.country || 'US',
-      email,
-      capabilities: {
-        card_payments: { requested: true },
-        transfers: { requested: true }
-      },
-      business_type: businessProfile.businessType || 'individual'
-    };
-
-    // Add business profile if provided
-    if (businessProfile) {
-      accountData.business_profile = {
-        name: businessProfile.displayName,
-        product_description: 'Tour and experience services',
-        support_email: email,
-        url: businessProfile.website
-      };
-
-      if (businessProfile.address) {
-        accountData.business_profile.support_address = {
-          line1: businessProfile.address.line1,
-          line2: businessProfile.address.line2,
-          city: businessProfile.address.city,
-          state: businessProfile.address.state,
-          postal_code: businessProfile.address.postalCode,
-          country: businessProfile.country
-        };
-      }
-    }
-
-    // Add individual information if provided
-    if (individual && businessProfile.businessType === 'individual') {
-      accountData.individual = {
-        email,
-        first_name: individual.fullName?.split(' ')[0],
-        last_name: individual.fullName?.split(' ').slice(1).join(' '),
-        dob: individual.dateOfBirth ? {
-          day: new Date(individual.dateOfBirth).getDate(),
-          month: new Date(individual.dateOfBirth).getMonth() + 1,
-          year: new Date(individual.dateOfBirth).getFullYear()
-        } : undefined
-      };
-
-      if (individual.address) {
-        accountData.individual.address = {
-          line1: individual.address.line1,
-          line2: individual.address.line2,
-          city: individual.address.city,
-          state: individual.address.state,
-          postal_code: individual.address.postalCode,
-          country: businessProfile.country
-        };
-      }
-    }
-
-    const account = await getStripe().accounts.create(accountData);
-    
-    console.log(` Stripe Connect account created: ${account.id}`);
-    return account;
-  } catch (error) {
-    console.error(' Stripe Connect account creation failed:', error);
-    throw new Error(`Failed to create Stripe account: ${error.message}`);
-  }
-}
-
-/**
- * Create Stripe Connect onboarding link
- */
-async function createOnboardingLink(accountId, { refreshUrl, returnUrl }) {
-  try {
-    const accountLink = await getStripe().accountLinks.create({
-      account: accountId,
-      refresh_url: refreshUrl,
-      return_url: returnUrl,
-      type: 'account_onboarding'
-    });
-
-    console.log(` Onboarding link created for account: ${accountId}`);
-    return accountLink;
-  } catch (error) {
-    console.error(' Onboarding link creation failed:', error);
-    throw new Error(`Failed to create onboarding link: ${error.message}`);
-  }
-}
-
-/**
  * Create Payment Intent with commission split
  */
 async function createPaymentIntent({
@@ -222,14 +130,6 @@ async function processStripeWebhook(event) {
 
       case 'payment_intent.payment_failed':
         result = await handlePaymentFailed(event.data.object);
-        break;
-
-      case 'account.updated':
-        result = await handleAccountUpdated(event.data.object);
-        break;
-
-      case 'transfer.created':
-        result = await handleTransferCreated(event.data.object);
         break;
 
       default:
@@ -403,74 +303,6 @@ async function handlePaymentFailed(paymentIntent) {
 }
 
 /**
- * Handle Stripe Connect account updates
- */
-async function handleAccountUpdated(account) {
-  const supplierProfile = await prisma.supplierProfile.findUnique({
-    where: { stripeAccountId: account.id },
-    include: { user: true }
-  });
-
-  if (!supplierProfile) {
-    console.log(` No supplier found for Stripe account: ${account.id}`);
-    return { success: false, message: 'Supplier not found' };
-  }
-
-  const chargesEnabled = account.charges_enabled;
-  const payoutsEnabled = account.payouts_enabled;
-  const onboardingComplete = chargesEnabled && payoutsEnabled;
-
-  // Update supplier status if onboarding is complete
-  if (onboardingComplete && supplierProfile.status === 'STRIPE_PENDING') {
-    await prisma.supplierProfile.update({
-      where: { id: supplierProfile.id },
-      data: { status: 'ACTIVE' }
-    });
-
-    // Send notification
-    await prisma.notification.create({
-      data: {
-        userId: supplierProfile.userId,
-        type: 'SUPPLIER_APPROVED',
-        title: 'Supplier Account Activated',
-        message: 'Your supplier account is now active! You can start creating tours.',
-        data: { supplierId: supplierProfile.userId }
-      }
-    });
-
-    console.log(` Supplier ${supplierProfile.userId} activated`);
-  }
-
-  return { success: true, message: 'Account status updated' };
-}
-
-/**
- * Generate a Stripe Express dashboard login link for suppliers.
- * This lets suppliers update their bank account, tax info, and view payouts.
- */
-async function createDashboardLink(stripeAccountId) {
-  try {
-    const link = await getStripe().accounts.createLoginLink(stripeAccountId);
-    return link.url;
-  } catch (error) {
-    console.error(' Failed to create Stripe dashboard link:', error.message);
-    throw new Error(`Failed to create dashboard link: ${error.message}`);
-  }
-}
-
-/**
- * Handle transfer creation (for tracking payouts)
- */
-async function handleTransferCreated(transfer) {
-  console.log(` Transfer created: ${transfer.id} for ${transfer.amount} to ${transfer.destination}`);
-
-  // You can add logic here to track individual payouts
-  // and update supplier earnings records
-
-  return { success: true, message: 'Transfer logged' };
-}
-
-/**
  * Verify Stripe webhook signature
  */
 function verifyWebhookSignature(payload, signature, endpointSecret) {
@@ -483,11 +315,8 @@ function verifyWebhookSignature(payload, signature, endpointSecret) {
 }
 
 module.exports = {
-  createStripeConnectAccount,
-  createOnboardingLink,
   createPaymentIntent,
   calculateCommission,
   processStripeWebhook,
   verifyWebhookSignature,
-  createDashboardLink,
 };

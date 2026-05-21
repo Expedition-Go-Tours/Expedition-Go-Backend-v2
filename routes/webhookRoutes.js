@@ -21,9 +21,6 @@ const router = express.Router();
  *       This endpoint handles various Stripe events including:
  *       - payment_intent.succeeded - Payment completed successfully
  *       - payment_intent.payment_failed - Payment failed
- *       - account.updated - Stripe Connect account updated
- *       - payout.paid - Payout completed to supplier
- *       - payout.failed - Payout failed
  *       
  *       **Security:** Webhook signature verification is required.
  *       The endpoint validates the Stripe signature header to ensure authenticity.
