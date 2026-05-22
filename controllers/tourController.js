@@ -575,11 +575,28 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     return next(new AppError(`Validation failed: ${validationResult.errors.join(', ')}`, 400));
   }
 
-  const updateData = { ...req.body };
+  // Explicitly extract only known Prisma model fields — prevents non-model fields
+  // (existingPhotos, coverPhotoIndex, etc.) from reaching Prisma and causing
+  // PrismaClientValidationError
+  const {
+    title, description, metaTitle, metaDescription,
+    productContent, schedulesAndPricing, bookingAndTickets,
+    coverPhoto, tags, status, latitude, longitude
+  } = req.body;
 
-  // Remove non-model fields from updateData before passing to Prisma
-  delete updateData.existingPhotos;
-  delete updateData.coverPhotoIndex;
+  const updateData = {};
+  if (title !== undefined) updateData.title = title;
+  if (description !== undefined) updateData.description = description;
+  if (metaTitle !== undefined) updateData.metaTitle = metaTitle;
+  if (metaDescription !== undefined) updateData.metaDescription = metaDescription;
+  if (productContent !== undefined) updateData.productContent = productContent;
+  if (schedulesAndPricing !== undefined) updateData.schedulesAndPricing = schedulesAndPricing;
+  if (bookingAndTickets !== undefined) updateData.bookingAndTickets = bookingAndTickets;
+  if (coverPhoto !== undefined) updateData.coverPhoto = coverPhoto;
+  if (tags !== undefined) updateData.tags = tags;
+  if (status !== undefined) updateData.status = status;
+  if (latitude !== undefined) updateData.latitude = latitude;
+  if (longitude !== undefined) updateData.longitude = longitude;
 
   // Handle uploaded photos from multer
   const uploadedPhotos = (req.files || []).map(f => f.path);
