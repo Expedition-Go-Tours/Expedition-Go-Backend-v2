@@ -582,7 +582,14 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   if (uploadedPhotos.length > 0 || req.body.existingPhotos) {
     // existingPhotos is already parsed by parseJsonFields inside validateTourData
     const keptPhotos = req.body.existingPhotos || (existingTour.photos || []);
-    updateData.photos = [...keptPhotos, ...uploadedPhotos];
+    const newPhotos = [...keptPhotos, ...uploadedPhotos];
+
+    // Delete removed photos from Cloudinary
+    const oldPhotos = existingTour.photos || [];
+    const removed = oldPhotos.filter(url => !newPhotos.includes(url));
+    await Promise.all(removed.map(url => deleteCloudinaryImage(url)));
+
+    updateData.photos = newPhotos;
 
     if (req.body.coverPhotoIndex !== undefined) {
       const idx = parseInt(req.body.coverPhotoIndex);

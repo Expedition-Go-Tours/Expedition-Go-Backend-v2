@@ -616,6 +616,10 @@ router.get('/supplier/my-tours', restrictTo('supplier'), tourController.getMyTou
  *                 type: string
  *                 description: URL of the cover/featured image for the tour. If not provided, the first photo in the photos array is used. Should be one of the uploaded photo URLs.
  *                 example: https://res.cloudinary.com/dfpagrtoy/image/upload/v1/tours/cover.jpg
+ *               coverPhotoIndex:
+ *                 type: string
+ *                 description: Zero-based index of which uploaded photo should be the cover/hero image. Overrides coverPhoto.
+ *                 example: "0"
  *               latitude:
   *                 type: number
   *                 format: float
@@ -717,10 +721,18 @@ router.post('/', restrictTo('supplier'), uploadTourPhotos, tourController.create
  *                 items:
  *                   type: string
  *                   format: binary
- *                 description: Tour photos (max 10 images)
+ *                 description: New tour photo files to upload. Existing photos to keep should be sent via existingPhotos field.
  *               coverPhoto:
  *                 type: string
  *                 description: URL of the cover/featured image for the tour
+ *               coverPhotoIndex:
+ *                 type: string
+ *                 description: Zero-based index of which newly uploaded photo should be the cover/hero image
+ *                 example: "0"
+ *               existingPhotos:
+ *                 type: string
+ *                 description: JSON string array of existing photo URLs to keep. Photos not in this list will be deleted from Cloudinary.
+ *                 example: '["https://res.cloudinary.com/dfpagrtoy/image/upload/v1/tours/photo1.jpg","https://res.cloudinary.com/dfpagrtoy/image/upload/v1/tours/photo2.jpg"]'
  *               tags:
  *                 type: array
  *                 items:
@@ -786,9 +798,10 @@ router.patch('/:id', restrictTo('supplier'), uploadTourPhotos, tourController.up
  *         required: true
  *         schema:
  *           type: string
+ *     description: Deletes a tour (sets status to ARCHIVED) and removes all associated photos from Cloudinary.
  *     responses:
  *       204:
- *         description: Tour deleted successfully
+ *         description: Tour deleted successfully. All associated Cloudinary images have been cleaned up.
  *       400:
  *         description: Cannot delete tour with active bookings
  *       404:
