@@ -452,6 +452,22 @@ exports.createTour = catchAsync(async (req, res, next) => {
     longitude
   } = req.body;
 
+  // Get uploaded Cloudinary URLs from multer
+  const uploadedPhotos = (req.files || []).map(f => f.path);
+  const allPhotos = [...photos, ...uploadedPhotos];
+
+  // Determine cover photo from uploaded files
+  let finalCoverPhoto = coverPhoto;
+  if (uploadedPhotos.length > 0 && req.body.coverPhotoIndex !== undefined) {
+    const idx = parseInt(req.body.coverPhotoIndex);
+    if (!isNaN(idx) && idx >= 0 && idx < uploadedPhotos.length) {
+      finalCoverPhoto = uploadedPhotos[idx];
+    }
+  }
+  if (!finalCoverPhoto && allPhotos.length > 0) {
+    finalCoverPhoto = allPhotos[0];
+  }
+
   const slug = await createSlug(title);
 
   const parsedCategory = typeof categorization === 'string' ? JSON.parse(categorization) : categorization;
@@ -470,8 +486,8 @@ exports.createTour = catchAsync(async (req, res, next) => {
       bookingAndTickets,
       metaTitle,
       metaDescription,
-      photos,
-      coverPhoto: coverPhoto || (photos.length > 0 ? photos[0] : null),
+      photos: allPhotos,
+      coverPhoto: finalCoverPhoto,
       tags,
       status,
       latitude,
@@ -560,6 +576,20 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   }
 
   const updateData = { ...req.body };
+
+  // Handle uploaded photos from multer
+  const uploadedPhotos = (req.files || []).map(f => f.path);
+  if (uploadedPhotos.length > 0) {
+    const existingPhotos = existingTour.photos || [];
+    updateData.photos = [...existingPhotos, ...uploadedPhotos];
+
+    if (req.body.coverPhotoIndex !== undefined) {
+      const idx = parseInt(req.body.coverPhotoIndex);
+      if (!isNaN(idx) && idx >= 0 && idx < uploadedPhotos.length) {
+        updateData.coverPhoto = uploadedPhotos[idx];
+      }
+    }
+  }
 
   // Update slug if title changed
   if (req.body.title && req.body.title !== existingTour.title) {
@@ -734,12 +764,20 @@ exports.getMyTours = catchAsync(async (req, res, next) => {
     prisma.tour.count({ where })
   ]);
 
+  const optimizedTours = tours.map(tour => ({
+    ...tour,
+    photos: Array.isArray(tour.photos)
+      ? tour.photos.map(url => cloudinaryUrl(url, 800))
+      : tour.photos,
+    coverPhoto: tour.coverPhoto ? cloudinaryUrl(tour.coverPhoto, 800) : null,
+  }));
+
   const totalPages = Math.ceil(totalCount / parseInt(limit));
 
   res.status(200).json({
     status: 'success',
     data: {
-      tours,
+      tours: optimizedTours,
       pagination: {
         currentPage: parseInt(page),
         totalPages,
