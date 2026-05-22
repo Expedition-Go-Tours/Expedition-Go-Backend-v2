@@ -34,10 +34,40 @@ async function createSlug(title, attempt = 0) {
 }
 
 /**
+ * Parse JSON string fields and convert numeric strings in a request body.
+ * Called before validation so that checks see proper types (objects, arrays, numbers).
+ */
+function parseJsonFields(data) {
+  if (!data || typeof data !== 'object') return data;
+
+  const jsonFields = ['categorization', 'theme', 'productContent', 'schedulesAndPricing', 'bookingAndTickets', 'tags', 'existingPhotos'];
+  for (const field of jsonFields) {
+    if (typeof data[field] === 'string') {
+      try { data[field] = JSON.parse(data[field]); } catch { /* leave as-is */ }
+    }
+  }
+
+  // Convert lat/lng from strings to numbers (FormData sends strings)
+  if (typeof data.latitude === 'string') {
+    const n = parseFloat(data.latitude);
+    if (!isNaN(n)) data.latitude = n;
+  }
+  if (typeof data.longitude === 'string') {
+    const n = parseFloat(data.longitude);
+    if (!isNaN(n)) data.longitude = n;
+  }
+
+  return data;
+}
+
+/**
  * Validate tour data structure
  */
 function validateTourData(data, isPartial = false) {
   const errors = [];
+
+  // Pre-parse JSON string fields so validation sees objects/arrays/numbers, not strings
+  parseJsonFields(data);
 
   if (!isPartial) {
     // Required fields for new tours
@@ -549,6 +579,7 @@ async function searchTours({
 
 module.exports = {
   createSlug,
+  parseJsonFields,
   validateTourData,
   checkTourAvailability,
   calculateTourPrice,

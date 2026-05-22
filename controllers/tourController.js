@@ -580,10 +580,8 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   // Handle uploaded photos from multer
   const uploadedPhotos = (req.files || []).map(f => f.path);
   if (uploadedPhotos.length > 0 || req.body.existingPhotos) {
-    // Use frontend-provided existing photo URLs, or fall back to DB
-    const keptPhotos = req.body.existingPhotos
-      ? JSON.parse(req.body.existingPhotos)
-      : (existingTour.photos || []);
+    // existingPhotos is already parsed by parseJsonFields inside validateTourData
+    const keptPhotos = req.body.existingPhotos || (existingTour.photos || []);
     updateData.photos = [...keptPhotos, ...uploadedPhotos];
 
     if (req.body.coverPhotoIndex !== undefined) {
