@@ -577,6 +577,10 @@ exports.updateTour = catchAsync(async (req, res, next) => {
 
   const updateData = { ...req.body };
 
+  // Remove non-model fields from updateData before passing to Prisma
+  delete updateData.existingPhotos;
+  delete updateData.coverPhotoIndex;
+
   // Handle uploaded photos from multer
   const uploadedPhotos = (req.files || []).map(f => f.path);
   if (uploadedPhotos.length > 0 || req.body.existingPhotos) {
