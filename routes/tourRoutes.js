@@ -811,6 +811,67 @@ router.delete('/:id', restrictTo('supplier'), tourController.deleteTour);
 
 /**
  * @swagger
+ * /tours/{id}/photos:
+ *   delete:
+ *     summary: Delete a specific photo from a tour (suppliers only - own tours)
+ *     tags: [Tours, Supplier]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         description: Tour ID
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - photoUrl
+ *             properties:
+ *               photoUrl:
+ *                 type: string
+ *                 description: The full Cloudinary URL of the photo to delete
+ *                 example: https://res.cloudinary.com/dfpagrtoy/image/upload/v1/tours/photo.jpg
+ *     responses:
+ *       200:
+ *         description: Photo deleted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 message:
+ *                   type: string
+ *                   example: Photo deleted successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     photos:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                       description: Updated photos array after deletion
+ *                     coverPhoto:
+ *                       type: string
+ *                       nullable: true
+ *                       description: Updated cover photo (null if the deleted photo was the cover)
+ *       400:
+ *         description: Photo URL is required
+ *       404:
+ *         description: Tour not found, access denied, or photo not found in tour
+ */
+router.delete('/:id/photos', restrictTo('supplier'), tourController.deleteTourPhoto);
+
+/**
+ * @swagger
  * /tours/{id}/analytics:
  *   get:
  *     summary: Get tour analytics (suppliers only - own tours)

@@ -888,4 +888,65 @@ exports.getTourAnalytics = catchAsync(async (req, res, next) => {
   });
 });
 
+/**
+ * Delete a specific photo from a tour (suppliers only - own tours)
+ */
+exports.deleteTourPhoto = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const supplierId = req.user.id;
+  const { photoUrl } = req.body;
+
+  if (!photoUrl) {
+    return next(new AppError('Photo URL is required', 400));
+  }
+
+  // Find tour and verify ownership
+  const tour = await prisma.tour.findFirst({
+    where: { id, supplierId },
+    select: { id: true, photos: true, coverPhoto: true, title: true }
+  });
+
+  if (!tour) {
+    return next(new AppError('Tour not found or access denied', 404));
+  }
+
+  // Check if photo exists in the tour's photos array
+  if (!tour.photos || !tour.photos.includes(photoUrl)) {
+    return next(new AppError('Photo not found in this tour', 404));
+  }
+
+  // Delete from Cloudinary
+  await deleteCloudinaryImage(photoUrl);
+
+  // Remove the photo URL from the array
+  const updatedPhotos = tour.photos.filter(url => url !== photoUrl);
+
+  // If the deleted photo was the coverPhoto, clear it
+  const updateData = { photos: updatedPhotos };
+  if (tour.coverPhoto === photoUrl) {
+    updateData.coverPhoto = null;
+  }
+
+  await prisma.tour.update({
+    where: { id },
+    data: updateData
+  });
+
+  cache.invalidateTourCaches(id).catch(() => {});
+
+  await logActivity({
+    userId: supplierId,
+    action: 'tour.photo.deleted',
+    resource: 'Tour',
+    resourceId: tour.id,
+    metadata: { title: tour.title, photoUrl }
+  });
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Photo deleted successfully',
+    data: { photos: updatedPhotos, coverPhoto: updateData.coverPhoto }
+  });
+});
+
 module.exports = exports;
