@@ -848,7 +848,7 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
 /**
  * Calculate tour pricing based on travelers and date
  */
-function calculateTourPricing(tour, travelers, selectedDate, selectedTime) {
+function calculateTourPricing(tour, travelers) {
   try {
     const pricing = tour.schedulesAndPricing;
     
@@ -873,7 +873,7 @@ function calculateTourPricing(tour, travelers, selectedDate, selectedTime) {
       total: subtotal,
       currency
     };
-  } catch (error) {
+  } catch {
     return {
       success: false,
       error: 'Unable to calculate pricing'

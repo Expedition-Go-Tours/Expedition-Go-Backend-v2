@@ -12,7 +12,7 @@ const prisma = require('./prismaClient');
  * Create unique slug for tour
  */
 async function createSlug(title, attempt = 0) {
-  let baseSlug = title
+  const baseSlug = title
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, '') // Remove special characters
     .replace(/\s+/g, '-') // Replace spaces with hyphens
@@ -165,7 +165,7 @@ function validateCategorization(categorization) {
 
     // Validate tour categorization
     if (categorization.tour) {
-      const { transportModes, duration } = categorization.tour;
+      const { transportModes } = categorization.tour;
       
       if (transportModes) {
         if (transportModes.airTransport && !Array.isArray(transportModes.airTransport)) return false;
@@ -181,7 +181,7 @@ function validateCategorization(categorization) {
     }
 
     return true;
-  } catch (error) {
+  } catch {
     return false;
   }
 }
@@ -266,7 +266,7 @@ function validatePricing(schedulesAndPricing) {
       }
     }
 
-  } catch (error) {
+  } catch {
     errors.push('Invalid pricing structure format');
   }
 
@@ -445,7 +445,6 @@ async function searchTours({
   rating,
   startDate,
   endDate,
-  travelers,
   sortBy = 'relevance',
   page = 1,
   limit = 12

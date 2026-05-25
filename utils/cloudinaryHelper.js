@@ -37,7 +37,7 @@ async function deleteCloudinaryImage(photoUrl) {
 
   // If we can't determine public_id, we can't delete reliably.
   if (!publicId) {
-    // eslint-disable-next-line no-console
+     
     console.warn('Cloudinary delete: could not extract public_id from photoURL. Skipping delete.', {
       photoUrl,
     });
@@ -47,7 +47,7 @@ async function deleteCloudinaryImage(photoUrl) {
   try {
     await cloudinary.uploader.destroy(publicId);
   } catch (err) {
-    // eslint-disable-next-line no-console
+     
     console.warn('Cloudinary delete failed (non-fatal):', err?.message || err);
   }
 }

@@ -104,7 +104,6 @@ async function emit({
  */
 async function emitBatch(events) {
   try {
-    let count = 0;
     await prisma.$transaction(
       events.map((evt) =>
         prisma.event.create({

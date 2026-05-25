@@ -15,7 +15,6 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
-const admin = require('../config/firebaseAdmin');
 const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
 const { logActivity } = require('../utils/auditLogger');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
@@ -121,7 +120,7 @@ exports.deleteMe = catchAsync(async (req, res) => {
 exports.deleteUser = catchAsync(async (req, res, next) => {
   try {
     await prisma.user.delete({ where: { id: req.params.id } });
-  } catch (err) {
+  } catch {
     return next(new AppError('User not found', 404));
   }
 

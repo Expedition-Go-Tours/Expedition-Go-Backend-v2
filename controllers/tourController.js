@@ -128,7 +128,7 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
       distMap = await getTourDistances(prisma, parseFloat(lat), parseFloat(lng), tours.map(t => t.id));
     }
 
-    let optimizedTours = tours.map((tour) => {
+    const optimizedTours = tours.map((tour) => {
       const t = {
         ...tour,
         photos: Array.isArray(tour.photos)

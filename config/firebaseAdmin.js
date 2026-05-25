@@ -25,7 +25,7 @@ if (process.env.NODE_ENV === 'development') {
   console.log('Firebase admin: running in development mode — using stubbed admin');
   module.exports = {
     auth: () => ({
-      verifyIdToken: async (token) => {
+      verifyIdToken: async () => {
         throw new Error('Firebase admin disabled in development — use dev auth bypass');
       },
     }),

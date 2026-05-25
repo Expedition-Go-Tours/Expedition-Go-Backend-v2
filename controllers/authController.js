@@ -57,7 +57,7 @@ exports.signup = catchAsync(async (req, res, next) => {
   let decoded;
   try {
     decoded = await admin.auth().verifyIdToken(idToken);
-  } catch (err) {
+  } catch {
     return next(
       new AppError('Invalid or expired Firebase token. Please log in again.', 401),
     );
@@ -129,7 +129,7 @@ exports.verifyToken = catchAsync(async (req, res, next) => {
   let decoded;
   try {
     decoded = await admin.auth().verifyIdToken(token);
-  } catch (err) {
+  } catch {
     return next(new AppError('Invalid or expired token', 401));
   }
 

@@ -294,7 +294,7 @@ function buildTourFilters(queryParams) {
 /**
  * Build price filter based on range or specific values
  */
-function buildPriceFilter(minPrice, maxPrice, priceRange, currency) {
+function buildPriceFilter(minPrice, maxPrice, priceRange) {
   // Define price ranges
   const priceRanges = {
     budget: { min: 0, max: 50 },

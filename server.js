@@ -4,7 +4,7 @@ const { Server } = require('socket.io');
 const prisma = require('./utils/prismaClient');
 const event = require('./utils/eventEmitter');
 const { registerWorkers, closeAll, enqueueNotification, enqueueCleanup, enqueueAggregation, isRedisAvailable } = require('./utils/queue');
-/* eslint-disable no-console */
+ 
 
 let server;
 let io;

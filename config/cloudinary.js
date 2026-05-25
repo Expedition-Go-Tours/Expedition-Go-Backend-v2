@@ -15,7 +15,7 @@ if (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
     api_secret: CLOUDINARY_API_SECRET,
   });
 } else {
-  // eslint-disable-next-line no-console
+   
   console.warn('Cloudinary: missing env vars (CLOUDINARY_CLOUD_NAME/CLOUDINARY_API_KEY/CLOUDINARY_API_SECRET). Uploads may fail.');
 }
 
@@ -35,7 +35,7 @@ try {
 
   upload = multer({ storage });
 } catch (e) {
-  // eslint-disable-next-line no-console
+   
   console.warn('Cloudinary upload dependency missing. Install multer-storage-cloudinary and multer for uploads.', e?.message || e);
 
   console.error('[Cloudinary] CRITICAL: Cloudinary env vars missing. File uploads will fail.');

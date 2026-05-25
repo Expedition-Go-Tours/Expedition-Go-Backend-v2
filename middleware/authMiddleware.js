@@ -97,14 +97,14 @@ exports.protect = catchAsync(async (req, res, next) => {
     }
 
     return next();
-  } catch (firebaseErr) {
+  } catch {
     // Firebase verification failed, so try the backend session cookie
   }
 
   let decodedSession;
   try {
     decodedSession = jwt.verify(token, process.env.JWT_SECRET);
-  } catch (sessionErr) {
+  } catch {
     return next(
       new AppError('Invalid or expired session. Please log in again.', 401),
     );

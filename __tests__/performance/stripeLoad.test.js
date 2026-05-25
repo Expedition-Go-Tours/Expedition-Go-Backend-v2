@@ -102,9 +102,7 @@ describe('Stripe Load Tests', () => {
   }, 30000);
 
   it('processStripeWebhook — payment succeeded at scale', async () => {
-    let callCount = 0;
     const results = await runLoadTestScenarios('processStripeWebhook (succeeded)', () => {
-      callCount++;
       jest.clearAllMocks();
       prisma.stripeEvent.findUnique.mockResolvedValue(null);
       prisma.stripeEvent.upsert.mockResolvedValue({});
@@ -139,7 +137,7 @@ describe('Stripe Load Tests', () => {
   it('verifyWebhookSignature — high concurrency', async () => {
     const Stripe = require('stripe');
     const stripeInstance = Stripe();
-    stripeInstance.webhooks.constructEvent.mockImplementation((payload, sig, secret) => {
+    stripeInstance.webhooks.constructEvent.mockImplementation((payload, sig) => {
       if (sig === 'good_sig') return { id: 'evt_valid', type: 'payment_intent.succeeded' };
       throw new Error('Invalid signature');
     });
@@ -148,7 +146,7 @@ describe('Stripe Load Tests', () => {
       const sig = Math.random() > 0.1 ? 'good_sig' : 'bad_sig';
       try {
         verifyWebhookSignature('payload', sig, 'secret');
-      } catch (e) { /* expected for bad_sig */ }
+      } catch { /* expected for bad_sig */ }
       return Promise.resolve();
     }, [
       { concurrency: 100, targetRps: 5000, durationMs: 500 },

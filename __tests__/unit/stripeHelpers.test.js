@@ -37,7 +37,6 @@ const {
   calculateCommission,
   processStripeWebhook,
   verifyWebhookSignature,
-  createPaymentIntent,
 } = require('../../utils/stripeHelpers');
 
 const mockBooking = {

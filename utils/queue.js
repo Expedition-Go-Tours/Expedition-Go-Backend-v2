@@ -17,7 +17,7 @@
  * @version 1.0.0
  */
 
-const { Queue, Worker, QueueScheduler } = require('bullmq');
+const { Queue, Worker } = require('bullmq');
 const IORedis = require('ioredis');
 
 
@@ -263,7 +263,7 @@ async function enqueueAggregation(jobName, payload = {}) {
  * Register all queue processors.
  * @param {import('express').Application} app — Express app (for accessing io instance, etc.)
  */
-function registerWorkers(app) {
+function registerWorkers() {
   const conn = getConnection();
 
   function createWorker(queueName, processor) {
@@ -372,7 +372,7 @@ function registerWorkers(app) {
 // ---------------------------------------------------------------------------
 async function closeAll() {
   const closePromises = [];
-  for (const [name, queue] of queueInstances) {
+  for (const [, queue] of queueInstances) {
     closePromises.push(queue.close());
   }
   if (connection) {

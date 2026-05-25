@@ -1,5 +1,3 @@
-const prisma = require('./prismaClient');
-
 async function addApprovedRating(tx, tourId, rating) {
   const tour = await tx.tour.findUnique({
     where: { id: tourId },

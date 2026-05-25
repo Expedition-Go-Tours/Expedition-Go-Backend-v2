@@ -16,8 +16,6 @@
 
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
-const AppError = require('../utils/appError');
-const event = require('../utils/eventEmitter');
 
 /**
  * GET /api/admin/analytics/overview
