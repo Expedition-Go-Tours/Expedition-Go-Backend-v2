@@ -117,9 +117,86 @@ async function enqueueEvent(eventData) {
 }
 
 /**
+ * Process an email job directly (used by both the worker and the fallback
+ * when Redis/BullMQ is unavailable).  This mirrors the logic in the EMAIL
+ * WORKER section below so there is a single source of truth.
+ */
+async function processEmailJob(job) {
+  const prisma = require('./prismaClient');
+
+  switch (job.type) {
+    case 'booking-confirmation': {
+      const { sendBookingConfirmationEmail } = require('./emailService');
+      const booking = await prisma.booking.findUnique({
+        where: { id: job.bookingId },
+        include: {
+          customer: { select: { id: true, name: true, email: true } },
+          tour: {
+            select: {
+              id: true, title: true, description: true, photos: true,
+              productContent: true, bookingAndTickets: true,
+              supplier: { select: { name: true, email: true, phone: true } },
+            },
+          },
+        },
+      });
+      if (!booking) throw new Error(`Booking ${job.bookingId} not found`);
+      await sendBookingConfirmationEmail(booking);
+      break;
+    }
+
+    case 'booking-cancellation': {
+      const { sendBookingCancellationEmail } = require('./emailService');
+      const booking = await prisma.booking.findUnique({
+        where: { id: job.bookingId },
+        include: {
+          customer: { select: { id: true, name: true, email: true } },
+          tour: { select: { id: true, title: true } },
+        },
+      });
+      if (!booking) throw new Error(`Booking ${job.bookingId} not found`);
+      await sendBookingCancellationEmail(booking, job.refundAmount);
+      break;
+    }
+
+    case 'supplier-booking-notification': {
+      const { sendSupplierBookingNotification } = require('./emailService');
+      const booking = await prisma.booking.findUnique({
+        where: { id: job.bookingId },
+        include: {
+          customer: { select: { id: true, name: true, email: true, phone: true } },
+          tour: {
+            select: {
+              id: true, title: true,
+              supplier: { select: { id: true, name: true, email: true } },
+            },
+          },
+        },
+      });
+      if (!booking) throw new Error(`Booking ${job.bookingId} not found`);
+      await sendSupplierBookingNotification(booking);
+      break;
+    }
+
+    case 'supplier-status-email': {
+      const { sendSupplierStatusEmail } = require('./emailService');
+      await sendSupplierStatusEmail(job.email, job.status, job.data || {});
+      break;
+    }
+
+    default: {
+      const { to, subject, template, data, attachments } = job;
+      const { sendEmail } = require('./emailService');
+      await sendEmail({ to, subject, template, data, attachments });
+    }
+  }
+}
+
+/**
  * Enqueue a transactional email.
  * Worker handles rendering + SendGrid delivery with retry.
  * Supports typed jobs (worker fetches its own data) and raw emails.
+ * Falls back to direct sending when Redis/BullMQ is unavailable.
  */
 async function enqueueEmail(job) {
   try {
@@ -133,7 +210,11 @@ async function enqueueEmail(job) {
     return await emailQueue().add('email', job, {
       jobId: `email:${job.to}:${Date.now()}`,
     });
-  } catch { /* Redis unavailable — email will be retried on next attempt */ }
+  } catch {
+    processEmailJob(job).catch((err) => {
+      console.error('[Queue] Fallback email failed:', err.message);
+    });
+  }
 }
 
 /**
@@ -154,7 +235,12 @@ async function enqueueCleanup(jobName, payload = {}) {
 async function enqueueNotification({ userId, type, title, message, data }) {
   try {
     return await notificationQueue().add('notify', { userId, type, title, message, data });
-  } catch { /* Redis unavailable — skip notification */ }
+  } catch {
+    const { sendNotification } = require('./notificationService');
+    sendNotification({ userId, type, title, message, data }).catch((err) => {
+      console.error('[Queue] Fallback notification failed:', err.message);
+    });
+  }
 }
 
 /**
@@ -196,74 +282,7 @@ function registerWorkers(app) {
    * pre-rendered emails.  Retries on SendGrid failure with back-off.
    * ------------------------------------------------------------------ */
   createWorker(QUEUE_NAMES.EMAILS, async (job) => {
-    const prisma = require('./prismaClient');
-
-    switch (job.data.type) {
-      case 'booking-confirmation': {
-        const { sendBookingConfirmationEmail } = require('./emailService');
-        const booking = await prisma.booking.findUnique({
-          where: { id: job.data.bookingId },
-          include: {
-            customer: { select: { id: true, name: true, email: true } },
-            tour: {
-              select: {
-                id: true, title: true, description: true, photos: true,
-                productContent: true, bookingAndTickets: true,
-                supplier: { select: { name: true, email: true, phone: true } },
-              },
-            },
-          },
-        });
-        if (!booking) throw new Error(`Booking ${job.data.bookingId} not found`);
-        await sendBookingConfirmationEmail(booking);
-        break;
-      }
-
-      case 'booking-cancellation': {
-        const { sendBookingCancellationEmail } = require('./emailService');
-        const booking = await prisma.booking.findUnique({
-          where: { id: job.data.bookingId },
-          include: {
-            customer: { select: { id: true, name: true, email: true } },
-            tour: { select: { id: true, title: true } },
-          },
-        });
-        if (!booking) throw new Error(`Booking ${job.data.bookingId} not found`);
-        await sendBookingCancellationEmail(booking, job.data.refundAmount);
-        break;
-      }
-
-      case 'supplier-booking-notification': {
-        const { sendSupplierBookingNotification } = require('./emailService');
-        const booking = await prisma.booking.findUnique({
-          where: { id: job.data.bookingId },
-          include: {
-            customer: { select: { id: true, name: true, email: true, phone: true } },
-            tour: {
-              select: {
-                id: true, title: true,
-                supplier: { select: { id: true, name: true, email: true } },
-              },
-            },
-          },
-        });
-        if (!booking) throw new Error(`Booking ${job.data.bookingId} not found`);
-        await sendSupplierBookingNotification(booking);
-        break;
-      }
-
-      case 'supplier-status-email': {
-        const { sendSupplierStatusEmail } = require('./emailService');
-        await sendSupplierStatusEmail(job.data.email, job.data.status, job.data.data || {});
-        break;
-      }
-
-      default: {
-        const { to, subject, template, data, attachments } = job.data;
-        const { sendEmail } = require('./emailService');
-        await sendEmail({ to, subject, template, data, attachments });
-      }
-    }
+    await processEmailJob(job.data);
   });
 
   /* ------------------------------------------------------------------
@@ -370,6 +389,7 @@ module.exports = {
   enqueueEvent,
   enqueueAggregation,
   enqueueCleanup,
+  processEmailJob,
   registerWorkers,
   closeAll,
   getConnection,
