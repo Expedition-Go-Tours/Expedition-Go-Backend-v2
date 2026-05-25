@@ -833,7 +833,6 @@ ${year} ${brandName} by Expedition-Go Tours. All rights reserved.`;
 
 function generateSupplierApprovedTemplate(data = {}) {
   const brandName = data.brandName || 'Travio Africa';
-  const brandSubtext = data.brandSubtext || 'by Expedition-Go Tours';
   const supplierName = data.supplierBusinessName || data.name || 'there';
   const dashboardUrl = data.dashboardUrl || '#';
   const supportEmail = data.supportEmail || 'support@expeditiongo.com';
@@ -1047,7 +1046,6 @@ Let's grow together.`;
 
 function generateSupplierRejectedTemplate(data) {
   const brandName = data.brandName || 'Travio Africa';
-  const brandSubtext = data.brandSubtext || 'by Expedition-Go Tours';
   const supplierName = data.supplierBusinessName || data.name || 'there';
   const supportEmail = data.supportEmail || 'support@expeditiongo.com';
   const logoUrl = data.logoUrl || process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
