@@ -70,6 +70,7 @@ const mockTx = {
   notification: { create: jest.fn().mockResolvedValue({}) },
   supplierProfile: { update: jest.fn().mockResolvedValue({}) },
   tour: { update: jest.fn().mockResolvedValue({}) },
+  payout: { create: jest.fn().mockResolvedValue({}) },
 };
 
 function makeStripeEvent(type) {
