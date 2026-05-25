@@ -1,8 +1,5 @@
 name: Nightly Performance Tests
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 on:
   schedule:
     - cron: '0 6 * * *'  # 06:00 UTC daily
@@ -33,10 +30,10 @@ jobs:
       DIRECT_URL: postgresql://test:test@localhost:5432/testdb
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: 'npm'
