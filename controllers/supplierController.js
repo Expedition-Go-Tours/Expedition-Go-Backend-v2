@@ -76,6 +76,13 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
     return next(new AppError('Supplier application already exists', 400));
   }
 
+  // Parse JSON string fields from multipart form data
+  for (const field of JSON_FIELDS) {
+    if (typeof req.body[field] === 'string') {
+      try { req.body[field] = JSON.parse(req.body[field]); } catch {}
+    }
+  }
+
   // Validate application data
   const validationResult = validateSupplierData(req.body);
   if (!validationResult.isValid) {
@@ -205,6 +212,13 @@ exports.updateApplication = catchAsync(async (req, res, next) => {
 
   if (!['PENDING', 'UNDER_REVIEW'].includes(supplierProfile.status)) {
     return next(new AppError('Application cannot be modified in current status', 400));
+  }
+
+  // Parse JSON string fields from multipart form data
+  for (const field of JSON_FIELDS) {
+    if (typeof req.body[field] === 'string') {
+      try { req.body[field] = JSON.parse(req.body[field]); } catch {}
+    }
   }
 
   // Validate update data
