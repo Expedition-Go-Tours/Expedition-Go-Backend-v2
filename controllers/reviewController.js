@@ -17,6 +17,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { enqueueNotification } = require('../utils/queue');
+const { notifyAdmin } = require('../utils/adminNotificationService');
 const { logActivity } = require('../utils/auditLogger');
 const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
@@ -838,6 +839,13 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
       reason
     }
   }).catch(() => {});
+
+  notifyAdmin({
+    type: 'REVIEW_NEEDS_MODERATION',
+    title: `Review ${action === 'approve' ? 'Approved' : action === 'reject' ? 'Rejected' : 'Flagged'}`,
+    message: `Review #${review.id.slice(0, 8)} by customer ${review.customerId.slice(0, 8)} was ${action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'flagged'}${reason ? ` — ${reason}` : ''}`,
+    data: { reviewId: review.id, action, reason, customerId: review.customerId, tourId: review.tourId },
+  });
 
   await logActivity({
     userId: adminId,

@@ -18,8 +18,20 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 
 const { enqueueNotification, enqueueEmail } = require('../utils/queue');
+const { notifyAdmin } = require('../utils/adminNotificationService');
 const { logActivity } = require('../utils/auditLogger');
 const { validateSupplierData } = require('../utils/supplierHelpers');
+
+const JSON_FIELDS = ['businessInfo', 'operatingInfo', 'representativeInfo', 'businessDocuments', 'payoutInfo', 'compliance'];
+function parseSupplierFields(obj) {
+  if (!obj) return obj;
+  for (const field of JSON_FIELDS) {
+    if (typeof obj[field] === 'string') {
+      try { obj[field] = JSON.parse(obj[field]); } catch {}
+    }
+  }
+  return obj;
+}
 
 // ================================
 // SUPPLIER APPLICATION PROCESS
@@ -84,27 +96,17 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
     }
   });
 
-  // Send notification to admins
-  const admins = await prisma.user.findMany({
-    where: {
-      roles: {
-        has: 'admin'
-      }
-    }
+  // Notify admins
+  notifyAdmin({
+    type: 'NEW_SUPPLIER_APPLICATION',
+    title: 'New Supplier Application',
+    message: `${req.user.name} has applied to become a supplier`,
+    data: {
+      supplierId: userId,
+      supplierProfileId: supplierProfile.id,
+      businessName: supplierProfile.businessInfo?.legalBusinessName,
+    },
   });
-
-  for (const admin of admins) {
-    enqueueNotification({
-      userId: admin.id,
-      type: 'SUPPLIER_APPROVED',
-      title: 'New Supplier Application',
-      message: `${req.user.name} has applied to become a supplier`,
-      data: {
-        supplierId: userId,
-        supplierProfileId: supplierProfile.id
-      }
-    }).catch(() => {});
-  }
 
   // Log activity
   await logActivity({
@@ -209,7 +211,7 @@ exports.updateApplication = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: { supplierProfile: updatedProfile }
+    data: { supplierProfile: parseSupplierFields(updatedProfile) }
   });
 });
 
@@ -481,7 +483,7 @@ exports.getAllApplications = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: {
-      applications,
+      applications: applications.map(parseSupplierFields),
       pagination: {
         currentPage: parseInt(page),
         totalPages,
@@ -558,6 +560,20 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
     data: { name: supplierProfile.user.name, notes }
   }).catch(() => {});
 
+  // Notify admins of status change
+  notifyAdmin({
+    type: 'SUPPLIER_STATUS_CHANGE',
+    title: `Supplier ${action === 'approve' ? 'Approved' : action === 'reject' ? 'Rejected' : 'Requested Info'}`,
+    message: `${supplierProfile.user?.name || supplierProfile.businessInfo?.legalBusinessName || 'A supplier'}'s application was ${action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'requested additional information'}`,
+    data: {
+      supplierId: supplierProfile.userId,
+      supplierProfileId: supplierProfile.id,
+      action,
+      notes,
+      businessName: supplierProfile.businessInfo?.legalBusinessName,
+    },
+  });
+
   // Log activity
   await logActivity({
     userId: adminId,
@@ -573,7 +589,7 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: { supplierProfile: updatedProfile }
+    data: { supplierProfile: parseSupplierFields(updatedProfile) }
   });
 });
 
@@ -611,6 +627,13 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
     data: { supplierId: id }
   }).catch(() => {});
 
+  notifyAdmin({
+    type: 'SUPPLIER_STATUS_CHANGE',
+    title: 'Supplier Activated',
+    message: `${supplierProfile.user?.name || 'A supplier'}'s account was activated`,
+    data: { supplierId: id, businessName: supplierProfile.businessInfo?.legalBusinessName },
+  });
+
   enqueueEmail({
     type: 'supplier-status-email',
     email: supplierProfile.user.email,
@@ -631,7 +654,7 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: { supplierProfile: updatedProfile }
+    data: { supplierProfile: parseSupplierFields(updatedProfile) }
   });
 });
 
@@ -677,6 +700,13 @@ exports.suspendSupplier = catchAsync(async (req, res, next) => {
     }
   }).catch(() => {});
 
+  notifyAdmin({
+    type: 'SUPPLIER_STATUS_CHANGE',
+    title: suspend ? 'Supplier Suspended' : 'Supplier Reactivated',
+    message: `${supplierProfile.user?.name || 'A supplier'}'s account was ${suspend ? 'suspended' : 'reactivated'}${reason ? ` — ${reason}` : ''}`,
+    data: { supplierId: id, reason, action: suspend ? 'suspended' : 'reactivated' },
+  });
+
   // Log activity
   await logActivity({
     userId: adminId,
@@ -691,7 +721,7 @@ exports.suspendSupplier = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: { supplierProfile: updatedProfile }
+    data: { supplierProfile: parseSupplierFields(updatedProfile) }
   });
 });
 

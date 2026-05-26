@@ -76,6 +76,14 @@ enum NotificationType {
   SYSTEM_ALERT
 }
 
+enum AdminNotificationType {
+  NEW_SUPPLIER_APPLICATION
+  SUPPLIER_STATUS_CHANGE
+  REVIEW_NEEDS_MODERATION
+  PAYOUT_NEEDS_APPROVAL
+  SYSTEM_ALERT
+}
+
 enum ReviewStatus {
   PENDING
   APPROVED
@@ -508,6 +516,27 @@ model Notification {
   @@index([userId])
   @@index([type])
   @@index([read])
+  @@index([createdAt])
+}
+
+model AdminNotification {
+  id           String               @id @default(cuid())
+  
+  // Notification Content
+  type         AdminNotificationType
+  title        String
+  message      String
+  data         Json?                // Additional structured data (supplierId, reviewId, payoutId, etc.)
+  
+  // Status
+  acknowledged Boolean              @default(false)
+  acknowledgedAt DateTime?
+  acknowledgedBy String?            // Admin user ID who acknowledged
+  
+  createdAt    DateTime             @default(now())
+
+  @@index([type])
+  @@index([acknowledged])
   @@index([createdAt])
 }
 

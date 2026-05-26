@@ -14,6 +14,7 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const adminController = require('../controllers/adminController');
+const adminNotifController = require('../controllers/adminNotificationController');
 
 const router = express.Router();
 
@@ -303,5 +304,97 @@ router.get('/analytics/search', adminController.getSearchAnalytics);
  *                   $ref: '#/components/schemas/CartAbandonmentResponse'
  */
 router.get('/analytics/cart-abandonment', adminController.getCartAbandonment);
+
+/**
+ * Admin Notifications
+ */
+
+/**
+ * @swagger
+ * /admin/notifications:
+ *   get:
+ *     summary: Get admin notifications (system-wide feed)
+ *     description: |
+ *       Returns system-wide admin notifications (new supplier applications,
+ *       pending reviews, payout approvals needed, etc.) with pagination.
+ *     tags: [Admin, Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: page
+ *         in: query
+ *         schema: { type: integer, default: 1 }
+ *       - name: limit
+ *         in: query
+ *         schema: { type: integer, default: 20 }
+ *       - name: unacknowledgedOnly
+ *         in: query
+ *         schema: { type: boolean, default: false }
+ *     responses:
+ *       200:
+ *         description: Notifications retrieved
+ */
+router.get('/notifications', adminNotifController.getNotifications);
+
+/**
+ * @swagger
+ * /admin/notifications/unread-count:
+ *   get:
+ *     summary: Get unacknowledged notification count
+ *     tags: [Admin, Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Unacknowledged count
+ */
+router.get('/notifications/unread-count', adminNotifController.getUnreadCount);
+
+/**
+ * @swagger
+ * /admin/notifications/stats:
+ *   get:
+ *     summary: Admin notification statistics
+ *     tags: [Admin, Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Statistics retrieved
+ */
+router.get('/notifications/stats', adminNotifController.getStats);
+
+/**
+ * @swagger
+ * /admin/notifications/{id}/acknowledge:
+ *   patch:
+ *     summary: Acknowledge a notification
+ *     tags: [Admin, Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Notification acknowledged
+ */
+router.patch('/notifications/:id/acknowledge', adminNotifController.acknowledge);
+
+/**
+ * @swagger
+ * /admin/notifications/acknowledge-all:
+ *   patch:
+ *     summary: Acknowledge all notifications
+ *     tags: [Admin, Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: All notifications acknowledged
+ */
+router.patch('/notifications/acknowledge-all', adminNotifController.acknowledgeAll);
 
 module.exports = router;

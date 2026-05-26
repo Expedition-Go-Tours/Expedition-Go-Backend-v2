@@ -2,6 +2,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { enqueueNotification, enqueueEmail } = require('../utils/queue');
+const { notifyAdmin } = require('../utils/adminNotificationService');
 const { logActivity } = require('../utils/auditLogger');
 
 /**
@@ -201,6 +202,13 @@ exports.approvePayout = catchAsync(async (req, res, next) => {
     data: { payoutId: payout.id, amount: payout.amount }
   }).catch(() => {});
 
+  notifyAdmin({
+    type: 'PAYOUT_NEEDS_APPROVAL',
+    title: 'Payout Approved',
+    message: `${payout.supplier.name}: Payout of ${payout.currency} ${payout.amount} for "${payout.booking?.tour?.title || 'Tour'}" was approved`,
+    data: { payoutId: payout.id, supplierId: payout.supplierId, amount: payout.amount, action: 'approved' },
+  });
+
   await logActivity({
     userId: adminId,
     action: 'payout.approved',
@@ -327,6 +335,13 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
     }
   }).catch(() => {});
 
+  notifyAdmin({
+    type: 'PAYOUT_NEEDS_APPROVAL',
+    title: 'Payout Released',
+    message: `${payout.supplier.name}: Payout of ${payout.currency} ${payout.amount} was released via ${method.type.replace('_', ' ')}`,
+    data: { payoutId: payout.id, supplierId: payout.supplierId, amount: payout.amount, action: 'released' },
+  });
+
   await logActivity({
     userId: adminId,
     action: 'payout.released',
@@ -412,6 +427,13 @@ exports.failPayout = catchAsync(async (req, res, next) => {
       dashboardUrl: `${CLIENT_URL}/supplier/earnings`
     }
   }).catch(() => {});
+
+  notifyAdmin({
+    type: 'PAYOUT_NEEDS_APPROVAL',
+    title: 'Payout Failed',
+    message: `${payout.supplier.name}: Payout of ${payout.currency} ${payout.amount} for "${payout.booking?.tour?.title || 'Tour'}" failed${reason ? ` — ${reason}` : ''}`,
+    data: { payoutId: payout.id, supplierId: payout.supplierId, amount: payout.amount, action: 'failed', reason },
+  });
 
   await logActivity({
     userId: adminId,
