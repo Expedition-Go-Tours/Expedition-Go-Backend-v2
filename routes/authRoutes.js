@@ -4,7 +4,6 @@ const authController = require('../controllers/authController');
 
 const router = express.Router();
 
-router.post('/verify-token', authController.verifyToken);
 router.post('/logout', authController.logout);
 
 module.exports = router;

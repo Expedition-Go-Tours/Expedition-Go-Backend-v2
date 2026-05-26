@@ -6,7 +6,6 @@ const rateLimit = require('express-rate-limit');
 const hpp = require('hpp');
 const morgan = require('morgan');
 const compression = require('compression');
-const cookieParser = require('cookie-parser');
 const logger = require('./utils/logger');
 
 
@@ -28,7 +27,6 @@ try {
 app.use(helmet());
 app.use(hpp());
 app.use(compression());
-app.use(cookieParser());
 
 // Global rate limit: 100 requests per 15 min per IP
 app.use(

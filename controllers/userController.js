@@ -18,13 +18,6 @@ const AppError = require('../utils/appError');
 const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
 const { logActivity } = require('../utils/auditLogger');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
-const { createSessionToken } = require('../utils/createSessionToken');
-const { sendSessionCookie } = require('../utils/sendSessionCookie');
-
-const issueSessionCookie = (res, user) => {
-  const token = createSessionToken(user);
-  sendSessionCookie(res, token);
-};
 
 exports.getMe = (req, res, next) => {
   if (!req.user) {
@@ -198,9 +191,6 @@ exports.createMe = catchAsync(async (req, res, next) => {
   let user = await prisma.user.findUnique({ where: { firebaseUid: firebaseUser.uid } });
 
   if (user) {
-    // ADDED: issue shared session cookie even when the user already exists
-    issueSessionCookie(res, user);
-
     return res.status(200).json({ status: 'success', data: { user } });
   }
 
@@ -230,9 +220,6 @@ exports.createMe = catchAsync(async (req, res, next) => {
       roles: ['customer']
     },
   });
-
-  // ADDED: issue shared session cookie after first-time user creation
-  issueSessionCookie(res, user);
 
   // Log activity
   await logActivity({
@@ -268,9 +255,6 @@ exports.syncMe = catchAsync(async (req, res) => {
       lastLoginAt: new Date()
     },
   });
-
-  // ADDED: refresh the shared session cookie on sync/login
-  issueSessionCookie(res, user);
 
   // Log activity
   await logActivity({

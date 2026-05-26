@@ -11,11 +11,6 @@ jest.mock('../../utils/prismaClient', () => ({
   },
 }));
 
-jest.mock('jsonwebtoken', () => ({
-  verify: jest.fn(),
-}));
-
-const jwt = require('jsonwebtoken');
 const { protect, restrictTo } = require('../../middleware/authMiddleware');
 
 const mockReq = (overrides = {}) => ({
@@ -28,8 +23,6 @@ const mockRes = () => {
   const res = {};
   res.status = jest.fn().mockReturnValue(res);
   res.json = jest.fn().mockReturnValue(res);
-  res.cookie = jest.fn().mockReturnValue(res);
-  res.clearCookie = jest.fn().mockReturnValue(res);
   return res;
 };
 
@@ -45,7 +38,6 @@ const mockUser = {
 
 beforeEach(() => {
   mockVerifyIdToken.mockClear();
-  jwt.verify.mockClear();
   const p = require('../../utils/prismaClient');
   p.user.findUnique.mockClear();
   p.user.findFirst.mockClear();
@@ -139,35 +131,6 @@ describe('Firebase token verification', () => {
     expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 403 }));
   });
 
-  it('falls back to session cookie on Firebase failure', async () => {
-    const prisma = require('../../utils/prismaClient');
-    mockVerifyIdToken.mockRejectedValue(new Error('expired'));
-    jwt.verify.mockReturnValue({ id: 'user-1', roles: ['customer'], active: true });
-    prisma.user.findUnique.mockResolvedValue(mockUser);
-
-    const req = mockReq({ headers: { authorization: 'Bearer bad' }, cookies: { session: 'sess' } });
-    const next = jest.fn();
-    await protect(req, mockRes(), next);
-
-    expect(jwt.verify).toHaveBeenCalled();
-    expect(req.user).toEqual(mockUser);
-    expect(next).toHaveBeenCalled();
-  });
-
-  it('reads session cookie when no auth header', async () => {
-    const prisma = require('../../utils/prismaClient');
-    mockVerifyIdToken.mockRejectedValue(new Error('no token'));
-    jwt.verify.mockReturnValue({ id: 'user-1', roles: ['customer'], active: true });
-    prisma.user.findUnique.mockResolvedValue(mockUser);
-
-    const req = mockReq({ cookies: { session: 'cookie-val' } });
-    const next = jest.fn();
-    await protect(req, mockRes(), next);
-
-    expect(jwt.verify).toHaveBeenCalledWith('cookie-val', process.env.JWT_SECRET);
-    expect(req.user).toEqual(mockUser);
-    expect(next).toHaveBeenCalled();
-  });
 });
 
 describe('restrictTo', () => {
