@@ -23,9 +23,6 @@ function validateSupplierData(data, isPartial = false) {
     if (!data.representativeInfo) {
       errors.push('Representative information is required');
     }
-    if (!data.businessDocuments) {
-      errors.push('Business documents are required');
-    }
   }
 
   // Validate business info

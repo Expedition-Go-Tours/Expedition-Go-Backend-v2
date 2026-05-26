@@ -23,25 +23,17 @@ const { notifyAdmin } = require('../utils/adminNotificationService');
 const { logActivity } = require('../utils/auditLogger');
 const { validateSupplierData } = require('../utils/supplierHelpers');
 
-async function uploadBase64ToCloudinary(dataUri, folder = 'supplier-documents') {
-  if (!dataUri || typeof dataUri !== 'string' || !dataUri.startsWith('data:')) return dataUri;
-  try {
-    const result = await cloudinary.uploader.upload(dataUri, { folder, resource_type: 'auto' });
-    return result.secure_url;
-  } catch {
-    return dataUri;
-  }
-}
+const MULTER_FILE_FIELDS = ['registrationDocument', 'taxDocument', 'proofOfAddress', 'idDocument', 'licenses'];
 
-async function uploadBusinessDocs(docs) {
-  if (!docs || typeof docs !== 'object') return docs;
-  const result = { ...docs };
-  const fileFields = ['registrationDocumentUrl', 'taxDocumentUrl', 'proofOfAddressUrl', 'idDocumentUrl'];
-  for (const field of fileFields) {
-    if (result[field]) result[field] = await uploadBase64ToCloudinary(result[field]);
-  }
-  if (Array.isArray(result.licenses)) {
-    result.licenses = await Promise.all(result.licenses.map((l) => uploadBase64ToCloudinary(l)));
+function extractFileUrls(files) {
+  if (!files) return {};
+  const result = {};
+  for (const [field, fileList] of Object.entries(files)) {
+    if (field === 'licenses') {
+      result.licenses = fileList.map((f) => f.path);
+    } else {
+      result[`${field}Url`] = fileList[0]?.path;
+    }
   }
   return result;
 }
@@ -83,6 +75,18 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
     }
   }
 
+  // Merge uploaded file URLs from multer into the body before validation
+  const fileUrls = extractFileUrls(req.files);
+  req.body.businessDocuments = {
+    registrationDocumentUrl: fileUrls.registrationDocumentUrl,
+    taxDocumentUrl: fileUrls.taxDocumentUrl,
+    proofOfAddressUrl: fileUrls.proofOfAddressUrl,
+    licenses: fileUrls.licenses || [],
+  };
+  if (req.body.representativeInfo && fileUrls.idDocumentUrl) {
+    req.body.representativeInfo.idDocumentUrl = fileUrls.idDocumentUrl;
+  }
+
   // Validate application data
   const validationResult = validateSupplierData(req.body);
   if (!validationResult.isValid) {
@@ -96,11 +100,6 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
     businessDocuments,
     payoutInfo
   } = req.body;
-
-  // Upload base64 images to Cloudinary if present
-  if (businessDocuments) {
-    businessDocuments = await uploadBusinessDocs(businessDocuments);
-  }
 
   // Create supplier profile with PENDING status
   const supplierProfile = await prisma.supplierProfile.create({
@@ -222,17 +221,26 @@ exports.updateApplication = catchAsync(async (req, res, next) => {
   }
 
   // Validate update data
+  // Merge uploaded file URLs from multer into the data
+  const fileUrls = extractFileUrls(req.files);
+  if (fileUrls.registrationDocumentUrl || fileUrls.taxDocumentUrl || fileUrls.proofOfAddressUrl || fileUrls.licenses) {
+    req.body.businessDocuments = {
+      registrationDocumentUrl: fileUrls.registrationDocumentUrl,
+      taxDocumentUrl: fileUrls.taxDocumentUrl,
+      proofOfAddressUrl: fileUrls.proofOfAddressUrl,
+      licenses: fileUrls.licenses || [],
+    };
+  }
+  if (req.body.representativeInfo && fileUrls.idDocumentUrl) {
+    req.body.representativeInfo.idDocumentUrl = fileUrls.idDocumentUrl;
+  }
+
   const validationResult = validateSupplierData(req.body, true); // partial validation
   if (!validationResult.isValid) {
     return next(new AppError(`Validation failed: ${validationResult.errors.join(', ')}`, 400));
   }
 
   const updateData = { ...req.body };
-
-  // Upload base64 images to Cloudinary if present
-  if (updateData.businessDocuments) {
-    updateData.businessDocuments = await uploadBusinessDocs(updateData.businessDocuments);
-  }
 
   // Reset status to PENDING if significant changes made
   if (req.body.businessInfo || req.body.representativeInfo || req.body.businessDocuments) {
