@@ -16,11 +16,35 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
+const cloudinary = require('cloudinary').v2;
 
 const { enqueueNotification, enqueueEmail } = require('../utils/queue');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const { logActivity } = require('../utils/auditLogger');
 const { validateSupplierData } = require('../utils/supplierHelpers');
+
+async function uploadBase64ToCloudinary(dataUri, folder = 'supplier-documents') {
+  if (!dataUri || typeof dataUri !== 'string' || !dataUri.startsWith('data:')) return dataUri;
+  try {
+    const result = await cloudinary.uploader.upload(dataUri, { folder, resource_type: 'auto' });
+    return result.secure_url;
+  } catch {
+    return dataUri;
+  }
+}
+
+async function uploadBusinessDocs(docs) {
+  if (!docs || typeof docs !== 'object') return docs;
+  const result = { ...docs };
+  const fileFields = ['registrationDocumentUrl', 'taxDocumentUrl', 'proofOfAddressUrl', 'idDocumentUrl'];
+  for (const field of fileFields) {
+    if (result[field]) result[field] = await uploadBase64ToCloudinary(result[field]);
+  }
+  if (Array.isArray(result.licenses)) {
+    result.licenses = await Promise.all(result.licenses.map((l) => uploadBase64ToCloudinary(l)));
+  }
+  return result;
+}
 
 const JSON_FIELDS = ['businessInfo', 'operatingInfo', 'representativeInfo', 'businessDocuments', 'payoutInfo', 'compliance'];
 function parseSupplierFields(obj) {
@@ -58,13 +82,18 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
     return next(new AppError(`Validation failed: ${validationResult.errors.join(', ')}`, 400));
   }
 
-  const {
+  let {
     businessInfo,
     operatingInfo,
     representativeInfo,
     businessDocuments,
     payoutInfo
   } = req.body;
+
+  // Upload base64 images to Cloudinary if present
+  if (businessDocuments) {
+    businessDocuments = await uploadBusinessDocs(businessDocuments);
+  }
 
   // Create supplier profile with PENDING status
   const supplierProfile = await prisma.supplierProfile.create({
@@ -185,7 +214,12 @@ exports.updateApplication = catchAsync(async (req, res, next) => {
   }
 
   const updateData = { ...req.body };
-  
+
+  // Upload base64 images to Cloudinary if present
+  if (updateData.businessDocuments) {
+    updateData.businessDocuments = await uploadBusinessDocs(updateData.businessDocuments);
+  }
+
   // Reset status to PENDING if significant changes made
   if (req.body.businessInfo || req.body.representativeInfo || req.body.businessDocuments) {
     updateData.status = 'PENDING';
