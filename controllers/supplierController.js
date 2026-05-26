@@ -104,7 +104,7 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
       operatingInfo,
       representativeInfo,
       businessDocuments,
-      payoutInfo,
+      payoutInfo: payoutInfo || {},
       compliance: {
         acceptedTerms: true,
         agreedToPayoutTerms: true,
@@ -629,7 +629,7 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
 
 /**
  * Activate a supplier directly (admin only)
- * Supplier must be APPROVED and have at least one verified payout method
+ * Supplier must be APPROVED and have a verified payout method
  */
 exports.activateSupplier = catchAsync(async (req, res, next) => {
   const { id } = req.params;
@@ -646,6 +646,14 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
 
   if (supplierProfile.status !== 'APPROVED') {
     return next(new AppError('Supplier must be in APPROVED status to activate', 400));
+  }
+
+  // Check supplier has a verified payout method before activating
+  const payoutMethod = await prisma.payoutMethod.findFirst({
+    where: { supplierId: id, verified: true },
+  });
+  if (!payoutMethod) {
+    return next(new AppError('Supplier must add a verified payout method before activation', 400));
   }
 
   const updatedProfile = await prisma.supplierProfile.update({

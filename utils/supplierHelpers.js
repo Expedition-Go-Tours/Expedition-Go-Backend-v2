@@ -26,9 +26,6 @@ function validateSupplierData(data, isPartial = false) {
     if (!data.businessDocuments) {
       errors.push('Business documents are required');
     }
-    if (!data.payoutInfo) {
-      errors.push('Payout information is required');
-    }
   }
 
   // Validate business info
@@ -55,8 +52,8 @@ function validateSupplierData(data, isPartial = false) {
     errors.push(...docErrors);
   }
 
-  // Validate payout info
-  if (data.payoutInfo) {
+  // Validate payout info (optional during application, required before activation)
+  if (data.payoutInfo && Object.keys(data.payoutInfo).some(k => data.payoutInfo[k])) {
     const payoutErrors = validatePayoutInfo(data.payoutInfo);
     errors.push(...payoutErrors);
   }
