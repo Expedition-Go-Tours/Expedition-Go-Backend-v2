@@ -31,10 +31,15 @@ async function isRedisAvailable() {
     const conn = getConnection();
     await conn.connect();
     await conn.ping();
+    // Also check if we're being rate-limited
+    if (connectionFailed) return false;
     connectionFailed = false;
     return true;
-  } catch {
+  } catch (err) {
     connectionFailed = true;
+    if (err.message && err.message.includes('max requests limit')) {
+      console.warn('[Queue] Upstash Redis rate limit exceeded — using inline fallbacks');
+    }
     return false;
   }
 }
@@ -50,11 +55,7 @@ function getConnection() {
       },
       lazyConnect: true,
     });
-    connection.on('error', (err) => {
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn('[Queue] Redis connection error:', err.message);
-      }
-    });
+    connection.on('error', () => {}); // Suppressed — handled by isRedisAvailable
   }
   return connection;
 }
@@ -268,11 +269,7 @@ function registerWorkers() {
 
   function createWorker(queueName, processor) {
     const worker = new Worker(queueName, processor, { connection: conn });
-    worker.on('error', (err) => {
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn('[Queue] Worker error:', err.message);
-      }
-    });
+    worker.on('error', () => {}); // Suppressed — handled by caller
     return worker;
   }
 

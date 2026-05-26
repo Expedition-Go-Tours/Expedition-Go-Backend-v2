@@ -199,46 +199,45 @@ process.on('SIGINT', () => {
     const redisOk = await isRedisAvailable();
     if (redisOk) {
       registerWorkers(app);
-    } else {
-      console.warn('[Queue] Redis unavailable — skipping worker registration, queued tasks will be lost until Redis is restored');
-    }
+      console.log('[Queue] Workers registered');
 
-    // ----- Scheduled maintenance jobs -----
-    const intervals = [];
+      // ----- Scheduled maintenance jobs (via BullMQ) -----
+      const intervals = [];
 
-    // Expired cart cleanup every 5 minutes
-    intervals.push(setInterval(() => {
+      // Expired cart cleanup every 5 minutes
+      intervals.push(setInterval(() => {
+        enqueueCleanup('cleanup-expired-cart').catch(() => {});
+      }, 5 * 60 * 1000));
+
+      // Popularity cache refresh every hour
+      intervals.push(setInterval(() => {
+        enqueueAggregation('refresh-popularity').catch(() => {});
+      }, 60 * 60 * 1000));
+
+      // Old event cleanup once per day
+      intervals.push(setInterval(() => {
+        enqueueAggregation('cleanup-events').catch(() => {});
+      }, 24 * 60 * 60 * 1000));
+
+      // Old notification cleanup once per day
+      intervals.push(setInterval(() => {
+        enqueueCleanup('cleanup-notifications').catch(() => {});
+      }, 24 * 60 * 60 * 1000));
+
+      // Old audit log cleanup once per day
+      intervals.push(setInterval(() => {
+        enqueueCleanup('cleanup-audit-logs').catch(() => {});
+      }, 24 * 60 * 60 * 1000));
+
+      // Run each once on startup so the first cycle isn't delayed
       enqueueCleanup('cleanup-expired-cart').catch(() => {});
-    }, 5 * 60 * 1000));
-
-    // Popularity cache refresh every hour
-    intervals.push(setInterval(() => {
       enqueueAggregation('refresh-popularity').catch(() => {});
-    }, 60 * 60 * 1000));
-
-    // Old event cleanup once per day
-    intervals.push(setInterval(() => {
       enqueueAggregation('cleanup-events').catch(() => {});
-    }, 24 * 60 * 60 * 1000));
-
-    // Old notification cleanup once per day
-    intervals.push(setInterval(() => {
       enqueueCleanup('cleanup-notifications').catch(() => {});
-    }, 24 * 60 * 60 * 1000));
-
-    // Old audit log cleanup once per day
-    intervals.push(setInterval(() => {
       enqueueCleanup('cleanup-audit-logs').catch(() => {});
-    }, 24 * 60 * 60 * 1000));
-
-    // Run each once on startup so the first cycle isn't delayed
-    enqueueCleanup('cleanup-expired-cart').catch(() => {});
-    enqueueAggregation('refresh-popularity').catch(() => {});
-    enqueueAggregation('cleanup-events').catch(() => {});
-    enqueueCleanup('cleanup-notifications').catch(() => {});
-    enqueueCleanup('cleanup-audit-logs').catch(() => {});
-
-    console.log('[Queue] Workers registered');
+    } else {
+      console.warn('[Queue] Redis unavailable — emails and notifications will use inline fallback (no queue)');
+    }
   } catch (err) {
     shutdown('DATABASE CONNECTION FAILED', err);
   }
