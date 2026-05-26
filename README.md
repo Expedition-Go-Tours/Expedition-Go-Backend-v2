@@ -234,7 +234,7 @@ Customer wants to become a Supplier
 │    (PATCH /api/payout-methods/admin/:id/verify)  │
 │    → verified: true                              │
 │                                                 │
-│    ⚠️ Without this, supplier CANNOT publish     │
+│     Without this, supplier CANNOT publish     │
 │       tours or receive payouts                   │
 └──────────────────────┬──────────────────────────┘
                        │
@@ -242,11 +242,11 @@ Customer wants to become a Supplier
 ┌─────────────────────────────────────────────────┐
 │ 5. Admin Activates Supplier                      │
 │    (PATCH /api/suppliers/admin/:id/activate)     │
-│    → Status: ACTIVE 🟢                           │
+│    → Status: ACTIVE                            │
 └──────────────────────┬──────────────────────────┘
                        │
                        ▼
-              SUPPLIER IS NOW ACTIVE ✅
+              SUPPLIER IS NOW ACTIVE 
 ```
 
 ### Stage 2: Tour Creation & Sales
@@ -259,7 +259,7 @@ ACTIVE Supplier
 │ 6. Create & Publish Tours                    │
 │    (POST /api/tours)                         │
 │                                              │
-│    🚫 Can't publish without verified         │
+│     Can't publish without verified         │
 │       payout method (bank/momo/paypal)       │
 └──────────────────┬──────────────────────────┘
                    │
@@ -291,13 +291,13 @@ ACTIVE Supplier
 │ 9. Stripe Confirms Payment                   │
 │    (Webhook: payment_intent.succeeded)        │
 │                                              │
-│    ✅ Booking → CONFIRMED                    │
-│    ✅ Payout record created → PENDING        │
-│    ✅ Supplier earnings updated              │
+│     Booking → CONFIRMED                    │
+│     Payout record created → PENDING        │
+│     Supplier earnings updated              │
 └──────────────────┬──────────────────────────┘
                    │
                    ▼
-         PAYOUT IS NOW PENDING ⏳
+         PAYOUT IS NOW PENDING 
 ```
 
 ### Stage 3: Admin Payout Process
@@ -326,13 +326,13 @@ Payout is PENDING
 └──────────────────────┬──────────────────────────┘
                        │
                        ▼
-┌─────────────────────────────────────────────────┐
-│ 12. Admin Releases Payment                      │
-│     (PATCH /api/payouts/admin/:id/release)      │
+┌──────────────────────────────────────────────── ─┐
+│ 12. Admin Releases Payment                       │
+│     (PATCH /api/payouts/admin/:id/release)       │
 │                                                  │
 │     Admin sends money via bank/MoMo/PayPal,      │
 │     records: { reference, payoutMethod }         │
-│     → PAID ✅, Supplier notified                 │
+│     → PAID, Supplier notified                    │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -362,7 +362,7 @@ CUSTOMER           PLATFORM                 SUPPLIER
                      │
             ┌────────▼─────────┐
             │ 5. Activate      │
-            │ → ACTIVE 🟢      │
+            │ → ACTIVE         │
             └────────┬─────────┘
                      │
             ┌────────▼─────────┐
@@ -394,7 +394,7 @@ CUSTOMER           PLATFORM                 SUPPLIER
             ┌────────▼─────────┐
             │ 11. Admin Sends  │─────► Money to
             │     Money        │      Supplier
-            │     → PAID ✅    │
+            │     → PAID       │
             └──────────────────┘
 ```
 
