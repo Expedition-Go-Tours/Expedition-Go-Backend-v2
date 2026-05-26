@@ -271,9 +271,10 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
 
   const allowedSorts = ['totalRevenue', 'totalBookings', 'averageRating', 'viewCount', 'createdAt'];
   const field = allowedSorts.includes(sortBy) ? sortBy : 'totalRevenue';
-  const order = sortOrder === 'asc' ? 'ASC' : 'DESC';
+  const order = sortOrder === 'asc' ? 'asc' : 'desc';
 
-  const where = { ...(status && { status }) };
+  const filterStatus = status && status !== 'all' ? status.toUpperCase() : undefined;
+  const where = { ...(filterStatus && { status: filterStatus }) };
   // category filtering via JSON is expensive at scale; accept this for now.
   if (category) {
     where.categorization = { path: ['category'], equals: category };
