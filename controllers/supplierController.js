@@ -132,7 +132,7 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
   });
 
   // Notify admins
-  notifyAdmin({
+  await notifyAdmin({
     type: 'NEW_SUPPLIER_APPLICATION',
     title: 'New Supplier Application',
     message: `${req.user.name} has applied to become a supplier`,
@@ -617,7 +617,7 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
   }).catch(() => {});
 
   // Notify admins of status change
-  notifyAdmin({
+  await notifyAdmin({
     type: 'SUPPLIER_STATUS_CHANGE',
     title: `Supplier ${action === 'approve' ? 'Approved' : action === 'reject' ? 'Rejected' : 'Requested Info'}`,
     message: `${supplierProfile.user?.name || supplierProfile.businessInfo?.legalBusinessName || 'A supplier'}'s application was ${action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'requested additional information'}`,
@@ -691,7 +691,7 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
     data: { supplierId: id }
   }).catch(() => {});
 
-  notifyAdmin({
+  await notifyAdmin({
     type: 'SUPPLIER_STATUS_CHANGE',
     title: 'Supplier Activated',
     message: `${supplierProfile.user?.name || 'A supplier'}'s account was activated`,
@@ -764,7 +764,7 @@ exports.suspendSupplier = catchAsync(async (req, res, next) => {
     }
   }).catch(() => {});
 
-  notifyAdmin({
+  await notifyAdmin({
     type: 'SUPPLIER_STATUS_CHANGE',
     title: suspend ? 'Supplier Suspended' : 'Supplier Reactivated',
     message: `${supplierProfile.user?.name || 'A supplier'}'s account was ${suspend ? 'suspended' : 'reactivated'}${reason ? ` — ${reason}` : ''}`,

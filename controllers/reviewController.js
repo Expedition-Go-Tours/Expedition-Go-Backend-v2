@@ -840,7 +840,7 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
     }
   }).catch(() => {});
 
-  notifyAdmin({
+  await notifyAdmin({
     type: 'REVIEW_NEEDS_MODERATION',
     title: `Review ${action === 'approve' ? 'Approved' : action === 'reject' ? 'Rejected' : 'Flagged'}`,
     message: `Review #${review.id.slice(0, 8)} by customer ${review.customerId.slice(0, 8)} was ${action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'flagged'}${reason ? ` — ${reason}` : ''}`,

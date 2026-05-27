@@ -202,7 +202,7 @@ exports.approvePayout = catchAsync(async (req, res, next) => {
     data: { payoutId: payout.id, amount: payout.amount }
   }).catch(() => {});
 
-  notifyAdmin({
+  await notifyAdmin({
     type: 'PAYOUT_NEEDS_APPROVAL',
     title: 'Payout Approved',
     message: `${payout.supplier.name}: Payout of ${payout.currency} ${payout.amount} for "${payout.booking?.tour?.title || 'Tour'}" was approved`,
@@ -335,7 +335,7 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
     }
   }).catch(() => {});
 
-  notifyAdmin({
+  await notifyAdmin({
     type: 'PAYOUT_NEEDS_APPROVAL',
     title: 'Payout Released',
     message: `${payout.supplier.name}: Payout of ${payout.currency} ${payout.amount} was released via ${method.type.replace('_', ' ')}`,
@@ -428,7 +428,7 @@ exports.failPayout = catchAsync(async (req, res, next) => {
     }
   }).catch(() => {});
 
-  notifyAdmin({
+  await notifyAdmin({
     type: 'PAYOUT_NEEDS_APPROVAL',
     title: 'Payout Failed',
     message: `${payout.supplier.name}: Payout of ${payout.currency} ${payout.amount} for "${payout.booking?.tour?.title || 'Tour'}" failed${reason ? ` — ${reason}` : ''}`,
