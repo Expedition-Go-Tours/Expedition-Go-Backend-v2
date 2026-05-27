@@ -494,6 +494,25 @@ router.use(protect);
 
 /**
  * @swagger
+ * /tours/seed:
+ *   post:
+ *     summary: Create a simulated tour for development/testing
+ *     description: |
+ *       **Development only.** Creates a tour with realistic mock data.
+ *       If the user doesn't have a supplier profile, one is created automatically.
+ *     tags: [Tours, Development]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       201:
+ *         description: Simulated tour created successfully
+ *       403:
+ *         description: Only available in development mode
+ */
+router.post('/seed', tourController.seedTour);
+
+/**
+ * @swagger
  * /tours/supplier/my-tours:
  *   get:
  *     summary: Get supplier's own tours

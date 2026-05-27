@@ -970,4 +970,201 @@ exports.deleteTourPhoto = catchAsync(async (req, res, next) => {
   });
 });
 
+/**
+ * Seed a simulated tour for development/testing
+ */
+exports.seedTour = catchAsync(async (req, res, next) => {
+  if (process.env.NODE_ENV !== 'development') {
+    return next(new AppError('Seed endpoint is only available in development mode', 403));
+  }
+
+  const userId = req.user.id;
+
+  let supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { userId }
+  });
+
+  if (!supplierProfile) {
+    supplierProfile = await prisma.supplierProfile.create({
+      data: {
+        userId,
+        status: 'ACTIVE',
+        businessInfo: {
+          legalBusinessName: 'Seed Tours Ltd',
+          businessType: 'Tour Operator',
+          registrationNumber: 'SEED-001',
+          taxId: 'TAX-SEED-001',
+          country: 'Ghana',
+          city: 'Accra',
+          phone: '+233500000000',
+          website: 'https://seed-tours.example.com'
+        },
+        operatingInfo: {
+          regions: ['West Africa', 'East Africa'],
+          hours: { monday: '09:00-17:00', tuesday: '09:00-17:00' }
+        },
+        representativeInfo: {
+          fullName: req.user.name || 'Seed User',
+          email: req.user.email || 'seed@example.com',
+          phone: '+233500000000'
+        },
+        businessDocuments: {},
+        payoutInfo: {},
+        compliance: {
+          acceptedTerms: true,
+          agreedToPayoutTerms: true,
+          verified: true,
+          reviewStatus: 'APPROVED'
+        }
+      }
+    });
+  }
+
+  if (supplierProfile.status !== 'ACTIVE') {
+    supplierProfile = await prisma.supplierProfile.update({
+      where: { userId },
+      data: { status: 'ACTIVE' }
+    });
+  }
+
+  const now = new Date();
+  const futureDate = new Date(now);
+  futureDate.setMonth(futureDate.getMonth() + 6);
+
+  const title = `Simulated Tour ${Date.now()}`;
+  const slug = await createSlug(title);
+
+  const seedData = {
+    title,
+    description: 'This is a simulated tour created for development and testing purposes. It includes all required fields and demonstrates the tour creation flow. The tour covers various attractions and offers a comprehensive experience.',
+    categorization: {
+      category: 'Cultural',
+      subcategory: 'Walking Tours',
+      activityType: 'Guided Tour',
+      difficulty: 'Easy',
+      duration: { hours: 3 },
+      transportMode: { land: ['Walking', '4x4/Jeep'], air: ['Plane'] }
+    },
+    theme: {
+      primary: 'Nature & Wildlife',
+      secondary: ['Photography', 'Adventure', 'Cultural']
+    },
+    productContent: {
+      highlights: [
+        'Visit local markets and cultural sites',
+        'Guided nature walk through scenic trails',
+        'Traditional cooking experience',
+        'Photo opportunities at viewpoints'
+      ],
+      included: ['Professional guide', 'Bottled water', 'All fees and taxes'],
+      excluded: ['Hotel pickup and drop-off', 'Personal expenses', 'Gratuities'],
+      whatToBring: ['Comfortable walking shoes', 'Camera', 'Sunscreen', 'Hat'],
+      accessibility: 'Not wheelchair accessible',
+      restrictions: 'Moderate walking required (approx 2km)',
+      location: {
+        city: 'Accra',
+        country: 'Ghana',
+        region: 'Greater Accra',
+        address: 'Independence Square, Accra, Ghana'
+      }
+    },
+    schedulesAndPricing: {
+      travelerDetails: {
+        pricingModel: 'perPerson',
+        maxTravelersPerBooking: 15,
+        ageGroups: [
+          { label: 'Adult', minAge: 13, maxAge: 99 },
+          { label: 'Child', minAge: 6, maxAge: 12 },
+          { label: 'Infant', minAge: 0, maxAge: 5 }
+        ]
+      },
+      pricingSchedules: {
+        currency: 'USD',
+        schedules: [
+          {
+            startDate: now.toISOString().split('T')[0],
+            endDate: futureDate.toISOString().split('T')[0],
+            prices: [
+              { ageGroup: 'Adult', retailPrice: 75.00 },
+              { ageGroup: 'Child', retailPrice: 45.00 },
+              { ageGroup: 'Infant', retailPrice: 0.00 }
+            ]
+          }
+        ]
+      },
+      availability: {
+        daysOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+        timeSlots: ['09:00', '14:00']
+      }
+    },
+    bookingAndTickets: {
+      confirmationType: 'INSTANT',
+      cancellationPolicy: 'Free cancellation up to 24 hours before start time',
+      meetingPoint: {
+        type: 'meeting_point',
+        address: 'Independence Square, Accra, Ghana',
+        coordinates: { lat: 5.6037, lng: -0.1870 },
+        instructions: 'Meet at the main entrance near the flag pole'
+      },
+      checkInProcess: 'Please arrive 15 minutes before tour start time'
+    },
+    tags: ['simulated', 'test', 'development', 'guided-tour', 'cultural'],
+    latitude: 5.6037,
+    longitude: -0.1870,
+    status: 'ACTIVE'
+  };
+
+  const tour = await prisma.tour.create({
+    data: {
+      supplierId: userId,
+      slug,
+      title: seedData.title,
+      description: seedData.description,
+      categorization: seedData.categorization,
+      theme: seedData.theme,
+      productContent: seedData.productContent,
+      schedulesAndPricing: seedData.schedulesAndPricing,
+      bookingAndTickets: seedData.bookingAndTickets,
+      tags: seedData.tags,
+      status: seedData.status,
+      latitude: seedData.latitude,
+      longitude: seedData.longitude,
+      photos: [],
+      city: seedData.productContent.location.city,
+      country: seedData.productContent.location.country,
+      region: seedData.productContent.location.region,
+      category: seedData.categorization.category,
+      subcategory: seedData.categorization.subcategory,
+      activityType: seedData.categorization.activityType,
+      difficulty: seedData.categorization.difficulty,
+      durationMinutes: seedData.categorization.duration.hours * 60,
+      primaryTheme: seedData.theme.primary,
+      secondaryThemes: {
+        create: seedData.theme.secondary.map(t => ({ theme: t }))
+      }
+    },
+    include: {
+      supplier: {
+        select: { id: true, name: true, photoURL: true }
+      }
+    }
+  });
+
+  cache.invalidateTourCaches().catch(() => {});
+
+  await logActivity({
+    userId,
+    action: 'tour.seeded',
+    resource: 'Tour',
+    resourceId: tour.id,
+    metadata: { title: tour.title, status: tour.status }
+  });
+
+  res.status(201).json({
+    status: 'success',
+    message: 'Simulated tour created successfully',
+    data: { tour }
+  });
+});
+
 module.exports = exports;
