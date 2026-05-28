@@ -2,9 +2,39 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { enqueueNotification } = require('../utils/queue');
+const { notifyAdmin } = require('../utils/adminNotificationService');
 const { logActivity } = require('../utils/auditLogger');
 
 const VALID_TYPES = ['BANK_TRANSFER', 'MOBILE_MONEY', 'PAYPAL'];
+
+async function syncPayoutInfo(supplierId) {
+  try {
+    const method = await prisma.payoutMethod.findFirst({
+      where: { supplierId, isDefault: true },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const payoutInfo = method ? {
+      type: method.type,
+      currency: method.currency,
+      bankName: method.bankName || null,
+      bankCountry: method.bankCountry || null,
+      bankAccountName: method.accountName || null,
+      bankAccountNumber: method.accountNumber || null,
+      mobileProvider: method.mobileProvider || null,
+      mobileNumber: method.mobileNumber || null,
+      paypalEmail: method.paypalEmail || null,
+      verified: method.verified
+    } : {};
+
+    await prisma.supplierProfile.updateMany({
+      where: { userId: supplierId },
+      data: { payoutInfo }
+    });
+  } catch (err) {
+    console.error('[PayoutMethod] syncPayoutInfo failed:', err.message);
+  }
+}
 
 function validatePayoutMethodData(data) {
   const errors = [];
@@ -101,6 +131,20 @@ exports.addMethod = catchAsync(async (req, res, next) => {
     metadata: { type: data.type }
   });
 
+  notifyAdmin({
+    type: 'PAYOUT_METHOD_ADDED',
+    title: 'New Payout Method for Verification',
+    message: `${req.user.name || 'A supplier'} added a ${data.type.replace('_', ' ')} payout method that needs verification`,
+    data: {
+      supplierId,
+      methodId: method.id,
+      type: data.type,
+      supplierName: req.user.name
+    }
+  }).catch((err) => console.error('[AdminNotification] notifyAdmin failed:', err.message));
+
+  syncPayoutInfo(supplierId);
+
   res.status(201).json({
     status: 'success',
     data: { method }
@@ -166,6 +210,8 @@ exports.updateMethod = catchAsync(async (req, res, next) => {
     metadata: { type: method.type }
   });
 
+  syncPayoutInfo(supplierId);
+
   res.status(200).json({
     status: 'success',
     data: { method }
@@ -207,6 +253,8 @@ exports.deleteMethod = catchAsync(async (req, res, next) => {
     resourceId: id,
     metadata: { type: existing.type }
   });
+
+  syncPayoutInfo(supplierId);
 
   res.status(200).json({
     status: 'success',
@@ -339,7 +387,7 @@ exports.verifyPayoutMethod = catchAsync(async (req, res, next) => {
       ? `Your ${method.type.replace('_', ' ')} payout method has been verified by the finance team.`
       : `Your ${method.type.replace('_', ' ')} payout method was marked as unverified. Please contact support.`,
     data: { methodId: method.id, type: method.type, verified }
-  }).catch(() => {});
+  }).catch((err) => console.error('[Notification] enqueueNotification (payout method) failed:', err.message));
 
   await logActivity({
     userId: adminId,
@@ -352,6 +400,8 @@ exports.verifyPayoutMethod = catchAsync(async (req, res, next) => {
       verified
     }
   });
+
+  syncPayoutInfo(method.supplierId);
 
   res.status(200).json({
     status: 'success',

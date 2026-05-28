@@ -23,6 +23,8 @@ function ensureSgMail() {
   if (sgMailInitialized) return;
   if (process.env.SENDGRID_API_KEY) {
     sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+  } else {
+    console.error('[Email] CRITICAL: SENDGRID_API_KEY is not set in environment variables');
   }
   sgMailInitialized = true;
 }
@@ -53,13 +55,12 @@ async function sendEmail({ to, subject, template, data = {}, attachments = [] })
     const result = await sgMail.send(msg);
     console.log(` Email sent successfully to ${to}: ${subject}`);
     
-    return { success: true, messageId: result[0].headers['x-message-id'] };
+    return { success: true, messageId: result[0]?.headers?.['x-message-id'] };
   } catch (error) {
-    console.error('Email sending failed:', error);
+    console.error(`[Email] Failed to send to ${to}: ${subject}`, error.message);
     
-    // Log email failure for debugging
     if (error.response) {
-      console.error('SendGrid Error:', error.response.body);
+      console.error('[Email] SendGrid response body:', JSON.stringify(error.response.body, null, 2));
     }
     
     throw new Error(`Failed to send email: ${error.message}`);

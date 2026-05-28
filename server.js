@@ -155,7 +155,7 @@ process.on('SIGINT', () => {
             title: 'Supplier Responded to Your Review',
             message: `The supplier responded to your review for "${review.tour.title}"`,
             data: { reviewId: review.id, tourId: review.tourId }
-          }).catch(() => {});
+          }).catch((err) => console.error('[Notification] enqueueNotification failed:', err.message));
 
           ack?.({ status: 'success', data: { review: updated } });
 

@@ -249,8 +249,8 @@ async function handlePaymentSucceeded(paymentIntent) {
 
   // Send confirmation emails through the queue (non-blocking, outside transaction)
   for (const booking of bookings) {
-    enqueueEmail({ type: 'booking-confirmation', bookingId: booking.id }).catch(() => {});
-    enqueueEmail({ type: 'supplier-booking-notification', bookingId: booking.id }).catch(() => {});
+    enqueueEmail({ type: 'booking-confirmation', bookingId: booking.id }).catch((err) => console.error('[Email] Booking confirmation email failed:', err.message));
+    enqueueEmail({ type: 'supplier-booking-notification', bookingId: booking.id }).catch((err) => console.error('[Email] Supplier booking notification email failed:', err.message));
   }
 
   // Emit analytics events for each completed booking

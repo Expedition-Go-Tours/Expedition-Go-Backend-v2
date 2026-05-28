@@ -125,7 +125,7 @@ exports.createReview = catchAsync(async (req, res, next) => {
       rating
     },
     sendEmail: true
-  }).catch(() => {});
+  }).catch((err) => console.error('[Notification] enqueueNotification (review) failed:', err.message));
 
   // Log activity
   await logActivity({
@@ -505,7 +505,7 @@ exports.addSupplierResponse = catchAsync(async (req, res, next) => {
       reviewId: review.id,
       tourId: review.tourId
     }
-  }).catch(() => {});
+  }).catch((err) => console.error('[Notification] enqueueNotification (review response) failed:', err.message));
 
   // Log activity
   await logActivity({
@@ -838,7 +838,7 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
       action,
       reason
     }
-  }).catch(() => {});
+  }).catch((err) => console.error('[Notification] enqueueNotification (review moderation) failed:', err.message));
 
   await notifyAdmin({
     type: 'REVIEW_NEEDS_MODERATION',

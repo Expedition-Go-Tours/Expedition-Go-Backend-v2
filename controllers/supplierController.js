@@ -523,7 +523,32 @@ exports.getAllApplications = catchAsync(async (req, res, next) => {
             name: true,
             email: true,
             photoURL: true,
-            createdAt: true
+            createdAt: true,
+            payoutMethods: {
+              select: {
+                id: true,
+                type: true,
+                isDefault: true,
+                currency: true,
+                bankName: true,
+                bankAddress: true,
+                bankCountry: true,
+                accountName: true,
+                accountNumber: true,
+                routingNumber: true,
+                swiftCode: true,
+                iban: true,
+                sortCode: true,
+                branchCode: true,
+                mobileProvider: true,
+                mobileNumber: true,
+                paypalEmail: true,
+                verified: true,
+                createdAt: true,
+                updatedAt: true
+              },
+              orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }]
+            }
           }
         }
       },
@@ -586,6 +611,24 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
       adminNotes: notes,
       reviewedBy: adminId,
       reviewedAt: new Date()
+    },
+    include: {
+      user: {
+        select: {
+          id: true, name: true, email: true, photoURL: true, createdAt: true,
+          payoutMethods: {
+            select: {
+              id: true, type: true, isDefault: true, currency: true,
+              bankName: true, bankAddress: true, bankCountry: true,
+              accountName: true, accountNumber: true, routingNumber: true,
+              swiftCode: true, iban: true, sortCode: true, branchCode: true,
+              mobileProvider: true, mobileNumber: true, paypalEmail: true,
+              verified: true, createdAt: true, updatedAt: true
+            },
+            orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }]
+          }
+        }
+      }
     }
   });
 
@@ -606,7 +649,7 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
       action,
       notes
     }
-  }).catch(() => {});
+  }).catch((err) => console.error('[Notification] enqueueNotification failed:', err.message));
 
   // Send email notification through the queue
   enqueueEmail({
@@ -614,7 +657,7 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
     email: supplierProfile.user.email,
     status: statusMap[action],
     data: { name: supplierProfile.user.name, notes }
-  }).catch(() => {});
+  }).catch((err) => console.error('[Email] Supplier status email failed:', err.message));
 
   // Notify admins of status change
   await notifyAdmin({
@@ -680,7 +723,25 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
 
   const updatedProfile = await prisma.supplierProfile.update({
     where: { userId: id },
-    data: { status: 'ACTIVE' }
+    data: { status: 'ACTIVE' },
+    include: {
+      user: {
+        select: {
+          id: true, name: true, email: true, photoURL: true, createdAt: true,
+          payoutMethods: {
+            select: {
+              id: true, type: true, isDefault: true, currency: true,
+              bankName: true, bankAddress: true, bankCountry: true,
+              accountName: true, accountNumber: true, routingNumber: true,
+              swiftCode: true, iban: true, sortCode: true, branchCode: true,
+              mobileProvider: true, mobileNumber: true, paypalEmail: true,
+              verified: true, createdAt: true, updatedAt: true
+            },
+            orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }]
+          }
+        }
+      }
+    }
   });
 
   enqueueNotification({
@@ -689,7 +750,7 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
     title: 'Supplier Account Activated',
     message: 'Your supplier account is now active! You can start creating tours.',
     data: { supplierId: id }
-  }).catch(() => {});
+  }).catch((err) => console.error('[Notification] enqueueNotification failed:', err.message));
 
   await notifyAdmin({
     type: 'SUPPLIER_STATUS_CHANGE',
@@ -703,7 +764,7 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
     email: supplierProfile.user.email,
     status: 'ACTIVE',
     data: { name: supplierProfile.user.name }
-  }).catch(() => {});
+  }).catch((err) => console.error('[Email] Supplier activation email failed:', err.message));
 
   await logActivity({
     userId: adminId,
@@ -748,6 +809,24 @@ exports.suspendSupplier = catchAsync(async (req, res, next) => {
     data: {
       status: newStatus,
       adminNotes: reason
+    },
+    include: {
+      user: {
+        select: {
+          id: true, name: true, email: true, photoURL: true, createdAt: true,
+          payoutMethods: {
+            select: {
+              id: true, type: true, isDefault: true, currency: true,
+              bankName: true, bankAddress: true, bankCountry: true,
+              accountName: true, accountNumber: true, routingNumber: true,
+              swiftCode: true, iban: true, sortCode: true, branchCode: true,
+              mobileProvider: true, mobileNumber: true, paypalEmail: true,
+              verified: true, createdAt: true, updatedAt: true
+            },
+            orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }]
+          }
+        }
+      }
     }
   });
 
@@ -762,7 +841,7 @@ exports.suspendSupplier = catchAsync(async (req, res, next) => {
       reason,
       action: suspend ? 'suspended' : 'reactivated'
     }
-  }).catch(() => {});
+  }).catch((err) => console.error('[Notification] enqueueNotification (supplier suspend) failed:', err.message));
 
   await notifyAdmin({
     type: 'SUPPLIER_STATUS_CHANGE',

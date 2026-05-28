@@ -200,7 +200,7 @@ exports.approvePayout = catchAsync(async (req, res, next) => {
     title: 'Payout Approved',
     message: `${payout.booking?.tour?.title || 'Tour'}: Your payout of ${payout.currency} ${payout.amount} has been approved and is being processed.`,
     data: { payoutId: payout.id, amount: payout.amount }
-  }).catch(() => {});
+  }).catch((err) => console.error('[Notification] enqueueNotification failed:', err.message));
 
   await notifyAdmin({
     type: 'PAYOUT_NEEDS_APPROVAL',
@@ -239,7 +239,7 @@ exports.approvePayout = catchAsync(async (req, res, next) => {
       payoutId: payout.id,
       dashboardUrl: `${CLIENT_URL}/supplier/earnings`
     }
-  }).catch(() => {});
+  }).catch((err) => console.error('[Email] Payout approved email failed:', err.message));
 
   res.status(200).json({
     status: 'success',
@@ -315,7 +315,7 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
     title: 'Payout Completed',
     message: `Your payout of ${payout.currency} ${payout.amount} has been sent via ${method.type.replace('_', ' ')}.`,
     data: { payoutId: payout.id, amount: payout.amount, paymentMethod, payoutMethodId: method.id }
-  }).catch(() => {});
+  }).catch((err) => console.error('[Notification] enqueueNotification failed:', err.message));
 
   const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
 
@@ -333,7 +333,7 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
       payoutMethod: method.type.replace('_', ' '),
       dashboardUrl: `${CLIENT_URL}/supplier/earnings`
     }
-  }).catch(() => {});
+  }).catch((err) => console.error('[Email] Payout released email failed:', err.message));
 
   await notifyAdmin({
     type: 'PAYOUT_NEEDS_APPROVAL',
@@ -404,7 +404,7 @@ exports.failPayout = catchAsync(async (req, res, next) => {
     title: 'Payout Failed',
     message: `Your payout of ${payout.currency} ${payout.amount} has failed. Please contact support.`,
     data: { payoutId: payout.id, reason }
-  }).catch(() => {});
+  }).catch((err) => console.error('[Notification] enqueueNotification failed:', err.message));
 
   const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
 
@@ -426,7 +426,7 @@ exports.failPayout = catchAsync(async (req, res, next) => {
       payoutId: payout.id,
       dashboardUrl: `${CLIENT_URL}/supplier/earnings`
     }
-  }).catch(() => {});
+  }).catch((err) => console.error('[Email] Payout failed email failed:', err.message));
 
   await notifyAdmin({
     type: 'PAYOUT_NEEDS_APPROVAL',

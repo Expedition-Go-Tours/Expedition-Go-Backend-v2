@@ -406,7 +406,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       title: 'New Booking Received',
       message: `You have a new booking for "${booking.tour.title}"`,
       data: { bookingId: booking.id }
-    }).catch(() => {});
+    }).catch((err) => console.error('[Notification] enqueueNotification (booking supplier) failed:', err.message));
   }
 
   // Emit analytics events for every created booking
@@ -657,7 +657,7 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
   });
 
   // Send cancellation email + notifications through the queue
-  enqueueEmail({ type: 'booking-cancellation', bookingId: booking.id, refundAmount: cancellationCheck.refundAmount }).catch(() => {});
+  enqueueEmail({ type: 'booking-cancellation', bookingId: booking.id, refundAmount: cancellationCheck.refundAmount }).catch((err) => console.error('[Email] Booking cancellation email failed:', err.message));
 
   enqueueNotification({
     userId: booking.tour.supplier.id,
@@ -665,7 +665,7 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     title: 'Booking Cancelled',
     message: `Booking for "${booking.tour.title}" has been cancelled`,
     data: { bookingId: booking.id }
-  }).catch(() => {});
+  }).catch((err) => console.error('[Notification] enqueueNotification failed:', err.message));
 
   // Log activity
   await logActivity({
@@ -814,7 +814,7 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
       title: 'Booking Update',
       message: statusMessages[status],
       data: { bookingId: booking.id }
-    }).catch(() => {});
+    }).catch((err) => console.error('[Notification] enqueueNotification (booking update) failed:', err.message));
   }
 
   // Log activity

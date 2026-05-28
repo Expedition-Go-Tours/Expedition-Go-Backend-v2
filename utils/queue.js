@@ -211,7 +211,8 @@ async function enqueueEmail(job) {
     return await emailQueue().add('email', job, {
       jobId: `email:${job.to}:${Date.now()}`,
     });
-  } catch {
+  } catch (err) {
+    console.error('[Queue] BullMQ unavailable, using inline fallback:', err.message);
     processEmailJob(job).catch((err) => {
       console.error('[Queue] Fallback email failed:', err.message);
     });
