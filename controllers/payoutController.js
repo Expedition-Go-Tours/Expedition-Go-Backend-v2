@@ -96,8 +96,12 @@ exports.getAllPayouts = catchAsync(async (req, res, next) => {
             id: true,
             name: true,
             email: true,
+            phone: true,
             supplierProfile: {
-              select: { payoutInfo: true }
+              select: {
+                payoutInfo: true,
+                businessInfo: true,
+              }
             }
           }
         },
