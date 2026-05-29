@@ -889,7 +889,43 @@ exports.getCartAbandonment = catchAsync(async (req, res, next) => {
     const tours = await prisma.tour.findMany({
       where: { id: { in: tourIds } },
       select: { id: true, title: true },
-    });
+});
+
+/**
+ * GET /api/admin/users/new
+ *
+ * Returns users who signed up within the given period, optionally filtered by role.
+ * Query params: period (30d|90d|1y), role (optional - e.g. "customer", "supplier", "admin")
+ */
+exports.getNewUsers = catchAsync(async (req, res, next) => {
+  const { period = '30d', role } = req.query;
+
+  const days = period === '1y' ? 365 : period === '90d' ? 90 : 30;
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const where = { createdAt: { gte: since } };
+  if (role) {
+    where.roles = { has: role };
+  }
+
+  const users = await prisma.user.findMany({
+    where,
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      photoURL: true,
+      roles: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { users },
+  });
+});
     tourMap = Object.fromEntries(tours.map((t) => [t.id, t.title]));
   }
 

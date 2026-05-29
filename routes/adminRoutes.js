@@ -429,6 +429,28 @@ router.get('/users/new-signups', adminController.getRecentSignups);
 
 /**
  * @swagger
+ * /admin/users/new:
+ *   get:
+ *     summary: New users within a period
+ *     description: Returns users who signed up in the given period, optionally filtered by role.
+ *     tags: [Admin, Users]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: period
+ *         schema: { type: string, default: '30d' }
+ *       - in: query
+ *         name: role
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: New users list
+ */
+router.get('/users/new', adminController.getNewUsers);
+
+/**
+ * @swagger
  * /admin/bookings/today:
  *   get:
  *     summary: Today's bookings
