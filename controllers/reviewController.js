@@ -723,7 +723,10 @@ exports.getPendingReviews = catchAsync(async (req, res, next) => {
   const { page = 1, limit = 20 } = req.query;
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  const [reviews, totalCount] = await Promise.all([
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  const [reviews, totalCount, flaggedCount, moderatedTodayCount] = await Promise.all([
     prisma.review.findMany({
       where: { status: 'PENDING' },
       include: {
@@ -751,7 +754,9 @@ exports.getPendingReviews = catchAsync(async (req, res, next) => {
       skip,
       take: parseInt(limit)
     }),
-    prisma.review.count({ where: { status: 'PENDING' } })
+    prisma.review.count({ where: { status: 'PENDING' } }),
+    prisma.review.count({ where: { status: 'FLAGGED' } }),
+    prisma.review.count({ where: { moderatedAt: { gte: todayStart } } }),
   ]);
 
   const totalPages = Math.ceil(totalCount / parseInt(limit));
@@ -765,6 +770,11 @@ exports.getPendingReviews = catchAsync(async (req, res, next) => {
         totalPages,
         totalCount,
         limit: parseInt(limit)
+      },
+      counts: {
+        pending: totalCount,
+        flagged: flaggedCount,
+        moderatedToday: moderatedTodayCount,
       }
     }
   });
