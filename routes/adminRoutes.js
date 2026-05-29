@@ -397,4 +397,19 @@ router.patch('/notifications/:id/acknowledge', adminNotifController.acknowledge)
  */
 router.patch('/notifications/acknowledge-all', adminNotifController.acknowledgeAll);
 
+/**
+ * @swagger
+ * /admin/users/active:
+ *   get:
+ *     summary: List recently active users
+ *     description: Returns users who have logged in within the last 30 days.
+ *     tags: [Admin, Users]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Active users list
+ */
+router.get('/users/active', adminController.getActiveUsers);
+
 module.exports = router;

@@ -896,3 +896,32 @@ exports.getCartAbandonment = catchAsync(async (req, res, next) => {
     },
   });
 });
+
+/**
+ * Get list of recently active users (last 30 days)
+ */
+exports.getActiveUsers = catchAsync(async (req, res, next) => {
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  const users = await prisma.user.findMany({
+    where: {
+      lastLoginAt: { gte: thirtyDaysAgo },
+      active: true,
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      photoURL: true,
+      roles: true,
+      lastLoginAt: true,
+    },
+    orderBy: { lastLoginAt: 'desc' },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { users },
+  });
+});
