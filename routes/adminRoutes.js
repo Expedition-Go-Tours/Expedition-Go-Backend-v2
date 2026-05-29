@@ -447,7 +447,7 @@ router.get('/users/new-signups', adminController.getRecentSignups);
  *       200:
  *         description: New users list
  */
-router.get('/users/new', adminController.getNewUsers);
+router.get('/users/new', adminController.getRecentSignups);
 
 /**
  * @swagger
