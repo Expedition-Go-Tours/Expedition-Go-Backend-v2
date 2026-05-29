@@ -63,7 +63,6 @@ function getConnection() {
 
 const QUEUE_NAMES = {
   EVENTS:     'analytics-events',
-  EMAILS:     'communications-emails',
   NOTIFICATIONS: 'communications-notifications',
   AGGREGATIONS: 'analytics-aggregations',
   CLEANUP:    'system-cleanup',
@@ -96,7 +95,6 @@ function getQueue(queueName) {
 // Convenience accessors
 // ---------------------------------------------------------------------------
 const eventQueue       = () => getQueue(QUEUE_NAMES.EVENTS);
-const emailQueue       = () => getQueue(QUEUE_NAMES.EMAILS);
 const notificationQueue = () => getQueue(QUEUE_NAMES.NOTIFICATIONS);
 const aggregationQueue = () => getQueue(QUEUE_NAMES.AGGREGATIONS);
 const cleanupQueue     = () => getQueue(QUEUE_NAMES.CLEANUP);
@@ -200,23 +198,9 @@ async function processEmailJob(job) {
  * Falls back to direct sending when Redis/BullMQ is unavailable.
  */
 async function enqueueEmail(job) {
-  try {
-    if (job.type) {
-      return await emailQueue().add(job.type, job, {
-        jobId: `email:${job.type}:${job.bookingId || 'x'}:${Date.now()}`,
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 2000 },
-      });
-    }
-    return await emailQueue().add('email', job, {
-      jobId: `email:${job.to}:${Date.now()}`,
-    });
-  } catch (err) {
-    console.error('[Queue] BullMQ unavailable, using inline fallback:', err.message);
-    processEmailJob(job).catch((err) => {
-      console.error('[Queue] Fallback email failed:', err.message);
-    });
-  }
+  processEmailJob(job).catch((err) => {
+    console.error('[Queue] Direct email failed:', err.message);
+  });
 }
 
 /**
@@ -273,15 +257,6 @@ function registerWorkers() {
     worker.on('error', () => {}); // Suppressed — handled by caller
     return worker;
   }
-
-  /* ------------------------------------------------------------------
-   * EMAIL WORKER
-   * Handles typed email jobs (worker fetches booking data) and raw
-   * pre-rendered emails.  Retries on SendGrid failure with back-off.
-   * ------------------------------------------------------------------ */
-  createWorker(QUEUE_NAMES.EMAILS, async (job) => {
-    await processEmailJob(job.data);
-  });
 
   /* ------------------------------------------------------------------
    * NOTIFICATION WORKER
