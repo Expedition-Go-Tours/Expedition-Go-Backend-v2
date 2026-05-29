@@ -898,6 +898,34 @@ exports.getCartAbandonment = catchAsync(async (req, res, next) => {
 });
 
 /**
+ * Get list of users who signed up in the last 30 days
+ */
+exports.getRecentSignups = catchAsync(async (req, res, next) => {
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  const users = await prisma.user.findMany({
+    where: {
+      createdAt: { gte: thirtyDaysAgo },
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      photoURL: true,
+      roles: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { users },
+  });
+});
+
+/**
  * Get list of recently active users (last 30 days)
  */
 exports.getActiveUsers = catchAsync(async (req, res, next) => {
@@ -923,5 +951,38 @@ exports.getActiveUsers = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: { users },
+  });
+});
+
+/**
+ * GET /api/admin/bookings/today
+ *
+ * Returns today's bookings with customer, tour, and supplier details.
+ */
+exports.getTodayBookings = catchAsync(async (req, res, next) => {
+  const now = new Date();
+  const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
+
+  const bookings = await prisma.booking.findMany({
+    where: {
+      createdAt: { gte: startOfDay, lt: endOfDay },
+    },
+    include: {
+      customer: { select: { id: true, name: true, email: true } },
+      tour: {
+        select: {
+          id: true,
+          title: true,
+          supplier: { select: { id: true, name: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { bookings },
   });
 });

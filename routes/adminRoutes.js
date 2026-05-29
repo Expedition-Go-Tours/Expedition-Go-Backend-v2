@@ -412,4 +412,34 @@ router.patch('/notifications/acknowledge-all', adminNotifController.acknowledgeA
  */
 router.get('/users/active', adminController.getActiveUsers);
 
+/**
+ * @swagger
+ * /admin/users/new-signups:
+ *   get:
+ *     summary: Recent new user signups
+ *     description: Returns users who signed up in the last 30 days.
+ *     tags: [Admin, Users]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Recent signups list
+ */
+router.get('/users/new-signups', adminController.getRecentSignups);
+
+/**
+ * @swagger
+ * /admin/bookings/today:
+ *   get:
+ *     summary: Today's bookings
+ *     description: Returns all bookings created today with customer, tour, and supplier details.
+ *     tags: [Admin, Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Today's bookings list
+ */
+router.get('/bookings/today', adminController.getTodayBookings);
+
 module.exports = router;
