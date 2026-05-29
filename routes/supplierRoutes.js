@@ -410,6 +410,7 @@ router.get('/dashboard', restrictTo('supplier'), supplierController.getDashboard
  *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.get('/earnings', restrictTo('supplier'), supplierController.getEarnings);
+router.get('/payouts', restrictTo('supplier'), supplierController.getPayouts);
 
 // ================================
 // ADMIN SUPPLIER MANAGEMENT

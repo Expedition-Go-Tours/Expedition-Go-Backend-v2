@@ -410,6 +410,8 @@ model Payout {
   @@index([supplierId])
   @@index([status])
   @@index([createdAt])
+  @@index([supplierId, status])
+  @@index([supplierId, createdAt])
   @@index([bookingId])
   @@index([payoutMethodId])
 }

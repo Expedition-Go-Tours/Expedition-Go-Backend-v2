@@ -28,6 +28,10 @@ const {
   getTourDistances
 } = require('../utils/tourFilterBuilder');
 const { getPopularByCategory } = require('../utils/popularityScorer');
+
+// In-memory cache for view tracking (prevents duplicate counts)
+// Key format: "view:{tourId}:{userId|IP}" -> timestamp
+const viewTrackingCache = new Map();
 const { rankTourIdsBySearch } = require('../utils/fullTextSearch');
 const cache = require('../utils/cacheHelper');
 const crypto = require('crypto');
@@ -386,12 +390,54 @@ exports.getTour = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found', 404));
   }
 
-  prisma.tour.update({
-    where: { id: result.id },
-    data: { viewCount: { increment: 1 } }
-  }).catch(console.error);
+  // Smart view tracking: Only count unique views
+  const shouldCountView = (() => {
+    // Don't count if user is the tour owner (supplier viewing their own tour)
+    if (req.user?.id === result.supplierId) {
+      return false;
+    }
 
-  event.emit({ name: 'tour.viewed', userId: req.user?.id, req, resource: 'Tour', resourceId: result.id });
+    // Don't count if user is admin
+    if (req.user?.roles?.includes('admin')) {
+      return false;
+    }
+
+    // Check if this view was already counted recently (prevent rapid refreshes)
+    // Using a simple in-memory cache with tour ID + user/IP combination
+    const viewKey = `view:${result.id}:${req.user?.id || req.ip}`;
+    const lastViewTime = viewTrackingCache.get(viewKey);
+    const now = Date.now();
+    
+    // Only count if last view was more than 30 minutes ago (or never viewed)
+    if (lastViewTime && (now - lastViewTime) < 30 * 60 * 1000) {
+      return false;
+    }
+
+    // Update cache with current timestamp
+    viewTrackingCache.set(viewKey, now);
+    
+    // Clean up old entries (older than 1 hour)
+    if (Math.random() < 0.01) { // 1% chance to trigger cleanup
+      const oneHourAgo = now - 60 * 60 * 1000;
+      for (const [key, time] of viewTrackingCache.entries()) {
+        if (time < oneHourAgo) {
+          viewTrackingCache.delete(key);
+        }
+      }
+    }
+
+    return true;
+  })();
+
+  // Increment view count only if it should be counted
+  if (shouldCountView) {
+    prisma.tour.update({
+      where: { id: result.id },
+      data: { viewCount: { increment: 1 } }
+    }).catch(console.error);
+
+    event.emit({ name: 'tour.viewed', userId: req.user?.id, req, resource: 'Tour', resourceId: result.id });
+  }
 
   res.status(200).json({
     status: 'success',
