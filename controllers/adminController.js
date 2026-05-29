@@ -35,25 +35,33 @@ exports.getOverview = catchAsync(async (req, res, next) => {
 
   // Start-of-day for "today" range
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterdayStart = new Date(todayStart);
+  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
   const weekStart = new Date(todayStart);
   weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Sunday
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const yearStart = new Date(now.getFullYear(), 0, 1);
+  const previous30Start = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
   const [
     revenueToday,
+    revenueYesterday,
     revenueThisWeek,
     revenueThisMonth,
     revenueYTD,
     bookingsToday,
+    bookingsYesterday,
     bookingsThisWeek,
     bookingsThisMonth,
     bookingsYTD,
     signupsToday,
+    signupsYesterday,
     signupsThisWeek,
     signupsThisMonth,
     signupsYTD,
     activeUsers,
+    activeUsersPrevious,
     topTours,
     topSuppliers,
     bookingStatusDist,
@@ -65,6 +73,10 @@ exports.getOverview = catchAsync(async (req, res, next) => {
     prisma.booking.aggregate({
       _sum: { total: true, supplierPayout: true, commissionAmount: true },
       where: { paidAt: { gte: todayStart }, paymentStatus: 'SUCCEEDED' },
+    }),
+    prisma.booking.aggregate({
+      _sum: { total: true, supplierPayout: true, commissionAmount: true },
+      where: { paidAt: { gte: yesterdayStart, lt: todayStart }, paymentStatus: 'SUCCEEDED' },
     }),
     prisma.booking.aggregate({
       _sum: { total: true, supplierPayout: true, commissionAmount: true },
@@ -81,12 +93,14 @@ exports.getOverview = catchAsync(async (req, res, next) => {
 
     /* Booking volume aggregations */
     prisma.booking.count({ where: { createdAt: { gte: todayStart } } }),
+    prisma.booking.count({ where: { createdAt: { gte: yesterdayStart, lt: todayStart } } }),
     prisma.booking.count({ where: { createdAt: { gte: weekStart } } }),
     prisma.booking.count({ where: { createdAt: { gte: monthStart } } }),
     prisma.booking.count({ where: { createdAt: { gte: yearStart } } }),
 
     /* User signups */
     prisma.user.count({ where: { createdAt: { gte: todayStart } } }),
+    prisma.user.count({ where: { createdAt: { gte: yesterdayStart, lt: todayStart } } }),
     prisma.user.count({ where: { createdAt: { gte: weekStart } } }),
     prisma.user.count({ where: { createdAt: { gte: monthStart } } }),
     prisma.user.count({ where: { createdAt: { gte: yearStart } } }),
@@ -94,9 +108,15 @@ exports.getOverview = catchAsync(async (req, res, next) => {
     /* Active users (logged in within last 30 days) */
     prisma.user.count({
       where: {
-        lastLoginAt: {
-          gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
-        },
+        lastLoginAt: { gte: thirtyDaysAgo },
+        active: true,
+      },
+    }),
+
+    /* Active users previous 30-day period */
+    prisma.user.count({
+      where: {
+        lastLoginAt: { gte: previous30Start, lt: thirtyDaysAgo },
         active: true,
       },
     }),
@@ -177,23 +197,27 @@ exports.getOverview = catchAsync(async (req, res, next) => {
       overview: {
         revenue: {
           today:    fmt(revenueToday),
+          yesterday: fmt(revenueYesterday),
           thisWeek: fmt(revenueThisWeek),
           thisMonth:fmt(revenueThisMonth),
           ytd:      fmt(revenueYTD),
         },
         bookings: {
           today:    bookingsToday,
+          yesterday: bookingsYesterday,
           thisWeek: bookingsThisWeek,
           thisMonth:bookingsThisMonth,
           ytd:      bookingsYTD,
         },
         signups: {
           today:    signupsToday,
+          yesterday: signupsYesterday,
           thisWeek: signupsThisWeek,
           thisMonth:signupsThisMonth,
           ytd:      signupsYTD,
         },
         activeUsersLast30Days: activeUsers,
+        activeUsersPrevious30: activeUsersPrevious,
       },
       topTours,
       topSuppliers,
