@@ -317,6 +317,7 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
         title: true,
         slug: true,
         status: true,
+        coverPhoto: true,
         totalBookings: true,
         totalRevenue: true,
         averageRating: true,
