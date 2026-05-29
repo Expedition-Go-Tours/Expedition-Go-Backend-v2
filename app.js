@@ -1,3 +1,10 @@
+// BigInt is not serializable by JSON.stringify by default.
+// Prisma can return BigInt from raw SQL aggregates (COUNT, SUM).
+// This polyfill prevents "Do not know how to serialize a BigInt" errors.
+BigInt.prototype.toJSON = function () {
+  return Number(this);
+};
+
 const cors = require('cors');
 const express = require('express');
 const swaggerUi = require('swagger-ui-express');
