@@ -30,6 +30,7 @@ function getStripe() {
 }
 const prisma = require('./prismaClient');
 const { enqueueEmail } = require('./queue');
+const { notifyAdmin } = require('./adminNotificationService');
 const event = require('./eventEmitter');
 
 /**
@@ -251,6 +252,16 @@ async function handlePaymentSucceeded(paymentIntent) {
   for (const booking of bookings) {
     enqueueEmail({ type: 'booking-confirmation', bookingId: booking.id }).catch((err) => console.error('[Email] Booking confirmation email failed:', err.message));
     enqueueEmail({ type: 'supplier-booking-notification', bookingId: booking.id }).catch((err) => console.error('[Email] Supplier booking notification email failed:', err.message));
+  }
+
+  // Notify admins of new pending payouts
+  for (const booking of bookings) {
+    notifyAdmin({
+      type: 'PAYOUT_NEEDS_APPROVAL',
+      title: 'New Payout Pending',
+      message: `Booking #${booking.bookingNumber}: $${parseFloat(booking.supplierPayout).toFixed(2)} payout awaiting approval`,
+      data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.supplierPayout },
+    }).catch((err) => console.error('[AdminNotification] Payout notification failed:', err.message));
   }
 
   // Emit analytics events for each completed booking
