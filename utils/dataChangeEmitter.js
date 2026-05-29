@@ -25,6 +25,32 @@ function emitDataChange(modelName, action, recordId) {
   });
 }
 
+const EVENT_MAP = {
+  'User.create':         'admin:signup',
+  'Booking.create':      'admin:new-booking',
+  'Review.create':       'admin:new-review',
+  'Payout.update':       'admin:payout-update',
+  'SupplierProfile.create': 'admin:supplier-application',
+  'SupplierProfile.update': 'admin:supplier-status-change',
+  'AdminNotification.create': 'admin:notification',
+  'Tour.create':         'admin:new-tour',
+  'Tour.update':         'admin:tour-update',
+};
+
+function emitModelEvent(modelName, action, recordId) {
+  if (!io) return;
+  const key = `${modelName}.${action}`;
+  const eventName = EVENT_MAP[key];
+  if (eventName) {
+    io.to('admin-room').emit(eventName, {
+      model: modelName,
+      action,
+      recordId,
+      timestamp: new Date().toISOString(),
+    });
+  }
+}
+
 function setupPrismaMiddleware(prisma) {
   prisma.$use(async (params, next) => {
     const result = await next(params);
@@ -34,6 +60,7 @@ function setupPrismaMiddleware(prisma) {
         const recordId = params.args?.where?.id || result?.id || null;
         setImmediate(() => {
           emitDataChange(params.model, params.action, recordId);
+          emitModelEvent(params.model, params.action, recordId);
         });
       }
     }
