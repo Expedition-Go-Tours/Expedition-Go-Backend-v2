@@ -12,6 +12,7 @@ const AppError = require('../utils/appError');
 const { logActivity } = require('../utils/auditLogger');
 const { sendSupplierStatusEmail } = require('../utils/emailService');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
+const admin = require('../config/firebaseAdmin');
 
 // ================================
 // SUPPLIER APPLICATION
@@ -342,7 +343,7 @@ exports.getAllApplications = catchAsync(async (req, res) => {
     prisma.supplierProfile.findMany({
       where,
       include: {
-        user: { select: { id: true, name: true, email: true, photoURL: true, createdAt: true } },
+        user: { select: { id: true, name: true, email: true, photoURL: true, firebaseUid: true, createdAt: true } },
       },
       orderBy: { createdAt: 'desc' },
       skip,
@@ -353,11 +354,20 @@ exports.getAllApplications = catchAsync(async (req, res) => {
 
   const totalPages = Math.ceil(totalCount / parseInt(limit));
 
-  const transformed = applications.map((app) => ({
-    ...app,
-    user: app.user
-      ? { ...app.user, photoURL: app.user.photoURL ? cloudinaryUrl(app.user.photoURL, 150) : app.user.photoURL }
-      : app.user,
+  const transformed = await Promise.all(applications.map(async (app) => {
+    let photoURL = app.user?.photoURL || '';
+    if (!photoURL && app.user?.firebaseUid) {
+      try {
+        const firebaseRecord = await admin.auth().getUser(app.user.firebaseUid);
+        photoURL = firebaseRecord.photoURL || '';
+      } catch { /* ignore */ }
+    }
+    return {
+      ...app,
+      user: app.user
+        ? { ...app.user, photoURL: photoURL ? cloudinaryUrl(photoURL, 150) : photoURL }
+        : app.user,
+    };
   }));
 
   res.status(200).json({
