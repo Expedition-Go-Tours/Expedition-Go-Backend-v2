@@ -67,6 +67,14 @@ exports.signup = catchAsync(async (req, res, next) => {
     });
   }
 
+  let photoURL = decoded.picture || '';
+  if (!photoURL) {
+    try {
+      const firebaseRecord = await admin.auth().getUser(decoded.uid);
+      photoURL = firebaseRecord.photoURL || '';
+    } catch { /* ignore */ }
+  }
+
   user = await prisma.user.create({
     data: {
       firebaseUid: decoded.uid,
@@ -75,7 +83,7 @@ exports.signup = catchAsync(async (req, res, next) => {
         decoded.email?.split('@')[0] ||
         'User',
       email: decoded.email,
-      photoURL: decoded.picture || '',
+      photoURL,
       roles: ['customer'],
     }
   });

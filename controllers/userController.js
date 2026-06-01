@@ -18,6 +18,7 @@ const AppError = require('../utils/appError');
 const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
 const { logActivity } = require('../utils/auditLogger');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
+const admin = require('../config/firebaseAdmin');
 
 exports.getMe = (req, res, next) => {
   if (!req.user) {
@@ -246,12 +247,20 @@ exports.syncMe = catchAsync(async (req, res) => {
     throw new AppError('User not found. Please complete onboarding.', 404);
   }
 
+  let firebasePhotoUrl = firebaseUser.picture || '';
+  if (!firebasePhotoUrl) {
+    try {
+      const firebaseRecord = await admin.auth().getUser(firebaseUser.uid);
+      firebasePhotoUrl = firebaseRecord.photoURL || '';
+    } catch { /* ignore */ }
+  }
+
   const user = await prisma.user.update({
     where: { id: existing.id },
     data: {
       name: firebaseUser.name || firebaseUser.email?.split('@')[0],
       email: firebaseUser.email,
-      photoURL: firebaseUser.picture || '',
+      photoURL: firebasePhotoUrl,
       lastLoginAt: new Date()
     },
   });

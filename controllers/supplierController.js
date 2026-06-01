@@ -11,6 +11,7 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { logActivity } = require('../utils/auditLogger');
 const { sendSupplierStatusEmail } = require('../utils/emailService');
+const { cloudinaryUrl } = require('../utils/imageOptimizer');
 
 // ================================
 // SUPPLIER APPLICATION
@@ -352,10 +353,17 @@ exports.getAllApplications = catchAsync(async (req, res) => {
 
   const totalPages = Math.ceil(totalCount / parseInt(limit));
 
+  const transformed = applications.map((app) => ({
+    ...app,
+    user: app.user
+      ? { ...app.user, photoURL: app.user.photoURL ? cloudinaryUrl(app.user.photoURL, 150) : app.user.photoURL }
+      : app.user,
+  }));
+
   res.status(200).json({
     status: 'success',
     data: {
-      applications,
+      applications: transformed,
       pagination: {
         currentPage: parseInt(page),
         totalPages,
