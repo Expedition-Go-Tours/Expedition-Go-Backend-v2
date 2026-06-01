@@ -486,8 +486,9 @@ exports.getPayoutSummary = catchAsync(async (req, res, next) => {
     prisma.$queryRaw`
       SELECT
         DATE_TRUNC('month', "paidAt") as month,
-        COUNT(*) as count,
-        SUM("amount") as total
+        COUNT(*)::int as count,
+        SUM("amount") as "totalAmount",
+        SUM("commissionAmount") as commission
       FROM "Payout"
       WHERE "status" = 'PAID'
         AND "paidAt" >= NOW() - INTERVAL '12 months'
