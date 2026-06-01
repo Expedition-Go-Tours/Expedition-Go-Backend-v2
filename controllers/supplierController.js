@@ -8,7 +8,6 @@
 
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
-const AppError = require('../utils/appError');
 
 exports.getPayouts = catchAsync(async (req, res, next) => {
   const userId = req.user.id;
