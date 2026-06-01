@@ -720,15 +720,17 @@ exports.getSupplierReviews = catchAsync(async (req, res, next) => {
  * Get reviews pending moderation (admin only)
  */
 exports.getPendingReviews = catchAsync(async (req, res, next) => {
-  const { page = 1, limit = 20 } = req.query;
+  const { page = 1, limit = 20, status } = req.query;
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
-  const [reviews, totalCount, flaggedCount, moderatedTodayCount] = await Promise.all([
+  const statusFilter = status && status !== 'ALL' ? status : undefined;
+
+  const [reviews, filteredCount, pendingCount, flaggedCount, moderatedTodayCount] = await Promise.all([
     prisma.review.findMany({
-      where: { status: 'PENDING' },
+      where: { ...(statusFilter && { status: statusFilter }) },
       include: {
         customer: {
           select: {
@@ -754,12 +756,13 @@ exports.getPendingReviews = catchAsync(async (req, res, next) => {
       skip,
       take: parseInt(limit)
     }),
+    prisma.review.count({ where: { ...(statusFilter && { status: statusFilter }) } }),
     prisma.review.count({ where: { status: 'PENDING' } }),
     prisma.review.count({ where: { status: 'FLAGGED' } }),
     prisma.review.count({ where: { moderatedAt: { gte: todayStart } } }),
   ]);
 
-  const totalPages = Math.ceil(totalCount / parseInt(limit));
+  const totalPages = Math.ceil(filteredCount / parseInt(limit));
 
   res.status(200).json({
     status: 'success',
@@ -768,11 +771,11 @@ exports.getPendingReviews = catchAsync(async (req, res, next) => {
       pagination: {
         currentPage: parseInt(page),
         totalPages,
-        totalCount,
+        totalCount: filteredCount,
         limit: parseInt(limit)
       },
       counts: {
-        pending: totalCount,
+        pending: pendingCount,
         flagged: flaggedCount,
         moderatedToday: moderatedTodayCount,
       }
