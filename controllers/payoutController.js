@@ -299,19 +299,25 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
 
   const paymentMethod = method.type;
 
-  const updated = await prisma.payout.update({
-    where: { id },
-    data: {
-      status: 'PAID',
-      paidAt: new Date(),
-      processedBy: adminId,
-      processedAt: new Date(),
-      payoutMethodId: method.id,
-      paymentMethod,
-      reference: reference || null,
-      notes: notes || null
-    }
-  });
+  const [updated] = await prisma.$transaction([
+    prisma.payout.update({
+      where: { id },
+      data: {
+        status: 'PAID',
+        paidAt: new Date(),
+        processedBy: adminId,
+        processedAt: new Date(),
+        payoutMethodId: method.id,
+        paymentMethod,
+        reference: reference || null,
+        notes: notes || null
+      }
+    }),
+    prisma.supplierProfile.update({
+      where: { userId: payout.supplierId },
+      data: { totalEarnings: { increment: parseFloat(payout.amount) } },
+    }),
+  ]);
 
   enqueueNotification({
     userId: payout.supplierId,
