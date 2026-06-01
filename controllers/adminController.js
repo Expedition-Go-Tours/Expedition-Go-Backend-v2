@@ -66,6 +66,7 @@ exports.getOverview = catchAsync(async (req, res, next) => {
     topSuppliers,
     bookingStatusDist,
     recentEvents,
+    allUsers,
     totalEventCount,
   ] = await Promise.all([
 
@@ -180,6 +181,11 @@ exports.getOverview = catchAsync(async (req, res, next) => {
       },
     }),
 
+    /* User names for event feed */
+    prisma.user.findMany({
+      select: { id: true, name: true },
+    }),
+
     /* Total platform events (quick sanity metric) */
     prisma.event.count(),
   ]);
@@ -225,7 +231,10 @@ exports.getOverview = catchAsync(async (req, res, next) => {
         status: b.status,
         count:  b._count,
       })),
-      eventFeed: recentEvents,
+      eventFeed: recentEvents.map((e) => {
+        const user = allUsers.find((u) => u.id === e.userId);
+        return { ...e, userName: user?.name || null };
+      }),
       totalEvents: totalEventCount,
     },
   });
