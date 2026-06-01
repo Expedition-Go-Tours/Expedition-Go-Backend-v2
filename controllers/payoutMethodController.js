@@ -311,6 +311,9 @@ exports.getAllSuppliersMethods = catchAsync(async (req, res) => {
         id: true,
         name: true,
         email: true,
+        supplierProfile: {
+          select: { status: true },
+        },
         payoutMethods: {
           orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
         },
