@@ -11,6 +11,7 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const { logActivity } = require('../utils/auditLogger');
+const { cloudinaryUrl } = require('../utils/imageOptimizer');
 
 // ================================
 // SUPPLIER ROUTES
@@ -311,6 +312,8 @@ exports.getAllSuppliersMethods = catchAsync(async (req, res) => {
         id: true,
         name: true,
         email: true,
+        photoURL: true,
+        firebaseUid: true,
         supplierProfile: {
           select: { status: true },
         },
@@ -327,10 +330,22 @@ exports.getAllSuppliersMethods = catchAsync(async (req, res) => {
 
   const totalPages = Math.ceil(totalCount / parseInt(limit));
 
+  const transformed = await Promise.all(suppliers.map(async (s) => {
+    let photoURL = s.photoURL || '';
+    if (!photoURL && s.firebaseUid) {
+      try {
+        const firebaseRecord = await admin.auth().getUser(s.firebaseUid);
+        photoURL = firebaseRecord.photoURL || '';
+      } catch { /* not a Firebase auth user or not found */ }
+    }
+    const { firebaseUid, ...rest } = s;
+    return { ...rest, photoURL: photoURL ? cloudinaryUrl(photoURL, 150) : photoURL };
+  }));
+
   res.status(200).json({
     status: 'success',
     data: {
-      suppliers,
+      suppliers: transformed,
       pagination: {
         currentPage: parseInt(page),
         totalPages,
