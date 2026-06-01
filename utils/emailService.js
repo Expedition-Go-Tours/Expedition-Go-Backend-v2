@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Email Service - Production Ready
  * Handles transactional emails using SendGrid
  * 
@@ -849,175 +849,230 @@ function generateSupplierApprovedTemplate(data = {}) {
   <meta name="x-apple-disable-message-reformatting">
   <title>Welcome to ${brandName}</title>
   <style>
-    body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; background-color: #F8FAFC; }
-    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
-    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
-    .font-main { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+    body { margin:0; padding:0; width:100% !important; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; background-color:#F8FAFC; }
+    table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; border-collapse:collapse; }
+    img { border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; display:block; }
+    .font-main { font-family:'Plus Jakarta Sans','Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
+    @media only screen and (max-width:600px) {
+      .outer-pad   { padding:16px 8px !important; }
+      .card-pad    { padding:24px 20px !important; }
+      .hero-wrap   { display:block !important; width:100% !important; }
+      .hero-text   { display:block !important; width:100% !important; padding-right:0 !important; }
+      .hero-img-td { display:block !important; width:100% !important; text-align:center !important; padding-top:20px !important; }
+      .hero-img    { max-width:180px !important; margin:0 auto !important; }
+      .h1          { font-size:26px !important; }
+      .steps-row   { display:block !important; }
+      .step-col    { display:block !important; width:100% !important; padding:0 0 24px 0 !important; border-right:none !important; }
+      .step-col:last-child { padding-bottom:0 !important; }
+      .cta-wrap    { display:block !important; }
+      .cta-text    { display:block !important; width:100% !important; padding:20px 20px 8px !important; }
+      .cta-btn-td  { display:block !important; width:100% !important; text-align:center !important; padding:0 20px 20px !important; }
+      .cta-btn     { display:block !important; text-align:center !important; }
+      .footer-wrap { display:block !important; }
+      .footer-left { display:block !important; width:100% !important; padding-bottom:12px !important; }
+      .footer-right{ display:block !important; width:100% !important; text-align:left !important; }
+    }
   </style>
 </head>
 <body>
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
-    <tr>
-      <td align="center" style="padding: 40px 16px;">
-        <table role="presentation" width="100%" style="max-width: 640px; background-color: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;" cellspacing="0" cellpadding="0" border="0">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+  <tr>
+    <td align="center" class="outer-pad" style="padding:40px 16px;">
+      <table role="presentation" width="100%" style="max-width:640px;background-color:#ffffff;border:1px solid #E2E8F0;border-radius:16px;" cellspacing="0" cellpadding="0" border="0">
 
-          <!-- Header -->
-          <tr>
-            <td style="padding: 40px 40px 32px 40px;">
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                <tr>
-                  <td align="left">
-                    <img src="${logoUrl}" alt="${brandName}" width="180" style="display: block; max-width: 180px; height: auto;">
-                  </td>
-                  <td align="right" valign="middle">
-                    <table role="presentation" cellspacing="0" cellpadding="0" border="0">
-                      <tr>
-                        <td bgcolor="#F1F5F9" style="border-radius: 50px; padding: 6px 14px; font-size: 13px; font-weight: 600; color: #334155; line-height: 1;" class="font-main">
-                          &#x1F464;&nbsp;&nbsp;Supplier
-                        </td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
+        <!-- ── HEADER ── -->
+        <tr>
+          <td class="card-pad" style="padding:32px 40px 28px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+              <tr>
+                <td align="left" valign="middle">
+                  <img src="${logoUrl}" alt="${brandName}" width="160" style="max-width:160px;height:auto;">
+                </td>
+                <td align="right" valign="middle">
+                  <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                    <tr>
+                      <td bgcolor="#F1F5F9" style="border-radius:50px;padding:6px 14px;font-size:13px;font-weight:600;color:#334155;line-height:1;white-space:nowrap;" class="font-main">
+                        &#x1F464;&nbsp;&nbsp;Supplier
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
 
-          <!-- Hero Section (55/45 split) -->
-          <tr>
-            <td style="padding: 0 40px 40px 40px;">
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                <tr>
-                  <td width="55%" valign="top" style="padding-right: 20px;" align="left">
-                    <h1 style="margin: 0 0 16px 0; font-size: 32px; font-weight: 800; color: #001F3F; line-height: 1.15;" class="font-main">Welcome to<br>Travio <span style="color: #00A669;">Africa!</span></h1>
-                    <p style="margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #001F3F;" class="font-main">Hi ${supplierName},</p>
-                    <p style="margin: 0 0 8px 0; font-size: 15px; color: #334155; line-height: 1.5;" class="font-main">Congratulations! Your supplier application has been approved.</p>
-                    <p style="margin: 0; font-size: 15px; color: #334155; line-height: 1.5;" class="font-main">You're now part of our tour platform community.</p>
-                  </td>
-                  <td width="45%" valign="top" align="right">
-                    <img src="${heroImageUrl}" alt="Scenic travel destination" width="220" style="display: block; max-width: 220px; height: auto; border-radius: 30% 0% 30% 30%; border-right: 4px solid #00A669;">
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
+        <!-- ── HERO ── -->
+        <tr>
+          <td class="card-pad" style="padding:0 40px 36px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+              <tr>
+                <!-- Text side -->
+                <td class="hero-text" valign="top" style="width:55%;padding-right:20px;">
+                  <h1 class="h1 font-main" style="margin:0 0 16px;font-size:32px;font-weight:800;color:#001F3F;line-height:1.15;">
+                    Welcome to<br>Travio <span style="color:#00A669;">Africa!</span>
+                  </h1>
+                  <p class="font-main" style="margin:0 0 8px;font-size:16px;font-weight:700;color:#001F3F;">Hi ${supplierName},</p>
+                  <p class="font-main" style="margin:0 0 8px;font-size:15px;color:#334155;line-height:1.6;">Congratulations! Your supplier application has been approved.</p>
+                  <p class="font-main" style="margin:0;font-size:15px;color:#334155;line-height:1.6;">You're now part of our tour platform community.</p>
+                </td>
+                <!-- Image side -->
+                <td class="hero-img-td" valign="top" align="right" style="width:45%;">
+                  <img class="hero-img" src="${heroImageUrl}" alt="Scenic travel destination" width="220"
+                    style="max-width:220px;height:auto;border-radius:30% 0% 30% 30%;border-right:4px solid #00A669;">
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
 
-          <!-- Next Steps Card -->
-          <tr>
-            <td style="padding: 0 40px 32px 40px;">
-              <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
-                <!-- Title row -->
-                <tr><td style="padding: 32px 32px 24px 32px;" align="left">
-                    <table role="presentation" cellspacing="0" cellpadding="0" border="0">
-                      <tr>
-                        <td style="font-size: 24px; padding-right: 12px; line-height: 1;" valign="middle">&#x1F4CB;</td>
-                        <td valign="middle" align="left">
-                          <h3 style="margin: 0 0 2px 0; font-size: 18px; font-weight: 700; color: #001F3F; line-height: 1.3;" class="font-main">Your next steps</h3>
-                          <p style="margin: 0; font-size: 14px; color: #64748B; line-height: 1.3;" class="font-main">Follow these simple steps to get started on ${brandName}.</p>
-                        </td>
-                      </tr>
-                    </table>
-                  </td></tr>
+        <!-- ── NEXT STEPS CARD ── -->
+        <tr>
+          <td class="card-pad" style="padding:0 40px 32px;">
+            <table role="presentation" width="100%" style="border:1px solid #E2E8F0;border-radius:12px;" cellspacing="0" cellpadding="0" border="0">
 
-                <!-- 3 Steps -->
-                <tr><td style="padding: 0 32px 32px 32px;">
-                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                      <tr>
-                        <td width="33.33%" valign="top" style="padding-right: 8px;" align="left">
-                          <table role="presentation" cellspacing="0" cellpadding="0" border="0">
-                            <tr>
-                              <td width="48" height="48" bgcolor="#E6F6F0" style="border-radius: 50%; text-align: center; line-height: 48px;" align="center" valign="middle">
-                                <span style="font-size: 20px; line-height: 48px;">&#x1F4B3;</span>
-                              </td>
-                            </tr>
-                          </table>
-                          <div style="margin-top: 12px; margin-bottom: 8px;"><span style="background-color: #00A669; color: #ffffff; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; line-height: 1.4;" class="font-main">1</span></div>
-                          <h4 style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #001F3F; line-height: 1.3;" class="font-main">Set up your payment method</h4>
-                          <p style="margin: 0; font-size: 12px; color: #64748B; line-height: 1.4;" class="font-main">Set up your payment method to start receiving payments securely.</p>
-                        </td>
-                        <td width="33.33%" valign="top" style="padding-left: 4px; padding-right: 4px;" align="left">
-                          <table role="presentation" cellspacing="0" cellpadding="0" border="0">
-                            <tr>
-                              <td width="48" height="48" bgcolor="#E6F6F0" style="border-radius: 50%; text-align: center; line-height: 48px;" align="center" valign="middle">
-                                <span style="font-size: 20px; line-height: 48px;">&#x1F9F3;</span>
-                              </td>
-                            </tr>
-                          </table>
-                          <div style="margin-top: 12px; margin-bottom: 8px;"><span style="background-color: #00A669; color: #ffffff; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; line-height: 1.4;" class="font-main">2</span></div>
-                          <h4 style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #001F3F; line-height: 1.3;" class="font-main">Create your first tour listing</h4>
-                          <p style="margin: 0; font-size: 12px; color: #64748B; line-height: 1.4;" class="font-main">Add your tours and start reaching global travelers.</p>
-                        </td>
-                        <td width="33.33%" valign="top" style="padding-left: 8px;" align="left">
-                          <table role="presentation" cellspacing="0" cellpadding="0" border="0">
-                            <tr>
-                              <td width="48" height="48" bgcolor="#E6F6F0" style="border-radius: 50%; text-align: center; line-height: 48px;" align="center" valign="middle">
-                                <span style="font-size: 20px; line-height: 48px;">&#x1F464;</span>
-                              </td>
-                            </tr>
-                          </table>
-                          <div style="margin-top: 12px; margin-bottom: 8px;"><span style="background-color: #00A669; color: #ffffff; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; line-height: 1.4;" class="font-main">3</span></div>
-                          <h4 style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #001F3F; line-height: 1.3;" class="font-main">Set up your supplier profile</h4>
-                          <p style="margin: 0; font-size: 12px; color: #64748B; line-height: 1.4;" class="font-main">Tell travelers about your business and unique expertise.</p>
-                        </td>
-                      </tr>
-                    </table>
-                  </td></tr>
-              </table>
-            </td>
-          </tr>
+              <!-- Card header -->
+              <tr>
+                <td style="padding:28px 28px 20px;">
+                  <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                    <tr>
+                      <td style="font-size:22px;padding-right:10px;line-height:1;" valign="middle">&#x1F4CB;</td>
+                      <td valign="middle">
+                        <h3 class="font-main" style="margin:0 0 2px;font-size:17px;font-weight:700;color:#001F3F;line-height:1.3;">Your next steps</h3>
+                        <p class="font-main" style="margin:0;font-size:13px;color:#64748B;line-height:1.4;">Follow these simple steps to get started on ${brandName}.</p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
 
-          <!-- Ready-State Row -->
-          <tr>
-            <td style="padding: 0 40px 40px 40px;">
-              <table role="presentation" width="100%" bgcolor="#F0FDF4" style="border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
-                <tr>
-                  <td style="padding: 24px 0 24px 24px;" width="56" valign="middle" align="center">
-                    <span style="font-size: 28px; line-height: 1;">&#x1F4C8;</span>
-                  </td>
-                  <td style="padding: 24px 16px 24px 24px;" align="left" valign="middle">
-                    <h4 style="margin: 0 0 4px 0; font-size: 16px; font-weight: 700; color: #001F3F;" class="font-main">You're all set!</h4>
-                    <p style="margin: 0; font-size: 13px; color: #475569; line-height: 1.4;" class="font-main">Access your dashboard to manage your listings, bookings, and grow your business with ${brandName}.</p>
-                  </td>
-                  <td style="padding: 24px; text-align: right;" align="right" valign="middle" width="190">
-                    <a href="${dashboardUrl}" target="_blank" style="display: inline-block; background-color: #00A669; padding: 12px 20px; border-radius: 8px; color: #ffffff; font-size: 14px; font-weight: 700; text-decoration: none; white-space: nowrap;" class="font-main">Access Your Dashboard &nbsp;&rarr;</a>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
+              <!-- 3 steps — desktop: 3 columns | mobile: stacked -->
+              <tr>
+                <td style="padding:0 28px 28px;">
+                  <table role="presentation" width="100%" class="steps-row" cellspacing="0" cellpadding="0" border="0">
+                    <tr>
 
-          <!-- Support -->
-          <tr>
-            <td style="padding: 0 40px 40px 40px;" align="center">
-              <span style="font-size: 13px; color: #64748B;" class="font-main">&#x1F3A7;&nbsp;&nbsp;Need help getting started? Contact <a href="mailto:${supportEmail}" style="color: #00A669; text-decoration: none; font-weight: 600;">${supportEmail}</a></span>
-            </td>
-          </tr>
+                      <!-- Step 1 -->
+                      <td class="step-col" width="33%" valign="top" style="padding-right:12px;border-right:1px solid #E2E8F0;">
+                        <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                          <tr>
+                            <td width="44" height="44" bgcolor="#E6F6F0" style="border-radius:50%;text-align:center;line-height:44px;" align="center" valign="middle">
+                              <span style="font-size:18px;line-height:44px;">&#x1F4B3;</span>
+                            </td>
+                          </tr>
+                        </table>
+                        <div style="margin:10px 0 6px;">
+                          <span class="font-main" style="background-color:#00A669;color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;line-height:1.4;">1</span>
+                        </div>
+                        <h4 class="font-main" style="margin:0 0 5px;font-size:13px;font-weight:700;color:#001F3F;line-height:1.3;">Set up your payment method</h4>
+                        <p class="font-main" style="margin:0;font-size:12px;color:#64748B;line-height:1.5;">Set up your payment method to start receiving payments securely.</p>
+                      </td>
 
-          <!-- Footer -->
-          <tr>
-            <td bgcolor="#001F3F" style="padding: 32px 40px;">
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                <tr>
-                  <td align="left" style="color: #ffffff; font-size: 14px; line-height: 1.4;" class="font-main">
-                    <strong style="color: #00A669; font-size: 14px;">Welcome aboard!</strong><br>
-                    <span style="color: #94A3B8; font-size: 13px;">${brandName} Team</span>
-                  </td>
-                  <td align="right" style="font-family: 'Caveat', 'Georgia', 'Apple Chancery', cursive; font-size: 24px; color: #ffffff; font-weight: 400;" valign="middle">
-                    Let's <span style="color: #00A669;">grow</span> together.
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
+                      <!-- Step 2 -->
+                      <td class="step-col" width="33%" valign="top" style="padding:0 12px;border-right:1px solid #E2E8F0;">
+                        <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                          <tr>
+                            <td width="44" height="44" bgcolor="#E6F6F0" style="border-radius:50%;text-align:center;line-height:44px;" align="center" valign="middle">
+                              <span style="font-size:18px;line-height:44px;">&#x1F9F3;</span>
+                            </td>
+                          </tr>
+                        </table>
+                        <div style="margin:10px 0 6px;">
+                          <span class="font-main" style="background-color:#00A669;color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;line-height:1.4;">2</span>
+                        </div>
+                        <h4 class="font-main" style="margin:0 0 5px;font-size:13px;font-weight:700;color:#001F3F;line-height:1.3;">Create your first tour listing</h4>
+                        <p class="font-main" style="margin:0;font-size:12px;color:#64748B;line-height:1.5;">Add your tours and start reaching global travelers.</p>
+                      </td>
 
-        </table>
+                      <!-- Step 3 -->
+                      <td class="step-col" width="33%" valign="top" style="padding-left:12px;">
+                        <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                          <tr>
+                            <td width="44" height="44" bgcolor="#E6F6F0" style="border-radius:50%;text-align:center;line-height:44px;" align="center" valign="middle">
+                              <span style="font-size:18px;line-height:44px;">&#x1F464;</span>
+                            </td>
+                          </tr>
+                        </table>
+                        <div style="margin:10px 0 6px;">
+                          <span class="font-main" style="background-color:#00A669;color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;line-height:1.4;">3</span>
+                        </div>
+                        <h4 class="font-main" style="margin:0 0 5px;font-size:13px;font-weight:700;color:#001F3F;line-height:1.3;">Set up your supplier profile</h4>
+                        <p class="font-main" style="margin:0;font-size:12px;color:#64748B;line-height:1.5;">Tell travelers about your business and unique expertise.</p>
+                      </td>
 
-        <p style="margin: 24px 0 0 0; text-align: center; font-size: 11px; color: #94A3B8; line-height: 1;" class="font-main">
-          &copy; ${year} ${brandName} by Expedition-Go Tours. All rights reserved.
-        </p>
-      </td>
-    </tr>
-  </table>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- ── CTA STRIP ── -->
+        <tr>
+          <td class="card-pad" style="padding:0 40px 36px;">
+            <table role="presentation" width="100%" bgcolor="#F0FDF4" style="border-radius:12px;" cellspacing="0" cellpadding="0" border="0">
+              <tr class="cta-wrap">
+                <!-- Icon + text -->
+                <td class="cta-text" valign="middle" style="padding:22px 0 22px 22px;">
+                  <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                    <tr>
+                      <td style="font-size:26px;padding-right:14px;line-height:1;" valign="middle">&#x1F4C8;</td>
+                      <td valign="middle">
+                        <h4 class="font-main" style="margin:0 0 3px;font-size:15px;font-weight:700;color:#001F3F;">You're all set!</h4>
+                        <p class="font-main" style="margin:0;font-size:13px;color:#475569;line-height:1.5;">Access your dashboard to manage listings, bookings, and grow your business.</p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+                <!-- Button -->
+                <td class="cta-btn-td" align="right" valign="middle" style="padding:22px 22px 22px 16px;white-space:nowrap;">
+                  <a class="cta-btn font-main" href="${dashboardUrl}" target="_blank"
+                    style="display:inline-block;background-color:#00A669;padding:12px 18px;border-radius:8px;color:#ffffff;font-size:13px;font-weight:700;text-decoration:none;white-space:nowrap;">
+                    Access Your Dashboard &rarr;
+                  </a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- ── SUPPORT ── -->
+        <tr>
+          <td class="card-pad" style="padding:0 40px 36px;" align="center">
+            <p class="font-main" style="margin:0;font-size:13px;color:#64748B;line-height:1.6;">
+              &#x1F3A7;&nbsp;&nbsp;Need help getting started?<br>
+              Contact <a href="mailto:${supportEmail}" style="color:#00A669;text-decoration:none;font-weight:600;">${supportEmail}</a>
+            </p>
+          </td>
+        </tr>
+
+        <!-- ── FOOTER ── -->
+        <tr>
+          <td bgcolor="#001F3F" style="padding:28px 40px;border-radius:0 0 16px 16px;">
+            <table role="presentation" width="100%" class="footer-wrap" cellspacing="0" cellpadding="0" border="0">
+              <tr>
+                <td class="footer-left" align="left" valign="middle">
+                  <strong class="font-main" style="color:#00A669;font-size:14px;display:block;margin-bottom:2px;">Welcome aboard!</strong>
+                  <span class="font-main" style="color:#94A3B8;font-size:13px;">${brandName} Team</span>
+                </td>
+                <td class="footer-right" align="right" valign="middle"
+                  style="font-family:'Caveat','Georgia','Apple Chancery',cursive;font-size:22px;color:#ffffff;font-weight:400;">
+                  Let's <span style="color:#00A669;">grow</span> together.
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+      </table>
+
+      <p class="font-main" style="margin:20px 0 0;text-align:center;font-size:11px;color:#94A3B8;line-height:1;">
+        &copy; ${year} ${brandName} by Expedition-Go Tours. All rights reserved.
+      </p>
+    </td>
+  </tr>
+</table>
 </body>
 </html>`;
 
