@@ -12,6 +12,7 @@ const AppError = require('../utils/appError');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const { logActivity } = require('../utils/auditLogger');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
+const admin = require('../config/firebaseAdmin');
 
 // ================================
 // SUPPLIER ROUTES
@@ -338,7 +339,7 @@ exports.getAllSuppliersMethods = catchAsync(async (req, res) => {
         photoURL = firebaseRecord.photoURL || '';
       } catch { /* not a Firebase auth user or not found */ }
     }
-    const { firebaseUid, ...rest } = s;
+    const { firebaseUid: _uid, ...rest } = s; // eslint-disable-line no-unused-vars
     return { ...rest, photoURL: photoURL ? cloudinaryUrl(photoURL, 150) : photoURL };
   }));
 
