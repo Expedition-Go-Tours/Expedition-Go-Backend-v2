@@ -413,11 +413,12 @@ exports.getReview = catchAsync(async (req, res, next) => {
         select: {
           id: true,
           title: true,
-          supplier: {
-            select: {
-              name: true
-            }
-          }
+              supplier: {
+                select: {
+                  name: true,
+                  photoURL: true
+                }
+              }
         }
       }
     }
