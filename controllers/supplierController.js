@@ -571,7 +571,7 @@ exports.getSupplierOverview = catchAsync(async (req, res, next) => {
 
   const { userId } = supplierProfile;
 
-  const [tourStats, bookingStats, reviewStats] = await Promise.all([
+  const [tourStats, bookingStats, reviewStats, bookingCount] = await Promise.all([
     prisma.tour.groupBy({
       by: ['status'],
       where: { supplierId: userId },
@@ -587,6 +587,7 @@ exports.getSupplierOverview = catchAsync(async (req, res, next) => {
       _avg: { rating: true },
       _count: true,
     }),
+    prisma.booking.count({ where: { tour: { supplierId: userId } } }),
   ]);
 
   const tourMap = Object.fromEntries(tourStats.map(t => [t.status, t._count]));
@@ -596,7 +597,7 @@ exports.getSupplierOverview = catchAsync(async (req, res, next) => {
     status: 'success',
     data: {
       earnings: Number(supplierProfile.totalEarnings),
-      totalBookings: Number(supplierProfile.totalBookings),
+      totalBookings: bookingCount,
       averageRating: Number(supplierProfile.averageRating) || Number(reviewStats._avg.rating) || 0,
       totalReviews: reviewStats._count,
       tours: {
@@ -646,9 +647,8 @@ exports.getSupplierTours = catchAsync(async (req, res, next) => {
         coverPhoto: true,
         slug: true,
         status: true,
-        totalBookings: true,
+        _count: { select: { bookings: true, reviews: true } },
         averageRating: true,
-        reviewCount: true,
         city: true,
         country: true,
         createdAt: true,
@@ -659,10 +659,16 @@ exports.getSupplierTours = catchAsync(async (req, res, next) => {
 
   const totalPages = Math.ceil(totalCount / parseInt(limit));
 
+  const mapped = tours.map(({ _count, ...rest }) => ({
+    ...rest,
+    totalBookings: _count.bookings,
+    reviewCount: _count.reviews,
+  }));
+
   res.status(200).json({
     status: 'success',
     data: {
-      tours,
+      tours: mapped,
       pagination: {
         currentPage: parseInt(page),
         totalPages,
