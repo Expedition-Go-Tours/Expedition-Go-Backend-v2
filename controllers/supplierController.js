@@ -571,7 +571,7 @@ exports.getSupplierOverview = catchAsync(async (req, res, next) => {
 
   const { userId } = supplierProfile;
 
-  const [tourStats, bookingStats, reviewStats, bookingCount] = await Promise.all([
+  const [tourStats, bookingStats, reviewStats, bookingCount, commissionSum, toursWithBooking] = await Promise.all([
     prisma.tour.groupBy({
       by: ['status'],
       where: { supplierId: userId },
