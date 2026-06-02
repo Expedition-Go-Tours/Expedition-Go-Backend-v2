@@ -334,6 +334,7 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
         viewCount: true,
         createdAt: true,
         supplier: { select: { id: true, name: true } },
+        _count: { select: { bookings: true } },
       },
     }),
     prisma.tour.count({ where }),
