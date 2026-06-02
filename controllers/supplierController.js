@@ -588,16 +588,45 @@ exports.getSupplierOverview = catchAsync(async (req, res, next) => {
       _count: true,
     }),
     prisma.booking.count({ where: { tour: { supplierId: userId } } }),
+    prisma.booking.aggregate({
+      where: { tour: { supplierId: userId } },
+      _sum: { commissionAmount: true },
+    }),
+    prisma.tour.findMany({
+      where: { supplierId: userId },
+      select: {
+        id: true,
+        title: true,
+        _count: { select: { bookings: true } },
+        bookings: {
+          select: { commissionAmount: true, total: true, status: true },
+          where: { status: { not: 'CANCELLED' } },
+        },
+      },
+    }),
   ]);
 
   const tourMap = Object.fromEntries(tourStats.map(t => [t.status, t._count]));
   const bookingMap = Object.fromEntries(bookingStats.map(b => [b.status, b._count]));
+
+  const tourCommissions = toursWithBooking.map((t) => {
+    const totalCommission = t.bookings.reduce((sum, b) => sum + Number(b.commissionAmount), 0);
+    const totalRevenue = t.bookings.reduce((sum, b) => sum + Number(b.total), 0);
+    return {
+      id: t.id,
+      title: t.title,
+      bookings: t._count.bookings,
+      commission: totalCommission,
+      revenue: totalRevenue,
+    };
+  });
 
   res.status(200).json({
     status: 'success',
     data: {
       earnings: Number(supplierProfile.totalEarnings),
       totalBookings: bookingCount,
+      totalCommission: Number(commissionSum._sum.commissionAmount) || 0,
       averageRating: Number(supplierProfile.averageRating) || Number(reviewStats._avg.rating) || 0,
       totalReviews: reviewStats._count,
       tours: {
@@ -614,6 +643,7 @@ exports.getSupplierOverview = catchAsync(async (req, res, next) => {
         completed: bookingMap.COMPLETED || 0,
         cancelled: bookingMap.CANCELLED || 0,
       },
+      tourCommissions,
     },
   });
 });
