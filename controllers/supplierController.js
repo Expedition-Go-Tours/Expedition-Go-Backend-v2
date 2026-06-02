@@ -11,6 +11,8 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { logActivity } = require('../utils/auditLogger');
 const { sendSupplierStatusEmail } = require('../utils/emailService');
+const { notifyAdmin } = require('../utils/adminNotificationService');
+const { enqueueNotification } = require('../utils/queue');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const admin = require('../config/firebaseAdmin');
 
@@ -525,6 +527,23 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
     console.error('Supplier activation email failed:', err.message);
   }
 
+  // Notify supplier
+  enqueueNotification({
+    userId: supplierProfile.user.id,
+    type: 'SUPPLIER_STATUS_CHANGE',
+    title: 'Account Activated',
+    message: 'Your supplier account has been activated. You can now start receiving bookings and managing your tours.',
+    data: { supplierId: id, status: 'ACTIVE' },
+  }).catch((err) => console.error('[Notification] enqueueNotification (activate) failed:', err.message));
+
+  // Notify admins
+  notifyAdmin({
+    type: 'SUPPLIER_STATUS_CHANGE',
+    title: 'Supplier Activated',
+    message: `${supplierProfile.user.name} has been activated as a supplier.`,
+    data: { supplierId: id, supplierName: supplierProfile.user.name },
+  }).catch((err) => console.error('[Notification] notifyAdmin (activate) failed:', err.message));
+
   await logActivity({
     userId: req.user.id,
     action: 'supplier.activated',
@@ -535,5 +554,122 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: { supplierProfile: updated },
+  });
+});
+
+exports.getSupplierOverview = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { id },
+    select: { id: true, userId: true, totalEarnings: true, totalBookings: true, averageRating: true },
+  });
+
+  if (!supplierProfile) {
+    return next(new AppError('Supplier not found', 404));
+  }
+
+  const { userId } = supplierProfile;
+
+  const [tourStats, bookingStats, reviewStats] = await Promise.all([
+    prisma.tour.groupBy({
+      by: ['status'],
+      where: { supplierId: userId },
+      _count: true,
+    }),
+    prisma.booking.groupBy({
+      by: ['status'],
+      where: { tour: { supplierId: userId } },
+      _count: true,
+    }),
+    prisma.review.aggregate({
+      where: { tour: { supplierId: userId } },
+      _avg: { rating: true },
+      _count: true,
+    }),
+  ]);
+
+  const tourMap = Object.fromEntries(tourStats.map(t => [t.status, t._count]));
+  const bookingMap = Object.fromEntries(bookingStats.map(b => [b.status, b._count]));
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      earnings: Number(supplierProfile.totalEarnings),
+      totalBookings: Number(supplierProfile.totalBookings),
+      averageRating: Number(supplierProfile.averageRating) || Number(reviewStats._avg.rating) || 0,
+      totalReviews: reviewStats._count,
+      tours: {
+        total: Object.values(tourMap).reduce((a, b) => a + b, 0),
+        active: tourMap.ACTIVE || 0,
+        draft: tourMap.DRAFT || 0,
+        paused: tourMap.PAUSED || 0,
+        archived: tourMap.ARCHIVED || 0,
+      },
+      bookings: {
+        total: Object.values(bookingMap).reduce((a, b) => a + b, 0),
+        pending: bookingMap.PENDING || 0,
+        confirmed: bookingMap.CONFIRMED || 0,
+        completed: bookingMap.COMPLETED || 0,
+        cancelled: bookingMap.CANCELLED || 0,
+      },
+    },
+  });
+});
+
+exports.getSupplierTours = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { page = 1, limit = 20, status } = req.query;
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { id },
+    select: { userId: true },
+  });
+
+  if (!supplierProfile) {
+    return next(new AppError('Supplier not found', 404));
+  }
+
+  const where = { supplierId: supplierProfile.userId };
+  if (status) where.status = status;
+
+  const [tours, totalCount] = await Promise.all([
+    prisma.tour.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: parseInt(limit),
+      select: {
+        id: true,
+        title: true,
+        coverPhoto: true,
+        slug: true,
+        status: true,
+        totalBookings: true,
+        averageRating: true,
+        reviewCount: true,
+        city: true,
+        country: true,
+        createdAt: true,
+      },
+    }),
+    prisma.tour.count({ where }),
+  ]);
+
+  const totalPages = Math.ceil(totalCount / parseInt(limit));
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      tours,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages,
+        totalCount,
+        hasNextPage: parseInt(page) < totalPages,
+        limit: parseInt(limit),
+      },
+    },
   });
 });

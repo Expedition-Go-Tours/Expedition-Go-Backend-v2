@@ -713,6 +713,8 @@ router.patch('/admin/:id/suspend', restrictTo('admin'), supplierController.suspe
  *       400:
  *         description: Supplier not in APPROVED status
  */
+router.get('/admin/:id/overview', restrictTo('admin'), supplierController.getSupplierOverview);
+router.get('/admin/:id/tours', restrictTo('admin'), supplierController.getSupplierTours);
 router.patch('/admin/:id/activate', restrictTo('admin'), supplierController.activateSupplier);
 
 module.exports = router;
