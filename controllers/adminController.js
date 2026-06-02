@@ -128,11 +128,16 @@ exports.getOverview = catchAsync(async (req, res, next) => {
         t.id,
         t.title,
         t."coverPhoto",
-        t."totalBookings",
+        COALESCE(b.booking_count, 0)::int AS "totalBookings",
         t."totalRevenue",
         t."averageRating",
         COALESCE(r.review_count, 0)::int AS "reviewCount"
       FROM "Tour" t
+      LEFT JOIN (
+        SELECT "tourId", COUNT(*)::int AS booking_count
+        FROM "Booking" WHERE "paymentStatus" = 'SUCCEEDED'
+        GROUP BY "tourId"
+      ) b ON b."tourId" = t.id
       LEFT JOIN (
         SELECT "tourId", COUNT(*)::int AS review_count
         FROM "Review" WHERE status = 'APPROVED'
