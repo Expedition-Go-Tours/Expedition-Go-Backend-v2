@@ -557,7 +557,6 @@ exports.exportPayouts = catchAsync(async (req, res, next) => {
     let methodDetail = '';
     if (p.payoutMethod) {
       if (p.payoutMethod.type === 'BANK_TRANSFER') methodDetail = p.payoutMethod.bankName || '';
-      else if (p.payoutMethod.type === 'MOBILE_MONEY') methodDetail = p.payoutMethod.mobileProvider || '';
       else if (p.payoutMethod.type === 'PAYPAL') methodDetail = p.payoutMethod.paypalEmail || '';
     }
 

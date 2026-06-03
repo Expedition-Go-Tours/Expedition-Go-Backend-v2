@@ -42,7 +42,6 @@ enum PayoutStatus {
 
 enum PayoutMethodType {
   BANK_TRANSFER
-  MOBILE_MONEY
   PAYPAL
 }
 

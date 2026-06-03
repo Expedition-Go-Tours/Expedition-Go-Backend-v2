@@ -1,6 +1,6 @@
 /**
  * Payout Method Controller - Production Ready
- * Handles supplier payout method management (bank, mobile money, PayPal)
+ * Handles supplier payout method management (bank, PayPal)
  *
  * @author Tour Platform Team
  * @version 1.0.0
@@ -57,9 +57,6 @@ exports.addMethod = catchAsync(async (req, res, next) => {
     iban,
     sortCode,
     branchCode,
-    // Mobile Money
-    mobileProvider,
-    mobileNumber,
     // PayPal
     paypalEmail,
   } = req.body;
@@ -71,9 +68,6 @@ exports.addMethod = catchAsync(async (req, res, next) => {
   // Validate required fields per type
   if (type === 'BANK_TRANSFER' && (!accountName || !accountNumber)) {
     return next(new AppError('Bank transfer requires accountName and accountNumber', 400));
-  }
-  if (type === 'MOBILE_MONEY' && (!mobileProvider || !mobileNumber)) {
-    return next(new AppError('Mobile money requires mobileProvider and mobileNumber', 400));
   }
   if (type === 'PAYPAL' && !paypalEmail) {
     return next(new AppError('PayPal requires paypalEmail', 400));
@@ -99,8 +93,6 @@ exports.addMethod = catchAsync(async (req, res, next) => {
       iban,
       sortCode,
       branchCode,
-      mobileProvider,
-      mobileNumber,
       paypalEmail,
     },
     include: {
@@ -162,8 +154,6 @@ exports.updateMethod = catchAsync(async (req, res, next) => {
     iban,
     sortCode,
     branchCode,
-    mobileProvider,
-    mobileNumber,
     paypalEmail,
     isDefault,
   } = req.body;
@@ -190,8 +180,6 @@ exports.updateMethod = catchAsync(async (req, res, next) => {
       ...(iban !== undefined && { iban }),
       ...(sortCode !== undefined && { sortCode }),
       ...(branchCode !== undefined && { branchCode }),
-      ...(mobileProvider !== undefined && { mobileProvider }),
-      ...(mobileNumber !== undefined && { mobileNumber }),
       ...(paypalEmail !== undefined && { paypalEmail }),
       ...(isDefault !== undefined && { isDefault }),
       // Reset verification when details change
