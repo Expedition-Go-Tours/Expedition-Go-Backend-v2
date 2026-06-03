@@ -56,8 +56,67 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
       }
     }
   });
+
+  if (existing) return existing;
+
+  const recipient = await prisma.user.findUnique({
+    where: { id: recipientId },
+    select: { id: true, name: true },
+  });
+
+  if (!recipient) throw Object.assign(new Error('Recipient not found'), { statusCode: 404 });
+
+  const conversation = await prisma.conversation.create({
+    data: {
+      type,
+      title: recipient.name,
+      participants: {
+        create: [
+          { userId: senderId },
+          { userId: recipientId },
+        ]
+      }
+    },
+    include: {
+      participants: {
+        include: { user: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, roles: true, firebaseUid: true } } }
+      },
+      messages: {
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        include: { sender: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, firebaseUid: true, roles: true } } }
+      }
+    }
+  });
+
+  return conversation;
+}
+
+async function getConversations(userId) {
+  userId = await resolveChatUserId(userId);
+
+  const participants = await prisma.conversationParticipant.findMany({
+    where: { userId },
+    include: {
+      conversation: {
+        include: {
+          participants: {
+            include: { user: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, roles: true, firebaseUid: true } } }
+          },
+          messages: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            include: { sender: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, firebaseUid: true, roles: true } } }
+          }
+        }
+      }
+    },
+    orderBy: { conversation: { updatedAt: 'desc' } }
+  });
+
   return participants.map(p => {
     const lastMessage = p.conversation.messages[0];
+    const hasUnread = lastMessage && lastMessage.createdAt > p.lastReadAt;
     return {
       ...p.conversation,
       unreadCount: hasUnread ? 1 : 0,
@@ -130,7 +189,7 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
       attachmentType: attachment?.type || null,
     },
     include: {
-      sender: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, firebaseUid: true } }
+      sender: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, firebaseUid: true, roles: true } }
     }
   });
 
