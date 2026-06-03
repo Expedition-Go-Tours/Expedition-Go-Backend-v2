@@ -661,14 +661,24 @@ exports.updateTour = catchAsync(async (req, res, next) => {
 
   // Handle uploaded photos from multer
   const uploadedPhotos = (req.files || []).map(f => f.path);
-  if (uploadedPhotos.length > 0 || req.body.existingPhotos) {
+  const hasExistingPhotos = Array.isArray(req.body.existingPhotos);
+  if (uploadedPhotos.length > 0 || hasExistingPhotos) {
     // existingPhotos is already parsed by parseJsonFields inside validateTourData
-    const keptPhotos = req.body.existingPhotos || (existingTour.photos || []);
+    const keptPhotos = hasExistingPhotos ? req.body.existingPhotos : (existingTour.photos || []);
     const newPhotos = [...keptPhotos, ...uploadedPhotos];
+
+    // Normalize Cloudinary URLs for comparison by extracting just the path (folder+filename)
+    const normalize = (url) => {
+      const m = url.match(/\/upload\/.*?\/(.+)$/);
+      return m ? m[1] : url;
+    };
 
     // Delete removed photos from Cloudinary
     const oldPhotos = existingTour.photos || [];
-    const removed = oldPhotos.filter(url => !newPhotos.includes(url));
+    const removed = oldPhotos.filter(url => {
+      const normalizedOld = normalize(url);
+      return !newPhotos.some(nu => normalize(nu) === normalizedOld);
+    });
     await Promise.all(removed.map(url => deleteCloudinaryImage(url)));
 
     updateData.photos = newPhotos;

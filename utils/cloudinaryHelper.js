@@ -3,27 +3,42 @@ const cloudinary = require('cloudinary').v2;
 function extractPublicIdFromUrl(photoUrl) {
   if (typeof photoUrl !== 'string' || photoUrl.length === 0) return null;
 
-  // Typical Cloudinary URL shape:
-  // https://res.cloudinary.com/<cloud_name>/image/upload/v169.../folder/file.ext
   const uploadMarker = '/upload/';
   const markerIndex = photoUrl.indexOf(uploadMarker);
   if (markerIndex === -1) return null;
 
   const afterUpload = photoUrl.slice(markerIndex + uploadMarker.length);
 
-  // afterUpload example: v1699999999/folder/file.jpg
+  // Cloudinary URL after /upload/ can be:
+  //   w_1400,q_80,f_auto/v123/user-photos/abc.jpg  (with transformations)
+  //   v123/user-photos/abc.jpg                       (no transformations)
+  //   user-photos/abc.jpg                            (no version)
+  // Skip transformation segments (contain underscores and are NOT the version)
+  // then skip the optional version segment (v<digits>).
   const parts = afterUpload.split('/');
 
-  if (parts.length < 2) return null;
+  // Find the first segment that is NOT a transformation or version
+  let publicIdStart = 0;
+  for (let i = 0; i < parts.length; i++) {
+    const seg = parts[i];
+    if (/^v\d+$/i.test(seg)) {
+      // skip version segment
+      publicIdStart = i + 1;
+      break;
+    }
+    // If this segment doesn't contain an underscore, it's the start of the public ID
+    if (!seg.includes('_')) {
+      publicIdStart = i;
+      break;
+    }
+    // Otherwise, it's a transformation segment — skip it
+  }
 
-  // If first segment is a version (v<digits>), drop it.
-  const first = parts[0];
-  const isVersion = /^v\d+$/i.test(first);
-  const publicIdParts = isVersion ? parts.slice(1) : parts;
+  const publicIdParts = parts.slice(publicIdStart);
 
   if (publicIdParts.length < 2) return null;
 
-  // Join and strip extension from last segment.
+  // Strip extension from last segment
   const last = publicIdParts[publicIdParts.length - 1];
   const lastWithoutExt = last.replace(/\.[^/.]+$/, '');
 
