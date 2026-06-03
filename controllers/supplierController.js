@@ -530,7 +530,7 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
   // Notify supplier
   enqueueNotification({
     userId: supplierProfile.user.id,
-    type: 'SUPPLIER_STATUS_CHANGE',
+    type: 'SUPPLIER_APPROVED',
     title: 'Account Activated',
     message: 'Your supplier account has been activated. You can now start receiving bookings and managing your tours.',
     data: { supplierId: id, status: 'ACTIVE' },

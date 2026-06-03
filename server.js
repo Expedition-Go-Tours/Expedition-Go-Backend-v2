@@ -71,9 +71,17 @@ process.on('SIGINT', () => {
 
     server = http.createServer(app);
 
-    const allowedOrigins = process.env.ALLOWED_ORIGINS
-      ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
-      : ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5174', 'http://127.0.0.1:5174'];
+    const allowedOrigins = [
+      ...new Set([
+        ...(process.env.ALLOWED_ORIGINS
+          ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
+          : []),
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+        'http://localhost:5174',
+        'http://127.0.0.1:5174',
+      ]),
+    ];
 
     io = new Server(server, {
       cors: {
