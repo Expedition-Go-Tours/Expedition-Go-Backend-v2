@@ -2,7 +2,36 @@ const prisma = require('./prismaClient');
 const { enqueueNotification } = require('./queue');
 const { notifyAdmin } = require('./adminNotificationService');
 
+let _sharedAdminId = null;
+
+async function getSharedAdminId() {
+  if (!_sharedAdminId) {
+    const admin = await prisma.user.findFirst({
+      where: { roles: { has: 'admin' } },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true }
+    });
+    _sharedAdminId = admin?.id || null;
+  }
+  return _sharedAdminId;
+}
+
+async function resolveChatUserId(userId) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { roles: true }
+  });
+  if (user?.roles?.includes('admin')) {
+    const sharedId = await getSharedAdminId();
+    return sharedId || userId;
+  }
+  return userId;
+}
+
 async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_ADMIN') {
+  senderId = await resolveChatUserId(senderId);
+  recipientId = await resolveChatUserId(recipientId);
+
   const existing = await prisma.conversation.findFirst({
     where: {
       type,
@@ -18,12 +47,12 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
     },
     include: {
       participants: {
-        include: { user: { select: { id: true, name: true, photoURL: true, roles: true } } }
+        include: { user: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, roles: true, firebaseUid: true } } }
       },
       messages: {
         orderBy: { createdAt: 'desc' },
         take: 1,
-        include: { sender: { select: { id: true, name: true, photoURL: true } } }
+        include: { sender: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, firebaseUid: true } } }
       }
     }
   });
@@ -50,12 +79,12 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
     },
     include: {
       participants: {
-        include: { user: { select: { id: true, name: true, photoURL: true, roles: true } } }
+        include: { user: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, roles: true, firebaseUid: true } } }
       },
       messages: {
         orderBy: { createdAt: 'desc' },
         take: 1,
-        include: { sender: { select: { id: true, name: true, photoURL: true } } }
+        include: { sender: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, firebaseUid: true } } }
       }
     }
   });
@@ -64,18 +93,20 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
 }
 
 async function getConversations(userId) {
+  userId = await resolveChatUserId(userId);
+
   const participants = await prisma.conversationParticipant.findMany({
     where: { userId },
     include: {
       conversation: {
         include: {
           participants: {
-            include: { user: { select: { id: true, name: true, photoURL: true, roles: true } } }
+            include: { user: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, roles: true, firebaseUid: true } } }
           },
           messages: {
             orderBy: { createdAt: 'desc' },
             take: 1,
-            include: { sender: { select: { id: true, name: true, photoURL: true } } }
+            include: { sender: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, firebaseUid: true } } }
           }
         }
       }
@@ -92,6 +123,8 @@ async function getConversations(userId) {
 }
 
 async function getMessages(conversationId, userId, cursor, limit = 50) {
+  userId = await resolveChatUserId(userId);
+
   const participant = await prisma.conversationParticipant.findUnique({
     where: { conversationId_userId: { conversationId, userId } }
   });
@@ -108,7 +141,7 @@ async function getMessages(conversationId, userId, cursor, limit = 50) {
     orderBy: { createdAt: 'desc' },
     take: limit + 1,
     include: {
-      sender: { select: { id: true, name: true, photoURL: true } }
+      sender: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, firebaseUid: true } }
     }
   });
 
@@ -123,6 +156,9 @@ async function getMessages(conversationId, userId, cursor, limit = 50) {
 }
 
 async function sendMessage(conversationId, senderId, content, attachment = null) {
+  const originalSenderId = senderId;
+  senderId = await resolveChatUserId(senderId);
+
   const participant = await prisma.conversationParticipant.findUnique({
     where: { conversationId_userId: { conversationId, userId: senderId } },
     include: {
@@ -149,7 +185,7 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
       attachmentType: attachment?.type || null,
     },
     include: {
-      sender: { select: { id: true, name: true, photoURL: true } }
+      sender: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, firebaseUid: true } }
     }
   });
 
@@ -163,7 +199,9 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
     data: { lastReadAt: new Date() }
   });
 
-  const recipientIds = participant.conversation.participants.map(p => p.userId);
+  const recipientIds = participant.conversation.participants
+    .map(p => p.userId)
+    .filter(id => id !== senderId);
   for (const recipientId of recipientIds) {
     enqueueNotification({
       userId: recipientId,
@@ -175,7 +213,7 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
   }
 
   const sender = await prisma.user.findUnique({
-    where: { id: senderId },
+    where: { id: originalSenderId },
     select: { roles: true, name: true }
   });
 
@@ -192,6 +230,8 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
 }
 
 async function markAsRead(conversationId, userId) {
+  userId = await resolveChatUserId(userId);
+
   const participant = await prisma.conversationParticipant.findUnique({
     where: { conversationId_userId: { conversationId, userId } }
   });
@@ -207,6 +247,8 @@ async function markAsRead(conversationId, userId) {
 }
 
 async function getUnreadCount(userId) {
+  userId = await resolveChatUserId(userId);
+
   const participants = await prisma.conversationParticipant.findMany({
     where: { userId },
     include: {
@@ -241,4 +283,6 @@ module.exports = {
   sendMessage,
   markAsRead,
   getUnreadCount,
+  resolveChatUserId,
+  getSharedAdminId,
 };

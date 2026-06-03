@@ -75,8 +75,9 @@ exports.sendMessage = catchAsync(async (req, res) => {
 
   const io = req.app.get('io');
   if (io) {
+    const effectiveUserId = await chatService.resolveChatUserId(req.user.id);
     const participant = await prisma.conversationParticipant.findFirst({
-      where: { conversationId: id, userId: { not: req.user.id } },
+      where: { conversationId: id, userId: { not: effectiveUserId } },
       select: { userId: true }
     });
     if (participant) {
@@ -97,8 +98,9 @@ exports.markAsRead = catchAsync(async (req, res) => {
 
   const io = req.app.get('io');
   if (io) {
+    const effectiveUserId = await chatService.resolveChatUserId(req.user.id);
     const participant = await prisma.conversationParticipant.findFirst({
-      where: { conversationId: id, userId: { not: req.user.id } },
+      where: { conversationId: id, userId: { not: effectiveUserId } },
       select: { userId: true }
     });
     if (participant) {

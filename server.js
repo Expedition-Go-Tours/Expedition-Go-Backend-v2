@@ -185,8 +185,12 @@ process.on('SIGINT', () => {
           const { conversationId } = payload || {};
           if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
 
+          const effectiveUserId = role === 'admin'
+            ? (await chatService.getSharedAdminId()) || userId
+            : userId;
+
           const participant = await prisma.conversationParticipant.findUnique({
-            where: { conversationId_userId: { conversationId, userId } }
+            where: { conversationId_userId: { conversationId, userId: effectiveUserId } }
           });
 
           if (!participant) return ack?.({ status: 'error', message: 'Access denied' });
@@ -219,13 +223,17 @@ process.on('SIGINT', () => {
           if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
           if (!content && !attachmentUrl) return ack?.({ status: 'error', message: 'content or attachment required' });
 
+          const effectiveUserId = role === 'admin'
+            ? (await chatService.getSharedAdminId()) || userId
+            : userId;
+
           const participant = await prisma.conversationParticipant.findUnique({
-            where: { conversationId_userId: { conversationId, userId } }
+            where: { conversationId_userId: { conversationId, userId: effectiveUserId } }
           });
 
           if (!participant) return ack?.({ status: 'error', message: 'Access denied' });
 
-          const message = await chatService.sendMessage(conversationId, userId, content || '', {
+          const message = await chatService.sendMessage(conversationId, effectiveUserId, content || '', {
             url: attachmentUrl,
             type: attachmentType,
           });
@@ -236,7 +244,7 @@ process.on('SIGINT', () => {
           });
 
           const recipient = await prisma.conversationParticipant.findFirst({
-            where: { conversationId, userId: { not: userId } },
+            where: { conversationId, userId: { not: effectiveUserId } },
             select: { userId: true }
           });
           if (recipient) {
@@ -258,15 +266,19 @@ process.on('SIGINT', () => {
           const { conversationId, isTyping } = payload || {};
           if (!conversationId) return;
 
+          const effectiveUserId = role === 'admin'
+            ? (await chatService.getSharedAdminId()) || userId
+            : userId;
+
           const participant = await prisma.conversationParticipant.findUnique({
-            where: { conversationId_userId: { conversationId, userId } }
+            where: { conversationId_userId: { conversationId, userId: effectiveUserId } }
           });
 
           if (!participant) return;
 
           socket.to(`conversation:${conversationId}`).emit('chat:typing', {
             conversationId,
-            userId,
+            userId: effectiveUserId,
             isTyping: !!isTyping,
           });
         } catch (err) {
@@ -279,11 +291,15 @@ process.on('SIGINT', () => {
           const { conversationId } = payload || {};
           if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
 
-          await chatService.markAsRead(conversationId, userId);
+          const effectiveUserId = role === 'admin'
+            ? (await chatService.getSharedAdminId()) || userId
+            : userId;
+
+          await chatService.markAsRead(conversationId, effectiveUserId);
 
           socket.to(`conversation:${conversationId}`).emit('chat:mark-read', {
             conversationId,
-            readBy: userId,
+            readBy: effectiveUserId,
             readAt: new Date().toISOString(),
           });
 

@@ -35,12 +35,12 @@ app.use(helmet());
 app.use(hpp());
 app.use(compression());
 
-// Global rate limit: 100 requests per 15 min per IP
+// Global rate limit: 10 requests per 2 hours per IP
 app.use(
   '/api',
   rateLimit({
-    max: 100,
-    windowMs: 15 * 60 * 1000,
+    max: 200,
+    windowMs: 2 * 60 * 60 * 1000,
     standardHeaders: true,
     legacyHeaders: false,
     message: {
