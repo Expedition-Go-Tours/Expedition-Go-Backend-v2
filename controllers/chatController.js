@@ -77,6 +77,10 @@ exports.sendMessage = catchAsync(async (req, res) => {
         message,
       });
     }
+    io.to(`conversation:${id}`).emit('chat:message', {
+      conversationId: id,
+      message,
+    });
   }
 
   res.status(201).json({ status: 'success', data: { message } });
