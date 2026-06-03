@@ -111,6 +111,10 @@ process.on('SIGINT', () => {
 
       if (role === 'admin') { // This needs server-side validation
         socket.join('admin-room');
+        const chatService = require('./utils/chatService');
+        chatService.getSharedAdminId().then(sharedId => {
+          if (sharedId) socket.join(`user:${sharedId}`);
+        });
       }
 
       if (userId) {
