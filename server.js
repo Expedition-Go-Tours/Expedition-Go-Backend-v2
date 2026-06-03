@@ -332,6 +332,38 @@ process.on('SIGINT', () => {
         }
       });
 
+      socket.on('chat:delivered', async (payload) => {
+        try {
+          const { conversationId, messageIds } = payload || {};
+          if (!conversationId || !messageIds?.length) return;
+
+          let effectiveUserId = userId;
+          if (role === 'admin') {
+            effectiveUserId = (await chatService.getSharedAdminId()) || userId;
+          }
+
+          socket.to(`conversation:${conversationId}`).emit('chat:delivered', {
+            conversationId,
+            messageIds,
+            deliveredTo: effectiveUserId,
+          });
+
+          const participant = await prisma.conversationParticipant.findFirst({
+            where: { conversationId, userId: { not: effectiveUserId } },
+            select: { userId: true }
+          });
+          if (participant) {
+            io.to(`user:${participant.userId}`).emit('chat:delivered', {
+              conversationId,
+              messageIds,
+              deliveredTo: effectiveUserId,
+            });
+          }
+        } catch (err) {
+          console.error('Socket chat:delivered error:', err);
+        }
+      });
+
       socket.on('error', (err) => {
         console.warn('Socket error:', socket.id, err.message);
       });
