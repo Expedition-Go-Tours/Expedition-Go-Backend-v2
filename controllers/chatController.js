@@ -117,3 +117,16 @@ exports.getUnreadCount = catchAsync(async (req, res) => {
   const result = await chatService.getUnreadCount(req.user.id);
   res.json({ status: 'success', data: result });
 });
+
+exports.uploadImage = catchAsync(async (req, res) => {
+  if (!req.file) {
+    throw new AppError('No file provided', 400);
+  }
+  res.json({
+    status: 'success',
+    data: {
+      url: req.file.path,
+      type: 'image',
+    },
+  });
+});

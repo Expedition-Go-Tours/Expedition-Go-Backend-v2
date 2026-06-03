@@ -31,3 +31,6 @@ exports.uploadSupplierDocuments = wrapMulter(upload.fields([
   { name: 'idDocument', maxCount: 1 },
   { name: 'licenses', maxCount: 5 }
 ]));
+
+// Chat image upload
+exports.uploadChatImage = wrapMulter(upload.single('file'));
