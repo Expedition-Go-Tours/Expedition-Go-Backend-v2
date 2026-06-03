@@ -29,7 +29,7 @@ try {
     cloudinary,
     params: {
       folder: 'user-photos',
-      allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
+      allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'avif'],
     },
   });
 
