@@ -127,6 +127,7 @@ const authRoutes = require('./routes/authRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const payoutRoutes = require('./routes/payoutRoutes');
 const payoutMethodRoutes = require('./routes/payoutMethodRoutes');
+const chatRoutes = require('./routes/chatRoutes');
 
 app.use('/api/users', userRoutes);
 app.use('/api/tours', tourRoutes);
@@ -139,6 +140,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/chat', chatRoutes);
 
 
 if (swaggerSpec) {

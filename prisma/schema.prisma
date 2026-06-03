@@ -74,6 +74,7 @@ enum NotificationType {
   PAYOUT_PROCESSED
   PAYOUT_APPROVED
   SYSTEM_ALERT
+  NEW_MESSAGE
 }
 
 enum AdminNotificationType {
@@ -136,6 +137,8 @@ model User {
   reviews      Review[]
   notifications Notification[]
   cartItems    CartItem[]
+  chatParticipants ConversationParticipant[]
+  messages     Message[]
   
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -488,6 +491,58 @@ model CartItem {
   @@unique([customerId, tourId, selectedDate, selectedTime])
   @@index([customerId])
   @@index([expiresAt])
+}
+
+// ================================
+// CHAT MODELS
+// ================================
+
+enum ConversationType {
+  SUPPLIER_ADMIN
+  USER_SUPPORT
+}
+
+model Conversation {
+  id           String               @id @default(cuid())
+  type         ConversationType     @default(SUPPLIER_ADMIN)
+  title        String?              // Auto-generated for 1-on-1: other participant's name
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@index([updatedAt])
+}
+
+model ConversationParticipant {
+  id             String       @id @default(cuid())
+  conversationId String
+  userId         String
+  joinedAt       DateTime     @default(now())
+  lastReadAt     DateTime     @default(now())
+
+  conversation  Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id             String        @id @default(cuid())
+  conversationId String
+  senderId       String
+  content        String
+  attachmentUrl  String?       // Cloudinary URL
+  attachmentType String?       // "image" | "document"
+  editedAt       DateTime?
+  createdAt      DateTime      @default(now())
+
+  conversation  Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender        User          @relation(fields: [senderId], references: [id])
+
+  @@index([conversationId, createdAt])
 }
 
 model Notification {

@@ -177,6 +177,123 @@ process.on('SIGINT', () => {
         }
       });
 
+      // ---- Chat socket handlers ----
+      const chatService = require('./utils/chatService');
+
+      socket.on('chat:join', async (payload, ack) => {
+        try {
+          const { conversationId } = payload || {};
+          if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
+
+          const participant = await prisma.conversationParticipant.findUnique({
+            where: { conversationId_userId: { conversationId, userId } }
+          });
+
+          if (!participant) return ack?.({ status: 'error', message: 'Access denied' });
+
+          socket.join(`conversation:${conversationId}`);
+          ack?.({ status: 'success' });
+        } catch (err) {
+          console.error('Socket chat:join error:', err);
+          ack?.({ status: 'error', message: 'Internal server error' });
+        }
+      });
+
+      socket.on('chat:leave', async (payload, ack) => {
+        try {
+          const { conversationId } = payload || {};
+          if (conversationId) {
+            socket.leave(`conversation:${conversationId}`);
+          }
+          ack?.({ status: 'success' });
+        } catch (err) {
+          console.error('Socket chat:leave error:', err);
+          ack?.({ status: 'error', message: 'Internal server error' });
+        }
+      });
+
+      socket.on('chat:message', async (payload, ack) => {
+        try {
+          const { conversationId, content, attachmentUrl, attachmentType } = payload || {};
+
+          if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
+          if (!content && !attachmentUrl) return ack?.({ status: 'error', message: 'content or attachment required' });
+
+          const participant = await prisma.conversationParticipant.findUnique({
+            where: { conversationId_userId: { conversationId, userId } }
+          });
+
+          if (!participant) return ack?.({ status: 'error', message: 'Access denied' });
+
+          const message = await chatService.sendMessage(conversationId, userId, content || '', {
+            url: attachmentUrl,
+            type: attachmentType,
+          });
+
+          io.to(`conversation:${conversationId}`).emit('chat:message', {
+            conversationId,
+            message,
+          });
+
+          const recipient = await prisma.conversationParticipant.findFirst({
+            where: { conversationId, userId: { not: userId } },
+            select: { userId: true }
+          });
+          if (recipient) {
+            io.to(`user:${recipient.userId}`).emit('chat:message', {
+              conversationId,
+              message,
+            });
+          }
+
+          ack?.({ status: 'success', data: { message } });
+        } catch (err) {
+          console.error('Socket chat:message error:', err);
+          ack?.({ status: 'error', message: 'Internal server error' });
+        }
+      });
+
+      socket.on('chat:typing', async (payload) => {
+        try {
+          const { conversationId, isTyping } = payload || {};
+          if (!conversationId) return;
+
+          const participant = await prisma.conversationParticipant.findUnique({
+            where: { conversationId_userId: { conversationId, userId } }
+          });
+
+          if (!participant) return;
+
+          socket.to(`conversation:${conversationId}`).emit('chat:typing', {
+            conversationId,
+            userId,
+            isTyping: !!isTyping,
+          });
+        } catch (err) {
+          console.error('Socket chat:typing error:', err);
+        }
+      });
+
+      socket.on('chat:mark-read', async (payload, ack) => {
+        try {
+          const { conversationId } = payload || {};
+          if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
+
+          await chatService.markAsRead(conversationId, userId);
+
+          socket.to(`conversation:${conversationId}`).emit('chat:mark-read', {
+            conversationId,
+            readBy: userId,
+            readAt: new Date().toISOString(),
+          });
+
+          ack?.({ status: 'success' });
+        } catch (err) {
+          console.error('Socket chat:mark-read error:', err);
+          ack?.({ status: 'error', message: 'Internal server error' });
+        }
+      });
+
       socket.on('error', (err) => {
         console.warn('Socket error:', socket.id, err.message);
       });
