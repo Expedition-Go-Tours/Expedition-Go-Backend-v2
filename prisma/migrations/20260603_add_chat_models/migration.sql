@@ -4,6 +4,9 @@ CREATE TYPE "ConversationType" AS ENUM ('SUPPLIER_ADMIN', 'USER_SUPPORT');
 -- AlterEnum
 ALTER TYPE "NotificationType" ADD VALUE 'NEW_MESSAGE';
 
+-- AlterEnum
+ALTER TYPE "AdminNotificationType" ADD VALUE 'NEW_MESSAGE';
+
 -- CreateTable
 CREATE TABLE "Conversation" (
     "id" TEXT NOT NULL,

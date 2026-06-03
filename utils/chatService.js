@@ -1,5 +1,6 @@
 const prisma = require('./prismaClient');
 const { enqueueNotification } = require('./queue');
+const { notifyAdmin } = require('./adminNotificationService');
 
 async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_ADMIN') {
   const existing = await prisma.conversation.findFirst({
@@ -171,6 +172,20 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
       message: content.length > 100 ? content.slice(0, 100) + '...' : content,
       data: { conversationId, senderId }
     }).catch(() => {});
+  }
+
+  const sender = await prisma.user.findUnique({
+    where: { id: senderId },
+    select: { roles: true, name: true }
+  });
+
+  if (sender && sender.roles.includes('supplier')) {
+    notifyAdmin({
+      type: 'NEW_MESSAGE',
+      title: `New message from ${sender.name}`,
+      message: content.length > 100 ? content.slice(0, 100) + '...' : content,
+      data: { conversationId, senderId, senderName: sender.name }
+    });
   }
 
   return message;

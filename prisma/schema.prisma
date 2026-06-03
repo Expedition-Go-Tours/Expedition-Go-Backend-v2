@@ -83,6 +83,7 @@ enum AdminNotificationType {
   REVIEW_NEEDS_MODERATION
   PAYOUT_NEEDS_APPROVAL
   SYSTEM_ALERT
+  NEW_MESSAGE
 }
 
 enum ReviewStatus {
