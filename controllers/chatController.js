@@ -115,6 +115,58 @@ exports.getUnreadCount = catchAsync(async (req, res) => {
   res.json({ status: 'success', data: result });
 });
 
+exports.updateMessage = catchAsync(async (req, res) => {
+  const { id, messageId } = req.params;
+  const { content } = req.body;
+
+  if (!content) {
+    throw new AppError('Message content is required', 400);
+  }
+
+  const message = await chatService.updateMessage(id, messageId, req.user.id, content);
+
+  const io = req.app.get('io');
+  if (io) {
+    io.to(`conversation:${id}`).emit('chat:message-edited', {
+      conversationId: id,
+      messageId: message.id,
+      content: message.content,
+      editedAt: message.editedAt,
+    });
+  }
+
+  res.json({ status: 'success', data: { message } });
+});
+
+exports.deleteMessage = catchAsync(async (req, res) => {
+  const { id, messageId } = req.params;
+
+  await chatService.deleteMessage(id, messageId, req.user.id);
+
+  const io = req.app.get('io');
+  if (io) {
+    io.to(`conversation:${id}`).emit('chat:message-deleted', {
+      conversationId: id,
+      messageId,
+    });
+  }
+
+  res.json({ status: 'success', data: null });
+});
+
+exports.deleteConversation = catchAsync(async (req, res) => {
+  const { id } = req.params;
+
+  await chatService.deleteConversation(id, req.user.id);
+
+  const io = req.app.get('io');
+  if (io) {
+    io.emit('chat:conversation-deleted', { conversationId: id });
+  }
+
+  res.json({ status: 'success', data: null });
+});
+
 exports.uploadImage = catchAsync(async (req, res) => {
   if (!req.file) {
     throw new AppError('No file provided', 400);

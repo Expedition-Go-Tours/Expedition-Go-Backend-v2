@@ -13,5 +13,8 @@ router.post('/upload', uploadChatImage, chatController.uploadImage);
 router.get('/conversations/:id/messages', chatController.getMessages);
 router.post('/conversations/:id/messages', chatController.sendMessage);
 router.patch('/conversations/:id/read', chatController.markAsRead);
+router.put('/conversations/:id/messages/:messageId', chatController.updateMessage);
+router.delete('/conversations/:id/messages/:messageId', chatController.deleteMessage);
+router.delete('/conversations/:id', chatController.deleteConversation);
 
 module.exports = router;

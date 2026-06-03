@@ -250,6 +250,52 @@ async function markAsRead(conversationId, userId) {
   return { lastReadAt: new Date() };
 }
 
+async function updateMessage(conversationId, messageId, userId, content) {
+  const resolvedUserId = await resolveChatUserId(userId);
+
+  const message = await prisma.message.findFirst({
+    where: { id: messageId, conversationId },
+  });
+
+  if (!message) throw Object.assign(new Error('Message not found'), { statusCode: 404 });
+  if (message.senderId !== resolvedUserId) throw Object.assign(new Error('You can only edit your own messages'), { statusCode: 403 });
+
+  const updated = await prisma.message.update({
+    where: { id: messageId },
+    data: { content, editedAt: new Date() },
+    include: {
+      sender: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, firebaseUid: true, roles: true } }
+    }
+  });
+
+  return updated;
+}
+
+async function deleteMessage(conversationId, messageId, userId) {
+  const resolvedUserId = await resolveChatUserId(userId);
+
+  const message = await prisma.message.findFirst({
+    where: { id: messageId, conversationId },
+  });
+
+  if (!message) throw Object.assign(new Error('Message not found'), { statusCode: 404 });
+  if (message.senderId !== resolvedUserId) throw Object.assign(new Error('You can only delete your own messages'), { statusCode: 403 });
+
+  await prisma.message.delete({ where: { id: messageId } });
+}
+
+async function deleteConversation(conversationId, userId) {
+  const resolvedUserId = await resolveChatUserId(userId);
+
+  const participant = await prisma.conversationParticipant.findFirst({
+    where: { conversationId, userId: resolvedUserId },
+  });
+
+  if (!participant) throw Object.assign(new Error('Conversation not found'), { statusCode: 404 });
+
+  await prisma.conversation.delete({ where: { id: conversationId } });
+}
+
 async function getUnreadCount(userId) {
   userId = await resolveChatUserId(userId);
 
@@ -289,4 +335,7 @@ module.exports = {
   getUnreadCount,
   resolveChatUserId,
   getSharedAdminId,
+  updateMessage,
+  deleteMessage,
+  deleteConversation,
 };
