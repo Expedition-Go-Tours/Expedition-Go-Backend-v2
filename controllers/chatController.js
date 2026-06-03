@@ -5,16 +5,7 @@ const chatService = require('../utils/chatService');
 
 exports.getConversations = catchAsync(async (req, res) => {
   const conversations = await chatService.getConversations(req.user.id);
-
-  const withUnread = await Promise.all(conversations.map(async (conv) => {
-    const lastMsg = conv.messages[0];
-    const unread = lastMsg && lastMsg.senderId !== req.user.id
-      ? 1
-      : 0;
-    return { ...conv, unreadCount: unread };
-  }));
-
-  res.json({ status: 'success', data: { conversations: withUnread } });
+  res.json({ status: 'success', data: { conversations } });
 });
 
 exports.getOrCreateConversation = catchAsync(async (req, res) => {

@@ -114,12 +114,16 @@ async function getConversations(userId) {
     orderBy: { conversation: { updatedAt: 'desc' } }
   });
 
-  return participants.map(p => ({
-    ...p.conversation,
-    unreadCount: 0,
-    lastReadAt: p.lastReadAt,
-    _participant: { id: p.id, lastReadAt: p.lastReadAt },
-  }));
+  return participants.map(p => {
+    const lastMessage = p.conversation.messages[0];
+    const hasUnread = lastMessage && lastMessage.createdAt > p.lastReadAt;
+    return {
+      ...p.conversation,
+      unreadCount: hasUnread ? 1 : 0,
+      lastReadAt: p.lastReadAt,
+      _participant: { id: p.id, lastReadAt: p.lastReadAt },
+    };
+  });
 }
 
 async function getMessages(conversationId, userId, cursor, limit = 50) {
