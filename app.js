@@ -124,7 +124,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.get('/debug-sentry', (_req, _res) => {
+app.get('/debug-sentry', () => {
   throw new Error('Sentry test error');
 });
 
