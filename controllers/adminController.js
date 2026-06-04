@@ -1027,3 +1027,26 @@ exports.getTodayBookings = catchAsync(async (req, res, next) => {
     data: { bookings },
   });
 });
+
+exports.searchUsers = catchAsync(async (req, res) => {
+  const { q = "", role } = req.query;
+
+  const where = {
+    OR: [
+      { name: { contains: q, mode: 'insensitive' } },
+      { email: { contains: q, mode: 'insensitive' } },
+    ],
+  };
+
+  if (role) {
+    where.roles = { has: role };
+  }
+
+  const users = await prisma.user.findMany({
+    where,
+    select: { id: true, name: true, email: true, photoURL: true, roles: true },
+    take: 20,
+  });
+
+  res.status(200).json({ status: 'success', data: { users } });
+});

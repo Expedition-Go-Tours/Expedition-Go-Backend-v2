@@ -464,4 +464,29 @@ router.get('/users/new', adminController.getRecentSignups);
  */
 router.get('/bookings/today', adminController.getTodayBookings);
 
+/**
+ * @swagger
+ * /admin/users/search:
+ *   get:
+ *     summary: Search users by name or email (admin)
+ *     tags: [Admin, Users]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: q
+ *         in: query
+ *         description: Search query
+ *         schema:
+ *           type: string
+ *       - name: role
+ *         in: query
+ *         description: Filter by role (customer, supplier)
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Users found
+ */
+router.get('/users/search', adminController.searchUsers);
+
 module.exports = router;

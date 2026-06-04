@@ -9,7 +9,7 @@ exports.getConversations = catchAsync(async (req, res) => {
 });
 
 exports.getOrCreateConversation = catchAsync(async (req, res) => {
-  const { recipientId } = req.body;
+  const { recipientId, type: requestedType } = req.body;
 
   if (!recipientId) {
     throw new AppError('recipientId is required', 400);
@@ -28,15 +28,28 @@ exports.getOrCreateConversation = catchAsync(async (req, res) => {
     throw new AppError('Recipient not found', 404);
   }
 
-  const isSupplier = req.user.roles.includes('supplier');
-  if (isSupplier && !recipient.roles.includes('admin')) {
+  const isSenderSupplier = req.user.roles.includes('supplier');
+  if (isSenderSupplier && !recipient.roles.includes('admin')) {
     throw new AppError('Suppliers can only message admins', 403);
+  }
+
+  let type = requestedType;
+  if (!type) {
+    const isRecipientSupplier = recipient.roles.includes('supplier');
+    const isRecipientCustomer = recipient.roles.includes('customer');
+    if (isSenderSupplier || isRecipientSupplier) {
+      type = 'SUPPLIER_ADMIN';
+    } else if (isRecipientCustomer) {
+      type = 'USER_SUPPORT';
+    } else {
+      type = 'USER_SUPPORT';
+    }
   }
 
   const conversation = await chatService.findOrCreateConversation(
     req.user.id,
     recipientId,
-    isSupplier ? 'SUPPLIER_ADMIN' : 'USER_SUPPORT'
+    type
   );
 
   res.status(201).json({ status: 'success', data: { conversation } });

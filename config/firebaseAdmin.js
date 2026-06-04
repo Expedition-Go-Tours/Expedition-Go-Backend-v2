@@ -20,28 +20,10 @@ function getServiceAccountConfig() {
   };
 }
 
-// Development: use a lightweight stub that only supports the dev test-token bypass
-if (process.env.NODE_ENV === 'development') {
-  console.log('Firebase admin: running in development mode — using stubbed admin');
-  module.exports = {
-    auth: () => ({
-      verifyIdToken: async () => {
-        throw new Error('Firebase admin disabled in development — use dev auth bypass');
-      },
-    }),
-    apps: [],
-  };
-} else {
-  if (!admin.apps.length) {
-    admin.initializeApp({
-      credential: admin.credential.cert(getServiceAccountConfig()),
-    });
-
-    console.log(
-      'DEBUG: Admin SDK Project ID:',
-      admin.app().options.credential.projectId || 'Check service account JSON',
-    );
-  }
-
-  module.exports = admin;
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert(getServiceAccountConfig()),
+  });
 }
+
+module.exports = admin;
