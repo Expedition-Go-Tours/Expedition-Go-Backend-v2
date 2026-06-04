@@ -124,10 +124,6 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.get('/debug-sentry', () => {
-  throw new Error('Sentry test error');
-});
-
 
 app.get('/', (req, res) => {
   res.send('Expedition Go Tours API is running...');
