@@ -8,9 +8,7 @@ function getServiceAccountConfig() {
   } = process.env;
 
   if (!FIREBASE_PROJECT_ID || !FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
-    throw new Error(
-      'Missing Firebase Admin env vars: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY',
-    );
+    return null;
   }
 
   return {
@@ -20,10 +18,9 @@ function getServiceAccountConfig() {
   };
 }
 
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(getServiceAccountConfig()),
-  });
+const cfg = getServiceAccountConfig();
+if (cfg && !admin.apps.length) {
+  admin.initializeApp({ credential: admin.credential.cert(cfg) });
 }
 
 module.exports = admin;
