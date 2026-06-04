@@ -24,6 +24,7 @@
     "@logtail/node": "^0.5.8",
     "@prisma/client": "^5.20.0",
     "@sendgrid/mail": "^8.1.6",
+    "@sentry/node": "^10.56.0",
     "axios": "^1.16.0",
     "bullmq": "^5.76.8",
     "cloudinary": "^1.41.3",
