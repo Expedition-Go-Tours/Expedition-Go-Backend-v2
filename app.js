@@ -7,6 +7,15 @@ BigInt.prototype.toJSON = function () {
 
 const Sentry = require('@sentry/node');
 
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  environment: process.env.NODE_ENV || 'development',
+  tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+  ignoreErrors: [
+    'Object [object Object] has no method',
+  ],
+});
+
 const cors = require('cors');
 const express = require('express');
 const swaggerUi = require('swagger-ui-express');
@@ -23,19 +32,10 @@ const AppError = require('./utils/appError');
 
 const app = express();
 
-Sentry.init({
-  dsn: process.env.SENTRY_DSN,
-  environment: process.env.NODE_ENV || 'development',
-  tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
-  ignoreErrors: [
-    'Object [object Object] has no method',
-  ],
-});
-
 // Trust Render proxy for correct IP detection (rate limiting, etc.)
 app.set('trust proxy', 1);
 
-app.use(Sentry.Handlers.requestHandler());
+
 
 let swaggerSpec;
 try {
@@ -167,7 +167,7 @@ if (swaggerSpec) {
   });
 }
 
-app.use(Sentry.Handlers.errorHandler());
+Sentry.setupExpressErrorHandler(app);
 
 app.use((req, res, next) => {
   next(new AppError(`Can't find ${req.originalUrl} on this server!`, 404));
