@@ -269,6 +269,10 @@ model Tour {
   // Normalized theme (extracted from theme JSON)
   primaryTheme String?     // e.g. "Nature & Wildlife", "History & Culture"
 
+  // PostGIS geography column — managed via raw SQL, not by Prisma
+  // (trigger function update_tour_location() populates it from lat/lng)
+  location_geom Unsupported("geography(Point, 4326)")?
+
   // Statistics
   totalBookings Int        @default(0)
   totalRevenue Decimal     @default(0) @db.Decimal(10,2)
