@@ -9,7 +9,7 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const supplierController = require('../controllers/supplierController');
-const { uploadSupplierDocuments } = require('../middleware/uploadMiddleware');
+const { uploadSupplierDocuments, uploadSupplierLogo } = require('../middleware/uploadMiddleware');
 
 const router = express.Router();
 
@@ -136,6 +136,7 @@ router.use(protect);
  *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.post('/apply', uploadSupplierDocuments, supplierController.applyToBeSupplier);
+router.post('/logo', uploadSupplierLogo, supplierController.uploadLogo);
 
 /**
  * @swagger

@@ -109,6 +109,7 @@ model User {
   name         String
   email        String     @unique
   photoURL     String     @default("")
+  logoUrl      String?
   phone        String?
   roles        UserRole[] @default([customer])
   

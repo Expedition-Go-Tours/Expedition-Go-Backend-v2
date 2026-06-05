@@ -52,6 +52,7 @@ exports.updateMe = catchAsync(async (req, res, next) => {
   if (req.body.phone !== undefined) updates.phone = req.body.phone;
   if (req.body.language !== undefined) updates.language = req.body.language;
   if (req.body.timezone !== undefined) updates.timezone = req.body.timezone;
+  if (req.body.logoUrl !== undefined) updates.logoUrl = req.body.logoUrl;
 
   if (req.file) {
     const user = await prisma.user.findUnique({

@@ -709,3 +709,19 @@ exports.getSupplierTours = catchAsync(async (req, res, next) => {
     },
   });
 });
+
+exports.uploadLogo = catchAsync(async (req, res, next) => {
+  if (!req.file) {
+    return next(new AppError('No file uploaded', 400));
+  }
+
+  const updatedUser = await prisma.user.update({
+    where: { id: req.user.id },
+    data: { logoUrl: req.file.path },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { logoUrl: updatedUser.logoUrl },
+  });
+});

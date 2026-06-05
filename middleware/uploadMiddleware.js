@@ -34,3 +34,6 @@ exports.uploadSupplierDocuments = wrapMulter(upload.fields([
 
 // Chat image upload
 exports.uploadChatImage = wrapMulter(upload.single('file'));
+
+// Supplier logo upload
+exports.uploadSupplierLogo = wrapMulter(upload.single('logo'));
