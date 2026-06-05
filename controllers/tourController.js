@@ -696,6 +696,8 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     updateData.slug = await createSlug(req.body.title);
   }
 
+  let secondaryThemesData;
+
   // Handle categorization normalization (supports both JSON string and parsed object from multipart form)
   if (req.body.categorization) {
     const cat = typeof req.body.categorization === 'string'
@@ -725,10 +727,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     // Keep the original JSON field as-is
     updateData.theme = th;
     // Replace secondary themes: delete all existing, re-create
-    updateData.secondaryThemes = {
-      deleteMany: {},
-      create: [...new Set(th.secondary || [])].map(t => ({ theme: t })),
-    };
+    secondaryThemesData = [...new Set(th.secondary || [])].map(t => ({ theme: t }));
   }
 
   // Auto-extract location fields from productContent if not sent as top-level fields
@@ -752,6 +751,13 @@ exports.updateTour = catchAsync(async (req, res, next) => {
       }
     }
   });
+
+  if (secondaryThemesData) {
+    await prisma.tourSecondaryTheme.deleteMany({ where: { tourId: id } });
+    if (secondaryThemesData.length > 0) {
+      await prisma.tourSecondaryTheme.createMany({ data: secondaryThemesData.map(t => ({ tourId: id, ...t })) });
+    }
+  }
 
   cache.invalidateTourCaches(id).catch(() => {});
 

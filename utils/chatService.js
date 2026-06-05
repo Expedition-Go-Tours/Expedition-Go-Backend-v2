@@ -59,17 +59,28 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
 
   if (existing) return existing;
 
-  const recipient = await prisma.user.findUnique({
-    where: { id: recipientId },
-    select: { id: true, name: true },
-  });
+  const [sender, recipient] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: senderId },
+      select: { id: true, name: true, roles: true },
+    }),
+    prisma.user.findUnique({
+      where: { id: recipientId },
+      select: { id: true, name: true, roles: true },
+    }),
+  ]);
 
   if (!recipient) throw Object.assign(new Error('Recipient not found'), { statusCode: 404 });
+
+  // Title should reflect the non-admin participant
+  const title = recipient.roles?.includes('admin')
+    ? sender?.name || recipient.name
+    : recipient.name;
 
   const conversation = await prisma.conversation.create({
     data: {
       type,
-      title: recipient.name,
+      title,
       participants: {
         create: [
           { userId: senderId },
@@ -169,6 +180,7 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
       conversation: {
         select: {
           id: true,
+          type: true,
           participants: {
             where: { userId: { not: senderId } },
             select: { userId: true }
@@ -221,12 +233,14 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
     select: { roles: true, name: true }
   });
 
+  const chatType = participant.conversation.type === 'SUPPLIER_ADMIN' ? 'suppliers' : 'customers';
+
   if (sender && sender.roles.includes('supplier')) {
     notifyAdmin({
       type: 'NEW_MESSAGE',
       title: `New message from ${sender.name}`,
       message: content.length > 100 ? content.slice(0, 100) + '...' : content,
-      data: { conversationId, senderId, senderName: sender.name, messageId: message.id }
+      data: { conversationId, senderId, senderName: sender.name, messageId: message.id, chatType }
     });
   }
 
