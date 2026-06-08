@@ -38,8 +38,12 @@ jest.mock('../../utils/auditLogger', () => ({
 jest.mock('../../utils/emailService', () => ({
   generatePrintableTicketHtml: jest.fn(() => '<html>ticket</html>'),
 }));
+jest.mock('../../utils/tourHelpers', () => ({
+  checkTourAvailability: jest.fn(),
+}));
 
 const bookingHelpers = require('../../utils/bookingHelpers');
+const { checkTourAvailability } = require('../../utils/tourHelpers');
 const bookingController = require('../../controllers/bookingController');
 
 const mockReq = (overrides = {}) => ({
@@ -141,6 +145,7 @@ beforeEach(() => {
   prisma.$transaction.mockImplementation((cb) => cb(mockTx));
   calculateCommission.mockReturnValue({ rate: 0.15, amount: 57.75, supplierPayout: 327.25 });
   createPaymentIntent.mockResolvedValue({ id: 'pi_123', client_secret: 'secret_123' });
+  checkTourAvailability.mockResolvedValue({ available: true, availableSpots: 10 });
 });
 
 describe('Booking Controller', () => {
