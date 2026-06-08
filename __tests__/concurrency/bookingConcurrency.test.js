@@ -61,6 +61,8 @@ const tourTemplate = {
   title: 'Grand Canyon Tour',
   status: 'ACTIVE',
   supplierId: 'supplier-1',
+  bookings: [],
+  dateOverrides: [],
   schedulesAndPricing: {
     currency: 'USD',
     schedules: [{ prices: [{ retailPrice: 175 }] }],
@@ -145,6 +147,7 @@ function baseSetup() {
   usedBookingNumbers = new Set();
   jest.clearAllMocks();
   prisma.tour.findFirst.mockResolvedValue(tourTemplate);
+  prisma.tour.findUnique.mockResolvedValue(tourTemplate);
   prisma.$transaction.mockImplementation((cb) => cb(makeBookingTx(usedBookingNumbers)));
   calculateCommission.mockReturnValue({ rate: 0.15, amount: 57.75, supplierPayout: 327.25 });
   createPaymentIntent.mockResolvedValue({ id: 'pi_concur', client_secret: 'secret' });

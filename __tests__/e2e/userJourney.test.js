@@ -147,6 +147,8 @@ const activeTour = {
   title: 'E2E Grand Canyon Tour',
   status: 'ACTIVE',
   supplierId: 'supplier-e2e',
+  bookings: [],
+  dateOverrides: [],
   schedulesAndPricing: {
     currency: 'USD',
     schedules: [{ prices: [{ retailPrice: 175 }] }],
@@ -181,6 +183,7 @@ describe('E2E: Full User Journey', () => {
     // Prisma: tour listing
     prisma.tour.findMany.mockResolvedValue([mockTour]);
     prisma.tour.count.mockResolvedValue(1);
+    prisma.tour.findUnique.mockResolvedValue(activeTour);
 
     // Prisma: addToCart
     prisma.tour.findFirst.mockResolvedValue(activeTour);
