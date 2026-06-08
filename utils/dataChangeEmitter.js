@@ -9,6 +9,7 @@ const TRACKED_MODELS = new Set([
   'PayoutMethod',
   'Review',
   'AdminNotification',
+  'TourDateOverride',
 ]);
 
 function setIO(socketIO) {

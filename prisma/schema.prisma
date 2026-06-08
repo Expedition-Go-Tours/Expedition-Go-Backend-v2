@@ -99,6 +99,13 @@ enum TourStatus {
   ARCHIVED
 }
 
+enum OverrideStatus {
+  AVAILABLE
+  LIMITED
+  FULL
+  BLOCKED
+}
+
 // ================================
 // CORE MODELS
 // ================================
@@ -285,6 +292,7 @@ model Tour {
   bookings     Booking[]
   reviews      Review[]
   cartItems    CartItem[]
+  dateOverrides TourDateOverride[]
   secondaryThemes TourSecondaryTheme[]
 
   createdAt    DateTime    @default(now())
@@ -305,6 +313,20 @@ model Tour {
   @@index([difficulty])
   @@index([primaryTheme])
   @@index([durationMinutes])
+}
+
+model TourDateOverride {
+  id                 String         @id @default(cuid())
+  tourId             String
+  tour               Tour           @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  date               DateTime       @db.Date
+  status             OverrideStatus @default(AVAILABLE)
+  capacity           Int?
+  timeSlotOverrides  Json?          // [{ time: "09:00", capacity: 10, booked: 0 }, ...]
+  notes              String?
+
+  @@unique([tourId, date])
+  @@index([tourId, date])
 }
 
 model TourSecondaryTheme {
@@ -504,6 +526,7 @@ model CartItem {
 
 enum ConversationType {
   SUPPLIER_ADMIN
+  SUPPLIER_CUSTOMER
   USER_SUPPORT
 }
 

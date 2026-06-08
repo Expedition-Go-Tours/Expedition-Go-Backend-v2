@@ -48,14 +48,33 @@ app.use(helmet());
 app.use(hpp());
 app.use(compression());
 
-// Global rate limit: 10 requests per 2 hours per IP
+// CORS must be registered before rate limiter so that
+// rate-limited responses include proper CORS headers.
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
+  : ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5174', 'http://127.0.0.1:5174'];
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    callback(null, origin);
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+
+// Global rate limit: 500 requests per hour per IP
 app.use(
   '/api',
   rateLimit({
-    max: 200,
-    windowMs: 2 * 60 * 60 * 1000,
+    max: 500,
+    windowMs: 60 * 60 * 1000,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req) => req.method === 'OPTIONS',
     message: {
       status: 'fail',
       message: 'Too many requests from this IP, please try again later.',
@@ -71,30 +90,13 @@ app.use(
     windowMs: 15 * 60 * 1000,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req) => req.method === 'OPTIONS',
     message: {
       status: 'fail',
       message: 'Too many auth attempts, please try again later.',
     },
   }),
 );
-
-
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
-  : ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5174', 'http://127.0.0.1:5174'];
-
-const corsOptions = {
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    return callback(null, false);
-  },
-  credentials: true,
-};
-
-app.use(cors(corsOptions));
 
 // Request monitoring middleware
 app.use((req, res, next) => {
@@ -141,6 +143,7 @@ const adminRoutes = require('./routes/adminRoutes');
 const payoutRoutes = require('./routes/payoutRoutes');
 const payoutMethodRoutes = require('./routes/payoutMethodRoutes');
 const chatRoutes = require('./routes/chatRoutes');
+const availabilityRoutes = require('./routes/availabilityRoutes');
 
 app.use('/api/users', userRoutes);
 app.use('/api/tours', tourRoutes);
@@ -153,6 +156,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/tours', availabilityRoutes);
 app.use('/api/chat', chatRoutes);
 
 

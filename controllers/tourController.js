@@ -845,7 +845,7 @@ exports.getMyTours = catchAsync(async (req, res, next) => {
   const supplierId = req.user.id;
   const { status, page = 1, limit = 10 } = req.query;
 
-  const where = { supplierId };
+  const where = { supplierId, status: { not: 'ARCHIVED' } };
   if (status) {
     where.status = status;
   }

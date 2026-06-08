@@ -18,6 +18,7 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { createPaymentIntent, calculateCommission } = require('../utils/stripeHelpers');
 const { generateBookingNumber, validateTravelerInfo } = require('../utils/bookingHelpers');
+const { checkTourAvailability } = require('../utils/tourHelpers');
 const { enqueueNotification, enqueueEmail } = require('../utils/queue');
 const { generatePrintableTicketHtml } = require('../utils/emailService');
 const { logActivity } = require('../utils/auditLogger');
@@ -300,6 +301,21 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     
     if (!pricingCalculation.success) {
       return next(new AppError(pricingCalculation.error, 400));
+    }
+
+    // Check availability for the selected date
+    const availability = await checkTourAvailability(tourId, selectedDate, null);
+    if (!availability.available) {
+      return next(new AppError(availability.reason || 'Tour is not available on the selected date', 400));
+    }
+
+    // Check if sufficient capacity exists
+    const totalTravelers = (travelers.adults || 0) + (travelers.children || 0) + (travelers.infants || 0);
+    if (totalTravelers > availability.availableSpots) {
+      return next(new AppError(
+        `Only ${availability.availableSpots} spots available on the selected date, but ${totalTravelers} travelers requested`,
+        400
+      ));
     }
 
     bookingItems = [{
@@ -700,13 +716,12 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
  */
 exports.getSupplierBookings = catchAsync(async (req, res, next) => {
   const supplierId = req.user.id;
-  const { status, tourId, page = 1, limit = 10 } = req.query;
+  const { status, tourId, customerId, page = 1, limit = 10 } = req.query;
 
   // Verify supplier status
   const supplierProfile = await prisma.supplierProfile.findUnique({
     where: { userId: supplierId }
   });
-
   if (!supplierProfile || supplierProfile.status !== 'ACTIVE') {
     return next(new AppError('Access denied', 403));
   }
@@ -719,6 +734,7 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
 
   if (status) where.status = status;
   if (tourId) where.tourId = tourId;
+  if (customerId) where.customerId = customerId;
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 

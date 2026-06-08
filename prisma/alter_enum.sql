@@ -1,0 +1,1 @@
+ALTER TYPE "ConversationType" ADD VALUE 'SUPPLIER_CUSTOMER';

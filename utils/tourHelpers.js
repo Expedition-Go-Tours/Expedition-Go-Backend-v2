@@ -275,6 +275,7 @@ function validatePricing(schedulesAndPricing) {
 
 /**
  * Calculate tour availability for a given date
+ * Checks TourDateOverride, daysOfWeek template, and existing bookings.
  */
 async function checkTourAvailability(tourId, selectedDate, selectedTime = null) {
   try {
@@ -289,7 +290,12 @@ async function checkTourAvailability(tourId, selectedDate, selectedTime = null) 
               in: ['PENDING', 'CONFIRMED']
             }
           }
-        }
+        },
+        dateOverrides: {
+          where: {
+            date: new Date(selectedDate),
+          },
+        },
       }
     });
 
@@ -301,8 +307,29 @@ async function checkTourAvailability(tourId, selectedDate, selectedTime = null) 
       return { available: false, reason: 'Tour is not active' };
     }
 
-    // Get max capacity from tour settings
-    const maxCapacity = tour.schedulesAndPricing?.travelerDetails?.maxTravelersPerBooking || 10;
+    // Check if date is blocked by override
+    const override = tour.dateOverrides?.[0];
+    if (override?.status === 'BLOCKED') {
+      return { available: false, reason: 'Date is blocked', overrideStatus: 'BLOCKED' };
+    }
+    if (override?.status === 'FULL') {
+      return { available: false, reason: 'Date is fully booked', overrideStatus: 'FULL' };
+    }
+
+    // Check if operating day
+    const schedulesAndPricing = typeof tour.schedulesAndPricing === 'string'
+      ? JSON.parse(tour.schedulesAndPricing)
+      : tour.schedulesAndPricing;
+    const templateDaysOfWeek = schedulesAndPricing?.availability?.daysOfWeek || [];
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dayOfWeek = dayNames[new Date(selectedDate).getDay()];
+
+    if (templateDaysOfWeek.length > 0 && !templateDaysOfWeek.some(d => d.toLowerCase() === dayOfWeek.toLowerCase())) {
+      return { available: false, reason: 'Tour does not operate on this day' };
+    }
+
+    // Get capacity from override or template
+    const maxCapacity = override?.capacity ?? schedulesAndPricing?.travelerDetails?.maxTravelersPerBooking ?? 10;
     
     // Calculate current bookings
     const currentBookings = tour.bookings.reduce((total, booking) => {
@@ -316,7 +343,8 @@ async function checkTourAvailability(tourId, selectedDate, selectedTime = null) 
       available: availableSpots > 0,
       availableSpots,
       maxCapacity,
-      currentBookings
+      currentBookings,
+      overrideStatus: override?.status || null,
     };
   } catch (error) {
     console.error('❌ Check availability failed:', error);

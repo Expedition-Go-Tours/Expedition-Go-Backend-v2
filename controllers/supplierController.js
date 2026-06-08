@@ -244,22 +244,31 @@ exports.getEarnings = catchAsync(async (req, res) => {
   const { page = 1, limit = 20, startDate, endDate } = req.query;
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  const where = { supplierId };
+  const where = { tour: { supplierId } };
   if (startDate || endDate) {
     where.createdAt = {};
     if (startDate) where.createdAt.gte = new Date(startDate);
     if (endDate) where.createdAt.lte = new Date(endDate);
   }
 
-  const [payouts, totalCount, profile] = await Promise.all([
-    prisma.payout.findMany({
+  const [bookings, totalCount, profile, aggregates] = await Promise.all([
+    prisma.booking.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       skip,
       take: parseInt(limit),
+      include: {
+        tour: { select: { id: true, title: true } },
+        customer: { select: { id: true, name: true, email: true } },
+        payouts: { select: { id: true, status: true, paidAt: true } },
+      },
     }),
-    prisma.payout.count({ where }),
+    prisma.booking.count({ where }),
     prisma.supplierProfile.findUnique({ where: { userId: supplierId } }),
+    prisma.booking.aggregate({
+      where,
+      _sum: { total: true, commissionAmount: true, supplierPayout: true },
+    }),
   ]);
 
   const totalPages = Math.ceil(totalCount / parseInt(limit));
@@ -269,9 +278,24 @@ exports.getEarnings = catchAsync(async (req, res) => {
     data: {
       summary: {
         totalEarnings: Number(profile?.totalEarnings || 0),
+        totalRevenue: Number(aggregates._sum.total || 0),
+        totalCommission: Number(aggregates._sum.commissionAmount || 0),
+        totalBookings: totalCount,
         currency: 'USD',
       },
-      payouts,
+      earnings: bookings.map((b) => ({
+        id: b.id,
+        bookingNumber: b.bookingNumber,
+        selectedDate: b.selectedDate,
+        paidAt: b.paidAt,
+        total: Number(b.total),
+        supplierPayout: Number(b.supplierPayout),
+        commissionAmount: Number(b.commissionAmount),
+        commissionRate: Number(b.commissionRate),
+        currency: b.currency,
+        tour: b.tour,
+        customer: b.customer,
+      })),
       pagination: {
         currentPage: parseInt(page),
         totalPages,

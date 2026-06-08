@@ -36,14 +36,10 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
     where: {
       type,
       participants: {
-        every: {
+        some: {
           userId: { in: [senderId, recipientId] }
         }
-      },
-      AND: [
-        { participants: { some: { userId: senderId } } },
-        { participants: { some: { userId: recipientId } } },
-      ]
+      }
     },
     include: {
       participants: {
@@ -242,6 +238,19 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
       message: content.length > 100 ? content.slice(0, 100) + '...' : content,
       data: { conversationId, senderId, senderName: sender.name, messageId: message.id, chatType }
     });
+  }
+
+  // For supplier-to-customer conversations, also notify the customer in-app
+  if (participant.conversation.type === 'SUPPLIER_CUSTOMER' && sender && !sender.roles.includes('customer')) {
+    for (const recipientId of recipientIds) {
+      enqueueNotification({
+        userId: recipientId,
+        type: 'NEW_MESSAGE',
+        title: `New message from ${sender.name}`,
+        message: content.length > 100 ? content.slice(0, 100) + '...' : content,
+        data: { conversationId, senderId }
+      }).catch(() => {});
+    }
   }
 
   return message;

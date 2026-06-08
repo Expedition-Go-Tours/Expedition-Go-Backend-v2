@@ -29,18 +29,13 @@ exports.getOrCreateConversation = catchAsync(async (req, res) => {
   }
 
   const isSenderSupplier = req.user.roles.includes('supplier');
-  if (isSenderSupplier && !recipient.roles.includes('admin')) {
-    throw new AppError('Suppliers can only message admins', 403);
-  }
 
   let type = requestedType;
   if (!type) {
-    const isRecipientSupplier = recipient.roles.includes('supplier');
-    const isRecipientCustomer = recipient.roles.includes('customer');
-    if (isSenderSupplier || isRecipientSupplier) {
+    if (isSenderSupplier && recipient.roles.includes('customer')) {
+      type = 'SUPPLIER_CUSTOMER';
+    } else if (isSenderSupplier || recipient.roles.includes('supplier')) {
       type = 'SUPPLIER_ADMIN';
-    } else if (isRecipientCustomer) {
-      type = 'USER_SUPPORT';
     } else {
       type = 'USER_SUPPORT';
     }
