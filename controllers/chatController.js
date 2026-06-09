@@ -32,9 +32,9 @@ exports.getOrCreateConversation = catchAsync(async (req, res) => {
 
   let type = requestedType;
   if (!type) {
-    if (isSenderSupplier && recipient.roles.includes('customer')) {
+    if (isSenderSupplier && recipient.roles.includes('customer') && !recipient.roles.includes('admin')) {
       type = 'SUPPLIER_CUSTOMER';
-    } else if (isSenderSupplier || recipient.roles.includes('supplier')) {
+    } else if (isSenderSupplier || recipient.roles.includes('supplier') || recipient.roles.includes('admin')) {
       type = 'SUPPLIER_ADMIN';
     } else {
       type = 'USER_SUPPORT';

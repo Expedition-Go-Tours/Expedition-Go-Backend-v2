@@ -29,17 +29,19 @@ async function resolveChatUserId(userId) {
 }
 
 async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_ADMIN') {
+  const originalSenderId = senderId;
+  const originalRecipientId = recipientId;
   senderId = await resolveChatUserId(senderId);
   recipientId = await resolveChatUserId(recipientId);
+  console.log('[ChatService] findOrCreateConversation:', { originalSenderId, senderId, originalRecipientId, recipientId, type });
 
   const existing = await prisma.conversation.findFirst({
     where: {
       type,
-      participants: {
-        some: {
-          userId: { in: [senderId, recipientId] }
-        }
-      }
+      AND: [
+        { participants: { some: { userId: senderId } } },
+        { participants: { some: { userId: recipientId } } }
+      ]
     },
     include: {
       participants: {
@@ -53,8 +55,12 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
     }
   });
 
-  if (existing) return existing;
+  if (existing) {
+    console.log('[ChatService] findOrCreateConversation: FOUND EXISTING', { conversationId: existing.id, existingParticipantIds: existing.participants.map(p => p.userId) });
+    return existing;
+  }
 
+  console.log('[ChatService] findOrCreateConversation: CREATING NEW conversation');
   const [sender, recipient] = await Promise.all([
     prisma.user.findUnique({
       where: { id: senderId },
@@ -186,7 +192,14 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
     }
   });
 
-  if (!participant) throw Object.assign(new Error('Conversation not found'), { statusCode: 404 });
+  if (!participant) {
+    const existingParticipants = await prisma.conversationParticipant.findMany({
+      where: { conversationId },
+      select: { userId: true }
+    });
+    console.error('[ChatService] Participant not found:', { conversationId, userId: senderId, resolvedSenderId: senderId, originalSenderId, existingParticipants: existingParticipants.map(p => p.userId) });
+    throw Object.assign(new Error('Conversation not found'), { statusCode: 404 });
+  }
 
   const message = await prisma.message.create({
     data: {
@@ -232,6 +245,7 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
   const chatType = participant.conversation.type === 'SUPPLIER_ADMIN' ? 'suppliers' : 'customers';
 
   if (sender && sender.roles.includes('supplier')) {
+    console.log('[ChatService] notifyAdmin called:', { conversationId, conversationType: participant.conversation.type, chatType, senderRoles: sender.roles, senderName: sender.name });
     notifyAdmin({
       type: 'NEW_MESSAGE',
       title: `New message from ${sender.name}`,
@@ -257,6 +271,7 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
 }
 
 async function markAsRead(conversationId, userId) {
+  const originalUserId = userId;
   userId = await resolveChatUserId(userId);
 
   const participant = await prisma.conversationParticipant.findUnique({
@@ -269,6 +284,32 @@ async function markAsRead(conversationId, userId) {
     where: { id: participant.id },
     data: { lastReadAt: new Date() }
   });
+
+  const user = await prisma.user.findUnique({
+    where: { id: originalUserId },
+    select: { roles: true }
+  });
+
+  if (user?.roles?.includes('admin')) {
+    await prisma.adminNotification.updateMany({
+      where: {
+        type: 'NEW_MESSAGE',
+        acknowledged: false,
+        data: { path: ['conversationId'], equals: conversationId }
+      },
+      data: { acknowledged: true, acknowledgedAt: new Date(), acknowledgedBy: userId }
+    });
+  } else {
+    await prisma.notification.updateMany({
+      where: {
+        userId,
+        type: 'NEW_MESSAGE',
+        read: false,
+        data: { path: ['conversationId'], equals: conversationId }
+      },
+      data: { read: true, readAt: new Date() }
+    });
+  }
 
   return { lastReadAt: new Date() };
 }
