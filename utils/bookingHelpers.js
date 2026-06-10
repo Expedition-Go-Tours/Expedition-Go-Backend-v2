@@ -7,6 +7,7 @@
  */
 
 const prisma = require('./prismaClient');
+const getConfig = require('./getConfig');
 
 /**
  * Generate unique booking number
@@ -74,7 +75,7 @@ function validateTravelerInfo(travelers) {
 /**
  * Calculate booking totals including taxes and fees
  */
-function calculateBookingTotals(subtotal, currency = 'USD', promoCode = null) {
+async function calculateBookingTotals(subtotal, currency = 'USD', promoCode = null) {
   let total = subtotal;
   let taxes = 0;
   let fees = 0;
@@ -91,8 +92,8 @@ function calculateBookingTotals(subtotal, currency = 'USD', promoCode = null) {
   const taxRate = taxRates[currency] || 0;
   taxes = subtotal * taxRate;
   
-  // Calculate platform fees (2.9% + $0.30)
-  fees = (subtotal * 0.029) + 0.30;
+  // Calculate platform fees from system config
+  fees = parseFloat(await getConfig('commission.platform_fee', '2.50'));
   
   // Apply promo code discount (simplified)
   if (promoCode) {

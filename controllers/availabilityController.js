@@ -2,6 +2,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { startOfDay, endOfDay, differenceInDays, parseISO, isAfter, addDays, format } = require('date-fns');
+const getConfig = require('../utils/getConfig');
 
 const MAX_DATE_RANGE_DAYS = 366;
 
@@ -55,7 +56,8 @@ exports.getAvailability = catchAsync(async (req, res, next) => {
 
   const templateDaysOfWeek = schedulesAndPricing?.availability?.daysOfWeek || [];
   const templateTimeSlots = schedulesAndPricing?.availability?.timeSlots || [];
-  const maxCapacity = schedulesAndPricing?.travelerDetails?.maxTravelersPerBooking || 10;
+  const maxTravelersFallback = parseInt(await getConfig('booking.max_travelers', '50'));
+  const maxCapacity = schedulesAndPricing?.travelerDetails?.maxTravelersPerBooking || maxTravelersFallback;
 
   const [overrides, bookings] = await Promise.all([
     prisma.tourDateOverride.findMany({

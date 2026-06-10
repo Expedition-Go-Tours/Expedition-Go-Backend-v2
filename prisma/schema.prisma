@@ -134,6 +134,10 @@ model User {
   emailVerified Boolean  @default(false)
   lastLoginAt  DateTime?
   
+  // Admin Role (only for admins — determines granular permissions)
+  adminRoleId    String?
+  adminRole      AdminRole?    @relation(fields: [adminRoleId], references: [id])
+  
   // Supplier Information (only for suppliers)
   supplierProfile SupplierProfile?
   
@@ -653,6 +657,55 @@ model SystemConfig {
   updatedBy    String      // Admin user ID
 
   @@index([key])
+}
+
+// ================================
+// ADMIN SETTINGS — RBAC & CONFIGURATION
+// ================================
+
+model AdminPermission {
+  id           String   @id @default(cuid())
+  key          String   @unique   // e.g. "suppliers.approve", "payouts.view"
+  name         String              // e.g. "Approve Suppliers"
+  description  String?
+  category     String              // e.g. "Suppliers", "Finance", "Reviews"
+  isSystem     Boolean  @default(false) // cannot be deleted
+
+  roles        AdminRolePermission[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([category])
+  @@index([key])
+}
+
+model AdminRole {
+  id           String   @id @default(cuid())
+  name         String   @unique    // e.g. "super_admin", "finance_admin"
+  description  String?
+  isSystem     Boolean  @default(false) // super_admin cannot be deleted or modified
+  isDefault    Boolean  @default(false) // auto-assigned to new admins if not specified
+
+  permissions  AdminRolePermission[]
+  users        User[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([name])
+}
+
+model AdminRolePermission {
+  roleId       String
+  permissionId String
+
+  role         AdminRole       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   AdminPermission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
 }
 
 // ================================

@@ -1,5 +1,6 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { requirePermission } = require('../middleware/permissionMiddleware');
 const userController = require('../controllers/userController');
 const authController = require('../controllers/authController');
 const { uploadUserPhoto } = require('../middleware/uploadMiddleware');
@@ -465,6 +466,6 @@ router.patch('/like/:tourId', userController.toggleLike);
  *             schema:
  *               $ref: '#/components/responses/NotFoundError'
  */
-router.delete('/:id', restrictTo('admin'), userController.deleteUser);
+router.delete('/:id', restrictTo('admin'), requirePermission('users.delete'), userController.deleteUser);
 
 module.exports = router;

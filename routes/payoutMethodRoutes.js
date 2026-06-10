@@ -1,5 +1,6 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { requirePermission } = require('../middleware/permissionMiddleware');
 const payoutMethodController = require('../controllers/payoutMethodController');
 
 const router = express.Router();
@@ -122,7 +123,7 @@ router.delete('/:id', restrictTo('supplier'), payoutMethodController.deleteMetho
  *       200:
  *         description: Supplier's payout methods with user info
  */
-router.get('/admin/suppliers/:supplierId', restrictTo('admin'), payoutMethodController.getSupplierMethods);
+router.get('/admin/suppliers/:supplierId', restrictTo('admin'), requirePermission('payout-methods.view'), payoutMethodController.getSupplierMethods);
 
 /**
  * @swagger
@@ -146,7 +147,7 @@ router.get('/admin/suppliers/:supplierId', restrictTo('admin'), payoutMethodCont
  *       200:
  *         description: Suppliers list with payout methods
  */
-router.get('/admin', restrictTo('admin'), payoutMethodController.getAllSuppliersMethods);
+router.get('/admin', restrictTo('admin'), requirePermission('payout-methods.view'), payoutMethodController.getAllSuppliersMethods);
 
 /**
  * @swagger
@@ -180,6 +181,6 @@ router.get('/admin', restrictTo('admin'), payoutMethodController.getAllSuppliers
  *       200:
  *         description: Payout method verification status updated
  */
-router.patch('/admin/:id/verify', restrictTo('admin'), payoutMethodController.verifyPayoutMethod);
+router.patch('/admin/:id/verify', restrictTo('admin'), requirePermission('payout-methods.verify'), payoutMethodController.verifyPayoutMethod);
 
 module.exports = router;

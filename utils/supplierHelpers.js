@@ -6,6 +6,8 @@
  * @version 1.0.0
  */
 
+const getConfig = require('./getConfig');
+
 /**
  * Validate supplier application data
  */
@@ -326,15 +328,17 @@ function generateVerificationChecklist(supplierProfile) {
 /**
  * Get supplier tier based on performance
  */
-function getSupplierTier(supplierProfile) {
+async function getSupplierTier(supplierProfile) {
   const { totalBookings, averageRating, totalEarnings } = supplierProfile;
+
+  const baseRate = parseFloat(await getConfig('commission.default_rate', '0.15'));
 
   if (totalBookings >= 100 && averageRating >= 4.8 && totalEarnings >= 10000) {
     return {
       tier: 'platinum',
       name: 'Platinum Supplier',
       benefits: ['Lowest commission rates', 'Priority support', 'Featured listings'],
-      commissionRate: 0.10
+      commissionRate: Math.max(0.01, baseRate - 0.05)
     };
   }
 
@@ -343,7 +347,7 @@ function getSupplierTier(supplierProfile) {
       tier: 'gold',
       name: 'Gold Supplier',
       benefits: ['Reduced commission rates', 'Priority support'],
-      commissionRate: 0.12
+      commissionRate: Math.max(0.01, baseRate - 0.03)
     };
   }
 
@@ -352,7 +356,7 @@ function getSupplierTier(supplierProfile) {
       tier: 'silver',
       name: 'Silver Supplier',
       benefits: ['Standard commission rates', 'Regular support'],
-      commissionRate: 0.14
+      commissionRate: Math.max(0.01, baseRate - 0.01)
     };
   }
 
@@ -360,7 +364,7 @@ function getSupplierTier(supplierProfile) {
     tier: 'bronze',
     name: 'New Supplier',
     benefits: ['Standard commission rates', 'Getting started support'],
-    commissionRate: 0.15
+    commissionRate: baseRate
   };
 }
 

@@ -8,6 +8,7 @@
 
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { requirePermission } = require('../middleware/permissionMiddleware');
 const reviewController = require('../controllers/reviewController');
 const { uploadReviewPhotos } = require('../middleware/uploadMiddleware');
 
@@ -510,7 +511,7 @@ router.get('/supplier/reviews', restrictTo('supplier'), reviewController.getSupp
  *       403:
  *         description: Access denied
  */
-router.get('/admin/pending', restrictTo('admin'), reviewController.getPendingReviews);
+router.get('/admin/pending', restrictTo('admin'), requirePermission('reviews.view'), reviewController.getPendingReviews);
 
 /**
  * @swagger
@@ -603,6 +604,6 @@ router.get('/admin/pending', restrictTo('admin'), reviewController.getPendingRev
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.patch('/:id/moderate', restrictTo('admin'), reviewController.moderateReview);
+router.patch('/:id/moderate', restrictTo('admin'), requirePermission('reviews.moderate'), reviewController.moderateReview);
 
 module.exports = router;

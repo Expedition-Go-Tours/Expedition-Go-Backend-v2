@@ -16,6 +16,7 @@
 
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
+const { cloudinaryUrl } = require('../utils/imageOptimizer');
 
 /**
  * GET /api/admin/analytics/overview
@@ -1048,5 +1049,32 @@ exports.searchUsers = catchAsync(async (req, res) => {
     take: 20,
   });
 
-  res.status(200).json({ status: 'success', data: { users } });
+  const optimized = users.map((u) => ({
+    ...u,
+    photoURL: cloudinaryUrl(u.photoURL, 64),
+  }));
+
+  res.status(200).json({ status: 'success', data: { users: optimized } });
+});
+
+exports.getMe = catchAsync(async (req, res, next) => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      photoURL: true,
+      roles: true,
+      adminRoleId: true,
+      adminRole: {
+        select: { id: true, name: true },
+      },
+    },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { ...user, photoURL: cloudinaryUrl(user.photoURL, 80) },
+  });
 });

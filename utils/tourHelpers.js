@@ -7,6 +7,7 @@
  */
 
 const prisma = require('./prismaClient');
+const getConfig = require('./getConfig');
 
 /**
  * Create unique slug for tour
@@ -329,7 +330,8 @@ async function checkTourAvailability(tourId, selectedDate, selectedTime = null) 
     }
 
     // Get capacity from override or template
-    const maxCapacity = override?.capacity ?? schedulesAndPricing?.travelerDetails?.maxTravelersPerBooking ?? 10;
+    const maxTravelersFallback = parseInt(await getConfig('booking.max_travelers', '50'));
+    const maxCapacity = override?.capacity ?? schedulesAndPricing?.travelerDetails?.maxTravelersPerBooking ?? maxTravelersFallback;
     
     // Calculate current bookings
     const currentBookings = tour.bookings.reduce((total, booking) => {

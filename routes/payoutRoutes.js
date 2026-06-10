@@ -1,5 +1,6 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { requirePermission } = require('../middleware/permissionMiddleware');
 const payoutController = require('../controllers/payoutController');
 
 const router = express.Router();
@@ -80,7 +81,7 @@ router.get('/me', restrictTo('supplier'), payoutController.getMyPayouts);
  *       200:
  *         description: Paginated payouts list with summary
  */
-router.get('/admin', restrictTo('admin'), payoutController.getAllPayouts);
+router.get('/admin', restrictTo('admin'), requirePermission('payouts.view'), payoutController.getAllPayouts);
 
 /**
  * @swagger
@@ -95,7 +96,7 @@ router.get('/admin', restrictTo('admin'), payoutController.getAllPayouts);
  *       200:
  *         description: Payout summary stats
  */
-router.get('/admin/summary', restrictTo('admin'), payoutController.getPayoutSummary);
+router.get('/admin/summary', restrictTo('admin'), requirePermission('payouts.view'), payoutController.getPayoutSummary);
 
 /**
  * @swagger
@@ -139,7 +140,7 @@ router.get('/admin/summary', restrictTo('admin'), payoutController.getPayoutSumm
  *               type: string
  *               format: binary
  */
-router.get('/admin/export', restrictTo('admin'), payoutController.exportPayouts);
+router.get('/admin/export', restrictTo('admin'), requirePermission('payouts.export'), payoutController.exportPayouts);
 
 /**
  * @swagger
@@ -165,7 +166,7 @@ router.get('/admin/export', restrictTo('admin'), payoutController.exportPayouts)
  *             schema:
  *               $ref: '#/components/schemas/PayoutApproveResponse'
  */
-router.patch('/admin/:id/approve', restrictTo('admin'), payoutController.approvePayout);
+router.patch('/admin/:id/approve', restrictTo('admin'), requirePermission('payouts.approve'), payoutController.approvePayout);
 
 /**
  * @swagger
@@ -198,7 +199,7 @@ router.patch('/admin/:id/approve', restrictTo('admin'), payoutController.approve
  *       400:
  *         description: Supplier has no verified payout method or invalid payout method ID
  */
-router.patch('/admin/:id/release', restrictTo('admin'), payoutController.releasePayout);
+router.patch('/admin/:id/release', restrictTo('admin'), requirePermission('payouts.approve'), payoutController.releasePayout);
 
 /**
  * @swagger
@@ -226,6 +227,6 @@ router.patch('/admin/:id/release', restrictTo('admin'), payoutController.release
  *       200:
  *         description: Payout marked as failed
  */
-router.patch('/admin/:id/fail', restrictTo('admin'), payoutController.failPayout);
+router.patch('/admin/:id/fail', restrictTo('admin'), requirePermission('payouts.approve'), payoutController.failPayout);
 
 module.exports = router;

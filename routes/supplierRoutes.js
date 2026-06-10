@@ -8,6 +8,7 @@
 
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { requirePermission } = require('../middleware/permissionMiddleware');
 const supplierController = require('../controllers/supplierController');
 const { uploadSupplierDocuments, uploadSupplierLogo } = require('../middleware/uploadMiddleware');
 
@@ -490,7 +491,7 @@ router.get('/payouts', restrictTo('supplier'), supplierController.getPayouts);
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.get('/admin/applications', restrictTo('admin'), supplierController.getAllApplications);
+router.get('/admin/applications', restrictTo('admin'), requirePermission('suppliers.view'), supplierController.getAllApplications);
 
 /**
  * @swagger
@@ -584,7 +585,7 @@ router.get('/admin/applications', restrictTo('admin'), supplierController.getAll
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.patch('/admin/applications/:id/review', restrictTo('admin'), supplierController.reviewApplication);
+router.patch('/admin/applications/:id/review', restrictTo('admin'), requirePermission('suppliers.approve'), supplierController.reviewApplication);
 
 /**
  * @swagger
@@ -674,7 +675,7 @@ router.patch('/admin/applications/:id/review', restrictTo('admin'), supplierCont
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.patch('/admin/:id/suspend', restrictTo('admin'), supplierController.suspendSupplier);
+router.patch('/admin/:id/suspend', restrictTo('admin'), requirePermission('suppliers.suspend'), supplierController.suspendSupplier);
 
 /**
  * @swagger
@@ -714,8 +715,8 @@ router.patch('/admin/:id/suspend', restrictTo('admin'), supplierController.suspe
  *       400:
  *         description: Supplier not in APPROVED status
  */
-router.get('/admin/:id/overview', restrictTo('admin'), supplierController.getSupplierOverview);
-router.get('/admin/:id/tours', restrictTo('admin'), supplierController.getSupplierTours);
-router.patch('/admin/:id/activate', restrictTo('admin'), supplierController.activateSupplier);
+router.get('/admin/:id/overview', restrictTo('admin'), requirePermission('suppliers.view'), supplierController.getSupplierOverview);
+router.get('/admin/:id/tours', restrictTo('admin'), requirePermission('suppliers.view', 'tours.view'), supplierController.getSupplierTours);
+router.patch('/admin/:id/activate', restrictTo('admin'), requirePermission('suppliers.approve'), supplierController.activateSupplier);
 
 module.exports = router;

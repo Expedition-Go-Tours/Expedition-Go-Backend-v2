@@ -20,6 +20,7 @@ const { createPaymentIntent, calculateCommission } = require('../utils/stripeHel
 const { generateBookingNumber, validateTravelerInfo } = require('../utils/bookingHelpers');
 const { checkTourAvailability } = require('../utils/tourHelpers');
 const { enqueueNotification, enqueueEmail } = require('../utils/queue');
+const getConfig = require('../utils/getConfig');
 const { generatePrintableTicketHtml } = require('../utils/emailService');
 const { logActivity } = require('../utils/auditLogger');
 const event = require('../utils/eventEmitter');
@@ -337,6 +338,40 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     }
   }
 
+  // Validate booking rules from system config
+  const minAdvanceHours = parseInt(await getConfig('booking.min_advance_hours', '24'));
+  const maxAdvanceDays = parseInt(await getConfig('booking.max_advance_days', '365'));
+  const maxTravelersPerBooking = parseInt(await getConfig('booking.max_travelers', '50'));
+  const now = new Date();
+
+  for (const item of bookingItems) {
+    const selectedDate = new Date(item.selectedDate);
+    const hoursUntilTour = (selectedDate - now) / (1000 * 60 * 60);
+    const daysUntilTour = hoursUntilTour / 24;
+
+    if (hoursUntilTour < minAdvanceHours) {
+      return next(new AppError(
+        `Bookings must be made at least ${minAdvanceHours} hours before the tour start time`,
+        400
+      ));
+    }
+
+    if (daysUntilTour > maxAdvanceDays) {
+      return next(new AppError(
+        `Bookings can only be made up to ${maxAdvanceDays} days in advance`,
+        400
+      ));
+    }
+
+    const totalTravelers = (item.travelers.adults || 0) + (item.travelers.children || 0) + (item.travelers.infants || 0);
+    if (totalTravelers > maxTravelersPerBooking) {
+      return next(new AppError(
+        `Total travelers (${totalTravelers}) exceeds the maximum of ${maxTravelersPerBooking} per booking`,
+        400
+      ));
+    }
+  }
+
   // Create bookings in transaction
   const result = await prisma.$transaction(async (tx) => {
     const bookings = [];
@@ -344,7 +379,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
 
     for (const item of bookingItems) {
       const bookingNumber = await generateBookingNumber();
-      const commission = calculateCommission(item.total, item.tour.supplier.supplierProfile);
+      const commission = await calculateCommission(item.total, item.tour.supplier.supplierProfile);
       
       const booking = await tx.booking.create({
         data: {

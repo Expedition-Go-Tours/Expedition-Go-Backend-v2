@@ -4,6 +4,7 @@ const AppError = require('../utils/appError');
 const { enqueueNotification, enqueueEmail } = require('../utils/queue');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const { logActivity } = require('../utils/auditLogger');
+const getConfig = require('../utils/getConfig');
 
 /**
  * Get payout history for the authenticated supplier
@@ -187,6 +188,15 @@ exports.approvePayout = catchAsync(async (req, res, next) => {
 
   if (payout.status !== 'PENDING') {
     return next(new AppError('Only pending payouts can be approved', 400));
+  }
+
+  // Check payout meets minimum threshold from system config
+  const minThreshold = parseFloat(await getConfig('payout.min_threshold', '0'));
+  if (parseFloat(payout.amount) < minThreshold) {
+    return next(new AppError(
+      `Payout amount (${payout.currency} ${parseFloat(payout.amount).toFixed(2)}) is below the minimum threshold of ${payout.currency} ${minThreshold.toFixed(2)}`,
+      400
+    ));
   }
 
   const updated = await prisma.payout.update({

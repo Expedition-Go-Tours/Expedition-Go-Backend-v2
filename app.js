@@ -144,6 +144,12 @@ const payoutRoutes = require('./routes/payoutRoutes');
 const payoutMethodRoutes = require('./routes/payoutMethodRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 const availabilityRoutes = require('./routes/availabilityRoutes');
+const adminSettingsRoutes = require('./routes/adminSettingsRoutes');
+const adminRoleRoutes = require('./routes/adminRoleRoutes');
+const adminUserRoutes = require('./routes/adminUserRoutes');
+const maintenanceMode = require('./middleware/maintenanceMode');
+
+app.use('/api', maintenanceMode);
 
 app.use('/api/users', userRoutes);
 app.use('/api/tours', tourRoutes);
@@ -156,6 +162,9 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin/settings', adminSettingsRoutes);
+app.use('/api/admin/roles', adminRoleRoutes);
+app.use('/api/admin/admins', adminUserRoutes);
 app.use('/api/tours', availabilityRoutes);
 app.use('/api/chat', chatRoutes);
 

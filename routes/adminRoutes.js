@@ -13,8 +13,10 @@
 
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { requirePermission } = require('../middleware/permissionMiddleware');
 const adminController = require('../controllers/adminController');
 const adminNotifController = require('../controllers/adminNotificationController');
+const adminSettingsController = require('../controllers/adminSettingsController');
 
 const router = express.Router();
 
@@ -48,7 +50,7 @@ router.use(protect, restrictTo('admin'));
  *       403:
  *         description: Admin access required
  */
-router.get('/analytics/overview', adminController.getOverview);
+router.get('/analytics/overview', requirePermission('dashboard.view', 'analytics.view'), adminController.getOverview);
 
 /**
  * @swagger
@@ -73,7 +75,7 @@ router.get('/analytics/overview', adminController.getOverview);
  *                 data:
  *                   $ref: '#/components/schemas/RevenueTrendResponse'
  */
-router.get('/analytics/revenue-trend', adminController.getRevenueTrend);
+router.get('/analytics/revenue-trend', requirePermission('analytics.view'), adminController.getRevenueTrend);
 
 /**
  * @swagger
@@ -98,7 +100,7 @@ router.get('/analytics/revenue-trend', adminController.getRevenueTrend);
  *                 data:
  *                   $ref: '#/components/schemas/UserGrowthResponse'
  */
-router.get('/analytics/user-growth', adminController.getUserGrowth);
+router.get('/analytics/user-growth', requirePermission('analytics.view'), adminController.getUserGrowth);
 
 /**
  * @swagger
@@ -159,7 +161,7 @@ router.get('/analytics/user-growth', adminController.getUserGrowth);
  *                 data:
  *                   $ref: '#/components/schemas/TourPerformanceResponse'
  */
-router.get('/analytics/tour-performance', adminController.getTourPerformance);
+router.get('/analytics/tour-performance', requirePermission('analytics.view'), adminController.getTourPerformance);
 
 /**
  * Phase 2 — Marketplace Intelligence
@@ -199,7 +201,7 @@ router.get('/analytics/tour-performance', adminController.getTourPerformance);
  *                 data:
  *                   $ref: '#/components/schemas/FunnelResponse'
  */
-router.get('/analytics/funnel', adminController.getFunnel);
+router.get('/analytics/funnel', requirePermission('analytics.view'), adminController.getFunnel);
 
 /**
  * @swagger
@@ -228,7 +230,7 @@ router.get('/analytics/funnel', adminController.getFunnel);
  *                 data:
  *                   $ref: '#/components/schemas/CLVResponse'
  */
-router.get('/analytics/clv', adminController.getCLV);
+router.get('/analytics/clv', requirePermission('analytics.view'), adminController.getCLV);
 
 /**
  * @swagger
@@ -266,7 +268,7 @@ router.get('/analytics/clv', adminController.getCLV);
  *                 data:
  *                   $ref: '#/components/schemas/SearchAnalyticsResponse'
  */
-router.get('/analytics/search', adminController.getSearchAnalytics);
+router.get('/analytics/search', requirePermission('analytics.view'), adminController.getSearchAnalytics);
 
 /**
  * @swagger
@@ -303,7 +305,7 @@ router.get('/analytics/search', adminController.getSearchAnalytics);
  *                 data:
  *                   $ref: '#/components/schemas/CartAbandonmentResponse'
  */
-router.get('/analytics/cart-abandonment', adminController.getCartAbandonment);
+router.get('/analytics/cart-abandonment', requirePermission('analytics.view'), adminController.getCartAbandonment);
 
 /**
  * Admin Notifications
@@ -334,7 +336,7 @@ router.get('/analytics/cart-abandonment', adminController.getCartAbandonment);
  *       200:
  *         description: Notifications retrieved
  */
-router.get('/notifications', adminNotifController.getNotifications);
+router.get('/notifications', requirePermission('dashboard.view'), adminNotifController.getNotifications);
 
 /**
  * @swagger
@@ -348,7 +350,7 @@ router.get('/notifications', adminNotifController.getNotifications);
  *       200:
  *         description: Unacknowledged count
  */
-router.get('/notifications/unread-count', adminNotifController.getUnreadCount);
+router.get('/notifications/unread-count', requirePermission('dashboard.view'), adminNotifController.getUnreadCount);
 
 /**
  * @swagger
@@ -362,7 +364,7 @@ router.get('/notifications/unread-count', adminNotifController.getUnreadCount);
  *       200:
  *         description: Statistics retrieved
  */
-router.get('/notifications/stats', adminNotifController.getStats);
+router.get('/notifications/stats', requirePermission('dashboard.view'), adminNotifController.getStats);
 
 /**
  * @swagger
@@ -381,7 +383,7 @@ router.get('/notifications/stats', adminNotifController.getStats);
  *       200:
  *         description: Notification acknowledged
  */
-router.patch('/notifications/:id/acknowledge', adminNotifController.acknowledge);
+router.patch('/notifications/:id/acknowledge', requirePermission('dashboard.view'), adminNotifController.acknowledge);
 
 /**
  * @swagger
@@ -395,7 +397,7 @@ router.patch('/notifications/:id/acknowledge', adminNotifController.acknowledge)
  *       200:
  *         description: All notifications acknowledged
  */
-router.patch('/notifications/acknowledge-all', adminNotifController.acknowledgeAll);
+router.patch('/notifications/acknowledge-all', requirePermission('dashboard.view'), adminNotifController.acknowledgeAll);
 
 /**
  * @swagger
@@ -410,7 +412,7 @@ router.patch('/notifications/acknowledge-all', adminNotifController.acknowledgeA
  *       200:
  *         description: Active users list
  */
-router.get('/users/active', adminController.getActiveUsers);
+router.get('/users/active', requirePermission('users.view'), adminController.getActiveUsers);
 
 /**
  * @swagger
@@ -425,7 +427,7 @@ router.get('/users/active', adminController.getActiveUsers);
  *       200:
  *         description: Recent signups list
  */
-router.get('/users/new-signups', adminController.getRecentSignups);
+router.get('/users/new-signups', requirePermission('users.view'), adminController.getRecentSignups);
 
 /**
  * @swagger
@@ -447,7 +449,7 @@ router.get('/users/new-signups', adminController.getRecentSignups);
  *       200:
  *         description: New users list
  */
-router.get('/users/new', adminController.getRecentSignups);
+router.get('/users/new', requirePermission('users.view'), adminController.getRecentSignups);
 
 /**
  * @swagger
@@ -462,7 +464,7 @@ router.get('/users/new', adminController.getRecentSignups);
  *       200:
  *         description: Today's bookings list
  */
-router.get('/bookings/today', adminController.getTodayBookings);
+router.get('/bookings/today', requirePermission('dashboard.view'), adminController.getTodayBookings);
 
 /**
  * @swagger
@@ -487,6 +489,24 @@ router.get('/bookings/today', adminController.getTodayBookings);
  *       200:
  *         description: Users found
  */
-router.get('/users/search', adminController.searchUsers);
+router.get('/users/search', requirePermission('users.view'), adminController.searchUsers);
+
+/**
+ * @swagger
+ * /admin/me:
+ *   get:
+ *     summary: Get current admin user profile
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Current admin user
+ */
+router.get('/me', adminController.getMe);
+
+// Audit log
+router.get('/audit-log/export', requirePermission('settings.access'), adminSettingsController.exportAuditLog);
+router.get('/audit-log', requirePermission('settings.access'), adminSettingsController.getAuditLog);
 
 module.exports = router;

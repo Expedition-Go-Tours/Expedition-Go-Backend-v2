@@ -32,6 +32,7 @@ const prisma = require('./prismaClient');
 const { enqueueEmail } = require('./queue');
 const { notifyAdmin } = require('./adminNotificationService');
 const event = require('./eventEmitter');
+const getConfig = require('./getConfig');
 
 /**
  * Create Payment Intent with commission split
@@ -68,19 +69,19 @@ async function createPaymentIntent({
 /**
  * Calculate commission based on supplier tier and booking amount
  */
-function calculateCommission(bookingAmount, supplierProfile) {
+async function calculateCommission(bookingAmount, supplierProfile) {
   const amount = parseFloat(bookingAmount);
-  
-  // Default commission rates based on supplier tier/volume
-  let commissionRate = 0.15; // 15% default
-  
+
+  const defaultRate = parseFloat(await getConfig('commission.default_rate', '0.15'));
+  let commissionRate = defaultRate;
+
   // Adjust rate based on supplier performance
   if (supplierProfile.totalBookings > 100) {
-    commissionRate = 0.12; // 12% for high-volume suppliers
+    commissionRate = Math.max(0.01, defaultRate - 0.03);
   } else if (supplierProfile.totalBookings > 50) {
-    commissionRate = 0.13; // 13% for medium-volume suppliers
+    commissionRate = Math.max(0.01, defaultRate - 0.02);
   } else if (supplierProfile.averageRating && supplierProfile.averageRating >= 4.8) {
-    commissionRate = 0.14; // 14% for high-rated new suppliers
+    commissionRate = Math.max(0.01, defaultRate - 0.01);
   }
 
   const commissionAmount = amount * commissionRate;
@@ -162,6 +163,7 @@ async function handlePaymentSucceeded(paymentIntent) {
   }
 
   let bookings;
+  const payoutMinThreshold = parseFloat(await getConfig('payout.min_threshold', '0'));
 
   await prisma.$transaction(async (tx) => {
     // Update booking statuses
@@ -235,16 +237,19 @@ async function handlePaymentSucceeded(paymentIntent) {
       });
 
       // Create Payout record (PENDING — awaits admin approval)
-      await tx.payout.create({
-        data: {
-          supplierId: booking.tour.supplierId,
-          bookingId: booking.id,
-          amount: booking.supplierPayout,
-          currency: booking.currency,
-          commissionAmount: booking.commissionAmount,
-          status: 'PENDING'
-        }
-      });
+      // Only create if amount meets the minimum threshold from system config
+      if (parseFloat(booking.supplierPayout) >= payoutMinThreshold) {
+        await tx.payout.create({
+          data: {
+            supplierId: booking.tour.supplierId,
+            bookingId: booking.id,
+            amount: booking.supplierPayout,
+            currency: booking.currency,
+            commissionAmount: booking.commissionAmount,
+            status: 'PENDING'
+          }
+        });
+      }
     }
   });
 
