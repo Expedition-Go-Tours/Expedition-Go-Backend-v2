@@ -26,7 +26,13 @@ exports.requirePermission = (...permissionKeys) => {
     }
 
     const hasPermission = permissionKeys.some((key) =>
-      role.permissions.some((rp) => rp.permission.key === key),
+      role.permissions.some((rp) => {
+        if (key.endsWith('*')) {
+          const prefix = key.slice(0, -1);
+          return rp.permission.key.startsWith(prefix);
+        }
+        return rp.permission.key === key;
+      }),
     );
 
     if (!hasPermission) {

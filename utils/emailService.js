@@ -2103,5 +2103,6 @@ module.exports = {
   sendReviewNotificationEmail,
   sendPayoutNotificationEmail,
   sendSupplierBookingNotification,
-  generatePrintableTicketHtml
+  generatePrintableTicketHtml,
+  generateEmailContent
 };

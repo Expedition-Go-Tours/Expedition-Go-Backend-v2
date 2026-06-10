@@ -10,8 +10,14 @@
 const prisma = require('../utils/prismaClient');
 
 const PERMISSIONS = [
-  // Dashboard
-  { key: 'dashboard.view', name: 'View Dashboard', category: 'Dashboard', description: 'Access the admin overview dashboard' },
+  // Dashboard — each section is individually controllable
+  { key: 'dashboard.revenue', name: 'Revenue KPIs', category: 'Dashboard', description: 'View revenue today and period comparison cards' },
+  { key: 'dashboard.bookings', name: 'Booking KPIs & Chart', category: 'Dashboard', description: 'View bookings today KPI and booking status pie chart' },
+  { key: 'dashboard.users', name: 'User KPIs', category: 'Dashboard', description: 'View new signups and active users KPIs' },
+  { key: 'dashboard.top_suppliers', name: 'Top Suppliers', category: 'Dashboard', description: 'View top suppliers by revenue' },
+  { key: 'dashboard.top_tours', name: 'Top Tours', category: 'Dashboard', description: 'View top tours by revenue' },
+  { key: 'dashboard.recent_activity', name: 'Recent Activity', category: 'Dashboard', description: 'View recent platform activity feed' },
+  { key: 'dashboard.payout_summary', name: 'Payout Summary', category: 'Dashboard', description: 'View pending payouts KPI and payout summary section' },
   // Analytics
   { key: 'analytics.view', name: 'View Analytics', category: 'Analytics', description: 'View revenue, user growth, funnel, and CLV charts' },
   // Suppliers
@@ -56,7 +62,10 @@ const ROLES = {
     isSystem: false,
     isDefault: false,
     permissions: [
-      'dashboard.view',
+      'dashboard.revenue',
+      'dashboard.bookings',
+      'dashboard.users',
+      'dashboard.payout_summary',
       'analytics.view',
       'payouts.view',
       'payouts.approve',
@@ -72,7 +81,10 @@ const ROLES = {
     isSystem: false,
     isDefault: false,
     permissions: [
-      'dashboard.view',
+      'dashboard.bookings',
+      'dashboard.users',
+      'dashboard.top_suppliers',
+      'dashboard.recent_activity',
       'suppliers.view',
       'suppliers.approve',
       'reviews.view',
@@ -88,7 +100,10 @@ const ROLES = {
     isSystem: false,
     isDefault: false,
     permissions: [
-      'dashboard.view',
+      'dashboard.bookings',
+      'dashboard.users',
+      'dashboard.top_tours',
+      'dashboard.recent_activity',
       'analytics.view',
       'tours.view',
       'tours.manage',
@@ -102,7 +117,13 @@ const ROLES = {
     isSystem: false,
     isDefault: false,
     permissions: [
-      'dashboard.view',
+      'dashboard.revenue',
+      'dashboard.bookings',
+      'dashboard.users',
+      'dashboard.top_suppliers',
+      'dashboard.top_tours',
+      'dashboard.recent_activity',
+      'dashboard.payout_summary',
       'analytics.view',
       'suppliers.view',
       'tours.view',

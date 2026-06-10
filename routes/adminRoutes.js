@@ -50,7 +50,7 @@ router.use(protect, restrictTo('admin'));
  *       403:
  *         description: Admin access required
  */
-router.get('/analytics/overview', requirePermission('dashboard.view', 'analytics.view'), adminController.getOverview);
+router.get('/analytics/overview', requirePermission('dashboard.*', 'analytics.view'), adminController.getOverview);
 
 /**
  * @swagger
@@ -336,7 +336,7 @@ router.get('/analytics/cart-abandonment', requirePermission('analytics.view'), a
  *       200:
  *         description: Notifications retrieved
  */
-router.get('/notifications', requirePermission('dashboard.view'), adminNotifController.getNotifications);
+router.get('/notifications', requirePermission('dashboard.*'), adminNotifController.getNotifications);
 
 /**
  * @swagger
@@ -350,7 +350,7 @@ router.get('/notifications', requirePermission('dashboard.view'), adminNotifCont
  *       200:
  *         description: Unacknowledged count
  */
-router.get('/notifications/unread-count', requirePermission('dashboard.view'), adminNotifController.getUnreadCount);
+router.get('/notifications/unread-count', requirePermission('dashboard.*'), adminNotifController.getUnreadCount);
 
 /**
  * @swagger
@@ -364,7 +364,7 @@ router.get('/notifications/unread-count', requirePermission('dashboard.view'), a
  *       200:
  *         description: Statistics retrieved
  */
-router.get('/notifications/stats', requirePermission('dashboard.view'), adminNotifController.getStats);
+router.get('/notifications/stats', requirePermission('dashboard.*'), adminNotifController.getStats);
 
 /**
  * @swagger
@@ -383,7 +383,7 @@ router.get('/notifications/stats', requirePermission('dashboard.view'), adminNot
  *       200:
  *         description: Notification acknowledged
  */
-router.patch('/notifications/:id/acknowledge', requirePermission('dashboard.view'), adminNotifController.acknowledge);
+router.patch('/notifications/:id/acknowledge', requirePermission('dashboard.*'), adminNotifController.acknowledge);
 
 /**
  * @swagger
@@ -397,7 +397,7 @@ router.patch('/notifications/:id/acknowledge', requirePermission('dashboard.view
  *       200:
  *         description: All notifications acknowledged
  */
-router.patch('/notifications/acknowledge-all', requirePermission('dashboard.view'), adminNotifController.acknowledgeAll);
+router.patch('/notifications/acknowledge-all', requirePermission('dashboard.*'), adminNotifController.acknowledgeAll);
 
 /**
  * @swagger
@@ -464,7 +464,7 @@ router.get('/users/new', requirePermission('users.view'), adminController.getRec
  *       200:
  *         description: Today's bookings list
  */
-router.get('/bookings/today', requirePermission('dashboard.view'), adminController.getTodayBookings);
+router.get('/bookings/today', requirePermission('dashboard.bookings', 'dashboard.revenue'), adminController.getTodayBookings);
 
 /**
  * @swagger
