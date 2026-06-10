@@ -4,8 +4,13 @@ const AppError = require('../utils/appError');
 
 exports.requirePermission = (...permissionKeys) => {
   return catchAsync(async (req, res, next) => {
-    if (!req.user || !req.user.roles || !req.user.roles.includes('admin')) {
-      return next(new AppError('Admin access required', 403));
+    if (!req.user) {
+      return next(new AppError('Not authenticated', 401));
+    }
+
+    // Non-admin users pass through (e.g. suppliers/customers on shared routes like chat)
+    if (!req.user.roles?.includes('admin')) {
+      return next();
     }
 
     if (!req.user.adminRoleId) {
