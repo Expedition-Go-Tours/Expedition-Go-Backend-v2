@@ -1,4 +1,4 @@
-const { startOfDay, endOfDay, parseISO, addDays, format } = require('date-fns');
+const { parseISO } = require('date-fns');
 
 jest.mock('../../utils/prismaClient', () => ({
   tour: { findFirst: jest.fn() },
@@ -277,7 +277,7 @@ describe('availabilityController', () => {
 
     it('returns 400 when updates exceeds 365', async () => {
       req.params = { tourId: 't1' };
-      req.body = { updates: Array.from({ length: 366 }, (_, i) => ({ date: '2026-01-01' })) };
+      req.body = { updates: Array.from({ length: 366 }, () => ({ date: '2026-01-01' })) };
       await controller.batchUpdateAvailability(req, res, next);
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });

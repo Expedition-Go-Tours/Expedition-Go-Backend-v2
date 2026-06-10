@@ -18,14 +18,12 @@ const controller = require('../../controllers/adminController');
 describe('adminController', () => {
   let req, res, next;
 
-  const mockRawRow = () => ({});
   const mockAgg = (overrides = {}) => ({
     _sum: { total: '5000', supplierPayout: '4000', commissionAmount: '800' },
     ...overrides,
   });
   const mockCount = () => 42;
   const mockGroupBy = () => [];
-  const mockFindMany = () => [];
 
   beforeEach(() => {
     jest.clearAllMocks();

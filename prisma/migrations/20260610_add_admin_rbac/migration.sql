@@ -43,6 +43,9 @@ CREATE INDEX IF NOT EXISTS "AdminRolePermission_roleId_idx" ON "AdminRolePermiss
 CREATE INDEX IF NOT EXISTS "AdminRolePermission_permissionId_idx" ON "AdminRolePermission"("permissionId");
 
 -- Foreign Keys
-ALTER TABLE "User" ADD CONSTRAINT IF NOT EXISTS "User_adminRoleId_fkey" FOREIGN KEY ("adminRoleId") REFERENCES "AdminRole"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-ALTER TABLE "AdminRolePermission" ADD CONSTRAINT IF NOT EXISTS "AdminRolePermission_roleId_fkey" FOREIGN KEY ("roleId") REFERENCES "AdminRole"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "AdminRolePermission" ADD CONSTRAINT IF NOT EXISTS "AdminRolePermission_permissionId_fkey" FOREIGN KEY ("permissionId") REFERENCES "AdminPermission"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "User" DROP CONSTRAINT IF EXISTS "User_adminRoleId_fkey";
+ALTER TABLE "User" ADD CONSTRAINT "User_adminRoleId_fkey" FOREIGN KEY ("adminRoleId") REFERENCES "AdminRole"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "AdminRolePermission" DROP CONSTRAINT IF EXISTS "AdminRolePermission_roleId_fkey";
+ALTER TABLE "AdminRolePermission" ADD CONSTRAINT "AdminRolePermission_roleId_fkey" FOREIGN KEY ("roleId") REFERENCES "AdminRole"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "AdminRolePermission" DROP CONSTRAINT IF EXISTS "AdminRolePermission_permissionId_fkey";
+ALTER TABLE "AdminRolePermission" ADD CONSTRAINT "AdminRolePermission_permissionId_fkey" FOREIGN KEY ("permissionId") REFERENCES "AdminPermission"("id") ON DELETE CASCADE ON UPDATE CASCADE;

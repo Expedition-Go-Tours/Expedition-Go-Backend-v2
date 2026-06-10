@@ -8,7 +8,6 @@ jest.mock('../../utils/prismaClient', () => ({
 jest.mock('../../utils/getConfig', () => jest.fn().mockResolvedValue('2.50'));
 
 const prisma = require('../../utils/prismaClient');
-const getConfig = require('../../utils/getConfig');
 
 const {
   generateBookingNumber,
