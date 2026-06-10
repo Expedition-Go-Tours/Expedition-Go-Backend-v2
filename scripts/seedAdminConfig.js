@@ -153,8 +153,22 @@ const SYSTEM_CONFIG = {
   'system.maintenance_mode': { value: false, description: 'Enable/disable platform-wide maintenance mode' },
 };
 
+const PERMISSION_KEYS = new Set(PERMISSIONS.map((p) => p.key));
+
 async function seed() {
   console.log('Seeding admin permissions...');
+
+  // Remove old permissions that no longer exist in the definition
+  const stalePermissions = await prisma.adminPermission.findMany({
+    where: { key: { notIn: Array.from(PERMISSION_KEYS) } },
+  });
+  if (stalePermissions.length > 0) {
+    const staleIds = stalePermissions.map((p) => p.id);
+    console.log(`  Cleaning up ${stalePermissions.length} removed permission(s): ${stalePermissions.map((p) => p.key).join(', ')}`);
+    await prisma.adminRolePermission.deleteMany({ where: { permissionId: { in: staleIds } } });
+    await prisma.adminPermission.deleteMany({ where: { id: { in: staleIds } } });
+  }
+
   const permissionMap = {};
   for (const perm of PERMISSIONS) {
     const created = await prisma.adminPermission.upsert({
