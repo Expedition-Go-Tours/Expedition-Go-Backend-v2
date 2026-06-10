@@ -41,7 +41,8 @@ const PERMISSIONS = [
   { key: 'users.view', name: 'View Users', category: 'Users', description: 'View platform users' },
   { key: 'users.delete', name: 'Delete Users', category: 'Users', description: 'Delete user accounts' },
   // Chat
-  { key: 'chat.access', name: 'Access Chat', category: 'Chat', description: 'Access the chat/messaging system' },
+  { key: 'chat.suppliers', name: 'Supplier Messages', category: 'Chat', description: 'Access supplier chat conversations' },
+  { key: 'chat.customers', name: 'Customer Support', category: 'Chat', description: 'Access customer support conversations' },
   // Settings
   { key: 'settings.access', name: 'Access Settings', category: 'Settings', description: 'Access the admin settings page' },
   { key: 'settings.manage', name: 'Manage Settings', category: 'Settings', description: 'Update platform-wide settings' },
@@ -89,7 +90,8 @@ const ROLES = {
       'suppliers.approve',
       'reviews.view',
       'reviews.moderate',
-      'chat.access',
+      'chat.suppliers',
+      'chat.customers',
       'users.view',
       'tours.view',
     ],

@@ -3,9 +3,18 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const chatService = require('../utils/chatService');
 
+function canAccessType(user, type) {
+  const keys = user.permissionKeys || [];
+  if (keys.includes('super_admin')) return true;
+  if (type === 'SUPPLIER_ADMIN') return keys.includes('chat.suppliers');
+  if (type === 'USER_SUPPORT') return keys.includes('chat.customers');
+  return false;
+}
+
 exports.getConversations = catchAsync(async (req, res) => {
   const conversations = await chatService.getConversations(req.user.id);
-  res.json({ status: 'success', data: { conversations } });
+  const filtered = conversations.filter((c) => canAccessType(req.user, c.type));
+  res.json({ status: 'success', data: { conversations: filtered } });
 });
 
 exports.getOrCreateConversation = catchAsync(async (req, res) => {
@@ -39,6 +48,10 @@ exports.getOrCreateConversation = catchAsync(async (req, res) => {
     } else {
       type = 'USER_SUPPORT';
     }
+  }
+
+  if (req.user.roles.includes('admin') && (type === 'SUPPLIER_ADMIN' || type === 'USER_SUPPORT') && !canAccessType(req.user, type)) {
+    throw new AppError('You do not have permission for this conversation type', 403);
   }
 
   const conversation = await chatService.findOrCreateConversation(

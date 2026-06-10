@@ -39,6 +39,7 @@ exports.requirePermission = (...permissionKeys) => {
       return next(new AppError('You do not have permission to perform this action', 403));
     }
 
+    req.user.permissionKeys = role.permissions.map((rp) => rp.permission.key);
     next();
   });
 };
