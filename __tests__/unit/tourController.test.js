@@ -1,39 +1,17 @@
 jest.mock('../../utils/prismaClient', () => ({
-  tour: {
-    findMany: jest.fn().mockResolvedValue([]),
-    findFirst: jest.fn().mockResolvedValue(null),
-    count: jest.fn().mockResolvedValue(0),
-    create: jest.fn().mockResolvedValue({}),
-    update: jest.fn().mockResolvedValue({}),
-    groupBy: jest.fn().mockResolvedValue([]),
-    aggregate: jest.fn().mockResolvedValue({}),
-  },
-  booking: {
-    groupBy: jest.fn().mockResolvedValue([]),
-    aggregate: jest.fn().mockResolvedValue({}),
-  },
-  review: {
-    aggregate: jest.fn().mockResolvedValue({}),
-  },
-  supplierProfile: {
-    findUnique: jest.fn().mockResolvedValue(null),
-    create: jest.fn().mockResolvedValue({}),
-    update: jest.fn().mockResolvedValue({}),
-  },
-  tourSecondaryTheme: {
-    deleteMany: jest.fn().mockResolvedValue(),
-    createMany: jest.fn().mockResolvedValue(),
-  },
-  payoutMethod: {
-    findFirst: jest.fn().mockResolvedValue(null),
-  },
-  $queryRaw: jest.fn().mockResolvedValue([]),
+  tour: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), groupBy: jest.fn(), aggregate: jest.fn() },
+  booking: { groupBy: jest.fn(), aggregate: jest.fn() },
+  review: { aggregate: jest.fn() },
+  supplierProfile: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
+  tourSecondaryTheme: { deleteMany: jest.fn(), createMany: jest.fn() },
+  payoutMethod: { findFirst: jest.fn() },
+  $queryRaw: jest.fn(),
 }));
 
 jest.mock('../../utils/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
-  invalidateTourCaches: jest.fn().mockResolvedValue(),
-  invalidateKeys: jest.fn().mockResolvedValue(),
+  invalidateTourCaches: jest.fn(),
+  invalidateKeys: jest.fn(),
   TOUR_DETAIL_PREFIX: (id) => `tours:detail:${id}`,
   TOUR_POPULAR_KEY: 'tours:popular:by-category',
   TOUR_LIST_PREFIX: 'tours:list:*',
@@ -41,43 +19,14 @@ jest.mock('../../utils/cacheHelper', () => ({
   REVIEWS_TOUR_PREFIX: (tourId) => `reviews:tour:${tourId}:*`,
 }));
 
-jest.mock('../../utils/eventEmitter', () => ({
-  emit: jest.fn(),
-}));
-
-jest.mock('../../utils/cloudinaryHelper', () => ({
-  deleteCloudinaryImage: jest.fn().mockResolvedValue(),
-}));
-
-jest.mock('../../utils/tourHelpers', () => ({
-  createSlug: jest.fn().mockResolvedValue('test-tour-slug'),
-  validateTourData: jest.fn().mockReturnValue({ isValid: true, errors: [] }),
-}));
-
-jest.mock('../../utils/auditLogger', () => ({
-  logActivity: jest.fn().mockResolvedValue(),
-}));
-
-jest.mock('../../utils/imageOptimizer', () => ({
-  cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`),
-}));
-
-jest.mock('../../utils/tourFilterBuilder', () => ({
-  buildTourFilters: jest.fn().mockReturnValue({}),
-  buildSortOptions: jest.fn().mockReturnValue({ createdAt: 'desc' }),
-  getAvailableFilterOptions: jest.fn(),
-  validateFilterParams: jest.fn().mockReturnValue({ isValid: true, errors: [] }),
-  findNearbyTourIds: jest.fn(),
-  getTourDistances: jest.fn(),
-}));
-
-jest.mock('../../utils/popularityScorer', () => ({
-  getPopularByCategory: jest.fn(),
-}));
-
-jest.mock('../../utils/fullTextSearch', () => ({
-  rankTourIdsBySearch: jest.fn(),
-}));
+jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
+jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn() }));
+jest.mock('../../utils/tourHelpers', () => ({ createSlug: jest.fn(), validateTourData: jest.fn() }));
+jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
+jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn() }));
+jest.mock('../../utils/tourFilterBuilder', () => ({ buildTourFilters: jest.fn(), buildSortOptions: jest.fn(), getAvailableFilterOptions: jest.fn(), validateFilterParams: jest.fn(), findNearbyTourIds: jest.fn(), getTourDistances: jest.fn() }));
+jest.mock('../../utils/popularityScorer', () => ({ getPopularByCategory: jest.fn() }));
+jest.mock('../../utils/fullTextSearch', () => ({ rankTourIdsBySearch: jest.fn() }));
 
 const prisma = require('../../utils/prismaClient');
 const cache = require('../../utils/cacheHelper');
@@ -121,6 +70,41 @@ describe('tourController', () => {
     next = jest.fn();
 
     jest.clearAllMocks();
+
+    prisma.tour.findMany.mockResolvedValue([]);
+    prisma.tour.findFirst.mockResolvedValue(null);
+    prisma.tour.count.mockResolvedValue(0);
+    prisma.tour.create.mockResolvedValue({});
+    prisma.tour.update.mockResolvedValue({});
+    prisma.tour.groupBy.mockResolvedValue([]);
+    prisma.tour.aggregate.mockResolvedValue({});
+    prisma.booking.groupBy.mockResolvedValue([]);
+    prisma.booking.aggregate.mockResolvedValue({});
+    prisma.review.aggregate.mockResolvedValue({});
+    prisma.supplierProfile.findUnique.mockResolvedValue(null);
+    prisma.supplierProfile.create.mockResolvedValue({});
+    prisma.supplierProfile.update.mockResolvedValue({});
+    prisma.tourSecondaryTheme.deleteMany.mockResolvedValue();
+    prisma.tourSecondaryTheme.createMany.mockResolvedValue();
+    prisma.payoutMethod.findFirst.mockResolvedValue(null);
+    prisma.$queryRaw.mockResolvedValue([]);
+    cache.getOrSet.mockImplementation((key, fn) => fn());
+    cache.invalidateTourCaches.mockResolvedValue();
+    cache.invalidateKeys.mockResolvedValue();
+    event.emit.mockReturnValue();
+    deleteCloudinaryImage.mockResolvedValue();
+    createSlug.mockResolvedValue('test-tour-slug');
+    validateTourData.mockReturnValue({ isValid: true, errors: [] });
+    logActivity.mockResolvedValue();
+    cloudinaryUrl.mockImplementation((url, size) => `https://cdn.example.com/${size}/${url}`);
+    buildTourFilters.mockReturnValue({});
+    buildSortOptions.mockReturnValue({ createdAt: 'desc' });
+    validateFilterParams.mockReturnValue({ isValid: true, errors: [] });
+    findNearbyTourIds.mockResolvedValue([]);
+    getTourDistances.mockResolvedValue(new Map());
+    getAvailableFilterOptions.mockResolvedValue({});
+    getPopularByCategory.mockReturnValue({});
+    rankTourIdsBySearch.mockResolvedValue([]);
   });
 
   // ============================
@@ -449,7 +433,7 @@ describe('tourController', () => {
 
     it('emits tour.viewed event when view is counted', async () => {
       req.params = { id: 'tour-1' };
-      req.user = { id: 'customer-1', roles: ['customer'] };
+      req.user = { id: 'unique-viewer-99', roles: ['customer'] };
       prisma.tour.update = jest.fn().mockResolvedValue();
 
       await controller.getTour(req, res, next);
@@ -486,6 +470,7 @@ describe('tourController', () => {
     beforeEach(() => {
       prisma.supplierProfile.findUnique.mockResolvedValue(mockProfile);
       prisma.tour.create.mockResolvedValue(mockCreatedTour);
+      prisma.payoutMethod.findFirst = jest.fn().mockResolvedValue(null);
     });
 
     it('creates a tour successfully', async () => {
@@ -534,7 +519,7 @@ describe('tourController', () => {
 
     it('returns 400 when publishing without verified payout method', async () => {
       req.body.status = 'PUBLISHED';
-      prisma.payoutMethod = { findFirst: jest.fn().mockResolvedValue(null) };
+      prisma.payoutMethod.findFirst = jest.fn().mockResolvedValue(null);
 
       await controller.createTour(req, res, next);
 
@@ -552,7 +537,7 @@ describe('tourController', () => {
         schedulesAndPricing: {},
         bookingAndTickets: {},
       };
-      prisma.payoutMethod = { findFirst: jest.fn().mockResolvedValue({ id: 'pm-1', verified: true }) };
+      prisma.payoutMethod.findFirst = jest.fn().mockResolvedValue({ id: 'pm-1', verified: true });
 
       await controller.createTour(req, res, next);
 
@@ -585,10 +570,7 @@ describe('tourController', () => {
       };
 
       await controller.createTour(req, res, next);
-      if (next.mock.calls.length > 0) {
-        const err = next.mock.calls[0][0];
-        throw new Error(`next was called with: ${err.message}`);
-      }
+
       expect(prisma.tour.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
