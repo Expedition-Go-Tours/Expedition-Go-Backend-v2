@@ -1,12 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
-const { requirePermission } = require('../middleware/permissionMiddleware');
 const { uploadChatImage } = require('../middleware/uploadMiddleware');
 const chatController = require('../controllers/chatController');
 
 router.use(protect);
-router.use(requirePermission('chat.suppliers', 'chat.customers'));
 
 router.get('/conversations', chatController.getConversations);
 router.post('/conversations', chatController.getOrCreateConversation);

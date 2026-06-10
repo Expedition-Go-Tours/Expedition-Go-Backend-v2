@@ -4,6 +4,7 @@ const AppError = require('../utils/appError');
 const chatService = require('../utils/chatService');
 
 function canAccessType(user, type) {
+  if (!user.roles?.includes('admin')) return true;
   const keys = user.permissionKeys || [];
   if (keys.includes('super_admin')) return true;
   if (type === 'SUPPLIER_ADMIN') return keys.includes('chat.suppliers');
