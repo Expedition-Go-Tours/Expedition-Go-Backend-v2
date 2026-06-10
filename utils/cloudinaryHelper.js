@@ -67,4 +67,4 @@ async function deleteCloudinaryImage(photoUrl) {
   }
 }
 
-module.exports = { deleteCloudinaryImage };
+module.exports = { deleteCloudinaryImage, extractPublicIdFromUrl };

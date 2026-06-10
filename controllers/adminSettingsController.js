@@ -88,9 +88,7 @@ exports.getSetting = catchAsync(async (req, res, next) => {
 });
 
 exports.exportAuditLog = catchAsync(async (req, res, next) => {
-  const action = req.query.action || '';
-
-  const where = action ? { action: { contains: action, mode: 'insensitive' } } : {};
+  const where = buildAuditWhere(req);
 
   const entries = await prisma.auditLog.findMany({
     where,
@@ -141,13 +139,23 @@ function escapeCsv(val) {
   return val;
 }
 
+function buildAuditWhere(req) {
+  const where = {};
+  if (req.query.action) where.action = { contains: req.query.action, mode: 'insensitive' };
+  if (req.query.resource) where.resource = { contains: req.query.resource, mode: 'insensitive' };
+  if (req.query.startDate || req.query.endDate) {
+    where.createdAt = {};
+    if (req.query.startDate) where.createdAt.gte = new Date(req.query.startDate);
+    if (req.query.endDate) where.createdAt.lte = new Date(req.query.endDate);
+  }
+  return where;
+}
+
 exports.getAuditLog = catchAsync(async (req, res, next) => {
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-  const action = req.query.action || '';
   const skip = (page - 1) * limit;
-
-  const where = action ? { action: { contains: action, mode: 'insensitive' } } : {};
+  const where = buildAuditWhere(req);
 
   const [entries, total] = await Promise.all([
     prisma.auditLog.findMany({

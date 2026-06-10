@@ -47,6 +47,8 @@ const PERMISSIONS = [
   { key: 'settings.access', name: 'Access Settings', category: 'Settings', description: 'Access the admin settings page' },
   { key: 'settings.manage', name: 'Manage Settings', category: 'Settings', description: 'Update platform-wide settings' },
   { key: 'roles.manage', name: 'Manage Roles & Permissions', category: 'Settings', description: 'Create, edit, and delete admin roles and permissions' },
+  // Audit
+  { key: 'audit.view', name: 'View Audit Log', category: 'Settings', description: 'View and export the audit log' },
 ];
 
 const ROLES = {

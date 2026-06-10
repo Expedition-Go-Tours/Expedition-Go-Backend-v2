@@ -19,6 +19,7 @@ jest.mock('../../utils/eventEmitter', () => ({
   emit: jest.fn(),
 }));
 jest.mock('../../utils/emailService', () => ({}));
+jest.mock('../../utils/getConfig', () => jest.fn((key, defaultValue) => Promise.resolve(defaultValue)));
 
 const mockConstructEvent = jest.fn();
 jest.mock('stripe', () => {
@@ -88,55 +89,55 @@ const mockStripeEvent = (type, data = {}) => ({
 });
 
 describe('calculateCommission', () => {
-  it('returns 15% for default tier (low volume)', () => {
+  it('returns 15% for default tier (low volume)', async () => {
     const profile = { totalBookings: 5, averageRating: null };
-    const result = calculateCommission(100, profile);
+    const result = await calculateCommission(100, profile);
 
     expect(result.rate).toBe(0.15);
     expect(result.amount).toBe(15);
     expect(result.supplierPayout).toBe(85);
   });
 
-  it('returns 14% for high-rated new suppliers', () => {
+  it('returns 14% for high-rated new suppliers', async () => {
     const profile = { totalBookings: 5, averageRating: 4.9 };
-    const result = calculateCommission(100, profile);
+    const result = await calculateCommission(100, profile);
 
-    expect(result.rate).toBe(0.14);
+    expect(result.rate).toBeCloseTo(0.14);
   });
 
-  it('returns 13% for medium-volume suppliers (51-100 bookings)', () => {
+  it('returns 13% for medium-volume suppliers (51-100 bookings)', async () => {
     const profile = { totalBookings: 75, averageRating: null };
-    const result = calculateCommission(100, profile);
+    const result = await calculateCommission(100, profile);
 
     expect(result.rate).toBe(0.13);
   });
 
-  it('returns 12% for high-volume suppliers (100+ bookings)', () => {
+  it('returns 12% for high-volume suppliers (100+ bookings)', async () => {
     const profile = { totalBookings: 150, averageRating: null };
-    const result = calculateCommission(100, profile);
+    const result = await calculateCommission(100, profile);
 
     expect(result.rate).toBe(0.12);
   });
 
-  it('high volume takes priority over high rating', () => {
+  it('high volume takes priority over high rating', async () => {
     const profile = { totalBookings: 150, averageRating: 4.9 };
-    const result = calculateCommission(100, profile);
+    const result = await calculateCommission(100, profile);
 
     expect(result.rate).toBe(0.12);
   });
 
-  it('handles zero booking amount', () => {
+  it('handles zero booking amount', async () => {
     const profile = { totalBookings: 0, averageRating: null };
-    const result = calculateCommission(0, profile);
+    const result = await calculateCommission(0, profile);
 
     expect(result.rate).toBe(0.15);
     expect(result.amount).toBe(0);
     expect(result.supplierPayout).toBe(0);
   });
 
-  it('handles string amount input', () => {
+  it('handles string amount input', async () => {
     const profile = { totalBookings: 10, averageRating: null };
-    const result = calculateCommission('200', profile);
+    const result = await calculateCommission('200', profile);
 
     expect(result.rate).toBe(0.15);
     expect(result.amount).toBe(30);

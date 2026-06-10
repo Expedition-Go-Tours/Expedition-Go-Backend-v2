@@ -506,7 +506,7 @@ router.get('/users/search', requirePermission('users.view'), adminController.sea
 router.get('/me', adminController.getMe);
 
 // Audit log
-router.get('/audit-log/export', requirePermission('settings.access'), adminSettingsController.exportAuditLog);
-router.get('/audit-log', requirePermission('settings.access'), adminSettingsController.getAuditLog);
+router.get('/audit-log/export', requirePermission('settings.access', 'audit.view'), adminSettingsController.exportAuditLog);
+router.get('/audit-log', requirePermission('settings.access', 'audit.view'), adminSettingsController.getAuditLog);
 
 module.exports = router;
