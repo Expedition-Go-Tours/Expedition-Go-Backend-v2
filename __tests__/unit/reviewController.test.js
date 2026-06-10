@@ -3,10 +3,9 @@ jest.mock('../../utils/prismaClient', () => ({
   review: { findFirst: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   tour: { findMany: jest.fn() },
   $transaction: jest.fn((cb) => cb({
-    review: { create: jest.fn(), update: jest.fn(), delete: jest.fn() },
+    review: { create: jest.fn(), update: jest.fn(), delete: jest.fn(), aggregate: jest.fn() },
     tour: { update: jest.fn(), findUnique: jest.fn() },
     supplierProfile: { update: jest.fn() },
-    review: { aggregate: jest.fn() },
   })),
 }));
 

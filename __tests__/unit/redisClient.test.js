@@ -18,8 +18,6 @@ createMockRedis();
 
 jest.mock('ioredis', () => jest.fn(() => mockRedis));
 
-const Redis = require('ioredis');
-
 describe('redisClient', () => {
   let redis;
 
