@@ -319,6 +319,30 @@ async function sendSupplierBookingNotification(booking) {
 }
 
 /**
+ * Send team invitation email
+ */
+async function sendTeamInviteEmail({ to, supplierName, role, inviteUrl, invitedBy }) {
+  try {
+    await sendEmail({
+      to,
+      subject: `You've been invited to join ${supplierName}'s team`,
+      template: 'team-invite',
+      data: {
+        supplierName,
+        role,
+        inviteUrl,
+        invitedBy,
+        brandName: 'Travio Africa',
+        brandSubtext: 'by Expedition-Go Tours',
+        supportEmail: process.env.SUPPORT_EMAIL
+      }
+    });
+  } catch (error) {
+    console.error(' Team invite email failed:', error);
+  }
+}
+
+/**
  * Generate email content from template
  */
 function generateEmailContent(template, data) {
@@ -333,7 +357,8 @@ function generateEmailContent(template, data) {
     'review-notification': generateReviewNotificationTemplate,
     'payout-notification': generatePayoutNotificationTemplate,
     'supplier-booking-notification': generateSupplierBookingNotificationTemplate,
-    'generic-notification': generateGenericNotificationTemplate
+    'generic-notification': generateGenericNotificationTemplate,
+    'team-invite': generateTeamInviteTemplate
   };
 
   const templateFunction = templates[template];
@@ -2095,6 +2120,169 @@ function generateGenericNotificationTemplate(data) {
   return { html, text };
 }
 
+function generateTeamInviteTemplate(data) {
+  const brandName = data.brandName || 'Travio Africa';
+  const supplierName = data.supplierName || 'a supplier';
+  const supportEmail = data.supportEmail || 'support@expeditiongo.com';
+  const logoUrl = data.logoUrl || process.env.LOGO_URL || 'https://firebasestorage.googleapis.com/v0/b/expedition-go-tours-domain.appspot.com/o/travio-logo.png?alt=media';
+  const inviteUrl = data.inviteUrl || '#';
+  const role = data.role || 'editor';
+  const invitedBy = data.invitedBy || 'Your supplier';
+  const year = new Date().getFullYear();
+
+  const roleLabels = { admin: 'Admin', editor: 'Editor', finance: 'Finance', support: 'Support' };
+  const roleLabel = roleLabels[role] || role.charAt(0).toUpperCase() + role.slice(1);
+
+  const html = `<!DOCTYPE html>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>Team Invitation</title>
+  <style>
+    body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; background-color: #F8FAFC; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
+    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    .font-main { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  </style>
+</head>
+<body>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+    <tr>
+      <td align="center" style="padding: 40px 16px;">
+        <table role="presentation" width="100%" style="max-width: 640px; background-color: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;" cellspacing="0" cellpadding="0" border="0">
+
+          <!-- Header -->
+          <tr>
+            <td style="padding: 40px 40px 24px 40px;">
+              <img src="${logoUrl}" alt="${brandName}" width="180" style="display: block; max-width: 180px; height: auto;">
+            </td>
+          </tr>
+
+          <!-- Title -->
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="center">
+                    <h1 style="margin: 0 0 12px 0; font-size: 28px; font-weight: 800; color: #001F3F; line-height: 1.2;" class="font-main">Team Invitation</h1>
+                    <p style="margin: 0; font-size: 16px; color: #475569; line-height: 1.4;" class="font-main">You've been invited to join <strong style="color: #001F3F;">${supplierName}</strong></p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Invite Details Card -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;">
+              <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr><td style="padding: 32px;">
+
+                <!-- Greeting -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding-bottom: 24px; border-bottom: 1px solid #E2E8F0;">
+                    <p style="margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #001F3F;" class="font-main">Hello,</p>
+                    <p style="margin: 0; font-size: 15px; color: #334155; line-height: 1.5;" class="font-main">${invitedBy} has invited you to join their team on ${brandName}. You'll be able to manage tours, bookings, and more.</p>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Role -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td width="50%" valign="top" style="padding-right: 12px;">
+                          <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Supplier</span>
+                          <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${supplierName}</span>
+                        </td>
+                        <td width="50%" valign="top" style="padding-left: 12px;">
+                          <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Role</span>
+                          <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">${roleLabel}</span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Expiry notice -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td>
+                    <table role="presentation" width="100%" bgcolor="#FFF7ED" style="border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td style="padding: 16px 20px;">
+                          <p style="margin: 0; font-size: 13px; color: #9A3412; line-height: 1.4;" class="font-main">This invitation will expire in 48 hours. If you don't have an account yet, you'll be able to create one when you accept.</p>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                </table>
+
+                </td></tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- CTA Button -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="center">
+                    <a href="${inviteUrl}" target="_blank" style="display: block; width: 100%; background-color: #00A669; padding: 16px 0; text-align: center; border-radius: 10px; color: #ffffff; font-size: 16px; font-weight: 700; text-decoration: none; line-height: 1;" class="font-main">Accept Invitation &nbsp;&rarr;</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Support -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;" align="center">
+              <span style="font-size: 13px; color: #64748B;" class="font-main">Need help? Contact <a href="mailto:${supportEmail}" style="color: #00A669; text-decoration: none; font-weight: 600;">${supportEmail}</a></span>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td bgcolor="#001F3F" style="padding: 32px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="left" style="color: #ffffff; font-size: 14px; line-height: 1.4;" class="font-main">
+                    <strong style="color: #00A669; font-size: 14px;">${supplierName}</strong><br>
+                    <span style="color: #94A3B8; font-size: 13px;">${brandName} Team</span>
+                  </td>
+                  <td align="right" style="font-family: 'Caveat', 'Georgia', 'Apple Chancery', cursive; font-size: 20px; color: #ffffff; font-weight: 400;" valign="middle">
+                    Welcome to the team.
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+
+        <p style="margin: 24px 0 0 0; text-align: center; font-size: 11px; color: #94A3B8; line-height: 1;" class="font-main">
+          &copy; ${year} ${brandName} by Expedition-Go Tours. All rights reserved.
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const text = `TEAM INVITATION\n\nYou've been invited to join ${supplierName}\n\nSupplier: ${supplierName}\nRole: ${roleLabel}\n\nThis invitation will expire in 48 hours.\n\nAccept invitation: ${inviteUrl}\n\nNeed help? ${supportEmail}\n\n${year} ${brandName} by Expedition-Go Tours. All rights reserved.`;
+
+  return { html, text };
+}
+
 module.exports = {
   sendEmail,
   sendBookingConfirmationEmail,
@@ -2103,6 +2291,7 @@ module.exports = {
   sendReviewNotificationEmail,
   sendPayoutNotificationEmail,
   sendSupplierBookingNotification,
+  sendTeamInviteEmail,
   generatePrintableTicketHtml,
   generateEmailContent
 };

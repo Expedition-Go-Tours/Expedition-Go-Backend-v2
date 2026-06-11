@@ -129,6 +129,9 @@ model User {
   language     String    @default("en")
   timezone     String    @default("UTC")
   
+  // Notification Preferences (JSON object with email/push categories)
+  notificationPreferences Json?
+  
   // Account Status
   active       Boolean   @default(true)
   emailVerified Boolean  @default(false)
@@ -149,6 +152,8 @@ model User {
   reviews      Review[]
   notifications Notification[]
   cartItems    CartItem[]
+  teamMembers  TeamMember[]     @relation("SupplierTeam")
+  teamInvitations TeamMember[]  @relation("TeamInviter")
   chatParticipants ConversationParticipant[]
   messages     Message[]
   
@@ -733,6 +738,31 @@ model Event {
   @@index([createdAt])
   @@index([name, createdAt])         // Coverage for time-series analytics queries
   @@index([userId, name, createdAt]) // Coverage for user-journey / funnel queries
+}
+
+// ================================
+// TEAM MANAGEMENT
+// ================================
+
+model TeamMember {
+  id             String     @id @default(cuid())
+  supplierId     String
+  supplier       User       @relation("SupplierTeam", fields: [supplierId], references: [id], onDelete: Cascade)
+  email          String
+  role           String     @default("editor")
+  status         String     @default("PENDING")
+  invitedById    String?
+  invitedBy      User?      @relation("TeamInviter", fields: [invitedById], references: [id])
+  inviteToken    String?    @unique
+  tokenExpiresAt DateTime?
+  acceptedAt     DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@unique([supplierId, email])
+  @@index([supplierId])
+  @@index([email])
+  @@index([inviteToken])
 }
 
 model AuditLog {

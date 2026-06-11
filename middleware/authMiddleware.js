@@ -26,7 +26,7 @@ exports.protect = catchAsync(async (req, res, next) => {
           name: 'Dev User',
           email: 'dev@test.com',
           photoURL: '',
-          roles: ['admin'],
+          roles: ['admin', 'supplier'],
         },
       });
     }
