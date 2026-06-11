@@ -43,6 +43,7 @@ describe('chatController', () => {
     });
 
     it('filters out conversations user cannot access', async () => {
+      req.user = { id: 'admin-1', roles: ['admin'], permissionKeys: ['chat.suppliers'] };
       chatService.getConversations.mockResolvedValue([
         { id: 'c-1', type: 'SUPPLIER_ADMIN', title: 'A' },
         { id: 'c-2', type: 'USER_SUPPORT', title: 'B' },

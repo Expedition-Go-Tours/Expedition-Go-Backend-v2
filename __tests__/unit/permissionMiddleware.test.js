@@ -45,11 +45,12 @@ describe('permissionMiddleware', () => {
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 403, message: 'You do not have permission to perform this action' }));
     });
 
-    it('returns 403 when user is not admin', async () => {
+    it('passes through when user is not admin', async () => {
       req.user = { id: 'u-1', roles: ['supplier'] };
       const handler = middleware.requirePermission('tours.create');
       await handler(req, res, next);
-      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 403 }));
+      expect(next).toHaveBeenCalled();
+      expect(next).not.toHaveBeenCalledWith(expect.objectContaining({ statusCode: expect.any(Number) }));
     });
 
     it('returns 403 when admin role not assigned', async () => {

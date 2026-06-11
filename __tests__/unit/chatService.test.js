@@ -5,6 +5,7 @@ jest.mock('../../utils/prismaClient', () => ({
   message: { findMany: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   notification: { updateMany: jest.fn() },
   adminNotification: { updateMany: jest.fn() },
+  systemConfig: { findUnique: jest.fn() },
 }));
 
 jest.mock('../../utils/queue', () => ({ enqueueNotification: jest.fn() }));
@@ -49,6 +50,7 @@ describe('chatService', () => {
     prisma.message.delete.mockResolvedValue();
     prisma.notification.updateMany.mockResolvedValue({ count: 1 });
     prisma.adminNotification.updateMany.mockResolvedValue({ count: 1 });
+    prisma.systemConfig.findUnique.mockResolvedValue(null);
   });
 
   describe('getSharedAdminId', () => {

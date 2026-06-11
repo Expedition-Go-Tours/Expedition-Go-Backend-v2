@@ -6,12 +6,20 @@ let _sharedAdminId = null;
 
 async function getSharedAdminId() {
   if (!_sharedAdminId) {
-    const admin = await prisma.user.findFirst({
-      where: { roles: { has: 'admin' } },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true }
+    const config = await prisma.systemConfig.findUnique({
+      where: { key: 'chat.admin_id' },
+      select: { value: true }
     });
-    _sharedAdminId = admin?.id || null;
+    if (config?.value) {
+      _sharedAdminId = config.value;
+    } else {
+      const admin = await prisma.user.findFirst({
+        where: { roles: { has: 'admin' } },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true }
+      });
+      _sharedAdminId = admin?.id || null;
+    }
   }
   return _sharedAdminId;
 }
