@@ -326,7 +326,13 @@ describe('supplierController', () => {
         expect.objectContaining({ by: ['status'], where: { supplierId: 'u-1' } })
       );
       expect(prisma.booking.groupBy).toHaveBeenCalledWith(
-        expect.objectContaining({ by: ['status'], where: { tour: { supplierId: 'u-1' } } })
+        expect.objectContaining({
+          by: ['status'],
+          where: {
+            tour: { supplierId: 'u-1' },
+            createdAt: { gte: expect.any(Date) },
+          },
+        })
       );
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(

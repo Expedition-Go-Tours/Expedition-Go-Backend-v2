@@ -1,5 +1,6 @@
 jest.mock('../../utils/prismaClient', () => ({
   user: { findUnique: jest.fn(), update: jest.fn(), create: jest.fn(), delete: jest.fn() },
+  tour: { findUnique: jest.fn(), findMany: jest.fn() },
 }));
 
 jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn() }));
@@ -172,9 +173,58 @@ describe('userController', () => {
   });
 
   // ============================
+  // getWishlist
+  // ============================
+  describe('getWishlist', () => {
+    it('returns wishlisted tours with full details', async () => {
+      prisma.user.findUnique.mockResolvedValue({ wishlist: ['t1', 't2'] });
+      const mockTours = [
+        { id: 't1', title: 'Tour A', slug: 'tour-a', coverPhoto: 'a.jpg', city: 'Accra', country: 'Ghana', averageRating: 4.5, reviewCount: 10, totalBookings: 50, schedulesAndPricing: {}, createdAt: new Date(), supplier: { id: 's1', name: 'Supplier 1', photoURL: 's.jpg' } },
+        { id: 't2', title: 'Tour B', slug: 'tour-b', coverPhoto: 'b.jpg', city: 'Kumasi', country: 'Ghana', averageRating: 4.0, reviewCount: 5, totalBookings: 20, schedulesAndPricing: {}, createdAt: new Date(), supplier: { id: 's2', name: 'Supplier 2', photoURL: null } },
+      ];
+      prisma.tour.findMany.mockResolvedValue(mockTours);
+
+      await controller.getWishlist(req, res, next);
+
+      expect(prisma.tour.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ id: { in: ['t1', 't2'] } }) })
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith({
+        status: 'success',
+        results: 2,
+        data: { tours: mockTours }
+      });
+    });
+
+    it('returns empty array when wishlist is empty', async () => {
+      prisma.user.findUnique.mockResolvedValue({ wishlist: [] });
+
+      await controller.getWishlist(req, res, next);
+
+      expect(prisma.tour.findMany).not.toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith({
+        status: 'success',
+        results: 0,
+        data: { tours: [] }
+      });
+    });
+
+    it('returns 404 when user not found', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      await controller.getWishlist(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
+    });
+  });
+
+  // ============================
   // toggleWishlist
   // ============================
   describe('toggleWishlist', () => {
+    beforeEach(() => {
+      prisma.tour.findUnique.mockResolvedValue({ id: 't1', status: 'ACTIVE' });
+    });
+
     it('adds tour to wishlist', async () => {
       req.params = { tourId: 't1' };
       prisma.user.findUnique.mockResolvedValue({ ...mockUser, wishlist: [] });
@@ -182,6 +232,7 @@ describe('userController', () => {
 
       await controller.toggleWishlist(req, res, next);
 
+      expect(prisma.tour.findUnique).toHaveBeenCalledWith({ where: { id: 't1' }, select: { id: true, status: true } });
       expect(prisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: { wishlist: ['t1'] } })
       );
@@ -207,6 +258,13 @@ describe('userController', () => {
       prisma.user.findUnique.mockResolvedValue(null);
       await controller.toggleWishlist(req, res, next);
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
+    });
+
+    it('returns 404 when tour not found', async () => {
+      req.params = { tourId: 'nonexistent' };
+      prisma.tour.findUnique.mockResolvedValue(null);
+      await controller.toggleWishlist(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404, message: 'Tour not found' }));
     });
   });
 

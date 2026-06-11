@@ -324,6 +324,43 @@ router.delete('/me', userController.deleteMe);
 
 /**
  * @swagger
+ * /users/wishlist:
+ *   get:
+ *     summary: Get user's wishlist with full tour details
+ *     description: |
+ *       Returns the authenticated user's wishlisted tours with full details
+ *       (title, cover photo, location, rating, price, supplier info).
+ *       Tours are returned in the order they were added to the wishlist.
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Wishlist retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 results:
+ *                   type: integer
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     tours:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/Tour'
+ *       401:
+ *         $ref: '#/components/responses/UnauthorizedError'
+ */
+router.get('/wishlist', userController.getWishlist);
+
+/**
+ * @swagger
  * /users/wishlist/{tourId}:
  *   patch:
  *     summary: Toggle tour in wishlist
@@ -370,6 +407,7 @@ router.delete('/me', userController.deleteMe);
  *       401:
  *         $ref: '#/components/responses/UnauthorizedError'
  */
+router.get('/wishlist', userController.getWishlist);
 router.patch('/wishlist/:tourId', userController.toggleWishlist);
 
 /**

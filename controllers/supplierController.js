@@ -175,6 +175,8 @@ exports.getDashboard = catchAsync(async (req, res, next) => {
     return next(new AppError('Supplier profile not found', 404));
   }
 
+  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+
   const [tourStats, bookingStats, recentReviews] = await Promise.all([
     // Tour counts by status
     prisma.tour.groupBy({
@@ -183,10 +185,10 @@ exports.getDashboard = catchAsync(async (req, res, next) => {
       _count: true,
     }),
 
-    // Booking counts by status
+    // Booking counts by status (last 90 days)
     prisma.booking.groupBy({
       by: ['status'],
-      where: { tour: { supplierId } },
+      where: { tour: { supplierId }, createdAt: { gte: ninetyDaysAgo } },
       _count: true,
     }),
 

@@ -130,11 +130,60 @@ exports.deleteUser = catchAsync(async (req, res, next) => {
   res.status(204).json({ status: 'success', data: null });
 });
 
+exports.getWishlist = catchAsync(async (req, res, next) => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { wishlist: true }
+  });
+  if (!user) return next(new AppError('User not found', 404));
+
+  const tourIds = user.wishlist;
+
+  let tours = [];
+  if (tourIds.length > 0) {
+    tours = await prisma.tour.findMany({
+      where: { id: { in: tourIds }, status: { not: 'DRAFT' } },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        coverPhoto: true,
+        photos: true,
+        city: true,
+        country: true,
+        averageRating: true,
+        reviewCount: true,
+        totalBookings: true,
+        schedulesAndPricing: true,
+        createdAt: true,
+        supplier: {
+          select: { id: true, name: true, photoURL: true }
+        }
+      },
+    });
+
+    const tourMap = Object.fromEntries(tours.map(t => [t.id, t]));
+    tours = tourIds.map(id => tourMap[id]).filter(Boolean);
+  }
+
+  res.status(200).json({
+    status: 'success',
+    results: tours.length,
+    data: { tours }
+  });
+});
+
 exports.toggleWishlist = catchAsync(async (req, res, next) => {
   const user = await prisma.user.findUnique({ where: { id: req.user.id } });
   if (!user) return next(new AppError('User not found', 404));
 
   const tourId = req.params.tourId;
+
+  const tour = await prisma.tour.findUnique({
+    where: { id: tourId },
+    select: { id: true, status: true }
+  });
+  if (!tour) return next(new AppError('Tour not found', 404));
 
   const isWishlisted = user.wishlist.includes(tourId);
   const nextWishlist = isWishlisted
@@ -155,7 +204,13 @@ exports.toggleWishlist = catchAsync(async (req, res, next) => {
     metadata: { tourId }
   });
 
-  res.status(200).json({ status: 'success', data: { wishlist: updatedUser.wishlist } });
+  res.status(200).json({
+    status: 'success',
+    data: {
+      wishlist: updatedUser.wishlist,
+      isWishlisted: !isWishlisted
+    }
+  });
 });
 
 exports.toggleLike = catchAsync(async (req, res, next) => {
