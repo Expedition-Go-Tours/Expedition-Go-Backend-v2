@@ -57,8 +57,9 @@ describe('sendEmail', () => {
     expect(msg.subject).toBe('Test Subject');
     expect(msg.from.email).toBe('noreply@travioafrica.com');
     expect(msg.from.name).toBe('Travio Africa');
-    expect(msg.html).toContain('Hello');
-    expect(msg.text).toContain('Hello');
+    expect(msg.templateId).toBe('d-12b0cfb8cf1f4211a22db258e13c9f30');
+    expect(msg.dynamicTemplateData.title).toBe('Hello');
+    expect(msg.dynamicTemplateData.message).toBe('World');
     expect(result.success).toBe(true);
     expect(result.messageId).toBe('msg-123');
   });
@@ -88,7 +89,7 @@ describe('sendEmail', () => {
     expect(result.success).toBe(true);
   });
 
-  it('falls back to generic template for unknown template name', async () => {
+  it('falls back to generic fallback for unknown template name', async () => {
     sgMail.send.mockResolvedValue([{ headers: { 'x-message-id': 'msg-789' } }]);
 
     await sendEmail({
@@ -99,27 +100,37 @@ describe('sendEmail', () => {
     });
 
     const msg = sgMail.send.mock.calls[0][0];
-    expect(msg.html).toContain('Fallback');
-    expect(msg.html).toContain('Generic body');
+    expect(msg.html).toContain('Email template not found');
   });
 
   it('outputs each known template type correctly', async () => {
     sgMail.send.mockResolvedValue([{ headers: { 'x-message-id': 'm' } }]);
 
+    const templateIds = {
+      'booking-confirmation': 'd-0a159d1f1c43422d85195f8d8f898506',
+      'booking-cancellation': 'd-3b94f590c23f4530a05152bbdca561b0',
+      'supplier-approved': 'd-2f3d5b9302ae459b8ac94758a70d6ce6',
+      'supplier-rejected': 'd-46112aefe32a4e1a846ec72b5ddc38e4',
+      'supplier-under-review': 'd-875a87dd2cf14a11a4f1075d053fc6b1',
+      'supplier-activated': 'd-493cd6b3347e4552a09f6c7d70a4a933',
+      'supplier-suspended': 'd-d09364df53b4467ea43a7128483295e3',
+    };
+
     const cases = [
-      { template: 'booking-confirmation', data: { tourTitle: 'T', bookingNumber: 'B1', customerName: 'J', selectedDate: '2026-07-01', totalAmount: 100, currency: 'USD' }, expectHtml: 'Booking Confirmed' },
-      { template: 'booking-cancellation', data: { tourTitle: 'T', bookingNumber: 'B1', customerName: 'J', selectedDate: '2026-07-01' }, expectHtml: 'Booking Cancelled' },
-      { template: 'supplier-approved', data: { name: 'Biz' }, expectHtml: 'Welcome to' },
-      { template: 'supplier-rejected', data: { name: 'Biz' }, expectHtml: 'Application Update' },
-      { template: 'supplier-under-review', data: { name: 'Biz' }, expectHtml: 'Additional Information Required' },
-      { template: 'supplier-activated', data: { name: 'Biz' }, expectHtml: 'Account Activated' },
-      { template: 'supplier-suspended', data: { name: 'Biz' }, expectHtml: 'Account Suspended' },
+      { template: 'booking-confirmation', data: { tourTitle: 'T', bookingNumber: 'B1', customerName: 'J', selectedDate: '2026-07-01', totalAmount: 100, currency: 'USD' } },
+      { template: 'booking-cancellation', data: { tourTitle: 'T', bookingNumber: 'B1', customerName: 'J', selectedDate: '2026-07-01' } },
+      { template: 'supplier-approved', data: { name: 'Biz' } },
+      { template: 'supplier-rejected', data: { name: 'Biz' } },
+      { template: 'supplier-under-review', data: { name: 'Biz' } },
+      { template: 'supplier-activated', data: { name: 'Biz' } },
+      { template: 'supplier-suspended', data: { name: 'Biz' } },
     ];
 
     for (const c of cases) {
       await sendEmail({ to: 't@t.com', subject: 'S', template: c.template, data: c.data });
       const msg = sgMail.send.mock.calls[sgMail.send.mock.calls.length - 1][0];
-      expect(msg.html).toContain(c.expectHtml);
+      expect(msg.templateId).toBe(templateIds[c.template]);
+      expect(msg.dynamicTemplateData).toBeDefined();
     }
   });
 });
@@ -238,10 +249,9 @@ describe('sendBookingConfirmationEmail', () => {
     expect(msg.subject).toContain('Booking Confirmed');
     expect(msg.subject).toContain('Test Tour');
     expect(msg.subject).toContain('TB-001');
-    expect(msg.html).toContain('2 Adult(s)');
-    expect(msg.html).toContain('1 Child(ren)');
-    expect(msg.html).toContain('Main Gate');
-    expect(msg.html).toContain('Professional guide');
+    expect(msg.templateId).toBe('d-0a159d1f1c43422d85195f8d8f898506');
+    expect(msg.dynamicTemplateData.bookingNumber).toBe('TB-001');
+    expect(msg.dynamicTemplateData.tourTitle).toBe('Test Tour');
   });
 
   it('handles missing customer gracefully', async () => {
@@ -284,16 +294,18 @@ describe('sendBookingCancellationEmail', () => {
     await sendBookingCancellationEmail(mockBooking, 220);
     const msg = sgMail.send.mock.calls[0][0];
     expect(msg.subject).toContain('Booking Cancelled');
-    expect(msg.html).toContain('TB-001');
-    expect(msg.html).toContain('Schedule conflict');
-    expect(msg.html).toContain('220.00');
+    expect(msg.templateId).toBe('d-3b94f590c23f4530a05152bbdca561b0');
+    expect(msg.dynamicTemplateData.bookingNumber).toBe('TB-001');
+    expect(msg.dynamicTemplateData.cancellationReason).toBe('Schedule conflict');
+    expect(msg.dynamicTemplateData.refundAmount).toBe(220);
   });
 
   it('sends cancellation without refund', async () => {
     await sendBookingCancellationEmail(mockBooking);
     const msg = sgMail.send.mock.calls[0][0];
-    expect(msg.html).toContain('TB-001');
-    expect(msg.html).not.toContain('Refund');
+    expect(msg.templateId).toBe('d-3b94f590c23f4530a05152bbdca561b0');
+    expect(msg.dynamicTemplateData.bookingNumber).toBe('TB-001');
+    expect(msg.dynamicTemplateData.refundAmount).toBeNull();
   });
 
   it('throws on DB error', async () => {
@@ -312,12 +324,20 @@ describe('sendSupplierStatusEmail', () => {
 
   const statuses = ['APPROVED', 'REJECTED', 'UNDER_REVIEW', 'ACTIVE', 'SUSPENDED'];
 
+  const statusTemplateIds = {
+    APPROVED: 'd-2f3d5b9302ae459b8ac94758a70d6ce6',
+    REJECTED: 'd-46112aefe32a4e1a846ec72b5ddc38e4',
+    UNDER_REVIEW: 'd-875a87dd2cf14a11a4f1075d053fc6b1',
+    ACTIVE: 'd-493cd6b3347e4552a09f6c7d70a4a933',
+    SUSPENDED: 'd-d09364df53b4467ea43a7128483295e3',
+  };
   statuses.forEach((status) => {
     it(`sends ${status} email correctly`, async () => {
       await sendSupplierStatusEmail('supplier@test.com', status, { name: 'Test Business' });
       const msg = sgMail.send.mock.calls[0][0];
       expect(msg.to).toBe('supplier@test.com');
-      expect(msg.html).toContain('Test Business');
+      expect(msg.templateId).toBe(statusTemplateIds[status]);
+      expect(msg.dynamicTemplateData.supplierBusinessName).toBe('Test Business');
     });
   });
 
@@ -357,9 +377,10 @@ describe('sendReviewNotificationEmail', () => {
     const msg = sgMail.send.mock.calls[0][0];
     expect(msg.to).toBe('supplier@test.com');
     expect(msg.subject).toContain('5-Star Review');
-    expect(msg.html).toContain('Test Tour');
-    expect(msg.html).toContain('John Doe');
-    expect(msg.html).toContain('Best tour ever');
+    expect(msg.templateId).toBe('d-3fd7be6a230d418e92090c8bc888f8e7');
+    expect(msg.dynamicTemplateData.tourTitle).toBe('Test Tour');
+    expect(msg.dynamicTemplateData.customerName).toBe('John Doe');
+    expect(msg.dynamicTemplateData.reviewComment).toBe('Best tour ever');
   });
 
   it('throws when supplier not found', async () => {
@@ -385,9 +406,10 @@ describe('sendPayoutNotificationEmail', () => {
     const msg = sgMail.send.mock.calls[0][0];
     expect(msg.to).toBe('supplier@test.com');
     expect(msg.subject).toContain('Payout Processed');
-    expect(msg.html).toContain('Supplier Co');
-    expect(msg.html).toContain('500');
-    expect(msg.html).toContain('po-001');
+    expect(msg.templateId).toBe('d-78cb9803209e42f6a80cfe45b9cdfc3b');
+    expect(msg.dynamicTemplateData.supplierName).toBe('Supplier Co');
+    expect(msg.dynamicTemplateData.payoutAmount).toBe(500);
+    expect(msg.dynamicTemplateData.payoutId).toBe('po-001');
   });
 
   it('throws when supplier not found', async () => {
@@ -431,10 +453,11 @@ describe('sendSupplierBookingNotification', () => {
     const msg = sgMail.send.mock.calls[0][0];
     expect(msg.to).toBe('supplier@test.com');
     expect(msg.subject).toContain('New Booking');
-    expect(msg.html).toContain('John Doe');
-    expect(msg.html).toContain('+233501234567');
-    expect(msg.html).toContain('3 guest(s)');
-    expect(msg.html).toContain('220');
+    expect(msg.templateId).toBe('d-2973e0ab70734472985569ca1e20b220');
+    expect(msg.dynamicTemplateData.customerName).toBe('John Doe');
+    expect(msg.dynamicTemplateData.customerPhone).toBe('+233501234567');
+    expect(msg.dynamicTemplateData.travelerCount).toBe(3);
+    expect(msg.dynamicTemplateData.totalAmount).toBe(220);
   });
 
   it('handles missing customer gracefully', async () => {
@@ -445,7 +468,7 @@ describe('sendSupplierBookingNotification', () => {
     });
     await sendSupplierBookingNotification(mockBooking);
     const msg = sgMail.send.mock.calls[0][0];
-    expect(msg.html).toContain('Guest');
+    expect(msg.dynamicTemplateData.customerName).toBe('Guest');
   });
 
   it('handles missing supplier gracefully', async () => {
