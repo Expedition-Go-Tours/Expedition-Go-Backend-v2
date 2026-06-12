@@ -5,12 +5,16 @@ Production-ready tour booking platform backend built with Node.js, Express, Pris
 ## Features
 
 - **Multi-role Authentication**: Customer, Supplier, and Admin roles with Firebase token verification
-- **Tour Management**: Full CRUD with rich metadata, PostGIS geo-search, categorization, and pagination
-- **Booking System**: Full lifecycle with conflict detection, Stripe Payment Intent integration, and commission splits
-- **Review System**: Customer reviews with moderation, supplier responses, and rating aggregation
-- **Supplier Onboarding**: Application workflow with document upload, admin review, and payout method setup
-- **Notifications**: Real-time (Socket.IO), email (SendGrid), and in-app notification service
+- **Tour Management**: Full CRUD with rich metadata, PostGIS geo-search, categorization, date overrides, and pagination
+- **Booking System**: Full lifecycle with conflict detection, Stripe Payment Intent integration, commission splits, and cart management
+- **Review System**: Customer reviews with moderation, supplier responses, rating aggregation, and verified booking badges
+- **Supplier Onboarding**: Application workflow with document upload, admin review, compliance checks, and payout method setup
+- **Chat System**: Real-time messaging between suppliers, customers, and admins via Socket.IO
+- **Notifications**: Real-time (Socket.IO), email (SendGrid), and in-app notification service for both users and admins
 - **Payment Processing**: Stripe payment intents with commission calculation and manual payout management (Treasury model)
+- **Team Management**: Suppliers can invite team members with role-based access (editor, viewer, etc.)
+- **RBAC**: Granular admin permissions system with custom roles (super_admin, finance_admin, etc.)
+- **Analytics & Events**: Event tracking for user journeys, funnels, and business analytics
 - **Image Management**: Cloudinary upload with optimization pipeline
 - **Redis Caching**: Tour detail and filter caching with automatic invalidation
 - **Audit Logging**: Comprehensive action logging for admin monitoring
@@ -31,6 +35,111 @@ Production-ready tour booking platform backend built with Node.js, Express, Pris
 | Cache | Redis (ioredis) |
 | Realtime | Socket.IO |
 | Logging | Structured JSON logger (Logtail) |
+
+## Database Schema
+
+The database uses PostgreSQL 16 with PostGIS for geo-location queries. The schema is managed via Prisma migrations in `prisma/migrations/`.
+
+### Enums
+
+| Enum | Values |
+|------|--------|
+| `UserRole` | `customer`, `supplier`, `admin` |
+| `SupplierStatus` | `PENDING`, `UNDER_REVIEW`, `APPROVED`, `ACTIVE`, `SUSPENDED`, `REJECTED` |
+| `TourStatus` | `DRAFT`, `ACTIVE`, `PAUSED`, `ARCHIVED` |
+| `BookingStatus` | `PENDING`, `CONFIRMED`, `CANCELLED`, `REFUNDED`, `COMPLETED`, `NO_SHOW` |
+| `PaymentStatus` | `PENDING`, `PROCESSING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `REFUNDED` |
+| `PayoutStatus` | `PENDING`, `APPROVED`, `PROCESSING`, `PAID`, `FAILED`, `CANCELLED` |
+| `PayoutMethodType` | `BANK_TRANSFER`, `PAYPAL` |
+| `ReviewStatus` | `PENDING`, `APPROVED`, `REJECTED`, `FLAGGED` |
+| `OverrideStatus` | `AVAILABLE`, `LIMITED`, `FULL`, `BLOCKED` |
+| `NotificationType` | `BOOKING_CONFIRMED`, `BOOKING_CANCELLED`, `PAYMENT_RECEIVED`, `REVIEW_RECEIVED`, `SUPPLIER_APPROVED`, `SUPPLIER_REJECTED`, `PAYOUT_PROCESSED`, `PAYOUT_APPROVED`, `SYSTEM_ALERT`, `NEW_MESSAGE` |
+| `AdminNotificationType` | `NEW_SUPPLIER_APPLICATION`, `SUPPLIER_STATUS_CHANGE`, `REVIEW_NEEDS_MODERATION`, `PAYOUT_NEEDS_APPROVAL`, `SYSTEM_ALERT`, `NEW_MESSAGE` |
+| `ConversationType` | `SUPPLIER_ADMIN`, `SUPPLIER_CUSTOMER`, `USER_SUPPORT` |
+
+### Models
+
+#### User & Profile
+- **User** — Core user record linked to Firebase Auth (`firebaseUid`). Supports multiple roles (customer, supplier, admin) via the `roles` array field. Includes Stripe customer ID, language/timezone preferences, notification settings (JSON), wishlist, and likes. Admin users have a role-level `adminRoleId` linking to `AdminRole`.
+- **SupplierProfile** — Extended profile for supplier users. Contains business info, operating info, representative details, business documents, payout preferences, and compliance data — all stored as JSON blobs. Tracks earnings, bookings, and average rating. Managed through the admin review workflow (status transitions: PENDING → UNDER_REVIEW → APPROVED → ACTIVE).
+
+#### Tours
+- **Tour** — Central product entity. Each tour belongs to a supplier and includes:
+  - Basic info (title, description, photos, cover photo, status)
+  - **Categorization** (JSON): category, subcategory, activity type, difficulty, duration
+  - **Theme** (JSON): primary theme + secondary themes in a separate `TourSecondaryTheme` table
+  - **Product content** (JSON): included items, what to bring, highlights, restrictions
+  - **Schedules & pricing** (JSON): multi-variant pricing by group size, seasonal rates
+  - **Booking & tickets** (JSON): meeting point, check-in process, cancellation policy
+  - **SEO**: slug (unique), meta title/description, tags
+  - **Location**: lat/lng + PostGIS `geography(Point, 4326)` column (`location_geom`) for geo-search via `ST_DWithin`. City, country, and region are denormalized for indexed filtering.
+  - Normalized fields for filtering: `category`, `subcategory`, `activityType`, `difficulty`, `durationMinutes`, `primaryTheme`
+  - Statistics: total bookings, revenue, average rating, review count, view count
+- **TourDateOverride** — Per-date availability override. Allows suppliers to set custom capacity, time-slot overrides, or block specific dates.
+- **TourSecondaryTheme** — Many-to-many secondary themes for a tour (e.g., "Nature & Wildlife" + "Photography").
+
+#### Bookings
+- **Booking** — Records a customer's booking on a tour. Includes:
+  - Traveler details (JSON), selected date/time
+  - Full pricing breakdown: subtotal, taxes, fees, discounts, total, currency
+  - Commission: locked rate at time of booking, commission amount, supplier payout
+  - Stripe payment intent ID, payment status, paid timestamp
+  - Cancellation tracking: reason, timestamp, refund amount
+  - Special requests and supplier notes
+  - Generated booking number (`bookingNumber`) — human-readable reference
+- **CartItem** — Shopping cart for unauthenticated/authenticated users. Each item links a customer to a tour with selected date, time, and traveler details. Pricing is snapshotted at add time. Items expire after a configurable period (`expiresAt`).
+
+#### Payments & Payouts
+- **PayoutMethod** — Supplier payout destinations. Supports bank transfer (bank name, account number, routing, SWIFT, IBAN, sort code, branch code) and PayPal (email). Mobile money fields (provider, number) are defined but the enum excludes `MOBILE_MONEY` for now. Methods must be admin-verified before the supplier can publish tours or receive payouts.
+- **Payout** — Links a booking to a supplier's payout. Tracks full lifecycle: PENDING → APPROVED → PROCESSING → PAID. Records admin approval/processing, payout method used, payment provider reference, and admin notes. Commission amount is stored for accounting.
+- **StripeEvent** — Idempotency tracking for Stripe webhook events. Stores the raw event data and processing status to prevent double-processing.
+
+#### Reviews
+- **Review** — Customer reviews tied to a completed booking (1:1 relationship). Includes rating (1-5), title, comment, and optional photos. Moderation workflow: PENDING → APPROVED/REJECTED/FLAGGED. Supports supplier responses and tracks helpfulness votes and abuse reports.
+
+#### Chat
+- **Conversation** — Chat thread between participants. Types: SUPPLIER_ADMIN, SUPPLIER_CUSTOMER, USER_SUPPORT.
+- **ConversationParticipant** — Join table linking users to conversations with `lastReadAt` for unread tracking.
+- **Message** — Individual chat messages with text content, optional attachment (Cloudinary URL + type), and edit tracking.
+
+#### Notifications
+- **Notification** — User-facing in-app notifications with type, title, message, and structured data (JSON). Tracks read status and email/push delivery status.
+- **AdminNotification** — Admin-specific notifications (new supplier applications, reviews needing moderation, payouts needing approval). Tracked separately with acknowledge workflow.
+
+#### Team Management
+- **TeamMember** — Allows suppliers to invite team members (editors, viewers) to help manage their tours and bookings. Invitations use a token-based flow with expiry. Status: PENDING → ACCEPTED.
+
+#### Admin & RBAC
+- **AdminRole** — Named roles (e.g., `super_admin`, `finance_admin`, `support_admin`). The `super_admin` role is system-protected (cannot be deleted/modified).
+- **AdminPermission** — Granular permissions defined by unique key (e.g., `suppliers.approve`, `payouts.view`), grouped by category.
+- **AdminRolePermission** — Many-to-many join linking roles to permissions.
+
+#### System
+- **SystemConfig** — Key-value configuration store for platform-wide settings (platform name, currency, commission rates, email branding, maintenance mode, etc.). Values are JSON, set by admins via the admin dashboard.
+- **AuditLog** — Immutable audit trail for admin actions. Records actor (user ID/email), IP, user agent, action name, affected resource, old/new values (JSON), and arbitrary metadata.
+- **Event** — Analytics event tracking. Captures dot-notation event names (`booking.completed`, `tour.viewed`), user/session attribution, resource references, event properties (JSON), and source (web/mobile/api/webhook). Indexed for time-series and funnel analysis.
+
+### Key Indexes
+
+| Model | Indexes |
+|-------|---------|
+| User | `email`, `roles`, `createdAt`, `stripeCustomerId` |
+| Tour | `supplierId`, `status`, `slug`, `createdAt`, `averageRating`, `category`, `subcategory`, `activityType`, `difficulty`, `primaryTheme`, `durationMinutes`, `city`, `country`, `region`, `country+city`, PostGIS geo-index on `location_geom` |
+| Booking | `customerId`, `tourId`, `status`, `selectedDate`, `bookingNumber`, `stripePaymentIntentId` |
+| Payout | `supplierId`, `status`, `createdAt`, `supplierId+status`, `supplierId+createdAt`, `bookingId`, `payoutMethodId` |
+| Review | `tourId`, `customerId`, `rating`, `status`, `createdAt` |
+| Event | `name`, `userId`, `resource+resourceId`, `createdAt`, `name+createdAt`, `userId+name+createdAt` |
+| AuditLog | `userId`, `action`, `resource`, `createdAt` |
+
+### PostGIS Geo-Search
+
+Tours include a `location_geom` column (`geography(Point, 4326)`) populated by a database trigger on insert/update of `latitude`/`longitude`. The `findToursNearby` query uses `ST_DWithin` for radius-based search:
+
+```sql
+SELECT * FROM "Tour"
+WHERE ST_DWithin(location_geom, ST_SetSRID(ST_MakePoint($lng, $lat), 4326)::geography, $radiusMeters)
+  AND status = 'ACTIVE';
+```
 
 ## Prerequisites
 
@@ -89,6 +198,11 @@ Production-ready tour booking platform backend built with Node.js, Express, Pris
    # SendGrid
    SENDGRID_API_KEY=SG....
    EMAIL_FROM="Travio Africa <noreply@travioafrica.com>"
+   EMAIL_REPLY_TO=support@travioafrica.com
+
+   # Supabase (for Storage / realtime subscriptions)
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
    ```
 
 4. **Run database migrations**
@@ -141,10 +255,12 @@ const response = await fetch('http://localhost:5000/api/users/me', {
 ```
 ├── config/              # Firebase, Cloudinary, Swagger configuration
 ├── controllers/         # Route handlers with business logic
-├── middleware/          # Auth, error handling, file upload
+├── middleware/          # Auth, error handling, file upload, rate limiting
 ├── prisma/              # Schema, migrations, PostGIS extensions
 ├── routes/              # Express route definitions
-├── utils/               # Helpers: Stripe, email, cache, logger, notifications
+├── utils/               # Helpers: Stripe, email, SendGrid templates, cache, logger, queue, notifications, chat
+├── email-templates/     # MJML source + compiled HTML for SendGrid templates
+├── sendgrid-templates/  # Static HTML templates uploaded to SendGrid
 ├── __tests__/           # Test suites (unit, integration, API)
 ├── .github/workflows/   # CI/CD pipeline
 ├── app.js               # Express application setup
@@ -154,41 +270,128 @@ const response = await fetch('http://localhost:5000/api/users/me', {
 
 ## Key Endpoints
 
-### Authentication
+### Authentication & Users
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/users/signup` | Create or get user profile (idempotent) |
 | PATCH | `/api/users/sync-me` | Sync user profile with Firebase |
 | GET | `/api/users/me` | Get current user profile |
+| GET | `/api/users/:id` | Get user profile by ID |
+| PATCH | `/api/users/me` | Update own profile |
+| GET | `/api/users` | List users (admin only, paginated) |
 
 ### Tours
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/tours` | List tours (pagination, filters, geo-search) |
-| GET | `/api/tours/:id` | Get tour details |
+| GET | `/api/tours` | List tours (pagination, filters, geo-search, sorting) |
+| GET | `/api/tours/:slug` | Get tour details by slug |
+| GET | `/api/tours/:slug/related` | Get related tours |
 | POST | `/api/tours` | Create tour (supplier only) |
 | PATCH | `/api/tours/:id` | Update tour (supplier only) |
+| DELETE | `/api/tours/:id` | Delete tour (supplier only, soft) |
+| PATCH | `/api/tours/:id/status` | Change tour status (supplier only) |
+| GET | `/api/tours/supplier/mine` | List supplier's own tours |
+| PATCH | `/api/tours/:id/date-overrides` | Manage date overrides |
 
 ### Bookings
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/bookings` | Create booking with Stripe payment |
+| POST | `/api/bookings/admin` | Admin creates booking manually |
 | GET | `/api/bookings/my-bookings` | List current user's bookings |
+| GET | `/api/bookings/:id` | Get booking details (with ticket) |
 | PATCH | `/api/bookings/:id/cancel` | Cancel booking |
+| GET | `/api/bookings/all` | List all bookings (admin only) |
+| GET | `/api/bookings/tour/:tourId` | List bookings for a tour (supplier only) |
+
+### Cart
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/cart` | Add item to cart |
+| GET | `/api/cart` | Get current cart |
+| DELETE | `/api/cart/:itemId` | Remove cart item |
+| DELETE | `/api/cart` | Clear entire cart |
 
 ### Reviews
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/reviews` | Submit review |
+| POST | `/api/reviews` | Submit review (requires completed booking) |
 | GET | `/api/reviews/tour/:tourId` | Get tour reviews |
 | PATCH | `/api/reviews/:id/respond` | Supplier response |
+| PATCH | `/api/reviews/:id/moderate` | Admin moderation (approve/reject/flag) |
+| GET | `/api/reviews/pending` | List pending reviews (admin only) |
 
 ### Suppliers
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/suppliers/apply` | Submit supplier application |
-| GET | `/api/suppliers/dashboard` | Supplier dashboard |
+| GET | `/api/suppliers/dashboard` | Supplier dashboard stats |
+| GET | `/api/suppliers/profile` | Get supplier profile |
+| PATCH | `/api/suppliers/profile` | Update supplier profile |
 | GET | `/api/suppliers/admin/applications` | Admin: view applications |
+| PATCH | `/api/suppliers/admin/:id/review` | Admin: review application |
+| PATCH | `/api/suppliers/admin/:id/activate` | Admin: activate supplier |
+
+### Payouts
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/payout-methods` | Add payout method (supplier) |
+| GET | `/api/payout-methods` | List supplier's payout methods |
+| DELETE | `/api/payout-methods/:id` | Remove payout method |
+| PATCH | `/api/payout-methods/admin/:id/verify` | Admin: verify payout method |
+| GET | `/api/payouts` | List supplier's payouts |
+| GET | `/api/payouts/admin` | Admin: list all payouts (filterable by status) |
+| PATCH | `/api/payouts/admin/:id/approve` | Admin: approve payout |
+| PATCH | `/api/payouts/admin/:id/release` | Admin: mark payout as paid |
+
+### Notifications
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/notifications` | List user's notifications |
+| PATCH | `/api/notifications/:id/read` | Mark notification as read |
+| GET | `/api/admin/notifications` | List admin notifications |
+| PATCH | `/api/admin/notifications/:id/acknowledge` | Acknowledge admin notification |
+
+### Chat
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/chat/conversations` | List user's conversations |
+| POST | `/api/chat/conversations` | Create conversation |
+| GET | `/api/chat/conversations/:id` | Get conversation with messages |
+| POST | `/api/chat/conversations/:id/messages` | Send message |
+| PATCH | `/api/chat/conversations/:id/read` | Mark conversation as read |
+
+### Team Management
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/team` | List team members (supplier) |
+| POST | `/api/team/invite` | Invite team member |
+| POST | `/api/team/accept` | Accept invitation (via token) |
+| DELETE | `/api/team/:id` | Remove team member |
+
+### Admin Settings
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/settings` | Get all system config |
+| GET | `/api/admin/settings/:key` | Get specific config value |
+| PUT | `/api/admin/settings` | Batch update settings |
+| GET | `/api/admin/roles` | List admin roles |
+| POST | `/api/admin/roles` | Create admin role |
+| PATCH | `/api/admin/roles/:id` | Update admin role |
+| DELETE | `/api/admin/roles/:id` | Delete admin role |
+| GET | `/api/admin/permissions` | List all permissions |
+| GET | `/api/admin/users` | List admin users |
+| PATCH | `/api/admin/users/:id/role` | Change admin's role |
+| GET | `/api/admin/audit-log` | Query audit log (paginated, filterable) |
+
+### Analytics
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/analytics/summary` | Dashboard summary stats |
+| GET | `/api/analytics/revenue` | Revenue data (time-series) |
+| GET | `/api/analytics/bookings` | Booking metrics |
+| GET | `/api/analytics/users` | User growth data |
+| POST | `/api/analytics/events` | Track custom event |
 
 ## Supplier & Payout Flow
 
@@ -421,7 +624,7 @@ CUSTOMER           PLATFORM                 SUPPLIER
 
 ## Testing
 
-The project includes 11 tests across 4 suites with Jest + Supertest, validated in CI against a fresh PostgreSQL container.
+The project includes **853 tests across 42 suites** with Jest + Supertest, validated in CI against a fresh PostgreSQL container.
 
 ```bash
 # Run all tests
@@ -433,12 +636,11 @@ npx jest --coverage
 
 ### Test Suites
 
-| Suite | File | Type | Coverage |
-|-------|------|------|----------|
-| AppError | `__tests__/appError.test.js` | Unit | Error class behavior |
-| User CRUD | `__tests__/user.integration.test.js` | Integration | Prisma + PostgreSQL |
-| Health | `__tests__/api/health.test.js` | API | Server availability |
-| Tours | `__tests__/api/tours.test.js` | API | Pagination, validation |
+| Suite | Type | Scope |
+|-------|------|-------|
+| `__tests__/unit/*` | Unit | Email service, AppError, cache, chat, notification helpers |
+| `__tests__/api/*` | API | Health, tours, bookings, reviews, carts, suppliers, payouts, auth |
+| `__tests__/user.integration.*` | Integration | Prisma + PostgreSQL CRUD |
 
 ### Coverage Thresholds
 
@@ -522,5 +724,5 @@ Proprietary and confidential.
 
 ---
 
-**Last Updated**: May 21, 2026
-**Version**: 2.1.0
+**Last Updated**: June 12, 2026
+**Version**: 2.2.0
