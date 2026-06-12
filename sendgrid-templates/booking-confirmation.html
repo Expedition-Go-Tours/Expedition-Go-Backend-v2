@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>Booking Confirmed</title>
+  <style>
+    body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; background-color: #F8FAFC; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
+    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    .font-main { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  </style>
+</head>
+<body>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+    <tr>
+      <td align="center" style="padding: 40px 16px;">
+        <table role="presentation" width="100%" style="max-width: 640px; background-color: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;" cellspacing="0" cellpadding="0" border="0">
+
+          <!-- Header -->
+          <tr>
+            <td style="padding: 40px 40px 24px 40px;">
+              <img src="{{logoUrl}}" alt="{{brandName}}" width="180" style="display: block; max-width: 180px; height: auto;">
+            </td>
+          </tr>
+
+          <!-- Title & Status -->
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="center">
+                    <h1 style="margin: 0 0 12px 0; font-size: 28px; font-weight: 800; color: #001F3F; line-height: 1.2;" class="font-main">Booking Confirmed</h1>
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;">
+                      <tr>
+                        <td bgcolor="#E6F6F0" style="border-radius: 20px; padding: 6px 16px; font-size: 14px; font-weight: 700; color: #00A669; line-height: 1;" class="font-main">
+                          &#x2713;&nbsp;&nbsp;Confirmed
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Booking Reference Block -->
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <table role="presentation" width="100%" bgcolor="#F8FAFC" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 24px 32px; text-align: center;" align="center">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Booking Reference</span>
+                    <span style="font-size: 32px; font-weight: 800; color: #001F3F; line-height: 1;" class="font-main">{{bookingNumber}}</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Tour Details Card -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;">
+              <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr><td style="padding: 32px;">
+
+                <!-- Tour Title -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding-bottom: 24px; border-bottom: 1px solid #E2E8F0;">
+                    <h3 style="margin: 0 0 4px 0; font-size: 18px; font-weight: 700; color: #001F3F; line-height: 1.4;" class="font-main">{{tourTitle}}</h3>
+                    <p style="margin: 0; font-size: 14px; color: #64748B; line-height: 1.4;" class="font-main">Your booking has been confirmed. Details below.</p>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Date -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Date</span>
+                    <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">{{selectedDate}}</span>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Time -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Time</span>
+                    <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">{{#if selectedTime}}{{selectedTime}}{{else}}Flexible{{/if}}</span>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Meeting Point -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Meeting Point</span>
+                    <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">{{#if meetingPoint.address}}{{meetingPoint.address}}{{else}}To be confirmed{{/if}}</span>
+                    {{#if meetingPoint.instructions}}<p style="margin: 4px 0 0; font-size: 13px; color: #64748B; line-height: 1.4;" class="font-main">{{meetingPoint.instructions}}</p>{{/if}}
+                    {{#if meetingPoint.coordinates}}<p style="margin: 4px 0 0;"><a href="https://maps.google.com/?q={{meetingPoint.coordinates.lat}},{{meetingPoint.coordinates.lng}}" style="color: #00A669; font-size: 13px; text-decoration: underline; font-weight: 600;" class="font-main">View on Google Maps &rarr;</a></p>{{/if}}
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Travelers -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0; border-bottom: 1px solid #F1F5F9;">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Travelers</span>
+                    <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">
+                      {{#if travelers.adults}}{{travelers.adults}} Adult(s){{/if}}
+                      {{#if travelers.children}} &bull; {{travelers.children}} Child(ren){{/if}}
+                      {{#if travelers.infants}} &bull; {{travelers.infants}} Infant(s){{/if}}
+                      {{#unless travelers.adults}}1 Adult{{/unless}}
+                    </span>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Tour Operator -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 20px 0 24px 0;">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Tour Operator</span>
+                    <span style="font-size: 15px; font-weight: 600; color: #001F3F;" class="font-main">{{supplierName}}</span>
+                  </td>
+                </tr>
+                </table>
+
+                <!-- Total Paid -->
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td>
+                    <table role="presentation" width="100%" bgcolor="#F0FDF4" style="border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td style="padding: 18px 24px;" align="left" valign="middle">
+                          <span style="display: block; font-size: 11px; font-weight: 700; color: #00A669; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;" class="font-main">Total Paid</span>
+                          <span style="font-size: 26px; font-weight: 800; color: #00A669; line-height: 1;" class="font-main">{{currency}} {{totalAmount}}</span>
+                          {{#if subtotal}}
+                          <table cellpadding="0" cellspacing="0" border="0" style="margin-top: 6px;">
+                            <tr><td style="color: #64748B; font-size: 12px; padding: 1px 0;">Subtotal</td><td style="padding: 1px 0 1px 12px; color: #001F3F; font-size: 12px; font-weight: 500;">{{currency}} {{subtotal}}</td></tr>
+                            {{#if taxes}}<tr><td style="color: #64748B; font-size: 12px; padding: 1px 0;">Taxes &amp; Fees</td><td style="padding: 1px 0 1px 12px; color: #001F3F; font-size: 12px;">{{currency}} {{taxes}}</td></tr>{{/if}}
+                          </table>{{/if}}
+                        </td>
+                        <td style="padding: 18px 24px; text-align: right;" align="right" valign="middle" width="60">
+                          <table role="presentation" width="36" height="36" bgcolor="#00A669" style="border-radius: 50%;" cellspacing="0" cellpadding="0" border="0">
+                            <tr>
+                              <td align="center" valign="middle" style="font-size: 16px; color: #ffffff; line-height: 36px;">&#x2713;</td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                </table>
+
+                </td></tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- What's Included -->
+          {{#if included}}
+          <tr>
+            <td style="padding: 0 40px 20px 40px;">
+              <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr><td style="padding: 24px;">
+                  <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;" class="font-main">What's Included</span>
+                  <ul style="margin: 0; padding-left: 16px;">
+                    {{#each included}}<li style="padding:3px 0;color:#64748B;font-size:13px;line-height:1.5;">{{this}}</li>{{/each}}
+                  </ul>
+                </td></tr>
+              </table>
+            </td>
+          </tr>
+          {{/if}}
+
+          <!-- What to Bring -->
+          {{#if whatToBring}}
+          <tr>
+            <td style="padding: 0 40px 20px 40px;">
+              <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr><td style="padding: 24px;">
+                  <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;" class="font-main">What to Bring</span>
+                  <ul style="margin: 0; padding-left: 16px;">
+                    {{#each whatToBring}}<li style="padding:3px 0;color:#64748B;font-size:13px;line-height:1.5;">{{this}}</li>{{/each}}
+                  </ul>
+                </td></tr>
+              </table>
+            </td>
+          </tr>
+          {{/if}}
+
+          <!-- Cancellation Policy -->
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <table role="presentation" width="100%" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr><td style="padding: 24px;">
+                  <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;" class="font-main">Cancellation Policy</span>
+                  <p style="margin: 0; font-size: 13px; color: #64748B; line-height: 1.5;" class="font-main">{{#if cancellationPolicy}}{{cancellationPolicy}}{{else}}Free cancellation up to 24 hours before start time{{/if}}</p>
+                </td></tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- CTA Button -->
+          <tr>
+            <td style="padding: 0 40px 40px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="center">
+                    <a href="{{bookingUrl}}" target="_blank" style="display: block; width: 100%; background-color: #00A669; padding: 16px 0; text-align: center; border-radius: 10px; color: #ffffff; font-size: 16px; font-weight: 700; text-decoration: none; line-height: 1;" class="font-main">View Booking Details &nbsp;&rarr;</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Tour Operator Contact Strip -->
+          {{#if supplierContact}}
+          <tr>
+            <td style="padding: 0 40px 32px 40px;">
+              <table role="presentation" width="100%" bgcolor="#F8FAFC" style="border: 1px solid #E2E8F0; border-radius: 12px;" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding: 16px 24px;" align="left" valign="middle">
+                    <span style="display: block; font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;" class="font-main">Tour Operator</span>
+                    <span style="font-size: 14px; font-weight: 600; color: #001F3F;" class="font-main">{{supplierName}}</span>
+                  </td>
+                  <td style="padding: 16px 24px; text-align: right;" align="right" valign="middle">
+                    <a href="tel:{{supplierContact}}" style="color: #00A669; font-size: 14px; font-weight: 600; text-decoration: none;" class="font-main">&#x1F4DE;&nbsp; {{supplierContact}}</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {{/if}}
+
+          <!-- Footer -->
+          <tr>
+            <td bgcolor="#001F3F" style="padding: 32px 40px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="left" style="color: #ffffff; font-size: 14px; line-height: 1.4;" class="font-main">
+                    <strong style="color: #00A669; font-size: 14px;">Thank you for booking!</strong><br>
+                    <span style="color: #94A3B8; font-size: 13px;">{{brandName}} Team</span>
+                  </td>
+                  <td align="right" style="font-family: 'Caveat', 'Georgia', 'Apple Chancery', cursive; font-size: 20px; color: #ffffff; font-weight: 400;" valign="middle">
+                    Need help? <a href="mailto:{{supportEmail}}" style="color: #00A669; text-decoration: underline; font-weight: 600;">Contact us</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+
+        <p style="margin: 24px 0 0 0; text-align: center; font-size: 11px; color: #94A3B8; line-height: 1;" class="font-main">
+          &copy; {{year}} {{brandName}} by Expedition-Go Tours. All rights reserved.
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
