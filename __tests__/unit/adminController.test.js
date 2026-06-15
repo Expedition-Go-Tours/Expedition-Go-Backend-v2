@@ -1,6 +1,7 @@
 jest.mock('../../utils/prismaClient', () => ({
   booking: { aggregate: jest.fn(), count: jest.fn(), groupBy: jest.fn(), findMany: jest.fn() },
   user: { count: jest.fn(), findMany: jest.fn(), findUnique: jest.fn() },
+  adminRole: { findUnique: jest.fn() },
   tour: { findMany: jest.fn(), count: jest.fn() },
   event: { findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
   supplierProfile: {},
@@ -640,6 +641,11 @@ describe('adminController', () => {
         adminRole: { id: 'role-1', name: 'Super Admin' },
       };
       prisma.user.findUnique.mockResolvedValue(user);
+      prisma.adminRole.findUnique.mockResolvedValue({
+        id: 'role-1',
+        name: 'Super Admin',
+        permissions: [{ permission: { key: 'dashboard.*' } }],
+      });
 
       await controller.getMe(req, res, next);
 

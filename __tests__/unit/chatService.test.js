@@ -2,7 +2,7 @@ jest.mock('../../utils/prismaClient', () => ({
   user: { findFirst: jest.fn(), findUnique: jest.fn() },
   conversation: { findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   conversationParticipant: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
-  message: { findMany: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
+  message: { findMany: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), count: jest.fn() },
   notification: { updateMany: jest.fn() },
   adminNotification: { updateMany: jest.fn() },
   systemConfig: { findUnique: jest.fn() },
@@ -48,6 +48,7 @@ describe('chatService', () => {
     prisma.message.create.mockResolvedValue(mockMessage);
     prisma.message.update.mockResolvedValue(mockMessage);
     prisma.message.delete.mockResolvedValue();
+    prisma.message.count.mockResolvedValue(0);
     prisma.notification.updateMany.mockResolvedValue({ count: 1 });
     prisma.adminNotification.updateMany.mockResolvedValue({ count: 1 });
     prisma.systemConfig.findUnique.mockResolvedValue(null);
@@ -135,6 +136,7 @@ describe('chatService', () => {
 
   describe('getConversations', () => {
     it('returns mapped conversations with unread count', async () => {
+      prisma.message.count.mockResolvedValue(1);
       prisma.conversationParticipant.findMany.mockResolvedValue([{
         ...mockParticipant,
         conversation: { ...mockConversation, messages: [{ ...mockMessage, createdAt: new Date('2026-06-10') }] },
@@ -351,21 +353,12 @@ describe('chatService', () => {
 
   describe('getUnreadCount', () => {
     it('returns total unread count', async () => {
+      prisma.message.count
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(0);
       prisma.conversationParticipant.findMany.mockResolvedValue([
-        {
-          userId: 'u-1',
-          lastReadAt: new Date(0),
-          conversation: {
-            messages: [{ createdAt: new Date('2026-06-10') }],
-          },
-        },
-        {
-          userId: 'u-1',
-          lastReadAt: new Date('2026-06-15'),
-          conversation: {
-            messages: [{ createdAt: new Date('2026-06-10') }],
-          },
-        },
+        { conversationId: 'c-1', lastReadAt: new Date(0) },
+        { conversationId: 'c-2', lastReadAt: new Date('2026-06-15') },
       ]);
 
       const result = await chatService.getUnreadCount('u-1');
