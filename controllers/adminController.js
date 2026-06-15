@@ -1073,8 +1073,29 @@ exports.getMe = catchAsync(async (req, res, next) => {
     },
   });
 
+  let permissions = [];
+  if (user.adminRoleId) {
+    const role = await prisma.adminRole.findUnique({
+      where: { id: user.adminRoleId },
+      include: {
+        permissions: {
+          include: { permission: true },
+        },
+      },
+    });
+    if (role) {
+      permissions = role.permissions.map((rp) => rp.permission.key);
+    }
+  }
+
   res.status(200).json({
     status: 'success',
-    data: { ...user, photoURL: cloudinaryUrl(user.photoURL, 80) },
+    data: {
+      ...user,
+      photoURL: cloudinaryUrl(user.photoURL, 80),
+      adminRole: user.adminRole
+        ? { ...user.adminRole, permissions }
+        : null,
+    },
   });
 });

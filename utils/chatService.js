@@ -135,16 +135,23 @@ async function getConversations(userId) {
     orderBy: { conversation: { updatedAt: 'desc' } }
   });
 
-  return participants.map(p => {
-    const lastMessage = p.conversation.messages[0];
-    const hasUnread = lastMessage && lastMessage.createdAt > p.lastReadAt;
-    return {
-      ...p.conversation,
-      unreadCount: hasUnread ? 1 : 0,
-      lastReadAt: p.lastReadAt,
-      _participant: { id: p.id, lastReadAt: p.lastReadAt },
-    };
-  });
+  const unreadCounts = await Promise.all(
+    participants.map(p =>
+      prisma.message.count({
+        where: {
+          conversationId: p.conversationId,
+          createdAt: { gt: p.lastReadAt },
+        },
+      })
+    )
+  );
+
+  return participants.map((p, i) => ({
+    ...p.conversation,
+    unreadCount: unreadCounts[i],
+    lastReadAt: p.lastReadAt,
+    _participant: { id: p.id, lastReadAt: p.lastReadAt },
+  }));
 }
 
 async function getMessages(conversationId, userId, cursor, limit = 50) {
@@ -242,7 +249,7 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
       title: 'New Message',
       message: content.length > 100 ? content.slice(0, 100) + '...' : content,
       data: { conversationId, senderId }
-    }).catch(() => {});
+    }).catch((err) => console.error('[ChatService] Failed to enqueue notification:', err));
   }
 
   const sender = await prisma.user.findUnique({
@@ -260,19 +267,6 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
       message: content.length > 100 ? content.slice(0, 100) + '...' : content,
       data: { conversationId, senderId, senderName: sender.name, messageId: message.id, chatType }
     });
-  }
-
-  // For supplier-to-customer conversations, also notify the customer in-app
-  if (participant.conversation.type === 'SUPPLIER_CUSTOMER' && sender && !sender.roles.includes('customer')) {
-    for (const recipientId of recipientIds) {
-      enqueueNotification({
-        userId: recipientId,
-        type: 'NEW_MESSAGE',
-        title: `New message from ${sender.name}`,
-        message: content.length > 100 ? content.slice(0, 100) + '...' : content,
-        data: { conversationId, senderId }
-      }).catch(() => {});
-    }
   }
 
   return message;
@@ -373,27 +367,24 @@ async function getUnreadCount(userId) {
 
   const participants = await prisma.conversationParticipant.findMany({
     where: { userId },
-    include: {
-      conversation: {
-        select: {
-          id: true,
-          messages: {
-            orderBy: { createdAt: 'desc' },
-            take: 1,
-            select: { createdAt: true }
-          }
-        }
-      }
-    }
+    select: {
+      conversationId: true,
+      lastReadAt: true,
+    },
   });
 
-  let total = 0;
-  for (const p of participants) {
-    const lastMessage = p.conversation.messages[0];
-    if (lastMessage && lastMessage.createdAt > p.lastReadAt) {
-      total++;
-    }
-  }
+  const counts = await Promise.all(
+    participants.map(p =>
+      prisma.message.count({
+        where: {
+          conversationId: p.conversationId,
+          createdAt: { gt: p.lastReadAt },
+        },
+      })
+    )
+  );
+
+  const total = counts.reduce((sum, c) => sum + c, 0);
 
   return { unreadCount: total };
 }
