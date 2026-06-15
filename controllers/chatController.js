@@ -12,6 +12,14 @@ function canAccessType(user, type) {
   return false;
 }
 
+exports.getAdminSupport = catchAsync(async (req, res) => {
+  const adminId = await chatService.getSharedAdminId();
+  if (!adminId) {
+    throw new AppError('Admin support is not configured yet', 404);
+  }
+  res.json({ status: 'success', data: { adminId } });
+});
+
 exports.getConversations = catchAsync(async (req, res) => {
   const conversations = await chatService.getConversations(req.user.id);
   const filtered = conversations.filter((c) => canAccessType(req.user, c.type));
