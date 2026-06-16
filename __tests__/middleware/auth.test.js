@@ -45,39 +45,13 @@ beforeEach(() => {
 });
 
 describe('DEV mode bypass', () => {
-  const OLD_ENV = process.env.NODE_ENV;
-
-  afterAll(() => { process.env.NODE_ENV = OLD_ENV; });
-
-  it('creates dev user', async () => {
-    process.env.NODE_ENV = 'development';
-    const prisma = require('../../utils/prismaClient');
-    prisma.user.findFirst.mockResolvedValue(null);
-    prisma.user.create.mockResolvedValue({ ...mockUser, firebaseUid: 'dev-uid', roles: ['admin'] });
-
+  it('rejects test-token like any invalid token', async () => {
+    mockVerifyIdToken.mockRejectedValue(new Error('Invalid token'));
     const req = mockReq({ headers: { authorization: 'Bearer test-token' } });
     const next = jest.fn();
     await protect(req, mockRes(), next);
 
-    expect(prisma.user.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ firebaseUid: 'dev-uid' }) }),
-    );
-    expect(req.user).toBeDefined();
-    expect(next).toHaveBeenCalled();
-  });
-
-  it('uses existing dev user', async () => {
-    process.env.NODE_ENV = 'development';
-    const prisma = require('../../utils/prismaClient');
-    prisma.user.findFirst.mockResolvedValue({ ...mockUser, firebaseUid: 'dev-uid', roles: ['admin'] });
-
-    const req = mockReq({ headers: { authorization: 'Bearer test-token' } });
-    const next = jest.fn();
-    await protect(req, mockRes(), next);
-
-    expect(prisma.user.create).not.toHaveBeenCalled();
-    expect(req.user).toBeDefined();
-    expect(next).toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 401 }));
   });
 });
 
