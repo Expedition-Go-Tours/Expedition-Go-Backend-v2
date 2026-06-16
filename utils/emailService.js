@@ -368,6 +368,7 @@ async function sendTeamInviteEmail({ to, supplierName, role, inviteUrl, invitedB
       subject: `You've been invited to join ${supplierName}'s team`,
       template: 'team-invite',
       data: {
+        brandName: supplierName,
         role,
         inviteLink: inviteUrl,
         invitedBy,

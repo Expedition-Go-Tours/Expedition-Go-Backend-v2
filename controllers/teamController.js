@@ -42,6 +42,7 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
       email: req.user.email,
       status: 'ACCEPTED',
     },
+    orderBy: { createdAt: 'desc' },
     select: { role: true, supplierId: true },
   });
 
