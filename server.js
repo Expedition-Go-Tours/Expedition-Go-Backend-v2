@@ -103,13 +103,41 @@ process.on('SIGINT', () => {
       console.warn('Socket.IO connection error:', err.message);
     });
 
-    io.on('connection', (socket) => {
-      // WARNING: Currently trusting client-side data. 
-      // Suggestion: Verify JWT here before proceeding.
-      const { userId, role } = socket.handshake.auth || {};
-      console.log('Socket connected:', socket.id, { userId, role });
+    io.on('connection', async (socket) => {
+      const { token } = socket.handshake.auth || {};
 
-      if (role === 'admin') { // This needs server-side validation
+      if (!token) {
+        console.warn('Socket connection rejected: No token provided');
+        socket.disconnect(true);
+        return;
+      }
+
+      let decoded;
+      try {
+        const firebaseAdmin = require('./config/firebaseAdmin');
+        decoded = await firebaseAdmin.auth().verifyIdToken(token);
+      } catch (err) {
+        console.warn('Socket connection rejected: Invalid token');
+        socket.disconnect(true);
+        return;
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { firebaseUid: decoded.uid },
+        select: { id: true, roles: true, active: true },
+      });
+
+      if (!user || !user.active) {
+        console.warn('Socket connection rejected: User not found or inactive');
+        socket.disconnect(true);
+        return;
+      }
+
+      socket.userId = user.id;
+      socket.userRoles = user.roles;
+      console.log('Socket connected:', socket.id, { userId: user.id, roles: user.roles });
+
+      if (user.roles.includes('admin')) {
         socket.join('admin-room');
         const chatService = require('./utils/chatService');
         chatService.getSharedAdminId().then(sharedId => {
@@ -117,9 +145,7 @@ process.on('SIGINT', () => {
         });
       }
 
-      if (userId) {
-        socket.join(`user:${userId}`);
-      }
+      socket.join(`user:${user.id}`);
 
       // Supplier responds to a review via WebSocket (real-time)
       socket.on('review:respond', async (payload, ack) => {
@@ -128,7 +154,7 @@ process.on('SIGINT', () => {
           if (!reviewId || !response || !response.trim()) {
             return ack?.({ status: 'error', message: 'reviewId and response are required' });
           }
-          if (role !== 'supplier') {
+          if (!socket.userRoles.includes('supplier')) {
             return ack?.({ status: 'error', message: 'Only suppliers can respond to reviews' });
           }
 
@@ -136,7 +162,7 @@ process.on('SIGINT', () => {
           const review = await prisma.review.findFirst({
             where: {
               id: reviewId,
-              tour: { supplierId: userId },
+              tour: { supplierId: socket.userId },
               status: 'APPROVED'
             },
             include: {
@@ -187,7 +213,7 @@ process.on('SIGINT', () => {
 
           event.emit({
             name: 'review.responded',
-            userId,
+            userId: socket.userId,
             resource: 'Review',
             resourceId: reviewId,
             properties: { tourId: review.tourId, customerId: review.customerId },
@@ -207,9 +233,9 @@ process.on('SIGINT', () => {
           const { conversationId } = payload || {};
           if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
 
-          const effectiveUserId = role === 'admin'
-            ? (await chatService.getSharedAdminId()) || userId
-            : userId;
+          const effectiveUserId = socket.userRoles.includes('admin')
+            ? (await chatService.getSharedAdminId()) || socket.userId
+            : socket.userId;
 
           const participant = await prisma.conversationParticipant.findUnique({
             where: { conversationId_userId: { conversationId, userId: effectiveUserId } }
@@ -245,9 +271,9 @@ process.on('SIGINT', () => {
           if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
           if (!content && !attachmentUrl) return ack?.({ status: 'error', message: 'content or attachment required' });
 
-          const effectiveUserId = role === 'admin'
-            ? (await chatService.getSharedAdminId()) || userId
-            : userId;
+          const effectiveUserId = socket.userRoles.includes('admin')
+            ? (await chatService.getSharedAdminId()) || socket.userId
+            : socket.userId;
 
           const participant = await prisma.conversationParticipant.findUnique({
             where: { conversationId_userId: { conversationId, userId: effectiveUserId } }
@@ -288,9 +314,9 @@ process.on('SIGINT', () => {
           const { conversationId, isTyping } = payload || {};
           if (!conversationId) return;
 
-          const effectiveUserId = role === 'admin'
-            ? (await chatService.getSharedAdminId()) || userId
-            : userId;
+          const effectiveUserId = socket.userRoles.includes('admin')
+            ? (await chatService.getSharedAdminId()) || socket.userId
+            : socket.userId;
 
           const participant = await prisma.conversationParticipant.findUnique({
             where: { conversationId_userId: { conversationId, userId: effectiveUserId } }
@@ -313,9 +339,9 @@ process.on('SIGINT', () => {
           const { conversationId } = payload || {};
           if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
 
-          const effectiveUserId = role === 'admin'
-            ? (await chatService.getSharedAdminId()) || userId
-            : userId;
+          const effectiveUserId = socket.userRoles.includes('admin')
+            ? (await chatService.getSharedAdminId()) || socket.userId
+            : socket.userId;
 
           await chatService.markAsRead(conversationId, effectiveUserId);
 
@@ -337,9 +363,9 @@ process.on('SIGINT', () => {
           const { conversationId, messageIds } = payload || {};
           if (!conversationId || !messageIds?.length) return;
 
-          let effectiveUserId = userId;
-          if (role === 'admin') {
-            effectiveUserId = (await chatService.getSharedAdminId()) || userId;
+          let effectiveUserId = socket.userId;
+          if (socket.userRoles.includes('admin')) {
+            effectiveUserId = (await chatService.getSharedAdminId()) || socket.userId;
           }
 
           socket.to(`conversation:${conversationId}`).emit('chat:delivered', {

@@ -14,35 +14,6 @@ exports.protect = catchAsync(async (req, res, next) => {
 
   const idToken = authHeader.split(' ')[1];
 
-  if (process.env.NODE_ENV === 'development' && idToken === 'test-token') {
-    let user = await prisma.user.findFirst({
-      where: { firebaseUid: 'dev-uid' },
-    });
-
-    if (!user) {
-      user = await prisma.user.create({
-        data: {
-          firebaseUid: 'dev-uid',
-          name: 'Dev User',
-          email: 'dev@test.com',
-          photoURL: '',
-          roles: ['admin', 'supplier'],
-        },
-      });
-    }
-
-    req.user = user;
-
-    req.firebaseUser = {
-      uid: user.firebaseUid,
-      name: user.name,
-      email: user.email,
-      picture: user.photoURL || '',
-    };
-
-    return next();
-  }
-
   let decoded;
   try {
     decoded = await admin.auth().verifyIdToken(idToken);

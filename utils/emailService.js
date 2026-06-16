@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Email Service - Production Ready
  * Handles transactional emails using SendGrid
  * 
@@ -25,7 +25,6 @@ const TEMPLATE_IDS = {
   'payout-notification': 'd-78cb9803209e42f6a80cfe45b9cdfc3b',
   'supplier-booking-notification': 'd-2973e0ab70734472985569ca1e20b220',
   'generic-notification': 'd-12b0cfb8cf1f4211a22db258e13c9f30',
-  'team-invite': 'd-12b0cfb8cf1f4211a22db258e13c9f30',
   'booking-cancellation': 'd-3b94f590c23f4530a05152bbdca561b0',
   'supplier-under-review': 'd-875a87dd2cf14a11a4f1075d053fc6b1',
   'supplier-suspended': 'd-d09364df53b4467ea43a7128483295e3',
@@ -83,7 +82,14 @@ async function sendEmail({ to, subject, template, data = {}, attachments = [] })
         year: new Date().getFullYear()
       };
     } else {
-      const emailContent = generateEmailContent(template, data);
+      const enrichedData = {
+        ...data,
+        supportEmail: data.supportEmail || configSupportEmail || process.env.SUPPORT_EMAIL,
+        logoUrl: data.logoUrl || configLogoUrl || process.env.LOGO_URL || 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1778862668/TRAVOI_AFRICA_NEW_kd1tnr.png',
+        brandName: data.brandName || configBrandName || 'Travio Africa',
+        year: data.year || new Date().getFullYear()
+      };
+      const emailContent = generateEmailContent(template, enrichedData);
       msg.html = emailContent.html;
       msg.text = emailContent.text;
     }
@@ -362,15 +368,14 @@ async function sendTeamInviteEmail({ to, supplierName, role, inviteUrl, invitedB
       subject: `You've been invited to join ${supplierName}'s team`,
       template: 'team-invite',
       data: {
-        supplierName,
         role,
-        inviteUrl,
+        inviteLink: inviteUrl,
         invitedBy,
-        brandSubtext: 'by Expedition-Go Tours',
       }
     });
   } catch (error) {
-    console.error(' Team invite email failed:', error);
+    console.error('Team invite email failed:', error);
+    throw error;
   }
 }
 
@@ -378,7 +383,9 @@ async function sendTeamInviteEmail({ to, supplierName, role, inviteUrl, invitedB
  * Generate email content from template
  */
 function generateEmailContent(template, data) {
-  const templates = {};
+  const templates = {
+    'team-invite': generateTeamInviteEmail,
+  };
 
   const templateFunction = templates[template];
   if (!templateFunction) {
@@ -386,6 +393,35 @@ function generateEmailContent(template, data) {
   }
 
   return templateFunction(data);
+}
+
+/**
+ * Generate team invite email from local HTML template
+ */
+function generateTeamInviteEmail(data) {
+  const fs = require('fs');
+  const path = require('path');
+
+  const templatePath = path.join(__dirname, '..', 'sendgrid-templates', 'team-invite.html');
+  let html = fs.readFileSync(templatePath, 'utf-8');
+
+  const replacements = {
+    '{{logoUrl}}': data.logoUrl || '',
+    '{{brandName}}': data.brandName || 'Travio Africa',
+    '{{invitedBy}}': data.invitedBy || 'A team member',
+    '{{role}}': data.role || 'member',
+    '{{inviteLink}}': data.inviteLink || '#',
+    '{{supportEmail}}': data.supportEmail || 'support@travioafrica.com',
+    '{{year}}': data.year || new Date().getFullYear().toString(),
+  };
+
+  for (const [key, value] of Object.entries(replacements)) {
+    html = html.split(key).join(value);
+  }
+
+  html = html.replace(/\{\{#if companyName\}\}.*?\{\{\/if\}\}/gs, '');
+
+  return { html, text: `You've been invited to join as ${data.role}. Accept: ${data.inviteLink}` };
 }
 
 

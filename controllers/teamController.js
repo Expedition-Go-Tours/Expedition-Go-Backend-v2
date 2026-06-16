@@ -3,6 +3,71 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const crypto = require('crypto');
 const { sendTeamInviteEmail } = require('../utils/emailService');
+const { logActivity } = require('../utils/auditLogger');
+const { VALID_TEAM_ROLES, TEAM_ROLE_PERMISSIONS } = require('../config/teamPermissions');
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+exports.getMyTeamRole = catchAsync(async (req, res) => {
+  if (req.user.roles.includes('admin')) {
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        role: 'admin',
+        permissions: ['*'],
+        isOwner: true,
+      },
+    });
+  }
+
+  const supplier = await prisma.supplierProfile.findFirst({
+    where: { userId: req.user.id },
+    select: { id: true },
+  });
+
+  if (supplier) {
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        role: 'admin',
+        permissions: ['*'],
+        isOwner: true,
+        supplierId: supplier.id,
+      },
+    });
+  }
+
+  const teamMember = await prisma.teamMember.findFirst({
+    where: {
+      email: req.user.email,
+      status: 'ACCEPTED',
+    },
+    select: { role: true, supplierId: true },
+  });
+
+  if (!teamMember) {
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        role: null,
+        permissions: [],
+        isOwner: false,
+      },
+    });
+  }
+
+  const roleConfig = TEAM_ROLE_PERMISSIONS[teamMember.role] || { permissions: [] };
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      role: teamMember.role,
+      permissions: roleConfig.permissions,
+      isOwner: false,
+      supplierId: teamMember.supplierId,
+    },
+  });
+});
 
 exports.getMembers = catchAsync(async (req, res) => {
   const members = await prisma.teamMember.findMany({
@@ -34,9 +99,12 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     return next(new AppError('Email is required', 400));
   }
 
-  const validRoles = ['admin', 'editor', 'finance', 'support'];
-  if (role && !validRoles.includes(role)) {
-    return next(new AppError(`Invalid role. Must be one of: ${validRoles.join(', ')}`, 400));
+  if (!EMAIL_REGEX.test(email)) {
+    return next(new AppError('Please provide a valid email address', 400));
+  }
+
+  if (role && !VALID_TEAM_ROLES.includes(role)) {
+    return next(new AppError(`Invalid role. Must be one of: ${VALID_TEAM_ROLES.join(', ')}`, 400));
   }
 
   const existing = await prisma.teamMember.findUnique({
@@ -66,6 +134,15 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
       },
     });
 
+    await logActivity({
+      userId: req.user.id,
+      action: 'team.member_added',
+      resource: 'TeamMember',
+      resourceId: member.id,
+      metadata: { email, role: member.role, method: 'direct_add' },
+      source: 'web',
+    });
+
     return res.status(201).json({
       status: 'success',
       message: `${email} added as a team member`,
@@ -87,7 +164,7 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     },
   });
 
-  const frontendUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5173';
+  const frontendUrl = process.env.SUPPLIER_DASHBOARD_URL || process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5173';
   const inviteUrl = `${frontendUrl}/team/invite?token=${token}`;
 
   const supplier = await prisma.user.findUnique({
@@ -101,6 +178,15 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     role: role || 'editor',
     inviteUrl,
     invitedBy: req.user.name || 'Your supplier',
+  });
+
+  await logActivity({
+    userId: req.user.id,
+    action: 'team.invite_sent',
+    resource: 'TeamMember',
+    resourceId: member.id,
+    metadata: { email, role: member.role },
+    source: 'web',
   });
 
   res.status(201).json({
@@ -187,6 +273,15 @@ exports.acceptInvite = catchAsync(async (req, res, next) => {
     },
   });
 
+  await logActivity({
+    userId: req.user.id,
+    action: 'team.invite_accepted',
+    resource: 'TeamMember',
+    resourceId: member.id,
+    metadata: { email: member.email, role: member.role },
+    source: 'web',
+  });
+
   res.status(200).json({
     status: 'success',
     message: 'Invitation accepted successfully',
@@ -218,6 +313,15 @@ exports.declineInvite = catchAsync(async (req, res, next) => {
     },
   });
 
+  await logActivity({
+    userId: req.user.id,
+    action: 'team.invite_declined',
+    resource: 'TeamMember',
+    resourceId: member.id,
+    metadata: { email: member.email, role: member.role },
+    source: 'web',
+  });
+
   res.status(200).json({
     status: 'success',
     message: 'Invitation declined',
@@ -231,9 +335,12 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
     return next(new AppError('Email is required', 400));
   }
 
-  const validRoles = ['admin', 'editor', 'finance', 'support'];
-  if (!role || !validRoles.includes(role)) {
-    return next(new AppError(`Invalid role. Must be one of: ${validRoles.join(', ')}`, 400));
+  if (!EMAIL_REGEX.test(email)) {
+    return next(new AppError('Please provide a valid email address', 400));
+  }
+
+  if (!role || !VALID_TEAM_ROLES.includes(role)) {
+    return next(new AppError(`Invalid role. Must be one of: ${VALID_TEAM_ROLES.join(', ')}`, 400));
   }
 
   const existing = await prisma.teamMember.findUnique({
@@ -259,6 +366,15 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
     },
   });
 
+  await logActivity({
+    userId: req.user.id,
+    action: 'team.member_added',
+    resource: 'TeamMember',
+    resourceId: member.id,
+    metadata: { email, role, method: 'direct_add' },
+    source: 'web',
+  });
+
   res.status(201).json({
     status: 'success',
     message: `${email} added as a team member`,
@@ -279,6 +395,15 @@ exports.removeMember = catchAsync(async (req, res, next) => {
 
   await prisma.teamMember.delete({ where: { id } });
 
+  await logActivity({
+    userId: req.user.id,
+    action: 'team.member_removed',
+    resource: 'TeamMember',
+    resourceId: id,
+    metadata: { email: member.email, role: member.role },
+    source: 'web',
+  });
+
   res.status(200).json({
     status: 'success',
     message: 'Team member removed successfully',
@@ -289,9 +414,8 @@ exports.updateMemberRole = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { role } = req.body;
 
-  const validRoles = ['admin', 'editor', 'finance', 'support'];
-  if (!role || !validRoles.includes(role)) {
-    return next(new AppError(`Invalid role. Must be one of: ${validRoles.join(', ')}`, 400));
+  if (!role || !VALID_TEAM_ROLES.includes(role)) {
+    return next(new AppError(`Invalid role. Must be one of: ${VALID_TEAM_ROLES.join(', ')}`, 400));
   }
 
   const member = await prisma.teamMember.findFirst({
@@ -302,9 +426,19 @@ exports.updateMemberRole = catchAsync(async (req, res, next) => {
     return next(new AppError('Team member not found', 404));
   }
 
+  const previousRole = member.role;
   const updated = await prisma.teamMember.update({
     where: { id },
     data: { role },
+  });
+
+  await logActivity({
+    userId: req.user.id,
+    action: 'team.role_changed',
+    resource: 'TeamMember',
+    resourceId: id,
+    metadata: { email: member.email, previousRole, newRole: role },
+    source: 'web',
   });
 
   res.status(200).json({
