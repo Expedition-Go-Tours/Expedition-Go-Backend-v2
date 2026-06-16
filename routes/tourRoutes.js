@@ -7,7 +7,8 @@
  */
 
 const express = require('express');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect } = require('../middleware/authMiddleware');
+const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 const tourController = require('../controllers/tourController');
 const { uploadTourPhotos } = require('../middleware/uploadMiddleware');
 
@@ -541,7 +542,7 @@ router.post('/seed', tourController.seedTour);
  *       403:
  *         description: Access denied
  */
-router.get('/supplier/my-tours', restrictTo('supplier'), tourController.getMyTours);
+router.get('/supplier/my-tours', resolveSupplier, requireTeamPermission('tours.view'), tourController.getMyTours);
 
 /**
  * @swagger
@@ -685,7 +686,7 @@ router.get('/supplier/my-tours', restrictTo('supplier'), tourController.getMyTou
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post('/', restrictTo('supplier'), uploadTourPhotos, tourController.createTour);
+router.post('/', resolveSupplier, requireTeamPermission('tours.create'), uploadTourPhotos, tourController.createTour);
 
 /**
  * @swagger
@@ -801,7 +802,7 @@ router.post('/', restrictTo('supplier'), uploadTourPhotos, tourController.create
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.patch('/:id', restrictTo('supplier'), uploadTourPhotos, tourController.updateTour);
+router.patch('/:id', resolveSupplier, requireTeamPermission('tours.update'), uploadTourPhotos, tourController.updateTour);
 
 /**
  * @swagger
@@ -826,7 +827,7 @@ router.patch('/:id', restrictTo('supplier'), uploadTourPhotos, tourController.up
  *       404:
  *         description: Tour not found or access denied
  */
-router.delete('/:id', restrictTo('supplier'), tourController.deleteTour);
+router.delete('/:id', resolveSupplier, requireTeamPermission('tours.delete'), tourController.deleteTour);
 
 /**
  * @swagger
@@ -887,7 +888,7 @@ router.delete('/:id', restrictTo('supplier'), tourController.deleteTour);
  *       404:
  *         description: Tour not found, access denied, or photo not found in tour
  */
-router.delete('/:id/photos', restrictTo('supplier'), tourController.deleteTourPhoto);
+router.delete('/:id/photos', resolveSupplier, requireTeamPermission('tours.update'), tourController.deleteTourPhoto);
 
 /**
  * @swagger
@@ -1102,6 +1103,6 @@ router.delete('/:id/photos', restrictTo('supplier'), tourController.deleteTourPh
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.get('/:id/analytics', restrictTo('supplier'), tourController.getTourAnalytics);
+router.get('/:id/analytics', resolveSupplier, requireTeamPermission('tours.view'), tourController.getTourAnalytics);
 
 module.exports = router;

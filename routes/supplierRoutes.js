@@ -8,6 +8,7 @@
 
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { resolveSupplier } = require('../middleware/teamRoleMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
 const supplierController = require('../controllers/supplierController');
 const { uploadSupplierDocuments, uploadSupplierLogo } = require('../middleware/uploadMiddleware');
@@ -289,7 +290,7 @@ router.patch('/application', uploadSupplierDocuments, supplierController.updateA
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.get('/dashboard', restrictTo('supplier'), supplierController.getDashboard);
+router.get('/dashboard', resolveSupplier, supplierController.getDashboard);
 
 /**
  * @swagger
@@ -411,8 +412,8 @@ router.get('/dashboard', restrictTo('supplier'), supplierController.getDashboard
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.get('/earnings', restrictTo('supplier'), supplierController.getEarnings);
-router.get('/payouts', restrictTo('supplier'), supplierController.getPayouts);
+router.get('/earnings', resolveSupplier, supplierController.getEarnings);
+router.get('/payouts', resolveSupplier, supplierController.getPayouts);
 
 // ================================
 // ADMIN SUPPLIER MANAGEMENT

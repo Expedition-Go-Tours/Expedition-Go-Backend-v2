@@ -1,6 +1,7 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
+const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 const payoutMethodController = require('../controllers/payoutMethodController');
 
 const router = express.Router();
@@ -37,7 +38,7 @@ router.use(protect);
  *                       items:
  *                         $ref: '#/components/schemas/PayoutMethod'
  */
-router.get('/me', restrictTo('supplier'), payoutMethodController.getMyMethods);
+router.get('/me', resolveSupplier, requireTeamPermission('payout-methods.view'), payoutMethodController.getMyMethods);
 
 /**
  * @swagger
@@ -60,7 +61,7 @@ router.get('/me', restrictTo('supplier'), payoutMethodController.getMyMethods);
  *       201:
  *         description: Payout method created
  */
-router.post('/', restrictTo('supplier'), payoutMethodController.addMethod);
+router.post('/', resolveSupplier, requireTeamPermission('payout-methods.manage'), payoutMethodController.addMethod);
 
 /**
  * @swagger
@@ -100,8 +101,8 @@ router.post('/', restrictTo('supplier'), payoutMethodController.addMethod);
  *       200:
  *         description: Payout method deleted
  */
-router.patch('/:id', restrictTo('supplier'), payoutMethodController.updateMethod);
-router.delete('/:id', restrictTo('supplier'), payoutMethodController.deleteMethod);
+router.patch('/:id', resolveSupplier, requireTeamPermission('payout-methods.manage'), payoutMethodController.updateMethod);
+router.delete('/:id', resolveSupplier, requireTeamPermission('payout-methods.manage'), payoutMethodController.deleteMethod);
 
 // ── Admin routes ──
 

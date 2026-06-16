@@ -1,7 +1,7 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
-const { requireTeamRole } = require('../middleware/teamRoleMiddleware');
+const { protect } = require('../middleware/authMiddleware');
+const { requireTeamRole, resolveSupplier } = require('../middleware/teamRoleMiddleware');
 const teamController = require('../controllers/teamController');
 const settingsController = require('../controllers/supplierSettingsController');
 
@@ -18,15 +18,18 @@ const teamInviteLimiter = rateLimit({
   },
 });
 
+// Public — no auth required
+router.get('/team/invite/:token', teamController.getInviteDetails);
+
+// Auth required
 router.use(protect);
 
 router.get('/team/my-role', teamController.getMyTeamRole);
-
-router.get('/team/invite/:token', teamController.getInviteDetails);
 router.post('/team/invite/:token/accept', teamController.acceptInvite);
 router.post('/team/invite/:token/decline', teamController.declineInvite);
 
-router.use(restrictTo('supplier'));
+// Supplier access (owner or invited team member)
+router.use(resolveSupplier);
 
 router.get('/business-profile', settingsController.getBusinessProfile);
 router.patch('/business-profile', requireTeamRole('admin', 'editor'), settingsController.updateBusinessProfile);
@@ -42,6 +45,8 @@ router.put('/booking-rules', requireTeamRole('admin', 'editor'), settingsControl
 
 router.get('/team/members', requireTeamRole('admin'), teamController.getMembers);
 router.post('/team/invite', requireTeamRole('admin'), teamInviteLimiter, teamController.inviteMember);
+router.post('/team/invite/resend', requireTeamRole('admin'), teamInviteLimiter, teamController.resendInvite);
+router.patch('/team/invite/:memberId/revoke', requireTeamRole('admin'), teamController.revokeInvite);
 router.post('/team/direct-add', requireTeamRole('admin'), teamInviteLimiter, teamController.directAddMember);
 router.delete('/team/members/:id', requireTeamRole('admin'), teamController.removeMember);
 router.patch('/team/members/:id/role', requireTeamRole('admin'), teamController.updateMemberRole);

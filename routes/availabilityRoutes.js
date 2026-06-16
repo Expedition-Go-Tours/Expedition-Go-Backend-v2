@@ -1,14 +1,15 @@
 const express = require('express');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect } = require('../middleware/authMiddleware');
+const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 const availabilityController = require('../controllers/availabilityController');
 
 const router = express.Router();
 
 router.use(protect);
 
-router.get('/:tourId/availability', restrictTo('supplier'), availabilityController.getAvailability);
-router.patch('/:tourId/availability/:date', restrictTo('supplier'), availabilityController.updateDateAvailability);
-router.delete('/:tourId/availability/:date', restrictTo('supplier'), availabilityController.removeDateOverride);
-router.post('/:tourId/availability/batch', restrictTo('supplier'), availabilityController.batchUpdateAvailability);
+router.get('/:tourId/availability', resolveSupplier, requireTeamPermission('tours.view', 'bookings.view'), availabilityController.getAvailability);
+router.patch('/:tourId/availability/:date', resolveSupplier, requireTeamPermission('tours.update'), availabilityController.updateDateAvailability);
+router.delete('/:tourId/availability/:date', resolveSupplier, requireTeamPermission('tours.update'), availabilityController.removeDateOverride);
+router.post('/:tourId/availability/batch', resolveSupplier, requireTeamPermission('tours.update'), availabilityController.batchUpdateAvailability);
 
 module.exports = router;

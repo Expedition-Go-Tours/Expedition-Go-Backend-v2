@@ -23,7 +23,7 @@ const admin = require('../config/firebaseAdmin');
  * Returns all payout methods for the authenticated supplier
  */
 exports.getMyMethods = catchAsync(async (req, res) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
 
   const methods = await prisma.payoutMethod.findMany({
     where: { supplierId },
@@ -41,7 +41,7 @@ exports.getMyMethods = catchAsync(async (req, res) => {
  * Add a new payout method for the authenticated supplier
  */
 exports.addMethod = catchAsync(async (req, res, next) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
 
   const {
     type,
@@ -131,7 +131,7 @@ exports.addMethod = catchAsync(async (req, res, next) => {
  * Update a payout method (supplier can only update their own)
  */
 exports.updateMethod = catchAsync(async (req, res, next) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
   const { id } = req.params;
 
   const existing = await prisma.payoutMethod.findFirst({
@@ -205,7 +205,7 @@ exports.updateMethod = catchAsync(async (req, res, next) => {
  * Delete a payout method (auto-reassigns default if needed)
  */
 exports.deleteMethod = catchAsync(async (req, res, next) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
   const { id } = req.params;
 
   const existing = await prisma.payoutMethod.findFirst({

@@ -43,7 +43,7 @@ exports.getAvailability = catchAsync(async (req, res, next) => {
   }
 
   const tour = await prisma.tour.findFirst({
-    where: { id: tourId, supplierId: req.user.id },
+    where: { id: tourId, supplierId: req.supplierId },
   });
 
   if (!tour) {
@@ -162,7 +162,7 @@ exports.updateDateAvailability = catchAsync(async (req, res, next) => {
   }
 
   const tour = await prisma.tour.findFirst({
-    where: { id: tourId, supplierId: req.user.id },
+    where: { id: tourId, supplierId: req.supplierId },
   });
 
   if (!tour) {
@@ -233,7 +233,7 @@ exports.removeDateOverride = catchAsync(async (req, res, next) => {
   }
 
   const tour = await prisma.tour.findFirst({
-    where: { id: tourId, supplierId: req.user.id },
+    where: { id: tourId, supplierId: req.supplierId },
   });
 
   if (!tour) {
@@ -266,7 +266,7 @@ exports.batchUpdateAvailability = catchAsync(async (req, res, next) => {
   }
 
   const tour = await prisma.tour.findFirst({
-    where: { id: tourId, supplierId: req.user.id },
+    where: { id: tourId, supplierId: req.supplierId },
   });
 
   if (!tour) {

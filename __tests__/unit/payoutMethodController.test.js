@@ -44,7 +44,7 @@ describe('payoutMethodController', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    req = { query: {}, params: {}, body: {}, user: { id: 's-1' } };
+    req = { query: {}, params: {}, body: {}, supplierId: 's-1', user: { id: 's-1' } };
     res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
     next = jest.fn();
 

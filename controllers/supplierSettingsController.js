@@ -4,7 +4,7 @@ const AppError = require('../utils/appError');
 
 exports.getBusinessProfile = catchAsync(async (req, res) => {
   const profile = await prisma.supplierProfile.findUnique({
-    where: { userId: req.user.id },
+    where: { userId: req.supplierId },
     select: { businessInfo: true, operatingInfo: true }
   });
 
@@ -21,7 +21,7 @@ exports.updateBusinessProfile = catchAsync(async (req, res, next) => {
   const { businessInfo, operatingInfo } = req.body;
 
   const profile = await prisma.supplierProfile.findUnique({
-    where: { userId: req.user.id },
+    where: { userId: req.supplierId },
   });
 
   if (!profile) {
@@ -29,7 +29,7 @@ exports.updateBusinessProfile = catchAsync(async (req, res, next) => {
   }
 
   const updated = await prisma.supplierProfile.update({
-    where: { userId: req.user.id },
+    where: { userId: req.supplierId },
     data: {
       businessInfo: businessInfo ? { ...(profile.businessInfo || {}), ...businessInfo } : undefined,
       operatingInfo: operatingInfo ? { ...(profile.operatingInfo || {}), ...operatingInfo } : undefined,
@@ -96,7 +96,7 @@ exports.updateNotificationPreferences = catchAsync(async (req, res, next) => {
 
 exports.getTaxInfo = catchAsync(async (req, res) => {
   const profile = await prisma.supplierProfile.findUnique({
-    where: { userId: req.user.id },
+    where: { userId: req.supplierId },
     select: { businessDocuments: true, compliance: true },
   });
 
@@ -113,7 +113,7 @@ exports.updateTaxInfo = catchAsync(async (req, res, next) => {
   const { taxId, taxCountry, legalBusinessName, businessType } = req.body;
 
   const profile = await prisma.supplierProfile.findUnique({
-    where: { userId: req.user.id },
+    where: { userId: req.supplierId },
   });
 
   if (!profile) {
@@ -124,7 +124,7 @@ exports.updateTaxInfo = catchAsync(async (req, res, next) => {
   const currentBusinessInfo = profile.businessInfo || {};
 
   const updated = await prisma.supplierProfile.update({
-    where: { userId: req.user.id },
+    where: { userId: req.supplierId },
     data: {
       compliance: {
         ...currentCompliance,
@@ -155,7 +155,7 @@ exports.updateTaxInfo = catchAsync(async (req, res, next) => {
 
 exports.getBookingRules = catchAsync(async (req, res) => {
   const profile = await prisma.supplierProfile.findUnique({
-    where: { userId: req.user.id },
+    where: { userId: req.supplierId },
     select: { operatingInfo: true },
   });
 
@@ -178,7 +178,7 @@ exports.updateBookingRules = catchAsync(async (req, res, next) => {
   const rules = req.body;
 
   const profile = await prisma.supplierProfile.findUnique({
-    where: { userId: req.user.id },
+    where: { userId: req.supplierId },
   });
 
   if (!profile) {
@@ -188,7 +188,7 @@ exports.updateBookingRules = catchAsync(async (req, res, next) => {
   const currentOperating = profile.operatingInfo || {};
 
   const updated = await prisma.supplierProfile.update({
-    where: { userId: req.user.id },
+    where: { userId: req.supplierId },
     data: {
       operatingInfo: {
         ...currentOperating,

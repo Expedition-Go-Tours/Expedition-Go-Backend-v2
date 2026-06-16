@@ -56,6 +56,7 @@ describe('tourController', () => {
       query: {},
       params: {},
       body: {},
+      supplierId: 'supplier-1',
       user: { id: 'supplier-1', roles: ['supplier'] },
       files: [],
       headers: {},

@@ -750,7 +750,7 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
  * Get supplier's bookings
  */
 exports.getSupplierBookings = catchAsync(async (req, res, next) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
   const { status, tourId, customerId, page = 1, limit = 10 } = req.query;
 
   // Verify supplier status
@@ -823,7 +823,7 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
 exports.updateBookingStatus = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { status, supplierNotes } = req.body;
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
 
   const booking = await prisma.booking.findFirst({
     where: {

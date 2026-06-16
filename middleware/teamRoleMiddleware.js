@@ -119,3 +119,35 @@ exports.isSupplierOwner = catchAsync(async (req, res, next) => {
   req.supplierId = supplier.id;
   next();
 });
+
+exports.resolveSupplier = catchAsync(async (req, res, next) => {
+  if (!req.user) {
+    return next(new AppError('Not authenticated', 401));
+  }
+
+  if (req.user.roles.includes('admin')) {
+    return next();
+  }
+
+  const profile = await prisma.supplierProfile.findFirst({
+    where: { userId: req.user.id },
+    select: { id: true },
+  });
+
+  if (profile) {
+    req.supplierId = req.user.id;
+    return next();
+  }
+
+  const member = await prisma.teamMember.findFirst({
+    where: { email: req.user.email, status: 'ACCEPTED' },
+    select: { supplierId: true },
+  });
+
+  if (!member) {
+    return next(new AppError('Supplier access required', 403));
+  }
+
+  req.supplierId = member.supplierId;
+  next();
+});

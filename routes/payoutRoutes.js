@@ -1,6 +1,7 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
+const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 const payoutController = require('../controllers/payoutController');
 
 const router = express.Router();
@@ -55,7 +56,7 @@ router.use(protect);
  *                     pagination:
  *                       $ref: '#/components/schemas/PaginatedResponse/properties/pagination'
  */
-router.get('/me', restrictTo('supplier'), payoutController.getMyPayouts);
+router.get('/me', resolveSupplier, requireTeamPermission('payouts.view'), payoutController.getMyPayouts);
 
 // ── Admin routes ──
 

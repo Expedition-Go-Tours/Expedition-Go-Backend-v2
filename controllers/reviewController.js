@@ -444,7 +444,7 @@ exports.getReview = catchAsync(async (req, res, next) => {
 exports.addSupplierResponse = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { response } = req.body;
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
 
   if (!response || response.trim().length === 0) {
     return next(new AppError('Response cannot be empty', 400));
@@ -532,7 +532,7 @@ exports.addSupplierResponse = catchAsync(async (req, res, next) => {
 exports.updateSupplierResponse = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { response } = req.body;
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
 
   if (!response || response.trim().length === 0) {
     return next(new AppError('Response cannot be empty', 400));
@@ -601,7 +601,7 @@ exports.updateSupplierResponse = catchAsync(async (req, res, next) => {
  */
 exports.deleteSupplierResponse = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
 
   // Verify review exists and belongs to supplier's tour
   const review = await prisma.review.findFirst({
@@ -651,7 +651,7 @@ exports.deleteSupplierResponse = catchAsync(async (req, res, next) => {
  * Get reviews for supplier's tours
  */
 exports.getSupplierReviews = catchAsync(async (req, res, next) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
   const {
     tourId,
     status = 'APPROVED',

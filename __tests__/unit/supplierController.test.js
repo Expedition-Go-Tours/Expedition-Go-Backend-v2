@@ -65,7 +65,7 @@ describe('supplierController', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    req = { query: {}, params: {}, body: {}, user: { id: 'u-1' }, files: undefined };
+    req = { query: {}, params: {}, body: {}, user: { id: 'u-1' }, supplierId: 'u-1', files: undefined };
     res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
     next = jest.fn();
 

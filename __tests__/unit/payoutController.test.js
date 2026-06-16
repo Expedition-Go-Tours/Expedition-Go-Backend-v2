@@ -78,6 +78,7 @@ describe('payoutController', () => {
   describe('getMyPayouts', () => {
     it('returns supplier payouts with pagination', async () => {
       req.user = { id: 's-1' };
+      req.supplierId = 's-1';
       await controller.getMyPayouts(req, res, next);
 
       expect(prisma.payout.findMany).toHaveBeenCalledWith(
@@ -91,6 +92,7 @@ describe('payoutController', () => {
 
     it('filters by status when provided', async () => {
       req.user = { id: 's-1' };
+      req.supplierId = 's-1';
       req.query = { status: 'PAID' };
       await controller.getMyPayouts(req, res, next);
       expect(prisma.payout.findMany).toHaveBeenCalledWith(
@@ -100,6 +102,7 @@ describe('payoutController', () => {
 
     it('supports pagination', async () => {
       req.user = { id: 's-1' };
+      req.supplierId = 's-1';
       req.query = { page: '2', limit: '10' };
       prisma.payout.count.mockResolvedValue(25);
       await controller.getMyPayouts(req, res, next);

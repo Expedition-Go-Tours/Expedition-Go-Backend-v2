@@ -12,7 +12,7 @@ const getConfig = require('../utils/getConfig');
 exports.getMyPayouts = catchAsync(async (req, res, next) => {
   const { page = 1, limit = 20, status } = req.query;
 
-  const where = { supplierId: req.user.id };
+  const where = { supplierId: req.supplierId };
   if (status) where.status = status;
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -51,7 +51,7 @@ exports.getMyPayouts = catchAsync(async (req, res, next) => {
     }),
     prisma.payout.count({ where }),
     prisma.payout.aggregate({
-      where: { supplierId: req.user.id },
+      where: { supplierId: req.supplierId },
       _sum: { amount: true },
       _count: true
     })

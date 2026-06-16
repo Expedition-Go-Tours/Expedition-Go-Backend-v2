@@ -9,6 +9,7 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
+const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 const reviewController = require('../controllers/reviewController');
 const { uploadReviewPhotos } = require('../middleware/uploadMiddleware');
 
@@ -344,7 +345,7 @@ router.delete('/:id', reviewController.deleteReview);
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post('/:id/response', restrictTo('supplier'), reviewController.addSupplierResponse);
+router.post('/:id/response', resolveSupplier, requireTeamPermission('reviews.respond'), reviewController.addSupplierResponse);
 
 /**
  * @swagger
@@ -411,7 +412,7 @@ router.post('/:id/response', restrictTo('supplier'), reviewController.addSupplie
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.patch('/:id/response', restrictTo('supplier'), reviewController.updateSupplierResponse);
+router.patch('/:id/response', resolveSupplier, requireTeamPermission('reviews.respond'), reviewController.updateSupplierResponse);
 
 /**
  * @swagger
@@ -433,7 +434,7 @@ router.patch('/:id/response', restrictTo('supplier'), reviewController.updateSup
  *       404:
  *         description: Review not found or no response to delete
  */
-router.delete('/:id/response', restrictTo('supplier'), reviewController.deleteSupplierResponse);
+router.delete('/:id/response', resolveSupplier, requireTeamPermission('reviews.respond'), reviewController.deleteSupplierResponse);
 
 // ================================
 // SUPPLIER REVIEW MANAGEMENT
@@ -480,7 +481,7 @@ router.delete('/:id/response', restrictTo('supplier'), reviewController.deleteSu
  *       403:
  *         description: Access denied
  */
-router.get('/supplier/reviews', restrictTo('supplier'), reviewController.getSupplierReviews);
+router.get('/supplier/reviews', resolveSupplier, requireTeamPermission('reviews.view'), reviewController.getSupplierReviews);
 
 // ================================
 // ADMIN MODERATION ENDPOINTS

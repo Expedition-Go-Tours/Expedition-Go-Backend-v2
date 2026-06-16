@@ -7,7 +7,8 @@
  */
 
 const express = require('express');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect } = require('../middleware/authMiddleware');
+const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 const bookingController = require('../controllers/bookingController');
 
 const router = express.Router();
@@ -488,7 +489,7 @@ router.patch('/:id/cancel', bookingController.cancelBooking);
  *       403:
  *         description: Access denied
  */
-router.get('/supplier/bookings', restrictTo('supplier'), bookingController.getSupplierBookings);
+router.get('/supplier/bookings', resolveSupplier, requireTeamPermission('bookings.view'), bookingController.getSupplierBookings);
 
 /**
  * @swagger
@@ -576,6 +577,6 @@ router.get('/supplier/bookings', restrictTo('supplier'), bookingController.getSu
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.patch('/:id/status', restrictTo('supplier'), bookingController.updateBookingStatus);
+router.patch('/:id/status', resolveSupplier, requireTeamPermission('bookings.manage'), bookingController.updateBookingStatus);
 
 module.exports = router;

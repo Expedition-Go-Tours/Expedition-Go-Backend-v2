@@ -468,7 +468,7 @@ exports.getTour = catchAsync(async (req, res, next) => {
  * Create new tour (suppliers only)
  */
 exports.createTour = catchAsync(async (req, res, next) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
 
   // Verify supplier is active
   const supplierProfile = await prisma.supplierProfile.findUnique({
@@ -606,7 +606,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
  */
 exports.updateTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
 
   // Find tour and verify ownership
   const existingTour = await prisma.tour.findFirst({
@@ -781,7 +781,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
  */
 exports.deleteTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
 
   // Find tour and verify ownership
   const tour = await prisma.tour.findFirst({
@@ -842,7 +842,7 @@ exports.deleteTour = catchAsync(async (req, res, next) => {
  * Get supplier's own tours
  */
 exports.getMyTours = catchAsync(async (req, res, next) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
   const { status, page = 1, limit = 10 } = req.query;
 
   const where = { supplierId, status: { not: 'ARCHIVED' } };
@@ -903,7 +903,7 @@ exports.getMyTours = catchAsync(async (req, res, next) => {
  */
 exports.getTourAnalytics = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
 
   // Verify ownership
   const tour = await prisma.tour.findFirst({
@@ -991,7 +991,7 @@ exports.getTourAnalytics = catchAsync(async (req, res, next) => {
  */
 exports.deleteTourPhoto = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
   const { photoUrl } = req.body;
 
   if (!photoUrl) {

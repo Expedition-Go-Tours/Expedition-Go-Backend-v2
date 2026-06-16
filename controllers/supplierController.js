@@ -173,7 +173,7 @@ exports.updateApplication = catchAsync(async (req, res, next) => {
  * Supplier dashboard summary
  */
 exports.getDashboard = catchAsync(async (req, res, next) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
 
   const supplierProfile = await prisma.supplierProfile.findUnique({
     where: { userId: supplierId },
@@ -250,7 +250,7 @@ exports.getDashboard = catchAsync(async (req, res, next) => {
  * Supplier earnings summary
  */
 exports.getEarnings = catchAsync(async (req, res) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId;
   const { page = 1, limit = 20, startDate, endDate } = req.query;
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
@@ -321,7 +321,7 @@ exports.getEarnings = catchAsync(async (req, res) => {
  * Supplier payout history
  */
 exports.getPayouts = catchAsync(async (req, res) => {
-  const userId = req.user.id;
+  const userId = req.supplierId;
   const { page = 1, limit = 20, status } = req.query;
 
   const where = { supplierId: userId };

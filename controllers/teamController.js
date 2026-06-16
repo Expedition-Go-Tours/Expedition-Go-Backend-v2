@@ -3,10 +3,21 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const crypto = require('crypto');
 const { sendTeamInviteEmail } = require('../utils/emailService');
+const { enqueueNotification } = require('../utils/queue');
 const { logActivity } = require('../utils/auditLogger');
 const { VALID_TEAM_ROLES, TEAM_ROLE_PERMISSIONS } = require('../config/teamPermissions');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_TEAM_SIZE = parseInt(process.env.MAX_TEAM_SIZE, 10) || 50;
+
+async function enforceTeamSizeLimit(supplierId) {
+  const acceptedCount = await prisma.teamMember.count({
+    where: { supplierId, status: 'ACCEPTED' },
+  });
+  if (acceptedCount >= MAX_TEAM_SIZE) {
+    throw new AppError(`Team size limit of ${MAX_TEAM_SIZE} reached`, 400);
+  }
+}
 
 exports.getMyTeamRole = catchAsync(async (req, res) => {
   if (req.user.roles.includes('admin')) {
@@ -71,25 +82,44 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
 });
 
 exports.getMembers = catchAsync(async (req, res) => {
-  const members = await prisma.teamMember.findMany({
-    where: { supplierId: req.user.id },
-    orderBy: { createdAt: 'desc' },
-    select: {
-      id: true,
-      email: true,
-      role: true,
-      status: true,
-      invitedById: true,
-      acceptedAt: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-  });
+  const { status, page = 1, limit = 50 } = req.query;
+  const where = { supplierId: req.supplierId };
+  if (status) where.status = status;
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+
+  const [members, totalCount] = await Promise.all([
+    prisma.teamMember.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: parseInt(limit),
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        status: true,
+        invitedById: true,
+        acceptedAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    }),
+    prisma.teamMember.count({ where }),
+  ]);
 
   res.status(200).json({
     status: 'success',
     results: members.length,
-    data: { members },
+    data: {
+      members,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(totalCount / parseInt(limit)),
+        totalCount,
+        limit: parseInt(limit),
+      },
+    },
   });
 });
 
@@ -108,9 +138,11 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     return next(new AppError(`Invalid role. Must be one of: ${VALID_TEAM_ROLES.join(', ')}`, 400));
   }
 
+  await enforceTeamSizeLimit(req.supplierId);
+
   const existing = await prisma.teamMember.findUnique({
     where: {
-      supplierId_email: { supplierId: req.user.id, email },
+      supplierId_email: { supplierId: req.supplierId, email },
     },
   });
 
@@ -126,7 +158,7 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
   if (directAdd) {
     const member = await prisma.teamMember.create({
       data: {
-        supplierId: req.user.id,
+        supplierId: req.supplierId,
         email,
         role: role || 'editor',
         status: 'ACCEPTED',
@@ -156,7 +188,7 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
 
   const member = await prisma.teamMember.create({
     data: {
-      supplierId: req.user.id,
+      supplierId: req.supplierId,
       email,
       role: role || 'editor',
       invitedById: req.user.id,
@@ -229,7 +261,6 @@ exports.getInviteDetails = catchAsync(async (req, res, next) => {
     status: 'success',
     data: {
       supplierName: member.supplier.name,
-      supplierEmail: member.supplier.email,
       role: member.role,
       invitedEmail: member.email,
       status: member.status,
@@ -274,6 +305,27 @@ exports.acceptInvite = catchAsync(async (req, res, next) => {
     },
   });
 
+  const acceptedUser = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { roles: true },
+  });
+
+  if (acceptedUser && !acceptedUser.roles.includes('supplier')) {
+    acceptedUser.roles.push('supplier');
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: { roles: acceptedUser.roles },
+    });
+  }
+
+  enqueueNotification({
+    userId: member.supplierId,
+    type: 'TEAM_INVITE_ACCEPTED',
+    title: 'Team Invitation Accepted',
+    message: `${req.user.email} has accepted their invitation as ${member.role}`,
+    data: { memberId: member.id, email: req.user.email, role: member.role },
+  }).catch(() => {});
+
   await logActivity({
     userId: req.user.id,
     action: 'team.invite_accepted',
@@ -305,6 +357,10 @@ exports.declineInvite = catchAsync(async (req, res, next) => {
     return next(new AppError(`Invitation is already ${member.status.toLowerCase()}`, 400));
   }
 
+  if (req.user.email !== member.email) {
+    return next(new AppError(`This invitation was sent to ${member.email}. Please sign in with that email address.`, 403));
+  }
+
   await prisma.teamMember.update({
     where: { id: member.id },
     data: {
@@ -329,6 +385,115 @@ exports.declineInvite = catchAsync(async (req, res, next) => {
   });
 });
 
+exports.resendInvite = catchAsync(async (req, res, next) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return next(new AppError('Email is required', 400));
+  }
+
+  if (!EMAIL_REGEX.test(email)) {
+    return next(new AppError('Please provide a valid email address', 400));
+  }
+
+  const existing = await prisma.teamMember.findUnique({
+    where: {
+      supplierId_email: { supplierId: req.supplierId, email },
+    },
+    include: {
+      supplier: { select: { name: true, email: true } },
+    },
+  });
+
+  if (!existing) {
+    return next(new AppError('No pending invitation found for this email', 404));
+  }
+
+  if (existing.status === 'ACCEPTED') {
+    return next(new AppError('This user has already accepted their invitation', 400));
+  }
+
+  if (existing.status === 'REVOKED') {
+    return next(new AppError('This invitation has been revoked. Send a new invitation instead.', 400));
+  }
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+
+  await prisma.teamMember.update({
+    where: { id: existing.id },
+    data: {
+      inviteToken: token,
+      tokenExpiresAt: expiresAt,
+      status: 'PENDING',
+    },
+  });
+
+  const frontendUrl = process.env.SUPPLIER_DASHBOARD_URL || process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5173';
+  const inviteUrl = `${frontendUrl}/team/invite?token=${token}`;
+
+  await sendTeamInviteEmail({
+    to: email,
+    supplierName: existing.supplier.name || 'A supplier',
+    role: existing.role,
+    inviteUrl,
+    invitedBy: req.user.name || 'Your supplier',
+  });
+
+  await logActivity({
+    userId: req.user.id,
+    action: 'team.invite_resend',
+    resource: 'TeamMember',
+    resourceId: existing.id,
+    metadata: { email, role: existing.role },
+    source: 'web',
+  });
+
+  res.status(200).json({
+    status: 'success',
+    message: `Invitation resent to ${email}`,
+  });
+});
+
+exports.revokeInvite = catchAsync(async (req, res, next) => {
+  const { memberId } = req.params;
+
+  const member = await prisma.teamMember.findFirst({
+    where: { id: memberId, supplierId: req.supplierId },
+  });
+
+  if (!member) {
+    return next(new AppError('Team member not found', 404));
+  }
+
+  if (member.status !== 'PENDING') {
+    return next(new AppError(`Invitation is already ${member.status.toLowerCase()}`, 400));
+  }
+
+  await prisma.teamMember.update({
+    where: { id: member.id },
+    data: {
+      status: 'REVOKED',
+      inviteToken: null,
+      tokenExpiresAt: null,
+    },
+  });
+
+  await logActivity({
+    userId: req.user.id,
+    action: 'team.invite_revoked',
+    resource: 'TeamMember',
+    resourceId: member.id,
+    metadata: { email: member.email, role: member.role },
+    source: 'web',
+  });
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Invitation revoked successfully',
+  });
+});
+
 exports.directAddMember = catchAsync(async (req, res, next) => {
   const { email, role } = req.body;
 
@@ -339,33 +504,48 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
   if (!EMAIL_REGEX.test(email)) {
     return next(new AppError('Please provide a valid email address', 400));
   }
-
   if (!role || !VALID_TEAM_ROLES.includes(role)) {
     return next(new AppError(`Invalid role. Must be one of: ${VALID_TEAM_ROLES.join(', ')}`, 400));
   }
 
+  await enforceTeamSizeLimit(req.supplierId);
+
   const existing = await prisma.teamMember.findUnique({
+
     where: {
-      supplierId_email: { supplierId: req.user.id, email },
+      supplierId_email: { supplierId: req.supplierId, email },
     },
   });
 
+  let member;
   if (existing) {
     if (existing.status === 'ACCEPTED') {
       return next(new AppError('This user is already a team member', 400));
     }
-  }
 
-  const member = await prisma.teamMember.create({
-    data: {
-      supplierId: req.user.id,
-      email,
-      role,
-      status: 'ACCEPTED',
-      acceptedAt: new Date(),
-      invitedById: req.user.id,
-    },
-  });
+    member = await prisma.teamMember.update({
+      where: { id: existing.id },
+      data: {
+        role,
+        status: 'ACCEPTED',
+        acceptedAt: new Date(),
+        invitedById: req.user.id,
+        inviteToken: null,
+        tokenExpiresAt: null,
+      },
+    });
+  } else {
+    member = await prisma.teamMember.create({
+      data: {
+        supplierId: req.supplierId,
+        email,
+        role,
+        status: 'ACCEPTED',
+        acceptedAt: new Date(),
+        invitedById: req.user.id,
+      },
+    });
+  }
 
   await logActivity({
     userId: req.user.id,
@@ -387,7 +567,7 @@ exports.removeMember = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
   const member = await prisma.teamMember.findFirst({
-    where: { id, supplierId: req.user.id },
+    where: { id, supplierId: req.supplierId },
   });
 
   if (!member) {
@@ -420,7 +600,7 @@ exports.updateMemberRole = catchAsync(async (req, res, next) => {
   }
 
   const member = await prisma.teamMember.findFirst({
-    where: { id, supplierId: req.user.id },
+    where: { id, supplierId: req.supplierId },
   });
 
   if (!member) {
@@ -452,7 +632,7 @@ exports.getMemberById = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
   const member = await prisma.teamMember.findFirst({
-    where: { id, supplierId: req.user.id },
+    where: { id, supplierId: req.supplierId },
     select: {
       id: true,
       email: true,
