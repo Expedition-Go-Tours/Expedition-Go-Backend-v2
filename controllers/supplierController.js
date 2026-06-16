@@ -82,6 +82,14 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
     data: { roles: { push: 'supplier' } },
   });
 
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
+  notifyAdmin({
+    type: 'NEW_SUPPLIER_APPLICATION',
+    title: 'New Supplier Application',
+    message: `${user?.name || 'A user'} (${user?.email || userId}) has submitted a supplier application.`,
+    data: { supplierId: supplierProfile.id, userId, applicantName: user?.name, applicantEmail: user?.email },
+  }).catch((err) => console.error('[Notification] notifyAdmin (new supplier) failed:', err.message));
+
   await logActivity({
     userId,
     action: 'supplier.applied',

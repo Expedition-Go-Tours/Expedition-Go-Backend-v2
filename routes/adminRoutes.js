@@ -336,7 +336,7 @@ router.get('/analytics/cart-abandonment', requirePermission('analytics.view'), a
  *       200:
  *         description: Notifications retrieved
  */
-router.get('/notifications', requirePermission('dashboard.*'), adminNotifController.getNotifications);
+router.get('/notifications', requirePermission('notifications.view'), adminNotifController.getNotifications);
 
 /**
  * @swagger
@@ -350,7 +350,7 @@ router.get('/notifications', requirePermission('dashboard.*'), adminNotifControl
  *       200:
  *         description: Unacknowledged count
  */
-router.get('/notifications/unread-count', requirePermission('dashboard.*'), adminNotifController.getUnreadCount);
+router.get('/notifications/unread-count', requirePermission('notifications.view'), adminNotifController.getUnreadCount);
 
 /**
  * @swagger
@@ -364,7 +364,7 @@ router.get('/notifications/unread-count', requirePermission('dashboard.*'), admi
  *       200:
  *         description: Statistics retrieved
  */
-router.get('/notifications/stats', requirePermission('dashboard.*'), adminNotifController.getStats);
+router.get('/notifications/stats', requirePermission('notifications.view'), adminNotifController.getStats);
 
 /**
  * @swagger
@@ -383,7 +383,7 @@ router.get('/notifications/stats', requirePermission('dashboard.*'), adminNotifC
  *       200:
  *         description: Notification acknowledged
  */
-router.patch('/notifications/:id/acknowledge', requirePermission('dashboard.*'), adminNotifController.acknowledge);
+router.patch('/notifications/:id/acknowledge', requirePermission('notifications.view'), adminNotifController.acknowledge);
 
 /**
  * @swagger
@@ -397,7 +397,7 @@ router.patch('/notifications/:id/acknowledge', requirePermission('dashboard.*'),
  *       200:
  *         description: All notifications acknowledged
  */
-router.patch('/notifications/acknowledge-all', requirePermission('dashboard.*'), adminNotifController.acknowledgeAll);
+router.patch('/notifications/acknowledge-all', requirePermission('notifications.view'), adminNotifController.acknowledgeAll);
 
 /**
  * @swagger

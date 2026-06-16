@@ -13,6 +13,7 @@
     "lint:fix": "eslint . --fix",
     "postinstall": "npx prisma generate",
     "migrate": "npx prisma migrate deploy",
+    "seed": "node prisma/seed.js",
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
