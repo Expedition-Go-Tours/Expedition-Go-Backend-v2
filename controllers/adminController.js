@@ -944,11 +944,11 @@ exports.getCartAbandonment = catchAsync(async (req, res, next) => {
  */
 exports.getRecentSignups = catchAsync(async (req, res, next) => {
   const now = new Date();
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   const users = await prisma.user.findMany({
     where: {
-      createdAt: { gte: thirtyDaysAgo },
+      createdAt: { gte: todayStart },
     },
     select: {
       id: true,
