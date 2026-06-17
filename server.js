@@ -124,7 +124,7 @@ process.on('SIGINT', () => {
 
       const user = await prisma.user.findUnique({
         where: { firebaseUid: decoded.uid },
-        select: { id: true, roles: true, active: true },
+        select: { id: true, roles: true, active: true, name: true },
       });
 
       if (!user || !user.active) {
@@ -135,6 +135,7 @@ process.on('SIGINT', () => {
 
       socket.userId = user.id;
       socket.userRoles = user.roles;
+      socket.userName = user.name || 'Unknown';
       console.log('Socket connected:', socket.id, { userId: user.id, roles: user.roles });
 
       if (user.roles.includes('admin')) {
@@ -329,6 +330,19 @@ process.on('SIGINT', () => {
             userId: effectiveUserId,
             isTyping: !!isTyping,
           });
+
+          const recipient = await prisma.conversationParticipant.findFirst({
+            where: { conversationId, userId: { not: effectiveUserId } },
+            select: { userId: true },
+          });
+          if (recipient) {
+            io.to(`user:${recipient.userId}`).emit('chat:typing', {
+              conversationId,
+              userId: effectiveUserId,
+              isTyping: !!isTyping,
+              userName: socket.userName || 'Someone',
+            });
+          }
         } catch (err) {
           console.error('Socket chat:typing error:', err);
         }
