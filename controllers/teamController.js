@@ -2,7 +2,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const crypto = require('crypto');
-const { sendTeamInviteEmail } = require('../utils/emailService');
+const { sendTeamInviteEmail, sendTeamInviteRevokedEmail } = require('../utils/emailService');
 const { enqueueNotification } = require('../utils/queue');
 const { logActivity } = require('../utils/auditLogger');
 const { VALID_TEAM_ROLES, TEAM_ROLE_PERMISSIONS } = require('../config/teamPermissions');
@@ -10,14 +10,25 @@ const { VALID_TEAM_ROLES, TEAM_ROLE_PERMISSIONS } = require('../config/teamPermi
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_TEAM_SIZE = parseInt(process.env.MAX_TEAM_SIZE, 10) || 50;
 
-async function enforceTeamSizeLimit(supplierId) {
-  const acceptedCount = await prisma.teamMember.count({
-    where: { supplierId, status: 'ACCEPTED' },
+exports.cleanupExpiredInvites = catchAsync(async (req, res) => {
+  const { count } = await prisma.teamMember.updateMany({
+    where: {
+      status: 'PENDING',
+      tokenExpiresAt: { lt: new Date() },
+    },
+    data: {
+      status: 'EXPIRED',
+      inviteToken: null,
+      tokenExpiresAt: null,
+    },
   });
-  if (acceptedCount >= MAX_TEAM_SIZE) {
-    throw new AppError(`Team size limit of ${MAX_TEAM_SIZE} reached`, 400);
-  }
-}
+
+  res.status(200).json({
+    status: 'success',
+    message: `${count} expired invitation(s) cleaned up`,
+    data: { cleanedCount: count },
+  });
+});
 
 exports.getMyTeamRole = catchAsync(async (req, res) => {
   if (req.user.roles.includes('admin')) {
@@ -138,35 +149,59 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     return next(new AppError(`Invalid role. Must be one of: ${VALID_TEAM_ROLES.join(', ')}`, 400));
   }
 
-  await enforceTeamSizeLimit(req.supplierId);
+  const member = await prisma.$transaction(async (tx) => {
+    const acceptedCount = await tx.teamMember.count({
+      where: { supplierId: req.supplierId, status: 'ACCEPTED' },
+    });
 
-  const existing = await prisma.teamMember.findUnique({
-    where: {
-      supplierId_email: { supplierId: req.supplierId, email },
-    },
-  });
-
-  if (existing) {
-    if (existing.status === 'PENDING') {
-      return next(new AppError('An invitation has already been sent to this email', 400));
+    if (acceptedCount >= MAX_TEAM_SIZE) {
+      throw new AppError(`Team size limit of ${MAX_TEAM_SIZE} reached`, 400);
     }
-    if (existing.status === 'ACCEPTED') {
-      return next(new AppError('This user is already a team member', 400));
-    }
-  }
 
-  if (directAdd) {
-    const member = await prisma.teamMember.create({
+    const existing = await tx.teamMember.findUnique({
+      where: {
+        supplierId_email: { supplierId: req.supplierId, email },
+      },
+    });
+
+    if (existing) {
+      if (existing.status === 'PENDING') {
+        throw new AppError('An invitation has already been sent to this email', 400);
+      }
+      if (existing.status === 'ACCEPTED') {
+        throw new AppError('This user is already a team member', 400);
+      }
+    }
+
+    if (directAdd) {
+      return tx.teamMember.create({
+        data: {
+          supplierId: req.supplierId,
+          email,
+          role: role || 'editor',
+          status: 'ACCEPTED',
+          acceptedAt: new Date(),
+          invitedById: req.user.id,
+        },
+      });
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+
+    return tx.teamMember.create({
       data: {
         supplierId: req.supplierId,
         email,
         role: role || 'editor',
-        status: 'ACCEPTED',
-        acceptedAt: new Date(),
         invitedById: req.user.id,
+        inviteToken: token,
+        tokenExpiresAt: expiresAt,
       },
     });
+  });
 
+  if (directAdd) {
     await logActivity({
       userId: req.user.id,
       action: 'team.member_added',
@@ -183,22 +218,8 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     });
   }
 
-  const token = crypto.randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
-
-  const member = await prisma.teamMember.create({
-    data: {
-      supplierId: req.supplierId,
-      email,
-      role: role || 'editor',
-      invitedById: req.user.id,
-      inviteToken: token,
-      tokenExpiresAt: expiresAt,
-    },
-  });
-
   const frontendUrl = process.env.SUPPLIER_DASHBOARD_URL || process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5173';
-  const inviteUrl = `${frontendUrl}/team/invite?token=${token}`;
+  const inviteUrl = `${frontendUrl}/team/invite?token=${member.inviteToken}`;
 
   const supplier = await prisma.user.findUnique({
     where: { id: req.user.id },
@@ -310,7 +331,7 @@ exports.acceptInvite = catchAsync(async (req, res, next) => {
     select: { roles: true },
   });
 
-  if (acceptedUser && !acceptedUser.roles.includes('supplier')) {
+  if (acceptedUser && member.role === 'admin' && !acceptedUser.roles.includes('supplier')) {
     acceptedUser.roles.push('supplier');
     await prisma.user.update({
       where: { id: req.user.id },
@@ -479,6 +500,18 @@ exports.revokeInvite = catchAsync(async (req, res, next) => {
     },
   });
 
+  const supplier = await prisma.user.findUnique({
+    where: { id: req.supplierId },
+    select: { name: true },
+  });
+
+  sendTeamInviteRevokedEmail({
+    to: member.email,
+    supplierName: supplier?.name || 'A supplier',
+    role: member.role,
+    invitedBy: req.user.name || 'Your supplier',
+  }).catch(() => {});
+
   await logActivity({
     userId: req.user.id,
     action: 'team.invite_revoked',
@@ -508,34 +541,49 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
     return next(new AppError(`Invalid role. Must be one of: ${VALID_TEAM_ROLES.join(', ')}`, 400));
   }
 
-  await enforceTeamSizeLimit(req.supplierId);
+  const member = await prisma.$transaction(async (tx) => {
+    const acceptedCount = await tx.teamMember.count({
+      where: { supplierId: req.supplierId, status: 'ACCEPTED' },
+    });
 
-  const existing = await prisma.teamMember.findUnique({
-
-    where: {
-      supplierId_email: { supplierId: req.supplierId, email },
-    },
-  });
-
-  let member;
-  if (existing) {
-    if (existing.status === 'ACCEPTED') {
-      return next(new AppError('This user is already a team member', 400));
+    if (acceptedCount >= MAX_TEAM_SIZE) {
+      throw new AppError(`Team size limit of ${MAX_TEAM_SIZE} reached`, 400);
     }
 
-    member = await prisma.teamMember.update({
-      where: { id: existing.id },
-      data: {
-        role,
-        status: 'ACCEPTED',
-        acceptedAt: new Date(),
-        invitedById: req.user.id,
-        inviteToken: null,
-        tokenExpiresAt: null,
+    const existing = await tx.teamMember.findUnique({
+      where: {
+        supplierId_email: { supplierId: req.supplierId, email },
       },
     });
-  } else {
-    member = await prisma.teamMember.create({
+
+    if (existing && existing.status === 'PENDING') {
+      const acceptedCountNow = await tx.teamMember.count({
+        where: { supplierId: req.supplierId, status: 'ACCEPTED' },
+      });
+      if (acceptedCountNow >= MAX_TEAM_SIZE) {
+        throw new AppError(`Team size limit of ${MAX_TEAM_SIZE} reached`, 400);
+      }
+    }
+
+    if (existing) {
+      if (existing.status === 'ACCEPTED') {
+        throw new AppError('This user is already a team member', 400);
+      }
+
+      return tx.teamMember.update({
+        where: { id: existing.id },
+        data: {
+          role,
+          status: 'ACCEPTED',
+          acceptedAt: new Date(),
+          invitedById: req.user.id,
+          inviteToken: null,
+          tokenExpiresAt: null,
+        },
+      });
+    }
+
+    return tx.teamMember.create({
       data: {
         supplierId: req.supplierId,
         email,
@@ -545,7 +593,7 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
         invitedById: req.user.id,
       },
     });
-  }
+  });
 
   await logActivity({
     userId: req.user.id,
@@ -605,6 +653,10 @@ exports.updateMemberRole = catchAsync(async (req, res, next) => {
 
   if (!member) {
     return next(new AppError('Team member not found', 404));
+  }
+
+  if (member.email === req.user.email) {
+    return next(new AppError('You cannot change your own role', 403));
   }
 
   const previousRole = member.role;

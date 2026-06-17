@@ -18,8 +18,19 @@ const teamInviteLimiter = rateLimit({
   },
 });
 
+const inviteLookupLimiter = rateLimit({
+  max: 30,
+  windowMs: 15 * 60 * 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: 'fail',
+    message: 'Too many requests, please try again later.',
+  },
+});
+
 // Public — no auth required
-router.get('/team/invite/:token', teamController.getInviteDetails);
+router.get('/team/invite/:token', inviteLookupLimiter, teamController.getInviteDetails);
 
 // Auth required
 router.use(protect);
@@ -51,5 +62,6 @@ router.post('/team/direct-add', requireTeamRole('admin'), teamInviteLimiter, tea
 router.delete('/team/members/:id', requireTeamRole('admin'), teamController.removeMember);
 router.patch('/team/members/:id/role', requireTeamRole('admin'), teamController.updateMemberRole);
 router.get('/team/members/:id', requireTeamRole('admin'), teamController.getMemberById);
+router.post('/team/cleanup-expired', requireTeamRole('admin'), teamController.cleanupExpiredInvites);
 
 module.exports = router;

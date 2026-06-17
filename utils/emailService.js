@@ -381,11 +381,32 @@ async function sendTeamInviteEmail({ to, supplierName, role, inviteUrl, invitedB
 }
 
 /**
+ * Send team invitation revoked email
+ */
+async function sendTeamInviteRevokedEmail({ to, supplierName, role, invitedBy }) {
+  try {
+    await sendEmail({
+      to,
+      subject: `Invitation to join ${supplierName}'s team has been revoked`,
+      template: 'team-invite-revoked',
+      data: {
+        brandName: supplierName,
+        role,
+        invitedBy,
+      }
+    });
+  } catch (error) {
+    console.error('Team invite revoked email failed:', error);
+  }
+}
+
+/**
  * Generate email content from template
  */
 function generateEmailContent(template, data) {
   const templates = {
     'team-invite': generateTeamInviteEmail,
+    'team-invite-revoked': generateTeamInviteRevokedEmail,
   };
 
   const templateFunction = templates[template];
@@ -425,8 +446,29 @@ function generateTeamInviteEmail(data) {
   return { html, text: `You've been invited to join as ${data.role}. Accept: ${data.inviteLink}` };
 }
 
+function generateTeamInviteRevokedEmail(data) {
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Invitation Revoked</title>
+<style>body{margin:0;padding:0;background-color:#F8FAFC;font-family:'Plus Jakarta Sans','Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}</style>
+</head>
+<body>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC"><tr><td align="center" style="padding:40px 16px">
+<table role="presentation" width="100%" style="max-width:640px;background:#fff;border:1px solid #E2E8F0;border-radius:16px" cellspacing="0" cellpadding="0" border="0">
+<tr><td style="padding:40px 40px 32px;text-align:center">
+<h1 style="margin:0 0 16px;font-size:28px;font-weight:800;color:#001F3F;line-height:1.2">Invitation Revoked</h1>
+<p style="margin:0;font-size:15px;color:#334155;line-height:1.4">${data.invitedBy || 'A team member'} has revoked your invitation to join <strong>${data.brandName || 'their team'}</strong> as <strong>${data.role || 'member'}</strong>.</p>
+</td></tr>
+<tr><td style="padding:0 40px 40px" align="center"><span style="font-size:13px;color:#64748B">If you have any questions, please contact the supplier directly.</span></td></tr>
+<tr><td bgcolor="#001F3F" style="padding:32px 40px;text-align:center"><span style="color:#94A3B8;font-size:13px">${data.brandName || 'Travio Africa'} Team</span></td></tr>
+</table>
+<p style="margin:24px 0 0;text-align:center;font-size:11px;color:#94A3B8">&copy; ${data.year || new Date().getFullYear()} ${data.brandName || 'Travio Africa'}. All rights reserved.</p>
+</td></tr></table>
+</body>
+</html>`;
 
-
+  return { html, text: `${data.invitedBy || 'A team member'} has revoked your invitation to join ${data.brandName || 'their team'} as ${data.role || 'member'}.` };
+}
 
 function generatePrintableTicketHtml(data) {
   const travelers = [];
@@ -507,6 +549,7 @@ module.exports = {
   sendPayoutNotificationEmail,
   sendSupplierBookingNotification,
   sendTeamInviteEmail,
+  sendTeamInviteRevokedEmail,
   generatePrintableTicketHtml,
   generateEmailContent
 };

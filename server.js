@@ -116,7 +116,7 @@ process.on('SIGINT', () => {
       try {
         const firebaseAdmin = require('./config/firebaseAdmin');
         decoded = await firebaseAdmin.auth().verifyIdToken(token);
-      } catch (err) {
+      } catch {
         console.warn('Socket connection rejected: Invalid token');
         socket.disconnect(true);
         return;

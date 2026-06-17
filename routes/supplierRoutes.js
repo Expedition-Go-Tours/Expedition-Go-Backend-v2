@@ -292,6 +292,16 @@ router.patch('/application', uploadSupplierDocuments, supplierController.updateA
  */
 router.get('/dashboard', resolveSupplier, supplierController.getDashboard);
 
+// ================================
+// SUPPLIER CANCELLATION RATE
+// ================================
+
+const cancellationController = require('../controllers/cancellationController');
+
+router.get('/cancellation/summary', resolveSupplier, cancellationController.getCancellationSummary);
+router.get('/cancellation/records', resolveSupplier, cancellationController.getCancellationRecords);
+router.get('/products/list', resolveSupplier, cancellationController.getCancellationProducts);
+
 /**
  * @swagger
  * /suppliers/earnings:
