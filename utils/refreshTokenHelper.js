@@ -1,6 +1,5 @@
 const crypto = require('crypto');
 const prisma = require('./prismaClient');
-const jwt = require('../config/jwt');
 
 function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');

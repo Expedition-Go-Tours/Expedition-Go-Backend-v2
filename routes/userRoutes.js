@@ -2,7 +2,6 @@ const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
 const userController = require('../controllers/userController');
-const authController = require('../controllers/authController');
 const { uploadUserPhoto } = require('../middleware/uploadMiddleware');
 
 const router = express.Router();
