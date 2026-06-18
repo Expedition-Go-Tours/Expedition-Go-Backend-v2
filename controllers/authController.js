@@ -308,6 +308,7 @@ exports.googleAuth = (req, res, next) => {
     session: false,
     scope: ['profile', 'email'],
     state: getClientOrigin(req),
+    prompt: req.query.prompt || 'select_account',
   })(req, res, next);
 };
 

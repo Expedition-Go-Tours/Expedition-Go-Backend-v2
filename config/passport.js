@@ -36,7 +36,7 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
       },
       async (accessToken, refreshToken, profile, done) => {
         try {
-          const email = profile.emails?.[0]?.value;
+          const email = profile.emails?.[0]?.value?.toLowerCase().trim();
           if (!email) return done(null, false, { message: 'No email found from Google' });
 
           let user = await prisma.user.findUnique({ where: { email } });

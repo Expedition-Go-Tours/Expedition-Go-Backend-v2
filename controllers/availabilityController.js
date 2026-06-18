@@ -19,45 +19,15 @@ function computeAggregatedStatus(bookedCount, totalCapacity, overrideStatus) {
   return 'AVAILABLE';
 }
 
-exports.getAvailability = catchAsync(async (req, res, next) => {
-  const { tourId } = req.params;
-  const { startDate, endDate } = req.query;
+async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end) {
+  const parsed = typeof schedulesAndPricing === 'string'
+    ? JSON.parse(schedulesAndPricing)
+    : schedulesAndPricing;
 
-  if (!startDate || !endDate) {
-    return next(new AppError('startDate and endDate are required', 400));
-  }
-
-  const start = parseISO(startDate);
-  const end = parseISO(endDate);
-
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-    return next(new AppError('Invalid date format. Use YYYY-MM-DD.', 400));
-  }
-
-  const daysInRange = differenceInDays(end, start);
-  if (daysInRange < 0) {
-    return next(new AppError('endDate must be after startDate', 400));
-  }
-  if (daysInRange > MAX_DATE_RANGE_DAYS) {
-    return next(new AppError(`Date range cannot exceed ${MAX_DATE_RANGE_DAYS} days`, 400));
-  }
-
-  const tour = await prisma.tour.findFirst({
-    where: { id: tourId, supplierId: req.supplierId },
-  });
-
-  if (!tour) {
-    return next(new AppError('Tour not found or access denied', 404));
-  }
-
-  const schedulesAndPricing = typeof tour.schedulesAndPricing === 'string'
-    ? JSON.parse(tour.schedulesAndPricing)
-    : tour.schedulesAndPricing;
-
-  const templateDaysOfWeek = schedulesAndPricing?.availability?.daysOfWeek || [];
-  const templateTimeSlots = schedulesAndPricing?.availability?.timeSlots || [];
+  const templateDaysOfWeek = parsed?.availability?.daysOfWeek || [];
+  const templateTimeSlots = parsed?.availability?.timeSlots || [];
   const maxTravelersFallback = parseInt(await getConfig('booking.max_travelers', '50'));
-  const maxCapacity = schedulesAndPricing?.travelerDetails?.maxTravelersPerBooking || maxTravelersFallback;
+  const maxCapacity = parsed?.travelerDetails?.maxTravelersPerBooking || maxTravelersFallback;
 
   const [overrides, bookings] = await Promise.all([
     prisma.tourDateOverride.findMany({
@@ -140,6 +110,90 @@ exports.getAvailability = catchAsync(async (req, res, next) => {
 
     current = addDays(current, 1);
   }
+
+  return calendar;
+}
+
+exports.getAvailability = catchAsync(async (req, res, next) => {
+  const { tourId } = req.params;
+  const { startDate, endDate } = req.query;
+
+  if (!startDate || !endDate) {
+    return next(new AppError('startDate and endDate are required', 400));
+  }
+
+  const start = parseISO(startDate);
+  const end = parseISO(endDate);
+
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return next(new AppError('Invalid date format. Use YYYY-MM-DD.', 400));
+  }
+
+  const daysInRange = differenceInDays(end, start);
+  if (daysInRange < 0) {
+    return next(new AppError('endDate must be after startDate', 400));
+  }
+  if (daysInRange > MAX_DATE_RANGE_DAYS) {
+    return next(new AppError(`Date range cannot exceed ${MAX_DATE_RANGE_DAYS} days`, 400));
+  }
+
+  const tour = await prisma.tour.findFirst({
+    where: { id: tourId, supplierId: req.supplierId },
+  });
+
+  if (!tour) {
+    return next(new AppError('Tour not found or access denied', 404));
+  }
+
+  const calendar = await buildAvailabilityCalendar(tourId, tour.schedulesAndPricing, start, end);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      tour: { id: tour.id, title: tour.title },
+      startDate,
+      endDate,
+      calendar,
+    },
+  });
+});
+
+exports.getPublicAvailability = catchAsync(async (req, res, next) => {
+  const { tourId } = req.params;
+  const { startDate, endDate } = req.query;
+
+  if (!startDate || !endDate) {
+    return next(new AppError('startDate and endDate are required', 400));
+  }
+
+  const start = parseISO(startDate);
+  const end = parseISO(endDate);
+
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return next(new AppError('Invalid date format. Use YYYY-MM-DD.', 400));
+  }
+
+  const daysInRange = differenceInDays(end, start);
+  if (daysInRange < 0) {
+    return next(new AppError('endDate must be after startDate', 400));
+  }
+  if (daysInRange > 31) {
+    return next(new AppError('Date range cannot exceed 31 days', 400));
+  }
+
+  const tour = await prisma.tour.findFirst({
+    where: {
+      OR: [{ id: tourId }, { slug: tourId }],
+      status: 'ACTIVE',
+    },
+    select: { id: true, title: true, status: true, schedulesAndPricing: true },
+  });
+
+  if (!tour) {
+    return next(new AppError('Tour not found or not available for booking', 404));
+  }
+
+  const calendar = await buildAvailabilityCalendar(tourId, tour.schedulesAndPricing, start, end);
 
   res.status(200).json({
     status: 'success',
