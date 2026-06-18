@@ -18,7 +18,6 @@ const AppError = require('../utils/appError');
 const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
 const { logActivity } = require('../utils/auditLogger');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
-const admin = require('../config/firebaseAdmin');
 
 exports.getMe = (req, res, next) => {
   if (!req.user) {
@@ -239,94 +238,23 @@ exports.toggleLike = catchAsync(async (req, res, next) => {
 });
 
 exports.createMe = catchAsync(async (req, res, next) => {
-  const firebaseUser = req.firebaseUser;
-
-  if (!firebaseUser || !firebaseUser.uid) {
-    return next(new AppError('Invalid Firebase user', 400));
-  }
-
-  let user = await prisma.user.findUnique({ where: { firebaseUid: firebaseUser.uid } });
-
-  if (user) {
-    return res.status(200).json({ status: 'success', data: { user } });
-  }
-
-  // Create Stripe customer
-  const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-  let stripeCustomer = null;
-  
-  try {
-    stripeCustomer = await stripe.customers.create({
-      email: firebaseUser.email,
-      name: firebaseUser.name || firebaseUser.email?.split('@')[0] || 'User',
-      metadata: {
-        firebaseUid: firebaseUser.uid
-      }
-    });
-  } catch (error) {
-    console.error('❌ Failed to create Stripe customer:', error);
-  }
-
-  user = await prisma.user.create({
-    data: {
-      firebaseUid: firebaseUser.uid,
-      name: firebaseUser.name || firebaseUser.email?.split('@')[0] || 'User',
-      email: firebaseUser.email,
-      photoURL: firebaseUser.picture || '',
-      stripeCustomerId: stripeCustomer?.id,
-      roles: ['customer']
-    },
-  });
-
-  // Log activity
-  await logActivity({
-    userId: user.id,
-    userEmail: user.email,
-    action: 'user.created',
-    resource: 'User',
-    resourceId: user.id,
-    metadata: {
-      source: 'firebase',
-      stripeCustomerId: stripeCustomer?.id
-    }
-  });
-
-  res.status(201).json({ status: 'success', data: { user } });
+  // User already exists at this point (protect middleware ensures it)
+  res.status(200).json({ status: 'success', data: { user: req.user } });
 });
 
 exports.syncMe = catchAsync(async (req, res) => {
-  const firebaseUser = req.firebaseUser;
-
-  const existing = await prisma.user.findUnique({ where: { firebaseUid: firebaseUser.uid } });
-
-  if (!existing) {
-    throw new AppError('User not found. Please complete onboarding.', 404);
-  }
-
-  let firebasePhotoUrl = firebaseUser.picture || '';
-  if (!firebasePhotoUrl) {
-    try {
-      const firebaseRecord = await admin.auth().getUser(firebaseUser.uid);
-      firebasePhotoUrl = firebaseRecord.photoURL || '';
-    } catch { /* ignore */ }
-  }
-
   const user = await prisma.user.update({
-    where: { id: existing.id },
+    where: { id: req.user.id },
     data: {
-      name: firebaseUser.name || firebaseUser.email?.split('@')[0],
-      email: firebaseUser.email,
-      photoURL: firebasePhotoUrl,
-      lastLoginAt: new Date()
+      lastLoginAt: new Date(),
     },
   });
 
-  // Log activity
   await logActivity({
     userId: user.id,
     action: 'user.synced',
     resource: 'User',
-    resourceId: user.id
+    resourceId: user.id,
   });
 
   res.status(200).json({ status: 'success', data: { user } });

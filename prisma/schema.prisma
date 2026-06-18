@@ -112,9 +112,12 @@ enum OverrideStatus {
 
 model User {
   id           String     @id @default(cuid())
-  firebaseUid  String     @unique
+  firebaseUid  String?    @unique
   name         String
   email        String     @unique
+  passwordHash String?
+  authProvider String     @default("local")
+  refreshToken String?
   photoURL     String     @default("")
   logoUrl      String?
   phone        String?

@@ -74,7 +74,8 @@ const router = express.Router();
  *       401:
  *         $ref: '#/components/responses/UnauthorizedError'
  */
-router.post('/signup', authController.signup); // NO protect middleware!
+// Signup moved to POST /api/auth/register
+// router.post('/signup', authController.signup);
 
 /**
  * @swagger

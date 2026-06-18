@@ -114,8 +114,8 @@ process.on('SIGINT', () => {
 
       let decoded;
       try {
-        const firebaseAdmin = require('./config/firebaseAdmin');
-        decoded = await firebaseAdmin.auth().verifyIdToken(token);
+        const { verifyAccessToken } = require('./config/jwt');
+        decoded = verifyAccessToken(token);
       } catch {
         console.warn('Socket connection rejected: Invalid token');
         socket.disconnect(true);
@@ -123,7 +123,7 @@ process.on('SIGINT', () => {
       }
 
       const user = await prisma.user.findUnique({
-        where: { firebaseUid: decoded.uid },
+        where: { id: decoded.userId },
         select: { id: true, roles: true, active: true, name: true },
       });
 
@@ -323,7 +323,10 @@ process.on('SIGINT', () => {
             where: { conversationId_userId: { conversationId, userId: effectiveUserId } }
           });
 
-          if (!participant) return;
+          if (!participant) {
+            console.warn(`[chat:typing] Participant not found: conv=${conversationId}, userId=${effectiveUserId}, socketUserId=${socket.userId}`);
+            return;
+          }
 
           socket.to(`conversation:${conversationId}`).emit('chat:typing', {
             conversationId,

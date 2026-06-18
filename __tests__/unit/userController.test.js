@@ -6,18 +6,10 @@ jest.mock('../../utils/prismaClient', () => ({
 jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn() }));
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
-jest.mock('../../config/firebaseAdmin', () => ({ auth: () => ({ getUser: jest.fn() }) }));
-
-let mockStripeCustomersCreate;
-jest.mock('stripe', () => jest.fn(() => ({
-  customers: { create: jest.fn((...args) => mockStripeCustomersCreate(...args)) },
-})));
-
 const prisma = require('../../utils/prismaClient');
 const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
 const { logActivity } = require('../../utils/auditLogger');
 const { cloudinaryUrl } = require('../../utils/imageOptimizer');
-const admin = require('../../config/firebaseAdmin');
 const controller = require('../../controllers/userController');
 
 describe('userController', () => {
@@ -25,7 +17,6 @@ describe('userController', () => {
 
   const mockUser = {
     id: 'u-1',
-    firebaseUid: 'fb-1',
     name: 'John Doe',
     email: 'john@test.com',
     photoURL: 'photo.jpg',
@@ -43,7 +34,7 @@ describe('userController', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    req = { query: {}, params: {}, body: {}, user: { id: 'u-1', ...mockUser }, file: null, firebaseUser: null };
+    req = { query: {}, params: {}, body: {}, user: { id: 'u-1', ...mockUser }, file: null };
     res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
     next = jest.fn();
 
@@ -54,8 +45,6 @@ describe('userController', () => {
     deleteCloudinaryImage.mockResolvedValue();
     logActivity.mockResolvedValue();
     cloudinaryUrl.mockImplementation((url, size) => `https://cdn.example.com/${size}/${url}`);
-    admin.auth = () => ({ getUser: jest.fn().mockResolvedValue({ photoURL: 'fb-photo.jpg' }) });
-    mockStripeCustomersCreate = jest.fn().mockResolvedValue({ id: 'cus_123' });
   });
 
   // ============================
@@ -305,60 +294,15 @@ describe('userController', () => {
   // createMe
   // ============================
   describe('createMe', () => {
-    const firebaseUser = { uid: 'fb-1', email: 'john@test.com', name: 'John Doe', picture: 'pic.jpg' };
-
-    it('returns 400 when no firebase user', async () => {
+    it('returns the authenticated user', async () => {
       await controller.createMe(req, res, next);
-      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
-    });
 
-    it('returns existing user if already in db', async () => {
-      req.firebaseUser = firebaseUser;
-      await controller.createMe(req, res, next);
       expect(res.status).toHaveBeenCalledWith(200);
-      expect(prisma.user.create).not.toHaveBeenCalled();
-    });
-
-    it('creates new user with Stripe customer', async () => {
-      req.firebaseUser = firebaseUser;
-      prisma.user.findUnique.mockResolvedValue(null);
-
-      await controller.createMe(req, res, next);
-
-      expect(prisma.user.create).toHaveBeenCalledWith(
+      expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({
-            firebaseUid: 'fb-1',
-            email: 'john@test.com',
-            roles: ['customer'],
-            stripeCustomerId: 'cus_123',
-          }),
+          status: 'success',
+          data: { user: expect.objectContaining({ id: 'u-1' }) },
         })
-      );
-      expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'user.created' }));
-      expect(res.status).toHaveBeenCalledWith(201);
-    });
-
-    it('creates user without Stripe customer on failure', async () => {
-      req.firebaseUser = firebaseUser;
-      prisma.user.findUnique.mockResolvedValue(null);
-      mockStripeCustomersCreate = jest.fn().mockRejectedValue(new Error('Stripe error'));
-
-      await controller.createMe(req, res, next);
-
-      expect(prisma.user.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ stripeCustomerId: undefined }) })
-      );
-    });
-
-    it('uses fallback name when name not provided', async () => {
-      req.firebaseUser = { uid: 'fb-2', email: 'user@test.com', name: null };
-      prisma.user.findUnique.mockResolvedValue(null);
-
-      await controller.createMe(req, res, next);
-
-      expect(prisma.user.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ name: 'user' }) })
       );
     });
   });
@@ -367,53 +311,17 @@ describe('userController', () => {
   // syncMe
   // ============================
   describe('syncMe', () => {
-    it('returns 404 when user not found', async () => {
-      req.firebaseUser = { uid: 'fb-none' };
-      prisma.user.findUnique.mockResolvedValue(null);
-
-      await controller.syncMe(req, res, next);
-
-      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404, message: expect.stringContaining('User not found') }));
-    });
-
-    it('syncs user data from Firebase', async () => {
-      req.firebaseUser = { uid: 'fb-1', email: 'john@test.com', name: 'John Updated', picture: 'new-pic.jpg' };
-
+    it('updates lastLoginAt and returns user', async () => {
       await controller.syncMe(req, res, next);
 
       expect(prisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({
-            name: 'John Updated',
-            email: 'john@test.com',
-            photoURL: 'new-pic.jpg',
-            lastLoginAt: expect.any(Date),
-          }),
+          where: { id: 'u-1' },
+          data: { lastLoginAt: expect.any(Date) },
         })
       );
       expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'user.synced' }));
       expect(res.status).toHaveBeenCalledWith(200);
-    });
-
-    it('fetches photo from Firebase when picture is empty', async () => {
-      req.firebaseUser = { uid: 'fb-1', email: 'john@test.com', name: 'John', picture: '' };
-
-      await controller.syncMe(req, res, next);
-
-      expect(prisma.user.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ photoURL: 'fb-photo.jpg' }) })
-      );
-    });
-
-    it('handles firebase fetch failure gracefully', async () => {
-      req.firebaseUser = { uid: 'fb-1', email: 'john@test.com', name: 'John', picture: '' };
-      admin.auth = () => ({ getUser: jest.fn().mockRejectedValue(new Error('FB error')) });
-
-      await controller.syncMe(req, res, next);
-
-      expect(prisma.user.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ photoURL: '' }) })
-      );
     });
   });
 });

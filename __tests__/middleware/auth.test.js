@@ -1,6 +1,6 @@
-const mockVerifyIdToken = jest.fn();
-jest.mock('../../config/firebaseAdmin', () => ({
-  auth: () => ({ verifyIdToken: mockVerifyIdToken }),
+const mockVerifyAccessToken = jest.fn();
+jest.mock('../../config/jwt', () => ({
+  verifyAccessToken: (...args) => mockVerifyAccessToken(...args),
 }));
 
 jest.mock('../../utils/prismaClient', () => ({
@@ -28,7 +28,6 @@ const mockRes = () => {
 
 const mockUser = {
   id: 'user-1',
-  firebaseUid: 'firebase-uid-1',
   name: 'John Doe',
   email: 'john@test.com',
   photoURL: '',
@@ -37,37 +36,35 @@ const mockUser = {
 };
 
 beforeEach(() => {
-  mockVerifyIdToken.mockClear();
+  mockVerifyAccessToken.mockClear();
   const p = require('../../utils/prismaClient');
   p.user.findUnique.mockClear();
   p.user.findFirst.mockClear();
   p.user.create.mockClear();
 });
 
-describe('DEV mode bypass', () => {
-  it('rejects test-token like any invalid token', async () => {
-    mockVerifyIdToken.mockRejectedValue(new Error('Invalid token'));
-    const req = mockReq({ headers: { authorization: 'Bearer test-token' } });
+describe('JWT verification', () => {
+  it('rejects invalid token', async () => {
+    mockVerifyAccessToken.mockImplementation(() => { throw new Error('jwt error'); });
+    const req = mockReq({ headers: { authorization: 'Bearer bad-token' } });
     const next = jest.fn();
     await protect(req, mockRes(), next);
 
     expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 401 }));
   });
-});
 
-describe('Firebase token verification', () => {
   it('passes with valid token', async () => {
     const prisma = require('../../utils/prismaClient');
-    mockVerifyIdToken.mockResolvedValue({ uid: 'firebase-uid-1' });
+    mockVerifyAccessToken.mockReturnValue({ userId: 'user-1' });
     prisma.user.findUnique.mockResolvedValue(mockUser);
 
-    const req = mockReq({ headers: { authorization: 'Bearer valid-token' } });
+    const req = mockReq({ headers: { authorization: 'Bearer valid-jwt' } });
     const next = jest.fn();
     await protect(req, mockRes(), next);
 
-    expect(mockVerifyIdToken).toHaveBeenCalledWith('valid-token');
+    expect(mockVerifyAccessToken).toHaveBeenCalledWith('valid-jwt');
     expect(prisma.user.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { firebaseUid: 'firebase-uid-1' } }),
+      expect.objectContaining({ where: { id: 'user-1' } }),
     );
     expect(req.user).toEqual(mockUser);
     expect(next).toHaveBeenCalled();
@@ -83,7 +80,7 @@ describe('Firebase token verification', () => {
 
   it('returns 404 if user not found', async () => {
     const prisma = require('../../utils/prismaClient');
-    mockVerifyIdToken.mockResolvedValue({ uid: 'unknown' });
+    mockVerifyAccessToken.mockReturnValue({ userId: 'unknown' });
     prisma.user.findUnique.mockResolvedValue(null);
 
     const req = mockReq({ headers: { authorization: 'Bearer tok' } });
@@ -95,7 +92,7 @@ describe('Firebase token verification', () => {
 
   it('returns 403 if user deactivated', async () => {
     const prisma = require('../../utils/prismaClient');
-    mockVerifyIdToken.mockResolvedValue({ uid: 'firebase-uid-1' });
+    mockVerifyAccessToken.mockReturnValue({ userId: 'user-1' });
     prisma.user.findUnique.mockResolvedValue({ ...mockUser, active: false });
 
     const req = mockReq({ headers: { authorization: 'Bearer tok' } });
@@ -104,7 +101,6 @@ describe('Firebase token verification', () => {
 
     expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 403 }));
   });
-
 });
 
 describe('restrictTo', () => {
