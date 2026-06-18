@@ -1,11 +1,11 @@
 const prisma = require('../utils/prismaClient');
 
-const testUid = `integration-test-${Date.now()}`;
-
 describe('User model', () => {
+  const testEmail = `integration-${Date.now()}@test.com`;
+
   afterAll(async () => {
     await prisma.user.deleteMany({
-      where: { firebaseUid: { startsWith: 'integration-test-' } },
+      where: { email: { startsWith: 'integration-' } },
     });
     await prisma.$disconnect();
   });
@@ -13,9 +13,8 @@ describe('User model', () => {
   test('creates a user in the database', async () => {
     const user = await prisma.user.create({
       data: {
-        firebaseUid: testUid,
         name: 'Integration Test User',
-        email: `integration-${Date.now()}@test.com`,
+        email: testEmail,
         roles: ['customer'],
       },
     });
@@ -27,14 +26,14 @@ describe('User model', () => {
     expect(user.active).toBe(true);
   });
 
-  test('finds a user by firebaseUid', async () => {
+  test('finds a user by email', async () => {
     const user = await prisma.user.findUnique({
-      where: { firebaseUid: testUid },
+      where: { email: testEmail },
     });
 
     expect(user).toBeDefined();
     expect(user.name).toBe('Integration Test User');
-    expect(user.email).toBeDefined();
+    expect(user.email).toBe(testEmail);
   });
 
   test('fails when email is duplicated', async () => {
@@ -42,7 +41,6 @@ describe('User model', () => {
 
     await prisma.user.create({
       data: {
-        firebaseUid: `dup-user-${Date.now()}`,
         name: 'Duplicate Email User',
         email: dupEmail,
         roles: ['customer'],
@@ -52,7 +50,6 @@ describe('User model', () => {
     await expect(
       prisma.user.create({
         data: {
-          firebaseUid: `dup-user-2-${Date.now()}`,
           name: 'Duplicate Email User 2',
           email: dupEmail,
           roles: ['customer'],
