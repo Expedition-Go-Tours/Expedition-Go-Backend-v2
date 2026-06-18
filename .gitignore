@@ -51,3 +51,10 @@ fix-user-rls.js
 send-all-emails.js
 setup-rls.js
 setup-rls-policies.sql
+
+# Local backup / scratch files
+.env.supabase.backup
+vision_server.py
+vision_wrapper.py
+gen_mcp.py
+restore_supplier.sql
