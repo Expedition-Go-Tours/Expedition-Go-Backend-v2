@@ -1,19 +1,7 @@
-const mockVerifyIdToken = jest.fn();
+const mockVerifyAccessToken = jest.fn();
 
-jest.mock('firebase-admin', () => ({
-  auth: () => ({ verifyIdToken: mockVerifyIdToken }),
-  credential: { cert: jest.fn() },
-  initializeApp: jest.fn(),
-  apps: [],
-}));
-
-jest.mock('../../config/firebaseAdmin', () => ({
-  auth: () => ({ verifyIdToken: mockVerifyIdToken }),
-  apps: [],
-}));
-
-jest.mock('jsonwebtoken', () => ({
-  verify: jest.fn(),
+jest.mock('../../config/jwt', () => ({
+  verifyAccessToken: (...args) => mockVerifyAccessToken(...args),
 }));
 
 jest.mock('../../utils/prismaClient', () => ({
@@ -85,7 +73,6 @@ const event = require('../../utils/eventEmitter');
 
 const mockUser = {
   id: 'e2e-user-1',
-  firebaseUid: 'firebase-uid-e2e',
   name: 'E2E Test User',
   email: 'e2e@test.com',
   photoURL: '',
@@ -173,8 +160,8 @@ describe('E2E: Full User Journey', () => {
   beforeEach(() => {
     jest.clearAllMocks();
 
-    // Auth: valid Firebase token
-    mockVerifyIdToken.mockResolvedValue({ uid: 'firebase-uid-e2e', name: 'E2E Test User', email: 'e2e@test.com' });
+    // Auth: valid JWT token
+    mockVerifyAccessToken.mockReturnValue({ userId: 'e2e-user-1' });
 
     // Prisma: user lookup
     prisma.user.findUnique.mockResolvedValue(mockUser);
@@ -240,9 +227,9 @@ describe('E2E: Full User Journey', () => {
     expect(res.body.data.cartItem.tourId).toBe('tour-e2e-1');
 
     // Verify the auth middleware decoded the token
-    expect(mockVerifyIdToken).toHaveBeenCalledWith('valid-firebase-token');
+    expect(mockVerifyAccessToken).toHaveBeenCalledWith('valid-firebase-token');
     expect(prisma.user.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { firebaseUid: 'firebase-uid-e2e' } }),
+      expect.objectContaining({ where: { id: 'e2e-user-1' } }),
     );
   });
 
@@ -378,7 +365,7 @@ describe('E2E: Full User Journey', () => {
       .set('Authorization', 'Bearer full-journey-token')
       .send({ tourId: 'tour-e2e-1', selectedDate: '2026-07-01', travelers: { adults: 2 } });
     expect(cartRes.status).toBe(201);
-    expect(mockVerifyIdToken).toHaveBeenCalledWith('full-journey-token');
+    expect(mockVerifyAccessToken).toHaveBeenCalledWith('full-journey-token');
 
     // 3. Create booking
     prisma.$transaction.mockImplementation((cb) => cb(mockTx));
