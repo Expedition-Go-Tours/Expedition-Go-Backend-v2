@@ -10,6 +10,7 @@ const express = require('express');
 const { protect } = require('../middleware/authMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 const tourController = require('../controllers/tourController');
+const availabilityController = require('../controllers/availabilityController');
 const { uploadTourPhotos } = require('../middleware/uploadMiddleware');
 
 const router = express.Router();
@@ -485,6 +486,7 @@ router.get('/popular/by-category', tourController.getPopularByCategory);
  *         description: Tour not found
  */
 router.get('/:id', tourController.getTour);
+router.get('/availability/public/:tourId', availabilityController.getPublicAvailability);
 
 // ================================
 // SUPPLIER TOUR MANAGEMENT

@@ -5,8 +5,6 @@ const availabilityController = require('../controllers/availabilityController');
 
 const router = express.Router();
 
-router.get('/availability/public/:tourId', availabilityController.getPublicAvailability);
-
 router.use(protect);
 
 router.get('/:tourId/availability', resolveSupplier, requireTeamPermission('tours.view', 'bookings.view'), availabilityController.getAvailability);
