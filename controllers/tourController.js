@@ -1244,4 +1244,58 @@ exports.seedTour = catchAsync(async (req, res, next) => {
   });
 });
 
+// ================================
+// OFFER LISTINGS (Customer-facing)
+// ================================
+
+/**
+ * Get active special offers for customer-facing display
+ * Public endpoint - returns offers with associated tour info
+ */
+exports.getOfferListings = catchAsync(async (req, res, next) => {
+  const { offerType, promoCode, quantity, basePrice, tourId } = req.query;
+  const now = new Date();
+
+  const where = {
+    isActive: true,
+    startDate: { lte: now },
+    endDate: { gte: now },
+  };
+  if (offerType) where.offerType = offerType;
+  if (promoCode) where.promoCode = promoCode;
+  if (tourId) where.targets = { some: { tourId } };
+  if (quantity) where.minQuantity = { lte: parseInt(quantity) };
+
+  let offers = await prisma.specialOffer.findMany({
+    where,
+    include: {
+      targets: {
+        include: {
+          tour: {
+            select: {
+              id: true,
+              title: true,
+              photos: true,
+              coverPhoto: true,
+              slug: true,
+              schedulesAndPricing: true,
+            },
+          },
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (basePrice) {
+    const minSpend = parseFloat(basePrice);
+    offers = offers.filter((o) => !o.minSpendAmount || minSpend >= o.minSpendAmount);
+  }
+
+  res.json({
+    status: 'success',
+    data: { offers },
+  });
+});
+
 module.exports = exports;

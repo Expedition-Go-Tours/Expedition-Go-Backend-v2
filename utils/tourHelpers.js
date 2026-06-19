@@ -8,6 +8,7 @@
 
 const prisma = require('./prismaClient');
 const getConfig = require('./getConfig');
+const { findBestDiscount } = require('./specialOfferEngine');
 
 /**
  * Create unique slug for tour
@@ -357,7 +358,7 @@ async function checkTourAvailability(tourId, selectedDate, selectedTime = null) 
 /**
  * Get tour pricing for specific date and travelers
  */
-function calculateTourPrice(tour, travelers, selectedDate, selectedTime = null) {
+async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = null, tourOptionKey = null) {
   try {
     const pricing = tour.schedulesAndPricing;
     if (!pricing || !pricing.pricingSchedules) {
@@ -440,6 +441,23 @@ function calculateTourPrice(tour, travelers, selectedDate, selectedTime = null) 
       }
     }
 
+    let appliedOffer = null;
+
+    const totalTravelers = Object.values(travelers).reduce((sum, count) => sum + (typeof count === 'number' ? count : 0), 0);
+    const specialOfferResult = await findBestDiscount({
+      tourId: tour.id,
+      tourOptionKey,
+      selectedDate: new Date(selectedDate),
+      basePrice: subtotal,
+      quantity: totalTravelers,
+    }).catch(() => ({ discountAmount: 0, finalPrice: subtotal, appliedOffer: null, discountType: null }));
+
+    const specialDiscount = subtotal - specialOfferResult.finalPrice;
+    if (specialDiscount > discount) {
+      discount = specialDiscount;
+      appliedOffer = specialOfferResult.appliedOffer;
+    }
+
     const total = subtotal - discount;
 
     return {
@@ -448,6 +466,7 @@ function calculateTourPrice(tour, travelers, selectedDate, selectedTime = null) 
       discount,
       total,
       currency,
+      appliedOffer,
       breakdown: {
         travelers,
         applicableSchedule: applicableSchedule.startDate
