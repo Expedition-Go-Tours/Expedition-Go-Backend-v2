@@ -40,10 +40,11 @@ jest.mock('../../utils/emailService', () => ({
 }));
 jest.mock('../../utils/tourHelpers', () => ({
   checkTourAvailability: jest.fn(),
+  calculateTourPrice: jest.fn(),
 }));
 
 const bookingHelpers = require('../../utils/bookingHelpers');
-const { checkTourAvailability } = require('../../utils/tourHelpers');
+const { checkTourAvailability, calculateTourPrice } = require('../../utils/tourHelpers');
 const bookingController = require('../../controllers/bookingController');
 
 const mockReq = (overrides = {}) => ({
@@ -146,6 +147,14 @@ beforeEach(() => {
   calculateCommission.mockReturnValue({ rate: 0.15, amount: 57.75, supplierPayout: 327.25 });
   createPaymentIntent.mockResolvedValue({ id: 'pi_123', client_secret: 'secret_123' });
   checkTourAvailability.mockResolvedValue({ available: true, availableSpots: 10 });
+  calculateTourPrice.mockResolvedValue({
+    success: true,
+    subtotal: 350,
+    discount: 0,
+    total: 350,
+    currency: 'USD',
+    appliedOffer: null,
+  });
 });
 
 describe('Booking Controller', () => {
@@ -178,6 +187,7 @@ describe('Booking Controller', () => {
     });
 
     it('returns 400 if pricing calculation fails', async () => {
+      calculateTourPrice.mockResolvedValueOnce({ success: false, error: 'Unable to calculate pricing' });
       prisma.tour.findFirst.mockResolvedValue({ ...activeTour, schedulesAndPricing: {} });
       const req = mockReq({ body: { tourId: 'tour-1', selectedDate: '2026-07-01', travelers: { adults: 1 } } });
       const res = mockRes();

@@ -50,6 +50,18 @@ jest.mock('../../utils/emailService', () => ({
   generatePrintableTicketHtml: jest.fn(() => '<html>ticket</html>'),
 }));
 
+jest.mock('../../utils/tourHelpers', () => ({
+  checkTourAvailability: jest.fn().mockResolvedValue({ available: true, availableSpots: 100 }),
+  calculateTourPrice: jest.fn().mockResolvedValue({
+    success: true,
+    subtotal: 350,
+    discount: 0,
+    total: 350,
+    currency: 'USD',
+    appliedOffer: null,
+  }),
+}));
+
 const prisma = require('../../utils/prismaClient');
 const { createPaymentIntent, calculateCommission, processStripeWebhook } = require('../../utils/stripeHelpers');
 const { generateBookingNumber } = require('../../utils/bookingHelpers');

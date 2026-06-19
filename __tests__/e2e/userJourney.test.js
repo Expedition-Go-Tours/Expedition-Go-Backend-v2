@@ -138,7 +138,21 @@ const activeTour = {
   dateOverrides: [],
   schedulesAndPricing: {
     currency: 'USD',
-    schedules: [{ prices: [{ retailPrice: 175 }] }],
+    pricingSchedules: {
+      currency: 'USD',
+      schedules: [{
+        startDate: '2026-01-01',
+        endDate: '2026-12-31',
+        prices: [{ ageGroup: 'Adult', retailPrice: 175 }],
+      }],
+    },
+    travelerDetails: {
+      ageGroups: [
+        { label: 'Adult', minAge: 13, maxAge: 99 },
+        { label: 'Child', minAge: 6, maxAge: 12 },
+        { label: 'Infant', minAge: 0, maxAge: 5 },
+      ],
+    },
   },
   supplier: {
     id: 'supplier-e2e',

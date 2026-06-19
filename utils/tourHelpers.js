@@ -400,7 +400,8 @@ async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = 
 
     for (const [ageCategory, count] of Object.entries(travelers)) {
       if (count > 0) {
-        const ageGroup = ageGroups.find(ag => ag.label.toLowerCase() === ageCategory.toLowerCase());
+        const normalized = ageCategory.toLowerCase().replace(/s$/, '');
+        const ageGroup = ageGroups.find(ag => ag.label.toLowerCase() === normalized || ag.label.toLowerCase() === ageCategory.toLowerCase());
         if (ageGroup) {
           const priceInfo = applicableSchedule.prices.find(p => p.ageGroup === ageGroup.label);
           if (priceInfo) {
