@@ -512,6 +512,37 @@ router.get('/availability/public/:tourId', availabilityController.getPublicAvail
  */
 router.get('/offers', tourController.getOfferListings);
 
+/**
+ * @swagger
+ * /tours/offers/validate-promo:
+ *   post:
+ *     summary: Validate a promo code for a specific tour and date
+ *     tags: [Tours]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [promoCode, tourId, selectedDate]
+ *             properties:
+ *               promoCode:
+ *                 type: string
+ *               tourId:
+ *                 type: string
+ *               selectedDate:
+ *                 type: string
+ *                 format: date
+ *               quantity:
+ *                 type: integer
+ *               basePrice:
+ *                 type: number
+ *     responses:
+ *       200:
+ *         description: Promo code validation result
+ */
+router.post('/offers/validate-promo', tourController.validatePromoCode);
+
 // ================================
 // SUPPLIER TOUR MANAGEMENT
 // ================================

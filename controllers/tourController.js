@@ -1298,4 +1298,50 @@ exports.getOfferListings = catchAsync(async (req, res, next) => {
   });
 });
 
+exports.validatePromoCode = catchAsync(async (req, res, next) => {
+  const { promoCode, tourId, selectedDate } = req.body;
+
+  if (!promoCode || promoCode.length < 3) {
+    return next(new AppError('Promo code must be at least 3 characters', 400));
+  }
+  if (!tourId) {
+    return next(new AppError('Tour ID is required', 400));
+  }
+  if (!selectedDate) {
+    return next(new AppError('Selected date is required', 400));
+  }
+
+  const { findApplicableOffers } = require('../utils/specialOfferEngine');
+
+  const offers = await findApplicableOffers({
+    tourId,
+    selectedDate: new Date(selectedDate),
+    promoCode,
+  });
+
+  if (offers.length === 0) {
+    return res.json({
+      status: 'success',
+      data: { valid: false, message: 'Invalid or expired promo code for this tour/date' },
+    });
+  }
+
+  const offer = offers[0];
+
+  res.json({
+    status: 'success',
+    data: {
+      valid: true,
+      offer: {
+        id: offer.id,
+        name: offer.name,
+        offerType: offer.offerType,
+        discountType: offer.discountType,
+        discountPercentage: offer.discountPercentage,
+        fixedDiscountValue: offer.fixedDiscountValue,
+      },
+    },
+  });
+});
+
 module.exports = exports;

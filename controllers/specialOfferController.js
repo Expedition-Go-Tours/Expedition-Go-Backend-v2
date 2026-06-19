@@ -7,8 +7,8 @@ const cache = require('../utils/cacheHelper');
 function computeStatus(offer) {
   const now = new Date();
   if (!offer.isActive) return 'inactive';
-  if (now < new Date(offer.startDate)) return 'scheduled';
-  if (now > new Date(offer.endDate)) return 'expired';
+  if (offer.startDate && now < new Date(offer.startDate)) return 'scheduled';
+  if (offer.endDate && now > new Date(offer.endDate)) return 'expired';
   return 'active';
 }
 
@@ -24,8 +24,10 @@ exports.createOffer = catchAsync(async (req, res, next) => {
 
   if (!name || !name.trim()) return next(new AppError('Offer name is required', 400));
   if (!offerType) return next(new AppError('Offer type is required', 400));
-  if (!startDate || !endDate) return next(new AppError('Start and end dates are required', 400));
-  if (new Date(startDate) >= new Date(endDate)) return next(new AppError('Start date must be before end date', 400));
+  if (offerType === 'LIMITED_TIME') {
+    if (!startDate || !endDate) return next(new AppError('Start and end dates are required', 400));
+    if (new Date(startDate) >= new Date(endDate)) return next(new AppError('Start date must be before end date', 400));
+  }
   if (!targets || targets.length === 0) return next(new AppError('At least one target product is required', 400));
 
   const dType = discountType || 'PERCENTAGE';
@@ -57,8 +59,8 @@ exports.createOffer = catchAsync(async (req, res, next) => {
         discountType: dType,
         discountPercentage: dType === 'PERCENTAGE' ? discountPercentage : 0,
         fixedDiscountValue: dType === 'FIXED_AMOUNT' ? fixedDiscountValue : null,
-        startDate: new Date(startDate),
-        endDate: new Date(endDate),
+        startDate: startDate ? new Date(startDate) : null,
+        endDate: endDate ? new Date(endDate) : null,
         isActive: isActive !== false,
         capacityType: capacityType || 'UNLIMITED',
         maxSpots: capacityType === 'CAPPED' ? (maxSpots || null) : null,
@@ -158,9 +160,9 @@ exports.updateOffer = catchAsync(async (req, res, next) => {
   if (fixedDiscountValue !== undefined && dType === 'FIXED_AMOUNT' && fixedDiscountValue <= 0)
     return next(new AppError('Fixed discount value must be greater than 0', 400));
 
-  if (earlyBirdAdvanceDays !== undefined && (earlyBirdAdvanceDays < 1 || earlyBirdAdvanceDays > 365))
+  if (earlyBirdAdvanceDays != null && (earlyBirdAdvanceDays < 1 || earlyBirdAdvanceDays > 365))
     return next(new AppError('Early bird advance days must be between 1 and 365', 400));
-  if (lastMinuteWindowHours !== undefined && (lastMinuteWindowHours < 1 || lastMinuteWindowHours > 720))
+  if (lastMinuteWindowHours != null && (lastMinuteWindowHours < 1 || lastMinuteWindowHours > 720))
     return next(new AppError('Last minute window hours must be between 1 and 720', 400));
 
   if (promoCode && promoCode.length < 3) return next(new AppError('Promo code must be at least 3 characters', 400));

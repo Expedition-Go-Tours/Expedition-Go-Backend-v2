@@ -14,11 +14,9 @@ function daysBefore(dateA, dateB) {
   return Math.round((new Date(dateB) - new Date(dateA)) / (1000 * 60 * 60 * 24));
 }
 
-async function findApplicableOffers({ tourId, tourOptionKey, selectedDate, promoCode }) {
+async function findApplicableOffers({ tourId, tourOptionKey, selectedDate, promoCode, customerId }) {
   const where = {
     isActive: true,
-    startDate: { lte: selectedDate },
-    endDate: { gte: selectedDate },
     targets: {
       some: {
         tourId,
@@ -41,7 +39,10 @@ async function findApplicableOffers({ tourId, tourOptionKey, selectedDate, promo
     },
   });
 
-  return offers.filter((offer) => {
+  const filtered = offers.filter((offer) => {
+    if (offer.startDate && new Date(selectedDate) < new Date(offer.startDate)) return false;
+    if (offer.endDate && new Date(selectedDate) > new Date(offer.endDate)) return false;
+
     const dayName = getDayName(selectedDate);
     if (offer.timeSlotMode === 'SPECIFIC_WEEKDAYS' && !offer.specificWeekdays.includes(dayName)) {
       return false;
@@ -53,10 +54,30 @@ async function findApplicableOffers({ tourId, tourOptionKey, selectedDate, promo
 
     return true;
   });
+
+  if (customerId) {
+    const eligible = [];
+    for (const offer of filtered) {
+      if (offer.maxRedemptionsPerCustomer) {
+        const count = await prisma.booking.count({
+          where: {
+            customerId,
+            appliedOfferId: offer.id,
+            status: { in: ['CONFIRMED', 'PENDING'] },
+          },
+        });
+        if (count >= offer.maxRedemptionsPerCustomer) continue;
+      }
+      eligible.push(offer);
+    }
+    return eligible;
+  }
+
+  return filtered;
 }
 
-async function findBestDiscount({ tourId, tourOptionKey, selectedDate, basePrice, promoCode, quantity }) {
-  const offers = await findApplicableOffers({ tourId, tourOptionKey, selectedDate, promoCode });
+async function findBestDiscount({ tourId, tourOptionKey, selectedDate, basePrice, promoCode, quantity, customerId }) {
+  const offers = await findApplicableOffers({ tourId, tourOptionKey, selectedDate, promoCode, customerId });
 
   if (offers.length === 0) return { discountAmount: 0, finalPrice: basePrice, appliedOffer: null, discountType: null };
 
@@ -79,6 +100,41 @@ async function findBestDiscount({ tourId, tourOptionKey, selectedDate, basePrice
   });
 
   if (valid.length === 0) return { discountAmount: 0, finalPrice: basePrice, appliedOffer: null, discountType: null };
+
+  const stackableOffers = valid.filter((o) => o.stackable);
+  if (stackableOffers.length > 1) {
+    let totalDiscount = 0;
+    const appliedOffers = [];
+    for (const o of stackableOffers) {
+      let disc;
+      if (o.discountType === 'PERCENTAGE') {
+        disc = Math.round(basePrice * (o.discountPercentage / 100) * 100) / 100;
+      } else {
+        disc = Math.min(o.fixedDiscountValue || 0, basePrice);
+      }
+      if (totalDiscount + disc <= basePrice) {
+        totalDiscount += disc;
+        appliedOffers.push({
+          id: o.id,
+          name: o.name,
+          offerType: o.offerType,
+          discountType: o.discountType,
+          discountPercentage: o.discountPercentage,
+          fixedDiscountValue: o.fixedDiscountValue,
+        });
+      }
+    }
+    if (totalDiscount > 0) {
+      const finalPrice = Math.round((basePrice - totalDiscount) * 100) / 100;
+      return {
+        discountAmount: totalDiscount,
+        discountPercentage: null,
+        discountType: 'STACKED',
+        finalPrice,
+        appliedOffer: appliedOffers.length === 1 ? appliedOffers[0] : appliedOffers,
+      };
+    }
+  }
 
   const best = valid.reduce((max, o) => {
     const maxDiscount = max.discountType === 'PERCENTAGE'

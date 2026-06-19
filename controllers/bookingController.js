@@ -18,7 +18,7 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { createPaymentIntent, calculateCommission } = require('../utils/stripeHelpers');
 const { generateBookingNumber, validateTravelerInfo } = require('../utils/bookingHelpers');
-const { checkTourAvailability } = require('../utils/tourHelpers');
+const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
 const { enqueueNotification, enqueueEmail } = require('../utils/queue');
 const getConfig = require('../utils/getConfig');
 const { generatePrintableTicketHtml } = require('../utils/emailService');
@@ -60,12 +60,16 @@ exports.addToCart = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found or not available for booking', 404));
   }
 
-  // Calculate pricing based on tour's pricing model
-  const pricingCalculation = calculateTourPricing(tour, travelers, selectedDate, null);
+  // Calculate pricing based on tour's pricing model (includes special offers)
+  const pricingCalculation = await calculateTourPrice(tour, travelers, selectedDate, null, null, customerId)
+    .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
   
   if (!pricingCalculation.success) {
     return next(new AppError(pricingCalculation.error, 400));
   }
+
+  const discount = pricingCalculation.discount || 0;
+  const appliedOffer = pricingCalculation.appliedOffer || null;
 
   // Set cart expiration (2 hours from now)
   const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000);
@@ -84,6 +88,8 @@ exports.addToCart = catchAsync(async (req, res, next) => {
       travelers,
       subtotal: pricingCalculation.subtotal,
       total: pricingCalculation.total,
+      discounts: discount,
+      appliedOfferId: appliedOffer?.id || null,
       expiresAt
     },
     create: {
@@ -95,6 +101,8 @@ exports.addToCart = catchAsync(async (req, res, next) => {
       subtotal: pricingCalculation.subtotal,
       total: pricingCalculation.total,
       currency: pricingCalculation.currency,
+      discounts: discount,
+      appliedOfferId: appliedOffer?.id || null,
       expiresAt
     },
     include: {
@@ -276,7 +284,9 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       travelers: item.travelers,
       subtotal: parseFloat(item.subtotal),
       total: parseFloat(item.total),
-      currency: item.currency
+      currency: item.currency,
+      discounts: parseFloat(item.discounts) || 0,
+      appliedOfferId: item.appliedOfferId || null
     }));
   } else {
     // Direct booking
@@ -298,11 +308,15 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       return next(new AppError('Tour not found or not available', 404));
     }
 
-    const pricingCalculation = calculateTourPricing(tour, travelers, selectedDate, null);
+    const pricingCalculation = await calculateTourPrice(tour, travelers, selectedDate, null, null, customerId)
+      .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
     
     if (!pricingCalculation.success) {
       return next(new AppError(pricingCalculation.error, 400));
     }
+
+    const discount = pricingCalculation.discount || 0;
+    const appliedOffer = pricingCalculation.appliedOffer || null;
 
     // Check availability for the selected date
     const availability = await checkTourAvailability(tourId, selectedDate, null);
@@ -327,7 +341,9 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       travelers,
       subtotal: pricingCalculation.subtotal,
       total: pricingCalculation.total,
-      currency: pricingCalculation.currency
+      currency: pricingCalculation.currency,
+      discounts: discount,
+      appliedOfferId: appliedOffer?.id || null
     }];
   }
 
@@ -391,6 +407,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
           travelers: item.travelers,
           subtotal: item.subtotal,
           total: item.total,
+          discounts: item.discounts || 0,
           currency: item.currency,
           commissionRate: commission.rate,
           commissionAmount: commission.amount,
@@ -705,6 +722,14 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
       });
     }
 
+    // Decrement spotsSold for applied special offer
+    if (booking.appliedOfferId) {
+      await tx.specialOffer.update({
+        where: { id: booking.appliedOfferId },
+        data: { spotsSold: { decrement: 1 } },
+      });
+    }
+
     return updatedBooking;
   });
 
@@ -896,42 +921,6 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
 // ================================
 // HELPER FUNCTIONS
 // ================================
-
-/**
- * Calculate tour pricing based on travelers and date
- */
-function calculateTourPricing(tour, travelers) {
-  try {
-    const pricing = tour.schedulesAndPricing;
-    
-    if (!pricing || !pricing.schedules || pricing.schedules.length === 0) {
-      return { success: false, error: 'Unable to calculate pricing' };
-    }
-    
-    let subtotal = 0;
-    const currency = pricing.currency || 'USD';
-    
-    const schedule = pricing.schedules[0];
-    if (!schedule.prices || schedule.prices.length === 0) {
-      return { success: false, error: 'Unable to calculate pricing' };
-    }
-    
-    const basePrice = schedule.prices[0].retailPrice || 0;
-    subtotal = basePrice * (travelers.adults || 1);
-    
-    return {
-      success: true,
-      subtotal,
-      total: subtotal,
-      currency
-    };
-  } catch {
-    return {
-      success: false,
-      error: 'Unable to calculate pricing'
-    };
-  }
-}
 
 /**
  * Check if booking can be cancelled and calculate refund

@@ -385,8 +385,8 @@ model SpecialOffer {
   discountType       DiscountType               @default(PERCENTAGE)
   discountPercentage Int                        @default(10)
   fixedDiscountValue Float?
-  startDate          DateTime
-  endDate            DateTime
+  startDate          DateTime?
+  endDate            DateTime?
   isActive           Boolean                    @default(true)
 
   capacityType       SpecialOfferCapacityType   @default(UNLIMITED)
@@ -406,6 +406,7 @@ model SpecialOffer {
   stackable                Boolean  @default(false)
 
   targets            SpecialOfferTarget[]
+  bookings           Booking[]
 
   createdAt          DateTime                   @default(now())
   updatedAt          DateTime                   @updatedAt
@@ -477,6 +478,7 @@ model Booking {
   
   // Applied special offer (if any)
   appliedOfferId String?
+  appliedOffer   SpecialOffer? @relation(fields: [appliedOfferId], references: [id], onDelete: SetNull)
   
   // Relationships
   review       Review?
@@ -602,6 +604,8 @@ model CartItem {
   subtotal     Decimal     @db.Decimal(10,2)
   total        Decimal     @db.Decimal(10,2)
   currency     String      @default("USD")
+  discounts    Decimal     @default(0) @db.Decimal(10,2)
+  appliedOfferId String?
   
   // Cart Management
   expiresAt    DateTime    // Cart items expire after X hours

@@ -358,7 +358,7 @@ async function checkTourAvailability(tourId, selectedDate, selectedTime = null) 
 /**
  * Get tour pricing for specific date and travelers
  */
-async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = null, tourOptionKey = null) {
+async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = null, tourOptionKey = null, customerId = null) {
   try {
     const pricing = tour.schedulesAndPricing;
     if (!pricing || !pricing.pricingSchedules) {
@@ -450,6 +450,7 @@ async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = 
       selectedDate: new Date(selectedDate),
       basePrice: subtotal,
       quantity: totalTravelers,
+      customerId,
     }).catch(() => ({ discountAmount: 0, finalPrice: subtotal, appliedOffer: null, discountType: null }));
 
     const specialDiscount = subtotal - specialOfferResult.finalPrice;
