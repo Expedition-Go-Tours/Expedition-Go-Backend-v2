@@ -236,6 +236,14 @@ async function handlePaymentSucceeded(paymentIntent) {
         }
       });
 
+      // Increment spotsSold for applied special offer
+      if (booking.appliedOfferId) {
+        await tx.specialOffer.update({
+          where: { id: booking.appliedOfferId },
+          data: { spotsSold: { increment: 1 } },
+        });
+      }
+
       // Create Payout record (PENDING — awaits admin approval)
       // Only create if amount meets the minimum threshold from system config
       if (parseFloat(booking.supplierPayout) >= payoutMinThreshold) {

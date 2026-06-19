@@ -179,6 +179,7 @@ describe('createSlug', () => {
 // ---------------------------------------------------------------------------
 describe('calculateTourPrice', () => {
   const baseTour = {
+    id: 'test-tour-1',
     schedulesAndPricing: {
       travelerDetails: {
         pricingModel: 'perPerson',
@@ -204,22 +205,22 @@ describe('calculateTourPrice', () => {
     },
   };
 
-  it('calculates total for a group of travelers', () => {
-    const result = calculateTourPrice(baseTour, { adult: 2, child: 1, infant: 0 }, '2026-06-15');
+  it('calculates total for a group of travelers', async () => {
+    const result = await calculateTourPrice(baseTour, { adult: 2, child: 1, infant: 0 }, '2026-06-15');
     expect(result.success).toBe(true);
     expect(result.subtotal).toBe(250);
     expect(result.total).toBe(250);
     expect(result.currency).toBe('USD');
   });
 
-  it('returns error when no pricing available', () => {
+  it('returns error when no pricing available', async () => {
     const tour = { schedulesAndPricing: null };
-    const result = calculateTourPrice(tour, { adult: 1 }, '2026-06-15');
+    const result = await calculateTourPrice(tour, { adult: 1 }, '2026-06-15');
     expect(result.success).toBe(false);
     expect(result.error).toContain('No pricing information available');
   });
 
-  it('returns error when no schedule matches the date', () => {
+  it('returns error when no schedule matches the date', async () => {
     const tour = {
       schedulesAndPricing: {
         travelerDetails: { ageGroups: [{ label: 'Adult', minAge: 13, maxAge: 99 }] },
@@ -233,12 +234,12 @@ describe('calculateTourPrice', () => {
         },
       },
     };
-    const result = calculateTourPrice(tour, { adult: 1 }, '2026-06-15');
+    const result = await calculateTourPrice(tour, { adult: 1 }, '2026-06-15');
     expect(result.success).toBe(false);
     expect(result.error).toContain('No pricing available');
   });
 
-  it('applies percentage promotions', () => {
+  it('applies percentage promotions', async () => {
     const tour = {
       ...baseTour,
       schedulesAndPricing: {
@@ -248,14 +249,14 @@ describe('calculateTourPrice', () => {
         ],
       },
     };
-    const result = calculateTourPrice(tour, { adult: 2 }, '2026-06-15');
+    const result = await calculateTourPrice(tour, { adult: 2 }, '2026-06-15');
     expect(result.success).toBe(true);
     expect(result.subtotal).toBe(200);
     expect(result.discount).toBe(20);
     expect(result.total).toBe(180);
   });
 
-  it('applies fixed amount promotions', () => {
+  it('applies fixed amount promotions', async () => {
     const tour = {
       ...baseTour,
       schedulesAndPricing: {
@@ -265,14 +266,14 @@ describe('calculateTourPrice', () => {
         ],
       },
     };
-    const result = calculateTourPrice(tour, { adult: 1 }, '2026-06-15');
+    const result = await calculateTourPrice(tour, { adult: 1 }, '2026-06-15');
     expect(result.success).toBe(true);
     expect(result.subtotal).toBe(100);
     expect(result.discount).toBe(15);
     expect(result.total).toBe(85);
   });
 
-  it('ignores inactive promotions', () => {
+  it('ignores inactive promotions', async () => {
     const tour = {
       ...baseTour,
       schedulesAndPricing: {
@@ -282,13 +283,13 @@ describe('calculateTourPrice', () => {
         ],
       },
     };
-    const result = calculateTourPrice(tour, { adult: 1 }, '2026-06-15');
+    const result = await calculateTourPrice(tour, { adult: 1 }, '2026-06-15');
     expect(result.success).toBe(true);
     expect(result.discount).toBe(0);
     expect(result.total).toBe(100);
   });
 
-  it('respects maximumDiscountAmount', () => {
+  it('respects maximumDiscountAmount', async () => {
     const tour = {
       ...baseTour,
       schedulesAndPricing: {
@@ -298,7 +299,7 @@ describe('calculateTourPrice', () => {
         ],
       },
     };
-    const result = calculateTourPrice(tour, { adult: 2 }, '2026-06-15');
+    const result = await calculateTourPrice(tour, { adult: 2 }, '2026-06-15');
     expect(result.subtotal).toBe(200);
     expect(result.discount).toBe(30);
   });

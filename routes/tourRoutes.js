@@ -488,6 +488,30 @@ router.get('/popular/by-category', tourController.getPopularByCategory);
 router.get('/:id', tourController.getTour);
 router.get('/availability/public/:tourId', availabilityController.getPublicAvailability);
 
+/**
+ * @swagger
+ * /tours/offers:
+ *   get:
+ *     summary: Get active special offers (customer-facing)
+ *     tags: [Tours, Offers]
+ *     parameters:
+ *       - name: offerType
+ *         in: query
+ *         schema:
+ *           type: string
+ *           enum: [LIMITED_TIME, EARLY_BIRD, LAST_MINUTE]
+ *         description: Filter by offer type
+ *       - name: promoCode
+ *         in: query
+ *         schema:
+ *           type: string
+ *         description: Filter by promo code
+ *     responses:
+ *       200:
+ *         description: Active offers retrieved successfully
+ */
+router.get('/offers', tourController.getOfferListings);
+
 // ================================
 // SUPPLIER TOUR MANAGEMENT
 // ================================

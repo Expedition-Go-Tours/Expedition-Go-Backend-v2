@@ -3,7 +3,7 @@ const jwt = require('jsonwebtoken');
 const ACCESS_TOKEN_SECRET = process.env.JWT_SECRET || 'fallback-dev-secret';
 const REFRESH_TOKEN_SECRET = (process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || 'fallback-refresh-secret') + '_refresh';
 
-const ACCESS_TOKEN_EXPIRY = '15m';
+const ACCESS_TOKEN_EXPIRY = '30m';
 const REFRESH_TOKEN_EXPIRY = '7d';
 
 function signAccessToken(payload) {

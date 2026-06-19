@@ -396,6 +396,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
           commissionAmount: commission.amount,
           supplierPayout: commission.supplierPayout,
           specialRequests,
+          ...(item.appliedOfferId && { appliedOfferId: item.appliedOfferId }),
           status: 'PENDING'
         },
         include: {

@@ -99,6 +99,27 @@ enum TourStatus {
   ARCHIVED
 }
 
+enum SpecialOfferType {
+  LIMITED_TIME
+  EARLY_BIRD
+  LAST_MINUTE
+}
+
+enum SpecialOfferCapacityType {
+  UNLIMITED
+  CAPPED
+}
+
+enum SpecialOfferTimeSlotMode {
+  ALL_DAYS
+  SPECIFIC_WEEKDAYS
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
 enum OverrideStatus {
   AVAILABLE
   LIMITED
@@ -159,6 +180,7 @@ model User {
   teamInvitations TeamMember[]  @relation("TeamInviter")
   chatParticipants ConversationParticipant[]
   messages     Message[]
+  specialOffers SpecialOffer[]
   
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -306,6 +328,7 @@ model Tour {
   cartItems    CartItem[]
   dateOverrides TourDateOverride[]
   secondaryThemes TourSecondaryTheme[]
+  specialOfferTargets SpecialOfferTarget[]
 
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
@@ -352,6 +375,62 @@ model TourSecondaryTheme {
   @@index([tourId])
 }
 
+model SpecialOffer {
+  id                 String                     @id @default(cuid())
+  supplierId         String
+  supplier           User                       @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  name               String
+  offerType          SpecialOfferType
+  discountType       DiscountType               @default(PERCENTAGE)
+  discountPercentage Int                        @default(10)
+  fixedDiscountValue Float?
+  startDate          DateTime
+  endDate            DateTime
+  isActive           Boolean                    @default(true)
+
+  capacityType       SpecialOfferCapacityType   @default(UNLIMITED)
+  maxSpots           Int?
+  spotsSold          Int                        @default(0)
+
+  timeSlotMode       SpecialOfferTimeSlotMode   @default(ALL_DAYS)
+  specificWeekdays   String[]                   @default([])
+
+  earlyBirdAdvanceDays   Int?
+  lastMinuteWindowHours  Int?
+
+  promoCode                String?  @unique
+  minQuantity              Int?
+  minSpendAmount           Float?
+  maxRedemptionsPerCustomer Int?
+  stackable                Boolean  @default(false)
+
+  targets            SpecialOfferTarget[]
+
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+
+  @@index([supplierId])
+  @@index([isActive, startDate, endDate])
+  @@index([offerType])
+}
+
+model SpecialOfferTarget {
+  id              String       @id @default(cuid())
+  specialOfferId  String
+  specialOffer    SpecialOffer @relation(fields: [specialOfferId], references: [id], onDelete: Cascade)
+
+  tourId          String
+  tour            Tour         @relation(fields: [tourId], references: [id], onDelete: Cascade)
+
+  tourOptionKey   String?
+  tourOptionLabel String?
+
+  @@index([tourId])
+  @@index([tourOptionKey])
+  @@unique([specialOfferId, tourId, tourOptionKey])
+}
+
 model Booking {
   id           String        @id @default(cuid())
   bookingNumber String       @unique // Human-readable booking reference
@@ -395,6 +474,9 @@ model Booking {
   // Communication
   specialRequests String?
   supplierNotes String?
+  
+  // Applied special offer (if any)
+  appliedOfferId String?
   
   // Relationships
   review       Review?
