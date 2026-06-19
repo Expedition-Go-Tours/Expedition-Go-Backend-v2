@@ -138,6 +138,62 @@ router.use(protect);
  *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.post('/apply', uploadSupplierDocuments, supplierController.applyToBeSupplier);
+
+/**
+ * @swagger
+ * /suppliers/logo:
+ *   post:
+ *     summary: Upload supplier logo
+ *     description: Upload a logo image for the supplier's profile. The image is uploaded to Cloudinary and the URL is saved to the user's profile.
+ *     tags: [Suppliers]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - logo
+ *             properties:
+ *               logo:
+ *                 type: string
+ *                 format: binary
+ *                 description: Supplier logo image (JPEG, PNG, GIF, max 5MB)
+ *     responses:
+ *       200:
+ *         description: Logo uploaded successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     logoUrl:
+ *                       type: string
+ *                       format: uri
+ *                       description: Cloudinary URL of the uploaded logo
+ *                       example: https://res.cloudinary.com/demo/image/upload/v1623456789/suppliers/logos/abc123.png
+ *       400:
+ *         description: No file uploaded or invalid file type
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: fail
+ *                 message:
+ *                   type: string
+ *                   example: No file uploaded
+ */
 router.post('/logo', uploadSupplierLogo, supplierController.uploadLogo);
 
 /**
@@ -176,6 +232,11 @@ router.get('/application/status', supplierController.getApplicationStatus);
  * /suppliers/application:
  *   patch:
  *     summary: Update supplier application (only if PENDING or UNDER_REVIEW)
+ *     description: |
+ *       Update an existing supplier application. Only applications in PENDING or UNDER_REVIEW
+ *       status can be modified. All fields are optional — only provided fields will be updated.
+ *       Fields must be provided as JSON strings in multipart/form-data format.
+ *       Documents can be re-uploaded as files.
  *     tags: [Suppliers]
  *     security:
  *       - bearerAuth: []
@@ -185,13 +246,99 @@ router.get('/application/status', supplierController.getApplicationStatus);
  *         multipart/form-data:
  *           schema:
  *             type: object
+ *             properties:
+ *               businessInfo:
+ *                 type: string
+ *                 description: |
+ *                   JSON string containing business information:
+ *                   - legalBusinessName: Legal registered business name
+ *                   - displayName: Public display name
+ *                   - businessType: "individual", "company", or "non_profit"
+ *                   - country: ISO 3166-1 alpha-2 country code
+ *                   - address: Object with line1, city, state, postalCode
+ *                   - website: Business website URL (optional)
+ *                   - phoneNumber: Business phone number
+ *                 example: '{"legalBusinessName":"Adventure Tours Ltd","displayName":"Adventure Tours","businessType":"company","country":"US","address":{"line1":"123 Main Street","line2":"Suite 100","city":"New York","state":"NY","postalCode":"10001"},"website":"https://adventuretours.com","phoneNumber":"+1-555-123-4567"}'
+ *               operatingInfo:
+ *                 type: string
+ *                 description: |
+ *                   JSON string containing operating information:
+ *                   - tourCategories: Array of tour types offered
+ *                   - destinations: Array of geographic areas served
+ *                   - languages: Array of languages spoken by guides
+ *                   - yearsInBusiness: Years of experience (optional)
+ *                   - cancellationPolicy: Standard cancellation policy
+ *                   - meetingStyle: "pickup", "meeting_point", or "flexible"
+ *                 example: '{"tourCategories":["Adventure","Cultural","Nature"],"destinations":["New York","California","Florida"],"languages":["English","Spanish","French"],"yearsInBusiness":5,"cancellationPolicy":"Free cancellation up to 24 hours before tour start time","meetingStyle":"pickup"}'
+ *               representativeInfo:
+ *                 type: string
+ *                 description: |
+ *                   JSON string containing legal representative information:
+ *                   - fullName: Full legal name
+ *                   - email: Email address
+ *                   - phoneNumber: Phone number (optional)
+ *                   - dateOfBirth: Date of birth in YYYY-MM-DD format (must be 18+)
+ *                   - address: Object with line1, city, state, postalCode
+ *                   - idType: "passport", "drivers_license", or "national_id"
+ *                 example: '{"fullName":"John Smith","email":"john@adventuretours.com","phoneNumber":"+1-555-123-4567","dateOfBirth":"1985-06-15","address":{"line1":"456 Oak Avenue","line2":"Apt 2B","city":"New York","state":"NY","postalCode":"10002"},"idType":"passport"}'
+ *               payoutInfo:
+ *                 type: string
+ *                 description: |
+ *                   JSON string containing bank account information:
+ *                   - bankAccountName: Name on bank account
+ *                   - bankCountry: ISO 3166-1 alpha-2 country code
+ *                   - payoutCurrency: ISO 4217 currency code
+ *                 example: '{"bankAccountName":"Adventure Tours Ltd","bankCountry":"US","payoutCurrency":"USD"}'
+ *               registrationDocument:
+ *                 type: string
+ *                 format: binary
+ *                 description: Business registration certificate (PDF, max 5MB)
+ *               taxDocument:
+ *                 type: string
+ *                 format: binary
+ *                 description: Tax identification document (PDF, max 5MB)
+ *               proofOfAddress:
+ *                 type: string
+ *                 format: binary
+ *                 description: Proof of business address (PDF, max 5MB)
+ *               idDocument:
+ *                 type: string
+ *                 format: binary
+ *                 description: Representative ID document (PDF/Image, max 5MB)
+ *               licenses:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *                 description: Additional business licenses (optional, PDF, max 5MB each)
  *     responses:
  *       200:
  *         description: Application updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     supplierProfile:
+ *                       $ref: '#/components/schemas/SupplierProfile'
  *       400:
  *         description: Application cannot be modified in current status
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  *       404:
  *         description: No supplier application found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.patch('/application', uploadSupplierDocuments, supplierController.updateApplication);
 
@@ -298,8 +445,195 @@ router.get('/dashboard', resolveSupplier, supplierController.getDashboard);
 
 const cancellationController = require('../controllers/cancellationController');
 
+/**
+ * @swagger
+ * /suppliers/cancellation/summary:
+ *   get:
+ *     summary: Get supplier cancellation summary
+ *     description: |
+ *       Returns a summary of the supplier's cancellation rate over the last 90 days.
+ *       Only supplier-caused cancellations are counted (excludes weather, force majeure,
+ *       and customer-requested cancellations). The status is calculated as:
+ *       - **Excellent**: cancellation rate < 2%
+ *       - **Warning**: cancellation rate 2–5%
+ *       - **Poor**: cancellation rate > 5%
+ *     tags: [Suppliers]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: productId
+ *         in: query
+ *         schema:
+ *           type: string
+ *         description: Filter by specific tour/product ID
+ *         example: tour_abc123
+ *     responses:
+ *       200:
+ *         description: Cancellation summary retrieved
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     cancellationRate:
+ *                       type: number
+ *                       description: Percentage of supplier-caused cancellations (0-100)
+ *                       example: 3.2
+ *                     status:
+ *                       type: string
+ *                       enum: [Excellent, Warning, Poor]
+ *                       description: Severity level based on cancellation rate
+ *                       example: Warning
+ *                     bookingValueLost:
+ *                       type: number
+ *                       description: Total monetary value of cancelled bookings
+ *                       example: 1250.50
+ *                     mostCommonReason:
+ *                       type: string
+ *                       nullable: true
+ *                       description: Most frequent cancellation reason (null if no cancellations)
+ *                       example: Guide unavailable
+ */
 router.get('/cancellation/summary', resolveSupplier, cancellationController.getCancellationSummary);
+
+/**
+ * @swagger
+ * /suppliers/cancellation/records:
+ *   get:
+ *     summary: Get supplier cancellation records
+ *     description: |
+ *       Returns a paginated list of supplier-caused cancellations over the last 90 days.
+ *       Excludes weather, force majeure, and customer-requested cancellations.
+ *     tags: [Suppliers]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: productId
+ *         in: query
+ *         schema:
+ *           type: string
+ *         description: Filter by specific tour/product ID
+ *         example: tour_abc123
+ *       - name: page
+ *         in: query
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number
+ *         example: 1
+ *       - name: limit
+ *         in: query
+ *         schema:
+ *           type: integer
+ *           default: 25
+ *         description: Records per page
+ *         example: 25
+ *     responses:
+ *       200:
+ *         description: Cancellation records retrieved
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     records:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: string
+ *                             example: booking_abc123
+ *                           travelDate:
+ *                             type: string
+ *                             format: date
+ *                             description: The scheduled tour date
+ *                             example: "2026-06-15"
+ *                           reason:
+ *                             type: string
+ *                             description: Cancellation reason
+ *                             example: Guide unavailable
+ *                           bookingReference:
+ *                             type: string
+ *                             description: Unique booking reference number
+ *                             example: BRK-20260615-ABCD
+ *                           productName:
+ *                             type: string
+ *                             description: Name of the cancelled tour
+ *                             example: Grand Canyon Adventure
+ *                           bookingValue:
+ *                             type: number
+ *                             description: Total booking value
+ *                             example: 450.00
+ *                     pagination:
+ *                       type: object
+ *                       properties:
+ *                         currentPage:
+ *                           type: integer
+ *                           example: 1
+ *                         totalPages:
+ *                           type: integer
+ *                           example: 3
+ *                         totalCount:
+ *                           type: integer
+ *                           example: 58
+ *                         limit:
+ *                           type: integer
+ *                           example: 25
+ */
 router.get('/cancellation/records', resolveSupplier, cancellationController.getCancellationRecords);
+
+/**
+ * @swagger
+ * /suppliers/products/list:
+ *   get:
+ *     summary: Get supplier's active tours (for product filter dropdown)
+ *     description: |
+ *       Returns a list of the supplier's active tours for use in product filter dropdowns
+ *       on the cancellation management page.
+ *     tags: [Suppliers]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Products list retrieved
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     products:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: string
+ *                             description: Tour ID
+ *                             example: tour_abc123
+ *                           title:
+ *                             type: string
+ *                             description: Tour title
+ *                             example: Grand Canyon Adventure
+ */
 router.get('/products/list', resolveSupplier, cancellationController.getCancellationProducts);
 
 /**
@@ -726,7 +1060,237 @@ router.patch('/admin/:id/suspend', restrictTo('admin'), requirePermission('suppl
  *       400:
  *         description: Supplier not in APPROVED status
  */
+/**
+ * @swagger
+ * /suppliers/admin/{id}/overview:
+ *   get:
+ *     summary: Get supplier overview (admin)
+ *     description: |
+ *       Returns a comprehensive overview of a supplier's performance including earnings,
+ *       booking statistics, review data, and per-tour commission breakdown.
+ *     tags: [Suppliers, Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         description: Supplier profile ID
+ *         schema:
+ *           type: string
+ *         example: cmp2himz40001iwkfib3ld8to
+ *     responses:
+ *       200:
+ *         description: Supplier overview retrieved
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     earnings:
+ *                       type: number
+ *                       description: Total lifetime earnings
+ *                       example: 12500.75
+ *                     totalBookings:
+ *                       type: integer
+ *                       description: Total number of bookings
+ *                       example: 342
+ *                     totalCommission:
+ *                       type: number
+ *                       description: Total commission generated
+ *                       example: 1875.50
+ *                     averageRating:
+ *                       type: number
+ *                       description: Average review rating (0-5)
+ *                       example: 4.7
+ *                     totalReviews:
+ *                       type: integer
+ *                       description: Total number of reviews
+ *                       example: 89
+ *                     tours:
+ *                       type: object
+ *                       properties:
+ *                         total:
+ *                           type: integer
+ *                           example: 15
+ *                         active:
+ *                           type: integer
+ *                           example: 12
+ *                         draft:
+ *                           type: integer
+ *                           example: 2
+ *                         paused:
+ *                           type: integer
+ *                           example: 0
+ *                         archived:
+ *                           type: integer
+ *                           example: 1
+ *                     bookings:
+ *                       type: object
+ *                       properties:
+ *                         total:
+ *                           type: integer
+ *                           example: 342
+ *                         pending:
+ *                           type: integer
+ *                           example: 5
+ *                         confirmed:
+ *                           type: integer
+ *                           example: 12
+ *                         completed:
+ *                           type: integer
+ *                           example: 320
+ *                         cancelled:
+ *                           type: integer
+ *                           example: 5
+ *                     tourCommissions:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: string
+ *                             example: tour_abc123
+ *                           title:
+ *                             type: string
+ *                             example: Grand Canyon Adventure
+ *                           bookings:
+ *                             type: integer
+ *                             example: 45
+ *                           commission:
+ *                             type: number
+ *                             example: 675.00
+ *                           revenue:
+ *                             type: number
+ *                             example: 4500.00
+ *       403:
+ *         description: Access denied - admin role required
+ *       404:
+ *         description: Supplier not found
+ */
 router.get('/admin/:id/overview', restrictTo('admin'), requirePermission('suppliers.view'), supplierController.getSupplierOverview);
+
+/**
+ * @swagger
+ * /suppliers/admin/{id}/tours:
+ *   get:
+ *     summary: Get supplier's tours (admin)
+ *     description: |
+ *       Returns a paginated list of a supplier's tours with booking and review counts.
+ *       Admins can filter by tour status.
+ *     tags: [Suppliers, Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         description: Supplier profile ID
+ *         schema:
+ *           type: string
+ *         example: cmp2himz40001iwkfib3ld8to
+ *       - name: page
+ *         in: query
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number
+ *       - name: limit
+ *         in: query
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *         description: Records per page
+ *       - name: status
+ *         in: query
+ *         schema:
+ *           type: string
+ *           enum: [DRAFT, ACTIVE, PAUSED, ARCHIVED]
+ *         description: Filter by tour status
+ *     responses:
+ *       200:
+ *         description: Supplier tours retrieved
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     tours:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: string
+ *                             example: tour_abc123
+ *                           title:
+ *                             type: string
+ *                             example: Grand Canyon Adventure
+ *                           coverPhoto:
+ *                             type: string
+ *                             format: uri
+ *                             example: https://res.cloudinary.com/demo/image/upload/v1/tours/abc123.jpg
+ *                           slug:
+ *                             type: string
+ *                             example: grand-canyon-adventure
+ *                           status:
+ *                             type: string
+ *                             enum: [DRAFT, ACTIVE, PAUSED, ARCHIVED]
+ *                             example: ACTIVE
+ *                           totalBookings:
+ *                             type: integer
+ *                             example: 45
+ *                           reviewCount:
+ *                             type: integer
+ *                             example: 12
+ *                           averageRating:
+ *                             type: number
+ *                             example: 4.8
+ *                           city:
+ *                             type: string
+ *                             example: Flagstaff
+ *                           country:
+ *                             type: string
+ *                             example: United States
+ *                           createdAt:
+ *                             type: string
+ *                             format: date-time
+ *                             example: "2026-01-15T10:00:00.000Z"
+ *                     pagination:
+ *                       type: object
+ *                       properties:
+ *                         currentPage:
+ *                           type: integer
+ *                           example: 1
+ *                         totalPages:
+ *                           type: integer
+ *                           example: 3
+ *                         totalCount:
+ *                           type: integer
+ *                           example: 47
+ *                         hasNextPage:
+ *                           type: boolean
+ *                           example: true
+ *                         limit:
+ *                           type: integer
+ *                           example: 20
+ *       403:
+ *         description: Access denied - admin role required
+ *       404:
+ *         description: Supplier not found
+ */
 router.get('/admin/:id/tours', restrictTo('admin'), requirePermission('suppliers.view', 'tours.view'), supplierController.getSupplierTours);
 router.patch('/admin/:id/activate', restrictTo('admin'), requirePermission('suppliers.approve'), supplierController.activateSupplier);
 

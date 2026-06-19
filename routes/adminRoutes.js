@@ -505,8 +505,178 @@ router.get('/users/search', requirePermission('users.view'), adminController.sea
  */
 router.get('/me', adminController.getMe);
 
-// Audit log
-router.get('/audit-log/export', requirePermission('settings.access', 'audit.view'), adminSettingsController.exportAuditLog);
+/**
+ * @swagger
+ * /admin/audit-log:
+ *   get:
+ *     summary: Get audit log entries
+ *     description: |
+ *       Returns paginated audit log entries with optional filtering by action type,
+ *       resource, and date range. Each entry records administrative actions for
+ *       compliance and security monitoring.
+ *     tags: [Admin, Audit]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: page
+ *         in: query
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number
+ *       - name: limit
+ *         in: query
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *           maximum: 100
+ *         description: Records per page (max 100)
+ *       - name: action
+ *         in: query
+ *         schema:
+ *           type: string
+ *         description: Filter by action type (case-insensitive partial match)
+ *         example: settings.updated
+ *       - name: resource
+ *         in: query
+ *         schema:
+ *           type: string
+ *         description: Filter by resource type (case-insensitive partial match)
+ *         example: SystemConfig
+ *       - name: startDate
+ *         in: query
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter entries from this date (ISO 8601)
+ *         example: "2026-01-01"
+ *       - name: endDate
+ *         in: query
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter entries until this date (ISO 8601)
+ *         example: "2026-06-19"
+ *     responses:
+ *       200:
+ *         description: Audit log entries retrieved
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     entries:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: string
+ *                             example: audit_abc123
+ *                           userId:
+ *                             type: string
+ *                             example: user_abc123
+ *                           userEmail:
+ *                             type: string
+ *                             example: admin@example.com
+ *                           userName:
+ *                             type: string
+ *                             description: Resolved admin name (from user lookup)
+ *                             example: John Admin
+ *                           action:
+ *                             type: string
+ *                             description: The action performed
+ *                             example: settings.updated
+ *                           resource:
+ *                             type: string
+ *                             example: SystemConfig
+ *                           resourceId:
+ *                             type: string
+ *                             nullable: true
+ *                             example: system.maintenance_mode
+ *                           oldValues:
+ *                             type: object
+ *                             nullable: true
+ *                             description: Previous values (for update actions)
+ *                           newValues:
+ *                             type: object
+ *                             nullable: true
+ *                             description: New values (for create/update actions)
+ *                             example: {"system.maintenance_mode": "true"}
+ *                           createdAt:
+ *                             type: string
+ *                             format: date-time
+ *                             example: "2026-06-19T14:30:00.000Z"
+ *                     total:
+ *                       type: integer
+ *                       example: 156
+ *                     page:
+ *                       type: integer
+ *                       example: 1
+ *                     pages:
+ *                       type: integer
+ *                       example: 8
+ *       403:
+ *         description: Access denied - admin role required
+ */
 router.get('/audit-log', requirePermission('settings.access', 'audit.view'), adminSettingsController.getAuditLog);
+
+/**
+ * @swagger
+ * /admin/audit-log/export:
+ *   get:
+ *     summary: Export audit log as CSV
+ *     description: |
+ *       Exports audit log entries as a CSV file download. Supports the same
+ *       filtering parameters as the audit log list endpoint.
+ *       The CSV includes columns: Date/Time, Admin, Email, Action, Resource, Resource ID, Details.
+ *     tags: [Admin, Audit]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: action
+ *         in: query
+ *         schema:
+ *           type: string
+ *         description: Filter by action type (case-insensitive partial match)
+ *         example: settings.updated
+ *       - name: resource
+ *         in: query
+ *         schema:
+ *           type: string
+ *         description: Filter by resource type (case-insensitive partial match)
+ *         example: SystemConfig
+ *       - name: startDate
+ *         in: query
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter entries from this date (ISO 8601)
+ *         example: "2026-01-01"
+ *       - name: endDate
+ *         in: query
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter entries until this date (ISO 8601)
+ *         example: "2026-06-19"
+ *     responses:
+ *       200:
+ *         description: CSV file download
+ *         content:
+ *           text/csv:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       403:
+ *         description: Access denied - admin role required
+ */
+router.get('/audit-log/export', requirePermission('settings.access', 'audit.view'), adminSettingsController.exportAuditLog);
 
 module.exports = router;
