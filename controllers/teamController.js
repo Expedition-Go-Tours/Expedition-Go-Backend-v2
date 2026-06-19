@@ -174,20 +174,38 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     }
 
     if (directAdd) {
-      return tx.teamMember.create({
-        data: {
-          supplierId: req.supplierId,
-          email,
-          role: role || 'editor',
-          status: 'ACCEPTED',
-          acceptedAt: new Date(),
-          invitedById: req.user.id,
-        },
-      });
+      const memberData = {
+        supplierId: req.supplierId,
+        email,
+        role: role || 'editor',
+        status: 'ACCEPTED',
+        acceptedAt: new Date(),
+        invitedById: req.user.id,
+      };
+      if (existing) {
+        return tx.teamMember.update({
+          where: { id: existing.id },
+          data: { ...memberData, inviteToken: null, tokenExpiresAt: null },
+        });
+      }
+      return tx.teamMember.create({ data: memberData });
     }
 
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+
+    if (existing) {
+      return tx.teamMember.update({
+        where: { id: existing.id },
+        data: {
+          role: role || 'editor',
+          status: 'PENDING',
+          invitedById: req.user.id,
+          inviteToken: token,
+          tokenExpiresAt: expiresAt,
+        },
+      });
+    }
 
     return tx.teamMember.create({
       data: {
