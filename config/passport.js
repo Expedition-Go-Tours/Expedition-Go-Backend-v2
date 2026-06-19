@@ -11,7 +11,8 @@ passport.use(
       try {
         const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
         if (!user) return done(null, false, { message: 'Invalid email or password' });
-        if (!user.passwordHash) return done(null, false, { message: 'This account uses social login. Please sign in with Google.' });
+        if (!user.passwordHash && user.authProvider !== 'local') return done(null, false, { message: 'This account uses social login. Please sign in with Google.' });
+        if (!user.passwordHash && user.authProvider === 'local') return done(null, false, { message: 'Password not set. Please use the forgot password option to create one.' });
         if (!user.active) return done(null, false, { message: 'Account has been deactivated' });
 
         const isMatch = await bcrypt.compare(password, user.passwordHash);
