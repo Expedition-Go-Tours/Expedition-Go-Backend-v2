@@ -1191,3 +1191,246 @@ exports.getMe = catchAsync(async (req, res, next) => {
     },
   });
 });
+
+/**
+ * GET /api/admin/bookings
+ *
+ * Returns paginated bookings with optional status filter, search, and date range.
+ */
+exports.getBookings = catchAsync(async (req, res) => {
+  const { page = '1', limit = '20', status = '', search = '', startDate, endDate } = req.query;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  const skip = (pageNum - 1) * limitNum;
+
+  const where = {};
+
+  if (status) {
+    where.status = status;
+  }
+
+  if (search) {
+    const q = search.trim();
+    where.OR = [
+      { bookingNumber: { contains: q, mode: 'insensitive' } },
+      { customer: { name: { contains: q, mode: 'insensitive' } } },
+      { tour: { title: { contains: q, mode: 'insensitive' } } },
+      { tour: { supplier: { name: { contains: q, mode: 'insensitive' } } } },
+    ];
+  }
+
+  if (startDate || endDate) {
+    where.selectedDate = {};
+    if (startDate) where.selectedDate.gte = new Date(startDate);
+    if (endDate) where.selectedDate.lte = new Date(endDate);
+  }
+
+  const [bookings, totalCount, counts] = await Promise.all([
+    prisma.booking.findMany({
+      where,
+      select: {
+        id: true,
+        bookingNumber: true,
+        status: true,
+        paymentStatus: true,
+        total: true,
+        currency: true,
+        selectedDate: true,
+        subtotal: true,
+        taxes: true,
+        fees: true,
+        discounts: true,
+        commissionRate: true,
+        commissionAmount: true,
+        supplierPayout: true,
+        travelers: true,
+        specialRequests: true,
+        cancellationReason: true,
+        paidAt: true,
+        createdAt: true,
+        updatedAt: true,
+        customer: {
+          select: { id: true, name: true, email: true, photoURL: true, phone: true },
+        },
+        tour: {
+          select: {
+            id: true,
+            title: true,
+            coverPhoto: true,
+            supplier: { select: { id: true, name: true } },
+          },
+        },
+        payouts: {
+          select: { id: true, amount: true, currency: true, status: true, paidAt: true, createdAt: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limitNum,
+    }),
+    prisma.booking.count({ where }),
+    prisma.booking.groupBy({
+      by: ['status'],
+      _count: { id: true },
+    }),
+  ]);
+
+  const countsMap = { total: totalCount };
+  counts.forEach((c) => { countsMap[c.status] = c._count.id; });
+
+  const optimized = bookings.map((b) => ({
+    ...b,
+    total: Number(b.total),
+    subtotal: Number(b.subtotal),
+    taxes: Number(b.taxes),
+    fees: Number(b.fees),
+    discounts: Number(b.discounts),
+    commissionAmount: Number(b.commissionAmount),
+    supplierPayout: Number(b.supplierPayout),
+    customer: {
+      ...b.customer,
+      photoURL: b.customer.photoURL ? cloudinaryUrl(b.customer.photoURL, 64) : null,
+    },
+    payouts: b.payouts.map((p) => ({ ...p, amount: Number(p.amount) })),
+  }));
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      bookings: optimized,
+      pagination: {
+        currentPage: pageNum,
+        totalPages: Math.ceil(totalCount / limitNum),
+        totalCount,
+      },
+      counts: countsMap,
+    },
+  });
+});
+
+/**
+ * GET /api/admin/bookings/:id
+ *
+ * Returns a single booking with full details.
+ */
+exports.getBookingById = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+
+  const booking = await prisma.booking.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      bookingNumber: true,
+      status: true,
+      paymentStatus: true,
+      total: true,
+      currency: true,
+      selectedDate: true,
+      selectedTime: true,
+      subtotal: true,
+      taxes: true,
+      fees: true,
+      discounts: true,
+      commissionRate: true,
+      commissionAmount: true,
+      supplierPayout: true,
+      travelers: true,
+      specialRequests: true,
+      cancellationReason: true,
+      paidAt: true,
+      createdAt: true,
+      updatedAt: true,
+      customer: {
+        select: { id: true, name: true, email: true, photoURL: true, phone: true },
+      },
+      tour: {
+        select: {
+          id: true,
+          title: true,
+          coverPhoto: true,
+          supplier: { select: { id: true, name: true } },
+        },
+      },
+      payouts: {
+        select: { id: true, amount: true, currency: true, status: true, paidAt: true, createdAt: true },
+      },
+    },
+  });
+
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      ...booking,
+      total: Number(booking.total),
+      subtotal: Number(booking.subtotal),
+      taxes: Number(booking.taxes),
+      fees: Number(booking.fees),
+      discounts: Number(booking.discounts),
+      commissionAmount: Number(booking.commissionAmount),
+      supplierPayout: Number(booking.supplierPayout),
+      customer: {
+        ...booking.customer,
+        photoURL: booking.customer.photoURL ? cloudinaryUrl(booking.customer.photoURL, 80) : null,
+      },
+      payouts: booking.payouts.map((p) => ({ ...p, amount: Number(p.amount) })),
+    },
+  });
+});
+
+/**
+ * PATCH /api/admin/bookings/:id/confirm-payment
+ *
+ * Confirms payment for a booking. Updates paymentStatus to PAID and
+ * optionally transitions booking status to CONFIRMED if currently PENDING.
+ */
+exports.confirmPayment = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { reference } = req.body;
+
+  const booking = await prisma.booking.findUnique({
+    where: { id },
+    select: { id: true, status: true, paymentStatus: true },
+  });
+
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  if (booking.paymentStatus === 'PAID') {
+    return next(new AppError('Payment has already been confirmed for this booking', 400));
+  }
+
+  const updateData = {
+    paymentStatus: 'PAID',
+    paidAt: new Date(),
+  };
+
+  if (booking.status === 'PENDING') {
+    updateData.status = 'CONFIRMED';
+  }
+
+  if (reference) {
+    updateData.supplierNotes = `Payment confirmed. Reference: ${reference}`;
+  }
+
+  const updated = await prisma.booking.update({
+    where: { id },
+    data: updateData,
+    select: {
+      id: true,
+      bookingNumber: true,
+      status: true,
+      paymentStatus: true,
+      paidAt: true,
+    },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: updated,
+  });
+});

@@ -680,4 +680,91 @@ router.get('/audit-log', requirePermission('settings.access', 'audit.view'), adm
  */
 router.get('/audit-log/export', requirePermission('settings.access', 'audit.view'), adminSettingsController.exportAuditLog);
 
+/**
+ * @swagger
+ * /admin/bookings:
+ *   get:
+ *     summary: Paginated bookings list
+ *     tags: [Admin, Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: page
+ *         in: query
+ *         schema: { type: integer, default: 1 }
+ *       - name: limit
+ *         in: query
+ *         schema: { type: integer, default: 20 }
+ *       - name: status
+ *         in: query
+ *         schema: { type: string }
+ *         description: Filter by booking status (PENDING, CONFIRMED, COMPLETED, CANCELLED)
+ *       - name: search
+ *         in: query
+ *         schema: { type: string }
+ *         description: Search by booking number, customer name, tour title, supplier name
+ *       - name: startDate
+ *         in: query
+ *         schema: { type: string, format: date }
+ *       - name: endDate
+ *         in: query
+ *         schema: { type: string, format: date }
+ *     responses:
+ *       200:
+ *         description: Bookings list
+ */
+router.get('/bookings', requirePermission('bookings.view', 'dashboard.*'), adminController.getBookings);
+
+/**
+ * @swagger
+ * /admin/bookings/{id}:
+ *   get:
+ *     summary: Get booking by ID
+ *     tags: [Admin, Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Booking details
+ *       404:
+ *         description: Booking not found
+ */
+router.get('/bookings/:id', requirePermission('bookings.view', 'dashboard.*'), adminController.getBookingById);
+
+/**
+ * @swagger
+ * /admin/bookings/{id}/confirm-payment:
+ *   patch:
+ *     summary: Confirm payment for a booking
+ *     tags: [Admin, Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               reference:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Payment confirmed
+ *       400:
+ *         description: Payment already confirmed
+ *       404:
+ *         description: Booking not found
+ */
+router.patch('/bookings/:id/confirm-payment', requirePermission('bookings.confirm-payment', 'dashboard.*'), adminController.confirmPayment);
+
 module.exports = router;
