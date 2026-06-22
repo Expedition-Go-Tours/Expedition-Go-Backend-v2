@@ -353,6 +353,7 @@ router.get('/google/callback', authController.googleCallback);
  *       401:
  *         $ref: '#/components/responses/UnauthorizedError'
  */
+router.post('/set-cookies', authController.setCookies);
 router.post('/logout', protect, authController.logout);
 
 /**

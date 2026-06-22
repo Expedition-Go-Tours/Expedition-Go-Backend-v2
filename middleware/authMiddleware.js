@@ -4,13 +4,17 @@ const AppError = require('../utils/appError');
 const { verifyAccessToken } = require('../config/jwt');
 
 exports.protect = catchAsync(async (req, res, next) => {
-  const authHeader = req.headers.authorization;
+  const token = req.cookies?.accessToken || (() => {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      return authHeader.split(' ')[1];
+    }
+    return null;
+  })();
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (!token) {
     return next(new AppError('You are not logged in! Please log in to get access.', 401));
   }
-
-  const token = authHeader.split(' ')[1];
 
   let decoded;
   try {

@@ -104,7 +104,13 @@ process.on('SIGINT', () => {
     });
 
     io.on('connection', async (socket) => {
-      const { token } = socket.handshake.auth || {};
+      const parseCookies = (h) => (h || '').split(';').reduce((o, p) => {
+        const [k, ...v] = p.trim().split('=');
+        if (k) o[k.trim()] = v.join('=');
+        return o;
+      }, {});
+      const cookies = parseCookies(socket.handshake.headers.cookie);
+      const token = socket.handshake.auth?.token || cookies.accessToken;
 
       if (!token) {
         console.warn('Socket connection rejected: No token provided');

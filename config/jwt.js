@@ -22,9 +22,40 @@ function verifyRefreshToken(token) {
   return jwt.verify(token, REFRESH_TOKEN_SECRET);
 }
 
+const COOKIE_OPTIONS = Object.freeze({
+  accessToken: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    path: '/',
+    maxAge: 30 * 60 * 1000, // 30 min
+  },
+  refreshToken: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    path: '/api/auth',
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  },
+});
+
+function setAuthCookies(res, accessToken, refreshToken) {
+  res.cookie('accessToken', accessToken, COOKIE_OPTIONS.accessToken);
+  res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS.refreshToken);
+}
+
+function clearAuthCookies(res) {
+  const opts = { ...COOKIE_OPTIONS.accessToken, maxAge: 0 };
+  const refreshOpts = { ...COOKIE_OPTIONS.refreshToken, maxAge: 0 };
+  res.cookie('accessToken', '', opts);
+  res.cookie('refreshToken', '', refreshOpts);
+}
+
 module.exports = {
   signAccessToken,
   signRefreshToken,
   verifyAccessToken,
   verifyRefreshToken,
+  setAuthCookies,
+  clearAuthCookies,
 };

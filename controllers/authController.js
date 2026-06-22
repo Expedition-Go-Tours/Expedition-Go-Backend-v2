@@ -2,7 +2,7 @@ const bcrypt = require('bcrypt');
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
-const { signAccessToken, signRefreshToken } = require('../config/jwt');
+const { signAccessToken, signRefreshToken, setAuthCookies, clearAuthCookies } = require('../config/jwt');
 const { storeRefreshToken, rotateRefreshToken, clearRefreshToken } = require('../utils/refreshTokenHelper');
 const event = require('../utils/eventEmitter');
 const passport = require('passport');
@@ -35,6 +35,8 @@ exports.login = catchAsync(async (req, res, next) => {
       resourceId: user.id,
       properties: { method: 'local' },
     });
+
+    setAuthCookies(res, accessToken, refreshToken);
 
     res.status(200).json({
       status: 'success',
@@ -102,6 +104,8 @@ exports.register = catchAsync(async (req, res, next) => {
     properties: { method: 'local' },
   });
 
+  setAuthCookies(res, accessToken, refreshToken);
+
   res.status(201).json({
     status: 'success',
     data: {
@@ -113,7 +117,7 @@ exports.register = catchAsync(async (req, res, next) => {
 });
 
 exports.refresh = catchAsync(async (req, res, next) => {
-  const { refreshToken } = req.body;
+  const refreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
 
   if (!refreshToken) {
     return next(new AppError('Refresh token required', 400));
@@ -144,6 +148,8 @@ exports.refresh = catchAsync(async (req, res, next) => {
   const newAccessToken = signAccessToken({ userId: user.id });
   const newRefreshToken = signRefreshToken({ userId: user.id });
 
+  setAuthCookies(res, newAccessToken, newRefreshToken);
+
   res.status(200).json({
     status: 'success',
     data: {
@@ -153,10 +159,31 @@ exports.refresh = catchAsync(async (req, res, next) => {
   });
 });
 
+exports.setCookies = catchAsync(async (req, res, next) => {
+  const { accessToken, refreshToken } = req.body;
+  if (!accessToken || !refreshToken) {
+    return next(new AppError('accessToken and refreshToken are required', 400));
+  }
+
+  // Validate the access token before setting cookies
+  try {
+    const { verifyAccessToken } = require('../config/jwt');
+    verifyAccessToken(accessToken);
+  } catch {
+    return next(new AppError('Invalid access token', 401));
+  }
+
+  setAuthCookies(res, accessToken, refreshToken);
+
+  res.status(200).json({ status: 'success', message: 'Cookies set' });
+});
+
 exports.logout = catchAsync(async (req, res) => {
   if (req.user?.id) {
     await clearRefreshToken(req.user.id);
   }
+
+  clearAuthCookies(res);
 
   event.emit({
     name: 'user.logged_out',

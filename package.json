@@ -31,6 +31,7 @@
     "bullmq": "^5.76.8",
     "cloudinary": "^1.41.3",
     "compression": "^1.8.1",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "date-fns": "^4.1.0",
     "dotenv": "^17.4.2",
