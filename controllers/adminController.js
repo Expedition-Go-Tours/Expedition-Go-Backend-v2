@@ -1087,7 +1087,7 @@ exports.getUser = catchAsync(async (req, res, next) => {
         id: true,
         bookingNumber: true,
         status: true,
-        travelDate: true,
+        selectedDate: true,
         total: true,
         currency: true,
         createdAt: true,
