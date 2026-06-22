@@ -1,0 +1,84 @@
+# Exported from Render on 2026-06-22T08:05:44Z
+version: "1"
+projects:
+- name: Expedition-GO_Backend
+  environments:
+  - name: Production
+    services:
+    - type: web
+      name: Expedition-Go-Backend-v2
+      runtime: node
+      repo: https://github.com/Expedition-Go-Tours/Expedition-Go-Backend-v2
+      plan: pro
+      envVars:
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: SUPPORT_EMAIL
+        sync: false
+      - key: SUPPLIER_DASHBOARD_URL
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: PRODUCTION_API_URL
+        sync: false
+      - key: PORT
+        sync: false
+      - key: NODE_ENV
+        sync: false
+      - key: LOGTAIL_HOST
+        sync: false
+      - key: LOGO_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: HERO_IMAGE_URL
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CALLBACK_URL
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: EMAIL_REPLY_TO
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLIENT_URL
+        sync: false
+      - key: API_BASE_URL
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: LOGTAIL_TOKEN
+        sync: false
+      - key: API_VERSION
+        sync: false
+      region: oregon
+      buildCommand: npm install && npx prisma generate
+      startCommand: npx prisma db push && node server.js
+      healthCheckPath: /health
+      autoDeployTrigger: checksPass
