@@ -22,20 +22,24 @@ function verifyRefreshToken(token) {
   return jwt.verify(token, REFRESH_TOKEN_SECRET);
 }
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 const COOKIE_OPTIONS = Object.freeze({
   accessToken: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    secure: true,
+    sameSite: 'lax',
+    domain: isProduction ? '.travioafrica.com' : undefined,
     path: '/',
-    maxAge: 30 * 60 * 1000, // 30 min
+    maxAge: 30 * 60 * 1000,
   },
   refreshToken: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    secure: true,
+    sameSite: 'lax',
+    domain: isProduction ? '.travioafrica.com' : undefined,
     path: '/api/auth',
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    maxAge: 7 * 24 * 60 * 60 * 1000,
   },
 });
 
