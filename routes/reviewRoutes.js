@@ -607,4 +607,118 @@ router.get('/admin/pending', restrictTo('admin'), requirePermission('reviews.vie
  */
 router.patch('/:id/moderate', restrictTo('admin'), requirePermission('reviews.moderate'), reviewController.moderateReview);
 
+// ================================
+// ADMIN REVIEW MANAGEMENT
+// ================================
+
+/**
+ * @swagger
+ * /reviews/{id}/admin:
+ *   patch:
+ *     summary: Admin edit any review content
+ *     tags: [Reviews, Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               rating:
+ *                 type: integer
+ *                 minimum: 1
+ *                 maximum: 5
+ *               title:
+ *                 type: string
+ *               comment:
+ *                 type: string
+ *               photos:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *     responses:
+ *       200:
+ *         description: Review updated
+ */
+router.patch('/:id/admin', restrictTo('admin'), requirePermission('reviews.moderate'), reviewController.adminUpdateReview);
+
+/**
+ * @swagger
+ * /reviews/{id}/admin:
+ *   delete:
+ *     summary: Admin delete any review
+ *     tags: [Reviews, Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       204:
+ *         description: Review deleted
+ */
+router.delete('/:id/admin', restrictTo('admin'), requirePermission('reviews.moderate'), reviewController.adminDeleteReview);
+
+/**
+ * @swagger
+ * /reviews/{id}/admin/response:
+ *   patch:
+ *     summary: Admin edit any supplier response
+ *     tags: [Reviews, Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - response
+ *             properties:
+ *               response:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Supplier response updated
+ */
+router.patch('/:id/admin/response', restrictTo('admin'), requirePermission('reviews.moderate'), reviewController.adminUpdateSupplierResponse);
+
+/**
+ * @swagger
+ * /reviews/{id}/admin/response:
+ *   delete:
+ *     summary: Admin delete any supplier response
+ *     tags: [Reviews, Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Supplier response deleted
+ */
+router.delete('/:id/admin/response', restrictTo('admin'), requirePermission('reviews.moderate'), reviewController.adminDeleteSupplierResponse);
+
 module.exports = router;

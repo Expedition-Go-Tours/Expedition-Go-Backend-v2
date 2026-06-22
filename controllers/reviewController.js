@@ -889,4 +889,212 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
   });
 });
 
+// ================================
+// ADMIN REVIEW MANAGEMENT
+// ================================
+
+/**
+ * Admin: update any review content
+ */
+exports.adminUpdateReview = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const adminId = req.user.id;
+  const { rating, title, comment, photos } = req.body;
+
+  const review = await prisma.review.findUnique({
+    where: { id },
+    include: { tour: { select: { supplierId: true } } }
+  });
+
+  if (!review) {
+    return next(new AppError('Review not found', 404));
+  }
+
+  if (rating !== undefined && (rating < 1 || rating > 5)) {
+    return next(new AppError('Rating must be between 1 and 5', 400));
+  }
+
+  const updateData = {};
+  if (rating !== undefined) updateData.rating = rating;
+  if (title !== undefined) updateData.title = title;
+  if (comment !== undefined) updateData.comment = comment;
+  if (photos !== undefined) updateData.photos = photos;
+
+  const ratingChanged = rating !== undefined && rating !== review.rating;
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const result = await tx.review.update({
+      where: { id },
+      data: updateData,
+      include: {
+        customer: { select: { id: true, name: true, photoURL: true } },
+        tour: { select: { id: true, title: true } }
+      }
+    });
+
+    if (review.status === 'APPROVED' && ratingChanged) {
+      await removeApprovedRating(tx, review.tourId, review.rating);
+      await addApprovedRating(tx, review.tourId, rating);
+      await recalculateSupplierRating(tx, review.tour.supplierId);
+    }
+
+    return result;
+  });
+
+  if (review.status === 'APPROVED' && ratingChanged) {
+    cache.invalidateReviewCaches(review.tourId).catch(() => {});
+    cache.invalidateTourCaches(review.tourId).catch(() => {});
+  }
+
+  await logActivity({
+    userId: adminId,
+    action: 'review.admin_updated',
+    resource: 'Review',
+    resourceId: review.id,
+    oldValues: { rating: review.rating, title: review.title, comment: review.comment },
+    newValues: updateData,
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { review: updated }
+  });
+});
+
+/**
+ * Admin: delete any review
+ */
+exports.adminDeleteReview = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const adminId = req.user.id;
+
+  const review = await prisma.review.findUnique({
+    where: { id },
+    include: { tour: { select: { supplierId: true } } }
+  });
+
+  if (!review) {
+    return next(new AppError('Review not found', 404));
+  }
+
+  if (review.photos && review.photos.length > 0) {
+    for (const photoUrl of review.photos) {
+      await deleteCloudinaryImage(photoUrl);
+    }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.review.delete({ where: { id } });
+
+    if (review.status === 'APPROVED') {
+      await removeApprovedRating(tx, review.tourId, review.rating);
+      await recalculateSupplierRating(tx, review.tour.supplierId);
+    }
+  });
+
+  cache.invalidateReviewCaches(review.tourId).catch(() => {});
+  cache.invalidateTourCaches(review.tourId).catch(() => {});
+
+  await logActivity({
+    userId: adminId,
+    action: 'review.admin_deleted',
+    resource: 'Review',
+    resourceId: review.id,
+    metadata: {
+      tourId: review.tourId,
+      rating: review.rating,
+      customerId: review.customerId,
+    },
+  });
+
+  res.status(204).json({ status: 'success', data: null });
+});
+
+/**
+ * Admin: update any supplier response
+ */
+exports.adminUpdateSupplierResponse = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { response } = req.body;
+  const adminId = req.user.id;
+
+  if (!response || response.trim().length === 0) {
+    return next(new AppError('Response cannot be empty', 400));
+  }
+
+  const review = await prisma.review.findUnique({ where: { id } });
+
+  if (!review) {
+    return next(new AppError('Review not found', 404));
+  }
+
+  const updated = await prisma.review.update({
+    where: { id },
+    data: {
+      supplierResponse: response,
+      supplierResponseAt: new Date(),
+    },
+    include: {
+      customer: { select: { id: true, name: true, photoURL: true } },
+      tour: { select: { id: true, title: true } },
+    },
+  });
+
+  await logActivity({
+    userId: adminId,
+    action: 'review.admin_response_updated',
+    resource: 'Review',
+    resourceId: review.id,
+    oldValues: { supplierResponse: review.supplierResponse },
+    newValues: { supplierResponse: response },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { review: updated },
+  });
+});
+
+/**
+ * Admin: delete any supplier response
+ */
+exports.adminDeleteSupplierResponse = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const adminId = req.user.id;
+
+  const review = await prisma.review.findUnique({ where: { id } });
+
+  if (!review) {
+    return next(new AppError('Review not found', 404));
+  }
+
+  if (!review.supplierResponse) {
+    return next(new AppError('No response to delete', 404));
+  }
+
+  const updated = await prisma.review.update({
+    where: { id },
+    data: {
+      supplierResponse: null,
+      supplierResponseAt: null,
+    },
+    include: {
+      customer: { select: { id: true, name: true, photoURL: true } },
+      tour: { select: { id: true, title: true } },
+    },
+  });
+
+  await logActivity({
+    userId: adminId,
+    action: 'review.admin_response_deleted',
+    resource: 'Review',
+    resourceId: review.id,
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { review: updated },
+  });
+});
+
 module.exports = exports;
