@@ -13,11 +13,12 @@
  * @author Tour Platform Team
  * @version 1.0.0
  */
-
 const prisma = require('../utils/prismaClient');
-const catchAsync = require('../utils/catchAsync');
-const { cloudinaryUrl } = require('../utils/imageOptimizer');
 
+const AppError = require('../utils/appError');
+const catchAsync = require('../utils/catchAsync');
+
+const { cloudinaryUrl } = require('../utils/imageOptimizer');
 /**
  * GET /api/admin/analytics/overview
  *
@@ -1055,6 +1056,97 @@ exports.searchUsers = catchAsync(async (req, res) => {
   }));
 
   res.status(200).json({ status: 'success', data: { users: optimized } });
+});
+
+exports.getUser = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+
+  const user = await prisma.user.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      photoURL: true,
+      phone: true,
+      roles: true,
+      active: true,
+      lastLoginAt: true,
+      createdAt: true,
+    },
+  });
+
+  if (!user) {
+    return next(new AppError('User not found', 404));
+  }
+
+  const [bookings, reviewStats, recentReviews] = await Promise.all([
+    prisma.booking.findMany({
+      where: { customerId: id },
+      select: {
+        id: true,
+        bookingNumber: true,
+        status: true,
+        travelDate: true,
+        total: true,
+        currency: true,
+        createdAt: true,
+        tour: {
+          select: {
+            id: true,
+            title: true,
+            coverPhoto: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+    }),
+    prisma.review.aggregate({
+      where: { customerId: id },
+      _count: { id: true },
+      _avg: { rating: true },
+    }),
+    prisma.review.findMany({
+      where: { customerId: id },
+      select: {
+        id: true,
+        rating: true,
+        title: true,
+        comment: true,
+        status: true,
+        createdAt: true,
+        tour: {
+          select: { id: true, title: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+    }),
+  ]);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      user: {
+        ...user,
+        photoURL: cloudinaryUrl(user.photoURL, 128),
+      },
+      bookings: bookings.map((b) => ({
+        ...b,
+        tour: b.tour
+          ? { ...b.tour, coverPhoto: cloudinaryUrl(b.tour.coverPhoto, 80) }
+          : null,
+      })),
+      reviewStats: {
+        totalReviews: reviewStats._count.id,
+        averageRating: reviewStats._avg.rating
+          ? Math.round(reviewStats._avg.rating * 10) / 10
+          : null,
+      },
+      recentReviews,
+    },
+  });
 });
 
 exports.getMe = catchAsync(async (req, res, next) => {

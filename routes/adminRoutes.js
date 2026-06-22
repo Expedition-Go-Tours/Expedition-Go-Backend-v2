@@ -490,6 +490,7 @@ router.get('/bookings/today', requirePermission('dashboard.bookings', 'dashboard
  *         description: Users found
  */
 router.get('/users/search', requirePermission('users.view'), adminController.searchUsers);
+router.get('/users/:id', requirePermission('users.view'), adminController.getUser);
 
 /**
  * @swagger
