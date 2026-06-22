@@ -745,6 +745,7 @@ exports.getPendingReviews = catchAsync(async (req, res, next) => {
           select: {
             id: true,
             title: true,
+            coverPhoto: true,
             supplier: {
               select: {
                 name: true
