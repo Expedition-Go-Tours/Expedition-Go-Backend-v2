@@ -242,10 +242,20 @@ function buildTourFilters(queryParams) {
   
   if (freeCancellation === 'true') {
     andConditions.push({
-      bookingAndTickets: {
-        path: ['cancellationPolicy', 'type'],
-        equals: 'flexible'
-      }
+      OR: [
+        {
+          bookingAndTickets: {
+            path: ['cancellationPolicy'],
+            string_contains: 'free cancellation'
+          }
+        },
+        {
+          bookingAndTickets: {
+            path: ['cancellationPolicy', 'type'],
+            equals: 'flexible'
+          }
+        }
+      ]
     });
   }
 
@@ -293,48 +303,11 @@ function buildTourFilters(queryParams) {
 
 /**
  * Build price filter based on range or specific values
+ * Returns null — price filtering is handled via raw SQL in the controller
+ * because Prisma's JSON path filter cannot traverse JSON arrays with comparisons.
  */
 function buildPriceFilter(minPrice, maxPrice, priceRange) {
-  // Define price ranges
-  const priceRanges = {
-    budget: { min: 0, max: 50 },
-    moderate: { min: 50, max: 150 },
-    luxury: { min: 150, max: 999999 }
-  };
-
-  let min = minPrice ? parseFloat(minPrice) : null;
-  let max = maxPrice ? parseFloat(maxPrice) : null;
-
-  // Apply predefined range if specified
-  if (priceRange && priceRanges[priceRange]) {
-    min = min || priceRanges[priceRange].min;
-    max = max || priceRanges[priceRange].max;
-  }
-
-  if (!min && !max) return null;
-
-  // Build filter for adult price in pricing schedules
-  const conditions = [];
-
-  if (min !== null) {
-    conditions.push({
-      schedulesAndPricing: {
-        path: ['pricing', 'adult'],
-        gte: min
-      }
-    });
-  }
-
-  if (max !== null) {
-    conditions.push({
-      schedulesAndPricing: {
-        path: ['pricing', 'adult'],
-        lte: max
-      }
-    });
-  }
-
-  return conditions.length > 0 ? { AND: conditions } : null;
+  return null;
 }
 
 /**

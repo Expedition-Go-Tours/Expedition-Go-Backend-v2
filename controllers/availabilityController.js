@@ -327,42 +327,44 @@ exports.batchUpdateAvailability = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found or access denied', 404));
   }
 
-  const results = [];
+  const results = await prisma.$transaction(async (tx) => {
+    const created = [];
+    for (const update of updates) {
+      const { date, status, capacity, timeSlotOverrides, notes } = update;
+      const parsedDate = parseISO(date);
 
-  for (const update of updates) {
-    const { date, status, capacity, timeSlotOverrides, notes } = update;
-    const parsedDate = parseISO(date);
+      if (isNaN(parsedDate.getTime())) {
+        throw new AppError(`Invalid date format: ${date}. Use YYYY-MM-DD.`, 400);
+      }
 
-    if (isNaN(parsedDate.getTime())) {
-      return next(new AppError(`Invalid date format: ${date}. Use YYYY-MM-DD.`, 400));
+      if (status && !['AVAILABLE', 'LIMITED', 'FULL', 'BLOCKED'].includes(status)) {
+        throw new AppError(`Invalid status for ${date}. Must be AVAILABLE, LIMITED, FULL, or BLOCKED.`, 400);
+      }
+
+      const override = await tx.tourDateOverride.upsert({
+        where: {
+          tourId_date: { tourId, date: parsedDate },
+        },
+        update: {
+          ...(status && { status }),
+          ...(capacity !== undefined && { capacity }),
+          ...(timeSlotOverrides && { timeSlotOverrides }),
+          ...(notes !== undefined && { notes }),
+        },
+        create: {
+          tourId,
+          date: parsedDate,
+          status: status || 'AVAILABLE',
+          capacity: capacity ?? null,
+          timeSlotOverrides: timeSlotOverrides || undefined,
+          notes: notes || null,
+        },
+      });
+
+      created.push(override);
     }
-
-    if (status && !['AVAILABLE', 'LIMITED', 'FULL', 'BLOCKED'].includes(status)) {
-      return next(new AppError(`Invalid status for ${date}. Must be AVAILABLE, LIMITED, FULL, or BLOCKED.`, 400));
-    }
-
-    const override = await prisma.tourDateOverride.upsert({
-      where: {
-        tourId_date: { tourId, date: parsedDate },
-      },
-      update: {
-        ...(status && { status }),
-        ...(capacity !== undefined && { capacity }),
-        ...(timeSlotOverrides && { timeSlotOverrides }),
-        ...(notes !== undefined && { notes }),
-      },
-      create: {
-        tourId,
-        date: parsedDate,
-        status: status || 'AVAILABLE',
-        capacity: capacity ?? null,
-        timeSlotOverrides: timeSlotOverrides || undefined,
-        notes: notes || null,
-      },
-    });
-
-    results.push(override);
-  }
+    return created;
+  });
 
   res.status(200).json({
     status: 'success',

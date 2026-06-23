@@ -68,6 +68,9 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
     const where = buildTourFilters(req.query);
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
+    // Collect ID constraints from filters that cannot be expressed as Prisma queries
+    const idFilters = [];
+
     // Apply geo-spatial filter
     if (hasGeo) {
       const nearbyIds = await findNearbyTourIds(prisma, parseFloat(lat), parseFloat(lng), parseFloat(radius) || 50);
@@ -90,7 +93,38 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
           }
         };
       }
-      where.id = { in: nearbyIds };
+      idFilters.push({ id: { in: nearbyIds } });
+    }
+
+    // Apply price filter via raw SQL (JSONB paths into arrays not supported by Prisma)
+    const { minPrice, maxPrice, priceRange } = req.query;
+    const priceConstraint = await buildPriceIdConstraint(prisma, minPrice, maxPrice, priceRange);
+    if (priceConstraint === false) {
+      // No results match the price filter
+      const totalPages = Math.ceil(0 / parseInt(limit));
+      return {
+        status: 'success',
+        data: {
+          tours: [],
+          pagination: {
+            currentPage: parseInt(page), totalPages, totalCount: 0,
+            hasNextPage: false, hasPrevPage: false, limit: parseInt(limit)
+          },
+          appliedFilters: {
+            category: req.query.category, theme: req.query.theme,
+            location: req.query.location, priceRange: req.query.priceRange,
+            minRating: req.query.minRating, search: req.query.search,
+          }
+        }
+      };
+    }
+    if (priceConstraint !== null) {
+      idFilters.push({ id: { in: priceConstraint } });
+    }
+
+    // Merge ID constraints into the where clause
+    if (idFilters.length > 0) {
+      where.AND = [...(where.AND || []), ...idFilters];
     }
 
     const orderBy = sortBy === 'nearest' && hasGeo ? { createdAt: 'desc' } : buildSortOptions(sortBy, sortOrder);
@@ -1343,5 +1377,45 @@ exports.validatePromoCode = catchAsync(async (req, res, next) => {
     },
   });
 });
+
+/**
+ * Find tour IDs matching a price range by querying into the schedulesAndPricing JSONB array.
+ * Returns null if no price filter is active, false if no tours match, or an array of tour IDs.
+ */
+async function buildPriceIdConstraint(prisma, minPrice, maxPrice, priceRange) {
+  const priceRanges = {
+    budget: { min: 0, max: 50 },
+    moderate: { min: 50, max: 150 },
+    luxury: { min: 150, max: 999999 }
+  };
+
+  let min = minPrice ? parseFloat(minPrice) : null;
+  let max = maxPrice ? parseFloat(maxPrice) : null;
+
+  if (priceRange && priceRanges[priceRange]) {
+    min = min !== null ? min : priceRanges[priceRange].min;
+    max = max !== null ? max : priceRanges[priceRange].max;
+  }
+
+  if (min === null && max === null) return null;
+
+  const params = [];
+  const clauses = [];
+  if (min !== null) { params.push(min); clauses.push(`(p->>'retailPrice')::numeric >= $${params.length}`); }
+  if (max !== null) { params.push(max); clauses.push(`(p->>'retailPrice')::numeric <= $${params.length}`); }
+
+  const sql = `
+    SELECT DISTINCT t.id
+    FROM "Tour" t,
+         jsonb_array_elements(t."schedulesAndPricing"->'pricingSchedules'->'schedules') AS s,
+         jsonb_array_elements(s->'prices') AS p
+    WHERE p->>'ageGroup' = 'adult'
+      AND ${clauses.join(' AND ')}
+  `;
+
+  const rows = await prisma.$queryRawUnsafe(sql, ...params);
+  const ids = rows.map(r => r.id);
+  return ids.length > 0 ? ids : false;
+}
 
 module.exports = exports;

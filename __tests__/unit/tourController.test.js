@@ -180,7 +180,9 @@ describe('tourController', () => {
       expect(prisma.tour.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            id: { in: ['tour-1'] },
+            AND: expect.arrayContaining([
+              expect.objectContaining({ id: { in: ['tour-1'] } }),
+            ]),
           }),
         })
       );

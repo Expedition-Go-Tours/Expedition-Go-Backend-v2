@@ -257,13 +257,16 @@ async function sendSupplierStatusEmail(email, status, data = {}) {
  */
 async function sendReviewNotificationEmail(review) {
   try {
-    const supplier = await prisma.user.findUnique({
-      where: { id: review.tour.supplierId }
-    });
+    const tour = review.tour
+      ? review.tour
+      : await prisma.tour.findUnique({ where: { id: review.tourId }, select: { id: true, title: true, supplierId: true } });
 
-    const customer = await prisma.user.findUnique({
-      where: { id: review.customerId }
-    });
+    if (!tour) throw new Error(`Tour ${review.tourId} not found for review ${review.id}`);
+
+    const [supplier, customer] = await Promise.all([
+      prisma.user.findUnique({ where: { id: tour.supplierId } }),
+      prisma.user.findUnique({ where: { id: review.customerId } })
+    ]);
 
     await sendEmail({
       to: supplier.email,
@@ -271,7 +274,7 @@ async function sendReviewNotificationEmail(review) {
       template: 'review-notification',
       data: {
         supplierName: supplier.name,
-        tourTitle: review.tour.title,
+        tourTitle: tour.title,
         customerName: customer.name,
         rating: review.rating,
         reviewTitle: review.title,

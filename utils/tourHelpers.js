@@ -287,7 +287,7 @@ async function checkTourAvailability(tourId, selectedDate, selectedTime = null) 
         bookings: {
           where: {
             selectedDate: new Date(selectedDate),
-            selectedTime: selectedTime,
+            selectedTime: selectedTime ?? undefined,
             status: {
               in: ['PENDING', 'CONFIRMED']
             }

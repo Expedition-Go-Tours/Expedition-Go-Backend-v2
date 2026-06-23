@@ -64,6 +64,7 @@ function getConnection() {
 const QUEUE_NAMES = {
   EVENTS:     'analytics-events',
   NOTIFICATIONS: 'communications-notifications',
+  EMAILS:     'communications-emails',
   AGGREGATIONS: 'analytics-aggregations',
   CLEANUP:    'system-cleanup',
 };
@@ -96,6 +97,7 @@ function getQueue(queueName) {
 // ---------------------------------------------------------------------------
 const eventQueue       = () => getQueue(QUEUE_NAMES.EVENTS);
 const notificationQueue = () => getQueue(QUEUE_NAMES.NOTIFICATIONS);
+const emailQueue       = () => getQueue(QUEUE_NAMES.EMAILS);
 const aggregationQueue = () => getQueue(QUEUE_NAMES.AGGREGATIONS);
 const cleanupQueue     = () => getQueue(QUEUE_NAMES.CLEANUP);
 
@@ -198,9 +200,17 @@ async function processEmailJob(job) {
  * Falls back to direct sending when Redis/BullMQ is unavailable.
  */
 async function enqueueEmail(job) {
-  processEmailJob(job).catch((err) => {
-    console.error('[Queue] Direct email failed:', err.message);
-  });
+  try {
+    await emailQueue().add('email', job, {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 2000 },
+    });
+  } catch {
+    // Redis unavailable — send directly as fallback
+    processEmailJob(job).catch((err) => {
+      console.error('[Queue] Direct email fallback failed:', err.message);
+    });
+  }
 }
 
 /**
@@ -267,13 +277,20 @@ function registerWorkers() {
   });
 
   /* ------------------------------------------------------------------
+   * EMAIL WORKER
+   * ------------------------------------------------------------------ */
+  createWorker(QUEUE_NAMES.EMAILS, async (job) => {
+    await processEmailJob(job.data);
+  });
+
+  /* ------------------------------------------------------------------
    * AGGREGATION WORKER
    * ------------------------------------------------------------------ */
   createWorker(QUEUE_NAMES.AGGREGATIONS, async (job) => {
     switch (job.name) {
       case 'refresh-popularity':
         const cache = require('./cacheHelper');
-        await cache.invalidate(cache.TOUR_POPULAR_KEY);
+        await cache.invalidateKeys([cache.TOUR_POPULAR_KEY]);
         break;
       case 'cleanup-events':
         const prisma = require('./prismaClient');

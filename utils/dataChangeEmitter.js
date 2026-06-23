@@ -58,7 +58,8 @@ function setupPrismaMiddleware(prisma) {
 
     if (TRACKED_MODELS.has(params.model)) {
       if (params.action === 'create' || params.action === 'update' || params.action === 'delete' || params.action === 'updateMany' || params.action === 'deleteMany') {
-        const recordId = params.args?.where?.id || result?.id || null;
+        const whereId = params.args?.where?.id;
+        const recordId = (typeof whereId === 'string' ? whereId : null) || result?.id || null;
         setImmediate(() => {
           emitDataChange(params.model, params.action, recordId);
           emitModelEvent(params.model, params.action, recordId);

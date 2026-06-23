@@ -309,6 +309,7 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
 
   const paymentMethod = method.type;
 
+  // totalEarnings was already incremented in handlePaymentSucceeded, no double-counting
   const [updated] = await prisma.$transaction([
     prisma.payout.update({
       where: { id },
@@ -322,11 +323,7 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
         reference: reference || null,
         notes: notes || null
       }
-    }),
-    prisma.supplierProfile.update({
-      where: { userId: payout.supplierId },
-      data: { totalEarnings: { increment: parseFloat(payout.amount) } },
-    }),
+    })
   ]);
 
   enqueueNotification({

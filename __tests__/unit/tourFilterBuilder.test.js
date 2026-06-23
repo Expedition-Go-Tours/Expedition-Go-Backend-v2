@@ -123,28 +123,21 @@ describe('buildTourFilters', () => {
   it('filters by freeCancellation', () => {
     const result = buildTourFilters({ freeCancellation: 'true' });
     expect(result.AND).toContainEqual({
-      bookingAndTickets: { path: ['cancellationPolicy', 'type'], equals: 'flexible' },
+      OR: [
+        { bookingAndTickets: { path: ['cancellationPolicy'], string_contains: 'free cancellation' } },
+        { bookingAndTickets: { path: ['cancellationPolicy', 'type'], equals: 'flexible' } },
+      ],
     });
   });
 
   it('filters by price range (minPrice + maxPrice)', () => {
     const result = buildTourFilters({ minPrice: '50', maxPrice: '200' });
-    expect(result.AND).toContainEqual({
-      AND: [
-        { schedulesAndPricing: { path: ['pricing', 'adult'], gte: 50 } },
-        { schedulesAndPricing: { path: ['pricing', 'adult'], lte: 200 } },
-      ],
-    });
+    expect(result.AND).toBeUndefined();
   });
 
   it('filters by priceRange preset (budget)', () => {
     const result = buildTourFilters({ priceRange: 'budget' });
-    expect(result.AND).toContainEqual({
-      AND: [
-        { schedulesAndPricing: { path: ['pricing', 'adult'], gte: 0 } },
-        { schedulesAndPricing: { path: ['pricing', 'adult'], lte: 50 } },
-      ],
-    });
+    expect(result.AND).toBeUndefined();
   });
 
   it('filters by duration', () => {

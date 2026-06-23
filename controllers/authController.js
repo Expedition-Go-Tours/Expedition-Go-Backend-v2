@@ -2,7 +2,7 @@ const bcrypt = require('bcrypt');
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
-const { signAccessToken, signRefreshToken, setAuthCookies, clearAuthCookies } = require('../config/jwt');
+const { signAccessToken, signRefreshToken, signPasswordResetToken, verifyPasswordResetToken, setAuthCookies, clearAuthCookies } = require('../config/jwt');
 const { storeRefreshToken, rotateRefreshToken, clearRefreshToken } = require('../utils/refreshTokenHelper');
 const event = require('../utils/eventEmitter');
 const passport = require('passport');
@@ -209,7 +209,7 @@ exports.forgotPassword = catchAsync(async (req, res, next) => {
     });
   }
 
-  const resetToken = signAccessToken({ userId: user.id, purpose: 'password_reset' });
+  const resetToken = signPasswordResetToken({ userId: user.id });
 
   const resetUrl = `${process.env.CLIENT_URL || 'http://localhost:8080'}/reset-password?token=${resetToken}`;
 
@@ -250,13 +250,9 @@ exports.resetPassword = catchAsync(async (req, res, next) => {
 
   let decoded;
   try {
-    decoded = require('../config/jwt').verifyAccessToken(token);
+    decoded = verifyPasswordResetToken(token);
   } catch {
     return next(new AppError('Invalid or expired reset token', 400));
-  }
-
-  if (decoded.purpose !== 'password_reset') {
-    return next(new AppError('Invalid reset token', 400));
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
@@ -363,6 +359,7 @@ exports.googleCallback = (req, res, next) => {
     });
 
     const origin = req.query.state || process.env.CLIENT_URL || 'http://localhost:8080';
-    res.redirect(`${origin}/auth/callback?accessToken=${accessToken}&refreshToken=${refreshToken}`);
+    setAuthCookies(res, accessToken, refreshToken);
+    res.redirect(`${origin}/auth/callback?accessToken=${encodeURIComponent(accessToken)}&refreshToken=${encodeURIComponent(refreshToken)}`);
   })(req, res, next);
 };

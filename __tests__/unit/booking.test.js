@@ -52,6 +52,7 @@ const mockReq = (overrides = {}) => ({
   body: {},
   params: {},
   query: {},
+  headers: {},
   originalUrl: '/api/bookings',
   ip: '127.0.0.1',
   ...overrides,
@@ -577,7 +578,7 @@ describe('Booking Controller', () => {
     });
 
     it('skips notification for status without message', async () => {
-      const supplierBooking = { ...mockBooking, tour: { supplierId: 'supplier-1', title: 'Tour' }, customer: { id: 'c-1' } };
+      const supplierBooking = { ...mockBooking, status: 'CANCELLED', tour: { supplierId: 'supplier-1', title: 'Tour' }, customer: { id: 'c-1' } };
       prisma.booking.findFirst.mockResolvedValue(supplierBooking);
       prisma.booking.update.mockResolvedValue({ ...supplierBooking, status: 'REFUNDED' });
       const req = mockReq({

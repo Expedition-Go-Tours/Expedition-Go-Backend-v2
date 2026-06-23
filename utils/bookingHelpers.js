@@ -38,6 +38,7 @@ async function generateBookingNumber() {
   
   // Fallback with UUID if still colliding
   const { v4: uuidv4 } = require('uuid');
+  console.warn(`[BookingHelpers] Booking number collision after ${attempt} attempts, using UUID fallback. Prefix: ${prefix}`);
   return `${prefix}${uuidv4().replace(/-/g, '').substring(0, 10).toUpperCase()}`;
 }
 

@@ -3,7 +3,7 @@ jest.mock('../../utils/prismaClient', () => ({
   user: { update: jest.fn(), findUnique: jest.fn() },
   tour: { groupBy: jest.fn(), findMany: jest.fn(), count: jest.fn() },
   booking: { groupBy: jest.fn(), findMany: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
-  review: { findMany: jest.fn(), aggregate: jest.fn() },
+  review: { findMany: jest.fn(), aggregate: jest.fn(), count: jest.fn() },
   payout: { findMany: jest.fn(), count: jest.fn() },
 }));
 
@@ -319,6 +319,7 @@ describe('supplierController', () => {
     it('returns dashboard with aggregated stats', async () => {
       prisma.supplierProfile.findUnique.mockResolvedValue(mockProfile);
       prisma.review.findMany.mockResolvedValue(mockReviews());
+      prisma.review.count.mockResolvedValue(mockReviews().length);
 
       await controller.getDashboard(req, res, next);
 
@@ -341,7 +342,7 @@ describe('supplierController', () => {
             earnings: expect.any(Object),
             tours: expect.objectContaining({ total: 8, active: 5, draft: 3 }),
             bookings: expect.objectContaining({ total: 22, confirmed: 10 }),
-            reviews: expect.objectContaining({ averageRating: 4.5, totalReviews: 20, recentReviews: expect.any(Array) }),
+            reviews: expect.objectContaining({ averageRating: 4.5, totalReviews: mockReviews().length, recentReviews: expect.any(Array) }),
           }),
         })
       );
@@ -351,6 +352,7 @@ describe('supplierController', () => {
       prisma.supplierProfile.findUnique.mockResolvedValue(mockProfile);
       prisma.tour.groupBy.mockResolvedValue([]);
       prisma.booking.groupBy.mockResolvedValue([]);
+      prisma.review.count.mockResolvedValue(0);
 
       await controller.getDashboard(req, res, next);
 

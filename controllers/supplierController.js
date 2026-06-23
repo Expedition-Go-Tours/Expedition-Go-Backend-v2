@@ -185,7 +185,7 @@ exports.getDashboard = catchAsync(async (req, res, next) => {
 
   const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
-  const [tourStats, bookingStats, recentReviews] = await Promise.all([
+  const [tourStats, bookingStats, recentReviews, reviewCount] = await Promise.all([
     // Tour counts by status
     prisma.tour.groupBy({
       by: ['status'],
@@ -209,6 +209,11 @@ exports.getDashboard = catchAsync(async (req, res, next) => {
       },
       orderBy: { createdAt: 'desc' },
       take: 5,
+    }),
+
+    // Total review count
+    prisma.review.count({
+      where: { tour: { supplierId }, status: 'APPROVED' },
     }),
   ]);
 
@@ -238,7 +243,7 @@ exports.getDashboard = catchAsync(async (req, res, next) => {
       },
       reviews: {
         averageRating: Number(supplierProfile.averageRating) || 0,
-        totalReviews: supplierProfile.totalBookings || 0,
+        totalReviews: reviewCount,
         recentReviews,
       },
     },

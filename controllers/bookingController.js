@@ -276,6 +276,28 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       return next(new AppError('Cart is empty or expired', 400));
     }
 
+    // Recheck availability for each cart item
+    for (const item of cartItems) {
+      const availability = await checkTourAvailability(
+        item.tourId,
+        item.selectedDate.toISOString().split('T')[0],
+        null
+      );
+      if (!availability.available) {
+        return next(new AppError(
+          `"${item.tour.title}" is no longer available on ${item.selectedDate.toISOString().split('T')[0]}`,
+          400
+        ));
+      }
+      const totalTravelers = (item.travelers.adults || 0) + (item.travelers.children || 0) + (item.travelers.infants || 0);
+      if (totalTravelers > availability.availableSpots) {
+        return next(new AppError(
+          `Only ${availability.availableSpots} spots left for "${item.tour.title}" on ${item.selectedDate.toISOString().split('T')[0]}, but ${totalTravelers} requested`,
+          400
+        ));
+      }
+    }
+
     bookingItems = cartItems.map(item => ({
       tourId: item.tourId,
       tour: item.tour,
@@ -435,11 +457,13 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     }
 
     // Create Stripe PaymentIntent (platform collects 100%, payouts handled via Payout model)
+    const idempotencyKey = req.headers['idempotency-key'] || `booking:${customerId}:${Date.now()}`;
     const paymentIntent = await createPaymentIntent({
       amount: Math.round(totalAmount * 100),
       currency: bookingItems[0].currency,
       customerId: req.user.stripeCustomerId,
       paymentMethodId,
+      idempotencyKey,
       metadata: {
         customerId,
         bookingIds: bookings.map(b => b.id).join(',')
@@ -866,6 +890,23 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
 
   if (!booking) {
     return next(new AppError('Booking not found or access denied', 404));
+  }
+
+  const VALID_TRANSITIONS = {
+    PENDING:   ['CONFIRMED', 'CANCELLED'],
+    CONFIRMED: ['COMPLETED', 'CANCELLED', 'NO_SHOW'],
+    COMPLETED: [],
+    CANCELLED: ['REFUNDED'],
+    REFUNDED:  [],
+    NO_SHOW:   [],
+  };
+
+  const allowed = VALID_TRANSITIONS[booking.status] || [];
+  if (!allowed.includes(status)) {
+    return next(new AppError(
+      `Cannot transition booking from ${booking.status} to ${status}. Allowed: ${allowed.join(', ') || 'none'}`,
+      400
+    ));
   }
 
   const updatedBooking = await prisma.booking.update({

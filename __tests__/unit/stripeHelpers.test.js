@@ -168,6 +168,7 @@ describe('processStripeWebhook', () => {
         },
         notification: { create: jest.fn().mockResolvedValue({}) },
         payout: { create: jest.fn().mockResolvedValue({ id: 'payout-1', status: 'PENDING' }) },
+        payoutMethod: { findFirst: jest.fn().mockResolvedValue({ id: 'pm-1', type: 'bank' }) },
         supplierProfile: { update: jest.fn().mockResolvedValue({}) },
         tour: { update: jest.fn().mockResolvedValue({}) },
       };

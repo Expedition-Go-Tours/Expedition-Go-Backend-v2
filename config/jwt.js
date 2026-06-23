@@ -2,9 +2,11 @@ const jwt = require('jsonwebtoken');
 
 const ACCESS_TOKEN_SECRET = process.env.JWT_SECRET || 'fallback-dev-secret';
 const REFRESH_TOKEN_SECRET = (process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || 'fallback-refresh-secret') + '_refresh';
+const PASSWORD_RESET_SECRET = process.env.JWT_PASSWORD_RESET_SECRET || (process.env.JWT_SECRET || 'fallback-reset-secret') + '_password_reset';
 
 const ACCESS_TOKEN_EXPIRY = '30m';
 const REFRESH_TOKEN_EXPIRY = '7d';
+const PASSWORD_RESET_EXPIRY = '15m';
 
 function signAccessToken(payload) {
   return jwt.sign(payload, ACCESS_TOKEN_SECRET, { expiresIn: ACCESS_TOKEN_EXPIRY });
@@ -43,6 +45,14 @@ const COOKIE_OPTIONS = Object.freeze({
   },
 });
 
+function signPasswordResetToken(payload) {
+  return jwt.sign(payload, PASSWORD_RESET_SECRET, { expiresIn: PASSWORD_RESET_EXPIRY });
+}
+
+function verifyPasswordResetToken(token) {
+  return jwt.verify(token, PASSWORD_RESET_SECRET);
+}
+
 function setAuthCookies(res, accessToken, refreshToken) {
   res.cookie('accessToken', accessToken, COOKIE_OPTIONS.accessToken);
   res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS.refreshToken);
@@ -58,8 +68,10 @@ function clearAuthCookies(res) {
 module.exports = {
   signAccessToken,
   signRefreshToken,
+  signPasswordResetToken,
   verifyAccessToken,
   verifyRefreshToken,
+  verifyPasswordResetToken,
   setAuthCookies,
   clearAuthCookies,
 };

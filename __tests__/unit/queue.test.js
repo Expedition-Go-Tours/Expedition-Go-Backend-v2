@@ -36,7 +36,7 @@ jest.mock('../../utils/auditLogger', () => ({
 }));
 
 jest.mock('../../utils/cacheHelper', () => ({
-  invalidate: jest.fn(),
+  invalidateKeys: jest.fn(),
   TOUR_POPULAR_KEY: 'tour:popular',
 }));
 
@@ -107,18 +107,22 @@ describe('queue', () => {
   });
 
   describe('enqueueEmail', () => {
-    it('calls processEmailJob with the job', async () => {
+    it('adds email job to the queue', async () => {
       const job = { type: 'supplier-status-email', email: 's@t.com', status: 'APPROVED', data: {} };
+
+      await queue.enqueueEmail(job);
+
+      expect(mockQueueInstance.add).toHaveBeenCalledWith('email', job, expect.objectContaining({ attempts: 3 }));
+    });
+
+    it('falls back to direct processing when Redis unavailable', async () => {
+      mockQueueInstance.add.mockRejectedValue(new Error('Redis down'));
       emailService.sendSupplierStatusEmail.mockResolvedValue();
+      const job = { type: 'supplier-status-email', email: 's@t.com', status: 'APPROVED', data: {} };
 
       await queue.enqueueEmail(job);
 
       expect(emailService.sendSupplierStatusEmail).toHaveBeenCalledWith('s@t.com', 'APPROVED', {});
-    });
-
-    it('handles processEmailJob errors gracefully', async () => {
-      emailService.sendSupplierStatusEmail.mockRejectedValue(new Error('Email failed'));
-      await expect(queue.enqueueEmail({ type: 'supplier-status-email', email: 's@t.com', status: 'APPROVED' })).resolves.not.toThrow();
     });
   });
 
@@ -246,7 +250,7 @@ describe('queue', () => {
 
       await workerCallback({ name: 'refresh-popularity' });
 
-      expect(cacheHelper.invalidate).toHaveBeenCalledWith('tour:popular');
+      expect(cacheHelper.invalidateKeys).toHaveBeenCalledWith(['tour:popular']);
     });
 
     it('aggregation worker handles cleanup-events', async () => {

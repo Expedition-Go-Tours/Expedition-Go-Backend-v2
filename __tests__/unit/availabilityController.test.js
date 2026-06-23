@@ -4,6 +4,7 @@ jest.mock('../../utils/prismaClient', () => ({
   tour: { findFirst: jest.fn() },
   tourDateOverride: { findMany: jest.fn(), upsert: jest.fn(), deleteMany: jest.fn() },
   booking: { findMany: jest.fn(), count: jest.fn() },
+  $transaction: jest.fn(),
 }));
 
 jest.mock('../../utils/getConfig', () => jest.fn().mockResolvedValue('50'));
@@ -42,6 +43,12 @@ describe('availabilityController', () => {
     prisma.booking.count.mockResolvedValue(0);
     prisma.tourDateOverride.upsert.mockResolvedValue({ id: 'ov-1', date: new Date(), status: 'AVAILABLE' });
     prisma.tourDateOverride.deleteMany.mockResolvedValue({ count: 1 });
+    prisma.$transaction.mockImplementation(async (cb) => {
+      const tx = {
+        tourDateOverride: { upsert: jest.fn().mockResolvedValue({ id: 'ov-1', date: new Date(), status: 'AVAILABLE' }) },
+      };
+      return cb(tx);
+    });
     getConfig.mockResolvedValue('50');
   });
 
@@ -315,7 +322,7 @@ describe('availabilityController', () => {
 
       await controller.batchUpdateAvailability(req, res, next);
 
-      expect(prisma.tourDateOverride.upsert).toHaveBeenCalledTimes(2);
+      expect(prisma.$transaction).toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(200);
       const body = res.json.mock.calls[0][0];
       expect(body.data.count).toBe(2);

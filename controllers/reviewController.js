@@ -188,9 +188,8 @@ exports.updateReview = catchAsync(async (req, res, next) => {
   if (photos !== undefined) updateData.photos = photos;
 
   const ratingChanged = rating !== undefined && rating !== existingReview.rating;
-  const contentChanged = rating !== undefined || title !== undefined || comment !== undefined;
 
-  if (contentChanged) {
+  if (ratingChanged && existingReview.status === 'APPROVED') {
     updateData.status = 'PENDING';
   }
 
@@ -748,7 +747,9 @@ exports.getPendingReviews = catchAsync(async (req, res, next) => {
             coverPhoto: true,
             supplier: {
               select: {
-                name: true
+                id: true,
+                name: true,
+                photoURL: true
               }
             }
           }

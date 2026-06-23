@@ -42,7 +42,8 @@ async function createPaymentIntent({
   currency = 'USD',
   customerId,
   paymentMethodId,
-  metadata = {}
+  metadata = {},
+  idempotencyKey
 }) {
   try {
     const paymentIntentData = {
@@ -56,7 +57,8 @@ async function createPaymentIntent({
       metadata
     };
 
-    const paymentIntent = await getStripe().paymentIntents.create(paymentIntentData);
+    const options = idempotencyKey ? { idempotencyKey } : {};
+    const paymentIntent = await getStripe().paymentIntents.create(paymentIntentData, options);
 
     console.log(` Payment Intent created: ${paymentIntent.id} for amount: ${amount}`);
     return paymentIntent;
@@ -76,9 +78,11 @@ async function calculateCommission(bookingAmount, supplierProfile) {
   let commissionRate = defaultRate;
 
   // Adjust rate based on supplier performance
-  if (supplierProfile.totalBookings > 100) {
+  // Use totalBookings + 1 since this booking hasn't been counted yet
+  const bookingCount = supplierProfile.totalBookings + 1;
+  if (bookingCount > 100) {
     commissionRate = Math.max(0.01, defaultRate - 0.03);
-  } else if (supplierProfile.totalBookings > 50) {
+  } else if (bookingCount > 50) {
     commissionRate = Math.max(0.01, defaultRate - 0.02);
   } else if (supplierProfile.averageRating && supplierProfile.averageRating >= 4.8) {
     commissionRate = Math.max(0.01, defaultRate - 0.01);
@@ -238,15 +242,21 @@ async function handlePaymentSucceeded(paymentIntent) {
 
       // Increment spotsSold for applied special offer
       if (booking.appliedOfferId) {
+        const travelerCount = (booking.travelers?.adults || 0) + (booking.travelers?.children || 0) + (booking.travelers?.infants || 0);
         await tx.specialOffer.update({
           where: { id: booking.appliedOfferId },
-          data: { spotsSold: { increment: 1 } },
+          data: { spotsSold: { increment: travelerCount } },
         });
       }
 
       // Create Payout record (PENDING — awaits admin approval)
       // Only create if amount meets the minimum threshold from system config
       if (parseFloat(booking.supplierPayout) >= payoutMinThreshold) {
+        const defaultMethod = await tx.payoutMethod.findFirst({
+          where: { supplierId: booking.tour.supplierId, verified: true },
+          orderBy: { isDefault: 'desc' }
+        });
+
         await tx.payout.create({
           data: {
             supplierId: booking.tour.supplierId,
@@ -254,7 +264,8 @@ async function handlePaymentSucceeded(paymentIntent) {
             amount: booking.supplierPayout,
             currency: booking.currency,
             commissionAmount: booking.commissionAmount,
-            status: 'PENDING'
+            status: 'PENDING',
+            payoutMethodId: defaultMethod?.id || null
           }
         });
       }
