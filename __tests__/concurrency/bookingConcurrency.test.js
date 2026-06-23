@@ -115,6 +115,7 @@ function mockReq(uid, overrides = {}) {
     },
     params: {},
     query: {},
+    headers: {},
     originalUrl: '/api/bookings',
     ip: '127.0.0.1',
     ...overrides,
@@ -249,6 +250,7 @@ describe('Concurrency — Double Booking Prevention', () => {
       booking: { updateMany: jest.fn().mockResolvedValue({ count: 2 }), findMany: jest.fn().mockResolvedValue([mockBooking]) },
       notification: { create: jest.fn().mockResolvedValue({}) },
       payout: { create: jest.fn().mockResolvedValue({ id: 'payout-concur-1', status: 'PENDING' }) },
+      payoutMethod: { findFirst: jest.fn().mockResolvedValue({ id: 'pm-concur-1', type: 'bank' }) },
       supplierProfile: { update: jest.fn().mockResolvedValue({}) },
       tour: { update: jest.fn().mockResolvedValue({}) },
     };

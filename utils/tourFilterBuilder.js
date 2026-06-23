@@ -306,7 +306,7 @@ function buildTourFilters(queryParams) {
  * Returns null — price filtering is handled via raw SQL in the controller
  * because Prisma's JSON path filter cannot traverse JSON arrays with comparisons.
  */
-function buildPriceFilter(minPrice, maxPrice, priceRange) {
+function buildPriceFilter() {
   return null;
 }
 

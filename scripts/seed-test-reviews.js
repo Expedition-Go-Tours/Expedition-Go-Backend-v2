@@ -85,7 +85,7 @@ async function main() {
       },
     });
 
-    const review = await prisma.review.create({
+    await prisma.review.create({
       data: {
         bookingId: booking.id,
         customerId: customer.id,

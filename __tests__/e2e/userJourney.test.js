@@ -322,6 +322,7 @@ describe('E2E: Full User Journey', () => {
       }]) },
       notification: { create: jest.fn().mockResolvedValue({}) },
       payout: { create: jest.fn().mockResolvedValue({ id: 'payout-e2e-1', status: 'PENDING' }) },
+      payoutMethod: { findFirst: jest.fn().mockResolvedValue({ id: 'pm-e2e-1', type: 'bank' }) },
       supplierProfile: { update: jest.fn().mockResolvedValue({}) },
       tour: { update: jest.fn().mockResolvedValue({}) },
     };
@@ -403,6 +404,7 @@ describe('E2E: Full User Journey', () => {
       }]) },
       notification: { create: jest.fn().mockResolvedValue({}) },
       payout: { create: jest.fn().mockResolvedValue({ id: 'payout-e2e-1', status: 'PENDING' }) },
+      payoutMethod: { findFirst: jest.fn().mockResolvedValue({ id: 'pm-e2e-1', type: 'bank' }) },
       supplierProfile: { update: jest.fn().mockResolvedValue({}) },
       tour: { update: jest.fn().mockResolvedValue({}) },
     };
