@@ -65,32 +65,18 @@ const router = express.Router();
  */
 router.get('/tours/:tourId', reviewController.getTourReviews);
 
-/**
- * @swagger
- * /reviews/{id}:
- *   get:
- *     summary: Get single review details
- *     tags: [Reviews]
- *     parameters:
- *       - name: id
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Review retrieved successfully
- *       404:
- *         description: Review not found
- */
-router.get('/:id', reviewController.getReview);
-
 // ================================
 // AUTHENTICATED REVIEW ENDPOINTS
 // ================================
 
 // All routes below require authentication
 router.use(protect);
+
+// Literal paths BEFORE parameterized /:id to avoid route collision
+router.get('/admin/pending', restrictTo('admin'), requirePermission('reviews.view'), reviewController.getPendingReviews);
+router.get('/supplier/reviews', resolveSupplier, requireTeamPermission('reviews.view'), reviewController.getSupplierReviews);
+
+router.post('/', uploadReviewPhotos, reviewController.createReview);
 
 /**
  * @swagger
@@ -171,7 +157,7 @@ router.use(protect);
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post('/', uploadReviewPhotos, reviewController.createReview);
+router.get('/:id', reviewController.getReview);
 
 /**
  * @swagger
@@ -437,82 +423,8 @@ router.patch('/:id/response', resolveSupplier, requireTeamPermission('reviews.re
 router.delete('/:id/response', resolveSupplier, requireTeamPermission('reviews.respond'), reviewController.deleteSupplierResponse);
 
 // ================================
-// SUPPLIER REVIEW MANAGEMENT
-// ================================
-
-/**
- * @swagger
- * /reviews/supplier/reviews:
- *   get:
- *     summary: Get reviews for supplier's tours
- *     tags: [Reviews, Supplier]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - name: tourId
- *         in: query
- *         schema:
- *           type: string
- *       - name: status
- *         in: query
- *         schema:
- *           type: string
- *           enum: [PENDING, APPROVED, REJECTED, FLAGGED]
- *           default: APPROVED
- *       - name: rating
- *         in: query
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 5
- *       - name: page
- *         in: query
- *         schema:
- *           type: integer
- *           default: 1
- *       - name: limit
- *         in: query
- *         schema:
- *           type: integer
- *           default: 10
- *     responses:
- *       200:
- *         description: Supplier reviews retrieved successfully
- *       403:
- *         description: Access denied
- */
-router.get('/supplier/reviews', resolveSupplier, requireTeamPermission('reviews.view'), reviewController.getSupplierReviews);
-
-// ================================
 // ADMIN MODERATION ENDPOINTS
 // ================================
-
-/**
- * @swagger
- * /reviews/admin/pending:
- *   get:
- *     summary: Get reviews pending moderation (admin only)
- *     tags: [Reviews, Admin]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - name: page
- *         in: query
- *         schema:
- *           type: integer
- *           default: 1
- *       - name: limit
- *         in: query
- *         schema:
- *           type: integer
- *           default: 20
- *     responses:
- *       200:
- *         description: Pending reviews retrieved successfully
- *       403:
- *         description: Access denied
- */
-router.get('/admin/pending', restrictTo('admin'), requirePermission('reviews.view'), reviewController.getPendingReviews);
 
 /**
  * @swagger
