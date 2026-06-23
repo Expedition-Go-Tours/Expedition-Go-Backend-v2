@@ -96,6 +96,7 @@ describe('reviewController', () => {
 
     it('returns 404 when booking not found', async () => {
       prisma.booking.findFirst.mockResolvedValue(null);
+      req.body = { bookingId: 'b1', rating: 5 };
 
       await controller.createReview(req, res, next);
 
