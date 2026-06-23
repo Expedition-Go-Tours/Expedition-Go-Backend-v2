@@ -546,8 +546,8 @@ model Review {
   id           String      @id @default(cuid())
   
   // Relationships
-  bookingId    String      @unique
-  booking      Booking     @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingId    String?
+  booking      Booking?    @relation(fields: [bookingId], references: [id], onDelete: SetNull)
   customerId   String
   customer     User        @relation(fields: [customerId], references: [id])
   tourId       String
@@ -558,6 +558,15 @@ model Review {
   title        String?
   comment      String?
   photos       String[]    // Review photos
+  
+  // Sub-ratings
+  valueForMoneyRating Int?
+  guideRating         Int?
+  meetingRating       Int?
+  
+  // Travel metadata
+  travelMonth  String?
+  companions   String[]
   
   // Moderation
   status       ReviewStatus @default(PENDING)
@@ -579,6 +588,7 @@ model Review {
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
+  @@unique([bookingId])
   @@index([tourId])
   @@index([customerId])
   @@index([rating])

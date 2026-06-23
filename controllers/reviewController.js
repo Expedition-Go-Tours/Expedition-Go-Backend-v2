@@ -37,56 +37,93 @@ exports.createReview = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
   const {
     bookingId,
+    tourId: bodyTourId,
     rating,
     title,
     comment,
-    photos = []
+    valueForMoneyRating,
+    guideRating,
+    meetingRating,
+    travelMonth,
+    companions = []
   } = req.body;
 
-  // Validate booking exists, belongs to customer, paid and completed
-  const booking = await prisma.booking.findFirst({
-    where: {
-      id: bookingId,
-      customerId,
-      status: 'COMPLETED',
-      paymentStatus: 'SUCCEEDED',
-      selectedDate: { lte: new Date() }
-    },
-    include: {
-      tour: {
-        include: {
-          supplier: true
-        }
-      },
-      review: true
-    }
-  });
-
-  if (!booking) {
-    return next(new AppError('Booking not found or not eligible for review', 404));
-  }
-
-  if (booking.review) {
-    return next(new AppError('Review already exists for this booking', 400));
-  }
+  const photos = (req.files || []).map((f) => f.path || f.secure_url || f.url).filter(Boolean);
 
   if (!rating || rating < 1 || rating > 5) {
     return next(new AppError('Rating must be between 1 and 5', 400));
   }
 
-  // Create review (auto-approved, verified badge set)
+  let tourId;
+  let supplierId;
+  let tourTitle;
+  let verified = false;
+
+  if (bookingId) {
+    const booking = await prisma.booking.findFirst({
+      where: {
+        id: bookingId,
+        customerId,
+        status: 'COMPLETED',
+        paymentStatus: 'SUCCEEDED',
+        selectedDate: { lte: new Date() }
+      },
+      include: {
+        tour: { include: { supplier: true } },
+        review: true
+      }
+    });
+
+    if (!booking) {
+      return next(new AppError('Booking not found or not eligible for review', 404));
+    }
+    if (booking.review) {
+      return next(new AppError('Review already exists for this booking', 400));
+    }
+
+    tourId = booking.tourId;
+    supplierId = booking.tour.supplierId;
+    tourTitle = booking.tour.title;
+    verified = true;
+  } else {
+    if (!bodyTourId) {
+      return next(new AppError('Either bookingId or tourId is required', 400));
+    }
+    const tour = await prisma.tour.findUnique({
+      where: { id: bodyTourId },
+      include: { supplier: { select: { id: true } } }
+    });
+    if (!tour) {
+      return next(new AppError('Tour not found', 404));
+    }
+    tourId = bodyTourId;
+    supplierId = tour.supplier.id;
+    tourTitle = tour.title;
+  }
+
+  const parsedCompanions = Array.isArray(companions)
+    ? companions
+    : typeof companions === 'string'
+      ? companions.split(',').map((c) => c.trim()).filter(Boolean)
+      : [];
+
   const result = await prisma.$transaction(async (tx) => {
     const review = await tx.review.create({
       data: {
-        bookingId,
+        bookingId: bookingId || null,
         customerId,
-        tourId: booking.tourId,
+        tourId,
         rating,
         title,
         comment,
         photos,
+        valueForMoneyRating: valueForMoneyRating ? parseInt(valueForMoneyRating) : null,
+        guideRating: guideRating ? parseInt(guideRating) : null,
+        meetingRating: meetingRating ? parseInt(meetingRating) : null,
+        travelMonth: travelMonth || null,
+        companions: parsedCompanions,
         status: 'APPROVED',
-        verified: true
+        verified
       },
       include: {
         customer: {
@@ -105,39 +142,31 @@ exports.createReview = catchAsync(async (req, res, next) => {
       }
     });
 
-    // Update tour stats (review is APPROVED, so it counts)
-    await addApprovedRating(tx, booking.tourId, rating);
-    // Update supplier stats
-    await recalculateSupplierRating(tx, booking.tour.supplierId);
+    await addApprovedRating(tx, tourId, rating);
+    await recalculateSupplierRating(tx, supplierId);
 
     return review;
   });
 
-  // Send notification to supplier through the queue
   enqueueNotification({
-    userId: booking.tour.supplierId,
+    userId: supplierId,
     type: 'REVIEW_RECEIVED',
     title: 'New Review Received',
-    message: `You received a ${rating}-star review for "${booking.tour.title}"`,
+    message: `You received a ${rating}-star review for "${tourTitle}"`,
     data: {
       reviewId: result.id,
-      tourId: booking.tourId,
+      tourId,
       rating
     },
     sendEmail: true
   }).catch((err) => console.error('[Notification] enqueueNotification (review) failed:', err.message));
 
-  // Log activity
   await logActivity({
     userId: customerId,
     action: 'review.created',
     resource: 'Review',
     resourceId: result.id,
-    metadata: {
-      tourId: booking.tourId,
-      rating,
-      bookingId
-    }
+    metadata: { tourId, rating, bookingId: bookingId || null }
   });
 
   event.emit({
@@ -146,7 +175,7 @@ exports.createReview = catchAsync(async (req, res, next) => {
     req,
     resource: 'Review',
     resourceId: result.id,
-    properties: { tourId: booking.tourId, rating, bookingId, supplierId: booking.tour.supplierId },
+    properties: { tourId, rating, bookingId: bookingId || null, supplierId },
   });
 
   res.status(201).json({
@@ -165,8 +194,16 @@ exports.updateReview = catchAsync(async (req, res, next) => {
     rating,
     title,
     comment,
-    photos
+    valueForMoneyRating,
+    guideRating,
+    meetingRating,
+    travelMonth,
+    companions
   } = req.body;
+
+  const photos = (req.files || []).length > 0
+    ? (req.files || []).map((f) => f.path || f.secure_url || f.url).filter(Boolean)
+    : undefined;
 
   const existingReview = await prisma.review.findFirst({
     where: { id, customerId },
@@ -186,6 +223,17 @@ exports.updateReview = catchAsync(async (req, res, next) => {
   if (title !== undefined) updateData.title = title;
   if (comment !== undefined) updateData.comment = comment;
   if (photos !== undefined) updateData.photos = photos;
+  if (valueForMoneyRating !== undefined) updateData.valueForMoneyRating = valueForMoneyRating ? parseInt(valueForMoneyRating) : null;
+  if (guideRating !== undefined) updateData.guideRating = guideRating ? parseInt(guideRating) : null;
+  if (meetingRating !== undefined) updateData.meetingRating = meetingRating ? parseInt(meetingRating) : null;
+  if (travelMonth !== undefined) updateData.travelMonth = travelMonth || null;
+  if (companions !== undefined) {
+    updateData.companions = Array.isArray(companions)
+      ? companions
+      : typeof companions === 'string'
+        ? companions.split(',').map((c) => c.trim()).filter(Boolean)
+        : [];
+  }
 
   const ratingChanged = rating !== undefined && rating !== existingReview.rating;
 
