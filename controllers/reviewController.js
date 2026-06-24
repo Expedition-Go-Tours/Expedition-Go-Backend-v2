@@ -50,7 +50,8 @@ exports.createReview = catchAsync(async (req, res, next) => {
 
   const photos = (req.files || []).map((f) => f.path || f.secure_url || f.url).filter(Boolean);
 
-  if (!rating || rating < 1 || rating > 5) {
+  const parsedRating = parseInt(rating);
+  if (!parsedRating || parsedRating < 1 || parsedRating > 5) {
     return next(new AppError('Rating must be between 1 and 5', 400));
   }
 
@@ -117,7 +118,7 @@ exports.createReview = catchAsync(async (req, res, next) => {
         bookingId: bookingId || null,
         customerId,
         tourId,
-        rating,
+        rating: parsedRating,
         title,
         comment,
         photos,
@@ -146,7 +147,7 @@ exports.createReview = catchAsync(async (req, res, next) => {
       }
     });
 
-    await addApprovedRating(tx, tourId, rating);
+    await addApprovedRating(tx, tourId, parsedRating);
     await recalculateSupplierRating(tx, supplierId);
 
     return review;
@@ -156,11 +157,11 @@ exports.createReview = catchAsync(async (req, res, next) => {
     userId: supplierId,
     type: 'REVIEW_RECEIVED',
     title: 'New Review Received',
-    message: `You received a ${rating}-star review for "${tourTitle}"`,
+    message: `You received a ${parsedRating}-star review for "${tourTitle}"`,
     data: {
       reviewId: result.id,
       tourId,
-      rating
+      rating: parsedRating
     },
     sendEmail: true
   }).catch((err) => console.error('[Notification] enqueueNotification (review) failed:', err.message));
@@ -170,7 +171,7 @@ exports.createReview = catchAsync(async (req, res, next) => {
     action: 'review.created',
     resource: 'Review',
     resourceId: result.id,
-    metadata: { tourId, rating, bookingId: bookingId || null }
+    metadata: { tourId, rating: parsedRating, bookingId: bookingId || null }
   });
 
   event.emit({
@@ -179,7 +180,7 @@ exports.createReview = catchAsync(async (req, res, next) => {
     req,
     resource: 'Review',
     resourceId: result.id,
-    properties: { tourId, rating, bookingId: bookingId || null, supplierId },
+    properties: { tourId, rating: parsedRating, bookingId: bookingId || null, supplierId },
   });
 
   res.status(201).json({
@@ -218,7 +219,8 @@ exports.updateReview = catchAsync(async (req, res, next) => {
     return next(new AppError('Review not found or access denied', 404));
   }
 
-  if (rating && (rating < 1 || rating > 5)) {
+  const parsedUpdateRating = rating !== undefined ? parseInt(rating) : undefined;
+  if (parsedUpdateRating !== undefined && (parsedUpdateRating < 1 || parsedUpdateRating > 5)) {
     return next(new AppError('Rating must be between 1 and 5', 400));
   }
 
@@ -227,7 +229,7 @@ exports.updateReview = catchAsync(async (req, res, next) => {
   }
 
   const updateData = {};
-  if (rating !== undefined) updateData.rating = rating;
+  if (parsedUpdateRating !== undefined) updateData.rating = parsedUpdateRating;
   if (title !== undefined) updateData.title = title;
   if (comment !== undefined) updateData.comment = comment;
   if (photos !== undefined) updateData.photos = photos;
@@ -243,7 +245,7 @@ exports.updateReview = catchAsync(async (req, res, next) => {
         : [];
   }
 
-  const ratingChanged = rating !== undefined && rating !== existingReview.rating;
+  const ratingChanged = parsedUpdateRating !== undefined && parsedUpdateRating !== existingReview.rating;
 
   if (ratingChanged && existingReview.status === 'APPROVED') {
     updateData.status = 'PENDING';
@@ -968,17 +970,18 @@ exports.adminUpdateReview = catchAsync(async (req, res, next) => {
     return next(new AppError('Review not found', 404));
   }
 
-  if (rating !== undefined && (rating < 1 || rating > 5)) {
+  const parsedAdminRating = rating !== undefined ? parseInt(rating) : undefined;
+  if (parsedAdminRating !== undefined && (parsedAdminRating < 1 || parsedAdminRating > 5)) {
     return next(new AppError('Rating must be between 1 and 5', 400));
   }
 
   const updateData = {};
-  if (rating !== undefined) updateData.rating = rating;
+  if (parsedAdminRating !== undefined) updateData.rating = parsedAdminRating;
   if (title !== undefined) updateData.title = title;
   if (comment !== undefined) updateData.comment = comment;
   if (photos !== undefined) updateData.photos = photos;
 
-  const ratingChanged = rating !== undefined && rating !== review.rating;
+  const ratingChanged = parsedAdminRating !== undefined && parsedAdminRating !== review.rating;
 
   const updated = await prisma.$transaction(async (tx) => {
     const result = await tx.review.update({
@@ -992,7 +995,7 @@ exports.adminUpdateReview = catchAsync(async (req, res, next) => {
 
     if (review.status === 'APPROVED' && ratingChanged) {
       await removeApprovedRating(tx, review.tourId, review.rating);
-      await addApprovedRating(tx, review.tourId, rating);
+      await addApprovedRating(tx, review.tourId, parsedAdminRating);
       await recalculateSupplierRating(tx, review.tour.supplierId);
     }
 
