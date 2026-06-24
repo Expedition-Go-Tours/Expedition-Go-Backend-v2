@@ -54,6 +54,10 @@ exports.createReview = catchAsync(async (req, res, next) => {
     return next(new AppError('Rating must be between 1 and 5', 400));
   }
 
+  if (comment && comment.trim().length < 20) {
+    return next(new AppError('Review comment must be at least 20 characters', 400));
+  }
+
   let tourId;
   let supplierId;
   let tourTitle;
@@ -216,6 +220,10 @@ exports.updateReview = catchAsync(async (req, res, next) => {
 
   if (rating && (rating < 1 || rating > 5)) {
     return next(new AppError('Rating must be between 1 and 5', 400));
+  }
+
+  if (comment !== undefined && comment !== null && comment.trim().length < 20) {
+    return next(new AppError('Review comment must be at least 20 characters', 400));
   }
 
   const updateData = {};

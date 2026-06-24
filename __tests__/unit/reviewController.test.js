@@ -84,7 +84,7 @@ describe('reviewController', () => {
     });
 
     it('creates a review successfully', async () => {
-      req.body = { bookingId: 'b1', rating: 5, title: 'Great!', comment: 'Amazing' };
+      req.body = { bookingId: 'b1', rating: 5, title: 'Great!', comment: 'An absolutely amazing tour experience!' };
 
       await controller.createReview(req, res, next);
 
@@ -112,7 +112,7 @@ describe('reviewController', () => {
     });
 
     it('returns 400 for invalid rating', async () => {
-      req.body = { bookingId: 'b1', rating: 6, title: 'Great!', comment: 'Amazing' };
+      req.body = { bookingId: 'b1', rating: 6, title: 'Great!', comment: 'An absolutely amazing tour experience!' };
 
       await controller.createReview(req, res, next);
 
@@ -120,7 +120,7 @@ describe('reviewController', () => {
     });
 
     it('creates review WITHIN a transaction', async () => {
-      req.body = { bookingId: 'b1', rating: 4, title: 'Good', comment: 'Nice' };
+      req.body = { bookingId: 'b1', rating: 4, title: 'Good', comment: 'A really good tour experience overall' };
 
       await controller.createReview(req, res, next);
 
@@ -128,7 +128,7 @@ describe('reviewController', () => {
     });
 
     it('calls addApprovedRating and recalculateSupplierRating in transaction', async () => {
-      req.body = { bookingId: 'b1', rating: 4, title: 'Good', comment: 'Nice' };
+      req.body = { bookingId: 'b1', rating: 4, title: 'Good', comment: 'A really good tour experience overall' };
 
       await controller.createReview(req, res, next);
 
@@ -137,7 +137,7 @@ describe('reviewController', () => {
     });
 
     it('enqueues notification after creation', async () => {
-      req.body = { bookingId: 'b1', rating: 4, title: 'Good', comment: 'Nice' };
+      req.body = { bookingId: 'b1', rating: 4, title: 'Good', comment: 'A really good tour experience overall' };
 
       await controller.createReview(req, res, next);
 
@@ -145,7 +145,7 @@ describe('reviewController', () => {
     });
 
     it('logs activity after creation', async () => {
-      req.body = { bookingId: 'b1', rating: 4, title: 'Good', comment: 'Nice' };
+      req.body = { bookingId: 'b1', rating: 4, title: 'Good', comment: 'A really good tour experience overall' };
 
       await controller.createReview(req, res, next);
 
@@ -153,7 +153,7 @@ describe('reviewController', () => {
     });
 
     it('emits review.submitted event', async () => {
-      req.body = { bookingId: 'b1', rating: 4, title: 'Good', comment: 'Nice' };
+      req.body = { bookingId: 'b1', rating: 4, title: 'Good', comment: 'A really good tour experience overall' };
 
       await controller.createReview(req, res, next);
 
@@ -161,7 +161,7 @@ describe('reviewController', () => {
     });
 
     it('handles rating of 1 (minimum)', async () => {
-      req.body = { bookingId: 'b1', rating: 1, title: 'Bad', comment: 'Terrible' };
+      req.body = { bookingId: 'b1', rating: 1, title: 'Bad', comment: 'A truly terrible experience overall' };
 
       await controller.createReview(req, res, next);
 

@@ -127,7 +127,7 @@ router.post('/', uploadReviewPhotos, reviewController.createReview);
  *                 items:
  *                   type: string
  *                   format: binary
- *                 description: Review photos (max 5 images, JPEG/PNG, max 5MB each)
+ *                 description: Review photos (max 10 images, JPEG/PNG, max 5MB each)
  *     responses:
  *       201:
  *         description: Review created successfully
