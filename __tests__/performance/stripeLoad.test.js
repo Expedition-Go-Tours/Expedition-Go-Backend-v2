@@ -5,6 +5,8 @@ jest.mock('../../utils/prismaClient', () => ({
   notification: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), createMany: jest.fn() },
   supplierProfile: { findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
   stripeEvent: { findUnique: jest.fn(), upsert: jest.fn(), update: jest.fn() },
+  payoutMethod: { findFirst: jest.fn() },
+  specialOffer: { update: jest.fn() },
   $transaction: jest.fn(),
   $disconnect: jest.fn(),
 }));
@@ -16,6 +18,8 @@ jest.mock('../../utils/queue', () => ({
 jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
 
 jest.mock('../../utils/emailService', () => ({}));
+
+jest.mock('../../utils/getConfig', () => jest.fn().mockResolvedValue('0'));
 
 jest.mock('stripe', () => {
   return jest.fn().mockImplementation(() => ({
@@ -71,6 +75,8 @@ const mockTx = {
   supplierProfile: { update: jest.fn().mockResolvedValue({}) },
   tour: { update: jest.fn().mockResolvedValue({}) },
   payout: { create: jest.fn().mockResolvedValue({}) },
+  payoutMethod: { findFirst: jest.fn().mockResolvedValue({ id: 'pm-1' }) },
+  specialOffer: { update: jest.fn().mockResolvedValue({}) },
 };
 
 function makeStripeEvent(type) {
