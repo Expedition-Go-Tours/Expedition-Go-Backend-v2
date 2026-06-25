@@ -1,4 +1,5 @@
 jest.mock('../../utils/chatService');
+jest.mock('../../utils/cloudinaryHelper', () => ({ isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
 jest.mock('../../utils/prismaClient', () => ({
   user: { findUnique: jest.fn() },
   conversationParticipant: { findFirst: jest.fn() },
@@ -203,13 +204,13 @@ describe('chatController', () => {
 
     it('sends message with attachment', async () => {
       req.params = { id: 'c-1' };
-      req.body = { content: '', attachmentUrl: 'https://img.jpg', attachmentType: 'image' };
+      req.body = { content: '', attachmentUrl: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/chat-attachments/img.jpg', attachmentType: 'image' };
       chatService.sendMessage.mockResolvedValue({ id: 'm-1' });
       prisma.conversationParticipant.findFirst.mockResolvedValue({ userId: 'admin-1' });
 
       await controller.sendMessage(req, res, next);
 
-      expect(chatService.sendMessage).toHaveBeenCalledWith('c-1', 'u-1', '', { url: 'https://img.jpg', type: 'image' });
+      expect(chatService.sendMessage).toHaveBeenCalledWith('c-1', 'u-1', '', { url: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/chat-attachments/img.jpg', type: 'image' });
     });
 
     it('handles no io gracefully', async () => {
@@ -329,13 +330,13 @@ describe('chatController', () => {
 
   describe('uploadImage', () => {
     it('returns file URL when file provided', async () => {
-      req.file = { path: 'https://cdn.example.com/img.jpg' };
+      req.file = { path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/chat-attachments/img.jpg' };
 
       await controller.uploadImage(req, res, next);
 
       expect(res.json).toHaveBeenCalledWith({
         status: 'success',
-        data: { url: 'https://cdn.example.com/img.jpg', type: 'image' },
+        data: { url: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/chat-attachments/img.jpg', type: 'image' },
       });
     });
 

@@ -3,11 +3,11 @@ jest.mock('../../utils/prismaClient', () => ({
   tour: { findUnique: jest.fn(), findMany: jest.fn() },
 }));
 
-jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn() }));
+jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
 const prisma = require('../../utils/prismaClient');
-const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
+const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../../utils/cloudinaryHelper');
 const { logActivity } = require('../../utils/auditLogger');
 const { cloudinaryUrl } = require('../../utils/imageOptimizer');
 const controller = require('../../controllers/userController');
@@ -107,19 +107,19 @@ describe('userController', () => {
     });
 
     it('handles file upload and deletes old photo', async () => {
-      req.file = { path: '/new/photo.jpg' };
+      req.file = { path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/new-photo.jpg' };
 
       await controller.updateMe(req, res, next);
 
       expect(deleteCloudinaryImage).toHaveBeenCalledWith('photo.jpg');
       expect(prisma.user.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ photoURL: '/new/photo.jpg' }) })
+        expect.objectContaining({ data: expect.objectContaining({ photoURL: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/new-photo.jpg' }) })
       );
     });
 
     it('skips deleteCloudinaryImage when no existing photo', async () => {
       prisma.user.findUnique.mockResolvedValue({ ...mockUser, photoURL: null });
-      req.file = { path: '/new/photo.jpg' };
+      req.file = { path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/new-photo.jpg' };
 
       await controller.updateMe(req, res, next);
 

@@ -2,6 +2,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const chatService = require('../utils/chatService');
+const { isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 
 function canAccessType(user, type) {
   if (!user.roles?.includes('admin')) return true;
@@ -87,6 +88,10 @@ exports.sendMessage = catchAsync(async (req, res) => {
 
   if (!content && !attachmentUrl) {
     throw new AppError('Message content or attachment is required', 400);
+  }
+
+  if (attachmentUrl && !isValidCloudinaryUrl(attachmentUrl)) {
+    throw new AppError('Invalid attachment URL', 400);
   }
 
   const message = await chatService.sendMessage(id, req.user.id, content || '', {

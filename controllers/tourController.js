@@ -15,7 +15,7 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
-const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
+const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 const { createSlug, validateTourData } = require('../utils/tourHelpers');
 const { logActivity } = require('../utils/auditLogger');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
@@ -548,7 +548,12 @@ exports.createTour = catchAsync(async (req, res, next) => {
   } = req.body;
 
   // Get uploaded Cloudinary URLs from multer
-  const uploadedPhotos = (req.files || []).map(f => f.path);
+  const uploadedPhotos = (req.files || []).map(f => f.path).filter(isValidCloudinaryUrl);
+
+  if ((req.files || []).length > 0 && uploadedPhotos.length === 0) {
+    return next(new AppError('Upload failed: no valid images were uploaded', 400));
+  }
+
   const allPhotos = [...photos, ...uploadedPhotos];
 
   // Determine cover photo from uploaded files
@@ -694,18 +699,20 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   if (longitude !== undefined) updateData.longitude = longitude;
 
   // Handle uploaded photos from multer
-  const uploadedPhotos = (req.files || []).map(f => f.path);
+  const uploadedPhotos = (req.files || []).map(f => f.path).filter(isValidCloudinaryUrl);
   const hasExistingPhotos = Array.isArray(req.body.existingPhotos);
   if (uploadedPhotos.length > 0 || hasExistingPhotos) {
     // existingPhotos is already parsed by parseJsonFields inside validateTourData
-    const keptPhotos = hasExistingPhotos ? req.body.existingPhotos : (existingTour.photos || []);
-    const newPhotos = [...keptPhotos, ...uploadedPhotos];
-
-    // Normalize Cloudinary URLs for comparison by extracting just the path (folder+filename)
+    // Only keep URLs that match the tour's current photos (normalized comparison)
     const normalize = (url) => {
-      const m = url.match(/\/upload\/.*?\/(.+)$/);
+      const m = url.match(/\/upload\/(?:w_\d+[^/]*\/)?(?:v\d+\/)?(.+)$/);
       return m ? m[1] : url;
     };
+    const currentPhotoPaths = new Set((existingTour.photos || []).map(normalize));
+    const keptPhotos = hasExistingPhotos
+      ? req.body.existingPhotos.filter(url => currentPhotoPaths.has(normalize(url)))
+      : (existingTour.photos || []);
+    const newPhotos = [...keptPhotos, ...uploadedPhotos];
 
     // Delete removed photos from Cloudinary
     const oldPhotos = existingTour.photos || [];
@@ -713,7 +720,12 @@ exports.updateTour = catchAsync(async (req, res, next) => {
       const normalizedOld = normalize(url);
       return !newPhotos.some(nu => normalize(nu) === normalizedOld);
     });
-    await Promise.all(removed.map(url => deleteCloudinaryImage(url)));
+    const deletionResults = await Promise.allSettled(removed.map(url => deleteCloudinaryImage(url)));
+    deletionResults.forEach((result, i) => {
+      if (result.status === 'rejected') {
+        console.warn('Failed to delete Cloudinary image:', removed[i], result.reason);
+      }
+    });
 
     updateData.photos = newPhotos;
 

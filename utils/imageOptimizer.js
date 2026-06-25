@@ -1,5 +1,6 @@
 function cloudinaryUrl(url, width = 800) {
   if (typeof url !== 'string') return url;
+  width = Math.min(Math.max(parseInt(width) || 800, 100), 2000);
 
   const { CLOUDINARY_CLOUD_NAME } = process.env;
   if (CLOUDINARY_CLOUD_NAME && !url.startsWith('http://') && !url.startsWith('https://')) {

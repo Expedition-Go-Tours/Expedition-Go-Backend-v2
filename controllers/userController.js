@@ -15,7 +15,7 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
-const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
+const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 const { logActivity } = require('../utils/auditLogger');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
 
@@ -54,6 +54,10 @@ exports.updateMe = catchAsync(async (req, res, next) => {
   if (req.body.logoUrl !== undefined) updates.logoUrl = req.body.logoUrl;
 
   if (req.file) {
+    if (!isValidCloudinaryUrl(req.file.path)) {
+      return next(new AppError('Upload failed: invalid image URL', 400));
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
     });

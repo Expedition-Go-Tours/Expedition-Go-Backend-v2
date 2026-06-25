@@ -208,12 +208,21 @@ async function seedDevUsers() {
   }
 
   // Admin user — Peter Mensah
+  const CLOUD = process.env.CLOUDINARY_CLOUD_NAME || 'dfpagrtoy';
+  const DEFAULT_AVATAR = `https://res.cloudinary.com/${CLOUD}/image/upload/v1780670572/user-photos/vdrxzjwlzxhqs091mg5a.png`;
+  const DEFAULT_DOCS = {
+    insurance: `https://res.cloudinary.com/${CLOUD}/image/upload/v1/seed/insurance.pdf`,
+    identification: `https://res.cloudinary.com/${CLOUD}/image/upload/v1/seed/id.pdf`,
+    taxCertificate: `https://res.cloudinary.com/${CLOUD}/image/upload/v1/seed/tax.pdf`,
+    certificateOfRegistration: `https://res.cloudinary.com/${CLOUD}/image/upload/v1/seed/registration.pdf`,
+  };
+
   const admin = await prisma.user.upsert({
     where: { firebaseUid: '8KOrbaTJQsfxdxNKenCaCl4IXxv1' },
     update: {
       name: 'Peter Mensah',
       email: 'expeditiongoltd@gmail.com',
-      photoURL: 'https://res.cloudinary.com/dfpagrtoy/image/upload/w_80,q_80,f_auto/v1780670572/user-photos/vdrxzjwlzxhqs091mg5a.png',
+      photoURL: DEFAULT_AVATAR,
       roles: ['admin'],
       active: true,
       adminRoleId: superAdminRole.id,
@@ -222,7 +231,7 @@ async function seedDevUsers() {
       firebaseUid: '8KOrbaTJQsfxdxNKenCaCl4IXxv1',
       name: 'Peter Mensah',
       email: 'expeditiongoltd@gmail.com',
-      photoURL: 'https://res.cloudinary.com/dfpagrtoy/image/upload/w_80,q_80,f_auto/v1780670572/user-photos/vdrxzjwlzxhqs091mg5a.png',
+      photoURL: DEFAULT_AVATAR,
       roles: ['admin'],
       active: true,
       adminRoleId: superAdminRole.id,
@@ -241,7 +250,7 @@ async function seedDevUsers() {
       roles: ['supplier'],
       active: true,
       lastLoginAt: new Date('2026-06-16T17:03:36.515Z'),
-      logoUrl: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1780670572/user-photos/vdrxzjwlzxhqs091mg5a.png',
+      logoUrl: DEFAULT_AVATAR,
       notificationPreferences: {
         pushNotifications: { reviews: true, bookings: true, payments: true, systemAlerts: true },
         emailNotifications: { reviews: true, bookings: true, payments: true, systemAlerts: true },
@@ -256,7 +265,7 @@ async function seedDevUsers() {
       roles: ['supplier'],
       active: true,
       lastLoginAt: new Date('2026-06-16T17:03:36.515Z'),
-      logoUrl: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1780670572/user-photos/vdrxzjwlzxhqs091mg5a.png',
+      logoUrl: DEFAULT_AVATAR,
       notificationPreferences: {
         pushNotifications: { reviews: true, bookings: true, payments: true, systemAlerts: true },
         emailNotifications: { reviews: true, bookings: true, payments: true, systemAlerts: true },
@@ -271,7 +280,7 @@ async function seedDevUsers() {
       businessInfo: { city: 'Accra', phone: '+233501234567', state: 'Greater Accra', taxId: 'TIN-GH-98765432', address: '42 Liberation Road, Accra', country: 'Ghana', website: 'https://gideonexpeditions.com', description: 'Premier tour operator specializing in authentic Ghanaian cultural experiences, wildlife safaris, and coastal adventures.', businessName: 'Gideon Expeditions', businessType: 'Individual', registrationNumber: 'CS1234567890' },
       operatingInfo: { hours: { friday: '08:00-18:00', monday: '08:00-18:00', sunday: 'closed', tuesday: '08:00-18:00', saturday: '09:00-15:00', thursday: '08:00-18:00', wednesday: '08:00-18:00' }, regions: ['West Africa', 'Ghana'], capacity: { maxGroupSize: 25, monthlyBookings: 80 }, languages: ['English', 'Twi', 'Ga'], serviceArea: 'Local & Regional', destinations: ['Accra', 'Kumasi', 'Cape Coast', 'Kakum', 'Elmina', 'Ada', 'Volta Region'], operatingSince: '2018' },
       representativeInfo: { email: 'rxsieon@gmail.com', phone: '+233501234567', idType: 'Passport', address: '42 Liberation Road, Accra, Ghana', fullName: 'Gideon Wilson', idNumber: 'GH-PP-87654321', position: 'Owner & Lead Guide' },
-      businessDocuments: { insurance: 'https://cloudinary.com/gideon/insurance.pdf', identification: 'https://cloudinary.com/gideon/id.pdf', taxCertificate: 'https://cloudinary.com/gideon/tax.pdf', certificateOfRegistration: 'https://cloudinary.com/gideon/registration.pdf' },
+      businessDocuments: DEFAULT_DOCS,
       payoutInfo: { method: 'bank_transfer', bankCode: '013', bankName: 'GCB Bank', currency: 'GHS', accountName: 'Gideon Wilson', accountNumber: '1234567890123' },
       compliance: { termsAccepted: true, privacyAccepted: true, termsAcceptedAt: '2026-01-15T00:00:00.000Z', marketingConsent: true, codeOfConductAccepted: true, dataProcessingAccepted: true },
       totalEarnings: 48750.00,
@@ -284,7 +293,7 @@ async function seedDevUsers() {
       businessInfo: { city: 'Accra', phone: '+233501234567', state: 'Greater Accra', taxId: 'TIN-GH-98765432', address: '42 Liberation Road, Accra', country: 'Ghana', website: 'https://gideonexpeditions.com', description: 'Premier tour operator specializing in authentic Ghanaian cultural experiences, wildlife safaris, and coastal adventures.', businessName: 'Gideon Expeditions', businessType: 'Individual', registrationNumber: 'CS1234567890' },
       operatingInfo: { hours: { friday: '08:00-18:00', monday: '08:00-18:00', sunday: 'closed', tuesday: '08:00-18:00', saturday: '09:00-15:00', thursday: '08:00-18:00', wednesday: '08:00-18:00' }, regions: ['West Africa', 'Ghana'], capacity: { maxGroupSize: 25, monthlyBookings: 80 }, languages: ['English', 'Twi', 'Ga'], serviceArea: 'Local & Regional', destinations: ['Accra', 'Kumasi', 'Cape Coast', 'Kakum', 'Elmina', 'Ada', 'Volta Region'], operatingSince: '2018' },
       representativeInfo: { email: 'rxsieon@gmail.com', phone: '+233501234567', idType: 'Passport', address: '42 Liberation Road, Accra, Ghana', fullName: 'Gideon Wilson', idNumber: 'GH-PP-87654321', position: 'Owner & Lead Guide' },
-      businessDocuments: { insurance: 'https://cloudinary.com/gideon/insurance.pdf', identification: 'https://cloudinary.com/gideon/id.pdf', taxCertificate: 'https://cloudinary.com/gideon/tax.pdf', certificateOfRegistration: 'https://cloudinary.com/gideon/registration.pdf' },
+      businessDocuments: DEFAULT_DOCS,
       payoutInfo: { method: 'bank_transfer', bankCode: '013', bankName: 'GCB Bank', currency: 'GHS', accountName: 'Gideon Wilson', accountNumber: '1234567890123' },
       compliance: { termsAccepted: true, privacyAccepted: true, termsAcceptedAt: '2026-01-15T00:00:00.000Z', marketingConsent: true, codeOfConductAccepted: true, dataProcessingAccepted: true },
       totalEarnings: 48750.00,

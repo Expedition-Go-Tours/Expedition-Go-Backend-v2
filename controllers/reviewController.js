@@ -19,7 +19,7 @@ const AppError = require('../utils/appError');
 const { enqueueNotification } = require('../utils/queue');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const { logActivity } = require('../utils/auditLogger');
-const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
+const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const { addApprovedRating, removeApprovedRating, recalculateSupplierRating } = require('../utils/ratingHelper');
 const cache = require('../utils/cacheHelper');
@@ -48,7 +48,7 @@ exports.createReview = catchAsync(async (req, res, next) => {
     companions = []
   } = req.body;
 
-  const photos = (req.files || []).map((f) => f.path || f.secure_url || f.url).filter(Boolean);
+  const photos = (req.files || []).map((f) => f.path || f.secure_url || f.url).filter(isValidCloudinaryUrl);
 
   const parsedRating = parseInt(rating);
   if (!parsedRating || parsedRating < 1 || parsedRating > 5) {
@@ -207,7 +207,7 @@ exports.updateReview = catchAsync(async (req, res, next) => {
   } = req.body;
 
   const photos = (req.files || []).length > 0
-    ? (req.files || []).map((f) => f.path || f.secure_url || f.url).filter(Boolean)
+    ? (req.files || []).map((f) => f.path || f.secure_url || f.url).filter(isValidCloudinaryUrl)
     : undefined;
 
   const existingReview = await prisma.review.findFirst({
@@ -226,6 +226,12 @@ exports.updateReview = catchAsync(async (req, res, next) => {
 
   if (comment !== undefined && comment !== null && comment.trim().length < 20) {
     return next(new AppError('Review comment must be at least 20 characters', 400));
+  }
+
+  if (photos !== undefined) {
+    const oldPhotos = existingReview.photos || [];
+    const removedPhotos = oldPhotos.filter(url => !photos.includes(url));
+    await Promise.all(removedPhotos.map(url => deleteCloudinaryImage(url)));
   }
 
   const updateData = {};
@@ -979,7 +985,7 @@ exports.adminUpdateReview = catchAsync(async (req, res, next) => {
   if (parsedAdminRating !== undefined) updateData.rating = parsedAdminRating;
   if (title !== undefined) updateData.title = title;
   if (comment !== undefined) updateData.comment = comment;
-  if (photos !== undefined) updateData.photos = photos;
+  if (photos !== undefined) updateData.photos = Array.isArray(photos) ? photos.filter(isValidCloudinaryUrl) : [];
 
   const ratingChanged = parsedAdminRating !== undefined && parsedAdminRating !== review.rating;
 

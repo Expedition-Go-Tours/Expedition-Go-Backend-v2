@@ -3,6 +3,15 @@
 
 const prisma = require('../utils/prismaClient');
 
+const CLOUD = process.env.CLOUDINARY_CLOUD_NAME || 'dfpagrtoy';
+const DEFAULT_LOGO = `https://res.cloudinary.com/${CLOUD}/image/upload/v1780670572/user-photos/vdrxzjwlzxhqs091mg5a.png`;
+const DEFAULT_DOCS = {
+  insurance: `https://res.cloudinary.com/${CLOUD}/image/upload/v1/seed/insurance.pdf`,
+  identification: `https://res.cloudinary.com/${CLOUD}/image/upload/v1/seed/id.pdf`,
+  taxCertificate: `https://res.cloudinary.com/${CLOUD}/image/upload/v1/seed/tax.pdf`,
+  certificateOfRegistration: `https://res.cloudinary.com/${CLOUD}/image/upload/v1/seed/registration.pdf`,
+};
+
 async function main() {
   const email = 'rxsieon@gmail.com';
 
@@ -25,7 +34,7 @@ async function main() {
         active: true,
         emailVerified: false,
         authProvider: 'google',
-        logoUrl: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1780670572/user-photos/vdrxzjwlzxhqs091mg5a.png',
+        logoUrl: DEFAULT_LOGO,
         notificationPreferences: '{"pushNotifications": {"reviews": true, "bookings": true, "payments": true, "systemAlerts": true}, "emailNotifications": {"reviews": true, "bookings": true, "payments": true, "systemAlerts": true}}',
       },
     });
@@ -37,7 +46,7 @@ async function main() {
       data: {
         roles: { set: ['supplier'] },
         photoURL: 'https://lh3.googleusercontent.com/a/ACg8ocJn1eM8pG9xWvmkEFOh4WYanf_sdeGDguVKchZ-R-_HagiVueRA=s96-c',
-        logoUrl: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1780670572/user-photos/vdrxzjwlzxhqs091mg5a.png',
+        logoUrl: DEFAULT_LOGO,
       },
     });
     console.log('User updated:', user.email);
@@ -89,12 +98,7 @@ async function main() {
           idNumber: 'GH-PP-87654321',
           position: 'Owner & Lead Guide',
         }),
-        businessDocuments: JSON.stringify({
-          insurance: 'https://cloudinary.com/gideon/insurance.pdf',
-          identification: 'https://cloudinary.com/gideon/id.pdf',
-          taxCertificate: 'https://cloudinary.com/gideon/tax.pdf',
-          certificateOfRegistration: 'https://cloudinary.com/gideon/registration.pdf',
-        }),
+        businessDocuments: JSON.stringify(DEFAULT_DOCS),
         payoutInfo: JSON.stringify({
           method: 'bank_transfer',
           bankCode: '013',

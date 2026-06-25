@@ -20,7 +20,7 @@ jest.mock('../../utils/cacheHelper', () => ({
 }));
 
 jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
-jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn() }));
+jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
 jest.mock('../../utils/tourHelpers', () => ({ createSlug: jest.fn(), validateTourData: jest.fn() }));
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn() }));
@@ -113,8 +113,8 @@ describe('tourController', () => {
   // ============================
   describe('getAllTours', () => {
     const mockTours = [
-      { id: 'tour-1', title: 'Tour 1', photos: ['photo1.jpg'], coverPhoto: 'cover1.jpg', supplier: { id: 's1', name: 'S1', photoURL: 'photo.jpg', supplierProfile: { averageRating: 4.5, totalBookings: 10 } }, _count: { reviews: 5, bookings: 20 } },
-      { id: 'tour-2', title: 'Tour 2', photos: ['photo2.jpg'], coverPhoto: null, supplier: { id: 's2', name: 'S2', photoURL: null, supplierProfile: { averageRating: 4.0, totalBookings: 5 } }, _count: { reviews: 2, bookings: 8 } },
+      { id: 'tour-1', title: 'Tour 1', photos: ['https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/photo1.jpg'], coverPhoto: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/cover1.jpg', supplier: { id: 's1', name: 'S1', photoURL: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/photo.jpg', supplierProfile: { averageRating: 4.5, totalBookings: 10 } }, _count: { reviews: 5, bookings: 20 } },
+      { id: 'tour-2', title: 'Tour 2', photos: ['https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/photo2.jpg'], coverPhoto: null, supplier: { id: 's2', name: 'S2', photoURL: null, supplierProfile: { averageRating: 4.0, totalBookings: 5 } }, _count: { reviews: 2, bookings: 8 } },
     ];
 
     beforeEach(() => {
@@ -556,7 +556,7 @@ describe('tourController', () => {
     });
 
     it('uploads photos from multer files', async () => {
-      req.files = [{ path: 'https://cloudinary.com/img1.jpg' }, { path: 'https://cloudinary.com/img2.jpg' }];
+      req.files = [{ path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/img1.jpg' }, { path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/img2.jpg' }];
       req.body = {
         title: 'Tour With Photos',
         description: 'A great tour experience that is long enough to pass validation.',
@@ -577,14 +577,14 @@ describe('tourController', () => {
       expect(prisma.tour.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            photos: expect.arrayContaining(['https://cloudinary.com/img1.jpg']),
+            photos: expect.arrayContaining(['https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/img1.jpg']),
           }),
         })
       );
     });
 
     it('sets coverPhoto from coverPhotoIndex', async () => {
-      req.files = [{ path: 'img1.jpg' }, { path: 'img2.jpg' }];
+      req.files = [{ path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/img1.jpg' }, { path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/img2.jpg' }];
       req.body.coverPhotoIndex = '1';
       req.body.title = 'Tour';
       req.body.description = 'A great tour experience that is long enough to pass validation.';
@@ -599,7 +599,7 @@ describe('tourController', () => {
       expect(prisma.tour.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            coverPhoto: 'img2.jpg',
+            coverPhoto: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/img2.jpg',
           }),
         })
       );
@@ -670,8 +670,8 @@ describe('tourController', () => {
       title: 'Old Title',
       supplierId: 'supplier-1',
       status: 'DRAFT',
-      photos: ['old-photo.jpg'],
-      coverPhoto: 'old-photo.jpg',
+      photos: ['https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/old-photo.jpg'],
+      coverPhoto: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/old-photo.jpg',
     };
     const mockUpdatedTour = {
       id: 'tour-1',
@@ -738,16 +738,16 @@ describe('tourController', () => {
     });
 
     it('handles photo uploads and deletion of removed photos', async () => {
-      req.body = { title: 'Updated', existingPhotos: ['kept-photo.jpg'] };
-      req.files = [{ path: 'new-photo.jpg' }];
+      req.body = { title: 'Updated', existingPhotos: ['https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/kept-photo.jpg'] };
+      req.files = [{ path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/new-photo.jpg' }];
       prisma.tour.findFirst.mockResolvedValue({
         ...mockExistingTour,
-        photos: ['old-photo.jpg', 'kept-photo.jpg'],
+        photos: ['https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/old-photo.jpg', 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/kept-photo.jpg'],
       });
 
       await controller.updateTour(req, res, next);
 
-      expect(deleteCloudinaryImage).toHaveBeenCalledWith('old-photo.jpg');
+      expect(deleteCloudinaryImage).toHaveBeenCalledWith('https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/old-photo.jpg');
     });
 
     it('handles categorization normalization from JSON string', async () => {

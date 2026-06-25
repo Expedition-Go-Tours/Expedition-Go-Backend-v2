@@ -12,6 +12,7 @@ jest.mock('../../utils/emailService', () => ({ sendSupplierStatusEmail: jest.fn(
 jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn() }));
 jest.mock('../../utils/queue', () => ({ enqueueNotification: jest.fn() }));
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
+jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
 jest.mock('../../config/firebaseAdmin', () => ({ auth: () => ({ getUser: jest.fn() }) }));
 
 const prisma = require('../../utils/prismaClient');
@@ -20,6 +21,7 @@ const { sendSupplierStatusEmail } = require('../../utils/emailService');
 const { notifyAdmin } = require('../../utils/adminNotificationService');
 const { enqueueNotification } = require('../../utils/queue');
 const { cloudinaryUrl } = require('../../utils/imageOptimizer');
+const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../../utils/cloudinaryHelper');
 const admin = require('../../config/firebaseAdmin');
 const controller = require('../../controllers/supplierController');
 
@@ -92,6 +94,7 @@ describe('supplierController', () => {
     notifyAdmin.mockResolvedValue();
     enqueueNotification.mockResolvedValue();
     cloudinaryUrl.mockImplementation((url, size) => `https://cdn.example.com/${size}/${url}`);
+    deleteCloudinaryImage.mockResolvedValue();
     admin.auth = () => ({ getUser: jest.fn().mockResolvedValue({ photoURL: 'fb-photo.jpg' }) });
   });
 
@@ -167,11 +170,11 @@ describe('supplierController', () => {
         payoutInfo: { bankAccountName: 'A' },
       };
       req.files = {
-        registrationDocument: [{ path: '/uploads/reg.pdf' }],
-        taxDocument: [{ path: '/uploads/tax.pdf' }],
-        proofOfAddress: [{ path: '/uploads/poa.pdf' }],
-        idDocument: [{ path: '/uploads/id.pdf' }],
-        licenses: [{ path: '/uploads/l1.pdf' }, { path: '/uploads/l2.pdf' }],
+        registrationDocument: [{ path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-documents/reg.pdf' }],
+        taxDocument: [{ path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-documents/tax.pdf' }],
+        proofOfAddress: [{ path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-documents/poa.pdf' }],
+        idDocument: [{ path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-documents/id.pdf' }],
+        licenses: [{ path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-documents/l1.pdf' }, { path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-documents/l2.pdf' }],
       };
 
       await controller.applyToBeSupplier(req, res, next);
@@ -180,11 +183,11 @@ describe('supplierController', () => {
         expect.objectContaining({
           data: expect.objectContaining({
             businessDocuments: expect.objectContaining({
-              registrationDocument: '/uploads/reg.pdf',
-              taxDocument: '/uploads/tax.pdf',
-              proofOfAddress: '/uploads/poa.pdf',
-              idDocument: '/uploads/id.pdf',
-              licenses: ['/uploads/l1.pdf', '/uploads/l2.pdf'],
+              registrationDocument: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-documents/reg.pdf',
+              taxDocument: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-documents/tax.pdf',
+              proofOfAddress: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-documents/poa.pdf',
+              idDocument: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-documents/id.pdf',
+              licenses: ['https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-documents/l1.pdf', 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-documents/l2.pdf'],
             }),
           }),
         })
@@ -887,17 +890,17 @@ describe('supplierController', () => {
     });
 
     it('updates user logoUrl and returns it', async () => {
-      req.file = { path: '/uploads/logo.png' };
-      prisma.user.update.mockResolvedValue({ logoUrl: '/uploads/logo.png' });
+      req.file = { path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-logos/logo.png' };
+      prisma.user.update.mockResolvedValue({ logoUrl: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-logos/logo.png' });
 
       await controller.uploadLogo(req, res, next);
 
       expect(prisma.user.update).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'u-1' }, data: { logoUrl: '/uploads/logo.png' } })
+        expect.objectContaining({ where: { id: 'u-1' }, data: { logoUrl: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-logos/logo.png' } })
       );
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ logoUrl: '/uploads/logo.png' }) })
+        expect.objectContaining({ data: expect.objectContaining({ logoUrl: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-logos/logo.png' }) })
       );
     });
   });

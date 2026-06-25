@@ -47,7 +47,10 @@ try {
 
 app.use(helmet());
 app.use(hpp());
-app.use(compression());
+app.use((req, res, next) => {
+  if (req.headers['content-type']?.startsWith('multipart/')) return next();
+  compression()(req, res, next);
+});
 
 // CORS must be registered before rate limiter so that
 // rate-limited responses include proper CORS headers.
@@ -60,7 +63,7 @@ const corsOptions = {
     if (!origin || allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
-    callback(null, origin);
+    callback(null, false);
   },
   credentials: true,
 };
@@ -98,6 +101,36 @@ app.use(
     },
   }),
 );
+
+// Stricter rate limit on file upload endpoints (20 uploads per hour per user)
+const uploadLimiter = rateLimit({
+  max: 20,
+  windowMs: 60 * 60 * 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.method === 'OPTIONS',
+  message: {
+    status: 'fail',
+    message: 'Too many uploads, please try again later.',
+  },
+});
+app.use('/api/users/updateMe', uploadLimiter);
+app.use('/api/tours', (req, res, next) => {
+  if (req.method === 'POST' || req.method === 'PATCH') return uploadLimiter(req, res, next);
+  next();
+});
+app.use('/api/reviews', (req, res, next) => {
+  if (req.method === 'POST' || req.method === 'PATCH') return uploadLimiter(req, res, next);
+  next();
+});
+app.use('/api/suppliers', (req, res, next) => {
+  if (['POST', 'PATCH'].includes(req.method)) return uploadLimiter(req, res, next);
+  next();
+});
+app.use('/api/chat', (req, res, next) => {
+  if (req.method === 'POST') return uploadLimiter(req, res, next);
+  next();
+});
 
 // Request monitoring middleware
 app.use((req, res, next) => {

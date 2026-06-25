@@ -12,7 +12,7 @@ jest.mock('../../utils/prismaClient', () => ({
 jest.mock('../../utils/queue', () => ({ enqueueNotification: jest.fn() }));
 jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn() }));
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
-jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn() }));
+jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
 jest.mock('../../utils/ratingHelper', () => ({ addApprovedRating: jest.fn(), removeApprovedRating: jest.fn(), recalculateSupplierRating: jest.fn() }));
 jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateReviewCaches: jest.fn(), invalidateTourCaches: jest.fn() }));
@@ -22,7 +22,7 @@ const prisma = require('../../utils/prismaClient');
 const { enqueueNotification } = require('../../utils/queue');
 const { notifyAdmin } = require('../../utils/adminNotificationService');
 const { logActivity } = require('../../utils/auditLogger');
-const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
+const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../../utils/cloudinaryHelper');
 const { addApprovedRating, removeApprovedRating, recalculateSupplierRating } = require('../../utils/ratingHelper');
 const cache = require('../../utils/cacheHelper');
 const event = require('../../utils/eventEmitter');

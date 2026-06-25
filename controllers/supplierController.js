@@ -14,6 +14,7 @@ const { sendSupplierStatusEmail } = require('../utils/emailService');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const { enqueueNotification } = require('../utils/queue');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
+const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 const admin = require('../config/firebaseAdmin');
 
 // ================================
@@ -62,6 +63,15 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
     if (req.files.idDocument?.[0]) businessDocuments.idDocument = req.files.idDocument[0].path;
     if (req.files.licenses) businessDocuments.licenses = req.files.licenses.map(f => f.path);
   }
+
+  Object.keys(businessDocuments).forEach(key => {
+    const val = businessDocuments[key];
+    if (Array.isArray(val)) {
+      businessDocuments[key] = val.filter(isValidCloudinaryUrl);
+    } else if (val && !isValidCloudinaryUrl(val)) {
+      delete businessDocuments[key];
+    }
+  });
 
   const supplierProfile = await prisma.supplierProfile.create({
     data: {
@@ -152,6 +162,29 @@ exports.updateApplication = catchAsync(async (req, res, next) => {
   if (req.body.operatingInfo) updateData.operatingInfo = parse(req.body.operatingInfo);
   if (req.body.representativeInfo) updateData.representativeInfo = parse(req.body.representativeInfo);
   if (req.body.payoutInfo) updateData.payoutInfo = parse(req.body.payoutInfo);
+
+  if (req.files) {
+    const oldDocs = supplierProfile.businessDocuments || {};
+    const newDocs = {};
+    if (req.files.registrationDocument?.[0]) newDocs.registrationDocument = req.files.registrationDocument[0].path;
+    if (req.files.taxDocument?.[0]) newDocs.taxDocument = req.files.taxDocument[0].path;
+    if (req.files.proofOfAddress?.[0]) newDocs.proofOfAddress = req.files.proofOfAddress[0].path;
+    if (req.files.idDocument?.[0]) newDocs.idDocument = req.files.idDocument[0].path;
+    if (req.files.licenses) newDocs.licenses = req.files.licenses.map(f => f.path);
+
+    Object.keys(newDocs).forEach(key => {
+      if (oldDocs[key] && oldDocs[key] !== newDocs[key]) {
+        const oldVal = oldDocs[key];
+        if (Array.isArray(oldVal)) {
+          oldVal.forEach(url => deleteCloudinaryImage(url).catch(() => {}));
+        } else {
+          deleteCloudinaryImage(oldVal).catch(() => {});
+        }
+      }
+    });
+
+    updateData.businessDocuments = { ...oldDocs, ...newDocs };
+  }
 
   const updated = await prisma.supplierProfile.update({
     where: { userId: req.user.id },
@@ -752,6 +785,15 @@ exports.getSupplierTours = catchAsync(async (req, res, next) => {
 exports.uploadLogo = catchAsync(async (req, res, next) => {
   if (!req.file) {
     return next(new AppError('No file uploaded', 400));
+  }
+
+  if (!isValidCloudinaryUrl(req.file.path)) {
+    return next(new AppError('Upload failed: invalid image URL', 400));
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+  if (user?.logoUrl) {
+    await deleteCloudinaryImage(user.logoUrl);
   }
 
   const updatedUser = await prisma.user.update({

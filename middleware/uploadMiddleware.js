@@ -1,11 +1,21 @@
-const upload = require('../config/cloudinary');
+const { imageUpload, documentUpload } = require('../config/cloudinary');
 
-// Wrap multer middleware to catch Cloudinary errors (e.g. rejected format)
-// and forward them to Express error handler instead of crashing the process.
 function wrapMulter(middleware) {
   return (req, res, next) => {
+    if (middleware._cloudinaryMissing) {
+      return res.status(503).json({ status: 'fail', message: 'File upload service is unavailable' });
+    }
     middleware(req, res, (err) => {
       if (err) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({ status: 'fail', message: 'File exceeds maximum size of 10MB' });
+        }
+        if (err.code === 'LIMIT_FILE_COUNT') {
+          return res.status(400).json({ status: 'fail', message: 'Too many files uploaded' });
+        }
+        if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+          return res.status(400).json({ status: 'fail', message: 'Unexpected file field' });
+        }
         const message = err.message || 'File upload failed';
         return res.status(400).json({ status: 'fail', message });
       }
@@ -14,26 +24,20 @@ function wrapMulter(middleware) {
   };
 }
 
-// User photo upload
-exports.uploadUserPhoto = wrapMulter(upload.single('photo'));
+exports.uploadUserPhoto = wrapMulter(imageUpload.single('photo'));
 
-// Tour photos upload (multiple)
-exports.uploadTourPhotos = wrapMulter(upload.array('photos', 20));
+exports.uploadTourPhotos = wrapMulter(imageUpload.array('photos', 20));
 
-// Review photos upload (multiple)
-exports.uploadReviewPhotos = wrapMulter(upload.array('photos', 10));
+exports.uploadReviewPhotos = wrapMulter(imageUpload.array('photos', 10));
 
-// Supplier document uploads
-exports.uploadSupplierDocuments = wrapMulter(upload.fields([
+exports.uploadSupplierDocuments = wrapMulter(documentUpload.fields([
   { name: 'registrationDocument', maxCount: 1 },
   { name: 'taxDocument', maxCount: 1 },
   { name: 'proofOfAddress', maxCount: 1 },
   { name: 'idDocument', maxCount: 1 },
-  { name: 'licenses', maxCount: 5 }
+  { name: 'licenses', maxCount: 5 },
 ]));
 
-// Chat image upload
-exports.uploadChatImage = wrapMulter(upload.single('file'));
+exports.uploadChatImage = wrapMulter(imageUpload.single('file'));
 
-// Supplier logo upload
-exports.uploadSupplierLogo = wrapMulter(upload.single('logo'));
+exports.uploadSupplierLogo = wrapMulter(imageUpload.single('logo'));

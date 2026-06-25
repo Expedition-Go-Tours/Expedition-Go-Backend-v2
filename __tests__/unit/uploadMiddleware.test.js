@@ -1,17 +1,25 @@
 jest.mock('../../config/cloudinary', () => ({
-  single: jest.fn(),
-  array: jest.fn(),
-  fields: jest.fn(),
+  imageUpload: {
+    single: jest.fn(),
+    array: jest.fn(),
+    _cloudinaryMissing: false,
+  },
+  documentUpload: {
+    fields: jest.fn(),
+    _cloudinaryMissing: false,
+  },
 }));
 
 describe('uploadMiddleware', () => {
-  let req, res, next, upload, middleware;
+  let req, res, next, config, middleware;
 
   function setupMocks() {
-    upload = require('../../config/cloudinary');
-    upload.single.mockReturnValue((req, res, cb) => cb(null));
-    upload.array.mockReturnValue((req, res, cb) => cb(null));
-    upload.fields.mockReturnValue((req, res, cb) => cb(null));
+    config = require('../../config/cloudinary');
+    const mockFn = (req, res, cb) => cb(null);
+    mockFn._cloudinaryMissing = false;
+    config.imageUpload.single.mockReturnValue(mockFn);
+    config.imageUpload.array.mockReturnValue((req, res, cb) => cb(null));
+    config.documentUpload.fields.mockReturnValue((req, res, cb) => cb(null));
     jest.isolateModules(() => {
       middleware = require('../../middleware/uploadMiddleware');
     });
@@ -25,24 +33,24 @@ describe('uploadMiddleware', () => {
     next = jest.fn();
   });
 
-  it('uploadUserPhoto calls upload.single with photo', () => {
+  it('uploadUserPhoto calls imageUpload.single with photo', () => {
     middleware.uploadUserPhoto(req, res, next);
-    expect(upload.single).toHaveBeenCalledWith('photo');
+    expect(config.imageUpload.single).toHaveBeenCalledWith('photo');
   });
 
-  it('uploadTourPhotos calls upload.array with photos and 20', () => {
+  it('uploadTourPhotos calls imageUpload.array with photos and 20', () => {
     middleware.uploadTourPhotos(req, res, next);
-    expect(upload.array).toHaveBeenCalledWith('photos', 20);
+    expect(config.imageUpload.array).toHaveBeenCalledWith('photos', 20);
   });
 
-  it('uploadReviewPhotos calls upload.array with photos and 10', () => {
+  it('uploadReviewPhotos calls imageUpload.array with photos and 10', () => {
     middleware.uploadReviewPhotos(req, res, next);
-    expect(upload.array).toHaveBeenCalledWith('photos', 10);
+    expect(config.imageUpload.array).toHaveBeenCalledWith('photos', 10);
   });
 
-  it('uploadSupplierDocuments calls upload.fields with correct fields', () => {
+  it('uploadSupplierDocuments calls documentUpload.fields with correct fields', () => {
     middleware.uploadSupplierDocuments(req, res, next);
-    expect(upload.fields).toHaveBeenCalledWith([
+    expect(config.documentUpload.fields).toHaveBeenCalledWith([
       { name: 'registrationDocument', maxCount: 1 },
       { name: 'taxDocument', maxCount: 1 },
       { name: 'proofOfAddress', maxCount: 1 },
@@ -51,24 +59,50 @@ describe('uploadMiddleware', () => {
     ]);
   });
 
-  it('uploadChatImage calls upload.single with file', () => {
+  it('uploadChatImage calls imageUpload.single with file', () => {
     middleware.uploadChatImage(req, res, next);
-    expect(upload.single).toHaveBeenCalledWith('file');
+    expect(config.imageUpload.single).toHaveBeenCalledWith('file');
   });
 
-  it('uploadSupplierLogo calls upload.single with logo', () => {
+  it('uploadSupplierLogo calls imageUpload.single with logo', () => {
     middleware.uploadSupplierLogo(req, res, next);
-    expect(upload.single).toHaveBeenCalledWith('logo');
+    expect(config.imageUpload.single).toHaveBeenCalledWith('logo');
   });
 
   it('returns 400 when multer passes an error', () => {
     jest.isolateModules(() => {
-      const upload = require('../../config/cloudinary');
-      upload.single.mockReturnValue((req, res, cb) => cb(new Error('Invalid file type')));
+      const config = require('../../config/cloudinary');
+      config.imageUpload.single.mockReturnValue((req, res, cb) => cb(new Error('Invalid file type')));
       const middleware = require('../../middleware/uploadMiddleware');
       middleware.uploadUserPhoto(req, res, next);
     });
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({ status: 'fail', message: 'Invalid file type' });
+  });
+
+  it('returns 400 for file size limit error', () => {
+    jest.isolateModules(() => {
+      const config = require('../../config/cloudinary');
+      const err = new Error('File too large');
+      err.code = 'LIMIT_FILE_SIZE';
+      config.imageUpload.single.mockReturnValue((req, res, cb) => cb(err));
+      const middleware = require('../../middleware/uploadMiddleware');
+      middleware.uploadUserPhoto(req, res, next);
+    });
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({ status: 'fail', message: 'File exceeds maximum size of 10MB' });
+  });
+
+  it('returns 503 when cloudinary is missing', () => {
+    jest.isolateModules(() => {
+      const config = require('../../config/cloudinary');
+      const mockSingleFn = (req, res, cb) => cb(null);
+      mockSingleFn._cloudinaryMissing = true;
+      config.imageUpload.single.mockReturnValue(mockSingleFn);
+      const middleware = require('../../middleware/uploadMiddleware');
+      middleware.uploadUserPhoto(req, res, next);
+    });
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.json).toHaveBeenCalledWith({ status: 'fail', message: 'File upload service is unavailable' });
   });
 });
