@@ -103,48 +103,78 @@ process.on('SIGINT', () => {
       console.warn('Socket.IO connection error:', err.message);
     });
 
-    io.on('connection', async (socket) => {
-      const parseCookies = (h) => (h || '').split(';').reduce((o, p) => {
-        const [k, ...v] = p.trim().split('=');
-        if (k) o[k.trim()] = v.join('=');
-        return o;
-      }, {});
-      const cookies = parseCookies(socket.handshake.headers.cookie);
-      const token = socket.handshake.auth?.token || cookies.accessToken;
+    // --- Socket.IO auth middleware (Fix 2A: runs before connection) ---
+    const connectionAttempts = new Map();
+    const RATE_LIMIT = 10;
+    const RATE_WINDOW = 60 * 1000;
 
-      if (!token) {
-        console.warn('Socket connection rejected: No token provided');
-        socket.disconnect(true);
-        return;
-      }
-
-      let decoded;
+    io.use(async (socket, next) => {
       try {
-        const { verifyAccessToken } = require('./config/jwt');
-        decoded = verifyAccessToken(token);
+        // Rate limiting (Fix 2B)
+        const ip = socket.handshake.address;
+        const now = Date.now();
+        const attempts = connectionAttempts.get(ip) || [];
+        const recent = attempts.filter(t => now - t < RATE_WINDOW);
+        if (recent.length >= RATE_LIMIT) {
+          return next(new Error('Too many connection attempts'));
+        }
+        recent.push(now);
+        connectionAttempts.set(ip, recent);
+
+        // Parse token from handshake auth or cookie
+        const parseCookies = (h) => (h || '').split(';').reduce((o, p) => {
+          const [k, ...v] = p.trim().split('=');
+          if (k) o[k.trim()] = v.join('=');
+          return o;
+        }, {});
+        const cookies = parseCookies(socket.handshake.headers.cookie);
+        const token = socket.handshake.auth?.token || cookies.accessToken;
+
+        if (!token) {
+          return next(new Error('No token provided'));
+        }
+
+        let decoded;
+        try {
+          const { verifyAccessToken } = require('./config/jwt');
+          decoded = verifyAccessToken(token);
+        } catch {
+          return next(new Error('Invalid token'));
+        }
+
+        const user = await prisma.user.findUnique({
+          where: { id: decoded.userId },
+          select: { id: true, roles: true, active: true, name: true },
+        });
+
+        if (!user || !user.active) {
+          return next(new Error('User not found or inactive'));
+        }
+
+        // Stamp user info on socket
+        socket.userId = user.id;
+        socket.userRoles = user.roles;
+        socket.userName = user.name || 'Unknown';
+
+        // JWT expiry timer (Fix 2C)
+        const ttl = decoded.exp * 1000 - Date.now();
+        if (ttl > 0) {
+          setTimeout(() => {
+            socket.emit('auth:expired', { message: 'Token expired, please reconnect' });
+            socket.disconnect(true);
+          }, ttl);
+        }
+
+        next();
       } catch {
-        console.warn('Socket connection rejected: Invalid token');
-        socket.disconnect(true);
-        return;
+        next(new Error('Authentication failed'));
       }
+    });
 
-      const user = await prisma.user.findUnique({
-        where: { id: decoded.userId },
-        select: { id: true, roles: true, active: true, name: true },
-      });
+    io.on('connection', (socket) => {
+      console.log('Socket connected:', socket.id, { userId: socket.userId, roles: socket.userRoles });
 
-      if (!user || !user.active) {
-        console.warn('Socket connection rejected: User not found or inactive');
-        socket.disconnect(true);
-        return;
-      }
-
-      socket.userId = user.id;
-      socket.userRoles = user.roles;
-      socket.userName = user.name || 'Unknown';
-      console.log('Socket connected:', socket.id, { userId: user.id, roles: user.roles });
-
-      if (user.roles.includes('admin')) {
+      if (socket.userRoles.includes('admin')) {
         socket.join('admin-room');
         const chatService = require('./utils/chatService');
         chatService.getSharedAdminId().then(sharedId => {
@@ -152,7 +182,7 @@ process.on('SIGINT', () => {
         });
       }
 
-      socket.join(`user:${user.id}`);
+      socket.join(`user:${socket.userId}`);
 
       // Supplier responds to a review via WebSocket (real-time)
       socket.on('review:respond', async (payload, ack) => {
@@ -451,6 +481,8 @@ process.on('SIGINT', () => {
       console.warn('HTTP client error:', err.message);
       socket.destroy(err);
     });
+
+    server.timeout = 30000;
 
     server.listen(port, '0.0.0.0', () => {
       console.log(`App running on port ${port}...`);

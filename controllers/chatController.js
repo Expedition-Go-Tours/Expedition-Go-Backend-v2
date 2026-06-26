@@ -99,25 +99,6 @@ exports.sendMessage = catchAsync(async (req, res) => {
     type: attachmentType,
   });
 
-  const io = req.app.get('io');
-  if (io) {
-    const effectiveUserId = await chatService.resolveChatUserId(req.user.id);
-    const participant = await prisma.conversationParticipant.findFirst({
-      where: { conversationId: id, userId: { not: effectiveUserId } },
-      select: { userId: true }
-    });
-    if (participant) {
-      io.to(`user:${participant.userId}`).emit('chat:message', {
-        conversationId: id,
-        message,
-      });
-    }
-    io.to(`conversation:${id}`).emit('chat:message', {
-      conversationId: id,
-      message,
-    });
-  }
-
   res.status(201).json({ status: 'success', data: { message } });
 });
 
@@ -125,22 +106,6 @@ exports.markAsRead = catchAsync(async (req, res) => {
   const { id } = req.params;
 
   const result = await chatService.markAsRead(id, req.user.id);
-
-  const io = req.app.get('io');
-  if (io) {
-    const effectiveUserId = await chatService.resolveChatUserId(req.user.id);
-    const participant = await prisma.conversationParticipant.findFirst({
-      where: { conversationId: id, userId: { not: effectiveUserId } },
-      select: { userId: true }
-    });
-    if (participant) {
-      io.to(`user:${participant.userId}`).emit('chat:mark-read', {
-        conversationId: id,
-        readBy: req.user.id,
-        readAt: result.lastReadAt,
-      });
-    }
-  }
 
   res.json({ status: 'success', data: result });
 });

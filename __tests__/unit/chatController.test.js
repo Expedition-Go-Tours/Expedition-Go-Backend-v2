@@ -180,19 +180,16 @@ describe('chatController', () => {
   });
 
   describe('sendMessage', () => {
-    it('sends message and emits socket events', async () => {
+    it('sends message and returns it', async () => {
       req.params = { id: 'c-1' };
       req.body = { content: 'Hello' };
-      chatService.resolveChatUserId.mockResolvedValue('u-1');
       chatService.sendMessage.mockResolvedValue({ id: 'm-1', content: 'Hello' });
-      prisma.conversationParticipant.findFirst.mockResolvedValue({ userId: 'admin-1' });
 
       await controller.sendMessage(req, res, next);
 
       expect(chatService.sendMessage).toHaveBeenCalledWith('c-1', 'u-1', 'Hello', { url: undefined, type: undefined });
       expect(res.status).toHaveBeenCalledWith(201);
-      expect(mockIo.to).toHaveBeenCalledWith('user:admin-1');
-      expect(mockIo.to).toHaveBeenCalledWith('conversation:c-1');
+      expect(res.json).toHaveBeenCalledWith({ status: 'success', data: { message: { id: 'm-1', content: 'Hello' } } });
     });
 
     it('throws 400 when content and attachment both missing', async () => {
