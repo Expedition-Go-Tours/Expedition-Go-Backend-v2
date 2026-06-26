@@ -13,7 +13,7 @@ const { protect } = require('../middleware/authMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 
 // All special offer routes require authentication + supplier team management permission
-router.use(protect, resolveSupplier, requireTeamPermission('tours', 'manage'));
+router.use(protect, resolveSupplier, requireTeamPermission('tours.manage'));
 
 /**
  * @swagger

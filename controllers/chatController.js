@@ -7,7 +7,7 @@ const { isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 function canAccessType(user, type) {
   if (!user.roles?.includes('admin')) return true;
   const keys = user.permissionKeys || [];
-  if (keys.includes('super_admin')) return true;
+  if (keys.includes('dashboard.*')) return true;
   if (type === 'SUPPLIER_ADMIN') return keys.includes('chat.suppliers');
   if (type === 'USER_SUPPORT') return keys.includes('chat.customers');
   return false;
@@ -192,11 +192,18 @@ exports.deleteMessage = catchAsync(async (req, res) => {
 exports.deleteConversation = catchAsync(async (req, res) => {
   const { id } = req.params;
 
+  const participants = await prisma.conversationParticipant.findMany({
+    where: { conversationId: id },
+    select: { userId: true }
+  });
+
   await chatService.deleteConversation(id, req.user.id);
 
   const io = req.app.get('io');
   if (io) {
-    io.emit('chat:conversation-deleted', { conversationId: id });
+    for (const p of participants) {
+      io.to(`user:${p.userId}`).emit('chat:conversation-deleted', { conversationId: id });
+    }
   }
 
   res.json({ status: 'success', data: null });

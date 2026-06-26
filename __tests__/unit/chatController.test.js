@@ -2,7 +2,7 @@ jest.mock('../../utils/chatService');
 jest.mock('../../utils/cloudinaryHelper', () => ({ isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
 jest.mock('../../utils/prismaClient', () => ({
   user: { findUnique: jest.fn() },
-  conversationParticipant: { findFirst: jest.fn() },
+  conversationParticipant: { findFirst: jest.fn(), findMany: jest.fn() },
 }));
 
 const chatService = require('../../utils/chatService');
@@ -309,12 +309,22 @@ describe('chatController', () => {
   });
 
   describe('deleteConversation', () => {
-    it('deletes conversation and emits global event', async () => {
+    it('deletes conversation and notifies participants', async () => {
       req.params = { id: 'c-1' };
+      prisma.conversationParticipant.findMany.mockResolvedValue([
+        { userId: 'u-1' },
+        { userId: 'u-2' },
+      ]);
 
       await controller.deleteConversation(req, res, next);
 
+      expect(prisma.conversationParticipant.findMany).toHaveBeenCalledWith({
+        where: { conversationId: 'c-1' },
+        select: { userId: true },
+      });
       expect(chatService.deleteConversation).toHaveBeenCalledWith('c-1', 'u-1');
+      expect(mockIo.to).toHaveBeenCalledWith('user:u-1');
+      expect(mockIo.to).toHaveBeenCalledWith('user:u-2');
       expect(mockIo.emit).toHaveBeenCalledWith('chat:conversation-deleted', { conversationId: 'c-1' });
       expect(res.json).toHaveBeenCalledWith({ status: 'success', data: null });
     });
@@ -322,6 +332,7 @@ describe('chatController', () => {
     it('handles no io gracefully', async () => {
       req.params = { id: 'c-1' };
       req.app.get.mockReturnValue(null);
+      prisma.conversationParticipant.findMany.mockResolvedValue([]);
 
       await controller.deleteConversation(req, res, next);
       expect(res.json).toHaveBeenCalled();

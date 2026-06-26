@@ -261,9 +261,19 @@ process.on('SIGINT', () => {
       socket.on('chat:leave', async (payload, ack) => {
         try {
           const { conversationId } = payload || {};
-          if (conversationId) {
-            socket.leave(`conversation:${conversationId}`);
-          }
+          if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
+
+          const effectiveUserId = socket.userRoles.includes('admin')
+            ? (await chatService.getSharedAdminId()) || socket.userId
+            : socket.userId;
+
+          const participant = await prisma.conversationParticipant.findUnique({
+            where: { conversationId_userId: { conversationId, userId: effectiveUserId } }
+          });
+
+          if (!participant) return ack?.({ status: 'error', message: 'Access denied' });
+
+          socket.leave(`conversation:${conversationId}`);
           ack?.({ status: 'success' });
         } catch (err) {
           console.error('Socket chat:leave error:', err);
@@ -366,6 +376,12 @@ process.on('SIGINT', () => {
             ? (await chatService.getSharedAdminId()) || socket.userId
             : socket.userId;
 
+          const participant = await prisma.conversationParticipant.findUnique({
+            where: { conversationId_userId: { conversationId, userId: effectiveUserId } }
+          });
+
+          if (!participant) return ack?.({ status: 'error', message: 'Access denied' });
+
           await chatService.markAsRead(conversationId, effectiveUserId);
 
           socket.to(`conversation:${conversationId}`).emit('chat:mark-read', {
@@ -391,18 +407,24 @@ process.on('SIGINT', () => {
             effectiveUserId = (await chatService.getSharedAdminId()) || socket.userId;
           }
 
+          const participant = await prisma.conversationParticipant.findUnique({
+            where: { conversationId_userId: { conversationId, userId: effectiveUserId } }
+          });
+
+          if (!participant) return;
+
           socket.to(`conversation:${conversationId}`).emit('chat:delivered', {
             conversationId,
             messageIds,
             deliveredTo: effectiveUserId,
           });
 
-          const participant = await prisma.conversationParticipant.findFirst({
+          const recipient = await prisma.conversationParticipant.findFirst({
             where: { conversationId, userId: { not: effectiveUserId } },
             select: { userId: true }
           });
-          if (participant) {
-            io.to(`user:${participant.userId}`).emit('chat:delivered', {
+          if (recipient) {
+            io.to(`user:${recipient.userId}`).emit('chat:delivered', {
               conversationId,
               messageIds,
               deliveredTo: effectiveUserId,
