@@ -13,6 +13,8 @@ jest.mock('../../utils/prismaClient', () => ({
 jest.mock('../../utils/queue', () => ({
   enqueueNotification: jest.fn(() => Promise.resolve()),
   enqueueEmail: jest.fn(() => Promise.resolve()),
+  enqueueEvent: jest.fn(() => Promise.resolve()),
+  enqueueCreateStripeCustomer: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));

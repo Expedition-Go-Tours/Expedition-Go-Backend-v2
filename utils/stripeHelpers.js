@@ -29,9 +29,8 @@ function getStripe() {
   return _stripe;
 }
 const prisma = require('./prismaClient');
-const { enqueueEmail } = require('./queue');
+const { enqueueEmail, enqueueEvent } = require('./queue');
 const { notifyAdmin } = require('./adminNotificationService');
-const event = require('./eventEmitter');
 const getConfig = require('./getConfig');
 
 /**
@@ -290,7 +289,7 @@ async function handlePaymentSucceeded(paymentIntent) {
 
   // Emit analytics events for each completed booking
   for (const booking of bookings) {
-    event.emit({
+    enqueueEvent({
       name: 'booking.completed',
       userId: booking.customerId,
       resource: 'Booking',

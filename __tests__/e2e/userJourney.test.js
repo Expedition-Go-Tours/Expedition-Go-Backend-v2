@@ -15,6 +15,7 @@ jest.mock('../../utils/prismaClient', () => ({
   stripeEvent: { findUnique: jest.fn(), upsert: jest.fn(), update: jest.fn() },
   tourEvent: { create: jest.fn(), findMany: jest.fn(), update: jest.fn(), delete: jest.fn(), count: jest.fn() },
   auditLog: { create: jest.fn(), findMany: jest.fn(), deleteMany: jest.fn(), count: jest.fn() },
+  adminNotification: { create: jest.fn() },
   $transaction: jest.fn(),
   $disconnect: jest.fn(),
 }));
@@ -22,9 +23,11 @@ jest.mock('../../utils/prismaClient', () => ({
 jest.mock('../../utils/queue', () => ({
   enqueueNotification: jest.fn(() => Promise.resolve()),
   enqueueEmail: jest.fn(() => Promise.resolve()),
+  enqueueEvent: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
+jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateTourCaches: jest.fn(), invalidateKeys: jest.fn() }));
 
 jest.mock('stripe', () => {
   return jest.fn().mockImplementation(() => ({
@@ -68,7 +71,7 @@ const request = require('supertest');
 const app = require('../../app');
 const prisma = require('../../utils/prismaClient');
 const { createPaymentIntent, calculateCommission, processStripeWebhook } = require('../../utils/stripeHelpers');
-const { enqueueEmail, enqueueNotification } = require('../../utils/queue');
+const { enqueueEmail, enqueueNotification, enqueueEvent } = require('../../utils/queue');
 const event = require('../../utils/eventEmitter');
 
 const mockUser = {
@@ -352,7 +355,7 @@ describe('E2E: Full User Journey', () => {
     );
 
     // Verify analytics event emitted
-    expect(event.emit).toHaveBeenCalledWith(
+    expect(enqueueEvent).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'booking.completed' }),
     );
   });
@@ -425,7 +428,7 @@ describe('E2E: Full User Journey', () => {
     );
 
     // 6. Verify analytics
-    expect(event.emit).toHaveBeenCalledWith(
+    expect(enqueueEvent).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'booking.completed' }),
     );
   });

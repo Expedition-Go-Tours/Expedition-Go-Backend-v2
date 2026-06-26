@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { sendTeamInviteEmail, sendTeamInviteRevokedEmail } = require('../utils/emailService');
 const { enqueueNotification } = require('../utils/queue');
 const { logActivity } = require('../utils/auditLogger');
+const logger = require('../utils/logger');
 const { VALID_TEAM_ROLES, TEAM_ROLE_PERMISSIONS } = require('../config/teamPermissions');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -363,7 +364,7 @@ exports.acceptInvite = catchAsync(async (req, res, next) => {
     title: 'Team Invitation Accepted',
     message: `${req.user.email} has accepted their invitation as ${member.role}`,
     data: { memberId: member.id, email: req.user.email, role: member.role },
-  }).catch(() => {});
+  }).catch((err) => logger.warn('[team] enqueueNotification failed:', err?.message));
 
   await logActivity({
     userId: req.user.id,
@@ -528,7 +529,7 @@ exports.revokeInvite = catchAsync(async (req, res, next) => {
     supplierName: supplier?.name || 'A supplier',
     role: member.role,
     invitedBy: req.user.name || 'Your supplier',
-  }).catch(() => {});
+  }).catch((err) => logger.warn('[team] sendTeamInviteRevokedEmail failed:', err?.message));
 
   await logActivity({
     userId: req.user.id,

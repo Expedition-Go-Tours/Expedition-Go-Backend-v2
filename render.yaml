@@ -77,6 +77,8 @@ projects:
         sync: false
       - key: API_VERSION
         sync: false
+      - key: UV_THREADPOOL_SIZE
+        value: "8"
       region: oregon
       buildCommand: npm install && npx prisma generate
       startCommand: npx prisma db push && node server.js

@@ -24,7 +24,8 @@ const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const { addApprovedRating, removeApprovedRating, recalculateSupplierRating } = require('../utils/ratingHelper');
 const cache = require('../utils/cacheHelper');
 const crypto = require('crypto');
-const event = require('../utils/eventEmitter');
+const { enqueueEvent } = require('../utils/queue');
+const logger = require('../utils/logger');
 
 // ================================
 // CUSTOMER REVIEW ENDPOINTS
@@ -174,7 +175,7 @@ exports.createReview = catchAsync(async (req, res, next) => {
     metadata: { tourId, rating: parsedRating, bookingId: bookingId || null }
   });
 
-  event.emit({
+  enqueueEvent({
     name: 'review.submitted',
     userId: customerId,
     req,
@@ -287,8 +288,8 @@ exports.updateReview = catchAsync(async (req, res, next) => {
   });
 
   if (existingReview.status === 'APPROVED' && ratingChanged) {
-    cache.invalidateReviewCaches(existingReview.tourId).catch(() => {});
-    cache.invalidateTourCaches(existingReview.tourId).catch(() => {});
+    cache.invalidateReviewCaches(existingReview.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+    cache.invalidateTourCaches(existingReview.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
   }
 
   await logActivity({
@@ -337,8 +338,8 @@ exports.deleteReview = catchAsync(async (req, res, next) => {
     }
   });
 
-  cache.invalidateReviewCaches(review.tourId).catch(() => {});
-  cache.invalidateTourCaches(review.tourId).catch(() => {});
+  cache.invalidateReviewCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+  cache.invalidateTourCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
 
   await logActivity({
     userId: customerId,
@@ -899,8 +900,8 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
     return [updated];
   });
 
-  cache.invalidateReviewCaches(review.tourId).catch(() => {});
-  cache.invalidateTourCaches(review.tourId).catch(() => {});
+  cache.invalidateReviewCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+  cache.invalidateTourCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
 
   const notificationMessages = {
     approve: 'Your review has been approved and is now visible',
@@ -939,7 +940,7 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
     }
   });
 
-  event.emit({
+  enqueueEvent({
     name: `review.${action}`,
     userId: adminId,
     req,
@@ -1009,8 +1010,8 @@ exports.adminUpdateReview = catchAsync(async (req, res, next) => {
   });
 
   if (review.status === 'APPROVED' && ratingChanged) {
-    cache.invalidateReviewCaches(review.tourId).catch(() => {});
-    cache.invalidateTourCaches(review.tourId).catch(() => {});
+    cache.invalidateReviewCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+    cache.invalidateTourCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
   }
 
   await logActivity({
@@ -1059,8 +1060,8 @@ exports.adminDeleteReview = catchAsync(async (req, res, next) => {
     }
   });
 
-  cache.invalidateReviewCaches(review.tourId).catch(() => {});
-  cache.invalidateTourCaches(review.tourId).catch(() => {});
+  cache.invalidateReviewCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+  cache.invalidateTourCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
 
   await logActivity({
     userId: adminId,

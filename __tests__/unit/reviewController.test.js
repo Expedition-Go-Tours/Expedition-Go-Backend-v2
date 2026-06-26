@@ -9,7 +9,7 @@ jest.mock('../../utils/prismaClient', () => ({
   })),
 }));
 
-jest.mock('../../utils/queue', () => ({ enqueueNotification: jest.fn() }));
+jest.mock('../../utils/queue', () => ({ enqueueNotification: jest.fn(), enqueueEvent: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn() }));
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
 jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
@@ -19,7 +19,7 @@ jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn(
 jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
 
 const prisma = require('../../utils/prismaClient');
-const { enqueueNotification } = require('../../utils/queue');
+const { enqueueNotification, enqueueEvent } = require('../../utils/queue');
 const { notifyAdmin } = require('../../utils/adminNotificationService');
 const { logActivity } = require('../../utils/auditLogger');
 const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
@@ -55,7 +55,7 @@ describe('reviewController', () => {
     cache.getOrSet.mockImplementation((key, fn) => fn());
     cache.invalidateReviewCaches.mockResolvedValue();
     cache.invalidateTourCaches.mockResolvedValue();
-    event.emit.mockReturnValue();
+    enqueueEvent.mockResolvedValue();
     prisma.$transaction.mockImplementation((cb) => cb(mockTx()));
   });
 
@@ -157,7 +157,7 @@ describe('reviewController', () => {
 
       await controller.createReview(req, res, next);
 
-      expect(event.emit).toHaveBeenCalledWith(expect.objectContaining({ name: 'review.submitted' }));
+      expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'review.submitted' }));
     });
 
     it('handles rating of 1 (minimum)', async () => {
@@ -729,7 +729,7 @@ describe('reviewController', () => {
     it('emits moderation event', async () => {
       await controller.moderateReview(req, res, next);
 
-      expect(event.emit).toHaveBeenCalledWith(expect.objectContaining({ name: 'review.approve' }));
+      expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'review.approve' }));
     });
   });
 });

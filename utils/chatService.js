@@ -2,6 +2,7 @@ const prisma = require('./prismaClient');
 const { enqueueNotification } = require('./queue');
 const { notifyAdmin } = require('./adminNotificationService');
 const { deleteCloudinaryImage } = require('./cloudinaryHelper');
+const logger = require('./logger');
 
 let _sharedAdminId = null;
 
@@ -349,7 +350,7 @@ async function deleteMessage(conversationId, messageId, userId) {
   if (message.senderId !== resolvedUserId) throw Object.assign(new Error('You can only delete your own messages'), { statusCode: 403 });
 
   if (message.attachmentUrl) {
-    deleteCloudinaryImage(message.attachmentUrl).catch(() => {});
+    deleteCloudinaryImage(message.attachmentUrl).catch((err) => logger.warn('[chat] deleteCloudinaryImage failed:', err?.message));
   }
 
   await prisma.message.delete({ where: { id: messageId } });
@@ -370,7 +371,7 @@ async function deleteConversation(conversationId, userId) {
   });
 
   for (const msg of messagesWithAttachments) {
-    deleteCloudinaryImage(msg.attachmentUrl).catch(() => {});
+    deleteCloudinaryImage(msg.attachmentUrl).catch((err) => logger.warn('[chat] deleteCloudinaryImage failed:', err?.message));
   }
 
   await prisma.conversation.delete({ where: { id: conversationId } });

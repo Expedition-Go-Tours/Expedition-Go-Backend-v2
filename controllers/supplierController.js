@@ -16,6 +16,7 @@ const { enqueueNotification } = require('../utils/queue');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 const admin = require('../config/firebaseAdmin');
+const logger = require('../utils/logger');
 
 // ================================
 // SUPPLIER APPLICATION
@@ -176,9 +177,9 @@ exports.updateApplication = catchAsync(async (req, res, next) => {
       if (oldDocs[key] && oldDocs[key] !== newDocs[key]) {
         const oldVal = oldDocs[key];
         if (Array.isArray(oldVal)) {
-          oldVal.forEach(url => deleteCloudinaryImage(url).catch(() => {}));
+          oldVal.forEach(url => deleteCloudinaryImage(url).catch((err) => logger.warn('[supplier] deleteCloudinaryImage failed:', err?.message)));
         } else {
-          deleteCloudinaryImage(oldVal).catch(() => {});
+          deleteCloudinaryImage(oldVal).catch((err) => logger.warn('[supplier] deleteCloudinaryImage failed:', err?.message));
         }
       }
     });

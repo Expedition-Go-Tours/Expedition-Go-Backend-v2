@@ -14,12 +14,13 @@ jest.mock('../../utils/prismaClient', () => ({
 }));
 
 const prisma = require('../../utils/prismaClient');
-const { enqueueNotification, enqueueEmail } = require('../../utils/queue');
+const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../../utils/queue');
 const event = require('../../utils/eventEmitter');
 const { createPaymentIntent, calculateCommission } = require('../../utils/stripeHelpers');
 jest.mock('../../utils/queue', () => ({
   enqueueNotification: jest.fn(() => Promise.resolve()),
   enqueueEmail: jest.fn(() => Promise.resolve()),
+  enqueueEvent: jest.fn(() => Promise.resolve()),
 }));
 jest.mock('../../utils/eventEmitter', () => ({
   emit: jest.fn(),
@@ -173,7 +174,7 @@ describe('Booking Controller', () => {
         status: 'success',
         data: expect.objectContaining({ cartItem: mockCartItem }),
       }));
-      expect(event.emit).toHaveBeenCalledWith(expect.objectContaining({ name: 'cart.added' }));
+      expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'cart.added' }));
     });
 
     it('returns 404 if tour not found or inactive', async () => {
@@ -269,7 +270,7 @@ describe('Booking Controller', () => {
       await bookingController.clearCart(req, res);
 
       expect(res.status).toHaveBeenCalledWith(204);
-      expect(event.emit).toHaveBeenCalledWith(expect.objectContaining({ name: 'cart.cleared' }));
+      expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'cart.cleared' }));
     });
   });
 
@@ -297,7 +298,7 @@ describe('Booking Controller', () => {
         }),
       }));
       expect(enqueueNotification).toHaveBeenCalled();
-      expect(event.emit).toHaveBeenCalledWith(expect.objectContaining({ name: 'booking.initiated' }));
+      expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'booking.initiated' }));
     });
 
     it('creates bookings from cart items when useCart=true', async () => {
@@ -389,7 +390,7 @@ describe('Booking Controller', () => {
       expect(res.status).toHaveBeenCalledWith(200);
       expect(enqueueEmail).toHaveBeenCalledWith(expect.objectContaining({ type: 'booking-cancellation', bookingId: 'booking-1' }));
       expect(enqueueNotification).toHaveBeenCalledWith(expect.objectContaining({ type: 'BOOKING_CANCELLED' }));
-      expect(event.emit).toHaveBeenCalledWith(expect.objectContaining({ name: 'booking.cancelled' }));
+      expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'booking.cancelled' }));
     });
 
     it('returns 404 if booking not found or cannot be cancelled', async () => {
@@ -563,7 +564,7 @@ describe('Booking Controller', () => {
 
       expect(res.status).toHaveBeenCalledWith(200);
       expect(enqueueNotification).toHaveBeenCalled();
-      expect(event.emit).toHaveBeenCalledWith(expect.objectContaining({ name: 'booking.status_confirmed' }));
+      expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'booking.status_confirmed' }));
     });
 
     it('returns 404 if booking not found for supplier', async () => {

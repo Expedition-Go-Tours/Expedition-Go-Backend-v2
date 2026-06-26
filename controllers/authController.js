@@ -4,7 +4,7 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { signAccessToken, signRefreshToken, signPasswordResetToken, verifyPasswordResetToken, setAuthCookies, clearAuthCookies } = require('../config/jwt');
 const { storeRefreshToken, rotateRefreshToken, clearRefreshToken } = require('../utils/refreshTokenHelper');
-const event = require('../utils/eventEmitter');
+const { enqueueEvent, enqueueCreateStripeCustomer } = require('../utils/queue');
 const passport = require('passport');
 
 exports.login = catchAsync(async (req, res, next) => {
@@ -27,7 +27,7 @@ exports.login = catchAsync(async (req, res, next) => {
       data: { lastLoginAt: new Date() },
     });
 
-    event.emit({
+    enqueueEvent({
       name: 'user.logged_in',
       userId: user.id,
       req,
@@ -65,19 +65,7 @@ exports.register = catchAsync(async (req, res, next) => {
     return next(new AppError('An account with this email already exists', 409));
   }
 
-  const passwordHash = await bcrypt.hash(password, 12);
-
-  const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-  let stripeCustomer = null;
-  try {
-    stripeCustomer = await stripe.customers.create({
-      email,
-      name,
-      metadata: { source: 'local_auth' },
-    });
-  } catch (error) {
-    console.error('Failed to create Stripe customer:', error);
-  }
+  const passwordHash = await bcrypt.hash(password, 10);
 
   const user = await prisma.user.create({
     data: {
@@ -86,16 +74,17 @@ exports.register = catchAsync(async (req, res, next) => {
       passwordHash,
       authProvider: 'local',
       roles: ['customer'],
-      stripeCustomerId: stripeCustomer?.id,
       lastLoginAt: new Date(),
     },
   });
+
+  enqueueCreateStripeCustomer({ userId: user.id, email: user.email, name: user.name });
 
   const accessToken = signAccessToken({ userId: user.id });
   const refreshToken = signRefreshToken({ userId: user.id });
   await storeRefreshToken(user.id, refreshToken);
 
-  event.emit({
+  enqueueEvent({
     name: 'user.signed_up',
     userId: user.id,
     req,
@@ -185,7 +174,7 @@ exports.logout = catchAsync(async (req, res) => {
 
   clearAuthCookies(res);
 
-  event.emit({
+  enqueueEvent({
     name: 'user.logged_out',
     userId: req.user?.id,
     req,
@@ -255,7 +244,7 @@ exports.resetPassword = catchAsync(async (req, res, next) => {
     return next(new AppError('Invalid or expired reset token', 400));
   }
 
-  const passwordHash = await bcrypt.hash(password, 12);
+  const passwordHash = await bcrypt.hash(password, 10);
 
   await prisma.user.update({
     where: { id: decoded.userId },
@@ -265,7 +254,7 @@ exports.resetPassword = catchAsync(async (req, res, next) => {
     },
   });
 
-  event.emit({
+  enqueueEvent({
     name: 'user.password_reset',
     userId: decoded.userId,
     req,
@@ -301,7 +290,7 @@ exports.changePassword = catchAsync(async (req, res, next) => {
     return next(new AppError('Current password is incorrect', 401));
   }
 
-  const passwordHash = await bcrypt.hash(newPassword, 12);
+  const passwordHash = await bcrypt.hash(newPassword, 10);
   await prisma.user.update({
     where: { id: user.id },
     data: { passwordHash },
@@ -349,7 +338,7 @@ exports.googleCallback = (req, res, next) => {
       data: { lastLoginAt: new Date() },
     });
 
-    event.emit({
+    enqueueEvent({
       name: 'user.logged_in',
       userId: user.id,
       req,

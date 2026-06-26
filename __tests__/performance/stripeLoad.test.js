@@ -7,12 +7,15 @@ jest.mock('../../utils/prismaClient', () => ({
   stripeEvent: { findUnique: jest.fn(), upsert: jest.fn(), update: jest.fn() },
   payoutMethod: { findFirst: jest.fn() },
   specialOffer: { update: jest.fn() },
+  adminNotification: { create: jest.fn() },
   $transaction: jest.fn(),
   $disconnect: jest.fn(),
 }));
 
 jest.mock('../../utils/queue', () => ({
   enqueueEmail: jest.fn(() => Promise.resolve()),
+  enqueueEvent: jest.fn(() => Promise.resolve()),
+  enqueueCreateStripeCustomer: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));

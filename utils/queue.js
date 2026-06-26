@@ -67,6 +67,7 @@ const QUEUE_NAMES = {
   EMAILS:     'communications-emails',
   AGGREGATIONS: 'analytics-aggregations',
   CLEANUP:    'system-cleanup',
+  STRIPE:     'platform-stripe',
 };
 
 const DEFAULT_JOB_OPTIONS = {
@@ -100,6 +101,7 @@ const notificationQueue = () => getQueue(QUEUE_NAMES.NOTIFICATIONS);
 const emailQueue       = () => getQueue(QUEUE_NAMES.EMAILS);
 const aggregationQueue = () => getQueue(QUEUE_NAMES.AGGREGATIONS);
 const cleanupQueue     = () => getQueue(QUEUE_NAMES.CLEANUP);
+const stripeQueue      = () => getQueue(QUEUE_NAMES.STRIPE);
 
 // ---------------------------------------------------------------------------
 // Enqueue helpers (typed so callers don't touch raw queue names)
@@ -251,6 +253,22 @@ async function enqueueAggregation(jobName, payload = {}) {
   } catch { /* Redis unavailable — skip aggregation */ }
 }
 
+/**
+ * Enqueue a Stripe customer creation job.
+ * Runs in the background so the signup response isn't blocked by Stripe's latency.
+ * Retries 3 times with exponential backoff if Stripe is temporarily unavailable.
+ */
+async function enqueueCreateStripeCustomer(data) {
+  try {
+    await stripeQueue().add('create-customer', data, {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 2000 },
+    });
+  } catch {
+    console.error('[Queue] Redis unavailable — Stripe customer creation skipped');
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Worker registration — called once at startup from server.js
 // ---------------------------------------------------------------------------
@@ -262,26 +280,47 @@ async function enqueueAggregation(jobName, payload = {}) {
 function registerWorkers() {
   const conn = getConnection();
 
-  function createWorker(queueName, processor) {
-    const worker = new Worker(queueName, processor, { connection: conn });
+  function createWorker(queueName, processor, concurrency = 1) {
+    const worker = new Worker(queueName, processor, { connection: conn, concurrency });
     worker.on('error', () => {}); // Suppressed — handled by caller
     return worker;
   }
 
   /* ------------------------------------------------------------------
-   * NOTIFICATION WORKER
+   * NOTIFICATION WORKER (concurrency 5)
    * ------------------------------------------------------------------ */
   createWorker(QUEUE_NAMES.NOTIFICATIONS, async (job) => {
     const { sendNotification } = require('./notificationService');
     await sendNotification(job.data);
-  });
+  }, 5);
 
   /* ------------------------------------------------------------------
-   * EMAIL WORKER
+   * EMAIL WORKER (concurrency 5)
    * ------------------------------------------------------------------ */
   createWorker(QUEUE_NAMES.EMAILS, async (job) => {
     await processEmailJob(job.data);
-  });
+  }, 5);
+
+  /* ------------------------------------------------------------------
+   * STRIPE WORKER (concurrency 5)
+   * ------------------------------------------------------------------ */
+  createWorker(QUEUE_NAMES.STRIPE, async (job) => {
+    const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+    const prisma = require('./prismaClient');
+
+    const { userId, email, name } = job.data;
+
+    const customer = await stripe.customers.create({
+      email,
+      name,
+      metadata: { source: 'local_auth' },
+    });
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { stripeCustomerId: customer.id },
+    });
+  }, 5);
 
   /* ------------------------------------------------------------------
    * AGGREGATION WORKER
@@ -379,6 +418,7 @@ module.exports = {
   enqueueEvent,
   enqueueAggregation,
   enqueueCleanup,
+  enqueueCreateStripeCustomer,
   processEmailJob,
   registerWorkers,
   closeAll,

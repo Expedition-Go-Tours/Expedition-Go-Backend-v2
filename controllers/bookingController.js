@@ -19,11 +19,11 @@ const AppError = require('../utils/appError');
 const { createPaymentIntent, calculateCommission } = require('../utils/stripeHelpers');
 const { generateBookingNumber, validateTravelerInfo } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
-const { enqueueNotification, enqueueEmail } = require('../utils/queue');
+const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../utils/queue');
 const getConfig = require('../utils/getConfig');
 const { generatePrintableTicketHtml } = require('../utils/emailService');
 const { logActivity } = require('../utils/auditLogger');
-const event = require('../utils/eventEmitter');
+const logger = require('../utils/logger');
 
 // ================================
 // CART MANAGEMENT
@@ -126,7 +126,7 @@ exports.addToCart = catchAsync(async (req, res, next) => {
     data: { cartItem }
   });
 
-  event.emit({ name: 'cart.added', userId: customerId, req, resource: 'Tour', resourceId: tourId, properties: { total: pricingCalculation.total, currency: pricingCalculation.currency, travelers } });
+  enqueueEvent({ name: 'cart.added', userId: customerId, req, resource: 'Tour', resourceId: tourId, properties: { total: pricingCalculation.total, currency: pricingCalculation.currency, travelers } });
 });
 
 /**
@@ -200,7 +200,7 @@ exports.removeFromCart = catchAsync(async (req, res, next) => {
     return next(new AppError('Cart item not found', 404));
   }
 
-  event.emit({ name: 'cart.removed', userId: customerId, req, resource: 'CartItem', resourceId: id });
+  enqueueEvent({ name: 'cart.removed', userId: customerId, req, resource: 'CartItem', resourceId: id });
 
   res.status(204).json({
     status: 'success',
@@ -218,7 +218,7 @@ exports.clearCart = catchAsync(async (req, res, next) => {
     where: { customerId }
   });
 
-  event.emit({ name: 'cart.cleared', userId: customerId, req, resource: 'Cart' });
+  enqueueEvent({ name: 'cart.cleared', userId: customerId, req, resource: 'Cart' });
 
   res.status(204).json({
     status: 'success',
@@ -376,10 +376,12 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Validate booking rules from system config
-  const minAdvanceHours = parseInt(await getConfig('booking.min_advance_hours', '24'));
-  const maxAdvanceDays = parseInt(await getConfig('booking.max_advance_days', '365'));
-  const maxTravelersPerBooking = parseInt(await getConfig('booking.max_travelers', '50'));
+  // Validate booking rules from system config (fetched in parallel)
+  const [minAdvanceHours, maxAdvanceDays, maxTravelersPerBooking] = await Promise.all([
+    getConfig('booking.min_advance_hours', '24').then(v => parseInt(v)),
+    getConfig('booking.max_advance_days', '365').then(v => parseInt(v)),
+    getConfig('booking.max_travelers', '50').then(v => parseInt(v)),
+  ]);
   const now = new Date();
 
   for (const item of bookingItems) {
@@ -502,9 +504,9 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     }).catch((err) => console.error('[Notification] enqueueNotification (booking supplier) failed:', err.message));
   }
 
-  // Emit analytics events for every created booking
+  // Emit analytics events for every created booking (via queue)
   for (const booking of result.bookings) {
-    event.emit({
+    enqueueEvent({
       name: 'booking.initiated',
       userId: customerId,
       req,
@@ -768,16 +770,16 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     data: { bookingId: booking.id }
   }).catch((err) => console.error('[Notification] enqueueNotification failed:', err.message));
 
-  // Log activity
-  await logActivity({
+  // Log activity (fire-and-forget)
+  logActivity({
     userId: customerId,
     action: 'booking.cancelled',
     resource: 'Booking',
     resourceId: booking.id,
     metadata: { reason, refundAmount: cancellationCheck.refundAmount }
-  });
+  }).catch((err) => logger.warn('[booking] logActivity failed:', err?.message));
 
-  event.emit({
+  enqueueEvent({
     name: 'booking.cancelled',
     userId: customerId,
     req,
@@ -935,16 +937,16 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
     }).catch((err) => console.error('[Notification] enqueueNotification (booking update) failed:', err.message));
   }
 
-  // Log activity
-  await logActivity({
+  // Log activity (fire-and-forget)
+  logActivity({
     userId: supplierId,
     action: 'booking.status_updated',
     resource: 'Booking',
     resourceId: booking.id,
     metadata: { oldStatus: booking.status, newStatus: status }
-  });
+  }).catch((err) => logger.warn('[booking] logActivity failed:', err?.message));
 
-  event.emit({
+  enqueueEvent({
     name: `booking.status_${status.toLowerCase()}`,
     userId: supplierId,
     req,

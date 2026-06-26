@@ -97,7 +97,7 @@ async function delPattern(pattern) {
         keys.forEach((k) => pipeline.del(k));
       }
     });
-    stream.on('end', () => pipeline.exec().catch(() => {}));
+    stream.on('end', () => pipeline.exec().catch((err) => console.warn('[Redis] delPattern pipeline failed:', err?.message)));
     stream.read();
   } catch { /* silent fail */ }
 }

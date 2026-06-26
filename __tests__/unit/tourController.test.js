@@ -20,6 +20,7 @@ jest.mock('../../utils/cacheHelper', () => ({
 }));
 
 jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
+jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
 jest.mock('../../utils/tourHelpers', () => ({ createSlug: jest.fn(), validateTourData: jest.fn() }));
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
@@ -31,6 +32,7 @@ jest.mock('../../utils/fullTextSearch', () => ({ rankTourIdsBySearch: jest.fn() 
 const prisma = require('../../utils/prismaClient');
 const cache = require('../../utils/cacheHelper');
 const event = require('../../utils/eventEmitter');
+const { enqueueEvent } = require('../../utils/queue');
 const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
 const { createSlug, validateTourData } = require('../../utils/tourHelpers');
 const { logActivity } = require('../../utils/auditLogger');
@@ -92,7 +94,7 @@ describe('tourController', () => {
     cache.getOrSet.mockImplementation((key, fn) => fn());
     cache.invalidateTourCaches.mockResolvedValue();
     cache.invalidateKeys.mockResolvedValue();
-    event.emit.mockReturnValue();
+    enqueueEvent.mockResolvedValue();
     deleteCloudinaryImage.mockResolvedValue();
     createSlug.mockResolvedValue('test-tour-slug');
     validateTourData.mockReturnValue({ isValid: true, errors: [] });
@@ -224,7 +226,7 @@ describe('tourController', () => {
 
       await controller.getAllTours(req, res, next);
 
-      expect(event.emit).toHaveBeenCalledWith(
+      expect(enqueueEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           name: 'search.executed',
           properties: expect.objectContaining({
@@ -240,7 +242,7 @@ describe('tourController', () => {
 
       await controller.getAllTours(req, res, next);
 
-      expect(event.emit).toHaveBeenCalledWith(
+      expect(enqueueEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           name: 'browse.executed',
         })
@@ -250,7 +252,7 @@ describe('tourController', () => {
     it('does not emit event when no filters are applied', async () => {
       await controller.getAllTours(req, res, next);
 
-      expect(event.emit).not.toHaveBeenCalled();
+      expect(enqueueEvent).not.toHaveBeenCalled();
     });
 
     it('handles prisma errors gracefully by passing to error middleware', async () => {
@@ -441,7 +443,7 @@ describe('tourController', () => {
 
       await controller.getTour(req, res, next);
 
-      expect(event.emit).toHaveBeenCalledWith(
+      expect(enqueueEvent).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'tour.viewed' })
       );
     });
