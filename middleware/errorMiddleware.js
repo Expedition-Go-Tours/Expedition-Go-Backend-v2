@@ -22,9 +22,6 @@ module.exports = (err, req, res, next) => {
   } else if (err.code === 'LIMIT_FILE_SIZE') {
     err.statusCode = 413;
     err.message = 'File too large';
-  } else if (err.name === 'CastError') {
-    err.statusCode = 400;
-    err.message = 'Invalid ID format';
   } else if (err.name === 'JsonWebTokenError') {
     err.statusCode = 401;
     err.message = 'Invalid token';

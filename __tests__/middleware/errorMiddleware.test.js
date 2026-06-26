@@ -179,18 +179,6 @@ describe('Error Middleware', () => {
     });
   });
 
-  describe('CastError handling', () => {
-    it('handles MongoDB-style CastError', () => {
-      const res = mockRes();
-      const err = new Error('Cast to ObjectId failed');
-      err.name = 'CastError';
-
-      errorHandler(err, req, res, jest.fn());
-
-      expect(res.status).toHaveBeenCalledWith(400);
-    });
-  });
-
   describe('JWT errors', () => {
     it('handles JsonWebTokenError', () => {
       const res = mockRes();

@@ -24,6 +24,7 @@ const rateLimit = require('express-rate-limit');
 const hpp = require('hpp');
 const morgan = require('morgan');
 const compression = require('compression');
+const crypto = require('crypto');
 const logger = require('./utils/logger');
 
 
@@ -132,12 +133,20 @@ app.use('/api/chat', (req, res, next) => {
   next();
 });
 
+// Attach correlation ID to every request
+app.use((req, res, next) => {
+  req.id = crypto.randomUUID();
+  res.setHeader('X-Request-Id', req.id);
+  next();
+});
+
 // Request monitoring middleware
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
     const duration = Date.now() - start;
     logger.httpLog(req.method, req.originalUrl, res.statusCode, duration, {
+      reqId: req.id,
       ip: req.ip,
       userAgent: req.headers['user-agent'],
     });
@@ -226,15 +235,5 @@ app.use((req, res, next) => {
 });
 
 app.use(globalErrorHandler);
-
-process.on('uncaughtException', (err) => {
-  console.error('UNCAUGHT EXCEPTION', err);
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (err) => {
-  console.error('UNHANDLED REJECTION', err);
-  process.exit(1);
-});
 
 module.exports = app;
