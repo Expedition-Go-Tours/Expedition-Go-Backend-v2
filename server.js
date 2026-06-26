@@ -11,7 +11,7 @@ const logger = require('./utils/logger');
 let server;
 let io;
 
-const shutdown = (reason, err) => {
+const shutdown = async (reason, err) => {
   console.log(`${reason}! Shutting down...`);
 
   if (err) {
@@ -25,6 +25,13 @@ const shutdown = (reason, err) => {
     }
   } catch (e) {
     console.error('Error closing Socket.IO:', e?.message || e);
+  }
+
+  try {
+    await prisma.$disconnect();
+    console.log('Prisma disconnected');
+  } catch (e) {
+    console.error('Error disconnecting Prisma:', e?.message || e);
   }
 
   try {
@@ -45,6 +52,9 @@ process.on('uncaughtException', (err) => {
 });
 
 dotenv.config({ path: './.env' });
+
+const { validateEnv } = require('./config/validateEnv');
+validateEnv();
 
 const app = require('./app');
 
