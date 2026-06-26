@@ -35,7 +35,8 @@ const viewTrackingCache = new Map();
 const { rankTourIdsBySearch } = require('../utils/fullTextSearch');
 const cache = require('../utils/cacheHelper');
 const crypto = require('crypto');
-const event = require('../utils/eventEmitter');
+const { enqueueEvent } = require('../utils/queue');
+const logger = require('../utils/logger');
 
 // ================================
 // PUBLIC TOUR ENDPOINTS
@@ -231,7 +232,7 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
 
   // Fire-and-forget search analytics event (never blocks response)
   if (req.query.search || req.query.category || req.query.location || (req.query.lat && req.query.lng)) {
-    event.emit({
+    enqueueEvent({
       name: req.query.search ? 'search.executed' : 'browse.executed',
       userId: req.user?.id,
       req,
@@ -405,17 +406,28 @@ exports.getTour = catchAsync(async (req, res, next) => {
             reviews: true,
             bookings: true
           }
+        },
+        specialOfferTargets: {
+          include: {
+            specialOffer: true
+          }
         }
       }
     });
 
     if (!tour) return null;
 
+    // Transform specialOfferTargets into a flat specialOffers array
+    const specialOffers = (tour.specialOfferTargets || [])
+      .map(t => t.specialOffer)
+      .filter(Boolean);
+
     return {
       ...tour,
       photos: Array.isArray(tour.photos)
         ? tour.photos.map((url) => cloudinaryUrl(url, 1400))
         : tour.photos,
+      specialOffers,
       coverPhoto: tour.coverPhoto ? cloudinaryUrl(tour.coverPhoto, 1400) : null,
     };
   }, 300);
@@ -481,7 +493,7 @@ exports.getTour = catchAsync(async (req, res, next) => {
       data: { viewCount: { increment: 1 } },
     }).catch(console.error);
 
-    event.emit({ name: 'tour.viewed', userId: req.user?.id, req, resource: 'Tour', resourceId: result.id });
+    enqueueEvent({ name: 'tour.viewed', userId: req.user?.id, req, resource: 'Tour', resourceId: result.id });
   }
 
   // Tell browsers/CDNs: cache this response for 60 s, then revalidate.
@@ -532,6 +544,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
   const {
     title,
     description,
+    referenceCode,
     metaTitle,
     metaDescription,
     categorization,
@@ -544,7 +557,8 @@ exports.createTour = catchAsync(async (req, res, next) => {
     tags = [],
     status = 'DRAFT',
     latitude,
-    longitude
+    longitude,
+    specialOffers
   } = req.body;
 
   // Get uploaded Cloudinary URLs from multer
@@ -578,6 +592,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
       supplierId,
       title,
       description,
+      referenceCode: referenceCode || null,
       slug,
       categorization: parsedCategory,
       theme: parsedTheme,
@@ -624,7 +639,35 @@ exports.createTour = catchAsync(async (req, res, next) => {
     }
   });
 
-  cache.invalidateTourCaches().catch(() => {});
+  cache.invalidateTourCaches().catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
+
+  // Handle special offers if provided
+  const parsedSpecialOffers = typeof specialOffers === 'string' ? JSON.parse(specialOffers) : specialOffers;
+  if (Array.isArray(parsedSpecialOffers) && parsedSpecialOffers.length > 0) {
+    for (const offer of parsedSpecialOffers) {
+      try {
+        await prisma.specialOffer.create({
+          data: {
+            supplierId,
+            name: offer.name || 'Special Offer',
+            offerType: offer.offerType || 'PROMO_CODE',
+            discountType: offer.discountType || 'PERCENTAGE',
+            discountPercentage: offer.discountPercentage || 10,
+            fixedDiscountValue: offer.fixedDiscountValue || null,
+            startDate: offer.startDate ? new Date(offer.startDate) : null,
+            endDate: offer.endDate ? new Date(offer.endDate) : null,
+            promoCode: offer.promoCode || null,
+            isActive: offer.isActive !== false,
+            targets: {
+              create: [{ tourId: tour.id }],
+            },
+          },
+        });
+      } catch (offerErr) {
+        console.warn('Failed to create special offer:', offerErr.message);
+      }
+    }
+  }
 
   await logActivity({
     userId: supplierId,
@@ -679,14 +722,15 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   // (existingPhotos, coverPhotoIndex, etc.) from reaching Prisma and causing
   // PrismaClientValidationError
   const {
-    title, description, metaTitle, metaDescription,
+    title, description, referenceCode, metaTitle, metaDescription,
     productContent, schedulesAndPricing, bookingAndTickets,
-    coverPhoto, tags, status, latitude, longitude
+    coverPhoto, tags, status, latitude, longitude, specialOffers
   } = req.body;
 
   const updateData = {};
   if (title !== undefined) updateData.title = title;
   if (description !== undefined) updateData.description = description;
+  if (referenceCode !== undefined) updateData.referenceCode = referenceCode || null;
   if (metaTitle !== undefined) updateData.metaTitle = metaTitle;
   if (metaDescription !== undefined) updateData.metaDescription = metaDescription;
   if (productContent !== undefined) updateData.productContent = productContent;
@@ -805,7 +849,50 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     }
   }
 
-  cache.invalidateTourCaches(id).catch(() => {});
+  // Handle special offers if provided
+  const parsedSpecialOffers = typeof specialOffers === 'string' ? JSON.parse(specialOffers) : specialOffers;
+  if (Array.isArray(parsedSpecialOffers)) {
+    // Delete existing special offer targets for this tour
+    const existingTargets = await prisma.specialOfferTarget.findMany({ where: { tourId: id } });
+    const existingOfferIds = [...new Set(existingTargets.map(t => t.specialOfferId))];
+    if (existingOfferIds.length > 0) {
+      await prisma.specialOfferTarget.deleteMany({ where: { tourId: id } });
+      // Clean up offers that no longer have any targets
+      for (const offerId of existingOfferIds) {
+        const remainingTargets = await prisma.specialOfferTarget.count({ where: { specialOfferId: offerId } });
+        if (remainingTargets === 0) {
+          await prisma.specialOffer.delete({ where: { id: offerId } }).catch(() => {});
+        }
+      }
+    }
+
+    // Create new special offers
+    for (const offer of parsedSpecialOffers) {
+      try {
+        await prisma.specialOffer.create({
+          data: {
+            supplierId,
+            name: offer.name || 'Special Offer',
+            offerType: offer.offerType || 'PROMO_CODE',
+            discountType: offer.discountType || 'PERCENTAGE',
+            discountPercentage: offer.discountPercentage || 10,
+            fixedDiscountValue: offer.fixedDiscountValue || null,
+            startDate: offer.startDate ? new Date(offer.startDate) : null,
+            endDate: offer.endDate ? new Date(offer.endDate) : null,
+            promoCode: offer.promoCode || null,
+            isActive: offer.isActive !== false,
+            targets: {
+              create: [{ tourId: id }],
+            },
+          },
+        });
+      } catch (offerErr) {
+        console.warn('Failed to create special offer:', offerErr.message);
+      }
+    }
+  }
+
+  cache.invalidateTourCaches(id).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
 
   await logActivity({
     userId: supplierId,
@@ -868,7 +955,7 @@ exports.deleteTour = catchAsync(async (req, res, next) => {
     data: { status: 'ARCHIVED' }
   });
 
-  cache.invalidateTourCaches(id).catch(() => {});
+  cache.invalidateTourCaches(id).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
 
   await logActivity({
     userId: supplierId,
@@ -907,6 +994,11 @@ exports.getMyTours = catchAsync(async (req, res, next) => {
             reviews: true,
             bookings: true
           }
+        },
+        specialOfferTargets: {
+          include: {
+            specialOffer: true
+          }
         }
       },
       orderBy: { createdAt: 'desc' },
@@ -916,13 +1008,19 @@ exports.getMyTours = catchAsync(async (req, res, next) => {
     prisma.tour.count({ where })
   ]);
 
-  const optimizedTours = tours.map(tour => ({
-    ...tour,
-    photos: Array.isArray(tour.photos)
-      ? tour.photos.map(url => cloudinaryUrl(url, 800))
-      : tour.photos,
-    coverPhoto: tour.coverPhoto ? cloudinaryUrl(tour.coverPhoto, 800) : null,
-  }));
+  const optimizedTours = tours.map(tour => {
+    const specialOffers = (tour.specialOfferTargets || [])
+      .map(t => t.specialOffer)
+      .filter(Boolean);
+    return {
+      ...tour,
+      photos: Array.isArray(tour.photos)
+        ? tour.photos.map(url => cloudinaryUrl(url, 800))
+        : tour.photos,
+      coverPhoto: tour.coverPhoto ? cloudinaryUrl(tour.coverPhoto, 800) : null,
+      specialOffers,
+    };
+  });
 
   const totalPages = Math.ceil(totalCount / parseInt(limit));
 
@@ -1076,7 +1174,7 @@ exports.deleteTourPhoto = catchAsync(async (req, res, next) => {
     data: updateData
   });
 
-  cache.invalidateTourCaches(id).catch(() => {});
+  cache.invalidateTourCaches(id).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
 
   await logActivity({
     userId: supplierId,
@@ -1273,7 +1371,7 @@ exports.seedTour = catchAsync(async (req, res, next) => {
     }
   });
 
-  cache.invalidateTourCaches().catch(() => {});
+  cache.invalidateTourCaches().catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
 
   await logActivity({
     userId,

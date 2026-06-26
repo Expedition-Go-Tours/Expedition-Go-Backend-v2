@@ -271,6 +271,7 @@ model Tour {
   // Basic Information
   title        String
   description  String
+  referenceCode String?
   photos       String[]
   coverPhoto   String?
   status       TourStatus  @default(DRAFT)
