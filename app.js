@@ -46,7 +46,22 @@ try {
   console.warn('Swagger spec generation failed:', e.message);
 }
 
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'none'"],
+      imgSrc: ["'self'", 'data:', 'https://res.cloudinary.com', 'https://*.cloudinary.com'],
+      connectSrc: ["'self'", 'https://api.stripe.com', 'https://js.stripe.com'],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      formAction: ["'self'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+}));
 app.use(hpp());
 app.use((req, res, next) => {
   if (req.headers['content-type']?.startsWith('multipart/')) return next();
