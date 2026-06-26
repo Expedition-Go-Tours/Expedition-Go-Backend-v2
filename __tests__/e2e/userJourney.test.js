@@ -72,7 +72,6 @@ const app = require('../../app');
 const prisma = require('../../utils/prismaClient');
 const { createPaymentIntent, calculateCommission, processStripeWebhook } = require('../../utils/stripeHelpers');
 const { enqueueEmail, enqueueNotification, enqueueEvent } = require('../../utils/queue');
-const event = require('../../utils/eventEmitter');
 
 const mockUser = {
   id: 'e2e-user-1',

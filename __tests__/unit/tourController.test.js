@@ -31,7 +31,6 @@ jest.mock('../../utils/fullTextSearch', () => ({ rankTourIdsBySearch: jest.fn() 
 
 const prisma = require('../../utils/prismaClient');
 const cache = require('../../utils/cacheHelper');
-const event = require('../../utils/eventEmitter');
 const { enqueueEvent } = require('../../utils/queue');
 const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
 const { createSlug, validateTourData } = require('../../utils/tourHelpers');

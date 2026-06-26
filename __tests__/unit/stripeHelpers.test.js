@@ -11,7 +11,6 @@ jest.mock('../../utils/prismaClient', () => ({
 
 const prisma = require('../../utils/prismaClient');
 const { enqueueEmail, enqueueEvent } = require('../../utils/queue');
-const event = require('../../utils/eventEmitter');
 jest.mock('../../utils/queue', () => ({
   enqueueEmail: jest.fn(() => Promise.resolve()),
   enqueueEvent: jest.fn(() => Promise.resolve()),

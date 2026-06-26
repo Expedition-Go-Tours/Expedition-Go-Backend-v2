@@ -25,7 +25,6 @@ const { logActivity } = require('../../utils/auditLogger');
 const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
 const { addApprovedRating, removeApprovedRating, recalculateSupplierRating } = require('../../utils/ratingHelper');
 const cache = require('../../utils/cacheHelper');
-const event = require('../../utils/eventEmitter');
 const controller = require('../../controllers/reviewController');
 
 describe('reviewController', () => {
