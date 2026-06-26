@@ -21,7 +21,7 @@ const { sendSupplierStatusEmail } = require('../../utils/emailService');
 const { notifyAdmin } = require('../../utils/adminNotificationService');
 const { enqueueNotification } = require('../../utils/queue');
 const { cloudinaryUrl } = require('../../utils/imageOptimizer');
-const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../../utils/cloudinaryHelper');
+const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
 const admin = require('../../config/firebaseAdmin');
 const controller = require('../../controllers/supplierController');
 

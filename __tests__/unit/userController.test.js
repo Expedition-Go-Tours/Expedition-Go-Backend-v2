@@ -7,7 +7,7 @@ jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.f
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
 const prisma = require('../../utils/prismaClient');
-const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../../utils/cloudinaryHelper');
+const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
 const { logActivity } = require('../../utils/auditLogger');
 const { cloudinaryUrl } = require('../../utils/imageOptimizer');
 const controller = require('../../controllers/userController');
