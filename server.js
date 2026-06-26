@@ -2,9 +2,10 @@ const dotenv = require('dotenv');
 const http = require('http');
 const { Server } = require('socket.io');
 const prisma = require('./utils/prismaClient');
-const event = require('./utils/eventEmitter');
 const { setIO, setupPrismaMiddleware } = require('./utils/dataChangeEmitter');
-const { registerWorkers, closeAll, enqueueNotification, enqueueCleanup, enqueueAggregation, isRedisAvailable } = require('./utils/queue');
+const { registerWorkers, closeAll, enqueueNotification, enqueueCleanup, enqueueAggregation, enqueueEvent, isRedisAvailable } = require('./utils/queue');
+const { logActivity } = require('./utils/auditLogger');
+const logger = require('./utils/logger');
  
 
 let server;
@@ -99,6 +100,21 @@ process.on('SIGINT', () => {
     app.set('io', io);
     setIO(io);
 
+    // Redis adapter for multi-process scaling (graceful fallback if Redis unavailable)
+    if (process.env.REDIS_URL) {
+      try {
+        const { createAdapter } = require('@socket.io/redis-adapter');
+        const { createClient } = require('redis');
+        const pubClient = createClient({ url: process.env.REDIS_URL });
+        const subClient = pubClient.duplicate();
+        await Promise.all([pubClient.connect(), subClient.connect()]);
+        io.adapter(createAdapter(pubClient, subClient));
+        console.log('[Socket.IO] Redis adapter connected');
+      } catch (err) {
+        console.warn('[Socket.IO] Redis adapter unavailable, using in-memory:', err?.message);
+      }
+    }
+
     io.engine.on('connection_error', (err) => {
       console.warn('Socket.IO connection error:', err.message);
     });
@@ -176,6 +192,12 @@ process.on('SIGINT', () => {
 
       if (socket.userRoles.includes('admin')) {
         socket.join('admin-room');
+        logActivity({
+          userId: socket.userId,
+          action: 'socket.admin-connected',
+          resource: 'Socket',
+          metadata: { socketId: socket.id, roles: socket.userRoles },
+        }).catch((err) => logger.warn('[socket] admin connection logActivity failed:', err?.message));
         const chatService = require('./utils/chatService');
         chatService.getSharedAdminId().then(sharedId => {
           if (sharedId) socket.join(`user:${sharedId}`);
@@ -248,7 +270,7 @@ process.on('SIGINT', () => {
 
           ack?.({ status: 'success', data: { review: updated } });
 
-          event.emit({
+          enqueueEvent({
             name: 'review.responded',
             userId: socket.userId,
             resource: 'Review',
@@ -500,35 +522,35 @@ process.on('SIGINT', () => {
 
       // Expired cart cleanup every 5 minutes
       intervals.push(setInterval(() => {
-        enqueueCleanup('cleanup-expired-cart').catch(() => {});
+        enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] cleanup-expired-cart failed:', err?.message));
       }, 5 * 60 * 1000));
 
       // Popularity cache refresh every hour
       intervals.push(setInterval(() => {
-        enqueueAggregation('refresh-popularity').catch(() => {});
+        enqueueAggregation('refresh-popularity').catch((err) => logger.warn('[scheduler] refresh-popularity failed:', err?.message));
       }, 60 * 60 * 1000));
 
       // Old event cleanup once per day
       intervals.push(setInterval(() => {
-        enqueueAggregation('cleanup-events').catch(() => {});
+        enqueueAggregation('cleanup-events').catch((err) => logger.warn('[scheduler] cleanup-events failed:', err?.message));
       }, 24 * 60 * 60 * 1000));
 
       // Old notification cleanup once per day
       intervals.push(setInterval(() => {
-        enqueueCleanup('cleanup-notifications').catch(() => {});
+        enqueueCleanup('cleanup-notifications').catch((err) => logger.warn('[scheduler] cleanup-notifications failed:', err?.message));
       }, 24 * 60 * 60 * 1000));
 
       // Old audit log cleanup once per day
       intervals.push(setInterval(() => {
-        enqueueCleanup('cleanup-audit-logs').catch(() => {});
+        enqueueCleanup('cleanup-audit-logs').catch((err) => logger.warn('[scheduler] cleanup-audit-logs failed:', err?.message));
       }, 24 * 60 * 60 * 1000));
 
       // Run each once on startup so the first cycle isn't delayed
-      enqueueCleanup('cleanup-expired-cart').catch(() => {});
-      enqueueAggregation('refresh-popularity').catch(() => {});
-      enqueueAggregation('cleanup-events').catch(() => {});
-      enqueueCleanup('cleanup-notifications').catch(() => {});
-      enqueueCleanup('cleanup-audit-logs').catch(() => {});
+      enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] startup cleanup-expired-cart failed:', err?.message));
+      enqueueAggregation('refresh-popularity').catch((err) => logger.warn('[scheduler] startup refresh-popularity failed:', err?.message));
+      enqueueAggregation('cleanup-events').catch((err) => logger.warn('[scheduler] startup cleanup-events failed:', err?.message));
+      enqueueCleanup('cleanup-notifications').catch((err) => logger.warn('[scheduler] startup cleanup-notifications failed:', err?.message));
+      enqueueCleanup('cleanup-audit-logs').catch((err) => logger.warn('[scheduler] startup cleanup-audit-logs failed:', err?.message));
     } else {
       console.warn('[Queue] Redis unavailable — emails and notifications will use inline fallback (no queue)');
     }

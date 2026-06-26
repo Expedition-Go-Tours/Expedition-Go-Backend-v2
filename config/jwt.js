@@ -1,5 +1,10 @@
 const jwt = require('jsonwebtoken');
 
+if (process.env.NODE_ENV === 'production') {
+  if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET is required in production');
+  if (!process.env.JWT_REFRESH_SECRET) throw new Error('JWT_REFRESH_SECRET is required in production');
+}
+
 const ACCESS_TOKEN_SECRET = process.env.JWT_SECRET || 'fallback-dev-secret';
 const REFRESH_TOKEN_SECRET = (process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || 'fallback-refresh-secret') + '_refresh';
 const PASSWORD_RESET_SECRET = process.env.JWT_PASSWORD_RESET_SECRET || (process.env.JWT_SECRET || 'fallback-reset-secret') + '_password_reset';
