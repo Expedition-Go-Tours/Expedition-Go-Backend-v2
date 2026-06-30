@@ -1,5 +1,4 @@
 const axios = require('axios');
-const logger = require('../utils/logger');
 
 const BASE_URL = 'https://nominatim.openstreetmap.org';
 
