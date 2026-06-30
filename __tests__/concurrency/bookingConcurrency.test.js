@@ -24,7 +24,7 @@ jest.mock('stripe', () => {
     webhooks: { constructEvent: jest.fn() },
     accounts: { create: jest.fn(), createLoginLink: jest.fn() },
     accountLinks: { create: jest.fn() },
-    paymentIntents: { create: jest.fn() },
+    paymentIntents: { create: jest.fn(), update: jest.fn().mockResolvedValue({}) },
   }));
 });
 beforeAll(() => { process.env.STRIPE_SECRET_KEY = 'sk_test_concur'; });
@@ -37,6 +37,19 @@ jest.mock('../../utils/stripeHelpers', () => {
     processStripeWebhook: actual.processStripeWebhook,
     verifyWebhookSignature: actual.verifyWebhookSignature,
   };
+});
+
+jest.mock('../../utils/getConfig', () => {
+  const fn = jest.fn();
+  fn.mockImplementation((key, defaultValue) => {
+    const values = {
+      'booking.min_advance_hours': '0',
+      'booking.max_advance_days': '365',
+      'booking.max_travelers': '50',
+    };
+    return Promise.resolve(values[key] ?? defaultValue);
+  });
+  return fn;
 });
 
 jest.mock('../../utils/bookingHelpers', () => ({
@@ -134,6 +147,12 @@ function mockRes() {
 function makeBookingTx(usedNumbers) {
   const used = usedNumbers || new Set();
   return {
+    $queryRawUnsafe: jest.fn().mockImplementation((query) => {
+      if (query.includes('SELECT id FROM')) {
+        return [{ id: 'tour-1' }];
+      }
+      return [{ currentBookings: '0' }];
+    }),
     booking: {
       create: jest.fn().mockImplementation((args) => {
         if (used.has(args.data.bookingNumber)) {
@@ -251,6 +270,7 @@ describe('Concurrency — Double Booking Prevention', () => {
     const mockTx = {
       booking: { updateMany: jest.fn().mockResolvedValue({ count: 2 }), findMany: jest.fn().mockResolvedValue([mockBooking]) },
       notification: { create: jest.fn().mockResolvedValue({}) },
+      stripeEvent: { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn().mockResolvedValue({}), update: jest.fn().mockResolvedValue({}) },
       payout: { create: jest.fn().mockResolvedValue({ id: 'payout-concur-1', status: 'PENDING' }) },
       payoutMethod: { findFirst: jest.fn().mockResolvedValue({ id: 'pm-concur-1', type: 'bank' }) },
       supplierProfile: { update: jest.fn().mockResolvedValue({}) },

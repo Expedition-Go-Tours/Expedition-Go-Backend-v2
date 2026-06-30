@@ -48,6 +48,13 @@ jest.mock('../../utils/getConfig', () => {
 jest.mock('../../utils/auditLogger', () => ({
   logActivity: jest.fn(() => Promise.resolve()),
 }));
+
+beforeAll(() => { process.env.STRIPE_SECRET_KEY = 'sk_test_unit'; });
+jest.mock('stripe', () => {
+  return jest.fn().mockImplementation(() => ({
+    paymentIntents: { create: jest.fn(), update: jest.fn().mockResolvedValue({}) },
+  }));
+});
 jest.mock('../../utils/emailService', () => ({
   generatePrintableTicketHtml: jest.fn(() => '<html>ticket</html>'),
 }));

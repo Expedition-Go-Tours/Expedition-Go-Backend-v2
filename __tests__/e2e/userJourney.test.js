@@ -28,13 +28,25 @@ jest.mock('../../utils/queue', () => ({
 
 jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
 jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateTourCaches: jest.fn(), invalidateKeys: jest.fn() }));
+jest.mock('../../utils/getConfig', () => {
+  const fn = jest.fn();
+  fn.mockImplementation((key, defaultValue) => {
+    const values = {
+      'booking.min_advance_hours': '0',
+      'booking.max_advance_days': '365',
+      'booking.max_travelers': '50',
+    };
+    return Promise.resolve(values[key] ?? defaultValue);
+  });
+  return fn;
+});
 
 jest.mock('stripe', () => {
   return jest.fn().mockImplementation(() => ({
     webhooks: { constructEvent: jest.fn() },
     accounts: { create: jest.fn(), createLoginLink: jest.fn() },
     accountLinks: { create: jest.fn() },
-    paymentIntents: { create: jest.fn() },
+    paymentIntents: { create: jest.fn(), update: jest.fn().mockResolvedValue({}) },
   }));
 });
 
@@ -165,6 +177,12 @@ const activeTour = {
 };
 
 const mockTx = {
+  $queryRawUnsafe: jest.fn().mockImplementation((query) => {
+    if (query.includes('SELECT id FROM')) {
+      return [{ id: 'tour-e2e-1' }];
+    }
+    return [{ currentBookings: '0' }];
+  }),
   booking: { create: jest.fn().mockResolvedValue(expectedBooking), update: jest.fn().mockResolvedValue(expectedBooking), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
   notification: { create: jest.fn().mockResolvedValue({}) },
   supplierProfile: { update: jest.fn().mockResolvedValue({}) },
@@ -323,6 +341,7 @@ describe('E2E: Full User Journey', () => {
         customer: { id: 'e2e-user-1', name: 'E2E Test User', email: 'e2e@test.com' },
       }]) },
       notification: { create: jest.fn().mockResolvedValue({}) },
+      stripeEvent: { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn().mockResolvedValue({}), update: jest.fn().mockResolvedValue({}) },
       payout: { create: jest.fn().mockResolvedValue({ id: 'payout-e2e-1', status: 'PENDING' }) },
       payoutMethod: { findFirst: jest.fn().mockResolvedValue({ id: 'pm-e2e-1', type: 'bank' }) },
       supplierProfile: { update: jest.fn().mockResolvedValue({}) },
@@ -405,6 +424,7 @@ describe('E2E: Full User Journey', () => {
         customer: { id: 'e2e-user-1', name: 'E2E Test User', email: 'e2e@test.com' },
       }]) },
       notification: { create: jest.fn().mockResolvedValue({}) },
+      stripeEvent: { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn().mockResolvedValue({}), update: jest.fn().mockResolvedValue({}) },
       payout: { create: jest.fn().mockResolvedValue({ id: 'payout-e2e-1', status: 'PENDING' }) },
       payoutMethod: { findFirst: jest.fn().mockResolvedValue({ id: 'pm-e2e-1', type: 'bank' }) },
       supplierProfile: { update: jest.fn().mockResolvedValue({}) },
