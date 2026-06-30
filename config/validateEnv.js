@@ -26,6 +26,7 @@ const RECOMMENDED = [
   'SUPPLIER_DASHBOARD_URL',
   'ALLOWED_ORIGINS',
   'SENTRY_DSN',
+  'GEOAPIFY_API_KEY',
 ];
 
 function validateEnv() {

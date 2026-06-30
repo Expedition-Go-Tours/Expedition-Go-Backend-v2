@@ -211,6 +211,7 @@ const adminRoleRoutes = require('./routes/adminRoleRoutes');
 const adminUserRoutes = require('./routes/adminUserRoutes');
 const supplierSettingsRoutes = require('./routes/supplierSettingsRoutes');
 const specialOfferRoutes = require('./routes/specialOfferRoutes');
+const locationRoutes = require('./routes/locationRoutes');
 const maintenanceMode = require('./middleware/maintenanceMode');
 
 app.use('/api', maintenanceMode);
@@ -234,6 +235,7 @@ app.use('/api/tours', availabilityRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/suppliers/settings', supplierSettingsRoutes);
 app.use('/api/suppliers/special-offers', specialOfferRoutes);
+app.use('/api/locations', locationRoutes);
 
 
 if (swaggerSpec) {

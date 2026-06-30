@@ -67,7 +67,8 @@ const QUEUE_NAMES = {
   EMAILS:     'communications-emails',
   AGGREGATIONS: 'analytics-aggregations',
   CLEANUP:    'system-cleanup',
-  STRIPE:     'platform-stripe',
+  STRIPE:         'platform-stripe',
+  WEBHOOK_RETRY:  'webhook-retry',
 };
 
 const DEFAULT_JOB_OPTIONS = {
@@ -102,6 +103,7 @@ const emailQueue       = () => getQueue(QUEUE_NAMES.EMAILS);
 const aggregationQueue = () => getQueue(QUEUE_NAMES.AGGREGATIONS);
 const cleanupQueue     = () => getQueue(QUEUE_NAMES.CLEANUP);
 const stripeQueue      = () => getQueue(QUEUE_NAMES.STRIPE);
+const webhookRetryQueue = () => getQueue(QUEUE_NAMES.WEBHOOK_RETRY);
 
 // ---------------------------------------------------------------------------
 // Enqueue helpers (typed so callers don't touch raw queue names)
@@ -269,6 +271,24 @@ async function enqueueCreateStripeCustomer(data) {
   }
 }
 
+/**
+ * Enqueue a webhook event for retry.
+ * Used when processStripeWebhook fails — the event is re-processed
+ * with exponential backoff instead of being silently dropped.
+ */
+async function enqueueWebhookRetry(event, attempts = 0) {
+  try {
+    await webhookRetryQueue().add('process-webhook', event, {
+      attempts: 5,
+      backoff: { type: 'exponential', delay: 60000 }, // 1min → 2min → 4min → 8min → 16min
+      removeOnComplete: { age: 24 * 3600, count: 50 },
+      removeOnFail: { age: 7 * 24 * 3600 },
+    });
+  } catch (err) {
+    console.error('[Queue] Failed to enqueue webhook retry:', err.message);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Worker registration — called once at startup from server.js
 // ---------------------------------------------------------------------------
@@ -321,6 +341,18 @@ function registerWorkers() {
       data: { stripeCustomerId: customer.id },
     });
   }, 5);
+
+  /* ------------------------------------------------------------------
+   * WEBHOOK RETRY WORKER (concurrency 2)
+   * Re-processes a Stripe webhook event that failed on first attempt.
+   * Since processStripeWebhook now wraps everything in a single
+   * $transaction, a retry is safe — the event either has
+   * processed=false (rolled back) or doesn't exist yet.
+   * ------------------------------------------------------------------ */
+  createWorker(QUEUE_NAMES.WEBHOOK_RETRY, async (job) => {
+    const { processStripeWebhook } = require('./stripeHelpers');
+    await processStripeWebhook(job.data);
+  }, 2);
 
   /* ------------------------------------------------------------------
    * AGGREGATION WORKER
@@ -419,6 +451,7 @@ module.exports = {
   enqueueAggregation,
   enqueueCleanup,
   enqueueCreateStripeCustomer,
+  enqueueWebhookRetry,
   processEmailJob,
   registerWorkers,
   closeAll,

@@ -322,7 +322,7 @@ async function checkTourAvailability(tourId, selectedDate, selectedTime = null) 
     const schedulesAndPricing = typeof tour.schedulesAndPricing === 'string'
       ? JSON.parse(tour.schedulesAndPricing)
       : tour.schedulesAndPricing;
-    const templateDaysOfWeek = schedulesAndPricing?.availability?.daysOfWeek || [];
+    const templateDaysOfWeek = schedulesAndPricing?.availability?.daysOfWeek || schedulesAndPricing?.operatingDays || [];
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const dayOfWeek = dayNames[new Date(selectedDate).getDay()];
 

@@ -19,7 +19,7 @@ const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudi
 const { logActivity } = require('../utils/auditLogger');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
 
-exports.getMe = (req, res, next) => {
+exports.getMe = catchAsync(async (req, res, next) => {
   if (!req.user) {
     return next(new AppError('User not found', 404));
   }
@@ -36,7 +36,7 @@ exports.getMe = (req, res, next) => {
     status: 'success',
     data: { user: optimizedUser },
   });
-};
+});
 
 exports.updateMe = catchAsync(async (req, res, next) => {
   //  Block email updates

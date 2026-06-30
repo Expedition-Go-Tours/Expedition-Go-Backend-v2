@@ -16,7 +16,7 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
-const { createPaymentIntent, calculateCommission } = require('../utils/stripeHelpers');
+const { createPaymentIntent, createRefund, calculateCommission } = require('../utils/stripeHelpers');
 const { generateBookingNumber, validateTravelerInfo } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
 const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../utils/queue');
@@ -412,10 +412,67 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Create bookings in transaction
+  // Calculate total amount for Stripe
+  const totalAmount = bookingItems.reduce((sum, item) => sum + item.total, 0);
+
+  // Create Stripe PaymentIntent FIRST (outside DB transaction — avoids holding connection open during network I/O)
+  const idempotencyKey = req.headers['idempotency-key'] || `booking:${customerId}:${Date.now()}`;
+  let paymentIntent;
+  try {
+    paymentIntent = await createPaymentIntent({
+      amount: Math.round(totalAmount * 100),
+      currency: bookingItems[0].currency,
+      customerId: req.user.stripeCustomerId,
+      paymentMethodId,
+      idempotencyKey,
+      metadata: {
+        customerId,
+        bookingIds: 'placeholder'
+      }
+    });
+  } catch (err) {
+    return next(new AppError(`Payment failed: ${err.message}`, 400));
+  }
+
+  // Create bookings in transaction (short — DB only, no network I/O)
   const result = await prisma.$transaction(async (tx) => {
+    // 1. Lock tour rows with FOR UPDATE to prevent race conditions
+    for (const item of bookingItems) {
+      const [lockedTour] = await tx.$queryRawUnsafe(
+        `SELECT id FROM "Tour" WHERE id = $1 FOR UPDATE`,
+        item.tourId
+      );
+      if (!lockedTour) {
+        throw new Error(`Tour ${item.tourId} not found`);
+      }
+    }
+
+    // 2. Check capacity atomically for each tour
+    for (const item of bookingItems) {
+      const totalTravelers = (item.travelers.adults || 0) + (item.travelers.children || 0) + (item.travelers.infants || 0);
+      const [capacityCheck] = await tx.$queryRawUnsafe(
+        `SELECT COALESCE(SUM(
+          CASE WHEN status IN ('PENDING', 'CONFIRMED')
+          THEN COALESCE(
+            (travelers->>'adults')::int, 0
+          ) + COALESCE(
+            (travelers->>'children')::int, 0
+          ) + COALESCE(
+            (travelers->>'infants')::int, 0
+          ) ELSE 0 END
+        ), 0) AS "currentBookings"
+        FROM "Booking"
+        WHERE "tourId" = $1 AND "selectedDate" = $2::date`,
+        item.tourId,
+        item.selectedDate instanceof Date ? item.selectedDate.toISOString().split('T')[0] : item.selectedDate
+      );
+      const availableSpots = (item.tour.schedulesAndPricing?.travelerDetails?.maxTravelersPerBooking || 50) - parseInt(capacityCheck.currentBookings);
+      if (totalTravelers > availableSpots) {
+        throw new Error(`Only ${availableSpots} spots left, but ${totalTravelers} requested`);
+      }
+    }
+
     const bookings = [];
-    let totalAmount = 0;
 
     for (const item of bookingItems) {
       const bookingNumber = await generateBookingNumber();
@@ -437,6 +494,8 @@ exports.createBooking = catchAsync(async (req, res, next) => {
           commissionAmount: commission.amount,
           supplierPayout: commission.supplierPayout,
           specialRequests,
+          stripePaymentIntentId: paymentIntent.id,
+          paymentStatus: 'PROCESSING',
           ...(item.appliedOfferId && { appliedOfferId: item.appliedOfferId }),
           status: 'PENDING'
         },
@@ -455,33 +514,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       });
 
       bookings.push(booking);
-      totalAmount += item.total;
     }
-
-    // Create Stripe PaymentIntent (platform collects 100%, payouts handled via Payout model)
-    const idempotencyKey = req.headers['idempotency-key'] || `booking:${customerId}:${Date.now()}`;
-    const paymentIntent = await createPaymentIntent({
-      amount: Math.round(totalAmount * 100),
-      currency: bookingItems[0].currency,
-      customerId: req.user.stripeCustomerId,
-      paymentMethodId,
-      idempotencyKey,
-      metadata: {
-        customerId,
-        bookingIds: bookings.map(b => b.id).join(',')
-      }
-    });
-
-    // Update bookings with payment intent ID
-    await tx.booking.updateMany({
-      where: {
-        id: { in: bookings.map(b => b.id) }
-      },
-      data: {
-        stripePaymentIntentId: paymentIntent.id,
-        paymentStatus: 'PROCESSING'
-      }
-    });
 
     // Clear cart if used
     if (useCart) {
@@ -491,6 +524,26 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     }
 
     return { bookings, paymentIntent };
+  }).catch(async (err) => {
+    // Transaction failed — refund the PaymentIntent since card was already charged
+    try {
+      await createRefund(paymentIntent.id);
+      console.log(` Auto-refunded PaymentIntent ${paymentIntent.id} after failed booking transaction`);
+    } catch (refundErr) {
+      console.error(` Failed to auto-refund PaymentIntent ${paymentIntent.id}:`, refundErr.message);
+    }
+    throw err; // Re-throw so catchAsync handles it
+  });
+
+  // Update Stripe PaymentIntent metadata with real booking IDs (fire-and-forget)
+  const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+  stripe.paymentIntents.update(paymentIntent.id, {
+    metadata: {
+      customerId,
+      bookingIds: result.bookings.map(b => b.id).join(',')
+    }
+  }).catch(err => {
+    console.error(` Failed to update PaymentIntent metadata for ${paymentIntent.id}:`, err.message);
   });
 
   // Send notifications through the queue (async)
@@ -735,9 +788,16 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     });
 
     // Process refund if payment was successful
-    if (booking.paymentStatus === 'SUCCEEDED') {
-      // Refund logic will be handled by Stripe webhook
-      // For now, just mark as refund pending
+    if (booking.paymentStatus === 'SUCCEEDED' && cancellationCheck.refundAmount > 0) {
+      // Call Stripe refund API
+      try {
+        const refundAmountCents = Math.round(parseFloat(cancellationCheck.refundAmount) * 100);
+        await createRefund(booking.stripePaymentIntentId, refundAmountCents);
+      } catch (refundErr) {
+        console.error(` Stripe refund failed for booking ${id}:`, refundErr.message);
+        // Continue — booking is cancelled in the DB; refund can be retried manually
+      }
+
       await tx.booking.update({
         where: { id },
         data: {

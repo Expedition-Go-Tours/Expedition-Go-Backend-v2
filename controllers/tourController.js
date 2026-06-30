@@ -623,9 +623,9 @@ exports.createTour = catchAsync(async (req, res, next) => {
         if (d.minutes != null) return d.minutes;
         return null;
       })(),
-      primaryTheme: parsedTheme?.primary || null,
+      primaryTheme: parsedTheme?.primaryTheme || parsedTheme?.primary || null,
       secondaryThemes: {
-        create: [...new Set(parsedTheme?.secondary || [])].map(t => ({ theme: t })),
+        create: [...new Set(parsedTheme?.secondaryThemes || parsedTheme?.secondary || [])].map(t => ({ theme: t })),
       },
     },
     include: {
@@ -813,11 +813,11 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   // Handle theme normalization
   if (req.body.theme) {
     const th = typeof req.body.theme === 'string' ? JSON.parse(req.body.theme) : req.body.theme;
-    updateData.primaryTheme = th.primary || null;
+    updateData.primaryTheme = th.primaryTheme || th.primary || null;
     // Keep the original JSON field as-is
     updateData.theme = th;
     // Replace secondary themes: delete all existing, re-create
-    secondaryThemesData = [...new Set(th.secondary || [])].map(t => ({ theme: t }));
+    secondaryThemesData = [...new Set(th.secondaryThemes || th.secondary || [])].map(t => ({ theme: t }));
   }
 
   // Auto-extract location fields from productContent if not sent as top-level fields

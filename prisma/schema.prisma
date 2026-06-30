@@ -185,7 +185,7 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  @@index([roles])
+  @@index([roles], type: Gin)      // GIN for array column performance
   @@index([email])
   @@index([createdAt])
   @@index([stripeCustomerId])
@@ -335,6 +335,7 @@ model Tour {
   updatedAt    DateTime    @updatedAt
 
   @@index([supplierId])
+  @@index([supplierId, status])                  // Supplier dashboard: my tours by status
   @@index([status])
   @@index([slug])
   @@index([createdAt])
@@ -494,6 +495,9 @@ model Booking {
   @@index([selectedDate])
   @@index([bookingNumber])
   @@index([stripePaymentIntentId])
+  @@index([tourId, status, selectedDate])       // Capacity checks + supplier booking lookup
+  @@index([customerId, status, selectedDate])   // "My bookings" filtered pages
+  @@index([status, selectedDate])               // Admin/supplier date-range queries
 }
 
 model Payout {
@@ -595,6 +599,8 @@ model Review {
   @@index([rating])
   @@index([status])
   @@index([createdAt])
+  @@index([tourId, status, rating])              // Tour page: approved reviews sorted by rating
+  @@index([status, createdAt])                   // Moderation queue
 }
 
 model CartItem {

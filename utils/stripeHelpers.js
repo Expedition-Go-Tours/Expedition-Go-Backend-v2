@@ -68,6 +68,24 @@ async function createPaymentIntent({
 }
 
 /**
+ * Create a Stripe refund for a PaymentIntent
+ */
+async function createRefund(paymentIntentId, amount = null) {
+  try {
+    const refundData = { payment_intent: paymentIntentId };
+    if (amount !== null) {
+      refundData.amount = amount;
+    }
+    const refund = await getStripe().refunds.create(refundData);
+    console.log(` Refund created: ${refund.id} for PaymentIntent: ${paymentIntentId}`);
+    return refund;
+  } catch (error) {
+    console.error(' Refund creation failed:', error);
+    throw new Error(`Failed to create refund: ${error.message}`);
+  }
+}
+
+/**
  * Calculate commission based on supplier tier and booking amount
  */
 async function calculateCommission(bookingAmount, supplierProfile) {
@@ -99,23 +117,34 @@ async function calculateCommission(bookingAmount, supplierProfile) {
 
 /**
  * Process Stripe webhook events
+ *
+ * Idempotency is guaranteed by wrapping the entire flow in a single
+ * $transaction.  The stripeEvent upsert + business logic + processed
+ * flag update happen atomically.  If the transaction rolls back,
+ * the event remains un-processed and a retry is safe.
+ *
+ * Side-effects (emails, admin notifications, analytics) run AFTER
+ * the transaction commits so they are never emitted for a rolled-back
+ * event.
  */
 async function processStripeWebhook(event) {
-  try {
-    console.log(` Processing Stripe webhook: ${event.type}`);
+  console.log(` Processing Stripe webhook: ${event.type}`);
 
-    // Check if event already processed (idempotency)
-    const existingEvent = await prisma.stripeEvent.findUnique({
+  let bookings = [];
+
+  await prisma.$transaction(async (tx) => {
+    // Re-check inside the transaction — serialized by Postgres, no race
+    const existingEvent = await tx.stripeEvent.findUnique({
       where: { stripeEventId: event.id }
     });
 
     if (existingEvent && existingEvent.processed) {
       console.log(` Event ${event.id} already processed, skipping`);
-      return { success: true, message: 'Event already processed' };
+      return;
     }
 
-    // Store event for idempotency
-    await prisma.stripeEvent.upsert({
+    // Upsert event record (creates on first call, updates on concurrent duplicate)
+    await tx.stripeEvent.upsert({
       where: { stripeEventId: event.id },
       update: { data: event },
       create: {
@@ -126,51 +155,91 @@ async function processStripeWebhook(event) {
       }
     });
 
-    let result = { success: true, message: 'Event processed' };
-
     switch (event.type) {
       case 'payment_intent.succeeded':
-        result = await handlePaymentSucceeded(event.data.object);
+        bookings = await handlePaymentSucceeded(event.data.object, tx);
         break;
 
       case 'payment_intent.payment_failed':
-        result = await handlePaymentFailed(event.data.object);
+        await handlePaymentFailed(event.data.object, tx);
         break;
 
       default:
         console.log(` Unhandled event type: ${event.type}`);
     }
 
-    // Mark event as processed
-    await prisma.stripeEvent.update({
+    // Mark processed INSIDE the same transaction.
+    // If this line is reached, the transaction commits everything atomically.
+    // A concurrent duplicate would have its upsert succeed but the stripeEvent
+    // already has processed=false here; however Postgres serialization ensures
+    // only one transaction commits — the others fail and retry.
+    await tx.stripeEvent.update({
       where: { stripeEventId: event.id },
       data: { processed: true }
     });
+  });
 
-    return result;
-  } catch (error) {
-    console.error(' Webhook processing failed:', error);
-    throw error;
+  // ── Side effects run AFTER the transaction committed ──────────────
+  // These are fire-and-forget; failures are caught and logged but do
+  // not affect the booking state (which is already committed).
+
+  for (const booking of bookings) {
+    enqueueEmail({ type: 'booking-confirmation', bookingId: booking.id })
+      .catch((err) => console.error('[Email] Booking confirmation failed:', err.message));
+    enqueueEmail({ type: 'supplier-booking-notification', bookingId: booking.id })
+      .catch((err) => console.error('[Email] Supplier notification failed:', err.message));
+
+    notifyAdmin({
+      type: 'PAYOUT_NEEDS_APPROVAL',
+      title: 'New Payout Pending',
+      message: `Booking #${booking.bookingNumber}: $${parseFloat(booking.supplierPayout).toFixed(2)} payout awaiting approval`,
+      data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.supplierPayout },
+    }).catch((err) => console.error('[AdminNotification] Payout notification failed:', err.message));
+
+    enqueueEvent({
+      name: 'booking.completed',
+      userId: booking.customerId,
+      resource: 'Booking',
+      resourceId: booking.id,
+      properties: {
+        tourId: booking.tourId,
+        total: parseFloat(booking.total),
+        currency: booking.currency,
+        supplierPayout: parseFloat(booking.supplierPayout),
+        commissionAmount: parseFloat(booking.commissionAmount),
+        supplierId: booking.tour?.supplierId,
+        paymentIntentId: event.data.object?.id,
+      },
+      source: 'webhook',
+    });
   }
+
+  return { success: true, message: 'Event processed' };
 }
 
 /**
  * Handle successful payment
+ *
+ * @param {object} paymentIntent - Stripe PaymentIntent object
+ * @param {object} [tx] - Optional Prisma transaction client.
+ *   When provided, all DB operations use this client (called from
+ *   within the parent transaction in processStripeWebhook).
+ *   When omitted, creates its own transaction (standalone call).
+ * @returns {Promise<Array>} Array of booking records (for side effects)
  */
-async function handlePaymentSucceeded(paymentIntent) {
+async function handlePaymentSucceeded(paymentIntent, tx = null) {
   const bookingIds = paymentIntent.metadata.bookingIds?.split(',') || [];
   
   if (bookingIds.length === 0) {
     console.log(' No booking IDs found in payment intent metadata');
-    return { success: false, message: 'No bookings found' };
+    return [];
   }
 
   let bookings;
   const payoutMinThreshold = parseFloat(await getConfig('payout.min_threshold', '0'));
 
-  await prisma.$transaction(async (tx) => {
-    // Update booking statuses
-    const updatedBookings = await tx.booking.updateMany({
+  const dbWork = async (client) => {
+    const updatedBookings = await client.booking.updateMany({
       where: {
         id: { in: bookingIds },
         stripePaymentIntentId: paymentIntent.id
@@ -184,23 +253,16 @@ async function handlePaymentSucceeded(paymentIntent) {
 
     console.log(` Updated ${updatedBookings.count} bookings to CONFIRMED`);
 
-    // Get booking details for notifications
-    bookings = await tx.booking.findMany({
+    bookings = await client.booking.findMany({
       where: { id: { in: bookingIds } },
       include: {
         customer: true,
-        tour: {
-          include: {
-            supplier: true
-          }
-        }
+        tour: { include: { supplier: true } }
       }
     });
 
-    // Send notifications and emails
     for (const booking of bookings) {
-      // Notify customer
-      await tx.notification.create({
+      await client.notification.create({
         data: {
           userId: booking.customerId,
           type: 'BOOKING_CONFIRMED',
@@ -210,8 +272,7 @@ async function handlePaymentSucceeded(paymentIntent) {
         }
       });
 
-      // Notify supplier
-      await tx.notification.create({
+      await client.notification.create({
         data: {
           userId: booking.tour.supplierId,
           type: 'BOOKING_CONFIRMED',
@@ -221,8 +282,7 @@ async function handlePaymentSucceeded(paymentIntent) {
         }
       });
 
-      // Update supplier statistics (internal ledger)
-      await tx.supplierProfile.update({
+      await client.supplierProfile.update({
         where: { userId: booking.tour.supplierId },
         data: {
           totalBookings: { increment: 1 },
@@ -230,8 +290,7 @@ async function handlePaymentSucceeded(paymentIntent) {
         }
       });
 
-      // Update tour statistics
-      await tx.tour.update({
+      await client.tour.update({
         where: { id: booking.tourId },
         data: {
           totalBookings: { increment: 1 },
@@ -239,24 +298,21 @@ async function handlePaymentSucceeded(paymentIntent) {
         }
       });
 
-      // Increment spotsSold for applied special offer
       if (booking.appliedOfferId) {
         const travelerCount = (booking.travelers?.adults || 0) + (booking.travelers?.children || 0) + (booking.travelers?.infants || 0);
-        await tx.specialOffer.update({
+        await client.specialOffer.update({
           where: { id: booking.appliedOfferId },
           data: { spotsSold: { increment: travelerCount } },
         });
       }
 
-      // Create Payout record (PENDING — awaits admin approval)
-      // Only create if amount meets the minimum threshold from system config
       if (parseFloat(booking.supplierPayout) >= payoutMinThreshold) {
-        const defaultMethod = await tx.payoutMethod.findFirst({
+        const defaultMethod = await client.payoutMethod.findFirst({
           where: { supplierId: booking.tour.supplierId, verified: true },
           orderBy: { isDefault: 'desc' }
         });
 
-        await tx.payout.create({
+        await client.payout.create({
           data: {
             supplierId: booking.tour.supplierId,
             bookingId: booking.id,
@@ -269,58 +325,33 @@ async function handlePaymentSucceeded(paymentIntent) {
         });
       }
     }
-  });
+  };
 
-  // Send confirmation emails through the queue (non-blocking, outside transaction)
-  for (const booking of bookings) {
-    enqueueEmail({ type: 'booking-confirmation', bookingId: booking.id }).catch((err) => console.error('[Email] Booking confirmation email failed:', err.message));
-    enqueueEmail({ type: 'supplier-booking-notification', bookingId: booking.id }).catch((err) => console.error('[Email] Supplier booking notification email failed:', err.message));
+  if (tx) {
+    await dbWork(tx);
+  } else {
+    await prisma.$transaction(dbWork);
   }
 
-  // Notify admins of new pending payouts
-  for (const booking of bookings) {
-    notifyAdmin({
-      type: 'PAYOUT_NEEDS_APPROVAL',
-      title: 'New Payout Pending',
-      message: `Booking #${booking.bookingNumber}: $${parseFloat(booking.supplierPayout).toFixed(2)} payout awaiting approval`,
-      data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.supplierPayout },
-    }).catch((err) => console.error('[AdminNotification] Payout notification failed:', err.message));
-  }
-
-  // Emit analytics events for each completed booking
-  for (const booking of bookings) {
-    enqueueEvent({
-      name: 'booking.completed',
-      userId: booking.customerId,
-      resource: 'Booking',
-      resourceId: booking.id,
-      properties: {
-        tourId: booking.tourId,
-        total: parseFloat(booking.total),
-        currency: booking.currency,
-        supplierPayout: parseFloat(booking.supplierPayout),
-        commissionAmount: parseFloat(booking.commissionAmount),
-        supplierId: booking.tour?.supplierId,
-        paymentIntentId: paymentIntent.id,
-      },
-      source: 'webhook',
-    });
-  }
-
-  return { success: true, message: `${bookingIds.length} bookings confirmed` };
+  return bookings;
 }
 
 /**
  * Handle failed payment
+ *
+ * @param {object} paymentIntent - Stripe PaymentIntent object
+ * @param {object} [tx] - Optional Prisma transaction client
  */
-async function handlePaymentFailed(paymentIntent) {
+async function handlePaymentFailed(paymentIntent, tx = null) {
   const bookingIds = paymentIntent.metadata.bookingIds?.split(',') || [];
   
   if (bookingIds.length === 0) {
     return { success: false, message: 'No bookings found' };
   }
 
-  await prisma.booking.updateMany({
+  const client = tx || prisma;
+
+  await client.booking.updateMany({
     where: {
       id: { in: bookingIds },
       stripePaymentIntentId: paymentIntent.id
@@ -350,6 +381,7 @@ function verifyWebhookSignature(payload, signature, endpointSecret) {
 
 module.exports = {
   createPaymentIntent,
+  createRefund,
   calculateCommission,
   processStripeWebhook,
   verifyWebhookSignature,

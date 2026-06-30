@@ -26,12 +26,25 @@ jest.mock('../../utils/eventEmitter', () => ({
 }));
 jest.mock('../../utils/stripeHelpers', () => ({
   createPaymentIntent: jest.fn(),
+  createRefund: jest.fn(),
   calculateCommission: jest.fn(),
 }));
 jest.mock('../../utils/bookingHelpers', () => ({
   generateBookingNumber: jest.fn(() => 'BK-TEST-001'),
   validateTravelerInfo: jest.fn(() => ({ isValid: true, errors: [] })),
 }));
+jest.mock('../../utils/getConfig', () => {
+  const fn = jest.fn();
+  fn.mockImplementation((key, defaultValue) => {
+    const values = {
+      'booking.min_advance_hours': '0',
+      'booking.max_advance_days': '365',
+      'booking.max_travelers': '50',
+    };
+    return Promise.resolve(values[key] ?? defaultValue);
+  });
+  return fn;
+});
 jest.mock('../../utils/auditLogger', () => ({
   logActivity: jest.fn(() => Promise.resolve()),
 }));
@@ -129,6 +142,12 @@ const mockBooking = {
 };
 
 const mockTx = {
+  $queryRawUnsafe: jest.fn().mockImplementation((query) => {
+    if (query.includes('SELECT id FROM')) {
+      return [{ id: 'tour-1' }];
+    }
+    return [{ currentBookings: '0' }];
+  }),
   booking: {
     create: jest.fn().mockResolvedValue(mockBooking),
     update: jest.fn().mockResolvedValue({ ...mockBooking, status: 'CANCELLED' }),

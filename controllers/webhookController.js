@@ -9,6 +9,7 @@
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { processStripeWebhook, verifyWebhookSignature } = require('../utils/stripeHelpers');
+const { enqueueWebhookRetry } = require('../utils/queue');
 const { logActivity } = require('../utils/auditLogger');
 
 /**
@@ -69,7 +70,6 @@ exports.handleStripeWebhook = catchAsync(async (req, res, next) => {
   } catch (error) {
     console.error('❌ Webhook processing error:', error);
     
-    // Log the error but still return 200 to prevent retries
     await logActivity({
       action: `webhook.stripe.${event.type}.error`,
       resource: 'Webhook',
@@ -81,9 +81,18 @@ exports.handleStripeWebhook = catchAsync(async (req, res, next) => {
       }
     });
 
+    // Enqueue for retry — processStripeWebhook wraps everything in a
+    // single $transaction, so a partial failure rolls back cleanly and
+    // re-processing is safe.
+    enqueueWebhookRetry(event).catch((err) =>
+      console.error('[Webhook] Failed to enqueue retry:', err.message)
+    );
+
+    // Still return 200 to Stripe — retries handled internally via the
+    // webhook-retry BullMQ queue with exponential backoff.
     res.status(200).json({
       status: 'error',
-      message: 'Webhook processing failed'
+      message: 'Webhook processing failed, queued for retry'
     });
   }
 });

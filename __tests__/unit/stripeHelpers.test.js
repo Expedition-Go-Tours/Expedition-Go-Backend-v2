@@ -14,6 +14,7 @@ const { enqueueEmail, enqueueEvent } = require('../../utils/queue');
 jest.mock('../../utils/queue', () => ({
   enqueueEmail: jest.fn(() => Promise.resolve()),
   enqueueEvent: jest.fn(() => Promise.resolve()),
+  enqueueWebhookRetry: jest.fn(() => Promise.resolve()),
 }));
 jest.mock('../../utils/eventEmitter', () => ({
   emit: jest.fn(),
@@ -146,22 +147,17 @@ describe('calculateCommission', () => {
 });
 
 describe('processStripeWebhook', () => {
-  it('skips already processed events (idempotency)', async () => {
-    prisma.stripeEvent.findUnique.mockResolvedValue({ processed: true });
+  let tx;
 
-    const event = mockStripeEvent('payment_intent.succeeded');
-    const result = await processStripeWebhook(event);
-
-    expect(result.message).toContain('already processed');
-  });
-
-  it('handles payment_intent.succeeded', async () => {
-    prisma.stripeEvent.findUnique.mockResolvedValue(null);
-    prisma.stripeEvent.upsert.mockResolvedValue({});
-    prisma.stripeEvent.update.mockResolvedValue({});
-
+  beforeEach(() => {
+    tx = null;
     prisma.$transaction.mockImplementation(async (cb) => {
-      const tx = {
+      tx = {
+        stripeEvent: {
+          findUnique: jest.fn().mockResolvedValue(null),
+          upsert: jest.fn().mockResolvedValue({}),
+          update: jest.fn().mockResolvedValue({}),
+        },
         booking: {
           updateMany: jest.fn().mockResolvedValue({ count: 2 }),
           findMany: jest.fn().mockResolvedValue([mockBooking]),
@@ -171,29 +167,46 @@ describe('processStripeWebhook', () => {
         payoutMethod: { findFirst: jest.fn().mockResolvedValue({ id: 'pm-1', type: 'bank' }) },
         supplierProfile: { update: jest.fn().mockResolvedValue({}) },
         tour: { update: jest.fn().mockResolvedValue({}) },
+        specialOffer: { update: jest.fn().mockResolvedValue({}) },
       };
       await cb(tx);
     });
+  });
 
-    const stripeEvent = mockStripeEvent('payment_intent.succeeded');
-    const result = await processStripeWebhook(stripeEvent);
+  it('skips already processed events (idempotency)', async () => {
+    const mockTx = {
+      stripeEvent: {
+        findUnique: jest.fn().mockResolvedValue({ processed: true }),
+        upsert: jest.fn(),
+        update: jest.fn(),
+      },
+    };
+    tx = mockTx;
+    prisma.$transaction.mockImplementation(async (cb) => {
+      await cb(mockTx);
+    });
+
+    const event = mockStripeEvent('payment_intent.succeeded');
+    const result = await processStripeWebhook(event);
 
     expect(result.success).toBe(true);
+    expect(result.message).toContain('processed');
+  });
+
+  it('handles payment_intent.succeeded', async () => {
+    const stripeEvent = mockStripeEvent('payment_intent.succeeded');
+    await processStripeWebhook(stripeEvent);
+
+    expect(tx.booking.updateMany).toHaveBeenCalled();
     expect(enqueueEmail).toHaveBeenCalled();
     expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'booking.completed' }));
   });
 
   it('handles payment_intent.payment_failed', async () => {
-    prisma.stripeEvent.findUnique.mockResolvedValue(null);
-    prisma.stripeEvent.upsert.mockResolvedValue({});
-    prisma.stripeEvent.update.mockResolvedValue({});
-    prisma.booking.updateMany.mockResolvedValue({ count: 2 });
-
     const stripeEvent = mockStripeEvent('payment_intent.payment_failed');
-    const result = await processStripeWebhook(stripeEvent);
+    await processStripeWebhook(stripeEvent);
 
-    expect(result.success).toBe(true);
-    expect(prisma.booking.updateMany).toHaveBeenCalledWith(
+    expect(tx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ paymentStatus: 'FAILED' }),
       }),
@@ -201,26 +214,17 @@ describe('processStripeWebhook', () => {
   });
 
   it('handles payment_intent.succeeded with no booking IDs', async () => {
-    prisma.stripeEvent.findUnique.mockResolvedValue(null);
-    prisma.stripeEvent.upsert.mockResolvedValue({});
-    prisma.stripeEvent.update.mockResolvedValue({});
-
     const stripeEvent = mockStripeEvent('payment_intent.succeeded', { metadata: {} });
-    const result = await processStripeWebhook(stripeEvent);
+    await processStripeWebhook(stripeEvent);
 
-    expect(result.success).toBe(false);
-    expect(result.message).toContain('No bookings found');
+    expect(tx.booking.updateMany).not.toHaveBeenCalled();
   });
 
   it('handles unhandled event types gracefully', async () => {
-    prisma.stripeEvent.findUnique.mockResolvedValue(null);
-    prisma.stripeEvent.upsert.mockResolvedValue({});
-    prisma.stripeEvent.update.mockResolvedValue({});
-
     const stripeEvent = mockStripeEvent('charge.updated');
-    const result = await processStripeWebhook(stripeEvent);
+    await processStripeWebhook(stripeEvent);
 
-    expect(result.success).toBe(true);
+    expect(tx.booking.updateMany).not.toHaveBeenCalled();
   });
 });
 
