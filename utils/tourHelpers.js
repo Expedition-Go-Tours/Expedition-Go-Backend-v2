@@ -134,6 +134,19 @@ function validateTourData(data, isPartial = false) {
     if (!validateCategorization(data.categorization)) {
       errors.push('Invalid categorization structure');
     }
+
+    // Validate durationMinutes > 0
+    const dur = data.categorization.duration;
+    if (dur) {
+      let minutes = null;
+      if (dur.minutes !== undefined) minutes = dur.minutes;
+      else if (dur.hours !== undefined) minutes = dur.hours * 60;
+      else if (dur.days !== undefined) minutes = dur.days * 1440;
+      else if (dur.weeks !== undefined) minutes = dur.weeks * 10080;
+      if (minutes !== null && minutes <= 0) {
+        errors.push('Duration must be greater than 0');
+      }
+    }
   }
 
   // Validate pricing structure
@@ -253,15 +266,20 @@ function validatePricing(schedulesAndPricing) {
           break;
         }
 
+        if (schedule.endDate && new Date(schedule.endDate) < new Date(schedule.startDate)) {
+          errors.push('Schedule end date must be on or after start date');
+          break;
+        }
+
         if (!schedule.prices || !Array.isArray(schedule.prices) || schedule.prices.length === 0) {
           errors.push('Schedule must have at least one price');
           break;
         }
 
-        // Validate prices
+        // Validate prices: each age group needs retailPrice >= 0.01
         for (const price of schedule.prices) {
-          if (!price.ageGroup || price.retailPrice === undefined || price.retailPrice < 0) {
-            errors.push('Invalid price structure');
+          if (!price.ageGroup || price.retailPrice === undefined || price.retailPrice < 0.01) {
+            errors.push('Each age group must have a retail price of at least 0.01');
             break;
           }
         }

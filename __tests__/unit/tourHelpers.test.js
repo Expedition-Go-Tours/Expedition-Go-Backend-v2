@@ -147,6 +147,119 @@ describe('validateTourData', () => {
     expect(r.errors).not.toContain('Categorization is required');
     expect(r.errors).toContain('Latitude must be a number between -90 and 90');
   });
+
+  // ---------------------------------------------------------------------------
+  // New Phase 2 validations
+  // ---------------------------------------------------------------------------
+
+  it('rejects durationMinutes <= 0', () => {
+    const r = validateTourData({
+      title: 'Valid Tour',
+      description: 'A'.repeat(50),
+      schedulesAndPricing: {
+        travelerDetails: {
+          pricingModel: 'perPerson',
+          maxTravelersPerBooking: 20,
+          ageGroups: [{ label: 'Adult', minAge: 13, maxAge: 99 }],
+        },
+        pricingSchedules: {
+          currency: 'USD',
+          schedules: [{ startDate: '2026-01-01', prices: [{ ageGroup: 'Adult', retailPrice: 100 }] }],
+        },
+      },
+      categorization: { category: 'Cultural', duration: { hours: 0 } },
+    });
+    expect(r.errors).toContain('Duration must be greater than 0');
+  });
+
+  it('rejects schedule endDate before startDate', () => {
+    const r = validateTourData({
+      title: 'Valid Tour',
+      description: 'A'.repeat(50),
+      categorization: { category: 'Cultural' },
+      schedulesAndPricing: {
+        travelerDetails: {
+          pricingModel: 'perPerson',
+          maxTravelersPerBooking: 20,
+          ageGroups: [{ label: 'Adult', minAge: 13, maxAge: 99 }],
+        },
+        pricingSchedules: {
+          currency: 'USD',
+          schedules: [{
+            startDate: '2026-06-01',
+            endDate: '2026-05-01',
+            prices: [{ ageGroup: 'Adult', retailPrice: 100 }],
+          }],
+        },
+      },
+    });
+    expect(r.errors).toContain('Schedule end date must be on or after start date');
+  });
+
+  it('rejects retailPrice < 0.01', () => {
+    const r = validateTourData({
+      title: 'Valid Tour',
+      description: 'A'.repeat(50),
+      categorization: { category: 'Cultural' },
+      schedulesAndPricing: {
+        travelerDetails: {
+          pricingModel: 'perPerson',
+          maxTravelersPerBooking: 20,
+          ageGroups: [{ label: 'Adult', minAge: 13, maxAge: 99 }],
+        },
+        pricingSchedules: {
+          currency: 'USD',
+          schedules: [{
+            startDate: '2026-01-01',
+            prices: [{ ageGroup: 'Adult', retailPrice: 0 }],
+          }],
+        },
+      },
+    });
+    expect(r.errors).toContain('Each age group must have a retail price of at least 0.01');
+  });
+
+  it('rejects invalid pricing model', () => {
+    const r = validateTourData({
+      title: 'Valid Tour',
+      description: 'A'.repeat(50),
+      categorization: { category: 'Cultural' },
+      schedulesAndPricing: {
+        travelerDetails: {
+          pricingModel: 'invalidModel',
+          maxTravelersPerBooking: 20,
+          ageGroups: [{ label: 'Adult', minAge: 13, maxAge: 99 }],
+        },
+        pricingSchedules: {
+          currency: 'USD',
+          schedules: [{ startDate: '2026-01-01', prices: [{ ageGroup: 'Adult', retailPrice: 100 }] }],
+        },
+      },
+    });
+    expect(r.errors).toContain('Valid pricing model is required (group, perPerson, or perBooking)');
+  });
+
+  it('accepts all valid pricing models', () => {
+    for (const model of ['group', 'perPerson', 'perBooking']) {
+      const r = validateTourData({
+        title: 'Valid Tour',
+        description: 'A'.repeat(50),
+        categorization: { category: 'Cultural' },
+        schedulesAndPricing: {
+          travelerDetails: {
+            pricingModel: model,
+            maxTravelersPerBooking: 20,
+            ageGroups: [{ label: 'Adult', minAge: 13, maxAge: 99 }],
+          },
+          pricingSchedules: {
+            currency: 'USD',
+            schedules: [{ startDate: '2026-01-01', prices: [{ ageGroup: 'Adult', retailPrice: 100 }] }],
+          },
+        },
+      });
+      expect(r.isValid).toBe(true);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

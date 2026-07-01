@@ -641,30 +641,14 @@ exports.createTour = catchAsync(async (req, res, next) => {
 
   cache.invalidateTourCaches().catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
 
-  // Handle special offers if provided
+  // Handle special offers if provided — upsert by promoCode (idempotent, no duplicates on re-publish)
   const parsedSpecialOffers = typeof specialOffers === 'string' ? JSON.parse(specialOffers) : specialOffers;
   if (Array.isArray(parsedSpecialOffers) && parsedSpecialOffers.length > 0) {
     for (const offer of parsedSpecialOffers) {
       try {
-        await prisma.specialOffer.create({
-          data: {
-            supplierId,
-            name: offer.name || 'Special Offer',
-            offerType: offer.offerType || 'PROMO_CODE',
-            discountType: offer.discountType || 'PERCENTAGE',
-            discountPercentage: offer.discountPercentage || 10,
-            fixedDiscountValue: offer.fixedDiscountValue || null,
-            startDate: offer.startDate ? new Date(offer.startDate) : null,
-            endDate: offer.endDate ? new Date(offer.endDate) : null,
-            promoCode: offer.promoCode || null,
-            isActive: offer.isActive !== false,
-            targets: {
-              create: [{ tourId: tour.id }],
-            },
-          },
-        });
+        await upsertSpecialOffer(prisma, supplierId, tour.id, offer);
       } catch (offerErr) {
-        console.warn('Failed to create special offer:', offerErr.message);
+        console.warn('Failed to upsert special offer:', offerErr.message);
       }
     }
   }
@@ -849,45 +833,38 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Handle special offers if provided
+  // Handle special offers if provided — upsert by promoCode, remove stale offers
   const parsedSpecialOffers = typeof specialOffers === 'string' ? JSON.parse(specialOffers) : specialOffers;
   if (Array.isArray(parsedSpecialOffers)) {
-    // Delete existing special offer targets for this tour
-    const existingTargets = await prisma.specialOfferTarget.findMany({ where: { tourId: id } });
-    const existingOfferIds = [...new Set(existingTargets.map(t => t.specialOfferId))];
-    if (existingOfferIds.length > 0) {
-      await prisma.specialOfferTarget.deleteMany({ where: { tourId: id } });
-      // Clean up offers that no longer have any targets
-      for (const offerId of existingOfferIds) {
-        const remainingTargets = await prisma.specialOfferTarget.count({ where: { specialOfferId: offerId } });
-        if (remainingTargets === 0) {
-          await prisma.specialOffer.delete({ where: { id: offerId } }).catch(() => {});
-        }
+    const incomingPromoCodes = parsedSpecialOffers.map(o => o.promoCode).filter(Boolean);
+
+    // Get existing special offer IDs for this tour (before upsert)
+    const existingTargets = await prisma.specialOfferTarget.findMany({
+      where: { tourId: id },
+      include: { specialOffer: { select: { id: true, promoCode: true } } },
+    });
+
+    // Upsert incoming offers
+    for (const offer of parsedSpecialOffers) {
+      try {
+        await upsertSpecialOffer(prisma, supplierId, id, offer);
+      } catch (offerErr) {
+        console.warn('Failed to upsert special offer:', offerErr.message);
       }
     }
 
-    // Create new special offers
-    for (const offer of parsedSpecialOffers) {
-      try {
-        await prisma.specialOffer.create({
-          data: {
-            supplierId,
-            name: offer.name || 'Special Offer',
-            offerType: offer.offerType || 'PROMO_CODE',
-            discountType: offer.discountType || 'PERCENTAGE',
-            discountPercentage: offer.discountPercentage || 10,
-            fixedDiscountValue: offer.fixedDiscountValue || null,
-            startDate: offer.startDate ? new Date(offer.startDate) : null,
-            endDate: offer.endDate ? new Date(offer.endDate) : null,
-            promoCode: offer.promoCode || null,
-            isActive: offer.isActive !== false,
-            targets: {
-              create: [{ tourId: id }],
-            },
-          },
+    // Remove targets for offers whose promoCode is no longer in the incoming list
+    for (const target of existingTargets) {
+      const pc = target.specialOffer.promoCode;
+      if (pc && !incomingPromoCodes.includes(pc)) {
+        await prisma.specialOfferTarget.delete({ where: { id: target.id } }).catch(() => {});
+        // Clean up orphaned offer
+        const remaining = await prisma.specialOfferTarget.count({
+          where: { specialOfferId: target.specialOfferId },
         });
-      } catch (offerErr) {
-        console.warn('Failed to create special offer:', offerErr.message);
+        if (remaining === 0) {
+          await prisma.specialOffer.delete({ where: { id: target.specialOfferId } }).catch(() => {});
+        }
       }
     }
   }
@@ -1526,6 +1503,107 @@ async function buildPriceIdConstraint(prisma, minPrice, maxPrice, priceRange) {
   const rows = await prisma.$queryRawUnsafe(sql, ...params);
   const ids = rows.map(r => r.id);
   return ids.length > 0 ? ids : false;
+}
+
+/**
+ * Upsert a special offer by promoCode.
+ * - If promoCode exists and belongs to the same supplier → update it + ensure tour target.
+ * - If promoCode belongs to a different supplier → skip (log warning).
+ * - If promoCode is null or not found → create a new offer.
+ */
+async function upsertSpecialOffer(prisma, supplierId, tourId, offer) {
+  // If offer has an id, try to update by id first (for re-publish of existing offers)
+  if (offer.id) {
+    const existing = await prisma.specialOffer.findFirst({ where: { id: offer.id, supplierId } });
+    if (existing) {
+      const updated = await prisma.specialOffer.update({
+        where: { id: existing.id },
+        data: {
+          name: offer.name ?? existing.name,
+          offerType: offer.offerType ?? existing.offerType,
+          discountType: offer.discountType ?? existing.discountType,
+          discountPercentage: offer.discountPercentage ?? existing.discountPercentage,
+          fixedDiscountValue: offer.fixedDiscountValue !== undefined ? offer.fixedDiscountValue : existing.fixedDiscountValue,
+          startDate: offer.startDate ? new Date(offer.startDate) : existing.startDate,
+          endDate: offer.endDate ? new Date(offer.endDate) : existing.endDate,
+          isActive: offer.isActive !== undefined ? offer.isActive : existing.isActive,
+          promoCode: offer.promoCode ?? existing.promoCode,
+        },
+      });
+      const targetExists = await prisma.specialOfferTarget.findFirst({
+        where: { specialOfferId: existing.id, tourId, tourOptionKey: null },
+      });
+      if (!targetExists) {
+        await prisma.specialOfferTarget.create({ data: { specialOfferId: existing.id, tourId } });
+      }
+      return updated;
+    }
+    // id provided not found for this supplier — fall through to create
+  }
+
+  // No id or id not found: try upsert by promoCode
+  if (!offer.promoCode) {
+    return prisma.specialOffer.create({
+      data: {
+        supplierId,
+        name: offer.name || 'Special Offer',
+        offerType: offer.offerType || 'PROMO_CODE',
+        discountType: offer.discountType || 'PERCENTAGE',
+        discountPercentage: offer.discountPercentage || 10,
+        fixedDiscountValue: offer.fixedDiscountValue || null,
+        startDate: offer.startDate ? new Date(offer.startDate) : null,
+        endDate: offer.endDate ? new Date(offer.endDate) : null,
+        promoCode: null,
+        isActive: offer.isActive !== false,
+        targets: { create: [{ tourId }] },
+      },
+    });
+  }
+
+  const existing = await prisma.specialOffer.findUnique({ where: { promoCode: offer.promoCode } });
+
+  if (existing) {
+    if (existing.supplierId !== supplierId) {
+      console.warn(`Promo code "${offer.promoCode}" belongs to another supplier — skipping`);
+      return null;
+    }
+    const updated = await prisma.specialOffer.update({
+      where: { id: existing.id },
+      data: {
+        name: offer.name ?? existing.name,
+        offerType: offer.offerType ?? existing.offerType,
+        discountType: offer.discountType ?? existing.discountType,
+        discountPercentage: offer.discountPercentage ?? existing.discountPercentage,
+        fixedDiscountValue: offer.fixedDiscountValue !== undefined ? offer.fixedDiscountValue : existing.fixedDiscountValue,
+        startDate: offer.startDate ? new Date(offer.startDate) : existing.startDate,
+        endDate: offer.endDate ? new Date(offer.endDate) : existing.endDate,
+        isActive: offer.isActive !== undefined ? offer.isActive : existing.isActive,
+      },
+    });
+    const targetExists = await prisma.specialOfferTarget.findFirst({
+      where: { specialOfferId: existing.id, tourId, tourOptionKey: null },
+    });
+    if (!targetExists) {
+      await prisma.specialOfferTarget.create({ data: { specialOfferId: existing.id, tourId } });
+    }
+    return updated;
+  }
+
+  return prisma.specialOffer.create({
+    data: {
+      supplierId,
+      name: offer.name || 'Special Offer',
+      offerType: offer.offerType || 'PROMO_CODE',
+      discountType: offer.discountType || 'PERCENTAGE',
+      discountPercentage: offer.discountPercentage || 10,
+      fixedDiscountValue: offer.fixedDiscountValue || null,
+      startDate: offer.startDate ? new Date(offer.startDate) : null,
+      endDate: offer.endDate ? new Date(offer.endDate) : null,
+      promoCode: offer.promoCode,
+      isActive: offer.isActive !== false,
+      targets: { create: [{ tourId }] },
+    },
+  });
 }
 
 module.exports = exports;
