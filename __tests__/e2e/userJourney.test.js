@@ -156,7 +156,7 @@ const activeTour = {
       currency: 'USD',
       schedules: [{
         startDate: '2026-01-01',
-        endDate: '2026-12-31',
+        endDate: '2027-12-31',
         prices: [{ ageGroup: 'Adult', retailPrice: 175 }],
       }],
     },
@@ -212,7 +212,7 @@ describe('E2E: Full User Journey', () => {
       id: 'cart-e2e-1',
       customerId: 'e2e-user-1',
       tourId: 'tour-e2e-1',
-      selectedDate: '2026-07-01',
+      selectedDate: '2027-07-01',
       travelers: { adults: 2 },
       subtotal: 350,
       total: 385,
@@ -251,7 +251,7 @@ describe('E2E: Full User Journey', () => {
       .set('Authorization', 'Bearer valid-firebase-token')
       .send({
         tourId: 'tour-e2e-1',
-        selectedDate: '2026-07-01',
+        selectedDate: '2027-07-01',
         travelers: { adults: 2 },
       })
       .expect(201);
@@ -296,7 +296,7 @@ describe('E2E: Full User Journey', () => {
       .set('Authorization', 'Bearer valid-firebase-token')
       .send({
         tourId: 'tour-e2e-1',
-        selectedDate: '2026-07-01',
+        selectedDate: '2027-07-01',
         travelers: { adults: 2 },
         paymentMethodId: 'pm_e2e_123',
       })
@@ -391,7 +391,7 @@ describe('E2E: Full User Journey', () => {
     prisma.tour.findFirst.mockResolvedValue(activeTour);
     prisma.cartItem.upsert.mockResolvedValue({
       id: 'cart-e2e-1', customerId: 'e2e-user-1', tourId: 'tour-e2e-1',
-      selectedDate: '2026-07-01', travelers: { adults: 2 },
+      selectedDate: '2027-07-01', travelers: { adults: 2 },
       subtotal: 350, total: 385, currency: 'USD',
       expiresAt: new Date(Date.now() + 3600000),
       tour: { id: 'tour-e2e-1', title: 'E2E Grand Canyon Tour', photos: [], supplier: { name: 'E2E Supplier' } },
@@ -399,7 +399,7 @@ describe('E2E: Full User Journey', () => {
     const cartRes = await request(app)
       .post('/api/bookings/cart')
       .set('Authorization', 'Bearer full-journey-token')
-      .send({ tourId: 'tour-e2e-1', selectedDate: '2026-07-01', travelers: { adults: 2 } });
+      .send({ tourId: 'tour-e2e-1', selectedDate: '2027-07-01', travelers: { adults: 2 } });
     expect(cartRes.status).toBe(201);
     expect(mockVerifyAccessToken).toHaveBeenCalledWith('full-journey-token');
 
@@ -409,7 +409,7 @@ describe('E2E: Full User Journey', () => {
     const bookingRes = await request(app)
       .post('/api/bookings')
       .set('Authorization', 'Bearer full-journey-token')
-      .send({ tourId: 'tour-e2e-1', selectedDate: '2026-07-01', travelers: { adults: 2 }, paymentMethodId: 'pm_full' });
+      .send({ tourId: 'tour-e2e-1', selectedDate: '2027-07-01', travelers: { adults: 2 }, paymentMethodId: 'pm_full' });
     expect(bookingRes.status).toBe(201);
     expect(createPaymentIntent).toHaveBeenCalled();
 

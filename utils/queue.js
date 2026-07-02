@@ -276,7 +276,7 @@ async function enqueueCreateStripeCustomer(data) {
  * Used when processStripeWebhook fails — the event is re-processed
  * with exponential backoff instead of being silently dropped.
  */
-async function enqueueWebhookRetry(event, _attempts = 0) {
+async function enqueueWebhookRetry(event) {
   try {
     await webhookRetryQueue().add('process-webhook', event, {
       attempts: 5,
