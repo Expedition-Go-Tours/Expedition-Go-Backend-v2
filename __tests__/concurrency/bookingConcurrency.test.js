@@ -120,11 +120,12 @@ const mockBooking = {
 };
 
 function mockReq(uid, overrides = {}) {
+  const futureDate = new Date(Date.now() + 7 * 24 * 3600000).toISOString().split('T')[0];
   return {
     user: { id: uid, roles: ['customer'], stripeCustomerId: 'cus_123' },
     body: {
       tourId: 'tour-1',
-      selectedDate: '2026-07-01',
+      selectedDate: futureDate,
       travelers: { adults: 2, children: 0, infants: 0 },
       paymentMethodId: 'pm_123',
     },
