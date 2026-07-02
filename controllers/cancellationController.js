@@ -27,12 +27,12 @@ exports.getCancellationSummary = catchAsync(async (req, res, next) => {
     });
   }
 
-  const { productId } = req.query;
-  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const { productId, days = 90 } = req.query;
+  const sinceDate = new Date(Date.now() - parseInt(days) * 24 * 60 * 60 * 1000);
 
   const bookingWhere = {
     tour: { supplierId },
-    selectedDate: { gte: ninetyDaysAgo },
+    selectedDate: { gte: sinceDate },
   };
   if (productId) bookingWhere.tourId = productId;
 
@@ -82,47 +82,49 @@ exports.getCancellationRecords = catchAsync(async (req, res, next) => {
     });
   }
 
-  const { productId, page = 1, limit = 25 } = req.query;
-  const skip = (parseInt(page) - 1) * parseInt(limit);
-  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const { productId, page = 1, limit = 25, days = 90 } = req.query;
+  const pageSize = parseInt(limit);
+  const sinceDate = new Date(Date.now() - parseInt(days) * 24 * 60 * 60 * 1000);
 
   const where = {
     tour: { supplierId },
     status: 'CANCELLED',
-    selectedDate: { gte: ninetyDaysAgo },
+    selectedDate: { gte: sinceDate },
   };
   if (productId) where.tourId = productId;
 
-  const [allCancelled, totalCount] = await Promise.all([
-    prisma.booking.findMany({
-      where,
-      orderBy: { selectedDate: 'desc' },
-      skip,
-      take: parseInt(limit),
-      include: { tour: { select: { id: true, title: true } } },
-    }),
-    prisma.booking.count({ where }),
-  ]);
+  // Fetch all matching cancelled bookings (no pagination yet — filter first, paginate after)
+  const allCancelled = await prisma.booking.findMany({
+    where,
+    orderBy: { selectedDate: 'desc' },
+    include: { tour: { select: { id: true, title: true } } },
+  });
 
-  const supplierCausedRecords = allCancelled.filter((r) => isSupplierCaused(r.cancellationReason));
-  const totalPages = Math.ceil(totalCount / parseInt(limit));
+  // Filter to supplier-caused only, then paginate
+  const supplierCaused = allCancelled.filter((r) => isSupplierCaused(r.cancellationReason));
+  const totalCount = supplierCaused.length;
+  const totalPages = Math.ceil(totalCount / pageSize);
+  const currentPage = Math.min(parseInt(page), Math.max(totalPages, 1));
+  const skip = (currentPage - 1) * pageSize;
+  const paged = supplierCaused.slice(skip, skip + pageSize);
 
   res.status(200).json({
     status: 'success',
     data: {
-      records: supplierCausedRecords.map((r) => ({
+      records: paged.map((r) => ({
         id: r.id,
         travelDate: r.selectedDate.toISOString().split('T')[0],
         reason: r.cancellationReason || 'Unknown',
         bookingReference: r.bookingNumber,
         productName: r.tour.title,
         bookingValue: Number(r.total),
+        refundAmount: r.refundAmount != null ? Number(r.refundAmount) : null,
       })),
       pagination: {
-        currentPage: parseInt(page),
+        currentPage,
         totalPages,
-        totalCount: supplierCausedRecords.length,
-        limit: parseInt(limit),
+        totalCount,
+        limit: pageSize,
       },
     },
   });

@@ -302,17 +302,19 @@ describe('Booking Controller', () => {
   describe('createBooking', () => {
     it('creates a booking from direct request', async () => {
       prisma.tour.findFirst.mockResolvedValue(activeTour);
+      const futureDate = new Date(Date.now() + 7 * 24 * 3600000).toISOString().split('T')[0];
       const req = mockReq({
         body: {
           tourId: 'tour-1',
-          selectedDate: '2026-07-01',
+          selectedDate: futureDate,
           travelers: { adults: 2, children: 0, infants: 0 },
           paymentMethodId: 'pm_123',
         },
       });
       const res = mockRes();
+      const next = jest.fn();
 
-      await bookingController.createBooking(req, res);
+      await bookingController.createBooking(req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(201);
       expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
@@ -327,7 +329,8 @@ describe('Booking Controller', () => {
     });
 
     it('creates bookings from cart items when useCart=true', async () => {
-      prisma.cartItem.findMany.mockResolvedValue([mockCartItem]);
+      const futureCartItem = { ...mockCartItem, selectedDate: new Date(Date.now() + 7 * 24 * 3600000) };
+      prisma.cartItem.findMany.mockResolvedValue([futureCartItem]);
       const req = mockReq({
         body: {
           useCart: true,
@@ -335,8 +338,9 @@ describe('Booking Controller', () => {
         },
       });
       const res = mockRes();
+      const next = jest.fn();
 
-      await bookingController.createBooking(req, res);
+      await bookingController.createBooking(req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(201);
       expect(prisma.cartItem.findMany).toHaveBeenCalled();
