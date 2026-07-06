@@ -1,5 +1,4 @@
 const fs = require('fs');
-const path = require('path');
 
 const summaryPath = process.argv[2] || 'k6-output/summary.json';
 const outputPath = process.argv[3] || 'k6-output/summary.html';

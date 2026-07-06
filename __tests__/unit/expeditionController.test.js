@@ -56,7 +56,6 @@ const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../../utils
 const { validateTravelerInfo, generateBookingNumber } = require('../../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../../utils/tourHelpers');
 const { createPaymentIntent, calculateCommission, createRefund } = require('../../utils/stripeHelpers');
-const getConfig = require('../../utils/getConfig');
 const { logActivity } = require('../../utils/auditLogger');
 
 const controller = require('../../controllers/expeditionController');

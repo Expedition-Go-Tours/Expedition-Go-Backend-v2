@@ -71,8 +71,6 @@ const combined = `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="92
   <rect width="720" height="92" fill="#f6f8fa" rx="4"/>
   <text x="10" y="16" font-weight="bold" font-size="13">Coverage Summary</text>
   ${lines.map((svg, i) => {
-    const match = svg.match(/width="([\d.]+)"/);
-    const w = parseFloat(match[1]);
     const x = 10 + (i % 2) * 180;
     const y = 28 + Math.floor(i / 2) * 30;
     return svg.replace(/svg/, `svg x="${x}" y="${y}"`);

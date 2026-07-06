@@ -77,7 +77,7 @@ const prisma = require('../../utils/prismaClient');
 const tourHelpers = require('../../utils/tourHelpers');
 const bookingHelpers = require('../../utils/bookingHelpers');
 const { createPaymentIntent, calculateCommission, processStripeWebhook } = require('../../utils/stripeHelpers');
-const { enqueueEmail, enqueueEvent } = require('../../utils/queue');
+
 
 const mockUser = {
   id: 'exp-e2e-user-1',
@@ -138,35 +138,6 @@ const mockExpeditionTour = {
   isFeatured: true,
   isActive: true,
   tour: mockTour,
-};
-
-const mockBooking = {
-  id: 'booking-exp-e2e-1',
-  bookingNumber: 'BK-EXP-E2E-001',
-  customerId: 'exp-e2e-user-1',
-  tourId: 'tour-exp-e2e',
-  source: 'EXPEDITION',
-  status: 'CONFIRMED',
-  selectedDate: new Date('2026-08-15'),
-  travelers: { adults: 2, children: 1, infants: 0 },
-  subtotal: 500,
-  taxes: 25,
-  discount: 0,
-  total: 525,
-  currency: 'USD',
-  commissionRate: 0.15,
-  commissionAmount: 78.75,
-  supplierPayout: 446.25,
-  stripePaymentIntentId: 'pi_exp_e2e',
-  paymentStatus: 'SUCCEEDED',
-  paidAt: new Date(),
-  specialRequests: '',
-  tour: {
-    title: 'Expedition E2E Safari',
-    supplierId: 'supplier-exp-e2e',
-    supplier: { id: 'supplier-exp-e2e', name: 'Safari Experts', email: 'safari@test.com' },
-  },
-  customer: { id: 'exp-e2e-user-1', name: 'Expedition User', email: 'exp@test.com' },
 };
 
 const expectedBooking = {
