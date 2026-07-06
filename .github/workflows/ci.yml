@@ -9,6 +9,7 @@ on:
 env:
   NODE_ENV: test
   DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
+  DIRECT_URL: postgresql://postgres:postgres@localhost:5432/test
   JWT_SECRET: ci-test-jwt-secret
   JWT_REFRESH_SECRET: ci-test-jwt-refresh-secret
   JWT_EXPIRES_IN: 90d
@@ -20,7 +21,10 @@ env:
   SENDGRID_API_KEY: SG.dummy
   FIREBASE_PROJECT_ID: dummy-project
   FIREBASE_CLIENT_EMAIL: dummy@dummy.com
-  FIREBASE_PRIVATE_KEY: dummy-key
+  FIREBASE_PRIVATE_KEY: |
+    -----BEGIN PRIVATE KEY-----
+    dummy-key
+    -----END PRIVATE KEY-----
   SENTRY_DSN: ''
   ALLOWED_ORIGINS: http://localhost:3000
 
