@@ -102,11 +102,18 @@ jobs:
             sleep 1
           done
 
+      - name: Install k6
+        run: |
+          curl -sL -o k6.tar.gz https://github.com/grafana/k6/releases/download/v2.1.0/k6-v2.1.0-linux-amd64.tar.gz
+          tar xzf k6.tar.gz
+          sudo cp k6-v2.1.0-linux-amd64/k6 /usr/local/bin/
+          k6 version
+
       - name: Run k6 — ${{ matrix.scenario }}
-        uses: grafana/k6-action@v0.3.1
-        with:
-          filename: __tests__/performance/k6/scenarios/${{ matrix.scenario }}.js
-          flags: --summary-export k6-output/summary.json --out json=k6-output/performance-report.json
+        run: |
+          k6 run __tests__/performance/k6/scenarios/${{ matrix.scenario }}.js \
+            --summary-export k6-output/summary.json \
+            --out json=k6-output/performance-report.json
 
       - name: Generate HTML summary
         if: always()

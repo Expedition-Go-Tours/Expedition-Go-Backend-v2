@@ -190,7 +190,7 @@ jobs:
       - name: Smoke test — tour detail by slug
         run: |
           DETAIL=$(curl -s http://localhost:5000/api/expedition/tours/perf-safari-adventure)
-          echo "$DETAIL" | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);process.exit(j.status==='success'&&j.data.tour.slug==='perf-safari-adventure'?0:1)})"
+          echo "$DETAIL" | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);process.exit(j.status==='success'&&j.data.tour.tour.slug==='perf-safari-adventure'?0:1)})"
           echo "Tour detail endpoint OK"
 
       - name: Smoke test — checkout calculation
@@ -279,11 +279,18 @@ jobs:
             sleep 1
           done
 
+      - name: Install k6
+        run: |
+          curl -sL -o k6.tar.gz https://github.com/grafana/k6/releases/download/v2.1.0/k6-v2.1.0-linux-amd64.tar.gz
+          tar xzf k6.tar.gz
+          sudo cp k6-v2.1.0-linux-amd64/k6 /usr/local/bin/
+          k6 version
+
       - name: Run k6 smoke test
-        uses: grafana/k6-action@v0.3.1
-        with:
-          filename: __tests__/performance/k6/scenarios/smoke.js
-          flags: --summary-export k6-output/summary.json --out json=k6-output/performance-report.json
+        run: |
+          k6 run __tests__/performance/k6/scenarios/smoke.js \
+            --summary-export k6-output/summary.json \
+            --out json=k6-output/performance-report.json
 
       - name: Upload k6 artifacts
         uses: actions/upload-artifact@v4
