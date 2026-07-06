@@ -11,6 +11,12 @@ node_modules/
 
 # Test coverage
 coverage/
+coverage-badge.svg
+
+# Test reports (JUnit XML, k6 output)
+reports/
+junit.xml
+k6-output/
 
 # OS files
 .DS_Store
@@ -34,6 +40,7 @@ pids/
 # Documentation and scratch scripts
 *.md
 !README.md
+!docs/testing.md
 *-fixed.js
 explore-database.js
 add-test-user.js

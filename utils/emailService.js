@@ -74,12 +74,12 @@ async function sendEmail({ to, subject, template, data = {}, attachments = [] })
     if (templateId) {
       msg.templateId = templateId;
       msg.dynamicTemplateData = {
-        ...data,
         supportEmail: configSupportEmail || process.env.SUPPORT_EMAIL,
         logoUrl: configLogoUrl || process.env.LOGO_URL || 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1778862668/TRAVOI_AFRICA_NEW_kd1tnr.png',
         heroImageUrl: configHeroImageUrl || process.env.HERO_IMAGE_URL || 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1747318000/email-hero-capetown.jpg',
         brandName: configBrandName || 'Travio Africa',
-        year: new Date().getFullYear()
+        year: new Date().getFullYear(),
+        ...data,
       };
     } else {
       const enrichedData = {

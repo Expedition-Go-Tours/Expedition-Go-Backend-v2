@@ -1,14 +1,13 @@
 const express = require('express');
-const rateLimit = require('express-rate-limit');
+const { createLimiter } = require('../middleware/dynamicRateLimiter');
 const locationController = require('../controllers/locationController');
 
 const router = express.Router();
 
-const locationLimiter = rateLimit({
-  max: 60,
-  windowMs: 60 * 1000,
-  standardHeaders: true,
-  legacyHeaders: false,
+const locationLimiter = createLimiter({
+  name: 'location',
+  defaultMax: 120,
+  defaultWindowMs: 60 * 1000,
   skip: (req) => req.method === 'OPTIONS',
   message: { status: 'fail', message: 'Too many location requests, please try again later.' },
 });

@@ -1,67 +1,124 @@
-name: CI Pipeline
+name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
+
+env:
+  NODE_ENV: test
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
+  JWT_SECRET: ci-test-jwt-secret
+  JWT_REFRESH_SECRET: ci-test-jwt-refresh-secret
+  JWT_EXPIRES_IN: 90d
+  STRIPE_SECRET_KEY: sk_test_dummy
+  STRIPE_WEBHOOK_SECRET: whsec_dummy
+  CLOUDINARY_CLOUD_NAME: dummy
+  CLOUDINARY_API_KEY: '000000000000000'
+  CLOUDINARY_API_SECRET: dummy-secret
+  SENDGRID_API_KEY: SG.dummy
+  FIREBASE_PROJECT_ID: dummy-project
+  FIREBASE_CLIENT_EMAIL: dummy@dummy.com
+  FIREBASE_PRIVATE_KEY: dummy-key
+  SENTRY_DSN: ''
+  ALLOWED_ORIGINS: http://localhost:3000
 
 jobs:
-  # ───────────── Stage 1: Gate (blocks deploy) ─────────────
+  # ── Lint (every push) ──────────────────────────────────────────────
   lint:
-    name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Security audit
-        run: npm audit --audit-level=high || true
-
-      - name: Run ESLint
-        run: npm run lint
-
-  test:
-    name: Unit & Middleware Tests
-    needs: lint
+  # ── Unit tests (every push) ────────────────────────────────────────
+  unit-tests:
     runs-on: ubuntu-latest
+    env:
+      JEST_JUNIT_OUTPUT_DIR: reports/junit
+      JEST_JUNIT_OUTPUT_NAME: unit.xml
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx jest __tests__/unit/ --no-coverage --forceExit --reporters=default --reporters=jest-junit
 
+      - name: Publish unit test results
+        uses: dorny/test-reporter@v1
+        if: success() || failure()
+        with:
+          name: Unit Tests
+          path: reports/junit/unit.xml
+          reporter: java-junit
+
+  # ── Integration tests (every push) ─────────────────────────────────
+  integration-tests:
+    runs-on: ubuntu-latest
+    env:
+      JEST_JUNIT_OUTPUT_DIR: reports/junit
+      JEST_JUNIT_OUTPUT_NAME: api.xml
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx jest __tests__/api/ --no-coverage --forceExit --reporters=default --reporters=jest-junit
+
+      - name: Publish integration test results
+        uses: dorny/test-reporter@v1
+        if: success() || failure()
+        with:
+          name: Integration Tests
+          path: reports/junit/api.xml
+          reporter: java-junit
+
+  # ── App startup verification (PR + main only) ──────────────────────
+  startup-check:
+    if: github.event_name == 'pull_request' || github.ref_name == 'main' || github.ref_name == 'master'
+    runs-on: ubuntu-latest
     services:
-      postgres:
-        image: postgis/postgis:16-master
+      postgis:
+        image: postgis/postgis:16-3.4
         env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: testdb
-        ports:
-          - 5432:5432
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test
         options: >-
           --health-cmd pg_isready
-          --health-interval 10s
+          --health-interval 5s
           --health-timeout 5s
           --health-retries 5
-
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
     env:
-      NODE_ENV: development
-      DATABASE_URL: postgresql://test:test@localhost:5432/testdb
-      DIRECT_URL: postgresql://test:test@localhost:5432/testdb
-
+      NODE_ENV: production
+      REDIS_URL: redis://localhost:6379
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
@@ -69,135 +126,205 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
-      - name: Run migrations
+      - name: Run database migrations
         run: npx prisma migrate deploy
 
-      - name: Run unit & middleware tests
-        run: npm test
+      - name: Seed permissions and roles
+        run: node prisma/seed.js
 
-  test-e2e:
-    name: E2E Tests
-    needs: lint
-    runs-on: ubuntu-latest
+      - name: Seed performance test data
+        run: node prisma/seedPerf.js
 
-    services:
-      postgres:
-        image: postgis/postgis:16-master
-        env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: testdb
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    env:
-      NODE_ENV: development
-      DATABASE_URL: postgresql://test:test@localhost:5432/testdb
-      DIRECT_URL: postgresql://test:test@localhost:5432/testdb
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Generate Prisma client
-        run: npx prisma generate
-
-      - name: Run migrations
-        run: npx prisma migrate deploy
-
-      - name: Run E2E tests
-        run: npm run test:e2e
-
-  # ───────────── Stage 2: Advisory (doesn't block deploy) ─────────────
-  test-concurrency:
-    name: Concurrency Tests
-    needs: lint
-    runs-on: ubuntu-latest
-    continue-on-error: true
-
-    services:
-      postgres:
-        image: postgis/postgis:16-master
-        env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: testdb
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    env:
-      NODE_ENV: development
-      DATABASE_URL: postgresql://test:test@localhost:5432/testdb
-      DIRECT_URL: postgresql://test:test@localhost:5432/testdb
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Generate Prisma client
-        run: npx prisma generate
-
-      - name: Run migrations
-        run: npx prisma migrate deploy
-
-      - name: Run concurrency tests
-        run: npm run test:concurrency
-
-  # ───────────── Stage 3: Deploy to Render ─────────────
-  deploy:
-    name: Deploy to Render
-    needs: [test, test-e2e]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-
-    steps:
-      - name: Trigger Render deploy hook
-        run: curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
-
-  # ───────────── Stage 4: Post-deploy health check ─────────────
-  health-check:
-    name: Post-deploy Health Check
-    needs: deploy
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-
-    steps:
-      - name: Wait for deploy and verify health endpoint
+      - name: Start application in background
         run: |
-          URL="${{ secrets.RENDER_APP_URL }}/health"
-          for i in $(seq 1 48); do
-            if curl -sf "$URL" > /dev/null 2>&1; then
-              echo "✅ Deploy is live and healthy"
-              exit 0
+          node server.js &
+          APP_PID=$!
+          echo "APP_PID=$APP_PID" >> $GITHUB_ENV
+
+      - name: Wait for health endpoint
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:5000/health > /dev/null 2>&1; then
+              echo "Server is healthy after ${i}s"
+              break
             fi
-            echo "Waiting for deploy... attempt $i/48"
-            sleep 10
+            if [ "$i" -eq 30 ]; then
+              echo "Server failed to start within 30s"
+              exit 1
+            fi
+            sleep 1
           done
-          echo "❌ Deploy did not become healthy within 8 minutes"
-          exit 1
+
+      - name: Verify health response
+        run: |
+          RESPONSE=$(curl -s http://localhost:5000/health)
+          echo "$RESPONSE"
+          STATUS=$(echo "$RESPONSE" | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);process.exit(j.status==='success'?0:1)})")
+          echo "Health check passed"
+
+      - name: Smoke test — expedition tours
+        run: |
+          TOURS=$(curl -s http://localhost:5000/api/expedition/tours)
+          echo "$TOURS" | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);process.exit(j.status==='success'&&j.data.tours.length>0?0:1)})"
+          echo "Expedition tours endpoint OK"
+
+      - name: Smoke test — tour detail by slug
+        run: |
+          DETAIL=$(curl -s http://localhost:5000/api/expedition/tours/perf-safari-adventure)
+          echo "$DETAIL" | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);process.exit(j.status==='success'&&j.data.tour.slug==='perf-safari-adventure'?0:1)})"
+          echo "Tour detail endpoint OK"
+
+      - name: Smoke test — checkout calculation
+        run: |
+          CALC=$(curl -s -X POST http://localhost:5000/api/expedition/checkout/calculate \
+            -H 'Content-Type: application/json' \
+            -d '{"tourId":"9b55dcd5-5b1d-4a3e-ac87-3d3c443e9d93","selectedDate":"2026-08-15","travelers":{"adults":2}}')
+          echo "$CALC" | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);process.exit(j.status==='success'&&j.data.pricing.total>0?0:1)})"
+          echo "Checkout calculation OK"
+
+      - name: Kill application
+        if: always()
+        run: kill ${{ env.APP_PID }} || true
+
+  # ── PR smoke test via k6 (PR + main only) ───────────────────────────
+  smoke-test:
+    if: github.event_name == 'pull_request' || github.ref_name == 'main' || github.ref_name == 'master'
+    runs-on: ubuntu-latest
+    services:
+      postgis:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    env:
+      NODE_ENV: production
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run database migrations
+        run: npx prisma migrate deploy
+
+      - name: Seed permissions and roles
+        run: node prisma/seed.js
+
+      - name: Seed performance test data
+        run: node prisma/seedPerf.js
+
+      - name: Create k6 output directory
+        run: mkdir -p k6-output
+
+      - name: Start application in background
+        run: |
+          node server.js &
+          APP_PID=$!
+          echo "APP_PID=$APP_PID" >> $GITHUB_ENV
+
+      - name: Wait for health endpoint
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:5000/health > /dev/null 2>&1; then
+              echo "Server is healthy after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Server failed to start within 30s"
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Run k6 smoke test
+        uses: grafana/k6-action@v0.3.1
+        with:
+          filename: __tests__/performance/k6/scenarios/smoke.js
+          flags: --summary-export k6-output/summary.json --out json=k6-output/performance-report.json
+
+      - name: Upload k6 artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-smoke
+          path: k6-output/
+
+      - name: Kill application
+        if: always()
+        run: kill ${{ env.APP_PID }} || true
+
+  # ── E2E tests (PR + main only) ─────────────────────────────────────
+  e2e-tests:
+    if: github.event_name == 'pull_request' || github.ref_name == 'main' || github.ref_name == 'master'
+    runs-on: ubuntu-latest
+    env:
+      JEST_JUNIT_OUTPUT_DIR: reports/junit
+      JEST_JUNIT_OUTPUT_NAME: e2e.xml
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx jest __tests__/e2e/ --no-coverage --forceExit --reporters=default --reporters=jest-junit
+
+      - name: Publish e2e test results
+        uses: dorny/test-reporter@v1
+        if: success() || failure()
+        with:
+          name: E2E Tests
+          path: reports/junit/e2e.xml
+          reporter: java-junit
+
+  # ── Full coverage + badge (PR + main only) ─────────────────────────
+  coverage:
+    if: github.event_name == 'pull_request' || github.ref_name == 'main' || github.ref_name == 'master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run test:ci
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-full
+          path: coverage/
+
+      - name: Generate coverage badge
+        run: node scripts/generateBadge.js
+
+      - name: Upload coverage badge
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-badge
+          path: coverage-badge.svg

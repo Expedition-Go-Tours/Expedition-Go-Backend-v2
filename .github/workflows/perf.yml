@@ -1,0 +1,120 @@
+name: Performance Tests
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+env:
+  NODE_ENV: production
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
+  JWT_SECRET: perf-jwt-secret
+  JWT_REFRESH_SECRET: perf-jwt-refresh-secret
+  JWT_EXPIRES_IN: 90d
+  STRIPE_SECRET_KEY: sk_test_dummy
+  STRIPE_WEBHOOK_SECRET: whsec_dummy
+  CLOUDINARY_CLOUD_NAME: dummy
+  CLOUDINARY_API_KEY: '000000000000000'
+  CLOUDINARY_API_SECRET: dummy-secret
+  SENDGRID_API_KEY: SG.dummy
+  FIREBASE_PROJECT_ID: dummy-project
+  FIREBASE_CLIENT_EMAIL: dummy@dummy.com
+  FIREBASE_PRIVATE_KEY: dummy-key
+  SENTRY_DSN: ''
+  ALLOWED_ORIGINS: http://localhost:3000
+  REDIS_URL: redis://localhost:6379
+
+jobs:
+  k6:
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [tourListing, checkoutFlow, mixed]
+    runs-on: ubuntu-latest
+    services:
+      postgis:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run database migrations
+        run: npx prisma migrate deploy
+
+      - name: Seed permissions and roles
+        run: node prisma/seed.js
+
+      - name: Seed performance test data
+        run: node prisma/seedPerf.js
+
+      - name: Create k6 output directory
+        run: mkdir -p k6-output
+
+      - name: Start application in background
+        run: |
+          node server.js &
+          APP_PID=$!
+          echo "APP_PID=$APP_PID" >> $GITHUB_ENV
+
+      - name: Wait for health endpoint
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:5000/health > /dev/null 2>&1; then
+              echo "Server is healthy after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Server failed to start within 30s"
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Run k6 — ${{ matrix.scenario }}
+        uses: grafana/k6-action@v0.3.1
+        with:
+          filename: __tests__/performance/k6/scenarios/${{ matrix.scenario }}.js
+          flags: --summary-export k6-output/summary.json --out json=k6-output/performance-report.json
+
+      - name: Generate HTML summary
+        if: always()
+        run: node scripts/k6SummaryToHtml.js k6-output/summary.json k6-output/summary.html
+
+      - name: Upload k6 artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-${{ matrix.scenario }}
+          path: k6-output/
+
+      - name: Kill application
+        if: always()
+        run: kill ${{ env.APP_PID }} || true

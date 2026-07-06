@@ -1,0 +1,111 @@
+name: Security Scan
+
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+env:
+  NODE_ENV: production
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
+  JWT_SECRET: security-jwt-secret
+  JWT_REFRESH_SECRET: security-jwt-refresh-secret
+  JWT_EXPIRES_IN: 90d
+  STRIPE_SECRET_KEY: sk_test_dummy
+  STRIPE_WEBHOOK_SECRET: whsec_dummy
+  CLOUDINARY_CLOUD_NAME: dummy
+  CLOUDINARY_API_KEY: '000000000000000'
+  CLOUDINARY_API_SECRET: dummy-secret
+  SENDGRID_API_KEY: SG.dummy
+  FIREBASE_PROJECT_ID: dummy-project
+  FIREBASE_CLIENT_EMAIL: dummy@dummy.com
+  FIREBASE_PRIVATE_KEY: dummy-key
+  SENTRY_DSN: ''
+  ALLOWED_ORIGINS: http://localhost:3000
+  REDIS_URL: redis://localhost:6379
+
+jobs:
+  zap-baseline:
+    runs-on: ubuntu-latest
+    services:
+      postgis:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run database migrations
+        run: npx prisma migrate deploy
+
+      - name: Seed permissions and roles
+        run: node prisma/seed.js
+
+      - name: Seed performance test data
+        run: node prisma/seedPerf.js
+
+      - name: Start application in background
+        run: |
+          node server.js &
+          APP_PID=$!
+          echo "APP_PID=$APP_PID" >> $GITHUB_ENV
+
+      - name: Wait for health endpoint
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:5000/health > /dev/null 2>&1; then
+              echo "Server is healthy after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Server failed to start within 30s"
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: 'http://localhost:5000'
+          cmd_options: '-I'
+          rules_file_name: ''
+          allow_issue_writing: false
+
+      - name: Upload ZAP report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-report
+          path: report_html.html
+
+      - name: Kill application
+        if: always()
+        run: kill ${{ env.APP_PID }} || true

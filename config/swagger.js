@@ -190,6 +190,14 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
       {
         name: 'Payout Methods',
         description: 'Supplier payout method configuration'
+      },
+      {
+        name: 'Expedition',
+        description: 'Expedition mini-site — branded tour listing, checkout, and wishlist for expedition.travioafrica.com'
+      },
+      {
+        name: 'Expedition Admin',
+        description: 'Administrative management of Expedition tours and cache'
       }
     ],
     components: {
@@ -2937,6 +2945,278 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
             payout: { $ref: '#/components/schemas/Payout' }
           }
         }
+      }
+    },
+    // ================================
+    // EXPEDITION SCHEMAS
+    // ================================
+    ExpeditionTour: {
+      type: 'object',
+      description: 'A tour curated for the Expedition mini-site (expedition.travioafrica.com)',
+      properties: {
+        id: { type: 'string', description: 'ExpeditionTour record ID', example: 'cmp2hql3c0001tzv0460pbckm' },
+        tourId: { type: 'string', description: 'Reference to the main Tour', example: 'cmp2hql3c0001tzv0460pbckm' },
+        isActive: { type: 'boolean', description: 'Whether the tour is visible on Expedition', example: true },
+        isFeatured: { type: 'boolean', description: 'Whether to show in the featured/hero section', example: false },
+        displayOrder: { type: 'integer', description: 'Sort order within listings', example: 1, minimum: 0 },
+        addedById: { type: 'string', description: 'Admin who added this tour', example: 'cmp2h5edn0000wrs1gfllik7m', nullable: true },
+        addedBy: { $ref: '#/components/schemas/User' },
+        tour: { $ref: '#/components/schemas/Tour' },
+        createdAt: { type: 'string', format: 'date-time' },
+        updatedAt: { type: 'string', format: 'date-time' },
+      }
+    },
+    ExpeditionTourInput: {
+      type: 'object',
+      description: 'Input to add a tour to Expedition',
+      required: ['tourId'],
+      properties: {
+        tourId: { type: 'string', description: 'ID of the existing Tour to add', example: 'cmp2hql3c0001tzv0460pbckm' },
+        isFeatured: { type: 'boolean', description: 'Promote to featured section', default: false, example: true },
+        displayOrder: { type: 'integer', description: 'Manual sort position', default: 0, example: 2 },
+      }
+    },
+    ExpeditionTourUpdate: {
+      type: 'object',
+      description: 'Update fields on an ExpeditionTour record',
+      properties: {
+        isActive: { type: 'boolean', description: 'Hide/unhide from Expedition', example: false },
+        isFeatured: { type: 'boolean', example: true },
+        displayOrder: { type: 'integer', example: 3 },
+      }
+    },
+    ExpeditionCalendarDay: {
+      type: 'object',
+      description: 'A single day in the Expedition availability calendar',
+      properties: {
+        date: { type: 'string', format: 'date', example: '2026-08-15' },
+        dayOfWeek: { type: 'string', example: 'Saturday' },
+        isOperatingDay: { type: 'boolean' },
+        status: { type: 'string', enum: ['AVAILABLE', 'LIMITED', 'FULL', 'BLOCKED'] },
+        capacity: { type: 'integer' },
+        booked: { type: 'integer' },
+        remaining: { type: 'integer' },
+        timeSlots: { type: 'array', items: { type: 'object' } },
+        hasOverride: { type: 'boolean' },
+        overrideStatus: { type: 'string', nullable: true },
+      },
+    },
+    ExpeditionReview: {
+      type: 'object',
+      description: 'A review on an Expedition tour',
+      properties: {
+        id: { type: 'string' },
+        rating: { type: 'integer', minimum: 1, maximum: 5 },
+        title: { type: 'string', nullable: true },
+        comment: { type: 'string', nullable: true },
+        photos: { type: 'array', items: { type: 'string' } },
+        travelMonth: { type: 'string', nullable: true },
+        companions: { type: 'array', items: { type: 'string' } },
+        verified: { type: 'boolean' },
+        helpfulCount: { type: 'integer' },
+        createdAt: { type: 'string', format: 'date-time' },
+        customer: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            photoURL: { type: 'string', nullable: true },
+          },
+        },
+      },
+    },
+    ExpeditionTourListing: {
+      type: 'object',
+      description: 'A transformed Expedition tour ready for public listing display',
+      properties: {
+        id: { type: 'string', description: 'ExpeditionTour record ID' },
+        displayOrder: { type: 'integer' },
+        isFeatured: { type: 'boolean' },
+        tour: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            title: { type: 'string' },
+            slug: { type: 'string' },
+            description: { type: 'string', nullable: true },
+            coverPhoto: { type: 'string', format: 'uri', nullable: true },
+            photos: { type: 'array', items: { type: 'string' } },
+            category: { type: 'string', nullable: true },
+            durationMinutes: { type: 'integer' },
+            startingPrice: { type: 'number', description: 'Lowest price across all schedules' },
+            currency: { type: 'string' },
+            averageRating: { type: 'number', nullable: true },
+            reviewCount: { type: 'integer' },
+            city: { type: 'string', nullable: true },
+            country: { type: 'string', nullable: true },
+            supplierName: { type: 'string', nullable: true },
+            supplierPhoto: { type: 'string', nullable: true },
+          }
+        }
+      }
+    },
+    ExpeditionCheckoutPricing: {
+      type: 'object',
+      description: 'Pricing breakdown for a checkout calculation',
+      properties: {
+        available: { type: 'boolean', example: true },
+        availableSpots: { type: 'integer', example: 10 },
+        pricing: {
+          type: 'object',
+          properties: {
+            currency: { type: 'string', example: 'USD' },
+            subtotal: { type: 'number', example: 120.00 },
+            fees: { type: 'number', example: 5.00 },
+            discounts: { type: 'number', example: 10.00 },
+            total: { type: 'number', example: 115.00 },
+          }
+        },
+        travelerSummary: {
+          type: 'object',
+          properties: {
+            adults: { type: 'integer', example: 2 },
+            children: { type: 'integer', example: 1 },
+            infants: { type: 'integer', example: 0 },
+            total: { type: 'integer', example: 3 },
+          }
+        }
+      }
+    },
+    ExpeditionBookingResult: {
+      type: 'object',
+      description: 'Result of a confirmed Expedition booking',
+      properties: {
+        booking: { $ref: '#/components/schemas/Booking' },
+        message: { type: 'string', example: 'Booking confirmed! You will receive a confirmation email shortly.' },
+      }
+    },
+    ExpeditionBookingSummary: {
+      type: 'object',
+      description: 'Summary of an Expedition booking (list view)',
+      properties: {
+        id: { type: 'string' },
+        bookingNumber: { type: 'string' },
+        status: { type: 'string', enum: ['PENDING', 'CONFIRMED', 'CANCELLED', 'REFUNDED', 'COMPLETED', 'NO_SHOW'] },
+        paymentStatus: { type: 'string', enum: ['PENDING', 'PROCESSING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'REFUNDED'] },
+        selectedDate: { type: 'string', format: 'date' },
+        total: { type: 'number' },
+        currency: { type: 'string' },
+        createdAt: { type: 'string', format: 'date-time' },
+        tour: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            title: { type: 'string' },
+            slug: { type: 'string' },
+            coverPhoto: { type: 'string', nullable: true },
+            category: { type: 'string', nullable: true },
+            durationMinutes: { type: 'integer' },
+            city: { type: 'string', nullable: true },
+            country: { type: 'string', nullable: true },
+            supplier: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                name: { type: 'string' },
+                photoURL: { type: 'string', nullable: true },
+              },
+            },
+          },
+        },
+      },
+    },
+    ExpeditionBookingDetail: {
+      type: 'object',
+      description: 'Full detail of an Expedition booking',
+      properties: {
+        id: { type: 'string' },
+        bookingNumber: { type: 'string' },
+        source: { type: 'string', example: 'EXPEDITION' },
+        status: { type: 'string', enum: ['PENDING', 'CONFIRMED', 'CANCELLED', 'REFUNDED', 'COMPLETED', 'NO_SHOW'] },
+        paymentStatus: { type: 'string', enum: ['PENDING', 'PROCESSING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'REFUNDED'] },
+        travelers: { type: 'object' },
+        selectedDate: { type: 'string', format: 'date' },
+        selectedTime: { type: 'string', nullable: true },
+        subtotal: { type: 'number' },
+        taxes: { type: 'number' },
+        fees: { type: 'number' },
+        discounts: { type: 'number' },
+        total: { type: 'number' },
+        currency: { type: 'string' },
+        specialRequests: { type: 'string', nullable: true },
+        cancellationReason: { type: 'string', nullable: true },
+        cancelledAt: { type: 'string', format: 'date-time', nullable: true },
+        refundAmount: { type: 'number', nullable: true },
+        refundedAt: { type: 'string', format: 'date-time', nullable: true },
+        createdAt: { type: 'string', format: 'date-time' },
+        tour: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            title: { type: 'string' },
+            slug: { type: 'string' },
+            coverPhoto: { type: 'string', nullable: true },
+            photos: { type: 'array', items: { type: 'string' } },
+            category: { type: 'string', nullable: true },
+            durationMinutes: { type: 'integer' },
+            city: { type: 'string', nullable: true },
+            country: { type: 'string', nullable: true },
+            supplier: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                name: { type: 'string' },
+                photoURL: { type: 'string', nullable: true },
+                phone: { type: 'string', nullable: true },
+                email: { type: 'string', nullable: true },
+              },
+            },
+          },
+        },
+        review: { type: 'object', nullable: true, description: 'Review left for this booking, if any' },
+      },
+    },
+    ExpeditionBookingCancelResult: {
+      type: 'object',
+      description: 'Result of cancelling an Expedition booking',
+      properties: {
+        id: { type: 'string' },
+        bookingNumber: { type: 'string' },
+        status: { type: 'string', example: 'CANCELLED' },
+        paymentStatus: { type: 'string', example: 'REFUNDED' },
+        cancellationReason: { type: 'string', nullable: true },
+        cancelledAt: { type: 'string', format: 'date-time' },
+        refundAmount: { type: 'number', nullable: true },
+        refundedAt: { type: 'string', format: 'date-time', nullable: true },
+      },
+    },
+    ExpeditionWishlistEntry: {
+      type: 'object',
+      description: 'A tour in the user\'s wishlist filtered to Expedition-available tours',
+      properties: {
+        id: { type: 'string', description: 'Tour ID' },
+        title: { type: 'string' },
+        slug: { type: 'string' },
+        description: { type: 'string', nullable: true },
+        coverPhoto: { type: 'string', format: 'uri', nullable: true },
+        photos: { type: 'array', items: { type: 'string' } },
+        category: { type: 'string', nullable: true },
+        durationMinutes: { type: 'integer' },
+        startingPrice: { type: 'number' },
+        currency: { type: 'string' },
+        averageRating: { type: 'number', nullable: true },
+        reviewCount: { type: 'integer' },
+        city: { type: 'string', nullable: true },
+        country: { type: 'string', nullable: true },
+        supplierName: { type: 'string', nullable: true },
+        supplierPhoto: { type: 'string', nullable: true },
+      }
+    },
+    ExpeditionSitemapEntry: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string' },
+        updatedAt: { type: 'string', format: 'date-time' },
       }
     },
     security: [

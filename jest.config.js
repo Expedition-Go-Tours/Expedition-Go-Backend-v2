@@ -4,17 +4,17 @@ module.exports = {
   verbose: true,
   collectCoverage: true,
   coverageDirectory: 'coverage',
-  coverageReporters: ['text', 'lcov'],
+  coverageReporters: ['text', 'lcov', 'json-summary'],
   coveragePathIgnorePatterns: ['/node_modules/', '/generated/'],
   setupFiles: ['./jest.setup.js'],
   testTimeout: 30000,
   forceExit: true,
   coverageThreshold: {
     global: {
-      branches: 3,
-      functions: 5,
-      lines: 10,
-      statements: 10,
+      branches: 45,
+      functions: 50,
+      lines: 60,
+      statements: 60,
     },
   },
 };

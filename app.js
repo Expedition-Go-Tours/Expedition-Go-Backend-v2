@@ -20,7 +20,7 @@ const cors = require('cors');
 const express = require('express');
 const swaggerUi = require('swagger-ui-express');
 const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
+const { createLimiter } = require('./middleware/dynamicRateLimiter');
 const hpp = require('hpp');
 const morgan = require('morgan');
 const compression = require('compression');
@@ -86,15 +86,13 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// Global rate limit: 500 requests per hour per IP
+// Global rate limit: 500 requests per hour per IP (configurable via ratelimit.global)
 app.use(
   '/api',
-  rateLimit({
-    max: 500,
-    windowMs: 60 * 60 * 1000,
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: (req) => req.method === 'OPTIONS',
+  createLimiter({
+    name: 'global',
+    defaultMax: 500,
+    defaultWindowMs: 60 * 60 * 1000,
     message: {
       status: 'fail',
       message: 'Too many requests from this IP, please try again later.',
@@ -105,12 +103,10 @@ app.use(
 // Stricter rate limit on auth endpoints
 app.use(
   '/api/auth',
-  rateLimit({
-    max: 20,
-    windowMs: 15 * 60 * 1000,
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: (req) => req.method === 'OPTIONS',
+  createLimiter({
+    name: 'auth',
+    defaultMax: 20,
+    defaultWindowMs: 15 * 60 * 1000,
     message: {
       status: 'fail',
       message: 'Too many auth attempts, please try again later.',
@@ -119,12 +115,10 @@ app.use(
 );
 
 // Stricter rate limit on file upload endpoints (20 uploads per hour per user)
-const uploadLimiter = rateLimit({
-  max: 20,
-  windowMs: 60 * 60 * 1000,
-  standardHeaders: true,
-  legacyHeaders: false,
-  skip: (req) => req.method === 'OPTIONS',
+const uploadLimiter = createLimiter({
+  name: 'upload',
+  defaultMax: 20,
+  defaultWindowMs: 60 * 60 * 1000,
   message: {
     status: 'fail',
     message: 'Too many uploads, please try again later.',
@@ -212,6 +206,7 @@ const adminUserRoutes = require('./routes/adminUserRoutes');
 const supplierSettingsRoutes = require('./routes/supplierSettingsRoutes');
 const specialOfferRoutes = require('./routes/specialOfferRoutes');
 const locationRoutes = require('./routes/locationRoutes');
+const expeditionRoutes = require('./routes/expeditionRoutes');
 const maintenanceMode = require('./middleware/maintenanceMode');
 
 app.use('/api', maintenanceMode);
@@ -236,6 +231,7 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/suppliers/settings', supplierSettingsRoutes);
 app.use('/api/suppliers/special-offers', specialOfferRoutes);
 app.use('/api/locations', locationRoutes);
+app.use('/api/expedition', expeditionRoutes);
 
 
 if (swaggerSpec) {

@@ -45,6 +45,11 @@ enum PayoutMethodType {
   PAYPAL
 }
 
+enum BookingSource {
+  TRAVIO
+  EXPEDITION
+}
+
 enum BookingStatus {
   PENDING         // Payment processing
   CONFIRMED       // Payment successful
@@ -181,6 +186,7 @@ model User {
   chatParticipants ConversationParticipant[]
   messages     Message[]
   specialOffers SpecialOffer[]
+  expeditionTours ExpeditionTour[]
   
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -330,6 +336,7 @@ model Tour {
   dateOverrides TourDateOverride[]
   secondaryThemes TourSecondaryTheme[]
   specialOfferTargets SpecialOfferTarget[]
+  expeditionTour      ExpeditionTour?
 
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
@@ -445,6 +452,7 @@ model Booking {
   tour         Tour          @relation(fields: [tourId], references: [id])
   
   // Booking Details
+  source       BookingSource @default(TRAVIO)
   status       BookingStatus @default(PENDING)
   travelers    Json          // Traveler information
   selectedDate DateTime
@@ -871,6 +879,26 @@ model TeamMember {
   @@index([inviteToken])
 }
 
+// ================================
+// EXPEDITION GO TOUR — CURATED LISTINGS
+// ================================
+
+model ExpeditionTour {
+  id           String   @id @default(cuid())
+  tourId       String   @unique
+  tour         Tour     @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  displayOrder Int      @default(0)
+  isFeatured   Boolean  @default(false)
+  isActive     Boolean  @default(true)
+  addedById    String?
+  addedBy      User?    @relation(fields: [addedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([isActive, displayOrder])
+  @@index([isActive, isFeatured, displayOrder])
+}
+
 model AuditLog {
   id           String      @id @default(cuid())
   
@@ -896,4 +924,17 @@ model AuditLog {
   @@index([action])
   @@index([resource])
   @@index([createdAt])
+}
+
+model NewsletterSubscriber {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  source    String   @default("EXPEDITION")
+  subscribed Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([subscribed])
 }

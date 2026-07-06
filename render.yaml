@@ -77,6 +77,42 @@ projects:
         sync: false
       - key: API_VERSION
         sync: false
+      - key: RATELIMIT_GLOBAL_MAX
+        value: "500"
+      - key: RATELIMIT_GLOBAL_WINDOW_MS
+        value: "3600000"
+      - key: RATELIMIT_AUTH_MAX
+        value: "20"
+      - key: RATELIMIT_AUTH_WINDOW_MS
+        value: "900000"
+      - key: RATELIMIT_UPLOAD_MAX
+        value: "20"
+      - key: RATELIMIT_UPLOAD_WINDOW_MS
+        value: "3600000"
+      - key: RATELIMIT_CONTACT_MAX
+        value: "5"
+      - key: RATELIMIT_CONTACT_WINDOW_MS
+        value: "900000"
+      - key: RATELIMIT_SUBSCRIBE_MAX
+        value: "10"
+      - key: RATELIMIT_SUBSCRIBE_WINDOW_MS
+        value: "60000"
+      - key: RATELIMIT_ADMIN_MAX
+        value: "200"
+      - key: RATELIMIT_ADMIN_WINDOW_MS
+        value: "900000"
+      - key: RATELIMIT_LOCATION_MAX
+        value: "120"
+      - key: RATELIMIT_LOCATION_WINDOW_MS
+        value: "60000"
+      - key: RATELIMIT_TEAM_INVITE_MAX
+        value: "10"
+      - key: RATELIMIT_TEAM_INVITE_WINDOW_MS
+        value: "3600000"
+      - key: RATELIMIT_INVITE_LOOKUP_MAX
+        value: "30"
+      - key: RATELIMIT_INVITE_LOOKUP_WINDOW_MS
+        value: "900000"
       - key: UV_THREADPOOL_SIZE
         value: "8"
       region: oregon

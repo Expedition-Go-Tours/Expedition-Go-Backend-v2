@@ -1,5 +1,5 @@
 const express = require('express');
-const rateLimit = require('express-rate-limit');
+const { createLimiter } = require('../middleware/dynamicRateLimiter');
 const { protect } = require('../middleware/authMiddleware');
 const { requireTeamRole, resolveSupplier } = require('../middleware/teamRoleMiddleware');
 const teamController = require('../controllers/teamController');
@@ -7,22 +7,20 @@ const settingsController = require('../controllers/supplierSettingsController');
 
 const router = express.Router();
 
-const teamInviteLimiter = rateLimit({
-  max: 10,
-  windowMs: 60 * 60 * 1000,
-  standardHeaders: true,
-  legacyHeaders: false,
+const teamInviteLimiter = createLimiter({
+  name: 'team_invite',
+  defaultMax: 10,
+  defaultWindowMs: 60 * 60 * 1000,
   message: {
     status: 'fail',
     message: 'Too many invitation attempts, please try again later.',
   },
 });
 
-const inviteLookupLimiter = rateLimit({
-  max: 30,
-  windowMs: 15 * 60 * 1000,
-  standardHeaders: true,
-  legacyHeaders: false,
+const inviteLookupLimiter = createLimiter({
+  name: 'invite_lookup',
+  defaultMax: 30,
+  defaultWindowMs: 15 * 60 * 1000,
   message: {
     status: 'fail',
     message: 'Too many requests, please try again later.',

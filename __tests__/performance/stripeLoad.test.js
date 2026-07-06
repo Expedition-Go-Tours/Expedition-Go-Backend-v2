@@ -80,6 +80,7 @@ const mockTx = {
   payout: { create: jest.fn().mockResolvedValue({}) },
   payoutMethod: { findFirst: jest.fn().mockResolvedValue({ id: 'pm-1' }) },
   specialOffer: { update: jest.fn().mockResolvedValue({}) },
+  stripeEvent: { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn().mockResolvedValue({}), update: jest.fn().mockResolvedValue({}) },
 };
 
 function makeStripeEvent(type) {
