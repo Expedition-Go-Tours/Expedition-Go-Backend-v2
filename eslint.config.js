@@ -61,7 +61,7 @@ module.exports = [
     },
   },
   {
-    files: ['__tests__/**/*.test.js'],
+    files: ['__tests__/**/*.js'],
     languageOptions: {
       globals: {
         describe: 'readonly',
@@ -73,6 +73,25 @@ module.exports = [
         beforeAll: 'readonly',
         afterAll: 'readonly',
         jest: 'readonly',
+      },
+    },
+  },
+  {
+    files: ['__tests__/performance/k6/**/*.js'],
+    languageOptions: {
+      sourceType: 'module',
+      ecmaVersion: 'latest',
+      globals: {
+        __ENV: 'readonly',
+        __ITER: 'readonly',
+        __VU: 'readonly',
+        __SCENARIOS: 'readonly',
+        __TEARDOWN: 'readonly',
+        data: 'readonly',
+        group: 'readonly',
+        check: 'readonly',
+        sleep: 'readonly',
+        fail: 'readonly',
       },
     },
   },

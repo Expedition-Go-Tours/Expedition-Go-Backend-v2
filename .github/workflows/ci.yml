@@ -19,12 +19,6 @@ env:
   CLOUDINARY_API_KEY: '000000000000000'
   CLOUDINARY_API_SECRET: dummy-secret
   SENDGRID_API_KEY: SG.dummy
-  FIREBASE_PROJECT_ID: dummy-project
-  FIREBASE_CLIENT_EMAIL: dummy@dummy.com
-  FIREBASE_PRIVATE_KEY: |
-    -----BEGIN PRIVATE KEY-----
-    dummy-key
-    -----END PRIVATE KEY-----
   SENTRY_DSN: ''
   ALLOWED_ORIGINS: http://localhost:3000
 

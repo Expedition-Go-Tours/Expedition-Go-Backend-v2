@@ -20,7 +20,11 @@ function getServiceAccountConfig() {
 
 const cfg = getServiceAccountConfig();
 if (cfg && !admin.apps.length) {
-  admin.initializeApp({ credential: admin.credential.cert(cfg) });
+  try {
+    admin.initializeApp({ credential: admin.credential.cert(cfg) });
+  } catch (err) {
+    console.warn('[Firebase] Failed to initialize with provided credentials:', err.message);
+  }
 }
 
 module.exports = admin;
