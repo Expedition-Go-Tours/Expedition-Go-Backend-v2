@@ -19,6 +19,12 @@ env:
   CLOUDINARY_API_KEY: '000000000000000'
   CLOUDINARY_API_SECRET: dummy-secret
   SENDGRID_API_KEY: SG.dummy
+  FIREBASE_PROJECT_ID: dummy-project
+  FIREBASE_CLIENT_EMAIL: dummy@dummy.com
+  FIREBASE_PRIVATE_KEY: |
+    -----BEGIN PRIVATE KEY-----
+    dummy-key
+    -----END PRIVATE KEY-----
   SENTRY_DSN: ''
   ALLOWED_ORIGINS: http://localhost:3000
 
@@ -61,6 +67,19 @@ jobs:
   # ── Integration tests (every push) ─────────────────────────────────
   integration-tests:
     runs-on: ubuntu-latest
+    services:
+      postgis:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
     env:
       JEST_JUNIT_OUTPUT_DIR: reports/junit
       JEST_JUNIT_OUTPUT_NAME: api.xml
@@ -72,6 +91,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: node prisma/seed.js
       - run: npx jest __tests__/api/ --no-coverage --forceExit --reporters=default --reporters=jest-junit
 
       - name: Publish integration test results
@@ -303,6 +324,19 @@ jobs:
   coverage:
     if: github.event_name == 'pull_request' || github.ref_name == 'main' || github.ref_name == 'master'
     runs-on: ubuntu-latest
+    services:
+      postgis:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -311,6 +345,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: node prisma/seed.js
       - run: npm run test:ci
       - uses: actions/upload-artifact@v4
         if: always()

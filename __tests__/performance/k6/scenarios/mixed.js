@@ -1,8 +1,7 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Rate } from 'k6/metrics';
-import { BASE_URL, TOUR_ID, TOUR_SLUG, CUSTOMER_EMAIL, CUSTOMER_PASSWORD } from '../config.js';
-import { authenticate, authHeaders } from '../helpers.js';
+import { BASE_URL, TOUR_ID, TOUR_SLUG } from '../config.js';
 
 const listingFailRate = new Rate('listing_errors');
 const detailFailRate = new Rate('detail_errors');

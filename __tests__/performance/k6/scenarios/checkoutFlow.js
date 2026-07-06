@@ -1,7 +1,6 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
-import { BASE_URL, TOUR_ID, CUSTOMER_EMAIL, CUSTOMER_PASSWORD } from '../config.js';
-import { authenticate, authHeaders } from '../helpers.js';
+import { BASE_URL, TOUR_ID } from '../config.js';
 
 export const options = {
   stages: [
