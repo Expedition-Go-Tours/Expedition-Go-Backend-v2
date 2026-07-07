@@ -1,4 +1,3 @@
-const path = require('path');
 process.env.NODE_ENV = 'test';
 
 jest.mock('../../utils/prismaClient', () => ({
@@ -54,7 +53,7 @@ const req = {
 let statusArg;
 const res = {
   status: (code) => { statusArg = code; console.log('status called with:', code); return res; },
-  json: (data) => console.log('json called, status was:', statusArg),
+  json: () => console.log('json called, status was:', statusArg),
   set: () => { console.log('res.set called'); },
 };
 const next = (err) => {
