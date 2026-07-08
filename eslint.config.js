@@ -48,7 +48,7 @@ module.exports = [
       },
     },
     rules: {
-      'no-unused-vars': ['warn', { argsIgnorePattern: 'next' }],
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_|next' }],
       'no-console': 'off',
       'prefer-const': 'warn',
       'no-var': 'warn',

@@ -91,7 +91,7 @@ function mockNext() {
 
 function simulatePassport(cbParams) {
   passport.authenticate.mockImplementation((strategy, options, cb) => {
-    return (req, res, next) => {
+    return (_req, _res, next) => {
       cb(...cbParams);
     };
   });
@@ -693,7 +693,7 @@ describe('googleAuth', () => {
 describe('googleCallback', () => {
   it('returns 401 when passport authentication fails', async () => {
     passport.authenticate.mockImplementation((strategy, options, cb) => {
-      return (req, res, next) => {
+      return (_req, _res, next) => {
         cb(new Error('google error'));
       };
     });
@@ -708,7 +708,7 @@ describe('googleCallback', () => {
 
   it('returns 401 when no user returned', async () => {
     passport.authenticate.mockImplementation((strategy, options, cb) => {
-      return (req, res, next) => {
+      return (_req, _res, next) => {
         cb(null, null, { message: 'Google authentication failed' });
       };
     });
@@ -723,7 +723,7 @@ describe('googleCallback', () => {
 
   it('redirects with tokens on success', (done) => {
     passport.authenticate.mockImplementation((strategy, options, cb) => {
-      return (req, res, next) => {
+      return (_req, _res, next) => {
         cb(null, { ...mockUser });
       };
     });

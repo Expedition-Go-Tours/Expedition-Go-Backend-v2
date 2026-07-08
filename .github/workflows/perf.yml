@@ -58,8 +58,8 @@ jobs:
         ports:
           - 6379:6379
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -128,7 +128,7 @@ jobs:
         run: node scripts/k6SummaryToHtml.js k6-output/summary.json k6-output/summary.html
 
       - name: Upload k6 artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: k6-${{ matrix.scenario }}
