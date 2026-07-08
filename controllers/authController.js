@@ -312,7 +312,7 @@ function getClientOrigin(req) {
   }
 }
 
-exports.googleAuth = (req, res, next) => {
+exports.googleAuth = catchAsync(async (req, res, next) => {
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
     return res.redirect(`${getClientOrigin(req)}/login?error=Google sign-in is not configured. Contact an administrator.`);
   }
@@ -322,9 +322,9 @@ exports.googleAuth = (req, res, next) => {
     state: getClientOrigin(req),
     prompt: req.query.prompt || 'select_account',
   })(req, res, next);
-};
+});
 
-exports.googleCallback = (req, res, next) => {
+exports.googleCallback = catchAsync(async (req, res, next) => {
   passport.authenticate('google', { session: false }, async (err, user, info) => {
     if (err) return next(err);
     if (!user) return next(new AppError(info?.message || 'Google authentication failed', 401));
@@ -351,4 +351,4 @@ exports.googleCallback = (req, res, next) => {
     setAuthCookies(res, accessToken, refreshToken);
     res.redirect(`${origin}/auth/callback?accessToken=${encodeURIComponent(accessToken)}&refreshToken=${encodeURIComponent(refreshToken)}`);
   })(req, res, next);
-};
+});

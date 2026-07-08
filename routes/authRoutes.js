@@ -4,6 +4,15 @@ const { protect } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
+const noCache = (req, res, next) => {
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  next();
+};
+
+router.use(noCache);
+
 /**
  * @swagger
  * /api/auth/login:

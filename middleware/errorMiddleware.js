@@ -3,9 +3,6 @@ module.exports = (err, req, res, next) => {
     return next(err);
   }
 
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Credentials', 'true');
-
   err.statusCode = err.statusCode || 500;
   err.status = err.status || 'error';
 
@@ -44,7 +41,6 @@ module.exports = (err, req, res, next) => {
     res.status(err.statusCode).json({
       status: err.status,
       message: err.isOperational ? err.message : 'Something went wrong!',
-      ...(err.isOperational ? { isOperational: true } : {}),
     });
   }
 };
