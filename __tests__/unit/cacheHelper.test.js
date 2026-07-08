@@ -6,6 +6,7 @@ const cache = require('../../utils/cacheHelper');
 describe('cacheHelper', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    cache._clearMemory();
     redis.connect.mockResolvedValue({});
     redis.get.mockResolvedValue(null);
     redis.set.mockResolvedValue();

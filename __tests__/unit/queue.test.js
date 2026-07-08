@@ -294,12 +294,11 @@ describe('queue', () => {
   });
 
   describe('closeAll', () => {
-    it('closes all queues and connection', async () => {
+    it('closes all queues', async () => {
       await queue.enqueueNotification({ userId: 'u-1', type: 'TEST' });
 
       const result = await queue.closeAll();
       expect(mockQueueInstance.close).toHaveBeenCalled();
-      expect(mockIoRedisInstance.quit).toHaveBeenCalled();
       expect(result).toBeUndefined();
     });
   });

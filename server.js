@@ -4,6 +4,7 @@ const { Server } = require('socket.io');
 const prisma = require('./utils/prismaClient');
 const { setIO, setupPrismaMiddleware } = require('./utils/dataChangeEmitter');
 const { registerWorkers, closeAll, enqueueNotification, enqueueCleanup, enqueueAggregation, enqueueEvent, isRedisAvailable } = require('./utils/queue');
+const redisClient = require('./utils/redisClient');
 const { logActivity } = require('./utils/auditLogger');
 const logger = require('./utils/logger');
  
@@ -37,10 +38,10 @@ const shutdown = async (reason, err) => {
   try {
     if (server) {
       server.close(() => {
-        closeAll().finally(() => process.exit(1));
+        closeAll().finally(() => redisClient.quit().finally(() => process.exit(1)));
       });
     } else {
-      closeAll().finally(() => process.exit(1));
+      closeAll().finally(() => redisClient.quit().finally(() => process.exit(1)));
     }
   } catch {
     process.exit(1);

@@ -18,47 +18,7 @@
  */
 
 const { Queue, Worker } = require('bullmq');
-const IORedis = require('ioredis');
-
-
-const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
-
-let connection;
-let connectionFailed = false;
-
-async function isRedisAvailable() {
-  try {
-    const conn = getConnection();
-    await conn.connect();
-    await conn.ping();
-    // Also check if we're being rate-limited
-    if (connectionFailed) return false;
-    connectionFailed = false;
-    return true;
-  } catch (err) {
-    connectionFailed = true;
-    if (err.message && err.message.includes('max requests limit')) {
-      console.warn('[Queue] Upstash Redis rate limit exceeded — using inline fallbacks');
-    }
-    return false;
-  }
-}
-
-function getConnection() {
-  if (!connection) {
-    connection = new IORedis(REDIS_URL, {
-      maxRetriesPerRequest: null,   
-      enableReadyCheck: false,      // Faster startup
-      retryStrategy: (times) => {
-        if (connectionFailed) return null; // Stop retrying if rate limited
-        return Math.min(times * 100, 3000);
-      },
-      lazyConnect: true,
-    });
-    connection.on('error', () => {}); // Suppressed — handled by isRedisAvailable
-  }
-  return connection;
-}
+const { getConnection, isRedisAvailable } = require('./redisClient');
 
 
 const QUEUE_NAMES = {
@@ -435,9 +395,6 @@ async function closeAll() {
   const closePromises = [];
   for (const [, queue] of queueInstances) {
     closePromises.push(queue.close());
-  }
-  if (connection) {
-    closePromises.push(connection.quit());
   }
   await Promise.allSettled(closePromises);
   queueInstances.clear();
