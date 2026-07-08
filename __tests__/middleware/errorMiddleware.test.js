@@ -168,14 +168,15 @@ describe('Error Middleware', () => {
       expect(body.status).toBe('error');
     });
 
-    it('includes isOperational flag for AppError', () => {
+    it('returns operation message for AppError', () => {
       const res = mockRes();
       const err = new AppError('Operational', 400);
 
       errorHandler(err, req, res, jest.fn());
 
       const body = res.json.mock.calls[0][0];
-      expect(body.isOperational).toBe(true);
+      expect(body.status).toBe('fail');
+      expect(body.message).toBe('Operational');
     });
   });
 
