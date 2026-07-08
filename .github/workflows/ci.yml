@@ -397,3 +397,32 @@ jobs:
         with:
           name: coverage-badge
           path: coverage-badge.svg
+
+  # ── Post-deploy verification (main only) ──────────────────────────
+  deploy-verify:
+    if: github.ref_name == 'main'
+    needs:
+      - lint
+      - unit-tests
+      - integration-tests
+      - startup-check
+      - smoke-test
+      - e2e-tests
+      - coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Render deploy
+        run: sleep 90
+
+      - name: Verify live health endpoint
+        run: |
+          RESPONSE=$(curl -sf https://expedition-go-backend-v2.onrender.com/health)
+          echo "$RESPONSE"
+          echo "$RESPONSE" | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);process.exit(j.status==='success'?0:1)})"
+          echo "Production health check passed"
+
+      - name: Smoke test live tours endpoint
+        run: |
+          TOURS=$(curl -sf https://expedition-go-backend-v2.onrender.com/api/expedition/tours)
+          echo "$TOURS" | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);process.exit(j.status==='success'&&j.data.tours.length>0?0:1)})"
+          echo "Production tours endpoint OK"
