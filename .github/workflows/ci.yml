@@ -202,7 +202,7 @@ jobs:
           echo "Checkout calculation OK"
 
       - name: Create ZAP output directory
-        run: mkdir -p zap-output
+        run: mkdir -p zap-output && chmod 777 zap-output
 
       - name: Run OWASP ZAP API scan
         continue-on-error: true
@@ -211,6 +211,10 @@ jobs:
             ghcr.io/zaproxy/zaproxy:stable \
             zap-api-scan.py -t http://localhost:5000/swagger.json \
             -f openapi -r zap-report.html -J zap-report.json
+
+      - name: Debug ZAP output
+        if: always()
+        run: ls -la zap-output/
 
       - name: Upload ZAP report
         if: always()
