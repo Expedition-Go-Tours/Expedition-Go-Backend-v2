@@ -255,7 +255,7 @@ app.use('/api/locations', locationRoutes);
 app.use('/api/expedition', expeditionRoutes);
 
 
-if (swaggerSpec) {
+if (swaggerSpec && process.env.NODE_ENV !== 'production') {
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
   app.get('/swagger.json', (req, res) => {
     res.json(swaggerSpec);

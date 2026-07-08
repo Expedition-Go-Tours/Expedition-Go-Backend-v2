@@ -105,6 +105,7 @@ process.on('SIGINT', () => {
         },
         credentials: true,
       },
+      transports: ['websocket'],
     });
 
     app.set('io', io);
