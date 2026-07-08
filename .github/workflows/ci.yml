@@ -201,6 +201,81 @@ jobs:
           echo "$CALC" | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);process.exit(j.status==='success'&&j.data.pricing.total>0?0:1)})"
           echo "Checkout calculation OK"
 
+      - name: Kill application
+        if: always()
+        run: kill ${{ env.APP_PID }} || true
+
+  # ── OWASP ZAP security scan (PR + main only) ──────────────────────
+  zap-scan:
+    if: github.event_name == 'pull_request' || github.ref_name == 'main' || github.ref_name == 'master'
+    runs-on: ubuntu-latest
+    services:
+      postgis:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    env:
+      NODE_ENV: production
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run database migrations
+        run: npx prisma migrate deploy
+
+      - name: Seed permissions and roles
+        run: node prisma/seed.js
+
+      - name: Seed performance test data
+        run: node prisma/seedPerf.js
+
+      - name: Start application in background
+        run: |
+          node server.js &
+          APP_PID=$!
+          echo "APP_PID=$APP_PID" >> $GITHUB_ENV
+
+      - name: Wait for health endpoint
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:5000/health > /dev/null 2>&1; then
+              echo "Server is healthy after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Server failed to start within 30s"
+              exit 1
+            fi
+            sleep 1
+          done
+
       - name: Create ZAP output directory
         run: mkdir -p zap-output && chmod 777 zap-output
 
