@@ -35,7 +35,7 @@ const COOKIE_OPTIONS = Object.freeze({
   accessToken: {
     httpOnly: true,
     secure: true,
-    sameSite: 'lax',
+    sameSite: 'none',
     domain: isProduction ? '.travioafrica.com' : undefined,
     path: '/',
     maxAge: 30 * 60 * 1000,
@@ -43,7 +43,7 @@ const COOKIE_OPTIONS = Object.freeze({
   refreshToken: {
     httpOnly: true,
     secure: true,
-    sameSite: 'lax',
+    sameSite: 'none',
     domain: isProduction ? '.travioafrica.com' : undefined,
     path: '/api/auth',
     maxAge: 7 * 24 * 60 * 60 * 1000,

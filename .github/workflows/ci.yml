@@ -233,6 +233,8 @@ jobs:
           - 6379:6379
     env:
       NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test?connection_limit=50
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/test?connection_limit=50
       REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
@@ -278,6 +280,14 @@ jobs:
             fi
             sleep 1
           done
+
+      - name: Warm up Redis cache
+        run: |
+          echo "Warming up tours listing..."
+          curl -sf http://localhost:5000/api/expedition/tours > /dev/null
+          echo "Warming up tour detail..."
+          curl -sf http://localhost:5000/api/expedition/tours/perf-safari-adventure > /dev/null
+          echo "Warm-up complete"
 
       - name: Install k6
         run: |

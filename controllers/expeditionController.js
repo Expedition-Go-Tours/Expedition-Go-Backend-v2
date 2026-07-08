@@ -17,6 +17,7 @@ const LIST_CACHE_KEY = `${CACHE_PREFIX}tours:list`;
 const FEATURED_CACHE_KEY = `${CACHE_PREFIX}tours:featured`;
 const DETAIL_CACHE_KEY = (slug) => `${CACHE_PREFIX}detail:${slug}`;
 const SITEMAP_CACHE_KEY = `${CACHE_PREFIX}sitemap`;
+const CHECKOUT_CACHE_TTL = 10;
 
 // In-memory view dedup cache (same pattern as tourController)
 const viewTrackingCache = new Map();
@@ -913,52 +914,58 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
     return next(new AppError('tourId, selectedDate, and travelers are required', 400));
   }
 
-  const tour = await prisma.tour.findFirst({
-    where: { id: tourId, status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } },
-    include: { supplier: { include: { supplierProfile: true } } },
-  });
+  const cacheKey = `${CACHE_PREFIX}checkout:${crypto.createHash('md5').update(JSON.stringify({ tourId, selectedDate, travelers })).digest('hex')}`;
 
-  if (!tour) {
-    return next(new AppError('Tour not found or not available for booking', 404));
-  }
+  const result = await cache.getOrSet(cacheKey, async () => {
+    const tour = await prisma.tour.findFirst({
+      where: { id: tourId, status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } },
+      include: { supplier: { include: { supplierProfile: true } } },
+    });
 
-  const availability = await checkTourAvailability(tourId, selectedDate, null);
-  if (!availability.available) {
-    return next(new AppError(availability.reason || 'Tour is not available on the selected date', 400));
-  }
+    if (!tour) {
+      throw new AppError('Tour not found or not available for booking', 404);
+    }
 
-  const totalTravelers = (travelers.adults || 0) + (travelers.children || 0) + (travelers.infants || 0);
-  if (totalTravelers > availability.availableSpots) {
-    return next(new AppError(`Only ${availability.availableSpots} spots available, but ${totalTravelers} travelers requested`, 400));
-  }
+    const availability = await checkTourAvailability(tourId, selectedDate, null);
+    if (!availability.available) {
+      throw new AppError(availability.reason || 'Tour is not available on the selected date', 400);
+    }
 
-  const pricing = await calculateTourPrice(tour, travelers, selectedDate, null, null, req.user?.id)
-    .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
+    const totalTravelers = (travelers.adults || 0) + (travelers.children || 0) + (travelers.infants || 0);
+    if (totalTravelers > availability.availableSpots) {
+      throw new AppError(`Only ${availability.availableSpots} spots available, but ${totalTravelers} travelers requested`, 400);
+    }
 
-  if (!pricing.success) {
-    return next(new AppError(pricing.error, 400));
-  }
+    const pricing = await calculateTourPrice(tour, travelers, selectedDate, null, null, req.user?.id)
+      .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
 
-  res.status(200).json({
-    status: 'success',
-    data: {
-      available: true,
-      availableSpots: availability.availableSpots,
-      pricing: {
-        currency: pricing.currency,
-        subtotal: pricing.subtotal,
-        fees: pricing.fees || 0,
-        discounts: pricing.discount || 0,
-        total: pricing.total,
+    if (!pricing.success) {
+      throw new AppError(pricing.error, 400);
+    }
+
+    return {
+      status: 'success',
+      data: {
+        available: true,
+        availableSpots: availability.availableSpots,
+        pricing: {
+          currency: pricing.currency,
+          subtotal: pricing.subtotal,
+          fees: pricing.fees || 0,
+          discounts: pricing.discount || 0,
+          total: pricing.total,
+        },
+        travelerSummary: {
+          adults: travelers.adults || 0,
+          children: travelers.children || 0,
+          infants: travelers.infants || 0,
+          total: totalTravelers,
+        },
       },
-      travelerSummary: {
-        adults: travelers.adults || 0,
-        children: travelers.children || 0,
-        infants: travelers.infants || 0,
-        total: totalTravelers,
-      },
-    },
-  });
+    };
+  }, CHECKOUT_CACHE_TTL);
+
+  res.status(200).json(result);
 });
 
 exports.confirmBooking = catchAsync(async (req, res, next) => {

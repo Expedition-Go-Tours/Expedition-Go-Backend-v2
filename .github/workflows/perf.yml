@@ -7,8 +7,8 @@ on:
 
 env:
   NODE_ENV: production
-  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
-  DIRECT_URL: postgresql://postgres:postgres@localhost:5432/test
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test?connection_limit=50
+  DIRECT_URL: postgresql://postgres:postgres@localhost:5432/test?connection_limit=50
   JWT_SECRET: perf-jwt-secret
   JWT_REFRESH_SECRET: perf-jwt-refresh-secret
   JWT_EXPIRES_IN: 90d
@@ -101,6 +101,14 @@ jobs:
             fi
             sleep 1
           done
+
+      - name: Warm up Redis cache
+        run: |
+          echo "Warming up tours listing..."
+          curl -sf http://localhost:5000/api/expedition/tours > /dev/null
+          echo "Warming up tour detail..."
+          curl -sf http://localhost:5000/api/expedition/tours/perf-safari-adventure > /dev/null
+          echo "Warm-up complete"
 
       - name: Install k6
         run: |
