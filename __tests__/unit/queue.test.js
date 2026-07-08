@@ -44,6 +44,8 @@ jest.mock('../../utils/eventEmitter', () => ({
   emit: jest.fn(),
 }));
 
+process.env.REDIS_URL = 'redis://localhost:6379';
+
 const { Queue, Worker } = require('bullmq');
 const IORedis = require('ioredis');
 const prisma = require('../../utils/prismaClient');
