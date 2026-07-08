@@ -201,6 +201,24 @@ jobs:
           echo "$CALC" | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);process.exit(j.status==='success'&&j.data.pricing.total>0?0:1)})"
           echo "Checkout calculation OK"
 
+      - name: Create ZAP output directory
+        run: mkdir -p zap-output
+
+      - name: Run OWASP ZAP API scan
+        continue-on-error: true
+        run: |
+          docker run -v $(pwd)/zap-output:/zap/wrk --network=host \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-api-scan.py -t http://localhost:5000/swagger.json \
+            -f openapi -r zap-report.html
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: zap-output/
+
       - name: Kill application
         if: always()
         run: kill ${{ env.APP_PID }} || true
