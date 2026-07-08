@@ -31,6 +31,8 @@ const logger = require('./utils/logger');
 const passport = require('./config/passport');
 const globalErrorHandler = require('./middleware/errorMiddleware');
 const AppError = require('./utils/appError');
+const prisma = require('./utils/prismaClient');
+const { isRedisAvailable } = require('./utils/queue');
 
 const app = express();
 
@@ -174,11 +176,30 @@ app.use(require('cookie-parser')());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'success',
-    message: 'API is healthy',
-  });
+app.get('/health', async (req, res) => {
+  const checks = { database: 'unknown', redis: 'unknown' };
+  let dbOk = false;
+
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    checks.database = 'healthy';
+    dbOk = true;
+  } catch {
+    checks.database = 'down';
+  }
+
+  try {
+    const redisOk = await isRedisAvailable();
+    checks.redis = redisOk ? 'healthy' : 'unhealthy';
+  } catch {
+    checks.redis = 'down';
+  }
+
+  if (dbOk) {
+    res.status(200).json({ status: 'success', checks });
+  } else {
+    res.status(503).json({ status: 'error', checks });
+  }
 });
 
 
