@@ -18,7 +18,7 @@
     "test:perf:mixed": "k6 run __tests__/performance/k6/scenarios/mixed.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "postinstall": "npx prisma generate",
+    "postinstall": "prisma generate",
     "migrate": "npx prisma migrate deploy",
     "seed": "node prisma/seed.js",
     "seed:perf": "node prisma/seedPerf.js",
@@ -65,7 +65,8 @@
     "swagger-ui-express": "^5.0.1",
     "uuid": "^14.0.0",
     "validator": "^13.15.35",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "prisma": "^5.20.0"
   },
   "overrides": {
     "multer-storage-cloudinary": {
@@ -78,7 +79,6 @@
     "jest": "^30.4.2",
     "jest-junit": "^17.0.0",
     "nodemon": "^3.1.14",
-    "prisma": "^5.20.0",
     "supertest": "^7.2.2"
   }
 }
