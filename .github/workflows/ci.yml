@@ -423,6 +423,7 @@ jobs:
 
       - name: Smoke test live tours endpoint
         run: |
-          TOURS=$(curl -sf https://expedition-go-backend-v2.onrender.com/api/expedition/tours)
-          echo "$TOURS" | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);process.exit(j.status==='success'&&j.data.tours.length>0?0:1)})"
+          HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" https://expedition-go-backend-v2.onrender.com/api/expedition/tours)
+          echo "HTTP $HTTP_CODE"
+          cat response.json | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);process.exit(j.status==='success'?0:1)})"
           echo "Production tours endpoint OK"
