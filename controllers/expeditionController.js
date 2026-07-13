@@ -17,9 +17,10 @@ const LIST_CACHE_KEY = `${CACHE_PREFIX}tours:list`;
 const FEATURED_CACHE_KEY = `${CACHE_PREFIX}tours:featured`;
 const DETAIL_CACHE_KEY = (slug) => `${CACHE_PREFIX}detail:${slug}`;
 const SITEMAP_CACHE_KEY = `${CACHE_PREFIX}sitemap`;
-const CHECKOUT_CACHE_TTL = 10;
+const CHECKOUT_CACHE_TTL = 60;
 
 // In-memory view dedup cache (same pattern as tourController)
+const VIEW_CACHE_MAX = 10000;
 const viewTrackingCache = new Map();
 
 function extractStartingPrice(schedulesAndPricing) {
@@ -138,13 +139,24 @@ function shouldCountView(req, tourSupplierId) {
 
   if (lastTime && now - lastTime < 30 * 60 * 1000) return false;
 
-  viewTrackingCache.set(viewKey, now);
-  if (Math.random() < 0.01) {
-    const cutoff = now - 60 * 60 * 1000;
+  // Enforce hard cap to prevent unbounded growth
+  if (viewTrackingCache.size >= VIEW_CACHE_MAX) {
+    const cutoff = now - 30 * 60 * 1000;
     for (const [k, t] of viewTrackingCache.entries()) {
       if (t < cutoff) viewTrackingCache.delete(k);
     }
+    // If still over cap after cleanup, clear oldest entries
+    if (viewTrackingCache.size >= VIEW_CACHE_MAX) {
+      const iter = viewTrackingCache.keys();
+      for (let i = 0; i < 1000; i++) {
+        const key = iter.next().value;
+        if (key) viewTrackingCache.delete(key);
+        else break;
+      }
+    }
   }
+
+  viewTrackingCache.set(viewKey, now);
   return true;
 }
 
@@ -263,91 +275,103 @@ exports.getFeaturedTours = catchAsync(async (req, res) => {
 exports.getTourReviews = catchAsync(async (req, res, next) => {
   const { slug } = req.params;
   const { page = 1, limit = 10, sortBy = 'newest' } = req.query;
+  const cacheKey = `expedition:reviews:${slug}:${page}:${limit}:${sortBy}`;
 
-  const expeditionTour = await prisma.expeditionTour.findFirst({
-    where: { tour: { slug }, isActive: true },
-    select: { tourId: true },
-  });
+  const result = await cache.getOrSet(cacheKey, async () => {
+    const expeditionTour = await prisma.expeditionTour.findFirst({
+      where: { tour: { slug }, isActive: true },
+      select: { tourId: true },
+    });
 
-  if (!expeditionTour) return next(new AppError('Tour not found', 404));
+    if (!expeditionTour) return null;
 
-  const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
-  const take = Math.min(parseInt(limit), 50);
+    const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
+    const take = Math.min(parseInt(limit), 50);
 
-  const orderBy = sortBy === 'highest' ? { rating: 'desc' }
-    : sortBy === 'lowest' ? { rating: 'asc' }
-    : { createdAt: 'desc' };
+    const orderBy = sortBy === 'highest' ? { rating: 'desc' }
+      : sortBy === 'lowest' ? { rating: 'asc' }
+      : { createdAt: 'desc' };
 
-  const where = { tourId: expeditionTour.tourId, status: 'APPROVED' };
+    const where = { tourId: expeditionTour.tourId, status: 'APPROVED' };
 
-  const [reviews, totalCount, aggregateRating] = await Promise.all([
-    prisma.review.findMany({
-      where,
-      orderBy,
-      skip,
-      take,
-      include: { customer: { select: { id: true, name: true, photoURL: true } } },
-    }),
-    prisma.review.count({ where }),
-    prisma.review.aggregate({ where, _avg: { rating: true } }),
-  ]);
+    const [reviews, totalCount, aggregateRating] = await Promise.all([
+      prisma.review.findMany({
+        where,
+        orderBy,
+        skip,
+        take,
+        include: { customer: { select: { id: true, name: true, photoURL: true } } },
+      }),
+      prisma.review.count({ where }),
+      prisma.review.aggregate({ where, _avg: { rating: true } }),
+    ]);
 
-  const totalPages = Math.ceil(totalCount / take);
+    const totalPages = Math.ceil(totalCount / take);
 
-  res.status(200).json({
-    status: 'success',
-    data: {
-      reviews,
-      averageRating: aggregateRating._avg.rating ? Math.round(aggregateRating._avg.rating * 10) / 10 : null,
-      totalCount,
-    },
-    pagination: { currentPage: parseInt(page), totalPages, totalCount, limit: take },
-  });
+    return {
+      status: 'success',
+      data: {
+        reviews,
+        averageRating: aggregateRating._avg.rating ? Math.round(aggregateRating._avg.rating * 10) / 10 : null,
+        totalCount,
+      },
+      pagination: { currentPage: parseInt(page), totalPages, totalCount, limit: take },
+    };
+  }, 300);
+
+  if (!result) return next(new AppError('Tour not found', 404));
+  res.status(200).json(result);
 });
 
 exports.getSimilarTours = catchAsync(async (req, res, next) => {
   const { slug } = req.params;
+  const cacheKey = `expedition:similar:${slug}`;
 
-  const expeditionTour = await prisma.expeditionTour.findFirst({
-    where: { tour: { slug }, isActive: true },
-    include: { tour: { select: { id: true, category: true } } },
-  });
+  const result = await cache.getOrSet(cacheKey, async () => {
+    const expeditionTour = await prisma.expeditionTour.findFirst({
+      where: { tour: { slug }, isActive: true },
+      include: { tour: { select: { id: true, category: true } } },
+    });
 
-  if (!expeditionTour) return next(new AppError('Tour not found', 404));
+    if (!expeditionTour) return null;
 
-  const tours = await prisma.expeditionTour.findMany({
-    where: {
-      isActive: true,
-      tour: {
-        status: 'ACTIVE',
-        id: { not: expeditionTour.tourId },
-        category: expeditionTour.tour.category,
-      },
-    },
-    orderBy: { displayOrder: 'asc' },
-    take: 4,
-    include: {
-      tour: {
-        select: {
-          id: true, title: true, slug: true, coverPhoto: true,
-          category: true, durationMinutes: true, averageRating: true,
-          reviewCount: true, city: true, country: true,
-          schedulesAndPricing: true,
-          supplier: { select: { name: true, photoURL: true } },
+    const tours = await prisma.expeditionTour.findMany({
+      where: {
+        isActive: true,
+        tour: {
+          status: 'ACTIVE',
+          id: { not: expeditionTour.tourId },
+          category: expeditionTour.tour.category,
         },
       },
-    },
-  });
+      orderBy: { displayOrder: 'asc' },
+      take: 4,
+      include: {
+        tour: {
+          select: {
+            id: true, title: true, slug: true, coverPhoto: true,
+            category: true, durationMinutes: true, averageRating: true,
+            reviewCount: true, city: true, country: true,
+            schedulesAndPricing: true,
+            supplier: { select: { name: true, photoURL: true } },
+          },
+        },
+      },
+    });
 
-  res.status(200).json({
-    status: 'success',
-    data: {
-      tours: tours.map((r) => ({
-        id: r.id,
-        tour: transformForListing(r.tour),
-      })),
-    },
-  });
+    return {
+      status: 'success',
+      data: {
+        tours: tours.map((r) => ({
+          id: r.id,
+          tour: transformForListing(r.tour),
+        })),
+      },
+    };
+  }, 600); // Cache for 10 minutes — similar tours rarely change
+
+  if (!result) return next(new AppError('Tour not found', 404));
+  res.status(200).json(result);
 });
 
 exports.getTourBySlug = catchAsync(async (req, res, next) => {
@@ -1160,6 +1184,9 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       travelers: totalTravelers,
     },
   });
+
+  // Invalidate checkout cache so availability is re-checked on next request
+  cache.invalidateKeys([`${CACHE_PREFIX}checkout:*`]).catch(() => {});
 
   res.status(201).json({
     status: 'success',

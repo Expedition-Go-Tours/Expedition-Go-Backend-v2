@@ -27,7 +27,7 @@ jest.mock('../../utils/queue', () => ({
 }));
 
 jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
-jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((_, fn) => fn()), invalidateKeys: jest.fn() }));
+jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((_, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
 

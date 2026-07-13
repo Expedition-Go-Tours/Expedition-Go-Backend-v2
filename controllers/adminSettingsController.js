@@ -2,6 +2,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { clearCache: clearMaintCache } = require('../middleware/maintenanceMode');
+const getConfig = require('../utils/getConfig');
 
 exports.getSettings = catchAsync(async (req, res, next) => {
   const configs = await prisma.systemConfig.findMany({
@@ -46,6 +47,9 @@ exports.updateSettings = catchAsync(async (req, res, next) => {
   if ('system.maintenance_mode' in settings) {
     clearMaintCache();
   }
+
+  // Invalidate getConfig cache so new settings take effect immediately
+  getConfig.clearCache();
 
   await prisma.auditLog.create({
     data: {

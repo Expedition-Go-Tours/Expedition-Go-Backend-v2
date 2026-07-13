@@ -2,6 +2,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
+const { invalidateUserCache } = require('../middleware/authMiddleware');
 
 exports.getAdminUsers = catchAsync(async (req, res, next) => {
   const admins = await prisma.user.findMany({
@@ -91,6 +92,8 @@ exports.addAdmin = catchAsync(async (req, res, next) => {
     },
   });
 
+  invalidateUserCache(userId);
+
   res.status(200).json({
     status: 'success',
     data: { ...updated, photoURL: cloudinaryUrl(updated.photoURL, 64) },
@@ -149,6 +152,8 @@ exports.updateAdminRole = catchAsync(async (req, res, next) => {
     },
   });
 
+  invalidateUserCache(id);
+
   res.status(200).json({
     status: 'success',
     data: updated,
@@ -198,6 +203,8 @@ exports.revokeAdmin = catchAsync(async (req, res, next) => {
       newValues: { roles: updatedRoles },
     },
   });
+
+  invalidateUserCache(id);
 
   res.status(200).json({
     status: 'success',

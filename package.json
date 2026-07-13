@@ -32,6 +32,7 @@
   "dependencies": {
     "@logtail/node": "^0.5.8",
     "@prisma/client": "^5.20.0",
+    "@sanity/client": "^7.23.0",
     "@sendgrid/mail": "^8.1.6",
     "@sentry/node": "^10.56.0",
     "@socket.io/redis-adapter": "^8.3.0",
@@ -58,6 +59,7 @@
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "passport-local": "^1.0.0",
+    "prisma": "^5.20.0",
     "redis": "^6.0.1",
     "socket.io": "^4.8.3",
     "stripe": "^22.1.1",
@@ -65,8 +67,7 @@
     "swagger-ui-express": "^5.0.1",
     "uuid": "^14.0.0",
     "validator": "^13.15.35",
-    "zod": "^4.4.3",
-    "prisma": "^5.20.0"
+    "zod": "^4.4.3"
   },
   "overrides": {
     "multer-storage-cloudinary": {

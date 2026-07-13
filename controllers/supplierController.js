@@ -8,6 +8,7 @@
 
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
+const cache = require('../utils/cacheHelper');
 const AppError = require('../utils/appError');
 const { logActivity } = require('../utils/auditLogger');
 const { sendSupplierStatusEmail } = require('../utils/emailService');
@@ -208,80 +209,83 @@ exports.updateApplication = catchAsync(async (req, res, next) => {
  */
 exports.getDashboard = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
+  const cacheKey = `supplier:dashboard:${supplierId}`;
+  const bucket = Math.floor(Date.now() / 60000); // 1-minute buckets
 
-  const supplierProfile = await prisma.supplierProfile.findUnique({
-    where: { userId: supplierId },
-  });
+  const result = await cache.getOrSet(`${cacheKey}:${bucket}`, async () => {
+    const supplierProfile = await prisma.supplierProfile.findUnique({
+      where: { userId: supplierId },
+    });
 
-  if (!supplierProfile) {
+    if (!supplierProfile) {
+      return null;
+    }
+
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+
+    const [tourStats, bookingStats, recentReviews, reviewCount] = await Promise.all([
+      prisma.tour.groupBy({
+        by: ['status'],
+        where: { supplierId },
+        _count: true,
+      }),
+      prisma.booking.groupBy({
+        by: ['status'],
+        where: { tour: { supplierId }, createdAt: { gte: ninetyDaysAgo } },
+        _count: true,
+      }),
+      prisma.review.findMany({
+        where: { tour: { supplierId }, status: 'APPROVED' },
+        include: {
+          customer: { select: { id: true, name: true, photoURL: true } },
+          tour: { select: { id: true, title: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+      }),
+      prisma.review.count({
+        where: { tour: { supplierId }, status: 'APPROVED' },
+      }),
+    ]);
+
+    const tourMap = Object.fromEntries(tourStats.map(t => [t.status, t._count]));
+    const bookingMap = Object.fromEntries(bookingStats.map(b => [b.status, b._count]));
+
+    return {
+      status: 'success',
+      data: {
+        earnings: {
+          totalEarnings: Number(supplierProfile.totalEarnings),
+          currency: 'USD',
+        },
+        tours: {
+          total: Object.values(tourMap).reduce((a, b) => a + b, 0),
+          active: tourMap.ACTIVE || 0,
+          draft: tourMap.DRAFT || 0,
+          paused: tourMap.PAUSED || 0,
+          archived: tourMap.ARCHIVED || 0,
+        },
+        bookings: {
+          total: Object.values(bookingMap).reduce((a, b) => a + b, 0),
+          pending: bookingMap.PENDING || 0,
+          confirmed: bookingMap.CONFIRMED || 0,
+          completed: bookingMap.COMPLETED || 0,
+          cancelled: bookingMap.CANCELLED || 0,
+        },
+        reviews: {
+          averageRating: Number(supplierProfile.averageRating) || 0,
+          totalReviews: reviewCount,
+          recentReviews,
+        },
+      },
+    };
+  }, 60); // Cache for 1 minute
+
+  if (!result) {
     return next(new AppError('Supplier profile not found', 404));
   }
 
-  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-
-  const [tourStats, bookingStats, recentReviews, reviewCount] = await Promise.all([
-    // Tour counts by status
-    prisma.tour.groupBy({
-      by: ['status'],
-      where: { supplierId },
-      _count: true,
-    }),
-
-    // Booking counts by status (last 90 days)
-    prisma.booking.groupBy({
-      by: ['status'],
-      where: { tour: { supplierId }, createdAt: { gte: ninetyDaysAgo } },
-      _count: true,
-    }),
-
-    // Recent reviews
-    prisma.review.findMany({
-      where: { tour: { supplierId }, status: 'APPROVED' },
-      include: {
-        customer: { select: { id: true, name: true, photoURL: true } },
-        tour: { select: { id: true, title: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 5,
-    }),
-
-    // Total review count
-    prisma.review.count({
-      where: { tour: { supplierId }, status: 'APPROVED' },
-    }),
-  ]);
-
-  const tourMap = Object.fromEntries(tourStats.map(t => [t.status, t._count]));
-  const bookingMap = Object.fromEntries(bookingStats.map(b => [b.status, b._count]));
-
-  res.status(200).json({
-    status: 'success',
-    data: {
-      earnings: {
-        totalEarnings: Number(supplierProfile.totalEarnings),
-        currency: 'USD',
-      },
-      tours: {
-        total: Object.values(tourMap).reduce((a, b) => a + b, 0),
-        active: tourMap.ACTIVE || 0,
-        draft: tourMap.DRAFT || 0,
-        paused: tourMap.PAUSED || 0,
-        archived: tourMap.ARCHIVED || 0,
-      },
-      bookings: {
-        total: Object.values(bookingMap).reduce((a, b) => a + b, 0),
-        pending: bookingMap.PENDING || 0,
-        confirmed: bookingMap.CONFIRMED || 0,
-        completed: bookingMap.COMPLETED || 0,
-        cancelled: bookingMap.CANCELLED || 0,
-      },
-      reviews: {
-        averageRating: Number(supplierProfile.averageRating) || 0,
-        totalReviews: reviewCount,
-        recentReviews,
-      },
-    },
-  });
+  res.status(200).json(result);
 });
 
 /**

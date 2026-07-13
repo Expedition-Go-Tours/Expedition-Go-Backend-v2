@@ -92,6 +92,12 @@ exports.createOffer = catchAsync(async (req, res, next) => {
     newValues: { name, offerType, discountType: dType, discountPercentage, fixedDiscountValue },
   });
 
+  // Targeted invalidation: clear caches only for affected tours
+  const tourIds = offer.targets?.map((t) => t.tourId).filter(Boolean) || [];
+  for (const tid of tourIds) {
+    cache.invalidateKey(cache.TOUR_DETAIL_PREFIX(tid)).catch(() => {});
+  }
+
   res.status(201).json({ status: 'success', data: { offer } });
 });
 
@@ -218,24 +224,44 @@ exports.updateOffer = catchAsync(async (req, res, next) => {
     oldValues: { name: existing.name }, newValues: { name },
   });
 
+  // Targeted invalidation: clear caches only for affected tours
+  const updatedTourIds = offer.targets?.map((t) => t.tourId).filter(Boolean) || [];
+  const existingTourIds = existing.targets?.map((t) => t.tourId).filter(Boolean) || [];
+  const allTourIds = [...new Set([...updatedTourIds, ...existingTourIds])];
+  for (const tid of allTourIds) {
+    cache.invalidateKey(cache.TOUR_DETAIL_PREFIX(tid)).catch(() => {});
+  }
+
   res.json({ status: 'success', data: { offer: { ...offer, status: computeStatus(offer) } } });
 });
 
 exports.deleteOffer = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const existing = await prisma.specialOffer.findFirst({ where: { id, supplierId: req.supplierId } });
+  const existing = await prisma.specialOffer.findFirst({
+    where: { id, supplierId: req.supplierId },
+    include: { targets: { select: { tourId: true } } },
+  });
   if (!existing) return next(new AppError('Offer not found', 404));
 
   await prisma.specialOffer.delete({ where: { id } });
   cache.invalidateTourCaches();
   await logActivity({ userId: req.user.id, action: 'special-offer.deleted', resource: 'SpecialOffer', resourceId: id });
 
+  // Targeted invalidation: clear caches only for affected tours
+  const deletedTourIds = existing.targets?.map((t) => t.tourId).filter(Boolean) || [];
+  for (const tid of deletedTourIds) {
+    cache.invalidateKey(cache.TOUR_DETAIL_PREFIX(tid)).catch(() => {});
+  }
+
   res.json({ status: 'success', message: 'Offer deleted' });
 });
 
 exports.toggleOffer = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const offer = await prisma.specialOffer.findFirst({ where: { id, supplierId: req.supplierId } });
+  const offer = await prisma.specialOffer.findFirst({
+    where: { id, supplierId: req.supplierId },
+    include: { targets: { select: { tourId: true } } },
+  });
   if (!offer) return next(new AppError('Offer not found', 404));
 
   const updated = await prisma.specialOffer.update({
@@ -248,6 +274,12 @@ exports.toggleOffer = catchAsync(async (req, res, next) => {
     userId: req.user.id, action: 'special-offer.toggled', resource: 'SpecialOffer', resourceId: id,
     newValues: { isActive: updated.isActive },
   });
+
+  // Targeted invalidation: clear caches only for affected tours
+  const toggledTourIds = offer.targets?.map((t) => t.tourId).filter(Boolean) || [];
+  for (const tid of toggledTourIds) {
+    cache.invalidateKey(cache.TOUR_DETAIL_PREFIX(tid)).catch(() => {});
+  }
 
   res.json({ status: 'success', data: { offer: { ...updated, status: computeStatus(updated) } } });
 });

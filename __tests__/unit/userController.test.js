@@ -6,6 +6,7 @@ jest.mock('../../utils/prismaClient', () => ({
 jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
+jest.mock('../../middleware/authMiddleware', () => ({ invalidateUserCache: jest.fn() }));
 const prisma = require('../../utils/prismaClient');
 const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
 const { logActivity } = require('../../utils/auditLogger');

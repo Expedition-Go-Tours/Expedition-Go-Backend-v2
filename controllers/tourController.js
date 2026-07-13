@@ -31,6 +31,7 @@ const { getPopularByCategory } = require('../utils/popularityScorer');
 
 // In-memory cache for view tracking (prevents duplicate counts)
 // Key format: "view:{tourId}:{userId|IP}" -> timestamp
+const VIEW_CACHE_MAX = 10000;
 const viewTrackingCache = new Map();
 const { rankTourIdsBySearch } = require('../utils/fullTextSearch');
 const cache = require('../utils/cacheHelper');
@@ -473,16 +474,24 @@ exports.getTour = catchAsync(async (req, res, next) => {
     // Already counted within the last 30 minutes → skip
     if (lastViewTime && now - lastViewTime < 30 * 60 * 1000) return false;
 
-    // Record this view
-    viewTrackingCache.set(viewKey, now);
-
-    // Probabilistic cleanup: remove entries older than 1 hour (~1% of requests)
-    if (Math.random() < 0.01) {
-      const cutoff = now - 60 * 60 * 1000;
+    // Enforce hard cap to prevent unbounded growth
+    if (viewTrackingCache.size >= VIEW_CACHE_MAX) {
+      const cutoff = now - 30 * 60 * 1000;
       for (const [k, t] of viewTrackingCache.entries()) {
         if (t < cutoff) viewTrackingCache.delete(k);
       }
+      if (viewTrackingCache.size >= VIEW_CACHE_MAX) {
+        const iter = viewTrackingCache.keys();
+        for (let i = 0; i < 1000; i++) {
+          const key = iter.next().value;
+          if (key) viewTrackingCache.delete(key);
+          else break;
+        }
+      }
     }
+
+    // Record this view
+    viewTrackingCache.set(viewKey, now);
 
     return true;
   })();

@@ -18,6 +18,7 @@ const AppError = require('../utils/appError');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 const { logActivity } = require('../utils/auditLogger');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
+const { invalidateUserCache } = require('../middleware/authMiddleware');
 
 exports.getMe = catchAsync(async (req, res, next) => {
   if (!req.user) {
@@ -81,6 +82,8 @@ exports.updateMe = catchAsync(async (req, res, next) => {
     data: updates,
   });
 
+  invalidateUserCache(req.user.id);
+
   // Log activity
   await logActivity({
     userId: req.user.id,
@@ -100,6 +103,8 @@ exports.deleteMe = catchAsync(async (req, res) => {
     where: { id: req.user.id },
     data: { active: false }
   });
+
+  invalidateUserCache(req.user.id);
 
   // Log activity
   await logActivity({

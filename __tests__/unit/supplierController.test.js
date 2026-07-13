@@ -13,6 +13,7 @@ jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn(
 jest.mock('../../utils/queue', () => ({ enqueueNotification: jest.fn() }));
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
 jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
+jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../config/firebaseAdmin', () => ({ auth: () => ({ getUser: jest.fn() }) }));
 
 const prisma = require('../../utils/prismaClient');

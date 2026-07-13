@@ -28,6 +28,7 @@ const PERMISSIONS = [
   { key: 'roles.manage', name: 'Manage Roles', description: 'Create, edit, and delete admin roles', category: 'Admin' },
   { key: 'audit.view', name: 'View Audit Log', description: 'View and export system audit logs', category: 'Admin' },
   { key: 'notifications.view', name: 'View Notifications', description: 'View, acknowledge, and manage admin notification feed', category: 'Notifications' },
+  { key: 'blog.manage', name: 'Manage Blog', description: 'Create, edit, publish, and delete blog articles', category: 'Blog' },
 ];
 
 const ROLE_DEFINITIONS = [
@@ -42,21 +43,10 @@ const ROLE_DEFINITIONS = [
     description: 'Day-to-day platform operations: suppliers, tours, reviews',
     isSystem: false,
     permissionKeys: [
-      'dashboard.*',
-      'dashboard.bookings',
-      'dashboard.revenue',
-      'analytics.view',
-      'suppliers.view',
-      'suppliers.approve',
-      'suppliers.suspend',
-      'tours.view',
-      'bookings.view',
-      'bookings.confirm-payment',
-      'reviews.view',
-      'reviews.moderate',
-      'chat.suppliers',
-      'chat.customers',
-      'notifications.view',
+      'dashboard.*', 'dashboard.bookings', 'dashboard.revenue', 'analytics.view',
+      'suppliers.view', 'suppliers.approve', 'suppliers.suspend', 'tours.view',
+      'bookings.view', 'bookings.confirm-payment', 'reviews.view', 'reviews.moderate',
+      'chat.suppliers', 'chat.customers', 'notifications.view',
     ],
   },
   {
@@ -64,17 +54,9 @@ const ROLE_DEFINITIONS = [
     description: 'Finance operations: payouts, payout methods, analytics',
     isSystem: false,
     permissionKeys: [
-      'dashboard.*',
-      'dashboard.revenue',
-      'analytics.view',
-      'bookings.view',
-      'bookings.confirm-payment',
-      'payouts.view',
-      'payouts.export',
-      'payouts.approve',
-      'payout-methods.view',
-      'payout-methods.verify',
-      'notifications.view',
+      'dashboard.*', 'dashboard.revenue', 'analytics.view', 'bookings.view',
+      'bookings.confirm-payment', 'payouts.view', 'payouts.export', 'payouts.approve',
+      'payout-methods.view', 'payout-methods.verify', 'notifications.view',
     ],
   },
   {
@@ -82,14 +64,8 @@ const ROLE_DEFINITIONS = [
     description: 'Customer support: chats, reviews, user lookup',
     isSystem: false,
     permissionKeys: [
-      'dashboard.*',
-      'users.view',
-      'bookings.view',
-      'reviews.view',
-      'reviews.moderate',
-      'chat.suppliers',
-      'chat.customers',
-      'notifications.view',
+      'dashboard.*', 'users.view', 'bookings.view', 'reviews.view',
+      'reviews.moderate', 'chat.suppliers', 'chat.customers', 'notifications.view',
     ],
   },
   {
@@ -97,18 +73,17 @@ const ROLE_DEFINITIONS = [
     description: 'Read-only access to analytics dashboards',
     isSystem: false,
     permissionKeys: [
-      'dashboard.*',
-      'dashboard.bookings',
-      'dashboard.revenue',
-      'analytics.view',
-      'users.view',
-      'tours.view',
-      'bookings.view',
-      'suppliers.view',
-      'reviews.view',
-      'payouts.view',
-      'payout-methods.view',
-      'notifications.view',
+      'dashboard.*', 'dashboard.bookings', 'dashboard.revenue', 'analytics.view',
+      'users.view', 'tours.view', 'bookings.view', 'suppliers.view',
+      'reviews.view', 'payouts.view', 'payout-methods.view', 'notifications.view',
+    ],
+  },
+  {
+    name: 'content_editor',
+    description: 'Blog content management: create, edit, publish, archive articles',
+    isSystem: false,
+    permissionKeys: [
+      'dashboard.*', 'blog.manage', 'reviews.view', 'notifications.view',
     ],
   },
 ];
@@ -207,7 +182,6 @@ async function seedDevUsers() {
     return;
   }
 
-  // Admin user — Peter Mensah
   const CLOUD = process.env.CLOUDINARY_CLOUD_NAME || 'dfpagrtoy';
   const DEFAULT_AVATAR = `https://res.cloudinary.com/${CLOUD}/image/upload/v1780670572/user-photos/vdrxzjwlzxhqs091mg5a.png`;
   const DEFAULT_DOCS = {
@@ -302,6 +276,48 @@ async function seedDevUsers() {
     },
   });
   console.log(`  Supplier: ${supplier.name} (${supplier.email}) — profile ACTIVE`);
+
+  // Dev user — EXP Developer
+  const existingByEmail = await prisma.user.findUnique({ where: { email: 'expdeveloper2@gmail.com' } });
+  if (existingByEmail && existingByEmail.firebaseUid !== 'aIQDqPPv97hN5QtqLCd5MLpgoJD3') {
+    await prisma.user.update({
+      where: { id: existingByEmail.id },
+      data: { firebaseUid: 'aIQDqPPv97hN5QtqLCd5MLpgoJD3' },
+    });
+  }
+  const devUser = await prisma.user.upsert({
+    where: { firebaseUid: 'aIQDqPPv97hN5QtqLCd5MLpgoJD3' },
+    update: {
+      name: 'EXP Developer',
+      email: 'expdeveloper2@gmail.com',
+      photoURL: 'https://lh3.googleusercontent.com/a/ACg8ocJzg5iseoK0zFHT0mHSFX3_VBxmac4LDz9OiFnVz5bGS23NRag=s96-c',
+      roles: ['customer', 'admin'],
+      language: 'en',
+      timezone: 'UTC',
+      active: true,
+      emailVerified: false,
+      lastLoginAt: new Date('2026-07-13T11:34:46.070Z'),
+      adminRoleId: superAdminRole.id,
+      authProvider: 'local',
+      refreshToken: '1865bb253b2cc5715d0bc2d788bfa66a93cb5e8056fa9023d5606f54c3f00c27',
+    },
+    create: {
+      firebaseUid: 'aIQDqPPv97hN5QtqLCd5MLpgoJD3',
+      name: 'EXP Developer',
+      email: 'expdeveloper2@gmail.com',
+      photoURL: 'https://lh3.googleusercontent.com/a/ACg8ocJzg5iseoK0zFHT0mHSFX3_VBxmac4LDz9OiFnVz5bGS23NRag=s96-c',
+      roles: ['customer', 'admin'],
+      language: 'en',
+      timezone: 'UTC',
+      active: true,
+      emailVerified: false,
+      lastLoginAt: new Date('2026-07-13T11:34:46.070Z'),
+      adminRoleId: superAdminRole.id,
+      authProvider: 'local',
+      refreshToken: '1865bb253b2cc5715d0bc2d788bfa66a93cb5e8056fa9023d5606f54c3f00c27',
+    },
+  });
+  console.log(`  Dev: ${devUser.name} (${devUser.email})`);
 }
 
 async function main() {

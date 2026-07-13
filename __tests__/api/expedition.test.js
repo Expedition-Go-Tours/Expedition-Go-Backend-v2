@@ -13,7 +13,7 @@ jest.mock('../../utils/prismaClient', () => ({
 }));
 
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
-jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateKeys: jest.fn() }));
+jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()), enqueueEmail: jest.fn(() => Promise.resolve()), enqueueNotification: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/bookingHelpers', () => ({ validateTravelerInfo: jest.fn(), generateBookingNumber: jest.fn() }));

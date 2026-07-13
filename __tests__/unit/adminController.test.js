@@ -11,6 +11,7 @@ jest.mock('../../utils/prismaClient', () => ({
 jest.mock('../../utils/imageOptimizer', () => ({
   cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`),
 }));
+jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()) }));
 
 const prisma = require('../../utils/prismaClient');
 const { cloudinaryUrl } = require('../../utils/imageOptimizer');

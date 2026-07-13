@@ -132,6 +132,12 @@ enum OverrideStatus {
   BLOCKED
 }
 
+enum ArticleStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
 // ================================
 // CORE MODELS
 // ================================
@@ -187,7 +193,8 @@ model User {
   messages     Message[]
   specialOffers SpecialOffer[]
   expeditionTours ExpeditionTour[]
-  
+  articles      Article[]
+
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -337,6 +344,7 @@ model Tour {
   secondaryThemes TourSecondaryTheme[]
   specialOfferTargets SpecialOfferTarget[]
   expeditionTour      ExpeditionTour?
+  articles            ArticleTour[]
 
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
@@ -897,6 +905,95 @@ model ExpeditionTour {
 
   @@index([isActive, displayOrder])
   @@index([isActive, isFeatured, displayOrder])
+}
+
+// ================================
+// BLOG / CMS MODELS
+// ================================
+
+model Article {
+  id              String        @id @default(cuid())
+  title           String
+  slug            String        @unique
+  excerpt         String        @db.Text
+  body            Json          // Portable Text (structured JSON from Sanity)
+  featuredImage   String?
+  images          Json?
+  metaTitle       String?
+  metaDescription String?
+  canonicalUrl    String?
+  publishedAt     DateTime?
+  status          ArticleStatus @default(DRAFT)
+  readTime        Int?
+  locale          String        @default("en")
+  viewCount       Int           @default(0)
+  shareCount      Int           @default(0)
+
+  authorId        String
+  author          User          @relation(fields: [authorId], references: [id])
+  categoryId      String
+  category        ArticleCategory @relation(fields: [categoryId], references: [id])
+  tags            ArticleTagOnArticle[]
+  relatedTours    ArticleTour[]
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([slug])
+  @@index([status])
+  @@index([publishedAt])
+  @@index([locale])
+  @@index([authorId])
+  @@index([categoryId])
+  @@index([status, publishedAt])
+  @@index([locale, status, publishedAt])
+}
+
+model ArticleCategory {
+  id          String    @id @default(cuid())
+  name        String
+  slug        String    @unique
+  description String?
+  parentId    String?
+  parent      ArticleCategory? @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children    ArticleCategory[] @relation("CategoryHierarchy")
+  articles    Article[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([slug])
+  @@index([parentId])
+}
+
+model ArticleTag {
+  id        String    @id @default(cuid())
+  name      String
+  slug      String    @unique
+  articles  ArticleTagOnArticle[]
+
+  @@index([slug])
+}
+
+model ArticleTagOnArticle {
+  articleId String
+  tagId     String
+  article   Article   @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  tag       ArticleTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([articleId, tagId])
+  @@index([articleId])
+  @@index([tagId])
+}
+
+model ArticleTour {
+  articleId String
+  tourId    String
+  article   Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  tour      Tour    @relation(fields: [tourId], references: [id], onDelete: Cascade)
+
+  @@id([articleId, tourId])
+  @@index([articleId])
+  @@index([tourId])
 }
 
 model AuditLog {

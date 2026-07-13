@@ -228,6 +228,7 @@ const supplierSettingsRoutes = require('./routes/supplierSettingsRoutes');
 const specialOfferRoutes = require('./routes/specialOfferRoutes');
 const locationRoutes = require('./routes/locationRoutes');
 const expeditionRoutes = require('./routes/expeditionRoutes');
+const blogRoutes = require('./routes/blogRoutes');
 const maintenanceMode = require('./middleware/maintenanceMode');
 
 app.use('/api', maintenanceMode);
@@ -253,6 +254,7 @@ app.use('/api/suppliers/settings', supplierSettingsRoutes);
 app.use('/api/suppliers/special-offers', specialOfferRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/expedition', expeditionRoutes);
+app.use('/api/blog', blogRoutes);
 
 
 if (swaggerSpec && process.env.NODE_ENV !== 'production') {

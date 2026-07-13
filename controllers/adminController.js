@@ -19,6 +19,7 @@ const AppError = require('../utils/appError');
 const catchAsync = require('../utils/catchAsync');
 
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
+const cache = require('../utils/cacheHelper');
 /**
  * GET /api/admin/analytics/overview
  *
@@ -33,18 +34,22 @@ const { cloudinaryUrl } = require('../utils/imageOptimizer');
  * All time periods are calendar-based (UTC midnight boundaries).
  */
 exports.getOverview = catchAsync(async (req, res, next) => {
+  // Cache key bucketed to 2-minute intervals for stability
   const now = new Date();
+  const bucket = Math.floor(now.getTime() / 120000);
+  const cacheKey = `admin:overview:${bucket}`;
 
-  // Start-of-day for "today" range
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterdayStart = new Date(todayStart);
-  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-  const weekStart = new Date(todayStart);
-  weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Sunday
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const yearStart = new Date(now.getFullYear(), 0, 1);
-  const previous30Start = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const result = await cache.getOrSet(cacheKey, async () => {
+    // Start-of-day for "today" range
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterdayStart = new Date(todayStart);
+    yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+    const weekStart = new Date(todayStart);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Sunday
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+    const previous30Start = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
   const [
     revenueToday,
@@ -204,7 +209,7 @@ exports.getOverview = catchAsync(async (req, res, next) => {
     commission:   parseFloat(agg._sum.commissionAmount || 0).toFixed(2),
   });
 
-  res.status(200).json({
+  const data = {
     status: 'success',
     data: {
       overview: {
@@ -244,7 +249,12 @@ exports.getOverview = catchAsync(async (req, res, next) => {
       }),
       totalEvents: totalEventCount,
     },
-  });
+  };
+
+  return data;
+  }, 120); // Cache for 2 minutes
+
+  res.status(200).json(result);
 });
 
 /**

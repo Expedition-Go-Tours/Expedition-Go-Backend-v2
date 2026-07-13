@@ -27,7 +27,7 @@ jest.mock('../../utils/queue', () => ({
 }));
 
 jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
-jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateTourCaches: jest.fn(), invalidateKeys: jest.fn() }));
+jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateTourCaches: jest.fn(() => Promise.resolve()), invalidateKeys: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/getConfig', () => {
   const fn = jest.fn();
   fn.mockImplementation((key, defaultValue) => {

@@ -299,23 +299,13 @@ function validatePricing(schedulesAndPricing) {
  */
 async function checkTourAvailability(tourId, selectedDate, selectedTime = null) {
   try {
+    // Fetch tour with minimal data first
     const tour = await prisma.tour.findUnique({
       where: { id: tourId },
-      include: {
-        bookings: {
-          where: {
-            selectedDate: new Date(selectedDate),
-            selectedTime: selectedTime ?? undefined,
-            status: {
-              in: ['PENDING', 'CONFIRMED']
-            }
-          }
-        },
-        dateOverrides: {
-          where: {
-            date: new Date(selectedDate),
-          },
-        },
+      select: {
+        id: true,
+        status: true,
+        schedulesAndPricing: true,
       }
     });
 
@@ -327,8 +317,25 @@ async function checkTourAvailability(tourId, selectedDate, selectedTime = null) 
       return { available: false, reason: 'Tour is not active' };
     }
 
+    // Fetch override and count bookings in parallel
+    const dateObj = new Date(selectedDate);
+    const [override, bookingCount] = await Promise.all([
+      prisma.tourDateOverride.findFirst({
+        where: { tourId, date: dateObj },
+        select: { status: true, capacity: true }
+      }),
+      prisma.booking.aggregate({
+        where: {
+          tourId,
+          selectedDate: dateObj,
+          selectedTime: selectedTime ?? undefined,
+          status: { in: ['PENDING', 'CONFIRMED'] }
+        },
+        _count: { id: true }
+      })
+    ]);
+
     // Check if date is blocked by override
-    const override = tour.dateOverrides?.[0];
     if (override?.status === 'BLOCKED') {
       return { available: false, reason: 'Date is blocked', overrideStatus: 'BLOCKED' };
     }
@@ -342,7 +349,7 @@ async function checkTourAvailability(tourId, selectedDate, selectedTime = null) 
       : tour.schedulesAndPricing;
     const templateDaysOfWeek = schedulesAndPricing?.availability?.daysOfWeek || schedulesAndPricing?.operatingDays || [];
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const dayOfWeek = dayNames[new Date(selectedDate).getDay()];
+    const dayOfWeek = dayNames[dateObj.getDay()];
 
     if (templateDaysOfWeek.length > 0 && !templateDaysOfWeek.some(d => d.toLowerCase() === dayOfWeek.toLowerCase())) {
       return { available: false, reason: 'Tour does not operate on this day' };
@@ -351,13 +358,8 @@ async function checkTourAvailability(tourId, selectedDate, selectedTime = null) 
     // Get capacity from override or template
     const maxTravelersFallback = parseInt(await getConfig('booking.max_travelers', '50'));
     const maxCapacity = override?.capacity ?? schedulesAndPricing?.travelerDetails?.maxTravelersPerBooking ?? maxTravelersFallback;
-    
-    // Calculate current bookings
-    const currentBookings = tour.bookings.reduce((total, booking) => {
-      const travelers = booking.travelers;
-      return total + (travelers.adults || 0) + (travelers.children || 0) + (travelers.infants || 0);
-    }, 0);
 
+    const currentBookings = bookingCount._count.id;
     const availableSpots = maxCapacity - currentBookings;
 
     return {

@@ -6,6 +6,7 @@ let connection = null;
 let isConnected = false;
 let connecting = false;
 let connectionFailed = false;
+let connectionFailedAt = 0;
 
 function getConnection() {
   if (!connection) {
@@ -14,7 +15,8 @@ function getConnection() {
       enableReadyCheck: false,
       lazyConnect: true,
       retryStrategy(times) {
-        if (connectionFailed) return null;
+        // Allow retry after 60 seconds even if connectionFailed
+        if (connectionFailed && Date.now() - connectionFailedAt < 60000) return null;
         if (times > 10) return null;
         return Math.min(times * 200, 3000);
       },
@@ -26,6 +28,7 @@ function getConnection() {
     connection.on('error', (err) => {
       if (err.message && err.message.includes('max requests limit')) {
         connectionFailed = true;
+        connectionFailedAt = Date.now();
       }
       if (process.env.NODE_ENV !== 'production') {
         console.warn('[Redis]', err.message);
@@ -47,6 +50,8 @@ async function connect() {
     isConnected = true;
     connecting = false;
   } catch {
+    // Disconnect orphaned instance to release sockets
+    try { conn.disconnect(); } catch { /* ignore */ }
     connection = null;
     isConnected = false;
     connecting = false;
@@ -119,8 +124,22 @@ async function delPattern(pattern) {
         keys.forEach((k) => pipeline.del(k));
       }
     });
-    stream.on('end', () => pipeline.exec().catch((err) => console.warn('[Redis] delPattern pipeline failed:', err?.message)));
-    stream.read();
+
+    await new Promise((resolve, reject) => {
+      stream.on('end', () => {
+        pipeline.exec()
+          .then(() => resolve())
+          .catch((err) => {
+            console.warn('[Redis] delPattern pipeline failed:', err?.message);
+            resolve(); // don't reject — best-effort
+          });
+      });
+      stream.on('error', (err) => {
+        console.warn('[Redis] delPattern scan failed:', err?.message);
+        resolve(); // best-effort
+      });
+      stream.read();
+    });
   } catch { /* silent fail */ }
 }
 

@@ -29,6 +29,7 @@ const QUEUE_NAMES = {
   CLEANUP:    'system-cleanup',
   STRIPE:         'platform-stripe',
   WEBHOOK_RETRY:  'webhook-retry',
+  CONTENT_SYNC:   'content-sync',
 };
 
 const DEFAULT_JOB_OPTIONS = {
@@ -64,6 +65,7 @@ const aggregationQueue = () => getQueue(QUEUE_NAMES.AGGREGATIONS);
 const cleanupQueue     = () => getQueue(QUEUE_NAMES.CLEANUP);
 const stripeQueue      = () => getQueue(QUEUE_NAMES.STRIPE);
 const webhookRetryQueue = () => getQueue(QUEUE_NAMES.WEBHOOK_RETRY);
+const contentSyncQueue  = () => getQueue(QUEUE_NAMES.CONTENT_SYNC);
 
 // ---------------------------------------------------------------------------
 // Enqueue helpers (typed so callers don't touch raw queue names)
@@ -249,6 +251,20 @@ async function enqueueWebhookRetry(event) {
   }
 }
 
+/**
+ * Enqueue a content sync job (blog article published/unpublished).
+ * Used by the Sanity webhook handler to invalidate caches asynchronously.
+ */
+async function enqueueContentSync(job) {
+  try {
+    return await contentSyncQueue().add('sync', job, {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 2000 },
+      jobId: `content-sync:${job.action}:${job.slug || Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+    });
+  } catch { /* Redis unavailable — skip content sync */ }
+}
+
 // ---------------------------------------------------------------------------
 // Worker registration — called once at startup from server.js
 // ---------------------------------------------------------------------------
@@ -312,6 +328,30 @@ function registerWorkers() {
   createWorker(QUEUE_NAMES.WEBHOOK_RETRY, async (job) => {
     const { processStripeWebhook } = require('./stripeHelpers');
     await processStripeWebhook(job.data);
+  }, 2);
+
+  /* ------------------------------------------------------------------
+   * CONTENT SYNC WORKER (concurrency 2)
+   * Handles blog content cache invalidation on Sanity webhook.
+   * ------------------------------------------------------------------ */
+  createWorker(QUEUE_NAMES.CONTENT_SYNC, async (job) => {
+    const cache = require('./cacheHelper');
+    const CACHE_PREFIX = 'blog:';
+    switch (job.data.action) {
+      case 'article-published':
+      case 'article-unpublished':
+        await cache.invalidateKeys([
+          `${CACHE_PREFIX}articles:list:*`,
+          `${CACHE_PREFIX}article:${job.data.slug}`,
+          `${CACHE_PREFIX}sitemap`,
+        ]);
+        break;
+      case 'sitemap-regenerate':
+        await cache.invalidateKeys([`${CACHE_PREFIX}sitemap`]);
+        break;
+      default:
+        await cache.invalidateKeys([`${CACHE_PREFIX}*`]);
+    }
   }, 2);
 
   /* ------------------------------------------------------------------
@@ -409,6 +449,7 @@ module.exports = {
   enqueueCleanup,
   enqueueCreateStripeCustomer,
   enqueueWebhookRetry,
+  enqueueContentSync,
   processEmailJob,
   registerWorkers,
   closeAll,

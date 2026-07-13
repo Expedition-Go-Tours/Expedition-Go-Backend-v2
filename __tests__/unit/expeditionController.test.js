@@ -14,7 +14,7 @@ jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) =>
 
 jest.mock('../../utils/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
-  invalidateKeys: jest.fn(),
+  invalidateKeys: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('../../utils/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));

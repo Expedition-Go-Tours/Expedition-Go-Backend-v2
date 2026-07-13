@@ -41,6 +41,9 @@ beforeEach(() => {
   p.user.findUnique.mockClear();
   p.user.findFirst.mockClear();
   p.user.create.mockClear();
+  const cache = require('../../utils/cacheHelper');
+  cache._clearMemory();
+  cache.invalidateKeys(['auth:user:user-1']).catch(() => {});
 });
 
 describe('JWT verification', () => {
