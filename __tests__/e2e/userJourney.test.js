@@ -6,7 +6,8 @@ jest.mock('../../config/jwt', () => ({
 
 jest.mock('../../utils/prismaClient', () => ({
   user: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn() },
-  booking: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn(), count: jest.fn(), delete: jest.fn() },
+  booking: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn(), count: jest.fn(), delete: jest.fn(), aggregate: jest.fn() },
+  tourDateOverride: { findFirst: jest.fn(), create: jest.fn() },
   cartItem: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), upsert: jest.fn(), update: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
   tour: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn() },
   review: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), aggregate: jest.fn(), count: jest.fn() },
@@ -205,6 +206,10 @@ describe('E2E: Full User Journey', () => {
     prisma.tour.findMany.mockResolvedValue([mockTour]);
     prisma.tour.count.mockResolvedValue(1);
     prisma.tour.findUnique.mockResolvedValue(activeTour);
+
+    // Prisma: availability check (tourDateOverride + booking aggregate)
+    prisma.tourDateOverride.findFirst.mockResolvedValue(null);
+    prisma.booking.aggregate.mockResolvedValue({ _count: { id: 0 } });
 
     // Prisma: addToCart
     prisma.tour.findFirst.mockResolvedValue(activeTour);
