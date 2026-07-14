@@ -15,6 +15,7 @@ const {
   sanityWebhookSchema,
   refreshCacheSchema,
 } = require('../utils/blogValidation');
+const { uploadBlogImage } = require('../middleware/uploadMiddleware');
 
 const router = express.Router();
 
@@ -310,6 +311,7 @@ router.use('/admin', protect, restrictTo('admin'), adminLimiter);
  *         description: Slug conflict
  */
 router.get('/admin/articles', blogController.getAdminArticles);
+router.get('/admin/articles/:id', blogController.getAdminArticle);
 router.post('/admin/articles', validate(createArticleSchema), blogController.createArticle);
 
 /**
@@ -394,5 +396,45 @@ router.delete('/admin/articles/:id', validate(deleteArticleSchema), blogControll
  *         description: Cache cleared
  */
 router.post('/admin/refresh/:articleId?', validate(refreshCacheSchema), blogController.refreshCache);
+
+/**
+ * @swagger
+ * /api/blog/admin/upload:
+ *   post:
+ *     summary: Upload an image for blog articles
+ *     description: |
+ *       Uploads an image to Cloudinary for use in blog articles.
+ *       Returns the Cloudinary URL. Supports images up to 10MB.
+ *       Admin-only.
+ *     tags: [Blog Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               image:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Image uploaded successfully
+ *       400:
+ *         description: No file provided
+ */
+router.post('/admin/upload', uploadBlogImage, blogController.uploadImage);
+
+// Admin category CRUD
+router.post('/admin/categories', blogController.createCategory);
+router.patch('/admin/categories/:id', blogController.updateCategory);
+router.delete('/admin/categories/:id', blogController.deleteCategory);
+
+// Admin tag CRUD
+router.post('/admin/tags', blogController.createTag);
+router.patch('/admin/tags/:id', blogController.updateTag);
+router.delete('/admin/tags/:id', blogController.deleteTag);
 
 module.exports = router;

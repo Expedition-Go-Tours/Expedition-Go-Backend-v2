@@ -41,3 +41,5 @@ exports.uploadSupplierDocuments = wrapMulter(documentUpload.fields([
 exports.uploadChatImage = wrapMulter(imageUpload.single('file'));
 
 exports.uploadSupplierLogo = wrapMulter(imageUpload.single('logo'));
+
+exports.uploadBlogImage = wrapMulter(imageUpload.single('image'));

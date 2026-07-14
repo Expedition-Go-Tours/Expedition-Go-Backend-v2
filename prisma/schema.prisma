@@ -931,8 +931,8 @@ model Article {
 
   authorId        String
   author          User          @relation(fields: [authorId], references: [id])
-  categoryId      String
-  category        ArticleCategory @relation(fields: [categoryId], references: [id])
+  categoryId      String?
+  category        ArticleCategory? @relation(fields: [categoryId], references: [id])
   tags            ArticleTagOnArticle[]
   relatedTours    ArticleTour[]
 

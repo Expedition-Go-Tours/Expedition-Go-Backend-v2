@@ -63,7 +63,7 @@ const createArticleSchema = z.object({
     readTime: z.number().int().min(0).optional(),
     locale: z.string().max(10).optional(),
     authorId: z.string().min(1).max(100),
-    categoryId: z.string().min(1).max(100),
+    categoryId: z.string().min(1).max(100).optional(),
     tagIds: z.array(z.string().max(100)).optional(),
     relatedTourIds: z.array(z.string().max(100)).optional(),
   }),

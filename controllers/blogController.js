@@ -57,10 +57,12 @@ function transformArticle(article) {
     category: article.category ? { id: article.category.id, name: article.category.name, slug: article.category.slug } : null,
     tags: article.tags?.map((t) => ({ id: t.tag.id, name: t.tag.name, slug: t.tag.slug })) || [],
     author: article.author ? { id: article.author.id, name: article.author.name, photoURL: article.author.photoURL ? cloudinaryUrl(article.author.photoURL, 100) : null } : null,
+    status: article.status,
     publishedAt: article.publishedAt,
     readTime: article.readTime,
     locale: article.locale,
     viewCount: article.viewCount,
+    createdAt: article.createdAt,
   };
 }
 
@@ -436,6 +438,19 @@ exports.getSitemap = catchAsync(async (req, res) => {
 // ADMIN ENDPOINTS
 // ================================
 
+exports.getAdminArticle = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const article = await prisma.article.findUnique({
+    where: { id },
+    include: articleDetailInclude,
+  });
+  if (!article) return next(new AppError('Article not found', 404));
+  res.status(200).json({
+    status: 'success',
+    data: { article: transformArticleDetail(article) },
+  });
+});
+
 exports.getAdminArticles = catchAsync(async (req, res) => {
   const { page = 1, limit = 20, status, locale, category } = req.query;
 
@@ -613,6 +628,103 @@ exports.refreshCache = catchAsync(async (req, res, next) => {
 // ================================
 // SANITY WEBHOOK
 // ================================
+
+// ================================
+// ADMIN CATEGORY ENDPOINTS
+// ================================
+
+exports.createCategory = catchAsync(async (req, res, next) => {
+  const { name, slug, description, parentId } = req.body;
+  const existing = await prisma.articleCategory.findUnique({ where: { slug } });
+  if (existing) return next(new AppError('A category with this slug already exists', 409));
+  const category = await prisma.articleCategory.create({
+    data: { name, slug, description, parentId },
+  });
+  await cache.invalidateKeys([CATEGORIES_CACHE_KEY]);
+  res.status(201).json({ status: 'success', data: { category } });
+});
+
+exports.updateCategory = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { name, slug, description, parentId } = req.body;
+  const existing = await prisma.articleCategory.findUnique({ where: { id } });
+  if (!existing) return next(new AppError('Category not found', 404));
+  if (slug && slug !== existing.slug) {
+    const conflict = await prisma.articleCategory.findUnique({ where: { slug } });
+    if (conflict) return next(new AppError('A category with this slug already exists', 409));
+  }
+  const category = await prisma.articleCategory.update({
+    where: { id },
+    data: { ...(name !== undefined && { name }), ...(slug !== undefined && { slug }), ...(description !== undefined && { description }), ...(parentId !== undefined && { parentId }) },
+  });
+  await cache.invalidateKeys([CATEGORIES_CACHE_KEY]);
+  res.status(200).json({ status: 'success', data: { category } });
+});
+
+exports.deleteCategory = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const existing = await prisma.articleCategory.findUnique({ where: { id } });
+  if (!existing) return next(new AppError('Category not found', 404));
+  await prisma.articleCategory.delete({ where: { id } });
+  await cache.invalidateKeys([CATEGORIES_CACHE_KEY]);
+  res.status(200).json({ status: 'success', message: 'Category deleted' });
+});
+
+// ================================
+// ADMIN TAG ENDPOINTS
+// ================================
+
+exports.createTag = catchAsync(async (req, res, next) => {
+  const { name, slug } = req.body;
+  const existing = await prisma.articleTag.findUnique({ where: { slug } });
+  if (existing) return next(new AppError('A tag with this slug already exists', 409));
+  const tag = await prisma.articleTag.create({ data: { name, slug } });
+  await cache.invalidateKeys([TAGS_CACHE_KEY]);
+  res.status(201).json({ status: 'success', data: { tag } });
+});
+
+exports.updateTag = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { name, slug } = req.body;
+  const existing = await prisma.articleTag.findUnique({ where: { id } });
+  if (!existing) return next(new AppError('Tag not found', 404));
+  if (slug && slug !== existing.slug) {
+    const conflict = await prisma.articleTag.findUnique({ where: { slug } });
+    if (conflict) return next(new AppError('A tag with this slug already exists', 409));
+  }
+  const tag = await prisma.articleTag.update({
+    where: { id },
+    data: { ...(name !== undefined && { name }), ...(slug !== undefined && { slug }) },
+  });
+  await cache.invalidateKeys([TAGS_CACHE_KEY]);
+  res.status(200).json({ status: 'success', data: { tag } });
+});
+
+exports.deleteTag = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const existing = await prisma.articleTag.findUnique({ where: { id } });
+  if (!existing) return next(new AppError('Tag not found', 404));
+  await prisma.articleTag.delete({ where: { id } });
+  await cache.invalidateKeys([TAGS_CACHE_KEY]);
+  res.status(200).json({ status: 'success', message: 'Tag deleted' });
+});
+
+exports.uploadImage = catchAsync(async (req, res, next) => {
+  if (!req.file) {
+    return next(new AppError('No image file provided', 400));
+  }
+  res.status(200).json({
+    status: 'success',
+    data: {
+      url: req.file.path,
+      secureUrl: req.file.path,
+      publicId: req.file.filename,
+      width: req.file.width,
+      height: req.file.height,
+      format: req.file.format,
+    },
+  });
+});
 
 exports.handleSanityWebhook = catchAsync(async (req, res, next) => {
   const signature = req.headers['sanity-webhook-signature'];

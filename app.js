@@ -143,6 +143,7 @@ app.use('/api/chat', (req, res, next) => {
   if (req.method === 'POST') return uploadLimiter(req, res, next);
   next();
 });
+app.use('/api/blog/admin/upload', uploadLimiter);
 
 // Attach correlation ID to every request
 app.use((req, res, next) => {
