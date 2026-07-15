@@ -411,13 +411,38 @@ exports.getTags = catchAsync(async (req, res) => {
   res.status(200).json(result);
 });
 
+function buildXmlSitemap(articles, baseUrl) {
+  const urls = articles.map((a) => {
+    const lastmod = a.updatedAt.toISOString();
+    return `  <url>
+    <loc>${baseUrl}/blog/${a.slug}</loc>
+    <lastmod>${lastmod}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>`;
+  }).join('\n');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${urls}
+</urlset>`;
+}
+
 exports.getSitemap = catchAsync(async (req, res) => {
-  const result = await cache.getOrSet(SITEMAP_CACHE_KEY, async () => {
+  const format = req.query.format || 'json';
+  const cacheKey = format === 'xml' ? `${SITEMAP_CACHE_KEY}:xml` : SITEMAP_CACHE_KEY;
+
+  const result = await cache.getOrSet(cacheKey, async () => {
     const articles = await prisma.article.findMany({
       where: { status: 'PUBLISHED' },
       orderBy: { publishedAt: 'desc' },
       select: { slug: true, updatedAt: true, locale: true },
     });
+
+    if (format === 'xml') {
+      const baseUrl = process.env.FRONTEND_URL || 'https://travioafrica.com';
+      return buildXmlSitemap(articles, baseUrl);
+    }
 
     return {
       status: 'success',
@@ -430,6 +455,87 @@ exports.getSitemap = catchAsync(async (req, res) => {
       },
     };
   }, 3600);
+
+  if (format === 'xml') {
+    res.set('Content-Type', 'application/xml');
+    res.status(200).send(result);
+  } else {
+    res.status(200).json(result);
+  }
+});
+
+// ================================
+// ANALYTICS
+// ================================
+
+exports.getBlogAnalytics = catchAsync(async (req, res) => {
+  const ANALYTICS_CACHE_KEY = 'blog:analytics';
+  const result = await cache.getOrSet(ANALYTICS_CACHE_KEY, async () => {
+    const [
+      totalArticles,
+      publishedCount,
+      draftCount,
+      archivedCount,
+      totalViewsResult,
+      totalSharesResult,
+      topViewed,
+    ] = await Promise.all([
+      prisma.article.count(),
+      prisma.article.count({ where: { status: 'PUBLISHED' } }),
+      prisma.article.count({ where: { status: 'DRAFT' } }),
+      prisma.article.count({ where: { status: 'ARCHIVED' } }),
+      prisma.article.aggregate({ _sum: { viewCount: true } }),
+      prisma.article.aggregate({ _sum: { shareCount: true } }),
+      prisma.article.findMany({
+        where: { status: 'PUBLISHED' },
+        orderBy: { viewCount: 'desc' },
+        take: 10,
+        select: {
+          id: true, title: true, slug: true, viewCount: true,
+          publishedAt: true, category: { select: { name: true } },
+        },
+      }),
+    ]);
+
+    const categoryDistribution = await prisma.article.groupBy({
+      by: ['categoryId'],
+      where: { status: 'PUBLISHED', categoryId: { not: null } },
+      _count: { id: true },
+    });
+
+    const categoryNames = categoryDistribution.length > 0 ? await prisma.articleCategory.findMany({
+      where: { id: { in: categoryDistribution.map((c) => c.categoryId) } },
+      select: { id: true, name: true },
+    }) : [];
+    const categoryMap = Object.fromEntries((categoryNames || []).map((c) => [c.id, c.name]));
+
+    return {
+      status: 'success',
+      data: {
+        totals: {
+          totalArticles,
+          publishedCount,
+          draftCount,
+          archivedCount,
+          totalViews: totalViewsResult._sum.viewCount || 0,
+          totalShares: totalSharesResult._sum.shareCount || 0,
+        },
+        topViewed: topViewed.map((a) => ({
+          id: a.id,
+          title: a.title,
+          slug: a.slug,
+          viewCount: a.viewCount,
+          publishedAt: a.publishedAt,
+          category: a.category?.name || null,
+        })),
+        categoryDistribution: categoryDistribution.map((c) => ({
+          categoryId: c.categoryId,
+          categoryName: categoryMap[c.categoryId] || 'Unknown',
+          articleCount: c._count.id,
+        })),
+      },
+    };
+  }, 300);
 
   res.status(200).json(result);
 });

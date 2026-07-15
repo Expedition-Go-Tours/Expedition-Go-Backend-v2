@@ -106,7 +106,8 @@ process.on('SIGINT', () => {
         },
         credentials: true,
       },
-      transports: ['websocket'],
+      transports: ['polling', 'websocket'],
+      allowEIO3: true,
     });
 
     app.set('io', io);

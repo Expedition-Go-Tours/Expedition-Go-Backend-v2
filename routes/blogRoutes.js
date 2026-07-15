@@ -426,6 +426,7 @@ router.post('/admin/refresh/:articleId?', validate(refreshCacheSchema), blogCont
  *         description: No file provided
  */
 router.post('/admin/upload', uploadBlogImage, blogController.uploadImage);
+router.get('/admin/analytics', blogController.getBlogAnalytics);
 
 // Admin category CRUD
 router.post('/admin/categories', blogController.createCategory);
