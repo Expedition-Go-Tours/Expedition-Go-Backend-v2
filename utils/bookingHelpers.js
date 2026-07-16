@@ -12,8 +12,7 @@ const getConfig = require('./getConfig');
 /**
  * Generate unique booking number
  */
-async function generateBookingNumber() {
-  const prefix = 'TB'; // Tour Booking
+async function generateBookingNumber(prefix = 'TRA') {
   const timestamp = Date.now().toString().slice(-8); // Last 8 digits of timestamp
   const random = Math.random().toString(36).substring(2, 6).toUpperCase(); // 4 random chars
   

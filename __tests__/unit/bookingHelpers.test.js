@@ -29,10 +29,10 @@ beforeEach(() => {
 // generateBookingNumber
 // ---------------------------------------------------------------------------
 describe('generateBookingNumber', () => {
-  it('generates a unique booking number starting with TB', async () => {
+  it('generates a unique booking number starting with TRA (default prefix)', async () => {
     prisma.booking.findUnique.mockResolvedValue(null);
     const result = await generateBookingNumber();
-    expect(result).toMatch(/^TB\d{8}[A-Z0-9]{4}$/);
+    expect(result).toMatch(/^TRA\d{8}[A-Z0-9]{4}$/);
   });
 
   it('retries on collision up to 10 attempts', async () => {
@@ -40,13 +40,19 @@ describe('generateBookingNumber', () => {
       .mockResolvedValueOnce({ id: 'existing' })
       .mockResolvedValueOnce(null);
     const result = await generateBookingNumber();
-    expect(result).toMatch(/^TB\d{8}[A-Z0-9]{4}$/);
+    expect(result).toMatch(/^TRA\d{8}[A-Z0-9]{4}$/);
   });
 
   it('falls back to UUID after 10 collisions', async () => {
     prisma.booking.findUnique.mockResolvedValue({ id: 'existing' });
     const result = await generateBookingNumber();
-    expect(result).toMatch(/^TB[A-Z0-9]{10}$/);
+    expect(result).toMatch(/^TRA[A-Z0-9]{10}$/);
+  });
+
+  it('accepts a custom prefix for expedition bookings', async () => {
+    prisma.booking.findUnique.mockResolvedValue(null);
+    const result = await generateBookingNumber('EXP');
+    expect(result).toMatch(/^EXP\d{8}[A-Z0-9]{4}$/);
   });
 });
 

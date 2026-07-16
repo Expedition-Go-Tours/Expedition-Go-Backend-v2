@@ -1098,7 +1098,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       throw new Error(`Only ${availableSpots} spots left, but ${totalTravelers} requested`);
     }
 
-    const bookingNumber = await generateBookingNumber();
+    const bookingNumber = await generateBookingNumber('EXP');
     const commission = await calculateCommission(pricing.total, tour.supplier.supplierProfile);
 
     const booking = await tx.booking.create({
