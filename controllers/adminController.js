@@ -62,6 +62,7 @@ exports.getOverview = catchAsync(async (req, res, next) => {
     bookingsThisWeek,
     bookingsThisMonth,
     bookingsYTD,
+    weeklyBookings,
     signupsToday,
     signupsYesterday,
     signupsThisWeek,
@@ -105,6 +106,23 @@ exports.getOverview = catchAsync(async (req, res, next) => {
     prisma.booking.count({ where: { createdAt: { gte: weekStart } } }),
     prisma.booking.count({ where: { createdAt: { gte: monthStart } } }),
     prisma.booking.count({ where: { createdAt: { gte: yearStart } } }),
+
+    /* Weekly booking volume (last 7 days, one per day) */
+    prisma.$queryRaw`
+      SELECT
+        TO_CHAR(d.date, 'Dy') AS day,
+        COALESCE(b.count, 0)::int AS count
+      FROM generate_series(
+        CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, '1 day'
+      ) d(date)
+      LEFT JOIN (
+        SELECT "createdAt"::date AS date, COUNT(*)::int AS count
+        FROM "Booking"
+        WHERE "createdAt" >= CURRENT_DATE - INTERVAL '6 days'
+        GROUP BY "createdAt"::date
+      ) b ON d.date = b.date
+      ORDER BY d.date ASC
+    `,
 
     /* User signups */
     prisma.user.count({ where: { createdAt: { gte: todayStart } } }),
@@ -204,9 +222,9 @@ exports.getOverview = catchAsync(async (req, res, next) => {
 
   // Flatten revenue sums with safe defaults
   const fmt = (agg) => ({
-    revenue:      parseFloat(agg._sum.total || 0).toFixed(2),
-    supplierPayout: parseFloat(agg._sum.supplierPayout || 0).toFixed(2),
-    commission:   parseFloat(agg._sum.commissionAmount || 0).toFixed(2),
+    revenue:      Math.round(parseFloat(agg._sum.total || 0) * 100) / 100,
+    supplierPayout: Math.round(parseFloat(agg._sum.supplierPayout || 0) * 100) / 100,
+    commission:   Math.round(parseFloat(agg._sum.commissionAmount || 0) * 100) / 100,
   });
 
   const data = {
@@ -237,6 +255,7 @@ exports.getOverview = catchAsync(async (req, res, next) => {
         activeUsersLast30Days: activeUsers,
         activeUsersPrevious30: activeUsersPrevious,
       },
+      weeklyBookingData: weeklyBookings,
       topTours,
       topSuppliers,
       bookingStatusDistribution: bookingStatusDist.map((b) => ({
