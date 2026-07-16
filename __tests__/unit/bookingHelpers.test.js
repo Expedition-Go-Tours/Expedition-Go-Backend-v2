@@ -1,7 +1,9 @@
 jest.mock('uuid', () => ({ v4: () => 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }));
 
+const mockUpsert = jest.fn();
 jest.mock('../../utils/prismaClient', () => ({
   booking: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), aggregate: jest.fn() },
+  $transaction: jest.fn((cb) => cb({ bookingCounter: { upsert: mockUpsert } })),
   $queryRaw: jest.fn(),
 }));
 
@@ -29,30 +31,26 @@ beforeEach(() => {
 // generateBookingNumber
 // ---------------------------------------------------------------------------
 describe('generateBookingNumber', () => {
-  it('generates a unique booking number starting with TRA (default prefix)', async () => {
-    prisma.booking.findUnique.mockResolvedValue(null);
+  it('generates a booking number with TRA prefix, timestamp, year, and counter', async () => {
+    mockUpsert.mockResolvedValue({ prefix: 'TRA', year: 2026, count: 1 });
     const result = await generateBookingNumber();
-    expect(result).toMatch(/^TRA\d{8}[A-Z0-9]{4}$/);
+    expect(result).toMatch(/^TRA-\d{8}-2026-\d{2}$/);
   });
 
-  it('retries on collision up to 10 attempts', async () => {
-    prisma.booking.findUnique
-      .mockResolvedValueOnce({ id: 'existing' })
-      .mockResolvedValueOnce(null);
-    const result = await generateBookingNumber();
-    expect(result).toMatch(/^TRA\d{8}[A-Z0-9]{4}$/);
-  });
-
-  it('falls back to UUID after 10 collisions', async () => {
-    prisma.booking.findUnique.mockResolvedValue({ id: 'existing' });
-    const result = await generateBookingNumber();
-    expect(result).toMatch(/^TRA[A-Z0-9]{10}$/);
+  it('increments counter on each call', async () => {
+    mockUpsert
+      .mockResolvedValueOnce({ prefix: 'TRA', year: 2026, count: 1 })
+      .mockResolvedValueOnce({ prefix: 'TRA', year: 2026, count: 2 });
+    const r1 = await generateBookingNumber();
+    const r2 = await generateBookingNumber();
+    expect(r1).toMatch(/-01$/);
+    expect(r2).toMatch(/-02$/);
   });
 
   it('accepts a custom prefix for expedition bookings', async () => {
-    prisma.booking.findUnique.mockResolvedValue(null);
+    mockUpsert.mockResolvedValue({ prefix: 'EXP', year: 2026, count: 1 });
     const result = await generateBookingNumber('EXP');
-    expect(result).toMatch(/^EXP\d{8}[A-Z0-9]{4}$/);
+    expect(result).toMatch(/^EXP-\d{8}-2026-\d{2}$/);
   });
 });
 

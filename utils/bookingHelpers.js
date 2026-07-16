@@ -13,32 +13,19 @@ const getConfig = require('./getConfig');
  * Generate unique booking number
  */
 async function generateBookingNumber(prefix = 'TRA') {
-  const timestamp = Date.now().toString().slice(-8); // Last 8 digits of timestamp
-  const random = Math.random().toString(36).substring(2, 6).toUpperCase(); // 4 random chars
-  
-  let bookingNumber = `${prefix}${timestamp}${random}`;
-  
-  // Ensure uniqueness
-  let attempt = 0;
-  while (attempt < 10) {
-    const existing = await prisma.booking.findUnique({
-      where: { bookingNumber }
+  const year = new Date().getFullYear();
+  const timestamp = Date.now().toString().slice(-8);
+
+  const counter = await prisma.$transaction(async (tx) => {
+    const row = await tx.bookingCounter.upsert({
+      where: { prefix_year: { prefix, year } },
+      create: { prefix, year, count: 1 },
+      update: { count: { increment: 1 } },
     });
-    
-    if (!existing) {
-      return bookingNumber;
-    }
-    
-    // Generate new number if collision
-    attempt++;
-    const newRandom = Math.random().toString(36).substring(2, 6).toUpperCase();
-    bookingNumber = `${prefix}${timestamp}${newRandom}`;
-  }
-  
-  // Fallback with UUID if still colliding
-  const { v4: uuidv4 } = require('uuid');
-  console.warn(`[BookingHelpers] Booking number collision after ${attempt} attempts, using UUID fallback. Prefix: ${prefix}`);
-  return `${prefix}${uuidv4().replace(/-/g, '').substring(0, 10).toUpperCase()}`;
+    return row.count;
+  });
+
+  return `${prefix}-${timestamp}-${year}-${String(counter).padStart(2, '0')}`;
 }
 
 /**

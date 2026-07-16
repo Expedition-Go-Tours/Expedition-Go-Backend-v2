@@ -1023,6 +1023,14 @@ model AuditLog {
   @@index([createdAt])
 }
 
+model BookingCounter {
+  prefix String
+  year   Int
+  count  Int    @default(0)
+
+  @@id([prefix, year])
+}
+
 model NewsletterSubscriber {
   id        String   @id @default(cuid())
   email     String   @unique
