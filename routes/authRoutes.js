@@ -338,6 +338,53 @@ router.get('/google/callback', authController.googleCallback);
 
 /**
  * @swagger
+ * /api/auth/google/onetap:
+ *   post:
+ *     summary: Google One Tap sign-in
+ *     description: |
+ *       Verifies a Google ID token from the One Tap or Credential Manager flow.
+ *       Finds or creates the user, signs JWT tokens, and returns user data.
+ *       This is an alternative to the full OAuth redirect flow.
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - credential
+ *             properties:
+ *               credential:
+ *                 type: string
+ *                 description: Google ID token (JWT) from the One Tap or Credential Manager response
+ *     responses:
+ *       200:
+ *         description: Authentication successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       $ref: '#/components/schemas/User'
+ *       400:
+ *         description: Missing credential
+ *       401:
+ *         description: Invalid Google credential
+ *       503:
+ *         description: Google sign-in not configured
+ */
+router.post('/google/onetap', authController.googleOneTap);
+
+/**
+ * @swagger
  * /api/auth/logout:
  *   post:
  *     summary: Log out (clear refresh token)

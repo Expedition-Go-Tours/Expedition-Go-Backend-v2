@@ -1,0 +1,21 @@
+- generic [ref=e2]:
+  - generic [ref=e6]:
+    - generic [ref=e7]:
+      - heading "Welcome back" [level=1] [ref=e8]
+      - paragraph [ref=e9]: Sign in to your admin account
+    - button "Continue with Google" [ref=e10] [cursor=pointer]
+    - generic [ref=e16]: OR
+    - generic [ref=e20]:
+      - generic [ref=e21]:
+        - text: Email
+        - textbox "Email" [ref=e22]:
+          - /placeholder: admin@travioafrica.com
+      - generic [ref=e23]:
+        - generic [ref=e24]:
+          - generic [ref=e25]: Password
+          - button "Forgot?" [ref=e26] [cursor=pointer]
+        - textbox "Password" [ref=e27]:
+          - /placeholder: ••••••••
+      - button "Sign In" [ref=e28] [cursor=pointer]
+    - paragraph [ref=e29]: TravioAfrica Admin Portal — Authorized access only
+  - region "Notifications alt+T"

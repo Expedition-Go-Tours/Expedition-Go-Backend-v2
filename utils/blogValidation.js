@@ -52,7 +52,7 @@ const createArticleSchema = z.object({
   body: z.object({
     title: z.string().min(1).max(500),
     slug: z.string().min(1).max(200),
-    excerpt: z.string().min(1).max(5000),
+    excerpt: z.string().max(5000).optional(),
     body: z.any(),
     featuredImage: z.string().max(1000).optional(),
     images: z.any().optional(),

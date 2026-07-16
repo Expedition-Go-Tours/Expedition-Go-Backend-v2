@@ -1,4 +1,4 @@
-const bcrypt = require('bcrypt');
+﻿const bcrypt = require('bcrypt');
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
@@ -6,6 +6,7 @@ const { signAccessToken, signRefreshToken, signPasswordResetToken, verifyPasswor
 const { storeRefreshToken, rotateRefreshToken, clearRefreshToken } = require('../utils/refreshTokenHelper');
 const { enqueueEvent, enqueueCreateStripeCustomer } = require('../utils/queue');
 const passport = require('passport');
+const { OAuth2Client } = require('google-auth-library');
 
 exports.login = catchAsync(async (req, res, next) => {
   const { email, password } = req.body;
@@ -351,4 +352,87 @@ exports.googleCallback = catchAsync(async (req, res, next) => {
     setAuthCookies(res, accessToken, refreshToken);
     res.redirect(`${origin}/auth/callback?accessToken=${encodeURIComponent(accessToken)}&refreshToken=${encodeURIComponent(refreshToken)}`);
   })(req, res, next);
+});
+
+exports.googleOneTap = catchAsync(async (req, res, next) => {
+  const { credential } = req.body;
+  if (!credential) return next(new AppError('Google credential is required', 400));
+
+  if (!process.env.GOOGLE_CLIENT_ID) {
+    return next(new AppError('Google sign-in is not configured', 503));
+  }
+
+  const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+  let payload;
+  try {
+    const ticket = await client.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    payload = ticket.getPayload();
+  } catch {
+    return next(new AppError('Invalid Google credential', 401));
+  }
+
+  const email = payload.email?.toLowerCase().trim();
+  if (!email) return next(new AppError('No email found from Google', 401));
+
+  const name = payload.name || '';
+  const photoURL = payload.picture || '';
+  const firebaseUid = payload.sub;
+
+  let user = await prisma.user.findUnique({ where: { email } });
+
+  if (user) {
+    user = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        authProvider: 'google',
+        name: user.name || name,
+        photoURL: user.photoURL || photoURL,
+        firebaseUid: user.firebaseUid || firebaseUid,
+      },
+    });
+  } else {
+    user = await prisma.user.create({
+      data: {
+        email,
+        name,
+        photoURL,
+        authProvider: 'google',
+        firebaseUid,
+        roles: ['customer'],
+      },
+    });
+  }
+
+  if (!user.active) return next(new AppError('Account has been deactivated', 403));
+
+  const accessToken = signAccessToken({ userId: user.id });
+  const refreshToken = signRefreshToken({ userId: user.id });
+  await storeRefreshToken(user.id, refreshToken);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { lastLoginAt: new Date() },
+  });
+
+  enqueueEvent({
+    name: 'user.logged_in',
+    userId: user.id,
+    req,
+    resource: 'User',
+    resourceId: user.id,
+    properties: { method: 'google_onetap' },
+  });
+
+  setAuthCookies(res, accessToken, refreshToken);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      user: { id: user.id, name: user.name, email: user.email, photoURL: user.photoURL, roles: user.roles },
+    },
+  });
 });
