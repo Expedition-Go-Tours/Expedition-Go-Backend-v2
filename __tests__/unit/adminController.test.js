@@ -126,7 +126,7 @@ describe('adminController', () => {
       await controller.getOverview(req, res, next);
 
       const body = res.json.mock.calls[0][0];
-      expect(body.data.overview.revenue.today.revenue).toBe('0.00');
+      expect(body.data.overview.revenue.today.revenue).toBe(0);
     });
   });
 
