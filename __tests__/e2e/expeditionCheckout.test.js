@@ -243,8 +243,8 @@ describe('E2E: Expedition Checkout Flow', () => {
     );
   });
 
-  // ── Step 3: Stripe webhook processes payment.succeeded (no-op for Expedition) ──
-  it('Step 3: Stripe webhook is a no-op when PI has no bookingIds', async () => {
+  // ── Step 3: Stripe webhook falls back to PI ID lookup when no bookingIds ──
+  it('Step 3: Stripe webhook falls back to PI ID lookup when no bookingIds', async () => {
     prisma.stripeEvent.findUnique.mockResolvedValue(null);
     prisma.stripeEvent.upsert.mockResolvedValue({});
     prisma.stripeEvent.update.mockResolvedValue({});
@@ -274,7 +274,16 @@ describe('E2E: Expedition Checkout Flow', () => {
     const result = await processStripeWebhook(stripeEvent);
     expect(result.success).toBe(true);
 
-    expect(webhookTx.booking.updateMany).not.toHaveBeenCalled();
+    // Falls back to updating by stripePaymentIntentId for PROCESSING bookings
+    expect(webhookTx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          stripePaymentIntentId: 'pi_exp_e2e',
+          status: 'PROCESSING',
+          paymentStatus: 'PENDING',
+        }),
+      }),
+    );
     expect(webhookTx.booking.findMany).not.toHaveBeenCalled();
   });
 
