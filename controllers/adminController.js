@@ -135,22 +135,29 @@ function buildAuditMessage(action, resource, metadata = {}) {
  * All time periods are calendar-based (UTC midnight boundaries).
  */
 exports.getOverview = catchAsync(async (req, res, next) => {
-  // Cache key bucketed to 2-minute intervals for stability
+  const period = req.query.period || 'today';
+  const periodMap = { today: 0, last_week: 7, last_month: 30, last_quarter: 90 };
+  const periodDays = periodMap[period] ?? 7;
+
   const now = new Date();
   const bucket = Math.floor(now.getTime() / 120000);
-  const cacheKey = `admin:overview:${bucket}`;
+  const cacheKey = `admin:overview:${bucket}:${periodDays}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
-    // Start-of-day for "today" range
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const yesterdayStart = new Date(todayStart);
-    yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+
+    const currentPeriodStart = period === 'today'
+      ? todayStart
+      : new Date(now.getTime() - periodDays * 24 * 60 * 60 * 1000);
+
+    const previousPeriodStart = period === 'today'
+      ? new Date(todayStart.getTime() - 24 * 60 * 60 * 1000)
+      : new Date(currentPeriodStart.getTime() - periodDays * 24 * 60 * 60 * 1000);
+
     const weekStart = new Date(todayStart);
-    weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Sunday
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const yearStart = new Date(now.getFullYear(), 0, 1);
-    const previous30Start = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
   const [
     revenueToday,
@@ -183,11 +190,11 @@ exports.getOverview = catchAsync(async (req, res, next) => {
     /* Revenue aggregations */
     prisma.booking.aggregate({
       _sum: { total: true, supplierPayout: true, commissionAmount: true },
-      where: { paidAt: { gte: todayStart }, paymentStatus: 'SUCCEEDED' },
+      where: { paidAt: { gte: currentPeriodStart }, paymentStatus: 'SUCCEEDED' },
     }),
     prisma.booking.aggregate({
       _sum: { total: true, supplierPayout: true, commissionAmount: true },
-      where: { paidAt: { gte: yesterdayStart, lt: todayStart }, paymentStatus: 'SUCCEEDED' },
+      where: { paidAt: { gte: previousPeriodStart, lt: currentPeriodStart }, paymentStatus: 'SUCCEEDED' },
     }),
     prisma.booking.aggregate({
       _sum: { total: true, supplierPayout: true, commissionAmount: true },
@@ -203,66 +210,87 @@ exports.getOverview = catchAsync(async (req, res, next) => {
     }),
 
     /* Booking volume aggregations */
-    prisma.booking.count({ where: { createdAt: { gte: todayStart } } }),
-    prisma.booking.count({ where: { createdAt: { gte: yesterdayStart, lt: todayStart } } }),
+    prisma.booking.count({ where: { createdAt: { gte: currentPeriodStart } } }),
+    prisma.booking.count({ where: { createdAt: { gte: previousPeriodStart, lt: currentPeriodStart } } }),
     prisma.booking.count({ where: { createdAt: { gte: weekStart } } }),
     prisma.booking.count({ where: { createdAt: { gte: monthStart } } }),
     prisma.booking.count({ where: { createdAt: { gte: yearStart } } }),
 
-    /* Weekly booking volume (last 7 days, one per day) */
-    prisma.$queryRaw`
-      SELECT
-        TO_CHAR(d.date, 'Dy') AS day,
-        COALESCE(b.count, 0)::int AS count
-      FROM generate_series(
-        CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, '1 day'
-      ) d(date)
-      LEFT JOIN (
-        SELECT "createdAt"::date AS date, COUNT(*)::int AS count
-        FROM "Booking"
-        WHERE "createdAt" >= CURRENT_DATE - INTERVAL '6 days'
-        GROUP BY "createdAt"::date
-      ) b ON d.date = b.date
-      ORDER BY d.date ASC
-    `,
+    /* Weekly booking volume (period-aware: daily for ≤30d, weekly for 90d) */
+    periodDays > 31
+      ? prisma.$queryRaw`
+          SELECT
+            TO_CHAR(date_trunc('week', d.date), 'Mon DD') AS day,
+            COALESCE(SUM(b.count), 0)::int AS count
+          FROM generate_series(
+            date_trunc('week', CURRENT_DATE - (${periodDays - 1} || ' days')::interval),
+            date_trunc('week', CURRENT_DATE),
+            '1 week'
+          ) d(date)
+          LEFT JOIN (
+            SELECT "createdAt"::date AS date, COUNT(*)::int AS count
+            FROM "Booking"
+            WHERE "createdAt" >= CURRENT_DATE - (${periodDays - 1} || ' days')::interval
+            GROUP BY "createdAt"::date
+          ) b ON b.date >= d.date AND b.date < d.date + INTERVAL '7 days'
+          GROUP BY date_trunc('week', d.date), d.date
+          ORDER BY d.date ASC
+        `
+      : prisma.$queryRaw`
+          SELECT
+            TO_CHAR(d.date, ${periodDays > 7 ? 'MM/DD' : 'Dy'}) AS day,
+            COALESCE(b.count, 0)::int AS count
+          FROM generate_series(
+            CURRENT_DATE - (${Math.min(periodDays || 7, 30) - 1} || ' days')::interval,
+            CURRENT_DATE, '1 day'
+          ) d(date)
+          LEFT JOIN (
+            SELECT "createdAt"::date AS date, COUNT(*)::int AS count
+            FROM "Booking"
+            WHERE "createdAt" >= CURRENT_DATE - (${Math.min(periodDays || 7, 30) - 1} || ' days')::interval
+            GROUP BY "createdAt"::date
+          ) b ON d.date = b.date
+          ORDER BY d.date ASC
+        `,
 
     /* User signups */
-    prisma.user.count({ where: { createdAt: { gte: todayStart } } }),
-    prisma.user.count({ where: { createdAt: { gte: yesterdayStart, lt: todayStart } } }),
+    prisma.user.count({ where: { createdAt: { gte: currentPeriodStart } } }),
+    prisma.user.count({ where: { createdAt: { gte: previousPeriodStart, lt: currentPeriodStart } } }),
     prisma.user.count({ where: { createdAt: { gte: weekStart } } }),
     prisma.user.count({ where: { createdAt: { gte: monthStart } } }),
     prisma.user.count({ where: { createdAt: { gte: yearStart } } }),
 
-    /* Active users (logged in within last 30 days) */
+    /* Active users (logged in within current period) */
     prisma.user.count({
       where: {
-        lastLoginAt: { gte: thirtyDaysAgo },
+        lastLoginAt: { gte: currentPeriodStart },
         active: true,
       },
     }),
 
-    /* Active users previous 30-day period */
+    /* Active users previous period */
     prisma.user.count({
       where: {
-        lastLoginAt: { gte: previous30Start, lt: thirtyDaysAgo },
+        lastLoginAt: { gte: previousPeriodStart, lt: currentPeriodStart },
         active: true,
       },
     }),
 
-    /* Top 10 tours by total revenue (confirmed bookings) */
+    /* Top 10 tours by period revenue (confirmed bookings) */
     prisma.$queryRaw`
       SELECT
         t.id,
         t.title,
         t."coverPhoto",
         COALESCE(b.booking_count, 0)::int AS "totalBookings",
-        t."totalRevenue",
+        COALESCE(b.total_revenue, 0)::float AS "totalRevenue",
         t."averageRating",
         COALESCE(r.review_count, 0)::int AS "reviewCount"
       FROM "Tour" t
       LEFT JOIN (
-        SELECT "tourId", COUNT(*)::int AS booking_count
-        FROM "Booking" WHERE "paymentStatus" = 'SUCCEEDED'
+        SELECT "tourId", COUNT(*)::int AS booking_count, SUM(total)::float AS total_revenue
+        FROM "Booking"
+        WHERE "paymentStatus" = 'SUCCEEDED' AND "createdAt" >= ${currentPeriodStart}
         GROUP BY "tourId"
       ) b ON b."tourId" = t.id
       LEFT JOIN (
@@ -271,31 +299,41 @@ exports.getOverview = catchAsync(async (req, res, next) => {
         GROUP BY "tourId"
       ) r ON r."tourId" = t.id
       WHERE t.status = 'ACTIVE'
-      ORDER BY t."totalRevenue" DESC
+      ORDER BY COALESCE(b.total_revenue, 0) DESC
       LIMIT 10
     `,
 
-    /* Top 10 suppliers by total earnings */
+    /* Top 10 suppliers by period earnings */
     prisma.$queryRaw`
       SELECT
         u.id,
         u.name,
         u.email,
         u."photoURL",
-        sp."totalEarnings",
-        sp."totalBookings",
+        COALESCE(period.total_earnings, 0)::float AS "totalEarnings",
+        COALESCE(period.booking_count, 0)::int AS "totalBookings",
         sp."averageRating"
       FROM "SupplierProfile" sp
       JOIN "User" u ON u.id = sp."userId"
+      LEFT JOIN (
+        SELECT t."supplierId",
+               COUNT(*)::int AS booking_count,
+               SUM(bo."supplierPayout")::float AS total_earnings
+        FROM "Booking" bo
+        JOIN "Tour" t ON t.id = bo."tourId"
+        WHERE bo."paymentStatus" = 'SUCCEEDED' AND bo."createdAt" >= ${currentPeriodStart}
+        GROUP BY t."supplierId"
+      ) period ON period."supplierId" = u.id
       WHERE sp.status = 'ACTIVE'
-      ORDER BY sp."totalEarnings" DESC
+      ORDER BY COALESCE(period.total_earnings, 0) DESC
       LIMIT 10
     `,
 
-    /* Booking status distribution */
+    /* Booking status distribution (filtered by period) */
     prisma.booking.groupBy({
       by: ['status'],
       _count: true,
+      where: { createdAt: { gte: currentPeriodStart } },
     }),
 
     /* Platform-wide recent events (last 20) */
@@ -370,8 +408,8 @@ exports.getOverview = catchAsync(async (req, res, next) => {
           thisMonth:signupsThisMonth,
           ytd:      signupsYTD,
         },
-        activeUsersLast30Days: activeUsers,
-        activeUsersPrevious30: activeUsersPrevious,
+        activeUsers: activeUsers,
+        activeUsersPrevious: activeUsersPrevious,
       },
       weeklyBookingData: weeklyBookings,
       topTours,
