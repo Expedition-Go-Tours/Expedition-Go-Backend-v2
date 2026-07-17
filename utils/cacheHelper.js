@@ -92,7 +92,6 @@ async function getOrSet(key, fetchFn, ttlSeconds = 300) {
   }
 
   // L2: Redis
-  let fromRedis = undefined;
   try {
     const raw = await redis.get(key);
     if (raw === NULL_SENTINEL) {

@@ -213,11 +213,19 @@ describe('processStripeWebhook', () => {
     );
   });
 
-  it('handles payment_intent.succeeded with no booking IDs', async () => {
+  it('handles payment_intent.succeeded with no booking IDs (falls back to PI ID lookup)', async () => {
     const stripeEvent = mockStripeEvent('payment_intent.succeeded', { metadata: {} });
     await processStripeWebhook(stripeEvent);
 
-    expect(tx.booking.updateMany).not.toHaveBeenCalled();
+    expect(tx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          stripePaymentIntentId: 'pi_123',
+          status: 'PROCESSING',
+          paymentStatus: 'PENDING',
+        }),
+      }),
+    );
   });
 
   it('handles unhandled event types gracefully', async () => {

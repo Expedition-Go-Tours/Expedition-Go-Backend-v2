@@ -222,6 +222,66 @@ const cancelBookingSchema = z.object({
   }),
 });
 
+const createReviewSchema = z.object({
+  body: z.object({
+    bookingId: z.string().min(1).max(100),
+    rating: z.number().int().min(1).max(5),
+    title: z.string().min(1).max(200).optional(),
+    comment: z.string().min(10).max(5000),
+  }),
+  query: z.any().optional(),
+  params: z.object({}).optional(),
+});
+
+const getSupplierBookingsSchema = z.object({
+  body: z.any().optional(),
+  query: z.object({
+    page: z.coerce.number().int().min(1).default(1).optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(10).optional(),
+    status: z.enum(['PENDING', 'PROCESSING', 'CONFIRMED', 'CANCELLED', 'REFUNDED', 'COMPLETED', 'NO_SHOW']).optional(),
+  }).passthrough(),
+  params: z.object({}).optional(),
+});
+
+const updateBookingStatusSchema = z.object({
+  body: z.object({
+    status: z.enum(['CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW']),
+    reason: z.string().max(500).optional(),
+  }),
+  query: z.any().optional(),
+  params: z.object({
+    id: z.string().min(1).max(100),
+  }),
+});
+
+const analyticsOverviewSchema = z.object({
+  body: z.any().optional(),
+  query: z.object({
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional(),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional(),
+  }).passthrough(),
+  params: z.object({}).optional(),
+});
+
+const analyticsRevenueTrendSchema = z.object({
+  body: z.any().optional(),
+  query: z.object({
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional(),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional(),
+    granularity: z.enum(['day', 'week', 'month']).optional(),
+  }).passthrough(),
+  params: z.object({}).optional(),
+});
+
+const analyticsFunnelSchema = z.object({
+  body: z.any().optional(),
+  query: z.object({
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional(),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional(),
+  }).passthrough(),
+  params: z.object({}).optional(),
+});
+
 module.exports = {
   getToursSchema,
   contactSchema,
@@ -242,4 +302,10 @@ module.exports = {
   getBookingsSchema,
   bookingIdParamSchema,
   cancelBookingSchema,
+  createReviewSchema,
+  getSupplierBookingsSchema,
+  updateBookingStatusSchema,
+  analyticsOverviewSchema,
+  analyticsRevenueTrendSchema,
+  analyticsFunnelSchema,
 };

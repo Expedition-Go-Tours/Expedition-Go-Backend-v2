@@ -4,6 +4,7 @@ jest.mock('../../utils/prismaClient', () => ({
   adminRole: { findUnique: jest.fn() },
   tour: { findMany: jest.fn(), count: jest.fn() },
   event: { findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
+  auditLog: { findMany: jest.fn() },
   supplierProfile: {},
   $queryRaw: jest.fn(),
 }));
@@ -45,6 +46,7 @@ describe('adminController', () => {
     prisma.event.findMany.mockResolvedValue([]);
     prisma.event.count.mockResolvedValue(0);
     prisma.event.groupBy.mockResolvedValue([]);
+    prisma.auditLog.findMany.mockResolvedValue([]);
     prisma.$queryRaw.mockResolvedValue([]);
     cloudinaryUrl.mockImplementation((url, size) => `https://cdn.example.com/${size}/${url}`);
   });

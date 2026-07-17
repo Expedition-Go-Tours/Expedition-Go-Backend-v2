@@ -5,11 +5,15 @@ const chatService = require('../utils/chatService');
 const { isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 
 function canAccessType(user, type) {
-  if (!user.roles?.includes('admin')) return true;
+  if (!user.roles?.includes('admin') && !user.roles?.includes('expedition')) return true;
   const keys = user.permissionKeys || [];
   if (keys.includes('dashboard.*')) return true;
   if (type === 'SUPPLIER_ADMIN') return keys.includes('chat.suppliers');
   if (type === 'USER_SUPPORT') return keys.includes('chat.customers');
+  if (type === 'EXPEDITION_CUSTOMER') {
+    if (user.roles?.includes('expedition')) return true;
+    return keys.includes('chat.expedition');
+  }
   return false;
 }
 
@@ -19,6 +23,14 @@ exports.getAdminSupport = catchAsync(async (req, res) => {
     throw new AppError('Admin support is not configured yet', 404);
   }
   res.json({ status: 'success', data: { adminId } });
+});
+
+exports.getExpeditionSupport = catchAsync(async (req, res) => {
+  const expeditionId = await chatService.getSharedExpeditionId();
+  if (!expeditionId) {
+    throw new AppError('Expedition support is not configured yet', 404);
+  }
+  res.json({ status: 'success', data: { expeditionId } });
 });
 
 exports.getConversations = catchAsync(async (req, res) => {
@@ -48,6 +60,7 @@ exports.getOrCreateConversation = catchAsync(async (req, res) => {
   }
 
   const isSenderSupplier = req.user.roles.includes('supplier');
+  const isSenderExpedition = req.user.roles.includes('expedition');
 
   let type = requestedType;
   if (!type) {
@@ -55,12 +68,14 @@ exports.getOrCreateConversation = catchAsync(async (req, res) => {
       type = 'SUPPLIER_CUSTOMER';
     } else if (isSenderSupplier || recipient.roles.includes('supplier') || recipient.roles.includes('admin')) {
       type = 'SUPPLIER_ADMIN';
+    } else if (isSenderExpedition || recipient.roles.includes('expedition')) {
+      type = 'EXPEDITION_CUSTOMER';
     } else {
       type = 'USER_SUPPORT';
     }
   }
 
-  if (req.user.roles.includes('admin') && (type === 'SUPPLIER_ADMIN' || type === 'USER_SUPPORT') && !canAccessType(req.user, type)) {
+  if ((req.user.roles.includes('admin') || req.user.roles.includes('expedition')) && (type === 'SUPPLIER_ADMIN' || type === 'USER_SUPPORT' || type === 'EXPEDITION_CUSTOMER') && !canAccessType(req.user, type)) {
     throw new AppError('You do not have permission for this conversation type', 403);
   }
 

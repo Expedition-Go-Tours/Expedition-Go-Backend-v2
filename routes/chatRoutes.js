@@ -43,8 +43,9 @@ router.use(protect);
  *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.get('/admin-support', chatController.getAdminSupport);
+router.get('/expedition-support', chatController.getExpeditionSupport);
 
-router.use(requirePermission('chat.suppliers', 'chat.customers'));
+router.use(requirePermission('chat.suppliers', 'chat.customers', 'chat.expedition'));
 
 /**
  * @swagger

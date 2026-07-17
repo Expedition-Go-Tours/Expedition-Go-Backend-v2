@@ -28,7 +28,6 @@ jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.reso
 jest.mock('@sanity/client', () => jest.fn(() => ({
   fetch: jest.fn().mockResolvedValue(null),
 })));
-const mockMulterMiddleware = (req, _res, next) => next();
 jest.mock('../../middleware/uploadMiddleware', () => {
   const fn = (req, _res, next) => next();
   fn._cloudinaryMissing = false;
@@ -89,14 +88,7 @@ const mockArticle = {
   updatedAt: new Date('2026-07-01'),
 };
 
-const mockDraftArticle = {
-  ...mockArticle,
-  id: 'article-2',
-  slug: 'draft-article',
-  title: 'Draft Article',
-  status: 'DRAFT',
-  publishedAt: null,
-};
+
 
 const mockArticleDetail = {
   ...mockArticle,

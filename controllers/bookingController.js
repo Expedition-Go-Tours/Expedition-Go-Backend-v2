@@ -576,6 +576,22 @@ exports.createBooking = catchAsync(async (req, res, next) => {
         status: booking.status,
       },
     });
+
+    logActivity({
+      userId: customerId,
+      action: 'booking.created',
+      resource: 'Booking',
+      resourceId: booking.id,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      metadata: {
+        tourId: booking.tourId,
+        tourTitle: booking.tour.title,
+        total: parseFloat(booking.total),
+        currency: booking.currency,
+        status: booking.status,
+      },
+    });
   }
 
   res.status(201).json({

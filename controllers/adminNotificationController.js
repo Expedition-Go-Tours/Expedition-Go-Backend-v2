@@ -15,10 +15,12 @@ function filterAdminNotifications(notifications, permissionKeys) {
     if (n.type === 'NEW_MESSAGE') {
       const canSupplier = permissionKeys.includes('chat.suppliers');
       const canCustomer = permissionKeys.includes('chat.customers');
+      const canExpedition = permissionKeys.includes('chat.expedition');
       const chatType = n.data?.chatType;
       if (chatType === 'suppliers') return canSupplier;
       if (chatType === 'customers') return canCustomer;
-      return canSupplier || canCustomer;
+      if (chatType === 'expedition') return canExpedition;
+      return canSupplier || canCustomer || canExpedition;
     }
 
     const required = TYPE_PERMISSION[n.type];

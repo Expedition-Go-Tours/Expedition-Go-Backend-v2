@@ -24,6 +24,7 @@ const PERMISSIONS = [
   { key: 'payout-methods.verify', name: 'Verify Payout Methods', description: 'Verify supplier payout method details', category: 'Finance' },
   { key: 'chat.suppliers', name: 'Chat — Suppliers', description: 'Access supplier chat conversations', category: 'Chat' },
   { key: 'chat.customers', name: 'Chat — Customers', description: 'Access customer chat conversations', category: 'Chat' },
+  { key: 'chat.expedition', name: 'Chat — Expedition', description: 'Access expedition chat conversations', category: 'Chat' },
   { key: 'settings.access', name: 'Access Settings', description: 'View platform settings page', category: 'Settings' },
   { key: 'roles.manage', name: 'Manage Roles', description: 'Create, edit, and delete admin roles', category: 'Admin' },
   { key: 'audit.view', name: 'View Audit Log', description: 'View and export system audit logs', category: 'Admin' },
@@ -46,7 +47,7 @@ const ROLE_DEFINITIONS = [
       'dashboard.*', 'dashboard.bookings', 'dashboard.revenue', 'analytics.view',
       'suppliers.view', 'suppliers.approve', 'suppliers.suspend', 'tours.view',
       'bookings.view', 'bookings.confirm-payment', 'reviews.view', 'reviews.moderate',
-      'chat.suppliers', 'chat.customers', 'notifications.view',
+      'chat.suppliers', 'chat.customers', 'chat.expedition', 'notifications.view',
     ],
   },
   {
@@ -65,7 +66,7 @@ const ROLE_DEFINITIONS = [
     isSystem: false,
     permissionKeys: [
       'dashboard.*', 'users.view', 'bookings.view', 'reviews.view',
-      'reviews.moderate', 'chat.suppliers', 'chat.customers', 'notifications.view',
+      'reviews.moderate', 'chat.suppliers', 'chat.customers', 'chat.expedition', 'notifications.view',
     ],
   },
   {

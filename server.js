@@ -5,7 +5,6 @@ const prisma = require('./utils/prismaClient');
 const { setIO, setupPrismaMiddleware } = require('./utils/dataChangeEmitter');
 const { registerWorkers, closeAll, enqueueNotification, enqueueCleanup, enqueueAggregation, enqueueEvent, isRedisAvailable } = require('./utils/queue');
 const redisClient = require('./utils/redisClient');
-const { logActivity } = require('./utils/auditLogger');
 const logger = require('./utils/logger');
  
 
@@ -205,14 +204,16 @@ process.on('SIGINT', () => {
 
       if (socket.userRoles.includes('admin')) {
         socket.join('admin-room');
-        logActivity({
-          userId: socket.userId,
-          action: 'socket.admin-connected',
-          resource: 'Socket',
-          metadata: { socketId: socket.id, roles: socket.userRoles },
-        }).catch((err) => logger.warn('[socket] admin connection logActivity failed:', err?.message));
         const chatService = require('./utils/chatService');
         chatService.getSharedAdminId().then(sharedId => {
+          if (sharedId) socket.join(`user:${sharedId}`);
+        });
+      }
+
+      if (socket.userRoles.includes('expedition')) {
+        socket.join('expedition-room');
+        const chatService = require('./utils/chatService');
+        chatService.getSharedExpeditionId().then(sharedId => {
           if (sharedId) socket.join(`user:${sharedId}`);
         });
       }

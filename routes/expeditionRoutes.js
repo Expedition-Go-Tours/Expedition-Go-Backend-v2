@@ -3,6 +3,7 @@ const { createLimiter } = require('../middleware/dynamicRateLimiter');
 const { protect } = require('../middleware/authMiddleware');
 const { restrictTo } = require('../middleware/authMiddleware');
 const expeditionController = require('../controllers/expeditionController');
+const expeditionAnalyticsController = require('../controllers/expeditionAnalyticsController');
 const validate = require('../middleware/validate');
 const {
   getToursSchema,
@@ -23,6 +24,12 @@ const {
   getBookingsSchema,
   bookingIdParamSchema,
   cancelBookingSchema,
+  createReviewSchema,
+  getSupplierBookingsSchema,
+  updateBookingStatusSchema,
+  analyticsOverviewSchema,
+  analyticsRevenueTrendSchema,
+  analyticsFunnelSchema,
 } = require('../utils/expeditionValidation');
 
 const router = express.Router();
@@ -635,7 +642,7 @@ router.post('/checkout/calculate', validate(calculateCheckoutSchema), expedition
  *       404:
  *         description: Tour not found
  */
-router.post('/checkout/confirm', protect, validate(confirmBookingSchema), expeditionController.confirmBooking);
+router.post('/checkout/confirm', protect, restrictTo('customer'), validate(confirmBookingSchema), expeditionController.confirmBooking);
 
 /**
  * @swagger
@@ -669,7 +676,7 @@ router.post('/checkout/confirm', protect, validate(confirmBookingSchema), expedi
  *       401:
  *         description: Authentication required
  */
-router.get('/wishlist', protect, expeditionController.getExpeditionWishlist);
+router.get('/wishlist', protect, restrictTo('customer'), expeditionController.getExpeditionWishlist);
 
 /**
  * @swagger
@@ -716,7 +723,7 @@ router.get('/wishlist', protect, expeditionController.getExpeditionWishlist);
  *       404:
  *         description: Tour not available on Expedition
  */
-router.patch('/wishlist/:tourId', protect, validate(tourIdParamSchema), expeditionController.toggleExpeditionWishlist);
+router.patch('/wishlist/:tourId', protect, restrictTo('customer'), validate(tourIdParamSchema), expeditionController.toggleExpeditionWishlist);
 
 /**
  * @swagger
@@ -763,7 +770,7 @@ router.patch('/wishlist/:tourId', protect, validate(tourIdParamSchema), expediti
  *       401:
  *         description: Authentication required
  */
-router.get('/bookings', protect, validate(getBookingsSchema), expeditionController.getMyBookings);
+router.get('/bookings', protect, restrictTo('customer'), validate(getBookingsSchema), expeditionController.getMyBookings);
 
 /**
  * @swagger
@@ -801,7 +808,7 @@ router.get('/bookings', protect, validate(getBookingsSchema), expeditionControll
  *       404:
  *         description: Booking not found
  */
-router.get('/bookings/:id', protect, validate(bookingIdParamSchema), expeditionController.getBooking);
+router.get('/bookings/:id', protect, restrictTo('customer'), validate(bookingIdParamSchema), expeditionController.getBooking);
 
 /**
  * @swagger
@@ -854,7 +861,130 @@ router.get('/bookings/:id', protect, validate(bookingIdParamSchema), expeditionC
  *       404:
  *         description: Booking not found
  */
-router.patch('/bookings/:id/cancel', protect, validate(cancelBookingSchema), expeditionController.cancelBooking);
+router.patch('/bookings/:id/cancel', protect, restrictTo('customer'), validate(cancelBookingSchema), expeditionController.cancelBooking);
+
+/**
+ * @swagger
+ * /api/expedition/reviews:
+ *   post:
+ *     summary: Submit a review for a completed Expedition booking
+ *     description: |
+ *       Authenticated customer endpoint to submit a review for a completed booking.
+ *       One review per booking. Reviews require admin approval before appearing publicly.
+ *     tags: [Expedition]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [bookingId, rating, comment]
+ *             properties:
+ *               bookingId:
+ *                 type: string
+ *                 description: ID of the completed booking
+ *               rating:
+ *                 type: integer
+ *                 minimum: 1
+ *                 maximum: 5
+ *                 example: 5
+ *               title:
+ *                 type: string
+ *                 maxLength: 200
+ *                 example: Amazing experience!
+ *               comment:
+ *                 type: string
+ *                 minLength: 10
+ *                 maxLength: 5000
+ *                 example: The tour was absolutely incredible. The guide was knowledgeable and friendly.
+ *     responses:
+ *       201:
+ *         description: Review submitted
+ *       400:
+ *         description: Booking not completed or already reviewed
+ *       404:
+ *         description: Booking not found
+ */
+router.post('/reviews', protect, restrictTo('customer'), validate(createReviewSchema), expeditionController.createReview);
+
+// ================================
+// SUPPLIER ROUTES (protected)
+// ================================
+
+/**
+ * @swagger
+ * /api/expedition/supplier/bookings:
+ *   get:
+ *     summary: Get Expedition bookings for my tours
+ *     description: |
+ *       Returns paginated bookings for the authenticated supplier's tours
+ *       that were made through Expedition. Optionally filter by status.
+ *     tags: [Expedition Supplier]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 10 }
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, enum: [PROCESSING, PENDING, CONFIRMED, COMPLETED, CANCELLED, REFUNDED, NO_SHOW] }
+ *     responses:
+ *       200:
+ *         description: Paginated bookings list
+ *       401:
+ *         description: Authentication required
+ *       404:
+ *         description: Supplier profile not found
+ */
+router.get('/supplier/bookings', protect, restrictTo('supplier'), validate(getSupplierBookingsSchema), expeditionController.getSupplierBookings);
+
+/**
+ * @swagger
+ * /api/expedition/supplier/bookings/{id}/status:
+ *   patch:
+ *     summary: Update Expedition booking status
+ *     description: |
+ *       Allows a supplier to transition a booking status.
+ *       Valid transitions: PROCESSING→CONFIRMED/CANCELLED, CONFIRMED→COMPLETED/CANCELLED/NO_SHOW, PENDING→CONFIRMED/CANCELLED.
+ *       Notifies the customer of the status change.
+ *     tags: [Expedition Supplier]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [status]
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [CONFIRMED, COMPLETED, CANCELLED, NO_SHOW]
+ *               reason:
+ *                 type: string
+ *                 maxLength: 500
+ *                 description: Required if cancelling
+ *     responses:
+ *       200:
+ *         description: Status updated
+ *       400:
+ *         description: Invalid transition
+ *       404:
+ *         description: Booking not found
+ */
+router.patch('/supplier/bookings/:id/status', protect, restrictTo('supplier'), validate(updateBookingStatusSchema), expeditionController.updateBookingStatus);
 
 // ================================
 // ADMIN ROUTES (protected + rate-limited)
@@ -1105,5 +1235,196 @@ router.delete('/admin/tours/:id', validate(removeTourSchema), expeditionControll
  *         description: Expedition tour not found (if specific ID provided)
  */
 router.post('/admin/refresh/:tourId?', validate(refreshCacheSchema), expeditionController.refreshCache);
+
+/**
+ * @swagger
+ * /api/expedition/admin/analytics/overview:
+ *   get:
+ *     summary: Expedition analytics overview
+ *     description: |
+ *       Returns aggregate metrics for Expedition: total bookings, revenue,
+ *       active tours, unique customers, cancellation rate, pending payouts.
+ *     tags: [Expedition Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: endDate
+ *         schema: { type: string, format: date }
+ *     responses:
+ *       200:
+ *         description: Overview metrics
+ */
+router.get('/admin/analytics/overview', validate(analyticsOverviewSchema), expeditionAnalyticsController.getAnalyticsOverview);
+
+/**
+ * @swagger
+ * /api/expedition/admin/analytics/revenue-trend:
+ *   get:
+ *     summary: Revenue trend data
+ *     description: |
+ *       Returns revenue bucketed by day, week, or month for a date range.
+ *     tags: [Expedition Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: endDate
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: granularity
+ *         schema: { type: string, enum: [day, week, month] }
+ *     responses:
+ *       200:
+ *         description: Revenue trend
+ */
+router.get('/admin/analytics/revenue-trend', validate(analyticsRevenueTrendSchema), expeditionAnalyticsController.getRevenueTrend);
+
+/**
+ * @swagger
+ * /api/expedition/admin/analytics/tour-performance:
+ *   get:
+ *     summary: Tour performance ranking
+ *     description: |
+ *       Returns tours ranked by booking count and revenue for a date range.
+ *     tags: [Expedition Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: endDate
+ *         schema: { type: string, format: date }
+ *     responses:
+ *       200:
+ *         description: Tour performance data
+ */
+router.get('/admin/analytics/tour-performance', validate(analyticsOverviewSchema), expeditionAnalyticsController.getTourPerformance);
+
+/**
+ * @swagger
+ * /api/expedition/admin/analytics/bookings:
+ *   get:
+ *     summary: Booking analytics
+ *     description: |
+ *       Returns status breakdown and daily booking/revenue trend.
+ *     tags: [Expedition Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: endDate
+ *         schema: { type: string, format: date }
+ *     responses:
+ *       200:
+ *         description: Booking analytics
+ */
+router.get('/admin/analytics/bookings', validate(analyticsOverviewSchema), expeditionAnalyticsController.getBookingAnalytics);
+
+/**
+ * @swagger
+ * /api/expedition/admin/analytics/conversion-funnel:
+ *   get:
+ *     summary: Conversion funnel
+ *     description: |
+ *       Returns stage-by-stage funnel from impressions through to confirmed bookings,
+ *       with conversion rates between each stage.
+ *     tags: [Expedition Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: endDate
+ *         schema: { type: string, format: date }
+ *     responses:
+ *       200:
+ *         description: Funnel data
+ */
+router.get('/admin/analytics/conversion-funnel', validate(analyticsFunnelSchema), expeditionAnalyticsController.getConversionFunnel);
+
+/**
+ * @swagger
+ * /api/expedition/admin/analytics/customers:
+ *   get:
+ *     summary: Customer analytics (CLV, repeat rate)
+ *     description: |
+ *       Returns customer metrics including total customers, repeat rate,
+ *       average order value, and customer lifetime value (CLV).
+ *     tags: [Expedition Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: endDate
+ *         schema: { type: string, format: date }
+ *     responses:
+ *       200:
+ *         description: Customer analytics
+ */
+router.get('/admin/analytics/customers', validate(analyticsOverviewSchema), expeditionAnalyticsController.getCustomerAnalytics);
+
+/**
+ * @swagger
+ * /api/expedition/admin/analytics/cart-abandonment:
+ *   get:
+ *     summary: Cart abandonment rate
+ *     description: |
+ *       Returns cart creation count vs successful checkouts with abandonment rate.
+ *     tags: [Expedition Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: endDate
+ *         schema: { type: string, format: date }
+ *     responses:
+ *       200:
+ *         description: Cart abandonment data
+ */
+router.get('/admin/analytics/cart-abandonment', validate(analyticsOverviewSchema), expeditionAnalyticsController.getCartAbandonment);
+
+/**
+ * @swagger
+ * /api/expedition/admin/analytics/search:
+ *   get:
+ *     summary: Search analytics
+ *     description: |
+ *       Returns search query data including total searches, result clicks,
+ *       click-through rate, and top search terms.
+ *     tags: [Expedition Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: endDate
+ *         schema: { type: string, format: date }
+ *     responses:
+ *       200:
+ *         description: Search analytics
+ */
+router.get('/admin/analytics/search', validate(analyticsOverviewSchema), expeditionAnalyticsController.getSearchAnalytics);
 
 module.exports = router;

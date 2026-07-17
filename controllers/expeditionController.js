@@ -9,6 +9,7 @@ const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/qu
 const { validateTravelerInfo, generateBookingNumber } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
 const { createPaymentIntent, calculateCommission, createRefund } = require('../utils/stripeHelpers');
+const { notifyAdmin } = require('../utils/adminNotificationService');
 const getConfig = require('../utils/getConfig');
 const { logActivity } = require('../utils/auditLogger');
 
@@ -1049,6 +1050,8 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError(`Bookings can only be made up to ${maxAdvanceDays} days in advance`, 400));
   }
 
+  const appliedOffer = pricing.appliedOffer || null;
+
   // Create Stripe PaymentIntent
   let paymentIntent;
   try {
@@ -1080,7 +1083,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     // Re-check capacity within transaction
     const [capacityCheck] = await tx.$queryRawUnsafe(
       `SELECT COALESCE(SUM(
-        CASE WHEN status IN ('PENDING', 'CONFIRMED')
+        CASE WHEN status IN ('PENDING', 'PROCESSING', 'CONFIRMED')
         THEN COALESCE((travelers->>'adults')::int, 0)
            + COALESCE((travelers->>'children')::int, 0)
            + COALESCE((travelers->>'infants')::int, 0)
@@ -1118,9 +1121,9 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         supplierPayout: commission.supplierPayout,
         specialRequests,
         stripePaymentIntentId: paymentIntent.id,
-        paidAt: new Date(),
-        paymentStatus: 'SUCCEEDED',
-        status: 'CONFIRMED',
+        appliedOfferId: appliedOffer?.id || null,
+        paymentStatus: 'PENDING',
+        status: 'PROCESSING',
       },
       include: {
         tour: { select: { id: true, title: true, slug: true, coverPhoto: true } },
@@ -1128,17 +1131,18 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       },
     });
 
-    // Update tour booking stats asynchronously
-    tx.tour.update({
-      where: { id: tourId },
-      data: {
-        totalBookings: { increment: 1 },
-        totalRevenue: { increment: pricing.total },
-      },
-    }).catch(() => {});
-
     return booking;
   });
+
+  // Attach booking ID to PI metadata so the webhook can find it
+  try {
+    const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+    await stripe.paymentIntents.update(paymentIntent.id, {
+      metadata: { bookingIds: result.id, source: 'expedition' },
+    });
+  } catch (err) {
+    console.error('[Expedition] Failed to update PI metadata:', err.message);
+  }
 
   // Clean up any cart items for this tour+date+customer
   prisma.cartItem
@@ -1147,22 +1151,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     })
     .catch(() => {});
 
-  // Send expedition-branded confirmation email
-  const brandName = process.env.EXPEDITION_BRAND_NAME || 'Expedition Go Tours';
-  const logoUrl = process.env.EXPEDITION_LOGO_URL || process.env.LOGO_URL;
-  const supportEmail = process.env.EXPEDITION_SUPPORT_EMAIL || process.env.SUPPORT_EMAIL || 'support@expeditiongo.com';
-
-  enqueueEmail({
-    type: 'booking-confirmation',
-    bookingId: result.id,
-    data: {
-      brandName,
-      logoUrl,
-      supportEmail,
-    },
-  });
-
-  // Notify supplier
+  // Notify supplier immediately
   enqueueNotification({
     userId: tour.supplierId,
     type: 'BOOKING_CONFIRMED',
@@ -1170,6 +1159,14 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     message: `A new booking (${result.bookingNumber}) was made through Expedition Go Tours for "${tour.title}"`,
     data: { bookingId: result.id, source: 'expedition' },
   });
+
+  // Notify expedition admins
+  notifyAdmin({
+    type: 'BOOKING_CREATED',
+    title: 'New Expedition Booking',
+    message: `Booking #${result.bookingNumber} — $${parseFloat(pricing.total).toFixed(2)} for "${tour.title}" — payment processing`,
+    data: { bookingId: result.id, tourTitle: tour.title, total: pricing.total, source: 'expedition' },
+  }).catch(() => {});
 
   enqueueEvent({
     name: 'expedition.booking_created',
@@ -1192,7 +1189,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     status: 'success',
     data: {
       booking: result,
-      message: 'Booking confirmed! You will receive a confirmation email shortly.',
+      message: 'Booking is being processed. You will receive a confirmation email shortly.',
     },
   });
 });
@@ -1395,6 +1392,15 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
       });
     }
 
+    // Decrement special offer spotsSold if an offer was applied
+    if (booking.appliedOfferId) {
+      const travelerCount = (booking.travelers?.adults || 0) + (booking.travelers?.children || 0) + (booking.travelers?.infants || 0);
+      await tx.specialOffer.update({
+        where: { id: booking.appliedOfferId },
+        data: { spotsSold: { decrement: travelerCount } },
+      });
+    }
+
     return updated;
   });
 
@@ -1414,4 +1420,187 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
   }).catch(() => {});
 
   res.status(200).json({ status: 'success', data: { booking: result } });
+});
+
+// ================================
+// REVIEWS
+// ================================
+
+exports.createReview = catchAsync(async (req, res, next) => {
+  const customerId = req.user.id;
+  const { bookingId, rating, title, comment } = req.body;
+
+  const booking = await prisma.booking.findFirst({
+    where: { id: bookingId, customerId, source: 'EXPEDITION' },
+    select: { id: true, tourId: true, status: true, paymentStatus: true, review: { select: { id: true } } },
+  });
+
+  if (!booking) {
+    return next(new AppError('Booking not found or not yours', 404));
+  }
+
+  if (booking.status !== 'COMPLETED') {
+    return next(new AppError('You can only review completed bookings', 400));
+  }
+
+  if (booking.review) {
+    return next(new AppError('You have already reviewed this booking', 409));
+  }
+
+  const review = await prisma.review.create({
+    data: {
+      bookingId: booking.id,
+      tourId: booking.tourId,
+      customerId,
+      rating,
+      title: title || null,
+      comment,
+      source: 'EXPEDITION',
+      isApproved: false,
+    },
+    include: {
+      tour: { select: { id: true, title: true, slug: true } },
+    },
+  });
+
+  enqueueEvent({
+    name: 'expedition.review_created',
+    userId: customerId,
+    req,
+    resource: 'Review',
+    resourceId: review.id,
+    properties: { tourId: booking.tourId, rating, source: 'expedition' },
+  });
+
+  res.status(201).json({
+    status: 'success',
+    data: { review },
+    message: 'Review submitted and pending approval.',
+  });
+});
+
+// ================================
+// SUPPLIER BOOKING MANAGEMENT
+// ================================
+
+exports.getSupplierBookings = catchAsync(async (req, res, next) => {
+  const supplierId = req.user.id;
+  const { status, page = 1, limit = 10 } = req.query;
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({ where: { userId: supplierId } });
+  if (!supplierProfile) return next(new AppError('Supplier profile not found', 404));
+
+  const where = {
+    tour: { supplierId },
+    source: 'EXPEDITION',
+  };
+  if (status) where.status = status;
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const take = Math.min(parseInt(limit), 100);
+
+  const [bookings, totalCount] = await Promise.all([
+    prisma.booking.findMany({
+      where,
+      include: {
+        tour: {
+          select: {
+            id: true,
+            title: true,
+            slug: true,
+            coverPhoto: true,
+            category: true,
+            city: true,
+            country: true,
+          },
+        },
+        customer: {
+          select: { id: true, name: true, email: true, photoURL: true },
+        },
+        review: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take,
+    }),
+    prisma.booking.count({ where }),
+  ]);
+
+  res.status(200).json({
+    status: 'success',
+    data: { bookings },
+    pagination: {
+      currentPage: parseInt(page),
+      totalPages: Math.ceil(totalCount / take),
+      totalCount,
+      limit: take,
+    },
+  });
+});
+
+exports.updateBookingStatus = catchAsync(async (req, res, next) => {
+  const supplierId = req.user.id;
+  const { id } = req.params;
+  const { status, reason } = req.body;
+
+  const booking = await prisma.booking.findFirst({
+    where: {
+      id,
+      source: 'EXPEDITION',
+      tour: { supplierId },
+    },
+    include: { tour: { select: { id: true, title: true } } },
+  });
+
+  if (!booking) {
+    return next(new AppError('Booking not found or not yours', 404));
+  }
+
+  const validTransitions = {
+    PROCESSING: ['CONFIRMED', 'CANCELLED'],
+    CONFIRMED: ['COMPLETED', 'CANCELLED', 'NO_SHOW'],
+    PENDING: ['CONFIRMED', 'CANCELLED'],
+  };
+
+  const allowed = validTransitions[booking.status];
+  if (!allowed || !allowed.includes(status)) {
+    return next(new AppError(`Cannot transition from ${booking.status} to ${status}`, 400));
+  }
+
+  const updateData = { status };
+  if (status === 'CANCELLED') {
+    updateData.cancellationReason = reason || null;
+    updateData.cancelledAt = new Date();
+  }
+
+  const updated = await prisma.booking.update({
+    where: { id },
+    data: updateData,
+    include: {
+      tour: { select: { id: true, title: true } },
+      customer: { select: { id: true, name: true, email: true } },
+    },
+  });
+
+  enqueueNotification({
+    userId: booking.customerId,
+    type: 'BOOKING_STATUS_UPDATED',
+    title: 'Booking Status Updated',
+    message: `Your booking "${booking.tour.title}" is now ${status}.`,
+    data: { bookingId: id, status, source: 'expedition' },
+  });
+
+  enqueueEvent({
+    name: 'expedition.booking_status_updated',
+    userId: supplierId,
+    req,
+    resource: 'Booking',
+    resourceId: id,
+    properties: { from: booking.status, to: status, source: 'expedition' },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { booking: updated },
+  });
 });

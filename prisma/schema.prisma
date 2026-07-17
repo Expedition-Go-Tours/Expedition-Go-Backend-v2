@@ -20,6 +20,7 @@ enum UserRole {
   customer
   supplier
   admin
+  expedition
 }
 
 enum SupplierStatus {
@@ -659,6 +660,7 @@ enum ConversationType {
   SUPPLIER_ADMIN
   SUPPLIER_CUSTOMER
   USER_SUPPORT
+  EXPEDITION_CUSTOMER
 }
 
 model Conversation {

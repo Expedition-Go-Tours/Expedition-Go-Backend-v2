@@ -52,7 +52,7 @@ jest.mock('../../utils/availabilityCalendar', () => ({
 const prisma = require('../../utils/prismaClient');
 const cache = require('../../utils/cacheHelper');
 const { sendEmail } = require('../../utils/emailService');
-const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../../utils/queue');
+const { enqueueEvent, enqueueNotification } = require('../../utils/queue');
 const { validateTravelerInfo, generateBookingNumber } = require('../../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../../utils/tourHelpers');
 const { createPaymentIntent, calculateCommission, createRefund } = require('../../utils/stripeHelpers');
@@ -516,7 +516,6 @@ describe('expeditionController', () => {
 
       expect(createPaymentIntent).toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(201);
-      expect(enqueueEmail).toHaveBeenCalled();
       expect(enqueueNotification).toHaveBeenCalled();
       expect(enqueueEvent).toHaveBeenCalled();
     });

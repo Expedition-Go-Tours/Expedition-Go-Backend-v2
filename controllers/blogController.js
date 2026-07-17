@@ -5,8 +5,8 @@ const AppError = require('../utils/appError');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const cache = require('../utils/cacheHelper');
 const { enqueueEvent } = require('../utils/queue');
-const { buildArticleSchema, buildArticleListSchema } = require('../utils/blogSEO');
-const { invalidateBlogCaches, LIST_CACHE_KEY, FEATURED_CACHE_KEY, DETAIL_CACHE_KEY, SITEMAP_CACHE_KEY, CATEGORIES_CACHE_KEY, TAGS_CACHE_KEY } = require('../utils/blogCache');
+const { buildArticleSchema } = require('../utils/blogSEO');
+const { invalidateBlogCaches, LIST_CACHE_KEY, DETAIL_CACHE_KEY, SITEMAP_CACHE_KEY, CATEGORIES_CACHE_KEY, TAGS_CACHE_KEY } = require('../utils/blogCache');
 
 const VIEW_CACHE_MAX = 10000;
 const viewTrackingCache = new Map();

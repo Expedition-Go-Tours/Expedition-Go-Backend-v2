@@ -5,6 +5,7 @@ const AppError = require('../utils/appError');
 const { signAccessToken, signRefreshToken, signPasswordResetToken, verifyPasswordResetToken, setAuthCookies, clearAuthCookies } = require('../config/jwt');
 const { storeRefreshToken, rotateRefreshToken, clearRefreshToken } = require('../utils/refreshTokenHelper');
 const { enqueueEvent, enqueueCreateStripeCustomer } = require('../utils/queue');
+const { logAuthEvent } = require('../utils/auditLogger');
 const passport = require('passport');
 const { OAuth2Client } = require('google-auth-library');
 
@@ -12,12 +13,30 @@ exports.login = catchAsync(async (req, res, next) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
+    logAuthEvent({
+      userEmail: req.body.email,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      event: 'login',
+      success: false,
+      details: { method: 'local', reason: 'missing_credentials' },
+    });
     return next(new AppError('Please provide email and password', 400));
   }
 
   passport.authenticate('local', { session: false }, async (err, user, info) => {
     if (err) return next(err);
-    if (!user) return next(new AppError(info?.message || 'Invalid credentials', 401));
+    if (!user) {
+      logAuthEvent({
+        userEmail: req.body.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        event: 'login',
+        success: false,
+        details: { method: 'local', reason: 'invalid_credentials' },
+      });
+      return next(new AppError(info?.message || 'Invalid credentials', 401));
+    }
 
     const accessToken = signAccessToken({ userId: user.id });
     const refreshToken = signRefreshToken({ userId: user.id });
@@ -35,6 +54,16 @@ exports.login = catchAsync(async (req, res, next) => {
       resource: 'User',
       resourceId: user.id,
       properties: { method: 'local' },
+    });
+
+    logAuthEvent({
+      userId: user.id,
+      userEmail: user.email,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      event: 'login',
+      success: true,
+      details: { method: 'local' },
     });
 
     setAuthCookies(res, accessToken, refreshToken);
@@ -221,6 +250,16 @@ exports.forgotPassword = catchAsync(async (req, res, next) => {
     console.error('Failed to send password reset email:', err.message);
   }
 
+  logAuthEvent({
+    userId: user.id,
+    userEmail: user.email,
+    ipAddress: req.ip,
+    userAgent: req.headers['user-agent'],
+    event: 'password_reset_requested',
+    success: true,
+    details: { method: 'email' },
+  });
+
   res.status(200).json({
     status: 'success',
     message: 'If an account with that email exists, a password reset link has been sent.',
@@ -263,6 +302,14 @@ exports.resetPassword = catchAsync(async (req, res, next) => {
     resourceId: decoded.userId,
   });
 
+  logAuthEvent({
+    userId: decoded.userId,
+    ipAddress: req.ip,
+    userAgent: req.headers['user-agent'],
+    event: 'password_reset_completed',
+    success: true,
+  });
+
   res.status(200).json({
     status: 'success',
     message: 'Password has been reset successfully. You can now log in with your new password.',
@@ -295,6 +342,15 @@ exports.changePassword = catchAsync(async (req, res, next) => {
   await prisma.user.update({
     where: { id: user.id },
     data: { passwordHash },
+  });
+
+  logAuthEvent({
+    userId: user.id,
+    userEmail: user.email,
+    ipAddress: req.ip,
+    userAgent: req.headers['user-agent'],
+    event: 'password_changed',
+    success: true,
   });
 
   res.status(200).json({
@@ -346,6 +402,16 @@ exports.googleCallback = catchAsync(async (req, res, next) => {
       resource: 'User',
       resourceId: user.id,
       properties: { method: 'google' },
+    });
+
+    logAuthEvent({
+      userId: user.id,
+      userEmail: user.email,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      event: 'login',
+      success: true,
+      details: { method: 'google' },
     });
 
     const origin = req.query.state || process.env.CLIENT_URL || 'http://localhost:8080';
@@ -425,6 +491,16 @@ exports.googleOneTap = catchAsync(async (req, res, next) => {
     resource: 'User',
     resourceId: user.id,
     properties: { method: 'google_onetap' },
+  });
+
+  logAuthEvent({
+    userId: user.id,
+    userEmail: user.email,
+    ipAddress: req.ip,
+    userAgent: req.headers['user-agent'],
+    event: 'login',
+    success: true,
+    details: { method: 'google_onetap' },
   });
 
   setAuthCookies(res, accessToken, refreshToken);

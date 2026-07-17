@@ -20,6 +20,107 @@ const catchAsync = require('../utils/catchAsync');
 
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const cache = require('../utils/cacheHelper');
+const { logActivity } = require('../utils/auditLogger');
+
+function buildAuditMessage(action, resource, metadata = {}) {
+  if (action.startsWith('webhook.')) {
+    const eventType = action.replace(/^webhook\.(stripe|test)\.?/, '');
+    const isError = action.includes('.error');
+    const prefix = action.includes('test.') ? 'Test webhook' : 'Webhook';
+    const suffix = isError ? ' — error' : '';
+    return `${prefix} received — ${eventType}${suffix}`;
+  }
+
+  const messages = {
+    'auth.login': () => {
+      const methods = { local: 'email/password', google: 'Google', google_onetap: 'Google One Tap' };
+      const method = methods[metadata.method] || metadata.method || 'unknown';
+      return metadata.success === false
+        ? `Failed login via ${method}${metadata.reason ? ` — ${metadata.reason.replace(/_/g, ' ')}` : ''}`
+        : `Login via ${method}`;
+    },
+    'auth.password_changed': () => 'Password changed',
+    'auth.password_reset_requested': () => 'Password reset requested',
+    'auth.password_reset_completed': () => 'Password reset completed',
+    'booking.created': () => {
+      const tour = metadata.tourTitle || '';
+      const price = metadata.total ? `${metadata.currency || '$'}${metadata.total}` : '';
+      const details = [tour, price].filter(Boolean).join(' ');
+      return details ? `Booking created — ${details}` : 'Booking created';
+    },
+    'booking.cancelled': () => 'Booking cancelled',
+    'booking.status_updated': () => 'Booking status updated',
+    'booking.payment_confirmed': () => {
+      const ref = metadata.reference ? ` (Ref: ${metadata.reference})` : '';
+      return `Payment confirmed${ref}`;
+    },
+    'tour.created': () => 'Tour created',
+    'tour.updated': () => 'Tour updated',
+    'tour.deleted': () => 'Tour deleted',
+    'tour.photo.deleted': () => 'Tour photo removed',
+    'tour.seeded': () => 'Tours imported from file',
+    'review.created': () => 'Review submitted',
+    'review.updated': () => 'Review updated',
+    'review.deleted': () => 'Review deleted',
+    'review.response_added': () => 'Response added to review',
+    'review.response_updated': () => 'Response updated on review',
+    'review.response_deleted': () => 'Response removed from review',
+    'review.approve': () => 'Review approved',
+    'review.reject': () => 'Review rejected',
+    'review.flag': () => 'Review flagged',
+    'review.admin_updated': () => 'Review updated by admin',
+    'review.admin_deleted': () => 'Review removed by admin',
+    'review.admin_response_updated': () => 'Review response updated by admin',
+    'review.admin_response_deleted': () => 'Review response removed by admin',
+    'payout.approved': () => 'Payout approved',
+    'payout.released': () => 'Payout released',
+    'payout.failed': () => 'Payout failed',
+    'payout_method.added': () => 'Payout method added',
+    'payout_method.updated': () => 'Payout method updated',
+    'payout_method.deleted': () => 'Payout method removed',
+    'payout_method.verified': () => 'Payout method verified',
+    'payout_method.unverified': () => 'Payout method unverified',
+    'supplier.applied': () => 'Supplier application received',
+    'supplier.approve': () => 'Supplier approved',
+    'supplier.reject': () => 'Supplier rejected',
+    'supplier.suspended': () => 'Supplier suspended',
+    'supplier.reactivated': () => 'Supplier reactivated',
+    'supplier.activated': () => 'Supplier activated',
+    'special-offer.created': () => 'Special offer created',
+    'special-offer.updated': () => 'Special offer updated',
+    'special-offer.deleted': () => 'Special offer removed',
+    'special-offer.toggled': () => 'Special offer toggled',
+    'team.member_added': () => 'Team member added',
+    'team.invite_sent': () => 'Team invite sent',
+    'team.invite_accepted': () => 'Team invite accepted',
+    'team.invite_declined': () => 'Team invite declined',
+    'team.invite_resend': () => 'Team invite resent',
+    'team.invite_revoked': () => 'Team invite revoked',
+    'team.member_removed': () => 'Team member removed',
+    'team.role_changed': () => 'Team role changed',
+    'user.profile_updated': () => 'Profile updated',
+    'user.account_deleted': () => 'Account deleted',
+    'user.deleted_by_admin': () => 'User account deleted by admin',
+    'user.wishlist_added': () => 'Wishlist item added',
+    'user.wishlist_removed': () => 'Wishlist item removed',
+    'user.like_added': () => 'Tour liked',
+    'user.like_removed': () => 'Tour unliked',
+    'settings.updated': () => 'System settings updated',
+    'admin_role.created': () => 'Admin role created',
+    'admin_role.updated': () => 'Admin role updated',
+    'admin_role.deleted': () => 'Admin role deleted',
+    'admin.granted': () => 'Admin privileges granted',
+    'admin.role_changed': () => 'Admin role changed',
+    'admin.revoked': () => 'Admin privileges revoked',
+    'system.cache_cleared': () => 'Application cache cleared',
+  };
+
+  const builder = messages[action];
+  if (builder) return builder();
+
+  return action.replace(/\./g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 /**
  * GET /api/admin/analytics/overview
  *
@@ -74,6 +175,7 @@ exports.getOverview = catchAsync(async (req, res, next) => {
     topSuppliers,
     bookingStatusDist,
     recentEvents,
+    recentAuditLogs,
     allUsers,
     totalEventCount,
   ] = await Promise.all([
@@ -211,6 +313,22 @@ exports.getOverview = catchAsync(async (req, res, next) => {
       },
     }),
 
+    /* Recent admin audit logs (last 20) */
+    prisma.auditLog.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+      select: {
+        id: true,
+        userId: true,
+        userEmail: true,
+        action: true,
+        resource: true,
+        resourceId: true,
+        metadata: true,
+        createdAt: true,
+      },
+    }),
+
     /* User names for event feed */
     prisma.user.findMany({
       select: { id: true, name: true },
@@ -262,10 +380,26 @@ exports.getOverview = catchAsync(async (req, res, next) => {
         status: b.status,
         count:  b._count,
       })),
-      eventFeed: recentEvents.map((e) => {
-        const user = allUsers.find((u) => u.id === e.userId);
-        return { ...e, userName: user?.name || null };
-      }),
+      eventFeed: [
+        ...recentEvents.map((e) => ({ ...e })),
+        ...recentAuditLogs.map((a) => ({
+          id: a.id,
+          name: a.action,
+          userId: a.userId,
+          resource: a.resource,
+          resourceId: a.resourceId,
+          properties: {
+            message: buildAuditMessage(a.action, a.resource, (a.metadata || {})),
+          },
+          createdAt: a.createdAt,
+        })),
+      ]
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 20)
+        .map((e) => {
+          const user = allUsers.find((u) => u.id === e.userId);
+          return { ...e, userName: user?.name || null };
+        }),
       totalEvents: totalEventCount,
     },
   };
@@ -1455,6 +1589,23 @@ exports.confirmPayment = catchAsync(async (req, res, next) => {
       status: true,
       paymentStatus: true,
       paidAt: true,
+    },
+  });
+
+  logActivity({
+    userId: req.user.id,
+    userEmail: req.user.email,
+    ipAddress: req.ip,
+    userAgent: req.headers['user-agent'],
+    action: 'booking.payment_confirmed',
+    resource: 'Booking',
+    resourceId: id,
+    metadata: {
+      previousPaymentStatus: booking.paymentStatus,
+      previousStatus: booking.status,
+      newPaymentStatus: updated.paymentStatus,
+      newStatus: updated.status,
+      reference: reference || null,
     },
   });
 

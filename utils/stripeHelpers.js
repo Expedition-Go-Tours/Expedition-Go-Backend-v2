@@ -184,20 +184,38 @@ async function processStripeWebhook(event) {
   // not affect the booking state (which is already committed).
 
   for (const booking of bookings) {
-    enqueueEmail({ type: 'booking-confirmation', bookingId: booking.id })
+    const isExpedition = booking.source === 'EXPEDITION';
+    const emailData = isExpedition
+      ? {
+          brandName: process.env.EXPEDITION_BRAND_NAME || 'Expedition Go Tours',
+          logoUrl: process.env.EXPEDITION_LOGO_URL || process.env.LOGO_URL,
+          supportEmail: process.env.EXPEDITION_SUPPORT_EMAIL || process.env.SUPPORT_EMAIL || 'support@expeditiongo.com',
+        }
+      : {};
+
+    enqueueEmail({ type: 'booking-confirmation', bookingId: booking.id, data: emailData })
       .catch((err) => console.error('[Email] Booking confirmation failed:', err.message));
     enqueueEmail({ type: 'supplier-booking-notification', bookingId: booking.id })
       .catch((err) => console.error('[Email] Supplier notification failed:', err.message));
 
-    notifyAdmin({
-      type: 'PAYOUT_NEEDS_APPROVAL',
-      title: 'New Payout Pending',
-      message: `Booking #${booking.bookingNumber}: $${parseFloat(booking.supplierPayout).toFixed(2)} payout awaiting approval`,
-      data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.supplierPayout },
-    }).catch((err) => console.error('[AdminNotification] Payout notification failed:', err.message));
+    if (isExpedition) {
+      notifyAdmin({
+        type: 'BOOKING_CONFIRMED',
+        title: 'Expedition Booking Confirmed',
+        message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.total).toFixed(2)} for "${booking.tour.title}" has been confirmed`,
+        data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.total, source: 'expedition' },
+      }).catch((err) => console.error('[AdminNotification] Expedition notification failed:', err.message));
+    } else {
+      notifyAdmin({
+        type: 'PAYOUT_NEEDS_APPROVAL',
+        title: 'New Payout Pending',
+        message: `Booking #${booking.bookingNumber}: $${parseFloat(booking.supplierPayout).toFixed(2)} payout awaiting approval`,
+        data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.supplierPayout },
+      }).catch((err) => console.error('[AdminNotification] Payout notification failed:', err.message));
+    }
 
     enqueueEvent({
-      name: 'booking.completed',
+      name: isExpedition ? 'expedition.booking_completed' : 'booking.completed',
       userId: booking.customerId,
       resource: 'Booking',
       resourceId: booking.id,
@@ -210,7 +228,7 @@ async function processStripeWebhook(event) {
         supplierId: booking.tour?.supplierId,
         paymentIntentId: event.data.object?.id,
       },
-      source: 'webhook',
+      source: isExpedition ? 'expedition' : 'webhook',
     });
   }
 
@@ -229,37 +247,67 @@ async function processStripeWebhook(event) {
  */
 async function handlePaymentSucceeded(paymentIntent, tx = null) {
   const bookingIds = paymentIntent.metadata.bookingIds?.split(',') || [];
-  
-  if (bookingIds.length === 0) {
-    console.log(' No booking IDs found in payment intent metadata');
-    return [];
-  }
-
   let bookings;
   const payoutMinThreshold = parseFloat(await getConfig('payout.min_threshold', '0'));
 
   const dbWork = async (client) => {
-    const updatedBookings = await client.booking.updateMany({
-      where: {
-        id: { in: bookingIds },
-        stripePaymentIntentId: paymentIntent.id
-      },
-      data: {
-        status: 'CONFIRMED',
-        paymentStatus: 'SUCCEEDED',
-        paidAt: new Date()
-      }
-    });
+    // Try to find bookings by metadata.bookingIds (main flow: bookings exist before PI)
+    if (bookingIds.length > 0) {
+      const updatedBookings = await client.booking.updateMany({
+        where: {
+          id: { in: bookingIds },
+          stripePaymentIntentId: paymentIntent.id
+        },
+        data: {
+          status: 'CONFIRMED',
+          paymentStatus: 'SUCCEEDED',
+          paidAt: new Date()
+        }
+      });
 
-    console.log(` Updated ${updatedBookings.count} bookings to CONFIRMED`);
+      console.log(` Updated ${updatedBookings.count} bookings to CONFIRMED`);
 
-    bookings = await client.booking.findMany({
-      where: { id: { in: bookingIds } },
-      include: {
-        customer: true,
-        tour: { include: { supplier: true } }
+      bookings = await client.booking.findMany({
+        where: { id: { in: bookingIds } },
+        include: {
+          customer: true,
+          tour: { include: { supplier: true } }
+        }
+      });
+    }
+
+    // Fallback: find expedition booking by stripePaymentIntentId
+    // (booking was created after PI confirmation, metadata updated async)
+    if (!bookings || bookings.length === 0) {
+      const updated = await client.booking.updateMany({
+        where: {
+          stripePaymentIntentId: paymentIntent.id,
+          status: 'PROCESSING',
+          paymentStatus: 'PENDING'
+        },
+        data: {
+          status: 'CONFIRMED',
+          paymentStatus: 'SUCCEEDED',
+          paidAt: new Date()
+        }
+      });
+
+      if (updated.count > 0) {
+        console.log(` Updated ${updated.count} expedition bookings to CONFIRMED`);
+        bookings = await client.booking.findMany({
+          where: { stripePaymentIntentId: paymentIntent.id },
+          include: {
+            customer: true,
+            tour: { include: { supplier: true } }
+          }
+        });
       }
-    });
+    }
+
+    if (!bookings || bookings.length === 0) {
+      console.log(' No bookings found for payment intent:', paymentIntent.id);
+      return;
+    }
 
     for (const booking of bookings) {
       await client.notification.create({
@@ -333,7 +381,7 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
     await prisma.$transaction(dbWork);
   }
 
-  return bookings;
+  return bookings || [];
 }
 
 /**
@@ -344,17 +392,31 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
  */
 async function handlePaymentFailed(paymentIntent, tx = null) {
   const bookingIds = paymentIntent.metadata.bookingIds?.split(',') || [];
-  
-  if (bookingIds.length === 0) {
-    return { success: false, message: 'No bookings found' };
-  }
-
   const client = tx || prisma;
 
-  await client.booking.updateMany({
+  if (bookingIds.length > 0) {
+    await client.booking.updateMany({
+      where: {
+        id: { in: bookingIds },
+        stripePaymentIntentId: paymentIntent.id
+      },
+      data: {
+        status: 'CANCELLED',
+        paymentStatus: 'FAILED',
+        cancellationReason: 'Payment failed'
+      }
+    });
+
+    console.log(` Marked ${bookingIds.length} bookings as CANCELLED due to payment failure`);
+    return { success: true, message: `${bookingIds.length} bookings cancelled` };
+  }
+
+  // Fallback: find expedition booking by stripePaymentIntentId
+  const updated = await client.booking.updateMany({
     where: {
-      id: { in: bookingIds },
-      stripePaymentIntentId: paymentIntent.id
+      stripePaymentIntentId: paymentIntent.id,
+      status: 'PROCESSING',
+      paymentStatus: 'PENDING'
     },
     data: {
       status: 'CANCELLED',
@@ -363,8 +425,11 @@ async function handlePaymentFailed(paymentIntent, tx = null) {
     }
   });
 
-  console.log(` Marked ${bookingIds.length} bookings as CANCELLED due to payment failure`);
-  return { success: true, message: `${bookingIds.length} bookings cancelled` };
+  if (updated.count > 0) {
+    console.log(` Marked ${updated.count} expedition bookings as CANCELLED due to payment failure`);
+  }
+
+  return { success: true, message: `${updated.count} bookings cancelled` };
 }
 
 /**

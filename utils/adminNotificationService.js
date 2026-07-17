@@ -82,6 +82,26 @@ async function acknowledgeAll(adminId) {
   }
 }
 
+async function emitToRoom(room, { type, title, message, data = {} }) {
+  try {
+    const app = require('../app');
+    const io = app.get('io');
+    if (io) {
+      io.to(room).emit('admin-notification', {
+        type,
+        title,
+        message,
+        data,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    return { success: true };
+  } catch (error) {
+    console.error('[AdminNotification] emitToRoom error:', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
 async function getStats() {
   const [total, unacknowledged, byType, recent] = await Promise.all([
     prisma.adminNotification.count(),
@@ -100,4 +120,4 @@ async function getStats() {
   return { total, unacknowledged, byType, recent };
 }
 
-module.exports = { notifyAdmin, getNotifications, acknowledgeNotification, acknowledgeAll, getStats };
+module.exports = { notifyAdmin, emitToRoom, getNotifications, acknowledgeNotification, acknowledgeAll, getStats };

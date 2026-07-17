@@ -125,7 +125,7 @@ async function delPattern(pattern) {
       }
     });
 
-    await new Promise((resolve, reject) => {
+    await new Promise((resolve, _reject) => {
       stream.on('end', () => {
         pipeline.exec()
           .then(() => resolve())

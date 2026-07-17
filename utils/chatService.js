@@ -1,6 +1,6 @@
 const prisma = require('./prismaClient');
 const { enqueueNotification } = require('./queue');
-const { notifyAdmin } = require('./adminNotificationService');
+const { notifyAdmin, emitToRoom } = require('./adminNotificationService');
 const { deleteCloudinaryImage } = require('./cloudinaryHelper');
 const logger = require('./logger');
 
@@ -26,12 +26,39 @@ async function getSharedAdminId() {
   return _sharedAdminId;
 }
 
+let _sharedExpeditionId = null;
+
+async function getSharedExpeditionId() {
+  if (!_sharedExpeditionId) {
+    const config = await prisma.systemConfig.findUnique({
+      where: { key: 'chat.expedition_id' },
+      select: { value: true }
+    });
+    if (config?.value) {
+      _sharedExpeditionId = config.value;
+    } else {
+      const expedition = await prisma.user.findFirst({
+        where: { roles: { has: 'expedition' } },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true }
+      });
+      _sharedExpeditionId = expedition?.id || null;
+    }
+  }
+  return _sharedExpeditionId;
+}
+
 async function resolveChatUserId(userId) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { roles: true }
   });
-  if (user?.roles?.includes('admin')) {
+  if (!user) return userId;
+  if (user.roles.includes('expedition')) {
+    const sharedId = await getSharedExpeditionId();
+    return sharedId || userId;
+  }
+  if (user.roles.includes('admin')) {
     const sharedId = await getSharedAdminId();
     return sharedId || userId;
   }
@@ -259,16 +286,35 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
     select: { roles: true, name: true }
   });
 
-  const chatType = participant.conversation.type === 'SUPPLIER_ADMIN' ? 'suppliers' : 'customers';
+  let chatType;
+  if (participant.conversation.type === 'SUPPLIER_ADMIN') {
+    chatType = 'suppliers';
+  } else if (participant.conversation.type === 'EXPEDITION_CUSTOMER') {
+    chatType = 'expedition';
+  } else {
+    chatType = 'customers';
+  }
 
-  if (sender && sender.roles.includes('supplier')) {
-    console.log('[ChatService] notifyAdmin called:', { conversationId, conversationType: participant.conversation.type, chatType, senderRoles: sender.roles, senderName: sender.name });
-    notifyAdmin({
-      type: 'NEW_MESSAGE',
-      title: `New message from ${sender.name}`,
-      message: content.length > 100 ? content.slice(0, 100) + '...' : content,
-      data: { conversationId, senderId, senderName: sender.name, messageId: message.id, chatType }
-    });
+  if (sender) {
+    if (sender.roles.includes('supplier')) {
+      console.log('[ChatService] notifyAdmin called:', { conversationId, conversationType: participant.conversation.type, chatType, senderRoles: sender.roles, senderName: sender.name });
+      notifyAdmin({
+        type: 'NEW_MESSAGE',
+        title: `New message from ${sender.name}`,
+        message: content.length > 100 ? content.slice(0, 100) + '...' : content,
+        data: { conversationId, senderId, senderName: sender.name, messageId: message.id, chatType }
+      });
+    }
+
+    if (chatType === 'expedition' && !sender.roles.includes('expedition')) {
+      console.log('[ChatService] emitToRoom expedition-room:', { conversationId, conversationType: participant.conversation.type, chatType, senderRoles: sender.roles, senderName: sender.name });
+      emitToRoom('expedition-room', {
+        type: 'NEW_MESSAGE',
+        title: `New message from ${sender.name}`,
+        message: content.length > 100 ? content.slice(0, 100) + '...' : content,
+        data: { conversationId, senderId, senderName: sender.name, messageId: message.id, chatType }
+      });
+    }
   }
 
   return message;
@@ -413,6 +459,7 @@ module.exports = {
   getUnreadCount,
   resolveChatUserId,
   getSharedAdminId,
+  getSharedExpeditionId,
   updateMessage,
   deleteMessage,
   deleteConversation,
