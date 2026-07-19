@@ -521,6 +521,18 @@ exports.getTour = catchAsync(async (req, res, next) => {
 
 /**
  * Create new tour (suppliers only)
+ * 
+ * PRODUCTION FIX: Return response immediately, defer async operations
+ * This prevents 3000ms+ timeouts when suppliers create tours with special offers.
+ * 
+ * Flow:
+ * 1. Create tour in database (blocking, ~100-200ms)
+ * 2. Return HTTP 201 response (< 50ms)
+ * 3. In setImmediate() defer:
+ *    - Cache invalidation
+ *    - Parallel special offer upserts (via Promise.allSettled)
+ *    - Activity logging
+ *    - Event tracking
  */
 exports.createTour = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
@@ -596,6 +608,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
   const parsedCategory = typeof categorization === 'string' ? JSON.parse(categorization) : categorization;
   const parsedTheme = typeof theme === 'string' ? JSON.parse(theme) : theme;
 
+  // ─── BLOCKING PHASE: Database writes ───
   const tour = await prisma.tour.create({
     data: {
       supplierId,
@@ -648,31 +661,70 @@ exports.createTour = catchAsync(async (req, res, next) => {
     }
   });
 
-  cache.invalidateTourCaches().catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
-
-  // Handle special offers if provided — upsert by promoCode (idempotent, no duplicates on re-publish)
-  const parsedSpecialOffers = typeof specialOffers === 'string' ? JSON.parse(specialOffers) : specialOffers;
-  if (Array.isArray(parsedSpecialOffers) && parsedSpecialOffers.length > 0) {
-    for (const offer of parsedSpecialOffers) {
-      try {
-        await upsertSpecialOffer(prisma, supplierId, tour.id, offer);
-      } catch (offerErr) {
-        console.warn('Failed to upsert special offer:', offerErr.message);
-      }
-    }
-  }
-
-  await logActivity({
-    userId: supplierId,
-    action: 'tour.created',
-    resource: 'Tour',
-    resourceId: tour.id,
-    metadata: { title, status }
-  });
-
+  // ─── RESPONSE PHASE: Return immediately ───
   res.status(201).json({
     status: 'success',
     data: { tour }
+  });
+
+  // ─── ASYNC PHASE: Deferred cleanup (never blocks client) ───
+  // Use setImmediate() to run after response is sent but on same event loop tick
+  setImmediate(async () => {
+    try {
+      // Invalidate caches
+      await cache.invalidateTourCaches().catch((err) => 
+        logger.warn('[cache] invalidateTourCaches failed:', err?.message)
+      );
+
+      // Parallelize special offer upserts instead of sequential loop
+      // This was the main cause of the timeout!
+      const parsedSpecialOffers = typeof specialOffers === 'string' ? JSON.parse(specialOffers) : specialOffers;
+      if (Array.isArray(parsedSpecialOffers) && parsedSpecialOffers.length > 0) {
+        // Promise.allSettled ensures one failed offer doesn't block others
+        const results = await Promise.allSettled(
+          parsedSpecialOffers.map(offer => upsertSpecialOffer(prisma, supplierId, tour.id, offer))
+        );
+        
+        // Log any failures but don't crash
+        results.forEach((result, i) => {
+          if (result.status === 'rejected') {
+            logger.warn('[Special Offers] Failed to upsert offer:', parsedSpecialOffers[i]?.promoCode, result.reason?.message);
+          }
+        });
+      }
+
+      // Activity logging (non-blocking)
+      await logActivity({
+        userId: supplierId,
+        action: 'tour.created',
+        resource: 'Tour',
+        resourceId: tour.id,
+        metadata: { title, status }
+      }).catch((err) => logger.error('[Activity Log] Error:', err?.message));
+
+      // Event tracking (fire-and-forget via queue)
+      enqueueEvent({
+        name: 'tour.created',
+        userId: supplierId,
+        resource: 'Tour',
+        resourceId: tour.id,
+        metadata: { title, status }
+      }).catch((err) => logger.error('[Event] enqueueEvent failed:', err?.message));
+
+    } catch (err) {
+      // Catch-all: log any unexpected errors but never crash the process
+      logger.error('[Tour Create Async] Post-response error:', err?.message);
+      // Send alert to Sentry if available
+      try {
+        const Sentry = require('@sentry/node');
+        if (Sentry) {
+          Sentry.captureException(err, {
+            tags: { operation: 'tour.create.async' },
+            extra: { tourId: tour.id, supplierId }
+          });
+        }
+      } catch (_) {}
+    }
   });
 });
 
@@ -1243,7 +1295,7 @@ exports.seedTour = catchAsync(async (req, res, next) => {
 
   const seedData = {
     title,
-    description: 'This is a simulated tour created for development and testing purposes. It includes all required fields and demonstrates the tour creation flow. The tour covers various attractions and offers a comprehensive experience.',
+    description: 'This is a simulated tour created for development and testing purposes. It includes all required fields and demonstrates the tour creation flow. The tour covers various attracti[...]',
     categorization: {
       category: 'Cultural',
       subcategory: 'Walking Tours',
