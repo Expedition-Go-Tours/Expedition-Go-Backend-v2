@@ -17,6 +17,7 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 const { createSlug, validateTourData } = require('../utils/tourHelpers');
+const { productToTour } = require('../utils/productToTour');
 const { logActivity } = require('../utils/auditLogger');
 const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const { 
@@ -556,6 +557,14 @@ exports.createTour = catchAsync(async (req, res, next) => {
     }
   }
 
+  // Map flat 13-step store shape to JSON blobs + normalized columns
+  const mapped = productToTour(req.body);
+  for (const key of Object.keys(mapped)) {
+    if (req.body[key] === undefined && mapped[key] !== undefined) {
+      req.body[key] = mapped[key];
+    }
+  }
+
   // Validate tour data
   const validationResult = validateTourData(req.body);
   if (!validationResult.isValid) {
@@ -754,6 +763,16 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     });
     if (!hasVerifiedMethod) {
       return next(new AppError('You must add and verify at least one payout method before publishing tours', 400));
+    }
+  }
+
+  // Map flat 13-step store shape to JSON blobs if flat fields are present
+  if (req.body.pricingModel || req.body.scheduleType || req.body.language) {
+    const mapped = productToTour(req.body);
+    for (const key of Object.keys(mapped)) {
+      if (req.body[key] === undefined && mapped[key] !== undefined) {
+        req.body[key] = mapped[key];
+      }
     }
   }
 
@@ -1330,7 +1349,7 @@ exports.seedTour = catchAsync(async (req, res, next) => {
     schedulesAndPricing: {
       travelerDetails: {
         pricingModel: 'perPerson',
-        maxTravelersPerBooking: 15,
+        maxParticipants: 15,
         ageGroups: [
           { label: 'Adult', minAge: 13, maxAge: 99 },
           { label: 'Child', minAge: 6, maxAge: 12 },
@@ -1666,5 +1685,25 @@ async function upsertSpecialOffer(prisma, supplierId, tourId, offer) {
     },
   });
 }
+
+/**
+ * Upload photos to Cloudinary without creating a tour.
+ * Accepts multipart/form-data with `photos` field (array of files).
+ * Returns an array of Cloudinary URLs.
+ */
+exports.uploadPhotos = catchAsync(async (req, res, next) => {
+  const uploadedPhotos = (req.files || []).map(f => f.path).filter(isValidCloudinaryUrl);
+
+  if (uploadedPhotos.length === 0) {
+    return next(new AppError('No valid images were uploaded', 400));
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      photos: uploadedPhotos,
+    },
+  });
+});
 
 module.exports = exports;

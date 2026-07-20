@@ -619,6 +619,7 @@ describe('tourController', () => {
       };
 
       await controller.createTour(req, res, next);
+      await new Promise(resolve => setImmediate(resolve));
 
       expect(logActivity).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -640,6 +641,7 @@ describe('tourController', () => {
       };
 
       await controller.createTour(req, res, next);
+      await new Promise(resolve => setImmediate(resolve));
 
       expect(cache.invalidateTourCaches).toHaveBeenCalled();
     });

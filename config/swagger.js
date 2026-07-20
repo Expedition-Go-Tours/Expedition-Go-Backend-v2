@@ -1059,20 +1059,13 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
                 travelerDetails: {
                   type: 'object',
                   description: 'Traveler categorization and limits',
-                  required: ['pricingModel', 'maxTravelersPerBooking', 'ageGroups'],
+                  required: ['pricingModel', 'ageGroups'],
                   properties: {
                     pricingModel: {
                       type: 'string',
-                      enum: ['group', 'perPerson', 'perBooking'],
+                      enum: ['perPerson', 'perGroup'],
                       description: 'How pricing is calculated',
                       example: 'perPerson'
-                    },
-                    maxTravelersPerBooking: {
-                      type: 'integer',
-                      description: 'Maximum travelers per single booking',
-                      minimum: 1,
-                      maximum: 50,
-                      example: 15
                     },
                     ageGroups: {
                       type: 'array',

@@ -377,7 +377,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
   }
 
   // Validate booking rules from system config (fetched in parallel)
-  const [minAdvanceHours, maxAdvanceDays, maxTravelersPerBooking] = await Promise.all([
+  const [minAdvanceHours, maxAdvanceDays, systemMaxTravelers] = await Promise.all([
     getConfig('booking.min_advance_hours', '24').then(v => parseInt(v)),
     getConfig('booking.max_advance_days', '365').then(v => parseInt(v)),
     getConfig('booking.max_travelers', '50').then(v => parseInt(v)),
@@ -404,9 +404,9 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     }
 
     const totalTravelers = (item.travelers.adults || 0) + (item.travelers.children || 0) + (item.travelers.infants || 0);
-    if (totalTravelers > maxTravelersPerBooking) {
+    if (totalTravelers > systemMaxTravelers) {
       return next(new AppError(
-        `Total travelers (${totalTravelers}) exceeds the maximum of ${maxTravelersPerBooking} per booking`,
+        `Total travelers (${totalTravelers}) exceeds the maximum of ${systemMaxTravelers} per booking`,
         400
       ));
     }
@@ -466,7 +466,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
         item.tourId,
         item.selectedDate instanceof Date ? item.selectedDate.toISOString().split('T')[0] : item.selectedDate
       );
-      const availableSpots = (item.tour.schedulesAndPricing?.travelerDetails?.maxTravelersPerBooking || 50) - parseInt(capacityCheck.currentBookings);
+      const availableSpots = (item.tour.schedulesAndPricing?.travelerDetails?.maxParticipants || 50) - parseInt(capacityCheck.currentBookings);
       if (totalTravelers > availableSpots) {
         throw new Error(`Only ${availableSpots} spots left, but ${totalTravelers} requested`);
       }

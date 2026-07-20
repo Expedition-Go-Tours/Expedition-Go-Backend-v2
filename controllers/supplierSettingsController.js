@@ -161,7 +161,7 @@ exports.getBookingRules = catchAsync(async (req, res) => {
 
   const defaults = {
     confirmationType: 'INSTANT',
-    maxTravelersPerBooking: 15,
+    maxParticipants: 15,
     minAdvanceHours: 24,
     maxAdvanceDays: 365,
     cancellationPolicy: 'Free cancellation up to 24 hours before start time',

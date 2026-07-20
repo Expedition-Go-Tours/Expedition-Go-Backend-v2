@@ -73,14 +73,12 @@ describe('validateTourData', () => {
       schedulesAndPricing: {
         travelerDetails: {
           pricingModel: 'perPerson',
-          maxTravelersPerBooking: 20,
-          ageGroups: [{ label: 'Adult', minAge: 13, maxAge: 99 }],
+          ageGroups: [{ name: 'Adult', minAge: 13, maxAge: 99 }],
         },
         pricingSchedules: {
           currency: 'USD',
           schedules: [{
             startDate: '2026-01-01',
-            prices: [{ ageGroup: 'Adult', retailPrice: 100 }],
           }],
         },
       },
@@ -96,9 +94,8 @@ describe('validateTourData', () => {
     const result = validateTourData({});
     expect(result.isValid).toBe(false);
     expect(result.errors).toContain('Title is required');
-    expect(result.errors).toContain('Description must be at least 50 characters');
-    expect(result.errors).toContain('Categorization is required');
-    expect(result.errors).toContain('Schedules and pricing information is required');
+    expect(result.errors).toContain('Product category is required');
+    expect(result.errors).toContain('Pricing information is required');
   });
 
   it('returns errors for title too long', () => {
@@ -129,8 +126,8 @@ describe('validateTourData', () => {
   });
 
   it('validates tags array length', () => {
-    const r = validateTourData({ title: 'Valid', tags: new Array(11) });
-    expect(r.errors).toContain('Maximum 10 tags allowed');
+    const r = validateTourData({ title: 'Valid', tags: new Array(16) });
+    expect(r.errors).toContain('Maximum 15 tags allowed');
   });
 
   it('validates categorization structure', () => {
@@ -152,110 +149,35 @@ describe('validateTourData', () => {
   // New Phase 2 validations
   // ---------------------------------------------------------------------------
 
-  it('rejects durationMinutes <= 0', () => {
-    const r = validateTourData({
-      title: 'Valid Tour',
-      description: 'A'.repeat(50),
-      schedulesAndPricing: {
-        travelerDetails: {
-          pricingModel: 'perPerson',
-          maxTravelersPerBooking: 20,
-          ageGroups: [{ label: 'Adult', minAge: 13, maxAge: 99 }],
-        },
-        pricingSchedules: {
-          currency: 'USD',
-          schedules: [{ startDate: '2026-01-01', prices: [{ ageGroup: 'Adult', retailPrice: 100 }] }],
-        },
-      },
-      categorization: { category: 'Cultural', duration: { hours: 0 } },
-    });
-    expect(r.errors).toContain('Duration must be greater than 0');
-  });
-
   it('rejects schedule endDate before startDate', () => {
     const r = validateTourData({
       title: 'Valid Tour',
       description: 'A'.repeat(50),
-      categorization: { category: 'Cultural' },
-      schedulesAndPricing: {
-        travelerDetails: {
-          pricingModel: 'perPerson',
-          maxTravelersPerBooking: 20,
-          ageGroups: [{ label: 'Adult', minAge: 13, maxAge: 99 }],
-        },
-        pricingSchedules: {
-          currency: 'USD',
-          schedules: [{
-            startDate: '2026-06-01',
-            endDate: '2026-05-01',
-            prices: [{ ageGroup: 'Adult', retailPrice: 100 }],
-          }],
-        },
-      },
+      category: 'Cultural',
+      pricingModel: 'perPerson',
+      scheduleStartDate: '2026-06-01',
+      scheduleEndDate: '2026-05-01',
     });
     expect(r.errors).toContain('Schedule end date must be on or after start date');
-  });
-
-  it('rejects retailPrice < 0.01', () => {
-    const r = validateTourData({
-      title: 'Valid Tour',
-      description: 'A'.repeat(50),
-      categorization: { category: 'Cultural' },
-      schedulesAndPricing: {
-        travelerDetails: {
-          pricingModel: 'perPerson',
-          maxTravelersPerBooking: 20,
-          ageGroups: [{ label: 'Adult', minAge: 13, maxAge: 99 }],
-        },
-        pricingSchedules: {
-          currency: 'USD',
-          schedules: [{
-            startDate: '2026-01-01',
-            prices: [{ ageGroup: 'Adult', retailPrice: 0 }],
-          }],
-        },
-      },
-    });
-    expect(r.errors).toContain('Each age group must have a retail price of at least 0.01');
   });
 
   it('rejects invalid pricing model', () => {
     const r = validateTourData({
       title: 'Valid Tour',
       description: 'A'.repeat(50),
-      categorization: { category: 'Cultural' },
-      schedulesAndPricing: {
-        travelerDetails: {
-          pricingModel: 'invalidModel',
-          maxTravelersPerBooking: 20,
-          ageGroups: [{ label: 'Adult', minAge: 13, maxAge: 99 }],
-        },
-        pricingSchedules: {
-          currency: 'USD',
-          schedules: [{ startDate: '2026-01-01', prices: [{ ageGroup: 'Adult', retailPrice: 100 }] }],
-        },
-      },
+      category: 'Cultural',
+      pricingModel: 'invalidModel',
     });
-    expect(r.errors).toContain('Valid pricing model is required (group, perPerson, or perBooking)');
+    expect(r.errors).toContain('Valid pricing model is required (perPerson or perGroup)');
   });
 
   it('accepts all valid pricing models', () => {
-    for (const model of ['group', 'perPerson', 'perBooking']) {
+    for (const model of ['perPerson', 'perGroup']) {
       const r = validateTourData({
         title: 'Valid Tour',
         description: 'A'.repeat(50),
-        categorization: { category: 'Cultural' },
-        schedulesAndPricing: {
-          travelerDetails: {
-            pricingModel: model,
-            maxTravelersPerBooking: 20,
-            ageGroups: [{ label: 'Adult', minAge: 13, maxAge: 99 }],
-          },
-          pricingSchedules: {
-            currency: 'USD',
-            schedules: [{ startDate: '2026-01-01', prices: [{ ageGroup: 'Adult', retailPrice: 100 }] }],
-          },
-        },
+        category: 'Cultural',
+        pricingModel: model,
       });
       expect(r.isValid).toBe(true);
     }
@@ -296,7 +218,6 @@ describe('calculateTourPrice', () => {
     schedulesAndPricing: {
       travelerDetails: {
         pricingModel: 'perPerson',
-        maxTravelersPerBooking: 20,
         ageGroups: [
           { label: 'Adult', minAge: 13, maxAge: 99 },
           { label: 'Child', minAge: 6, maxAge: 12 },

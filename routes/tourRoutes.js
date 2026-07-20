@@ -552,6 +552,55 @@ router.use(protect);
 
 /**
  * @swagger
+ * /tours/upload-photos:
+ *   post:
+ *     summary: Upload photos to Cloudinary (standalone, no tour creation)
+ *     tags: [Tours, Upload]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - photos
+ *             properties:
+ *               photos:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *                 description: Photo files to upload (JPEG/PNG, max 10MB each, max 20 files)
+ *     responses:
+ *       200:
+ *         description: Photos uploaded successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     photos:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                         example: https://res.cloudinary.com/dfpagrtoy/image/upload/v1/tours/photo.jpg
+ *       400:
+ *         description: No valid images uploaded
+ *       503:
+ *         description: Upload service unavailable
+ */
+router.post('/upload-photos', uploadTourPhotos, tourController.uploadPhotos);
+
+/**
+ * @swagger
  * /tours/seed:
  *   post:
  *     summary: Create a simulated tour for development/testing

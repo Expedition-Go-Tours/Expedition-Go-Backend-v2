@@ -1095,7 +1095,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       selectedDate
     );
 
-    const maxSpots = tour.schedulesAndPricing?.travelerDetails?.maxTravelersPerBooking || 50;
+    const maxSpots = tour.schedulesAndPricing?.travelerDetails?.maxParticipants || 50;
     const availableSpots = maxSpots - parseInt(capacityCheck.currentBookings);
     if (totalTravelers > availableSpots) {
       throw new Error(`Only ${availableSpots} spots left, but ${totalTravelers} requested`);

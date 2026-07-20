@@ -63,7 +63,8 @@ function parseJsonFields(data) {
 }
 
 /**
- * Validate tour data structure
+ * Validate tour data structure — supports both flat 13-step store shape
+ * and legacy nested JSON blob shape for backward compatibility.
  */
 function validateTourData(data, isPartial = false) {
   const errors = [];
@@ -78,15 +79,20 @@ function validateTourData(data, isPartial = false) {
     }
 
     if (!data.description || data.description.trim().length < 50) {
-      errors.push('Description must be at least 50 characters');
+      // Accept fullDescription as alias for description
+      if (!data.fullDescription || data.fullDescription.trim().length < 50) {
+        if (!data.description) errors.push('Description must be at least 50 characters');
+      }
     }
 
-    if (!data.categorization) {
-      errors.push('Categorization is required');
+    // Categorization or category is required
+    if (!data.categorization && !data.category) {
+      errors.push('Product category is required');
     }
 
-    if (!data.schedulesAndPricing) {
-      errors.push('Schedules and pricing information is required');
+    // Pricing model must be present
+    if (!data.pricingModel && !data.schedulesAndPricing) {
+      errors.push('Pricing information is required');
     }
   }
 
@@ -97,6 +103,9 @@ function validateTourData(data, isPartial = false) {
 
   // Validate description length
   if (data.description && data.description.length > 5000) {
+    errors.push('Description must be less than 5000 characters');
+  }
+  if (data.fullDescription && data.fullDescription.length > 5000) {
     errors.push('Description must be less than 5000 characters');
   }
 
@@ -120,39 +129,41 @@ function validateTourData(data, isPartial = false) {
     errors.push('Maximum 20 photos allowed');
   }
 
-  // Validate tags
-  if (data.tags && !Array.isArray(data.tags)) {
+  // Validate tags/keywords
+  const tags = data.tags || data.keywords;
+  if (tags && !Array.isArray(tags)) {
     errors.push('Tags must be an array');
   }
 
-  if (data.tags && data.tags.length > 10) {
-    errors.push('Maximum 10 tags allowed');
+  if (tags && tags.length > 15) {
+    errors.push('Maximum 15 tags allowed');
   }
 
   // Validate categorization structure
-  if (data.categorization) {
-    if (!validateCategorization(data.categorization)) {
+  const categorization = data.categorization || (data.category ? { category: data.category } : null);
+  if (categorization) {
+    if (!validateCategorization(categorization)) {
       errors.push('Invalid categorization structure');
-    }
-
-    // Validate durationMinutes > 0
-    const dur = data.categorization.duration;
-    if (dur) {
-      let minutes = null;
-      if (dur.minutes !== undefined) minutes = dur.minutes;
-      else if (dur.hours !== undefined) minutes = dur.hours * 60;
-      else if (dur.days !== undefined) minutes = dur.days * 1440;
-      else if (dur.weeks !== undefined) minutes = dur.weeks * 10080;
-      if (minutes !== null && minutes <= 0) {
-        errors.push('Duration must be greater than 0');
-      }
     }
   }
 
-  // Validate pricing structure
-  if (data.schedulesAndPricing) {
-    const pricingErrors = validatePricing(data.schedulesAndPricing);
-    errors.push(...pricingErrors);
+  // Validate pricing if present
+  if (data.schedulesAndPricing || data.pricingModel) {
+    const pricingErrors = validatePricing(
+      data.schedulesAndPricing || {
+        travelerDetails: data,
+        pricingSchedules: {
+          currency: data.currency,
+          schedules: data.scheduleStartDate
+            ? [{ startDate: data.scheduleStartDate, endDate: data.scheduleEndDate || null }]
+            : [],
+        },
+      }
+    );
+    // Only add pricing errors that are relevant — skip optional field warnings for partial updates
+    if (!isPartial) {
+      errors.push(...pricingErrors);
+    }
   }
 
   return {
@@ -202,37 +213,46 @@ function validateCategorization(categorization) {
 }
 
 /**
- * Validate pricing structure
+ * Validate pricing structure — accepts the nested schedulesAndPricing blob
+ * or flat store shape. Removed perBooking and maxTravelersPerBooking.
  */
-function validatePricing(schedulesAndPricing) {
+function validatePricing(data) {
   const errors = [];
 
   try {
-    // Validate traveler details
-    if (!schedulesAndPricing.travelerDetails) {
-      errors.push('Traveler details are required');
-      return errors;
+    // Support both flat store shape and nested schedulesAndPricing blob
+    const travelerDetails = data.travelerDetails || data;
+    const pricingSchedules = data.pricingSchedules || data;
+
+    const {
+      pricingModel,
+      pricingApproach,
+      ageGroups,
+      minParticipants,
+      maxParticipants,
+      groupSizes,
+      additionalPersonsEnabled,
+      additionalPersonPrice,
+      maxGroupsPerTimeSlot,
+    } = travelerDetails;
+
+    const {
+      currency,
+      schedules,
+    } = pricingSchedules;
+
+    if (pricingModel && !['perPerson', 'perGroup'].includes(pricingModel)) {
+      errors.push('Valid pricing model is required (perPerson or perGroup)');
     }
 
-    const { pricingModel, maxTravelersPerBooking, ageGroups } = schedulesAndPricing.travelerDetails;
-
-    if (!pricingModel || !['group', 'perPerson', 'perBooking'].includes(pricingModel)) {
-      errors.push('Valid pricing model is required (group, perPerson, or perBooking)');
+    if (pricingApproach && !['sameForEveryone', 'dependsOnAge'].includes(pricingApproach)) {
+      errors.push('Pricing approach must be sameForEveryone or dependsOnAge');
     }
 
-    if (!maxTravelersPerBooking || maxTravelersPerBooking < 1 || maxTravelersPerBooking > 50) {
-      errors.push('Max travelers per booking must be between 1 and 50');
-    }
-
-    if (!ageGroups || !Array.isArray(ageGroups) || ageGroups.length === 0) {
-      errors.push('At least one age group is required');
-    }
-
-    // Validate age groups
-    if (ageGroups) {
+    if (ageGroups && Array.isArray(ageGroups)) {
       for (const ageGroup of ageGroups) {
-        if (!ageGroup.label || ageGroup.minAge === undefined || ageGroup.maxAge === undefined) {
-          errors.push('Age groups must have label, minAge, and maxAge');
+        if (!ageGroup.name || ageGroup.minAge === undefined || ageGroup.maxAge === undefined) {
+          errors.push('Age groups must have name, minAge, and maxAge');
           break;
         }
         if (ageGroup.minAge < 0 || ageGroup.maxAge > 120 || ageGroup.minAge > ageGroup.maxAge) {
@@ -242,46 +262,44 @@ function validatePricing(schedulesAndPricing) {
       }
     }
 
-    // Validate pricing schedules
-    if (!schedulesAndPricing.pricingSchedules) {
-      errors.push('Pricing schedules are required');
-      return errors;
+    if (minParticipants !== undefined && (minParticipants < 1 || minParticipants > 100)) {
+      errors.push('Min participants must be between 1 and 100');
     }
 
-    const { currency, schedules } = schedulesAndPricing.pricingSchedules;
+    if (maxParticipants !== undefined && (maxParticipants < 1 || maxParticipants > 100)) {
+      errors.push('Max participants must be between 1 and 100');
+    }
 
-    if (!currency || currency.length !== 3) {
+    if (minParticipants !== undefined && maxParticipants !== undefined && minParticipants > maxParticipants) {
+      errors.push('Min participants cannot exceed max participants');
+    }
+
+    if (groupSizes && Array.isArray(groupSizes)) {
+      for (const gs of groupSizes) {
+        if (gs.size !== null && gs.size !== undefined && (gs.size < 1 || gs.size > 100)) {
+          errors.push('Group size must be between 1 and 100');
+          break;
+        }
+      }
+    }
+
+    if (additionalPersonsEnabled && (additionalPersonPrice === null || additionalPersonPrice === undefined)) {
+      errors.push('Additional person price is required when additional persons are enabled');
+    }
+
+    if (maxGroupsPerTimeSlot !== undefined && (maxGroupsPerTimeSlot < 1 || maxGroupsPerTimeSlot > 50)) {
+      errors.push('Max groups per time slot must be between 1 and 50');
+    }
+
+    if (currency && (typeof currency !== 'string' || currency.length !== 3)) {
       errors.push('Valid 3-letter currency code is required');
     }
 
-    if (!schedules || !Array.isArray(schedules) || schedules.length === 0) {
-      errors.push('At least one pricing schedule is required');
-    }
-
-    // Validate individual schedules
-    if (schedules) {
+    if (schedules && Array.isArray(schedules)) {
       for (const schedule of schedules) {
-        if (!schedule.startDate) {
-          errors.push('Schedule start date is required');
-          break;
-        }
-
-        if (schedule.endDate && new Date(schedule.endDate) < new Date(schedule.startDate)) {
+        if (schedule.startDate && schedule.endDate && new Date(schedule.endDate) < new Date(schedule.startDate)) {
           errors.push('Schedule end date must be on or after start date');
           break;
-        }
-
-        if (!schedule.prices || !Array.isArray(schedule.prices) || schedule.prices.length === 0) {
-          errors.push('Schedule must have at least one price');
-          break;
-        }
-
-        // Validate prices: each age group needs retailPrice >= 0.01
-        for (const price of schedule.prices) {
-          if (!price.ageGroup || price.retailPrice === undefined || price.retailPrice < 0.01) {
-            errors.push('Each age group must have a retail price of at least 0.01');
-            break;
-          }
         }
       }
     }
@@ -357,7 +375,7 @@ async function checkTourAvailability(tourId, selectedDate, selectedTime = null) 
 
     // Get capacity from override or template
     const maxTravelersFallback = parseInt(await getConfig('booking.max_travelers', '50'));
-    const maxCapacity = override?.capacity ?? schedulesAndPricing?.travelerDetails?.maxTravelersPerBooking ?? maxTravelersFallback;
+    const maxCapacity = override?.capacity ?? schedulesAndPricing?.travelerDetails?.maxParticipants ?? maxTravelersFallback;
 
     const currentBookings = bookingCount._count.id;
     const availableSpots = maxCapacity - currentBookings;

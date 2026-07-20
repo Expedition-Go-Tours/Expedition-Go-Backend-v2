@@ -92,7 +92,7 @@ describe('adminController', () => {
               revenue: expect.any(Object),
               bookings: expect.any(Object),
               signups: expect.any(Object),
-              activeUsersLast30Days: expect.any(Number),
+              activeUsers: expect.any(Number),
             }),
             topTours: expect.any(Array),
             topSuppliers: expect.any(Array),
