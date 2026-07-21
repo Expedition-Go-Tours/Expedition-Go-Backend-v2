@@ -67,109 +67,34 @@ function parseJsonFields(data) {
  * and legacy nested JSON blob shape for backward compatibility.
  */
 function validateTourData(data, isPartial = false) {
-  const errors = [];
+  const { productSchema } = require('./productSchema');
 
-  // Pre-parse JSON string fields so validation sees objects/arrays/numbers, not strings
-  parseJsonFields(data);
+  try {
+    // Use Zod validation schema
+    const parsed = isPartial
+      ? productSchema.partial().safeParse(data)
+      : productSchema.safeParse(data);
 
-  if (!isPartial) {
-    // Required fields for new tours
-    if (!data.title || data.title.trim().length === 0) {
-      errors.push('Title is required');
+    if (!parsed.success) {
+      return {
+        isValid: false,
+        errors: parsed.error.errors.map(e => {
+          const path = e.path.join('.');
+          return path ? `${path}: ${e.message}` : e.message;
+        })
+      };
     }
 
-    if (!data.description || data.description.trim().length < 50) {
-      // Accept fullDescription as alias for description
-      if (!data.fullDescription || data.fullDescription.trim().length < 50) {
-        if (!data.description) errors.push('Description must be at least 50 characters');
-      }
-    }
-
-    // Categorization or category is required
-    if (!data.categorization && !data.category) {
-      errors.push('Product category is required');
-    }
-
-    // Pricing model must be present
-    if (!data.pricingModel && !data.schedulesAndPricing) {
-      errors.push('Pricing information is required');
-    }
+    return {
+      isValid: true,
+      errors: []
+    };
+  } catch (error) {
+    return {
+      isValid: false,
+      errors: [`Validation error: ${error.message}`]
+    };
   }
-
-  // Validate title length
-  if (data.title && data.title.length > 200) {
-    errors.push('Title must be less than 200 characters');
-  }
-
-  // Validate description length
-  if (data.description && data.description.length > 5000) {
-    errors.push('Description must be less than 5000 characters');
-  }
-  if (data.fullDescription && data.fullDescription.length > 5000) {
-    errors.push('Description must be less than 5000 characters');
-  }
-
-  // Validate coordinates
-  if (data.latitude !== undefined && (typeof data.latitude !== 'number' || data.latitude < -90 || data.latitude > 90)) {
-    errors.push('Latitude must be a number between -90 and 90');
-  }
-  if (data.longitude !== undefined && (typeof data.longitude !== 'number' || data.longitude < -180 || data.longitude > 180)) {
-    errors.push('Longitude must be a number between -180 and 180');
-  }
-  if ((data.latitude !== undefined) !== (data.longitude !== undefined)) {
-    errors.push('Both latitude and longitude must be provided together');
-  }
-
-  // Validate photos array
-  if (data.photos && !Array.isArray(data.photos)) {
-    errors.push('Photos must be an array');
-  }
-
-  if (data.photos && data.photos.length > 20) {
-    errors.push('Maximum 20 photos allowed');
-  }
-
-  // Validate tags/keywords
-  const tags = data.tags || data.keywords;
-  if (tags && !Array.isArray(tags)) {
-    errors.push('Tags must be an array');
-  }
-
-  if (tags && tags.length > 15) {
-    errors.push('Maximum 15 tags allowed');
-  }
-
-  // Validate categorization structure
-  const categorization = data.categorization || (data.category ? { category: data.category } : null);
-  if (categorization) {
-    if (!validateCategorization(categorization)) {
-      errors.push('Invalid categorization structure');
-    }
-  }
-
-  // Validate pricing if present
-  if (data.schedulesAndPricing || data.pricingModel) {
-    const pricingErrors = validatePricing(
-      data.schedulesAndPricing || {
-        travelerDetails: data,
-        pricingSchedules: {
-          currency: data.currency,
-          schedules: data.scheduleStartDate
-            ? [{ startDate: data.scheduleStartDate, endDate: data.scheduleEndDate || null }]
-            : [],
-        },
-      }
-    );
-    // Only add pricing errors that are relevant — skip optional field warnings for partial updates
-    if (!isPartial) {
-      errors.push(...pricingErrors);
-    }
-  }
-
-  return {
-    isValid: errors.length === 0,
-    errors
-  };
 }
 
 /**

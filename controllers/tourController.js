@@ -36,6 +36,7 @@ const VIEW_CACHE_MAX = 10000;
 const viewTrackingCache = new Map();
 const { rankTourIdsBySearch } = require('../utils/fullTextSearch');
 const cache = require('../utils/cacheHelper');
+const { verifyAccessToken } = require('../config/jwt');
 const crypto = require('crypto');
 const { enqueueEvent } = require('../utils/queue');
 const logger = require('../utils/logger');
@@ -365,15 +366,57 @@ exports.getPopularByCategory = catchAsync(async (req, res, next) => {
 exports.getTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
-  const result = await cache.getOrSet(cache.TOUR_DETAIL_PREFIX(id), async () => {
+  // ── Optional auth: check if the requester is the tour owner ──
+  let isOwner = false;
+  let ownerSupplierId = null;
+  if (req.headers.authorization?.startsWith('Bearer ')) {
+    try {
+      const token = req.headers.authorization.split(' ')[1];
+      const decoded = verifyAccessToken(token);
+      ownerSupplierId = decoded.id;
+      const profile = await prisma.supplierProfile.findFirst({
+        where: { userId: decoded.id },
+        select: { id: true },
+      });
+      if (profile) {
+        isOwner = true;
+      } else {
+        const user = await prisma.user.findUnique({
+          where: { id: decoded.id },
+          select: { email: true },
+        });
+        if (user) {
+          const member = await prisma.teamMember.findFirst({
+            where: { email: user.email, status: 'ACCEPTED' },
+            select: { supplierId: true },
+          });
+          if (member) {
+            isOwner = true;
+            ownerSupplierId = member.supplierId;
+          }
+        }
+      }
+    } catch {
+      // Invalid token — continue as public request
+    }
+  }
+
+  const cacheKey = isOwner
+    ? cache.TOUR_DETAIL_PREFIX(id) + ':owner'
+    : cache.TOUR_DETAIL_PREFIX(id);
+
+  const result = await cache.getOrSet(cacheKey, async () => {
+    const where = {
+      OR: [{ id }, { slug: id }],
+    };
+    if (isOwner) {
+      where.supplierId = ownerSupplierId;
+    } else {
+      where.status = 'ACTIVE';
+    }
+
     const tour = await prisma.tour.findFirst({
-      where: {
-        OR: [
-          { id },
-          { slug: id }
-        ],
-        status: 'ACTIVE'
-      },
+      where,
       include: {
         supplier: {
           select: {
@@ -432,7 +475,7 @@ exports.getTour = catchAsync(async (req, res, next) => {
       specialOffers,
       coverPhoto: tour.coverPhoto ? cloudinaryUrl(tour.coverPhoto, 1400) : null,
     };
-  }, 300);
+  }, isOwner ? 60 : 300);
 
   if (!result) {
     return next(new AppError('Tour not found', 404));

@@ -509,6 +509,8 @@ exports.googleOneTap = catchAsync(async (req, res, next) => {
     status: 'success',
     data: {
       user: { id: user.id, name: user.name, email: user.email, photoURL: user.photoURL, roles: user.roles },
+      accessToken,
+      refreshToken,
     },
   });
 });

@@ -9,7 +9,7 @@ const ACCESS_TOKEN_SECRET = process.env.JWT_SECRET || 'fallback-dev-secret';
 const REFRESH_TOKEN_SECRET = (process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || 'fallback-refresh-secret') + '_refresh';
 const PASSWORD_RESET_SECRET = process.env.JWT_PASSWORD_RESET_SECRET || (process.env.JWT_SECRET || 'fallback-reset-secret') + '_password_reset';
 
-const ACCESS_TOKEN_EXPIRY = '30m';
+const ACCESS_TOKEN_EXPIRY = '1h';
 const REFRESH_TOKEN_EXPIRY = '7d';
 const PASSWORD_RESET_EXPIRY = '15m';
 
@@ -34,16 +34,16 @@ const isProduction = process.env.NODE_ENV === 'production';
 const COOKIE_OPTIONS = Object.freeze({
   accessToken: {
     httpOnly: true,
-    secure: true,
-    sameSite: 'none',
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
     domain: isProduction ? '.travioafrica.com' : undefined,
     path: '/',
-    maxAge: 30 * 60 * 1000,
+    maxAge: 60 * 60 * 1000,
   },
   refreshToken: {
     httpOnly: true,
-    secure: true,
-    sameSite: 'none',
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
     domain: isProduction ? '.travioafrica.com' : undefined,
     path: '/api/auth',
     maxAge: 7 * 24 * 60 * 60 * 1000,
