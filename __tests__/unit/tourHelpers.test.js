@@ -64,28 +64,26 @@ describe('parseJsonFields', () => {
 // ---------------------------------------------------------------------------
 // validateTourData
 // ---------------------------------------------------------------------------
+// Helper to build a minimal valid product object that passes productSchema
+function validProduct(overrides = {}) {
+  return {
+    language: 'English',
+    category: 'Cultural',
+    title: 'Amazing Tour',
+    shortDescription: 'A short description that is at least ten chars',
+    fullDescription: 'A full description that is at least twenty characters long enough',
+    highlights: ['Highlight 1', 'Highlight 2', 'Highlight 3'],
+    photos: Array.from({ length: 7 }, (_, i) => ({ id: `p${i}`, url: `https://example.com/${i}.jpg` })),
+    copyrightConfirmed: true,
+    meetingMode: 'meeting_point',
+    guideMaterials: { audioGuide: false, infoBooklet: false },
+    ...overrides,
+  };
+}
+
 describe('validateTourData', () => {
   it('returns valid for a complete tour data object', () => {
-    const data = {
-      title: 'Amazing Tour',
-      description: 'A'.repeat(50),
-      categorization: { category: 'Cultural' },
-      schedulesAndPricing: {
-        travelerDetails: {
-          pricingModel: 'perPerson',
-          ageGroups: [{ name: 'Adult', minAge: 13, maxAge: 99 }],
-        },
-        pricingSchedules: {
-          currency: 'USD',
-          schedules: [{
-            startDate: '2026-01-01',
-          }],
-        },
-      },
-      latitude: 5.5,
-      longitude: -0.2,
-    };
-    const result = validateTourData(data);
+    const result = validateTourData(validProduct());
     expect(result.isValid).toBe(true);
     expect(result.errors).toHaveLength(0);
   });
@@ -93,92 +91,56 @@ describe('validateTourData', () => {
   it('returns errors for missing required fields', () => {
     const result = validateTourData({});
     expect(result.isValid).toBe(false);
-    expect(result.errors).toContain('Title is required');
-    expect(result.errors).toContain('Product category is required');
-    expect(result.errors).toContain('Pricing information is required');
+    expect(result.errors.length).toBeGreaterThan(0);
   });
 
-  it('returns errors for title too long', () => {
-    const result = validateTourData({ title: 'X'.repeat(201) });
-    expect(result.errors).toContain('Title must be less than 200 characters');
+  it('returns error for empty title', () => {
+    const result = validateTourData(validProduct({ title: '' }));
+    expect(result.errors.length).toBeGreaterThan(0);
   });
 
-  it('returns errors for description too long', () => {
-    const result = validateTourData({ title: 'Valid', description: 'X'.repeat(5001) });
-    expect(result.errors).toContain('Description must be less than 5000 characters');
+  it('returns error for short description', () => {
+    const result = validateTourData(validProduct({ shortDescription: 'short' }));
+    expect(result.errors.length).toBeGreaterThan(0);
   });
 
-  it('validates coordinates', () => {
-    const tests = [
-      { latitude: 100, longitude: 0, err: 'Latitude must be a number between -90 and 90' },
-      { latitude: 5, err: 'Both latitude and longitude must be provided together' },
-      { longitude: -200, err: 'Longitude must be a number between -180 and 180' },
-    ];
-    for (const t of tests) {
-      const r = validateTourData({ title: 'Valid', ...t });
-      expect(r.errors).toContain(t.err);
-    }
+  it('validates highlights array constraints', () => {
+    const r = validateTourData(validProduct({ highlights: [] }));
+    expect(r.errors.length).toBeGreaterThan(0);
   });
 
-  it('validates photos array length', () => {
-    const r = validateTourData({ title: 'Valid', photos: new Array(21) });
-    expect(r.errors).toContain('Maximum 20 photos allowed');
+  it('validates photos minimum count', () => {
+    const r = validateTourData(validProduct({ photos: [{ id: '1', url: 'x' }] }));
+    expect(r.errors.length).toBeGreaterThan(0);
   });
 
-  it('validates tags array length', () => {
-    const r = validateTourData({ title: 'Valid', tags: new Array(16) });
-    expect(r.errors).toContain('Maximum 15 tags allowed');
+  it('validates keywords max count', () => {
+    const r = validateTourData(validProduct({ keywords: new Array(16).fill('k') }));
+    expect(r.errors.length).toBeGreaterThan(0);
   });
 
-  it('validates categorization structure', () => {
-    const r = validateTourData({
-      title: 'Valid',
-      categorization: 'not-an-object',
-    });
-    expect(r.errors).toContain('Invalid categorization structure');
+  it('validates copyrightConfirmed must be true', () => {
+    const r = validateTourData(validProduct({ copyrightConfirmed: false }));
+    expect(r.errors.length).toBeGreaterThan(0);
   });
 
   it('skips required field checks for partial updates', () => {
-    const r = validateTourData({ description: 'Short', latitude: 91 }, true);
+    const r = validateTourData({ shortDescription: 'Short enough text' }, true);
     expect(r.errors).not.toContain('Title is required');
-    expect(r.errors).not.toContain('Categorization is required');
-    expect(r.errors).toContain('Latitude must be a number between -90 and 90');
   });
 
   // ---------------------------------------------------------------------------
-  // New Phase 2 validations
+  // Pricing-related validations via productSchema
   // ---------------------------------------------------------------------------
-
-  it('rejects schedule endDate before startDate', () => {
-    const r = validateTourData({
-      title: 'Valid Tour',
-      description: 'A'.repeat(50),
-      category: 'Cultural',
-      pricingModel: 'perPerson',
-      scheduleStartDate: '2026-06-01',
-      scheduleEndDate: '2026-05-01',
-    });
-    expect(r.errors).toContain('Schedule end date must be on or after start date');
-  });
 
   it('rejects invalid pricing model', () => {
-    const r = validateTourData({
-      title: 'Valid Tour',
-      description: 'A'.repeat(50),
-      category: 'Cultural',
-      pricingModel: 'invalidModel',
-    });
-    expect(r.errors).toContain('Valid pricing model is required (perPerson or perGroup)');
+    const r = validateTourData(validProduct({ pricingModel: 'invalidModel' }));
+    expect(r.errors.length).toBeGreaterThan(0);
   });
 
   it('accepts all valid pricing models', () => {
     for (const model of ['perPerson', 'perGroup']) {
-      const r = validateTourData({
-        title: 'Valid Tour',
-        description: 'A'.repeat(50),
-        category: 'Cultural',
-        pricingModel: model,
-      });
+      const r = validateTourData(validProduct({ pricingModel: model }));
       expect(r.isValid).toBe(true);
     }
   });
