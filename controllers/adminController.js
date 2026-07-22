@@ -455,19 +455,22 @@ exports.getOverview = catchAsync(async (req, res, next) => {
  * Returns revenue, bookings, and commission per month.
  */
 exports.getRevenueTrend = catchAsync(async (req, res, next) => {
-  const months = await prisma.$queryRaw`
-    SELECT
-      DATE_TRUNC('month', "paidAt")::date AS month,
-      COUNT(*)::int                       AS bookings,
-      ROUND(SUM("total")::numeric, 2)     AS revenue,
-      ROUND(SUM("commissionAmount")::numeric, 2) AS commission,
-      ROUND(SUM("supplierPayout")::numeric, 2)   AS "supplierPayout"
-    FROM "Booking"
-    WHERE "paidAt" >= NOW() - INTERVAL '24 months'
-      AND "paymentStatus" = 'SUCCEEDED'
-    GROUP BY DATE_TRUNC('month', "paidAt")
-    ORDER BY month ASC
-  `;
+  const bucket = Math.floor(Date.now() / 300000);
+  const months = await cache.getOrSet(`admin:revenueTrend:${bucket}`, async () => {
+    return prisma.$queryRaw`
+      SELECT
+        DATE_TRUNC('month', "paidAt")::date AS month,
+        COUNT(*)::int                       AS bookings,
+        ROUND(SUM("total")::numeric, 2)     AS revenue,
+        ROUND(SUM("commissionAmount")::numeric, 2) AS commission,
+        ROUND(SUM("supplierPayout")::numeric, 2)   AS "supplierPayout"
+      FROM "Booking"
+      WHERE "paidAt" >= NOW() - INTERVAL '24 months'
+        AND "paymentStatus" = 'SUCCEEDED'
+      GROUP BY DATE_TRUNC('month', "paidAt")
+      ORDER BY month ASC
+    `;
+  }, 300);
 
   res.status(200).json({ status: 'success', data: { months } });
 });
@@ -479,17 +482,20 @@ exports.getRevenueTrend = catchAsync(async (req, res, next) => {
  * Broken down by role so we can see customer vs. supplier growth.
  */
 exports.getUserGrowth = catchAsync(async (req, res, next) => {
-  const growth = await prisma.$queryRaw`
-    SELECT
-      DATE_TRUNC('month', "createdAt")::date AS month,
-      COUNT(*)::int                          AS total,
-      COUNT(*) FILTER (WHERE 'customer' = ANY("roles"))::int AS customers,
-      COUNT(*) FILTER (WHERE 'supplier'  = ANY("roles"))::int AS suppliers
-    FROM "User"
-    WHERE "createdAt" >= NOW() - INTERVAL '24 months'
-    GROUP BY DATE_TRUNC('month', "createdAt")
-    ORDER BY month ASC
-  `;
+  const bucket = Math.floor(Date.now() / 300000);
+  const growth = await cache.getOrSet(`admin:userGrowth:${bucket}`, async () => {
+    return prisma.$queryRaw`
+      SELECT
+        DATE_TRUNC('month', "createdAt")::date AS month,
+        COUNT(*)::int                          AS total,
+        COUNT(*) FILTER (WHERE 'customer' = ANY("roles"))::int AS customers,
+        COUNT(*) FILTER (WHERE 'supplier'  = ANY("roles"))::int AS suppliers
+      FROM "User"
+      WHERE "createdAt" >= NOW() - INTERVAL '24 months'
+      GROUP BY DATE_TRUNC('month', "createdAt")
+      ORDER BY month ASC
+    `;
+  }, 300);
 
   res.status(200).json({ status: 'success', data: { growth } });
 });
@@ -581,63 +587,59 @@ exports.getFunnel = catchAsync(async (req, res, next) => {
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - days);
 
+  const bucket = Math.floor(Date.now() / 300000);
+  const result = await cache.getOrSet(`admin:funnel:${bucket}:${days}`, async () => {
+    const [viewed, cartAdded, checkoutStarted, completed, stepData] = await Promise.all([
+
   // Each query counts unique userIds who performed the event at least once in the period.
   // This is the true "user funnel" — a single user may be counted at most once per step.
-  const [viewed, cartAdded, checkoutStarted, completed, stepData] = await Promise.all([
-    // Step 1: Users who viewed any tour
-    prisma.event.groupBy({
-      by: ['userId'],
-      where: { name: 'tour.viewed', createdAt: { gte: startDate }, userId: { not: null } },
-      _count: true,
-    }),
+      prisma.event.groupBy({
+        by: ['userId'],
+        where: { name: 'tour.viewed', createdAt: { gte: startDate }, userId: { not: null } },
+        _count: true,
+      }),
 
-    // Step 2: Users who added to cart
-    prisma.event.groupBy({
-      by: ['userId'],
-      where: { name: 'cart.added', createdAt: { gte: startDate }, userId: { not: null } },
-      _count: true,
-    }),
+      prisma.event.groupBy({
+        by: ['userId'],
+        where: { name: 'cart.added', createdAt: { gte: startDate }, userId: { not: null } },
+        _count: true,
+      }),
 
-    // Step 3: Users who started checkout
-    prisma.event.groupBy({
-      by: ['userId'],
-      where: { name: 'booking.initiated', createdAt: { gte: startDate }, userId: { not: null } },
-      _count: true,
-    }),
+      prisma.event.groupBy({
+        by: ['userId'],
+        where: { name: 'booking.initiated', createdAt: { gte: startDate }, userId: { not: null } },
+        _count: true,
+      }),
 
-    // Step 4: Users who successfully paid
-    prisma.event.groupBy({
-      by: ['userId'],
-      where: { name: 'booking.completed', createdAt: { gte: startDate }, userId: { not: null } },
-      _count: true,
-    }),
+      prisma.event.groupBy({
+        by: ['userId'],
+        where: { name: 'booking.completed', createdAt: { gte: startDate }, userId: { not: null } },
+        _count: true,
+      }),
 
-    // Also get daily breakdown for charting
-    prisma.$queryRaw`
-      SELECT
-        name,
-        DATE_TRUNC('day', "createdAt")::date AS day,
-        COUNT(DISTINCT "userId")::int AS users
-      FROM "Event"
-      WHERE "createdAt" >= ${startDate}
-        AND "name" IN ('tour.viewed', 'cart.added', 'booking.initiated', 'booking.completed')
-        AND "userId" IS NOT NULL
-      GROUP BY name, DATE_TRUNC('day', "createdAt")
-      ORDER BY day ASC
-    `,
-  ]);
+      prisma.$queryRaw`
+        SELECT
+          name,
+          DATE_TRUNC('day', "createdAt")::date AS day,
+          COUNT(DISTINCT "userId")::int AS users
+        FROM "Event"
+        WHERE "createdAt" >= ${startDate}
+          AND "name" IN ('tour.viewed', 'cart.added', 'booking.initiated', 'booking.completed')
+          AND "userId" IS NOT NULL
+        GROUP BY name, DATE_TRUNC('day', "createdAt")
+        ORDER BY day ASC
+      `,
+    ]);
 
-  const viewedUsers = viewed.length;
-  const cartUsers = cartAdded.length;
-  const checkoutUsers = checkoutStarted.length;
-  const completedUsers = completed.length;
+    const viewedUsers = viewed.length;
+    const cartUsers = cartAdded.length;
+    const checkoutUsers = checkoutStarted.length;
+    const completedUsers = completed.length;
 
-  const calcRate = (numerator, denominator) =>
-    denominator > 0 ? parseFloat(((numerator / denominator) * 100).toFixed(1)) : 0;
+    const calcRate = (numerator, denominator) =>
+      denominator > 0 ? parseFloat(((numerator / denominator) * 100).toFixed(1)) : 0;
 
-  res.status(200).json({
-    status: 'success',
-    data: {
+    return {
       period: `${days}d`,
       funnel: [
         { step: 'viewed',          users: viewedUsers,     dropOff: null },
@@ -652,8 +654,10 @@ exports.getFunnel = catchAsync(async (req, res, next) => {
         overall:    calcRate(completedUsers, viewedUsers),
       },
       dailyTrend: stepData,
-    },
+    };
   });
+
+  res.status(200).json({ status: 'success', data: result });
 });
 
 /**
@@ -670,13 +674,15 @@ exports.getCLV = catchAsync(async (req, res, next) => {
   const now = new Date();
   const yearStart = new Date(now.getFullYear(), 0, 1);
 
-  const [
-    basicStats,
-    repeatRate,
-    bookingDistribution,
-    topCustomers,
-    monthlyCohorts,
-  ] = await Promise.all([
+  const bucket = Math.floor(Date.now() / 300000);
+  const data = await cache.getOrSet(`admin:clv:${bucket}`, async () => {
+    const [
+      basicStats,
+      repeatRate,
+      bookingDistribution,
+      topCustomers,
+      monthlyCohorts,
+    ] = await Promise.all([
 
     // Basic customer stats
     prisma.$queryRaw`
@@ -777,21 +783,19 @@ exports.getCLV = catchAsync(async (req, res, next) => {
         ROUND("revenue"::numeric / NULLIF("users", 0), 2)  AS "revenuePerUser"
       FROM cohort_bookings
     `,
-  ]);
+    ]);
 
-  const fmt = (r) => ({
-    totalCustomers: r[0].totalCustomers,
-    totalBookings: r[0].totalBookings,
-    avgBookingValue: r[0].avgBookingValue,
-    totalRevenue: r[0].totalRevenue,
-    avgCLV: r[0].totalCustomers > 0
-      ? parseFloat((parseFloat(r[0].totalRevenue) / r[0].totalCustomers).toFixed(2))
-      : 0,
-  });
+    const fmt = (r) => ({
+      totalCustomers: r[0].totalCustomers,
+      totalBookings: r[0].totalBookings,
+      avgBookingValue: r[0].avgBookingValue,
+      totalRevenue: r[0].totalRevenue,
+      avgCLV: r[0].totalCustomers > 0
+        ? parseFloat((parseFloat(r[0].totalRevenue) / r[0].totalCustomers).toFixed(2))
+        : 0,
+    });
 
-  res.status(200).json({
-    status: 'success',
-    data: {
+    return {
       overview: fmt(basicStats),
       repeatRate: {
         totalCustomers: repeatRate[0].totalCustomers,
@@ -821,8 +825,10 @@ exports.getCLV = catchAsync(async (req, res, next) => {
         bookingsPerUser: parseFloat(c.bookingsPerUser || 0),
         revenuePerUser: parseFloat(c.revenuePerUser || 0),
       })),
-    },
+    };
   });
+
+  res.status(200).json({ status: 'success', data });
 });
 
 /**

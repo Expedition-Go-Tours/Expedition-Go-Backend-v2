@@ -1,7 +1,10 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
+const cache = require('../utils/cacheHelper');
 const { hasTeamPermission } = require('../config/teamPermissions');
+
+const SUPPLIER_CACHE_TTL = 30;
 
 exports.requireTeamRole = (...allowedRoles) => {
   return catchAsync(async (req, res, next) => {
@@ -13,10 +16,12 @@ exports.requireTeamRole = (...allowedRoles) => {
       return next();
     }
 
-    const supplierProfile = await prisma.supplierProfile.findFirst({
-      where: { userId: req.user.id },
-      select: { id: true },
-    });
+    const supplierProfile = await cache.getOrSet(`supplier:profile:userId:${req.user.id}`, async () => {
+      return prisma.supplierProfile.findFirst({
+        where: { userId: req.user.id },
+        select: { id: true },
+      });
+    }, SUPPLIER_CACHE_TTL);
 
     if (supplierProfile) {
       req.teamRole = 'admin';
@@ -25,13 +30,15 @@ exports.requireTeamRole = (...allowedRoles) => {
       return next();
     }
 
-    const teamMember = await prisma.teamMember.findFirst({
-      where: {
-        email: req.user.email,
-        status: 'ACCEPTED',
-      },
-      select: { role: true, supplierId: true },
-    });
+    const teamMember = await cache.getOrSet(`team:member:email:${req.user.email}`, async () => {
+      return prisma.teamMember.findFirst({
+        where: {
+          email: req.user.email,
+          status: 'ACCEPTED',
+        },
+        select: { role: true, supplierId: true },
+      });
+    }, SUPPLIER_CACHE_TTL);
 
     if (!teamMember) {
       return next(new AppError('You are not a team member', 403));
@@ -58,10 +65,12 @@ exports.requireTeamPermission = (...permissionKeys) => {
       return next();
     }
 
-    const supplierProfile = await prisma.supplierProfile.findFirst({
-      where: { userId: req.user.id },
-      select: { id: true },
-    });
+    const supplierProfile = await cache.getOrSet(`supplier:profile:userId:${req.user.id}`, async () => {
+      return prisma.supplierProfile.findFirst({
+        where: { userId: req.user.id },
+        select: { id: true },
+      });
+    }, SUPPLIER_CACHE_TTL);
 
     if (supplierProfile) {
       req.teamRole = 'admin';
@@ -70,13 +79,15 @@ exports.requireTeamPermission = (...permissionKeys) => {
       return next();
     }
 
-    const teamMember = await prisma.teamMember.findFirst({
-      where: {
-        email: req.user.email,
-        status: 'ACCEPTED',
-      },
-      select: { role: true, supplierId: true },
-    });
+    const teamMember = await cache.getOrSet(`team:member:email:${req.user.email}`, async () => {
+      return prisma.teamMember.findFirst({
+        where: {
+          email: req.user.email,
+          status: 'ACCEPTED',
+        },
+        select: { role: true, supplierId: true },
+      });
+    }, SUPPLIER_CACHE_TTL);
 
     if (!teamMember) {
       return next(new AppError('You are not a team member', 403));
@@ -106,10 +117,12 @@ exports.isSupplierOwner = catchAsync(async (req, res, next) => {
     return next();
   }
 
-  const supplier = await prisma.supplierProfile.findFirst({
-    where: { userId: req.user.id },
-    select: { id: true },
-  });
+  const supplier = await cache.getOrSet(`supplier:profile:userId:${req.user.id}`, async () => {
+    return prisma.supplierProfile.findFirst({
+      where: { userId: req.user.id },
+      select: { id: true },
+    });
+  }, SUPPLIER_CACHE_TTL);
 
   if (!supplier) {
     return next(new AppError('No supplier profile found', 403));
@@ -129,20 +142,24 @@ exports.resolveSupplier = catchAsync(async (req, res, next) => {
     return next();
   }
 
-  const profile = await prisma.supplierProfile.findFirst({
-    where: { userId: req.user.id },
-    select: { id: true },
-  });
+  const profile = await cache.getOrSet(`supplier:profile:userId:${req.user.id}`, async () => {
+    return prisma.supplierProfile.findFirst({
+      where: { userId: req.user.id },
+      select: { id: true },
+    });
+  }, SUPPLIER_CACHE_TTL);
 
   if (profile) {
     req.supplierId = req.user.id;
     return next();
   }
 
-  const member = await prisma.teamMember.findFirst({
-    where: { email: req.user.email, status: 'ACCEPTED' },
-    select: { supplierId: true },
-  });
+  const member = await cache.getOrSet(`team:member:email:${req.user.email}`, async () => {
+    return prisma.teamMember.findFirst({
+      where: { email: req.user.email, status: 'ACCEPTED' },
+      select: { supplierId: true },
+    });
+  }, SUPPLIER_CACHE_TTL);
 
   if (!member) {
     return next(new AppError('Supplier access required', 403));

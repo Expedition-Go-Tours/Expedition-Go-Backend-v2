@@ -1,6 +1,6 @@
 jest.mock('bullmq', () => ({
   Queue: jest.fn(),
-  Worker: jest.fn(),
+  Worker: jest.fn(() => ({ close: jest.fn().mockResolvedValue() })),
 }));
 
 const mockIoRedisInstance = {

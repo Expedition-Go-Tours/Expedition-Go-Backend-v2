@@ -78,7 +78,7 @@ function validateTourData(data, isPartial = false) {
     if (!parsed.success) {
       return {
         isValid: false,
-        errors: parsed.error.errors.map(e => {
+        errors: parsed.error.issues.map(e => {
           const path = e.path.join('.');
           return path ? `${path}: ${e.message}` : e.message;
         })

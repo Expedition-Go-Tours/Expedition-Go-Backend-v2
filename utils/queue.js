@@ -41,6 +41,7 @@ const DEFAULT_JOB_OPTIONS = {
 
 
 const queueInstances = new Map();
+const workers = [];
 
 function getQueue(queueName) {
   if (!queueInstances.has(queueName)) {
@@ -278,7 +279,10 @@ function registerWorkers() {
 
   function createWorker(queueName, processor, concurrency = 1) {
     const worker = new Worker(queueName, processor, { connection: conn, concurrency });
-    worker.on('error', () => {}); // Suppressed — handled by caller
+    worker.on('error', (err) => {
+      console.warn(`[Queue] Worker error (${queueName}):`, err?.message);
+    });
+    workers.push(worker);
     return worker;
   }
 
@@ -436,8 +440,14 @@ async function closeAll() {
   for (const [, queue] of queueInstances) {
     closePromises.push(queue.close());
   }
+  for (const worker of workers) {
+    if (worker && typeof worker.close === 'function') {
+      closePromises.push(worker.close());
+    }
+  }
   await Promise.allSettled(closePromises);
   queueInstances.clear();
+  workers.length = 0;
 }
 
 module.exports = {

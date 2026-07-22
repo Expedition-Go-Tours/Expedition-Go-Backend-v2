@@ -1,6 +1,9 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
+const cache = require('../utils/cacheHelper');
+
+const ROLE_CACHE_TTL = 60;
 
 exports.requirePermission = (...permissionKeys) => {
   return catchAsync(async (req, res, next) => {
@@ -17,14 +20,16 @@ exports.requirePermission = (...permissionKeys) => {
       return next(new AppError('No admin role assigned. Contact super admin.', 403));
     }
 
-    const role = await prisma.adminRole.findUnique({
-      where: { id: req.user.adminRoleId },
-      include: {
-        permissions: {
-          include: { permission: true },
+    const role = await cache.getOrSet(`admin:role:${req.user.adminRoleId}`, async () => {
+      return prisma.adminRole.findUnique({
+        where: { id: req.user.adminRoleId },
+        include: {
+          permissions: {
+            include: { permission: true },
+          },
         },
-      },
-    });
+      });
+    }, ROLE_CACHE_TTL);
 
     if (!role) {
       return next(new AppError('Admin role not found. Contact super admin.', 403));
@@ -54,9 +59,11 @@ exports.requireSuperAdmin = catchAsync(async (req, res, next) => {
     return next(new AppError('Super admin access required', 403));
   }
 
-  const role = await prisma.adminRole.findUnique({
-    where: { id: req.user.adminRoleId },
-  });
+  const role = await cache.getOrSet(`admin:role:name:${req.user.adminRoleId}`, async () => {
+    return prisma.adminRole.findUnique({
+      where: { id: req.user.adminRoleId },
+    });
+  }, ROLE_CACHE_TTL);
 
   if (!role || role.name !== 'super_admin') {
     return next(new AppError('Super admin access required', 403));

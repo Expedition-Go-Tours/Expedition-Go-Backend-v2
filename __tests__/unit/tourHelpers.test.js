@@ -73,7 +73,7 @@ function validProduct(overrides = {}) {
     shortDescription: 'A short description that is at least ten chars',
     fullDescription: 'A full description that is at least twenty characters long enough',
     highlights: ['Highlight 1', 'Highlight 2', 'Highlight 3'],
-    photos: Array.from({ length: 7 }, (_, i) => ({ id: `p${i}`, url: `https://example.com/${i}.jpg` })),
+    photos: Array.from({ length: 7 }, (_, i) => `https://example.com/${i}.jpg`),
     copyrightConfirmed: true,
     meetingMode: 'meeting_point',
     guideMaterials: { audioGuide: false, infoBooklet: false },

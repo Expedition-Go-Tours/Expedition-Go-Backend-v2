@@ -152,7 +152,7 @@ const productSchema = z.object({
   transportationProvided: z.boolean().optional(),
   transportationType: z.string().optional(),
   // Step 8
-  photos: z.array(z.object({ id: z.string(), url: z.string() })).min(7, 'Upload at least 7 photos'),
+  photos: z.array(photoObjectSchema).min(7, 'Upload at least 7 photos'),
   copyrightConfirmed: z.literal(true, {
     message: 'You must confirm copyright ownership',
   }),
