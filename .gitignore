@@ -65,3 +65,5 @@ vision_server.py
 vision_wrapper.py
 gen_mcp.py
 restore_supplier.sql
+
+.git-rewrite/
