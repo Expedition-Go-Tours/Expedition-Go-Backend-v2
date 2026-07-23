@@ -9,6 +9,10 @@ const locationSchema = z.object({
   city: z.string().optional(),
   country: z.string().optional(),
   region: z.string().optional(),
+  description: z.string().optional(),
+  timeSpent: z.number().nullable().optional(),
+  timeSpentUnit: z.enum(['minutes', 'hours']).optional(),
+  admissionIncluded: z.enum(['yes', 'no', 'na']).optional(),
 });
 
 const locationPointSchema = z.object({
@@ -71,7 +75,7 @@ const itineraryEntrySchema = z.object({
 
 const pickupAreaSchema = z.object({
   name: z.string().min(1, 'Pickup area name is required'),
-  time: z.string().min(1, 'Pickup time is required'),
+  time: z.string(),
 });
 
 const timeSlotSchema = z.object({
@@ -87,14 +91,16 @@ const dateExceptionSchema = z.object({
   overrideTimes: z.array(z.string()).optional(),
 });
 
-const ageGroupSchema = z.object({
-  name: z.string().min(1, 'Age group name is required'),
+const pricingCategorySchema = z.object({
+  name: z.string().min(1, 'Category name is required'),
   price: z.number().min(0, 'Price must be 0 or greater').nullable().optional(),
   minAge: z.number().min(0, 'Min age must be 0 or greater'),
   maxAge: z.number().min(0, 'Max age must be 0 or greater'),
   notAllowed: z.boolean().optional(),
   ticketNotRequired: z.boolean().optional(),
   needsAdult: z.boolean().optional(),
+  idRequired: z.boolean().optional(),
+  idType: z.string().optional(),
 });
 
 const pricingTierSchema = z.object({
@@ -114,21 +120,21 @@ const photoObjectSchema = z.string();
 
 const productSchema = z.object({
   // Step 1
-  language: z.string().min(1, 'Select a language'),
+  language: z.string().min(1, 'Select a language').max(50, 'Language must be at most 50 characters'),
   // Step 2
   category: z.string().min(1, 'Select a product category'),
-  subcategory: z.string().optional(),
-  activityType: z.string().optional(),
-  difficulty: z.string().optional(),
-  transportMode: z.string().optional(),
+  subcategory: z.string().max(100).optional(),
+  activityType: z.string().max(100).optional(),
+  difficulty: z.string().max(50).optional(),
+  transportMode: z.string().max(50).optional(),
   duration: z.number().nullable().optional(),
   durationUnit: z.enum(['minutes', 'hours', 'days']).optional(),
   // Step 3
   title: z.string().min(1, 'Title is required'),
-  referenceCode: z.string().optional(),
+  referenceCode: z.string().max(50).optional(),
   // Step 4
-  shortDescription: z.string().min(10, 'Short description must be at least 10 characters'),
-  fullDescription: z.string().min(20, 'Full description must be at least 20 characters'),
+  shortDescription: z.string().min(10, 'Short description must be at least 10 characters').max(200, 'Short description must be at most 200 characters'),
+  fullDescription: z.string().min(500, 'Full description must be at least 500 characters').max(3000, 'Full description must be at most 3000 characters'),
   highlights: z.array(z.string().min(1, 'Each highlight must have at least 1 character')).min(3, 'Add at least 3 highlights').max(5, 'Maximum 5 highlights'),
   // Step 5
   locations: z.array(locationSchema).optional(),
@@ -146,50 +152,55 @@ const productSchema = z.object({
     infoBooklet: z.boolean(),
   }),
   foodProvided: z.boolean().optional(),
+  meals: z.array(z.object({
+    type: z.string().min(1, 'Select a meal type'),
+    format: z.string().min(1, 'Select a format'),
+  })).optional(),
   mealType: z.string().optional(),
+  showDietaryRestrictions: z.boolean().optional(),
   drinksIncluded: z.boolean().optional(),
   dietaryOptions: z.array(z.string()).optional(),
   transportationProvided: z.boolean().optional(),
   transportationType: z.string().optional(),
   // Step 8
-  photos: z.array(photoObjectSchema).min(7, 'Upload at least 7 photos'),
+  photos: z.array(photoObjectSchema).min(4, 'Upload at least 4 photos'),
   copyrightConfirmed: z.literal(true, {
     message: 'You must confirm copyright ownership',
-  }),
+  }).optional().catch(undefined),
   // Step 9
   notSuitableFor: z.array(z.string()).optional(),
   notAllowed: z.array(z.string()).optional(),
   petFriendly: z.boolean().optional(),
   mandatoryItems: z.array(z.string()).optional(),
-  knowBeforeYouGo: z.string().optional(),
-  emergencyCountryCode: z.string().optional(),
-  emergencyPhone: z.string().optional(),
-  voucherInfo: z.string().optional(),
+  knowBeforeYouGo: z.string().max(2000).optional(),
+  emergencyCountryCode: z.string().max(5).optional(),
+  emergencyPhone: z.string().max(20).optional(),
+  voucherInfo: z.string().max(500).optional(),
   // Step 10
   options: z.array(productOptionSchema).optional(),
   // Step 11
   meetingMode: z.enum(['meeting_point', 'pickup', 'none']),
   meetingPoint: locationPointSchema.nullable().optional(),
-  meetingPointPicture: z.string().optional(),
-  meetingPointDescription: z.string().optional(),
+  meetingPointPicture: z.string().max(500).optional(),
+  meetingPointDescription: z.string().max(500).optional(),
   arrivalTimeType: z.enum(['none', '5min', '10min', '15min', '30min', 'notified', 'custom']).optional(),
-  arrivalTimeCustom: z.string().optional(),
+  arrivalTimeCustom: z.string().max(20).optional(),
   pickupType: z.enum(['area', 'address']).optional(),
-  pickupDescription: z.string().optional(),
+  pickupDescription: z.string().max(500).optional(),
   pickupTiming: z.enum(['at_start', 'before_start']).optional(),
   pickupFinalLocationTiming: z.enum(['day_before', 'after_selection']).optional(),
-  referenceStartTime: z.string().optional(),
+  referenceStartTime: z.string().max(20).optional(),
   pickupAreas: z.array(pickupAreaSchema).optional(),
   pickupLocations: z.array(locationPointSchema).optional(),
   pickupGeoshape: z.any().nullable().optional(),
   dropoffOption: z.enum(['same_location', 'different_location', 'none', 'service']).optional(),
   dropoffLocation: locationPointSchema.nullable().optional(),
-  dropoffDescription: z.string().optional(),
+  dropoffDescription: z.string().max(500).optional(),
   // Step 12
   pricingModel: z.enum(['perPerson', 'perGroup']).optional(),
   currency: z.string().optional(),
   scheduleType: z.enum(['fixedTimeSlot', 'operatingHours']).optional(),
-  scheduleName: z.string().optional(),
+  scheduleName: z.string().max(100).optional(),
   scheduleStartDate: z.string().optional(),
   scheduleHasEndDate: z.boolean().optional(),
   scheduleEndDate: z.string().optional(),
@@ -198,7 +209,12 @@ const productSchema = z.object({
   operatingHoursEnd: z.string().optional(),
   dateExceptions: z.array(dateExceptionSchema).optional(),
   pricingApproach: z.enum(['sameForEveryone', 'dependsOnAge']).optional(),
-  ageGroups: z.array(ageGroupSchema).optional(),
+  pricingCategories: z.array(pricingCategorySchema).optional(),
+  ageGroups: z.array(pricingCategorySchema).optional(),
+  weeklySchedule: z.record(z.array(z.object({
+    startTime: z.string(),
+    endTime: z.string(),
+  }))).optional(),
   minParticipants: z.number().min(1).optional(),
   maxParticipants: z.number().min(1).optional(),
   pricingTiers: z.array(pricingTierSchema).optional(),
@@ -219,8 +235,8 @@ const productSchema = z.object({
   coverPhoto: z.string().optional(),
   coverPhotoIndex: z.number().optional(),
   existingPhotos: z.array(z.string()).optional(),
-  metaTitle: z.string().optional(),
-  metaDescription: z.string().optional(),
+  metaTitle: z.string().max(120).optional(),
+  metaDescription: z.string().max(320).optional(),
 });
 
 module.exports = { productSchema, locationSchema, itineraryEntrySchema, attractionSchema };

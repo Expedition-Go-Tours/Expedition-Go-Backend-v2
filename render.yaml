@@ -86,7 +86,7 @@ projects:
       - key: RATELIMIT_AUTH_WINDOW_MS
         value: "900000"
       - key: RATELIMIT_UPLOAD_MAX
-        value: "20"
+        value: "200"
       - key: RATELIMIT_UPLOAD_WINDOW_MS
         value: "3600000"
       - key: RATELIMIT_CONTACT_MAX

@@ -86,7 +86,9 @@ function buildProductContent(flat) {
     guideType: flat.guideType || 'tour-guide',
     guideMaterials: flat.guideMaterials || { audioGuide: false, infoBooklet: false },
     foodProvided: !!flat.foodProvided,
+    meals: Array.isArray(flat.meals) ? flat.meals : [],
     mealType: flat.mealType || '',
+    showDietaryRestrictions: !!flat.showDietaryRestrictions,
     drinksIncluded: !!flat.drinksIncluded,
     dietaryOptions: Array.isArray(flat.dietaryOptions) ? flat.dietaryOptions : [],
     transportationProvided: !!flat.transportationProvided,
@@ -106,7 +108,8 @@ function buildProductContent(flat) {
     arrivalTime: flat.arrivalTime || '',
     arrivalTimeType: flat.arrivalTimeType || 'none',
     arrivalTimeCustom: flat.arrivalTimeCustom || '',
-    pickupAvailable: !!flat.pickupProvided,
+    pickupProvided: flat.meetingMode === 'pickup',
+    pickupAvailable: flat.meetingMode === 'pickup',
     pickupType: flat.pickupType || 'area',
     pickupDescription: flat.pickupDescription || '',
     pickupTiming: flat.pickupTiming || 'at_start',
@@ -115,7 +118,8 @@ function buildProductContent(flat) {
     pickupAreas: Array.isArray(flat.pickupAreas) ? flat.pickupAreas : [],
     pickupLocations: Array.isArray(flat.pickupLocations) ? flat.pickupLocations : [],
     pickupGeoshape: flat.pickupGeoshape || null,
-    dropoffAvailable: !!flat.dropoffProvided,
+    dropoffProvided: flat.dropoffOption && flat.dropoffOption !== 'none',
+    dropoffAvailable: flat.dropoffOption && flat.dropoffOption !== 'none',
     dropoffOption: flat.dropoffOption || 'none',
     dropoffLocation: flat.dropoffLocation || null,
     dropoffDescription: flat.dropoffDescription || '',
@@ -129,7 +133,7 @@ function buildSchedulesAndPricing(flat) {
       pricingModel: flat.pricingModel || 'perPerson',
       pricingApproach: flat.pricingApproach || 'dependsOnAge',
       uniformPrice: flat.uniformPrice ?? null,
-      ageGroups: Array.isArray(flat.ageGroups) ? flat.ageGroups : [],
+      pricingCategories: Array.isArray(flat.pricingCategories) ? flat.pricingCategories : (Array.isArray(flat.ageGroups) ? flat.ageGroups : []),
       minParticipants: flat.minParticipants ?? null,
       maxParticipants: flat.maxParticipants ?? null,
       pricingTiers: Array.isArray(flat.pricingTiers) ? flat.pricingTiers : [],
@@ -151,14 +155,47 @@ function buildSchedulesAndPricing(flat) {
         },
       ],
     },
-    availability: {
-      scheduleType: flat.scheduleType || 'fixedTimeSlot',
-      operatingHoursStart: flat.operatingHoursStart || '09:00',
-      operatingHoursEnd: flat.operatingHoursEnd || '17:00',
-      daysOfWeek: flat.daysOfWeek || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
-      timeSlots: Array.isArray(flat.timeSlots) ? flat.timeSlots.map(t => t.startTime) : [],
-    },
+    availability: buildAvailability(flat),
   };
+}
+
+function buildAvailability(flat) {
+  const weekly = flat.weeklySchedule
+  let daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+  let operatingHoursStart = '09:00'
+  let operatingHoursEnd = '17:00'
+
+  if (weekly && typeof weekly === 'object') {
+    const activeDays = Object.entries(weekly)
+      .filter(([, slots]) => Array.isArray(slots) && slots.length > 0)
+      .map(([day]) => day)
+    if (activeDays.length > 0) {
+      daysOfWeek = activeDays
+      const allStarts = []
+      const allEnds = []
+      for (const slots of Object.values(weekly)) {
+        if (Array.isArray(slots)) {
+          for (const slot of slots) {
+            if (slot.startTime) allStarts.push(slot.startTime)
+            if (slot.endTime) allEnds.push(slot.endTime)
+          }
+        }
+      }
+      if (allStarts.length > 0) allStarts.sort()
+      if (allEnds.length > 0) allEnds.sort()
+      if (allStarts.length > 0) operatingHoursStart = allStarts[0]
+      if (allEnds.length > 0) operatingHoursEnd = allEnds[allEnds.length - 1]
+    }
+  }
+
+  return {
+    scheduleType: flat.scheduleType || 'fixedTimeSlot',
+    operatingHoursStart,
+    operatingHoursEnd,
+    daysOfWeek,
+    weeklySchedule: flat.weeklySchedule || null,
+    timeSlots: Array.isArray(flat.timeSlots) ? flat.timeSlots.map(t => t.startTime) : [],
+  }
 }
 
 function buildBookingAndTickets(flat) {

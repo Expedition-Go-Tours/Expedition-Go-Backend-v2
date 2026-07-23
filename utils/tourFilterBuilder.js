@@ -35,12 +35,6 @@ function buildTourFilters(queryParams) {
     country,
     region,
     
-    // Pricing
-    minPrice,
-    maxPrice,
-    currency = 'USD',
-    priceRange, // 'budget', 'moderate', 'luxury'
-    
     // Rating & Reviews
     minRating,
     minReviews,
@@ -167,13 +161,10 @@ function buildTourFilters(queryParams) {
   // ================================
   // PRICE FILTERS
   // ================================
-  
-  if (minPrice || maxPrice || priceRange) {
-    const priceFilter = buildPriceFilter(minPrice, maxPrice, priceRange, currency);
-    if (priceFilter) {
-      andConditions.push(priceFilter);
-    }
-  }
+  // Price filtering is handled via raw SQL in the controller (buildPriceIdConstraint)
+  // because Prisma's JSON path filter cannot traverse JSON arrays with comparisons.
+  // The minPrice/maxPrice/priceRange params are validated by validateFilterParams
+  // and consumed by tourController.getAllTours, not here.
 
   // ================================
   // RATING & REVIEW FILTERS
@@ -302,15 +293,6 @@ function buildTourFilters(queryParams) {
 }
 
 /**
- * Build price filter based on range or specific values
- * Returns null — price filtering is handled via raw SQL in the controller
- * because Prisma's JSON path filter cannot traverse JSON arrays with comparisons.
- */
-function buildPriceFilter() {
-  return null;
-}
-
-/**
  * Build duration filter
  */
 function buildDurationFilter(minDuration, maxDuration, durationType = 'hours') {
@@ -341,7 +323,6 @@ function buildSortOptions(sortBy = 'createdAt', sortOrder = 'desc') {
     createdAt: 'createdAt',
     updatedAt: 'updatedAt',
     title: 'title',
-    price: 'schedulesAndPricing', // Special handling needed
     rating: 'averageRating',
     reviews: 'reviewCount',
     bookings: 'totalBookings',

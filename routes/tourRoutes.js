@@ -221,7 +221,7 @@ const router = express.Router();
   *         description: Sort field
   *         schema:
   *           type: string
-  *           enum: [createdAt, updatedAt, title, price, rating, reviews, bookings, popularity, relevance, nearest]
+  *           enum: [createdAt, updatedAt, title, rating, reviews, bookings, popularity, relevance, nearest]
   *           default: createdAt
   *       - name: sortOrder
   *         in: query
@@ -469,23 +469,20 @@ router.get('/popular/by-category', tourController.getPopularByCategory);
 
 /**
  * @swagger
- * /tours/{id}:
+ * /tours/availability/public/{tourId}:
  *   get:
- *     summary: Get single tour by ID or slug
+ *     summary: Get public availability for a tour
  *     tags: [Tours]
  *     parameters:
- *       - name: id
+ *       - name: tourId
  *         in: path
  *         required: true
  *         schema:
  *           type: string
  *     responses:
  *       200:
- *         description: Tour retrieved successfully
- *       404:
- *         description: Tour not found
+ *         description: Availability retrieved successfully
  */
-router.get('/:id', tourController.getTour);
 router.get('/availability/public/:tourId', availabilityController.getPublicAvailability);
 
 /**
@@ -511,6 +508,26 @@ router.get('/availability/public/:tourId', availabilityController.getPublicAvail
  *         description: Active offers retrieved successfully
  */
 router.get('/offers', tourController.getOfferListings);
+
+/**
+ * @swagger
+ * /tours/{id}:
+ *   get:
+ *     summary: Get single tour by ID or slug
+ *     tags: [Tours]
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Tour retrieved successfully
+ *       404:
+ *         description: Tour not found
+ */
+router.get('/:id', tourController.getTour);
 
 /**
  * @swagger

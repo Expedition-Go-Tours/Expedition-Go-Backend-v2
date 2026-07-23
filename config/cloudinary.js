@@ -54,6 +54,7 @@ function buildImageUpload() {
       folder: 'user-photos',
       allowed_formats: IMAGE_FORMATS,
       resource_type: 'image',
+      transformation: { quality: 'auto', fetch_format: 'auto' },
     },
   });
 

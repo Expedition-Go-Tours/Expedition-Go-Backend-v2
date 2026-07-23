@@ -608,8 +608,25 @@ exports.createTour = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Validate tour data
-  const validationResult = validateTourData(req.body);
+  // Strip empty values for draft saves so partial wizard progress doesn't fail validation
+  const JSON_BLOB_KEYS = new Set(['categorization', 'theme', 'productContent', 'schedulesAndPricing', 'bookingAndTickets'])
+  if (req.body.status !== 'ACTIVE' && req.body.status !== 'PUBLISHED') {
+    for (const key of Object.keys(req.body)) {
+      if (JSON_BLOB_KEYS.has(key)) continue
+      const val = req.body[key]
+      if (val === '' || val === null) { delete req.body[key]; continue }
+      if (Array.isArray(val)) {
+        const filtered = val.filter(v => v !== '' && v !== null)
+        if (filtered.length === 0) { delete req.body[key]; continue }
+        req.body[key] = filtered
+      }
+    }
+  }
+
+  // Validate tour data — partial allows progressive draft saves from the step-by-step wizard
+  // Full validation runs when status is PUBLISHED to ensure completeness
+  const isPublishing = req.body.status === 'PUBLISHED';
+  const validationResult = validateTourData(req.body, !isPublishing);
   if (!validationResult.isValid) {
     return next(new AppError(`Validation failed: ${validationResult.errors.join(', ')}`, 400));
   }
@@ -698,9 +715,10 @@ exports.createTour = catchAsync(async (req, res, next) => {
         return null;
       })(),
       primaryTheme: parsedTheme?.primaryTheme || parsedTheme?.primary || null,
-      secondaryThemes: {
-        create: [...new Set(parsedTheme?.secondaryThemes || parsedTheme?.secondary || [])].map(t => ({ theme: t })),
-      },
+      ...(() => {
+        const themes = [...new Set(parsedTheme?.secondaryThemes || parsedTheme?.secondary || [])];
+        return themes.length > 0 ? { secondaryThemes: { create: themes.map(t => ({ theme: t })) } } : {};
+      })(),
     },
     include: {
       supplier: {
@@ -819,8 +837,24 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Validate update data
-  const validationResult = validateTourData(req.body, true); // partial validation
+  // Strip empty values for draft saves so partial wizard progress doesn't fail validation
+  const JSON_BLOB_KEYS = new Set(['categorization', 'theme', 'productContent', 'schedulesAndPricing', 'bookingAndTickets'])
+  if (req.body.status !== 'ACTIVE' && req.body.status !== 'PUBLISHED') {
+    for (const key of Object.keys(req.body)) {
+      if (JSON_BLOB_KEYS.has(key)) continue
+      const val = req.body[key]
+      if (val === '' || val === null) { delete req.body[key]; continue }
+      if (Array.isArray(val)) {
+        const filtered = val.filter(v => v !== '' && v !== null)
+        if (filtered.length === 0) { delete req.body[key]; continue }
+        req.body[key] = filtered
+      }
+    }
+  }
+
+  // Validate update data — full validation when publishing
+  const isPublishing = req.body.status === 'PUBLISHED';
+  const validationResult = validateTourData(req.body, !isPublishing);
   if (!validationResult.isValid) {
     return next(new AppError(`Validation failed: ${validationResult.errors.join(', ')}`, 400));
   }
@@ -1460,9 +1494,9 @@ exports.seedTour = catchAsync(async (req, res, next) => {
       difficulty: seedData.categorization.difficulty,
       durationMinutes: seedData.categorization.duration.hours * 60,
       primaryTheme: seedData.theme.primary,
-      secondaryThemes: {
-        create: seedData.theme.secondary.map(t => ({ theme: t }))
-      }
+      ...(seedData.theme.secondary?.length > 0
+        ? { secondaryThemes: { create: seedData.theme.secondary.map(t => ({ theme: t })) } }
+        : {}),
     },
     include: {
       supplier: {
