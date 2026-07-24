@@ -14,7 +14,7 @@ const { findBestDiscount } = require('./specialOfferEngine');
  * Create unique slug for tour
  */
 async function createSlug(title, attempt = 0) {
-  const baseSlug = title
+  const baseSlug = (title || 'untitled')
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, '') // Remove special characters
     .replace(/\s+/g, '-') // Replace spaces with hyphens
