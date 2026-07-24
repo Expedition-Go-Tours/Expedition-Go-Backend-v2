@@ -91,6 +91,13 @@ const dateExceptionSchema = z.object({
   overrideTimes: z.array(z.string()).optional(),
 });
 
+const pricingTierSchema = z.object({
+  id: z.string(),
+  from: z.number().min(1).nullable(),
+  to: z.number().min(1).nullable(),
+  pricePerPerson: z.number().min(0).nullable(),
+});
+
 const pricingCategorySchema = z.object({
   name: z.string().min(1, 'Category name is required'),
   price: z.number().min(0, 'Price must be 0 or greater').nullable().optional(),
@@ -101,13 +108,7 @@ const pricingCategorySchema = z.object({
   needsAdult: z.boolean().optional(),
   idRequired: z.boolean().optional(),
   idType: z.string().optional(),
-});
-
-const pricingTierSchema = z.object({
-  id: z.string(),
-  from: z.number().min(1).nullable(),
-  to: z.number().min(1).nullable(),
-  pricePerPerson: z.number().min(0).nullable(),
+  tiers: z.array(pricingTierSchema).optional(),
 });
 
 const groupSizeSchema = z.object({
@@ -153,8 +154,8 @@ const productSchema = z.object({
   }),
   foodProvided: z.boolean().optional(),
   meals: z.array(z.object({
-    type: z.string().min(1, 'Select a meal type'),
-    format: z.string().min(1, 'Select a format'),
+    type: z.string().optional(),
+    format: z.string().optional(),
   })).optional(),
   mealType: z.string().optional(),
   showDietaryRestrictions: z.boolean().optional(),
@@ -217,7 +218,6 @@ const productSchema = z.object({
   }))).optional(),
   minParticipants: z.number().min(1).optional(),
   maxParticipants: z.number().min(1).optional(),
-  pricingTiers: z.array(pricingTierSchema).optional(),
   groupSizes: z.array(groupSizeSchema).optional(),
   additionalPersonsEnabled: z.boolean().optional(),
   additionalPersonPrice: z.number().min(0).nullable().optional(),
@@ -237,6 +237,14 @@ const productSchema = z.object({
   existingPhotos: z.array(z.string()).optional(),
   metaTitle: z.string().max(120).optional(),
   metaDescription: z.string().max(320).optional(),
+  transportModes: z.array(z.string()).optional(),
+  transportServices: z.array(z.string()).optional(),
+  crossCityTravel: z.boolean().optional(),
+  cutoffMinutes: z.number().optional(),
+  lastMinuteBookings: z.boolean().optional(),
+  perSlotCutoff: z.boolean().optional(),
+  planPickupTimes: z.boolean().optional(),
+  pickupStartTime: z.string().optional(),
 });
 
 module.exports = { productSchema, locationSchema, itineraryEntrySchema, attractionSchema };

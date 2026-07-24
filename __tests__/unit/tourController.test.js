@@ -781,19 +781,19 @@ describe('tourController', () => {
       req.body = {
         theme: { primary: 'Adventure', secondary: ['Hiking', 'Camping'] },
       };
-      prisma.tourSecondaryTheme = {
-        deleteMany: jest.fn().mockResolvedValue(),
-        createMany: jest.fn().mockResolvedValue(),
-      };
 
       await controller.updateTour(req, res, next);
 
-      expect(prisma.tourSecondaryTheme.deleteMany).toHaveBeenCalled();
-      expect(prisma.tourSecondaryTheme.createMany).toHaveBeenCalledWith(
+      expect(prisma.tour.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.arrayContaining([
-            expect.objectContaining({ theme: 'Hiking' }),
-          ]),
+          data: expect.objectContaining({
+            secondaryThemes: expect.objectContaining({
+              deleteMany: {},
+              create: expect.arrayContaining([
+                expect.objectContaining({ theme: 'Hiking' }),
+              ]),
+            }),
+          }),
         })
       );
     });

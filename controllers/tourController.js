@@ -891,15 +891,12 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   const uploadedPhotos = (req.files || []).map(f => f.path).filter(isValidCloudinaryUrl);
   const hasExistingPhotos = Array.isArray(req.body.existingPhotos);
   if (uploadedPhotos.length > 0 || hasExistingPhotos) {
-    // existingPhotos is already parsed by parseJsonFields inside validateTourData
-    // Only keep URLs that match the tour's current photos (normalized comparison)
     const normalize = (url) => {
       const m = url.match(/\/upload\/(?:w_\d+[^/]*\/)?(?:v\d+\/)?(.+)$/);
       return m ? m[1] : url;
     };
-    const currentPhotoPaths = new Set((existingTour.photos || []).map(normalize));
     const keptPhotos = hasExistingPhotos
-      ? req.body.existingPhotos.filter(url => currentPhotoPaths.has(normalize(url)))
+      ? req.body.existingPhotos
       : (existingTour.photos || []);
     const newPhotos = [...keptPhotos, ...uploadedPhotos];
 
@@ -988,10 +985,10 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   });
 
   if (secondaryThemesData) {
-    await prisma.tourSecondaryTheme.deleteMany({ where: { tourId: id } });
-    if (secondaryThemesData.length > 0) {
-      await prisma.tourSecondaryTheme.createMany({ data: secondaryThemesData.map(t => ({ tourId: id, ...t })) });
-    }
+    updateData.secondaryThemes = {
+      deleteMany: {},
+      create: secondaryThemesData,
+    };
   }
 
   // Handle special offers if provided — upsert by promoCode, remove stale offers

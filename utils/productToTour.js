@@ -62,6 +62,8 @@ function buildCategorization(flat) {
     difficulty: flat.difficulty || null,
     duration: durationValue,
     transportMode: flat.transportMode || null,
+    transportModes: Array.isArray(flat.transportModes) ? flat.transportModes : [],
+    transportServices: Array.isArray(flat.transportServices) ? flat.transportServices : [],
   };
 }
 
@@ -124,6 +126,16 @@ function buildProductContent(flat) {
     dropoffLocation: flat.dropoffLocation || null,
     dropoffDescription: flat.dropoffDescription || '',
     itinerary: Array.isArray(flat.itinerary) ? flat.itinerary : [],
+    isPrivateActivity: !!flat.isPrivateActivity,
+    passportRequired: !!flat.passportRequired,
+    flightInfoRequired: !!flat.flightInfoRequired,
+    shipInfoRequired: !!flat.shipInfoRequired,
+    trainInfoRequired: !!flat.trainInfoRequired,
+    hotelInfoRequired: !!flat.hotelInfoRequired,
+    contactPhone: flat.contactPhone || null,
+    crossCityTravel: !!flat.crossCityTravel,
+    planPickupTimes: !!flat.planPickupTimes,
+    pickupStartTime: flat.pickupStartTime || '08:00',
   };
 }
 
@@ -136,7 +148,6 @@ function buildSchedulesAndPricing(flat) {
       pricingCategories: Array.isArray(flat.pricingCategories) ? flat.pricingCategories : (Array.isArray(flat.ageGroups) ? flat.ageGroups : []),
       minParticipants: flat.minParticipants ?? null,
       maxParticipants: flat.maxParticipants ?? null,
-      pricingTiers: Array.isArray(flat.pricingTiers) ? flat.pricingTiers : [],
       groupSizes: Array.isArray(flat.groupSizes) ? flat.groupSizes : [],
       additionalPersonsEnabled: !!flat.additionalPersonsEnabled,
       additionalPersonPrice: flat.additionalPersonPrice ?? null,
@@ -208,11 +219,27 @@ function buildBookingAndTickets(flat) {
     pickupProvided: flat.meetingMode === 'pickup' || !!flat.pickupProvided,
     pickupType: flat.pickupType || 'area',
     pickupDescription: flat.pickupDescription || '',
+    pickupTiming: flat.pickupTiming || 'at_start',
+    pickupFinalLocationTiming: flat.pickupFinalLocationTiming || 'day_before',
     referenceStartTime: flat.referenceStartTime || '',
     pickupAreas: Array.isArray(flat.pickupAreas) ? flat.pickupAreas : [],
+    pickupLocations: Array.isArray(flat.pickupLocations) ? flat.pickupLocations : [],
+    pickupGeoshape: flat.pickupGeoshape || null,
+    dropoffOption: flat.dropoffOption || 'none',
     dropoffProvided: (flat.dropoffOption && flat.dropoffOption !== 'none') || !!flat.dropoffProvided,
+    dropoffLocation: flat.dropoffLocation || null,
     dropoffDescription: flat.dropoffDescription || '',
+    ticketType: flat.ticketType || null,
+    instantBooking: flat.instantBooking ?? false,
+    instantConfirmation: flat.instantConfirmation ?? false,
+    maxQuantity: flat.maxQuantity ?? null,
+    bookingWindow: flat.bookingWindow || null,
+    minAdvanceBookingHours: flat.minAdvanceBookingHours ?? null,
+    travelerRequiredInfo: Array.isArray(flat.travelerRequiredInfo) ? flat.travelerRequiredInfo : [],
     cancellationPolicy: Object.keys(cancellationPolicy).length > 0 ? cancellationPolicy : undefined,
+    cutoffMinutes: flat.cutoffMinutes ?? 20,
+    lastMinuteBookings: !!flat.lastMinuteBookings,
+    perSlotCutoff: !!flat.perSlotCutoff,
   };
 }
 
