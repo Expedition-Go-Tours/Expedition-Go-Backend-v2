@@ -71,7 +71,7 @@ function validProduct(overrides = {}) {
     category: 'Cultural',
     title: 'Amazing Tour',
     shortDescription: 'A short description that is at least ten chars',
-    fullDescription: 'A full description that is at least twenty characters long enough',
+    fullDescription: 'This is a comprehensive full description of the tour experience that provides travelers with detailed information about every aspect of the journey. It covers the significance of each stop along the route, the quality of service that guests can expect from our professional guides, and the unique value proposition that distinguishes this tour from all others available in the region. Our carefully curated itinerary ensures that participants enjoy an authentic and memorable cultural experience while visiting the most important landmarks and hidden gems that only locals know about. This thorough overview gives potential customers everything they need to make a well-informed booking decision with confidence.',
     highlights: ['Highlight 1', 'Highlight 2', 'Highlight 3'],
     photos: Array.from({ length: 7 }, (_, i) => `https://example.com/${i}.jpg`),
     copyrightConfirmed: true,

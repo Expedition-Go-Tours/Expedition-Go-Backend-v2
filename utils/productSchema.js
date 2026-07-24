@@ -166,7 +166,7 @@ const productSchema = z.object({
   photos: z.array(photoObjectSchema).min(4, 'Upload at least 4 photos'),
   copyrightConfirmed: z.literal(true, {
     message: 'You must confirm copyright ownership',
-  }).optional().catch(undefined),
+  }).optional(),
   // Step 9
   notSuitableFor: z.array(z.string()).optional(),
   notAllowed: z.array(z.string()).optional(),
