@@ -631,6 +631,10 @@ exports.createTour = catchAsync(async (req, res, next) => {
     return next(new AppError(`Validation failed: ${validationResult.errors.join(', ')}`, 400));
   }
 
+  // Ensure required scalar fields always have a value for Prisma
+  if (!req.body.title) req.body.title = 'Untitled Tour';
+  if (!req.body.description) req.body.description = '';
+
   const {
     title,
     description,
