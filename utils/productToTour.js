@@ -103,6 +103,7 @@ function buildProductContent(flat) {
     emergencyCountryCode: flat.emergencyCountryCode || '',
     emergencyPhone: flat.emergencyPhone || '',
     voucherInfo: flat.voucherInfo || '',
+    copyrightConfirmed: !!flat.copyrightConfirmed,
     options: Array.isArray(flat.options) ? flat.options : [],
     meetingInstructions: flat.meetingPointDescription || '',
     meetingMode: flat.meetingMode || 'meeting_point',
