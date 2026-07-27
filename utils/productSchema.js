@@ -60,6 +60,7 @@ const itineraryEntrySchema = z.object({
   day: z.number().min(1, 'Day number must be 1 or greater'),
   time: z.string().min(1, 'Start time is required'),
   type: z.enum(['activity', 'transfer']),
+  visitType: z.string().optional(),
   locationName: z.string().optional(),
   locationAddress: z.string().optional(),
   locationLat: z.number().nullable().optional(),
@@ -71,6 +72,9 @@ const itineraryEntrySchema = z.object({
   description: z.string().min(1, 'Description is required'),
   isOptional: z.boolean().optional(),
   additionalFee: z.boolean().optional(),
+  activityName: z.string().optional(),
+  importance: z.enum(['major', 'minor']).optional(),
+  photo: z.string().optional(),
 });
 
 const pickupAreaSchema = z.object({
