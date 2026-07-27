@@ -2,7 +2,6 @@ const { z } = require('zod');
 
 const locationSchema = z.object({
   name: z.string().min(1, 'Location name is required'),
-  visitType: z.string().optional(),
   address: z.string().optional(),
   lat: z.number().optional(),
   lng: z.number().optional(),
@@ -60,7 +59,6 @@ const itineraryEntrySchema = z.object({
   day: z.number().min(1, 'Day number must be 1 or greater'),
   time: z.string().min(1, 'Start time is required'),
   type: z.enum(['activity', 'transfer']),
-  visitType: z.string().optional(),
   locationName: z.string().optional(),
   locationAddress: z.string().optional(),
   locationLat: z.number().nullable().optional(),
