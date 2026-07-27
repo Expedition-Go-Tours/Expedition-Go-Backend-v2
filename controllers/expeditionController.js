@@ -2,7 +2,6 @@ const crypto = require('crypto');
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
-const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const cache = require('../utils/cacheHelper');
 const { sendEmail } = require('../utils/emailService');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/queue');
@@ -66,10 +65,8 @@ function transformForListing(tour) {
     title: tour.title,
     slug: tour.slug,
     description: tour.description ? tour.description.slice(0, 300) : null,
-    coverPhoto: tour.coverPhoto ? cloudinaryUrl(tour.coverPhoto, 800) : null,
-    photos: Array.isArray(tour.photos)
-      ? tour.photos.map((url) => cloudinaryUrl(url, 400))
-      : [],
+    coverPhoto: tour.coverPhoto || null,
+    photos: Array.isArray(tour.photos) ? tour.photos : [],
     category: tour.category,
     durationMinutes: tour.durationMinutes,
     startingPrice: extractStartingPrice(tour.schedulesAndPricing),
@@ -80,7 +77,7 @@ function transformForListing(tour) {
     country: tour.country,
     supplierName: tour.supplier?.name || null,
     supplierPhoto: tour.supplier?.photoURL
-      ? cloudinaryUrl(tour.supplier.photoURL, 100)
+      ? tour.supplier.photoURL
       : null,
   };
 }
@@ -415,10 +412,8 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
       title: t.title,
       slug: t.slug,
       description: t.description,
-      coverPhoto: t.coverPhoto ? cloudinaryUrl(t.coverPhoto, 1400) : null,
-      photos: Array.isArray(t.photos)
-        ? t.photos.map((url) => cloudinaryUrl(url, 800))
-        : [],
+      coverPhoto: t.coverPhoto || null,
+    photos: Array.isArray(t.photos) ? t.photos : [],
       category: t.category,
       durationMinutes: t.durationMinutes,
       startingPrice: extractStartingPrice(t.schedulesAndPricing),
@@ -435,7 +430,7 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
       confirmationType: bookingAndTickets.confirmationType || null,
       supplierName: t.supplier?.name || null,
       supplierPhoto: t.supplier?.photoURL
-        ? cloudinaryUrl(t.supplier.photoURL, 100)
+        ? t.supplier.photoURL
         : null,
       supplierRating: t.supplier?.supplierProfile?.averageRating
         ? Number(t.supplier.supplierProfile.averageRating)
@@ -671,7 +666,7 @@ exports.searchTours = catchAsync(async (req, res) => {
         id: t.id,
         title: t.title,
         slug: t.slug,
-        coverPhoto: t.coverPhoto ? cloudinaryUrl(t.coverPhoto, 200) : null,
+        coverPhoto: t.coverPhoto || null,
         category: t.category,
         city: t.city,
         country: t.country,
@@ -727,7 +722,7 @@ exports.getAdminTours = catchAsync(async (req, res) => {
           slug: r.tour.slug,
           status: r.tour.status,
           coverPhoto: r.tour.coverPhoto
-            ? cloudinaryUrl(r.tour.coverPhoto, 200)
+            ? r.tour.coverPhoto
             : null,
           category: r.tour.category,
           city: r.tour.city,

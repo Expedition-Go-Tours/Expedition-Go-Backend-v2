@@ -20,7 +20,6 @@ const { enqueueNotification } = require('../utils/queue');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const { logActivity } = require('../utils/auditLogger');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
-const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const { addApprovedRating, removeApprovedRating, recalculateSupplierRating } = require('../utils/ratingHelper');
 const cache = require('../utils/cacheHelper');
 const crypto = require('crypto');
@@ -426,12 +425,12 @@ exports.getTourReviews = catchAsync(async (req, res, next) => {
     const optimizedReviews = reviews.map((review) => ({
       ...review,
       photos: Array.isArray(review.photos)
-        ? review.photos.map((url) => cloudinaryUrl(url, 600))
+        ? review.photos
         : review.photos,
       customer: {
         ...review.customer,
         photoURL: review.customer.photoURL
-          ? cloudinaryUrl(review.customer.photoURL, 150)
+          ? review.customer.photoURL
           : review.customer.photoURL,
       },
     }));

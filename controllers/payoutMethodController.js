@@ -11,7 +11,6 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const { logActivity } = require('../utils/auditLogger');
-const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const admin = require('../config/firebaseAdmin');
 
 // ================================
@@ -328,7 +327,7 @@ exports.getAllSuppliersMethods = catchAsync(async (req, res) => {
       } catch { /* not a Firebase auth user or not found */ }
     }
     const { firebaseUid: _uid, ...rest } = s; // eslint-disable-line no-unused-vars
-    return { ...rest, photoURL: photoURL ? cloudinaryUrl(photoURL, 150) : photoURL };
+    return { ...rest, photoURL: photoURL ? photoURL : photoURL };
   }));
 
   res.status(200).json({

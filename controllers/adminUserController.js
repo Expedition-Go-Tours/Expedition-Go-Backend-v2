@@ -1,7 +1,6 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
-const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const { invalidateUserCache } = require('../middleware/authMiddleware');
 
 exports.getAdminUsers = catchAsync(async (req, res, next) => {
@@ -31,7 +30,7 @@ exports.getAdminUsers = catchAsync(async (req, res, next) => {
 
   const optimized = admins.map((a) => ({
     ...a,
-    photoURL: cloudinaryUrl(a.photoURL, 64),
+    photoURL: a.photoURL,
   }));
 
   res.status(200).json({
@@ -96,7 +95,7 @@ exports.addAdmin = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: { ...updated, photoURL: cloudinaryUrl(updated.photoURL, 64) },
+    data: { ...updated, photoURL: updated.photoURL },
   });
 });
 

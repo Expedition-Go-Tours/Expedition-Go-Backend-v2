@@ -18,7 +18,6 @@ const prisma = require('../utils/prismaClient');
 const AppError = require('../utils/appError');
 const catchAsync = require('../utils/catchAsync');
 
-const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const cache = require('../utils/cacheHelper');
 const { logActivity } = require('../utils/auditLogger');
 
@@ -1259,7 +1258,7 @@ exports.searchUsers = catchAsync(async (req, res) => {
 
   const optimized = users.map((u) => ({
     ...u,
-    photoURL: cloudinaryUrl(u.photoURL, 64),
+    photoURL: u.photoURL,
   }));
 
   res.status(200).json({ status: 'success', data: { users: optimized } });
@@ -1337,12 +1336,12 @@ exports.getUser = catchAsync(async (req, res, next) => {
     data: {
       user: {
         ...user,
-        photoURL: cloudinaryUrl(user.photoURL, 128),
+        photoURL: user.photoURL,
       },
       bookings: bookings.map((b) => ({
         ...b,
         tour: b.tour
-          ? { ...b.tour, coverPhoto: cloudinaryUrl(b.tour.coverPhoto, 80) }
+          ? { ...b.tour, coverPhoto: b.tour.coverPhoto }
           : null,
       })),
       reviewStats: {
@@ -1391,7 +1390,7 @@ exports.getMe = catchAsync(async (req, res, next) => {
     status: 'success',
     data: {
       ...user,
-      photoURL: cloudinaryUrl(user.photoURL, 80),
+      photoURL: user.photoURL,
       adminRole: user.adminRole
         ? { ...user.adminRole, permissions }
         : null,
@@ -1496,7 +1495,7 @@ exports.getBookings = catchAsync(async (req, res) => {
     supplierPayout: Number(b.supplierPayout),
     customer: {
       ...b.customer,
-      photoURL: b.customer.photoURL ? cloudinaryUrl(b.customer.photoURL, 64) : null,
+      photoURL: b.customer.photoURL || null,
     },
     payouts: b.payouts.map((p) => ({ ...p, amount: Number(p.amount) })),
   }));
@@ -1581,7 +1580,7 @@ exports.getBookingById = catchAsync(async (req, res, next) => {
       supplierPayout: Number(booking.supplierPayout),
       customer: {
         ...booking.customer,
-        photoURL: booking.customer.photoURL ? cloudinaryUrl(booking.customer.photoURL, 80) : null,
+        photoURL: booking.customer.photoURL || null,
       },
       payouts: booking.payouts.map((p) => ({ ...p, amount: Number(p.amount) })),
     },

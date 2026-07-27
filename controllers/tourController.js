@@ -19,7 +19,6 @@ const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudi
 const { createSlug, validateTourData } = require('../utils/tourHelpers');
 const { productToTour } = require('../utils/productToTour');
 const { logActivity } = require('../utils/auditLogger');
-const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const { 
   buildTourFilters, 
   buildSortOptions, 
@@ -173,15 +172,11 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
     const optimizedTours = tours.map((tour) => {
       const t = {
         ...tour,
-        photos: Array.isArray(tour.photos)
-          ? tour.photos.map((url) => cloudinaryUrl(url, 800))
-          : tour.photos,
-        coverPhoto: tour.coverPhoto ? cloudinaryUrl(tour.coverPhoto, 800) : null,
+        photos: tour.photos,
+        coverPhoto: tour.coverPhoto || null,
         supplier: {
           ...tour.supplier,
-          photoURL: tour.supplier.photoURL
-            ? cloudinaryUrl(tour.supplier.photoURL, 150)
-            : tour.supplier.photoURL,
+          photoURL: tour.supplier.photoURL || null,
         },
       };
       if (hasGeo) {
@@ -329,15 +324,11 @@ exports.getPopularByCategory = catchAsync(async (req, res, next) => {
     for (const [cat, tours] of Object.entries(popular)) {
       optimized[cat] = tours.map(t => ({
         ...t,
-        photos: Array.isArray(t.photos)
-          ? t.photos.map(url => cloudinaryUrl(url, 800))
-          : t.photos,
-        coverPhoto: t.coverPhoto ? cloudinaryUrl(t.coverPhoto, 800) : null,
+        photos: t.photos,
+        coverPhoto: t.coverPhoto || null,
         supplier: {
           ...t.supplier,
-          photoURL: t.supplier.photoURL
-            ? cloudinaryUrl(t.supplier.photoURL, 150)
-            : t.supplier.photoURL,
+          photoURL: t.supplier.photoURL || null,
         },
       }));
     }
@@ -469,11 +460,9 @@ exports.getTour = catchAsync(async (req, res, next) => {
 
     return {
       ...tour,
-      photos: Array.isArray(tour.photos)
-        ? tour.photos.map((url) => cloudinaryUrl(url, 1400))
-        : tour.photos,
+      photos: tour.photos,
       specialOffers,
-      coverPhoto: tour.coverPhoto ? cloudinaryUrl(tour.coverPhoto, 1400) : null,
+      coverPhoto: tour.coverPhoto || null,
     };
   }, isOwner ? 60 : 300);
 
@@ -1149,10 +1138,8 @@ exports.getMyTours = catchAsync(async (req, res, next) => {
       .filter(Boolean);
     return {
       ...tour,
-      photos: Array.isArray(tour.photos)
-        ? tour.photos.map(url => cloudinaryUrl(url, 800))
-        : tour.photos,
-      coverPhoto: tour.coverPhoto ? cloudinaryUrl(tour.coverPhoto, 800) : null,
+      photos: tour.photos,
+      coverPhoto: tour.coverPhoto || null,
       specialOffers,
     };
   });

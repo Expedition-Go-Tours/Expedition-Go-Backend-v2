@@ -17,7 +17,6 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 const { logActivity } = require('../utils/auditLogger');
-const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const { invalidateUserCache } = require('../middleware/authMiddleware');
 
 exports.getMe = catchAsync(async (req, res, next) => {
@@ -29,7 +28,7 @@ exports.getMe = catchAsync(async (req, res, next) => {
   const optimizedUser = {
     ...req.user,
     photoURL: req.user.photoURL
-      ? cloudinaryUrl(req.user.photoURL, 300)
+      ? req.user.photoURL
       : req.user.photoURL,
   };
 

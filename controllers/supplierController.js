@@ -14,7 +14,6 @@ const { logActivity } = require('../utils/auditLogger');
 const { sendSupplierStatusEmail } = require('../utils/emailService');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const { enqueueNotification } = require('../utils/queue');
-const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 const admin = require('../config/firebaseAdmin');
 const logger = require('../utils/logger');
@@ -444,7 +443,7 @@ exports.getAllApplications = catchAsync(async (req, res) => {
     return {
       ...app,
       user: app.user
-        ? { ...app.user, photoURL: photoURL ? cloudinaryUrl(photoURL, 150) : photoURL }
+        ? { ...app.user, photoURL: photoURL ? photoURL : photoURL }
         : app.user,
     };
   }));

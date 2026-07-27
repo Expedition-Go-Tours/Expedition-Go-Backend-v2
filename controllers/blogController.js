@@ -2,7 +2,6 @@ const crypto = require('crypto');
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
-const { cloudinaryUrl } = require('../utils/imageOptimizer');
 const cache = require('../utils/cacheHelper');
 const { enqueueEvent } = require('../utils/queue');
 const { buildArticleSchema } = require('../utils/blogSEO');
@@ -53,10 +52,10 @@ function transformArticle(article) {
     title: article.title,
     slug: article.slug,
     excerpt: article.excerpt,
-    featuredImage: article.featuredImage ? cloudinaryUrl(article.featuredImage, 800) : null,
+    featuredImage: article.featuredImage || null,
     category: article.category ? { id: article.category.id, name: article.category.name, slug: article.category.slug } : null,
     tags: article.tags?.map((t) => ({ id: t.tag.id, name: t.tag.name, slug: t.tag.slug })) || [],
-    author: article.author ? { id: article.author.id, name: article.author.name, photoURL: article.author.photoURL ? cloudinaryUrl(article.author.photoURL, 100) : null } : null,
+    author: article.author ? { id: article.author.id, name: article.author.name, photoURL: article.author.photoURL || null } : null,
     status: article.status,
     publishedAt: article.publishedAt,
     readTime: article.readTime,
@@ -73,14 +72,14 @@ function transformArticleDetail(article) {
     slug: article.slug,
     excerpt: article.excerpt,
     body: article.body,
-    featuredImage: article.featuredImage ? cloudinaryUrl(article.featuredImage, 1400) : null,
-    images: Array.isArray(article.images) ? article.images.map((url) => cloudinaryUrl(url, 800)) : [],
+    featuredImage: article.featuredImage || null,
+    images: Array.isArray(article.images) ? article.images : [],
     metaTitle: article.metaTitle,
     metaDescription: article.metaDescription,
     canonicalUrl: article.canonicalUrl,
     category: article.category ? { id: article.category.id, name: article.category.name, slug: article.category.slug } : null,
     tags: article.tags?.map((t) => ({ id: t.tag.id, name: t.tag.name, slug: t.tag.slug })) || [],
-    author: article.author ? { id: article.author.id, name: article.author.name, photoURL: article.author.photoURL ? cloudinaryUrl(article.author.photoURL, 100) : null } : null,
+    author: article.author ? { id: article.author.id, name: article.author.name, photoURL: article.author.photoURL || null } : null,
     publishedAt: article.publishedAt,
     readTime: article.readTime,
     locale: article.locale,
@@ -89,7 +88,7 @@ function transformArticleDetail(article) {
       id: rt.tour.id,
       title: rt.tour.title,
       slug: rt.tour.slug,
-      coverPhoto: rt.tour.coverPhoto ? cloudinaryUrl(rt.tour.coverPhoto, 400) : null,
+      coverPhoto: rt.tour.coverPhoto || null,
       category: rt.tour.category,
       city: rt.tour.city,
       country: rt.tour.country,
