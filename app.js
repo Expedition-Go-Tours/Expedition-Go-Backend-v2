@@ -53,10 +53,11 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'none'"],
       imgSrc: ["'self'", 'data:', 'https://res.cloudinary.com', 'https://*.cloudinary.com'],
-      connectSrc: ["'self'", 'https://api.stripe.com', 'https://js.stripe.com'],
+      connectSrc: ["'self'", 'https://api.stripe.com', 'https://js.stripe.com', 'https://accounts.google.com'],
       styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
+      scriptSrc: ["'self'", 'https://accounts.google.com'],
       fontSrc: ["'self'"],
+      frameSrc: ["https://accounts.google.com"],
       objectSrc: ["'none'"],
       frameAncestors: ["'none'"],
       formAction: ["'self'"],
