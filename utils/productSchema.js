@@ -2,7 +2,7 @@ const { z } = require('zod');
 
 const locationSchema = z.object({
   name: z.string().min(1, 'Location name is required'),
-  visitType: z.string().min(1, 'Visit type is required'),
+  visitType: z.string().optional(),
   address: z.string().optional(),
   lat: z.number().optional(),
   lng: z.number().optional(),
