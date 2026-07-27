@@ -865,6 +865,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   // PrismaClientValidationError
   const {
     title, description, referenceCode, metaTitle, metaDescription,
+    categorization, theme,
     productContent, schedulesAndPricing, bookingAndTickets,
     coverPhoto, tags, status, latitude, longitude, specialOffers
   } = req.body;
@@ -875,6 +876,8 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   if (referenceCode !== undefined) updateData.referenceCode = referenceCode || null;
   if (metaTitle !== undefined) updateData.metaTitle = metaTitle;
   if (metaDescription !== undefined) updateData.metaDescription = metaDescription;
+  if (categorization !== undefined) updateData.categorization = categorization;
+  if (theme !== undefined) updateData.theme = theme;
   if (productContent !== undefined) updateData.productContent = productContent;
   if (schedulesAndPricing !== undefined) updateData.schedulesAndPricing = schedulesAndPricing;
   if (bookingAndTickets !== undefined) updateData.bookingAndTickets = bookingAndTickets;
