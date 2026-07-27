@@ -113,7 +113,6 @@ describe('Stripe Load Tests', () => {
 
   it('processStripeWebhook — payment succeeded at scale', async () => {
     const results = await runLoadTestScenarios('processStripeWebhook (succeeded)', () => {
-      jest.clearAllMocks();
       prisma.stripeEvent.findUnique.mockResolvedValue(null);
       prisma.stripeEvent.upsert.mockResolvedValue({});
       prisma.stripeEvent.update.mockResolvedValue({});
@@ -132,7 +131,6 @@ describe('Stripe Load Tests', () => {
 
     const test = new LoadTest({ name: 'Stripe Webhooks Mixed (c=100)', concurrency: 100, targetRps: 1000, durationMs: 1000 });
     await test.run(() => {
-      jest.clearAllMocks();
       prisma.stripeEvent.findUnique.mockResolvedValue(null);
       prisma.stripeEvent.upsert.mockResolvedValue({});
       prisma.stripeEvent.update.mockResolvedValue({});
@@ -174,7 +172,6 @@ describe('Stripe Load Tests', () => {
       const profile = { totalBookings: Math.floor(Math.random() * 200), averageRating: Math.random() * 5 };
       const commission = calculateCommission(amount / 100, profile);
 
-      jest.clearAllMocks();
       prisma.stripeEvent.findUnique.mockResolvedValue(null);
       prisma.stripeEvent.upsert.mockResolvedValue({});
       prisma.stripeEvent.update.mockResolvedValue({});

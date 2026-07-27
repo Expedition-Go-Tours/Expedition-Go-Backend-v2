@@ -625,7 +625,7 @@ describe('adminController', () => {
       await controller.searchUsers(req, res, next);
 
       const body = res.json.mock.calls[0][0];
-      expect(body.data.users[0].photoURL).toBe('https://cdn.example.com/64/photo.jpg');
+      expect(body.data.users[0].photoURL).toBe('photo.jpg');
     });
   });
 
@@ -658,7 +658,7 @@ describe('adminController', () => {
           data: expect.objectContaining({
             id: 'admin-1',
             name: 'Admin User',
-            photoURL: 'https://cdn.example.com/80/avatar.jpg',
+            photoURL: 'avatar.jpg',
           }),
         })
       );

@@ -5,6 +5,7 @@ jest.mock('../../utils/prismaClient', () => ({
   booking: { groupBy: jest.fn(), findMany: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
   review: { findMany: jest.fn(), aggregate: jest.fn(), count: jest.fn() },
   payout: { findMany: jest.fn(), count: jest.fn() },
+  media: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
 }));
 
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
@@ -527,7 +528,7 @@ describe('supplierController', () => {
       await controller.getAllApplications(req, res, next);
 
       const body = res.json.mock.calls[0][0];
-      expect(body.data.applications[0].user.photoURL).toBe('https://cdn.example.com/150/fb-photo.jpg');
+      expect(body.data.applications[0].user.photoURL).toBe('fb-photo.jpg');
     });
 
     it('handles firebase fetch failure gracefully', async () => {

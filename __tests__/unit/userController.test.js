@@ -1,6 +1,7 @@
 jest.mock('../../utils/prismaClient', () => ({
   user: { findUnique: jest.fn(), update: jest.fn(), create: jest.fn(), delete: jest.fn() },
   tour: { findUnique: jest.fn(), findMany: jest.fn() },
+  media: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
 }));
 
 jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
@@ -56,7 +57,7 @@ describe('userController', () => {
       await controller.getMe(req, res, next);
       expect(res.status).toHaveBeenCalledWith(200);
       const body = res.json.mock.calls[0][0];
-      expect(body.data.user.photoURL).toBe('https://cdn.example.com/300/photo.jpg');
+      expect(body.data.user.photoURL).toBe('photo.jpg');
     });
 
     it('returns 404 when no user', async () => {

@@ -93,6 +93,13 @@ exports.updateMe = catchAsync(async (req, res, next) => {
     newValues: updatedUser
   });
 
+  if (req.file?.path) {
+    prisma.media.updateMany({
+      where: { url: req.file.path },
+      data: { status: 'ATTACHED', entity: 'user', entityId: updatedUser.id },
+    }).catch(() => {});
+  }
+
   res.status(200).json({ status: 'success', data: { user: updatedUser } });
 });
 

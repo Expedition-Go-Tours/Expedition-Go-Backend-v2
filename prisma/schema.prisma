@@ -145,6 +145,30 @@ enum KeywordRequestStatus {
   REJECTED
 }
 
+enum MediaStatus {
+  PENDING
+  ATTACHED
+  ORPHANED
+}
+
+model Media {
+  id        String      @id @default(cuid())
+  url       String      @unique
+  publicId  String?
+  userId    String?
+  status    MediaStatus @default(PENDING)
+  entity    String?
+  entityId  String?
+
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@index([status])
+  @@index([url])
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
 // ================================
 // CORE MODELS
 // ================================

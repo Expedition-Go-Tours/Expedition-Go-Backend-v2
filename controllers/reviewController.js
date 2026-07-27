@@ -183,6 +183,13 @@ exports.createReview = catchAsync(async (req, res, next) => {
     properties: { tourId, rating: parsedRating, bookingId: bookingId || null, supplierId },
   });
 
+  if (photos.length > 0) {
+    prisma.media.updateMany({
+      where: { url: { in: photos } },
+      data: { status: 'ATTACHED', entity: 'review', entityId: result.id },
+    }).catch(() => {});
+  }
+
   res.status(201).json({
     status: 'success',
     data: { review: result }
@@ -299,6 +306,13 @@ exports.updateReview = catchAsync(async (req, res, next) => {
     oldValues: existingReview,
     newValues: review
   });
+
+  if (photos?.length > 0) {
+    prisma.media.updateMany({
+      where: { url: { in: photos } },
+      data: { status: 'ATTACHED', entity: 'review', entityId: review.id },
+    }).catch(() => {});
+  }
 
   res.status(200).json({
     status: 'success',

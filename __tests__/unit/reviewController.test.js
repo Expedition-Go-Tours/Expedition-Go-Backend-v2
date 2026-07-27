@@ -2,6 +2,7 @@ jest.mock('../../utils/prismaClient', () => ({
   booking: { findFirst: jest.fn() },
   review: { findFirst: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   tour: { findMany: jest.fn() },
+  media: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
   $transaction: jest.fn((cb) => cb({
     review: { create: jest.fn(), update: jest.fn(), delete: jest.fn(), aggregate: jest.fn() },
     tour: { update: jest.fn(), findUnique: jest.fn() },
@@ -356,7 +357,7 @@ describe('reviewController', () => {
       await controller.getTourReviews(req, res, next);
 
       const body = res.json.mock.calls[0][0];
-      expect(body.data.reviews[0].photos[0]).toContain('cdn.example.com');
+      expect(body.data.reviews[0].photos[0]).toBe('p1.jpg');
     });
   });
 

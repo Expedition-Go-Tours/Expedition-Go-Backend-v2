@@ -734,6 +734,14 @@ exports.createTour = catchAsync(async (req, res, next) => {
   // Use setImmediate() to run after response is sent but on same event loop tick
   setImmediate(async () => {
     try {
+      // Mark uploaded photos as ATTACHED
+      if (allPhotos.length > 0) {
+        await prisma.media.updateMany({
+          where: { url: { in: allPhotos } },
+          data: { status: 'ATTACHED', entity: 'tour', entityId: tour.id },
+        }).catch(err => logger.warn('[Media] Failed to mark photos as ATTACHED:', err?.message));
+      }
+
       // Invalidate caches
       await cache.invalidateTourCaches().catch((err) => 
         logger.warn('[cache] invalidateTourCaches failed:', err?.message)
@@ -1026,6 +1034,13 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     oldValues: existingTour,
     newValues: tour
   });
+
+  if (updateData.photos?.length > 0) {
+    prisma.media.updateMany({
+      where: { url: { in: updateData.photos } },
+      data: { status: 'ATTACHED', entity: 'tour', entityId: id },
+    }).catch(err => logger.warn('[Media] Failed to mark photos as ATTACHED:', err?.message));
+  }
 
   res.status(200).json({
     status: 'success',

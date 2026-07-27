@@ -1,4 +1,6 @@
 const { imageUpload, documentUpload } = require('../config/cloudinary');
+const prisma = require('../utils/prismaClient');
+const { extractPublicIdFromUrl } = require('../utils/cloudinaryHelper');
 
 function wrapMulter(middleware) {
   return (req, res, next) => {
@@ -24,13 +26,55 @@ function wrapMulter(middleware) {
   };
 }
 
-exports.uploadUserPhoto = wrapMulter(imageUpload.single('photo'));
+function wrapWithRecord(multerInstance) {
+  const wrapped = wrapMulter(multerInstance);
+  return (req, res, next) => {
+    wrapped(req, res, (err) => {
+      if (err) return next(err);
+      recordMedia(req, res, next);
+    });
+  };
+}
 
-exports.uploadTourPhotos = wrapMulter(imageUpload.array('photos', 20));
+async function recordMedia(req, res, next) {
+  const urls = [];
+  if (req.files) {
+    if (Array.isArray(req.files)) {
+      req.files.forEach(f => { if (f.path) urls.push(f.path); });
+    } else {
+      Object.values(req.files).forEach(arr => {
+        if (Array.isArray(arr)) arr.forEach(f => { if (f.path) urls.push(f.path); });
+      });
+    }
+  } else if (req.file?.path) {
+    urls.push(req.file.path);
+  }
 
-exports.uploadReviewPhotos = wrapMulter(imageUpload.array('photos', 10));
+  if (urls.length > 0) {
+    try {
+      const records = urls.map(url => ({
+        url,
+        publicId: extractPublicIdFromUrl(url),
+        userId: req.user?.id || null,
+        status: 'PENDING',
+      }));
+      await prisma.media.createMany({ data: records, skipDuplicates: true });
+    } catch (err) {
+      console.warn('[Media] Failed to record upload:', err.message);
+    }
+  }
+  next();
+}
 
-exports.uploadSupplierDocuments = wrapMulter(documentUpload.fields([
+exports.recordMedia = recordMedia;
+
+exports.uploadUserPhoto = wrapWithRecord(imageUpload.single('photo'));
+
+exports.uploadTourPhotos = wrapWithRecord(imageUpload.array('photos', 20));
+
+exports.uploadReviewPhotos = wrapWithRecord(imageUpload.array('photos', 10));
+
+exports.uploadSupplierDocuments = wrapWithRecord(documentUpload.fields([
   { name: 'registrationDocument', maxCount: 1 },
   { name: 'taxDocument', maxCount: 1 },
   { name: 'proofOfAddress', maxCount: 1 },
@@ -38,8 +82,8 @@ exports.uploadSupplierDocuments = wrapMulter(documentUpload.fields([
   { name: 'licenses', maxCount: 5 },
 ]));
 
-exports.uploadChatImage = wrapMulter(imageUpload.single('file'));
+exports.uploadChatImage = wrapWithRecord(imageUpload.single('file'));
 
-exports.uploadSupplierLogo = wrapMulter(imageUpload.single('logo'));
+exports.uploadSupplierLogo = wrapWithRecord(imageUpload.single('logo'));
 
-exports.uploadBlogImage = wrapMulter(imageUpload.single('image'));
+exports.uploadBlogImage = wrapWithRecord(imageUpload.single('image'));

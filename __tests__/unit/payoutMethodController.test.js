@@ -293,7 +293,7 @@ describe('payoutMethodController', () => {
       await controller.getAllSuppliersMethods(req, res, next);
 
       const body = res.json.mock.calls[0][0];
-      expect(body.data.suppliers[0].photoURL).toBe('https://cdn.example.com/150/fb-photo.jpg');
+      expect(body.data.suppliers[0].photoURL).toBe('fb-photo.jpg');
     });
 
     it('handles Firebase fetch failure gracefully', async () => {

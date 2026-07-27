@@ -5,6 +5,7 @@ jest.mock('../../utils/prismaClient', () => ({
   supplierProfile: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
   tourSecondaryTheme: { deleteMany: jest.fn(), createMany: jest.fn() },
   payoutMethod: { findFirst: jest.fn() },
+  media: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
   $queryRaw: jest.fn(),
 }));
 

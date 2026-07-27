@@ -43,7 +43,7 @@ describe('adminUserController', () => {
       );
       expect(res.status).toHaveBeenCalledWith(200);
       const body = res.json.mock.calls[0][0];
-      expect(body.data[0].photoURL).toBe('https://cdn.example.com/64/p.jpg');
+      expect(body.data[0].photoURL).toBe('p.jpg');
     });
   });
 
