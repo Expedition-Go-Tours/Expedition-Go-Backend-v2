@@ -889,7 +889,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
 
   // Handle uploaded photos from multer
   const uploadedPhotos = (req.files || []).map(f => f.path).filter(isValidCloudinaryUrl);
-  const hasExistingPhotos = Array.isArray(req.body.existingPhotos);
+  const hasExistingPhotos = Array.isArray(req.body.existingPhotos) && req.body.existingPhotos.length > 0;
   if (uploadedPhotos.length > 0 || hasExistingPhotos) {
     const normalize = (url) => {
       const m = url.match(/\/upload\/(?:w_\d+[^/]*\/)?(?:v\d+\/)?(.+)$/);
