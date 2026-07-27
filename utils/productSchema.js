@@ -186,8 +186,8 @@ const productSchema = z.object({
   // Step 11
   meetingMode: z.enum(['meeting_point', 'pickup', 'none']),
   meetingPoint: locationPointSchema.nullable().optional(),
-  meetingPointPicture: z.string().max(500).optional(),
-  meetingPointDescription: z.string().max(500).optional(),
+  meetingPointPicture: z.string().max(2000).optional(),
+  meetingPointDescription: z.string().max(1000).optional(),
   arrivalTimeType: z.enum(['none', '5min', '10min', '15min', '30min', 'notified', 'custom']).optional(),
   arrivalTimeCustom: z.string().max(20).optional(),
   pickupType: z.enum(['area', 'address']).optional(),
