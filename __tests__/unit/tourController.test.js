@@ -7,6 +7,8 @@ jest.mock('../../utils/prismaClient', () => ({
   payoutMethod: { findFirst: jest.fn() },
   media: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
   $queryRaw: jest.fn(),
+  $transaction: jest.fn(),
+  $queryRawUnsafe: jest.fn(),
 }));
 
 jest.mock('../../utils/cacheHelper', () => ({
@@ -91,6 +93,8 @@ describe('tourController', () => {
     prisma.tourSecondaryTheme.createMany.mockResolvedValue();
     prisma.payoutMethod.findFirst.mockResolvedValue(null);
     prisma.$queryRaw.mockResolvedValue([]);
+    prisma.$transaction.mockImplementation((cb) => cb(prisma));
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'tour-1' }]);
     cache.getOrSet.mockImplementation((key, fn) => fn());
     cache.invalidateTourCaches.mockResolvedValue();
     cache.invalidateKeys.mockResolvedValue();
@@ -738,7 +742,7 @@ describe('tourController', () => {
 
       await controller.updateTour(req, res, next);
 
-      expect(createSlug).toHaveBeenCalledWith('Brand New Title');
+      expect(createSlug).toHaveBeenCalledWith('Brand New Title', expect.anything());
     });
 
     it('handles photo uploads and deletion of removed photos', async () => {
