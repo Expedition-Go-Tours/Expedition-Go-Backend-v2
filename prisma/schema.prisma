@@ -50,6 +50,11 @@ enum BookingSource {
   EXPEDITION
 }
 
+enum BookingFlow {
+  DIRECT    // Booked on Expedition Go (EG's own supplier tours)
+  EXTERNAL  // Redirected to TravioAfrica (other suppliers)
+}
+
 enum BookingStatus {
   PENDING         // Payment processing
   CONFIRMED       // Payment successful
@@ -223,6 +228,8 @@ model User {
   messages     Message[]
   specialOffers SpecialOffer[]
   expeditionTours ExpeditionTour[]
+  publishedExpeditionTours ExpeditionTour[] @relation("ExpeditionPublishedBy")
+  unpublishedExpeditionTours ExpeditionTour[] @relation("ExpeditionUnpublishedBy")
   articles      Article[]
   keywordRequests KeywordRequest[]
 
@@ -924,16 +931,41 @@ model TeamMember {
 // ================================
 
 model ExpeditionTour {
-  id           String   @id @default(cuid())
-  tourId       String   @unique
-  tour         Tour     @relation(fields: [tourId], references: [id], onDelete: Cascade)
-  displayOrder Int      @default(0)
-  isFeatured   Boolean  @default(false)
-  isActive     Boolean  @default(true)
-  addedById    String?
-  addedBy      User?    @relation(fields: [addedById], references: [id], onDelete: SetNull)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id              String        @id @default(cuid())
+  tourId          String        @unique
+  tour            Tour          @relation(fields: [tourId], references: [id], onDelete: Cascade)
+
+  // Listing state
+  isActive        Boolean       @default(false)
+  bookingFlow     BookingFlow   @default(DIRECT)
+  externalUrl     String?
+
+  // Display
+  displayOrder    Int           @default(0)
+  isFeatured      Boolean       @default(false)
+
+  // Audit — publish
+  publishedById   String?
+  publishedBy     User?         @relation("ExpeditionPublishedBy", fields: [publishedById], references: [id])
+  publishedAt     DateTime?
+
+  // Audit — unpublish
+  unpublishedById String?
+  unpublishedBy   User?         @relation("ExpeditionUnpublishedBy", fields: [unpublishedById], references: [id])
+  unpublishedAt   DateTime?
+  unpublishReason String?
+
+  // Sync tracking
+  syncStatus      String?       // synced | pending | failed
+  lastSyncAt      DateTime?
+  syncError       String?
+
+  // Legacy adder tracker
+  addedById       String?
+  addedBy         User?         @relation(fields: [addedById], references: [id], onDelete: SetNull)
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
   @@index([isActive, displayOrder])
   @@index([isActive, isFeatured, displayOrder])
