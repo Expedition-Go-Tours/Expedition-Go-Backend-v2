@@ -67,7 +67,7 @@ const itineraryEntrySchema = z.object({
   duration: z.number().min(0, 'Duration is required'),
   durationUnit: z.enum(['minute', 'hour', 'day']),
   title: z.string().optional(),
-  description: z.string().min(1, 'Description is required'),
+  description: z.string().min(1, 'Description is required').max(2000),
   isOptional: z.boolean().optional(),
   additionalFee: z.boolean().optional(),
   activityName: z.string().optional(),
