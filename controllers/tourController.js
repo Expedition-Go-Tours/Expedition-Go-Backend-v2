@@ -971,6 +971,14 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     if (req.body.region === undefined) updateData.region = pc.location.region || null;
   }
 
+  // Auto-unpublish from Expedition Go if status leaves ACTIVE
+  if (status && status !== 'ACTIVE' && existingTour.status === 'ACTIVE') {
+    await prisma.expeditionTour.updateMany({
+      where: { tourId: id, isActive: true },
+      data: { isActive: false, unpublishReason: 'Tour status changed to ' + status },
+    });
+  }
+
   const tour = await prisma.tour.update({
     where: { id },
     data: updateData,

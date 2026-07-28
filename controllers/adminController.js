@@ -1823,6 +1823,10 @@ exports.toggleExpeditionPublish = catchAsync(async (req, res, next) => {
     },
   });
 
+  cache.invalidateTourCaches(tourId).catch((err) =>
+    console.warn('[cache] invalidateTourCaches failed:', err?.message)
+  );
+
   res.status(200).json({
     status: 'success',
     data: record,
@@ -1918,6 +1922,10 @@ exports.bulkExpeditionPublish = catchAsync(async (req, res, next) => {
     resource: 'ExpeditionTour',
     metadata: { total: operations.length, succeeded: results.length, failed: errors.length },
   });
+
+  // Invalidate tour caches for all affected tours
+  const tourIds = operations.map((op) => op.tourId);
+  Promise.allSettled(tourIds.map((tid) => cache.invalidateTourCaches(tid))).catch(() => {});
 
   res.status(200).json({
     status: 'success',
