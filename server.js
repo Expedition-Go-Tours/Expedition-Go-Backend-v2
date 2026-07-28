@@ -1,3 +1,5 @@
+console.log('[BOOT] server.js started');
+
 const dotenv = require('dotenv');
 const http = require('http');
 const { Server } = require('socket.io');

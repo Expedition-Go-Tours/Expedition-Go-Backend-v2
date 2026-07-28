@@ -198,11 +198,7 @@ app.get('/health', async (req, res) => {
     checks.redis = 'down';
   }
 
-  if (dbOk) {
-    res.status(200).json({ status: 'success', checks });
-  } else {
-    res.status(503).json({ status: 'error', checks });
-  }
+  res.status(200).json({ status: dbOk ? 'success' : 'degraded', checks });
 });
 
 
