@@ -117,6 +117,6 @@ projects:
         value: "8"
       region: oregon
       buildCommand: npm install && npx prisma generate
-      startCommand: npx prisma db push; node server.js
+      startCommand: npx prisma db push --accept-data-loss && node server.js
       healthCheckPath: /health
       autoDeployTrigger: checksPass
