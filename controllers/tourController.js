@@ -807,20 +807,17 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const supplierId = req.supplierId;
 
-  // Find tour and verify ownership
-  const existingTour = await prisma.tour.findFirst({
-    where: {
-      id,
-      supplierId
-    }
+  // Find tour and verify ownership (non-locking — used for early 404 check)
+  const ownershipCheck = await prisma.tour.findFirst({
+    where: { id, supplierId },
+    select: { id: true, status: true, photos: true, title: true }
   });
-
-  if (!existingTour) {
+  if (!ownershipCheck) {
     return next(new AppError('Tour not found or access denied', 404));
   }
 
   // Block publishing without a verified payout method
-  if (req.body.status === 'PUBLISHED' && existingTour.status !== 'PUBLISHED') {
+  if (req.body.status === 'PUBLISHED' && ownershipCheck.status !== 'PUBLISHED') {
     const hasVerifiedMethod = await prisma.payoutMethod.findFirst({
       where: { supplierId, verified: true }
     });
@@ -861,180 +858,188 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     return next(new AppError(`Validation failed: ${validationResult.errors.join(', ')}`, 400));
   }
 
-  // Explicitly extract only known Prisma model fields — prevents non-model fields
-  // (existingPhotos, coverPhotoIndex, etc.) from reaching Prisma and causing
-  // PrismaClientValidationError
-  const {
-    title, description, referenceCode, metaTitle, metaDescription,
-    categorization, theme,
-    productContent, schedulesAndPricing, bookingAndTickets,
-    coverPhoto, tags, status, latitude, longitude, specialOffers
-  } = req.body;
-
-  const updateData = {};
-  if (title !== undefined) updateData.title = title;
-  if (description !== undefined) updateData.description = description;
-  if (referenceCode !== undefined) updateData.referenceCode = referenceCode || null;
-  if (metaTitle !== undefined) updateData.metaTitle = metaTitle;
-  if (metaDescription !== undefined) updateData.metaDescription = metaDescription;
-  if (categorization !== undefined) updateData.categorization = categorization;
-  if (theme !== undefined) updateData.theme = theme;
-  if (productContent !== undefined) updateData.productContent = productContent;
-  if (schedulesAndPricing !== undefined) updateData.schedulesAndPricing = schedulesAndPricing;
-  if (bookingAndTickets !== undefined) updateData.bookingAndTickets = bookingAndTickets;
-  if (coverPhoto !== undefined) updateData.coverPhoto = coverPhoto;
-  if (tags !== undefined) updateData.tags = tags;
-  if (status !== undefined) updateData.status = status;
-  if (latitude !== undefined) updateData.latitude = latitude;
-  if (longitude !== undefined) updateData.longitude = longitude;
-
-  // Handle uploaded photos from multer
-  const uploadedPhotos = (req.files || []).map(f => f.path).filter(isValidCloudinaryUrl);
-  const hasExistingPhotos = Array.isArray(req.body.existingPhotos) && req.body.existingPhotos.length > 0;
-  if (uploadedPhotos.length > 0 || hasExistingPhotos) {
-    const normalize = (url) => {
-      const m = url.match(/\/upload\/(?:w_\d+[^/]*\/)?(?:v\d+\/)?(.+)$/);
-      return m ? m[1] : url;
-    };
-    const keptPhotos = hasExistingPhotos
-      ? req.body.existingPhotos
-      : (existingTour.photos || []);
-    const newPhotos = [...keptPhotos, ...uploadedPhotos];
-
-    // Delete removed photos from Cloudinary
-    const oldPhotos = existingTour.photos || [];
-    const removed = oldPhotos.filter(url => {
-      const normalizedOld = normalize(url);
-      return !newPhotos.some(nu => normalize(nu) === normalizedOld);
-    });
-    const deletionResults = await Promise.allSettled(removed.map(url => deleteCloudinaryImage(url)));
-    deletionResults.forEach((result, i) => {
-      if (result.status === 'rejected') {
-        console.warn('Failed to delete Cloudinary image:', removed[i], result.reason);
-      }
-    });
-
-    updateData.photos = newPhotos;
-
-    if (req.body.coverPhotoIndex !== undefined) {
-      const idx = parseInt(req.body.coverPhotoIndex);
-      if (!isNaN(idx) && idx >= 0 && idx < uploadedPhotos.length) {
-        updateData.coverPhoto = uploadedPhotos[idx];
-      }
+  // Host the update in a transaction with row lock so two concurrent PATCH
+  // requests cannot overwrite each other's changes.
+  const result = await prisma.$transaction(async (tx) => {
+    // Lock the tour row — blocks any other concurrent transaction writing to it
+    const [locked] = await tx.$queryRawUnsafe(
+      'SELECT id FROM "Tour" WHERE id = $1 AND "supplierId" = $2 FOR UPDATE',
+      id, supplierId
+    );
+    if (!locked) {
+      throw new AppError('Tour not found or access denied', 404);
     }
-  }
 
-  // Update slug if title changed
-  if (req.body.title && req.body.title !== existingTour.title) {
-    updateData.slug = await createSlug(req.body.title);
-  }
-
-  let secondaryThemesData;
-
-  // Handle categorization normalization (supports both JSON string and parsed object from multipart form)
-  if (req.body.categorization) {
-    const cat = typeof req.body.categorization === 'string'
-      ? JSON.parse(req.body.categorization)
-      : req.body.categorization;
-    updateData.category = cat.category || null;
-    updateData.subcategory = cat.subcategory || null;
-    updateData.activityType = cat.activityType || null;
-    updateData.difficulty = cat.difficulty || null;
-    updateData.durationMinutes = (() => {
-      const d = cat.duration;
-      if (!d) return null;
-      if (d.hours != null) return d.hours * 60;
-      if (d.days != null) return d.days * 1440;
-      if (d.weeks != null) return d.weeks * 10080;
-      if (d.minutes != null) return d.minutes;
-      return null;
-    })();
-    // Keep the original JSON field as-is
-    updateData.categorization = cat;
-  }
-
-  // Handle theme normalization
-  if (req.body.theme) {
-    const th = typeof req.body.theme === 'string' ? JSON.parse(req.body.theme) : req.body.theme;
-    updateData.primaryTheme = th.primaryTheme || th.primary || null;
-    // Keep the original JSON field as-is
-    updateData.theme = th;
-    // Replace secondary themes: delete all existing, re-create
-    secondaryThemesData = [...new Set(th.secondaryThemes || th.secondary || [])].map(t => ({ theme: t }));
-  }
-
-  // Auto-extract location fields from productContent if not sent as top-level fields
-  const pc = req.body.productContent;
-  if (pc?.location) {
-    if (req.body.city === undefined) updateData.city = pc.location.city || null;
-    if (req.body.country === undefined) updateData.country = pc.location.country || null;
-    if (req.body.region === undefined) updateData.region = pc.location.region || null;
-  }
-
-  // Auto-unpublish from Expedition Go if status leaves ACTIVE
-  if (status && status !== 'ACTIVE' && existingTour.status === 'ACTIVE') {
-    await prisma.expeditionTour.updateMany({
-      where: { tourId: id, isActive: true },
-      data: { isActive: false, unpublishReason: 'Tour status changed to ' + status },
+    // Re-read with full data inside the locked transaction (current state)
+    const existingTour = await tx.tour.findFirst({
+      where: { id, supplierId }
     });
-  }
 
-  const tour = await prisma.tour.update({
-    where: { id },
-    data: updateData,
-    include: {
-      supplier: {
-        select: {
-          id: true,
-          name: true,
-          photoURL: true
+    const {
+      title, description, referenceCode, metaTitle, metaDescription,
+      categorization, theme,
+      productContent, schedulesAndPricing, bookingAndTickets,
+      coverPhoto, tags, status, latitude, longitude, specialOffers
+    } = req.body;
+
+    const updateData = {};
+    if (title !== undefined) updateData.title = title;
+    if (description !== undefined) updateData.description = description;
+    if (referenceCode !== undefined) updateData.referenceCode = referenceCode || null;
+    if (metaTitle !== undefined) updateData.metaTitle = metaTitle;
+    if (metaDescription !== undefined) updateData.metaDescription = metaDescription;
+    if (categorization !== undefined) updateData.categorization = categorization;
+    if (theme !== undefined) updateData.theme = theme;
+    if (productContent !== undefined) updateData.productContent = productContent;
+    if (schedulesAndPricing !== undefined) updateData.schedulesAndPricing = schedulesAndPricing;
+    if (bookingAndTickets !== undefined) updateData.bookingAndTickets = bookingAndTickets;
+    if (coverPhoto !== undefined) updateData.coverPhoto = coverPhoto;
+    if (tags !== undefined) updateData.tags = tags;
+    if (status !== undefined) updateData.status = status;
+    if (latitude !== undefined) updateData.latitude = latitude;
+    if (longitude !== undefined) updateData.longitude = longitude;
+
+    // Handle uploaded photos from multer
+    const uploadedPhotos = (req.files || []).map(f => f.path).filter(isValidCloudinaryUrl);
+    const hasExistingPhotos = Array.isArray(req.body.existingPhotos) && req.body.existingPhotos.length > 0;
+    if (uploadedPhotos.length > 0 || hasExistingPhotos) {
+      const normalize = (url) => {
+        const m = url.match(/\/upload\/(?:w_\d+[^/]*\/)?(?:v\d+\/)?(.+)$/);
+        return m ? m[1] : url;
+      };
+      const keptPhotos = hasExistingPhotos
+        ? req.body.existingPhotos
+        : (existingTour.photos || []);
+      const newPhotos = [...keptPhotos, ...uploadedPhotos];
+
+      const oldPhotos = existingTour.photos || [];
+      const removed = oldPhotos.filter(url => {
+        const normalizedOld = normalize(url);
+        return !newPhotos.some(nu => normalize(nu) === normalizedOld);
+      });
+      const deletionResults = await Promise.allSettled(removed.map(url => deleteCloudinaryImage(url)));
+      deletionResults.forEach((result, i) => {
+        if (result.status === 'rejected') {
+          console.warn('Failed to delete Cloudinary image:', removed[i], result.reason);
+        }
+      });
+
+      updateData.photos = newPhotos;
+
+      if (req.body.coverPhotoIndex !== undefined) {
+        const idx = parseInt(req.body.coverPhotoIndex);
+        if (!isNaN(idx) && idx >= 0 && idx < uploadedPhotos.length) {
+          updateData.coverPhoto = uploadedPhotos[idx];
         }
       }
     }
+
+    // Update slug if title changed
+    if (req.body.title && req.body.title !== existingTour.title) {
+      updateData.slug = await createSlug(req.body.title);
+    }
+
+    let secondaryThemesData;
+
+    // Handle categorization normalization
+    if (req.body.categorization) {
+      const cat = typeof req.body.categorization === 'string'
+        ? JSON.parse(req.body.categorization)
+        : req.body.categorization;
+      updateData.category = cat.category || null;
+      updateData.subcategory = cat.subcategory || null;
+      updateData.activityType = cat.activityType || null;
+      updateData.difficulty = cat.difficulty || null;
+      updateData.durationMinutes = (() => {
+        const d = cat.duration;
+        if (!d) return null;
+        if (d.hours != null) return d.hours * 60;
+        if (d.days != null) return d.days * 1440;
+        if (d.weeks != null) return d.weeks * 10080;
+        if (d.minutes != null) return d.minutes;
+        return null;
+      })();
+      updateData.categorization = cat;
+    }
+
+    // Handle theme normalization
+    if (req.body.theme) {
+      const th = typeof req.body.theme === 'string' ? JSON.parse(req.body.theme) : req.body.theme;
+      updateData.primaryTheme = th.primaryTheme || th.primary || null;
+      updateData.theme = th;
+      secondaryThemesData = [...new Set(th.secondaryThemes || th.secondary || [])].map(t => ({ theme: t }));
+    }
+
+    // Auto-extract location fields from productContent if not sent as top-level fields
+    const pc = req.body.productContent;
+    if (pc?.location) {
+      if (req.body.city === undefined) updateData.city = pc.location.city || null;
+      if (req.body.country === undefined) updateData.country = pc.location.country || null;
+      if (req.body.region === undefined) updateData.region = pc.location.region || null;
+    }
+
+    // Replace secondary themes: delete all existing, re-create (BEFORE the update)
+    if (secondaryThemesData) {
+      updateData.secondaryThemes = {
+        deleteMany: {},
+        create: secondaryThemesData,
+      };
+    }
+
+    // Auto-unpublish from Expedition Go if status leaves ACTIVE
+    if (status && status !== 'ACTIVE' && existingTour.status === 'ACTIVE') {
+      await tx.expeditionTour.updateMany({
+        where: { tourId: id, isActive: true },
+        data: { isActive: false, unpublishReason: 'Tour status changed to ' + status },
+      });
+    }
+
+    const tour = await tx.tour.update({
+      where: { id },
+      data: updateData,
+      include: {
+        supplier: {
+          select: { id: true, name: true, photoURL: true }
+        }
+      }
+    });
+
+    // Handle special offers if provided — upsert by promoCode, remove stale offers
+    const parsedSpecialOffers = typeof specialOffers === 'string' ? JSON.parse(specialOffers) : specialOffers;
+    if (Array.isArray(parsedSpecialOffers)) {
+      const incomingPromoCodes = parsedSpecialOffers.map(o => o.promoCode).filter(Boolean);
+
+      const existingTargets = await tx.specialOfferTarget.findMany({
+        where: { tourId: id },
+        include: { specialOffer: { select: { id: true, promoCode: true } } },
+      });
+
+      for (const offer of parsedSpecialOffers) {
+        try {
+          await upsertSpecialOffer(tx, supplierId, id, offer);
+        } catch (offerErr) {
+          console.warn('Failed to upsert special offer:', offerErr.message);
+        }
+      }
+
+      for (const target of existingTargets) {
+        const pc = target.specialOffer.promoCode;
+        if (pc && !incomingPromoCodes.includes(pc)) {
+          await tx.specialOfferTarget.delete({ where: { id: target.id } }).catch(() => {});
+          const remaining = await tx.specialOfferTarget.count({
+            where: { specialOfferId: target.specialOfferId },
+          });
+          if (remaining === 0) {
+            await tx.specialOffer.delete({ where: { id: target.specialOfferId } }).catch(() => {});
+          }
+        }
+      }
+    }
+
+    return { tour, existingTour };
   });
 
-  if (secondaryThemesData) {
-    updateData.secondaryThemes = {
-      deleteMany: {},
-      create: secondaryThemesData,
-    };
-  }
-
-  // Handle special offers if provided — upsert by promoCode, remove stale offers
-  const parsedSpecialOffers = typeof specialOffers === 'string' ? JSON.parse(specialOffers) : specialOffers;
-  if (Array.isArray(parsedSpecialOffers)) {
-    const incomingPromoCodes = parsedSpecialOffers.map(o => o.promoCode).filter(Boolean);
-
-    // Get existing special offer IDs for this tour (before upsert)
-    const existingTargets = await prisma.specialOfferTarget.findMany({
-      where: { tourId: id },
-      include: { specialOffer: { select: { id: true, promoCode: true } } },
-    });
-
-    // Upsert incoming offers
-    for (const offer of parsedSpecialOffers) {
-      try {
-        await upsertSpecialOffer(prisma, supplierId, id, offer);
-      } catch (offerErr) {
-        console.warn('Failed to upsert special offer:', offerErr.message);
-      }
-    }
-
-    // Remove targets for offers whose promoCode is no longer in the incoming list
-    for (const target of existingTargets) {
-      const pc = target.specialOffer.promoCode;
-      if (pc && !incomingPromoCodes.includes(pc)) {
-        await prisma.specialOfferTarget.delete({ where: { id: target.id } }).catch(() => {});
-        // Clean up orphaned offer
-        const remaining = await prisma.specialOfferTarget.count({
-          where: { specialOfferId: target.specialOfferId },
-        });
-        if (remaining === 0) {
-          await prisma.specialOffer.delete({ where: { id: target.specialOfferId } }).catch(() => {});
-        }
-      }
-    }
-  }
+  const { tour, existingTour } = result;
 
   cache.invalidateTourCaches(id).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
 
@@ -1047,9 +1052,9 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     newValues: tour
   });
 
-  if (updateData.photos?.length > 0) {
+  if (tour.photos?.length > 0) {
     prisma.media.updateMany({
-      where: { url: { in: updateData.photos } },
+      where: { url: { in: tour.photos } },
       data: { status: 'ATTACHED', entity: 'tour', entityId: id },
     }).catch(err => logger.warn('[Media] Failed to mark photos as ATTACHED:', err?.message));
   }
