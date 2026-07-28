@@ -162,15 +162,23 @@ const TOUR_DETAIL_PREFIX = (id) => `tours:detail:${id}`;
 const TOUR_FILTERS_KEY = 'tours:filters:options';
 const TOUR_POPULAR_KEY = 'tours:popular:by-category';
 const REVIEWS_TOUR_PREFIX = (tourId) => `reviews:tour:${tourId}:*`;
+const EXPEDITION_LIST_PREFIX = 'expedition:tours:list:*';
+const EXPEDITION_FEATURED_PREFIX = 'expedition:tours:featured*';
+const EXPEDITION_DETAIL_PREFIX = (slug) => `expedition:detail:${slug}`;
 
-async function invalidateTourCaches(tourId) {
+async function invalidateTourCaches(tourId, slug) {
   await invalidateKeys([
     TOUR_LIST_PREFIX,
     TOUR_FILTERS_KEY,
-    TOUR_POPULAR_KEY
+    TOUR_POPULAR_KEY,
+    EXPEDITION_LIST_PREFIX,
+    EXPEDITION_FEATURED_PREFIX,
   ]);
   if (tourId) {
     await invalidateKey(TOUR_DETAIL_PREFIX(tourId));
+  }
+  if (slug) {
+    await invalidateKey(EXPEDITION_DETAIL_PREFIX(slug));
   }
 }
 
