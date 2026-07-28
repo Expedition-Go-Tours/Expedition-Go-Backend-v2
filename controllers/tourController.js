@@ -666,7 +666,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
     finalCoverPhoto = allPhotos[0];
   }
 
-  const slug = await createSlug(title);
+  const slug = await createSlug(title, prisma);
 
   const parsedCategory = typeof categorization === 'string' ? JSON.parse(categorization) : categorization;
   const parsedTheme = typeof theme === 'string' ? JSON.parse(theme) : theme;
@@ -1408,7 +1408,7 @@ exports.seedTour = catchAsync(async (req, res, next) => {
   futureDate.setMonth(futureDate.getMonth() + 6);
 
   const title = `Simulated Tour ${Date.now()}`;
-  const slug = await createSlug(title);
+  const slug = await createSlug(title, prisma);
 
   const seedData = {
     title,
