@@ -59,7 +59,7 @@ function extractCurrency(schedulesAndPricing) {
   }
 }
 
-function transformForListing(tour) {
+function transformForListing(tour, expeditionRecord) {
   return {
     id: tour.id,
     title: tour.title,
@@ -73,12 +73,15 @@ function transformForListing(tour) {
     currency: extractCurrency(tour.schedulesAndPricing),
     averageRating: tour.averageRating ? Number(tour.averageRating) : null,
     reviewCount: tour.reviewCount,
+    viewCount: tour.viewCount,
     city: tour.city,
     country: tour.country,
     supplierName: tour.supplier?.name || null,
     supplierPhoto: tour.supplier?.photoURL
       ? tour.supplier.photoURL
       : null,
+    bookingFlow: expeditionRecord?.bookingFlow || null,
+    externalUrl: expeditionRecord?.externalUrl || null,
   };
 }
 
@@ -186,6 +189,7 @@ exports.getTours = catchAsync(async (req, res) => {
     if (sortBy === 'rating') orderBy.unshift({ tour: { averageRating: { sort: 'desc', nulls: 'last' } } });
     else if (sortBy === 'newest') orderBy.unshift({ createdAt: 'desc' });
     else if (sortBy === 'popular') orderBy.unshift({ tour: { reviewCount: { sort: 'desc', nulls: 'last' } } });
+    else if (sortBy === 'views') orderBy.unshift({ tour: { viewCount: { sort: 'desc', nulls: 'last' } } });
 
     const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
     const take = Math.min(parseInt(limit), 50);
@@ -201,7 +205,7 @@ exports.getTours = catchAsync(async (req, res) => {
             select: {
               id: true, title: true, slug: true, description: true,
               coverPhoto: true, photos: true, category: true,
-              durationMinutes: true, averageRating: true, reviewCount: true,
+              durationMinutes: true, averageRating: true, reviewCount: true, viewCount: true,
               city: true, country: true, schedulesAndPricing: true,
               supplier: { select: { name: true, photoURL: true } },
             },
@@ -220,7 +224,9 @@ exports.getTours = catchAsync(async (req, res) => {
           id: r.id,
           displayOrder: r.displayOrder,
           isFeatured: r.isFeatured,
-          tour: transformForListing(r.tour),
+          bookingFlow: r.bookingFlow,
+          externalUrl: r.externalUrl,
+          tour: transformForListing(r.tour, r),
         })),
       },
       pagination: {
@@ -246,7 +252,7 @@ exports.getFeaturedTours = catchAsync(async (req, res) => {
           select: {
             id: true, title: true, slug: true, description: true,
             coverPhoto: true, photos: true, category: true,
-            durationMinutes: true, averageRating: true, reviewCount: true,
+            durationMinutes: true, averageRating: true, reviewCount: true, viewCount: true,
             city: true, country: true, schedulesAndPricing: true,
             supplier: { select: { name: true, photoURL: true } },
           },
@@ -261,7 +267,9 @@ exports.getFeaturedTours = catchAsync(async (req, res) => {
           id: r.id,
           displayOrder: r.displayOrder,
           isFeatured: r.isFeatured,
-          tour: transformForListing(r.tour),
+          bookingFlow: r.bookingFlow,
+          externalUrl: r.externalUrl,
+          tour: transformForListing(r.tour, r),
         })),
       },
     };

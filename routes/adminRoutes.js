@@ -767,4 +767,9 @@ router.get('/bookings/:id', requirePermission('bookings.view', 'dashboard.*'), a
  */
 router.patch('/bookings/:id/confirm-payment', requirePermission('bookings.confirm-payment', 'dashboard.*'), adminController.confirmPayment);
 
+// ── Expedition Go Listing Management ──
+router.get('/expedition/listings', adminController.getExpeditionListings);
+router.patch('/tours/:tourId/expedition-publish', adminController.toggleExpeditionPublish);
+router.patch('/expedition/bulk-publish', adminController.bulkExpeditionPublish);
+
 module.exports = router;

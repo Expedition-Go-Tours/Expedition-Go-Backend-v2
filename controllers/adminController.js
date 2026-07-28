@@ -548,6 +548,7 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
         createdAt: true,
         supplier: { select: { id: true, name: true } },
         _count: { select: { bookings: true } },
+        expeditionTour: { select: { isActive: true, bookingFlow: true, externalUrl: true } },
       },
     }),
     prisma.tour.count({ where }),
@@ -1655,5 +1656,271 @@ exports.confirmPayment = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: updated,
+  });
+});
+
+// =============================================================================
+// EXPEDITION GO — LISTING MANAGEMENT
+// =============================================================================
+
+/**
+ * GET /api/admin/expedition/listings
+ *
+ * Returns all ExpeditionTour records with tour + supplier info.
+ * Paginated, searchable, filterable by status and bookingFlow.
+ */
+exports.getExpeditionListings = catchAsync(async (req, res) => {
+  const { page = 1, limit = 20, status, bookingFlow, search } = req.query;
+
+  const where = {};
+  if (status === 'active') where.isActive = true;
+  else if (status === 'inactive') where.isActive = false;
+  if (bookingFlow) where.bookingFlow = bookingFlow;
+  if (search) {
+    where.tour = {
+      OR: [
+        { title: { contains: search, mode: 'insensitive' } },
+        { supplier: { name: { contains: search, mode: 'insensitive' } } },
+      ],
+    };
+  }
+
+  const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
+
+  const [records, totalCount] = await Promise.all([
+    prisma.expeditionTour.findMany({
+      where,
+      orderBy: [{ isActive: 'desc' }, { displayOrder: 'asc' }],
+      skip,
+      take: Math.min(parseInt(limit), 50),
+      include: {
+        tour: {
+          select: {
+            id: true,
+            title: true,
+            slug: true,
+            coverPhoto: true,
+            category: true,
+            status: true,
+            createdAt: true,
+            supplier: { select: { id: true, name: true, photoURL: true } },
+          },
+        },
+        publishedBy: { select: { id: true, name: true, email: true } },
+        unpublishedBy: { select: { id: true, name: true, email: true } },
+      },
+    }),
+    prisma.expeditionTour.count({ where }),
+  ]);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      listings: records,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(totalCount / Math.min(parseInt(limit), 50)),
+        totalCount,
+        limit: Math.min(parseInt(limit), 50),
+      },
+    },
+  });
+});
+
+/**
+ * PATCH /api/admin/tours/:tourId/expedition-publish
+ *
+ * Toggle a tour's Expedition Go listing.
+ * Body: { isActive: boolean }
+ * Auto-detects bookingFlow:
+ *   - If the tour's supplier has 'expedition' role → DIRECT
+ *   - Otherwise → EXTERNAL (with auto-generated externalUrl to TravioAfrica)
+ */
+exports.toggleExpeditionPublish = catchAsync(async (req, res, next) => {
+  const { tourId } = req.params;
+  const { isActive } = req.body;
+  const adminId = req.user.id;
+
+  if (typeof isActive !== 'boolean') {
+    return next(new AppError('isActive must be a boolean', 400));
+  }
+
+  const tour = await prisma.tour.findUnique({
+    where: { id: tourId },
+    select: {
+      id: true,
+      slug: true,
+      supplierId: true,
+      supplier: { select: { roles: true } },
+    },
+  });
+  if (!tour) return next(new AppError('Tour not found', 404));
+
+  const existing = await prisma.expeditionTour.findUnique({ where: { tourId } });
+
+  const data = {};
+  if (isActive) {
+    // Auto-detect booking flow based on supplier's roles
+    const hasExpeditionRole = tour.supplier.roles.includes('expedition');
+    data.bookingFlow = hasExpeditionRole ? 'DIRECT' : 'EXTERNAL';
+    data.externalUrl = hasExpeditionRole
+      ? null
+      : `https://travioafrica.com/tours/${tour.slug}?ref=expedition`;
+
+    data.publishedById = adminId;
+    data.publishedAt = new Date();
+    data.isActive = true;
+  } else {
+    data.isActive = false;
+    data.unpublishedById = adminId;
+    data.unpublishedAt = new Date();
+    data.unpublishReason = req.body.reason || null;
+  }
+
+  // Preserve displayOrder and isFeatured on reactivation
+  if (existing) {
+    if (existing.displayOrder) data.displayOrder = existing.displayOrder;
+    if (existing.isFeatured) data.isFeatured = existing.isFeatured;
+  }
+
+  const record = await prisma.expeditionTour.upsert({
+    where: { tourId },
+    create: {
+      tourId,
+      isActive: data.isActive ?? false,
+      bookingFlow: data.bookingFlow ?? 'DIRECT',
+      externalUrl: data.externalUrl ?? null,
+      publishedById: data.publishedById ?? null,
+      publishedAt: data.publishedAt ?? null,
+      displayOrder: existing?.displayOrder ?? 0,
+      isFeatured: existing?.isFeatured ?? false,
+    },
+    update: data,
+    include: {
+      tour: {
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          coverPhoto: true,
+          supplier: { select: { id: true, name: true } },
+        },
+      },
+      publishedBy: { select: { id: true, name: true, email: true } },
+      unpublishedBy: { select: { id: true, name: true, email: true } },
+    },
+  });
+
+  logActivity({
+    action: isActive ? 'expedition.tour.published' : 'expedition.tour.unpublished',
+    userId: adminId,
+    resource: 'ExpeditionTour',
+    resourceId: record.id,
+    metadata: {
+      tourId,
+      bookingFlow: record.bookingFlow,
+      isActive: record.isActive,
+    },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: record,
+  });
+});
+
+/**
+ * PATCH /api/admin/expedition/bulk-publish
+ *
+ * Batch publish/unpublish multiple tours on Expedition Go.
+ * Body: { operations: [{ tourId, isActive }] }
+ */
+exports.bulkExpeditionPublish = catchAsync(async (req, res, next) => {
+  const { operations } = req.body;
+  const adminId = req.user.id;
+
+  if (!Array.isArray(operations) || operations.length === 0) {
+    return next(new AppError('operations must be a non-empty array of { tourId, isActive }', 400));
+  }
+
+  if (operations.length > 50) {
+    return next(new AppError('Maximum 50 operations per request', 400));
+  }
+
+  const results = [];
+  const errors = [];
+
+  for (const op of operations) {
+    try {
+      const tour = await prisma.tour.findUnique({
+        where: { id: op.tourId },
+        select: {
+          id: true,
+          slug: true,
+          supplier: { select: { roles: true } },
+        },
+      });
+      if (!tour) {
+        errors.push({ tourId: op.tourId, error: 'Tour not found' });
+        continue;
+      }
+
+      const existing = await prisma.expeditionTour.findUnique({ where: { tourId: op.tourId } });
+
+      if (op.isActive) {
+        const hasExpeditionRole = tour.supplier.roles.includes('expedition');
+        const record = await prisma.expeditionTour.upsert({
+          where: { tourId: op.tourId },
+          create: {
+            tourId: op.tourId,
+            isActive: true,
+            bookingFlow: hasExpeditionRole ? 'DIRECT' : 'EXTERNAL',
+            externalUrl: hasExpeditionRole
+              ? null
+              : `https://travioafrica.com/tours/${tour.slug}?ref=expedition`,
+            publishedById: adminId,
+            publishedAt: new Date(),
+          },
+          update: {
+            isActive: true,
+            bookingFlow: hasExpeditionRole ? 'DIRECT' : 'EXTERNAL',
+            externalUrl: hasExpeditionRole
+              ? null
+              : `https://travioafrica.com/tours/${tour.slug}?ref=expedition`,
+            publishedById: adminId,
+            publishedAt: new Date(),
+            unpublishedById: null,
+            unpublishedAt: null,
+            unpublishReason: null,
+          },
+        });
+        results.push(record);
+      } else {
+        const record = await prisma.expeditionTour.update({
+          where: { tourId: op.tourId },
+          data: {
+            isActive: false,
+            unpublishedById: adminId,
+            unpublishedAt: new Date(),
+            unpublishReason: op.reason || null,
+          },
+        });
+        results.push(record);
+      }
+    } catch (err) {
+      errors.push({ tourId: op.tourId, error: err.message });
+    }
+  }
+
+  logActivity({
+    action: 'expedition.bulk.publish',
+    userId: adminId,
+    resource: 'ExpeditionTour',
+    metadata: { total: operations.length, succeeded: results.length, failed: errors.length },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { results, errors },
   });
 });

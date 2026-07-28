@@ -447,7 +447,8 @@ exports.getTour = catchAsync(async (req, res, next) => {
           include: {
             specialOffer: true
           }
-        }
+        },
+        expeditionTour: true
       }
     });
 
