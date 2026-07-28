@@ -1932,3 +1932,129 @@ exports.bulkExpeditionPublish = catchAsync(async (req, res, next) => {
     data: { results, errors },
   });
 });
+
+/**
+ * GET /api/admin/expedition/suppliers
+ *
+ * Returns all suppliers who have tours (optionally on Expedition Go),
+ * with aggregate counts: total tours, tours on EG, active EG tours.
+ * Useful for the Control Room supplier-level drill-down.
+ */
+exports.getExpeditionSuppliers = catchAsync(async (req, res) => {
+  const { search } = req.query;
+
+  const where = { roles: { has: 'supplier' } };
+  if (search) {
+    where.OR = [
+      { name: { contains: search, mode: 'insensitive' } },
+      { email: { contains: search, mode: 'insensitive' } },
+    ];
+  }
+
+  const suppliers = await prisma.user.findMany({
+    where,
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      photoURL: true,
+      _count: {
+        select: { tours: true },
+      },
+      tours: {
+        select: {
+          expeditionTour: {
+            select: { isActive: true, bookingFlow: true },
+          },
+        },
+        where: { expeditionTour: { isNot: null } },
+      },
+    },
+    orderBy: { name: 'asc' },
+  });
+
+  const mapped = suppliers
+    .map((s) => {
+      const onExp = s.tours.length;
+      const activeOnExp = s.tours.filter((t) => t.expeditionTour?.isActive).length;
+      const directCount = s.tours.filter((t) => t.expeditionTour?.bookingFlow === 'DIRECT').length;
+      return {
+        id: s.id,
+        name: s.name,
+        email: s.email,
+        photoURL: s.photoURL,
+        totalTours: s._count.tours,
+        onExpedition: onExp,
+        activeOnExpedition: activeOnExp,
+        directCount,
+      };
+    })
+    .filter((s) => s.totalTours > 0);
+
+  res.status(200).json({ status: 'success', data: { suppliers: mapped } });
+});
+
+/**
+ * GET /api/admin/expedition/suppliers/:id/tours
+ *
+ * Returns all tours belonging to a specific supplier with their
+ * ExpeditionTour status (if any). Used by Control Room's per-supplier view.
+ */
+exports.getExpeditionSupplierTours = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const statusFilter = req.query.status || 'active';
+
+  const supplier = await prisma.user.findUnique({
+    where: { id },
+    select: { id: true, name: true, photoURL: true, email: true },
+  });
+  if (!supplier) return next(new AppError('Supplier not found', 404));
+
+  const where = { supplierId: id };
+  if (statusFilter === 'active') {
+    where.status = { notIn: ['ARCHIVED'] };
+  } else if (statusFilter !== 'all') {
+    where.status = statusFilter.toUpperCase();
+  }
+
+  const tours = await prisma.tour.findMany({
+    where,
+    select: {
+      id: true,
+      title: true,
+      slug: true,
+      coverPhoto: true,
+      status: true,
+      category: true,
+      totalBookings: true,
+      averageRating: true,
+      createdAt: true,
+      expeditionTour: {
+        select: {
+          id: true,
+          isActive: true,
+          bookingFlow: true,
+          externalUrl: true,
+          isFeatured: true,
+          displayOrder: true,
+          syncStatus: true,
+          lastSyncAt: true,
+          syncError: true,
+          publishedAt: true,
+          publishedBy: { select: { id: true, name: true } },
+          unpublishedAt: true,
+          unpublishReason: true,
+        },
+      },
+    },
+    orderBy: [
+      { status: 'asc' },
+      { updatedAt: 'desc' },
+    ],
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { supplier, tours },
+  });
+});

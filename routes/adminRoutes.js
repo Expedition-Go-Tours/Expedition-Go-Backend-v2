@@ -769,6 +769,8 @@ router.patch('/bookings/:id/confirm-payment', requirePermission('bookings.confir
 
 // ── Expedition Go Listing Management ──
 router.get('/expedition/listings', adminController.getExpeditionListings);
+router.get('/expedition/suppliers', adminController.getExpeditionSuppliers);
+router.get('/expedition/suppliers/:id/tours', adminController.getExpeditionSupplierTours);
 router.patch('/tours/:tourId/expedition-publish', adminController.toggleExpeditionPublish);
 router.patch('/expedition/bulk-publish', adminController.bulkExpeditionPublish);
 
