@@ -6,14 +6,16 @@
  * @version 1.0.0
  */
 
-const prisma = require('./prismaClient');
 const getConfig = require('./getConfig');
 const { findBestDiscount } = require('./specialOfferEngine');
 
 /**
  * Create unique slug for tour
+ * @param {string} title
+ * @param {object} db - Prisma client or transaction client
+ * @param {number} attempt
  */
-async function createSlug(title, attempt = 0) {
+async function createSlug(title, db, attempt = 0) {
   const baseSlug = (title || 'untitled')
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, '') // Remove special characters
@@ -23,13 +25,12 @@ async function createSlug(title, attempt = 0) {
 
   const slug = attempt > 0 ? `${baseSlug}-${attempt}` : baseSlug;
 
-  // Check if slug exists
-  const existingTour = await prisma.tour.findUnique({
+  const existingTour = await db.tour.findUnique({
     where: { slug }
   });
 
   if (existingTour) {
-    return createSlug(title, attempt + 1);
+    return createSlug(title, db, attempt + 1);
   }
 
   return slug;

@@ -934,9 +934,10 @@ exports.updateTour = catchAsync(async (req, res, next) => {
       }
     }
 
-    // Update slug if title changed
+    // Update slug if title changed (uses tx so slug uniqueness check sees
+    // the transaction's pending writes — prevents duplicate slugs)
     if (req.body.title && req.body.title !== existingTour.title) {
-      updateData.slug = await createSlug(req.body.title);
+      updateData.slug = await createSlug(req.body.title, tx);
     }
 
     let secondaryThemesData;
