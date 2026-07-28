@@ -77,6 +77,7 @@ process.on('SIGINT', () => {
     // Test Prisma connection
     await prisma.$connect();
     console.log('PostgreSQL connection successful!');
+    console.log('[Startup] Prisma connected');
 
     setupPrismaMiddleware(prisma);
 
@@ -112,20 +113,7 @@ process.on('SIGINT', () => {
     app.set('io', io);
     setIO(io);
 
-    // Redis adapter for multi-process scaling (graceful fallback if Redis unavailable)
-    if (process.env.REDIS_URL) {
-      try {
-        const { createAdapter } = require('@socket.io/redis-adapter');
-        const { createClient } = require('redis');
-        const pubClient = createClient({ url: process.env.REDIS_URL });
-        const subClient = pubClient.duplicate();
-        await Promise.all([pubClient.connect(), subClient.connect()]);
-        io.adapter(createAdapter(pubClient, subClient));
-        console.log('[Socket.IO] Redis adapter connected');
-      } catch (err) {
-        console.warn('[Socket.IO] Redis adapter unavailable, using in-memory:', err?.message);
-      }
-    }
+    console.log('[Startup] Socket.IO configured');
 
     io.engine.on('connection_error', (err) => {
       console.warn('Socket.IO connection error:', err.message);
@@ -525,7 +513,30 @@ process.on('SIGINT', () => {
       console.log(`Environment: ${process.env.NODE_ENV}`);
     });
 
+    console.log(`[Startup] Server listening on ${port}`);
+
+    // Background: Redis adapter for multi-process scaling (non-blocking — server already listening)
+    if (process.env.REDIS_URL) {
+      (async () => {
+        try {
+          const { createAdapter } = require('@socket.io/redis-adapter');
+          const { createClient } = require('redis');
+          const pubClient = createClient({
+            url: process.env.REDIS_URL,
+            socket: { connectTimeout: 10000, reconnectStrategy: false },
+          });
+          const subClient = pubClient.duplicate();
+          await Promise.all([pubClient.connect(), subClient.connect()]);
+          io.adapter(createAdapter(pubClient, subClient));
+          console.log('[Socket.IO] Redis adapter connected');
+        } catch (err) {
+          console.warn('[Socket.IO] Redis adapter unavailable, using in-memory:', err?.message);
+        }
+      })();
+    }
+
     // Initialise background queue workers after server starts
+    console.log('[Startup] Checking Redis for queue workers...');
     const redisOk = await isRedisAvailable();
     if (redisOk) {
       registerWorkers(app);

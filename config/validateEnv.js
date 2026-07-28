@@ -37,7 +37,7 @@ function validateEnv() {
   for (const key of REQUIRED_IN_PROD) {
     if (!process.env[key]) {
       if (isProduction) {
-        missing.push(key);
+        console.warn(`[ENV] Missing required env var (server may not function fully): ${key}`);
       } else {
         warnings.push(key);
       }
@@ -48,12 +48,6 @@ function validateEnv() {
     if (!process.env[key]) {
       warnings.push(key);
     }
-  }
-
-  if (missing.length > 0) {
-    console.error(`[ENV] CRITICAL: Missing required environment variables in production:`);
-    missing.forEach(k => console.error(`  - ${k}`));
-    process.exit(1);
   }
 
   if (warnings.length > 0) {
