@@ -20,6 +20,7 @@ const {
   refreshCacheSchema,
   subscribeSchema,
   availabilityCalendarSchema,
+  slugParamSchema,
   getTourReviewsSchema,
   getBookingsSchema,
   bookingIdParamSchema,
@@ -272,7 +273,7 @@ router.get('/tours/:slug/reviews', validate(getTourReviewsSchema), expeditionCon
  *       404:
  *         description: Tour not found
  */
-router.get('/tours/:slug/similar', expeditionController.getSimilarTours);
+router.get('/tours/:slug/similar', validate(slugParamSchema), expeditionController.getSimilarTours);
 
 /**
  * @swagger
@@ -371,7 +372,7 @@ router.get('/tours/:slug/availability', validate(availabilityCalendarSchema), ex
  *       404:
  *         description: Tour not found or not active
  */
-router.get('/tours/:slug', expeditionController.getTourBySlug);
+router.get('/tours/:slug', validate(slugParamSchema), expeditionController.getTourBySlug);
 
 /**
  * @swagger
@@ -573,7 +574,21 @@ router.post('/track-click', validate(trackClickSchema), expeditionController.tra
  *       404:
  *         description: Tour not found
  */
-router.post('/checkout/calculate', validate(calculateCheckoutSchema), expeditionController.calculateCheckout);
+const calculateLimiter = createLimiter({
+  name: 'checkout-calculate',
+  defaultMax: 30,
+  defaultWindowMs: 60 * 1000,
+  message: { status: 'fail', message: 'Too many pricing requests, please try again later.' },
+});
+
+const confirmLimiter = createLimiter({
+  name: 'checkout-confirm',
+  defaultMax: 10,
+  defaultWindowMs: 60 * 1000,
+  message: { status: 'fail', message: 'Too many booking attempts, please try again later.' },
+});
+
+router.post('/checkout/calculate', calculateLimiter, validate(calculateCheckoutSchema), expeditionController.calculateCheckout);
 
 /**
  * @swagger
@@ -642,7 +657,7 @@ router.post('/checkout/calculate', validate(calculateCheckoutSchema), expedition
  *       404:
  *         description: Tour not found
  */
-router.post('/checkout/confirm', protect, restrictTo('customer'), validate(confirmBookingSchema), expeditionController.confirmBooking);
+router.post('/checkout/confirm', confirmLimiter, protect, restrictTo('customer'), validate(confirmBookingSchema), expeditionController.confirmBooking);
 
 /**
  * @swagger

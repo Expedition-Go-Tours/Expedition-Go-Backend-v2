@@ -33,7 +33,7 @@ const getToursSchema = z.object({
     country: z.string().max(100).optional(),
     minPrice: z.coerce.number().min(0).optional(),
     maxPrice: z.coerce.number().min(0).optional(),
-    sortBy: z.enum(['price_asc', 'price_desc', 'rating', 'newest', 'popular']).optional(),
+    sortBy: z.enum(['price_asc', 'price_desc', 'rating', 'newest', 'popular', 'views']).optional(),
   }).passthrough(),
   params: z.object({}).optional(),
 });

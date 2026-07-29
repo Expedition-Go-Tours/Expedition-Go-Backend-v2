@@ -42,7 +42,8 @@ async function createPaymentIntent({
   customerId,
   paymentMethodId,
   metadata = {},
-  idempotencyKey
+  idempotencyKey,
+  confirm = true
 }) {
   try {
     const paymentIntentData = {
@@ -51,7 +52,7 @@ async function createPaymentIntent({
       customer: customerId,
       payment_method: paymentMethodId,
       confirmation_method: 'manual',
-      confirm: true,
+      confirm,
       return_url: `${process.env.CLIENT_URL}/booking/complete`,
       metadata
     };

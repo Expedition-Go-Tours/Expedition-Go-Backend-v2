@@ -39,7 +39,7 @@ function validateTravelerInfo(travelers) {
     return { isValid: false, errors, totalTravelers: 0 };
   }
 
-  const totalTravelers = (travelers.adults || 0) + (travelers.children || 0) + (travelers.youth || 0);
+  const totalTravelers = (travelers.adults || 0) + (travelers.children || 0) + (travelers.infants || 0);
   if (totalTravelers === 0) {
     errors.push('At least one traveler is required');
   }

@@ -5,7 +5,7 @@ const AppError = require('../utils/appError');
 const cache = require('../utils/cacheHelper');
 const { sendEmail } = require('../utils/emailService');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/queue');
-const { validateTravelerInfo, generateBookingNumber } = require('../utils/bookingHelpers');
+const { validateTravelerInfo, generateBookingNumber, calculateRefundAmount } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
 const { createPaymentIntent, calculateCommission, createRefund } = require('../utils/stripeHelpers');
 const { notifyAdmin } = require('../utils/adminNotificationService');
@@ -64,7 +64,11 @@ function transformForListing(tour, expeditionRecord) {
     id: tour.id,
     title: tour.title,
     slug: tour.slug,
-    description: tour.description ? tour.description.slice(0, 300) : null,
+    description: tour.description
+      ? tour.description.length > 300
+        ? tour.description.slice(0, 297) + '...'
+        : tour.description
+      : null,
     coverPhoto: tour.coverPhoto || null,
     photos: Array.isArray(tour.photos) ? tour.photos : [],
     category: tour.category,
@@ -166,7 +170,7 @@ function shouldCountView(req, tourSupplierId) {
 // ================================
 
 exports.getTours = catchAsync(async (req, res) => {
-  const { page = 1, limit = 12, search, category, city, country, sortBy } = req.query;
+  const { page = 1, limit = 12, search, category, city, country, minPrice, maxPrice, sortBy } = req.query;
 
   const cacheKey = `${LIST_CACHE_KEY}:${crypto.createHash('md5').update(JSON.stringify(req.query)).digest('hex')}`;
 
@@ -190,31 +194,55 @@ exports.getTours = catchAsync(async (req, res) => {
     else if (sortBy === 'newest') orderBy.unshift({ createdAt: 'desc' });
     else if (sortBy === 'popular') orderBy.unshift({ tour: { reviewCount: { sort: 'desc', nulls: 'last' } } });
     else if (sortBy === 'views') orderBy.unshift({ tour: { viewCount: { sort: 'desc', nulls: 'last' } } });
+    else if (sortBy === 'price_asc' || sortBy === 'price_desc') {
+      orderBy.unshift({ createdAt: sortBy === 'price_asc' ? 'asc' : 'desc' });
+    }
 
     const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
     const take = Math.min(parseInt(limit), 50);
 
-    const [records, totalCount] = await Promise.all([
-      prisma.expeditionTour.findMany({
-        where: { isActive: true, tour: tourWhere },
-        orderBy,
-        skip,
-        take,
-        include: {
-          tour: {
-            select: {
-              id: true, title: true, slug: true, description: true,
-              coverPhoto: true, photos: true, category: true,
-              durationMinutes: true, averageRating: true, reviewCount: true, viewCount: true,
-              city: true, country: true, schedulesAndPricing: true,
-              supplier: { select: { name: true, photoURL: true } },
-            },
+    const fetchLimit = sortBy === 'price_asc' || sortBy === 'price_desc'
+      ? Math.min(500, Math.max(take, parseInt(page) * take))
+      : take;
+
+    let records = await prisma.expeditionTour.findMany({
+      where: { isActive: true, tour: tourWhere },
+      orderBy,
+      skip: sortBy === 'price_asc' || sortBy === 'price_desc' ? 0 : skip,
+      take: fetchLimit,
+      include: {
+        tour: {
+          select: {
+            id: true, title: true, slug: true, description: true,
+            coverPhoto: true, photos: true, category: true,
+            durationMinutes: true, averageRating: true, reviewCount: true, viewCount: true,
+            city: true, country: true, schedulesAndPricing: true,
+            supplier: { select: { name: true, photoURL: true } },
           },
         },
-      }),
-      prisma.expeditionTour.count({ where: { isActive: true, tour: tourWhere } }),
-    ]);
+      },
+    });
 
+    if (sortBy === 'price_asc' || sortBy === 'price_desc') {
+      records.sort((a, b) => {
+        const priceA = extractStartingPrice(a.tour.schedulesAndPricing) ?? Infinity;
+        const priceB = extractStartingPrice(b.tour.schedulesAndPricing) ?? Infinity;
+        return sortBy === 'price_asc' ? priceA - priceB : priceB - priceA;
+      });
+      records = records.slice(skip, skip + take);
+    }
+
+    if (minPrice !== undefined || maxPrice !== undefined) {
+      records = records.filter((r) => {
+        const price = extractStartingPrice(r.tour.schedulesAndPricing);
+        if (price === null) return false;
+        if (minPrice !== undefined && price < Number(minPrice)) return false;
+        if (maxPrice !== undefined && price > Number(maxPrice)) return false;
+        return true;
+      });
+    }
+
+    const totalCount = await prisma.expeditionTour.count({ where: { isActive: true, tour: tourWhere } });
     const totalPages = Math.ceil(totalCount / take);
 
     return {
@@ -954,6 +982,14 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
       throw new AppError('Tour not found or not available for booking', 404);
     }
 
+    const expTourCalc = await prisma.expeditionTour.findUnique({
+      where: { tourId },
+      select: { isActive: true },
+    });
+    if (!expTourCalc?.isActive) {
+      throw new AppError('Tour is not available on Expedition', 400);
+    }
+
     const availability = await checkTourAvailability(tourId, selectedDate, null);
     if (!availability.available) {
       throw new AppError(availability.reason || 'Tour is not available on the selected date', 400);
@@ -1018,6 +1054,14 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found or not available', 404));
   }
 
+  const expTour = await prisma.expeditionTour.findUnique({
+    where: { tourId },
+    select: { isActive: true },
+  });
+  if (!expTour?.isActive) {
+    return next(new AppError('Tour is not available on Expedition', 400));
+  }
+
   if (tour.supplier.supplierProfile.status !== 'ACTIVE') {
     return next(new AppError('Supplier is not active', 400));
   }
@@ -1055,15 +1099,37 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
 
   const appliedOffer = pricing.appliedOffer || null;
 
-  // Create Stripe PaymentIntent
+  // Dedup: prevent duplicate bookings on retry
+  const existingBooking = await prisma.booking.findFirst({
+    where: {
+      customerId,
+      tourId,
+      selectedDate: new Date(selectedDate),
+      status: { in: ['PROCESSING', 'CONFIRMED'] },
+    },
+    select: { id: true, status: true, bookingNumber: true },
+  });
+  if (existingBooking) {
+    return next(new AppError(
+      `You already have a ${existingBooking.status.toLowerCase()} booking (${existingBooking.bookingNumber}) for this tour on this date`,
+      409
+    ));
+  }
+
+  // Create Stripe PaymentIntent (no charge yet — confirm: false)
   let paymentIntent;
   try {
+    const idempotencyKey = crypto
+      .createHash('md5')
+      .update(`expedition:${customerId}:${tourId}:${selectedDate}`)
+      .digest('hex');
     paymentIntent = await createPaymentIntent({
       amount: Math.round(pricing.total * 100),
       currency: pricing.currency,
       customerId: req.user.stripeCustomerId,
       paymentMethodId: req.body.paymentMethodId,
-      idempotencyKey: `expedition:${customerId}:${tourId}:${selectedDate}:${Date.now()}`,
+      idempotencyKey,
+      confirm: false,
       metadata: {
         customerId,
         tourId,
@@ -1083,7 +1149,14 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     );
     if (!lockedTour) throw new Error('Tour not found');
 
-    // Re-check capacity within transaction
+    // Lock existing booking rows for this tour+date to prevent race conditions
+    await tx.$queryRawUnsafe(
+      `SELECT id FROM "Booking" WHERE "tourId" = $1 AND "selectedDate" = $2::date FOR UPDATE`,
+      tourId,
+      selectedDate
+    );
+
+    // Re-check capacity within transaction (reads already-locked rows)
     const [capacityCheck] = await tx.$queryRawUnsafe(
       `SELECT COALESCE(SUM(
         CASE WHEN status IN ('PENDING', 'PROCESSING', 'CONFIRMED')
@@ -1136,6 +1209,14 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
 
     return booking;
   });
+
+  // Charge the card now that the booking is safely created
+  try {
+    const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+    await stripe.paymentIntents.confirm(paymentIntent.id);
+  } catch (err) {
+    console.error('[Expedition] PaymentIntent confirm failed — booking exists without charge:', err.message);
+  }
 
   // Attach booking ID to PI metadata so the webhook can find it
   try {
@@ -1208,7 +1289,7 @@ exports.getExpeditionWishlist = catchAsync(async (req, res, next) => {
   });
   if (!user) return next(new AppError('User not found', 404));
 
-  if (user.wishlist.length === 0) {
+  if (!user.wishlist || user.wishlist.length === 0) {
     return res.status(200).json({ status: 'success', results: 0, data: { tours: [] } });
   }
 
@@ -1373,7 +1454,7 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     return next(new AppError(`Cancellation not allowed within ${windowHours} hours of tour`, 400));
   }
 
-  const refundAmount = parseFloat(booking.total);
+  const { refundAmount } = calculateRefundAmount(booking, booking.tour);
 
   const result = await prisma.$transaction(async (tx) => {
     const updated = await tx.booking.update({
@@ -1557,6 +1638,10 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
 
   if (!booking) {
     return next(new AppError('Booking not found or not yours', 404));
+  }
+
+  if (status === 'COMPLETED' && new Date(booking.selectedDate) >= new Date()) {
+    return next(new AppError('Cannot mark a future booking as COMPLETED', 400));
   }
 
   const validTransitions = {

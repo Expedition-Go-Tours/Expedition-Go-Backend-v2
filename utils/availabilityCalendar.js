@@ -35,7 +35,7 @@ async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end
         selectedDate: { gte: start, lte: end },
         status: { in: ['PENDING', 'CONFIRMED'] },
       },
-      select: { selectedDate: true, travelers: true },
+      select: { selectedDate: true, selectedTime: true, travelers: true },
     }),
   ]);
 
@@ -45,11 +45,17 @@ async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end
   }
 
   const bookingCountMap = new Map();
+  const bookingTimeSlotMap = new Map();
   for (const b of bookings) {
-    const key = format(b.selectedDate, 'yyyy-MM-dd');
+    const dateKey = format(b.selectedDate, 'yyyy-MM-dd');
     const travelers = typeof b.travelers === 'object' ? b.travelers : {};
     const count = (travelers.adults || 0) + (travelers.children || 0) + (travelers.infants || 0);
-    bookingCountMap.set(key, (bookingCountMap.get(key) || 0) + count);
+    bookingCountMap.set(dateKey, (bookingCountMap.get(dateKey) || 0) + count);
+
+    const slotKey = b.selectedTime || '__no_slot__';
+    const slotMap = bookingTimeSlotMap.get(dateKey) || new Map();
+    slotMap.set(slotKey, (slotMap.get(slotKey) || 0) + count);
+    bookingTimeSlotMap.set(dateKey, slotMap);
   }
 
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -73,11 +79,23 @@ async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end
         ? computeAggregatedStatus(bookedCount, effectiveCapacity, override.status)
         : computeAggregatedStatus(bookedCount, effectiveCapacity, 'AVAILABLE');
 
-    const effectiveTimeSlots = override?.timeSlotOverrides
+    const dateSlotMap = bookingTimeSlotMap.get(dateStr) || new Map();
+    const rawTimeSlots = override?.timeSlotOverrides
       ? (typeof override.timeSlotOverrides === 'string'
           ? JSON.parse(override.timeSlotOverrides)
           : override.timeSlotOverrides)
-      : templateTimeSlots.map((time) => ({ time, capacity: maxCapacity, booked: 0 }));
+      : templateTimeSlots.map((time) => ({ time, capacity: maxCapacity }));
+    const effectiveTimeSlots = rawTimeSlots.map((slot) => {
+      const slotTime = slot.time;
+      const slotCapacity = slot.capacity ?? maxCapacity;
+      const slotBooked = dateSlotMap.get(slotTime) || 0;
+      return {
+        time: slotTime,
+        capacity: slotCapacity,
+        booked: slotBooked,
+        remaining: Math.max(0, slotCapacity - slotBooked),
+      };
+    });
 
     calendar.push({
       date: dateStr,
