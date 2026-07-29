@@ -5,7 +5,7 @@ jest.mock('../../config/jwt', () => ({
 }));
 
 jest.mock('../../utils/prismaClient', () => ({
-  expeditionTour: { findFirst: jest.fn() },
+  expeditionTour: { findFirst: jest.fn(), findUnique: jest.fn() },
   tour: { findUnique: jest.fn(), findFirst: jest.fn() },
   user: { findUnique: jest.fn() },
   booking: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn(), count: jest.fn() },
@@ -181,6 +181,7 @@ describe('E2E: Expedition Checkout Flow', () => {
 
     prisma.user.findUnique.mockResolvedValue(mockUser);
     prisma.expeditionTour.findFirst.mockResolvedValue(mockExpeditionTour);
+    prisma.expeditionTour.findUnique.mockResolvedValue({ isActive: true });
     prisma.tour.findFirst.mockResolvedValue(mockTour);
     prisma.tour.findUnique.mockResolvedValue(mockTour);
     prisma.booking.findMany.mockResolvedValue([]);
