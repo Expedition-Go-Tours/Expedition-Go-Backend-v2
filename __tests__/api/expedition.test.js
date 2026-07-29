@@ -53,6 +53,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   prisma.expeditionTour.findMany.mockResolvedValue([mockExpeditionTour]);
   prisma.expeditionTour.findFirst.mockResolvedValue(mockExpeditionTour);
+  prisma.expeditionTour.findUnique.mockResolvedValue(mockExpeditionTour);
   prisma.expeditionTour.create.mockResolvedValue(mockExpeditionTour);
   prisma.tour.findFirst.mockResolvedValue(mockTour);
   prisma.tour.findUnique.mockResolvedValue(mockTour);

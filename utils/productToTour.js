@@ -144,12 +144,14 @@ function buildProductContent(flat) {
 }
 
 function buildSchedulesAndPricing(flat) {
+  const cats = Array.isArray(flat.pricingCategories) ? flat.pricingCategories : (Array.isArray(flat.ageGroups) ? flat.ageGroups : [])
   return {
     travelerDetails: {
       pricingModel: flat.pricingModel || 'perPerson',
       pricingApproach: flat.pricingApproach || 'dependsOnAge',
       uniformPrice: flat.uniformPrice ?? null,
-      pricingCategories: Array.isArray(flat.pricingCategories) ? flat.pricingCategories : (Array.isArray(flat.ageGroups) ? flat.ageGroups : []),
+      pricingCategories: cats,
+      ageGroups: cats.map(c => ({ label: c.name, minAge: c.minAge, maxAge: c.maxAge })),
       minParticipants: flat.minParticipants ?? null,
       maxParticipants: flat.maxParticipants ?? null,
       groupSizes: Array.isArray(flat.groupSizes) ? flat.groupSizes : [],
@@ -167,6 +169,8 @@ function buildSchedulesAndPricing(flat) {
           endDate: flat.scheduleHasEndDate ? (flat.scheduleEndDate || '') : null,
           timeSlots: Array.isArray(flat.timeSlots) ? flat.timeSlots : [],
           dateExceptions: Array.isArray(flat.dateExceptions) ? flat.dateExceptions : [],
+          pricingCategories: cats,
+          prices: cats.filter(c => c.price != null).map(c => ({ ageGroup: c.name, retailPrice: c.price })),
         },
       ],
     },
@@ -210,6 +214,8 @@ function buildAvailability(flat) {
     daysOfWeek,
     weeklySchedule: flat.weeklySchedule || null,
     timeSlots: Array.isArray(flat.timeSlots) ? flat.timeSlots.map(t => t.startTime) : [],
+    startDate: flat.scheduleStartDate || '',
+    endDate: flat.scheduleHasEndDate ? (flat.scheduleEndDate || '') : null,
   }
 }
 

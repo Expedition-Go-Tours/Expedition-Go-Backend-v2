@@ -28,6 +28,7 @@ jest.mock('../../utils/queue', () => ({
 jest.mock('../../utils/bookingHelpers', () => ({
   validateTravelerInfo: jest.fn(),
   generateBookingNumber: jest.fn(),
+  calculateRefundAmount: jest.fn(() => ({ refundAmount: 105, refundPercentage: 100, reason: 'Full refund' })),
 }));
 
 jest.mock('../../utils/tourHelpers', () => ({
