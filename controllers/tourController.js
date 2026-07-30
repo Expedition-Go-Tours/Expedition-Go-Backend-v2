@@ -642,7 +642,10 @@ exports.createTour = catchAsync(async (req, res, next) => {
     status = 'DRAFT',
     latitude,
     longitude,
-    specialOffers
+    specialOffers,
+    city,
+    country,
+    region
   } = req.body;
 
   // Get uploaded Cloudinary URLs from multer
@@ -692,9 +695,9 @@ exports.createTour = catchAsync(async (req, res, next) => {
       status,
       latitude,
       longitude,
-      city: productContent?.location?.city || null,
-      country: productContent?.location?.country || null,
-      region: productContent?.location?.region || null,
+      city: city ?? null,
+      country: country ?? null,
+      region: region ?? null,
       category: parsedCategory?.category || null,
       subcategory: parsedCategory?.subcategory || null,
       activityType: parsedCategory?.activityType || null,
@@ -879,7 +882,8 @@ exports.updateTour = catchAsync(async (req, res, next) => {
       title, description, referenceCode, metaTitle, metaDescription,
       categorization, theme,
       productContent, schedulesAndPricing, bookingAndTickets,
-      coverPhoto, tags, status, latitude, longitude, specialOffers
+      coverPhoto, tags, status, latitude, longitude, specialOffers,
+      city, country, region
     } = req.body;
 
     const updateData = {};
@@ -898,6 +902,9 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     if (status !== undefined) updateData.status = status;
     if (latitude !== undefined) updateData.latitude = latitude;
     if (longitude !== undefined) updateData.longitude = longitude;
+    if (city !== undefined) updateData.city = city;
+    if (country !== undefined) updateData.country = country;
+    if (region !== undefined) updateData.region = region;
 
     // Handle uploaded photos from multer
     const uploadedPhotos = (req.files || []).map(f => f.path).filter(isValidCloudinaryUrl);
@@ -973,11 +980,10 @@ exports.updateTour = catchAsync(async (req, res, next) => {
 
     // Auto-extract location fields from productContent if not sent as top-level fields
     const pc = req.body.productContent;
-    if (pc?.location) {
-      if (req.body.city === undefined) updateData.city = pc.location.city || null;
-      if (req.body.country === undefined) updateData.country = pc.location.country || null;
-      if (req.body.region === undefined) updateData.region = pc.location.region || null;
-    }
+    const firstLoc = Array.isArray(pc?.locations) ? pc.locations[0] : (pc?.location || null);
+    if (req.body.city === undefined) updateData.city = firstLoc?.city || null;
+    if (req.body.country === undefined) updateData.country = firstLoc?.country || null;
+    if (req.body.region === undefined) updateData.region = firstLoc?.region || null;
 
     // Replace secondary themes: delete all existing, re-create (BEFORE the update)
     if (secondaryThemesData) {

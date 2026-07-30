@@ -72,23 +72,23 @@ describe('validateTravelerInfo', () => {
 
   it('returns error for invalid phone', () => {
     const result = validateTravelerInfo({ adults: 1, phoneNumber: 'x', location: 'NYC' });
-    expect(result.errors).toContain('A valid phone number (WhatsApp) is required for contact');
+    expect(result.errors).toContain('A valid phone number is required. Use international format (e.g., +12025551234)');
   });
 
   it('returns error for short location', () => {
-    const result = validateTravelerInfo({ adults: 1, phoneNumber: '+1234567890', location: 'A' });
+    const result = validateTravelerInfo({ adults: 1, phoneNumber: '+12025551234', location: 'A' });
     expect(result.errors).toContain('Your location (city/country) is required');
   });
 
   it('returns valid for complete traveler info', () => {
-    const result = validateTravelerInfo({ adults: 2, children: 1, phoneNumber: '+1234567890', location: 'New York, USA' });
+    const result = validateTravelerInfo({ adults: 2, children: 1, phoneNumber: '+12025551234', location: 'New York, USA' });
     expect(result.isValid).toBe(true);
     expect(result.errors).toHaveLength(0);
     expect(result.totalTravelers).toBe(3);
   });
 
   it('counts youth travelers', () => {
-    const result = validateTravelerInfo({ youth: 1, phoneNumber: '+1234567890', location: 'London' });
+    const result = validateTravelerInfo({ youth: 1, phoneNumber: '+12025551234', location: 'London' });
     expect(result.totalTravelers).toBe(1);
   });
 });

@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { isValidPhoneNumber } = require('libphonenumber-js');
 
 const locationSchema = z.object({
   name: z.string().min(1, 'Location name is required'),
@@ -115,7 +116,8 @@ const pricingCategorySchema = z.object({
 
 const groupSizeSchema = z.object({
   id: z.string(),
-  size: z.number().min(1).nullable(),
+  from: z.number().min(1).nullable(),
+  to: z.number().min(1).nullable(),
   price: z.number().min(0).nullable(),
 });
 
@@ -177,7 +179,9 @@ const productSchema = z.object({
   mandatoryItems: z.array(z.string()).optional(),
   knowBeforeYouGo: z.string().max(2000).optional(),
   emergencyCountryCode: z.string().max(5).optional(),
-  emergencyPhone: z.string().max(20).optional(),
+  emergencyPhone: z.string()
+    .refine((val) => !val || isValidPhoneNumber(val), { message: 'Invalid phone number' })
+    .optional(),
   voucherInfo: z.string().max(500).optional(),
   // Step 10
   options: z.array(productOptionSchema).optional(),
@@ -232,6 +236,9 @@ const productSchema = z.object({
   secondaryThemes: z.array(z.string()).optional(),
   // Cancellation
   cutoffHours: z.number().min(0).optional(),
+  cancellationType: z.enum(['standard', 'all_sales_final']).optional(),
+  supplierCanCancelBadWeather: z.boolean().optional(),
+  supplierCanCancelNotEnoughTravelers: z.boolean().optional(),
   // Prisma-level fields
   status: z.enum(['DRAFT', 'ACTIVE', 'PAUSED', 'ARCHIVED']).optional(),
   coverPhoto: z.string().optional(),

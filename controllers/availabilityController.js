@@ -27,7 +27,11 @@ async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end
   const templateDaysOfWeek = parsed?.availability?.daysOfWeek || [];
   const templateTimeSlots = parsed?.availability?.timeSlots || [];
   const maxTravelersFallback = parseInt(await getConfig('booking.max_travelers', '50'));
-  const maxCapacity = parsed?.travelerDetails?.maxParticipants || maxTravelersFallback;
+  const td = parsed?.travelerDetails
+  const isPerGroup = td?.pricingModel === 'perGroup'
+  const maxCapacity = isPerGroup
+    ? (td?.maxGroupsPerTimeSlot ?? 1) * (td?.groupSizes?.[0]?.to ?? maxTravelersFallback)
+    : (td?.maxParticipants || maxTravelersFallback);
 
   const [overrides, bookings] = await Promise.all([
     prisma.tourDateOverride.findMany({

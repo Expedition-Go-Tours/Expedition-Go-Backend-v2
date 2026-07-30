@@ -96,8 +96,12 @@ function validateBusinessInfo(businessInfo) {
   }
 
   // Validate phone number format
-  if (businessInfo.phoneNumber && !/^\+?[\d\s\-()]+$/.test(businessInfo.phoneNumber)) {
-    errors.push('Invalid phone number format');
+  if (businessInfo.phoneNumber) {
+    const { validatePhone } = require('./phoneValidation');
+    const result = validatePhone(businessInfo.phoneNumber);
+    if (!result.isValid) {
+      errors.push('Invalid business phone number format. Use international format (e.g., +12025551234)');
+    }
   }
 
   // Validate website URL
@@ -177,8 +181,12 @@ function validateRepresentativeInfo(representativeInfo) {
     if (!representativeInfo.address.postalCode) errors.push('Representative postal code is required');
   }
 
-  if (representativeInfo.phoneNumber && !/^\+?[\d\s\-()]+$/.test(representativeInfo.phoneNumber)) {
-    errors.push('Invalid phone number format');
+  if (representativeInfo.phoneNumber) {
+    const { validatePhone } = require('./phoneValidation');
+    const result = validatePhone(representativeInfo.phoneNumber);
+    if (!result.isValid) {
+      errors.push('Invalid representative phone number format. Use international format (e.g., +12025551234)');
+    }
   }
 
   if (!representativeInfo.idType || !['passport', 'drivers_license', 'national_id'].includes(representativeInfo.idType)) {

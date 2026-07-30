@@ -23,7 +23,7 @@ describe('validateSupplierData', () => {
       businessType: 'company',
       country: 'US',
       address: { line1: '123 Main St', city: 'NYC', state: 'NY', postalCode: '10001' },
-      phoneNumber: '+1234567890',
+      phoneNumber: '+12025551234',
       website: 'https://acme.com',
     },
     operatingInfo: {
@@ -39,7 +39,7 @@ describe('validateSupplierData', () => {
       email: 'john@acme.com',
       dateOfBirth: '1990-01-01',
       address: { line1: '456 Oak Ave', city: 'NYC', state: 'NY', postalCode: '10002' },
-      phoneNumber: '+1987654321',
+      phoneNumber: '+12025551234',
       idType: 'passport',
       idDocumentUrl: 'https://docs.example.com/id.pdf',
     },
@@ -84,7 +84,7 @@ describe('validateSupplierData', () => {
     expect(result.errors).toContain('Valid business type is required (individual, company, or non_profit)');
     expect(result.errors).toContain('Valid 2-letter country code is required');
     expect(result.errors).toContain('Business address is required');
-    expect(result.errors).toContain('Invalid phone number format');
+    expect(result.errors).toContain('Invalid business phone number format. Use international format (e.g., +12025551234)');
     expect(result.errors).toContain('Invalid website URL format');
   });
 
@@ -222,7 +222,7 @@ describe('validateSupplierData', () => {
   // --- businessInfo phone/website edge cases ---
   it('accepts valid phone and website formats', () => {
     const result = validateSupplierData({
-      businessInfo: { legalBusinessName: 'N', displayName: 'N', businessType: 'company', country: 'US', address: { line1: '1', city: 'Lon', state: 'LDN', postalCode: 'SW1' }, phoneNumber: '+1 (123) 456-7890', website: 'http://example.com' },
+      businessInfo: { legalBusinessName: 'N', displayName: 'N', businessType: 'company', country: 'US', address: { line1: '1', city: 'Lon', state: 'LDN', postalCode: 'SW1' }, phoneNumber: '+12025551234', website: 'http://example.com' },
     });
     expect(result.errors.filter(e => e.includes('phone') || e.includes('website'))).toHaveLength(0);
   });

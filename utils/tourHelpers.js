@@ -202,9 +202,19 @@ function validatePricing(data) {
     }
 
     if (groupSizes && Array.isArray(groupSizes)) {
-      for (const gs of groupSizes) {
-        if (gs.size !== null && gs.size !== undefined && (gs.size < 1 || gs.size > 100)) {
-          errors.push('Group size must be between 1 and 100');
+      const sorted = [...groupSizes].sort((a, b) => (a.from ?? 0) - (b.from ?? 0))
+      for (let i = 0; i < sorted.length; i++) {
+        const gs = sorted[i]
+        if (gs.from == null || gs.to == null || gs.from < 1 || gs.to > 100) {
+          errors.push('Each group size must have from (1-100) and to (1-100)');
+          break;
+        }
+        if (gs.from > gs.to) {
+          errors.push('Group size from cannot exceed to');
+          break;
+        }
+        if (i > 0 && gs.from <= sorted[i - 1].to) {
+          errors.push('Group sizes must not overlap');
           break;
         }
       }

@@ -44,8 +44,14 @@ function validateTravelerInfo(travelers) {
     errors.push('At least one traveler is required');
   }
 
-  if (!travelers.phoneNumber || !/^\+?[\d\s\-()]{6,20}$/.test(travelers.phoneNumber)) {
+  if (!travelers.phoneNumber) {
     errors.push('A valid phone number (WhatsApp) is required for contact');
+  } else {
+    const { validatePhone } = require('./phoneValidation');
+    const result = validatePhone(travelers.phoneNumber);
+    if (!result.isValid) {
+      errors.push('A valid phone number is required. Use international format (e.g., +12025551234)');
+    }
   }
 
   if (!travelers.location || travelers.location.trim().length < 3) {

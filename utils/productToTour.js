@@ -6,6 +6,8 @@
  * Inverse of the frontend's tourToProduct() mapper.
  */
 
+const { normalizeToE164, extractCountryFromE164 } = require('./phoneValidation');
+
 function productToTour(flat) {
   if (!flat || typeof flat !== 'object') return {};
 
@@ -100,8 +102,12 @@ function buildProductContent(flat) {
     petFriendly: !!flat.petFriendly,
     whatToBring: Array.isArray(flat.mandatoryItems) ? flat.mandatoryItems : [],
     additionalInfo: flat.knowBeforeYouGo || '',
-    emergencyCountryCode: flat.emergencyCountryCode || '',
-    emergencyPhone: flat.emergencyPhone || '',
+    emergencyCountryCode: (() => {
+      if (flat.emergencyCountryCode) return flat.emergencyCountryCode;
+      if (flat.emergencyPhone) return extractCountryFromE164(flat.emergencyPhone) || '';
+      return '';
+    })(),
+    emergencyPhone: normalizeToE164(flat.emergencyPhone) || '',
     voucherInfo: flat.voucherInfo || '',
     copyrightConfirmed: !!flat.copyrightConfirmed,
     options: Array.isArray(flat.options) ? flat.options : [],
@@ -136,7 +142,7 @@ function buildProductContent(flat) {
     shipInfoRequired: !!flat.shipInfoRequired,
     trainInfoRequired: !!flat.trainInfoRequired,
     hotelInfoRequired: !!flat.hotelInfoRequired,
-    contactPhone: flat.contactPhone || null,
+    contactPhone: normalizeToE164(flat.contactPhone),
     crossCityTravel: !!flat.crossCityTravel,
     planPickupTimes: !!flat.planPickupTimes,
     pickupStartTime: flat.pickupStartTime || '08:00',
@@ -145,6 +151,24 @@ function buildProductContent(flat) {
 
 function buildSchedulesAndPricing(flat) {
   const cats = Array.isArray(flat.pricingCategories) ? flat.pricingCategories : (Array.isArray(flat.ageGroups) ? flat.ageGroups : [])
+
+  const prices = []
+  if (flat.pricingModel === 'perGroup') {
+    if (Array.isArray(flat.groupSizes)) {
+      for (const gs of flat.groupSizes) {
+        if (gs.price != null) {
+          prices.push({ label: `Group of ${gs.from}-${gs.to}`, retailPrice: gs.price, groupSize: true })
+        }
+      }
+    }
+  } else {
+    for (const c of cats) {
+      if (c.price != null) {
+        prices.push({ ageGroup: c.name, retailPrice: c.price })
+      }
+    }
+  }
+
   return {
     travelerDetails: {
       pricingModel: flat.pricingModel || 'perPerson',
@@ -170,7 +194,7 @@ function buildSchedulesAndPricing(flat) {
           timeSlots: Array.isArray(flat.timeSlots) ? flat.timeSlots : [],
           dateExceptions: Array.isArray(flat.dateExceptions) ? flat.dateExceptions : [],
           pricingCategories: cats,
-          prices: cats.filter(c => c.price != null).map(c => ({ ageGroup: c.name, retailPrice: c.price })),
+          prices,
         },
       ],
     },
@@ -221,6 +245,22 @@ function buildAvailability(flat) {
 
 function buildBookingAndTickets(flat) {
   const cancellationPolicy = {};
+
+  if (flat.cancellationType === 'standard') {
+    cancellationPolicy.type = 'standard';
+    cancellationPolicy.label = 'Free cancellation up to 24 hours before';
+    cancellationPolicy.cancellationWindowHours = 24;
+    cancellationPolicy.refundPercentage = 100;
+  } else if (flat.cancellationType === 'all_sales_final') {
+    cancellationPolicy.type = 'all_sales_final';
+    cancellationPolicy.label = 'No refunds';
+    cancellationPolicy.cancellationWindowHours = 0;
+    cancellationPolicy.refundPercentage = 0;
+  }
+
+  if (flat.supplierCanCancelBadWeather) cancellationPolicy.supplierCanCancelBadWeather = true;
+  if (flat.supplierCanCancelNotEnoughTravelers) cancellationPolicy.supplierCanCancelNotEnoughTravelers = true;
+
   if (flat.cutoffHours != null) cancellationPolicy.cutoffHours = flat.cutoffHours;
 
   return {

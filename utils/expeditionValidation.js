@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { isValidPhoneNumber } = require('libphonenumber-js');
 
 const travelerSchema = z.object({
   adults: z.number().int().min(1).max(50),
@@ -7,7 +8,8 @@ const travelerSchema = z.object({
 });
 
 const travelerWithDetailsSchema = travelerSchema.extend({
-  phoneNumber: z.string().min(5).max(30),
+  phoneNumber: z.string()
+    .refine((val) => isValidPhoneNumber(val), 'Invalid phone number. Use international format (e.g., +12025551234)'),
   location: z.string().min(2).max(200),
   details: z
     .array(
@@ -42,7 +44,9 @@ const contactSchema = z.object({
   body: z.object({
     name: z.string().min(1).max(100),
     email: z.string().email().max(255),
-    phone: z.string().max(30).optional(),
+    phone: z.string()
+      .refine((val) => !val || isValidPhoneNumber(val), 'Invalid phone number')
+      .optional(),
     subject: z.string().max(200).optional(),
     message: z.string().min(10).max(5000),
   }),

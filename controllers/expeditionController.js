@@ -29,19 +29,34 @@ function extractStartingPrice(schedulesAndPricing) {
     const sp = typeof schedulesAndPricing === 'string'
       ? JSON.parse(schedulesAndPricing)
       : schedulesAndPricing;
+
     const schedules = sp?.pricingSchedules?.schedules;
-    if (!Array.isArray(schedules) || schedules.length === 0) return null;
-    let lowest = Infinity;
-    for (const s of schedules) {
-      const prices = s?.prices;
-      if (!Array.isArray(prices)) continue;
-      for (const p of prices) {
-        if (p?.ageGroup?.toLowerCase() === 'adult' && p?.retailPrice != null) {
-          lowest = Math.min(lowest, Number(p.retailPrice));
+    if (Array.isArray(schedules) && schedules.length > 0) {
+      let lowest = Infinity;
+      for (const s of schedules) {
+        const prices = s?.prices;
+        if (!Array.isArray(prices)) continue;
+        for (const p of prices) {
+          if (p.retailPrice != null) {
+            lowest = Math.min(lowest, Number(p.retailPrice));
+          }
         }
       }
+      if (lowest !== Infinity) return lowest;
     }
-    return lowest === Infinity ? null : lowest;
+
+    const td = sp?.travelerDetails;
+    if (td?.pricingModel === 'perGroup' && Array.isArray(td?.groupSizes)) {
+      let lowest = Infinity;
+      for (const gs of td.groupSizes) {
+        if (gs.price != null) lowest = Math.min(lowest, Number(gs.price));
+      }
+      if (lowest !== Infinity) return lowest;
+    }
+
+    if (td?.uniformPrice != null) return Number(td.uniformPrice);
+
+    return null;
   } catch {
     return null;
   }
