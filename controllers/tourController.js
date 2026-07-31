@@ -289,7 +289,7 @@ exports.getPopularByCategory = catchAsync(async (req, res, next) => {
 
   const result = await cache.getOrSet(cache.TOUR_POPULAR_KEY, async () => {
     const tours = await prisma.tour.findMany({
-      where: { status: 'ACTIVE' },
+      where: { status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } },
       include: {
         supplier: {
           select: {

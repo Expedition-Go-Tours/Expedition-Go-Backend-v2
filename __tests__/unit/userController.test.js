@@ -161,6 +161,18 @@ describe('userController', () => {
       await controller.deleteUser(req, res, next);
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
     });
+
+    it('refuses to hard-delete a supplier account', async () => {
+      req.params = { id: 'supplier-user' };
+      prisma.user.findUnique.mockResolvedValue({
+        ...mockUser,
+        id: 'supplier-user',
+        supplierProfile: { id: 'sp-1', status: 'ACTIVE' },
+      });
+      await controller.deleteUser(req, res, next);
+      expect(prisma.user.delete).not.toHaveBeenCalled();
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 409 }));
+    });
   });
 
   // ============================

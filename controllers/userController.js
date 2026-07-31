@@ -129,7 +129,19 @@ exports.deleteMe = catchAsync(async (req, res) => {
 exports.deleteUser = catchAsync(async (req, res, next) => {
   let user;
   try {
-    user = await prisma.user.findUnique({ where: { id: req.params.id } });
+    user = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      include: { supplierProfile: { select: { id: true, status: true } } },
+    });
+    if (!user) {
+      return next(new AppError('User not found', 404));
+    }
+    if (user.supplierProfile) {
+      return next(new AppError(
+        'Supplier accounts cannot be hard-deleted because it would destroy their tours, bookings, and history. Use POST /suppliers/admin/:id/archive to soft-delete the account instead.',
+        409
+      ));
+    }
     await prisma.user.delete({ where: { id: req.params.id } });
   } catch {
     return next(new AppError('User not found', 404));

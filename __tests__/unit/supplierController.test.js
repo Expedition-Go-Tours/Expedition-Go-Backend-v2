@@ -1,7 +1,7 @@
 jest.mock('../../utils/prismaClient', () => ({
   supplierProfile: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), findMany: jest.fn(), count: jest.fn() },
   user: { update: jest.fn(), findUnique: jest.fn() },
-  tour: { groupBy: jest.fn(), findMany: jest.fn(), count: jest.fn() },
+  tour: { groupBy: jest.fn(), findMany: jest.fn(), count: jest.fn(), updateMany: jest.fn() },
   booking: { groupBy: jest.fn(), findMany: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
   review: { findMany: jest.fn(), aggregate: jest.fn(), count: jest.fn() },
   payout: { findMany: jest.fn(), count: jest.fn() },
@@ -14,7 +14,7 @@ jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn(
 jest.mock('../../utils/queue', () => ({ enqueueNotification: jest.fn() }));
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
 jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
-jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()), invalidateTourCaches: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../config/firebaseAdmin', () => ({ auth: () => ({ getUser: jest.fn() }) }));
 
 const prisma = require('../../utils/prismaClient');
@@ -25,6 +25,7 @@ const { enqueueNotification } = require('../../utils/queue');
 const { cloudinaryUrl } = require('../../utils/imageOptimizer');
 const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
 const admin = require('../../config/firebaseAdmin');
+const cache = require('../../utils/cacheHelper');
 const controller = require('../../controllers/supplierController');
 
 describe('supplierController', () => {
@@ -83,6 +84,7 @@ describe('supplierController', () => {
     prisma.tour.groupBy.mockResolvedValue(mockTourGroupBy());
     prisma.tour.findMany.mockResolvedValue([]);
     prisma.tour.count.mockResolvedValue(0);
+    prisma.tour.updateMany.mockResolvedValue({ count: 0 });
     prisma.booking.groupBy.mockResolvedValue(mockBookingGroupBy());
     prisma.booking.findMany.mockResolvedValue([]);
     prisma.booking.count.mockResolvedValue(0);
@@ -658,12 +660,14 @@ describe('supplierController', () => {
       req.params = { id: 'sp-1' };
       req.body = { suspend: true, reason: 'Violation' };
       prisma.supplierProfile.findUnique.mockResolvedValue(mockProfile);
+      prisma.tour.findMany.mockResolvedValue([{ id: 't-1', slug: 'acme-tour' }]);
 
       await controller.suspendSupplier(req, res, next);
 
       expect(prisma.supplierProfile.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'sp-1' }, data: expect.objectContaining({ status: 'SUSPENDED' }) })
       );
+      expect(cache.invalidateTourCaches).toHaveBeenCalledWith('t-1', 'acme-tour');
       expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'supplier.suspended' }));
       expect(res.status).toHaveBeenCalledWith(200);
     });
@@ -672,12 +676,14 @@ describe('supplierController', () => {
       req.params = { id: 'sp-1' };
       req.body = { suspend: false };
       prisma.supplierProfile.findUnique.mockResolvedValue(mockProfile);
+      prisma.tour.findMany.mockResolvedValue([]);
 
       await controller.suspendSupplier(req, res, next);
 
       expect(prisma.supplierProfile.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ status: 'ACTIVE' }) })
       );
+      expect(cache.invalidateKeys).toHaveBeenCalledWith(['expedition:sitemap']);
       expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'supplier.reactivated' }));
     });
   });
@@ -747,6 +753,61 @@ describe('supplierController', () => {
       await controller.activateSupplier(req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(200);
+    });
+  });
+
+  // ============================
+  // archiveSupplier (admin)
+  // ============================
+  describe('archiveSupplier', () => {
+    it('returns 404 when supplier not found', async () => {
+      req.params = { id: 'sp-1' };
+
+      await controller.archiveSupplier(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
+    });
+
+    it('archives supplier, hides tours, deactivates account, preserves bookings', async () => {
+      req.params = { id: 'sp-1' };
+      prisma.supplierProfile.findUnique.mockResolvedValue({
+        ...mockProfile,
+        user: { id: 'u-1', name: 'John', email: 'john@test.com' },
+      });
+      prisma.tour.updateMany.mockResolvedValue({ count: 4 });
+      prisma.tour.findMany.mockResolvedValue([
+        { id: 't-1', slug: 'tour-one' },
+        { id: 't-2', slug: 'tour-two' },
+      ]);
+
+      await controller.archiveSupplier(req, res, next);
+
+      expect(prisma.tour.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ supplierId: 'u-1' }), data: { status: 'ARCHIVED' } })
+      );
+      expect(prisma.supplierProfile.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'sp-1' }, data: { status: 'SUSPENDED' } })
+      );
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'u-1' }, data: { active: false } })
+      );
+      expect(cache.invalidateTourCaches).toHaveBeenCalledWith('t-1', 'tour-one');
+      expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'supplier.archived' }));
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ archivedTours: 4 }) }));
+    });
+
+    it('returns 409 when already archived', async () => {
+      req.params = { id: 'sp-1' };
+      prisma.supplierProfile.findUnique.mockResolvedValue({
+        ...mockProfile,
+        status: 'SUSPENDED',
+        user: { id: 'u-1', name: 'John', email: 'john@test.com', active: false },
+      });
+
+      await controller.archiveSupplier(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 409 }));
     });
   });
 

@@ -344,7 +344,7 @@ async function getAvailableFilterOptions(prisma) {
   try {
     // Get unique categories, themes, and locations from active tours
     const tours = await prisma.tour.findMany({
-      where: { status: 'ACTIVE' },
+      where: { status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } },
       select: {
         category: true,
         subcategory: true,

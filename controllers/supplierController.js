@@ -554,6 +554,19 @@ exports.suspendSupplier = catchAsync(async (req, res, next) => {
     },
   });
 
+  // Invalidate public tour/expedition caches so this supplier's tours
+  // disappear from (or reappear in) listings immediately on status change.
+  try {
+    const supplierTours = await prisma.tour.findMany({
+      where: { supplierId: supplierProfile.userId },
+      select: { id: true, slug: true },
+    });
+    await Promise.all(supplierTours.map((t) => cache.invalidateTourCaches(t.id, t.slug)));
+    await cache.invalidateKeys(['expedition:sitemap']);
+  } catch (err) {
+    logger.error('Failed to invalidate tour caches on supplier status change:', err);
+  }
+
   await logActivity({
     userId: req.user.id,
     action: suspend ? 'supplier.suspended' : 'supplier.reactivated',
@@ -630,6 +643,81 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: { supplierProfile: updated },
+  });
+});
+
+/**
+ * POST /suppliers/admin/:id/archive
+ * Soft-delete / archive a supplier (admin).
+ *
+ * Unlike hard deletion (which cascades and destroys tours, bookings, and
+ * related records), archiving:
+ *   - marks every tour as ARCHIVED (hidden from all public listings)
+ *   - suspends the supplier profile (blocks new bookings)
+ *   - deactivates the user account (blocks login)
+ *   - preserves all bookings, payouts, reviews, and related records
+ */
+exports.archiveSupplier = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { id },
+    include: { user: { select: { id: true, name: true, email: true, active: true } } },
+  });
+
+  if (!supplierProfile) {
+    return next(new AppError('Supplier not found', 404));
+  }
+
+  if (supplierProfile.status === 'SUSPENDED' && !supplierProfile.user.active) {
+    return next(new AppError('Supplier is already archived', 409));
+  }
+
+  const archivedTours = await prisma.tour.updateMany({
+    where: { supplierId: supplierProfile.userId, status: { not: 'ARCHIVED' } },
+    data: { status: 'ARCHIVED' },
+  });
+
+  await prisma.supplierProfile.update({
+    where: { id },
+    data: { status: 'SUSPENDED' },
+  });
+
+  await prisma.user.update({
+    where: { id: supplierProfile.userId },
+    data: { active: false },
+  });
+
+  // Invalidate public tour/expedition caches so archived tours disappear immediately.
+  try {
+    const supplierTours = await prisma.tour.findMany({
+      where: { supplierId: supplierProfile.userId },
+      select: { id: true, slug: true },
+    });
+    await Promise.all(supplierTours.map((t) => cache.invalidateTourCaches(t.id, t.slug)));
+    await cache.invalidateKeys(['expedition:sitemap']);
+  } catch (err) {
+    logger.error('Failed to invalidate tour caches on supplier archive:', err);
+  }
+
+  await logActivity({
+    userId: req.user.id,
+    action: 'supplier.archived',
+    resource: 'SupplierProfile',
+    resourceId: id,
+    metadata: {
+      archivedTours: archivedTours.count,
+      supplierName: supplierProfile.user.name,
+    },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Supplier archived. Tours are hidden and the account is deactivated; bookings are preserved.',
+    data: {
+      supplierId: id,
+      archivedTours: archivedTours.count,
+    },
   });
 });
 

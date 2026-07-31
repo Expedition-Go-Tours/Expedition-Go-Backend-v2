@@ -189,6 +189,7 @@ exports.getPublicAvailability = catchAsync(async (req, res, next) => {
     where: {
       OR: [{ id: tourId }, { slug: tourId }],
       status: 'ACTIVE',
+      supplier: { supplierProfile: { status: 'ACTIVE' } },
     },
     select: { id: true, title: true, status: true, schedulesAndPricing: true },
   });

@@ -190,7 +190,10 @@ exports.getTours = catchAsync(async (req, res) => {
   const cacheKey = `${LIST_CACHE_KEY}:${crypto.createHash('md5').update(JSON.stringify(req.query)).digest('hex')}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
-    const tourWhere = { status: 'ACTIVE' };
+    const tourWhere = {
+      status: 'ACTIVE',
+      supplier: { supplierProfile: { status: 'ACTIVE' } },
+    };
     if (category) tourWhere.category = category;
     if (city) tourWhere.city = city;
     if (country) tourWhere.country = country;
@@ -287,7 +290,7 @@ exports.getTours = catchAsync(async (req, res) => {
 exports.getFeaturedTours = catchAsync(async (req, res) => {
   const result = await cache.getOrSet(FEATURED_CACHE_KEY, async () => {
     const records = await prisma.expeditionTour.findMany({
-      where: { isActive: true, isFeatured: true, tour: { status: 'ACTIVE' } },
+      where: { isActive: true, isFeatured: true, tour: { status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } } },
       orderBy: { displayOrder: 'asc' },
       take: 8,
       include: {
@@ -389,6 +392,7 @@ exports.getSimilarTours = catchAsync(async (req, res, next) => {
         isActive: true,
         tour: {
           status: 'ACTIVE',
+          supplier: { supplierProfile: { status: 'ACTIVE' } },
           id: { not: expeditionTour.tourId },
           category: expeditionTour.tour.category,
         },
@@ -428,7 +432,7 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
 
   const result = await cache.getOrSet(DETAIL_CACHE_KEY(slug), async () => {
     const record = await prisma.expeditionTour.findFirst({
-      where: { isActive: true, tour: { slug, status: 'ACTIVE' } },
+      where: { isActive: true, tour: { slug, status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } } },
       include: {
         tour: {
           include: {
@@ -535,7 +539,7 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
 exports.getSitemap = catchAsync(async (req, res) => {
   const result = await cache.getOrSet(SITEMAP_CACHE_KEY, async () => {
     const records = await prisma.expeditionTour.findMany({
-      where: { isActive: true, tour: { status: 'ACTIVE' } },
+      where: { isActive: true, tour: { status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } } },
       orderBy: { displayOrder: 'asc' },
       select: {
         tour: { select: { slug: true } },
