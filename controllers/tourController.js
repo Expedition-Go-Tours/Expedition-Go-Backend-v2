@@ -16,7 +16,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
-const { createSlug, validateTourData } = require('../utils/tourHelpers');
+const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices } = require('../utils/tourHelpers');
 const { productToTour } = require('../utils/productToTour');
 const { logActivity } = require('../utils/auditLogger');
 const { 
@@ -613,12 +613,38 @@ exports.createTour = catchAsync(async (req, res, next) => {
     }
   }
 
+  // ── Regenerate derived schedule prices from the authoritative source ──
+  // The dashboard's autosave may send an empty/stale `prices` array; the server
+  // always recomputes it from travelerDetails so the stored blob matches what
+  // checkout (calculateTourPrice) and the public price display consume.
+  if (req.body.schedulesAndPricing !== undefined) {
+    let blob = req.body.schedulesAndPricing;
+    if (typeof blob === 'string') {
+      try { blob = JSON.parse(blob); } catch { blob = null; }
+    }
+    if (blob && typeof blob === 'object' && !Array.isArray(blob)) {
+      req.body.schedulesAndPricing = rebuildSchedulePrices(blob);
+    }
+  }
+
   // Validate tour data — partial allows progressive draft saves from the step-by-step wizard
   // Full validation runs when status is PUBLISHED to ensure completeness
   const isPublishing = req.body.status === 'PUBLISHED';
   const validationResult = validateTourData(req.body, !isPublishing);
   if (!validationResult.isValid) {
     return next(new AppError(`Validation failed: ${validationResult.errors.join(', ')}`, 400));
+  }
+
+  // ── Enforce pricing/availability completeness when created live ──
+  if (req.body.status === 'ACTIVE' || req.body.status === 'PUBLISHED') {
+    let blob = req.body.schedulesAndPricing;
+    if (typeof blob === 'string') {
+      try { blob = JSON.parse(blob); } catch { blob = null; }
+    }
+    const pricingErrors = validateStoredPricing(blob);
+    if (pricingErrors.length > 0) {
+      return next(new AppError(`Pricing and availability must be complete to go live: ${pricingErrors.join(', ')}`, 400));
+    }
   }
 
   // Ensure required scalar fields always have a value for Prisma
@@ -878,13 +904,37 @@ exports.updateTour = catchAsync(async (req, res, next) => {
       where: { id, supplierId }
     });
 
-    const {
+    let {
       title, description, referenceCode, metaTitle, metaDescription,
       categorization, theme,
       productContent, schedulesAndPricing, bookingAndTickets,
       coverPhoto, tags, status, latitude, longitude, specialOffers,
       city, country, region
     } = req.body;
+
+    // ── Server-authoritative derived pricing + live-data completeness ──
+    // The dashboard's autosave may send an empty/stale `prices` array; the
+    // server always regenerates it from the authoritative travelerDetails so
+    // the stored blob matches what checkout (calculateTourPrice) consumes.
+    let effectiveBlob = schedulesAndPricing !== undefined ? schedulesAndPricing : existingTour.schedulesAndPricing;
+    if (typeof effectiveBlob === 'string') {
+      try { effectiveBlob = JSON.parse(effectiveBlob); } catch { effectiveBlob = null; }
+    }
+    if (schedulesAndPricing !== undefined && effectiveBlob && typeof effectiveBlob === 'object' && !Array.isArray(effectiveBlob)) {
+      effectiveBlob = rebuildSchedulePrices(effectiveBlob);
+      schedulesAndPricing = effectiveBlob;
+    }
+
+    // Enforce pricing/availability completeness when going live. The dashboard's
+    // "Set Live" sends only { status: 'ACTIVE' }, so the effective blob is the
+    // incoming one (if provided) else the stored one.
+    const effectiveStatus = status || existingTour.status;
+    if (effectiveStatus === 'ACTIVE' || effectiveStatus === 'PUBLISHED') {
+      const pricingErrors = validateStoredPricing(effectiveBlob);
+      if (pricingErrors.length > 0) {
+        throw new AppError(`Pricing and availability must be complete to go live: ${pricingErrors.join(', ')}`, 400);
+      }
+    }
 
     const updateData = {};
     if (title !== undefined) updateData.title = title;

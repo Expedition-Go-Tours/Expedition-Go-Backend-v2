@@ -249,6 +249,168 @@ function validatePricing(data) {
 }
 
 /**
+ * Regenerate the derived `prices` array on every pricing schedule from the
+ * authoritative `travelerDetails` source-of-truth fields. Invoked on write so
+ * the stored blob never holds stale, empty, or client-derived prices — the
+ * server is the single author of `schedules[].prices`, which is what checkout
+ * (`calculateTourPrice`) and the public "from $X" reads consume.
+ *
+ * Returns the input blob unchanged when it cannot be normalized (missing
+ * schedules, non-object, etc.) so callers can pass the result straight to
+ * `validateStoredPricing`.
+ */
+function rebuildSchedulePrices(blob) {
+  if (!blob || typeof blob !== 'object' || Array.isArray(blob)) return blob;
+  const td = blob.travelerDetails || {};
+  const ps = blob.pricingSchedules;
+  if (!ps || !Array.isArray(ps.schedules)) return blob;
+
+  const cats = (Array.isArray(td.pricingCategories) && td.pricingCategories.length > 0)
+    ? td.pricingCategories
+    : (Array.isArray(td.ageGroups) ? td.ageGroups : []);
+  const groupSizes = Array.isArray(td.groupSizes) ? td.groupSizes : [];
+  const pricingModel = td.pricingModel || 'perPerson';
+  const pricingApproach = td.pricingApproach || 'dependsOnAge';
+
+  const prices = [];
+  if (pricingModel === 'perGroup') {
+    for (const gs of groupSizes) {
+      if (gs && gs.price != null) {
+        prices.push({ label: `Group of ${gs.from}-${gs.to}`, retailPrice: gs.price, groupSize: true });
+      }
+    }
+  } else if (pricingApproach === 'sameForEveryone') {
+    if (td.uniformPrice != null) {
+      prices.push({ ageGroup: 'Adult', retailPrice: td.uniformPrice });
+    }
+  } else {
+    for (const c of cats) {
+      if (c && c.price != null) {
+        prices.push({ ageGroup: c.name || c.label, retailPrice: c.price });
+      }
+    }
+  }
+
+  for (const s of ps.schedules) {
+    if (s && typeof s === 'object') {
+      s.prices = prices.slice();
+    }
+  }
+
+  return blob;
+}
+
+/**
+ * Validate the stored schedulesAndPricing blob when a tour is set live
+ * (status ACTIVE/PUBLISHED). Mirrors the supplier dashboard's step-14
+ * wizard rules: at least one schedule, per-category prices present,
+ * group-size prices present, capacity sane, and time slots / weekly
+ * hours present per schedule type.
+ */
+function validateStoredPricing(blob) {
+  const errors = [];
+
+  if (!blob || typeof blob !== 'object' || Array.isArray(blob)) {
+    errors.push('Pricing and availability data is required');
+    return errors;
+  }
+
+  const travelerDetails = blob.travelerDetails || {};
+  const pricingSchedules = blob.pricingSchedules || {};
+  const availability = blob.availability || {};
+  const schedules = Array.isArray(pricingSchedules.schedules) ? pricingSchedules.schedules : [];
+  const firstSchedule = schedules[0] || {};
+
+  const pricingModel = travelerDetails.pricingModel || firstSchedule.pricingModel || 'perPerson';
+  const pricingApproach = travelerDetails.pricingApproach || firstSchedule.pricingApproach || 'dependsOnAge';
+
+  // At least one pricing schedule
+  if (schedules.length === 0) {
+    errors.push('Add at least one pricing schedule');
+  }
+
+  // Date sanity for each schedule
+  for (let i = 0; i < schedules.length; i++) {
+    const s = schedules[i];
+    if (s && s.hasEndDate && s.startDate && s.endDate && new Date(s.endDate) < new Date(s.startDate)) {
+      errors.push(`Schedule ${i + 1}: end date must be on or after the start date`);
+    }
+  }
+
+  // Pricing completeness
+  const cats = (Array.isArray(travelerDetails.pricingCategories) && travelerDetails.pricingCategories.length > 0)
+    ? travelerDetails.pricingCategories
+    : (Array.isArray(firstSchedule.pricingCategories) ? firstSchedule.pricingCategories : []);
+  const groupSizes = (Array.isArray(travelerDetails.groupSizes) && travelerDetails.groupSizes.length > 0)
+    ? travelerDetails.groupSizes
+    : (Array.isArray(firstSchedule.groupSizes) ? firstSchedule.groupSizes : []);
+
+  if (pricingModel === 'perGroup') {
+    if (groupSizes.length === 0) {
+      errors.push('Add at least one group size');
+    }
+    groupSizes.forEach((gs, i) => {
+      if (gs == null) return;
+      if (gs.price == null) {
+        errors.push(`Group size ${i + 1}: price is required`);
+      } else if (typeof gs.price === 'number' && gs.price < 0) {
+        errors.push(`Group size ${i + 1}: price must be 0 or greater`);
+      }
+    });
+  } else if (pricingApproach === 'sameForEveryone') {
+    const uniformPrice = travelerDetails.uniformPrice != null
+      ? travelerDetails.uniformPrice
+      : (firstSchedule.uniformPrice != null ? firstSchedule.uniformPrice : null);
+    if (uniformPrice == null) {
+      errors.push('Enter a price per person');
+    } else if (typeof uniformPrice === 'number' && uniformPrice < 0) {
+      errors.push('Price per person must be 0 or greater');
+    }
+  } else {
+    // dependsOnAge
+    if (cats.length === 0) {
+      errors.push('Add at least one pricing category');
+    }
+    cats.forEach((cat, i) => {
+      if (cat == null) return;
+      const isFree = cat.ticketNotRequired === true;
+      if (cat.price == null && !isFree) {
+        errors.push(`Pricing category "${cat.name || i + 1}": price is required`);
+      } else if (typeof cat.price === 'number' && cat.price < 0) {
+        errors.push(`Pricing category "${cat.name || i + 1}": price must be 0 or greater`);
+      }
+    });
+  }
+
+  // Capacity sanity
+  const min = travelerDetails.minParticipants ?? firstSchedule.minParticipants;
+  const max = travelerDetails.maxParticipants ?? firstSchedule.maxParticipants;
+  if (min != null && max != null && typeof min === 'number' && typeof max === 'number' && min > max) {
+    errors.push('Min participants cannot exceed max participants');
+  }
+
+  // Schedule type: fixedTimeSlot needs time slots; operatingHours needs weekly hours
+  const scheduleType = availability.scheduleType || firstSchedule.type || 'fixedTimeSlot';
+  if (scheduleType === 'fixedTimeSlot') {
+    const timeSlots = (Array.isArray(availability.timeSlots) && availability.timeSlots.length > 0)
+      ? availability.timeSlots
+      : (Array.isArray(firstSchedule.timeSlots) ? firstSchedule.timeSlots : []);
+    if (timeSlots.length === 0) {
+      errors.push('Add at least one time slot');
+    }
+  } else if (scheduleType === 'operatingHours') {
+    const weekly = availability.weeklySchedule || firstSchedule.weeklySchedule;
+    const hasAnyHours = weekly && typeof weekly === 'object' &&
+      Object.values(weekly).some((slots) => Array.isArray(slots) && slots.length > 0);
+    if (!hasAnyHours) {
+      errors.push('Add at least one opening hours entry');
+    }
+  }
+
+  return errors;
+}
+
+/**
  * Calculate tour availability for a given date
  * Checks TourDateOverride, daysOfWeek template, and existing bookings.
  */
@@ -369,20 +531,68 @@ async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = 
       throw new Error('No pricing available for selected date/time');
     }
 
-    // Calculate total price
-    let subtotal = 0;
-    const ageGroups = pricing.travelerDetails.ageGroups;
+    // Calculate total price from the authoritative travelerDetails source of
+    // truth, so an empty/stale derived `prices` array can never price a live
+    // tour at $0. Any missing/unpriceable traveler fails closed.
+    const td = pricing.travelerDetails || {};
+    const pricingModel = td.pricingModel || applicableSchedule.pricingModel || 'perPerson';
+    const pricingApproach = td.pricingApproach || applicableSchedule.pricingApproach || 'dependsOnAge';
 
-    for (const [ageCategory, count] of Object.entries(travelers)) {
-      if (count > 0) {
+    let subtotal = 0;
+
+    if (pricingModel === 'perGroup') {
+      const groupSizes = Array.isArray(td.groupSizes) ? td.groupSizes : [];
+      const totalTravelers = Object.values(travelers).reduce((sum, count) => sum + (typeof count === 'number' ? count : 0), 0);
+      if (totalTravelers < 1) {
+        throw new Error('At least one traveler is required');
+      }
+      const match = groupSizes.find(gs => gs && totalTravelers >= gs.from && totalTravelers <= gs.to);
+      if (!match || match.price == null) {
+        throw new Error('No price available for the selected group size');
+      }
+      subtotal = match.price;
+    } else if (pricingApproach === 'sameForEveryone') {
+      const uniformPrice = td.uniformPrice != null ? td.uniformPrice : applicableSchedule.uniformPrice;
+      if (uniformPrice == null) {
+        throw new Error('No pricing available for this tour');
+      }
+      for (const count of Object.values(travelers)) {
+        if (typeof count === 'number' && count > 0) {
+          subtotal += uniformPrice * count;
+        }
+      }
+    } else {
+      // dependsOnAge — price per traveler, preferring travelerDetails
+      // pricingCategories and falling back to the schedule's derived prices
+      const cats = (Array.isArray(td.pricingCategories) && td.pricingCategories.length > 0)
+        ? td.pricingCategories
+        : (Array.isArray(td.ageGroups) ? td.ageGroups : []);
+      let priced = false;
+      for (const [ageCategory, count] of Object.entries(travelers)) {
+        if (typeof count !== 'number' || count <= 0) continue;
         const normalized = ageCategory.toLowerCase().replace(/s$/, '');
-        const ageGroup = ageGroups.find(ag => ag.label.toLowerCase() === normalized || ag.label.toLowerCase() === ageCategory.toLowerCase());
-        if (ageGroup) {
-          const priceInfo = applicableSchedule.prices.find(p => p.ageGroup === ageGroup.label);
-          if (priceInfo) {
-            subtotal += priceInfo.retailPrice * count;
+        const cat = cats.find(c => {
+          const label = String(c.name ?? c.label ?? '').toLowerCase();
+          return label === normalized || label === ageCategory.toLowerCase();
+        });
+        let price = (cat != null && cat.price != null) ? cat.price : null;
+        if (price == null && Array.isArray(applicableSchedule.prices)) {
+          const label = cat ? (cat.name || cat.label) : null;
+          const priceInfo = label
+            ? applicableSchedule.prices.find(p => p.ageGroup === label)
+            : applicableSchedule.prices.find(p =>
+                p.ageGroup?.toLowerCase() === normalized || p.ageGroup?.toLowerCase() === ageCategory.toLowerCase());
+          if (priceInfo && priceInfo.retailPrice != null) {
+            price = priceInfo.retailPrice;
           }
         }
+        if (price != null) {
+          subtotal += price * count;
+          priced = true;
+        }
+      }
+      if (!priced) {
+        throw new Error('No pricing available for this tour');
       }
     }
 
@@ -462,6 +672,8 @@ module.exports = {
   createSlug,
   parseJsonFields,
   validateTourData,
+  validateStoredPricing,
+  rebuildSchedulePrices,
   checkTourAvailability,
   calculateTourPrice,
 };

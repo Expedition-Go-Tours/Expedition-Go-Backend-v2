@@ -25,7 +25,7 @@ jest.mock('../../utils/cacheHelper', () => ({
 jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
 jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
-jest.mock('../../utils/tourHelpers', () => ({ createSlug: jest.fn(), validateTourData: jest.fn() }));
+jest.mock('../../utils/tourHelpers', () => ({ createSlug: jest.fn(), validateTourData: jest.fn(), validateStoredPricing: jest.fn(), rebuildSchedulePrices: jest.fn() }));
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn() }));
 jest.mock('../../utils/tourFilterBuilder', () => ({ buildTourFilters: jest.fn(), buildSortOptions: jest.fn(), getAvailableFilterOptions: jest.fn(), validateFilterParams: jest.fn(), findNearbyTourIds: jest.fn(), getTourDistances: jest.fn() }));
@@ -36,7 +36,7 @@ const prisma = require('../../utils/prismaClient');
 const cache = require('../../utils/cacheHelper');
 const { enqueueEvent } = require('../../utils/queue');
 const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
-const { createSlug, validateTourData } = require('../../utils/tourHelpers');
+const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices } = require('../../utils/tourHelpers');
 const { logActivity } = require('../../utils/auditLogger');
 const { cloudinaryUrl } = require('../../utils/imageOptimizer');
 const {
@@ -102,6 +102,7 @@ describe('tourController', () => {
     deleteCloudinaryImage.mockResolvedValue();
     createSlug.mockResolvedValue('test-tour-slug');
     validateTourData.mockReturnValue({ isValid: true, errors: [] });
+    validateStoredPricing.mockReturnValue([]);
     logActivity.mockResolvedValue();
     cloudinaryUrl.mockImplementation((url, size) => `https://cdn.example.com/${size}/${url}`);
     buildTourFilters.mockReturnValue({});
@@ -735,6 +736,98 @@ describe('tourController', () => {
       await controller.updateTour(req, res, next);
 
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('blocks Set Live when stored pricing blob is incomplete', async () => {
+      req.body = { status: 'ACTIVE' };
+      prisma.tour.findFirst.mockResolvedValue({
+        ...mockExistingTour,
+        status: 'DRAFT',
+        schedulesAndPricing: {
+          travelerDetails: { pricingModel: 'perPerson', pricingApproach: 'dependsOnAge' },
+          pricingSchedules: { schedules: [] },
+          availability: { scheduleType: 'fixedTimeSlot', timeSlots: [] },
+        },
+      });
+      validateStoredPricing.mockReturnValue(['Add at least one pricing schedule']);
+
+      await controller.updateTour(req, res, next);
+
+      expect(validateStoredPricing).toHaveBeenCalled();
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.tour.update).not.toHaveBeenCalled();
+    });
+
+    it('allows Set Live when stored pricing blob is complete', async () => {
+      req.body = { status: 'ACTIVE' };
+      prisma.tour.findFirst.mockResolvedValue({
+        ...mockExistingTour,
+        status: 'DRAFT',
+        schedulesAndPricing: {
+          travelerDetails: { pricingModel: 'perPerson', pricingApproach: 'dependsOnAge' },
+          pricingSchedules: { schedules: [{ startDate: '2026-01-01' }] },
+          availability: { scheduleType: 'fixedTimeSlot', timeSlots: ['09:00'] },
+        },
+      });
+    validateStoredPricing.mockReturnValue([]);
+    rebuildSchedulePrices.mockImplementation((blob) => blob);
+
+      await controller.updateTour(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('validates incoming pricing blob when publishing with one supplied', async () => {
+      req.body = {
+        title: 'Updated',
+        status: 'PUBLISHED',
+        schedulesAndPricing: {
+          travelerDetails: { pricingModel: 'perGroup', groupSizes: [{ from: 1, to: 4, price: null }] },
+          pricingSchedules: { schedules: [{ startDate: '2026-01-01' }] },
+          availability: { scheduleType: 'fixedTimeSlot', timeSlots: ['09:00'] },
+        },
+      };
+      prisma.payoutMethod = { findFirst: jest.fn().mockResolvedValue({ id: 'pm-1', verified: true }) };
+      validateStoredPricing.mockReturnValue(['Group size 1: price is required']);
+
+      await controller.updateTour(req, res, next);
+
+      expect(validateStoredPricing).toHaveBeenCalledWith(
+        expect.objectContaining({
+          travelerDetails: expect.objectContaining({ pricingModel: 'perGroup' }),
+        })
+      );
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('does not run live pricing validation on plain draft updates', async () => {
+      req.body = { title: 'Updated' };
+
+      await controller.updateTour(req, res, next);
+
+      expect(validateStoredPricing).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('regenerates derived schedule prices on the incoming blob before persisting', async () => {
+      const incoming = {
+        travelerDetails: { pricingModel: 'perGroup', groupSizes: [{ from: 1, to: 4, price: 300 }] },
+        pricingSchedules: { schedules: [{ startDate: '2026-01-01', prices: [] }] },
+        availability: { scheduleType: 'fixedTimeSlot', timeSlots: ['09:00'] },
+      };
+      const normalized = JSON.parse(JSON.stringify(incoming));
+      normalized.pricingSchedules.schedules[0].prices = [{ label: 'Group of 1-4', retailPrice: 300, groupSize: true }];
+      rebuildSchedulePrices.mockReturnValue(normalized);
+      req.body = { title: 'Updated', schedulesAndPricing: incoming };
+
+      await controller.updateTour(req, res, next);
+
+      expect(rebuildSchedulePrices).toHaveBeenCalledWith(incoming);
+      expect(prisma.tour.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ schedulesAndPricing: normalized }),
+        })
+      );
     });
 
     it('updates slug when title changes', async () => {

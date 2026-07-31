@@ -13,6 +13,8 @@ const {
   createSlug,
   parseJsonFields,
   validateTourData,
+  validateStoredPricing,
+  rebuildSchedulePrices,
   calculateTourPrice,
 } = require('../../utils/tourHelpers');
 
@@ -143,6 +145,173 @@ describe('validateTourData', () => {
       const r = validateTourData(validProduct({ pricingModel: model }));
       expect(r.isValid).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateStoredPricing
+// ---------------------------------------------------------------------------
+describe('validateStoredPricing', () => {
+  const validBlob = {
+    travelerDetails: {
+      pricingModel: 'perPerson',
+      pricingApproach: 'dependsOnAge',
+      pricingCategories: [{ name: 'Adult', price: 50, ticketNotRequired: false }],
+      minParticipants: 1,
+      maxParticipants: 10,
+    },
+    pricingSchedules: {
+      schedules: [{ startDate: '2026-01-01', hasEndDate: false }],
+    },
+    availability: { scheduleType: 'fixedTimeSlot', timeSlots: ['09:00'] },
+  };
+
+  it('returns no errors for a complete blob', () => {
+    expect(validateStoredPricing(validBlob)).toEqual([]);
+  });
+
+  it('rejects null, non-object, and array blobs', () => {
+    expect(validateStoredPricing(null)).not.toEqual([]);
+    expect(validateStoredPricing('string')).not.toEqual([]);
+    expect(validateStoredPricing([])).not.toEqual([]);
+  });
+
+  it('requires at least one pricing schedule', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.pricingSchedules.schedules = [];
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Add at least one pricing schedule']));
+  });
+
+  it('flags end date before start date', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.pricingSchedules.schedules = [{ startDate: '2026-02-01', hasEndDate: true, endDate: '2026-01-01' }];
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Schedule 1: end date must be on or after the start date']));
+  });
+
+  it('requires per-category prices for dependsOnAge when not free', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.travelerDetails.pricingCategories = [{ name: 'Adult', price: null, ticketNotRequired: false }];
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Pricing category "Adult": price is required']));
+  });
+
+  it('allows null price when ticketNotRequired is true', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.travelerDetails.pricingCategories = [{ name: 'Infant', price: null, ticketNotRequired: true }];
+    expect(validateStoredPricing(blob)).toEqual([]);
+  });
+
+  it('rejects negative per-category price', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.travelerDetails.pricingCategories = [{ name: 'Adult', price: -5, ticketNotRequired: false }];
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Pricing category "Adult": price must be 0 or greater']));
+  });
+
+  it('requires uniform price for sameForEveryone approach', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.travelerDetails.pricingApproach = 'sameForEveryone';
+    blob.travelerDetails.uniformPrice = null;
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Enter a price per person']));
+  });
+
+  it('accepts a zero uniform price', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.travelerDetails.pricingApproach = 'sameForEveryone';
+    blob.travelerDetails.uniformPrice = 0;
+    expect(validateStoredPricing(blob)).toEqual([]);
+  });
+
+  it('requires per-group prices for perGroup model', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.travelerDetails.pricingModel = 'perGroup';
+    blob.travelerDetails.groupSizes = [{ from: 1, to: 4, price: null }];
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Group size 1: price is required']));
+  });
+
+  it('flags min participants greater than max', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.travelerDetails.minParticipants = 10;
+    blob.travelerDetails.maxParticipants = 2;
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Min participants cannot exceed max participants']));
+  });
+
+  it('requires at least one time slot for fixedTimeSlot schedule type', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.availability.scheduleType = 'fixedTimeSlot';
+    blob.availability.timeSlots = [];
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Add at least one time slot']));
+  });
+
+  it('requires weekly opening hours for operatingHours schedule type', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.availability.scheduleType = 'operatingHours';
+    blob.availability.weeklySchedule = { Monday: [] };
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Add at least one opening hours entry']));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rebuildSchedulePrices
+// ---------------------------------------------------------------------------
+describe('rebuildSchedulePrices', () => {
+  const blob = {
+    travelerDetails: {
+      pricingModel: 'perPerson',
+      pricingApproach: 'dependsOnAge',
+      pricingCategories: [{ name: 'Adult', price: 50 }, { name: 'Child', price: 25 }],
+      uniformPrice: null,
+      groupSizes: [],
+    },
+    pricingSchedules: {
+      schedules: [
+        { name: 'A', prices: [] },
+        { name: 'B', prices: [{ ageGroup: 'Stale', retailPrice: 999 }] },
+      ],
+    },
+  };
+
+  it('regenerates prices on every schedule from pricingCategories', () => {
+    const result = rebuildSchedulePrices(JSON.parse(JSON.stringify(blob)));
+    const expected = [
+      { ageGroup: 'Adult', retailPrice: 50 },
+      { ageGroup: 'Child', retailPrice: 25 },
+    ];
+    for (const s of result.pricingSchedules.schedules) {
+      expect(s.prices).toEqual(expected);
+    }
+  });
+
+  it('builds group-size prices for perGroup models', () => {
+    const b = JSON.parse(JSON.stringify(blob));
+    b.travelerDetails.pricingModel = 'perGroup';
+    b.travelerDetails.groupSizes = [{ from: 1, to: 4, price: 300 }, { from: 5, to: 10, price: 500 }];
+    const result = rebuildSchedulePrices(b);
+    expect(result.pricingSchedules.schedules[0].prices).toEqual([
+      { label: 'Group of 1-4', retailPrice: 300, groupSize: true },
+      { label: 'Group of 5-10', retailPrice: 500, groupSize: true },
+    ]);
+  });
+
+  it('builds a uniform price entry for sameForEveryone', () => {
+    const b = JSON.parse(JSON.stringify(blob));
+    b.travelerDetails.pricingApproach = 'sameForEveryone';
+    b.travelerDetails.uniformPrice = 75;
+    const result = rebuildSchedulePrices(b);
+    expect(result.pricingSchedules.schedules[0].prices).toEqual([{ ageGroup: 'Adult', retailPrice: 75 }]);
+  });
+
+  it('overwrites stale client-derived prices', () => {
+    const b = JSON.parse(JSON.stringify(blob));
+    b.pricingSchedules.schedules[1].prices = [{ ageGroup: 'Stale', retailPrice: 999 }];
+    const result = rebuildSchedulePrices(b);
+    expect(result.pricingSchedules.schedules[1].prices[0].retailPrice).toBe(50);
+  });
+
+  it('leaves invalid/non-normalizable blobs unchanged', () => {
+    expect(rebuildSchedulePrices(null)).toBeNull();
+    expect(rebuildSchedulePrices('string')).toBe('string');
+    expect(rebuildSchedulePrices([])).toEqual([]);
+    const noSchedules = { travelerDetails: {}, pricingSchedules: { schedules: undefined } };
+    expect(rebuildSchedulePrices(noSchedules)).toBe(noSchedules);
   });
 });
 
@@ -298,5 +467,125 @@ describe('calculateTourPrice', () => {
     const result = await calculateTourPrice(tour, { adult: 2 }, '2026-06-15');
     expect(result.subtotal).toBe(200);
     expect(result.discount).toBe(30);
+  });
+
+  it('prices perGroup tours by total traveler count from groupSizes', async () => {
+    const tour = {
+      id: 'per-group-1',
+      schedulesAndPricing: {
+        travelerDetails: {
+          pricingModel: 'perGroup',
+          groupSizes: [
+            { from: 1, to: 4, price: 300 },
+            { from: 5, to: 10, price: 500 },
+          ],
+        },
+        pricingSchedules: {
+          currency: 'USD',
+          schedules: [{
+            startDate: '2026-01-01',
+            endDate: '2026-12-31',
+            prices: [],
+          }],
+        },
+      },
+    };
+    const small = await calculateTourPrice(tour, { adult: 3, child: 1 }, '2026-06-15');
+    expect(small.success).toBe(true);
+    expect(small.subtotal).toBe(300);
+    const large = await calculateTourPrice(tour, { adult: 5 }, '2026-06-15');
+    expect(large.success).toBe(true);
+    expect(large.subtotal).toBe(500);
+  });
+
+  it('fails closed for perGroup when no group size matches the traveler count', async () => {
+    const tour = {
+      id: 'per-group-2',
+      schedulesAndPricing: {
+        travelerDetails: {
+          pricingModel: 'perGroup',
+          groupSizes: [{ from: 1, to: 4, price: 300 }],
+        },
+        pricingSchedules: {
+          currency: 'USD',
+          schedules: [{
+            startDate: '2026-01-01',
+            endDate: '2026-12-31',
+            prices: [],
+          }],
+        },
+      },
+    };
+    const result = await calculateTourPrice(tour, { adult: 8 }, '2026-06-15');
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('No price available for the selected group size');
+  });
+
+  it('fails closed when perGroup data is missing entirely', async () => {
+    const tour = {
+      id: 'per-group-3',
+      schedulesAndPricing: {
+        travelerDetails: { pricingModel: 'perGroup', groupSizes: [] },
+        pricingSchedules: {
+          currency: 'USD',
+          schedules: [{
+            startDate: '2026-01-01',
+            endDate: '2026-12-31',
+            prices: [],
+          }],
+        },
+      },
+    };
+    const result = await calculateTourPrice(tour, { adult: 2 }, '2026-06-15');
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('No price available');
+  });
+
+  it('prices sameForEveryone tours from uniformPrice', async () => {
+    const tour = {
+      id: 'uniform-1',
+      schedulesAndPricing: {
+        travelerDetails: {
+          pricingModel: 'perPerson',
+          pricingApproach: 'sameForEveryone',
+          uniformPrice: 75,
+        },
+        pricingSchedules: {
+          currency: 'USD',
+          schedules: [{
+            startDate: '2026-01-01',
+            endDate: '2026-12-31',
+            prices: [],
+          }],
+        },
+      },
+    };
+    const result = await calculateTourPrice(tour, { adult: 2, child: 1 }, '2026-06-15');
+    expect(result.success).toBe(true);
+    expect(result.subtotal).toBe(225);
+  });
+
+  it('fails closed when an empty derived prices array has no source-of-truth price', async () => {
+    const tour = {
+      id: 'empty-prices-1',
+      schedulesAndPricing: {
+        travelerDetails: {
+          pricingModel: 'perPerson',
+          pricingApproach: 'dependsOnAge',
+          pricingCategories: [{ name: 'Adult', price: null, ticketNotRequired: false }],
+        },
+        pricingSchedules: {
+          currency: 'USD',
+          schedules: [{
+            startDate: '2026-01-01',
+            endDate: '2026-12-31',
+            prices: [],
+          }],
+        },
+      },
+    };
+    const result = await calculateTourPrice(tour, { adult: 2 }, '2026-06-15');
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('No pricing available');
   });
 });
