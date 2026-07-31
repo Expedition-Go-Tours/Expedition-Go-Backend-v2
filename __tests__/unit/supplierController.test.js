@@ -786,7 +786,13 @@ describe('supplierController', () => {
         expect.objectContaining({ where: expect.objectContaining({ supplierId: 'u-1' }), data: { status: 'ARCHIVED' } })
       );
       expect(prisma.supplierProfile.update).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'sp-1' }, data: { status: 'SUSPENDED' } })
+        expect.objectContaining({
+          where: { id: 'sp-1' },
+          data: expect.objectContaining({
+            status: 'SUSPENDED',
+            archiveSnapshot: expect.objectContaining({ tourIds: ['t-1', 't-2'] }),
+          }),
+        })
       );
       expect(prisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'u-1' }, data: { active: false } })
@@ -808,6 +814,90 @@ describe('supplierController', () => {
       await controller.archiveSupplier(req, res, next);
 
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 409 }));
+    });
+  });
+
+  // ============================
+  // restoreSupplier (admin)
+  // ============================
+  describe('restoreSupplier', () => {
+    it('returns 404 when supplier not found', async () => {
+      req.params = { id: 'sp-1' };
+
+      await controller.restoreSupplier(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
+    });
+
+    it('returns 409 when supplier is not archived', async () => {
+      req.params = { id: 'sp-1' };
+      prisma.supplierProfile.findUnique.mockResolvedValue({
+        ...mockProfile,
+        status: 'ACTIVE',
+        user: { id: 'u-1', name: 'John', email: 'john@test.com', active: true },
+      });
+
+      await controller.restoreSupplier(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 409 }));
+    });
+
+    it('restores supplier and reactivates snapshot tours', async () => {
+      req.params = { id: 'sp-1' };
+      prisma.supplierProfile.findUnique.mockResolvedValue({
+        ...mockProfile,
+        status: 'SUSPENDED',
+        archiveSnapshot: { archivedAt: '2026-07-30T00:00:00.000Z', tourIds: ['t-1', 't-2'] },
+        user: { id: 'u-1', name: 'John', email: 'john@test.com', active: false },
+      });
+      prisma.tour.updateMany.mockResolvedValue({ count: 2 });
+      prisma.tour.findMany.mockResolvedValue([
+        { id: 't-1', slug: 'tour-one' },
+        { id: 't-2', slug: 'tour-two' },
+      ]);
+
+      await controller.restoreSupplier(req, res, next);
+
+      expect(prisma.tour.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: { in: ['t-1', 't-2'] }, supplierId: 'u-1', status: 'ARCHIVED' }),
+          data: { status: 'ACTIVE' },
+        })
+      );
+      expect(prisma.supplierProfile.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'sp-1' }, data: { status: 'ACTIVE', archiveSnapshot: null } })
+      );
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'u-1' }, data: { active: true } })
+      );
+      expect(sendSupplierStatusEmail).toHaveBeenCalledWith('john@test.com', 'ACTIVE', expect.anything());
+      expect(cache.invalidateTourCaches).toHaveBeenCalledWith('t-1', 'tour-one');
+      expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'supplier.restored' }));
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ restoredTours: 2 }) }));
+    });
+
+    it('restores legacy archived supplier by reactivating all ARCHIVED tours', async () => {
+      req.params = { id: 'sp-1' };
+      prisma.supplierProfile.findUnique.mockResolvedValue({
+        ...mockProfile,
+        status: 'SUSPENDED',
+        archiveSnapshot: null,
+        user: { id: 'u-1', name: 'John', email: 'john@test.com', active: false },
+      });
+      prisma.tour.updateMany.mockResolvedValue({ count: 3 });
+      prisma.tour.findMany.mockResolvedValue([]);
+
+      await controller.restoreSupplier(req, res, next);
+
+      expect(prisma.tour.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ supplierId: 'u-1', status: 'ARCHIVED' }),
+          data: { status: 'ACTIVE' },
+        })
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'supplier.restored' }));
     });
   });
 

@@ -656,6 +656,9 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
  *   - suspends the supplier profile (blocks new bookings)
  *   - deactivates the user account (blocks login)
  *   - preserves all bookings, payouts, reviews, and related records
+ *
+ * A snapshot of the affected tour IDs is stored on the profile so
+ * POST /suppliers/admin/:id/restore can reactivate exactly those tours.
  */
 exports.archiveSupplier = catchAsync(async (req, res, next) => {
   const { id } = req.params;
@@ -673,6 +676,12 @@ exports.archiveSupplier = catchAsync(async (req, res, next) => {
     return next(new AppError('Supplier is already archived', 409));
   }
 
+  const toursToArchive = await prisma.tour.findMany({
+    where: { supplierId: supplierProfile.userId, status: { not: 'ARCHIVED' } },
+    select: { id: true },
+  });
+  const tourIds = toursToArchive.map((t) => t.id);
+
   const archivedTours = await prisma.tour.updateMany({
     where: { supplierId: supplierProfile.userId, status: { not: 'ARCHIVED' } },
     data: { status: 'ARCHIVED' },
@@ -680,7 +689,12 @@ exports.archiveSupplier = catchAsync(async (req, res, next) => {
 
   await prisma.supplierProfile.update({
     where: { id },
-    data: { status: 'SUSPENDED' },
+    data: {
+      status: 'SUSPENDED',
+      archiveSnapshot: tourIds.length > 0
+        ? { archivedAt: new Date().toISOString(), tourIds }
+        : null,
+    },
   });
 
   await prisma.user.update({
@@ -707,6 +721,7 @@ exports.archiveSupplier = catchAsync(async (req, res, next) => {
     resourceId: id,
     metadata: {
       archivedTours: archivedTours.count,
+      archivedTourIds: tourIds,
       supplierName: supplierProfile.user.name,
     },
   });
@@ -717,6 +732,107 @@ exports.archiveSupplier = catchAsync(async (req, res, next) => {
     data: {
       supplierId: id,
       archivedTours: archivedTours.count,
+    },
+  });
+});
+
+/**
+ * POST /suppliers/admin/:id/restore
+ * Restore a previously archived supplier (admin).
+ *
+ * Reverses the archive lifecycle:
+ *   - reactivates only the tours that were hidden by the archive action
+ *     (per the stored archiveSnapshot; falls back to all ARCHIVED tours for
+ *     legacy records archived before snapshots existed)
+ *   - reactivates the user account (login allowed again)
+ *   - returns the profile to ACTIVE status
+ *   - bookings, payouts, reviews, and related records are untouched
+ */
+exports.restoreSupplier = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { id },
+    include: { user: { select: { id: true, name: true, email: true, active: true } } },
+  });
+
+  if (!supplierProfile) {
+    return next(new AppError('Supplier not found', 404));
+  }
+
+  if (supplierProfile.status !== 'SUSPENDED' || supplierProfile.user.active) {
+    return next(new AppError('Supplier is not archived and cannot be restored', 409));
+  }
+
+  const snapshot = supplierProfile.archiveSnapshot;
+  const tourIds = Array.isArray(snapshot?.tourIds) && snapshot.tourIds.length > 0
+    ? snapshot.tourIds
+    : null;
+
+  const restoredTours = await prisma.tour.updateMany({
+    where: tourIds
+      ? { id: { in: tourIds }, supplierId: supplierProfile.userId, status: 'ARCHIVED' }
+      : { supplierId: supplierProfile.userId, status: 'ARCHIVED' },
+    data: { status: 'ACTIVE' },
+  });
+
+  await prisma.supplierProfile.update({
+    where: { id },
+    data: { status: 'ACTIVE', archiveSnapshot: null },
+  });
+
+  await prisma.user.update({
+    where: { id: supplierProfile.userId },
+    data: { active: true },
+  });
+
+  // Invalidate public tour/expedition caches so restored tours reappear immediately.
+  try {
+    const supplierTours = await prisma.tour.findMany({
+      where: { supplierId: supplierProfile.userId },
+      select: { id: true, slug: true },
+    });
+    await Promise.all(supplierTours.map((t) => cache.invalidateTourCaches(t.id, t.slug)));
+    await cache.invalidateKeys(['expedition:sitemap']);
+  } catch (err) {
+    logger.error('Failed to invalidate tour caches on supplier restore:', err);
+  }
+
+  // Notify the supplier that their account is back online.
+  try {
+    await sendSupplierStatusEmail(supplierProfile.user.email, 'ACTIVE', {
+      name: supplierProfile.user.name,
+    });
+  } catch (err) {
+    console.error('Supplier restore email failed:', err.message);
+  }
+
+  enqueueNotification({
+    userId: supplierProfile.user.id,
+    type: 'SUPPLIER_APPROVED',
+    title: 'Account Restored',
+    message: 'Your supplier account has been restored. Your tours are visible again and you can manage bookings.',
+    data: { supplierId: id, status: 'ACTIVE' },
+  }).catch((err) => console.error('[Notification] enqueueNotification (restore) failed:', err.message));
+
+  await logActivity({
+    userId: req.user.id,
+    action: 'supplier.restored',
+    resource: 'SupplierProfile',
+    resourceId: id,
+    metadata: {
+      restoredTours: restoredTours.count,
+      supplierName: supplierProfile.user.name,
+      snapshotBased: Boolean(tourIds),
+    },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Supplier restored. Account is active again and previously archived tours are visible.',
+    data: {
+      supplierId: id,
+      restoredTours: restoredTours.count,
     },
   });
 });

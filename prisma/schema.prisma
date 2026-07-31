@@ -263,6 +263,11 @@ model SupplierProfile {
   adminNotes   String?
   reviewedBy   String?       // Admin user ID
   reviewedAt   DateTime?
+
+  // Archive/Restore (soft-delete lifecycle)
+  // JSON: { "archivedAt": ISO string, "tourIds": string[] } — captures exactly
+  // which tours the archive action hid, so restore reactivates only those.
+  archiveSnapshot Json?
   
   // Statistics
   totalEarnings Decimal      @default(0) @db.Decimal(10,2)
