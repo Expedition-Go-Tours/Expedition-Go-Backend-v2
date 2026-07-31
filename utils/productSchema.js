@@ -135,8 +135,8 @@ const productSchema = z.object({
   duration: z.number().nullable().optional(),
   durationUnit: z.enum(['minutes', 'hours', 'days']).optional(),
   // Step 3
-  title: z.string().min(1, 'Title is required'),
-  referenceCode: z.string().max(50).optional(),
+  title: z.string().min(1, 'Title is required').max(60, 'Title must be at most 60 characters'),
+  referenceCode: z.string().max(20).optional(),
   // Step 4
   shortDescription: z.string().min(10, 'Short description must be at least 10 characters').max(200, 'Short description must be at most 200 characters'),
   fullDescription: z.string().min(500, 'Full description must be at least 500 characters').max(3000, 'Full description must be at most 3000 characters'),
