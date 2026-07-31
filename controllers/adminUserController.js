@@ -1,6 +1,7 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
+const { logActivity } = require('../utils/auditLogger');
 const { invalidateUserCache } = require('../middleware/authMiddleware');
 
 exports.getAdminUsers = catchAsync(async (req, res, next) => {
@@ -80,15 +81,13 @@ exports.addAdmin = catchAsync(async (req, res, next) => {
     },
   });
 
-  await prisma.auditLog.create({
-    data: {
-      userId: req.user.id,
-      userEmail: req.user.email,
-      action: 'admin.granted',
-      resource: 'User',
-      resourceId: userId,
-      newValues: { adminRoleId, roleName: role.name },
-    },
+  await logActivity({
+    userId: req.user.id,
+    userEmail: req.user.email,
+    action: 'admin.granted',
+    resource: 'User',
+    resourceId: userId,
+    newValues: { adminRoleId, roleName: role.name },
   });
 
   invalidateUserCache(userId);
@@ -139,16 +138,14 @@ exports.updateAdminRole = catchAsync(async (req, res, next) => {
     },
   });
 
-  await prisma.auditLog.create({
-    data: {
-      userId: req.user.id,
-      userEmail: req.user.email,
-      action: 'admin.role_changed',
-      resource: 'User',
-      resourceId: id,
-      oldValues: { adminRoleId: oldRoleId },
-      newValues: { adminRoleId, roleName: role.name },
-    },
+  await logActivity({
+    userId: req.user.id,
+    userEmail: req.user.email,
+    action: 'admin.role_changed',
+    resource: 'User',
+    resourceId: id,
+    oldValues: { adminRoleId: oldRoleId },
+    newValues: { adminRoleId, roleName: role.name },
   });
 
   invalidateUserCache(id);
@@ -191,16 +188,14 @@ exports.revokeAdmin = catchAsync(async (req, res, next) => {
     },
   });
 
-  await prisma.auditLog.create({
-    data: {
-      userId: req.user.id,
-      userEmail: req.user.email,
-      action: 'admin.revoked',
-      resource: 'User',
-      resourceId: id,
-      oldValues: { roles: user.roles, adminRoleId: user.adminRoleId },
-      newValues: { roles: updatedRoles },
-    },
+  await logActivity({
+    userId: req.user.id,
+    userEmail: req.user.email,
+    action: 'admin.revoked',
+    resource: 'User',
+    resourceId: id,
+    oldValues: { roles: user.roles, adminRoleId: user.adminRoleId },
+    newValues: { roles: updatedRoles },
   });
 
   invalidateUserCache(id);

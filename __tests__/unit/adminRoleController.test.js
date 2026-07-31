@@ -2,7 +2,8 @@ jest.mock('../../utils/prismaClient', () => ({
   adminPermission: { findMany: jest.fn() },
   adminRole: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   adminRolePermission: { deleteMany: jest.fn(), createMany: jest.fn() },
-  auditLog: { create: jest.fn() },
+  auditLog: { create: jest.fn(), findFirst: jest.fn() },
+  $transaction: jest.fn(),
 }));
 
 const prisma = require('../../utils/prismaClient');
@@ -38,6 +39,11 @@ describe('adminRoleController', () => {
     prisma.adminRolePermission.deleteMany.mockResolvedValue({ count: 0 });
     prisma.adminRolePermission.createMany.mockResolvedValue({ count: 0 });
     prisma.auditLog.create.mockResolvedValue({});
+    prisma.auditLog.findFirst.mockResolvedValue(null);
+    prisma.$transaction.mockImplementation((arg) => {
+      if (Array.isArray(arg)) return Promise.all(arg);
+      return arg({ $executeRaw: jest.fn().mockResolvedValue(undefined), auditLog: prisma.auditLog });
+    });
   });
 
   // ============================

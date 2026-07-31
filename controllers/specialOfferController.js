@@ -245,7 +245,22 @@ exports.deleteOffer = catchAsync(async (req, res, next) => {
 
   await prisma.specialOffer.delete({ where: { id } });
   cache.invalidateTourCaches();
-  await logActivity({ userId: req.user.id, action: 'special-offer.deleted', resource: 'SpecialOffer', resourceId: id });
+  await logActivity({
+    userId: req.user.id,
+    action: 'special-offer.deleted',
+    resource: 'SpecialOffer',
+    resourceId: id,
+    oldValues: {
+      name: existing.name,
+      isActive: existing.isActive,
+      offerType: existing.offerType,
+      discountType: existing.discountType,
+      discountPercentage: existing.discountPercentage,
+      fixedDiscountValue: existing.fixedDiscountValue,
+      startDate: existing.startDate,
+      endDate: existing.endDate,
+    },
+  });
 
   // Targeted invalidation: clear caches only for affected tours
   const deletedTourIds = existing.targets?.map((t) => t.tourId).filter(Boolean) || [];

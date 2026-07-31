@@ -1,6 +1,7 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
+const { logActivity } = require('../utils/auditLogger');
 
 exports.getPermissions = catchAsync(async (req, res, next) => {
   const permissions = await prisma.adminPermission.findMany({
@@ -111,15 +112,13 @@ exports.createRole = catchAsync(async (req, res, next) => {
     },
   });
 
-  await prisma.auditLog.create({
-    data: {
-      userId: req.user.id,
-      userEmail: req.user.email,
-      action: 'admin_role.created',
-      resource: 'AdminRole',
-      resourceId: role.id,
-      newValues: { name: roleName, description, permissionIds },
-    },
+  await logActivity({
+    userId: req.user.id,
+    userEmail: req.user.email,
+    action: 'admin_role.created',
+    resource: 'AdminRole',
+    resourceId: role.id,
+    newValues: { name: roleName, description, permissionIds },
   });
 
   res.status(201).json({
@@ -176,16 +175,14 @@ exports.updateRole = catchAsync(async (req, res, next) => {
     },
   });
 
-  await prisma.auditLog.create({
-    data: {
-      userId: req.user.id,
-      userEmail: req.user.email,
-      action: 'admin_role.updated',
-      resource: 'AdminRole',
-      resourceId: id,
-      oldValues: { name: role.name },
-      newValues: updateData,
-    },
+  await logActivity({
+    userId: req.user.id,
+    userEmail: req.user.email,
+    action: 'admin_role.updated',
+    resource: 'AdminRole',
+    resourceId: id,
+    oldValues: { name: role.name },
+    newValues: updateData,
   });
 
   res.status(200).json({
@@ -222,15 +219,13 @@ exports.deleteRole = catchAsync(async (req, res, next) => {
   await prisma.adminRolePermission.deleteMany({ where: { roleId: id } });
   await prisma.adminRole.delete({ where: { id } });
 
-  await prisma.auditLog.create({
-    data: {
-      userId: req.user.id,
-      userEmail: req.user.email,
-      action: 'admin_role.deleted',
-      resource: 'AdminRole',
-      resourceId: id,
-      oldValues: { name: role.name },
-    },
+  await logActivity({
+    userId: req.user.id,
+    userEmail: req.user.email,
+    action: 'admin_role.deleted',
+    resource: 'AdminRole',
+    resourceId: id,
+    oldValues: { name: role.name },
   });
 
   res.status(200).json({

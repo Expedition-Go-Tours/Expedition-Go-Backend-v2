@@ -120,6 +120,8 @@ function buildAuditMessage(action, resource, metadata = {}) {
   return action.replace(/\./g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+exports.buildAuditMessage = buildAuditMessage;
+
 /**
  * GET /api/admin/analytics/overview
  *

@@ -7,12 +7,54 @@
  * - Data change tracking
  * - Security event logging
  * - Performance monitoring
+ * - Tamper-evident hash chain (prevHash + hash) for integrity verification
+ * - Archive-not-purge retention (moves expired logs to AuditLogArchive)
+ * - Automatic IP / user-agent capture from the request context
  * 
  * @author Tour Platform Team
- * @version 1.0.0
+ * @version 2.0.0
  */
 
+const crypto = require('crypto');
 const prisma = require('./prismaClient');
+const logger = require('./logger');
+const { getRequestMeta } = require('../middleware/requestMeta');
+
+// Advisory lock key used to serialize hash-chain appends.
+const CHAIN_LOCK_KEY = 9135701;
+
+/**
+ * Produce a deterministic, key-sorted JSON string so the same logical payload
+ * always serializes identically (JSON key order is not guaranteed otherwise).
+ */
+function canonicalize(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+  if (value !== null && typeof value === 'object') {
+    const out = {};
+    for (const key of Object.keys(value).sort()) {
+      const v = value[key];
+      if (v !== undefined) out[key] = canonicalize(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Compute the chain hash for an entry: sha256(prevHash + canonical payload).
+ */
+function computeChainHash(prevHash, entry) {
+  const payload = { ...entry };
+  delete payload.prevHash;
+  delete payload.hash;
+  const canonical = JSON.stringify(canonicalize(payload));
+  return crypto
+    .createHash('sha256')
+    .update(`${prevHash || ''}|${canonical}`)
+    .digest('hex');
+}
 
 /**
  * Log user activity for audit trail
@@ -30,24 +72,51 @@ async function logActivity({
   metadata = {}
 }) {
   try {
-    await prisma.auditLog.create({
-      data: {
-        userId,
-        userEmail,
-        ipAddress,
-        userAgent,
-        action,
-        resource,
-        resourceId,
-        oldValues: oldValues ? JSON.parse(JSON.stringify(oldValues)) : null,
-        newValues: newValues ? JSON.parse(JSON.stringify(newValues)) : null,
-        metadata: JSON.parse(JSON.stringify(metadata))
-      }
+    const requestMeta = getRequestMeta();
+    const resolvedIp = ipAddress || requestMeta.ipAddress || null;
+    const resolvedAgent = userAgent || requestMeta.userAgent || null;
+    const createdAt = new Date();
+
+    // Auto-attach the touched endpoint (method + URL) so every entry records
+    // which request produced it, unless the caller already provided one.
+    const enrichedMeta = JSON.parse(JSON.stringify(metadata || {}));
+    if (!enrichedMeta.endpoint && requestMeta.method && requestMeta.url) {
+      enrichedMeta.endpoint = { method: requestMeta.method, url: requestMeta.url };
+    }
+
+    const base = {
+      userId: userId || null,
+      userEmail: userEmail || null,
+      ipAddress: resolvedIp,
+      userAgent: resolvedAgent,
+      action,
+      resource,
+      resourceId: resourceId || null,
+      oldValues: oldValues ? JSON.parse(JSON.stringify(oldValues)) : null,
+      newValues: newValues ? JSON.parse(JSON.stringify(newValues)) : null,
+      metadata: enrichedMeta,
+      createdAt,
+    };
+
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${CHAIN_LOCK_KEY})`;
+
+      const last = await tx.auditLog.findFirst({
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: { hash: true },
+      });
+
+      const prevHash = last?.hash ?? null;
+      const hash = computeChainHash(prevHash, base);
+
+      await tx.auditLog.create({
+        data: { ...base, prevHash, hash },
+      });
     });
 
-    console.log(` Audit log: ${action} on ${resource}${resourceId ? ` (${resourceId})` : ''} by user ${userId}`);
+    logger.info(`Audit log: ${action} on ${resource}${resourceId ? ` (${resourceId})` : ''} by user ${userId}`);
   } catch (error) {
-    console.error(' Audit logging failed:', error);
+    logger.error('Audit logging failed:', { action, resource, resourceId, userId, error: error?.message });
     // Don't throw error to avoid breaking main functionality
   }
 }
@@ -78,9 +147,9 @@ async function logSecurityEvent({
       }
     });
 
-    console.log(` Security event: ${event} (${severity}) from ${ipAddress}`);
+    logger.info(`Security event: ${event} (${severity}) from ${ipAddress}`);
   } catch (error) {
-    console.error(' Security logging failed:', error);
+    logger.error('Security logging failed:', { event, severity, error: error?.message });
   }
 }
 
@@ -110,9 +179,9 @@ async function logAuthEvent({
       }
     });
 
-    console.log(` Auth event: ${event} ${success ? 'succeeded' : 'failed'} for ${userEmail || userId}`);
+    logger.info(`Auth event: ${event} ${success ? 'succeeded' : 'failed'} for ${userEmail || userId}`);
   } catch (error) {
-    console.error(' Auth logging failed:', error);
+    logger.error('Auth logging failed:', { event, error: error?.message });
   }
 }
 
@@ -144,9 +213,9 @@ async function logPaymentEvent({
       }
     });
 
-    console.log(`💳 Payment event: ${event} ${success ? 'succeeded' : 'failed'} - ${currency} ${amount}`);
+    logger.info(`Payment event: ${event} ${success ? 'succeeded' : 'failed'} - ${currency} ${amount}`);
   } catch (error) {
-    console.error(' Payment logging failed:', error);
+    logger.error('Payment logging failed:', { event, error: error?.message });
   }
 }
 
@@ -155,6 +224,8 @@ async function logPaymentEvent({
  */
 async function getAuditLogs({
   userId,
+  userEmail,
+  resourceId,
   action,
   resource,
   startDate,
@@ -166,6 +237,8 @@ async function getAuditLogs({
     const where = {};
     
     if (userId) where.userId = userId;
+    if (userEmail) where.userEmail = { contains: userEmail, mode: 'insensitive' };
+    if (resourceId) where.resourceId = resourceId;
     if (action) where.action = { contains: action };
     if (resource) where.resource = resource;
     
@@ -199,7 +272,7 @@ async function getAuditLogs({
       }
     };
   } catch (error) {
-    console.error(' Get audit logs failed:', error);
+    logger.error('Get audit logs failed:', { error: error?.message });
     throw error;
   }
 }
@@ -274,31 +347,132 @@ async function getAuditStats(days = 30) {
       period: `${days} days`
     };
   } catch (error) {
-    console.error('❌ Get audit stats failed:', error);
+    logger.error('Get audit stats failed:', { error: error?.message });
     throw error;
   }
 }
 
 /**
- * Clean up old audit logs (run periodically)
+ * Verify the integrity of the audit hash chain.
+ *
+ * Walks entries in insertion order and recomputes each entry's expected hash
+ * from its stored prevHash + payload. Any entry whose stored hash does not
+ * match the recomputed value indicates tampering (or a corrupted record).
+ *
+ * Returns { verified, total, breaks, firstBreakAt, firstBreakId } where
+ * breaks is an array of { id, createdAt, action } for each invalid entry.
+ */
+async function verifyAuditChain({ limit = 100000 } = {}) {
+  try {
+    const entries = await prisma.auditLog.findMany({
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: limit,
+      select: {
+        id: true,
+        createdAt: true,
+        action: true,
+        resource: true,
+        userId: true,
+        userEmail: true,
+        ipAddress: true,
+        userAgent: true,
+        resourceId: true,
+        oldValues: true,
+        newValues: true,
+        metadata: true,
+        prevHash: true,
+        hash: true,
+      },
+    });
+
+    const breaks = [];
+    let expectedHash = null;
+
+    for (const entry of entries) {
+      const { id, createdAt, action, prevHash, hash } = entry;
+
+      if (prevHash !== expectedHash) {
+        breaks.push({ id, createdAt, action, reason: `prevHash mismatch (expected ${expectedHash}, got ${prevHash})` });
+      }
+
+      const computed = computeChainHash(prevHash, entry);
+      if (computed !== hash) {
+        breaks.push({ id, createdAt, action, reason: 'hash does not match payload' });
+      }
+
+      expectedHash = hash;
+    }
+
+    return {
+      verified: breaks.length === 0,
+      total: entries.length,
+      breaks,
+      firstBreakAt: breaks[0]?.createdAt ?? null,
+      firstBreakId: breaks[0]?.id ?? null,
+    };
+  } catch (error) {
+    logger.error('Audit chain verification failed:', { error: error?.message });
+    throw error;
+  }
+}
+
+/**
+ * Clean up old audit logs (run periodically).
+ *
+ * Retention is archive-not-purge: expired rows are copied to AuditLogArchive
+ * (preserving createdAt and hash-chain fields) and then removed from the live
+ * table. No audit data is ever destroyed.
  */
 async function cleanupOldLogs(daysToKeep = 365) {
   try {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
 
-    const result = await prisma.auditLog.deleteMany({
-      where: {
-        createdAt: {
-          lt: cutoffDate
-        }
-      }
-    });
+    let moved = 0;
+    const BATCH = 500;
 
-    console.log(`🧹 Cleaned up ${result.count} old audit logs`);
-    return { success: true, deletedCount: result.count };
+    while (true) {
+      const expired = await prisma.auditLog.findMany({
+        where: { createdAt: { lt: cutoffDate } },
+        orderBy: { createdAt: 'asc' },
+        take: BATCH,
+      });
+
+      if (expired.length === 0) break;
+
+      await prisma.$transaction([
+        prisma.auditLogArchive.createMany({
+          data: expired.map(({ id, userId, userEmail, ipAddress, userAgent, action, resource, resourceId, oldValues, newValues, metadata, prevHash, hash, createdAt }) => ({
+            id,
+            userId,
+            userEmail,
+            ipAddress,
+            userAgent,
+            action,
+            resource,
+            resourceId,
+            oldValues,
+            newValues,
+            metadata,
+            prevHash,
+            hash,
+            createdAt,
+          })),
+        }),
+        prisma.auditLog.deleteMany({
+          where: { id: { in: expired.map((e) => e.id) } },
+        }),
+      ]);
+
+      moved += expired.length;
+
+      if (expired.length < BATCH) break;
+    }
+
+    logger.info(`Archived ${moved} old audit logs (cutoff ${cutoffDate.toISOString()})`);
+    return { success: true, archivedCount: moved, cutoffDate };
   } catch (error) {
-    console.error('❌ Audit log cleanup failed:', error);
+    logger.error('Audit log cleanup failed:', { error: error?.message });
     return { success: false, error: error.message };
   }
 }
@@ -310,5 +484,7 @@ module.exports = {
   logPaymentEvent,
   getAuditLogs,
   getAuditStats,
-  cleanupOldLogs
+  verifyAuditChain,
+  cleanupOldLogs,
+  computeChainHash,
 };

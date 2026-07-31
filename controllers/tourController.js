@@ -1125,6 +1125,13 @@ exports.deleteTour = catchAsync(async (req, res, next) => {
     action: 'tour.deleted',
     resource: 'Tour',
     resourceId: tour.id,
+    oldValues: {
+      title: tour.title,
+      status: tour.status,
+      price: tour.price,
+      isFeatured: tour.isFeatured,
+      destination: tour.destination,
+    },
     metadata: { title: tour.title }
   });
 

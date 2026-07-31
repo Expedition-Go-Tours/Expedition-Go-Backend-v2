@@ -1079,12 +1079,50 @@ model AuditLog {
   oldValues    Json?
   newValues    Json?
   metadata     Json?
+
+  // Tamper evidence (hash chain)
+  prevHash     String?
+  hash         String?
   
   createdAt    DateTime    @default(now())
 
   @@index([userId])
   @@index([action])
   @@index([resource])
+  @@index([createdAt])
+  @@index([hash])
+}
+
+model AuditLogArchive {
+  id           String      @id @default(cuid())
+  
+  // Actor
+  userId       String?
+  userEmail    String?
+  ipAddress    String?
+  userAgent    String?
+  
+  // Action
+  action       String
+  resource     String
+  resourceId   String?
+  
+  // Details
+  oldValues    Json?
+  newValues    Json?
+  metadata     Json?
+
+  // Tamper evidence (hash chain)
+  prevHash     String?
+  hash         String?
+  
+  createdAt    DateTime
+  archivedAt   DateTime    @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([resource])
+  @@index([archivedAt])
   @@index([createdAt])
 }
 

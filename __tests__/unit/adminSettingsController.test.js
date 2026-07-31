@@ -1,7 +1,8 @@
 jest.mock('../../utils/prismaClient', () => ({
   systemConfig: { findMany: jest.fn(), findUnique: jest.fn(), upsert: jest.fn() },
-  auditLog: { create: jest.fn(), findMany: jest.fn(), count: jest.fn() },
+  auditLog: { create: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), findFirst: jest.fn() },
   user: { findMany: jest.fn() },
+  $transaction: jest.fn(),
 }));
 
 jest.mock('../../middleware/maintenanceMode', () => ({ clearCache: jest.fn() }));
@@ -30,7 +31,13 @@ describe('adminSettingsController', () => {
     prisma.auditLog.create.mockResolvedValue({});
     prisma.auditLog.findMany.mockResolvedValue([]);
     prisma.auditLog.count.mockResolvedValue(0);
+    prisma.auditLog.groupBy.mockResolvedValue([]);
+    prisma.auditLog.findFirst.mockResolvedValue(null);
     prisma.user.findMany.mockResolvedValue([]);
+    prisma.$transaction.mockImplementation((arg) => {
+      if (Array.isArray(arg)) return Promise.all(arg);
+      return arg({ $executeRaw: jest.fn().mockResolvedValue(undefined), auditLog: prisma.auditLog });
+    });
     clearMaintCache.mockClear();
   });
 
@@ -126,7 +133,7 @@ describe('adminSettingsController', () => {
 
       expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'text/csv');
       expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.send).toHaveBeenCalledWith(expect.stringContaining('Date/Time,Admin,Email,Action,Resource,Resource ID,Details'));
+      expect(res.send).toHaveBeenCalledWith(expect.stringContaining('Date/Time,Admin,Email,Action,Resource,Resource ID,IP Address,Details'));
     });
 
     it('filters by action when provided', async () => {

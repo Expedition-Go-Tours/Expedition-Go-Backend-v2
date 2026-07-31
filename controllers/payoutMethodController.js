@@ -236,6 +236,12 @@ exports.deleteMethod = catchAsync(async (req, res, next) => {
     action: 'payout_method.deleted',
     resource: 'PayoutMethod',
     resourceId: id,
+    oldValues: {
+      type: existing.type,
+      bankName: existing.bankName,
+      accountName: existing.accountName,
+      isDefault: existing.isDefault,
+    },
     metadata: { type: existing.type },
   });
 

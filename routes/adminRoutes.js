@@ -682,6 +682,61 @@ router.get('/audit-log/export', requirePermission('settings.access', 'audit.view
 
 /**
  * @swagger
+ * /admin/audit-log/stats:
+ *   get:
+ *     summary: Audit log aggregate stats
+ *     description: |
+ *       Returns aggregate counters for the Activity Log page — total activities,
+ *       unique actors, this week, today, this month, and a top-12 action breakdown.
+ *     tags: [Admin, Audit]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Aggregated audit stats
+ *       403:
+ *         description: Access denied - admin role required
+ */
+router.get('/audit-log/stats', requirePermission('settings.access', 'audit.view'), adminSettingsController.getAuditLogStats);
+
+/**
+ * @swagger
+ * /admin/audit-log/actions:
+ *   get:
+ *     summary: Distinct audit actions
+ *     description: Returns the distinct set of audit action values for filter dropdowns.
+ *     tags: [Admin, Audit]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of distinct actions
+ *       403:
+ *         description: Access denied - admin role required
+ */
+router.get('/audit-log/actions', requirePermission('settings.access', 'audit.view'), adminSettingsController.getAuditActions);
+
+/**
+ * @swagger
+ * /admin/audit-log/verify:
+ *   get:
+ *     summary: Verify audit hash chain integrity
+ *     description: |
+ *       Walks the tamper-evident hash chain and reports any entry whose stored
+ *       hash does not match its recomputed value.
+ *     tags: [Admin, Audit]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Integrity report
+ *       403:
+ *         description: Access denied - admin role required
+ */
+router.get('/audit-log/verify', requirePermission('settings.access', 'audit.view'), adminSettingsController.verifyAuditChain);
+
+/**
+ * @swagger
  * /admin/bookings:
  *   get:
  *     summary: Paginated bookings list

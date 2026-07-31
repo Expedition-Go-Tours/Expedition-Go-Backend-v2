@@ -127,7 +127,9 @@ exports.deleteMe = catchAsync(async (req, res) => {
 });
 
 exports.deleteUser = catchAsync(async (req, res, next) => {
+  let user;
   try {
+    user = await prisma.user.findUnique({ where: { id: req.params.id } });
     await prisma.user.delete({ where: { id: req.params.id } });
   } catch {
     return next(new AppError('User not found', 404));
@@ -138,7 +140,13 @@ exports.deleteUser = catchAsync(async (req, res, next) => {
     userId: req.user.id,
     action: 'user.deleted_by_admin',
     resource: 'User',
-    resourceId: req.params.id
+    resourceId: req.params.id,
+    oldValues: user ? {
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      isVerified: user.isVerified,
+    } : null,
   });
 
   res.status(204).json({ status: 'success', data: null });

@@ -1,18 +1,42 @@
 jest.mock('../../utils/prismaClient', () => ({
-  auditLog: { create: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), deleteMany: jest.fn() },
+  auditLog: {
+    create: jest.fn(),
+    findMany: jest.fn(),
+    findFirst: jest.fn(),
+    count: jest.fn(),
+    groupBy: jest.fn(),
+    deleteMany: jest.fn(),
+  },
+  auditLogArchive: { createMany: jest.fn() },
+  $transaction: jest.fn(),
 }));
 
 const prisma = require('../../utils/prismaClient');
 const logger = require('../../utils/auditLogger');
 
+// Interactive transaction helper: runs callback with a fake tx client that
+// reuses the same auditLog mocks so assertions stay on prisma.auditLog.create.
+function setupTx() {
+  prisma.$transaction.mockImplementation((arg) => {
+    if (Array.isArray(arg)) return Promise.all(arg);
+    return arg({
+      $executeRaw: jest.fn().mockResolvedValue(undefined),
+      auditLog: prisma.auditLog,
+    });
+  });
+}
+
 describe('auditLogger', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
+    setupTx();
     prisma.auditLog.create.mockResolvedValue({ id: 'log-1' });
+    prisma.auditLog.findFirst.mockResolvedValue(null);
     prisma.auditLog.findMany.mockResolvedValue([]);
     prisma.auditLog.count.mockResolvedValue(0);
     prisma.auditLog.groupBy.mockResolvedValue([]);
     prisma.auditLog.deleteMany.mockResolvedValue({ count: 10 });
+    prisma.auditLogArchive.createMany.mockResolvedValue({ count: 1 });
   });
 
   describe('logActivity', () => {
@@ -42,6 +66,26 @@ describe('auditLogger', () => {
           metadata: { source: 'web' },
         }),
       });
+    });
+
+    it('computes a hash chain (hash + prevHash)', async () => {
+      prisma.auditLog.findFirst.mockResolvedValue({ hash: 'abc123' });
+
+      await logger.logActivity({ userId: 'u-1', action: 'user.login', resource: 'User', metadata: {} });
+
+      const call = prisma.auditLog.create.mock.calls[0][0].data;
+      expect(call.prevHash).toBe('abc123');
+      expect(call.hash).toMatch(/^[a-f0-9]{64}$/);
+    });
+
+    it('sets null prevHash for the first entry', async () => {
+      prisma.auditLog.findFirst.mockResolvedValue(null);
+
+      await logger.logActivity({ userId: 'u-1', action: 'user.login', resource: 'User', metadata: {} });
+
+      const call = prisma.auditLog.create.mock.calls[0][0].data;
+      expect(call.prevHash).toBeNull();
+      expect(call.hash).toMatch(/^[a-f0-9]{64}$/);
     });
 
     it('handles null oldValues and newValues', async () => {
@@ -115,9 +159,11 @@ describe('auditLogger', () => {
       expect(result.pagination.totalCount).toBe(25);
     });
 
-    it('filters by userId, action, resource, date range', async () => {
+    it('filters by userId, action, resource, email, resourceId, date range', async () => {
       const filters = {
         userId: 'u-1',
+        userEmail: 'u@t.com',
+        resourceId: 'r-1',
         action: 'login',
         resource: 'User',
         startDate: '2026-01-01',
@@ -129,7 +175,9 @@ describe('auditLogger', () => {
         expect.objectContaining({
           where: expect.objectContaining({
             userId: 'u-1',
+            resourceId: 'r-1',
             resource: 'User',
+            userEmail: { contains: 'u@t.com', mode: 'insensitive' },
             createdAt: expect.objectContaining({ gte: expect.any(Date), lte: expect.any(Date) }),
           }),
         })
@@ -166,15 +214,36 @@ describe('auditLogger', () => {
     });
   });
 
+  describe('verifyAuditChain', () => {
+    it('reports verified=true when chain is intact', async () => {
+      const entry1 = { id: 'a', createdAt: new Date(), action: 'x', resource: 'R', prevHash: null, hash: 'h1' };
+      const result = await logger.verifyAuditChain();
+      expect(result).toEqual({
+        verified: true,
+        total: 0,
+        breaks: [],
+        firstBreakAt: null,
+        firstBreakId: null,
+      });
+    });
+  });
+
   describe('cleanupOldLogs', () => {
-    it('deletes logs older than specified days', async () => {
+    it('archives (not deletes) logs older than specified days', async () => {
+      const expired = [
+        { id: 'old-1', userId: null, userEmail: null, ipAddress: null, userAgent: null, action: 'x', resource: 'R', resourceId: null, oldValues: null, newValues: null, metadata: null, prevHash: 'p', hash: 'h', createdAt: new Date() },
+      ];
+      prisma.auditLog.findMany.mockResolvedValueOnce(expired).mockResolvedValueOnce([]);
+
       const result = await logger.cleanupOldLogs(90);
+
+      expect(prisma.auditLogArchive.createMany).toHaveBeenCalled();
       expect(prisma.auditLog.deleteMany).toHaveBeenCalled();
-      expect(result).toEqual({ success: true, deletedCount: 10 });
+      expect(result).toEqual({ success: true, archivedCount: 1, cutoffDate: expect.any(Date) });
     });
 
     it('handles errors without throwing', async () => {
-      prisma.auditLog.deleteMany.mockRejectedValue(new Error('Cleanup error'));
+      prisma.auditLog.findMany.mockRejectedValue(new Error('Cleanup error'));
       const result = await logger.cleanupOldLogs(90);
       expect(result).toEqual({ success: false, error: 'Cleanup error' });
     });

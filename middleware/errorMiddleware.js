@@ -1,3 +1,45 @@
+const { logActivity } = require('../utils/auditLogger');
+
+// Endpoints we never want to audit-log errors for (noise / self-inflicted traffic).
+const SKIP_ERROR_LOG = [
+  '/api/admin/audit-log',
+  '/api/admin/system/health',
+  '/health',
+  '/api/webhooks',
+  '/api/chat',
+  '/socket.io',
+];
+
+function shouldSkipErrorLog(req) {
+  const url = (req && (req.originalUrl || req.url)) || '';
+  return SKIP_ERROR_LOG.some((prefix) => url.startsWith(prefix));
+}
+
+// Fire-and-forget audit logging; never allow logging failures to affect the
+// response or crash the process.
+function logApiError(err, req) {
+  try {
+    if (!req || shouldSkipErrorLog(req)) return;
+    const url = (req.originalUrl || req.url || '').split('?')[0];
+    logActivity({
+      userId: req.user?.id || null,
+      userEmail: req.user?.email || null,
+      action: 'api.error',
+      resource: 'API',
+      metadata: {
+        endpoint: { method: req.method || 'GET', url },
+        statusCode: err.statusCode || 500,
+        errorName: err.name || 'Error',
+        message: err.message || 'Unknown error',
+        errorCode: err.code || null,
+        query: Object.keys(req.query || {}).length ? req.query : undefined,
+      },
+    }).catch(() => {});
+  } catch {
+    // swallow — audit logging must never break the error handler
+  }
+}
+
 module.exports = (err, req, res, next) => {
   if (res.headersSent) {
     return next(err);
@@ -42,5 +84,11 @@ module.exports = (err, req, res, next) => {
       status: err.status,
       message: err.isOperational ? err.message : 'Something went wrong!',
     });
+  }
+
+  // Audit the error (production & development; skipped in test env to keep
+  // middleware tests hermetic).
+  if (process.env.NODE_ENV !== 'test') {
+    logApiError(err, req);
   }
 };

@@ -1,5 +1,8 @@
+jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
+
 const errorHandler = require('../../middleware/errorMiddleware');
 const AppError = require('../../utils/appError');
+const { logActivity } = require('../../utils/auditLogger');
 
 const mockRes = () => {
   const res = {};
@@ -14,6 +17,8 @@ const req = {
   method: 'GET',
   ip: '127.0.0.1',
   headers: { origin: 'http://localhost:3000' },
+  query: {},
+  user: { id: 'admin-1', email: 'admin@t.com' },
 };
 
 describe('Error Middleware', () => {
@@ -98,6 +103,62 @@ describe('Error Middleware', () => {
       errorHandler(err, req, res, jest.fn());
 
       expect(res.status).toHaveBeenCalledWith(413);
+    });
+  });
+
+  describe('Audit logging', () => {
+    const OLD_ENV = process.env.NODE_ENV;
+
+    beforeAll(() => { process.env.NODE_ENV = 'production'; });
+    beforeEach(() => logActivity.mockClear());
+    afterAll(() => { process.env.NODE_ENV = OLD_ENV; });
+
+    it('logs 5xx API errors to the audit trail with endpoint metadata', () => {
+      const res = mockRes();
+      const err = new Error('DB exploded');
+      err.statusCode = 500;
+
+      errorHandler(err, req, res, jest.fn());
+
+      expect(logActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'admin-1',
+          userEmail: 'admin@t.com',
+          action: 'api.error',
+          resource: 'API',
+          metadata: expect.objectContaining({
+            statusCode: 500,
+            errorName: 'Error',
+            message: 'DB exploded',
+            endpoint: expect.objectContaining({ method: 'GET', url: '/api/test' }),
+          }),
+        })
+      );
+    });
+
+    it('logs 4xx operational errors', () => {
+      const res = mockRes();
+      const err = new AppError('Not allowed', 403);
+
+      errorHandler(err, req, res, jest.fn());
+
+      expect(logActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'api.error',
+          metadata: expect.objectContaining({ statusCode: 403 }),
+        })
+      );
+    });
+
+    it('skips audit-log endpoints to avoid noise', () => {
+      const res = mockRes();
+      const auditReq = { ...req, originalUrl: '/api/admin/audit-log?page=1' };
+      const err = new Error('boom');
+      err.statusCode = 500;
+
+      errorHandler(err, auditReq, res, jest.fn());
+
+      expect(logActivity).not.toHaveBeenCalled();
     });
   });
 

@@ -21,6 +21,7 @@ const express = require('express');
 const swaggerUi = require('swagger-ui-express');
 const helmet = require('helmet');
 const { createLimiter } = require('./middleware/dynamicRateLimiter');
+const { captureRequestMeta } = require('./middleware/requestMeta');
 const hpp = require('hpp');
 const morgan = require('morgan');
 const compression = require('compression');
@@ -67,6 +68,7 @@ app.use(helmet({
   crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
 }));
 app.use(hpp());
+app.use(captureRequestMeta);
 app.use((req, res, next) => {
   if (req.headers['content-type']?.startsWith('multipart/')) return next();
   compression()(req, res, next);

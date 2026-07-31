@@ -1,7 +1,8 @@
 jest.mock('../../utils/prismaClient', () => ({
   user: { findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
   adminRole: { findUnique: jest.fn() },
-  auditLog: { create: jest.fn() },
+  auditLog: { create: jest.fn(), findFirst: jest.fn() },
+  $transaction: jest.fn(),
 }));
 
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
@@ -29,6 +30,11 @@ describe('adminUserController', () => {
     prisma.user.update.mockResolvedValue({ ...mockUser, adminRoleId: 'r1', roles: ['customer', 'admin'], adminRole: mockRole });
     prisma.adminRole.findUnique.mockResolvedValue(mockRole);
     prisma.auditLog.create.mockResolvedValue({});
+    prisma.auditLog.findFirst.mockResolvedValue(null);
+    prisma.$transaction.mockImplementation((arg) => {
+      if (Array.isArray(arg)) return Promise.all(arg);
+      return arg({ $executeRaw: jest.fn().mockResolvedValue(undefined), auditLog: prisma.auditLog });
+    });
     cloudinaryUrl.mockImplementation((url, size) => `https://cdn.example.com/${size}/${url}`);
   });
 
