@@ -899,6 +899,48 @@ describe('supplierController', () => {
       expect(res.status).toHaveBeenCalledWith(200);
       expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'supplier.restored' }));
     });
+
+    it('returns 400 when manual tourIds is invalid', async () => {
+      req.params = { id: 'sp-1' };
+      req.body = { tourIds: [] };
+      prisma.supplierProfile.findUnique.mockResolvedValue({
+        ...mockProfile,
+        status: 'SUSPENDED',
+        user: { id: 'u-1', name: 'John', email: 'john@test.com', active: false },
+      });
+
+      await controller.restoreSupplier(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.tour.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('manual tourIds override takes precedence for legacy suppliers', async () => {
+      req.params = { id: 'sp-1' };
+      req.body = { tourIds: ['t-9', 't-10'] };
+      prisma.supplierProfile.findUnique.mockResolvedValue({
+        ...mockProfile,
+        status: 'SUSPENDED',
+        archiveSnapshot: null,
+        user: { id: 'u-1', name: 'John', email: 'john@test.com', active: false },
+      });
+      prisma.tour.updateMany.mockResolvedValue({ count: 2 });
+      prisma.tour.findMany.mockResolvedValue([]);
+
+      await controller.restoreSupplier(req, res, next);
+
+      expect(prisma.tour.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: { in: ['t-9', 't-10'] }, supplierId: 'u-1', status: 'ARCHIVED' }),
+          data: { status: 'ACTIVE' },
+        })
+      );
+      expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'supplier.restored',
+        metadata: expect.objectContaining({ selection: 'manual', requestedTourIds: ['t-9', 't-10'] }),
+      }));
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
   });
 
   // ============================

@@ -741,15 +741,25 @@ exports.archiveSupplier = catchAsync(async (req, res, next) => {
  * Restore a previously archived supplier (admin).
  *
  * Reverses the archive lifecycle:
- *   - reactivates only the tours that were hidden by the archive action
- *     (per the stored archiveSnapshot; falls back to all ARCHIVED tours for
- *     legacy records archived before snapshots existed)
  *   - reactivates the user account (login allowed again)
  *   - returns the profile to ACTIVE status
- *   - bookings, payouts, reviews, and related records are untouched
+ *   - reactivates tours (bookings, payouts, reviews are untouched)
+ *
+ * Tour selection precedence (only tours currently in ARCHIVED status qualify):
+ *   1. `tourIds` in the request body — manual per-tour override, useful for
+ *      legacy suppliers archived before snapshots existed.
+ *   2. The stored archiveSnapshot (the exact tours the archive action hid).
+ *   3. Fallback for legacy records without a snapshot: all ARCHIVED tours.
  */
 exports.restoreSupplier = catchAsync(async (req, res, next) => {
   const { id } = req.params;
+  const { tourIds: manualTourIds } = req.body;
+
+  if (manualTourIds !== undefined) {
+    if (!Array.isArray(manualTourIds) || manualTourIds.length === 0 || manualTourIds.some((t) => typeof t !== 'string' || !t.trim())) {
+      return next(new AppError('tourIds must be a non-empty array of tour ID strings', 400));
+    }
+  }
 
   const supplierProfile = await prisma.supplierProfile.findUnique({
     where: { id },
@@ -765,9 +775,11 @@ exports.restoreSupplier = catchAsync(async (req, res, next) => {
   }
 
   const snapshot = supplierProfile.archiveSnapshot;
-  const tourIds = Array.isArray(snapshot?.tourIds) && snapshot.tourIds.length > 0
+  const snapshotTourIds = Array.isArray(snapshot?.tourIds) && snapshot.tourIds.length > 0
     ? snapshot.tourIds
     : null;
+
+  const tourIds = manualTourIds || snapshotTourIds;
 
   const restoredTours = await prisma.tour.updateMany({
     where: tourIds
@@ -823,7 +835,8 @@ exports.restoreSupplier = catchAsync(async (req, res, next) => {
     metadata: {
       restoredTours: restoredTours.count,
       supplierName: supplierProfile.user.name,
-      snapshotBased: Boolean(tourIds),
+      selection: manualTourIds ? 'manual' : (snapshotTourIds ? 'snapshot' : 'all-archived'),
+      requestedTourIds: manualTourIds || undefined,
     },
   });
 
