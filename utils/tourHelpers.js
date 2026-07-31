@@ -249,6 +249,46 @@ function validatePricing(data) {
 }
 
 /**
+ * Convert a categorization.duration object into minutes. Supports the supplier
+ * dashboard's `{ value, unit }` shape as well as the legacy `{ hours }`,
+ * `{ days }`, `{ weeks }`, and `{ minutes }` shapes. Returns null when the
+ * duration cannot be resolved.
+ *
+ * @param {{ value?: number, unit?: string, hours?: number, days?: number, weeks?: number, minutes?: number }|null|undefined} duration
+ * @returns {number|null}
+ */
+function durationToMinutes(duration) {
+  if (!duration || typeof duration !== 'object') return null;
+
+  const unitMultipliers = {
+    minutes: 1,
+    minute: 1,
+    hours: 60,
+    hour: 60,
+    days: 1440,
+    day: 1440,
+    weeks: 10080,
+    week: 10080,
+  };
+
+  if (duration.value != null && duration.unit) {
+    const unit = String(duration.unit).toLowerCase();
+    const multiplier = unitMultipliers[unit];
+    if (multiplier && Number.isFinite(Number(duration.value))) {
+      return Number(duration.value) * multiplier;
+    }
+    return null;
+  }
+
+  if (duration.hours != null && Number.isFinite(Number(duration.hours))) return Number(duration.hours) * 60;
+  if (duration.days != null && Number.isFinite(Number(duration.days))) return Number(duration.days) * 1440;
+  if (duration.weeks != null && Number.isFinite(Number(duration.weeks))) return Number(duration.weeks) * 10080;
+  if (duration.minutes != null && Number.isFinite(Number(duration.minutes))) return Number(duration.minutes);
+
+  return null;
+}
+
+/**
  * Regenerate the derived `prices` array on every pricing schedule from the
  * authoritative `travelerDetails` source-of-truth fields. Invoked on write so
  * the stored blob never holds stale, empty, or client-derived prices — the
@@ -674,6 +714,7 @@ module.exports = {
   validateTourData,
   validateStoredPricing,
   rebuildSchedulePrices,
+  durationToMinutes,
   checkTourAvailability,
   calculateTourPrice,
 };

@@ -25,7 +25,7 @@ jest.mock('../../utils/cacheHelper', () => ({
 jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
 jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
-jest.mock('../../utils/tourHelpers', () => ({ createSlug: jest.fn(), validateTourData: jest.fn(), validateStoredPricing: jest.fn(), rebuildSchedulePrices: jest.fn() }));
+jest.mock('../../utils/tourHelpers', () => ({ createSlug: jest.fn(), validateTourData: jest.fn(), validateStoredPricing: jest.fn(), rebuildSchedulePrices: jest.fn(), durationToMinutes: jest.fn() }));
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn() }));
 jest.mock('../../utils/tourFilterBuilder', () => ({ buildTourFilters: jest.fn(), buildSortOptions: jest.fn(), getAvailableFilterOptions: jest.fn(), validateFilterParams: jest.fn(), findNearbyTourIds: jest.fn(), getTourDistances: jest.fn() }));
@@ -36,7 +36,7 @@ const prisma = require('../../utils/prismaClient');
 const cache = require('../../utils/cacheHelper');
 const { enqueueEvent } = require('../../utils/queue');
 const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
-const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices } = require('../../utils/tourHelpers');
+const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices, durationToMinutes } = require('../../utils/tourHelpers');
 const { logActivity } = require('../../utils/auditLogger');
 const { cloudinaryUrl } = require('../../utils/imageOptimizer');
 const {
@@ -771,6 +771,7 @@ describe('tourController', () => {
       });
     validateStoredPricing.mockReturnValue([]);
     rebuildSchedulePrices.mockImplementation((blob) => blob);
+    durationToMinutes.mockImplementation((d) => (d?.value != null && d?.unit === 'hours' ? d.value * 60 : null));
 
       await controller.updateTour(req, res, next);
 
@@ -836,6 +837,20 @@ describe('tourController', () => {
       await controller.updateTour(req, res, next);
 
       expect(createSlug).toHaveBeenCalledWith('Brand New Title', expect.anything());
+    });
+
+    it('normalizes durationMinutes from the dashboard { value, unit } duration shape', async () => {
+      durationToMinutes.mockReturnValue(120);
+      req.body = { title: 'Updated', categorization: { duration: { value: 2, unit: 'hours' } } };
+
+      await controller.updateTour(req, res, next);
+
+      expect(durationToMinutes).toHaveBeenCalledWith({ value: 2, unit: 'hours' });
+      expect(prisma.tour.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ durationMinutes: 120 }),
+        })
+      );
     });
 
     it('handles photo uploads and deletion of removed photos', async () => {

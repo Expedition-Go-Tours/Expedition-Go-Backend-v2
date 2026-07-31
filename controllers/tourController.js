@@ -16,7 +16,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
-const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices } = require('../utils/tourHelpers');
+const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices, durationToMinutes } = require('../utils/tourHelpers');
 const { productToTour } = require('../utils/productToTour');
 const { logActivity } = require('../utils/auditLogger');
 const { 
@@ -728,15 +728,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
       subcategory: parsedCategory?.subcategory || null,
       activityType: parsedCategory?.activityType || null,
       difficulty: parsedCategory?.difficulty || null,
-      durationMinutes: (() => {
-        const d = parsedCategory?.duration;
-        if (!d) return null;
-        if (d.hours != null) return d.hours * 60;
-        if (d.days != null) return d.days * 1440;
-        if (d.weeks != null) return d.weeks * 10080;
-        if (d.minutes != null) return d.minutes;
-        return null;
-      })(),
+      durationMinutes: durationToMinutes(parsedCategory?.duration),
       primaryTheme: parsedTheme?.primaryTheme || parsedTheme?.primary || null,
       ...(() => {
         const themes = [...new Set(parsedTheme?.secondaryThemes || parsedTheme?.secondary || [])];
@@ -1008,15 +1000,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
       updateData.subcategory = cat.subcategory || null;
       updateData.activityType = cat.activityType || null;
       updateData.difficulty = cat.difficulty || null;
-      updateData.durationMinutes = (() => {
-        const d = cat.duration;
-        if (!d) return null;
-        if (d.hours != null) return d.hours * 60;
-        if (d.days != null) return d.days * 1440;
-        if (d.weeks != null) return d.weeks * 10080;
-        if (d.minutes != null) return d.minutes;
-        return null;
-      })();
+      updateData.durationMinutes = durationToMinutes(cat.duration);
       updateData.categorization = cat;
     }
 

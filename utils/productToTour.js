@@ -7,6 +7,7 @@
  */
 
 const { normalizeToE164, extractCountryFromE164 } = require('./phoneValidation');
+const { durationToMinutes } = require('./tourHelpers');
 
 function productToTour(flat) {
   if (!flat || typeof flat !== 'object') return {};
@@ -308,10 +309,7 @@ function extractLongitude(flat) {
 function computeDurationMinutes(flat) {
   if (flat.durationMinutes != null) return flat.durationMinutes;
   if (flat.duration == null) return null;
-  const unit = flat.durationUnit || 'hours';
-  if (unit === 'minutes') return flat.duration;
-  if (unit === 'days') return flat.duration * 1440;
-  return flat.duration * 60;
+  return durationToMinutes({ value: flat.duration, unit: flat.durationUnit || 'hours' });
 }
 
 module.exports = { productToTour };

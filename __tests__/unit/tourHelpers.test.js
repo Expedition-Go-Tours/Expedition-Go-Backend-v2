@@ -15,6 +15,7 @@ const {
   validateTourData,
   validateStoredPricing,
   rebuildSchedulePrices,
+  durationToMinutes,
   calculateTourPrice,
 } = require('../../utils/tourHelpers');
 
@@ -312,6 +313,35 @@ describe('rebuildSchedulePrices', () => {
     expect(rebuildSchedulePrices([])).toEqual([]);
     const noSchedules = { travelerDetails: {}, pricingSchedules: { schedules: undefined } };
     expect(rebuildSchedulePrices(noSchedules)).toBe(noSchedules);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// durationToMinutes
+// ---------------------------------------------------------------------------
+describe('durationToMinutes', () => {
+  it('converts the dashboard { value, unit } shape for every unit', () => {
+    expect(durationToMinutes({ value: 2, unit: 'minutes' })).toBe(2);
+    expect(durationToMinutes({ value: 2, unit: 'hours' })).toBe(120);
+    expect(durationToMinutes({ value: 2, unit: 'days' })).toBe(2880);
+    expect(durationToMinutes({ value: 2, unit: 'weeks' })).toBe(20160);
+    expect(durationToMinutes({ value: 2, unit: 'hour' })).toBe(120);
+  });
+
+  it('supports legacy { hours, days, weeks, minutes } keys', () => {
+    expect(durationToMinutes({ hours: 2 })).toBe(120);
+    expect(durationToMinutes({ days: 1 })).toBe(1440);
+    expect(durationToMinutes({ weeks: 1 })).toBe(10080);
+    expect(durationToMinutes({ minutes: 30 })).toBe(30);
+  });
+
+  it('returns null for missing or invalid durations', () => {
+    expect(durationToMinutes(null)).toBeNull();
+    expect(durationToMinutes(undefined)).toBeNull();
+    expect(durationToMinutes({})).toBeNull();
+    expect(durationToMinutes({ value: 2, unit: 'fortnights' })).toBeNull();
+    expect(durationToMinutes({ value: 'x', unit: 'hours' })).toBeNull();
+    expect(durationToMinutes({ hours: 'x' })).toBeNull();
   });
 });
 
