@@ -303,40 +303,71 @@ function canModifyBooking(booking, tour) {
 }
 
 /**
+ * Evaluate a booking against its tour's cancellation policy.
+ * Single source of truth for cancellation eligibility and refund amounts.
+ *
+ * - all_sales_final: cancellation allowed, but never refunded
+ * - standard/custom: allowed outside cancellationWindowHours, refunded by refundPercentage
+ * - A cancellationWindowHours of 0 is valid (window is open); it must not fall back to 24
+ */
+function evaluateCancellationPolicy(booking, tour, cancellationDate = new Date()) {
+  const bookingDate = new Date(booking.selectedDate);
+  const hoursUntilBooking = (bookingDate - cancellationDate) / (1000 * 60 * 60);
+
+  const policy = tour?.bookingAndTickets?.cancellationPolicy;
+
+  if (!policy) {
+    // Default policy: full refund if more than 24 hours
+    const eligible = Number.isFinite(hoursUntilBooking) && hoursUntilBooking >= 24;
+    return {
+      allowed: eligible,
+      refundAmount: eligible ? parseFloat(booking.total) : 0,
+      refundPercentage: eligible ? 100 : 0,
+      reason: eligible ? 'Full refund (24+ hours notice)' : 'No refund (less than 24 hours)',
+      windowHours: 24
+    };
+  }
+
+  const type = policy.type || 'standard';
+  const windowHours = Number.isFinite(policy.cancellationWindowHours) ? policy.cancellationWindowHours : 24;
+  const refundPercentage = Number.isFinite(policy.refundPercentage) ? policy.refundPercentage : 100;
+
+  if (type === 'all_sales_final') {
+    return {
+      allowed: true,
+      refundAmount: 0,
+      refundPercentage: 0,
+      reason: 'No refund - all sales final',
+      windowHours: 0
+    };
+  }
+
+  if (!Number.isFinite(hoursUntilBooking) || hoursUntilBooking < windowHours) {
+    return {
+      allowed: false,
+      refundAmount: 0,
+      refundPercentage: 0,
+      reason: `Cancellation not allowed within ${windowHours} hours of tour`,
+      windowHours
+    };
+  }
+
+  const refundAmount = Math.round(parseFloat(booking.total) * (refundPercentage / 100) * 100) / 100;
+  return {
+    allowed: true,
+    refundAmount,
+    refundPercentage,
+    reason: refundPercentage >= 100 ? 'Full refund available' : `Partial refund (${refundPercentage}%) available`,
+    windowHours
+  };
+}
+
+/**
  * Calculate refund amount based on cancellation policy
  */
 function calculateRefundAmount(booking, tour, cancellationDate = new Date()) {
-  const bookingDate = new Date(booking.selectedDate);
-  const hoursUntilBooking = (bookingDate - cancellationDate) / (1000 * 60 * 60);
-  
-  const policy = tour.bookingAndTickets?.cancellationPolicy;
-  
-  if (!policy) {
-    // Default policy: full refund if more than 24 hours
-    return {
-      refundAmount: hoursUntilBooking >= 24 ? parseFloat(booking.total) : 0,
-      refundPercentage: hoursUntilBooking >= 24 ? 100 : 0,
-      reason: hoursUntilBooking >= 24 ? 'Full refund (24+ hours notice)' : 'No refund (less than 24 hours)'
-    };
-  }
-  
-  // Apply tour-specific cancellation policy
-  const windowHours = policy.cancellationWindowHours || 24;
-  
-  if (hoursUntilBooking < windowHours) {
-    return {
-      refundAmount: 0,
-      refundPercentage: 0,
-      reason: `No refund within ${windowHours} hours of tour`
-    };
-  }
-  
-  // Full refund if outside window
-  return {
-    refundAmount: parseFloat(booking.total),
-    refundPercentage: 100,
-    reason: 'Full refund available'
-  };
+  const { refundAmount, refundPercentage, reason } = evaluateCancellationPolicy(booking, tour, cancellationDate);
+  return { refundAmount, refundPercentage, reason };
 }
 
 /**
@@ -394,6 +425,7 @@ module.exports = {
   getBookingStats,
   generateBookingConfirmation,
   canModifyBooking,
+  evaluateCancellationPolicy,
   calculateRefundAmount,
   getUpcomingBookings
 };

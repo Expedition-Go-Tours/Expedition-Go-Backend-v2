@@ -5,7 +5,7 @@ const AppError = require('../utils/appError');
 const cache = require('../utils/cacheHelper');
 const { sendEmail } = require('../utils/emailService');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/queue');
-const { validateTravelerInfo, generateBookingNumber, calculateRefundAmount } = require('../utils/bookingHelpers');
+const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
 const { createPaymentIntent, calculateCommission, createRefund } = require('../utils/stripeHelpers');
 const { notifyAdmin } = require('../utils/adminNotificationService');
@@ -1459,17 +1459,11 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     return next(new AppError('Booking not found or cannot be cancelled', 404));
   }
 
-  const now = new Date();
-  const bookingDate = new Date(booking.selectedDate);
-  const hoursUntilBooking = (bookingDate - now) / (1000 * 60 * 60);
-  const policy = booking.tour.bookingAndTickets?.cancellationPolicy;
-  const windowHours = policy?.cancellationWindowHours || 24;
+  const { allowed, refundAmount, reason: policyReason } = evaluateCancellationPolicy(booking, booking.tour);
 
-  if (hoursUntilBooking < windowHours) {
-    return next(new AppError(`Cancellation not allowed within ${windowHours} hours of tour`, 400));
+  if (!allowed) {
+    return next(new AppError(policyReason, 400));
   }
-
-  const { refundAmount } = calculateRefundAmount(booking, booking.tour);
 
   const result = await prisma.$transaction(async (tx) => {
     const updated = await tx.booking.update({

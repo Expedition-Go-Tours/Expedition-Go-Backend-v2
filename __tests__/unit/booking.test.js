@@ -15,7 +15,7 @@ jest.mock('../../utils/prismaClient', () => ({
 
 const prisma = require('../../utils/prismaClient');
 const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../../utils/queue');
-const { createPaymentIntent, calculateCommission } = require('../../utils/stripeHelpers');
+const { createPaymentIntent, calculateCommission, createRefund } = require('../../utils/stripeHelpers');
 jest.mock('../../utils/queue', () => ({
   enqueueNotification: jest.fn(() => Promise.resolve()),
   enqueueEmail: jest.fn(() => Promise.resolve()),
@@ -32,6 +32,13 @@ jest.mock('../../utils/stripeHelpers', () => ({
 jest.mock('../../utils/bookingHelpers', () => ({
   generateBookingNumber: jest.fn(() => 'BK-TEST-001'),
   validateTravelerInfo: jest.fn(() => ({ isValid: true, errors: [] })),
+  evaluateCancellationPolicy: jest.fn((booking) => ({
+    allowed: true,
+    refundAmount: parseFloat(booking.total || 0),
+    refundPercentage: 100,
+    reason: 'Full refund available',
+    windowHours: 24,
+  })),
 }));
 jest.mock('../../utils/getConfig', () => {
   const fn = jest.fn();
@@ -442,6 +449,13 @@ describe('Booking Controller', () => {
         tour: { ...mockBooking.tour, bookingAndTickets: { cancellationPolicy: { cancellationWindowHours: 48 } } },
       };
       prisma.booking.findFirst.mockResolvedValue(soonBooking);
+      bookingHelpers.evaluateCancellationPolicy.mockReturnValueOnce({
+        allowed: false,
+        refundAmount: 0,
+        refundPercentage: 0,
+        reason: 'Cancellation not allowed within 48 hours of tour',
+        windowHours: 48,
+      });
       const req = mockReq({ params: { id: 'booking-1' }, body: { reason: 'test' } });
       const res = mockRes();
       const next = jest.fn();
@@ -449,6 +463,37 @@ describe('Booking Controller', () => {
       await bookingController.cancelBooking(req, res, next);
 
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('cancels an all-sales-final booking without issuing a refund', async () => {
+      const futureDate = new Date(Date.now() + 7 * 24 * 3600000);
+      const finalSaleBooking = {
+        ...mockBooking,
+        status: 'CONFIRMED',
+        paymentStatus: 'SUCCEEDED',
+        selectedDate: futureDate,
+        tour: {
+          ...mockBooking.tour,
+          bookingAndTickets: {
+            cancellationPolicy: { type: 'all_sales_final', label: 'No refunds', cancellationWindowHours: 0, refundPercentage: 0 },
+          },
+        },
+      };
+      prisma.booking.findFirst.mockResolvedValue(finalSaleBooking);
+      bookingHelpers.evaluateCancellationPolicy.mockReturnValueOnce({
+        allowed: true,
+        refundAmount: 0,
+        refundPercentage: 0,
+        reason: 'No refund - all sales final',
+        windowHours: 0,
+      });
+      const req = mockReq({ params: { id: 'booking-1' }, body: { reason: 'Change of plans' } });
+      const res = mockRes();
+
+      await bookingController.cancelBooking(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(createRefund).not.toHaveBeenCalled();
     });
 
     it('allows cancellation when no policy defined', async () => {

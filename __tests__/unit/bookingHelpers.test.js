@@ -19,6 +19,7 @@ const {
   getBookingStats,
   generateBookingConfirmation,
   canModifyBooking,
+  evaluateCancellationPolicy,
   calculateRefundAmount,
   getUpcomingBookings,
 } = require('../../utils/bookingHelpers');
@@ -312,6 +313,76 @@ describe('calculateRefundAmount', () => {
   it('defaults cancellation window to 24h', () => {
     const tour = { bookingAndTickets: { cancellationPolicy: {} } };
     const result = calculateRefundAmount(shortLeadBooking, tour);
+    expect(result.refundAmount).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// evaluateCancellationPolicy
+// ---------------------------------------------------------------------------
+describe('evaluateCancellationPolicy', () => {
+  const longLeadBooking = { total: '500', selectedDate: new Date(Date.now() + 72 * 60 * 60 * 1000) };
+  const shortLeadBooking = { total: '500', selectedDate: new Date(Date.now() + 6 * 60 * 60 * 1000) };
+
+  it('returns allowed + full refund for >24h lead with no policy', () => {
+    const result = evaluateCancellationPolicy(longLeadBooking, {});
+    expect(result.allowed).toBe(true);
+    expect(result.refundAmount).toBe(500);
+    expect(result.refundPercentage).toBe(100);
+  });
+
+  it('blocks cancellation for <24h lead with no policy', () => {
+    const result = evaluateCancellationPolicy(shortLeadBooking, {});
+    expect(result.allowed).toBe(false);
+    expect(result.refundAmount).toBe(0);
+    expect(result.refundPercentage).toBe(0);
+  });
+
+  it('never refunds an all-sales-final policy, even with a long lead', () => {
+    const tour = {
+      bookingAndTickets: {
+        cancellationPolicy: { type: 'all_sales_final', label: 'No refunds', cancellationWindowHours: 0, refundPercentage: 0 },
+      },
+    };
+    const result = evaluateCancellationPolicy(longLeadBooking, tour);
+    expect(result.allowed).toBe(true);
+    expect(result.refundAmount).toBe(0);
+    expect(result.refundPercentage).toBe(0);
+    expect(result.reason).toContain('all sales final');
+  });
+
+  it('does not treat cancellationWindowHours 0 as 24 for a standard policy', () => {
+    const tour = {
+      bookingAndTickets: {
+        cancellationPolicy: { type: 'standard', cancellationWindowHours: 0, refundPercentage: 100 },
+      },
+    };
+    const result = evaluateCancellationPolicy(shortLeadBooking, tour);
+    expect(result.allowed).toBe(true);
+    expect(result.refundAmount).toBe(500);
+  });
+
+  it('applies a partial refundPercentage when outside the window', () => {
+    const tour = {
+      bookingAndTickets: {
+        cancellationPolicy: { type: 'standard', cancellationWindowHours: 24, refundPercentage: 50 },
+      },
+    };
+    const result = evaluateCancellationPolicy(longLeadBooking, tour);
+    expect(result.allowed).toBe(true);
+    expect(result.refundAmount).toBe(250);
+    expect(result.refundPercentage).toBe(50);
+  });
+
+  it('respects a custom cancellation window', () => {
+    const tour = {
+      bookingAndTickets: {
+        cancellationPolicy: { type: 'standard', cancellationWindowHours: 48, refundPercentage: 100 },
+      },
+    };
+    const short48Booking = { total: '500', selectedDate: new Date(Date.now() + 30 * 60 * 60 * 1000) };
+    const result = evaluateCancellationPolicy(short48Booking, tour);
+    expect(result.allowed).toBe(false);
     expect(result.refundAmount).toBe(0);
   });
 });

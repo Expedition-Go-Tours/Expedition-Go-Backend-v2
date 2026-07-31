@@ -17,7 +17,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { createPaymentIntent, createRefund, calculateCommission } = require('../utils/stripeHelpers');
-const { generateBookingNumber, validateTravelerInfo } = require('../utils/bookingHelpers');
+const { generateBookingNumber, validateTravelerInfo, evaluateCancellationPolicy } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
 const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../utils/queue');
 const getConfig = require('../utils/getConfig');
@@ -786,7 +786,7 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
   }
 
   // Check cancellation policy
-  const cancellationCheck = checkCancellationPolicy(booking);
+  const cancellationCheck = evaluateCancellationPolicy(booking, booking.tour);
   if (!cancellationCheck.allowed) {
     return next(new AppError(cancellationCheck.reason, 400));
   }
@@ -1040,41 +1040,5 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
 // ================================
 // HELPER FUNCTIONS
 // ================================
-
-/**
- * Check if booking can be cancelled and calculate refund
- */
-function checkCancellationPolicy(booking) {
-  const now = new Date();
-  const bookingDate = new Date(booking.selectedDate);
-  const hoursUntilBooking = (bookingDate - now) / (1000 * 60 * 60);
-  
-  // Get cancellation policy from tour
-  const policy = booking.tour.bookingAndTickets?.cancellationPolicy;
-  
-  if (!policy) {
-    return {
-      allowed: true,
-      refundAmount: parseFloat(booking.total),
-      reason: 'Full refund available'
-    };
-  }
-  
-  // Implement cancellation policy logic
-  const windowHours = policy.cancellationWindowHours || 24;
-  
-  if (hoursUntilBooking < windowHours) {
-    return {
-      allowed: false,
-      reason: `Cancellation not allowed within ${windowHours} hours of tour`
-    };
-  }
-  
-  return {
-    allowed: true,
-    refundAmount: parseFloat(booking.total),
-    reason: 'Full refund available'
-  };
-}
 
 module.exports = exports;
