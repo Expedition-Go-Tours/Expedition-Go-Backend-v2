@@ -9,6 +9,69 @@
 const prisma = require('./prismaClient');
 const getConfig = require('./getConfig');
 const { findBestDiscount } = require('./specialOfferEngine');
+const { MAX_PRICE, isValidCurrencyCode, normalizeCurrency } = require('./currencyCodes');
+const {
+  BOOKABLE_STATUSES,
+  TRAVELER_COUNT_SQL,
+  parseBlob,
+  travelerCount,
+  isPerGroupTour,
+  getMaxGroupsPerTimeSlot,
+  isOperatingDay,
+  isClosedDate,
+  getEffectiveCapacity,
+  buildTimeSlots,
+  toDateKey,
+  toUtcDate,
+} = require('./availabilityCore');
+
+// SQL-safe literal (constants only) used in raw capacity queries.
+const statusLiteral = BOOKABLE_STATUSES.map((s) => `'${s}'`).join(', ');
+
+/**
+ * Coerce a price-like value to a finite number or null.
+ * - null / undefined / ''  -> null (missing)
+ * - finite number          -> unchanged
+ * - numeric string         -> Number (e.g. "50" -> 50)
+ * - anything else          -> null (garbage)
+ */
+function toFinitePrice(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string') {
+    const s = value.trim();
+    if (s === '') return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+/**
+ * Coerce + clamp a price into the safe [0, MAX_PRICE] range, or null when the
+ * value is not a finite number. Used by rebuildSchedulePrices so the stored
+ * blob never holds negative, NaN, Infinity, or overflow-priced values.
+ */
+function clampPrice(value) {
+  const n = toFinitePrice(value);
+  if (n == null) return null;
+  return Math.min(Math.max(n, 0), MAX_PRICE);
+}
+
+/**
+ * Classify a stored price value into a validation issue (or null when valid).
+ * Used by validateStoredPricing at publish time. Policy: tours must charge a
+ * positive, finite, in-range amount; free categories are expressed via
+ * ticketNotRequired with a null price, not a zero price.
+ */
+function priceIssue(value) {
+  if (value === null || value === undefined || value === '') return 'required';
+  const n = toFinitePrice(value);
+  if (n == null) return 'invalid';
+  if (n > MAX_PRICE) return 'max';
+  if (n <= 0) return 'positive';
+  return null;
+}
 
 /**
  * Create unique slug for tour
@@ -305,6 +368,25 @@ function rebuildSchedulePrices(blob) {
   const ps = blob.pricingSchedules;
   if (!ps || !Array.isArray(ps.schedules)) return blob;
 
+  // Sanitize the authoritative source-of-truth price fields in place so the
+  // stored blob never holds negative, non-finite, non-numeric, or overflowing
+  // values that could produce NaN at checkout. Garbage that cannot be coerced
+  // to a number is dropped to null (fails completeness at publish).
+  if (td.uniformPrice != null) td.uniformPrice = clampPrice(td.uniformPrice);
+  if (td.additionalPersonPrice != null) td.additionalPersonPrice = clampPrice(td.additionalPersonPrice);
+  for (const list of [td.pricingCategories, td.ageGroups]) {
+    if (Array.isArray(list)) {
+      for (const c of list) {
+        if (c && c.price != null) c.price = clampPrice(c.price);
+      }
+    }
+  }
+  if (Array.isArray(td.groupSizes)) {
+    for (const gs of td.groupSizes) {
+      if (gs && gs.price != null) gs.price = clampPrice(gs.price);
+    }
+  }
+
   const cats = (Array.isArray(td.pricingCategories) && td.pricingCategories.length > 0)
     ? td.pricingCategories
     : (Array.isArray(td.ageGroups) ? td.ageGroups : []);
@@ -316,17 +398,17 @@ function rebuildSchedulePrices(blob) {
   if (pricingModel === 'perGroup') {
     for (const gs of groupSizes) {
       if (gs && gs.price != null) {
-        prices.push({ label: `Group of ${gs.from}-${gs.to}`, retailPrice: gs.price, groupSize: true });
+        prices.push({ label: `Group of ${gs.from}-${gs.to}`, retailPrice: clampPrice(gs.price), groupSize: true });
       }
     }
   } else if (pricingApproach === 'sameForEveryone') {
     if (td.uniformPrice != null) {
-      prices.push({ ageGroup: 'Adult', retailPrice: td.uniformPrice });
+      prices.push({ ageGroup: 'Adult', retailPrice: clampPrice(td.uniformPrice) });
     }
   } else {
     for (const c of cats) {
       if (c && c.price != null) {
-        prices.push({ ageGroup: c.name || c.label, retailPrice: c.price });
+        prices.push({ ageGroup: c.name || c.label, retailPrice: clampPrice(c.price) });
       }
     }
   }
@@ -377,6 +459,25 @@ function validateStoredPricing(blob) {
     }
   }
 
+  // Currency — a currency must be declared before the tour can charge
+  // customers, and every declared currency must be a valid ISO 4217 code.
+  const declaredCurrencies = [];
+  if (pricingSchedules.currency != null && pricingSchedules.currency !== '') declaredCurrencies.push(pricingSchedules.currency);
+  if (blob.currency != null && blob.currency !== '') declaredCurrencies.push(blob.currency);
+  for (const s of schedules) {
+    if (s && s.currency != null && s.currency !== '') declaredCurrencies.push(s.currency);
+  }
+  if (declaredCurrencies.length === 0) {
+    errors.push('A currency code is required');
+  } else {
+    for (const c of declaredCurrencies) {
+      if (!isValidCurrencyCode(c)) {
+        errors.push(`"${c}" is not a valid ISO 4217 currency code`);
+        break;
+      }
+    }
+  }
+
   // Pricing completeness
   const cats = (Array.isArray(travelerDetails.pricingCategories) && travelerDetails.pricingCategories.length > 0)
     ? travelerDetails.pricingCategories
@@ -385,26 +486,47 @@ function validateStoredPricing(blob) {
     ? travelerDetails.groupSizes
     : (Array.isArray(firstSchedule.groupSizes) ? firstSchedule.groupSizes : []);
 
+  // Policy: a live tour must charge a positive, finite, in-range price. Free
+  // traveler categories are expressed via ticketNotRequired with a null price,
+  // never as a zero price. Any non-numeric, non-finite, or out-of-range price
+  // is a hard publish blocker (guards checkout from producing NaN/Infinity).
+  const describeIssue = (label, issue) => {
+    if (issue === 'required') return `${label}: price is required`;
+    if (issue === 'invalid') return `${label}: price must be a valid number`;
+    if (issue === 'max') return `${label}: price cannot exceed ${MAX_PRICE}`;
+    if (issue === 'positive') return `${label}: price must be greater than 0`;
+    return null;
+  };
+
+  let hasPositivePrice = false;
+
   if (pricingModel === 'perGroup') {
     if (groupSizes.length === 0) {
       errors.push('Add at least one group size');
     }
     groupSizes.forEach((gs, i) => {
       if (gs == null) return;
-      if (gs.price == null) {
-        errors.push(`Group size ${i + 1}: price is required`);
-      } else if (typeof gs.price === 'number' && gs.price < 0) {
-        errors.push(`Group size ${i + 1}: price must be 0 or greater`);
+      const issue = priceIssue(gs.price);
+      if (issue) {
+        errors.push(describeIssue(`Group size ${i + 1}`, issue));
+      } else if (toFinitePrice(gs.price) > 0) {
+        hasPositivePrice = true;
       }
     });
+    if (!hasPositivePrice) {
+      errors.push('At least one group size must have a price greater than 0');
+    }
   } else if (pricingApproach === 'sameForEveryone') {
     const uniformPrice = travelerDetails.uniformPrice != null
       ? travelerDetails.uniformPrice
       : (firstSchedule.uniformPrice != null ? firstSchedule.uniformPrice : null);
     if (uniformPrice == null) {
       errors.push('Enter a price per person');
-    } else if (typeof uniformPrice === 'number' && uniformPrice < 0) {
-      errors.push('Price per person must be 0 or greater');
+    } else {
+      const issue = priceIssue(uniformPrice);
+      if (issue === 'invalid') errors.push('Price per person must be a valid number');
+      else if (issue === 'max') errors.push(`Price per person cannot exceed ${MAX_PRICE}`);
+      else if (issue === 'positive') errors.push('Price per person must be greater than 0');
     }
   } else {
     // dependsOnAge
@@ -414,18 +536,27 @@ function validateStoredPricing(blob) {
     cats.forEach((cat, i) => {
       if (cat == null) return;
       const isFree = cat.ticketNotRequired === true;
-      if (cat.price == null && !isFree) {
-        errors.push(`Pricing category "${cat.name || i + 1}": price is required`);
-      } else if (typeof cat.price === 'number' && cat.price < 0) {
-        errors.push(`Pricing category "${cat.name || i + 1}": price must be 0 or greater`);
+      if (isFree && (cat.price == null || cat.price === '')) {
+        return; // free categories (e.g. infants) carry no price
+      }
+      const issue = priceIssue(cat.price);
+      if (issue) {
+        errors.push(describeIssue(`Pricing category "${cat.name || i + 1}"`, issue));
+      } else if (toFinitePrice(cat.price) > 0) {
+        hasPositivePrice = true;
       }
     });
+    if (!hasPositivePrice) {
+      errors.push('Add at least one pricing category with a price greater than 0');
+    }
   }
 
   // Capacity sanity
   const min = travelerDetails.minParticipants ?? firstSchedule.minParticipants;
   const max = travelerDetails.maxParticipants ?? firstSchedule.maxParticipants;
-  if (min != null && max != null && typeof min === 'number' && typeof max === 'number' && min > max) {
+  const minN = toFinitePrice(min);
+  const maxN = toFinitePrice(max);
+  if (minN != null && maxN != null && minN > maxN) {
     errors.push('Min participants cannot exceed max participants');
   }
 
@@ -451,80 +582,137 @@ function validateStoredPricing(blob) {
 }
 
 /**
- * Calculate tour availability for a given date
- * Checks TourDateOverride, daysOfWeek template, and existing bookings.
+ * Calculate tour availability for a given date (+ optional time slot).
+ * Uses the shared availability core so the rules (traveler-based capacity,
+ * PENDING occupancy, TourDateOverride, dateExceptions, per-group cap,
+ * per-slot capacity) are identical to the checkout transactions.
+ *
+ * @param {string} tourId
+ * @param {string|Date} selectedDate   YYYY-MM-DD (UTC) or Date
+ * @param {object|string|null} selectedTimeOrOptions
+ *   - string: the requested time slot (legacy positional arg)
+ *   - object: { selectedTime, travelers } — travelers enables capacity pre-check
  */
-async function checkTourAvailability(tourId, selectedDate, selectedTime = null) {
+async function checkTourAvailability(tourId, selectedDate, selectedTimeOrOptions = null) {
   try {
-    // Fetch tour with minimal data first
     const tour = await prisma.tour.findUnique({
       where: { id: tourId },
-      select: {
-        id: true,
-        status: true,
-        schedulesAndPricing: true,
-      }
+      select: { id: true, status: true, schedulesAndPricing: true },
     });
 
-    if (!tour) {
-      return { available: false, reason: 'Tour not found' };
+    if (!tour) return { available: false, reason: 'Tour not found' };
+    if (tour.status !== 'ACTIVE') return { available: false, reason: 'Tour is not active' };
+
+    let selectedTime = null;
+    let requestedTravelers = 0;
+    if (selectedTimeOrOptions && typeof selectedTimeOrOptions === 'object') {
+      selectedTime = selectedTimeOrOptions.selectedTime || null;
+      requestedTravelers = travelerCount(selectedTimeOrOptions.travelers) || 0;
+    } else if (typeof selectedTimeOrOptions === 'string' && selectedTimeOrOptions) {
+      selectedTime = selectedTimeOrOptions;
     }
 
-    if (tour.status !== 'ACTIVE') {
-      return { available: false, reason: 'Tour is not active' };
-    }
+    const parsed = parseBlob(tour.schedulesAndPricing);
+    const dateObj = toUtcDate(selectedDate);
+    if (!dateObj) return { available: false, reason: 'Invalid date' };
+    const dateKey = toDateKey(dateObj);
 
-    // Fetch override and count bookings in parallel
-    const dateObj = new Date(selectedDate);
-    const [override, bookingCount] = await Promise.all([
+    const maxTravelersFallback = parseInt(await getConfig('booking.max_travelers', '50'), 10);
+    const isPerGroup = isPerGroupTour(parsed);
+    const maxGroups = getMaxGroupsPerTimeSlot(parsed);
+
+    const [override, counts] = await Promise.all([
       prisma.tourDateOverride.findFirst({
         where: { tourId, date: dateObj },
-        select: { status: true, capacity: true }
+        select: { status: true, capacity: true, timeSlotOverrides: true },
       }),
-      prisma.booking.aggregate({
-        where: {
-          tourId,
-          selectedDate: dateObj,
-          selectedTime: selectedTime ?? undefined,
-          status: { in: ['PENDING', 'CONFIRMED'] }
-        },
-        _count: { id: true }
-      })
+      prisma.$queryRawUnsafe(
+        `SELECT
+           COALESCE(SUM(CASE WHEN status IN (${statusLiteral})
+             THEN ${TRAVELER_COUNT_SQL} ELSE 0 END), 0)::int AS "currentBookings",
+           COALESCE(COUNT(*) FILTER (WHERE status IN (${statusLiteral})), 0)::int AS "groupCount"
+         FROM "Booking"
+         WHERE "tourId" = $1 AND "selectedDate" = $2::date
+           ${selectedTime ? 'AND "selectedTime" = $3' : ''}`,
+        tourId,
+        dateKey,
+        ...(selectedTime ? [selectedTime] : [])
+      ),
     ]);
 
-    // Check if date is blocked by override
+    const row = counts && counts[0] ? counts[0] : { currentBookings: 0, groupCount: 0 };
+    const currentBookings = parseInt(row.currentBookings, 10) || 0;
+    const groupCount = parseInt(row.groupCount, 10) || 0;
+
+    const closedDate = isClosedDate(parsed, dateKey) || null;
+    const operating = isOperatingDay(parsed, dateObj);
+    const dayCapacity = getEffectiveCapacity(parsed, override, maxTravelersFallback);
+    const daySlots = buildTimeSlots(parsed, override, dayCapacity);
+
+    const base = {
+      overrideStatus: override?.status || null,
+      isPerGroup,
+      maxGroups,
+      closedDate,
+      isOperatingDay: operating,
+      timeSlots: daySlots,
+    };
+
+    if (closedDate || !operating) {
+      return { available: false, reason: 'Tour is not available on this date', maxCapacity: dayCapacity, currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
+    }
     if (override?.status === 'BLOCKED') {
-      return { available: false, reason: 'Date is blocked', overrideStatus: 'BLOCKED' };
+      return { available: false, reason: 'Date is blocked', maxCapacity: dayCapacity, currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
     }
     if (override?.status === 'FULL') {
-      return { available: false, reason: 'Date is fully booked', overrideStatus: 'FULL' };
+      return { available: false, reason: 'Date is fully booked', maxCapacity: dayCapacity, currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
     }
 
-    // Check if operating day
-    const schedulesAndPricing = typeof tour.schedulesAndPricing === 'string'
-      ? JSON.parse(tour.schedulesAndPricing)
-      : tour.schedulesAndPricing;
-    const templateDaysOfWeek = schedulesAndPricing?.availability?.daysOfWeek || schedulesAndPricing?.operatingDays || [];
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const dayOfWeek = dayNames[dateObj.getDay()];
-
-    if (templateDaysOfWeek.length > 0 && !templateDaysOfWeek.some(d => d.toLowerCase() === dayOfWeek.toLowerCase())) {
-      return { available: false, reason: 'Tour does not operate on this day' };
+    // Fixed-slot tours must carry a concrete, valid time slot.
+    if (daySlots.length > 0) {
+      if (!selectedTime) {
+        return { available: false, reason: 'A time slot must be selected', maxCapacity: dayCapacity, currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
+      }
+      if (!daySlots.some((s) => s.time === selectedTime)) {
+        return { available: false, reason: 'Selected time is not available for this date', maxCapacity: dayCapacity, currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
+      }
     }
 
-    // Get capacity from override or template
-    const maxTravelersFallback = parseInt(await getConfig('booking.max_travelers', '50'));
-    const maxCapacity = override?.capacity ?? schedulesAndPricing?.travelerDetails?.maxParticipants ?? maxTravelersFallback;
+    // When a slot is chosen, capacity is evaluated at the slot level; otherwise
+    // at the whole-day level.
+    let effectiveCapacity = dayCapacity;
+    if (selectedTime) {
+      const slot = daySlots.find((s) => s.time === selectedTime);
+      if (slot) effectiveCapacity = slot.capacity;
+    }
 
-    const currentBookings = bookingCount._count.id;
-    const availableSpots = maxCapacity - currentBookings;
+    const availableSpots = Math.max(0, effectiveCapacity - currentBookings);
+    let groupsRemaining = null;
+    if (isPerGroup) groupsRemaining = Math.max(0, maxGroups - groupCount);
+
+    let available = availableSpots > 0;
+    if (isPerGroup) available = available && groupsRemaining > 0;
+    if (requestedTravelers > 0 && requestedTravelers > availableSpots) available = false;
+
+    let reason;
+    if (!available) {
+      if (requestedTravelers > availableSpots) {
+        reason = `Only ${availableSpots} spot${availableSpots === 1 ? '' : 's'} left, but ${requestedTravelers} requested`;
+      } else if (isPerGroup && groupsRemaining <= 0) {
+        reason = 'No group slots remaining for this time';
+      } else {
+        reason = 'Date is fully booked';
+      }
+    }
 
     return {
-      available: availableSpots > 0,
-      availableSpots,
-      maxCapacity,
+      available,
+      ...(reason && { reason }),
+      maxCapacity: effectiveCapacity,
       currentBookings,
-      overrideStatus: override?.status || null,
+      availableSpots,
+      groupsRemaining,
+      ...base,
     };
   } catch (error) {
     console.error('❌ Check availability failed:', error);
@@ -542,7 +730,8 @@ async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = 
       throw new Error('No pricing information available');
     }
 
-    const { schedules, currency } = pricing.pricingSchedules;
+    const { schedules } = pricing.pricingSchedules;
+    const currency = normalizeCurrency(pricing.pricingSchedules.currency);
     
     // Find applicable schedule
     const applicableSchedule = schedules.find(schedule => {
@@ -587,12 +776,15 @@ async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = 
         throw new Error('At least one traveler is required');
       }
       const match = groupSizes.find(gs => gs && totalTravelers >= gs.from && totalTravelers <= gs.to);
-      if (!match || match.price == null) {
+      const matchPrice = toFinitePrice(match && match.price);
+      if (matchPrice == null) {
         throw new Error('No price available for the selected group size');
       }
-      subtotal = match.price;
+      subtotal = matchPrice;
     } else if (pricingApproach === 'sameForEveryone') {
-      const uniformPrice = td.uniformPrice != null ? td.uniformPrice : applicableSchedule.uniformPrice;
+      const uniformPrice = toFinitePrice(
+        td.uniformPrice != null ? td.uniformPrice : applicableSchedule.uniformPrice
+      );
       if (uniformPrice == null) {
         throw new Error('No pricing available for this tour');
       }
@@ -608,9 +800,11 @@ async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = 
         ? td.pricingCategories
         : (Array.isArray(td.ageGroups) ? td.ageGroups : []);
       let priced = false;
+      const IRREGULAR_PLURALS = { children: 'child', infants: 'infant', men: 'man', women: 'woman' };
       for (const [ageCategory, count] of Object.entries(travelers)) {
         if (typeof count !== 'number' || count <= 0) continue;
-        const normalized = ageCategory.toLowerCase().replace(/s$/, '');
+        const lower = ageCategory.toLowerCase();
+        const normalized = IRREGULAR_PLURALS[lower] || lower.replace(/s$/, '');
         const cat = cats.find(c => {
           const label = String(c.name ?? c.label ?? '').toLowerCase();
           return label === normalized || label === ageCategory.toLowerCase();
@@ -626,14 +820,21 @@ async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = 
             price = priceInfo.retailPrice;
           }
         }
-        if (price != null) {
-          subtotal += price * count;
+        const finitePrice = toFinitePrice(price);
+        if (finitePrice != null) {
+          subtotal += finitePrice * count;
           priced = true;
         }
       }
       if (!priced) {
         throw new Error('No pricing available for this tour');
       }
+    }
+
+    // Fail closed: garbage (NaN/Infinity/string) prices must never reach the
+    // amount Stripe charges. If any unpriceable data slipped through, abort.
+    if (!Number.isFinite(subtotal)) {
+      throw new Error('Invalid pricing information');
     }
 
     // Apply promotions if any
@@ -649,19 +850,27 @@ async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = 
         return now >= startDate && now <= endDate;
       });
 
-      // Apply best promotion
+      // Apply best promotion — discount values are clamped so a malformed
+      // promotion can never produce a negative charge.
       for (const promo of activePromotions) {
         let promoDiscount = 0;
-        
+
         if (promo.type === 'percentage') {
-          promoDiscount = subtotal * (promo.discountValue / 100);
+          const pct = toFinitePrice(promo.discountValue);
+          const clampedPct = pct == null ? 0 : Math.min(Math.max(pct, 0), 100);
+          promoDiscount = subtotal * (clampedPct / 100);
         } else if (promo.type === 'fixedAmount') {
-          promoDiscount = promo.discountValue;
+          const fixed = toFinitePrice(promo.discountValue);
+          promoDiscount = fixed == null ? 0 : Math.max(fixed, 0);
         }
 
-        if (promo.maximumDiscountAmount) {
-          promoDiscount = Math.min(promoDiscount, promo.maximumDiscountAmount);
+        const maxDiscount = toFinitePrice(promo.maximumDiscountAmount);
+        if (maxDiscount != null) {
+          promoDiscount = Math.min(promoDiscount, Math.max(maxDiscount, 0));
         }
+
+        // A single promotion can never discount more than the full subtotal.
+        promoDiscount = Math.min(promoDiscount, subtotal);
 
         discount = Math.max(discount, promoDiscount);
       }
@@ -679,13 +888,17 @@ async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = 
       customerId,
     }).catch(() => ({ discountAmount: 0, finalPrice: subtotal, appliedOffer: null, discountType: null }));
 
-    const specialDiscount = subtotal - specialOfferResult.finalPrice;
-    if (specialDiscount > discount) {
+    const finalPrice = Number.isFinite(specialOfferResult.finalPrice) ? specialOfferResult.finalPrice : subtotal;
+    const specialDiscount = subtotal - Math.min(finalPrice, subtotal);
+    if (specialDiscount > 0 && specialDiscount > discount) {
       discount = specialDiscount;
       appliedOffer = specialOfferResult.appliedOffer;
     }
 
-    const total = subtotal - discount;
+    // Clamp the discount to [0, subtotal] and floor the total at 0 so a
+    // malformed promotion/special-offer can never produce a negative charge.
+    discount = Math.min(Math.max(discount, 0), subtotal);
+    const total = Math.max(0, subtotal - discount);
 
     return {
       success: true,

@@ -10,6 +10,7 @@ const PERMISSIONS = [
   { key: 'users.view', name: 'View Users', description: 'View user growth, CLV, and conversion funnel', category: 'Users' },
   { key: 'users.delete', name: 'Delete Users', description: 'Permanently delete user accounts', category: 'Users' },
   { key: 'tours.view', name: 'View Tours', description: 'View tour performance and details', category: 'Tours' },
+  { key: 'tours.approve', name: 'Approve Tours', description: 'Approve or flag tour submissions in the moderation queue', category: 'Tours' },
   { key: 'suppliers.view', name: 'View Suppliers', description: 'View supplier applications and profiles', category: 'Suppliers' },
   { key: 'suppliers.approve', name: 'Approve Suppliers', description: 'Approve or reject supplier applications', category: 'Suppliers' },
   { key: 'suppliers.suspend', name: 'Suspend Suppliers', description: 'Suspend or activate supplier accounts', category: 'Suppliers' },
@@ -46,7 +47,7 @@ const ROLE_DEFINITIONS = [
     permissionKeys: [
       'dashboard.*', 'dashboard.bookings', 'dashboard.revenue', 'analytics.view',
       'suppliers.view', 'suppliers.approve', 'suppliers.suspend', 'tours.view',
-      'bookings.view', 'bookings.confirm-payment', 'reviews.view', 'reviews.moderate',
+      'tours.approve', 'bookings.view', 'bookings.confirm-payment', 'reviews.view', 'reviews.moderate',
       'chat.suppliers', 'chat.customers', 'chat.expedition', 'notifications.view',
     ],
   },

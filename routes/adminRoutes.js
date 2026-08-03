@@ -822,6 +822,111 @@ router.get('/bookings/:id', requirePermission('bookings.view', 'dashboard.*'), a
  */
 router.patch('/bookings/:id/confirm-payment', requirePermission('bookings.confirm-payment', 'dashboard.*'), adminController.confirmPayment);
 
+/**
+ * @swagger
+ * /admin/tours/review:
+ *   get:
+ *     summary: Tour moderation queue (submit-for-review workflow)
+ *     description: |
+ *       Lists tours awaiting admin approval, plus rejected and live tours.
+ *       Filters by status, searchable by tour title or supplier name.
+ *     tags: [Admin, Tours]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: status
+ *         in: query
+ *         schema:
+ *           type: string
+ *           enum: [PENDING_APPROVAL, REJECTED, ACTIVE]
+ *           default: PENDING_APPROVAL
+ *         description: Which queue to view
+ *       - name: search
+ *         in: query
+ *         schema:
+ *           type: string
+ *         description: Search by tour title or supplier name
+ *       - name: page
+ *         in: query
+ *         schema: { type: integer, default: 1 }
+ *       - name: limit
+ *         in: query
+ *         schema: { type: integer, default: 20 }
+ *     responses:
+ *       200:
+ *         description: Moderation queue retrieved
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     tours:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/Tour'
+ *                     counts:
+ *                       type: object
+ *                       properties:
+ *                         pending:
+ *                           type: integer
+ *                         rejected:
+ *                           type: integer
+ *                         active:
+ *                           type: integer
+ *                     pagination:
+ *                       type: object
+ */
+router.get('/tours/review', requirePermission('tours.view', 'tours.approve'), adminController.getTourReviewQueue);
+
+/**
+ * @swagger
+ * /admin/tours/{id}/review:
+ *   patch:
+ *     summary: Approve or flag a tour awaiting approval
+ *     description: |
+ *       approve → tour becomes ACTIVE (live on the storefront) and the supplier
+ *       is notified. flag → tour becomes REJECTED with a required reason and is
+ *       returned to the supplier, who can edit and resubmit.
+ *     tags: [Admin, Tours]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [action]
+ *             properties:
+ *               action:
+ *                 type: string
+ *                 enum: [approve, flag]
+ *                 example: approve
+ *               reason:
+ *                 type: string
+ *                 description: Required when action is flag
+ *                 example: Prices look incomplete — please review the adult pricing.
+ *     responses:
+ *       200:
+ *         description: Tour reviewed
+ *       400:
+ *         description: Invalid action, missing reason, or tour not awaiting approval
+ *       404:
+ *         description: Tour not found
+ */
+router.patch('/tours/:id/review', requirePermission('tours.approve'), adminController.reviewTour);
+
 // ── Expedition Go Listing Management ──
 router.get('/expedition/listings', adminController.getExpeditionListings);
 router.get('/expedition/suppliers', adminController.getExpeditionSuppliers);

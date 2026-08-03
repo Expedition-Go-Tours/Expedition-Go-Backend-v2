@@ -162,6 +162,7 @@ describe('validateStoredPricing', () => {
       maxParticipants: 10,
     },
     pricingSchedules: {
+      currency: 'USD',
       schedules: [{ startDate: '2026-01-01', hasEndDate: false }],
     },
     availability: { scheduleType: 'fixedTimeSlot', timeSlots: ['09:00'] },
@@ -195,16 +196,41 @@ describe('validateStoredPricing', () => {
     expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Pricing category "Adult": price is required']));
   });
 
-  it('allows null price when ticketNotRequired is true', () => {
+  it('allows null price when ticketNotRequired is true alongside a paid category', () => {
     const blob = JSON.parse(JSON.stringify(validBlob));
-    blob.travelerDetails.pricingCategories = [{ name: 'Infant', price: null, ticketNotRequired: true }];
+    blob.travelerDetails.pricingCategories = [
+      { name: 'Adult', price: 50, ticketNotRequired: false },
+      { name: 'Infant', price: null, ticketNotRequired: true },
+    ];
     expect(validateStoredPricing(blob)).toEqual([]);
+  });
+
+  it('rejects a tour where every pricing category is free', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.travelerDetails.pricingCategories = [
+      { name: 'Infant', price: null, ticketNotRequired: true },
+    ];
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining([
+      'Add at least one pricing category with a price greater than 0',
+    ]));
   });
 
   it('rejects negative per-category price', () => {
     const blob = JSON.parse(JSON.stringify(validBlob));
     blob.travelerDetails.pricingCategories = [{ name: 'Adult', price: -5, ticketNotRequired: false }];
-    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Pricing category "Adult": price must be 0 or greater']));
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Pricing category "Adult": price must be greater than 0']));
+  });
+
+  it('rejects non-numeric per-category price', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.travelerDetails.pricingCategories = [{ name: 'Adult', price: 'abc', ticketNotRequired: false }];
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Pricing category "Adult": price must be a valid number']));
+  });
+
+  it('rejects a per-category price above the Decimal ceiling', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.travelerDetails.pricingCategories = [{ name: 'Adult', price: 100000000, ticketNotRequired: false }];
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining([expect.stringMatching(/cannot exceed/)]));
   });
 
   it('requires uniform price for sameForEveryone approach', () => {
@@ -214,11 +240,23 @@ describe('validateStoredPricing', () => {
     expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Enter a price per person']));
   });
 
-  it('accepts a zero uniform price', () => {
+  it('rejects a zero uniform price', () => {
     const blob = JSON.parse(JSON.stringify(validBlob));
     blob.travelerDetails.pricingApproach = 'sameForEveryone';
     blob.travelerDetails.uniformPrice = 0;
-    expect(validateStoredPricing(blob)).toEqual([]);
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Price per person must be greater than 0']));
+  });
+
+  it('requires a currency code', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    delete blob.pricingSchedules.currency;
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['A currency code is required']));
+  });
+
+  it('rejects an invalid currency code', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.pricingSchedules.currency = 'NOTACODE';
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['"NOTACODE" is not a valid ISO 4217 currency code']));
   });
 
   it('requires per-group prices for perGroup model', () => {
@@ -313,6 +351,138 @@ describe('rebuildSchedulePrices', () => {
     expect(rebuildSchedulePrices([])).toEqual([]);
     const noSchedules = { travelerDetails: {}, pricingSchedules: { schedules: undefined } };
     expect(rebuildSchedulePrices(noSchedules)).toBe(noSchedules);
+  });
+
+  it('coerces numeric-string prices to numbers', () => {
+    const b = JSON.parse(JSON.stringify(blob));
+    b.travelerDetails.pricingCategories = [{ name: 'Adult', price: '50' }, { name: 'Child', price: '25' }];
+    const result = rebuildSchedulePrices(b);
+    expect(result.travelerDetails.pricingCategories[0].price).toBe(50);
+    expect(result.pricingSchedules.schedules[0].prices).toEqual([
+      { ageGroup: 'Adult', retailPrice: 50 },
+      { ageGroup: 'Child', retailPrice: 25 },
+    ]);
+  });
+
+  it('clamps negative and overflowing source prices', () => {
+    const b = JSON.parse(JSON.stringify(blob));
+    b.travelerDetails.pricingCategories = [{ name: 'Adult', price: -5 }, { name: 'Child', price: 99999999999 }];
+    const result = rebuildSchedulePrices(b);
+    expect(result.travelerDetails.pricingCategories[0].price).toBe(0);
+    expect(result.travelerDetails.pricingCategories[1].price).toBe(99999999);
+    expect(result.pricingSchedules.schedules[0].prices).toEqual([
+      { ageGroup: 'Adult', retailPrice: 0 },
+      { ageGroup: 'Child', retailPrice: 99999999 },
+    ]);
+  });
+
+  it('drops non-numeric source prices so they fail publish completeness', () => {
+    const b = JSON.parse(JSON.stringify(blob));
+    b.travelerDetails.pricingCategories = [{ name: 'Adult', price: 'abc' }, { name: 'Child', price: 25 }];
+    const result = rebuildSchedulePrices(b);
+    expect(result.travelerDetails.pricingCategories[0].price).toBeNull();
+    expect(result.pricingSchedules.schedules[0].prices).toEqual([{ ageGroup: 'Child', retailPrice: 25 }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// calculateTourPrice — money safety
+// ---------------------------------------------------------------------------
+function tourWithPricing(schedulesAndPricing) {
+  return { id: 'tour-1', schedulesAndPricing };
+}
+
+const basePricing = (overrides = {}) => ({
+  travelerDetails: {
+    pricingModel: 'perPerson',
+    pricingApproach: 'dependsOnAge',
+    pricingCategories: [{ name: 'Adult', price: 50 }, { name: 'Child', price: 25 }],
+    minParticipants: 1,
+    maxParticipants: 10,
+  },
+  pricingSchedules: {
+    currency: 'USD',
+    schedules: [{ startDate: '2026-01-01', hasEndDate: false, prices: [] }],
+  },
+  ...overrides,
+});
+
+describe('calculateTourPrice', () => {
+  it('prices sameForEveryone from the uniform price', async () => {
+    const pricing = basePricing({
+      travelerDetails: { pricingModel: 'perPerson', pricingApproach: 'sameForEveryone', uniformPrice: 50 },
+    });
+    const result = await calculateTourPrice(tourWithPricing(pricing), { adults: 2, children: 1 }, '2026-03-01');
+    expect(result.success).toBe(true);
+    expect(result.subtotal).toBe(150);
+    expect(result.total).toBe(150);
+    expect(result.currency).toBe('USD');
+  });
+
+  it('prices dependsOnAge per traveler', async () => {
+    const result = await calculateTourPrice(tourWithPricing(basePricing()), { adults: 2, children: 1 }, '2026-03-01');
+    expect(result.success).toBe(true);
+    expect(result.subtotal).toBe(125);
+  });
+
+  it('prices perGroup from the matched group size', async () => {
+    const pricing = basePricing({
+      travelerDetails: {
+        pricingModel: 'perGroup',
+        pricingApproach: 'dependsOnAge',
+        groupSizes: [{ from: 1, to: 4, price: 300 }, { from: 5, to: 10, price: 500 }],
+      },
+    });
+    const result = await calculateTourPrice(tourWithPricing(pricing), { adults: 3, children: 1 }, '2026-03-01');
+    expect(result.success).toBe(true);
+    expect(result.subtotal).toBe(300);
+  });
+
+  it('clamps an over-100% percentage promotion so total never goes negative', async () => {
+    const pricing = basePricing({
+      travelerDetails: { pricingModel: 'perPerson', pricingApproach: 'sameForEveryone', uniformPrice: 100 },
+      promotions: [{ isActive: true, type: 'percentage', discountValue: 150, startDate: '2026-01-01', endDate: '2026-12-31' }],
+    });
+    const result = await calculateTourPrice(tourWithPricing(pricing), { adults: 1 }, '2026-03-01');
+    expect(result.success).toBe(true);
+    expect(result.total).toBe(0);
+  });
+
+  it('floors the total at 0 when a fixed-amount discount exceeds the subtotal', async () => {
+    const pricing = basePricing({
+      travelerDetails: { pricingModel: 'perPerson', pricingApproach: 'sameForEveryone', uniformPrice: 100 },
+      promotions: [{ isActive: true, type: 'fixedAmount', discountValue: 500, startDate: '2026-01-01', endDate: '2026-12-31' }],
+    });
+    const result = await calculateTourPrice(tourWithPricing(pricing), { adults: 1 }, '2026-03-01');
+    expect(result.success).toBe(true);
+    expect(result.total).toBe(0);
+  });
+
+  it('coerces numeric-string prices', async () => {
+    const pricing = basePricing({
+      travelerDetails: { pricingModel: 'perPerson', pricingApproach: 'sameForEveryone', uniformPrice: '50' },
+    });
+    const result = await calculateTourPrice(tourWithPricing(pricing), { adults: 2 }, '2026-03-01');
+    expect(result.success).toBe(true);
+    expect(result.subtotal).toBe(100);
+  });
+
+  it('fails closed on a non-numeric price', async () => {
+    const pricing = basePricing({
+      travelerDetails: { pricingModel: 'perPerson', pricingApproach: 'sameForEveryone', uniformPrice: 'abc' },
+    });
+    const result = await calculateTourPrice(tourWithPricing(pricing), { adults: 1 }, '2026-03-01');
+    expect(result.success).toBe(false);
+  });
+
+  it('normalizes a missing/invalid currency to USD', async () => {
+    const pricing = basePricing({
+      travelerDetails: { pricingModel: 'perPerson', pricingApproach: 'sameForEveryone', uniformPrice: 10 },
+    });
+    pricing.pricingSchedules.currency = '';
+    const result = await calculateTourPrice(tourWithPricing(pricing), { adults: 1 }, '2026-03-01');
+    expect(result.success).toBe(true);
+    expect(result.currency).toBe('USD');
   });
 });
 

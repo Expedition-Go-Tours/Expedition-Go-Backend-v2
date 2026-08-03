@@ -221,7 +221,7 @@ describe('processStripeWebhook', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           stripePaymentIntentId: 'pi_123',
-          status: 'PROCESSING',
+          status: 'PENDING',
           paymentStatus: 'PENDING',
         }),
       }),

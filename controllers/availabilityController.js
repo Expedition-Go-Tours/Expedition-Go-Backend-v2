@@ -1,121 +1,46 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
-const { startOfDay, endOfDay, differenceInDays, parseISO, isAfter, addDays, format } = require('date-fns');
-const getConfig = require('../utils/getConfig');
+const { differenceInDays, isBefore } = require('date-fns');
+const { buildAvailabilityCalendar } = require('../utils/availabilityCalendar');
+const {
+  statusLiteral,
+  TRAVELER_COUNT_SQL,
+  toUtcDate,
+  toDateKey,
+} = require('../utils/availabilityCore');
 
 const MAX_DATE_RANGE_DAYS = 366;
+const VALID_OVERRIDE_STATUSES = ['AVAILABLE', 'LIMITED', 'FULL', 'BLOCKED'];
 
-function computeAggregatedStatus(bookedCount, totalCapacity, overrideStatus) {
-  if (overrideStatus === 'BLOCKED') return 'BLOCKED';
-  if (overrideStatus === 'FULL') return 'FULL';
-  if (totalCapacity <= 0) return 'BLOCKED';
-
-  const ratio = bookedCount / totalCapacity;
-  if (ratio >= 1) return 'FULL';
-  if (ratio >= 0.75) return 'LIMITED';
-  if (overrideStatus === 'LIMITED') return 'LIMITED';
-
-  return 'AVAILABLE';
+/** UTC-midnight start of today — overrides can never target the past. */
+function todayUtc() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
 
-async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end) {
-  const parsed = typeof schedulesAndPricing === 'string'
-    ? JSON.parse(schedulesAndPricing)
-    : schedulesAndPricing;
+/**
+ * Validate the timeSlotOverrides payload: must be an array of
+ * { time, capacity } entries with a valid HH:MM time and a non-negative int.
+ */
+function validateTimeSlotOverrides(timeSlotOverrides) {
+  if (timeSlotOverrides === undefined) return null;
+  if (!Array.isArray(timeSlotOverrides)) return 'timeSlotOverrides must be an array';
+  if (timeSlotOverrides.length > 50) return 'timeSlotOverrides cannot exceed 50 slots';
 
-  const templateDaysOfWeek = parsed?.availability?.daysOfWeek || [];
-  const templateTimeSlots = parsed?.availability?.timeSlots || [];
-  const maxTravelersFallback = parseInt(await getConfig('booking.max_travelers', '50'));
-  const td = parsed?.travelerDetails
-  const isPerGroup = td?.pricingModel === 'perGroup'
-  const maxCapacity = isPerGroup
-    ? (td?.maxGroupsPerTimeSlot ?? 1) * (td?.groupSizes?.[0]?.to ?? maxTravelersFallback)
-    : (td?.maxParticipants || maxTravelersFallback);
-
-  const [overrides, bookings] = await Promise.all([
-    prisma.tourDateOverride.findMany({
-      where: {
-        tourId,
-        date: { gte: start, lte: end },
-      },
-    }),
-    prisma.booking.findMany({
-      where: {
-        tourId,
-        selectedDate: { gte: start, lte: end },
-        status: { in: ['PENDING', 'CONFIRMED'] },
-      },
-      select: {
-        selectedDate: true,
-        travelers: true,
-      },
-    }),
-  ]);
-
-  const overrideMap = new Map();
-  for (const ov of overrides) {
-    const key = format(ov.date, 'yyyy-MM-dd');
-    overrideMap.set(key, ov);
+  for (const slot of timeSlotOverrides) {
+    const time = typeof slot === 'string' ? slot : slot?.time;
+    if (typeof time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+      return `Invalid time "${time}". Use HH:MM (24-hour).`;
+    }
+    if (slot && slot.capacity != null) {
+      const cap = Number(slot.capacity);
+      if (!Number.isInteger(cap) || cap < 0 || cap > 100000) {
+        return `Invalid capacity ${slot.capacity} for slot ${time}. Must be a non-negative integer.`;
+      }
+    }
   }
-
-  const bookingCountMap = new Map();
-  for (const b of bookings) {
-    const key = format(b.selectedDate, 'yyyy-MM-dd');
-    const travelers = typeof b.travelers === 'object' ? b.travelers : {};
-    const count = (travelers.adults || 0) + (travelers.children || 0) + (travelers.infants || 0);
-    bookingCountMap.set(key, (bookingCountMap.get(key) || 0) + count);
-  }
-
-  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-  const calendar = [];
-  let current = new Date(start);
-  while (!isAfter(current, end)) {
-    const dateStr = format(current, 'yyyy-MM-dd');
-    const override = overrideMap.get(dateStr);
-    const bookedCount = bookingCountMap.get(dateStr) || 0;
-    const dayOfWeek = dayNames[current.getDay()];
-
-    const isOperatingDay = templateDaysOfWeek.length === 0 || templateDaysOfWeek.some(
-      (d) => d.toLowerCase() === dayOfWeek.toLowerCase()
-    );
-
-    const effectiveCapacity = override?.capacity ?? maxCapacity;
-
-    const computedStatus = !isOperatingDay
-      ? 'BLOCKED'
-      : override
-        ? computeAggregatedStatus(bookedCount, effectiveCapacity, override.status)
-        : computeAggregatedStatus(bookedCount, effectiveCapacity, 'AVAILABLE');
-
-    const effectiveTimeSlots = override?.timeSlotOverrides
-      ? (typeof override.timeSlotOverrides === 'string'
-          ? JSON.parse(override.timeSlotOverrides)
-          : override.timeSlotOverrides)
-      : templateTimeSlots.map((time) => ({
-          time,
-          capacity: maxCapacity,
-          booked: 0,
-        }));
-
-    calendar.push({
-      date: dateStr,
-      dayOfWeek,
-      isOperatingDay,
-      status: computedStatus,
-      capacity: effectiveCapacity,
-      booked: bookedCount,
-      remaining: Math.max(0, effectiveCapacity - bookedCount),
-      timeSlots: effectiveTimeSlots,
-      hasOverride: !!override,
-      overrideStatus: override?.status || null,
-    });
-
-    current = addDays(current, 1);
-  }
-
-  return calendar;
+  return null;
 }
 
 exports.getAvailability = catchAsync(async (req, res, next) => {
@@ -126,10 +51,9 @@ exports.getAvailability = catchAsync(async (req, res, next) => {
     return next(new AppError('startDate and endDate are required', 400));
   }
 
-  const start = parseISO(startDate);
-  const end = parseISO(endDate);
-
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+  const start = toUtcDate(startDate);
+  const end = toUtcDate(endDate);
+  if (!start || !end) {
     return next(new AppError('Invalid date format. Use YYYY-MM-DD.', 400));
   }
 
@@ -149,7 +73,7 @@ exports.getAvailability = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found or access denied', 404));
   }
 
-  const calendar = await buildAvailabilityCalendar(tourId, tour.schedulesAndPricing, start, end);
+  const calendar = await buildAvailabilityCalendar(tour.id, tour.schedulesAndPricing, start, end);
 
   res.status(200).json({
     status: 'success',
@@ -170,10 +94,9 @@ exports.getPublicAvailability = catchAsync(async (req, res, next) => {
     return next(new AppError('startDate and endDate are required', 400));
   }
 
-  const start = parseISO(startDate);
-  const end = parseISO(endDate);
-
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+  const start = toUtcDate(startDate);
+  const end = toUtcDate(endDate);
+  if (!start || !end) {
     return next(new AppError('Invalid date format. Use YYYY-MM-DD.', 400));
   }
 
@@ -198,7 +121,9 @@ exports.getPublicAvailability = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found or not available for booking', 404));
   }
 
-  const calendar = await buildAvailabilityCalendar(tourId, tour.schedulesAndPricing, start, end);
+  // Build the calendar against the resolved tour id — a slug lookup must not
+  // be passed down as the tour id or overrides/bookings would be missed.
+  const calendar = await buildAvailabilityCalendar(tour.id, tour.schedulesAndPricing, start, end);
 
   res.status(200).json({
     status: 'success',
@@ -215,9 +140,18 @@ exports.updateDateAvailability = catchAsync(async (req, res, next) => {
   const { tourId, date } = req.params;
   const { status, capacity, timeSlotOverrides, notes } = req.body;
 
-  const parsedDate = parseISO(date);
-  if (isNaN(parsedDate.getTime())) {
+  const parsedDate = toUtcDate(date);
+  if (!parsedDate) {
     return next(new AppError('Invalid date format. Use YYYY-MM-DD.', 400));
+  }
+
+  if (status && !VALID_OVERRIDE_STATUSES.includes(status)) {
+    return next(new AppError('Invalid status. Must be AVAILABLE, LIMITED, FULL, or BLOCKED.', 400));
+  }
+
+  const slotError = validateTimeSlotOverrides(timeSlotOverrides);
+  if (slotError) {
+    return next(new AppError(slotError, 400));
   }
 
   const tour = await prisma.tour.findFirst({
@@ -228,53 +162,72 @@ exports.updateDateAvailability = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found or access denied', 404));
   }
 
-  if (status && !['AVAILABLE', 'LIMITED', 'FULL', 'BLOCKED'].includes(status)) {
-    return next(new AppError('Invalid status. Must be AVAILABLE, LIMITED, FULL, or BLOCKED.', 400));
-  }
-
-  if (capacity !== undefined && capacity !== null) {
-    if (capacity < 0) {
-      return next(new AppError('Capacity must be a non-negative number', 400));
+  const override = await prisma.$transaction(async (tx) => {
+    // Serialize against booking transactions by taking the same tour lock.
+    const [lockedTour] = await tx.$queryRawUnsafe(
+      `SELECT id FROM "Tour" WHERE id = $1 AND "supplierId" = $2 FOR UPDATE`,
+      tourId,
+      req.supplierId
+    );
+    if (!lockedTour) {
+      throw new AppError('Tour not found or access denied', 404);
     }
 
-    const existingBookings = await prisma.booking.count({
+    const dateKey = toDateKey(parsedDate);
+    const isPastDate = isBefore(parsedDate, todayUtc());
+    if (isPastDate) {
+      throw new AppError('Cannot update availability for a date in the past', 400);
+    }
+
+    const [liveRow] = await tx.$queryRawUnsafe(
+      `SELECT COALESCE(SUM(CASE WHEN status IN (${statusLiteral})
+         THEN ${TRAVELER_COUNT_SQL} ELSE 0 END), 0)::int AS "live"
+       FROM "Booking"
+       WHERE "tourId" = $1 AND "selectedDate" = $2::date`,
+      tourId,
+      dateKey
+    );
+    const liveBookings = parseInt(liveRow?.live, 10) || 0;
+
+    if (status === 'BLOCKED' && liveBookings > 0) {
+      throw new AppError(
+        `Cannot block this date — ${liveBookings} traveler${liveBookings === 1 ? '' : 's'} already booked. Mark it FULL instead.`,
+        400
+      );
+    }
+
+    if (capacity !== undefined && capacity !== null) {
+      if (!Number.isInteger(capacity) || capacity < 0) {
+        throw new AppError('Capacity must be a non-negative integer', 400);
+      }
+      if (capacity < liveBookings) {
+        throw new AppError(
+          `Cannot set capacity lower than existing bookings (${liveBookings}) for this date`,
+          400
+        );
+      }
+    }
+
+    const data = {};
+    if (status) data.status = status;
+    if (capacity !== undefined) data.capacity = capacity;
+    if (timeSlotOverrides) data.timeSlotOverrides = timeSlotOverrides;
+    if (notes !== undefined) data.notes = notes;
+
+    return tx.tourDateOverride.upsert({
       where: {
+        tourId_date: { tourId, date: parsedDate },
+      },
+      update: data,
+      create: {
         tourId,
-        selectedDate: {
-          gte: startOfDay(parsedDate),
-          lte: endOfDay(parsedDate),
-        },
-        status: { in: ['PENDING', 'CONFIRMED'] },
+        date: parsedDate,
+        status: status || 'AVAILABLE',
+        capacity: capacity ?? null,
+        timeSlotOverrides: timeSlotOverrides || undefined,
+        notes: notes || null,
       },
     });
-
-    if (capacity < existingBookings) {
-      return next(new AppError(
-        `Cannot set capacity lower than existing bookings (${existingBookings}) for this date`,
-        400
-      ));
-    }
-  }
-
-  const data = {};
-  if (status) data.status = status;
-  if (capacity !== undefined) data.capacity = capacity;
-  if (timeSlotOverrides) data.timeSlotOverrides = timeSlotOverrides;
-  if (notes !== undefined) data.notes = notes;
-
-  const override = await prisma.tourDateOverride.upsert({
-    where: {
-      tourId_date: { tourId, date: parsedDate },
-    },
-    update: data,
-    create: {
-      tourId,
-      date: parsedDate,
-      status: status || 'AVAILABLE',
-      capacity: capacity ?? null,
-      timeSlotOverrides: timeSlotOverrides || undefined,
-      notes: notes || null,
-    },
   });
 
   res.status(200).json({
@@ -286,8 +239,8 @@ exports.updateDateAvailability = catchAsync(async (req, res, next) => {
 exports.removeDateOverride = catchAsync(async (req, res, next) => {
   const { tourId, date } = req.params;
 
-  const parsedDate = parseISO(date);
-  if (isNaN(parsedDate.getTime())) {
+  const parsedDate = toUtcDate(date);
+  if (!parsedDate) {
     return next(new AppError('Invalid date format. Use YYYY-MM-DD.', 400));
   }
 
@@ -297,6 +250,10 @@ exports.removeDateOverride = catchAsync(async (req, res, next) => {
 
   if (!tour) {
     return next(new AppError('Tour not found or access denied', 404));
+  }
+
+  if (isBefore(parsedDate, todayUtc())) {
+    return next(new AppError('Cannot remove an override for a date in the past', 400));
   }
 
   await prisma.tourDateOverride.deleteMany({
@@ -333,17 +290,66 @@ exports.batchUpdateAvailability = catchAsync(async (req, res, next) => {
   }
 
   const results = await prisma.$transaction(async (tx) => {
+    // Serialize against booking transactions for the whole batch.
+    const [lockedTour] = await tx.$queryRawUnsafe(
+      `SELECT id FROM "Tour" WHERE id = $1 AND "supplierId" = $2 FOR UPDATE`,
+      tourId,
+      req.supplierId
+    );
+    if (!lockedTour) {
+      throw new AppError('Tour not found or access denied', 404);
+    }
+
     const created = [];
     for (const update of updates) {
       const { date, status, capacity, timeSlotOverrides, notes } = update;
-      const parsedDate = parseISO(date);
+      const parsedDate = toUtcDate(date);
 
-      if (isNaN(parsedDate.getTime())) {
+      if (!parsedDate) {
         throw new AppError(`Invalid date format: ${date}. Use YYYY-MM-DD.`, 400);
       }
 
-      if (status && !['AVAILABLE', 'LIMITED', 'FULL', 'BLOCKED'].includes(status)) {
+      if (status && !VALID_OVERRIDE_STATUSES.includes(status)) {
         throw new AppError(`Invalid status for ${date}. Must be AVAILABLE, LIMITED, FULL, or BLOCKED.`, 400);
+      }
+
+      const slotError = validateTimeSlotOverrides(timeSlotOverrides);
+      if (slotError) {
+        throw new AppError(slotError, 400);
+      }
+
+      if (isBefore(parsedDate, todayUtc())) {
+        throw new AppError(`Cannot update availability for a past date: ${date}`, 400);
+      }
+
+      const dateKey = toDateKey(parsedDate);
+      const [liveRow] = await tx.$queryRawUnsafe(
+        `SELECT COALESCE(SUM(CASE WHEN status IN (${statusLiteral})
+           THEN ${TRAVELER_COUNT_SQL} ELSE 0 END), 0)::int AS "live"
+         FROM "Booking"
+         WHERE "tourId" = $1 AND "selectedDate" = $2::date`,
+        tourId,
+        dateKey
+      );
+      const liveBookings = parseInt(liveRow?.live, 10) || 0;
+
+      if (status === 'BLOCKED' && liveBookings > 0) {
+        throw new AppError(
+          `Cannot block ${date} — ${liveBookings} traveler${liveBookings === 1 ? '' : 's'} already booked. Mark it FULL instead.`,
+          400
+        );
+      }
+
+      if (capacity !== undefined && capacity !== null) {
+        if (!Number.isInteger(capacity) || capacity < 0) {
+          throw new AppError(`Capacity must be a non-negative integer for ${date}`, 400);
+        }
+        if (capacity < liveBookings) {
+          throw new AppError(
+            `Cannot set capacity for ${date} lower than existing bookings (${liveBookings})`,
+            400
+          );
+        }
       }
 
       const override = await tx.tourDateOverride.upsert({

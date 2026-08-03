@@ -16,24 +16,43 @@ const controller = require('../../controllers/availabilityController');
 describe('availabilityController', () => {
   let req, res, next;
 
-  const mockTour = {
-    id: 't1',
-    title: 'Test Tour',
-    supplierId: 'u-1',
-    schedulesAndPricing: {
-      availability: {
-        daysOfWeek: ['Monday', 'Wednesday', 'Friday'],
-        timeSlots: ['10:00', '14:00'],
-      },
-      travelerDetails: {
-        maxTravelersPerBooking: 20,
-      },
+const mockTour = {
+  id: 't1',
+  title: 'Test Tour',
+  supplierId: 'u-1',
+  schedulesAndPricing: {
+    availability: {
+      daysOfWeek: ['Monday', 'Wednesday', 'Friday'],
+      timeSlots: ['10:00', '14:00'],
     },
-  };
+    travelerDetails: {
+      maxTravelersPerBooking: 20,
+    },
+  },
+};
+
+/** YYYY-MM-DD a few days from now — override writes reject past dates. */
+const futureDate = (days = 30) => {
+  const d = new Date(Date.now() + days * 86400000);
+  return d.toISOString().slice(0, 10);
+};
+
+/**
+ * Transaction mock used by the write endpoints. The tour lock query
+ * (`SELECT id FROM ... FOR UPDATE`) returns a locked row; the live-bookings
+ * aggregate returns the given traveler count.
+ */
+const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
+  $queryRawUnsafe: jest.fn().mockImplementation((query) => {
+    if (query.includes('SELECT id FROM')) return hasTour ? [{ id: 't1' }] : [];
+    return [{ live }];
+  }),
+  tourDateOverride: { upsert: prisma.tourDateOverride.upsert },
+});
 
   beforeEach(() => {
     jest.clearAllMocks();
-    req = { query: {}, params: {}, body: {}, user: { id: 'u-1' } };
+    req = { query: {}, params: {}, body: {}, user: { id: 'u-1' }, supplierId: 'u-1' };
     res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
     next = jest.fn();
 
@@ -43,12 +62,7 @@ describe('availabilityController', () => {
     prisma.booking.count.mockResolvedValue(0);
     prisma.tourDateOverride.upsert.mockResolvedValue({ id: 'ov-1', date: new Date(), status: 'AVAILABLE' });
     prisma.tourDateOverride.deleteMany.mockResolvedValue({ count: 1 });
-    prisma.$transaction.mockImplementation(async (cb) => {
-      const tx = {
-        tourDateOverride: { upsert: jest.fn().mockResolvedValue({ id: 'ov-1', date: new Date(), status: 'AVAILABLE' }) },
-      };
-      return cb(tx);
-    });
+    prisma.$transaction.mockImplementation(async (cb) => cb(makeTx()));
     getConfig.mockResolvedValue('50');
   });
 
@@ -119,7 +133,7 @@ describe('availabilityController', () => {
       await controller.getAvailability(req, res, next);
 
       const body = res.json.mock.calls[0][0];
-      expect(body.data.calendar[0].timeSlots).toEqual([{ time: '09:00', capacity: 10, booked: 2 }]);
+      expect(body.data.calendar[0].timeSlots).toEqual([{ time: '09:00', capacity: 10, booked: 0, remaining: 10 }]);
     });
 
     it('uses override capacity when present', async () => {
@@ -179,36 +193,57 @@ describe('availabilityController', () => {
     });
 
     it('returns 404 when tour not found', async () => {
-      req.params = { tourId: 'nonexistent', date: '2026-06-15' };
+      req.params = { tourId: 'nonexistent', date: futureDate() };
       prisma.tour.findFirst.mockResolvedValue(null);
       await controller.updateDateAvailability(req, res, next);
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
     });
 
     it('returns 400 for invalid status', async () => {
-      req.params = { tourId: 't1', date: '2026-06-15' };
+      req.params = { tourId: 't1', date: futureDate() };
       req.body = { status: 'INVALID' };
       await controller.updateDateAvailability(req, res, next);
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
 
     it('returns 400 for negative capacity', async () => {
-      req.params = { tourId: 't1', date: '2026-06-15' };
+      req.params = { tourId: 't1', date: futureDate() };
       req.body = { capacity: -1 };
       await controller.updateDateAvailability(req, res, next);
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
 
     it('returns 400 when capacity lower than existing bookings', async () => {
-      req.params = { tourId: 't1', date: '2026-06-15' };
+      req.params = { tourId: 't1', date: futureDate() };
       req.body = { capacity: 2 };
-      prisma.booking.count.mockResolvedValue(5);
+      prisma.$transaction.mockImplementation(async (cb) => cb(makeTx({ live: '5' })));
+      await controller.updateDateAvailability(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('returns 400 when blocking a date with live bookings', async () => {
+      req.params = { tourId: 't1', date: futureDate() };
+      req.body = { status: 'BLOCKED' };
+      prisma.$transaction.mockImplementation(async (cb) => cb(makeTx({ live: '3' })));
+      await controller.updateDateAvailability(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('returns 400 for a past date', async () => {
+      req.params = { tourId: 't1', date: '2020-01-01' };
+      await controller.updateDateAvailability(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('rejects invalid time slot override entries', async () => {
+      req.params = { tourId: 't1', date: futureDate() };
+      req.body = { timeSlotOverrides: [{ time: '25:00', capacity: 10 }] };
       await controller.updateDateAvailability(req, res, next);
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
 
     it('upserts override with all fields', async () => {
-      req.params = { tourId: 't1', date: '2026-06-15' };
+      req.params = { tourId: 't1', date: futureDate() };
       req.body = { status: 'LIMITED', capacity: 15, timeSlotOverrides: [{ time: '10:00', capacity: 10 }], notes: 'Testing' };
 
       await controller.updateDateAvailability(req, res, next);
@@ -218,7 +253,7 @@ describe('availabilityController', () => {
     });
 
     it('upserts override with minimal fields', async () => {
-      req.params = { tourId: 't1', date: '2026-06-15' };
+      req.params = { tourId: 't1', date: futureDate() };
       req.body = {};
 
       await controller.updateDateAvailability(req, res, next);
@@ -231,7 +266,7 @@ describe('availabilityController', () => {
     });
 
     it('sets capacity null when not provided', async () => {
-      req.params = { tourId: 't1', date: '2026-06-15' };
+      req.params = { tourId: 't1', date: futureDate() };
       req.body = { status: 'FULL' };
 
       await controller.updateDateAvailability(req, res, next);
@@ -255,14 +290,20 @@ describe('availabilityController', () => {
     });
 
     it('returns 404 when tour not found', async () => {
-      req.params = { tourId: 'nonexistent', date: '2026-06-15' };
+      req.params = { tourId: 'nonexistent', date: futureDate() };
       prisma.tour.findFirst.mockResolvedValue(null);
       await controller.removeDateOverride(req, res, next);
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
     });
 
+    it('returns 400 for a past date', async () => {
+      req.params = { tourId: 't1', date: '2020-01-01' };
+      await controller.removeDateOverride(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
     it('removes override and returns success', async () => {
-      req.params = { tourId: 't1', date: '2026-06-15' };
+      req.params = { tourId: 't1', date: futureDate() };
 
       await controller.removeDateOverride(req, res, next);
 
@@ -291,7 +332,7 @@ describe('availabilityController', () => {
 
     it('returns 404 when tour not found', async () => {
       req.params = { tourId: 'nonexistent' };
-      req.body = { updates: [{ date: '2026-06-15' }] };
+      req.body = { updates: [{ date: futureDate() }] };
       prisma.tour.findFirst.mockResolvedValue(null);
       await controller.batchUpdateAvailability(req, res, next);
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
@@ -306,7 +347,14 @@ describe('availabilityController', () => {
 
     it('returns 400 for invalid status', async () => {
       req.params = { tourId: 't1' };
-      req.body = { updates: [{ date: '2026-06-15', status: 'INVALID' }] };
+      req.body = { updates: [{ date: futureDate(), status: 'INVALID' }] };
+      await controller.batchUpdateAvailability(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('returns 400 for a past date', async () => {
+      req.params = { tourId: 't1' };
+      req.body = { updates: [{ date: '2020-01-01', status: 'FULL' }] };
       await controller.batchUpdateAvailability(req, res, next);
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
@@ -315,8 +363,8 @@ describe('availabilityController', () => {
       req.params = { tourId: 't1' };
       req.body = {
         updates: [
-          { date: '2026-06-15', status: 'FULL' },
-          { date: '2026-06-16', status: 'LIMITED', capacity: 10 },
+          { date: futureDate(), status: 'FULL' },
+          { date: futureDate(31), status: 'LIMITED', capacity: 10 },
         ],
       };
 

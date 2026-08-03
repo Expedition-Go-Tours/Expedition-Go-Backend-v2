@@ -19,6 +19,7 @@ const AppError = require('../utils/appError');
 const { createPaymentIntent, createRefund, calculateCommission } = require('../utils/stripeHelpers');
 const { generateBookingNumber, validateTravelerInfo, evaluateCancellationPolicy } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
+const { evaluateBookingAvailability } = require('../utils/availabilityCore');
 const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../utils/queue');
 const getConfig = require('../utils/getConfig');
 const { generatePrintableTicketHtml } = require('../utils/emailService');
@@ -37,6 +38,7 @@ exports.addToCart = catchAsync(async (req, res, next) => {
   const {
     tourId,
     selectedDate,
+    selectedTime,
     travelers
   } = req.body;
 
@@ -60,8 +62,15 @@ exports.addToCart = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found or not available for booking', 404));
   }
 
+  // Fail fast: the date (+ slot) must be bookable and have room for this party
+  // before it can ever sit in the cart.
+  const availability = await checkTourAvailability(tourId, selectedDate, { selectedTime, travelers });
+  if (!availability.available) {
+    return next(new AppError(availability.reason || 'Tour is not available on the selected date', 400));
+  }
+
   // Calculate pricing based on tour's pricing model (includes special offers)
-  const pricingCalculation = await calculateTourPrice(tour, travelers, selectedDate, null, null, customerId)
+  const pricingCalculation = await calculateTourPrice(tour, travelers, selectedDate, selectedTime || null, null, customerId)
     .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
   
   if (!pricingCalculation.success) {
@@ -73,6 +82,7 @@ exports.addToCart = catchAsync(async (req, res, next) => {
 
   // Set cart expiration (2 hours from now)
   const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000);
+  const normalizedTime = selectedTime || '';
 
   // Create or update cart item
   const cartItem = await prisma.cartItem.upsert({
@@ -81,7 +91,7 @@ exports.addToCart = catchAsync(async (req, res, next) => {
         customerId,
         tourId,
         selectedDate: new Date(selectedDate),
-        selectedTime: ''
+        selectedTime: normalizedTime
       }
     },
     update: {
@@ -96,7 +106,7 @@ exports.addToCart = catchAsync(async (req, res, next) => {
       customerId,
       tourId,
       selectedDate: new Date(selectedDate),
-      selectedTime: '',
+      selectedTime: normalizedTime,
       travelers,
       subtotal: pricingCalculation.subtotal,
       total: pricingCalculation.total,
@@ -238,6 +248,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
   const {
     tourId,
     selectedDate,
+    selectedTime,
     travelers,
     specialRequests,
     paymentMethodId,
@@ -281,35 +292,53 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       const availability = await checkTourAvailability(
         item.tourId,
         item.selectedDate.toISOString().split('T')[0],
-        null
+        { selectedTime: item.selectedTime || null, travelers: item.travelers }
       );
       if (!availability.available) {
         return next(new AppError(
-          `"${item.tour.title}" is no longer available on ${item.selectedDate.toISOString().split('T')[0]}`,
-          400
-        ));
-      }
-      const totalTravelers = (item.travelers.adults || 0) + (item.travelers.children || 0) + (item.travelers.infants || 0);
-      if (totalTravelers > availability.availableSpots) {
-        return next(new AppError(
-          `Only ${availability.availableSpots} spots left for "${item.tour.title}" on ${item.selectedDate.toISOString().split('T')[0]}, but ${totalTravelers} requested`,
+          `"${item.tour.title}" is no longer available on ${item.selectedDate.toISOString().split('T')[0]}${item.selectedTime ? ` at ${item.selectedTime}` : ''} (${availability.reason || 'no availability'})`,
           400
         ));
       }
     }
 
-    bookingItems = cartItems.map(item => ({
-      tourId: item.tourId,
-      tour: item.tour,
-      selectedDate: item.selectedDate,
-      selectedTime: item.selectedTime,
-      travelers: item.travelers,
-      subtotal: parseFloat(item.subtotal),
-      total: parseFloat(item.total),
-      currency: item.currency,
-      discounts: parseFloat(item.discounts) || 0,
-      appliedOfferId: item.appliedOfferId || null
-    }));
+    // Recompute pricing server-side for every cart item. The cart `total` is a
+    // snapshot taken at add-to-cart time; the amount a customer actually pays
+    // must reflect the tour's current pricing at checkout, so a price change
+    // after the item was added is honored and a stale/garbage snapshot can
+    // never be charged.
+    const recomputedItems = [];
+    for (const item of cartItems) {
+      const pricing = await calculateTourPrice(
+        item.tour,
+        item.travelers,
+        item.selectedDate.toISOString().split('T')[0],
+        item.selectedTime || null,
+        null,
+        customerId
+      ).catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
+
+      if (!pricing.success) {
+        return next(new AppError(`"${item.tour.title}": ${pricing.error}`, 400));
+      }
+      if (!Number.isFinite(pricing.subtotal) || !Number.isFinite(pricing.total) || pricing.total <= 0) {
+        return next(new AppError(`"${item.tour.title}" has invalid pricing`, 400));
+      }
+
+      recomputedItems.push({
+        tourId: item.tourId,
+        tour: item.tour,
+        selectedDate: item.selectedDate,
+        selectedTime: item.selectedTime,
+        travelers: item.travelers,
+        subtotal: pricing.subtotal,
+        total: pricing.total,
+        currency: pricing.currency,
+        discounts: pricing.discount || 0,
+        appliedOfferId: pricing.appliedOffer?.id || item.appliedOfferId || null
+      });
+    }
+    bookingItems = recomputedItems;
   } else {
     // Direct booking
     const tour = await prisma.tour.findFirst({
@@ -330,7 +359,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       return next(new AppError('Tour not found or not available', 404));
     }
 
-    const pricingCalculation = await calculateTourPrice(tour, travelers, selectedDate, null, null, customerId)
+    const pricingCalculation = await calculateTourPrice(tour, travelers, selectedDate, selectedTime || null, null, customerId)
       .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
     
     if (!pricingCalculation.success) {
@@ -340,26 +369,17 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     const discount = pricingCalculation.discount || 0;
     const appliedOffer = pricingCalculation.appliedOffer || null;
 
-    // Check availability for the selected date
-    const availability = await checkTourAvailability(tourId, selectedDate, null);
+    // Check availability for the selected date (+ slot), enforcing capacity for this party
+    const availability = await checkTourAvailability(tourId, selectedDate, { selectedTime, travelers });
     if (!availability.available) {
       return next(new AppError(availability.reason || 'Tour is not available on the selected date', 400));
-    }
-
-    // Check if sufficient capacity exists
-    const totalTravelers = (travelers.adults || 0) + (travelers.children || 0) + (travelers.infants || 0);
-    if (totalTravelers > availability.availableSpots) {
-      return next(new AppError(
-        `Only ${availability.availableSpots} spots available on the selected date, but ${totalTravelers} travelers requested`,
-        400
-      ));
     }
 
     bookingItems = [{
       tourId: tour.id,
       tour,
       selectedDate: new Date(selectedDate),
-      selectedTime: null,
+      selectedTime: selectedTime || null,
       travelers,
       subtotal: pricingCalculation.subtotal,
       total: pricingCalculation.total,
@@ -385,13 +405,31 @@ exports.createBooking = catchAsync(async (req, res, next) => {
   const now = new Date();
 
   for (const item of bookingItems) {
-    const selectedDate = new Date(item.selectedDate);
-    const hoursUntilTour = (selectedDate - now) / (1000 * 60 * 60);
+    // Per-tour advance cutoff (bookingAndTickets.minAdvanceBookingHours) wins
+    // over the system default. When a slot is booked and the tour uses per-slot
+    // cutoffs, the clock starts at the slot time instead of midnight.
+    const parsedBt = typeof item.tour.bookingAndTickets === 'string'
+      ? (() => { try { return JSON.parse(item.tour.bookingAndTickets); } catch { return null; } })()
+      : item.tour.bookingAndTickets;
+    const perSlotCutoff = !!parsedBt?.perSlotCutoff;
+    const tourCutoffHours = Number(parsedBt?.minAdvanceBookingHours);
+    const effectiveCutoff = Number.isFinite(tourCutoffHours) ? tourCutoffHours : minAdvanceHours;
+
+    const dateAt = new Date(item.selectedDate);
+    let startAt;
+    if (item.selectedTime && perSlotCutoff) {
+      const [h = 0, m = 0] = item.selectedTime.split(':').map(Number);
+      startAt = new Date(Date.UTC(dateAt.getUTCFullYear(), dateAt.getUTCMonth(), dateAt.getUTCDate(), h, m));
+    } else {
+      startAt = new Date(Date.UTC(dateAt.getUTCFullYear(), dateAt.getUTCMonth(), dateAt.getUTCDate()));
+    }
+
+    const hoursUntilTour = (startAt - now) / (1000 * 60 * 60);
     const daysUntilTour = hoursUntilTour / 24;
 
-    if (hoursUntilTour < minAdvanceHours) {
+    if (hoursUntilTour < effectiveCutoff) {
       return next(new AppError(
-        `Bookings must be made at least ${minAdvanceHours} hours before the tour start time`,
+        `Bookings must be made at least ${effectiveCutoff} hours before the tour start time`,
         400
       ));
     }
@@ -412,8 +450,12 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Calculate total amount for Stripe
+  // Calculate total amount for Stripe — guard against NaN/zero so a malformed
+  // price can never reach the payment provider.
   const totalAmount = bookingItems.reduce((sum, item) => sum + item.total, 0);
+  if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+    return next(new AppError('Booking total must be greater than 0', 400));
+  }
 
   // Create Stripe PaymentIntent FIRST (outside DB transaction — avoids holding connection open during network I/O)
   const idempotencyKey = req.headers['idempotency-key'] || `booking:${customerId}:${Date.now()}`;
@@ -436,39 +478,31 @@ exports.createBooking = catchAsync(async (req, res, next) => {
 
   // Create bookings in transaction (short — DB only, no network I/O)
   const result = await prisma.$transaction(async (tx) => {
-    // 1. Lock tour rows with FOR UPDATE to prevent race conditions
-    for (const item of bookingItems) {
+    // 1. Lock tour rows with FOR UPDATE to prevent race conditions.
+    //    Sorted ids keep lock ordering consistent and avoid deadlocks between
+    //    multi-tour carts. Every write path (both checkouts + override writes)
+    //    takes the tour lock first, which serializes all capacity decisions.
+    const sortedTourIds = [...new Set(bookingItems.map((i) => i.tourId))].sort();
+    for (const id of sortedTourIds) {
       const [lockedTour] = await tx.$queryRawUnsafe(
         `SELECT id FROM "Tour" WHERE id = $1 FOR UPDATE`,
-        item.tourId
+        id
       );
       if (!lockedTour) {
-        throw new Error(`Tour ${item.tourId} not found`);
+        throw new Error(`Tour ${id} not found`);
       }
     }
 
-    // 2. Check capacity atomically for each tour
+    // 2. Check capacity atomically for each item (shared availability core:
+    //    traveler-based sum incl. PENDING, TourDateOverride, closed days,
+    //    per-slot capacity and per-group cap).
     for (const item of bookingItems) {
-      const totalTravelers = (item.travelers.adults || 0) + (item.travelers.children || 0) + (item.travelers.infants || 0);
-      const [capacityCheck] = await tx.$queryRawUnsafe(
-        `SELECT COALESCE(SUM(
-          CASE WHEN status IN ('PENDING', 'CONFIRMED')
-          THEN COALESCE(
-            (travelers->>'adults')::int, 0
-          ) + COALESCE(
-            (travelers->>'children')::int, 0
-          ) + COALESCE(
-            (travelers->>'infants')::int, 0
-          ) ELSE 0 END
-        ), 0) AS "currentBookings"
-        FROM "Booking"
-        WHERE "tourId" = $1 AND "selectedDate" = $2::date`,
-        item.tourId,
-        item.selectedDate instanceof Date ? item.selectedDate.toISOString().split('T')[0] : item.selectedDate
-      );
-      const availableSpots = (item.tour.schedulesAndPricing?.travelerDetails?.maxParticipants || 50) - parseInt(capacityCheck.currentBookings);
-      if (totalTravelers > availableSpots) {
-        throw new Error(`Only ${availableSpots} spots left, but ${totalTravelers} requested`);
+      const dateKey = item.selectedDate instanceof Date
+        ? item.selectedDate.toISOString().split('T')[0]
+        : String(item.selectedDate).slice(0, 10);
+      const evalResult = await evaluateBookingAvailability(tx, item.tour, dateKey, item.selectedTime || null, item.travelers);
+      if (!evalResult.ok) {
+        throw new Error(evalResult.reason);
       }
     }
 

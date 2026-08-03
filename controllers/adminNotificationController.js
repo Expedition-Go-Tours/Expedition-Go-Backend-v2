@@ -8,6 +8,9 @@ const TYPE_PERMISSION = {
   PAYOUT_NEEDS_APPROVAL: ['payouts.view', 'payouts.approve'],
   SUPPLIER_STATUS_CHANGE: ['suppliers.view', 'suppliers.suspend'],
   SYSTEM_ALERT: [],
+  TOUR_SUBMITTED_FOR_REVIEW: ['tours.view', 'tours.approve'],
+  BOOKING_CREATED: ['bookings.view', 'dashboard.*'],
+  BOOKING_CONFIRMED: ['bookings.view', 'dashboard.*'],
 };
 
 function filterAdminNotifications(notifications, permissionKeys) {

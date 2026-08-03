@@ -152,8 +152,9 @@ function makeBookingTx(usedNumbers) {
       if (query.includes('SELECT id FROM')) {
         return [{ id: 'tour-1' }];
       }
-      return [{ currentBookings: '0' }];
+      return [{ currentBookings: '0', groupCount: '0' }];
     }),
+    tourDateOverride: { findFirst: jest.fn().mockResolvedValue(null) },
     booking: {
       create: jest.fn().mockImplementation((args) => {
         if (used.has(args.data.bookingNumber)) {

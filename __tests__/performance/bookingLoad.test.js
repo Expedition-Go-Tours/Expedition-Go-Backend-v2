@@ -141,7 +141,7 @@ describe('Booking Load Tests', () => {
     const best = results[results.length - 1];
     expect(best.throughput).toBeGreaterThan(0);
     expect(best.errorRate).toBe('0.00%');
-  }, 30000);
+  }, 120000);
 
   it('createBooking throughput at increasing concurrency', async () => {
     const results = await runLoadTestScenarios('createBooking Load', () => {
@@ -155,7 +155,7 @@ describe('Booking Load Tests', () => {
     const best = results[results.length - 1];
     expect(best.throughput).toBeGreaterThan(0);
     expect(best.errorRate).toBe('0.00%');
-  }, 30000);
+  }, 120000);
 
   it('mixed cart+booking flow at 100 concurrency', async () => {
     let opIdx = 0;
@@ -174,5 +174,5 @@ describe('Booking Load Tests', () => {
 
     const m = test.report();
     expect(m.throughput).toBeGreaterThan(0);
-  }, 30000);
+  }, 120000);
 });

@@ -23,7 +23,8 @@ jest.mock('../../utils/cacheHelper', () => ({
 }));
 
 jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
-jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()), enqueueNotification: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn(() => Promise.resolve()), emitToRoom: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
 jest.mock('../../utils/tourHelpers', () => ({ createSlug: jest.fn(), validateTourData: jest.fn(), validateStoredPricing: jest.fn(), rebuildSchedulePrices: jest.fn(), durationToMinutes: jest.fn() }));
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
@@ -34,7 +35,8 @@ jest.mock('../../utils/fullTextSearch', () => ({ rankTourIdsBySearch: jest.fn() 
 
 const prisma = require('../../utils/prismaClient');
 const cache = require('../../utils/cacheHelper');
-const { enqueueEvent } = require('../../utils/queue');
+const { enqueueEvent, enqueueNotification } = require('../../utils/queue');
+const { notifyAdmin } = require('../../utils/adminNotificationService');
 const { emit } = require('../../utils/eventEmitter');
 const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
 const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices, durationToMinutes } = require('../../utils/tourHelpers');
@@ -100,6 +102,8 @@ describe('tourController', () => {
     cache.invalidateTourCaches.mockResolvedValue();
     cache.invalidateKeys.mockResolvedValue();
     enqueueEvent.mockResolvedValue();
+    enqueueNotification.mockResolvedValue();
+    notifyAdmin.mockResolvedValue();
     deleteCloudinaryImage.mockResolvedValue();
     createSlug.mockResolvedValue('test-tour-slug');
     validateTourData.mockReturnValue({ isValid: true, errors: [] });
@@ -567,31 +571,29 @@ describe('tourController', () => {
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 403 }));
     });
 
-    it('returns 400 when publishing without verified payout method', async () => {
-      req.body.status = 'PUBLISHED';
-      prisma.payoutMethod.findFirst = jest.fn().mockResolvedValue(null);
-
-      await controller.createTour(req, res, next);
-
-      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
-    });
-
-    it('allows publishing with verified payout method', async () => {
+    it('coerces ACTIVE/PUBLISHED status to DRAFT (no direct publish)', async () => {
       req.body = {
-        title: 'Published Tour',
+        title: 'New Tour',
         description: 'A great tour experience that is long enough to pass validation.',
-        status: 'PUBLISHED',
         categorization: { category: 'Adventure', subcategory: 'Hiking', activityType: 'Guided', difficulty: 'Easy', duration: { hours: 3 } },
         theme: { primary: 'Nature', secondary: [] },
         productContent: { location: { city: 'Accra', country: 'Ghana', region: 'Greater Accra' } },
         schedulesAndPricing: {},
         bookingAndTickets: {},
+        photos: [],
+        status: 'PUBLISHED',
       };
       prisma.payoutMethod.findFirst = jest.fn().mockResolvedValue({ id: 'pm-1', verified: true });
 
       await controller.createTour(req, res, next);
 
+      expect(prisma.tour.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'DRAFT' }),
+        })
+      );
       expect(res.status).toHaveBeenCalledWith(201);
+      expect(prisma.payoutMethod.findFirst).not.toHaveBeenCalled();
     });
 
     it('returns 400 when validation fails', async () => {
@@ -752,22 +754,24 @@ describe('tourController', () => {
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
     });
 
-    it('blocks publishing without verified payout method', async () => {
+    it('blocks direct publish (ACTIVE/PUBLISHED) with guidance to submit for review', async () => {
       req.body = { status: 'PUBLISHED' };
       prisma.payoutMethod = { findFirst: jest.fn().mockResolvedValue(null) };
 
       await controller.updateTour(req, res, next);
 
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.tour.update).not.toHaveBeenCalled();
     });
 
-    it('allows publishing with verified payout method', async () => {
-      req.body = { title: 'Updated', status: 'PUBLISHED' };
+    it('blocks direct publish even with a verified payout method', async () => {
+      req.body = { title: 'Updated', status: 'ACTIVE' };
       prisma.payoutMethod = { findFirst: jest.fn().mockResolvedValue({ id: 'pm-1', verified: true }) };
 
       await controller.updateTour(req, res, next);
 
-      expect(res.status).toHaveBeenCalledWith(200);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.tour.update).not.toHaveBeenCalled();
     });
 
     it('returns 400 when partial validation fails', async () => {
@@ -778,7 +782,7 @@ describe('tourController', () => {
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
 
-    it('blocks Set Live when stored pricing blob is incomplete', async () => {
+    it('blocks Set Live (ACTIVE) via the direct-publish guard', async () => {
       req.body = { status: 'ACTIVE' };
       prisma.tour.findFirst.mockResolvedValue({
         ...mockExistingTour,
@@ -793,12 +797,12 @@ describe('tourController', () => {
 
       await controller.updateTour(req, res, next);
 
-      expect(validateStoredPricing).toHaveBeenCalled();
+      expect(validateStoredPricing).not.toHaveBeenCalled();
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
       expect(prisma.tour.update).not.toHaveBeenCalled();
     });
 
-    it('allows Set Live when stored pricing blob is complete', async () => {
+    it('blocks Set Live (ACTIVE) even with a complete stored pricing blob', async () => {
       req.body = { status: 'ACTIVE' };
       prisma.tour.findFirst.mockResolvedValue({
         ...mockExistingTour,
@@ -815,10 +819,11 @@ describe('tourController', () => {
 
       await controller.updateTour(req, res, next);
 
-      expect(res.status).toHaveBeenCalledWith(200);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.tour.update).not.toHaveBeenCalled();
     });
 
-    it('validates incoming pricing blob when publishing with one supplied', async () => {
+    it('blocks direct publish even when a pricing blob is supplied', async () => {
       req.body = {
         title: 'Updated',
         status: 'PUBLISHED',
@@ -833,12 +838,9 @@ describe('tourController', () => {
 
       await controller.updateTour(req, res, next);
 
-      expect(validateStoredPricing).toHaveBeenCalledWith(
-        expect.objectContaining({
-          travelerDetails: expect.objectContaining({ pricingModel: 'perGroup' }),
-        })
-      );
+      expect(validateStoredPricing).not.toHaveBeenCalled();
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.tour.update).not.toHaveBeenCalled();
     });
 
     it('does not run live pricing validation on plain draft updates', async () => {
@@ -1316,6 +1318,123 @@ describe('tourController', () => {
 
       expect(logActivity).toHaveBeenCalledWith(
         expect.objectContaining({ action: 'tour.seeded' })
+      );
+    });
+  });
+
+  // ============================
+  // submitTourForReview
+  // ============================
+  describe('submitTourForReview', () => {
+    const completeTour = {
+      id: 'tour-1',
+      title: 'Complete Tour',
+      description: 'A fully fleshed-out tour description that is long enough.',
+      photos: ['https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/p.jpg'],
+      status: 'DRAFT',
+      supplierId: 'supplier-1',
+      categorization: { category: 'Adventure' },
+      productContent: {
+        writingLanguage: 'English',
+        highlights: ['Scenic views'],
+        meetingMode: 'meeting_point',
+        meetingPoint: { name: 'Independence Arch', address: 'Accra' },
+      },
+      bookingAndTickets: { meetingPoint: { name: 'Independence Arch', address: 'Accra' } },
+      schedulesAndPricing: {},
+      supplier: { id: 'supplier-1', name: 'Supplier One', photoURL: null },
+    };
+
+    beforeEach(() => {
+      req.params = { id: 'tour-1' };
+      req.supplierId = 'supplier-1';
+      prisma.tour.findFirst.mockResolvedValue(completeTour);
+      prisma.payoutMethod.findFirst = jest.fn().mockResolvedValue({ id: 'pm-1' });
+      prisma.tour.update.mockResolvedValue({ ...completeTour, status: 'PENDING_APPROVAL' });
+      validateStoredPricing.mockReturnValue([]);
+    });
+
+    it('moves a complete tour to PENDING_APPROVAL and notifies admins', async () => {
+      await controller.submitTourForReview(req, res, next);
+
+      expect(prisma.tour.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'tour-1' },
+          data: expect.objectContaining({ status: 'PENDING_APPROVAL', submittedAt: expect.any(Date) }),
+        })
+      );
+      expect(notifyAdmin).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'TOUR_SUBMITTED_FOR_REVIEW', data: expect.objectContaining({ tourId: 'tour-1' }) })
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('returns 404 when tour is not owned by the supplier', async () => {
+      prisma.tour.findFirst.mockResolvedValue(null);
+
+      await controller.submitTourForReview(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
+    });
+
+    it('rejects submission for an already-live tour', async () => {
+      prisma.tour.findFirst.mockResolvedValue({ ...completeTour, status: 'ACTIVE' });
+
+      await controller.submitTourForReview(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.tour.update).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 when the tour is already awaiting approval', async () => {
+      prisma.tour.findFirst.mockResolvedValue({ ...completeTour, status: 'PENDING_APPROVAL' });
+
+      await controller.submitTourForReview(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 409 }));
+      expect(prisma.tour.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects submission when required fields are missing', async () => {
+      prisma.tour.findFirst.mockResolvedValue({ ...completeTour, title: ' ' });
+
+      await controller.submitTourForReview(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 400, message: expect.stringContaining('title') })
+      );
+      expect(prisma.tour.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects submission without a verified payout method', async () => {
+      prisma.payoutMethod.findFirst = jest.fn().mockResolvedValue(null);
+
+      await controller.submitTourForReview(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.tour.update).not.toHaveBeenCalled();
+    });
+
+    it('enforces pricing completeness via validateStoredPricing', async () => {
+      validateStoredPricing.mockReturnValue(['Add at least one pricing schedule']);
+
+      await controller.submitTourForReview(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 400, message: expect.stringContaining('pricing schedule') })
+      );
+      expect(prisma.tour.update).not.toHaveBeenCalled();
+    });
+
+    it('clears stale review fields when resubmitting', async () => {
+      prisma.tour.findFirst.mockResolvedValue({ ...completeTour, status: 'REJECTED', reviewedAt: new Date(), reviewNote: 'Fix pricing' });
+
+      await controller.submitTourForReview(req, res, next);
+
+      expect(prisma.tour.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ reviewedBy: null, reviewedAt: null, reviewNote: null }),
+        })
       );
     });
   });

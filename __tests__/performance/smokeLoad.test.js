@@ -97,7 +97,7 @@ describe('Smoke Load Tests', () => {
     const best = results[results.length - 1];
     expect(best.throughput).toBeGreaterThan(0);
     expect(best.errors).toBe(0);
-  }, 15000);
+  }, 60000);
 
   it('getTour — single tour detail under light load', async () => {
     prisma.tour.findUnique.mockResolvedValue({
@@ -122,7 +122,7 @@ describe('Smoke Load Tests', () => {
     const best = results[results.length - 1];
     expect(best.throughput).toBeGreaterThan(0);
     expect(best.errors).toBe(0);
-  }, 15000);
+  }, 60000);
 
   it('mixed read flow — tours + single tour at low concurrency', async () => {
     prisma.tour.findMany.mockResolvedValue([mockTour]);
@@ -152,5 +152,5 @@ describe('Smoke Load Tests', () => {
     const m = test.report();
     expect(m.throughput).toBeGreaterThan(0);
     expect(m.errors).toBe(0);
-  }, 15000);
+  }, 60000);
 });

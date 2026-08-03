@@ -1,5 +1,6 @@
 const { z } = require('zod');
 const { isValidPhoneNumber } = require('libphonenumber-js');
+const { MAX_PRICE, isValidCurrencyCode } = require('./currencyCodes');
 
 const locationSchema = z.object({
   name: z.string().min(1, 'Location name is required'),
@@ -123,6 +124,160 @@ const groupSizeSchema = z.object({
 
 const photoObjectSchema = z.string();
 
+/**
+ * Coerce a price-like value to a finite number or null.
+ * - null / undefined / ''  -> null (field absent or empty)
+ * - numeric string         -> Number (e.g. "50" -> 50)
+ * - finite number          -> unchanged
+ * - anything else          -> NaN (fails the z.number() check below)
+ */
+const toNullableNumber = (v) => {
+  if (v === undefined || v === null || v === '') return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : NaN;
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (s === '') return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : NaN;
+  }
+  return NaN;
+};
+
+/** Nullable, finite, non-negative price capped at the Decimal(10,2) ceiling. */
+const numericOrNull = z.preprocess(toNullableNumber, z.number().min(0).max(MAX_PRICE).nullable());
+
+/** Nullable, finite, positive integer (participants, group size bounds). */
+const intOrNull = z.preprocess(toNullableNumber, z.number().int().min(1).nullable());
+
+const storedPriceSchema = z.object({
+  ageGroup: z.string().optional(),
+  label: z.string().optional(),
+  retailPrice: numericOrNull.optional(),
+  groupSize: z.boolean().optional(),
+  days: z.array(z.string()).optional(),
+  times: z.array(z.string()).optional(),
+});
+
+const storedPricingCategorySchema = z.object({
+  name: z.string().optional(),
+  label: z.string().optional(),
+  price: numericOrNull.optional(),
+  minAge: z.number().finite().optional(),
+  maxAge: z.number().finite().optional(),
+  notAllowed: z.boolean().optional(),
+  ticketNotRequired: z.boolean().optional(),
+  needsAdult: z.boolean().optional(),
+  idRequired: z.boolean().optional(),
+  idType: z.string().optional(),
+  tiers: z.array(z.object({
+    id: z.string().optional(),
+    from: intOrNull.optional(),
+    to: intOrNull.optional(),
+    pricePerPerson: numericOrNull.optional(),
+  })).optional(),
+});
+
+const storedGroupSizeSchema = z.object({
+  id: z.string().optional(),
+  from: intOrNull.optional(),
+  to: intOrNull.optional(),
+  price: numericOrNull.optional(),
+});
+
+const storedTimeSlotSchema = z.object({
+  id: z.string().optional(),
+  startTime: z.string().optional(),
+  cutoff: z.number().finite().optional(),
+});
+
+const storedDateExceptionSchema = z.object({
+  id: z.string().optional(),
+  date: z.string().optional(),
+  type: z.string().optional(),
+  overrideTimes: z.array(z.string()).optional(),
+});
+
+const weeklyHoursSchema = z.record(z.array(z.object({
+  startTime: z.string().optional(),
+  endTime: z.string().optional(),
+}))).nullable().optional();
+
+const isoCurrencyRefine = (c) => c === '' || c == null || isValidCurrencyCode(c);
+const isoCurrencyCode = z.string().refine(isoCurrencyRefine, { message: 'Invalid ISO 4217 currency code' });
+
+const storedPricingScheduleSchema = z.object({
+  name: z.string().optional(),
+  type: z.string().optional(),
+  startDate: z.string().optional(),
+  hasEndDate: z.boolean().optional(),
+  endDate: z.string().nullable().optional(),
+  weeklySchedule: weeklyHoursSchema,
+  dateExceptions: z.array(storedDateExceptionSchema).optional(),
+  timeSlots: z.array(storedTimeSlotSchema).optional(),
+  pricingModel: z.string().optional(),
+  currency: isoCurrencyCode.optional(),
+  pricingApproach: z.string().optional(),
+  uniformPrice: numericOrNull.optional(),
+  pricingCategories: z.array(storedPricingCategorySchema).optional(),
+  prices: z.array(storedPriceSchema).optional(),
+  minParticipants: intOrNull.optional(),
+  maxParticipants: intOrNull.optional(),
+});
+
+const promotionSchema = z.object({
+  id: z.string().optional(),
+  isActive: z.boolean().optional(),
+  type: z.enum(['percentage', 'fixedAmount']).optional(),
+  discountValue: numericOrNull.optional(),
+  maximumDiscountAmount: numericOrNull.optional(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  promoCode: z.string().optional(),
+});
+
+/**
+ * Type-level validation for the nested `schedulesAndPricing` blob that the
+ * supplier dashboard sends on every save. Completeness (at least one schedule,
+ * positive prices, currency present) is NOT enforced here — that is the job of
+ * `validateStoredPricing` at publish time. This schema exists to reject
+ * structurally-garbage data (non-numeric prices, out-of-range values, NaN,
+ * bogus currency) on every write, including partial DRAFT saves, so bad data
+ * can never accumulate silently in storage.
+ *
+ * Every nested field is optional so partial wizard saves validate cleanly.
+ */
+const schedulesAndPricingSchema = z.object({
+  currency: isoCurrencyCode.optional(),
+  travelerDetails: z.object({
+    pricingModel: z.enum(['perPerson', 'perGroup']).optional(),
+    pricingApproach: z.enum(['sameForEveryone', 'dependsOnAge']).optional(),
+    uniformPrice: numericOrNull.optional(),
+    pricingCategories: z.array(storedPricingCategorySchema).optional(),
+    ageGroups: z.array(storedPricingCategorySchema).optional(),
+    minParticipants: intOrNull.optional(),
+    maxParticipants: intOrNull.optional(),
+    groupSizes: z.array(storedGroupSizeSchema).optional(),
+    additionalPersonsEnabled: z.boolean().optional(),
+    additionalPersonPrice: numericOrNull.optional(),
+    maxGroupsPerTimeSlot: z.number().finite().optional(),
+  }).optional(),
+  pricingSchedules: z.object({
+    currency: isoCurrencyCode.optional(),
+    schedules: z.array(storedPricingScheduleSchema).optional(),
+  }).optional(),
+  availability: z.object({
+    scheduleType: z.string().optional(),
+    operatingHoursStart: z.string().optional(),
+    operatingHoursEnd: z.string().optional(),
+    weeklySchedule: weeklyHoursSchema,
+    timeSlots: z.array(z.union([z.string(), storedTimeSlotSchema])).optional(),
+    daysOfWeek: z.array(z.string()).optional(),
+    startDate: z.string().optional(),
+    endDate: z.string().nullable().optional(),
+  }).optional(),
+  promotions: z.array(promotionSchema).optional(),
+});
+
 const productSchema = z.object({
   // Step 1
   language: z.string().min(1, 'Select a language').max(50, 'Language must be at most 50 characters'),
@@ -228,6 +383,11 @@ const productSchema = z.object({
   additionalPersonsEnabled: z.boolean().optional(),
   additionalPersonPrice: z.number().min(0).nullable().optional(),
   maxGroupsPerTimeSlot: z.number().min(1).optional(),
+  // Full nested pricing/availability blob written by the dashboard's autosave.
+  // Validated for structural soundness on every write (type-safe numbers,
+  // bounded prices, ISO 4217 currency); completeness is enforced at publish by
+  // validateStoredPricing.
+  schedulesAndPricing: schedulesAndPricingSchema.nullable().optional(),
   // Step 13
   itinerary: z.array(itineraryEntrySchema).optional(),
 

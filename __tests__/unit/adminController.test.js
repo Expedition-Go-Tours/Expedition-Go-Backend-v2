@@ -2,7 +2,7 @@ jest.mock('../../utils/prismaClient', () => ({
   booking: { aggregate: jest.fn(), count: jest.fn(), groupBy: jest.fn(), findMany: jest.fn() },
   user: { count: jest.fn(), findMany: jest.fn(), findUnique: jest.fn() },
   adminRole: { findUnique: jest.fn() },
-  tour: { findMany: jest.fn(), count: jest.fn() },
+  tour: { findMany: jest.fn(), count: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
   event: { findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
   auditLog: { findMany: jest.fn() },
   supplierProfile: {},
@@ -12,10 +12,17 @@ jest.mock('../../utils/prismaClient', () => ({
 jest.mock('../../utils/imageOptimizer', () => ({
   cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`),
 }));
-jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()), invalidateTourCaches: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../utils/queue', () => ({ enqueueNotification: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn(() => Promise.resolve()), emitToRoom: jest.fn(() => Promise.resolve()) }));
 
 const prisma = require('../../utils/prismaClient');
 const { cloudinaryUrl } = require('../../utils/imageOptimizer');
+const { enqueueNotification } = require('../../utils/queue');
+const adminNotifService = require('../../utils/adminNotificationService');
+const { logActivity } = require('../../utils/auditLogger');
+const cache = require('../../utils/cacheHelper');
 const controller = require('../../controllers/adminController');
 
 describe('adminController', () => {
@@ -43,6 +50,12 @@ describe('adminController', () => {
     prisma.user.findUnique.mockResolvedValue(null);
     prisma.tour.findMany.mockResolvedValue([]);
     prisma.tour.count.mockResolvedValue(0);
+    prisma.tour.findUnique.mockResolvedValue(null);
+    prisma.tour.update.mockResolvedValue({});
+    enqueueNotification.mockResolvedValue();
+    adminNotifService.emitToRoom.mockResolvedValue();
+    logActivity.mockResolvedValue();
+    cache.invalidateTourCaches.mockResolvedValue();
     prisma.event.findMany.mockResolvedValue([]);
     prisma.event.count.mockResolvedValue(0);
     prisma.event.groupBy.mockResolvedValue([]);
@@ -672,6 +685,182 @@ describe('adminController', () => {
           where: { id: 'admin-1' },
         })
       );
+    });
+  });
+
+  // ============================
+  // getTourReviewQueue
+  // ============================
+  describe('getTourReviewQueue', () => {
+    const mockTour = {
+      id: 't1',
+      title: 'Pending Tour',
+      status: 'PENDING_APPROVAL',
+      supplier: { id: 's1', name: 'Supplier One', email: 's1@t.com' },
+      _count: { bookings: 2, reviews: 1 },
+    };
+
+    beforeEach(() => {
+      req.query = { status: 'PENDING_APPROVAL', page: 1, limit: 20 };
+      prisma.tour.findMany.mockResolvedValue([mockTour]);
+      prisma.tour.count.mockResolvedValue(1);
+    });
+
+    it('returns the queue with counts and pagination', async () => {
+      await controller.getTourReviewQueue(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const body = res.json.mock.calls[0][0];
+      expect(body.data.tours).toEqual([mockTour]);
+      expect(body.data.counts).toEqual({ pending: 1, rejected: 1, active: 1 });
+      expect(body.data.pagination).toEqual(
+        expect.objectContaining({ currentPage: 1, totalPages: 1, totalCount: 1, limit: 20 })
+      );
+    });
+
+    it('applies a status filter when a valid one is provided', async () => {
+      req.query = { status: 'REJECTED', page: 1, limit: 20 };
+
+      await controller.getTourReviewQueue(req, res, next);
+
+      expect(prisma.tour.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ status: 'REJECTED' }) })
+      );
+    });
+
+    it('ignores an invalid status filter (defaults to all)', async () => {
+      req.query = { status: 'BOGUS', page: 1, limit: 20 };
+
+      await controller.getTourReviewQueue(req, res, next);
+
+      const arg = prisma.tour.findMany.mock.calls[0][0];
+      expect(arg.where.status).toBeUndefined();
+    });
+
+    it('searches by title or supplier name', async () => {
+      req.query = { status: 'PENDING_APPROVAL', search: 'Accra', page: 1, limit: 20 };
+
+      await controller.getTourReviewQueue(req, res, next);
+
+      const arg = prisma.tour.findMany.mock.calls[0][0];
+      expect(arg.where.OR).toEqual([
+        { title: { contains: 'Accra', mode: 'insensitive' } },
+        { supplier: { name: { contains: 'Accra', mode: 'insensitive' } } },
+      ]);
+    });
+
+    it('computes pagination from counts', async () => {
+      prisma.tour.count.mockResolvedValue(41);
+      req.query = { status: 'PENDING_APPROVAL', page: 3, limit: 20 };
+
+      await controller.getTourReviewQueue(req, res, next);
+
+      const body = res.json.mock.calls[0][0];
+      expect(body.data.pagination).toEqual(
+        expect.objectContaining({ currentPage: 3, totalPages: 3, totalCount: 41 })
+      );
+    });
+  });
+
+  // ============================
+  // reviewTour
+  // ============================
+  describe('reviewTour', () => {
+    const mockPendingTour = {
+      id: 't1',
+      title: 'Pending Tour',
+      status: 'PENDING_APPROVAL',
+      supplierId: 's1',
+      supplier: { id: 's1', name: 'Supplier One', email: 's1@t.com' },
+    };
+
+    beforeEach(() => {
+      req.params = { id: 't1' };
+      prisma.tour.findUnique.mockResolvedValue(mockPendingTour);
+    });
+
+    it('rejects an unknown action', async () => {
+      req.body = { action: 'nuke' };
+
+      await controller.reviewTour(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.tour.update).not.toHaveBeenCalled();
+    });
+
+    it('requires a reason when flagging', async () => {
+      req.body = { action: 'flag' };
+
+      await controller.reviewTour(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.tour.update).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 when the tour does not exist', async () => {
+      prisma.tour.findUnique.mockResolvedValue(null);
+      req.body = { action: 'approve' };
+
+      await controller.reviewTour(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
+    });
+
+    it('only reviews tours that are awaiting approval', async () => {
+      prisma.tour.findUnique.mockResolvedValue({ ...mockPendingTour, status: 'ACTIVE' });
+      req.body = { action: 'approve' };
+
+      await controller.reviewTour(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.tour.update).not.toHaveBeenCalled();
+    });
+
+    it('approves a tour to ACTIVE and notifies the supplier', async () => {
+      const approved = { ...mockPendingTour, status: 'ACTIVE' };
+      prisma.tour.update.mockResolvedValue(approved);
+      req.body = { action: 'approve' };
+
+      await controller.reviewTour(req, res, next);
+
+      expect(prisma.tour.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 't1' },
+          data: expect.objectContaining({ status: 'ACTIVE', reviewedBy: 'admin-1' }),
+        })
+      );
+      expect(enqueueNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 's1', type: 'TOUR_APPROVED' })
+      );
+      expect(adminNotifService.emitToRoom).toHaveBeenCalledWith('admin-room', expect.any(Object));
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('flags a tour back to the supplier with the reason', async () => {
+      const rejected = { ...mockPendingTour, status: 'REJECTED' };
+      prisma.tour.update.mockResolvedValue(rejected);
+      req.body = { action: 'flag', reason: 'Pricing is incomplete' };
+
+      await controller.reviewTour(req, res, next);
+
+      expect(prisma.tour.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'REJECTED', reviewNote: 'Pricing is incomplete' }),
+        })
+      );
+      expect(enqueueNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 's1', type: 'TOUR_FLAGGED' })
+      );
+      expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'tour.flagged' }));
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('invalidates tour caches on decision', async () => {
+      req.body = { action: 'approve' };
+
+      await controller.reviewTour(req, res, next);
+
+      expect(cache.invalidateTourCaches).toHaveBeenCalledWith('t1');
     });
   });
 });

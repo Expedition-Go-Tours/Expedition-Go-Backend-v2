@@ -20,6 +20,8 @@ const catchAsync = require('../utils/catchAsync');
 
 const cache = require('../utils/cacheHelper');
 const { logActivity } = require('../utils/auditLogger');
+const { enqueueNotification } = require('../utils/queue');
+const adminNotifService = require('../utils/adminNotificationService');
 
 function buildAuditMessage(action, resource, metadata = {}) {
   if (action.startsWith('webhook.')) {
@@ -2058,5 +2060,159 @@ exports.getExpeditionSupplierTours = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: { supplier, tours },
+  });
+});
+
+// ================================
+// TOUR MODERATION (Submit-for-Review)
+// ================================
+
+/**
+ * GET /admin/tours/review
+ * List tours in the moderation queue (pending / rejected / active) with
+ * supplier info and submission metadata. Supports search + pagination.
+ */
+exports.getTourReviewQueue = catchAsync(async (req, res) => {
+  const {
+    status = 'PENDING_APPROVAL',
+    page = 1,
+    limit = 20,
+    search,
+  } = req.query;
+
+  const validStatuses = ['PENDING_APPROVAL', 'REJECTED', 'ACTIVE'];
+  const where = {};
+  if (validStatuses.includes(status)) {
+    where.status = status;
+  }
+  if (search && search.trim()) {
+    where.OR = [
+      { title: { contains: search.trim(), mode: 'insensitive' } },
+      { supplier: { name: { contains: search.trim(), mode: 'insensitive' } } },
+    ];
+  }
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+
+  const [tours, totalCount, pendingCount, rejectedCount, activeCount] = await Promise.all([
+    prisma.tour.findMany({
+      where,
+      orderBy: [
+        { submittedAt: 'desc' },
+        { updatedAt: 'desc' },
+      ],
+      skip,
+      take: parseInt(limit),
+      include: {
+        supplier: {
+          select: { id: true, name: true, email: true, photoURL: true },
+        },
+        _count: {
+          select: { bookings: true, reviews: true },
+        },
+      },
+    }),
+    prisma.tour.count({ where }),
+    prisma.tour.count({ where: { status: 'PENDING_APPROVAL' } }),
+    prisma.tour.count({ where: { status: 'REJECTED' } }),
+    prisma.tour.count({ where: { status: 'ACTIVE' } }),
+  ]);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      tours,
+      counts: { pending: pendingCount, rejected: rejectedCount, active: activeCount },
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(totalCount / parseInt(limit)),
+        totalCount,
+        limit: parseInt(limit),
+      },
+    },
+  });
+});
+
+/**
+ * PATCH /admin/tours/:id/review
+ * Approve or flag a tour that is awaiting approval.
+ *  - approve → ACTIVE (live on storefront) + supplier notified
+ *  - flag   → REJECTED (sent back with a reason) + supplier notified
+ */
+exports.reviewTour = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { action, reason } = req.body || {};
+  const adminId = req.user.id;
+
+  if (!['approve', 'flag'].includes(action)) {
+    return next(new AppError('Action must be either "approve" or "flag"', 400));
+  }
+  if (action === 'flag' && (!reason || !String(reason).trim())) {
+    return next(new AppError('A reason is required when flagging a tour', 400));
+  }
+
+  const tour = await prisma.tour.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      supplierId: true,
+      supplier: { select: { id: true, name: true, email: true } },
+    },
+  });
+  if (!tour) {
+    return next(new AppError('Tour not found', 404));
+  }
+  if (tour.status !== 'PENDING_APPROVAL') {
+    return next(new AppError(`Only tours awaiting approval can be reviewed. Current status: ${tour.status}`, 400));
+  }
+
+  const now = new Date();
+  const isApprove = action === 'approve';
+
+  const updated = await prisma.tour.update({
+    where: { id },
+    data: isApprove
+      ? { status: 'ACTIVE', reviewedBy: adminId, reviewedAt: now, reviewNote: null }
+      : { status: 'REJECTED', reviewedBy: adminId, reviewedAt: now, reviewNote: String(reason).trim() },
+    include: {
+      supplier: { select: { id: true, name: true, photoURL: true } },
+    },
+  });
+
+  cache.invalidateTourCaches(id).catch((err) => console.warn('[Admin] invalidateTourCaches failed:', err?.message));
+
+  await logActivity({
+    userId: adminId,
+    action: isApprove ? 'tour.approved' : 'tour.flagged',
+    resource: 'Tour',
+    resourceId: tour.id,
+    metadata: { title: tour.title, reason: isApprove ? null : reason },
+  });
+
+  // Notify the supplier (in-app + realtime socket)
+  enqueueNotification({
+    userId: tour.supplierId,
+    type: isApprove ? 'TOUR_APPROVED' : 'TOUR_FLAGGED',
+    title: isApprove ? 'Tour Approved' : 'Tour Needs Changes',
+    message: isApprove
+      ? `"${tour.title}" has been approved and is now live on the platform.`
+      : `"${tour.title}" was flagged for changes: ${String(reason).trim()}`,
+    data: { tourId: tour.id, status: isApprove ? 'ACTIVE' : 'REJECTED', reason: isApprove ? null : reason },
+  }).catch((err) => console.warn('[Admin] Supplier notification failed:', err?.message));
+
+  // Push a refresh event to any other open admin consoles
+  adminNotifService.emitToRoom('admin-room', {
+    type: 'TOUR_REVIEW_RESOLVED',
+    title: isApprove ? 'Tour Approved' : 'Tour Flagged',
+    message: `"${tour.title}" was ${isApprove ? 'approved' : 'flagged'}`,
+    data: { tourId: tour.id, action, status: isApprove ? 'ACTIVE' : 'REJECTED' },
+  }).catch(() => {});
+
+  res.status(200).json({
+    status: 'success',
+    message: isApprove ? 'Tour approved and is now live' : 'Tour flagged and returned to the supplier',
+    data: { tour: updated },
   });
 });

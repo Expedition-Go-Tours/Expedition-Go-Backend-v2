@@ -166,6 +166,7 @@ const mockTx = {
     if (query.includes('SELECT id FROM')) return [{ id: 'tour-exp-e2e' }];
     return [{ currentBookings: '0' }];
   }),
+  tourDateOverride: { findFirst: jest.fn().mockResolvedValue(null) },
   booking: {
     create: jest.fn().mockResolvedValue(expectedBooking),
   },
@@ -275,12 +276,12 @@ describe('E2E: Expedition Checkout Flow', () => {
     const result = await processStripeWebhook(stripeEvent);
     expect(result.success).toBe(true);
 
-    // Falls back to updating by stripePaymentIntentId for PROCESSING bookings
+    // Falls back to updating by stripePaymentIntentId for PENDING bookings
     expect(webhookTx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           stripePaymentIntentId: 'pi_exp_e2e',
-          status: 'PROCESSING',
+          status: 'PENDING',
           paymentStatus: 'PENDING',
         }),
       }),

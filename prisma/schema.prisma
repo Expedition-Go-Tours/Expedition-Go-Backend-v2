@@ -85,6 +85,9 @@ enum NotificationType {
   PAYOUT_APPROVED
   SYSTEM_ALERT
   NEW_MESSAGE
+  TOUR_SUBMITTED
+  TOUR_APPROVED
+  TOUR_FLAGGED
 }
 
 enum AdminNotificationType {
@@ -94,6 +97,9 @@ enum AdminNotificationType {
   PAYOUT_NEEDS_APPROVAL
   SYSTEM_ALERT
   NEW_MESSAGE
+  TOUR_SUBMITTED_FOR_REVIEW
+  BOOKING_CREATED
+  BOOKING_CONFIRMED
 }
 
 enum ReviewStatus {
@@ -105,7 +111,9 @@ enum ReviewStatus {
 
 enum TourStatus {
   DRAFT
+  PENDING_APPROVAL
   ACTIVE
+  REJECTED
   PAUSED
   ARCHIVED
 }
@@ -332,6 +340,12 @@ model Tour {
   photos       String[]
   coverPhoto   String?
   status       TourStatus  @default(DRAFT)
+
+  // Review / Moderation (submit-for-review workflow)
+  submittedAt  DateTime?   // When supplier last submitted for review
+  reviewedBy   String?     // Admin user ID who made the last review decision
+  reviewedAt   DateTime?   // When the last review decision was made
+  reviewNote   String?     // Admin note shown to the supplier when flagged
   
   // Categorization (JSON structure as per your model)
   categorization Json
@@ -396,6 +410,7 @@ model Tour {
   @@index([supplierId])
   @@index([supplierId, status])                  // Supplier dashboard: my tours by status
   @@index([status])
+  @@index([status, submittedAt])                 // Admin moderation queue ordering
   @@index([slug])
   @@index([createdAt])
   @@index([averageRating])

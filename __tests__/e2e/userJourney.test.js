@@ -18,6 +18,7 @@ jest.mock('../../utils/prismaClient', () => ({
   auditLog: { create: jest.fn(), findMany: jest.fn(), deleteMany: jest.fn(), count: jest.fn() },
   adminNotification: { create: jest.fn() },
   $transaction: jest.fn(),
+  $queryRawUnsafe: jest.fn().mockResolvedValue([{ currentBookings: '0', groupCount: '0' }]),
   $disconnect: jest.fn(),
 }));
 
@@ -184,6 +185,7 @@ const mockTx = {
     }
     return [{ currentBookings: '0' }];
   }),
+  tourDateOverride: { findFirst: jest.fn().mockResolvedValue(null) },
   booking: { create: jest.fn().mockResolvedValue(expectedBooking), update: jest.fn().mockResolvedValue(expectedBooking), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
   notification: { create: jest.fn().mockResolvedValue({}) },
   supplierProfile: { update: jest.fn().mockResolvedValue({}) },

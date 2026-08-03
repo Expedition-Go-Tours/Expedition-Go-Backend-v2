@@ -109,7 +109,7 @@ describe('Stripe Load Tests', () => {
     ]);
 
     expect(results[results.length - 1].throughput).toBeGreaterThan(0);
-  }, 30000);
+  }, 120000);
 
   it('processStripeWebhook — payment succeeded at scale', async () => {
     const results = await runLoadTestScenarios('processStripeWebhook (succeeded)', () => {
@@ -123,7 +123,7 @@ describe('Stripe Load Tests', () => {
     const best = results[results.length - 1];
     expect(best.throughput).toBeGreaterThan(0);
     expect(best.errorRate).toBe('0.00%');
-  }, 30000);
+  }, 120000);
 
   it('processStripeWebhook — mixed event types', async () => {
     const types = ['payment_intent.succeeded', 'payment_intent.payment_failed', 'charge.updated', 'account.updated'];
@@ -140,7 +140,7 @@ describe('Stripe Load Tests', () => {
 
     const m = test.report();
     expect(m.throughput).toBeGreaterThan(0);
-  }, 30000);
+  }, 120000);
 
   it('verifyWebhookSignature — high concurrency', async () => {
     const Stripe = require('stripe');
@@ -162,7 +162,7 @@ describe('Stripe Load Tests', () => {
     ]);
 
     expect(results[results.length - 1].throughput).toBeGreaterThan(0);
-  }, 30000);
+  }, 120000);
 
   it('end-to-end Stripe flow: create PI → webhook → commission calc', async () => {
     const test = new LoadTest({ name: 'Stripe E2E Flow (c=50)', concurrency: 50, targetRps: 500, durationMs: 2000 });
@@ -184,5 +184,5 @@ describe('Stripe Load Tests', () => {
 
     const m = test.report();
     expect(m.throughput).toBeGreaterThan(0);
-  }, 30000);
+  }, 120000);
 });

@@ -162,6 +162,7 @@ const mockTx = {
     }
     return [{ currentBookings: '0' }];
   }),
+  tourDateOverride: { findFirst: jest.fn().mockResolvedValue(null) },
   booking: {
     create: jest.fn().mockResolvedValue(mockBooking),
     update: jest.fn().mockResolvedValue({ ...mockBooking, status: 'CANCELLED' }),

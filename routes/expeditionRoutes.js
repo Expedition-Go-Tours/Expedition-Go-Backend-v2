@@ -948,7 +948,7 @@ router.post('/reviews', protect, restrictTo('customer'), validate(createReviewSc
  *         schema: { type: integer, default: 10 }
  *       - in: query
  *         name: status
- *         schema: { type: string, enum: [PROCESSING, PENDING, CONFIRMED, COMPLETED, CANCELLED, REFUNDED, NO_SHOW] }
+ *         schema: { type: string, enum: [PENDING, CONFIRMED, COMPLETED, CANCELLED, REFUNDED, NO_SHOW] }
  *     responses:
  *       200:
  *         description: Paginated bookings list
@@ -966,7 +966,7 @@ router.get('/supplier/bookings', protect, restrictTo('supplier'), validate(getSu
  *     summary: Update Expedition booking status
  *     description: |
  *       Allows a supplier to transition a booking status.
- *       Valid transitions: PROCESSING→CONFIRMED/CANCELLED, CONFIRMED→COMPLETED/CANCELLED/NO_SHOW, PENDING→CONFIRMED/CANCELLED.
+ *       Valid transitions: PENDING→CONFIRMED/CANCELLED, CONFIRMED→COMPLETED/CANCELLED/NO_SHOW.
  *       Notifies the customer of the status change.
  *     tags: [Expedition Supplier]
  *     security:

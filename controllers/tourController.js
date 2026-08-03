@@ -36,6 +36,7 @@ const cache = require('../utils/cacheHelper');
 const { verifyAccessToken } = require('../config/jwt');
 const crypto = require('crypto');
 const { enqueueEvent } = require('../utils/queue');
+const { notifyAdmin } = require('../utils/adminNotificationService');
 const logger = require('../utils/logger');
 
 // ================================
@@ -522,14 +523,12 @@ exports.createTour = catchAsync(async (req, res, next) => {
     return next(new AppError('Only active suppliers can create tours', 403));
   }
 
-  // Block publishing without a verified payout method
-  if (req.body.status === 'PUBLISHED') {
-    const hasVerifiedMethod = await prisma.payoutMethod.findFirst({
-      where: { supplierId, verified: true }
-    });
-    if (!hasVerifiedMethod) {
-      return next(new AppError('You must add and verify at least one payout method before publishing tours', 400));
-    }
+  // ── Submit-for-review workflow ──
+  // Suppliers can no longer publish tours directly. Any ACTIVE/PUBLISHED status
+  // sent by the supplier is coerced to DRAFT here; a tour reaches ACTIVE only
+  // after an admin approves it via the tour moderation endpoint.
+  if (req.body.status === 'ACTIVE' || req.body.status === 'PUBLISHED') {
+    req.body.status = 'DRAFT';
   }
 
   // Map flat 13-step store shape to JSON blobs + normalized columns
@@ -569,24 +568,12 @@ exports.createTour = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Validate tour data — partial allows progressive draft saves from the step-by-step wizard
-  // Full validation runs when status is PUBLISHED to ensure completeness
-  const isPublishing = req.body.status === 'PUBLISHED';
-  const validationResult = validateTourData(req.body, !isPublishing);
+  // Validate tour data — partial validation allows progressive draft saves from
+  // the step-by-step wizard. Full validation + pricing completeness is enforced
+  // by the submit-for-review endpoint (tours can no longer be created live).
+  const validationResult = validateTourData(req.body, true);
   if (!validationResult.isValid) {
     return next(new AppError(`Validation failed: ${validationResult.errors.join(', ')}`, 400));
-  }
-
-  // ── Enforce pricing/availability completeness when created live ──
-  if (req.body.status === 'ACTIVE' || req.body.status === 'PUBLISHED') {
-    let blob = req.body.schedulesAndPricing;
-    if (typeof blob === 'string') {
-      try { blob = JSON.parse(blob); } catch { blob = null; }
-    }
-    const pricingErrors = validateStoredPricing(blob);
-    if (pricingErrors.length > 0) {
-      return next(new AppError(`Pricing and availability must be complete to go live: ${pricingErrors.join(', ')}`, 400));
-    }
   }
 
   // Ensure required scalar fields always have a value for Prisma
@@ -779,14 +766,12 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found or access denied', 404));
   }
 
-  // Block publishing without a verified payout method
-  if (req.body.status === 'PUBLISHED' && ownershipCheck.status !== 'PUBLISHED') {
-    const hasVerifiedMethod = await prisma.payoutMethod.findFirst({
-      where: { supplierId, verified: true }
-    });
-    if (!hasVerifiedMethod) {
-      return next(new AppError('You must add and verify at least one payout method before publishing tours', 400));
-    }
+  // ── Submit-for-review workflow ──
+  // Suppliers can no longer publish tours directly. Attempting to set a tour to
+  // ACTIVE/PUBLISHED is rejected — use the submit-for-review endpoint and await
+  // admin approval instead.
+  if (req.body.status === 'ACTIVE' || req.body.status === 'PUBLISHED') {
+    return next(new AppError('Tours can no longer be published directly. Submit the tour for review and an admin will approve it.', 400));
   }
 
   // Map flat 13-step store shape to JSON blobs if flat fields are present
@@ -814,9 +799,9 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Validate update data — full validation when publishing
-  const isPublishing = req.body.status === 'PUBLISHED';
-  const validationResult = validateTourData(req.body, !isPublishing);
+  // Validate update data — partial validation (draft saves). Full validation
+  // is enforced by the submit-for-review endpoint.
+  const validationResult = validateTourData(req.body, true);
   if (!validationResult.isValid) {
     return next(new AppError(`Validation failed: ${validationResult.errors.join(', ')}`, 400));
   }
@@ -860,17 +845,6 @@ exports.updateTour = catchAsync(async (req, res, next) => {
       schedulesAndPricing = effectiveBlob;
     }
 
-    // Enforce pricing/availability completeness when going live. The dashboard's
-    // "Set Live" sends only { status: 'ACTIVE' }, so the effective blob is the
-    // incoming one (if provided) else the stored one.
-    const effectiveStatus = status || existingTour.status;
-    if (effectiveStatus === 'ACTIVE' || effectiveStatus === 'PUBLISHED') {
-      const pricingErrors = validateStoredPricing(effectiveBlob);
-      if (pricingErrors.length > 0) {
-        throw new AppError(`Pricing and availability must be complete to go live: ${pricingErrors.join(', ')}`, 400);
-      }
-    }
-
     const updateData = {};
     if (title !== undefined) updateData.title = title;
     if (description !== undefined) updateData.description = description;
@@ -884,7 +858,15 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     if (bookingAndTickets !== undefined) updateData.bookingAndTickets = bookingAndTickets;
     if (coverPhoto !== undefined) updateData.coverPhoto = coverPhoto;
     if (tags !== undefined) updateData.tags = tags;
-    if (status !== undefined) updateData.status = status;
+    // ── Live-tour edits stay live ──
+    // An ACTIVE tour only leaves ACTIVE when the supplier explicitly pauses or
+    // archives it. Draft/review statuses sent while editing a live tour are
+    // ignored so autosaves never unpublish a live listing.
+    let effectiveStatus = status;
+    if (existingTour.status === 'ACTIVE' && (status === 'DRAFT' || status === 'REJECTED' || status === 'PENDING_APPROVAL')) {
+      effectiveStatus = 'ACTIVE';
+    }
+    if (effectiveStatus !== undefined) updateData.status = effectiveStatus;
     if (latitude !== undefined) updateData.latitude = latitude;
     if (longitude !== undefined) updateData.longitude = longitude;
     if (city !== undefined) updateData.city = city;
@@ -971,10 +953,10 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     }
 
     // Auto-unpublish from Expedition Go if status leaves ACTIVE
-    if (status && status !== 'ACTIVE' && existingTour.status === 'ACTIVE') {
+    if (effectiveStatus && effectiveStatus !== 'ACTIVE' && existingTour.status === 'ACTIVE') {
       await tx.expeditionTour.updateMany({
         where: { tourId: id, isActive: true },
-        data: { isActive: false, unpublishReason: 'Tour status changed to ' + status },
+        data: { isActive: false, unpublishReason: 'Tour status changed to ' + effectiveStatus },
       });
     }
 
@@ -1046,6 +1028,145 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: { tour }
+  });
+});
+
+/**
+ * Validate that a stored tour is complete enough to submit for review.
+ * Returns an array of human-readable error messages (empty = ready to submit).
+ *
+ * The strict pricing/availability completeness gate (validateStoredPricing)
+ * mirrors the pre-moderation "Set Live" check; the remaining checks enforce
+ * that customers get a usable product page if the tour is approved.
+ */
+function validateTourForReview(tour) {
+  const errors = [];
+
+  if (!tour.title || !tour.title.trim()) {
+    errors.push('A tour title is required');
+  }
+  if (!tour.description || tour.description.trim().length < 10) {
+    errors.push('A tour description (at least 10 characters) is required');
+  }
+  const photos = Array.isArray(tour.photos) ? tour.photos.filter(Boolean) : [];
+  if (photos.length === 0) {
+    errors.push('Add at least one photo before submitting for review');
+  }
+
+  const cat = tour.categorization;
+  if (!cat || typeof cat !== 'object' || !cat.category) {
+    errors.push('Select a product category');
+  }
+
+  const pc = tour.productContent;
+  if (!pc || typeof pc !== 'object') {
+    errors.push('Product content is required');
+  } else {
+    if (!pc.writingLanguage) {
+      errors.push('Select a language');
+    }
+    if (!Array.isArray(pc.highlights) || pc.highlights.length < 1) {
+      errors.push('Add at least one highlight');
+    }
+    if (pc.meetingMode === 'meeting_point') {
+      const mp = tour.bookingAndTickets?.meetingPoint || pc.meetingPoint;
+      if (!mp || !mp.name || !mp.address) {
+        errors.push('A meeting point (name and address) is required');
+      }
+    }
+  }
+
+  const pricingErrors = validateStoredPricing(tour.schedulesAndPricing);
+  if (pricingErrors.length > 0) {
+    errors.push(...pricingErrors);
+  }
+
+  return errors;
+}
+
+/**
+ * Submit tour for review (suppliers only - own tours)
+ *
+ * Replaces the removed direct-publish path. Full live-quality validation runs
+ * here; on success the tour moves to PENDING_APPROVAL and admins are notified.
+ * The tour only becomes ACTIVE when an admin approves it.
+ */
+exports.submitTourForReview = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const supplierId = req.supplierId;
+
+  const tour = await prisma.tour.findFirst({
+    where: { id, supplierId },
+    include: {
+      supplier: {
+        select: { id: true, name: true, photoURL: true }
+      }
+    }
+  });
+  if (!tour) {
+    return next(new AppError('Tour not found or access denied', 404));
+  }
+
+  if (tour.status === 'ACTIVE') {
+    return next(new AppError('This tour is already live and does not need review', 400));
+  }
+  if (tour.status === 'PENDING_APPROVAL') {
+    return next(new AppError('This tour is already awaiting approval', 409));
+  }
+
+  // Live-quality validation before the tour enters the moderation queue
+  const reviewErrors = validateTourForReview(tour);
+  if (reviewErrors.length > 0) {
+    return next(new AppError(`Cannot submit for review: ${reviewErrors.join(', ')}`, 400));
+  }
+
+  // Money needs somewhere to go — a verified payout method is required
+  const hasVerifiedMethod = await prisma.payoutMethod.findFirst({
+    where: { supplierId, verified: true },
+    select: { id: true },
+  });
+  if (!hasVerifiedMethod) {
+    return next(new AppError('You must add and verify at least one payout method before submitting a tour for review', 400));
+  }
+
+  const updated = await prisma.tour.update({
+    where: { id },
+    data: {
+      status: 'PENDING_APPROVAL',
+      submittedAt: new Date(),
+      reviewedBy: null,
+      reviewedAt: null,
+      reviewNote: null,
+    },
+    include: {
+      supplier: {
+        select: { id: true, name: true, photoURL: true }
+      }
+    }
+  });
+
+  cache.invalidateTourCaches(id).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
+
+  await logActivity({
+    userId: supplierId,
+    action: 'tour.submitted_for_review',
+    resource: 'Tour',
+    resourceId: tour.id,
+    metadata: { title: tour.title }
+  });
+
+  // Notify admins (bell + admin-room socket)
+  await notifyAdmin({
+    type: 'TOUR_SUBMITTED_FOR_REVIEW',
+    title: 'Tour Pending Approval',
+    message: `"${updated.title}" has been submitted for review by ${updated.supplier.name}`,
+    data: { tourId: updated.id, supplierId, tourTitle: updated.title, submittedAt: updated.submittedAt },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Tour submitted for review. An admin will review it shortly.',
+    data: { tour: updated }
   });
 });
 
@@ -1656,14 +1777,26 @@ async function buildPriceIdConstraint(prisma, minPrice, maxPrice, priceRange) {
 
   const params = [];
   const clauses = [];
-  if (min !== null) { params.push(min); clauses.push(`(p->>'retailPrice')::numeric >= $${params.length}`); }
-  if (max !== null) { params.push(max); clauses.push(`(p->>'retailPrice')::numeric <= $${params.length}`); }
+  if (min !== null) {
+    params.push(min);
+    clauses.push(`safePrice >= $${params.length}`);
+  }
+  if (max !== null) {
+    params.push(max);
+    clauses.push(`safePrice <= $${params.length}`);
+  }
 
+  // `safePrice` guards against legacy rows where retailPrice is a non-numeric
+  // string — those become NULL and simply never match, instead of throwing.
   const sql = `
     SELECT DISTINCT t.id
     FROM "Tour" t,
          jsonb_array_elements(t."schedulesAndPricing"->'pricingSchedules'->'schedules') AS s,
          jsonb_array_elements(s->'prices') AS p
+    CROSS JOIN LATERAL (
+      SELECT CASE WHEN p->>'retailPrice' ~ '^[+-]?[0-9]+(\\.[0-9]+)?$'
+        THEN (p->>'retailPrice')::numeric ELSE NULL END AS "safePrice"
+    ) sp
     WHERE p->>'ageGroup' = 'adult'
       AND ${clauses.join(' AND ')}
   `;

@@ -283,7 +283,7 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
       const updated = await client.booking.updateMany({
         where: {
           stripePaymentIntentId: paymentIntent.id,
-          status: 'PROCESSING',
+          status: 'PENDING',
           paymentStatus: 'PENDING'
         },
         data: {
@@ -416,7 +416,7 @@ async function handlePaymentFailed(paymentIntent, tx = null) {
   const updated = await client.booking.updateMany({
     where: {
       stripePaymentIntentId: paymentIntent.id,
-      status: 'PROCESSING',
+      status: 'PENDING',
       paymentStatus: 'PENDING'
     },
     data: {

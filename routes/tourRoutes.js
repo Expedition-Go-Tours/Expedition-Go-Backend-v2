@@ -1015,6 +1015,55 @@ router.delete('/:id/photos', resolveSupplier, requireTeamPermission('tours.updat
 
 /**
  * @swagger
+ * /tours/{id}/submit-for-review:
+ *   post:
+ *     summary: Submit a tour for admin review (suppliers only - own tours)
+ *     description: |
+ *       Replaces the removed direct-publish path. Runs full live-quality
+ *       validation (pricing/availability completeness, photos, meeting point)
+ *       and a verified-payout-method check, then moves the tour to
+ *       PENDING_APPROVAL and notifies admins. The tour only becomes ACTIVE
+ *       after an admin approves it via the moderation endpoint.
+ *     tags: [Tours, Supplier]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         description: Tour ID
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Tour submitted for review
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 message:
+ *                   type: string
+ *                   example: Tour submitted for review. An admin will review it shortly.
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     tour:
+ *                       $ref: '#/components/schemas/Tour'
+ *       400:
+ *         description: Validation failed or tour already live
+ *       404:
+ *         description: Tour not found or access denied
+ *       409:
+ *         description: Tour is already awaiting approval
+ */
+router.post('/:id/submit-for-review', resolveSupplier, requireTeamPermission('tours.update'), tourController.submitTourForReview);
+
+/**
+ * @swagger
  * /tours/{id}/analytics:
  *   get:
  *     summary: Get tour analytics (suppliers only - own tours)

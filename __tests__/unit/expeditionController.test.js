@@ -3,6 +3,7 @@ jest.mock('../../utils/prismaClient', () => ({
   tour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn() },
   user: { findUnique: jest.fn(), update: jest.fn() },
   booking: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn(), deleteMany: jest.fn() },
+  tourDateOverride: { findFirst: jest.fn() },
   review: { findMany: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
   newsletterSubscriber: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
   cartItem: { deleteMany: jest.fn() },
@@ -143,6 +144,7 @@ describe('expeditionController', () => {
     prisma.booking.create.mockResolvedValue({ id: 'booking-1', ...mockExpeditionTour, bookingNumber: 'TB00000001ABCD' });
     prisma.cartItem.deleteMany.mockResolvedValue({ count: 0 });
     prisma.$queryRawUnsafe.mockResolvedValue([{ currentBookings: '0' }]);
+    prisma.tourDateOverride.findFirst.mockResolvedValue(null);
     prisma.$transaction.mockImplementation(async (cb) => {
       if (typeof cb === 'function') return cb(prisma);
       return cb;
