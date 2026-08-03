@@ -331,6 +331,7 @@ const productSchema = z.object({
   notSuitableFor: z.array(z.string()).optional(),
   notAllowed: z.array(z.string()).optional(),
   petFriendly: z.boolean().optional(),
+  wifiIncluded: z.boolean({ required_error: 'WiFi/Internet availability is required' }),
   mandatoryItems: z.array(z.string()).optional(),
   knowBeforeYouGo: z.string().max(2000).optional(),
   emergencyCountryCode: z.string().max(5).optional(),

@@ -794,13 +794,20 @@ async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = 
         }
       }
     } else {
-      // dependsOnAge — price per traveler, preferring travelerDetails
-      // pricingCategories and falling back to the schedule's derived prices
+      // dependsOnAge — price per traveler with tier support
       const cats = (Array.isArray(td.pricingCategories) && td.pricingCategories.length > 0)
         ? td.pricingCategories
         : (Array.isArray(td.ageGroups) ? td.ageGroups : []);
+      
+      // Calculate total participants for tier matching (GetYourGuide standard)
+      const totalParticipants = Object.values(travelers).reduce(
+        (sum, count) => sum + (typeof count === 'number' && count > 0 ? count : 0),
+        0
+      );
+      
       let priced = false;
       const IRREGULAR_PLURALS = { children: 'child', infants: 'infant', men: 'man', women: 'woman' };
+      
       for (const [ageCategory, count] of Object.entries(travelers)) {
         if (typeof count !== 'number' || count <= 0) continue;
         const lower = ageCategory.toLowerCase();
@@ -809,7 +816,29 @@ async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = 
           const label = String(c.name ?? c.label ?? '').toLowerCase();
           return label === normalized || label === ageCategory.toLowerCase();
         });
-        let price = (cat != null && cat.price != null) ? cat.price : null;
+        
+        let price = null;
+        
+        // Check for tier pricing first (GetYourGuide tiered pricing logic)
+        if (cat && Array.isArray(cat.tiers) && cat.tiers.length > 0) {
+          // Find matching tier based on TOTAL participants (not just this category)
+          const matchingTier = cat.tiers.find(tier => {
+            const from = tier.from ?? 1;
+            const to = tier.to ?? Infinity;
+            return totalParticipants >= from && totalParticipants <= to;
+          });
+          
+          if (matchingTier && matchingTier.pricePerPerson != null) {
+            price = matchingTier.pricePerPerson;
+          }
+        }
+        
+        // Fall back to base category price if no tier matched
+        if (price == null && cat != null && cat.price != null) {
+          price = cat.price;
+        }
+        
+        // Fall back to schedule prices if category price not found
         if (price == null && Array.isArray(applicableSchedule.prices)) {
           const label = cat ? (cat.name || cat.label) : null;
           const priceInfo = label
@@ -820,12 +849,14 @@ async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = 
             price = priceInfo.retailPrice;
           }
         }
+        
         const finitePrice = toFinitePrice(price);
         if (finitePrice != null) {
           subtotal += finitePrice * count;
           priced = true;
         }
       }
+      
       if (!priced) {
         throw new Error('No pricing available for this tour');
       }
