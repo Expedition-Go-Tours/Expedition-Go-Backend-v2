@@ -28,11 +28,9 @@ const {
   getTourDistances
 } = require('../utils/tourFilterBuilder');
 const { getPopularByCategory } = require('../utils/popularityScorer');
+const { shouldCountTourView } = require('../utils/viewTracking');
+const eventEmitter = require('../utils/eventEmitter');
 
-// In-memory cache for view tracking (prevents duplicate counts)
-// Key format: "view:{tourId}:{userId|IP}" -> timestamp
-const VIEW_CACHE_MAX = 10000;
-const viewTrackingCache = new Map();
 const { rankTourIdsBySearch } = require('../utils/fullTextSearch');
 const cache = require('../utils/cacheHelper');
 const { verifyAccessToken } = require('../config/jwt');
@@ -471,72 +469,16 @@ exports.getTour = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found', 404));
   }
 
-  // ── View tracking: count each unique visitor once per 30 minutes ──
-  const shouldCountView = (() => {
-    // Never count the tour owner
-    if (req.user?.id && req.user.id === result.supplierId) return false;
-
-    // Never count admins
-    if (req.user?.roles?.includes('admin')) return false;
-
-    // Build a stable viewer fingerprint:
-    //   1. Authenticated user  → use their DB id (most reliable)
-    //   2. Anonymous           → hash of real IP + User-Agent
-    //      req.ip on Render is the proxy IP, so read x-forwarded-for first
-    let viewerId;
-    if (req.user?.id) {
-      viewerId = req.user.id;
-    } else {
-      const realIp =
-        (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
-        req.socket?.remoteAddress ||
-        req.ip ||
-        'unknown';
-      const ua = req.headers['user-agent'] || '';
-      // Hash so we never store raw IPs
-      viewerId = crypto
-        .createHash('sha256')
-        .update(`${realIp}:${ua}`)
-        .digest('hex')
-        .slice(0, 16);
-    }
-
-    const viewKey = `view:${result.id}:${viewerId}`;
-    const now = Date.now();
-    const lastViewTime = viewTrackingCache.get(viewKey);
-
-    // Already counted within the last 30 minutes → skip
-    if (lastViewTime && now - lastViewTime < 30 * 60 * 1000) return false;
-
-    // Enforce hard cap to prevent unbounded growth
-    if (viewTrackingCache.size >= VIEW_CACHE_MAX) {
-      const cutoff = now - 30 * 60 * 1000;
-      for (const [k, t] of viewTrackingCache.entries()) {
-        if (t < cutoff) viewTrackingCache.delete(k);
-      }
-      if (viewTrackingCache.size >= VIEW_CACHE_MAX) {
-        const iter = viewTrackingCache.keys();
-        for (let i = 0; i < 1000; i++) {
-          const key = iter.next().value;
-          if (key) viewTrackingCache.delete(key);
-          else break;
-        }
-      }
-    }
-
-    // Record this view
-    viewTrackingCache.set(viewKey, now);
-
-    return true;
-  })();
-
-  if (shouldCountView) {
+  // ── View tracking: count each unique external visitor once per 30 minutes ──
+  // Admins, expedition staff, the tour owner and ACTIVE suppliers are excluded
+  // from viewCount (and from the analytics event emitted below).
+  if (await shouldCountTourView({ req, tourSupplierId: result.supplierId })) {
     prisma.tour.update({
       where: { id: result.id },
       data: { viewCount: { increment: 1 } },
     }).catch(console.error);
 
-    enqueueEvent({ name: 'tour.viewed', userId: req.user?.id, req, resource: 'Tour', resourceId: result.id });
+    eventEmitter.emit({ name: 'tour.viewed', userId: req.user?.id, req, resource: 'Tour', resourceId: result.id });
   }
 
   // Tell browsers/CDNs: cache this response for 60 s, then revalidate.

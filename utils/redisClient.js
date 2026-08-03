@@ -107,6 +107,21 @@ async function set(key, data, ttlSeconds = 300) {
   } catch { /* silent fail */ }
 }
 
+/**
+ * Atomically set a key only if it does not already exist, with a TTL.
+ * Used for idempotency/dedup guards (e.g. tour view cooldowns).
+ * @returns {Promise<boolean|null>} true = newly set; false = key already existed; null = Redis unavailable
+ */
+async function setnx(key, ttlSeconds = 300) {
+  if (!isReady()) return null;
+  try {
+    const res = await connection.set(key, '1', 'EX', ttlSeconds, 'NX');
+    return res === 'OK';
+  } catch {
+    return null;
+  }
+}
+
 async function del(key) {
   if (!isReady()) return;
   try {
@@ -162,6 +177,7 @@ module.exports = {
   isRedisAvailable,
   get,
   set,
+  setnx,
   del,
   delPattern,
   quit

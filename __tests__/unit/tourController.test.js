@@ -2,7 +2,7 @@ jest.mock('../../utils/prismaClient', () => ({
   tour: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), groupBy: jest.fn(), aggregate: jest.fn() },
   booking: { groupBy: jest.fn(), aggregate: jest.fn() },
   review: { aggregate: jest.fn() },
-  supplierProfile: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
+  supplierProfile: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
   tourSecondaryTheme: { deleteMany: jest.fn(), createMany: jest.fn() },
   payoutMethod: { findFirst: jest.fn() },
   media: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
@@ -35,6 +35,7 @@ jest.mock('../../utils/fullTextSearch', () => ({ rankTourIdsBySearch: jest.fn() 
 const prisma = require('../../utils/prismaClient');
 const cache = require('../../utils/cacheHelper');
 const { enqueueEvent } = require('../../utils/queue');
+const { emit } = require('../../utils/eventEmitter');
 const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
 const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices, durationToMinutes } = require('../../utils/tourHelpers');
 const { logActivity } = require('../../utils/auditLogger');
@@ -441,14 +442,53 @@ describe('tourController', () => {
       );
     });
 
+    it('does not count view for non-owner active supplier', async () => {
+      req.params = { id: 'tour-1' };
+      req.user = { id: 'supplier-2', roles: ['supplier'] };
+      prisma.supplierProfile.findFirst.mockResolvedValue({ status: 'ACTIVE' });
+      prisma.tour.update = jest.fn().mockResolvedValue();
+
+      await controller.getTour(req, res, next);
+
+      expect(prisma.supplierProfile.findFirst).toHaveBeenCalled();
+      expect(prisma.tour.update).not.toHaveBeenCalled();
+    });
+
+    it('counts view for supplier whose profile is not ACTIVE', async () => {
+      req.params = { id: 'tour-1' };
+      req.user = { id: 'supplier-3', roles: ['supplier'] };
+      prisma.supplierProfile.findFirst.mockResolvedValue({ status: 'PENDING' });
+      prisma.tour.update = jest.fn().mockResolvedValue();
+
+      await controller.getTour(req, res, next);
+
+      expect(prisma.tour.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'tour-1' },
+          data: { viewCount: { increment: 1 } },
+        })
+      );
+    });
+
+    it('does not count view for expedition role', async () => {
+      req.params = { id: 'tour-1' };
+      req.user = { id: 'exp-1', roles: ['expedition'] };
+      prisma.tour.update = jest.fn().mockResolvedValue();
+
+      await controller.getTour(req, res, next);
+
+      expect(prisma.tour.update).not.toHaveBeenCalled();
+    });
+
     it('emits tour.viewed event when view is counted', async () => {
+      emit.mockClear();
       req.params = { id: 'tour-1' };
       req.user = { id: 'unique-viewer-99', roles: ['customer'] };
       prisma.tour.update = jest.fn().mockResolvedValue();
 
       await controller.getTour(req, res, next);
 
-      expect(enqueueEvent).toHaveBeenCalledWith(
+      expect(emit).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'tour.viewed' })
       );
     });

@@ -359,6 +359,21 @@ function registerWorkers() {
   }, 2);
 
   /* ------------------------------------------------------------------
+   * ANALYTICS EVENTS WORKER (concurrency 5)
+   * Persists queued analytics events to the Event table.
+   * NOTE: request-derived events (tour.viewed, expedition.tour_viewed, ...)
+   * are emitted via eventEmitter.emit() directly — an Express req object is
+   * not JSON-serializable and cannot travel through BullMQ. This worker
+   * persists any event that reaches the queue with serializable data only.
+   * ------------------------------------------------------------------ */
+  createWorker(QUEUE_NAMES.EVENTS, async (job) => {
+    const { emit } = require('./eventEmitter');
+    const { name, userId, sessionId, resource, resourceId, properties, source } = job.data || {};
+    if (!name) return;
+    await emit({ name, userId, sessionId, resource, resourceId, properties, source });
+  }, 5);
+
+  /* ------------------------------------------------------------------
    * AGGREGATION WORKER
    * ------------------------------------------------------------------ */
   createWorker(QUEUE_NAMES.AGGREGATIONS, async (job) => {

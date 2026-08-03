@@ -6,11 +6,14 @@ jest.mock('../../utils/prismaClient', () => ({
   review: { findMany: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
   newsletterSubscriber: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
   cartItem: { deleteMany: jest.fn() },
+  supplierProfile: { findFirst: jest.fn() },
   $transaction: jest.fn(),
   $queryRawUnsafe: jest.fn(),
 }));
 
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
+
+jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn(), emitBatch: jest.fn() }));
 
 jest.mock('../../utils/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),

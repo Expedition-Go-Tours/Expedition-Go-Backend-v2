@@ -11,6 +11,8 @@ const { createPaymentIntent, calculateCommission, createRefund } = require('../u
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const getConfig = require('../utils/getConfig');
 const { logActivity } = require('../utils/auditLogger');
+const { shouldCountTourView } = require('../utils/viewTracking');
+const eventEmitter = require('../utils/eventEmitter');
 
 const CACHE_PREFIX = 'expedition:';
 const LIST_CACHE_KEY = `${CACHE_PREFIX}tours:list`;
@@ -18,10 +20,6 @@ const FEATURED_CACHE_KEY = `${CACHE_PREFIX}tours:featured`;
 const DETAIL_CACHE_KEY = (slug) => `${CACHE_PREFIX}detail:${slug}`;
 const SITEMAP_CACHE_KEY = `${CACHE_PREFIX}sitemap`;
 const CHECKOUT_CACHE_TTL = 60;
-
-// In-memory view dedup cache (same pattern as tourController)
-const VIEW_CACHE_MAX = 10000;
-const viewTrackingCache = new Map();
 
 function extractStartingPrice(schedulesAndPricing) {
   if (!schedulesAndPricing) return null;
@@ -135,49 +133,6 @@ async function invalidateCaches(slug) {
   if (slug) {
     await cache.invalidateKeys([DETAIL_CACHE_KEY(slug)]);
   }
-}
-
-function getViewerFingerprint(req) {
-  if (req.user?.id) return req.user.id;
-  const realIp =
-    (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
-    req.socket?.remoteAddress ||
-    req.ip ||
-    'unknown';
-  const ua = req.headers['user-agent'] || '';
-  return crypto.createHash('sha256').update(`${realIp}:${ua}`).digest('hex').slice(0, 16);
-}
-
-function shouldCountView(req, tourSupplierId) {
-  if (req.user?.id && req.user.id === tourSupplierId) return false;
-  if (req.user?.roles?.includes('admin')) return false;
-
-  const viewerId = getViewerFingerprint(req);
-  const viewKey = `expedition:view:${tourSupplierId}:${viewerId}`;
-  const now = Date.now();
-  const lastTime = viewTrackingCache.get(viewKey);
-
-  if (lastTime && now - lastTime < 30 * 60 * 1000) return false;
-
-  // Enforce hard cap to prevent unbounded growth
-  if (viewTrackingCache.size >= VIEW_CACHE_MAX) {
-    const cutoff = now - 30 * 60 * 1000;
-    for (const [k, t] of viewTrackingCache.entries()) {
-      if (t < cutoff) viewTrackingCache.delete(k);
-    }
-    // If still over cap after cleanup, clear oldest entries
-    if (viewTrackingCache.size >= VIEW_CACHE_MAX) {
-      const iter = viewTrackingCache.keys();
-      for (let i = 0; i < 1000; i++) {
-        const key = iter.next().value;
-        if (key) viewTrackingCache.delete(key);
-        else break;
-      }
-    }
-  }
-
-  viewTrackingCache.set(viewKey, now);
-  return true;
 }
 
 // ================================
@@ -512,9 +467,10 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found', 404));
   }
 
-  // View tracking
+  // View tracking — count each unique external visitor once per 30 minutes.
+  // Admins, expedition staff, the tour owner and ACTIVE suppliers are excluded.
   const tourSupId = result.data?.tour?.tour?.supplierId || result.data?.tour?.tour?.id;
-  if (shouldCountView(req, tourSupId)) {
+  if (await shouldCountTourView({ req, tourSupplierId: tourSupId, prefix: 'expedition:view' })) {
     prisma.tour
       .update({
         where: { slug },
@@ -522,7 +478,7 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
       })
       .catch(() => {});
 
-    enqueueEvent({
+    eventEmitter.emit({
       name: 'expedition.tour_viewed',
       userId: req.user?.id,
       req,
