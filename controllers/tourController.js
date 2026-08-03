@@ -758,7 +758,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
             extra: { tourId: tour.id, supplierId }
           });
         }
-      } catch (_) {}
+      } catch { /* Sentry unavailable — ignore */ }
     }
   });
 });
@@ -838,13 +838,14 @@ exports.updateTour = catchAsync(async (req, res, next) => {
       where: { id, supplierId }
     });
 
-    let {
+    const {
       title, description, referenceCode, metaTitle, metaDescription,
       categorization, theme,
-      productContent, schedulesAndPricing, bookingAndTickets,
+      productContent, bookingAndTickets,
       coverPhoto, tags, status, latitude, longitude, specialOffers,
       city, country, region
     } = req.body;
+    let { schedulesAndPricing } = req.body;
 
     // ── Server-authoritative derived pricing + live-data completeness ──
     // The dashboard's autosave may send an empty/stale `prices` array; the
