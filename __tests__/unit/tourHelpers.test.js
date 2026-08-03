@@ -80,6 +80,7 @@ function validProduct(overrides = {}) {
     copyrightConfirmed: true,
     meetingMode: 'meeting_point',
     guideMaterials: { audioGuide: false, infoBooklet: false },
+    wifiIncluded: false,
     ...overrides,
   };
 }
