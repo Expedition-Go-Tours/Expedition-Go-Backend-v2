@@ -22,6 +22,8 @@ const cache = require('../utils/cacheHelper');
 const { logActivity } = require('../utils/auditLogger');
 const { enqueueNotification } = require('../utils/queue');
 const adminNotifService = require('../utils/adminNotificationService');
+const { buildTourDiff, computeChangesSummary, mergeDraftContent, buildLiveUpdateData } = require('../utils/tourDraft');
+const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
 
 function buildAuditMessage(action, resource, metadata = {}) {
   if (action.startsWith('webhook.')) {
@@ -2080,9 +2082,11 @@ exports.getTourReviewQueue = catchAsync(async (req, res) => {
     search,
   } = req.query;
 
-  const validStatuses = ['PENDING_APPROVAL', 'REJECTED', 'ACTIVE'];
+  const validStatuses = ['PENDING_APPROVAL', 'REJECTED', 'ACTIVE', 'PENDING_EDITS'];
   const where = {};
-  if (validStatuses.includes(status)) {
+  if (status === 'PENDING_EDITS') {
+    where.draftStatus = 'PENDING_APPROVAL';
+  } else if (validStatuses.includes(status)) {
     where.status = status;
   }
   if (search && search.trim()) {
@@ -2094,11 +2098,12 @@ exports.getTourReviewQueue = catchAsync(async (req, res) => {
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  const [tours, totalCount, pendingCount, rejectedCount, activeCount] = await Promise.all([
+  const [tours, totalCount, pendingCount, rejectedCount, activeCount, pendingEditsCount] = await Promise.all([
     prisma.tour.findMany({
       where,
       orderBy: [
         { submittedAt: 'desc' },
+        { draftSubmittedAt: 'desc' },
         { updatedAt: 'desc' },
       ],
       skip,
@@ -2116,19 +2121,72 @@ exports.getTourReviewQueue = catchAsync(async (req, res) => {
     prisma.tour.count({ where: { status: 'PENDING_APPROVAL' } }),
     prisma.tour.count({ where: { status: 'REJECTED' } }),
     prisma.tour.count({ where: { status: 'ACTIVE' } }),
+    prisma.tour.count({ where: { draftStatus: 'PENDING_APPROVAL' } }),
   ]);
 
   res.status(200).json({
     status: 'success',
     data: {
       tours,
-      counts: { pending: pendingCount, rejected: rejectedCount, active: activeCount },
+      counts: { pending: pendingCount, rejected: rejectedCount, active: activeCount, pendingEdits: pendingEditsCount },
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(totalCount / parseInt(limit)),
         totalCount,
         limit: parseInt(limit),
       },
+    },
+  });
+});
+
+/**
+ * GET /admin/tours/:id/draft
+ * Fetch the live version, the pending draft, and a sectioned diff for review.
+ */
+exports.getTourDraftReview = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+
+  const tour = await prisma.tour.findUnique({ where: { id } });
+  if (!tour) {
+    return next(new AppError('Tour not found', 404));
+  }
+
+  const live = {
+    id: tour.id,
+    title: tour.title,
+    description: tour.description,
+    photos: tour.photos || [],
+    coverPhoto: tour.coverPhoto,
+    tags: tour.tags || [],
+    metaTitle: tour.metaTitle,
+    metaDescription: tour.metaDescription,
+    categorization: tour.categorization,
+    theme: tour.theme,
+    productContent: tour.productContent,
+    schedulesAndPricing: tour.schedulesAndPricing,
+    bookingAndTickets: tour.bookingAndTickets,
+  };
+  const draft = tour.draftContent && typeof tour.draftContent === 'object'
+    ? mergeDraftContent(tour, tour.draftContent)
+    : null;
+  const diff = draft ? buildTourDiff(live, draft) : [];
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      tour: {
+        id: tour.id,
+        title: tour.title,
+        status: tour.status,
+        draftStatus: tour.draftStatus || null,
+        draftSubmittedAt: tour.draftSubmittedAt || null,
+        draftReviewNote: tour.draftReviewNote || null,
+        supplier: tour.supplierId,
+      },
+      live,
+      draft,
+      diff,
+      changesSummary: computeChangesSummary(diff),
     },
   });
 });
@@ -2214,5 +2272,156 @@ exports.reviewTour = catchAsync(async (req, res, next) => {
     status: 'success',
     message: isApprove ? 'Tour approved and is now live' : 'Tour flagged and returned to the supplier',
     data: { tour: updated },
+  });
+});
+
+/**
+ * PATCH /admin/tours/:id/draft-review
+ * Approve or flag a pending edit to a LIVE tour.
+ *  - approve → draft merged into the live columns (tour stays ACTIVE, no downtime) + supplier notified
+ *  - flag   → draft marked REJECTED with a reason; live version untouched + supplier notified
+ */
+exports.reviewTourDraft = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { action, reason } = req.body || {};
+  const adminId = req.user.id;
+
+  if (!['approve', 'flag'].includes(action)) {
+    return next(new AppError('Action must be either "approve" or "flag"', 400));
+  }
+  if (action === 'flag' && (!reason || !String(reason).trim())) {
+    return next(new AppError('A reason is required when flagging a draft', 400));
+  }
+
+  const tour = await prisma.tour.findUnique({
+    where: { id },
+    include: { supplier: { select: { id: true, name: true, email: true } } },
+  });
+  if (!tour) {
+    return next(new AppError('Tour not found', 404));
+  }
+  if (tour.draftStatus !== 'PENDING_APPROVAL') {
+    return next(new AppError(`No draft awaiting approval. Current draft status: ${tour.draftStatus || 'none'}`, 400));
+  }
+
+  const now = new Date();
+  const isApprove = action === 'approve';
+  const normalize = (url) => {
+    const m = url.match(/\/upload\/(?:w_\d+[^/]*\/)?(?:v\d+\/)?(.+)$/);
+    return m ? m[1] : url;
+  };
+
+  if (isApprove) {
+    const updated = await prisma.$transaction(async (tx) => {
+      const [locked] = await tx.$queryRawUnsafe('SELECT id FROM "Tour" WHERE id = $1 FOR UPDATE', id);
+      if (!locked) {
+        throw new AppError('Tour not found', 404);
+      }
+      const liveRow = await tx.tour.findUnique({ where: { id } });
+
+      const updateData = await buildLiveUpdateData(tx, liveRow, tour.draftContent);
+
+      const th = typeof tour.draftContent.theme === 'string'
+        ? JSON.parse(tour.draftContent.theme)
+        : tour.draftContent.theme;
+      if (th && (th.secondaryThemes || th.secondary)) {
+        updateData.secondaryThemes = {
+          deleteMany: {},
+          create: [...new Set(th.secondaryThemes || th.secondary || [])].map((t) => ({ theme: t })),
+        };
+      }
+
+      return tx.tour.update({
+        where: { id },
+        data: {
+          ...updateData,
+          status: 'ACTIVE',
+          reviewedBy: adminId,
+          reviewedAt: now,
+          reviewNote: null,
+          draftContent: null,
+          draftStatus: null,
+          draftSubmittedAt: null,
+          draftReviewedAt: now,
+          draftReviewNote: null,
+        },
+        include: { supplier: { select: { id: true, name: true, photoURL: true } } },
+      });
+    });
+
+    const draftPhotos = (tour.draftContent.photos || []).map(normalize);
+    const removedPhotos = (tour.photos || []).filter((url) => !draftPhotos.includes(normalize(url)));
+    if (removedPhotos.length > 0) {
+      await Promise.allSettled(removedPhotos.map((url) => deleteCloudinaryImage(url)));
+    }
+
+    cache.invalidateTourCaches(id).catch((err) => console.warn('[Admin] invalidateTourCaches failed:', err?.message));
+
+    await logActivity({
+      userId: adminId,
+      action: 'tour.draft_approved',
+      resource: 'Tour',
+      resourceId: tour.id,
+      metadata: { title: tour.title },
+    });
+
+    enqueueNotification({
+      userId: tour.supplierId,
+      type: 'TOUR_APPROVED',
+      title: 'Tour Update Approved',
+      message: `Your update to "${tour.title}" has been approved and is now live.`,
+      data: { tourId: tour.id, status: 'ACTIVE' },
+    }).catch((err) => console.warn('[Admin] Supplier notification failed:', err?.message));
+
+    adminNotifService.emitToRoom('admin-room', {
+      type: 'TOUR_REVIEW_RESOLVED',
+      title: 'Tour Update Approved',
+      message: `"${tour.title}" update approved`,
+      data: { tourId: tour.id, action, status: 'ACTIVE' },
+    }).catch(() => {});
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Tour update approved and applied to the live listing',
+      data: { tour: updated },
+    });
+  }
+
+  const flagged = await prisma.tour.update({
+    where: { id },
+    data: {
+      draftStatus: 'REJECTED',
+      draftReviewedAt: now,
+      draftReviewNote: String(reason).trim(),
+    },
+  });
+
+  await logActivity({
+    userId: adminId,
+    action: 'tour.draft_flagged',
+    resource: 'Tour',
+    resourceId: tour.id,
+    metadata: { title: tour.title, reason },
+  });
+
+  enqueueNotification({
+    userId: tour.supplierId,
+    type: 'TOUR_FLAGGED',
+    title: 'Tour Update Needs Changes',
+    message: `Your update to "${tour.title}" was flagged: ${String(reason).trim()}. The live tour is unchanged.`,
+    data: { tourId: tour.id, status: 'REJECTED', reason: String(reason).trim() },
+  }).catch((err) => console.warn('[Admin] Supplier notification failed:', err?.message));
+
+  adminNotifService.emitToRoom('admin-room', {
+    type: 'TOUR_REVIEW_RESOLVED',
+    title: 'Tour Update Flagged',
+    message: `"${tour.title}" update flagged`,
+    data: { tourId: tour.id, action, status: 'REJECTED' },
+  }).catch(() => {});
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Tour update flagged and returned to the supplier. The live tour is unchanged.',
+    data: { tour: flagged },
   });
 });

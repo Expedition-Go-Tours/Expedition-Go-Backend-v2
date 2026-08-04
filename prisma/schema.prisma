@@ -346,7 +346,14 @@ model Tour {
   reviewedBy   String?     // Admin user ID who made the last review decision
   reviewedAt   DateTime?   // When the last review decision was made
   reviewNote   String?     // Admin note shown to the supplier when flagged
-  
+
+  // Draft / Edit-approval (live-tour edits wait here; the live version keeps selling)
+  draftContent     Json?      // Full edited product snapshot (live columns stay untouched)
+  draftStatus      String?    // DRAFT | PENDING_APPROVAL | REJECTED
+  draftSubmittedAt DateTime?
+  draftReviewedAt  DateTime?
+  draftReviewNote  String?    // Admin note for a rejected draft
+
   // Categorization (JSON structure as per your model)
   categorization Json
   theme        Json

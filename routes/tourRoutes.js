@@ -1062,6 +1062,10 @@ router.delete('/:id/photos', resolveSupplier, requireTeamPermission('tours.updat
  */
 router.post('/:id/submit-for-review', resolveSupplier, requireTeamPermission('tours.update'), tourController.submitTourForReview);
 
+// Get the pending draft (if any) with its diff against the live version — lets
+// the supplier builder load/continue editing a live tour's pending changes.
+router.get('/:id/draft', resolveSupplier, requireTeamPermission('tours.view'), tourController.getTourDraft);
+
 /**
  * @swagger
  * /tours/{id}/analytics:

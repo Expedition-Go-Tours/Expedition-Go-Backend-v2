@@ -927,6 +927,10 @@ router.get('/tours/review', requirePermission('tours.view', 'tours.approve'), ad
  */
 router.patch('/tours/:id/review', requirePermission('tours.approve'), adminController.reviewTour);
 
+// ── Draft (live-tour edit) review ──
+router.get('/tours/:id/draft', requirePermission('tours.view', 'tours.approve'), adminController.getTourDraftReview);
+router.patch('/tours/:id/draft-review', requirePermission('tours.approve'), adminController.reviewTourDraft);
+
 // ── Expedition Go Listing Management ──
 router.get('/expedition/listings', adminController.getExpeditionListings);
 router.get('/expedition/suppliers', adminController.getExpeditionSuppliers);

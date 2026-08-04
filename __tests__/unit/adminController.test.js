@@ -712,7 +712,7 @@ describe('adminController', () => {
       expect(res.status).toHaveBeenCalledWith(200);
       const body = res.json.mock.calls[0][0];
       expect(body.data.tours).toEqual([mockTour]);
-      expect(body.data.counts).toEqual({ pending: 1, rejected: 1, active: 1 });
+      expect(body.data.counts).toEqual({ pending: 1, rejected: 1, active: 1, pendingEdits: 1 });
       expect(body.data.pagination).toEqual(
         expect.objectContaining({ currentPage: 1, totalPages: 1, totalCount: 1, limit: 20 })
       );

@@ -1377,13 +1377,21 @@ describe('tourController', () => {
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
     });
 
-    it('rejects submission for an already-live tour', async () => {
+    it('resubmits an already-live tour for review (ACTIVE -> PENDING_APPROVAL)', async () => {
       prisma.tour.findFirst.mockResolvedValue({ ...completeTour, status: 'ACTIVE' });
 
       await controller.submitTourForReview(req, res, next);
 
-      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
-      expect(prisma.tour.update).not.toHaveBeenCalled();
+      expect(prisma.tour.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'tour-1' },
+          data: expect.objectContaining({ status: 'PENDING_APPROVAL', submittedAt: expect.any(Date) }),
+        })
+      );
+      expect(notifyAdmin).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'TOUR_SUBMITTED_FOR_REVIEW', data: expect.objectContaining({ tourId: 'tour-1' }) })
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
     });
 
     it('returns 409 when the tour is already awaiting approval', async () => {
