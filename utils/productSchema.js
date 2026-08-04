@@ -40,7 +40,6 @@ const productOptionSchema = z.object({
   title: z.string().min(1, 'Option title is required'),
   refCode: z.string().optional(),
   description: z.string().optional(),
-  languages: z.array(z.string()).min(1, 'At least one language required'),
   isPrivate: z.boolean(),
   skipTheLine: z.enum(['none', 'skip_tickets', 'separate_entrance', 'express_security', 'express_elevators']),
   wheelchairAccessible: z.boolean(),
