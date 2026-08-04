@@ -30,12 +30,16 @@ async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end
   const isPerGroup = isPerGroupTour(parsed);
   const maxGroups = getMaxGroupsPerTimeSlot(parsed);
 
-  // Day-level capacity used for the aggregate status. Per-group tours express
-  // it as groups × largest group so the ratio is still meaningful; per-person
-  // tours use maxParticipants.
-  const maxCapacity = isPerGroup
-    ? maxGroups * (td?.groupSizes?.[0]?.to || maxTravelersFallback)
-    : getEffectiveCapacity(parsed, null, maxTravelersFallback);
+   // Day-level capacity used for the aggregate status. Per-group tours express
+   // it as groups × largest group so the ratio is still meaningful; per-person
+   // tours use maxParticipants.
+   const maxCapacity = isPerGroup
+     ? (() => {
+         const bandTos = (Array.isArray(td?.groupSizes) ? td.groupSizes : [])
+           .map((g) => Number(g?.to)).filter((n) => Number.isFinite(n) && n > 0);
+         return maxGroups * (bandTos.length ? Math.max(...bandTos) : maxTravelersFallback);
+       })()
+     : getEffectiveCapacity(parsed, null, maxTravelersFallback);
 
   const startDate = toUtcDate(start);
   const endDate = toUtcDate(end);

@@ -158,7 +158,7 @@ function buildSchedulesAndPricing(flat) {
     if (Array.isArray(flat.groupSizes)) {
       for (const gs of flat.groupSizes) {
         if (gs.price != null) {
-          prices.push({ label: `Group of ${gs.from}-${gs.to}`, retailPrice: gs.price, groupSize: true })
+          prices.push({ label: gs.from === gs.to ? `Group of ${gs.from}` : `Group of ${gs.from}-${gs.to}`, retailPrice: gs.price, groupSize: true })
         }
       }
     }
@@ -233,7 +233,7 @@ function buildAvailability(flat) {
   }
 
   return {
-    scheduleType: flat.scheduleType || 'fixedTimeSlot',
+    scheduleType: flat.scheduleType || 'operatingHours',
     operatingHoursStart,
     operatingHoursEnd,
     daysOfWeek,

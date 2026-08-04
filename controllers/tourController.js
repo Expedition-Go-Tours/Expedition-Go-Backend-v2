@@ -18,6 +18,7 @@ const AppError = require('../utils/appError');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices, durationToMinutes } = require('../utils/tourHelpers');
 const { productToTour } = require('../utils/productToTour');
+const { tourContentSnapshot, mergeDraftContent, buildTourDiff, computeChangesSummary } = require('../utils/tourDraft');
 const { logActivity } = require('../utils/auditLogger');
 const { 
   buildTourFilters, 
@@ -751,6 +752,30 @@ exports.createTour = catchAsync(async (req, res, next) => {
 });
 
 /**
+ * Merge the incoming product-editor payload over the current live content to
+ * produce the full draft snapshot. Live columns are never touched here — the
+ * draft waits in draftContent until an admin approves it.
+ */
+function buildDraftFromBody(existingTour, body, files) {
+  const merged = mergeDraftContent(existingTour, body);
+  const uploadedPhotos = (files || []).map((f) => f.path).filter(isValidCloudinaryUrl);
+  const keptPhotos = Array.isArray(body.existingPhotos) && body.existingPhotos.length > 0
+    ? body.existingPhotos
+    : (existingTour.photos || []);
+  merged.photos = [...keptPhotos, ...uploadedPhotos];
+  if (body.coverPhotoIndex !== undefined) {
+    const idx = parseInt(body.coverPhotoIndex, 10);
+    if (!Number.isNaN(idx) && uploadedPhotos[idx]) {
+      merged.coverPhoto = uploadedPhotos[idx];
+    }
+  }
+  if (merged.schedulesAndPricing && typeof merged.schedulesAndPricing === 'object' && !Array.isArray(merged.schedulesAndPricing)) {
+    merged.schedulesAndPricing = rebuildSchedulePrices(merged.schedulesAndPricing);
+  }
+  return merged;
+}
+
+/**
  * Update tour (suppliers only - own tours)
  */
 exports.updateTour = catchAsync(async (req, res, next) => {
@@ -804,6 +829,55 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   const validationResult = validateTourData(req.body, true);
   if (!validationResult.isValid) {
     return next(new AppError(`Validation failed: ${validationResult.errors.join(', ')}`, 400));
+  }
+
+  // ── Draft path: editing a live tour ──
+  // Edits to an ACTIVE tour are captured in draftContent and never touch the
+  // live columns. The live listing keeps selling the current approved version
+  // until an admin approves the draft. Terminal statuses (PAUSED/ARCHIVED)
+  // fall through to the normal live-update path below.
+  const editingLiveTour = ownershipCheck.status === 'ACTIVE'
+    && (!req.body.status || ['DRAFT', 'REJECTED', 'PENDING_APPROVAL', 'ACTIVE', 'PUBLISHED'].includes(req.body.status));
+  if (editingLiveTour) {
+    const existingTour = await prisma.tour.findFirst({ where: { id, supplierId } });
+    if (!existingTour) {
+      return next(new AppError('Tour not found or access denied', 404));
+    }
+
+    const merged = buildDraftFromBody(existingTour, req.body, req.files);
+
+    await prisma.tour.update({
+      where: { id },
+      data: {
+        draftContent: merged,
+        draftStatus: 'DRAFT',
+        draftReviewedAt: null,
+        draftReviewNote: null,
+      },
+    });
+
+    cache.invalidateTourCaches(id).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
+
+    await logActivity({
+      userId: supplierId,
+      action: 'tour.draft_saved',
+      resource: 'Tour',
+      resourceId: id,
+      metadata: { title: existingTour.title },
+    });
+
+    const tour = {
+      ...existingTour,
+      ...merged,
+      status: 'ACTIVE',
+      draftStatus: 'DRAFT',
+      draftContent: merged,
+      draftSubmittedAt: existingTour.draftSubmittedAt,
+      draftReviewedAt: null,
+      draftReviewNote: null,
+    };
+
+    return res.status(200).json({ status: 'success', data: { tour } });
   }
 
   // Host the update in a transaction with row lock so two concurrent PATCH
@@ -1090,6 +1164,9 @@ function validateTourForReview(tour) {
  * Replaces the removed direct-publish path. Full live-quality validation runs
  * here; on success the tour moves to PENDING_APPROVAL and admins are notified.
  * The tour only becomes ACTIVE when an admin approves it.
+ *
+ * A live tour with a pending draft keeps selling its current approved version
+ * while the edits wait in the moderation queue — only the draft status changes.
  */
 exports.submitTourForReview = catchAsync(async (req, res, next) => {
   const { id } = req.params;
@@ -1107,17 +1184,10 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found or access denied', 404));
   }
 
-  if (tour.status === 'ACTIVE') {
-    return next(new AppError('This tour is already live and does not need review', 400));
-  }
+  // Interim stopgap (Phase 1): allow resubmitting a live tour for review (ACTIVE -> PENDING_APPROVAL).
+  // Phase 2 (draft layer) will keep the live version selling while edits await review instead of unpublishing.
   if (tour.status === 'PENDING_APPROVAL') {
     return next(new AppError('This tour is already awaiting approval', 409));
-  }
-
-  // Live-quality validation before the tour enters the moderation queue
-  const reviewErrors = validateTourForReview(tour);
-  if (reviewErrors.length > 0) {
-    return next(new AppError(`Cannot submit for review: ${reviewErrors.join(', ')}`, 400));
   }
 
   // Money needs somewhere to go — a verified payout method is required
@@ -1129,15 +1199,34 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
     return next(new AppError('You must add and verify at least one payout method before submitting a tour for review', 400));
   }
 
+  // Live-quality validation before the tour enters the moderation queue
+  const hasDraft = tour.status === 'ACTIVE' && tour.draftContent && typeof tour.draftContent === 'object';
+  const validationSubject = hasDraft ? mergeDraftContent(tour, tour.draftContent) : tour;
+  const reviewErrors = validateTourForReview(validationSubject);
+  if (reviewErrors.length > 0) {
+    return next(new AppError(`Cannot submit for review: ${reviewErrors.join(', ')}`, 400));
+  }
+
+  const now = new Date();
+  const updateData = hasDraft
+    ? {
+        draftStatus: 'PENDING_APPROVAL',
+        draftSubmittedAt: now,
+        draftReviewedAt: null,
+        draftReviewNote: null,
+        status: 'ACTIVE',
+      }
+    : {
+        status: 'PENDING_APPROVAL',
+        submittedAt: now,
+        reviewedBy: null,
+        reviewedAt: null,
+        reviewNote: null,
+      };
+
   const updated = await prisma.tour.update({
     where: { id },
-    data: {
-      status: 'PENDING_APPROVAL',
-      submittedAt: new Date(),
-      reviewedBy: null,
-      reviewedAt: null,
-      reviewNote: null,
-    },
+    data: updateData,
     include: {
       supplier: {
         select: { id: true, name: true, photoURL: true }
@@ -1145,28 +1234,77 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
     }
   });
 
-  cache.invalidateTourCaches(id).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
+  if (!hasDraft) {
+    cache.invalidateTourCaches(id).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
+  }
 
   await logActivity({
     userId: supplierId,
-    action: 'tour.submitted_for_review',
+    action: hasDraft ? 'tour.edit_submitted_for_review' : 'tour.submitted_for_review',
     resource: 'Tour',
     resourceId: tour.id,
     metadata: { title: tour.title }
   });
 
   // Notify admins (bell + admin-room socket)
+  const merged = hasDraft ? mergeDraftContent(tour, tour.draftContent) : null;
   await notifyAdmin({
     type: 'TOUR_SUBMITTED_FOR_REVIEW',
-    title: 'Tour Pending Approval',
-    message: `"${updated.title}" has been submitted for review by ${updated.supplier.name}`,
-    data: { tourId: updated.id, supplierId, tourTitle: updated.title, submittedAt: updated.submittedAt },
+    title: hasDraft ? 'Tour Update Pending Approval' : 'Tour Pending Approval',
+    message: hasDraft
+      ? `"${updated.title}" has a pending update submitted for review by ${updated.supplier.name}. The live tour keeps selling.`
+      : `"${updated.title}" has been submitted for review by ${updated.supplier.name}`,
+    data: {
+      tourId: updated.id,
+      supplierId,
+      tourTitle: updated.title,
+      submittedAt: hasDraft ? updated.draftSubmittedAt : updated.submittedAt,
+      isResubmission: hasDraft,
+      changesSummary: hasDraft ? computeChangesSummary(buildTourDiff(tour, merged)) : undefined,
+    },
   });
 
   res.status(200).json({
     status: 'success',
-    message: 'Tour submitted for review. An admin will review it shortly.',
+    message: hasDraft
+      ? 'Tour update submitted for review. The live tour keeps selling while an admin reviews your changes.'
+      : 'Tour submitted for review. An admin will review it shortly.',
     data: { tour: updated }
+  });
+});
+
+/**
+ * Get the pending draft for a tour with its diff against the live version.
+ * (suppliers only - own tours)
+ */
+exports.getTourDraft = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const supplierId = req.supplierId;
+
+  const tour = await prisma.tour.findFirst({ where: { id, supplierId } });
+  if (!tour) {
+    return next(new AppError('Tour not found or access denied', 404));
+  }
+
+  const live = tourContentSnapshot(tour);
+  const draft = tour.draftContent && typeof tour.draftContent === 'object'
+    ? mergeDraftContent(tour, tour.draftContent)
+    : null;
+  const diff = draft ? buildTourDiff(live, draft) : [];
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      tourId: tour.id,
+      status: tour.status,
+      draftStatus: tour.draftStatus || null,
+      draftSubmittedAt: tour.draftSubmittedAt || null,
+      draftReviewNote: tour.draftReviewNote || null,
+      live,
+      draft,
+      diff,
+      changesSummary: computeChangesSummary(diff),
+    },
   });
 });
 
@@ -1797,7 +1935,7 @@ async function buildPriceIdConstraint(prisma, minPrice, maxPrice, priceRange) {
       SELECT CASE WHEN p->>'retailPrice' ~ '^[+-]?[0-9]+(\\.[0-9]+)?$'
         THEN (p->>'retailPrice')::numeric ELSE NULL END AS "safePrice"
     ) sp
-    WHERE p->>'ageGroup' = 'adult'
+    WHERE (LOWER(p->>'ageGroup') = 'adult' OR COALESCE((p->>'groupSize')::boolean, false) = true)
       AND ${clauses.join(' AND ')}
   `;
 

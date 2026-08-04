@@ -287,6 +287,27 @@ describe('validateStoredPricing', () => {
     blob.availability.weeklySchedule = { Monday: [] };
     expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Add at least one opening hours entry']));
   });
+
+  it('passes when all schedules share identical price copies', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    const prices = [{ ageGroup: 'Adult', retailPrice: 50 }];
+    blob.pricingSchedules.schedules = [
+      { startDate: '2026-01-01', hasEndDate: false, prices: prices.slice() },
+      { startDate: '2026-02-01', hasEndDate: false, prices: prices.slice() },
+    ];
+    expect(validateStoredPricing(blob)).toEqual([]);
+  });
+
+  it('flags divergent per-schedule price copies', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.pricingSchedules.schedules = [
+      { startDate: '2026-01-01', hasEndDate: false, prices: [{ ageGroup: 'Adult', retailPrice: 50 }] },
+      { startDate: '2026-02-01', hasEndDate: false, prices: [{ ageGroup: 'Adult', retailPrice: 99 }] },
+    ];
+    expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining([
+      expect.stringMatching(/Schedule pricing copies are inconsistent/),
+    ]));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -328,6 +349,17 @@ describe('rebuildSchedulePrices', () => {
     expect(result.pricingSchedules.schedules[0].prices).toEqual([
       { label: 'Group of 1-4', retailPrice: 300, groupSize: true },
       { label: 'Group of 5-10', retailPrice: 500, groupSize: true },
+    ]);
+  });
+
+  it('labels discrete group sizes as "Group of N"', () => {
+    const b = JSON.parse(JSON.stringify(blob));
+    b.travelerDetails.pricingModel = 'perGroup';
+    b.travelerDetails.groupSizes = [{ from: 1, to: 1, price: 300 }, { from: 2, to: 2, price: 500 }];
+    const result = rebuildSchedulePrices(b);
+    expect(result.pricingSchedules.schedules[0].prices).toEqual([
+      { label: 'Group of 1', retailPrice: 300, groupSize: true },
+      { label: 'Group of 2', retailPrice: 500, groupSize: true },
     ]);
   });
 

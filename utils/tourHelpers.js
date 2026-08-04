@@ -398,7 +398,7 @@ function rebuildSchedulePrices(blob) {
   if (pricingModel === 'perGroup') {
     for (const gs of groupSizes) {
       if (gs && gs.price != null) {
-        prices.push({ label: `Group of ${gs.from}-${gs.to}`, retailPrice: clampPrice(gs.price), groupSize: true });
+        prices.push({ label: gs.from === gs.to ? `Group of ${gs.from}` : `Group of ${gs.from}-${gs.to}`, retailPrice: clampPrice(gs.price), groupSize: true });
       }
     }
   } else if (pricingApproach === 'sameForEveryone') {
@@ -561,7 +561,7 @@ function validateStoredPricing(blob) {
   }
 
   // Schedule type: fixedTimeSlot needs time slots; operatingHours needs weekly hours
-  const scheduleType = availability.scheduleType || firstSchedule.type || 'fixedTimeSlot';
+  const scheduleType = availability.scheduleType || firstSchedule.type || 'operatingHours';
   if (scheduleType === 'fixedTimeSlot') {
     const timeSlots = (Array.isArray(availability.timeSlots) && availability.timeSlots.length > 0)
       ? availability.timeSlots
@@ -576,6 +576,18 @@ function validateStoredPricing(blob) {
     if (!hasAnyHours) {
       errors.push('Add at least one opening hours entry');
     }
+  }
+
+  // Per-product pricing invariant: every schedule carries ONE shared price
+  // list (derived from travelerDetails by rebuildSchedulePrices). Divergent
+  // per-schedule copies can only originate from legacy blobs that pre-date the
+  // normalizer; prisma/backfillTourPrices.js dedupes them. Block publish on any
+  // that still disagree so the price-range search can never match a stale copy.
+  const pricesSignatures = schedules
+    .map((s) => (Array.isArray(s?.prices) ? JSON.stringify(s.prices) : null))
+    .filter((sig) => sig !== null);
+  if (pricesSignatures.length > 1 && new Set(pricesSignatures).size > 1) {
+    errors.push('Schedule pricing copies are inconsistent - re-open and re-save the product in the dashboard to rebuild prices before submitting');
   }
 
   return errors;
