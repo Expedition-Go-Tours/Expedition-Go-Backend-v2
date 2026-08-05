@@ -300,6 +300,55 @@ describe('evaluateBookingAvailability', () => {
     expect(result.availableSpots).toBe(7);
     expect(result.groupsRemaining).toBeNull();
   });
+
+  it('enforces an override day limit across every slot (per-person)', async () => {
+    // 4 travelers already booked in the 10:00 slot; day limit is 5 — a party of
+    // 2 in the 14:00 slot must be rejected even though that slot is empty.
+    const db = makeDb({ override: { status: 'AVAILABLE', capacity: 5, timeSlotOverrides: null }, counts: [{ currentBookings: '4', groupCount: '0' }] });
+    const result = await core.evaluateBookingAvailability(db, perPersonTour, MONDAY, '14:00', { adults: 2 });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('Only 1 spot left, but 2 requested');
+  });
+
+  it('allows a party that fits within the override day limit', async () => {
+    const db = makeDb({ override: { status: 'AVAILABLE', capacity: 6, timeSlotOverrides: null }, counts: [{ currentBookings: '4', groupCount: '0' }] });
+    const result = await core.evaluateBookingAvailability(db, perPersonTour, MONDAY, '14:00', { adults: 2 });
+    expect(result.ok).toBe(true);
+    expect(result.maxCapacity).toBe(6);
+    expect(result.availableSpots).toBe(2);
+  });
+
+  it('treats an invalid override capacity as no override', async () => {
+    const db = makeDb({ override: { status: 'AVAILABLE', capacity: 0, timeSlotOverrides: null }, counts: [{ currentBookings: '4', groupCount: '0' }] });
+    const result = await core.evaluateBookingAvailability(db, perPersonTour, MONDAY, '10:00', { adults: 1 });
+    expect(result.ok).toBe(true);
+    expect(result.maxCapacity).toBe(10);
+  });
+
+  it('enforces an override day limit across every slot (per-group, in groups)', async () => {
+    const multiSlotGroupTour = {
+      ...perGroupTour,
+      schedulesAndPricing: {
+        ...perGroupTour.schedulesAndPricing,
+        availability: { timeSlots: ['10:00', '14:00'] },
+      },
+    };
+    // 1 group booked at 10:00; day limit 2 groups — a group at 14:00 fits.
+    const ok = await core.evaluateBookingAvailability(
+      makeDb({ override: { status: 'AVAILABLE', capacity: 2, timeSlotOverrides: null }, counts: [{ currentBookings: '1', groupCount: '1' }] }),
+      multiSlotGroupTour, MONDAY, '14:00', { adults: 4 }
+    );
+    expect(ok.ok).toBe(true);
+    expect(ok.groupsRemaining).toBe(1);
+
+    // 2 groups already booked — the day cap is full across slots.
+    const full = await core.evaluateBookingAvailability(
+      makeDb({ override: { status: 'AVAILABLE', capacity: 2, timeSlotOverrides: null }, counts: [{ currentBookings: '2', groupCount: '2' }] }),
+      multiSlotGroupTour, MONDAY, '14:00', { adults: 4 }
+    );
+    expect(full.ok).toBe(false);
+    expect(full.reason).toBe('No group slots remaining for this time');
+  });
 });
 
 describe('checkTourAvailability', () => {
@@ -372,6 +421,21 @@ describe('checkTourAvailability', () => {
     expect(result.available).toBe(false);
     expect(result.reason).toBe('No group slots remaining for this time');
   });
+
+  it('enforces an override day limit across every slot in the pre-check', async () => {
+    prisma.tourDateOverride.findFirst.mockResolvedValue({ status: 'AVAILABLE', capacity: 5, timeSlotOverrides: null });
+    // Day-wide occupancy (4 in the 10:00 slot) — a party of 2 at 14:00 overflows 5.
+    prisma.$queryRawUnsafe.mockResolvedValue([{ currentBookings: '4', groupCount: '0' }]);
+    const result = await checkTourAvailability('t1', MONDAY, { selectedTime: '14:00', travelers: { adults: 2 } });
+    expect(result.available).toBe(false);
+    expect(result.reason).toContain('Only 1 spot left, but 2 requested');
+
+    // Fits within the day limit → accepted.
+    prisma.$queryRawUnsafe.mockResolvedValue([{ currentBookings: '3', groupCount: '0' }]);
+    const ok = await checkTourAvailability('t1', MONDAY, { selectedTime: '14:00', travelers: { adults: 2 } });
+    expect(ok.available).toBe(true);
+    expect(ok.availableSpots).toBe(2);
+  });
 });
 
 describe('buildAvailabilityCalendar', () => {
@@ -408,15 +472,20 @@ describe('buildAvailabilityCalendar', () => {
     expect(calendar[0].isOperatingDay).toBe(false);
   });
 
-  it('ignores override status/capacity and derives from builder max', async () => {
+  it('applies an override day-limit capacity to the calendar day', async () => {
     prisma.tourDateOverride.findMany.mockResolvedValue([
       { date: new Date(`${MONDAY}T00:00:00.000Z`), status: 'LIMITED', capacity: 3, timeSlotOverrides: null },
     ]);
     const calendar = await buildAvailabilityCalendar('t1', perPersonTour.schedulesAndPricing, MONDAY, MONDAY, FIXED_TODAY);
-    expect(calendar[0].capacity).toBe(10);
-    expect(calendar[0].status).toBe('AVAILABLE');
+    // Day limit (3) replaces the builder max (10) as the effective capacity,
+    // while the base/template capacity stays exposed for the UI.
+    expect(calendar[0].capacity).toBe(3);
+    expect(calendar[0].baseCapacity).toBe(10);
+    expect(calendar[0].overrideCapacity).toBe(3);
     expect(calendar[0].overrideStatus).toBe('LIMITED');
     expect(calendar[0].hasOverride).toBe(true);
+    // Slot ceilings default to the capped day capacity too.
+    expect(calendar[0].timeSlots.every((s) => s.capacity === 3)).toBe(true);
   });
 
   it('reports groups for perGroup tours with unit-aware day capacity', async () => {
@@ -454,6 +523,23 @@ describe('buildAvailabilityCalendar', () => {
     const calendar = await buildAvailabilityCalendar('t1', perPersonTour.schedulesAndPricing, MONDAY, MONDAY, FIXED_TODAY);
     expect(calendar[0].capacityUnit).toBe('people');
     expect(calendar[0].capacity).toBe(10);
+  });
+
+  it('applies an override day limit to a perGroup tour in group units', async () => {
+    prisma.tourDateOverride.findMany.mockResolvedValue([
+      { date: new Date(`${MONDAY}T00:00:00.000Z`), status: 'AVAILABLE', capacity: 2, timeSlotOverrides: null },
+    ]);
+    prisma.booking.findMany.mockResolvedValue([
+      { selectedDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 4 } },
+    ]);
+    const calendar = await buildAvailabilityCalendar('t2', perGroupTour.schedulesAndPricing, MONDAY, MONDAY, FIXED_TODAY);
+    // Day limit (2 groups) replaces the template's 3 groups/slot × 1 slot.
+    expect(calendar[0].capacityUnit).toBe('groups');
+    expect(calendar[0].capacity).toBe(2);
+    expect(calendar[0].baseCapacity).toBe(3);
+    expect(calendar[0].overrideCapacity).toBe(2);
+    expect(calendar[0].booked).toBe(1);
+    expect(calendar[0].remaining).toBe(1);
   });
 
   it('clamps past dates to PAST with zeroed capacity fields', async () => {

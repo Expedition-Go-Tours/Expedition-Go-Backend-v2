@@ -20,6 +20,27 @@ const VALID_OVERRIDE_STATUSES = ['BLOCKED'];
 // A slot-only / notes-only override (no explicit status) creates an AVAILABLE
 // day row with timeSlotOverrides — it must never silently block the whole day.
 
+/**
+ * Validate an optional day-limit capacity. Returns an error string or null.
+ * undefined/null = ignore/clear; otherwise a positive integer ≤ 100000.
+ */
+function validateCapacity(capacity) {
+  if (capacity === undefined || capacity === null) return null;
+  if (typeof capacity !== 'number' && typeof capacity !== 'string') {
+    return 'capacity must be a positive integer or null';
+  }
+  const n = Number(capacity);
+  if (!Number.isInteger(n) || n < 1 || n > 100000) {
+    return 'Invalid capacity. Must be a positive integer up to 100000 (or null to clear the day limit).';
+  }
+  return null;
+}
+
+/** Human pluralization helper for live-booking guard messages. */
+function plural(count, singular, pluralWord) {
+  return count === 1 ? singular : pluralWord;
+}
+
 /** UTC-midnight start of today — overrides can never target the past. */
 function todayUtc() {
   const now = new Date();
@@ -168,7 +189,7 @@ exports.getPublicAvailability = catchAsync(async (req, res, next) => {
 
 exports.updateDateAvailability = catchAsync(async (req, res, next) => {
   const { tourId, date } = req.params;
-  const { status, timeSlotOverrides, notes } = req.body;
+  const { status, timeSlotOverrides, notes, capacity } = req.body;
 
   const parsedDate = toUtcDate(date);
   if (!parsedDate) {
@@ -182,6 +203,11 @@ exports.updateDateAvailability = catchAsync(async (req, res, next) => {
   const slotError = validateTimeSlotOverrides(timeSlotOverrides);
   if (slotError) {
     return next(new AppError(slotError, 400));
+  }
+
+  const capError = validateCapacity(capacity);
+  if (capError) {
+    return next(new AppError(capError, 400));
   }
 
   const tour = await prisma.tour.findFirst({
@@ -226,8 +252,18 @@ exports.updateDateAvailability = catchAsync(async (req, res, next) => {
       );
     }
 
+    // A day limit must never sit below what is already booked — it is a ceiling
+    // and could otherwise strand existing travelers.
+    if (capacity != null && liveBookings > capacity) {
+      throw new AppError(
+        `Cannot set the day limit to ${capacity} — ${liveBookings} traveler${plural(liveBookings, ' is', 's are')} already booked. Set it to ${liveBookings} or higher, or clear the limit.`,
+        400
+      );
+    }
+
     const data = {};
     if (status) data.status = status;
+    if (capacity !== undefined) data.capacity = capacity;
     if (timeSlotOverrides) data.timeSlotOverrides = timeSlotOverrides;
     if (notes !== undefined) data.notes = notes;
 
@@ -240,6 +276,7 @@ exports.updateDateAvailability = catchAsync(async (req, res, next) => {
         tourId,
         date: parsedDate,
         status: status || 'AVAILABLE',
+        ...(capacity !== undefined ? { capacity } : {}),
         timeSlotOverrides: timeSlotOverrides || undefined,
         notes: notes || null,
       },
@@ -312,7 +349,7 @@ exports.batchUpdateAvailability = catchAsync(async (req, res, next) => {
   // Validate every update up front so the transaction never partially applies
   // a malformed batch.
   const parsedUpdates = updates.map((update) => {
-    const { date, status, timeSlotOverrides, notes } = update;
+    const { date, status, timeSlotOverrides, notes, capacity } = update;
     const parsedDate = toUtcDate(date);
 
     if (!parsedDate) {
@@ -325,6 +362,10 @@ exports.batchUpdateAvailability = catchAsync(async (req, res, next) => {
     if (slotError) {
       throw new AppError(slotError, 400);
     }
+    const capError = validateCapacity(capacity);
+    if (capError) {
+      throw new AppError(`${capError} (date: ${date})`, 400);
+    }
     if (isBefore(parsedDate, todayUtc())) {
       throw new AppError(`Cannot update availability for a past date: ${date}`, 400);
     }
@@ -335,11 +376,17 @@ exports.batchUpdateAvailability = catchAsync(async (req, res, next) => {
       status: status || null,
       timeSlotOverrides: timeSlotOverrides || null,
       notes: notes !== undefined ? notes : null,
+      // undefined = preserve existing day limit; number = set it. (Clearing via
+      // batch isn't supported — use the single-date PATCH for that.)
+      capacity: capacity === undefined ? null : (capacity === null ? null : Number(capacity)),
     };
   });
 
-  // The BLOCKED guard only needs live bookings when a date is being blocked.
-  const needsLiveCount = parsedUpdates.some((u) => u.status === 'BLOCKED');
+  // Live-count guards only fire when a date is being blocked or has a day limit
+  // that could sit below what is already booked.
+  const needsLiveCount = parsedUpdates.some(
+    (u) => u.status === 'BLOCKED' || (u.capacity != null)
+  );
 
   const results = await prisma.$transaction(async (tx) => {
     // Serialize against booking transactions for the whole batch.
@@ -382,6 +429,15 @@ exports.batchUpdateAvailability = catchAsync(async (req, res, next) => {
           );
         }
       }
+      if (u.capacity != null) {
+        const liveBookings = liveByDate.get(u.dateKey) || 0;
+        if (liveBookings > u.capacity) {
+          throw new AppError(
+            `Cannot set the day limit to ${u.capacity} on ${u.date} — ${liveBookings} traveler${plural(liveBookings, ' is', 's are')} already booked. Set it to ${liveBookings} or higher, or clear the limit.`,
+            400
+          );
+        }
+      }
     }
 
     // A single parameterized multi-row upsert replaces up to 365 sequential
@@ -393,29 +449,33 @@ exports.batchUpdateAvailability = catchAsync(async (req, res, next) => {
     const statuses = parsedUpdates.map((u) => u.status || 'AVAILABLE');
     const slotJsons = parsedUpdates.map((u) => (u.timeSlotOverrides ? JSON.stringify(u.timeSlotOverrides) : null));
     const notes = parsedUpdates.map((u) => (u.notes === null ? null : JSON.stringify(u.notes)));
+    const capacities = parsedUpdates.map((u) => u.capacity);
 
     const rows = await tx.$queryRawUnsafe(
-      `INSERT INTO "TourDateOverride" ("id", "tourId", "date", "status", "timeSlotOverrides", "notes")
+      `INSERT INTO "TourDateOverride" ("id", "tourId", "date", "status", "timeSlotOverrides", "notes", "capacity")
        SELECT * FROM UNNEST(
          $1::text[],
          $2::text[],
          $3::date[],
          $4::text[]::"OverrideStatus"[],
          $5::text[]::jsonb[],
-         $6::text[]
-       ) AS t("id", "tourId", "date", "status", "timeSlotOverrides", "notes")
+         $6::text[],
+         $7::int[]
+       ) AS t("id", "tourId", "date", "status", "timeSlotOverrides", "notes", "capacity")
        ON CONFLICT ("tourId", "date")
        DO UPDATE SET
          "status" = EXCLUDED."status",
          "timeSlotOverrides" = EXCLUDED."timeSlotOverrides",
-         "notes" = EXCLUDED."notes"
+         "notes" = EXCLUDED."notes",
+         "capacity" = COALESCE(EXCLUDED."capacity", "TourDateOverride"."capacity")
        RETURNING "id", "date", "status"`,
       ids,
       tourIds,
       dates,
       statuses,
       slotJsons,
-      notes
+      notes,
+      capacities
     );
 
     return rows.map((r) => ({

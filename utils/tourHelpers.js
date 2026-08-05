@@ -21,6 +21,7 @@ const {
   isOperatingDay,
   isClosedDate,
   getEffectiveCapacity,
+  getOverrideCapacity,
   buildTimeSlots,
   toDateKey,
   toUtcDate,
@@ -485,24 +486,28 @@ async function checkTourAvailability(tourId, selectedDate, selectedTimeOrOptions
     const isPerGroup = isPerGroupTour(parsed);
     const maxGroups = getMaxGroupsPerTimeSlot(parsed);
 
-    const [override, counts] = await Promise.all([
-      prisma.tourDateOverride.findFirst({
-        where: { tourId, date: dateObj },
-        select: { status: true, capacity: true, timeSlotOverrides: true },
-      }),
-      prisma.$queryRawUnsafe(
-        `SELECT
-           COALESCE(SUM(CASE WHEN status IN (${statusLiteral})
-             THEN ${TRAVELER_COUNT_SQL} ELSE 0 END), 0)::int AS "currentBookings",
-           COALESCE(COUNT(*) FILTER (WHERE status IN (${statusLiteral})), 0)::int AS "groupCount"
-         FROM "Booking"
-         WHERE "tourId" = $1 AND "selectedDate" = $2::date
-           ${selectedTime ? 'AND "selectedTime" = $3' : ''}`,
-        tourId,
-        dateKey,
-        ...(selectedTime ? [selectedTime] : [])
-      ),
-    ]);
+    const override = await prisma.tourDateOverride.findFirst({
+      where: { tourId, date: dateObj },
+      select: { status: true, capacity: true, timeSlotOverrides: true },
+    });
+
+    // A day-limit override is a day-wide ceiling — occupancy must be counted
+    // across every time slot that day so the pre-check agrees with checkout.
+    const capOverride = getOverrideCapacity(override);
+    const dayWide = capOverride != null;
+
+    const counts = await prisma.$queryRawUnsafe(
+      `SELECT
+         COALESCE(SUM(CASE WHEN status IN (${statusLiteral})
+           THEN ${TRAVELER_COUNT_SQL} ELSE 0 END), 0)::int AS "currentBookings",
+         COALESCE(COUNT(*) FILTER (WHERE status IN (${statusLiteral})), 0)::int AS "groupCount"
+       FROM "Booking"
+       WHERE "tourId" = $1 AND "selectedDate" = $2::date
+         ${selectedTime && !dayWide ? 'AND "selectedTime" = $3' : ''}`,
+      tourId,
+      dateKey,
+      ...(selectedTime && !dayWide ? [selectedTime] : [])
+    );
 
     const row = counts && counts[0] ? counts[0] : { currentBookings: 0, groupCount: 0 };
     const currentBookings = parseInt(row.currentBookings, 10) || 0;
@@ -510,7 +515,7 @@ async function checkTourAvailability(tourId, selectedDate, selectedTimeOrOptions
 
     const closedDate = isClosedDate(parsed, dateKey) || null;
     const operating = isOperatingDay(parsed, dateObj);
-    const dayCapacity = getEffectiveCapacity(parsed, maxTravelersFallback);
+    const dayCapacity = capOverride ?? getEffectiveCapacity(parsed, maxTravelersFallback);
     const daySlots = buildTimeSlots(parsed, override, dayCapacity);
 
     const base = {
@@ -523,41 +528,45 @@ async function checkTourAvailability(tourId, selectedDate, selectedTimeOrOptions
     };
 
     if (closedDate || !operating) {
-      return { available: false, reason: 'Tour is not available on this date', maxCapacity: dayCapacity, currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
+      return { available: false, reason: 'Tour is not available on this date', maxCapacity: dayCapacity, currentBookings: currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
     }
     if (override?.status === 'BLOCKED') {
-      return { available: false, reason: 'Date is blocked', maxCapacity: dayCapacity, currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
+      return { available: false, reason: 'Date is blocked', maxCapacity: dayCapacity, currentBookings: currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
     }
 
     // Fixed-slot tours must carry a concrete, valid time slot.
     if (daySlots.length > 0) {
       if (!selectedTime) {
-        return { available: false, reason: 'A time slot must be selected', maxCapacity: dayCapacity, currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
+        return { available: false, reason: 'A time slot must be selected', maxCapacity: dayCapacity, currentBookings: currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
       }
       if (!daySlots.some((s) => s.time === selectedTime)) {
-        return { available: false, reason: 'Selected time is not available for this date', maxCapacity: dayCapacity, currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
+        return { available: false, reason: 'Selected time is not available for this date', maxCapacity: dayCapacity, currentBookings: currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
       }
     }
 
-    // When a slot is chosen, capacity is evaluated at the slot level; otherwise
-    // at the whole-day level.
+    // Per-slot ceiling when no day-wide cap is active; otherwise the day-wide
+    // cap is the ceiling (occupancy already counted day-wide above).
     let effectiveCapacity = dayCapacity;
-    if (selectedTime) {
+    if (selectedTime && !dayWide) {
       const slot = daySlots.find((s) => s.time === selectedTime);
       if (slot) effectiveCapacity = slot.capacity;
     }
 
     const availableSpots = Math.max(0, effectiveCapacity - currentBookings);
     let groupsRemaining = null;
-    if (isPerGroup) groupsRemaining = Math.max(0, maxGroups - groupCount);
+    if (isPerGroup) {
+      groupsRemaining = dayWide
+        ? Math.max(0, capOverride - groupCount)
+        : Math.max(0, maxGroups - groupCount);
+    }
 
     let available = availableSpots > 0;
     if (isPerGroup) available = available && groupsRemaining > 0;
-    if (requestedTravelers > 0 && requestedTravelers > availableSpots) available = false;
+    if (requestedTravelers > 0 && requestedTravelers > availableSpots && !(dayWide && isPerGroup)) available = false;
 
     let reason;
     if (!available) {
-      if (requestedTravelers > availableSpots) {
+      if (requestedTravelers > availableSpots && !(dayWide && isPerGroup)) {
         reason = `Only ${availableSpots} spot${availableSpots === 1 ? '' : 's'} left, but ${requestedTravelers} requested`;
       } else if (isPerGroup && groupsRemaining <= 0) {
         reason = 'No group slots remaining for this time';

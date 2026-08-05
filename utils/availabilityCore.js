@@ -250,13 +250,27 @@ function getTemplateTimeSlots(parsed) {
 /**
  * Effective traveler capacity for a date. Always derived from the tour's
  * maxParticipants (the builder's capacity max); otherwise the system fallback.
- * Per-date capacity overrides are intentionally ignored so capacity always
- * matches the builder.
+ * This is the BASE (template) capacity — a TourDateOverride day-limit may lower
+ * it for a specific date (see computeDayEntry / evaluateBookingAvailability),
+ * but the builder value is always the source of truth for the template.
  */
 function getEffectiveCapacity(parsed, fallbackCapacity) {
   const n = Number(parsed?.travelerDetails?.maxParticipants);
   if (Number.isFinite(n) && n > 0) return Math.floor(n);
   return fallbackCapacity;
+}
+
+/**
+ * Normalize a TourDateOverride day-limit into a usable int, or null when absent.
+ * The override capacity is a day-wide ceiling expressed in the tour's unit
+ * (people for per-person tours, group slots for per-group tours). Invalid or
+ * non-positive values are treated as "no override" so stale data can never
+ * silently disable a date.
+ */
+function getOverrideCapacity(override) {
+  if (!override || override.capacity == null) return null;
+  const n = Number(override.capacity);
+  return Number.isInteger(n) && n > 0 && n <= 100000 ? n : null;
 }
 
 /**
@@ -323,6 +337,10 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
     select: { status: true, capacity: true, timeSlotOverrides: true },
   });
 
+  const capOverride = getOverrideCapacity(override);
+  // A day-limit override is a day-wide ceiling, so occupancy is counted across
+  // every time slot that day. Without one, behavior is unchanged (per-slot).
+  const dayWide = capOverride != null;
   const [counts] = await db.$queryRawUnsafe(
     `SELECT
        COALESCE(SUM(CASE WHEN status IN (${statusLiteral})
@@ -330,10 +348,10 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
        COALESCE(COUNT(*) FILTER (WHERE status IN (${statusLiteral})), 0)::int AS "groupCount"
      FROM "Booking"
      WHERE "tourId" = $1 AND "selectedDate" = $2::date
-       ${selectedTime ? 'AND "selectedTime" = $3' : ''}`,
+       ${selectedTime && !dayWide ? 'AND "selectedTime" = $3' : ''}`,
     tour.id,
     dateKey,
-    ...(selectedTime ? [selectedTime] : [])
+    ...(selectedTime && !dayWide ? [selectedTime] : [])
   );
 
   const currentBookings = parseInt(counts?.currentBookings, 10) || 0;
@@ -341,7 +359,7 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
 
   const closedDate = isClosedDate(parsed, dateKey);
   const operating = isOperatingDay(parsed, dateObj);
-  const dayCapacity = getEffectiveCapacity(parsed, maxTravelersFallback);
+  const dayCapacity = capOverride ?? getEffectiveCapacity(parsed, maxTravelersFallback);
 
   if (closedDate || !operating) return { ok: false, reason: 'Tour is not available on this date' };
   if (override?.status === 'BLOCKED') return { ok: false, reason: 'Date is blocked' };
@@ -354,18 +372,26 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
     }
   }
 
+  // Per-slot ceiling when no day-wide cap is active; otherwise the day-wide cap
+  // is the ceiling (already counted day-wide above).
   let effectiveCapacity = dayCapacity;
-  if (selectedTime) {
+  if (selectedTime && !dayWide) {
     const slot = daySlots.find((s) => s.time === selectedTime);
     if (slot) effectiveCapacity = slot.capacity;
   }
 
-  const availableSpots = Math.max(0, effectiveCapacity - currentBookings);
   const requestedTravelers = travelerCount(travelers);
   let groupsRemaining = null;
-  if (isPerGroup) groupsRemaining = Math.max(0, maxGroups - groupCount);
+  if (isPerGroup) {
+    groupsRemaining = dayWide
+      ? Math.max(0, capOverride - groupCount)
+      : Math.max(0, maxGroups - groupCount);
+  }
 
-  if (requestedTravelers > availableSpots) {
+  // Traveler-based check: skipped for per-group tours with a day-wide cap —
+  // the binding constraint there is the group ceiling (groupsRemaining).
+  if (requestedTravelers > Math.max(0, effectiveCapacity - currentBookings) && !(dayWide && isPerGroup)) {
+    const availableSpots = Math.max(0, effectiveCapacity - currentBookings);
     return {
       ok: false,
       reason: `Only ${availableSpots} spot${availableSpots === 1 ? '' : 's'} left, but ${requestedTravelers} requested`,
@@ -373,12 +399,12 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
     };
   }
   if (isPerGroup && groupsRemaining <= 0) {
-    return { ok: false, reason: 'No group slots remaining for this time', availableSpots };
+    return { ok: false, reason: 'No group slots remaining for this time', availableSpots: 0 };
   }
 
   return {
     ok: true,
-    availableSpots,
+    availableSpots: Math.max(0, effectiveCapacity - currentBookings),
     groupsRemaining,
     maxCapacity: effectiveCapacity,
     currentBookings,
@@ -414,10 +440,13 @@ function computeDayEntry(parsed, override, slotData, dateObj, options = {}) {
 
   // Traveler-equivalent capacity (per-group: groups × largest group size). Only
   // the per-slot ceiling — the aggregate day status for per-group tours uses
-  // GROUP slots (see dayCapacity below).
+  // GROUP slots (see dayCapacity below). A day-limit override replaces the
+  // per-person day capacity with the capped value; per-group traveler-equivalent
+  // stays as-is (the cap is applied to the group day capacity below).
+  const capOverride = getOverrideCapacity(override);
   const maxCapacity = isPerGroup
     ? maxGroups * maxGroupSize
-    : getEffectiveCapacity(parsed, maxTravelersFallback);
+    : (capOverride ?? getEffectiveCapacity(parsed, maxTravelersFallback));
 
   const timezone = getTourTimezone(parsed);
   const dateStr = toDateKey(dateObj);
@@ -445,11 +474,15 @@ function computeDayEntry(parsed, override, slotData, dateObj, options = {}) {
   });
 
   // Day-level occupancy for the aggregate status:
-  //  - per-person tours: travelers vs maxParticipants
+  //  - per-person tours: travelers vs maxParticipants (or the day-limit cap)
   //  - per-group tours: group slots vs maxGroups × slots that day (a day
-  //    with no fixed slots holds one slot of maxGroups)
-  const dayCapacity = isPerGroup
+  //    with no fixed slots holds one slot of maxGroups); a day-limit override
+  //    replaces the day's group ceiling with the capped value.
+  const baseCapacity = isPerGroup
     ? maxGroups * Math.max(1, effectiveTimeSlots.length)
+    : getEffectiveCapacity(parsed, maxTravelersFallback);
+  const dayCapacity = isPerGroup
+    ? (capOverride ?? baseCapacity)
     : maxCapacity;
   const dayBooked = isPerGroup
     ? effectiveTimeSlots.reduce((sum, slot) => sum + (slot.groupsBooked || 0), 0)
@@ -469,6 +502,8 @@ function computeDayEntry(parsed, override, slotData, dateObj, options = {}) {
     timeSlots: isPast ? [] : effectiveTimeSlots,
     hasOverride: !!override,
     overrideStatus: override?.status || null,
+    overrideCapacity: capOverride,
+    baseCapacity,
     isPast,
     ...(isPerGroup
       ? { capacityUnit: 'groups', groupsPerSlot: maxGroups, maxGroupSize, maxCapacityTravelers: maxCapacity }
@@ -527,6 +562,7 @@ module.exports = {
   getOverrideTimeSlotList,
   getTemplateTimeSlots,
   getEffectiveCapacity,
+  getOverrideCapacity,
   buildTimeSlots,
   computeStatus,
   computeDayEntry,

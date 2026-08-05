@@ -75,6 +75,11 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
       const dates = args[2] || [];
       return dates.map((d) => ({ id: `ov-${d}`, date: d, status: 'BLOCKED' }));
     }
+    if (query.includes('GROUP BY "selectedDate"')) {
+      // Batch live-count query returns one row per target date (arg $2).
+      const dateKeys = args[1] || [];
+      return dateKeys.map((d) => ({ d: new Date(`${String(d).slice(0, 10)}T00:00:00.000Z`), live }));
+    }
     return [{ live }];
   }),
   tourDateOverride: { upsert: prisma.tourDateOverride.upsert },
@@ -165,7 +170,7 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
       expect(body.data.calendar[0].timeSlots).toEqual([{ time: '09:00', capacity: 10, booked: 0, remaining: 10 }]);
     });
 
-    it('ignores override capacity and derives from builder max', async () => {
+    it('applies an override day-limit capacity to the calendar day', async () => {
       req.query = { startDate: MON, endDate: MON };
       prisma.tourDateOverride.findMany.mockResolvedValue([
         { date: parseISO(MON), status: 'AVAILABLE', capacity: 5, timeSlotOverrides: null, notes: null },
@@ -174,7 +179,9 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
       await controller.getAvailability(req, res, next);
 
       const body = res.json.mock.calls[0][0];
-      expect(body.data.calendar[0].capacity).toBe(10);
+      expect(body.data.calendar[0].capacity).toBe(5);
+      expect(body.data.calendar[0].baseCapacity).toBe(10);
+      expect(body.data.calendar[0].overrideCapacity).toBe(5);
       expect(body.data.calendar[0].status).toBe('AVAILABLE');
       expect(body.data.calendar[0].overrideStatus).toBe('AVAILABLE');
     });
@@ -305,6 +312,54 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
       const createArg = prisma.tourDateOverride.upsert.mock.calls[0][0].create;
       expect(createArg).not.toHaveProperty('capacity');
     });
+
+    it('stores a day-limit capacity on the override', async () => {
+      req.params = { tourId: 't1', date: futureDate() };
+      req.body = { capacity: 50 };
+
+      await controller.updateDateAvailability(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.tourDateOverride.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ capacity: 50 }),
+          create: expect.objectContaining({ capacity: 50 }),
+        })
+      );
+    });
+
+    it('clears a day-limit capacity with null', async () => {
+      req.params = { tourId: 't1', date: futureDate() };
+      req.body = { capacity: null };
+
+      await controller.updateDateAvailability(req, res, next);
+
+      expect(prisma.tourDateOverride.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ capacity: null }),
+        })
+      );
+    });
+
+    it('rejects invalid day-limit capacity values', async () => {
+      for (const capacity of [0, -5, 100001, 'abc', 1.5]) {
+        req.params = { tourId: 't1', date: futureDate() };
+        req.body = { capacity };
+        await controller.updateDateAvailability(req, res, next);
+        expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+        next.mockClear();
+      }
+    });
+
+    it('rejects a day limit below the already-booked count', async () => {
+      req.params = { tourId: 't1', date: futureDate() };
+      req.body = { capacity: 5 };
+      prisma.$transaction.mockImplementation(async (cb) => cb(makeTx({ live: '10' })));
+
+      await controller.updateDateAvailability(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
   });
 
   // ============================
@@ -409,6 +464,50 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
       expect(res.status).toHaveBeenCalledWith(200);
       const body = res.json.mock.calls[0][0];
       expect(body.data.count).toBe(2);
+    });
+
+    it('persists day-limit capacities in the batch upsert', async () => {
+      req.params = { tourId: 't1' };
+      req.body = {
+        updates: [
+          { date: futureDate(), capacity: 25 },
+          { date: futureDate(31), status: 'BLOCKED' },
+        ],
+      };
+      let captured;
+      prisma.$transaction.mockImplementation(async (cb) => {
+        const tx = makeTx();
+        await cb(tx);
+        captured = tx;
+        return [];
+      });
+
+      await controller.batchUpdateAvailability(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const insertCall = captured.$queryRawUnsafe.mock.calls.find(
+        (c) => c[0].includes('INSERT INTO "TourDateOverride"')
+      );
+      expect(insertCall).toBeTruthy();
+      // 7th argument is the per-date capacities array ($7::int[]).
+      expect(insertCall[7]).toEqual([25, null]);
+    });
+
+    it('rejects an invalid day-limit capacity in batch', async () => {
+      req.params = { tourId: 't1' };
+      req.body = { updates: [{ date: futureDate(), capacity: 0 }] };
+      await controller.batchUpdateAvailability(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('rejects a batch day limit below the already-booked count', async () => {
+      req.params = { tourId: 't1' };
+      req.body = { updates: [{ date: futureDate(), capacity: 5 }] };
+      prisma.$transaction.mockImplementation(async (cb) => cb(makeTx({ live: '10' })));
+
+      await controller.batchUpdateAvailability(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
   });
 });
