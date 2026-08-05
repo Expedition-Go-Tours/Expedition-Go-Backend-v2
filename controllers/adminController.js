@@ -2140,6 +2140,72 @@ exports.getTourReviewQueue = catchAsync(async (req, res) => {
 });
 
 /**
+ * GET /admin/tours/:id
+ * Fetch a single tour for the admin dashboard regardless of its public status.
+ * Mirrors the public tour-detail shape so the dashboard normalizer stays identical.
+ * Does not apply the `status = 'ACTIVE'` filter and never counts a view.
+ */
+exports.getTourAdminDetail = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+
+  const tour = await prisma.tour.findFirst({
+    where: { OR: [{ id }, { slug: id }] },
+    include: {
+      supplier: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          photoURL: true,
+          supplierProfile: {
+            select: {
+              averageRating: true,
+              totalBookings: true,
+              businessInfo: true,
+            },
+          },
+        },
+      },
+      reviews: {
+        where: { status: 'APPROVED' },
+        include: {
+          customer: {
+            select: { id: true, name: true, photoURL: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      },
+      _count: {
+        select: { reviews: true, bookings: true },
+      },
+      specialOfferTargets: {
+        include: { specialOffer: true },
+      },
+      expeditionTour: true,
+    },
+  });
+
+  if (!tour) return next(new AppError('Tour not found', 404));
+
+  const specialOffers = (tour.specialOfferTargets || [])
+    .map((t) => t.specialOffer)
+    .filter(Boolean);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      tour: {
+        ...tour,
+        photos: tour.photos,
+        specialOffers,
+        coverPhoto: tour.coverPhoto || null,
+      },
+    },
+  });
+});
+
+/**
  * GET /admin/tours/:id/draft
  * Fetch the live version, the pending draft, and a sectioned diff for review.
  */
