@@ -1,4 +1,10 @@
-jest.mock('../../utils/getConfig', () => jest.fn().mockResolvedValue('50'));
+jest.mock('../../utils/getConfig', () =>
+  jest.fn(async (key) => {
+    if (key === 'availability.limited_ratio') return '0.5';
+    if (key === 'availability.full_ratio') return '1';
+    return '50';
+  })
+);
 
 jest.mock('../../utils/prismaClient', () => ({
   tour: { findUnique: jest.fn() },
@@ -16,6 +22,10 @@ const { buildAvailabilityCalendar } = require('../../utils/availabilityCalendar'
 const MONDAY = '2026-06-15';
 const TUESDAY = '2026-06-16';
 const WEDNESDAY = '2026-06-17';
+
+// Fixed "today" for calendar tests — keeps 2026-06-15 in the future so the
+// PAST clamp never flips these fixtures regardless of when the suite runs.
+const FIXED_TODAY = new Date('2026-06-01');
 
 const perPersonTour = {
   id: 't1',
@@ -135,16 +145,16 @@ describe('isOperatingDay', () => {
 });
 
 describe('getEffectiveCapacity', () => {
-  it('prefers override capacity', () => {
-    expect(core.getEffectiveCapacity({ travelerDetails: { maxParticipants: 10 } }, { capacity: 5 }, 50)).toBe(5);
+  it('always uses maxParticipants, ignoring any override capacity', () => {
+    expect(core.getEffectiveCapacity({ travelerDetails: { maxParticipants: 10 } }, 50)).toBe(10);
   });
 
   it('falls back to maxParticipants', () => {
-    expect(core.getEffectiveCapacity({ travelerDetails: { maxParticipants: 8 } }, null, 50)).toBe(8);
+    expect(core.getEffectiveCapacity({ travelerDetails: { maxParticipants: 8 } }, 50)).toBe(8);
   });
 
   it('falls back to the system value', () => {
-    expect(core.getEffectiveCapacity({}, null, 50)).toBe(50);
+    expect(core.getEffectiveCapacity({}, 50)).toBe(50);
   });
 });
 
@@ -175,19 +185,22 @@ describe('computeStatus', () => {
     expect(core.computeStatus(0, 10, null, false)).toBe('BLOCKED');
   });
 
-  it('honors override BLOCKED and FULL', () => {
+  it('honors only the BLOCKED override', () => {
     expect(core.computeStatus(0, 10, 'BLOCKED', true)).toBe('BLOCKED');
-    expect(core.computeStatus(0, 10, 'FULL', true)).toBe('FULL');
+  });
+
+  it('ignores manual FULL/LIMITED overrides and derives status from occupancy', () => {
+    expect(core.computeStatus(0, 10, 'FULL', true)).toBe('AVAILABLE');
+    expect(core.computeStatus(2, 10, 'LIMITED', true)).toBe('AVAILABLE');
+    expect(core.computeStatus(1, 10, 'AVAILABLE', true)).toBe('AVAILABLE');
   });
 
   it('computes FULL/LIMITED from the occupancy ratio', () => {
     expect(core.computeStatus(10, 10, null, true)).toBe('FULL');
     expect(core.computeStatus(8, 10, null, true)).toBe('LIMITED');
+    expect(core.computeStatus(5, 10, null, true)).toBe('LIMITED');
+    expect(core.computeStatus(4, 10, null, true)).toBe('AVAILABLE');
     expect(core.computeStatus(2, 10, null, true)).toBe('AVAILABLE');
-  });
-
-  it('honors override LIMITED', () => {
-    expect(core.computeStatus(1, 10, 'LIMITED', true)).toBe('LIMITED');
   });
 
   it('blocks zero capacity', () => {
@@ -221,18 +234,20 @@ describe('evaluateBookingAvailability', () => {
     expect(result.reason).toBe('Tour is not available on this date');
   });
 
-  it('rejects BLOCKED and FULL overrides', async () => {
+  it('rejects BLOCKED overrides but treats FULL overrides as automatic', async () => {
     const blocked = await core.evaluateBookingAvailability(
       makeDb({ override: { status: 'BLOCKED', capacity: 10, timeSlotOverrides: null } }),
       perPersonTour, MONDAY, '10:00', { adults: 1 }
     );
     expect(blocked.reason).toBe('Date is blocked');
 
+    // A manual FULL override is no longer honored — the date stays bookable
+    // until the capacity-derived ratio reaches 100%.
     const full = await core.evaluateBookingAvailability(
       makeDb({ override: { status: 'FULL', capacity: 10, timeSlotOverrides: null } }),
       perPersonTour, MONDAY, '10:00', { adults: 1 }
     );
-    expect(full.reason).toBe('Date is fully booked');
+    expect(full.ok).toBe(true);
   });
 
   it('requires a time slot when the tour has slots', async () => {
@@ -361,7 +376,7 @@ describe('checkTourAvailability', () => {
 
 describe('buildAvailabilityCalendar', () => {
   it('marks non-operating days BLOCKED and populates slots', async () => {
-    const calendar = await buildAvailabilityCalendar('t1', perPersonTour.schedulesAndPricing, MONDAY, WEDNESDAY);
+    const calendar = await buildAvailabilityCalendar('t1', perPersonTour.schedulesAndPricing, MONDAY, WEDNESDAY, FIXED_TODAY);
     expect(calendar).toHaveLength(3);
     expect(calendar[0].date).toBe(MONDAY);
     expect(calendar[0].status).toBe('AVAILABLE');
@@ -376,7 +391,7 @@ describe('buildAvailabilityCalendar', () => {
     prisma.booking.findMany.mockResolvedValue([
       { selectedDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 3 } },
     ]);
-    const calendar = await buildAvailabilityCalendar('t1', perPersonTour.schedulesAndPricing, MONDAY, MONDAY);
+    const calendar = await buildAvailabilityCalendar('t1', perPersonTour.schedulesAndPricing, MONDAY, MONDAY, FIXED_TODAY);
     const slot = calendar[0].timeSlots.find((s) => s.time === '10:00');
     expect(slot.booked).toBe(3);
     expect(slot.remaining).toBe(7);
@@ -388,28 +403,151 @@ describe('buildAvailabilityCalendar', () => {
       ...perPersonTour.schedulesAndPricing,
       availability: { ...perPersonTour.schedulesAndPricing.availability, dateExceptions: [{ type: 'closed', date: MONDAY }] },
     };
-    const calendar = await buildAvailabilityCalendar('t1', parsed, MONDAY, MONDAY);
+    const calendar = await buildAvailabilityCalendar('t1', parsed, MONDAY, MONDAY, FIXED_TODAY);
     expect(calendar[0].status).toBe('BLOCKED');
     expect(calendar[0].isOperatingDay).toBe(false);
   });
 
-  it('uses override capacity for the day', async () => {
+  it('ignores override status/capacity and derives from builder max', async () => {
     prisma.tourDateOverride.findMany.mockResolvedValue([
       { date: new Date(`${MONDAY}T00:00:00.000Z`), status: 'LIMITED', capacity: 3, timeSlotOverrides: null },
     ]);
-    const calendar = await buildAvailabilityCalendar('t1', perPersonTour.schedulesAndPricing, MONDAY, MONDAY);
-    expect(calendar[0].capacity).toBe(3);
-    expect(calendar[0].status).toBe('LIMITED');
+    const calendar = await buildAvailabilityCalendar('t1', perPersonTour.schedulesAndPricing, MONDAY, MONDAY, FIXED_TODAY);
+    expect(calendar[0].capacity).toBe(10);
+    expect(calendar[0].status).toBe('AVAILABLE');
+    expect(calendar[0].overrideStatus).toBe('LIMITED');
     expect(calendar[0].hasOverride).toBe(true);
   });
 
-  it('reports groups for perGroup tours', async () => {
+  it('reports groups for perGroup tours with unit-aware day capacity', async () => {
     prisma.booking.findMany.mockResolvedValue([
       { selectedDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 4 } },
     ]);
-    const calendar = await buildAvailabilityCalendar('t2', perGroupTour.schedulesAndPricing, MONDAY, MONDAY);
+    const calendar = await buildAvailabilityCalendar('t2', perGroupTour.schedulesAndPricing, MONDAY, MONDAY, FIXED_TODAY);
     const slot = calendar[0].timeSlots[0];
     expect(slot.groupsBooked).toBe(1);
     expect(slot.groupsRemaining).toBe(2);
+    // Day-level numbers are GROUP slots, not people: 3 groups/slot × 1 slot.
+    expect(calendar[0].capacityUnit).toBe('groups');
+    expect(calendar[0].groupsPerSlot).toBe(3);
+    expect(calendar[0].capacity).toBe(3);
+    expect(calendar[0].booked).toBe(1);
+    expect(calendar[0].remaining).toBe(2);
+    expect(calendar[0].status).toBe('AVAILABLE');
+  });
+
+  it('computes the perGroup day status from group slots, not travelers', async () => {
+    // 3 groups of 1 traveler each = every group slot taken. Under the old
+    // traveler-based math this was 3/150 (Available); group-based it is FULL.
+    prisma.booking.findMany.mockResolvedValue([
+      { selectedDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 1 } },
+      { selectedDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 1 } },
+      { selectedDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 1 } },
+    ]);
+    const calendar = await buildAvailabilityCalendar('t2', perGroupTour.schedulesAndPricing, MONDAY, MONDAY, FIXED_TODAY);
+    expect(calendar[0].booked).toBe(3);
+    expect(calendar[0].capacity).toBe(3);
+    expect(calendar[0].status).toBe('FULL');
+  });
+
+  it('keeps the per-person calendar in people units', async () => {
+    const calendar = await buildAvailabilityCalendar('t1', perPersonTour.schedulesAndPricing, MONDAY, MONDAY, FIXED_TODAY);
+    expect(calendar[0].capacityUnit).toBe('people');
+    expect(calendar[0].capacity).toBe(10);
+  });
+
+  it('clamps past dates to PAST with zeroed capacity fields', async () => {
+    const calendar = await buildAvailabilityCalendar(
+      't1', perPersonTour.schedulesAndPricing, MONDAY, TUESDAY, new Date('2026-06-20')
+    );
+    expect(calendar).toHaveLength(2);
+    expect(calendar[0].status).toBe('PAST');
+    expect(calendar[0].isPast).toBe(true);
+    expect(calendar[0].booked).toBe(0);
+    expect(calendar[0].remaining).toBe(0);
+    expect(calendar[0].timeSlots).toEqual([]);
+    expect(calendar[1].status).toBe('PAST');
+    expect(calendar[1].isPast).toBe(true);
+  });
+
+  it('keeps today and future dates bookable', async () => {
+    const calendar = await buildAvailabilityCalendar('t1', perPersonTour.schedulesAndPricing, MONDAY, MONDAY, FIXED_TODAY);
+    expect(calendar[0].status).toBe('AVAILABLE');
+    expect(calendar[0].isPast).toBe(false);
+  });
+});
+
+describe('resolveCutoffHours', () => {
+  it('prefers cutoffMinutes and converts to hours', () => {
+    expect(core.resolveCutoffHours({ cutoffMinutes: 20 }, 24)).toBeCloseTo(20 / 60, 5);
+    expect(core.resolveCutoffHours({ cutoffMinutes: 90 }, 24)).toBeCloseTo(1.5, 5);
+  });
+
+  it('falls back to legacy minAdvanceBookingHours', () => {
+    expect(core.resolveCutoffHours({ minAdvanceBookingHours: 12 }, 24)).toBe(12);
+    expect(core.resolveCutoffHours({ cutoffMinutes: null, minAdvanceBookingHours: 6 }, 24)).toBe(6);
+  });
+
+  it('falls back to the system default when nothing is configured', () => {
+    expect(core.resolveCutoffHours({}, 24)).toBe(24);
+    expect(core.resolveCutoffHours({}, null)).toBe(24);
+  });
+
+  it('ignores garbage and negative values', () => {
+    expect(core.resolveCutoffHours({ cutoffMinutes: 'abc' }, 24)).toBe(24);
+    expect(core.resolveCutoffHours({ cutoffMinutes: -5 }, 24)).toBe(24);
+  });
+});
+
+describe('cutoffLabel', () => {
+  it('labels sub-hour cutoffs in minutes', () => {
+    expect(core.cutoffLabel(20 / 60)).toBe('20 minutes');
+  });
+
+  it('labels hour cutoffs in hours', () => {
+    expect(core.cutoffLabel(24)).toBe('24 hours');
+    expect(core.cutoffLabel(12)).toBe('12 hours');
+  });
+});
+
+describe('timezone helpers', () => {
+  it('getTourTimezone reads the availability timezone with UTC fallback', () => {
+    expect(core.getTourTimezone({ availability: { timezone: 'Pacific/Auckland' } })).toBe('Pacific/Auckland');
+    expect(core.getTourTimezone({ timezone: 'America/New_York' })).toBe('America/New_York');
+    expect(core.getTourTimezone({ availability: {} })).toBe('UTC');
+    expect(core.getTourTimezone({ availability: { timezone: 'Not/AZone' } })).toBe('UTC');
+  });
+
+  it('weekdayInZone returns the tour-local weekday', () => {
+    // 2026-06-14 (Sunday UTC) is Monday in Auckland (+12).
+    expect(core.weekdayInZone(core.toUtcDate('2026-06-14'), 'Pacific/Auckland')).toBe('Monday');
+    expect(core.weekdayInZone(core.toUtcDate('2026-06-15'), 'Pacific/Auckland')).toBe('Tuesday');
+    expect(core.weekdayInZone(core.toUtcDate('2026-06-15'), 'UTC')).toBe('Monday');
+  });
+
+  it('zonedDateKey shifts the UTC day in positive-offset zones', () => {
+    expect(core.zonedDateKey('2026-06-15', 'UTC')).toBe('2026-06-15');
+    expect(core.zonedDateKey('2026-06-15', 'Pacific/Auckland')).toBe('2026-06-16');
+  });
+
+  it('zonedTimeToUtc converts a tour-local wall clock to the UTC instant', () => {
+    // 10:00 in Auckland (+12, no DST in June) = 22:00 the prior UTC day.
+    const utc = core.zonedTimeToUtc('2026-06-15 10:00', 'Pacific/Auckland');
+    expect(utc.toISOString().slice(0, 16)).toBe('2026-06-14T22:00');
+    // UTC zone maps through unchanged.
+    expect(core.zonedTimeToUtc('2026-06-15 10:00', 'UTC').toISOString().slice(0, 16)).toBe('2026-06-15T10:00');
+  });
+
+  it('zonedTimeToUtc rejects malformed input', () => {
+    expect(Number.isNaN(core.zonedTimeToUtc('garbage', 'UTC').getTime())).toBe(true);
+    expect(Number.isNaN(core.zonedTimeToUtc('2026-06-15 25:00', 'UTC').getTime())).toBe(true);
+  });
+
+  it('isOperatingDay uses the tour timezone for the weekday', async () => {
+    const parsed = { availability: { daysOfWeek: ['Monday'], timezone: 'Pacific/Auckland' } };
+    // Sunday UTC = Monday in Auckland -> operating.
+    expect(core.isOperatingDay(parsed, core.toUtcDate('2026-06-14'))).toBe(true);
+    // Monday UTC = Tuesday in Auckland -> not operating.
+    expect(core.isOperatingDay(parsed, core.toUtcDate('2026-06-15'))).toBe(false);
   });
 });

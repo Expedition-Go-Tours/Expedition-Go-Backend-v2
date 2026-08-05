@@ -97,13 +97,13 @@ router.use(protect);
  *                           isOperatingDay:
  *                             type: boolean
  *                             description: Whether this is a scheduled operating day based on the tour template
- *                           status:
- *                             type: string
- *                             enum: [AVAILABLE, LIMITED, FULL, BLOCKED]
- *                             description: Aggregated availability status for the day
- *                           capacity:
- *                             type: integer
- *                             description: Effective capacity (override value or template default)
+  *                           status:
+  *                             type: string
+  *                             enum: [AVAILABLE, LIMITED, FULL, BLOCKED]
+  *                             description: Availability status for the day — Available/Limited/Full are automatic from bookings vs capacity; BLOCKED is set manually
+  *                           capacity:
+  *                             type: integer
+  *                             description: Capacity from the builder's capacity max (max participants)
  *                           booked:
  *                             type: integer
  *                             description: Number of confirmed/pending bookings for this date
@@ -180,23 +180,18 @@ router.get('/:tourId/availability', resolveSupplier, requireTeamPermission('tour
  *           schema:
  *             type: object
  *             properties:
- *               status:
- *                 type: string
- *                 enum: [AVAILABLE, LIMITED, FULL, BLOCKED]
- *                 description: Override status for the date
- *                 example: BLOCKED
- *               capacity:
- *                 type: integer
- *                 minimum: 0
- *                 description: Override capacity (must be >= existing bookings for this date)
- *                 example: 20
- *               timeSlotOverrides:
- *                 type: array
- *                 description: Override time slot definitions
- *                 items:
- *                   type: object
- *                   properties:
- *                     time:
+  *               status:
+  *                 type: string
+  *                 enum: [BLOCKED]
+  *                 description: Only BLOCKED can be set manually — Available, Limited and Full are automatic. Remove an override to unblock.
+  *                 example: BLOCKED
+  *               timeSlotOverrides:
+  *                 type: array
+  *                 description: Override time slot definitions
+  *                 items:
+  *                   type: object
+  *                   properties:
+  *                     time:
  *                       type: string
  *                       example: "10:00"
  *                     capacity:
@@ -240,27 +235,29 @@ router.get('/:tourId/availability', resolveSupplier, requireTeamPermission('tour
  *                         date:
  *                           type: string
  *                           format: date
- *                         status:
- *                           type: string
- *                           enum: [AVAILABLE, LIMITED, FULL, BLOCKED]
- *                         capacity:
- *                           type: integer
- *                           nullable: true
+  *                         status:
+  *                           type: string
+  *                           enum: [AVAILABLE, LIMITED, FULL, BLOCKED]
+  *                         capacity:
+  *                           type: integer
+  *                           nullable: true
+  *                           deprecated: true
+  *                           description: Deprecated — this date-level capacity is ignored. Day capacity derives from the tour's schedulesAndPricing; set capacity per slot via timeSlotOverrides.
  *                         timeSlotOverrides:
  *                           type: array
  *                           nullable: true
  *                         notes:
  *                           type: string
  *                           nullable: true
- *       400:
- *         description: Invalid date format, invalid status, or capacity too low
- *       401:
- *         description: Unauthorized
- *       403:
- *         description: Forbidden - insufficient permissions
- *       404:
- *         description: Tour not found or access denied
- */
+  *       400:
+  *         description: Invalid date format, invalid status, or the date already has live bookings
+  *       401:
+  *         description: Unauthorized
+  *       403:
+  *         description: Forbidden - insufficient permissions
+  *       404:
+  *         description: Tour not found or access denied
+  */
 router.patch('/:tourId/availability/:date', resolveSupplier, requireTeamPermission('tours.update'), availabilityController.updateDateAvailability);
 
 /**
@@ -360,28 +357,23 @@ router.delete('/:tourId/availability/:date', resolveSupplier, requireTeamPermiss
  *                       format: date
  *                       description: Date for the override (YYYY-MM-DD)
  *                       example: "2026-07-15"
- *                     status:
- *                       type: string
- *                       enum: [AVAILABLE, LIMITED, FULL, BLOCKED]
- *                       description: Override status
- *                       example: LIMITED
- *                     capacity:
- *                       type: integer
- *                       minimum: 0
- *                       description: Override capacity
- *                       example: 15
- *                     timeSlotOverrides:
- *                       type: array
- *                       items:
- *                         type: object
- *                         properties:
- *                           time:
- *                             type: string
- *                           capacity:
- *                             type: integer
- *                           booked:
- *                             type: integer
- *                     notes:
+  *                     status:
+  *                       type: string
+  *                       enum: [BLOCKED]
+  *                       description: Only BLOCKED can be set manually — Available, Limited and Full are automatic
+  *                       example: BLOCKED
+  *                     timeSlotOverrides:
+  *                       type: array
+  *                       items:
+  *                         type: object
+  *                         properties:
+  *                           time:
+  *                             type: string
+  *                           capacity:
+  *                             type: integer
+  *                           booked:
+  *                             type: integer
+  *                     notes:
  *                       type: string
  *                       description: Internal notes
  *     responses:

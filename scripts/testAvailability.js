@@ -172,7 +172,7 @@ async function runSyntheticEvaluator() {
       perPersonTour, DATE, '10:00', { adults: 1 }
     );
     dump('res (FULL override)', res);
-    check('FULL override rejected', !res.ok && res.reason === 'Date is fully booked', res.reason);
+    check('manual FULL override is ignored (auto status)', res.ok === true, JSON.stringify(res));
   }
 
   {
@@ -338,10 +338,10 @@ async function runE2E() {
 
     const byDate = (d) => calendar.find((c) => c.date === d);
     check('blocked override -> BLOCKED', byDate(blockedDay)?.status === 'BLOCKED', byDate(blockedDay)?.status);
-    check('full override -> FULL', byDate(fullDay)?.status === 'FULL', byDate(fullDay)?.status);
+    check('manual FULL override is ignored -> AVAILABLE', byDate(fullDay)?.status === 'AVAILABLE', byDate(fullDay)?.status);
     check('closed date -> BLOCKED + not operating', byDate(closedDay)?.status === 'BLOCKED' && byDate(closedDay)?.isOperatingDay === false,
       JSON.stringify(byDate(closedDay)));
-    check('limited override capacity 5 honored', byDate(limitedDay)?.capacity === 5, byDate(limitedDay)?.capacity);
+    check('override capacity ignored -> builder max 10', byDate(limitedDay)?.capacity === 10, byDate(limitedDay)?.capacity);
     check('limited override slots from timeSlotOverrides', byDate(limitedDay)?.timeSlots?.length === 2 && byDate(limitedDay).timeSlots[0].capacity === 4,
       JSON.stringify(byDate(limitedDay)?.timeSlots));
     check('operating day reflects bookings: 10:00 booked 5', byDate(opDay)?.timeSlots.find((s) => s.time === '10:00')?.booked === 5,

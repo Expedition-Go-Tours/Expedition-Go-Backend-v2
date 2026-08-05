@@ -8,6 +8,7 @@
 
 const prisma = require('./prismaClient');
 const getConfig = require('./getConfig');
+const logger = require('./logger');
 const { findBestDiscount } = require('./specialOfferEngine');
 const { MAX_PRICE, isValidCurrencyCode, normalizeCurrency } = require('./currencyCodes');
 const {
@@ -160,155 +161,6 @@ function validateTourData(data, isPartial = false) {
       errors: [`Validation error: ${error.message}`]
     };
   }
-}
-
-/**
- * Validate categorization structure
- */
-function validateCategorization(categorization) {
-  try {
-    // Basic structure validation
-    if (typeof categorization !== 'object') return false;
-
-    // Validate top-level transportMode (nested object: { air: [...], land: [...], water: [...] })
-    if (categorization.transportMode) {
-      if (typeof categorization.transportMode !== 'object' || Array.isArray(categorization.transportMode)) return false;
-      const { air, land, water } = categorization.transportMode;
-      if (air && !Array.isArray(air)) return false;
-      if (land && !Array.isArray(land)) return false;
-      if (water && !Array.isArray(water)) return false;
-    }
-
-    // Validate tour categorization
-    if (categorization.tour) {
-      const { transportModes } = categorization.tour;
-      
-      if (transportModes) {
-        if (transportModes.airTransport && !Array.isArray(transportModes.airTransport)) return false;
-        if (transportModes.landTransport && !Array.isArray(transportModes.landTransport)) return false;
-        if (transportModes.waterTransport && !Array.isArray(transportModes.waterTransport)) return false;
-      }
-    }
-
-    // Validate activity categorization
-    if (categorization.activity) {
-      const { activitiesIncluded } = categorization.activity;
-      if (activitiesIncluded && !Array.isArray(activitiesIncluded)) return false;
-    }
-
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Validate pricing structure — accepts the nested schedulesAndPricing blob
- * or flat store shape. Removed perBooking and maxTravelersPerBooking.
- */
-function validatePricing(data) {
-  const errors = [];
-
-  try {
-    // Support both flat store shape and nested schedulesAndPricing blob
-    const travelerDetails = data.travelerDetails || data;
-    const pricingSchedules = data.pricingSchedules || data;
-
-    const {
-      pricingModel,
-      pricingApproach,
-      ageGroups,
-      minParticipants,
-      maxParticipants,
-      groupSizes,
-      additionalPersonsEnabled,
-      additionalPersonPrice,
-      maxGroupsPerTimeSlot,
-    } = travelerDetails;
-
-    const {
-      currency,
-      schedules,
-    } = pricingSchedules;
-
-    if (pricingModel && !['perPerson', 'perGroup'].includes(pricingModel)) {
-      errors.push('Valid pricing model is required (perPerson or perGroup)');
-    }
-
-    if (pricingApproach && !['sameForEveryone', 'dependsOnAge'].includes(pricingApproach)) {
-      errors.push('Pricing approach must be sameForEveryone or dependsOnAge');
-    }
-
-    if (ageGroups && Array.isArray(ageGroups)) {
-      for (const ageGroup of ageGroups) {
-        if (!ageGroup.name || ageGroup.minAge === undefined || ageGroup.maxAge === undefined) {
-          errors.push('Age groups must have name, minAge, and maxAge');
-          break;
-        }
-        if (ageGroup.minAge < 0 || ageGroup.maxAge > 120 || ageGroup.minAge > ageGroup.maxAge) {
-          errors.push('Invalid age range in age groups');
-          break;
-        }
-      }
-    }
-
-    if (minParticipants !== undefined && (minParticipants < 1 || minParticipants > 100)) {
-      errors.push('Min participants must be between 1 and 100');
-    }
-
-    if (maxParticipants !== undefined && (maxParticipants < 1 || maxParticipants > 100)) {
-      errors.push('Max participants must be between 1 and 100');
-    }
-
-    if (minParticipants !== undefined && maxParticipants !== undefined && minParticipants > maxParticipants) {
-      errors.push('Min participants cannot exceed max participants');
-    }
-
-    if (groupSizes && Array.isArray(groupSizes)) {
-      const sorted = [...groupSizes].sort((a, b) => (a.from ?? 0) - (b.from ?? 0))
-      for (let i = 0; i < sorted.length; i++) {
-        const gs = sorted[i]
-        if (gs.from == null || gs.to == null || gs.from < 1 || gs.to > 100) {
-          errors.push('Each group size must have from (1-100) and to (1-100)');
-          break;
-        }
-        if (gs.from > gs.to) {
-          errors.push('Group size from cannot exceed to');
-          break;
-        }
-        if (i > 0 && gs.from <= sorted[i - 1].to) {
-          errors.push('Group sizes must not overlap');
-          break;
-        }
-      }
-    }
-
-    if (additionalPersonsEnabled && (additionalPersonPrice === null || additionalPersonPrice === undefined)) {
-      errors.push('Additional person price is required when additional persons are enabled');
-    }
-
-    if (maxGroupsPerTimeSlot !== undefined && (maxGroupsPerTimeSlot < 1 || maxGroupsPerTimeSlot > 50)) {
-      errors.push('Max groups per time slot must be between 1 and 50');
-    }
-
-    if (currency && (typeof currency !== 'string' || currency.length !== 3)) {
-      errors.push('Valid 3-letter currency code is required');
-    }
-
-    if (schedules && Array.isArray(schedules)) {
-      for (const schedule of schedules) {
-        if (schedule.startDate && schedule.endDate && new Date(schedule.endDate) < new Date(schedule.startDate)) {
-          errors.push('Schedule end date must be on or after start date');
-          break;
-        }
-      }
-    }
-
-  } catch {
-    errors.push('Invalid pricing structure format');
-  }
-
-  return errors;
 }
 
 /**
@@ -658,7 +510,7 @@ async function checkTourAvailability(tourId, selectedDate, selectedTimeOrOptions
 
     const closedDate = isClosedDate(parsed, dateKey) || null;
     const operating = isOperatingDay(parsed, dateObj);
-    const dayCapacity = getEffectiveCapacity(parsed, override, maxTravelersFallback);
+    const dayCapacity = getEffectiveCapacity(parsed, maxTravelersFallback);
     const daySlots = buildTimeSlots(parsed, override, dayCapacity);
 
     const base = {
@@ -675,9 +527,6 @@ async function checkTourAvailability(tourId, selectedDate, selectedTimeOrOptions
     }
     if (override?.status === 'BLOCKED') {
       return { available: false, reason: 'Date is blocked', maxCapacity: dayCapacity, currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
-    }
-    if (override?.status === 'FULL') {
-      return { available: false, reason: 'Date is fully booked', maxCapacity: dayCapacity, currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
     }
 
     // Fixed-slot tours must carry a concrete, valid time slot.
@@ -727,7 +576,12 @@ async function checkTourAvailability(tourId, selectedDate, selectedTimeOrOptions
       ...base,
     };
   } catch (error) {
-    console.error('❌ Check availability failed:', error);
+    logger.error('Check availability failed', {
+      tourId,
+      selectedDate,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return { available: false, reason: 'Error checking availability' };
   }
 }

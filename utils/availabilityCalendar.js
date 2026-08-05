@@ -5,41 +5,27 @@ const {
   BOOKABLE_STATUSES,
   parseBlob,
   travelerCount,
-  isPerGroupTour,
-  getMaxGroupsPerTimeSlot,
-  isOperatingDay,
-  isClosedDate,
-  getEffectiveCapacity,
-  buildTimeSlots,
-  computeStatus,
-  DAY_NAMES,
+  computeDayEntry,
   toDateKey,
   toUtcDate,
+  todayUtc,
 } = require('./availabilityCore');
 
 /**
  * Build the availability calendar for a tour between two UTC dates.
  * This is the single canonical implementation — the supplier, public and admin
- * endpoints all use it. Rules come from the shared availability core so the
- * calendar never disagrees with the checkout transactions.
+ * endpoints all use it. Per-day computation is delegated to the pure
+ * computeDayEntry helper so the calendar never disagrees with the checkout
+ * transactions or the search re-check. The LIMITED/FULL status thresholds are
+ * configurable via availability.limited_ratio / availability.full_ratio.
  */
-async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end) {
+async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end, todayRef) {
   const parsed = parseBlob(schedulesAndPricing) || {};
-  const maxTravelersFallback = parseInt(await getConfig('booking.max_travelers', '50'), 10);
-  const td = parsed.travelerDetails;
-  const isPerGroup = isPerGroupTour(parsed);
-  const maxGroups = getMaxGroupsPerTimeSlot(parsed);
-
-   // Day-level capacity used for the aggregate status. Per-group tours express
-   // it as groups × largest group so the ratio is still meaningful; per-person
-   // tours use maxParticipants.
-   const maxCapacity = isPerGroup
-     ? (() => {
-         const bandTos = (Array.isArray(td?.groupSizes) ? td.groupSizes : [])
-           .map((g) => Number(g?.to)).filter((n) => Number.isFinite(n) && n > 0);
-         return maxGroups * (bandTos.length ? Math.max(...bandTos) : maxTravelersFallback);
-       })()
-     : getEffectiveCapacity(parsed, null, maxTravelersFallback);
+  const [maxTravelersFallback, limitedRatio, fullRatio] = await Promise.all([
+    getConfig('booking.max_travelers', '50'),
+    getConfig('availability.limited_ratio', '0.5'),
+    getConfig('availability.full_ratio', '1'),
+  ]);
 
   const startDate = toUtcDate(start);
   const endDate = toUtcDate(end);
@@ -76,56 +62,33 @@ async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end
     slotMap.set(slotKey, (slotMap.get(slotKey) || 0) + count);
     bookingTimeSlotMap.set(dateKey, slotMap);
 
-    if (isPerGroup) {
-      const groupMap = slotGroupCountMap.get(dateKey) || new Map();
-      groupMap.set(slotKey, (groupMap.get(slotKey) || 0) + 1);
-      slotGroupCountMap.set(dateKey, groupMap);
-    }
+    const groupMap = slotGroupCountMap.get(dateKey) || new Map();
+    groupMap.set(slotKey, (groupMap.get(slotKey) || 0) + 1);
+    slotGroupCountMap.set(dateKey, groupMap);
   }
 
   const calendar = [];
   let current = new Date(startDate);
+  const today = todayRef ? toUtcDate(todayRef) || todayUtc() : todayUtc();
 
   while (!isAfter(current, endDate)) {
     const dateStr = toDateKey(current);
-    const override = overrideMap.get(dateStr);
-    const bookedCount = bookingCountMap.get(dateStr) || 0;
-    const dayOfWeek = DAY_NAMES[current.getUTCDay()];
-    const operating = isOperatingDay(parsed, current) && !isClosedDate(parsed, dateStr);
-
-    const effectiveCapacity = override && override.capacity != null
-      ? Number(override.capacity)
-      : maxCapacity;
-    const computedStatus = computeStatus(bookedCount, effectiveCapacity, override?.status || null, operating);
-
-    const dateSlotMap = bookingTimeSlotMap.get(dateStr) || new Map();
-    const dateGroupMap = slotGroupCountMap.get(dateStr) || new Map();
-    const daySlots = buildTimeSlots(parsed, override, effectiveCapacity);
-    const effectiveTimeSlots = daySlots.map((slot) => {
-      const slotBooked = dateSlotMap.get(slot.time) || 0;
-      const groupsBooked = dateGroupMap.get(slot.time) || 0;
-      return {
-        time: slot.time,
-        capacity: slot.capacity,
-        booked: slotBooked,
-        remaining: Math.max(0, slot.capacity - slotBooked),
-        ...(isPerGroup ? { groupsBooked, groupsRemaining: Math.max(0, maxGroups - groupsBooked) } : {}),
-      };
-    });
-
-    calendar.push({
-      date: dateStr,
-      dayOfWeek,
-      isOperatingDay: operating,
-      status: computedStatus,
-      capacity: effectiveCapacity,
-      booked: bookedCount,
-      remaining: Math.max(0, effectiveCapacity - bookedCount),
-      timeSlots: effectiveTimeSlots,
-      hasOverride: !!override,
-      overrideStatus: override?.status || null,
-    });
-
+    calendar.push(computeDayEntry(
+      parsed,
+      overrideMap.get(dateStr) || null,
+      {
+        bookingsBySlot: bookingTimeSlotMap.get(dateStr) || new Map(),
+        groupsBySlot: slotGroupCountMap.get(dateStr) || new Map(),
+        bookedCount: bookingCountMap.get(dateStr) || 0,
+      },
+      current,
+      {
+        todayRef: today,
+        fallbackCapacity: parseInt(maxTravelersFallback, 10),
+        limitedRatio: parseFloat(limitedRatio),
+        fullRatio: parseFloat(fullRatio),
+      }
+    ));
     current = addDays(current, 1);
   }
 

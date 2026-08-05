@@ -33,6 +33,13 @@ const { shouldCountTourView } = require('../utils/viewTracking');
 const eventEmitter = require('../utils/eventEmitter');
 
 const { rankTourIdsBySearch } = require('../utils/fullTextSearch');
+const {
+  computeDayEntry,
+  parseBlob,
+  travelerCount,
+  toUtcDate,
+  BOOKABLE_STATUSES,
+} = require('../utils/availabilityCore');
 const cache = require('../utils/cacheHelper');
 const { verifyAccessToken } = require('../config/jwt');
 const crypto = require('crypto');
@@ -58,6 +65,10 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
   } = req.query;
 
   const sortBy = search && !rawSortBy ? 'relevance' : (rawSortBy || 'createdAt');
+  const pageLimit = parseInt(limit);
+  // When a date is searched, fetch a lookahead buffer so the availability
+  // re-check can still return a full page after dropping unavailable tours.
+  const queryLimit = req.query.availableDate ? Math.min(pageLimit * 3, 60) : pageLimit;
 
   const validation = validateFilterParams(req.query);
   if (!validation.isValid) {
@@ -158,7 +169,7 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
         },
         orderBy,
         skip,
-        take: parseInt(limit)
+        take: queryLimit
       }),
       prisma.tour.count({ where })
     ]);
@@ -197,7 +208,69 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
       optimizedTours.sort((a, b) => (idOrder.get(a.id) ?? Infinity) - (idOrder.get(b.id) ?? Infinity));
     }
 
-    const totalPages = Math.ceil(totalCount / parseInt(limit));
+    // Full-fidelity availability re-check for availableDate searches. The SQL
+    // filter only bounds the tour's start/end window, so the target date may
+    // still be a closed day, outside the operating days-of-week, overridden to
+    // BLOCKED, or fully booked. Re-evaluate each buffered tour against the
+    // exact per-day rules (same computeDayEntry the calendar uses) with two
+    // batched queries — no N+1 — and keep the first `limit` truly available.
+    if (req.query.availableDate) {
+      const targetDate = toUtcDate(req.query.availableDate);
+      if (targetDate && optimizedTours.length > 0) {
+        const tourIds = optimizedTours.map((t) => t.id);
+        const [dateOverrides, dateBookings] = await Promise.all([
+          prisma.tourDateOverride.findMany({
+            where: { tourId: { in: tourIds }, date: targetDate },
+          }),
+          prisma.booking.findMany({
+            where: {
+              tourId: { in: tourIds },
+              selectedDate: targetDate,
+              status: { in: BOOKABLE_STATUSES },
+            },
+            select: { tourId: true, selectedTime: true, travelers: true },
+          }),
+        ]);
+
+        const overrideByTour = new Map(dateOverrides.map((o) => [o.tourId, o]));
+        const bookedByTour = new Map();
+        const travelersBySlot = new Map(); // tourId -> Map(slot -> travelers)
+        const groupsBySlot = new Map(); // tourId -> Map(slot -> groups)
+        for (const b of dateBookings) {
+          const slotKey = b.selectedTime || '__no_slot__';
+          bookedByTour.set(b.tourId, (bookedByTour.get(b.tourId) || 0) + travelerCount(b.travelers));
+          const tMap = travelersBySlot.get(b.tourId) || new Map();
+          tMap.set(slotKey, (tMap.get(slotKey) || 0) + travelerCount(b.travelers));
+          travelersBySlot.set(b.tourId, tMap);
+          const gMap = groupsBySlot.get(b.tourId) || new Map();
+          gMap.set(slotKey, (gMap.get(slotKey) || 0) + 1);
+          groupsBySlot.set(b.tourId, gMap);
+        }
+
+        const availableTours = [];
+        for (const tour of optimizedTours) {
+          const entry = computeDayEntry(
+            parseBlob(tour.schedulesAndPricing) || {},
+            overrideByTour.get(tour.id) || null,
+            {
+              bookedCount: bookedByTour.get(tour.id) || 0,
+              bookingsBySlot: travelersBySlot.get(tour.id) || new Map(),
+              groupsBySlot: groupsBySlot.get(tour.id) || new Map(),
+            },
+            targetDate,
+            {}
+          );
+          if (entry.status === 'AVAILABLE' || entry.status === 'LIMITED') {
+            availableTours.push(tour);
+            if (availableTours.length >= pageLimit) break;
+          }
+        }
+        optimizedTours.length = 0;
+        optimizedTours.push(...availableTours);
+      }
+    }
+
+    const totalPages = Math.ceil(totalCount / pageLimit);
     const hasNextPage = parseInt(page) < totalPages;
     const hasPrevPage = parseInt(page) > 1;
 
@@ -207,7 +280,7 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
         tours: optimizedTours,
         pagination: {
           currentPage: parseInt(page), totalPages, totalCount,
-          hasNextPage, hasPrevPage, limit: parseInt(limit)
+          hasNextPage, hasPrevPage, limit: pageLimit
         },
         appliedFilters: {
           category: req.query.category, theme: req.query.theme,

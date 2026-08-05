@@ -133,10 +133,6 @@ function buildProductContent(flat) {
     dropoffOption: flat.dropoffOption || 'none',
     dropoffLocation: flat.dropoffLocation || null,
     dropoffDescription: flat.dropoffDescription || '',
-    itinerary: Array.isArray(flat.itinerary) ? flat.itinerary : [],
-    itineraryOverview: flat.itineraryOverview || '',
-    additionalItineraryInfo: flat.additionalItineraryInfo || '',
-    dayTitles: flat.dayTitles || {},
     isPrivateActivity: !!flat.isPrivateActivity,
     passportRequired: !!flat.passportRequired,
     flightInfoRequired: !!flat.flightInfoRequired,
@@ -241,6 +237,7 @@ function buildAvailability(flat) {
     timeSlots: Array.isArray(flat.timeSlots) ? flat.timeSlots.map(t => t.startTime) : [],
     startDate: flat.scheduleStartDate || '',
     endDate: flat.scheduleHasEndDate ? (flat.scheduleEndDate || '') : null,
+    timezone: flat.timezone || 'UTC',
   }
 }
 
@@ -291,6 +288,7 @@ function buildBookingAndTickets(flat) {
     cutoffMinutes: flat.cutoffMinutes ?? 20,
     lastMinuteBookings: !!flat.lastMinuteBookings,
     perSlotCutoff: !!flat.perSlotCutoff,
+    timezone: flat.timezone || 'UTC',
   };
 }
 

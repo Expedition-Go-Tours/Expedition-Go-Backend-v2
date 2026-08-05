@@ -130,15 +130,15 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
     },
     servers: [
       {
-        url: 'http://localhost:5000',
+        url: 'http://localhost:5000/api',
         description: 'Development server - Local development environment'
       },
       {
-        url: 'https://expedition-go-backend-v2.onrender.com',
+        url: 'https://expedition-go-backend-v2.onrender.com/api',
         description: 'Production server - Live production environment'
       },
       {
-        url: 'https://staging-api.expeditiongo.com',
+        url: 'https://staging-api.expeditiongo.com/api',
         description: 'Staging server - Testing environment'
       }
     ],
@@ -2985,7 +2985,7 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
         date: { type: 'string', format: 'date', example: '2026-08-15' },
         dayOfWeek: { type: 'string', example: 'Saturday' },
         isOperatingDay: { type: 'boolean' },
-        status: { type: 'string', enum: ['AVAILABLE', 'LIMITED', 'FULL', 'BLOCKED'] },
+        status: { type: 'string', enum: ['AVAILABLE', 'LIMITED', 'FULL', 'BLOCKED'], description: 'Available/Limited/Full are automatic from bookings vs capacity; BLOCKED is manual' },
         capacity: { type: 'integer' },
         booked: { type: 'integer' },
         remaining: { type: 'integer' },

@@ -7,7 +7,7 @@ const { sendEmail } = require('../utils/emailService');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
-const { evaluateBookingAvailability } = require('../utils/availabilityCore');
+const { evaluateBookingAvailability, resolveCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey } = require('../utils/availabilityCore');
 const { createPaymentIntent, calculateCommission, createRefund } = require('../utils/stripeHelpers');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const getConfig = require('../utils/getConfig');
@@ -916,13 +916,17 @@ exports.getTourAvailability = catchAsync(async (req, res, next) => {
 
   if (end < start) return next(new AppError('endDate must be after startDate', 400));
 
-  const maxRange = 31;
+  const maxPublicDays = parseInt(await getConfig('availability.public_max_days', '31'), 10) || 31;
   const daysInRange = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
-  if (daysInRange > maxRange) {
-    return next(new AppError(`Date range cannot exceed ${maxRange} days`, 400));
+  if (daysInRange > maxPublicDays) {
+    return next(new AppError(`Date range cannot exceed ${maxPublicDays} days`, 400));
   }
 
-  const calendar = await buildAvailabilityCalendar(tour.id, tour.schedulesAndPricing, start, end);
+  const calendar = await cache.getOrSet(
+    `availability:cal:${tour.id}:${toDateKey(start)}:${toDateKey(end)}`,
+    () => buildAvailabilityCalendar(tour.id, tour.schedulesAndPricing, start, end),
+    30
+  );
 
   res.status(200).json({
     status: 'success',
@@ -1068,21 +1072,25 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     ? (() => { try { return JSON.parse(tour.bookingAndTickets); } catch { return null; } })()
     : tour.bookingAndTickets;
   const perSlotCutoff = !!parsedBt?.perSlotCutoff;
-  const tourCutoffHours = Number(parsedBt?.minAdvanceBookingHours);
-  const effectiveCutoff = Number.isFinite(tourCutoffHours) ? tourCutoffHours : minAdvanceHours;
+  // Builder writes cutoffMinutes (minutes); resolveCutoffHours handles legacy
+  // minAdvanceBookingHours rows and the system default.
+  const effectiveCutoff = resolveCutoffHours(parsedBt, minAdvanceHours);
+  const tourTz = getTourTimezone(parsedBt);
 
   const dateAt = new Date(selectedDate);
   let startAt;
   if (selectedTime && perSlotCutoff) {
-    const [h = 0, m = 0] = selectedTime.split(':').map(Number);
-    startAt = new Date(Date.UTC(dateAt.getUTCFullYear(), dateAt.getUTCMonth(), dateAt.getUTCDate(), h, m));
+    // Anchor the cutoff clock to the slot's local wall clock in the tour's
+    // timezone (default UTC keeps current behavior).
+    const localDate = zonedDateKey(toDateKey(dateAt), tourTz);
+    startAt = zonedTimeToUtc(`${localDate} ${selectedTime}`, tourTz);
   } else {
     startAt = new Date(Date.UTC(dateAt.getUTCFullYear(), dateAt.getUTCMonth(), dateAt.getUTCDate()));
   }
 
   const hoursUntilTour = (startAt - new Date()) / (1000 * 60 * 60);
   if (hoursUntilTour < effectiveCutoff) {
-    return next(new AppError(`Bookings must be made at least ${effectiveCutoff} hours before the tour`, 400));
+    return next(new AppError(`Bookings must be made at least ${cutoffLabel(effectiveCutoff)} before the tour`, 400));
   }
   if (hoursUntilTour / 24 > maxAdvanceDays) {
     return next(new AppError(`Bookings can only be made up to ${maxAdvanceDays} days in advance`, 400));

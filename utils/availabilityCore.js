@@ -54,6 +54,12 @@ function toUtcDate(value) {
   return date;
 }
 
+/** UTC-midnight start of today — anything before it is in the past. */
+function todayUtc() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
 /** Parse a possibly-string JSON blob (schedulesAndPricing). */
 function parseBlob(blob) {
   if (blob == null) return null;
@@ -90,10 +96,120 @@ function getTemplateDaysOfWeek(parsed) {
   return days.map((d) => String(d).toLowerCase());
 }
 
+// ============================================================
+// Per-tour timezone support (GetYourGuide-style).
+// Slots, weekdays and cutoff clocks are anchored to the tour's
+// IANA timezone; every consumer derives them from these helpers so
+// they can never drift apart. Intl-based — no tz-database runtime dep.
+// ============================================================
+
+const TZ_FORMATTER_CACHE = new Map();
+
+function getTzFormatter(timeZone) {
+  let f = TZ_FORMATTER_CACHE.get(timeZone);
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      weekday: 'long',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+    TZ_FORMATTER_CACHE.set(timeZone, f);
+  }
+  return f;
+}
+
+function isTzValid(timeZone) {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A tour's IANA timezone, read from the availability or bookingAndTickets
+ * blob. Invalid/missing zones fall back to 'UTC'.
+ */
+function getTourTimezone(parsed) {
+  const candidate = parsed?.availability?.timezone ?? parsed?.timezone;
+  if (typeof candidate === 'string' && candidate.trim() && isTzValid(candidate)) {
+    return candidate;
+  }
+  return 'UTC';
+}
+
+/** UTC wall-clock offset (ms) of an instant in `timeZone` (Intl-derived). */
+function tzOffsetMs(instantMs, timeZone) {
+  const parts = Object.fromEntries(
+    getTzFormatter(timeZone).formatToParts(new Date(instantMs)).map((p) => [p.type, p.value])
+  );
+  const asUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour) % 24,
+    Number(parts.minute),
+    Number(parts.second)
+  );
+  return asUtc - instantMs;
+}
+
+/**
+ * Local calendar date (YYYY-MM-DD) inside `timeZone` for a UTC day key.
+ * Anchored at 12:00 UTC — inside every real zone's day — so a day never
+ * splits across a midnight boundary. (Zones at +12..+14 shift one day.)
+ */
+function zonedDateKey(dateKey, timeZone) {
+  const noon = new Date(`${String(dateKey).slice(0, 10)}T12:00:00.000Z`);
+  const parts = Object.fromEntries(
+    getTzFormatter(timeZone).formatToParts(noon).map((p) => [p.type, p.value])
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+/** Weekday name (e.g. "Monday") of a UTC day in the tour's timezone. */
+function weekdayInZone(dateObj, timeZone) {
+  const noon = new Date(Date.UTC(dateObj.getUTCFullYear(), dateObj.getUTCMonth(), dateObj.getUTCDate(), 12));
+  return getTzFormatter(timeZone).formatToParts(noon).find((p) => p.type === 'weekday').value;
+}
+
+/**
+ * UTC instant for a tour-local wall clock ("YYYY-MM-DD HH:MM") in `timeZone`.
+ * The wall clock is interpreted as if it were UTC, then corrected by the zone
+ * offset (iterated so DST transitions converge in 2-3 passes). Never uses
+ * Date.parse on a bare local time — that would silently depend on the server's
+ * own timezone.
+ */
+function zonedTimeToUtc(localDateTime, timeZone) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})/.exec(String(localDateTime));
+  if (!match) return new Date(NaN);
+  const y = Number(match[1]);
+  const mo = Number(match[2]);
+  const d = Number(match[3]);
+  const h = Number(match[4]);
+  const mi = Number(match[5]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59) return new Date(NaN);
+  const asUtc = Date.UTC(y, mo - 1, d, h, mi);
+  let guess = asUtc;
+  for (let i = 0; i < 3; i++) {
+    const next = asUtc - tzOffsetMs(guess, timeZone);
+    if (Math.abs(next - guess) < 1000) return new Date(next);
+    guess = next;
+  }
+  return new Date(guess);
+}
+
 function isOperatingDay(parsed, dateObj) {
   const days = getTemplateDaysOfWeek(parsed);
   if (days.length === 0) return true;
-  return days.includes(DAY_NAMES[dateObj.getUTCDay()].toLowerCase());
+  return days.includes(weekdayInZone(dateObj, getTourTimezone(parsed)).toLowerCase());
 }
 
 /** Collect dateExceptions from the availability block and every pricing schedule. */
@@ -132,13 +248,12 @@ function getTemplateTimeSlots(parsed) {
 }
 
 /**
- * Effective traveler capacity for a date. Override capacity wins; otherwise the
- * tour's maxParticipants; otherwise the system fallback.
+ * Effective traveler capacity for a date. Always derived from the tour's
+ * maxParticipants (the builder's capacity max); otherwise the system fallback.
+ * Per-date capacity overrides are intentionally ignored so capacity always
+ * matches the builder.
  */
-function getEffectiveCapacity(parsed, override, fallbackCapacity) {
-  if (override && override.capacity != null && Number.isFinite(Number(override.capacity)) && Number(override.capacity) >= 0) {
-    return Math.floor(Number(override.capacity));
-  }
+function getEffectiveCapacity(parsed, fallbackCapacity) {
   const n = Number(parsed?.travelerDetails?.maxParticipants);
   if (Number.isFinite(n) && n > 0) return Math.floor(n);
   return fallbackCapacity;
@@ -159,20 +274,29 @@ function buildTimeSlots(parsed, override, fallbackCapacity) {
       return { time, capacity: cap };
     });
   }
-  return getTemplateTimeSlots(parsed).map((time) => ({ time, capacity: fallbackCapacity }));
+  // Template slots may be stored as strings ("09:00") or objects ({ time, ... }).
+  // Normalize both so object-form entries can never leak `{ time: <object> }`
+  // into the calendar/checkout; invalid entries are dropped.
+  return getTemplateTimeSlots(parsed)
+    .map((slot) => ({ time: typeof slot === 'string' ? slot : slot?.time, capacity: fallbackCapacity }))
+    .filter((s) => typeof s.time === 'string' && s.time);
 }
 
-/** Day-level status aggregation shared by the calendar and the APIs. */
-function computeStatus(bookedCount, totalCapacity, overrideStatus, operating) {
+/** Day-level status aggregation shared by the calendar and the APIs.
+ * Available / Limited / Full are fully automatic (derived from bookings vs
+ * capacity). The only manual override honored is BLOCKED. The LIMITED/FULL
+ * ratios are configurable (`availability.limited_ratio` / `availability.full_ratio`)
+ * and default to 0.5 / 1.0. */
+function computeStatus(bookedCount, totalCapacity, overrideStatus, operating, limitedRatio = 0.5, fullRatio = 1) {
   if (!operating) return 'BLOCKED';
   if (overrideStatus === 'BLOCKED') return 'BLOCKED';
-  if (overrideStatus === 'FULL') return 'FULL';
   if (totalCapacity <= 0) return 'BLOCKED';
 
+  const limited = Number.isFinite(Number(limitedRatio)) ? Number(limitedRatio) : 0.5;
+  const full = Number.isFinite(Number(fullRatio)) ? Number(fullRatio) : 1;
   const ratio = bookedCount / totalCapacity;
-  if (ratio >= 1) return 'FULL';
-  if (ratio >= 0.75) return 'LIMITED';
-  if (overrideStatus === 'LIMITED') return 'LIMITED';
+  if (ratio >= full) return 'FULL';
+  if (ratio >= limited) return 'LIMITED';
   return 'AVAILABLE';
 }
 
@@ -217,11 +341,10 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
 
   const closedDate = isClosedDate(parsed, dateKey);
   const operating = isOperatingDay(parsed, dateObj);
-  const dayCapacity = getEffectiveCapacity(parsed, override, maxTravelersFallback);
+  const dayCapacity = getEffectiveCapacity(parsed, maxTravelersFallback);
 
   if (closedDate || !operating) return { ok: false, reason: 'Tour is not available on this date' };
   if (override?.status === 'BLOCKED') return { ok: false, reason: 'Date is blocked' };
-  if (override?.status === 'FULL') return { ok: false, reason: 'Date is fully booked' };
 
   const daySlots = buildTimeSlots(parsed, override, dayCapacity);
   if (daySlots.length > 0) {
@@ -265,6 +388,126 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
   };
 }
 
+/**
+ * Pure per-day availability evaluation — the single source of truth shared by
+ * the availability calendar loop and the search re-check. Returns the exact
+ * calendar day-entry shape for `dateObj`.
+ *
+ * `slotData` (nullable) carries pre-aggregated occupancy for the day:
+ *   { bookedCount, bookingsBySlot: Map(slotTime -> travelers),
+ *     groupsBySlot: Map(slotTime -> groups) }
+ * `options`: { todayRef, fallbackCapacity, limitedRatio, fullRatio }.
+ */
+function computeDayEntry(parsed, override, slotData, dateObj, options = {}) {
+  const fallback = options.fallbackCapacity != null ? options.fallbackCapacity : 50;
+  const maxTravelersFallback = parseInt(fallback, 10) || 50;
+
+  const isPerGroup = isPerGroupTour(parsed);
+  const maxGroups = getMaxGroupsPerTimeSlot(parsed);
+  const maxGroupSize = isPerGroup
+    ? (() => {
+        const bandTos = (Array.isArray(parsed?.travelerDetails?.groupSizes) ? parsed.travelerDetails.groupSizes : [])
+          .map((g) => Number(g?.to)).filter((n) => Number.isFinite(n) && n > 0);
+        return bandTos.length ? Math.max(...bandTos) : maxTravelersFallback;
+      })()
+    : null;
+
+  // Traveler-equivalent capacity (per-group: groups × largest group size). Only
+  // the per-slot ceiling — the aggregate day status for per-group tours uses
+  // GROUP slots (see dayCapacity below).
+  const maxCapacity = isPerGroup
+    ? maxGroups * maxGroupSize
+    : getEffectiveCapacity(parsed, maxTravelersFallback);
+
+  const timezone = getTourTimezone(parsed);
+  const dateStr = toDateKey(dateObj);
+  const dayOfWeek = weekdayInZone(dateObj, timezone);
+  const operating = isOperatingDay(parsed, dateObj) && !isClosedDate(parsed, dateStr);
+
+  const today = options.todayRef ? toUtcDate(options.todayRef) || todayUtc() : todayUtc();
+  const isPast = dateObj < today;
+
+  const bookingsBySlot = slotData?.bookingsBySlot || new Map();
+  const groupsBySlot = slotData?.groupsBySlot || new Map();
+  const bookedCount = slotData?.bookedCount || 0;
+
+  const daySlots = buildTimeSlots(parsed, override, maxCapacity);
+  const effectiveTimeSlots = daySlots.map((slot) => {
+    const slotBooked = bookingsBySlot.get(slot.time) || 0;
+    const groupsBooked = groupsBySlot.get(slot.time) || 0;
+    return {
+      time: slot.time,
+      capacity: slot.capacity,
+      booked: slotBooked,
+      remaining: Math.max(0, slot.capacity - slotBooked),
+      ...(isPerGroup ? { groupsBooked, groupsRemaining: Math.max(0, maxGroups - groupsBooked) } : {}),
+    };
+  });
+
+  // Day-level occupancy for the aggregate status:
+  //  - per-person tours: travelers vs maxParticipants
+  //  - per-group tours: group slots vs maxGroups × slots that day (a day
+  //    with no fixed slots holds one slot of maxGroups)
+  const dayCapacity = isPerGroup
+    ? maxGroups * Math.max(1, effectiveTimeSlots.length)
+    : maxCapacity;
+  const dayBooked = isPerGroup
+    ? effectiveTimeSlots.reduce((sum, slot) => sum + (slot.groupsBooked || 0), 0)
+    : bookedCount;
+
+  const computedStatus = isPast ? 'PAST' : computeStatus(dayBooked, dayCapacity, override?.status || null, operating, options.limitedRatio, options.fullRatio);
+
+  return {
+    date: dateStr,
+    dayOfWeek,
+    timezone,
+    isOperatingDay: operating,
+    status: computedStatus,
+    capacity: dayCapacity,
+    booked: isPast ? 0 : dayBooked,
+    remaining: isPast ? 0 : Math.max(0, dayCapacity - dayBooked),
+    timeSlots: isPast ? [] : effectiveTimeSlots,
+    hasOverride: !!override,
+    overrideStatus: override?.status || null,
+    isPast,
+    ...(isPerGroup
+      ? { capacityUnit: 'groups', groupsPerSlot: maxGroups, maxGroupSize, maxCapacityTravelers: maxCapacity }
+      : { capacityUnit: 'people' }),
+  };
+}
+
+/**
+ * Parse an optional numeric config value. null/undefined/'' and non-finite
+ * values are treated as absent — never coerced to 0 (which would silently
+ * disable the cutoff).
+ */
+function parseConfigNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/**
+ * Resolve a tour's effective advance cutoff in hours from its
+ * bookingAndTickets blob. The builder writes cutoffMinutes (minutes); legacy
+ * rows carry minAdvanceBookingHours (hours). minutes win when present, then
+ * hours, then the system default. Both checkout controllers share this so the
+ * cutoff can never drift between them again.
+ */
+function resolveCutoffHours(bookingAndTickets, fallbackHours) {
+  const minutes = parseConfigNumber(bookingAndTickets?.cutoffMinutes);
+  if (minutes !== null) return minutes / 60;
+  const hours = parseConfigNumber(bookingAndTickets?.minAdvanceBookingHours);
+  if (hours !== null) return hours;
+  return parseConfigNumber(fallbackHours) ?? 24;
+}
+
+/** Human label for an effective cutoff — minutes for sub-hour values. */
+function cutoffLabel(hours) {
+  if (hours < 1) return `${Math.round(hours * 60)} minutes`;
+  return `${hours} hours`;
+}
+
 module.exports = {
   DAY_NAMES,
   BOOKABLE_STATUSES,
@@ -272,6 +515,7 @@ module.exports = {
   TRAVELER_COUNT_SQL,
   toDateKey,
   toUtcDate,
+  todayUtc,
   parseBlob,
   travelerCount,
   isPerGroupTour,
@@ -285,5 +529,13 @@ module.exports = {
   getEffectiveCapacity,
   buildTimeSlots,
   computeStatus,
+  computeDayEntry,
   evaluateBookingAvailability,
+  resolveCutoffHours,
+  cutoffLabel,
+  parseConfigNumber,
+  getTourTimezone,
+  zonedDateKey,
+  weekdayInZone,
+  zonedTimeToUtc,
 };

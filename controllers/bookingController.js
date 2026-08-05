@@ -19,7 +19,7 @@ const AppError = require('../utils/appError');
 const { createPaymentIntent, createRefund, calculateCommission } = require('../utils/stripeHelpers');
 const { generateBookingNumber, validateTravelerInfo, evaluateCancellationPolicy } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
-const { evaluateBookingAvailability } = require('../utils/availabilityCore');
+const { evaluateBookingAvailability, resolveCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey } = require('../utils/availabilityCore');
 const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../utils/queue');
 const getConfig = require('../utils/getConfig');
 const { generatePrintableTicketHtml } = require('../utils/emailService');
@@ -412,14 +412,18 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       ? (() => { try { return JSON.parse(item.tour.bookingAndTickets); } catch { return null; } })()
       : item.tour.bookingAndTickets;
     const perSlotCutoff = !!parsedBt?.perSlotCutoff;
-    const tourCutoffHours = Number(parsedBt?.minAdvanceBookingHours);
-    const effectiveCutoff = Number.isFinite(tourCutoffHours) ? tourCutoffHours : minAdvanceHours;
+    // Builder writes cutoffMinutes (minutes); resolveCutoffHours handles legacy
+    // minAdvanceBookingHours rows and the system default.
+    const effectiveCutoff = resolveCutoffHours(parsedBt, minAdvanceHours);
+    const tourTz = getTourTimezone(parsedBt);
 
     const dateAt = new Date(item.selectedDate);
     let startAt;
     if (item.selectedTime && perSlotCutoff) {
-      const [h = 0, m = 0] = item.selectedTime.split(':').map(Number);
-      startAt = new Date(Date.UTC(dateAt.getUTCFullYear(), dateAt.getUTCMonth(), dateAt.getUTCDate(), h, m));
+      // Anchor the cutoff clock to the slot's local wall clock in the tour's
+      // timezone (default UTC keeps current behavior).
+      const localDate = zonedDateKey(toDateKey(dateAt), tourTz);
+      startAt = zonedTimeToUtc(`${localDate} ${item.selectedTime}`, tourTz);
     } else {
       startAt = new Date(Date.UTC(dateAt.getUTCFullYear(), dateAt.getUTCMonth(), dateAt.getUTCDate()));
     }
@@ -429,7 +433,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
 
     if (hoursUntilTour < effectiveCutoff) {
       return next(new AppError(
-        `Bookings must be made at least ${effectiveCutoff} hours before the tour start time`,
+        `Bookings must be made at least ${cutoffLabel(effectiveCutoff)} before the tour start time`,
         400
       ));
     }

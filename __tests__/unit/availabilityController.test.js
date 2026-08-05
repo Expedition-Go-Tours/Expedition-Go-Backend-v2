@@ -1,4 +1,4 @@
-const { parseISO } = require('date-fns');
+const { parseISO, addDays, format } = require('date-fns');
 
 jest.mock('../../utils/prismaClient', () => ({
   tour: { findFirst: jest.fn() },
@@ -7,10 +7,23 @@ jest.mock('../../utils/prismaClient', () => ({
   $transaction: jest.fn(),
 }));
 
-jest.mock('../../utils/getConfig', () => jest.fn().mockResolvedValue('50'));
+jest.mock('../../utils/getConfig', () =>
+  jest.fn(async (key) => {
+    if (key === 'availability.limited_ratio') return '0.5';
+    if (key === 'availability.full_ratio') return '1';
+    return '50';
+  })
+);
+
+// The calendar cache (availability:cal:{tourId}:*) would otherwise persist
+// results across tests that reuse the same tour/date key with different DB
+// mocks. Bypass caching entirely: always run the fetch function.
+jest.mock('../../utils/cacheHelper', () => ({
+  getOrSet: jest.fn(async (_key, fetchFn, _ttl) => fetchFn()),
+  invalidateKeys: jest.fn().mockResolvedValue(undefined),
+}));
 
 const prisma = require('../../utils/prismaClient');
-const getConfig = require('../../utils/getConfig');
 const controller = require('../../controllers/availabilityController');
 
 describe('availabilityController', () => {
@@ -27,6 +40,7 @@ const mockTour = {
     },
     travelerDetails: {
       maxTravelersPerBooking: 20,
+      maxParticipants: 10,
     },
   },
 };
@@ -37,14 +51,30 @@ const futureDate = (days = 30) => {
   return d.toISOString().slice(0, 10);
 };
 
+/** Next occurrence of `weekday` (0=Sunday..6) from today — always future. */
+const nextWeekday = (weekday) => {
+  const today = new Date(Date.now() + 1 * 86400000);
+  const diff = (weekday - today.getUTCDay() + 7) % 7;
+  return format(addDays(today, diff), 'yyyy-MM-dd');
+};
+
+// Monday (1) and Wednesday (3) are operating days for mockTour; Sunday (0) is not.
+const MON = nextWeekday(1);
+const SUN = nextWeekday(0);
+
 /**
  * Transaction mock used by the write endpoints. The tour lock query
  * (`SELECT id FROM ... FOR UPDATE`) returns a locked row; the live-bookings
  * aggregate returns the given traveler count.
  */
 const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
-  $queryRawUnsafe: jest.fn().mockImplementation((query) => {
+  $queryRawUnsafe: jest.fn().mockImplementation((query, ...args) => {
     if (query.includes('SELECT id FROM')) return hasTour ? [{ id: 't1' }] : [];
+    if (query.includes('INSERT INTO "TourDateOverride"')) {
+      // The bulk upsert derives one returned row per target date (arg $3).
+      const dates = args[2] || [];
+      return dates.map((d) => ({ id: `ov-${d}`, date: d, status: 'BLOCKED' }));
+    }
     return [{ live }];
   }),
   tourDateOverride: { upsert: prisma.tourDateOverride.upsert },
@@ -63,7 +93,6 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
     prisma.tourDateOverride.upsert.mockResolvedValue({ id: 'ov-1', date: new Date(), status: 'AVAILABLE' });
     prisma.tourDateOverride.deleteMany.mockResolvedValue({ count: 1 });
     prisma.$transaction.mockImplementation(async (cb) => cb(makeTx()));
-    getConfig.mockResolvedValue('50');
   });
 
   // ============================
@@ -105,7 +134,7 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
     });
 
     it('returns availability calendar', async () => {
-      req.query = { startDate: '2026-06-15', endDate: '2026-06-17' };
+      req.query = { startDate: MON, endDate: format(addDays(parseISO(MON), 2), 'yyyy-MM-dd') };
       await controller.getAvailability(req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(200);
@@ -117,7 +146,7 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
     });
 
     it('populates time slots from template', async () => {
-      req.query = { startDate: '2026-06-15', endDate: '2026-06-15' };
+      req.query = { startDate: MON, endDate: MON };
       await controller.getAvailability(req, res, next);
 
       const body = res.json.mock.calls[0][0];
@@ -125,9 +154,9 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
     });
 
     it('uses override time slots when present', async () => {
-      req.query = { startDate: '2026-06-15', endDate: '2026-06-15' };
+      req.query = { startDate: MON, endDate: MON };
       prisma.tourDateOverride.findMany.mockResolvedValue([
-        { date: parseISO('2026-06-15'), status: 'LIMITED', capacity: 10, timeSlotOverrides: [{ time: '09:00', capacity: 10, booked: 2 }], notes: null },
+        { date: parseISO(MON), status: 'LIMITED', capacity: 10, timeSlotOverrides: [{ time: '09:00', capacity: 10, booked: 2 }], notes: null },
       ]);
 
       await controller.getAvailability(req, res, next);
@@ -136,20 +165,22 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
       expect(body.data.calendar[0].timeSlots).toEqual([{ time: '09:00', capacity: 10, booked: 0, remaining: 10 }]);
     });
 
-    it('uses override capacity when present', async () => {
-      req.query = { startDate: '2026-06-15', endDate: '2026-06-15' };
+    it('ignores override capacity and derives from builder max', async () => {
+      req.query = { startDate: MON, endDate: MON };
       prisma.tourDateOverride.findMany.mockResolvedValue([
-        { date: parseISO('2026-06-15'), status: 'AVAILABLE', capacity: 5, timeSlotOverrides: null, notes: null },
+        { date: parseISO(MON), status: 'AVAILABLE', capacity: 5, timeSlotOverrides: null, notes: null },
       ]);
 
       await controller.getAvailability(req, res, next);
 
       const body = res.json.mock.calls[0][0];
-      expect(body.data.calendar[0].capacity).toBe(5);
+      expect(body.data.calendar[0].capacity).toBe(10);
+      expect(body.data.calendar[0].status).toBe('AVAILABLE');
+      expect(body.data.calendar[0].overrideStatus).toBe('AVAILABLE');
     });
 
     it('parses schedulesAndPricing JSON string', async () => {
-      req.query = { startDate: '2026-06-15', endDate: '2026-06-15' };
+      req.query = { startDate: MON, endDate: MON };
       prisma.tour.findFirst.mockResolvedValue({ ...mockTour, schedulesAndPricing: JSON.stringify(mockTour.schedulesAndPricing) });
 
       await controller.getAvailability(req, res, next);
@@ -158,7 +189,7 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
     });
 
     it('handles empty daysOfWeek (all days active)', async () => {
-      req.query = { startDate: '2026-06-15', endDate: '2026-06-15' };
+      req.query = { startDate: MON, endDate: MON };
       prisma.tour.findFirst.mockResolvedValue({
         ...mockTour,
         schedulesAndPricing: { ...mockTour.schedulesAndPricing, availability: { daysOfWeek: [], timeSlots: ['10:00'] } },
@@ -171,9 +202,9 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
     });
 
     it('marks non-operating days as BLOCKED', async () => {
-      req.query = { startDate: '2026-06-14', endDate: '2026-06-14' };
-      const sunday = new Date('2026-06-14');
-      expect(sunday.getDay()).toBe(0);
+      req.query = { startDate: SUN, endDate: SUN };
+      const sunday = parseISO(SUN);
+      expect(sunday.getUTCDay()).toBe(0);
 
       await controller.getAvailability(req, res, next);
 
@@ -206,19 +237,14 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
 
-    it('returns 400 for negative capacity', async () => {
-      req.params = { tourId: 't1', date: futureDate() };
-      req.body = { capacity: -1 };
-      await controller.updateDateAvailability(req, res, next);
-      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
-    });
-
-    it('returns 400 when capacity lower than existing bookings', async () => {
-      req.params = { tourId: 't1', date: futureDate() };
-      req.body = { capacity: 2 };
-      prisma.$transaction.mockImplementation(async (cb) => cb(makeTx({ live: '5' })));
-      await controller.updateDateAvailability(req, res, next);
-      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    it('rejects manual AVAILABLE/LIMITED/FULL statuses', async () => {
+      for (const status of ['AVAILABLE', 'LIMITED', 'FULL']) {
+        req.params = { tourId: 't1', date: futureDate() };
+        req.body = { status };
+        await controller.updateDateAvailability(req, res, next);
+        expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+        next.mockClear();
+      }
     });
 
     it('returns 400 when blocking a date with live bookings', async () => {
@@ -244,7 +270,7 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
 
     it('upserts override with all fields', async () => {
       req.params = { tourId: 't1', date: futureDate() };
-      req.body = { status: 'LIMITED', capacity: 15, timeSlotOverrides: [{ time: '10:00', capacity: 10 }], notes: 'Testing' };
+      req.body = { status: 'BLOCKED', timeSlotOverrides: [{ time: '10:00', capacity: 10 }], notes: 'Testing' };
 
       await controller.updateDateAvailability(req, res, next);
 
@@ -265,17 +291,19 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
       );
     });
 
-    it('sets capacity null when not provided', async () => {
+    it('creates an override without storing a capacity field', async () => {
       req.params = { tourId: 't1', date: futureDate() };
-      req.body = { status: 'FULL' };
+      req.body = { status: 'BLOCKED' };
 
       await controller.updateDateAvailability(req, res, next);
 
       expect(prisma.tourDateOverride.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
-          create: expect.objectContaining({ capacity: null }),
+          create: expect.objectContaining({ status: 'BLOCKED' }),
         })
       );
+      const createArg = prisma.tourDateOverride.upsert.mock.calls[0][0].create;
+      expect(createArg).not.toHaveProperty('capacity');
     });
   });
 
@@ -354,7 +382,14 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
 
     it('returns 400 for a past date', async () => {
       req.params = { tourId: 't1' };
-      req.body = { updates: [{ date: '2020-01-01', status: 'FULL' }] };
+      req.body = { updates: [{ date: '2020-01-01', status: 'BLOCKED' }] };
+      await controller.batchUpdateAvailability(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('rejects non-BLOCKED statuses in batch', async () => {
+      req.params = { tourId: 't1' };
+      req.body = { updates: [{ date: futureDate(), status: 'FULL' }] };
       await controller.batchUpdateAvailability(req, res, next);
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
@@ -363,8 +398,8 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
       req.params = { tourId: 't1' };
       req.body = {
         updates: [
-          { date: futureDate(), status: 'FULL' },
-          { date: futureDate(31), status: 'LIMITED', capacity: 10 },
+          { date: futureDate(), status: 'BLOCKED' },
+          { date: futureDate(31), status: 'BLOCKED' },
         ],
       };
 

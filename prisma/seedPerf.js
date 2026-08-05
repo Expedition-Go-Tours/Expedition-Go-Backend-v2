@@ -123,7 +123,6 @@ async function seedPerf() {
       theme: { primary: 'Nature & Wildlife', secondary: [] },
       productContent: {
         highlights: ['Game drive', 'Lunch', 'Park fees'],
-        itinerary: [{ day: 1, title: 'Full Day Safari', description: 'Game drive through Nairobi National Park' }],
         includes: ['Park fees', 'Guide', 'Lunch'],
         excludes: ['Drinks', 'Tips'],
         location: { city: 'Nairobi', country: 'Kenya', region: 'East Africa' },

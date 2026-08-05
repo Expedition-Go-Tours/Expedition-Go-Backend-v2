@@ -14,6 +14,8 @@ const locationSchema = z.object({
   timeSpent: z.number().nullable().optional(),
   timeSpentUnit: z.enum(['minutes', 'hours']).optional(),
   admissionIncluded: z.enum(['yes', 'no', 'na']).optional(),
+  isDropoff: z.boolean().optional(),
+  isPickup: z.boolean().optional(),
 });
 
 const locationPointSchema = z.object({
@@ -54,26 +56,6 @@ const productOptionSchema = z.object({
   validityType: z.enum(['date_picked', 'from_activation', 'period']).optional(),
   validityStartDate: z.string().optional(),
   validityEndDate: z.string().optional(),
-});
-
-const itineraryEntrySchema = z.object({
-  day: z.number().min(1, 'Day number must be 1 or greater'),
-  time: z.string().min(1, 'Start time is required'),
-  type: z.enum(['activity', 'transfer']),
-  locationName: z.string().optional(),
-  locationAddress: z.string().optional(),
-  locationLat: z.number().nullable().optional(),
-  locationLng: z.number().nullable().optional(),
-  isCustomLocation: z.boolean().optional(),
-  duration: z.number().min(0, 'Duration is required'),
-  durationUnit: z.enum(['minute', 'hour', 'day']),
-  title: z.string().optional(),
-  description: z.string().min(1, 'Description is required').max(2000),
-  isOptional: z.boolean().optional(),
-  additionalFee: z.boolean().optional(),
-  activityName: z.string().optional(),
-  importance: z.enum(['major', 'minor']).optional(),
-  photo: z.string().optional(),
 });
 
 const pickupAreaSchema = z.object({
@@ -273,6 +255,7 @@ const schedulesAndPricingSchema = z.object({
     daysOfWeek: z.array(z.string()).optional(),
     startDate: z.string().optional(),
     endDate: z.string().nullable().optional(),
+    timezone: z.string().optional(),
   }).optional(),
   promotions: z.array(promotionSchema).optional(),
 });
@@ -388,8 +371,6 @@ const productSchema = z.object({
   // bounded prices, ISO 4217 currency); completeness is enforced at publish by
   // validateStoredPricing.
   schedulesAndPricing: schedulesAndPricingSchema.nullable().optional(),
-  // Step 13
-  itinerary: z.array(itineraryEntrySchema).optional(),
 
   // Theme fields
   primaryTheme: z.string().optional(),
@@ -412,8 +393,9 @@ const productSchema = z.object({
   cutoffMinutes: z.number().optional(),
   lastMinuteBookings: z.boolean().optional(),
   perSlotCutoff: z.boolean().optional(),
+  timezone: z.string().optional(),
   planPickupTimes: z.boolean().optional(),
   pickupStartTime: z.string().optional(),
 });
 
-module.exports = { productSchema, locationSchema, itineraryEntrySchema, attractionSchema };
+module.exports = { productSchema, locationSchema, attractionSchema };
