@@ -572,5 +572,8 @@ function setupSocketIO() {
     socket.destroy(err);
   });
 
-  server.timeout = 30000;
+  // Socket.IO manages its own heartbeat (pingInterval/pingTimeout). A
+  // socket-level timeout here would destroy idle long-poll and pooled
+  // keep-alive connections with no HTTP response (net::ERR_EMPTY_RESPONSE).
+  server.timeout = 0;
 }
