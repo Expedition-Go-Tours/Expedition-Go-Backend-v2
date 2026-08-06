@@ -177,9 +177,9 @@ exports.updateApplication = catchAsync(async (req, res, next) => {
       if (oldDocs[key] && oldDocs[key] !== newDocs[key]) {
         const oldVal = oldDocs[key];
         if (Array.isArray(oldVal)) {
-          oldVal.forEach(url => deleteCloudinaryImage(url).catch((err) => logger.warn('[supplier] deleteCloudinaryImage failed:', err?.message)));
+          oldVal.forEach(url => deleteCloudinaryImage(url, 3, { userId: req.user.id }).catch((err) => logger.warn('[supplier] deleteCloudinaryImage failed:', err?.message)));
         } else {
-          deleteCloudinaryImage(oldVal).catch((err) => logger.warn('[supplier] deleteCloudinaryImage failed:', err?.message));
+          deleteCloudinaryImage(oldVal, 3, { userId: req.user.id }).catch((err) => logger.warn('[supplier] deleteCloudinaryImage failed:', err?.message));
         }
       }
     });
@@ -1014,7 +1014,7 @@ exports.uploadLogo = catchAsync(async (req, res, next) => {
 
   const user = await prisma.user.findUnique({ where: { id: req.user.id } });
   if (user?.logoUrl) {
-    await deleteCloudinaryImage(user.logoUrl);
+    await deleteCloudinaryImage(user.logoUrl, 3, { userId: req.user.id });
   }
 
   const updatedUser = await prisma.user.update({

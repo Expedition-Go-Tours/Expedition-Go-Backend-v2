@@ -113,7 +113,7 @@ describe('userController', () => {
 
       await controller.updateMe(req, res, next);
 
-      expect(deleteCloudinaryImage).toHaveBeenCalledWith('photo.jpg');
+      expect(deleteCloudinaryImage).toHaveBeenCalledWith('photo.jpg', 3, { userId: 'u-1' });
       expect(prisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ photoURL: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/new-photo.jpg' }) })
       );

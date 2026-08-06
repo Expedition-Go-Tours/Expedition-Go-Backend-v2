@@ -905,7 +905,7 @@ describe('tourController', () => {
 
       await controller.updateTour(req, res, next);
 
-      expect(deleteCloudinaryImage).toHaveBeenCalledWith('https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/old-photo.jpg');
+      expect(deleteCloudinaryImage).toHaveBeenCalledWith('https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/user-photos/old-photo.jpg', 3, { tourId: 'tour-1' });
     });
 
     it('handles categorization normalization from JSON string', async () => {
@@ -1351,6 +1351,8 @@ describe('tourController', () => {
       prisma.tour.findFirst.mockResolvedValue(completeTour);
       prisma.payoutMethod.findFirst = jest.fn().mockResolvedValue({ id: 'pm-1' });
       prisma.tour.update.mockResolvedValue({ ...completeTour, status: 'PENDING_APPROVAL' });
+      prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'tour-1' }]);
+      prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
       validateStoredPricing.mockReturnValue([]);
     });
 
@@ -1377,7 +1379,7 @@ describe('tourController', () => {
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
     });
 
-    it('resubmits an already-live tour for review (ACTIVE -> PENDING_APPROVAL)', async () => {
+    it('resubmits an already-live tour for review without unpublishing it (ACTIVE + draft path)', async () => {
       prisma.tour.findFirst.mockResolvedValue({ ...completeTour, status: 'ACTIVE' });
 
       await controller.submitTourForReview(req, res, next);
@@ -1385,11 +1387,11 @@ describe('tourController', () => {
       expect(prisma.tour.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'tour-1' },
-          data: expect.objectContaining({ status: 'PENDING_APPROVAL', submittedAt: expect.any(Date) }),
+          data: expect.objectContaining({ status: 'ACTIVE', draftStatus: 'PENDING_APPROVAL', draftSubmittedAt: expect.any(Date) }),
         })
       );
       expect(notifyAdmin).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'TOUR_SUBMITTED_FOR_REVIEW', data: expect.objectContaining({ tourId: 'tour-1' }) })
+        expect.objectContaining({ type: 'TOUR_SUBMITTED_FOR_REVIEW', data: expect.objectContaining({ tourId: 'tour-1', isResubmission: true }) })
       );
       expect(res.status).toHaveBeenCalledWith(200);
     });

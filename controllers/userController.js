@@ -63,7 +63,7 @@ exports.updateMe = catchAsync(async (req, res, next) => {
     });
 
     if (user?.photoURL) {
-      await deleteCloudinaryImage(user.photoURL);
+      await deleteCloudinaryImage(user.photoURL, 3, { userId: req.user.id });
     }
 
     updates.photoURL = req.file.path;

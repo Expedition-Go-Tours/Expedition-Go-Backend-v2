@@ -423,10 +423,13 @@ function validateStoredPricing(blob) {
       errors.push('Add at least one time slot');
     }
   } else if (scheduleType === 'operatingHours') {
-    const weekly = availability.weeklySchedule || firstSchedule.weeklySchedule;
-    const hasAnyHours = weekly && typeof weekly === 'object' &&
-      Object.values(weekly).some((slots) => Array.isArray(slots) && slots.length > 0);
-    if (!hasAnyHours) {
+    // Hours may live in the aggregate availability block OR on the first
+    // pricing schedule (the per-schedule editor writes them there and leaves
+    // the aggregate block as an empty-but-present object). Check both so the
+    // empty aggregate can never mask a valid per-schedule weekly schedule.
+    const hasAnyHours = (ws) => ws && typeof ws === 'object' &&
+      Object.values(ws).some((slots) => Array.isArray(slots) && slots.length > 0);
+    if (!hasAnyHours(availability.weeklySchedule) && !hasAnyHours(firstSchedule.weeklySchedule)) {
       errors.push('Add at least one opening hours entry');
     }
   }

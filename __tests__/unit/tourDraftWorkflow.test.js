@@ -171,6 +171,8 @@ describe('submitTourForReview (live tour with draft)', () => {
     next = jest.fn();
     validateStoredPricing.mockReturnValue([]);
     prisma.payoutMethod.findFirst = jest.fn().mockResolvedValue({ id: 'pm-1' });
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'tour-1' }]);
+    prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
   });
 
   it('keeps the live tour ACTIVE and moves only the draft to PENDING_APPROVAL', async () => {
@@ -208,6 +210,54 @@ describe('submitTourForReview (live tour with draft)', () => {
       expect.objectContaining({ data: expect.objectContaining({ status: 'PENDING_APPROVAL' }) })
     );
     expect(notifyAdmin.mock.calls[0][0].data.isResubmission).toBe(false);
+  });
+
+  it('persists the submitted payload into draftContent and validates it (live tour)', async () => {
+    const withDraft = { ...liveRow, draftContent: { ...liveRow, title: 'Old Draft' } };
+    prisma.tour.findFirst.mockResolvedValue({ ...withDraft, supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    prisma.tour.update.mockResolvedValue({ ...withDraft, draftSubmittedAt: new Date(), draftStatus: 'PENDING_APPROVAL', supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    req.body = { title: 'Newly Edited Title', schedulesAndPricing: { travelerDetails: { pricingCategories: [{ name: 'Child', price: 50 }] } } };
+
+    await tourController.submitTourForReview(req, res, next);
+
+    const updateCall = prisma.tour.update.mock.calls[0][0];
+    expect(updateCall.data.status).toBe('ACTIVE');
+    expect(updateCall.data.draftStatus).toBe('PENDING_APPROVAL');
+    expect(updateCall.data.draftContent.title).toBe('Newly Edited Title');
+    expect(updateCall.data.draftContent.photos).toEqual(liveRow.photos);
+    expect(validateStoredPricing).toHaveBeenCalledWith(
+      expect.objectContaining({ travelerDetails: expect.objectContaining({ pricingCategories: expect.any(Array) }) })
+    );
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('rolls back when the submitted payload fails review validation (no update)', async () => {
+    const withDraft = { ...liveRow, draftContent: { ...liveRow, title: 'Old Draft' } };
+    prisma.tour.findFirst.mockResolvedValue({ ...withDraft, supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    req.body = { title: 'Has Bad Pricing', schedulesAndPricing: { travelerDetails: { pricingCategories: [{ name: 'Child', price: null }] } } };
+    validateStoredPricing.mockReturnValue(['Pricing category "Child": price is required']);
+
+    await tourController.submitTourForReview(req, res, next);
+
+    expect(next).toHaveBeenCalled();
+    const err = next.mock.calls[0][0];
+    expect(err.statusCode).toBe(400);
+    expect(err.message).toContain('Cannot submit for review');
+    expect(prisma.tour.update).not.toHaveBeenCalled();
+  });
+
+  it('persists a submitted payload into the live columns for a non-live tour', async () => {
+    prisma.tour.findFirst.mockResolvedValue({ ...liveRow, status: 'DRAFT', supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    prisma.tour.update.mockResolvedValue({ ...liveRow, status: 'PENDING_APPROVAL', supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    req.body = { title: 'Draft Tour Name', schedulesAndPricing: { travelerDetails: {} } };
+
+    await tourController.submitTourForReview(req, res, next);
+
+    const updateCall = prisma.tour.update.mock.calls[0][0];
+    expect(updateCall.data.status).toBe('PENDING_APPROVAL');
+    expect(updateCall.data.title).toBe('Draft Tour Name');
+    expect(updateCall.data.photos).toEqual(liveRow.photos);
   });
 });
 

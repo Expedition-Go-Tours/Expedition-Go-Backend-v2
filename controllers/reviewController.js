@@ -238,7 +238,7 @@ exports.updateReview = catchAsync(async (req, res, next) => {
   if (photos !== undefined) {
     const oldPhotos = existingReview.photos || [];
     const removedPhotos = oldPhotos.filter(url => !photos.includes(url));
-    await Promise.all(removedPhotos.map(url => deleteCloudinaryImage(url)));
+    await Promise.all(removedPhotos.map(url => deleteCloudinaryImage(url, 3, { reviewId: id })));
   }
 
   const updateData = {};
@@ -338,7 +338,7 @@ exports.deleteReview = catchAsync(async (req, res, next) => {
 
   if (review.photos && review.photos.length > 0) {
     for (const photoUrl of review.photos) {
-      await deleteCloudinaryImage(photoUrl);
+      await deleteCloudinaryImage(photoUrl, 3, { reviewId: id });
     }
   }
 
@@ -1060,7 +1060,7 @@ exports.adminDeleteReview = catchAsync(async (req, res, next) => {
 
   if (review.photos && review.photos.length > 0) {
     for (const photoUrl of review.photos) {
-      await deleteCloudinaryImage(photoUrl);
+      await deleteCloudinaryImage(photoUrl, 3, { reviewId: id });
     }
   }
 

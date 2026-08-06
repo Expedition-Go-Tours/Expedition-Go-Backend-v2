@@ -18,7 +18,7 @@ const AppError = require('../utils/appError');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices, durationToMinutes } = require('../utils/tourHelpers');
 const { productToTour } = require('../utils/productToTour');
-const { tourContentSnapshot, mergeDraftContent, buildTourDiff, computeChangesSummary } = require('../utils/tourDraft');
+const { tourContentSnapshot, mergeDraftContent, buildTourDiff, computeChangesSummary, buildLiveUpdateData } = require('../utils/tourDraft');
 const { logActivity } = require('../utils/auditLogger');
 const { 
   buildTourFilters, 
@@ -1038,7 +1038,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
         const normalizedOld = normalize(url);
         return !newPhotos.some(nu => normalize(nu) === normalizedOld);
       });
-      const deletionResults = await Promise.allSettled(removed.map(url => deleteCloudinaryImage(url)));
+      const deletionResults = await Promise.allSettled(removed.map(url => deleteCloudinaryImage(url, 3, { tourId: id })));
       deletionResults.forEach((result, i) => {
         if (result.status === 'rejected') {
           console.warn('Failed to delete Cloudinary image:', removed[i], result.reason);
@@ -1244,24 +1244,7 @@ function validateTourForReview(tour) {
 exports.submitTourForReview = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const supplierId = req.supplierId;
-
-  const tour = await prisma.tour.findFirst({
-    where: { id, supplierId },
-    include: {
-      supplier: {
-        select: { id: true, name: true, photoURL: true }
-      }
-    }
-  });
-  if (!tour) {
-    return next(new AppError('Tour not found or access denied', 404));
-  }
-
-  // Interim stopgap (Phase 1): allow resubmitting a live tour for review (ACTIVE -> PENDING_APPROVAL).
-  // Phase 2 (draft layer) will keep the live version selling while edits await review instead of unpublishing.
-  if (tour.status === 'PENDING_APPROVAL') {
-    return next(new AppError('This tour is already awaiting approval', 409));
-  }
+  const hasBody = req.body && typeof req.body === 'object' && !Array.isArray(req.body) && Object.keys(req.body).length > 0;
 
   // Money needs somewhere to go — a verified payout method is required
   const hasVerifiedMethod = await prisma.payoutMethod.findFirst({
@@ -1272,40 +1255,110 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
     return next(new AppError('You must add and verify at least one payout method before submitting a tour for review', 400));
   }
 
-  // Live-quality validation before the tour enters the moderation queue
-  const hasDraft = tour.status === 'ACTIVE' && tour.draftContent && typeof tour.draftContent === 'object';
-  const validationSubject = hasDraft ? mergeDraftContent(tour, tour.draftContent) : tour;
-  const reviewErrors = validateTourForReview(validationSubject);
-  if (reviewErrors.length > 0) {
-    return next(new AppError(`Cannot submit for review: ${reviewErrors.join(', ')}`, 400));
-  }
-
-  const now = new Date();
-  const updateData = hasDraft
-    ? {
-        draftStatus: 'PENDING_APPROVAL',
-        draftSubmittedAt: now,
-        draftReviewedAt: null,
-        draftReviewNote: null,
-        status: 'ACTIVE',
-      }
-    : {
-        status: 'PENDING_APPROVAL',
-        submittedAt: now,
-        reviewedBy: null,
-        reviewedAt: null,
-        reviewNote: null,
-      };
-
-  const updated = await prisma.tour.update({
-    where: { id },
-    data: updateData,
-    include: {
-      supplier: {
-        select: { id: true, name: true, photoURL: true }
-      }
+  // Persist the submitted payload and validate it atomically so the review
+  // decision always reflects exactly what the supplier submitted — never a
+  // stale stored draft. If validation fails the whole transaction rolls back.
+  const result = await prisma.$transaction(async (tx) => {
+    // Lock the tour row — blocks any concurrent autosave PATCH racing this submit
+    const [locked] = await tx.$queryRawUnsafe(
+      'SELECT id FROM "Tour" WHERE id = $1 AND "supplierId" = $2 FOR UPDATE',
+      id, supplierId
+    );
+    if (!locked) {
+      throw new AppError('Tour not found or access denied', 404);
     }
+
+    const tour = await tx.tour.findFirst({
+      where: { id, supplierId },
+      include: {
+        supplier: {
+          select: { id: true, name: true, photoURL: true }
+        }
+      }
+    });
+    if (!tour) {
+      throw new AppError('Tour not found or access denied', 404);
+    }
+
+    if (tour.status === 'PENDING_APPROVAL') {
+      throw new AppError('This tour is already awaiting approval', 409);
+    }
+
+    const isLiveTour = tour.status === 'ACTIVE';
+    const now = new Date();
+
+    // The content snapshot that is being submitted (what review validates)
+    let submitted;
+    // The columns that get written for this submission
+    let updateData;
+
+    if (hasBody) {
+      // The supplier submitted their current builder state. Build the merged
+      // content snapshot exactly like a draft save (photos + rebuilt prices),
+      // persist it, then validate THAT — the submitted truth, not stored data.
+      submitted = buildDraftFromBody(tour, req.body, req.files);
+      if (isLiveTour) {
+        updateData = {
+          draftContent: submitted,
+          draftStatus: 'PENDING_APPROVAL',
+          draftSubmittedAt: now,
+          draftReviewedAt: null,
+          draftReviewNote: null,
+          status: 'ACTIVE',
+        };
+      } else {
+        updateData = {
+          ...(await buildLiveUpdateData(tx, tour, submitted)),
+          status: 'PENDING_APPROVAL',
+          submittedAt: now,
+          reviewedBy: null,
+          reviewedAt: null,
+          reviewNote: null,
+        };
+      }
+    } else {
+      // Backward-compatible body-less submit: validate the stored content
+      submitted = isLiveTour ? mergeDraftContent(tour, tour.draftContent) : tour;
+      updateData = isLiveTour
+        ? {
+            draftStatus: 'PENDING_APPROVAL',
+            draftSubmittedAt: now,
+            draftReviewedAt: null,
+            draftReviewNote: null,
+            status: 'ACTIVE',
+          }
+        : {
+            status: 'PENDING_APPROVAL',
+            submittedAt: now,
+            reviewedBy: null,
+            reviewedAt: null,
+            reviewNote: null,
+          };
+    }
+
+    // Live-quality validation before the tour enters the moderation queue.
+    // Throwing inside the transaction rolls back the persist above, so a
+    // failed submit never leaves a half-applied draft behind.
+    const reviewErrors = validateTourForReview(submitted);
+    if (reviewErrors.length > 0) {
+      throw new AppError(`Cannot submit for review: ${reviewErrors.join(', ')}`, 400);
+    }
+
+    const updated = await tx.tour.update({
+      where: { id },
+      data: updateData,
+      include: {
+        supplier: {
+          select: { id: true, name: true, photoURL: true }
+        }
+      }
+    });
+
+    return { tour, updated };
   });
+
+  const { tour, updated } = result;
+  const hasDraft = tour.status === 'ACTIVE';
 
   if (!hasDraft) {
     cache.invalidateTourCaches(id).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));

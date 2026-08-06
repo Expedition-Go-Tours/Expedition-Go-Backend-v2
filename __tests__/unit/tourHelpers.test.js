@@ -288,6 +288,21 @@ describe('validateStoredPricing', () => {
     expect(validateStoredPricing(blob)).toEqual(expect.arrayContaining(['Add at least one opening hours entry']));
   });
 
+  it('accepts per-schedule weekly hours when the aggregate block is empty', () => {
+    const blob = JSON.parse(JSON.stringify(validBlob));
+    blob.availability.scheduleType = 'operatingHours';
+    blob.availability.weeklySchedule = { Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [], Saturday: [], Sunday: [] };
+    blob.pricingSchedules.schedules = [{
+      startDate: '2026-01-01',
+      hasEndDate: false,
+      weeklySchedule: {
+        Monday: [{ startTime: '08:00', endTime: '18:00' }],
+        Tuesday: [], Wednesday: [], Thursday: [], Friday: [], Saturday: [], Sunday: [],
+      },
+    }];
+    expect(validateStoredPricing(blob)).not.toEqual(expect.arrayContaining(['Add at least one opening hours entry']));
+  });
+
   it('passes when all schedules share identical price copies', () => {
     const blob = JSON.parse(JSON.stringify(validBlob));
     const prices = [{ ageGroup: 'Adult', retailPrice: 50 }];
