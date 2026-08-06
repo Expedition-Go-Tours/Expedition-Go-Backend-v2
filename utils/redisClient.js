@@ -71,7 +71,9 @@ function isReady() {
 async function isRedisAvailable() {
   try {
     const conn = getConnection();
-    await conn.connect();
+    if (conn.status !== 'ready') {
+      await conn.connect();
+    }
     await conn.ping();
     if (connectionFailed) return false;
     connectionFailed = false;

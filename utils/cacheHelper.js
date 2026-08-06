@@ -196,6 +196,7 @@ function _clearMemory() {
 module.exports = {
   getOrSet,
   invalidateKeys,
+  invalidateKey,
   invalidateTourCaches,
   invalidateReviewCaches,
   TOUR_LIST_PREFIX,
