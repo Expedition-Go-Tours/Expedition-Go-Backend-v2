@@ -164,62 +164,68 @@ exports.getOverview = catchAsync(async (req, res, next) => {
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const yearStart = new Date(now.getFullYear(), 0, 1);
 
+  // Earliest boundary across all windows — bounds the scans without missing any period
+  const scanStart = new Date(Math.min(
+    currentPeriodStart.getTime(),
+    previousPeriodStart.getTime(),
+    weekStart.getTime(),
+    monthStart.getTime(),
+    yearStart.getTime(),
+  ));
+
   const [
-    revenueToday,
-    revenueYesterday,
-    revenueThisWeek,
-    revenueThisMonth,
-    revenueYTD,
-    bookingsToday,
-    bookingsYesterday,
-    bookingsThisWeek,
-    bookingsThisMonth,
-    bookingsYTD,
+    bookingAgg,
+    userAgg,
     weeklyBookings,
-    signupsToday,
-    signupsYesterday,
-    signupsThisWeek,
-    signupsThisMonth,
-    signupsYTD,
-    activeUsers,
-    activeUsersPrevious,
     topTours,
     topSuppliers,
     bookingStatusDist,
     recentEvents,
     recentAuditLogs,
     allUsers,
-    totalEventCount,
   ] = await Promise.all([
 
-    /* Revenue aggregations */
-    prisma.booking.aggregate({
-      _sum: { total: true, supplierPayout: true, commissionAmount: true },
-      where: { paidAt: { gte: currentPeriodStart }, paymentStatus: 'SUCCEEDED' },
-    }),
-    prisma.booking.aggregate({
-      _sum: { total: true, supplierPayout: true, commissionAmount: true },
-      where: { paidAt: { gte: previousPeriodStart, lt: currentPeriodStart }, paymentStatus: 'SUCCEEDED' },
-    }),
-    prisma.booking.aggregate({
-      _sum: { total: true, supplierPayout: true, commissionAmount: true },
-      where: { paidAt: { gte: weekStart }, paymentStatus: 'SUCCEEDED' },
-    }),
-    prisma.booking.aggregate({
-      _sum: { total: true, supplierPayout: true, commissionAmount: true },
-      where: { paidAt: { gte: monthStart }, paymentStatus: 'SUCCEEDED' },
-    }),
-    prisma.booking.aggregate({
-      _sum: { total: true, supplierPayout: true, commissionAmount: true },
-      where: { paidAt: { gte: yearStart }, paymentStatus: 'SUCCEEDED' },
-    }),
+    /* Revenue + booking volume in a single scan (FILTER aggregation) */
+    prisma.$queryRaw`
+      SELECT
+        COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}), 0)::float AS "todayRevenue",
+        COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${previousPeriodStart} AND "paidAt" < ${currentPeriodStart}), 0)::float AS "yesterdayRevenue",
+        COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${weekStart}), 0)::float AS "weekRevenue",
+        COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${monthStart}), 0)::float AS "monthRevenue",
+        COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${yearStart}), 0)::float AS "ytdRevenue",
+        COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}), 0)::float AS "todayPayout",
+        COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${previousPeriodStart} AND "paidAt" < ${currentPeriodStart}), 0)::float AS "yesterdayPayout",
+        COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${weekStart}), 0)::float AS "weekPayout",
+        COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${monthStart}), 0)::float AS "monthPayout",
+        COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${yearStart}), 0)::float AS "ytdPayout",
+        COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}), 0)::float AS "todayCommission",
+        COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${previousPeriodStart} AND "paidAt" < ${currentPeriodStart}), 0)::float AS "yesterdayCommission",
+        COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${weekStart}), 0)::float AS "weekCommission",
+        COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${monthStart}), 0)::float AS "monthCommission",
+        COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${yearStart}), 0)::float AS "ytdCommission",
+        COUNT(*) FILTER (WHERE "createdAt" >= ${currentPeriodStart})::int AS "todayBookings",
+        COUNT(*) FILTER (WHERE "createdAt" >= ${previousPeriodStart} AND "createdAt" < ${currentPeriodStart})::int AS "yesterdayBookings",
+        COUNT(*) FILTER (WHERE "createdAt" >= ${weekStart})::int AS "weekBookings",
+        COUNT(*) FILTER (WHERE "createdAt" >= ${monthStart})::int AS "monthBookings",
+        COUNT(*) FILTER (WHERE "createdAt" >= ${yearStart})::int AS "ytdBookings"
+      FROM "Booking"
+      WHERE "createdAt" >= ${scanStart} OR "paidAt" >= ${scanStart}
+    `,
 
-    /* Booking volume aggregations */
-    prisma.booking.count({ where: { createdAt: { gte: currentPeriodStart } } }),
-    prisma.booking.count({ where: { createdAt: { gte: previousPeriodStart, lt: currentPeriodStart } } }),
-    prisma.booking.count({ where: { createdAt: { gte: weekStart } } }),
-    prisma.booking.count({ where: { createdAt: { gte: monthStart } } }),
-    prisma.booking.count({ where: { createdAt: { gte: yearStart } } }),
+    /* Signups, active users and total events in a single scan (FILTER aggregation) */
+    prisma.$queryRaw`
+      SELECT
+        COUNT(*) FILTER (WHERE "createdAt" >= ${currentPeriodStart})::int AS "signupsToday",
+        COUNT(*) FILTER (WHERE "createdAt" >= ${previousPeriodStart} AND "createdAt" < ${currentPeriodStart})::int AS "signupsYesterday",
+        COUNT(*) FILTER (WHERE "createdAt" >= ${weekStart})::int AS "signupsWeek",
+        COUNT(*) FILTER (WHERE "createdAt" >= ${monthStart})::int AS "signupsMonth",
+        COUNT(*) FILTER (WHERE "createdAt" >= ${yearStart})::int AS "signupsYtd",
+        COUNT(*) FILTER (WHERE "lastLoginAt" >= ${currentPeriodStart} AND "active" = true)::int AS "activeToday",
+        COUNT(*) FILTER (WHERE "lastLoginAt" >= ${previousPeriodStart} AND "lastLoginAt" < ${currentPeriodStart} AND "active" = true)::int AS "activePrevious",
+        (SELECT COUNT(*) FROM "Event")::int AS "totalEvents"
+      FROM "User"
+      WHERE "createdAt" >= ${scanStart} OR "lastLoginAt" >= ${scanStart}
+    `,
 
     /* Weekly booking volume (period-aware: daily for ≤30d, weekly for 90d) */
     periodDays > 31
@@ -257,29 +263,6 @@ exports.getOverview = catchAsync(async (req, res, next) => {
           ) b ON d.date = b.date
           ORDER BY d.date ASC
         `,
-
-    /* User signups */
-    prisma.user.count({ where: { createdAt: { gte: currentPeriodStart } } }),
-    prisma.user.count({ where: { createdAt: { gte: previousPeriodStart, lt: currentPeriodStart } } }),
-    prisma.user.count({ where: { createdAt: { gte: weekStart } } }),
-    prisma.user.count({ where: { createdAt: { gte: monthStart } } }),
-    prisma.user.count({ where: { createdAt: { gte: yearStart } } }),
-
-    /* Active users (logged in within current period) */
-    prisma.user.count({
-      where: {
-        lastLoginAt: { gte: currentPeriodStart },
-        active: true,
-      },
-    }),
-
-    /* Active users previous period */
-    prisma.user.count({
-      where: {
-        lastLoginAt: { gte: previousPeriodStart, lt: currentPeriodStart },
-        active: true,
-      },
-    }),
 
     /* Top 10 tours by period revenue (confirmed bookings) */
     prisma.$queryRaw`
@@ -376,45 +359,46 @@ exports.getOverview = catchAsync(async (req, res, next) => {
     prisma.user.findMany({
       select: { id: true, name: true },
     }),
-
-    /* Total platform events (quick sanity metric) */
-    prisma.event.count(),
   ]);
 
-  // Flatten revenue sums with safe defaults
-  const fmt = (agg) => ({
-    revenue:      Math.round(parseFloat(agg._sum.total || 0) * 100) / 100,
-    supplierPayout: Math.round(parseFloat(agg._sum.supplierPayout || 0) * 100) / 100,
-    commission:   Math.round(parseFloat(agg._sum.commissionAmount || 0) * 100) / 100,
+  const bAgg = bookingAgg[0] || {};
+  const uAgg = userAgg[0] || {};
+
+  const round2 = (v) => Math.round(parseFloat(v || 0) * 100) / 100;
+  const fmt = (prefix) => ({
+    revenue:        round2(bAgg[`${prefix}Revenue`]),
+    supplierPayout: round2(bAgg[`${prefix}Payout`]),
+    commission:     round2(bAgg[`${prefix}Commission`]),
   });
+  const num = (v) => parseInt(v, 10) || 0;
 
   const data = {
     status: 'success',
     data: {
       overview: {
         revenue: {
-          today:    fmt(revenueToday),
-          yesterday: fmt(revenueYesterday),
-          thisWeek: fmt(revenueThisWeek),
-          thisMonth:fmt(revenueThisMonth),
-          ytd:      fmt(revenueYTD),
+          today:     fmt('today'),
+          yesterday: fmt('yesterday'),
+          thisWeek:  fmt('week'),
+          thisMonth: fmt('month'),
+          ytd:       fmt('ytd'),
         },
         bookings: {
-          today:    bookingsToday,
-          yesterday: bookingsYesterday,
-          thisWeek: bookingsThisWeek,
-          thisMonth:bookingsThisMonth,
-          ytd:      bookingsYTD,
+          today:     num(bAgg.todayBookings),
+          yesterday: num(bAgg.yesterdayBookings),
+          thisWeek:  num(bAgg.weekBookings),
+          thisMonth: num(bAgg.monthBookings),
+          ytd:       num(bAgg.ytdBookings),
         },
         signups: {
-          today:    signupsToday,
-          yesterday: signupsYesterday,
-          thisWeek: signupsThisWeek,
-          thisMonth:signupsThisMonth,
-          ytd:      signupsYTD,
+          today:     num(uAgg.signupsToday),
+          yesterday: num(uAgg.signupsYesterday),
+          thisWeek:  num(uAgg.signupsWeek),
+          thisMonth: num(uAgg.signupsMonth),
+          ytd:       num(uAgg.signupsYtd),
         },
-        activeUsers: activeUsers,
-        activeUsersPrevious: activeUsersPrevious,
+        activeUsers:         num(uAgg.activeToday),
+        activeUsersPrevious: num(uAgg.activePrevious),
       },
       weeklyBookingData: weeklyBookings,
       topTours,
@@ -443,7 +427,7 @@ exports.getOverview = catchAsync(async (req, res, next) => {
           const user = allUsers.find((u) => u.id === e.userId);
           return { ...e, userName: user?.name || null };
         }),
-      totalEvents: totalEventCount,
+      totalEvents: num(uAgg.totalEvents),
     },
   };
 

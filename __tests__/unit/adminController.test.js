@@ -68,6 +68,19 @@ describe('adminController', () => {
   // getOverview
   // ============================
   describe('getOverview', () => {
+    const mockBookingAgg = {
+      todayRevenue: 5000, todayPayout: 4000, todayCommission: 800,
+      yesterdayRevenue: 2000, yesterdayPayout: 1600, yesterdayCommission: 320,
+      weekRevenue: 7000, weekPayout: 5600, weekCommission: 1120,
+      monthRevenue: 15000, monthPayout: 12000, monthCommission: 2400,
+      ytdRevenue: 60000, ytdPayout: 48000, ytdCommission: 9600,
+      todayBookings: 3, yesterdayBookings: 2, weekBookings: 8, monthBookings: 20, ytdBookings: 42,
+    };
+    const mockUserAgg = {
+      signupsToday: 1, signupsYesterday: 2, signupsWeek: 5, signupsMonth: 12, signupsYtd: 39,
+      activeToday: 4, activePrevious: 3, totalEvents: 100,
+    };
+    const mockWeeklyBookings = [{ day: 'Wed', count: 2 }, { day: 'Thu', count: 3 }];
     const mockTopTours = [
       { id: 't1', title: 'Top Tour', coverPhoto: 'cover.jpg', totalBookings: 50, totalRevenue: '25000', averageRating: 4.8, reviewCount: 20 },
     ];
@@ -85,12 +98,14 @@ describe('adminController', () => {
 
     beforeEach(() => {
       prisma.$queryRaw
+        .mockResolvedValueOnce([mockBookingAgg])
+        .mockResolvedValueOnce([mockUserAgg])
+        .mockResolvedValueOnce(mockWeeklyBookings)
         .mockResolvedValueOnce(mockTopTours)
         .mockResolvedValueOnce(mockTopSuppliers);
       prisma.booking.groupBy.mockResolvedValue(mockBookingDist);
       prisma.event.findMany.mockResolvedValue(mockEvents);
       prisma.user.findMany.mockResolvedValue(mockUsers);
-      prisma.event.count.mockResolvedValue(100);
     });
 
     it('returns platform overview with all data sections', async () => {
@@ -134,9 +149,15 @@ describe('adminController', () => {
     });
 
     it('handles null revenue sums safely', async () => {
-      prisma.booking.aggregate.mockResolvedValue({
-        _sum: { total: null, supplierPayout: null, commissionAmount: null },
-      });
+      prisma.$queryRaw.mockReset();
+      prisma.$queryRaw.mockResolvedValue([{
+        todayRevenue: null, todayPayout: null, todayCommission: null,
+        yesterdayRevenue: null, yesterdayPayout: null, yesterdayCommission: null,
+        weekRevenue: null, weekPayout: null, weekCommission: null,
+        monthRevenue: null, monthPayout: null, monthCommission: null,
+        ytdRevenue: null, ytdPayout: null, ytdCommission: null,
+        todayBookings: null, yesterdayBookings: null, weekBookings: null, monthBookings: null, ytdBookings: null,
+      }]);
 
       await controller.getOverview(req, res, next);
 
