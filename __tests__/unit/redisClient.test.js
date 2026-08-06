@@ -1,6 +1,7 @@
 let mockRedis;
 
 function createMockRedis() {
+  const handlers = {};
   mockRedis = {
     connect: jest.fn().mockResolvedValue(),
     quit: jest.fn().mockResolvedValue(),
@@ -10,7 +11,11 @@ function createMockRedis() {
     del: jest.fn().mockResolvedValue(1),
     scanStream: jest.fn(),
     pipeline: jest.fn(),
-    on: jest.fn(),
+    ping: jest.fn().mockResolvedValue('PONG'),
+    status: 'wait',
+    disconnect: jest.fn(),
+    on: jest.fn((evt, cb) => { handlers[evt] = cb; }),
+    _handlers: handlers,
   };
 }
 
@@ -110,6 +115,54 @@ describe('redisClient', () => {
       redis = loadRedis();
       const result = await redis.quit();
       expect(result).toBeUndefined();
+    });
+  });
+
+  describe('degraded mode (Upstash quota)', () => {
+    it('marks degraded on limit error and isReady returns false', async () => {
+      process.env.REDIS_URL = 'redis://localhost:6379';
+      redis = loadRedis();
+      await redis.connect();
+      expect(redis.isReady()).toBe(true);
+
+      mockRedis._handlers.error(new Error('ERR max requests limit exceeded. Limit: 500000, Usage: 500006'));
+      expect(redis.isReady()).toBe(false);
+    });
+
+    it('isRedisAvailable returns false when degraded without pinging', async () => {
+      process.env.REDIS_URL = 'redis://localhost:6379';
+      redis = loadRedis();
+      await redis.connect();
+      mockRedis._handlers.error(new Error('ERR max requests limit exceeded'));
+
+      const ok = await redis.isRedisAvailable();
+      expect(ok).toBe(false);
+      expect(mockRedis.ping).not.toHaveBeenCalled();
+    });
+
+    it('probe recovers after a real command succeeds', async () => {
+      process.env.REDIS_URL = 'redis://localhost:6379';
+      redis = loadRedis();
+      await redis.connect();
+      mockRedis._handlers.error(new Error('ERR max requests limit exceeded'));
+      expect(redis.isReady()).toBe(false);
+
+      mockRedis.get.mockResolvedValue(null);
+      const ok = await redis.probe();
+      expect(ok).toBe(true);
+      expect(redis.isReady()).toBe(true);
+    });
+
+    it('probe stays degraded when the limit is still enforced', async () => {
+      process.env.REDIS_URL = 'redis://localhost:6379';
+      redis = loadRedis();
+      await redis.connect();
+      mockRedis._handlers.error(new Error('ERR max requests limit exceeded'));
+
+      mockRedis.get.mockRejectedValue(new Error('ERR max requests limit exceeded'));
+      const ok = await redis.probe();
+      expect(ok).toBe(false);
+      expect(redis.isReady()).toBe(false);
     });
   });
 });

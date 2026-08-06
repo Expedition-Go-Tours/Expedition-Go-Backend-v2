@@ -5,7 +5,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const prisma = require('./utils/prismaClient');
 const { setIO, setupPrismaMiddleware } = require('./utils/dataChangeEmitter');
-const { registerWorkers, closeAll, enqueueNotification, enqueueCleanup, enqueueAggregation, enqueueEvent, isRedisAvailable } = require('./utils/queue');
+const { registerWorkers, closeAll, enqueueNotification, enqueueCleanup, enqueueAggregation, enqueueEvent, probe, startResumeMonitor } = require('./utils/queue');
 const redisClient = require('./utils/redisClient');
 const logger = require('./utils/logger');
  
@@ -120,7 +120,10 @@ function setupRedisAdapter() {
 
 async function setupQueueWorkers() {
   console.log('[Startup] Checking Redis for queue workers...');
-  const redisOk = await isRedisAvailable();
+  startResumeMonitor();
+  // Real-command probe (not PING) so a quota-exhausted boot doesn't register
+  // workers that immediately start hammering Upstash.
+  const redisOk = await probe();
   if (!redisOk) {
     console.warn('[Queue] Redis unavailable — using inline fallback');
     return;

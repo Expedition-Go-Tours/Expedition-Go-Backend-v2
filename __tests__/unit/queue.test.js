@@ -72,6 +72,8 @@ describe('queue', () => {
 
     Worker.mockImplementation(() => ({
       on: jest.fn(),
+      pause: jest.fn().mockResolvedValue(),
+      resume: jest.fn().mockResolvedValue(),
     }));
   });
 
@@ -292,6 +294,35 @@ describe('queue', () => {
 
       expect(prisma.cartItem.deleteMany).toHaveBeenCalled();
       expect(eventEmitter.emit).toHaveBeenCalledWith(expect.objectContaining({ name: 'cart.abandoned' }));
+    });
+  });
+
+  describe('worker error handler (degraded mode)', () => {
+    function workerInstances() {
+      return Worker.mock.results.map((r) => r.value);
+    }
+
+    it('pauses the worker on Upstash limit errors', () => {
+      queue.registerWorkers();
+      const instance = workerInstances()[0];
+      const errorHandler = instance.on.mock.calls.find(([evt]) => evt === 'error')[1];
+
+      errorHandler(new Error('ERR max requests limit exceeded. Limit: 500000, Usage: 500006'));
+
+      expect(instance.pause).toHaveBeenCalled();
+    });
+
+    it('pauses each worker only once despite repeated errors', () => {
+      queue.registerWorkers();
+      const instances = workerInstances();
+      const handlers = instances.map((inst) => inst.on.mock.calls.find(([evt]) => evt === 'error')[1]);
+
+      for (const h of handlers) h(new Error('ERR max requests limit exceeded'));
+      for (const h of handlers) h(new Error('ERR max requests limit exceeded'));
+
+      for (const inst of instances) {
+        expect(inst.pause).toHaveBeenCalledTimes(1);
+      }
     });
   });
 

@@ -2,11 +2,45 @@ const Redis = require('ioredis');
 
 const REDIS_URL = process.env.REDIS_URL;
 
+const QUOTA_COOLDOWN_MS = 5 * 60 * 1000; // recovery probe interval while quota-limited
+const PROBE_KEY = 'health:probe';
+const COMMAND_TIMEOUT_MS = 3000;
+
 let connection = null;
 let isConnected = false;
 let connecting = false;
 let connectionFailed = false;
 let connectionFailedAt = 0;
+let lastErrorKind = null; // 'limit' | 'other' | null
+let recoveryTimer = null;
+
+function isLimitError(err) {
+  return !!err && typeof err.message === 'string' && err.message.includes('max requests limit');
+}
+
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Redis command timed out')), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * While degraded (quota-limited), probe with a REAL command on a slow cadence.
+ * PING is not trustworthy — Upstash can keep answering PING while every other
+ * command returns the limit error, which is why health checks were lying.
+ */
+function scheduleRecovery() {
+  if (recoveryTimer) return;
+  recoveryTimer = setTimeout(async () => {
+    recoveryTimer = null;
+    if (!connectionFailed && lastErrorKind !== 'limit') return;
+    const ok = await probe();
+    if (!ok && lastErrorKind === 'limit') scheduleRecovery();
+  }, QUOTA_COOLDOWN_MS);
+  if (recoveryTimer && recoveryTimer.unref) recoveryTimer.unref();
+}
 
 function getConnection() {
   if (!connection) {
@@ -15,23 +49,37 @@ function getConnection() {
       enableReadyCheck: false,
       lazyConnect: true,
       retryStrategy(times) {
-        // Allow retry after 60 seconds even if connectionFailed
-        if (connectionFailed && Date.now() - connectionFailedAt < 60000) return null;
+        // Don't reconnect within the quota cooldown — avoids hammering Upstash.
+        if (connectionFailed && lastErrorKind === 'limit' && Date.now() - connectionFailedAt < QUOTA_COOLDOWN_MS) return null;
         if (times > 10) return null;
         return Math.min(times * 200, 3000);
       },
       tls: REDIS_URL && REDIS_URL.startsWith('rediss://') ? {} : undefined
     });
 
-    connection.on('connect', () => { isConnected = true; connecting = false; connectionFailed = false; });
+    connection.on('connect', () => {
+      isConnected = true;
+      connecting = false;
+      // Quota degradation must NOT be cleared by a TCP reconnect — only a real
+      // command (probe) proves the limit window reset. Transient blips recover fast.
+      if (lastErrorKind !== 'limit') connectionFailed = false;
+    });
     connection.on('close', () => { isConnected = false; });
     connection.on('error', (err) => {
-      if (err.message && err.message.includes('max requests limit')) {
+      if (isLimitError(err)) {
+        const wasFailed = connectionFailed;
         connectionFailed = true;
         connectionFailedAt = Date.now();
-      }
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn('[Redis]', err.message);
+        lastErrorKind = 'limit';
+        scheduleRecovery();
+        if (!wasFailed) {
+          console.warn('[Redis] Upstash request limit exceeded — entering degraded mode (inline fallbacks active)');
+        }
+      } else {
+        lastErrorKind = 'other';
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[Redis]', err.message);
+        }
       }
     });
   }
@@ -65,26 +113,74 @@ function getClient() {
 }
 
 function isReady() {
-  return isConnected && connection !== null;
+  return isConnected && connection !== null && !connectionFailed;
 }
 
 async function isRedisAvailable() {
+  // While quota-limited, report unavailable WITHOUT pinging — PING can lie.
+  if (connectionFailed && lastErrorKind === 'limit') return false;
   try {
     const conn = getConnection();
     if (conn.status !== 'ready') {
-      await conn.connect();
+      await withTimeout(conn.connect(), COMMAND_TIMEOUT_MS);
     }
-    await conn.ping();
-    if (connectionFailed) return false;
+    await withTimeout(conn.ping(), COMMAND_TIMEOUT_MS);
     connectionFailed = false;
+    lastErrorKind = null;
     return true;
   } catch (err) {
     connectionFailed = true;
-    if (err.message && err.message.includes('max requests limit')) {
-      console.warn('[Redis] Upstash Redis rate limit exceeded — using inline fallbacks');
+    connectionFailedAt = Date.now();
+    lastErrorKind = isLimitError(err) ? 'limit' : 'other';
+    if (lastErrorKind === 'limit') {
+      console.warn('[Redis] Upstash request limit exceeded — entering degraded mode (inline fallbacks active)');
+      scheduleRecovery();
     }
     return false;
   }
+}
+
+/**
+ * Real-command health probe (GET, not PING). Used at boot and for recovery.
+ * Only a successful real command clears quota degradation.
+ */
+async function probe() {
+  if (!connection) return false;
+  try {
+    if (connection.status !== 'ready') {
+      await withTimeout(connection.connect(), COMMAND_TIMEOUT_MS);
+    }
+    await withTimeout(connection.get(PROBE_KEY), COMMAND_TIMEOUT_MS);
+    connectionFailed = false;
+    lastErrorKind = null;
+    return true;
+  } catch (err) {
+    connectionFailed = true;
+    connectionFailedAt = Date.now();
+    lastErrorKind = isLimitError(err) ? 'limit' : 'other';
+    if (lastErrorKind === 'limit') scheduleRecovery();
+    return false;
+  }
+}
+
+/**
+ * Mark Redis unavailable from a command failure (e.g. a queue worker hitting
+ * the Upstash limit). Keeps the connection open so enqueue calls still reject
+ * and inline fallbacks fire, but flips isReady/isRedisAvailable to false.
+ */
+function markUnavailable(err) {
+  const wasFailed = connectionFailed;
+  const limit = isLimitError(err);
+  connectionFailed = true;
+  connectionFailedAt = Date.now();
+  lastErrorKind = limit ? 'limit' : 'other';
+  if (limit) {
+    scheduleRecovery();
+    if (!wasFailed) {
+      console.warn('[Redis] Upstash request limit exceeded — entering degraded mode (inline fallbacks active)');
+    }
+  }
+  return connectionFailed;
 }
 
 async function get(key) {
@@ -161,6 +257,10 @@ async function delPattern(pattern) {
 }
 
 async function quit() {
+  if (recoveryTimer) {
+    clearTimeout(recoveryTimer);
+    recoveryTimer = null;
+  }
   if (connection) {
     try {
       await connection.quit();
@@ -168,6 +268,7 @@ async function quit() {
     connection = null;
     isConnected = false;
     connectionFailed = false;
+    lastErrorKind = null;
   }
 }
 
@@ -177,6 +278,9 @@ module.exports = {
   getConnection,
   isReady,
   isRedisAvailable,
+  probe,
+  markUnavailable,
+  isLimitError,
   get,
   set,
   setnx,

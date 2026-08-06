@@ -18,7 +18,7 @@
  */
 
 const { Queue, Worker } = require('bullmq');
-const { getConnection, isRedisAvailable } = require('./redisClient');
+const { getConnection, isRedisAvailable, isReady, isLimitError, markUnavailable, probe } = require('./redisClient');
 
 
 const QUEUE_NAMES = {
@@ -42,6 +42,10 @@ const DEFAULT_JOB_OPTIONS = {
 
 const queueInstances = new Map();
 const workers = [];
+const pausedWorkers = new Set();
+let resumeMonitor = null;
+let lastWorkerErrorLog = 0;
+let closed = false;
 
 function getQueue(queueName) {
   if (!queueInstances.has(queueName)) {
@@ -275,12 +279,27 @@ async function enqueueContentSync(job) {
  * @param {import('express').Application} app — Express app (for accessing io instance, etc.)
  */
 function registerWorkers() {
+  closed = false;
   const conn = getConnection();
 
   function createWorker(queueName, processor, concurrency = 1) {
     const worker = new Worker(queueName, processor, { connection: conn, concurrency });
     worker.on('error', (err) => {
-      console.warn(`[Queue] Worker error (${queueName}):`, err?.message);
+      if (isLimitError(err) || !isReady()) {
+        // Degraded (e.g. Upstash quota exhausted): stop the hot retry loop and
+        // throttle logging to once per minute instead of ~50x/second.
+        markUnavailable(err);
+        if (!lastWorkerErrorLog || Date.now() - lastWorkerErrorLog > 60000) {
+          console.warn(`[Queue] Worker error (${queueName}): Redis unavailable — pausing worker, using inline fallbacks (${err?.message || 'degraded'})`);
+          lastWorkerErrorLog = Date.now();
+        }
+        if (!pausedWorkers.has(worker)) {
+          pausedWorkers.add(worker);
+          if (typeof worker.pause === 'function') worker.pause().catch(() => {});
+        }
+      } else {
+        console.warn(`[Queue] Worker error (${queueName}):`, err?.message);
+      }
     });
     workers.push(worker);
     return worker;
@@ -448,9 +467,49 @@ function registerWorkers() {
 }
 
 // ---------------------------------------------------------------------------
+// Recovery monitor
+// ---------------------------------------------------------------------------
+
+/**
+ * Every 60s, if we are in a degraded/recovered state, check Redis with the
+ * real-command probe and (re)start workers. Runs no Redis calls while healthy
+ * with running workers.
+ */
+function startResumeMonitor() {
+  if (resumeMonitor) return;
+  resumeMonitor = setInterval(async () => {
+    try {
+      if (closed) return;
+      if (pausedWorkers.size > 0 || workers.length === 0) {
+        if (await isRedisAvailable()) {
+          const toResume = [...pausedWorkers];
+          pausedWorkers.clear();
+          for (const w of toResume) {
+            if (typeof w.resume === 'function') await w.resume().catch(() => {});
+          }
+          if (workers.length === 0) {
+            registerWorkers();
+            console.log('[Queue] Redis available — workers registered');
+          } else if (toResume.length > 0) {
+            console.log('[Queue] Redis recovered — workers resumed');
+          }
+        }
+      }
+    } catch { /* keep the monitor alive */ }
+  }, 60 * 1000);
+  if (resumeMonitor.unref) resumeMonitor.unref();
+}
+
+// ---------------------------------------------------------------------------
 // Graceful shutdown
 // ---------------------------------------------------------------------------
 async function closeAll() {
+  closed = true;
+  if (resumeMonitor) {
+    clearInterval(resumeMonitor);
+    resumeMonitor = null;
+  }
+  pausedWorkers.clear();
   const closePromises = [];
   for (const [, queue] of queueInstances) {
     closePromises.push(queue.close());
@@ -477,7 +536,9 @@ module.exports = {
   enqueueContentSync,
   processEmailJob,
   registerWorkers,
+  startResumeMonitor,
   closeAll,
   getConnection,
   isRedisAvailable,
+  probe,
 };
