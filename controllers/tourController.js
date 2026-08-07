@@ -16,7 +16,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
-const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices, durationToMinutes } = require('../utils/tourHelpers');
+const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices, reconcileAvailability, durationToMinutes } = require('../utils/tourHelpers');
 const { productToTour } = require('../utils/productToTour');
 const { tourContentSnapshot, mergeDraftContent, buildTourDiff, computeChangesSummary, buildLiveUpdateData } = require('../utils/tourDraft');
 const { logActivity } = require('../utils/auditLogger');
@@ -606,15 +606,36 @@ exports.createTour = catchAsync(async (req, res, next) => {
   }
 
   // Map flat 13-step store shape to JSON blobs + normalized columns
+  const JSON_BLOB_KEYS = new Set(['categorization', 'theme', 'productContent', 'schedulesAndPricing', 'bookingAndTickets']);
   const mapped = productToTour(req.body);
   for (const key of Object.keys(mapped)) {
-    if (req.body[key] === undefined && mapped[key] !== undefined) {
+    const bodyVal = req.body[key];
+    const isExplicitNested = bodyVal && typeof bodyVal === 'object' && !Array.isArray(bodyVal) && JSON_BLOB_KEYS.has(key);
+    if (!isExplicitNested) {
       req.body[key] = mapped[key];
     }
   }
 
+  // Fallback: if categorization.duration was sent directly (nested), use it
+  if (req.body.categorization && req.body.categorization.duration) {
+    const { value, unit } = req.body.categorization.duration;
+    if (value != null && unit) {
+      req.body.duration = value;
+      req.body.durationUnit = unit;
+    }
+  }
+
+  // Ensure flat duration/durationUnit are authoritative — they are the form's
+  // source of truth. Always override categorization.duration with them so a
+  // stale nested blob can never silently overwrite the user's edit.
+  if (req.body.duration != null && req.body.durationUnit) {
+    const cat = (req.body.categorization && typeof req.body.categorization === 'object')
+      ? req.body.categorization : {};
+    cat.duration = { value: req.body.duration, unit: req.body.durationUnit };
+    req.body.categorization = cat;
+  }
+
   // Strip empty values for draft saves so partial wizard progress doesn't fail validation
-  const JSON_BLOB_KEYS = new Set(['categorization', 'theme', 'productContent', 'schedulesAndPricing', 'bookingAndTickets'])
   if (req.body.status !== 'ACTIVE' && req.body.status !== 'PUBLISHED') {
     for (const key of Object.keys(req.body)) {
       if (JSON_BLOB_KEYS.has(key)) continue
@@ -638,7 +659,8 @@ exports.createTour = catchAsync(async (req, res, next) => {
       try { blob = JSON.parse(blob); } catch { blob = null; }
     }
     if (blob && typeof blob === 'object' && !Array.isArray(blob)) {
-      req.body.schedulesAndPricing = rebuildSchedulePrices(blob);
+      const normalized = reconcileAvailability(rebuildSchedulePrices(blob));
+      req.body.schedulesAndPricing = normalized;
     }
   }
 
@@ -830,6 +852,11 @@ exports.createTour = catchAsync(async (req, res, next) => {
  * draft waits in draftContent until an admin approves it.
  */
 function buildDraftFromBody(existingTour, body, files) {
+  console.log('[DEBUG buildDraftFromBody] === BUILD DRAFT FROM BODY CALLED ===');
+  console.log('[DEBUG buildDraftFromBody] body.duration:', body.duration);
+  console.log('[DEBUG buildDraftFromBody] body.durationUnit:', body.durationUnit);
+  console.log('[DEBUG buildDraftFromBody] body.categorization:', body.categorization);
+  
   const merged = mergeDraftContent(existingTour, body);
   const uploadedPhotos = (files || []).map((f) => f.path).filter(isValidCloudinaryUrl);
   const keptPhotos = Array.isArray(body.existingPhotos) && body.existingPhotos.length > 0
@@ -844,6 +871,10 @@ function buildDraftFromBody(existingTour, body, files) {
   }
   if (merged.schedulesAndPricing && typeof merged.schedulesAndPricing === 'object' && !Array.isArray(merged.schedulesAndPricing)) {
     merged.schedulesAndPricing = rebuildSchedulePrices(merged.schedulesAndPricing);
+    // Backfill any empty availability aggregate from the per-schedule data so an
+    // innocent edit never wipes the schedule the booking engine reads. Additive
+    // only: never invents or clears hours that are legitimately empty.
+    merged.schedulesAndPricing = reconcileAvailability(merged.schedulesAndPricing);
   }
   return merged;
 }
@@ -852,6 +883,11 @@ function buildDraftFromBody(existingTour, body, files) {
  * Update tour (suppliers only - own tours)
  */
 exports.updateTour = catchAsync(async (req, res, next) => {
+  console.log('[DEBUG updateTour] === UPDATE TOUR CALLED ===');
+  console.log('[DEBUG updateTour] req.body.duration:', req.body.duration);
+  console.log('[DEBUG updateTour] req.body.durationUnit:', req.body.durationUnit);
+  console.log('[DEBUG updateTour] req.body.categorization:', req.body.categorization);
+  
   const { id } = req.params;
   const supplierId = req.supplierId;
 
@@ -872,13 +908,38 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     return next(new AppError('Tours can no longer be published directly. Submit the tour for review and an admin will approve it.', 400));
   }
 
-  // Map flat 13-step store shape to JSON blobs if flat fields are present
-  if (req.body.pricingModel || req.body.scheduleType || req.body.language) {
+  // ALWAYS map flat 13-step store shape to JSON blobs when body is present
+  // The frontend sends the full flat form state; productToTour handles the
+  // mapping to nested blobs (categorization, theme, productContent, etc.).
+  // JSON blob keys (explicitly sent as nested objects) should use the
+  // frontend's version; flat-only fields should be consumed by productToTour.
+  if (req.body && typeof req.body === 'object' && !Array.isArray(req.body) && Object.keys(req.body).length > 0) {
+    const JSON_BLOB_KEYS = new Set(['categorization', 'theme', 'productContent', 'schedulesAndPricing', 'bookingAndTickets']);
     const mapped = productToTour(req.body);
     for (const key of Object.keys(mapped)) {
-      if (req.body[key] === undefined && mapped[key] !== undefined) {
+      const bodyVal = req.body[key];
+      const isExplicitNested = bodyVal && typeof bodyVal === 'object' && !Array.isArray(bodyVal) && JSON_BLOB_KEYS.has(key);
+      if (!isExplicitNested) {
         req.body[key] = mapped[key];
       }
+    }
+    // Fallback: if categorization.duration was sent directly (nested), use it
+    if (req.body.categorization && req.body.categorization.duration) {
+      const { value, unit } = req.body.categorization.duration;
+      if (value != null && unit) {
+        req.body.duration = value;
+        req.body.durationUnit = unit;
+      }
+    }
+
+    // Ensure flat duration/durationUnit are authoritative — they are the form's
+    // source of truth. Always override categorization.duration with them so a
+    // stale nested blob can never silently overwrite the user's edit.
+    if (req.body.duration != null && req.body.durationUnit) {
+      const cat = (req.body.categorization && typeof req.body.categorization === 'object')
+        ? req.body.categorization : {};
+      cat.duration = { value: req.body.duration, unit: req.body.durationUnit };
+      req.body.categorization = cat;
     }
   }
 
@@ -1005,7 +1066,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
       try { effectiveBlob = JSON.parse(effectiveBlob); } catch { effectiveBlob = null; }
     }
     if (schedulesAndPricing !== undefined && effectiveBlob && typeof effectiveBlob === 'object' && !Array.isArray(effectiveBlob)) {
-      effectiveBlob = rebuildSchedulePrices(effectiveBlob);
+      effectiveBlob = reconcileAvailability(rebuildSchedulePrices(effectiveBlob));
       schedulesAndPricing = effectiveBlob;
     }
 
@@ -1259,9 +1320,51 @@ function validateTourForReview(tour) {
  * while the edits wait in the moderation queue — only the draft status changes.
  */
 exports.submitTourForReview = catchAsync(async (req, res, next) => {
+  console.log('[DEBUG submitTourForReview] === SUBMIT TOUR FOR REVIEW CALLED ===');
+  console.log('[DEBUG submitTourForReview] req.body.duration:', req.body.duration);
+  console.log('[DEBUG submitTourForReview] req.body.durationUnit:', req.body.durationUnit);
+  console.log('[DEBUG submitTourForReview] req.body.categorization:', req.body.categorization);
+  
   const { id } = req.params;
   const supplierId = req.supplierId;
   const hasBody = req.body && typeof req.body === 'object' && !Array.isArray(req.body) && Object.keys(req.body).length > 0;
+
+  if (hasBody) {
+    // Map flat 13-step store shape to JSON blobs
+    // The frontend sends flat fields (duration, category, guideType, etc.)
+    // which must be transformed into nested blobs (categorization, theme, etc.).
+    // JSON blob keys (explicitly sent as nested objects) should use the
+    // frontend's version; flat-only fields should be consumed by productToTour.
+    const JSON_BLOB_KEYS = new Set(['categorization', 'theme', 'productContent', 'schedulesAndPricing', 'bookingAndTickets']);
+    const mapped = productToTour(req.body);
+    for (const key of Object.keys(mapped)) {
+      // If the body has a nested object for a JSON blob key, keep it.
+      // Otherwise (flat field or missing), use the mapped nested structure.
+      const bodyVal = req.body[key];
+      const isExplicitNested = bodyVal && typeof bodyVal === 'object' && !Array.isArray(bodyVal) && JSON_BLOB_KEYS.has(key);
+      if (!isExplicitNested) {
+        req.body[key] = mapped[key];
+      }
+    }
+    // Fallback: if categorization.duration was sent directly (nested), use it
+    if (req.body.categorization && req.body.categorization.duration) {
+      const { value, unit } = req.body.categorization.duration;
+      if (value != null && unit) {
+        req.body.duration = value;
+        req.body.durationUnit = unit;
+      }
+    }
+
+    // Ensure flat duration/durationUnit are authoritative — they are the form's
+    // source of truth. Always override categorization.duration with them so a
+    // stale nested blob can never silently overwrite the user's edit.
+    if (req.body.duration != null && req.body.durationUnit) {
+      const cat = (req.body.categorization && typeof req.body.categorization === 'object')
+        ? req.body.categorization : {};
+      cat.duration = { value: req.body.duration, unit: req.body.durationUnit };
+      req.body.categorization = cat;
+    }
+  }
 
   // Money needs somewhere to go — a verified payout method is required
   const hasVerifiedMethod = await prisma.payoutMethod.findFirst({

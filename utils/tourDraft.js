@@ -1,4 +1,4 @@
-const { createSlug, durationToMinutes } = require('./tourHelpers');
+const { createSlug, durationToMinutes, rebuildSchedulePrices, reconcileAvailability } = require('./tourHelpers');
 
 const CONTENT_FIELDS = [
   'title',
@@ -33,12 +33,19 @@ function tourContentSnapshot(tour) {
 }
 
 function mergeDraftContent(liveRow, draftContent) {
+  console.log('[DEBUG mergeDraftContent] liveRow.categorization:', liveRow?.categorization);
+  console.log('[DEBUG mergeDraftContent] draftContent.categorization:', draftContent?.categorization);
+  console.log('[DEBUG mergeDraftContent] draftContent.duration:', draftContent?.duration);
+  
   const snapshot = tourContentSnapshot(liveRow);
   if (!draftContent || typeof draftContent !== 'object') return snapshot;
-  return {
+  const merged = {
     ...snapshot,
     ...Object.fromEntries(CONTENT_FIELDS.map((f) => [f, draftContent[f] !== undefined ? draftContent[f] : snapshot[f]])),
   };
+  console.log('[DEBUG mergeDraftContent] merged.categorization:', merged.categorization);
+  console.log('[DEBUG mergeDraftContent] merged.duration:', merged.duration);
+  return merged;
 }
 
 function truncate(value, max = 400) {
@@ -49,6 +56,11 @@ function truncate(value, max = 400) {
 }
 
 function buildTourDiff(live, draft, maxDepth = 4) {
+  console.log('[DEBUG buildTourDiff] live.categorization:', live?.categorization);
+  console.log('[DEBUG buildTourDiff] draft.categorization:', draft?.categorization);
+  console.log('[DEBUG buildTourDiff] live.duration:', live?.duration);
+  console.log('[DEBUG buildTourDiff] draft.duration:', draft?.duration);
+  
   const liveSrc = live || {};
   const draftSrc = draft || {};
   const diffs = [];
@@ -65,7 +77,7 @@ function buildTourDiff(live, draft, maxDepth = 4) {
   }
 
   const walk = (a, b, path, depth) => {
-    if (a === b) return;
+    if (a === b && (typeof a !== 'object' || a === null)) return;
     if (a === undefined || a === null) {
       record(path, 'added', undefined, truncate(b));
       return;
@@ -145,7 +157,19 @@ async function buildLiveUpdateData(tx, liveRow, draftContent) {
     categorization: merged.categorization,
     theme: merged.theme,
     productContent: merged.productContent,
-    schedulesAndPricing: merged.schedulesAndPricing,
+    // Re-normalize the derived prices AND reconcile the availability aggregate
+    // before the snapshot goes live. This is the last gate before the public
+    // site reads schedulesAndPricing, so it must never commit a degraded
+    // availability block (e.g. an empty daysOfWeek / weeklySchedule with valid
+    // hours only on schedules[0]). reconcileAvailability is additive: it
+    // backfills the empty side from the populated one and never invents hours.
+    schedulesAndPricing: (() => {
+      if (!merged.schedulesAndPricing || typeof merged.schedulesAndPricing !== 'object' || Array.isArray(merged.schedulesAndPricing)) {
+        return merged.schedulesAndPricing;
+      }
+      const blob = rebuildSchedulePrices(merged.schedulesAndPricing);
+      return reconcileAvailability(blob);
+    })(),
     bookingAndTickets: merged.bookingAndTickets,
   };
 

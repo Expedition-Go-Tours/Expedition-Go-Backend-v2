@@ -15,6 +15,7 @@ const {
   validateTourData,
   validateStoredPricing,
   rebuildSchedulePrices,
+  reconcileAvailability,
   durationToMinutes,
   calculateTourPrice,
 } = require('../../utils/tourHelpers');
@@ -430,6 +431,109 @@ describe('rebuildSchedulePrices', () => {
     const result = rebuildSchedulePrices(b);
     expect(result.travelerDetails.pricingCategories[0].price).toBeNull();
     expect(result.pricingSchedules.schedules[0].prices).toEqual([{ ageGroup: 'Child', retailPrice: 25 }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reconcileAvailability
+// ---------------------------------------------------------------------------
+const baseBlob = (overrides = {}) => ({
+  availability: {
+    scheduleType: 'operatingHours',
+    timezone: 'UTC',
+    operatingHoursStart: '09:00',
+    operatingHoursEnd: '17:00',
+  },
+  pricingSchedules: {
+    schedules: [
+      { startDate: '2026-01-01', hasEndDate: false, type: 'operatingHours' },
+    ],
+  },
+  ...overrides,
+});
+
+const HOURS = { Monday: [{ startTime: '09:00', endTime: '12:00' }], Tuesday: [], Wednesday: [], Thursday: [], Friday: [], Saturday: [], Sunday: [] };
+
+function hasHours(ws) {
+  return ws && Object.values(ws).some((slots) => Array.isArray(slots) && slots.length > 0);
+}
+
+describe('reconcileAvailability', () => {
+  it('returns non-normalizable blobs unchanged', () => {
+    expect(reconcileAvailability(null)).toBeNull();
+    expect(reconcileAvailability('string')).toBe('string');
+    expect(reconcileAvailability([])).toEqual([]);
+    const noSchedules = { availability: {}, pricingSchedules: { schedules: undefined } };
+    expect(reconcileAvailability(noSchedules)).toBe(noSchedules);
+  });
+
+  it('backfills an empty aggregate weeklySchedule from schedules[0] (the migration-drift case)', () => {
+    const blob = JSON.parse(JSON.stringify(baseBlob()));
+    blob.availability.weeklySchedule = {};
+    blob.availability.daysOfWeek = [];
+    blob.pricingSchedules.schedules[0].weeklySchedule = HOURS;
+    const result = reconcileAvailability(blob);
+    expect(hasHours(result.availability.weeklySchedule)).toBe(true);
+    expect(result.availability.weeklySchedule).toEqual(HOURS);
+    expect(result.availability.daysOfWeek).toEqual(['Monday']);
+    expect(result.pricingSchedules.schedules[0].weeklySchedule).toEqual(HOURS);
+  });
+
+  it('backfills schedules[0] when the aggregate has hours but the schedule does not', () => {
+    const blob = JSON.parse(JSON.stringify(baseBlob()));
+    blob.availability.weeklySchedule = HOURS;
+    blob.pricingSchedules.schedules[0].weeklySchedule = {};
+    const result = reconcileAvailability(blob);
+    expect(hasHours(result.pricingSchedules.schedules[0].weeklySchedule)).toBe(true);
+  });
+
+  it('preserves a populated aggregate and aligns schedules[0] to it when both have data', () => {
+    const blob = JSON.parse(JSON.stringify(baseBlob()));
+    blob.availability.weeklySchedule = HOURS;
+    blob.availability.daysOfWeek = ['Monday'];
+    blob.pricingSchedules.schedules[0].weeklySchedule = JSON.parse(JSON.stringify(HOURS));
+    blob.pricingSchedules.schedules[0].weeklySchedule.Tuesday = [{ startTime: '10:00', endTime: '11:00' }];
+    const result = reconcileAvailability(blob);
+    expect(result.availability.daysOfWeek).toEqual(['Monday']);
+    expect(result.pricingSchedules.schedules[0].weeklySchedule).toEqual(HOURS);
+  });
+
+  it('never invents hours when both sides are empty (cleared schedule stays empty)', () => {
+    const blob = JSON.parse(JSON.stringify(baseBlob()));
+    blob.availability.weeklySchedule = {};
+    blob.availability.daysOfWeek = [];
+    blob.pricingSchedules.schedules[0].weeklySchedule = {};
+    const result = reconcileAvailability(blob);
+    expect(result.availability.daysOfWeek).toEqual([]);
+    expect(hasHours(result.availability.weeklySchedule)).toBe(false);
+    expect(result.availability.weeklySchedule).toEqual({ Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [], Saturday: [], Sunday: [] });
+  });
+
+  it('syncs timeSlots from the populated side when the other is empty', () => {
+    const blob = JSON.parse(JSON.stringify(baseBlob()));
+    blob.availability.timeSlots = [];
+    blob.pricingSchedules.schedules[0].timeSlots = ['08:00'];
+    const result = reconcileAvailability(blob);
+    expect(result.availability.timeSlots).toEqual(['08:00']);
+  });
+
+  it('syncs the per-schedule type with the aggregate scheduleType', () => {
+    const blob = JSON.parse(JSON.stringify(baseBlob()));
+    blob.availability.scheduleType = 'fixedTimeSlot';
+    blob.pricingSchedules.schedules[0].type = undefined;
+    const result = reconcileAvailability(blob);
+    expect(result.pricingSchedules.schedules[0].type).toBe('fixedTimeSlot');
+  });
+
+  it('is idempotent — running twice yields the same result', () => {
+    const blob = JSON.parse(JSON.stringify(baseBlob()));
+    blob.availability.weeklySchedule = {};
+    blob.availability.daysOfWeek = [];
+    blob.pricingSchedules.schedules[0].weeklySchedule = HOURS;
+    const once = reconcileAvailability(blob);
+    const twice = reconcileAvailability(JSON.parse(JSON.stringify(once)));
+    expect(twice.availability.weeklySchedule).toEqual(once.availability.weeklySchedule);
+    expect(twice.availability.daysOfWeek).toEqual(once.availability.daysOfWeek);
   });
 });
 
