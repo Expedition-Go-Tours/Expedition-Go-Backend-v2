@@ -276,6 +276,127 @@ function rebuildSchedulePrices(blob) {
 }
 
 /**
+ * Detect whether a weeklySchedule object holds any operating hours. Used by
+ * reconcileAvailability so an empty-but-present aggregate block (the shape the
+ * dashboard historically emitted) never masks a valid per-schedule schedule.
+ */
+function hasAnyHours(weeklySchedule) {
+  return weeklySchedule && typeof weeklySchedule === 'object' &&
+  Object.values(weeklySchedule).some((slots) => Array.isArray(slots) && slots.length > 0);
+}
+
+/**
+ * Normalize a weekly schedule to the canonical 7-day object (no hours for any
+ * day that is missing or malformed) without inventing data that was never
+ * provided. Idempotent.
+ */
+function normalizeWeeklySchedule(weeklySchedule) {
+  const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const base = {};
+  for (const day of days) {
+    const slots = weeklySchedule ? weeklySchedule[day] : undefined;
+    base[day] = Array.isArray(slots) ? slots : [];
+  }
+  return base;
+}
+
+/**
+ * Keep the two availability representations in sync: the aggregate
+ * `availability` block (daysOfWeek / weeklySchedule / timeSlots — what the
+ * booking engine reads) and the per-schedule `schedules[0]` block (what the
+ * supplier dashboard historically edited). Older dashboard builds could write
+ * an empty aggregate while `schedules[0]` carried the real hours (or vice-versa),
+ * which made `availability.daysOfWeek` appear empty and produced spurious
+ * "availability.daysOfWeek[0-6]" diffs. This backfills the EMPTY side from the
+ * populated side so they never drift — but it never invents data and never
+ * clears hours that are legitimately empty.
+ *
+ * Mutates the blob in place and returns it.
+ */
+function reconcileAvailability(blob) {
+  if (!blob || typeof blob !== 'object' || Array.isArray(blob)) return blob;
+
+  const ps = blob.pricingSchedules;
+  if (!ps || !Array.isArray(ps.schedules) || ps.schedules.length === 0) return blob;
+
+  const availability = blob.availability;
+  if (!availability || typeof availability !== 'object') return blob;
+
+  const first = ps.schedules[0];
+  if (!first || typeof first !== 'object') return blob;
+
+  const aggWeekly = availability.weeklySchedule || {};
+  const schWeekly = first.weeklySchedule || {};
+  const aggHasHours = hasAnyHours(aggWeekly);
+  const schHasHours = hasAnyHours(schWeekly);
+
+  // Determine the authoritative weekly schedule without inventing data:
+  // prefer the aggregate when populated, otherwise the first schedule.
+  let weekly = aggHasHours ? aggWeekly : (schHasHours ? schWeekly : aggWeekly);
+
+  // daysOfWeek must always be derivable from the weekly schedule. Backfill the
+  // aggregate daysOfWeek from the resolved schedule, and the schedule's weekly
+  // schedule mirrors the aggregate so both sides agree.
+  if (aggHasHours && !schHasHours) {
+    // Aggregate has hours; propagate to the first schedule so the per-schedule
+    // view matches what the booking engine sees.
+    first.weeklySchedule = normalizeWeeklySchedule(aggWeekly);
+    weekly = aggWeekly;
+  } else if (schHasHours && !aggHasHours) {
+    // First schedule has hours; backfill the aggregate (this is the shape the
+    // dashboard used to leave behind, and what availabilityCore reads from).
+    availability.weeklySchedule = normalizeWeeklySchedule(schWeekly);
+    weekly = schWeekly;
+  } else if (aggHasHours && schHasHours) {
+    // Both populated: trust the aggregate (the booking engine's source) and keep
+    // them aligned if they ever disagree by deferring to the aggregate.
+    first.weeklySchedule = normalizeWeeklySchedule(aggWeekly);
+    weekly = aggWeekly;
+  } else {
+    // Both empty: leave as-is — a cleared/empty schedule is a legitimate state
+    // (don't invent hours). Only ensure the canonical 7-day shape so downstream
+    // diffs see a stable empty object rather than a missing/undefined key.
+    weekly = normalizeWeeklySchedule(aggWeekly);
+  }
+
+  const daysOfWeek = Object.entries(weekly)
+    .filter(([, slots]) => Array.isArray(slots) && slots.length > 0)
+    .map(([day]) => day);
+
+  availability.weeklySchedule = normalizeWeeklySchedule(weekly);
+  availability.daysOfWeek = daysOfWeek;
+
+  if (Array.isArray(availability.timeSlots) && availability.timeSlots.length > 0) {
+    first.timeSlots = availability.timeSlots;
+  } else if (Array.isArray(first.timeSlots) && first.timeSlots.length > 0) {
+    availability.timeSlots = first.timeSlots
+      .map((s) => (s && typeof s === "object" && s.startTime ? s.startTime : s))
+      .filter((v) => typeof v === "string");
+  }
+  // If both are empty, leave timeSlots as-is (empty is a valid state for
+  // operatingHours schedules without explicit time slots).
+
+  // Keep the schedule's type aligned with the aggregate's scheduleType so the
+  // two can never disagree on which availability model applies.
+  // Ensure every schedule's weeklySchedule is a stable, non-null object so
+  // downstream loops (availabilityCore, tourHelpers) never crash on a null
+  // weeklySchedule and diffs see a canonical empty-7-day shape. Additive-only:
+  // normalize only fills missing days as empty arrays; it never invents hours.
+  if (first.weeklySchedule == null || typeof first.weeklySchedule !== 'object') {
+    first.weeklySchedule = normalizeWeeklySchedule(first.weeklySchedule);
+  }
+
+  if (availability.scheduleType) {
+    first.type = first.type || availability.scheduleType;
+  }
+  if (first.type) {
+    availability.scheduleType = availability.scheduleType || first.type;
+  }
+
+  return blob;
+}
+
+/**
  * Validate the stored schedulesAndPricing blob when a tour is set live
  * (status ACTIVE/PUBLISHED). Mirrors the supplier dashboard's step-14
  * wizard rules: at least one schedule, per-category prices present,
@@ -836,6 +957,7 @@ module.exports = {
   validateTourData,
   validateStoredPricing,
   rebuildSchedulePrices,
+  reconcileAvailability,
   durationToMinutes,
   checkTourAvailability,
   calculateTourPrice,

@@ -67,6 +67,7 @@ function buildCategorization(flat) {
     transportMode: flat.transportMode || null,
     transportModes: Array.isArray(flat.transportModes) ? flat.transportModes : [],
     transportServices: Array.isArray(flat.transportServices) ? flat.transportServices : [],
+    accommodationIncluded: flat.accommodationIncluded != null ? !!flat.accommodationIncluded : null,
   };
 }
 

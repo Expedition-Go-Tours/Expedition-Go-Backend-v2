@@ -271,6 +271,7 @@ const productSchema = z.object({
   transportMode: z.string().max(50).optional(),
   duration: z.number().nullable().optional(),
   durationUnit: z.enum(['minutes', 'hours', 'days']).optional(),
+  accommodationIncluded: z.boolean().optional(),
   // Step 3
   title: z.string().min(1, 'Title is required').max(60, 'Title must be at most 60 characters'),
   referenceCode: z.string().max(20).optional(),
@@ -400,6 +401,20 @@ const productSchema = z.object({
   timezone: z.string().optional(),
   planPickupTimes: z.boolean().optional(),
   pickupStartTime: z.string().optional(),
+}).superRefine((data, ctx) => {
+  // Conditional validation: require accommodationIncluded when duration >= 24 hours
+  if (data.duration != null && data.durationUnit) {
+    const durationInHours = data.durationUnit === 'days' ? data.duration * 24
+      : data.durationUnit === 'hours' ? data.duration
+      : data.duration / 60;
+    if (durationInHours >= 24 && data.accommodationIncluded === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['accommodationIncluded'],
+        message: 'Accommodation inclusion is required for tours 24 hours or longer',
+      });
+    }
+  }
 });
 
 module.exports = { productSchema, locationSchema, attractionSchema };

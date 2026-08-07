@@ -37,7 +37,72 @@ jest.mock('../../utils/tourHelpers', () => ({
   validateTourData: jest.fn(),
   validateStoredPricing: jest.fn(),
   rebuildSchedulePrices: jest.fn((b) => b),
+  reconcileAvailability: jest.fn((b) => b),
   durationToMinutes: jest.fn(),
+}));
+jest.mock('../../utils/productToTour', () => ({
+  productToTour: jest.fn((flat) => ({
+    title: flat.title || '',
+    categorization: {
+      category: flat.category || 'Adventure',
+      subcategory: flat.subcategory || null,
+      activityType: flat.activityType || null,
+      difficulty: flat.difficulty || 'Easy',
+      duration: flat.duration ? { value: flat.duration, unit: flat.durationUnit || 'hours' } : null,
+      transportMode: flat.transportMode || null,
+      transportModes: Array.isArray(flat.transportModes) ? flat.transportModes : [],
+      transportServices: Array.isArray(flat.transportServices) ? flat.transportServices : [],
+    },
+    theme: { primaryTheme: flat.primaryTheme || null, secondary: Array.isArray(flat.secondaryThemes) ? flat.secondaryThemes : [] },
+    productContent: {
+      writingLanguage: flat.language || 'English',
+      shortSummary: flat.shortDescription || '',
+      fullDescription: flat.fullDescription || '',
+      highlights: Array.isArray(flat.highlights) ? flat.highlights : [],
+      meetingMode: flat.meetingMode || 'meeting_point',
+      meetingPoint: flat.meetingPoint || { name: 'Gate', address: 'Main Rd' },
+      locations: Array.isArray(flat.locations) ? flat.locations : [],
+      attractions: Array.isArray(flat.attractions) ? flat.attractions : [],
+      activitiesIncluded: Array.isArray(flat.activitiesIncluded) ? flat.activitiesIncluded : [],
+      pickupTransportTypes: Array.isArray(flat.pickupTransportTypes) ? flat.pickupTransportTypes : [],
+      whatsIncluded: Array.isArray(flat.whatsIncluded) ? flat.whatsIncluded : [],
+      whatsNotIncluded: Array.isArray(flat.whatsNotIncluded) ? flat.whatsNotIncluded : [],
+      guideType: flat.guideType || 'tour-guide',
+      guideMaterials: flat.guideMaterials || { audioGuide: false, infoBooklet: false },
+      foodProvided: !!flat.foodProvided,
+      meals: Array.isArray(flat.meals) ? flat.meals : [],
+      mealType: flat.mealType || '',
+      showDietaryRestrictions: !!flat.showDietaryRestrictions,
+      drinksIncluded: !!flat.drinksIncluded,
+      dietaryOptions: Array.isArray(flat.dietaryOptions) ? flat.dietaryOptions : [],
+      transportationProvided: !!flat.transportationProvided,
+      transportationType: flat.transportationType || '',
+      healthRestrictions: Array.isArray(flat.healthRestrictions) ? flat.healthRestrictions : [],
+      notAllowed: Array.isArray(flat.notAllowed) ? flat.notAllowed : [],
+      petFriendly: !!flat.petFriendly,
+      mandatoryItems: Array.isArray(flat.mandatoryItems) ? flat.mandatoryItems : [],
+      knowBeforeYouGo: flat.knowBeforeYouGo || '',
+      emergencyCountryCode: flat.emergencyCountryCode || '',
+      emergencyPhone: flat.emergencyPhone || '',
+      voucherInfo: flat.voucherInfo || '',
+      copyrightConfirmed: !!flat.copyrightConfirmed,
+      options: Array.isArray(flat.options) ? flat.options : [],
+    },
+    schedulesAndPricing: flat.schedulesAndPricing || {
+      travelerDetails: {
+        pricingModel: 'perPerson',
+        pricingApproach: 'dependsOnAge',
+        pricingCategories: [{ name: 'Adult', price: 100, minAge: 13, maxAge: 99 }],
+      },
+      pricingSchedules: { currency: 'USD', schedules: [] },
+      availability: { scheduleType: 'operatingHours', weeklySchedule: {} }
+    },
+    bookingAndTickets: {
+      meetingPoint: flat.meetingPoint || { name: 'Gate', address: 'Main Rd' },
+      cutoffMinutes: flat.cutoffMinutes || 20,
+      cancellationPolicy: flat.cancellationPolicy || { type: 'standard' },
+    }
+  }))
 }));
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn() }));

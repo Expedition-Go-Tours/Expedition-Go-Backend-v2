@@ -165,6 +165,9 @@ const REVIEWS_TOUR_PREFIX = (tourId) => `reviews:tour:${tourId}:*`;
 const EXPEDITION_LIST_PREFIX = 'expedition:tours:list:*';
 const EXPEDITION_FEATURED_PREFIX = 'expedition:tours:featured*';
 const EXPEDITION_DETAIL_PREFIX = (slug) => `expedition:detail:${slug}`;
+const EXPEDITION_SIMILAR_PREFIX = (slug) => `expedition:similar:${slug}`;
+const EXPEDITION_REVIEWS_PREFIX = (slug) => `expedition:reviews:${slug}`;
+const EXPEDITION_SITEMAP_KEY = 'expedition:sitemap';
 
 async function invalidateTourCaches(tourId, slug) {
   await invalidateKeys([
@@ -173,6 +176,17 @@ async function invalidateTourCaches(tourId, slug) {
     TOUR_POPULAR_KEY,
     EXPEDITION_LIST_PREFIX,
     EXPEDITION_FEATURED_PREFIX,
+    // The public site also serves "similar tours", reviews and the sitemap
+    // views of a tour — none of these were invalidated before, so after an
+    // approval edits to availability/pricing could be invisible there for the
+    // full cache TTL. Invalidate them alongside the list/detail caches. When a
+    // slug is known we invalidate that tour's entries specifically; otherwise
+    // we fall back to the broad glob (e.g. when only a tourId is available).
+    ...(slug
+      ? [EXPEDITION_SIMILAR_PREFIX(slug), `${EXPEDITION_REVIEWS_PREFIX(slug)}:*`]
+      : ['expedition:similar:*', 'expedition:reviews:*']),
+    EXPEDITION_SITEMAP_KEY,
+    'reviews:tour:*',
   ]);
   if (tourId) {
     await invalidateKey(TOUR_DETAIL_PREFIX(tourId));
@@ -204,5 +218,11 @@ module.exports = {
   TOUR_FILTERS_KEY,
   TOUR_POPULAR_KEY,
   REVIEWS_TOUR_PREFIX,
+  EXPEDITION_LIST_PREFIX,
+  EXPEDITION_FEATURED_PREFIX,
+  EXPEDITION_DETAIL_PREFIX,
+  EXPEDITION_SIMILAR_PREFIX,
+  EXPEDITION_REVIEWS_PREFIX,
+  EXPEDITION_SITEMAP_KEY,
   _clearMemory
 };

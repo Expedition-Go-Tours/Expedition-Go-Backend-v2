@@ -2059,6 +2059,7 @@ exports.getExpeditionSupplierTours = catchAsync(async (req, res, next) => {
  * supplier info and submission metadata. Supports search + pagination.
  */
 exports.getTourReviewQueue = catchAsync(async (req, res) => {
+  console.log('[DEBUG getTourReviewQueue] === GET TOUR REVIEW QUEUE CALLED ===');
   const {
     status = 'PENDING_APPROVAL',
     page = 1,
@@ -2130,6 +2131,7 @@ exports.getTourReviewQueue = catchAsync(async (req, res) => {
  * Does not apply the `status = 'ACTIVE'` filter and never counts a view.
  */
 exports.getTourAdminDetail = catchAsync(async (req, res, next) => {
+  console.log('[DEBUG getTourAdminDetail] === GET TOUR ADMIN DETAIL CALLED ===');
   const { id } = req.params;
 
   const tour = await prisma.tour.findFirst({
@@ -2194,6 +2196,7 @@ exports.getTourAdminDetail = catchAsync(async (req, res, next) => {
  * Fetch the live version, the pending draft, and a sectioned diff for review.
  */
 exports.getTourDraftReview = catchAsync(async (req, res, next) => {
+  console.log('[DEBUG getTourDraftReview] === GET TOUR DRAFT REVIEW CALLED ===');
   const { id } = req.params;
 
   const tour = await prisma.tour.findUnique({ where: { id } });
@@ -2219,6 +2222,11 @@ exports.getTourDraftReview = catchAsync(async (req, res, next) => {
   const draft = tour.draftContent && typeof tour.draftContent === 'object'
     ? mergeDraftContent(tour, tour.draftContent)
     : null;
+  console.log('[DEBUG admin reviewTour] tour.categorization:', tour.categorization);
+  console.log('[DEBUG admin reviewTour] tour.draftContent.categorization:', tour.draftContent?.categorization);
+  console.log('[DEBUG admin reviewTour] draft.categorization:', draft?.categorization);
+  console.log('[DEBUG admin reviewTour] diff.length:', diff.length);
+  console.log('[DEBUG admin reviewTour] diff:', JSON.stringify(diff, null, 2));
   const diff = draft ? buildTourDiff(live, draft) : [];
 
   res.status(200).json({
@@ -2248,6 +2256,7 @@ exports.getTourDraftReview = catchAsync(async (req, res, next) => {
  *  - flag   → REJECTED (sent back with a reason) + supplier notified
  */
 exports.reviewTour = catchAsync(async (req, res, next) => {
+  console.log('[DEBUG reviewTour] === REVIEW TOUR CALLED ===');
   const { id } = req.params;
   const { action, reason } = req.body || {};
   const adminId = req.user.id;
@@ -2345,6 +2354,7 @@ exports.reviewTour = catchAsync(async (req, res, next) => {
  *  - flag   → draft marked REJECTED with a reason; live version untouched + supplier notified
  */
 exports.reviewTourDraft = catchAsync(async (req, res, next) => {
+  console.log('[DEBUG reviewTourDraft] === REVIEW TOUR DRAFT CALLED ===');
   const { id } = req.params;
   const { action, reason } = req.body || {};
   const adminId = req.user.id;
@@ -2400,8 +2410,14 @@ exports.reviewTourDraft = catchAsync(async (req, res, next) => {
       }
 
       // Empty-draft guard — never report success when the update changes nothing.
+      console.log('[DEBUG admin approve] liveRow.categorization:', liveRow.categorization);
+      console.log('[DEBUG admin approve] tour.draftContent.categorization:', tour.draftContent?.categorization);
       const draftSnapshot = mergeDraftContent(liveRow, tour.draftContent);
-      if (buildTourDiff(liveRow, draftSnapshot).length === 0) {
+      console.log('[DEBUG admin approve] draftSnapshot.categorization:', draftSnapshot.categorization);
+      const diff = buildTourDiff(liveRow, draftSnapshot);
+      console.log('[DEBUG admin approve] diff.length:', diff.length);
+      console.log('[DEBUG admin approve] diff:', JSON.stringify(diff, null, 2));
+      if (diff.length === 0) {
         throw new AppError('Cannot approve: the submitted update contains no changes', 400);
       }
 
