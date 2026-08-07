@@ -203,6 +203,10 @@ model User {
   stripeCustomerId String? @unique
   
   // Profile & Preferences
+  // Legacy wishlist storage (plain tour-ID array, no per-item timestamps).
+  // Kept for the one-time data backfill — WishlistItem is now the source of
+  // truth and this column is no longer read by any controller. Drop it in a
+  // follow-up deploy once scripts/backfill-wishlist.js has confirmed the copy.
   wishlist     String[]
   likes        String[]
   language     String    @default("en")
@@ -241,6 +245,7 @@ model User {
   unpublishedExpeditionTours ExpeditionTour[] @relation("ExpeditionUnpublishedBy")
   articles      Article[]
   keywordRequests KeywordRequest[]
+  wishlistItems WishlistItem[]
 
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -249,6 +254,23 @@ model User {
   @@index([email])
   @@index([createdAt])
   @@index([stripeCustomerId])
+}
+
+// Wishlist with per-entry timestamps. Replaces the legacy User.wishlist
+// String[] column: gives real "added at" dates, stable ordering, idempotent
+// add/remove (compound unique), and cascade cleanup when a user or tour is
+// deleted. Populated for pre-existing data by scripts/backfill-wishlist.js.
+model WishlistItem {
+  id      String   @id @default(cuid())
+  userId  String
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tourId  String
+  tour    Tour     @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  addedAt DateTime @default(now())
+
+  @@unique([userId, tourId])
+  @@index([userId, addedAt])
+  @@index([tourId])
 }
 
 model SupplierProfile {
@@ -410,6 +432,7 @@ model Tour {
   specialOfferTargets SpecialOfferTarget[]
   expeditionTour      ExpeditionTour?
   articles            ArticleTour[]
+  wishlistItems       WishlistItem[]
 
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt

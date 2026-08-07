@@ -2,6 +2,7 @@ jest.mock('../../utils/prismaClient', () => ({
   expeditionTour: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
   tour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn() },
   user: { findUnique: jest.fn(), update: jest.fn() },
+  wishlistItem: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), delete: jest.fn() },
   booking: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn(), deleteMany: jest.fn() },
   tourDateOverride: { findFirst: jest.fn() },
   review: { findMany: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
@@ -585,24 +586,34 @@ describe('expeditionController', () => {
 
   describe('getExpeditionWishlist', () => {
     it('returns wishlist tours filtered to Expedition', async () => {
-      prisma.user.findUnique.mockResolvedValue({ id: 'user-1', wishlist: ['tour-1', 'tour-2'] });
-      prisma.tour.findMany.mockResolvedValue([mockTour]);
+      const added1 = new Date('2026-01-02T10:00:00Z');
+      const mockItems = [
+        { id: 'wi1', addedAt: added1, tour: { id: 'tour-1', title: 'Tour One', slug: 'tour-one', description: 'A tour', status: 'ACTIVE', coverPhoto: 'a.jpg', photos: [], category: 'Nature', durationMinutes: 120, schedulesAndPricing: {}, averageRating: 4.5, reviewCount: 10, viewCount: 5, city: 'Accra', country: 'Ghana', supplier: { name: 'Supplier 1', photoURL: 's.jpg' } } },
+      ];
+      prisma.wishlistItem.findMany.mockResolvedValue(mockItems);
 
       await controller.getExpeditionWishlist(req, res, next);
 
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(prisma.tour.findMany).toHaveBeenCalledWith(
+      expect(prisma.wishlistItem.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            id: { in: ['tour-1', 'tour-2'] },
-            expeditionTours: { some: { isActive: true } },
+            userId: 'user-1',
+            tour: {
+              status: { not: 'DRAFT' },
+              expeditionTours: { some: { isActive: true } },
+            },
           }),
+          orderBy: { addedAt: 'desc' },
         })
       );
+      expect(res.status).toHaveBeenCalledWith(200);
+      const body = res.json.mock.calls[0][0];
+      expect(body.results).toBe(1);
+      expect(body.data.tours[0]).toEqual(expect.objectContaining({ id: 'tour-1', addedAt: added1 }));
     });
 
     it('returns empty array when wishlist is empty', async () => {
-      prisma.user.findUnique.mockResolvedValue({ id: 'user-1', wishlist: [] });
+      prisma.wishlistItem.findMany.mockResolvedValue([]);
 
       await controller.getExpeditionWishlist(req, res, next);
 
@@ -612,12 +623,16 @@ describe('expeditionController', () => {
       );
     });
 
-    it('returns 404 when user not found', async () => {
-      prisma.user.findUnique.mockResolvedValue(null);
+    it('drops wishlist items whose tour is missing', async () => {
+      prisma.wishlistItem.findMany.mockResolvedValue([
+        { id: 'wi1', addedAt: new Date(), tour: null },
+      ]);
 
       await controller.getExpeditionWishlist(req, res, next);
 
-      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
+      const body = res.json.mock.calls[0][0];
+      expect(body.data.tours).toEqual([]);
+      expect(body.results).toBe(0);
     });
   });
 
@@ -625,42 +640,39 @@ describe('expeditionController', () => {
     it('adds a tour to wishlist', async () => {
       req.params.tourId = 'tour-2';
       prisma.expeditionTour.findFirst.mockResolvedValue(mockExpeditionTour);
-      prisma.user.findUnique.mockResolvedValue({ id: 'user-1', wishlist: ['tour-1'] });
-      prisma.user.update.mockResolvedValue({ wishlist: ['tour-1', 'tour-2'] });
+      prisma.wishlistItem.findUnique.mockResolvedValue(null);
+      prisma.wishlistItem.create.mockResolvedValue({ id: 'wi1' });
 
       await controller.toggleExpeditionWishlist(req, res, next);
 
+      expect(prisma.expeditionTour.findFirst).toHaveBeenCalledWith({
+        where: { tourId: 'tour-2', isActive: true },
+        select: { id: true },
+      });
+      expect(prisma.wishlistItem.create).toHaveBeenCalledWith({
+        data: { userId: 'user-1', tourId: 'tour-2' },
+      });
       expect(res.status).toHaveBeenCalledWith(200);
-      expect(logActivity).toHaveBeenCalled();
+      expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'user.wishlist_added', metadata: { tourId: 'tour-2', source: 'expedition' } }));
     });
 
     it('removes a tour from wishlist', async () => {
       req.params.tourId = 'tour-1';
       prisma.expeditionTour.findFirst.mockResolvedValue(mockExpeditionTour);
-      prisma.user.findUnique.mockResolvedValue({ id: 'user-1', wishlist: ['tour-1', 'tour-2'] });
-      prisma.user.update.mockResolvedValue({ wishlist: ['tour-2'] });
+      prisma.wishlistItem.findUnique.mockResolvedValue({ id: 'wi1' });
+      prisma.wishlistItem.delete.mockResolvedValue({ id: 'wi1' });
 
       await controller.toggleExpeditionWishlist(req, res, next);
 
+      expect(prisma.wishlistItem.delete).toHaveBeenCalledWith({ where: { id: 'wi1' } });
+      expect(prisma.wishlistItem.create).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(200);
-      expect(prisma.user.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { wishlist: ['tour-2'] } })
-      );
+      expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'user.wishlist_removed' }));
     });
 
     it('returns 404 when tour not on Expedition', async () => {
       req.params.tourId = 'tour-99';
       prisma.expeditionTour.findFirst.mockResolvedValue(null);
-
-      await controller.toggleExpeditionWishlist(req, res, next);
-
-      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
-    });
-
-    it('returns 404 when user not found', async () => {
-      req.params.tourId = 'tour-1';
-      prisma.expeditionTour.findFirst.mockResolvedValue(mockExpeditionTour);
-      prisma.user.findUnique.mockResolvedValue(null);
 
       await controller.toggleExpeditionWishlist(req, res, next);
 

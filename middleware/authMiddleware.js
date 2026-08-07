@@ -7,12 +7,16 @@ const cache = require('../utils/cacheHelper');
 const USER_CACHE_TTL = 30;
 
 exports.protect = catchAsync(async (req, res, next) => {
-  const token = req.cookies?.accessToken || (() => {
+  // Prefer the Authorization Bearer header. A stale accessToken cookie set
+  // for the .travioafrica.com domain can outlive the client's current token
+  // and shadow a valid header if the cookie is checked first — which would
+  // 401 requests that actually carried a fresh token.
+  const token = (() => {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       return authHeader.split(' ')[1];
     }
-    return null;
+    return req.cookies?.accessToken || null;
   })();
 
   if (!token) {
