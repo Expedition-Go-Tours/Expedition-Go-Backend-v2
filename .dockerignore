@@ -1,0 +1,43 @@
+# Dependencies
+node_modules
+
+# Environment / secrets — never baked into the image
+.env
+.env.*
+.env.supabase.backup
+
+# VCS
+.git
+.gitignore
+
+# Tests & CI
+__tests__
+coverage
+reports
+junit.xml
+k6-output
+.github
+
+# Docs (keep runtime small)
+*.md
+
+# Scratch / one-time scripts
+scripts
+prisma/seed.js
+prisma/seedPerf.js
+prisma/seedBlogs.js
+test-*.js
+explore-database.js
+add-test-user.js
+create-test-user.js
+
+# Deployment files (not needed inside the image)
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.prod.yml
+Caddyfile
+
+# Local artifacts
+*.log
+npm-debug.log*

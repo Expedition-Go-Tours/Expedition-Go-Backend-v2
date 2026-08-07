@@ -1,9 +1,7 @@
-version: "3.8"
-
 services:
   postgres:
     image: postgis/postgis:16-3.4
-    container_name: travio-postgres
+    container_name: travio-dev-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -16,9 +14,28 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: travio-redis
+    container_name: travio-dev-redis
     ports:
       - "6379:6379"
+    restart: unless-stopped
+
+  app:
+    build: .
+    container_name: travio-app-dev
+    depends_on:
+      - postgres
+      - redis
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: development
+      PORT: 5000
+      CLIENT_URL: http://localhost:5173
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/travio
+      DIRECT_URL: postgresql://postgres:postgres@postgres:5432/travio
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "5000:5000"
     restart: unless-stopped
 
 volumes:

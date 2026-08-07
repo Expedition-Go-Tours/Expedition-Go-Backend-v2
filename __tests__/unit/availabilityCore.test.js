@@ -585,6 +585,42 @@ describe('resolveCutoffHours', () => {
   });
 });
 
+describe('resolveSlotCutoffHours', () => {
+  const bt = {
+    perSlotCutoff: true,
+    cutoffMinutes: 20,
+    perSlotCutoffs: { '09:00': 5, '13:00': 600, '18:30': 30 },
+  };
+
+  it('uses the slot-specific value in minutes when per-slot cutoffs are on', () => {
+    expect(core.resolveSlotCutoffHours(bt, '09:00', 24)).toBeCloseTo(5 / 60, 5);
+    expect(core.resolveSlotCutoffHours(bt, '13:00', 24)).toBe(10);
+    expect(core.resolveSlotCutoffHours(bt, '18:30', 24)).toBeCloseTo(0.5, 5);
+  });
+
+  it('falls back to the global cutoff for a slot with no override', () => {
+    expect(core.resolveSlotCutoffHours(bt, '11:00', 24)).toBeCloseTo(20 / 60, 5);
+    expect(core.resolveSlotCutoffHours(bt, undefined, 24)).toBeCloseTo(20 / 60, 5);
+  });
+
+  it('ignores per-slot cutoffs when the tour did not opt in', () => {
+    const off = { ...bt, perSlotCutoff: false };
+    expect(core.resolveSlotCutoffHours(off, '09:00', 24)).toBeCloseTo(20 / 60, 5);
+  });
+
+  it('falls back to the system default when nothing is configured at all', () => {
+    expect(core.resolveSlotCutoffHours({}, '09:00', 24)).toBe(24);
+  });
+
+  it('treats a malformed override as absent rather than disabling the cutoff', () => {
+    const bad = { perSlotCutoff: true, cutoffMinutes: 20, perSlotCutoffs: { '09:00': 'abc', '10:00': -5, '11:00': 900 } };
+    expect(core.resolveSlotCutoffHours(bad, '09:00', 24)).toBeCloseTo(20 / 60, 5);
+    expect(core.resolveSlotCutoffHours(bad, '10:00', 24)).toBeCloseTo(20 / 60, 5);
+    expect(core.resolveSlotCutoffHours(bad, '11:00', 24)).toBeCloseTo(20 / 60, 5);
+    expect(core.resolveSlotCutoffHours({ perSlotCutoff: true, cutoffMinutes: 20, perSlotCutoffs: null }, '09:00', 24)).toBeCloseTo(20 / 60, 5);
+  });
+});
+
 describe('cutoffLabel', () => {
   it('labels sub-hour cutoffs in minutes', () => {
     expect(core.cutoffLabel(20 / 60)).toBe('20 minutes');

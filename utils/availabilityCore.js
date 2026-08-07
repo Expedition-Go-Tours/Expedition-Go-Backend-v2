@@ -537,6 +537,31 @@ function resolveCutoffHours(bookingAndTickets, fallbackHours) {
   return parseConfigNumber(fallbackHours) ?? 24;
 }
 
+/**
+ * Resolve the effective cutoff for a specific time slot. When the tour opts
+ * into per-slot cutoffs (perSlotCutoff), the slot's own value — keyed by its
+ * start time ("HH:MM") in minutes — wins. A missing/unknown slot always falls
+ * back to the global cutoff so a slot can never silently lose its deadline.
+ * Values are bounded to the same 0..600 minute (10 h) range the write schema
+ * enforces so out-of-band data degrades to the global cutoff.
+ */
+const MAX_PER_SLOT_CUTOFF_MINUTES = 600;
+
+function resolveSlotCutoffHours(bookingAndTickets, slotTime, fallbackHours) {
+  const perSlot = bookingAndTickets?.perSlotCutoffs;
+  if (
+    bookingAndTickets?.perSlotCutoff &&
+    typeof perSlot === 'object' &&
+    perSlot !== null &&
+    !Array.isArray(perSlot) &&
+    typeof slotTime === 'string'
+  ) {
+    const minutes = parseConfigNumber(perSlot[slotTime]);
+    if (minutes !== null && minutes <= MAX_PER_SLOT_CUTOFF_MINUTES) return minutes / 60;
+  }
+  return resolveCutoffHours(bookingAndTickets, fallbackHours);
+}
+
 /** Human label for an effective cutoff — minutes for sub-hour values. */
 function cutoffLabel(hours) {
   if (hours < 1) return `${Math.round(hours * 60)} minutes`;
@@ -568,6 +593,7 @@ module.exports = {
   computeDayEntry,
   evaluateBookingAvailability,
   resolveCutoffHours,
+  resolveSlotCutoffHours,
   cutoffLabel,
   parseConfigNumber,
   getTourTimezone,

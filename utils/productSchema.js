@@ -393,6 +393,10 @@ const productSchema = z.object({
   cutoffMinutes: z.number().optional(),
   lastMinuteBookings: z.boolean().optional(),
   perSlotCutoff: z.boolean().optional(),
+  // Per-slot cut-off values in minutes, keyed by slot start time ("HH:MM").
+  // Bounded to GYG's range (5 min..10 h); the frontend offers 5-min increments
+  // for the first hour then fixed hours. 0 is tolerated for legacy/edge data.
+  perSlotCutoffs: z.record(z.string(), z.number().min(0).max(600)).optional(),
   timezone: z.string().optional(),
   planPickupTimes: z.boolean().optional(),
   pickupStartTime: z.string().optional(),

@@ -917,6 +917,15 @@ exports.updateTour = catchAsync(async (req, res, next) => {
       return next(new AppError('Tour not found or access denied', 404));
     }
 
+    // ── Edit-while-pending lock ──
+    // A tour already in the moderation queue must not be mutated underneath the
+    // reviewer. The supplier withdraws the submission (POST /withdraw-review)
+    // before editing again; otherwise the pending draft could silently drop out
+    // of the admin queue.
+    if (existingTour.draftStatus === 'PENDING_APPROVAL') {
+      return next(new AppError('This tour is currently pending review. Withdraw the submission to edit it again.', 409));
+    }
+
     const merged = buildDraftFromBody(existingTour, req.body, req.files);
 
     await prisma.tour.update({
@@ -929,7 +938,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
       },
     });
 
-    cache.invalidateTourCaches(id).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
+    cache.invalidateTourCaches(id, existingTour.slug).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
 
     await logActivity({
       userId: supplierId,
@@ -969,6 +978,14 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     const existingTour = await tx.tour.findFirst({
       where: { id, supplierId }
     });
+
+    // ── Edit-while-pending lock ──
+    // Covers the non-draft path: a NEW tour awaiting approval (status
+    // PENDING_APPROVAL) must also be frozen while an admin reviews it. The
+    // supplier withdraws the submission (POST /withdraw-review) before editing.
+    if (existingTour.status === 'PENDING_APPROVAL' || existingTour.draftStatus === 'PENDING_APPROVAL') {
+      throw new AppError('This tour is currently pending review. Withdraw the submission to edit it again.', 409);
+    }
 
     const {
       title, description, referenceCode, metaTitle, metaDescription,
@@ -1154,7 +1171,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
 
   const { tour, existingTour } = result;
 
-  cache.invalidateTourCaches(id).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
+  cache.invalidateTourCaches(id, tour.slug).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
 
   await logActivity({
     userId: supplierId,
@@ -1280,8 +1297,8 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
       throw new AppError('Tour not found or access denied', 404);
     }
 
-    if (tour.status === 'PENDING_APPROVAL') {
-      throw new AppError('This tour is already awaiting approval', 409);
+    if (tour.status === 'PENDING_APPROVAL' || tour.draftStatus === 'PENDING_APPROVAL') {
+      throw new AppError('This tour is currently pending review. Withdraw the submission to edit it again.', 409);
     }
 
     const isLiveTour = tour.status === 'ACTIVE';
@@ -1361,7 +1378,7 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
   const hasDraft = tour.status === 'ACTIVE';
 
   if (!hasDraft) {
-    cache.invalidateTourCaches(id).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
+    cache.invalidateTourCaches(id, updated.slug).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
   }
 
   await logActivity({
@@ -1396,6 +1413,62 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
       ? 'Tour update submitted for review. The live tour keeps selling while an admin reviews your changes.'
       : 'Tour submitted for review. An admin will review it shortly.',
     data: { tour: updated }
+  });
+});
+
+/**
+ * Withdraw a pending submission (suppliers only - own tours)
+ *
+ * Returns a tour that is currently awaiting review back to a DRAFT state so the
+ * supplier can edit it again. Applies to both a new-tour submission (status
+ * PENDING_APPROVAL) and a live-tour edit (draftStatus PENDING_APPROVAL).
+ */
+exports.withdrawTourForReview = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const supplierId = req.supplierId;
+
+  const result = await prisma.$transaction(async (tx) => {
+    // Lock the tour row — blocks a concurrent admin review racing the withdrawal.
+    const [locked] = await tx.$queryRawUnsafe(
+      'SELECT id FROM "Tour" WHERE id = $1 AND "supplierId" = $2 FOR UPDATE',
+      id, supplierId
+    );
+    if (!locked) {
+      throw new AppError('Tour not found or access denied', 404);
+    }
+
+    const tour = await tx.tour.findFirst({ where: { id, supplierId } });
+    const isPendingNewTour = tour.status === 'PENDING_APPROVAL';
+    const isPendingDraft = tour.draftStatus === 'PENDING_APPROVAL';
+    if (!isPendingNewTour && !isPendingDraft) {
+      throw new AppError('This tour is not currently awaiting review', 400);
+    }
+
+    return tx.tour.update({
+      where: { id },
+      data: isPendingDraft
+        ? { draftStatus: 'DRAFT', draftReviewedAt: null, draftReviewNote: null }
+        : { status: 'DRAFT', submittedAt: null, reviewedBy: null, reviewedAt: null, reviewNote: null },
+      include: {
+        supplier: {
+          select: { id: true, name: true, photoURL: true }
+        }
+      }
+    });
+  });
+
+  await logActivity({
+    userId: supplierId,
+    action: 'tour.withdrawn_from_review',
+    resource: 'Tour',
+    resourceId: id,
+    metadata: { title: result.title },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Tour withdrawn from review. You can now edit it again.',
+    data: { tour: result }
   });
 });
 
@@ -1480,7 +1553,7 @@ exports.deleteTour = catchAsync(async (req, res, next) => {
     data: { status: 'ARCHIVED' }
   });
 
-  cache.invalidateTourCaches(id).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
+  cache.invalidateTourCaches(id, tour.slug).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
 
   await logActivity({
     userId: supplierId,
@@ -1675,7 +1748,7 @@ exports.deleteTourPhoto = catchAsync(async (req, res, next) => {
   // Find tour and verify ownership
   const tour = await prisma.tour.findFirst({
     where: { id, supplierId },
-    select: { id: true, photos: true, coverPhoto: true, title: true }
+    select: { id: true, slug: true, photos: true, coverPhoto: true, title: true }
   });
 
   if (!tour) {
@@ -1704,7 +1777,7 @@ exports.deleteTourPhoto = catchAsync(async (req, res, next) => {
     data: updateData
   });
 
-  cache.invalidateTourCaches(id).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
+  cache.invalidateTourCaches(id, tour.slug).catch((err) => logger.warn('[cache] invalidateTourCaches failed:', err?.message));
 
   await logActivity({
     userId: supplierId,

@@ -1,0 +1,7 @@
+api.travioafrica.com {
+	reverse_proxy app:5000
+}
+
+status.travioafrica.com {
+	reverse_proxy uptime-kuma:3001
+}

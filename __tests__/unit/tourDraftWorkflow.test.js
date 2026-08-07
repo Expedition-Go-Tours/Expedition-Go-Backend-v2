@@ -65,6 +65,7 @@ let req, res, next;
 const liveRow = {
   id: 'tour-1',
   title: 'Live Safari',
+  slug: 'live-safari',
   description: 'A fully fleshed-out tour description that is long enough.',
   coverPhoto: null,
   photos: ['https://res.cloudinary.com/x/image/upload/v1/a.jpg'],
@@ -247,6 +248,23 @@ describe('submitTourForReview (live tour with draft)', () => {
     expect(prisma.tour.update).not.toHaveBeenCalled();
   });
 
+  it('blocks resubmitting while a draft is already pending approval (409)', async () => {
+    prisma.tour.findFirst.mockResolvedValue({
+      ...liveRow,
+      draftStatus: 'PENDING_APPROVAL',
+      draftContent: { ...liveRow, title: 'Pending' },
+      supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null },
+    });
+    req.body = { title: 'New Edit While Pending' };
+
+    await tourController.submitTourForReview(req, res, next);
+
+    const err = next.mock.calls[0][0];
+    expect(err.statusCode).toBe(409);
+    expect(err.message).toContain('pending review');
+    expect(prisma.tour.update).not.toHaveBeenCalled();
+  });
+
   it('persists a submitted payload into the live columns for a non-live tour', async () => {
     prisma.tour.findFirst.mockResolvedValue({ ...liveRow, status: 'DRAFT', supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
     prisma.tour.update.mockResolvedValue({ ...liveRow, status: 'PENDING_APPROVAL', supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
@@ -334,5 +352,197 @@ describe('admin draft review', () => {
     );
     expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'tour.draft_flagged' }));
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('is idempotent when a concurrent request already approved the draft', async () => {
+    jest.clearAllMocks();
+    // Top-level read sees PENDING_APPROVAL, but by the time the row lock is
+    // acquired inside the tx the draft has already been approved (null).
+    prisma.tour.findUnique
+      .mockResolvedValueOnce({ ...liveRow, draftStatus: 'PENDING_APPROVAL', draftContent: { ...liveRow, title: 'Edited Title' }, supplier: { id: 'supplier-1' } })
+      .mockResolvedValue({ ...liveRow, draftStatus: null, draftContent: { ...liveRow, title: 'Edited Title' } });
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'tour-1' }]);
+    prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
+
+    req = { params: { id: 'tour-1' }, body: { action: 'approve' }, user: { id: 'admin-1' } };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+    next = jest.fn();
+
+    await adminController.reviewTourDraft(req, res, next);
+
+    expect(prisma.tour.update).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json.mock.calls[0][0].data.alreadyProcessed).toBe(true);
+  });
+
+  it('is idempotent on a second flag of the same draft', async () => {
+    jest.clearAllMocks();
+    prisma.tour.findUnique
+      .mockResolvedValueOnce({ ...liveRow, draftStatus: 'PENDING_APPROVAL', draftContent: { ...liveRow, title: 'Edited Title' }, supplier: { id: 'supplier-1' } })
+      .mockResolvedValue({ ...liveRow, draftStatus: 'REJECTED', draftContent: { ...liveRow, title: 'Edited Title' } });
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'tour-1' }]);
+    prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
+
+    req = { params: { id: 'tour-1' }, body: { action: 'flag', reason: 'fix pricing' }, user: { id: 'admin-1' } };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+    next = jest.fn();
+
+    await adminController.reviewTourDraft(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json.mock.calls[0][0].data.alreadyProcessed).toBe(true);
+    expect(prisma.tour.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects approval with a 400 when the draft has no changes', async () => {
+    jest.clearAllMocks();
+    prisma.tour.findUnique
+      .mockResolvedValueOnce({ ...liveRow, draftStatus: 'PENDING_APPROVAL', draftContent: { ...liveRow }, supplier: { id: 'supplier-1' } })
+      .mockResolvedValue({ ...liveRow, draftStatus: 'PENDING_APPROVAL', draftContent: { ...liveRow } });
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'tour-1' }]);
+    prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
+
+    req = { params: { id: 'tour-1' }, body: { action: 'approve' }, user: { id: 'admin-1' } };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+    next = jest.fn();
+
+    await adminController.reviewTourDraft(req, res, next);
+
+    expect(prisma.tour.update).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400, message: expect.stringContaining('no changes') }));
+  });
+
+  it('rejects approval with a 400 when the draft theme is malformed JSON', async () => {
+    jest.clearAllMocks();
+    prisma.tour.findUnique
+      .mockResolvedValueOnce({ ...liveRow, draftStatus: 'PENDING_APPROVAL', draftContent: { ...liveRow, theme: 'not-json{{' }, supplier: { id: 'supplier-1' } })
+      .mockResolvedValue({ ...liveRow, draftStatus: 'PENDING_APPROVAL', draftContent: { ...liveRow, theme: 'not-json{{' } });
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'tour-1' }]);
+    prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
+
+    req = { params: { id: 'tour-1' }, body: { action: 'approve' }, user: { id: 'admin-1' } };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+    next = jest.fn();
+
+    await adminController.reviewTourDraft(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400, message: expect.stringContaining('theme') }));
+  });
+
+  it('invalidates the expedition detail key for both the old and regenerated slug on approval', async () => {
+    jest.clearAllMocks();
+    prisma.tour.findUnique
+      .mockResolvedValueOnce({ ...liveRow, draftStatus: 'PENDING_APPROVAL', draftContent: { ...liveRow, title: 'Edited Title' }, supplier: { id: 'supplier-1' } })
+      .mockResolvedValue({ ...liveRow, slug: 'old-slug', draftStatus: 'PENDING_APPROVAL', draftContent: { ...liveRow, title: 'Edited Title' } });
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'tour-1' }]);
+    // The title changed, so buildLiveUpdateData regenerates the slug.
+    prisma.tour.update.mockResolvedValue({ ...liveRow, slug: 'new-slug', title: 'Edited Title', status: 'ACTIVE' });
+    prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
+
+    req = { params: { id: 'tour-1' }, body: { action: 'approve' }, user: { id: 'admin-1' } };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+    next = jest.fn();
+
+    await adminController.reviewTourDraft(req, res, next);
+
+    const calls = cache.invalidateTourCaches.mock.calls;
+    const slugArgs = calls.map((c) => c[1]).filter(Boolean);
+    expect(slugArgs).toEqual(expect.arrayContaining(['old-slug', 'new-slug']));
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+});
+
+describe('edit-while-pending lock', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    req = { params: { id: 'tour-1' }, body: { title: 'Edited Title' }, supplierId: 'supplier-1', files: [] };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+    next = jest.fn();
+    validateTourData.mockReturnValue({ isValid: true });
+  });
+
+  it('blocks editing a tour that is currently pending approval (409)', async () => {
+    prisma.tour.findFirst
+      .mockResolvedValueOnce({ id: 'tour-1', status: 'ACTIVE', photos: liveRow.photos, title: liveRow.title })
+      .mockResolvedValue({ ...liveRow, draftStatus: 'PENDING_APPROVAL', draftContent: { ...liveRow, title: 'Pending' } });
+
+    await tourController.updateTour(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 409 }));
+    expect(prisma.tour.update).not.toHaveBeenCalled();
+  });
+
+  it('allows editing once the draft has been withdrawn back to DRAFT', async () => {
+    prisma.tour.findFirst
+      .mockResolvedValueOnce({ id: 'tour-1', status: 'ACTIVE', photos: liveRow.photos, title: liveRow.title })
+      .mockResolvedValue({ ...liveRow, draftStatus: 'DRAFT', draftContent: { ...liveRow, title: 'Pending' } });
+    prisma.tour.update.mockResolvedValue({ ...liveRow, draftStatus: 'DRAFT', draftContent: { title: 'Edited Title' } });
+
+    await tourController.updateTour(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    const draftCall = prisma.tour.update.mock.calls.find((c) => c[0] && c[0].data && c[0].data.draftStatus === 'DRAFT');
+    expect(draftCall).toBeDefined();
+  });
+
+  it('blocks editing a NEW tour that is awaiting approval (409, non-draft path)', async () => {
+    // A new tour awaiting admin review has status PENDING_APPROVAL but no
+    // draft row (draftStatus null) — the non-draft update path must still lock.
+    prisma.tour.findFirst
+      .mockResolvedValueOnce({ id: 'tour-1', status: 'PENDING_APPROVAL', photos: liveRow.photos, title: liveRow.title })
+      .mockResolvedValue({ ...liveRow, status: 'PENDING_APPROVAL', draftStatus: null });
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'tour-1' }]);
+    prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
+
+    await tourController.updateTour(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 409 }));
+    expect(prisma.tour.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('withdrawTourForReview', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    req = { params: { id: 'tour-1' }, supplierId: 'supplier-1' };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+    next = jest.fn();
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'tour-1' }]);
+    prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
+  });
+
+  it('returns a live tour with a pending edit back to DRAFT', async () => {
+    prisma.tour.findFirst.mockResolvedValue({ ...liveRow, draftStatus: 'PENDING_APPROVAL', draftContent: { ...liveRow, title: 'Edited' } });
+    prisma.tour.update.mockResolvedValue({ ...liveRow, draftStatus: 'DRAFT' });
+
+    await tourController.withdrawTourForReview(req, res, next);
+
+    const updateCall = prisma.tour.update.mock.calls[0][0];
+    expect(updateCall.data.draftStatus).toBe('DRAFT');
+    expect(updateCall.data.status).toBeUndefined();
+    expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'tour.withdrawn_from_review' }));
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('returns a new tour awaiting approval back to DRAFT', async () => {
+    prisma.tour.findFirst.mockResolvedValue({ ...liveRow, status: 'PENDING_APPROVAL', draftStatus: null });
+    prisma.tour.update.mockResolvedValue({ ...liveRow, status: 'DRAFT' });
+
+    await tourController.withdrawTourForReview(req, res, next);
+
+    const updateCall = prisma.tour.update.mock.calls[0][0];
+    expect(updateCall.data.status).toBe('DRAFT');
+    expect(updateCall.data.draftStatus).toBeUndefined();
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('rejects withdrawing a tour that is not awaiting review', async () => {
+    prisma.tour.findFirst.mockResolvedValue({ ...liveRow, status: 'ACTIVE', draftStatus: 'DRAFT' });
+
+    await tourController.withdrawTourForReview(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    expect(prisma.tour.update).not.toHaveBeenCalled();
   });
 });

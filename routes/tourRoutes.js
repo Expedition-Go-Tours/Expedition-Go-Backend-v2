@@ -1062,6 +1062,10 @@ router.delete('/:id/photos', resolveSupplier, requireTeamPermission('tours.updat
  */
 router.post('/:id/submit-for-review', resolveSupplier, requireTeamPermission('tours.update'), tourController.submitTourForReview);
 
+// Withdraw a pending submission so the supplier can edit it again. Returns the
+// tour from PENDING_APPROVAL (new tour or pending edit) back to DRAFT.
+router.post('/:id/withdraw-review', resolveSupplier, requireTeamPermission('tours.update'), tourController.withdrawTourForReview);
+
 // Get the pending draft (if any) with its diff against the live version — lets
 // the supplier builder load/continue editing a live tour's pending changes.
 router.get('/:id/draft', resolveSupplier, requireTeamPermission('tours.view'), tourController.getTourDraft);

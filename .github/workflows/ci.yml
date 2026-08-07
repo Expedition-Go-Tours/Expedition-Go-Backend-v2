@@ -490,19 +490,19 @@ jobs:
       - coverage
     runs-on: ubuntu-latest
     steps:
-      - name: Wait for Render deploy
+      - name: Wait for deploy
         run: sleep 90
 
       - name: Verify live health endpoint
         run: |
-          RESPONSE=$(curl -sf https://expedition-go-backend-v2.onrender.com/health)
+          RESPONSE=$(curl -sf https://api.travioafrica.com/health)
           echo "$RESPONSE"
           echo "$RESPONSE" | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);process.exit(j.status==='success'?0:1)})"
           echo "Production health check passed"
 
       - name: Smoke test live tours endpoint
         run: |
-          HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" https://expedition-go-backend-v2.onrender.com/api/expedition/tours)
+          HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" https://api.travioafrica.com/api/expedition/tours)
           echo "HTTP $HTTP_CODE"
           cat response.json | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);process.exit(j.status==='success'?0:1)})"
           echo "Production tours endpoint OK"
