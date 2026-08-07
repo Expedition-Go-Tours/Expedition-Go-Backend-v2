@@ -288,8 +288,27 @@ function buildBookingAndTickets(flat) {
     cutoffMinutes: flat.cutoffMinutes ?? 20,
     lastMinuteBookings: !!flat.lastMinuteBookings,
     perSlotCutoff: !!flat.perSlotCutoff,
+    perSlotCutoffs: normalizePerSlotCutoffs(flat.perSlotCutoffs),
     timezone: flat.timezone || 'UTC',
   };
+}
+
+/**
+ * Sanitize the per-slot cut-off map. Only keeps entries whose key is a
+ * non-empty string (slot start time) and whose value is a finite number
+ * within the supported 0..600 minute (10 h) range. Never trusts raw input —
+ * a malformed map must degrade to {} (global cutoff applies) rather than
+ * crashing a save or disabling the cutoff.
+ */
+function normalizePerSlotCutoffs(map) {
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return {};
+  const out = {};
+  for (const [time, value] of Object.entries(map)) {
+    if (!time || typeof time !== 'string') continue;
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= 0 && n <= 600) out[time] = n;
+  }
+  return out;
 }
 
 function extractLatitude(flat) {

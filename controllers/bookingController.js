@@ -19,7 +19,7 @@ const AppError = require('../utils/appError');
 const { createPaymentIntent, createRefund, calculateCommission } = require('../utils/stripeHelpers');
 const { generateBookingNumber, validateTravelerInfo, evaluateCancellationPolicy } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
-const { evaluateBookingAvailability, resolveCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey } = require('../utils/availabilityCore');
+const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey } = require('../utils/availabilityCore');
 const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../utils/queue');
 const getConfig = require('../utils/getConfig');
 const { generatePrintableTicketHtml } = require('../utils/emailService');
@@ -412,9 +412,10 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       ? (() => { try { return JSON.parse(item.tour.bookingAndTickets); } catch { return null; } })()
       : item.tour.bookingAndTickets;
     const perSlotCutoff = !!parsedBt?.perSlotCutoff;
-    // Builder writes cutoffMinutes (minutes); resolveCutoffHours handles legacy
+    // Builder writes cutoffMinutes (minutes); resolveSlotCutoffHours handles
+    // per-slot overrides (keyed by slot start time), legacy
     // minAdvanceBookingHours rows and the system default.
-    const effectiveCutoff = resolveCutoffHours(parsedBt, minAdvanceHours);
+    const effectiveCutoff = resolveSlotCutoffHours(parsedBt, item.selectedTime, minAdvanceHours);
     const tourTz = getTourTimezone(parsedBt);
 
     const dateAt = new Date(item.selectedDate);

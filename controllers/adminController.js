@@ -2264,6 +2264,7 @@ exports.reviewTour = catchAsync(async (req, res, next) => {
     select: {
       id: true,
       title: true,
+      slug: true,
       status: true,
       supplierId: true,
       supplier: { select: { id: true, name: true, email: true } },
@@ -2273,6 +2274,15 @@ exports.reviewTour = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found', 404));
   }
   if (tour.status !== 'PENDING_APPROVAL') {
+    // Idempotency: a retry/double-click after the first decision is not an
+    // error — the tour has simply already been reviewed.
+    if (tour.status === 'ACTIVE' || tour.status === 'REJECTED') {
+      return res.status(200).json({
+        status: 'success',
+        message: 'This tour has already been reviewed.',
+        data: { alreadyProcessed: true, tour },
+      });
+    }
     return next(new AppError(`Only tours awaiting approval can be reviewed. Current status: ${tour.status}`, 400));
   }
 
@@ -2289,7 +2299,10 @@ exports.reviewTour = catchAsync(async (req, res, next) => {
     },
   });
 
-  cache.invalidateTourCaches(id).catch((err) => console.warn('[Admin] invalidateTourCaches failed:', err?.message));
+  // Invalidate with the slug so the expedition detail key (expedition:detail:${slug})
+  // and the curated expedition list caches are cleared — the approval is only
+  // visible once every cache layer reflects the new state.
+  cache.invalidateTourCaches(id, updated.slug).catch((err) => console.warn('[Admin] invalidateTourCaches failed:', err?.message));
 
   await logActivity({
     userId: adminId,
@@ -2351,6 +2364,16 @@ exports.reviewTourDraft = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found', 404));
   }
   if (tour.draftStatus !== 'PENDING_APPROVAL') {
+    // Idempotency: a retry/double-click after the first decision is not an
+    // error — this draft has simply already been reviewed (null = approved
+    // earlier, REJECTED = flagged earlier).
+    if (tour.draftStatus === null || tour.draftStatus === 'REJECTED') {
+      return res.status(200).json({
+        status: 'success',
+        message: 'This update has already been reviewed.',
+        data: { alreadyProcessed: true, tour },
+      });
+    }
     return next(new AppError(`No draft awaiting approval. Current draft status: ${tour.draftStatus || 'none'}`, 400));
   }
 
@@ -2362,18 +2385,37 @@ exports.reviewTourDraft = catchAsync(async (req, res, next) => {
   };
 
   if (isApprove) {
-    const updated = await prisma.$transaction(async (tx) => {
+    const startedAt = Date.now();
+    const processed = await prisma.$transaction(async (tx) => {
       const [locked] = await tx.$queryRawUnsafe('SELECT id FROM "Tour" WHERE id = $1 FOR UPDATE', id);
       if (!locked) {
         throw new AppError('Tour not found', 404);
       }
       const liveRow = await tx.tour.findUnique({ where: { id } });
 
+      // Idempotency — a concurrent request may have already reviewed this draft
+      // while we waited on the row lock. Never apply the same merge twice.
+      if (liveRow.draftStatus !== 'PENDING_APPROVAL') {
+        return { alreadyProcessed: true, tour: liveRow };
+      }
+
+      // Empty-draft guard — never report success when the update changes nothing.
+      const draftSnapshot = mergeDraftContent(liveRow, tour.draftContent);
+      if (buildTourDiff(liveRow, draftSnapshot).length === 0) {
+        throw new AppError('Cannot approve: the submitted update contains no changes', 400);
+      }
+
       const updateData = await buildLiveUpdateData(tx, liveRow, tour.draftContent);
 
-      const th = typeof tour.draftContent.theme === 'string'
-        ? JSON.parse(tour.draftContent.theme)
-        : tour.draftContent.theme;
+      // Malformed theme JSON must fail cleanly with a 400, never crash the tx.
+      let th;
+      try {
+        th = typeof tour.draftContent.theme === 'string'
+          ? JSON.parse(tour.draftContent.theme)
+          : tour.draftContent.theme;
+      } catch {
+        throw new AppError('Cannot approve: the submitted theme is not valid JSON', 400);
+      }
       if (th && (th.secondaryThemes || th.secondary)) {
         updateData.secondaryThemes = {
           deleteMany: {},
@@ -2381,7 +2423,7 @@ exports.reviewTourDraft = catchAsync(async (req, res, next) => {
         };
       }
 
-      return tx.tour.update({
+      const updated = await tx.tour.update({
         where: { id },
         data: {
           ...updateData,
@@ -2397,7 +2439,19 @@ exports.reviewTourDraft = catchAsync(async (req, res, next) => {
         },
         include: { supplier: { select: { id: true, name: true, photoURL: true } } },
       });
+
+      return { alreadyProcessed: false, updated, oldSlug: liveRow.slug, newSlug: updated.slug };
     });
+
+    if (processed.alreadyProcessed) {
+      return res.status(200).json({
+        status: 'success',
+        message: 'This update has already been reviewed.',
+        data: { alreadyProcessed: true, tour: processed.tour },
+      });
+    }
+
+    const updated = processed.updated;
 
     const draftPhotos = (tour.draftContent.photos || []).map(normalize);
     const removedPhotos = (tour.photos || []).filter((url) => !draftPhotos.includes(normalize(url)));
@@ -2405,7 +2459,15 @@ exports.reviewTourDraft = catchAsync(async (req, res, next) => {
       await Promise.allSettled(removedPhotos.map((url) => deleteCloudinaryImage(url)));
     }
 
-    cache.invalidateTourCaches(id).catch((err) => console.warn('[Admin] invalidateTourCaches failed:', err?.message));
+    // Invalidate BOTH slugs — approval regenerates the slug when the title
+    // changes (buildLiveUpdateData → createSlug), and the old slug's
+    // expedition:detail key must not linger for another 5 minutes.
+    const slugs = [...new Set([processed.oldSlug, processed.newSlug].filter(Boolean))];
+    for (const slug of slugs) {
+      cache.invalidateTourCaches(id, slug).catch((err) => console.warn('[Admin] invalidateTourCaches failed:', err?.message));
+    }
+
+    console.log(`[Admin] Draft approved for "${tour.title}" (${id}) in ${Date.now() - startedAt}ms — caches invalidated (slugs: ${slugs.join(', ') || 'none'})`);
 
     await logActivity({
       userId: adminId,
@@ -2437,14 +2499,35 @@ exports.reviewTourDraft = catchAsync(async (req, res, next) => {
     });
   }
 
-  const flagged = await prisma.tour.update({
-    where: { id },
-    data: {
-      draftStatus: 'REJECTED',
-      draftReviewedAt: now,
-      draftReviewNote: String(reason).trim(),
-    },
+  const flaggedResult = await prisma.$transaction(async (tx) => {
+    const [locked] = await tx.$queryRawUnsafe('SELECT id FROM "Tour" WHERE id = $1 FOR UPDATE', id);
+    if (!locked) {
+      throw new AppError('Tour not found', 404);
+    }
+    const row = await tx.tour.findUnique({ where: { id } });
+    if (row.draftStatus !== 'PENDING_APPROVAL') {
+      return { alreadyProcessed: true, tour: row };
+    }
+    const updated = await tx.tour.update({
+      where: { id },
+      data: {
+        draftStatus: 'REJECTED',
+        draftReviewedAt: now,
+        draftReviewNote: String(reason).trim(),
+      },
+    });
+    return { alreadyProcessed: false, tour: updated };
   });
+
+  if (flaggedResult.alreadyProcessed) {
+    return res.status(200).json({
+      status: 'success',
+      message: 'This update has already been reviewed.',
+      data: { alreadyProcessed: true, tour: flaggedResult.tour },
+    });
+  }
+
+  const flagged = flaggedResult.tour;
 
   await logActivity({
     userId: adminId,

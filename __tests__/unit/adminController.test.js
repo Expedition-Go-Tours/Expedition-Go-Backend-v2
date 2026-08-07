@@ -790,6 +790,7 @@ describe('adminController', () => {
     const mockPendingTour = {
       id: 't1',
       title: 'Pending Tour',
+      slug: 'pending-tour',
       status: 'PENDING_APPROVAL',
       supplierId: 's1',
       supplier: { id: 's1', name: 'Supplier One', email: 's1@t.com' },
@@ -827,14 +828,15 @@ describe('adminController', () => {
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
     });
 
-    it('only reviews tours that are awaiting approval', async () => {
+    it('returns alreadyProcessed (200) when the tour was already approved', async () => {
       prisma.tour.findUnique.mockResolvedValue({ ...mockPendingTour, status: 'ACTIVE' });
       req.body = { action: 'approve' };
 
       await controller.reviewTour(req, res, next);
 
-      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
       expect(prisma.tour.update).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json.mock.calls[0][0].data.alreadyProcessed).toBe(true);
     });
 
     it('approves a tour to ACTIVE and notifies the supplier', async () => {
@@ -876,12 +878,14 @@ describe('adminController', () => {
       expect(res.status).toHaveBeenCalledWith(200);
     });
 
-    it('invalidates tour caches on decision', async () => {
+    it('invalidates tour caches on decision (id + slug so expedition detail clears)', async () => {
+      const approved = { ...mockPendingTour, status: 'ACTIVE' };
+      prisma.tour.update.mockResolvedValue(approved);
       req.body = { action: 'approve' };
 
       await controller.reviewTour(req, res, next);
 
-      expect(cache.invalidateTourCaches).toHaveBeenCalledWith('t1');
+      expect(cache.invalidateTourCaches).toHaveBeenCalledWith('t1', 'pending-tour');
     });
   });
 });

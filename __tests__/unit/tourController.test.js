@@ -977,7 +977,7 @@ describe('tourController', () => {
 
       await controller.updateTour(req, res, next);
 
-      expect(cache.invalidateTourCaches).toHaveBeenCalledWith('tour-1');
+      expect(cache.invalidateTourCaches).toHaveBeenCalledWith('tour-1', 'updated-title');
     });
 
     it('logs activity after update', async () => {
@@ -998,6 +998,7 @@ describe('tourController', () => {
     const mockTour = {
       id: 'tour-1',
       title: 'Test Tour',
+      slug: 'test-tour',
       supplierId: 'supplier-1',
       photos: ['photo1.jpg', 'photo2.jpg'],
     };
@@ -1048,7 +1049,7 @@ describe('tourController', () => {
     it('invalidates cache after deletion', async () => {
       await controller.deleteTour(req, res, next);
 
-      expect(cache.invalidateTourCaches).toHaveBeenCalledWith('tour-1');
+      expect(cache.invalidateTourCaches).toHaveBeenCalledWith('tour-1', 'test-tour');
     });
 
     it('logs activity after deletion', async () => {
@@ -1178,6 +1179,7 @@ describe('tourController', () => {
     const mockTour = {
       id: 'tour-1',
       title: 'Test Tour',
+      slug: 'test-tour',
       supplierId: 'supplier-1',
       photos: ['photo1.jpg', 'photo2.jpg'],
       coverPhoto: 'photo1.jpg',

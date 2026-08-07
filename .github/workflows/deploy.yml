@@ -1,0 +1,62 @@
+name: Deploy to Hetzner
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: hetzner-deploy
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Package app
+        run: tar --exclude='.git' --exclude='node_modules' --exclude='.env*' -czf app.tar.gz .
+
+      - name: Copy tarball to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: app.tar.gz
+          target: ${{ vars.DEPLOY_PATH }}
+
+      - name: Build & deploy on server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd ${{ vars.DEPLOY_PATH }}
+            tar -xzf app.tar.gz
+            rm app.tar.gz
+            docker compose -f docker-compose.prod.yml up -d --build
+            echo "Waiting for app container to become healthy..."
+            for i in $(seq 1 60); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' travio-app 2>/dev/null || echo "missing")
+              if [ "$STATUS" = "healthy" ]; then
+                echo "travio-app is healthy"
+                break
+              fi
+              if [ "$STATUS" = "unhealthy" ]; then
+                echo "travio-app is UNHEALTHY — check docker compose logs"
+                docker compose -f docker-compose.prod.yml logs --tail=100 app
+                exit 1
+              fi
+              sleep 5
+            done
+            if [ "$STATUS" != "healthy" ]; then
+              echo "travio-app did not become healthy in time"
+              docker compose -f docker-compose.prod.yml logs --tail=100 app
+              exit 1
+            fi
+            docker compose -f docker-compose.prod.yml ps
