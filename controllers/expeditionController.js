@@ -1272,39 +1272,47 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
 // WISHLIST ENDPOINTS
 // ================================
 
+// Fields transformForListing() reads when shaping a wishlist tour.
+const EXPEDITION_WISHLIST_TOUR_SELECT = {
+  id: true,
+  title: true,
+  slug: true,
+  description: true,
+  status: true,
+  coverPhoto: true,
+  photos: true,
+  category: true,
+  durationMinutes: true,
+  schedulesAndPricing: true,
+  averageRating: true,
+  reviewCount: true,
+  viewCount: true,
+  city: true,
+  country: true,
+  supplier: { select: { name: true, photoURL: true } },
+};
+
 exports.getExpeditionWishlist = catchAsync(async (req, res, next) => {
-  const user = await prisma.user.findUnique({
-    where: { id: req.user.id },
-    select: { wishlist: true },
-  });
-  if (!user) return next(new AppError('User not found', 404));
-
-  if (!user.wishlist || user.wishlist.length === 0) {
-    return res.status(200).json({ status: 'success', results: 0, data: { tours: [] } });
-  }
-
-  const tours = await prisma.tour.findMany({
+  const items = await prisma.wishlistItem.findMany({
     where: {
-      id: { in: user.wishlist },
-      status: { not: 'DRAFT' },
-      expeditionTours: { some: { isActive: true } },
+      userId: req.user.id,
+      tour: {
+        status: { not: 'DRAFT' },
+        expeditionTours: { some: { isActive: true } },
+      },
     },
-    select: {
-      id: true, title: true, slug: true, description: true,
-      coverPhoto: true, photos: true, category: true,
-      durationMinutes: true, averageRating: true, reviewCount: true,
-      city: true, country: true, schedulesAndPricing: true,
-      supplier: { select: { name: true, photoURL: true } },
-    },
+    orderBy: { addedAt: 'desc' },
+    include: { tour: { select: EXPEDITION_WISHLIST_TOUR_SELECT } },
   });
 
-  const tourMap = Object.fromEntries(tours.map((t) => [t.id, t]));
-  const ordered = user.wishlist.map((id) => tourMap[id]).filter(Boolean);
+  const tours = items
+    .filter((i) => i.tour)
+    .map((i) => ({ ...transformForListing(i.tour), addedAt: i.addedAt }));
 
   res.status(200).json({
     status: 'success',
-    results: ordered.length,
-    data: { tours: ordered.map((t) => transformForListing(t)) },
+    results: tours.length,
+    data: { tours },
   });
 });
 
@@ -1319,22 +1327,33 @@ exports.toggleExpeditionWishlist = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not available on Expedition', 404));
   }
 
-  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
-  if (!user) return next(new AppError('User not found', 404));
-
-  const isWishlisted = user.wishlist.includes(tourId);
-  const nextWishlist = isWishlisted
-    ? user.wishlist.filter((id) => id !== tourId)
-    : [...user.wishlist, tourId];
-
-  const updatedUser = await prisma.user.update({
-    where: { id: req.user.id },
-    data: { wishlist: nextWishlist },
+  const existing = await prisma.wishlistItem.findUnique({
+    where: { userId_tourId: { userId: req.user.id, tourId } },
+    select: { id: true },
   });
 
-  logActivity({
+  if (existing) {
+    await prisma.wishlistItem.delete({ where: { id: existing.id } });
+
+    await logActivity({
+      userId: req.user.id,
+      action: 'user.wishlist_removed',
+      resource: 'User',
+      resourceId: req.user.id,
+      metadata: { tourId, source: 'expedition' },
+    });
+
+    return res.status(200).json({
+      status: 'success',
+      data: { isWishlisted: false },
+    });
+  }
+
+  await prisma.wishlistItem.create({ data: { userId: req.user.id, tourId } });
+
+  await logActivity({
     userId: req.user.id,
-    action: isWishlisted ? 'user.wishlist_removed' : 'user.wishlist_added',
+    action: 'user.wishlist_added',
     resource: 'User',
     resourceId: req.user.id,
     metadata: { tourId, source: 'expedition' },
@@ -1342,10 +1361,7 @@ exports.toggleExpeditionWishlist = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: {
-      wishlist: updatedUser.wishlist,
-      isWishlisted: !isWishlisted,
-    },
+    data: { isWishlisted: true },
   });
 });
 

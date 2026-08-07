@@ -164,41 +164,45 @@ exports.deleteUser = catchAsync(async (req, res, next) => {
   res.status(204).json({ status: 'success', data: null });
 });
 
-exports.getWishlist = catchAsync(async (req, res, next) => {
-  const user = await prisma.user.findUnique({
-    where: { id: req.user.id },
-    select: { wishlist: true }
-  });
-  if (!user) return next(new AppError('User not found', 404));
-
-  const tourIds = user.wishlist;
-
-  let tours = [];
-  if (tourIds.length > 0) {
-    tours = await prisma.tour.findMany({
-      where: { id: { in: tourIds }, status: { not: 'DRAFT' } },
-      select: {
-        id: true,
-        title: true,
-        slug: true,
-        coverPhoto: true,
-        photos: true,
-        city: true,
-        country: true,
-        averageRating: true,
-        reviewCount: true,
-        totalBookings: true,
-        schedulesAndPricing: true,
-        createdAt: true,
-        supplier: {
-          select: { id: true, name: true, photoURL: true }
-        }
-      },
-    });
-
-    const tourMap = Object.fromEntries(tours.map(t => [t.id, t]));
-    tours = tourIds.map(id => tourMap[id]).filter(Boolean);
+// Wishlist tours are returned raw (not transformForListing-shaped) so the
+// mini-site's listing mapper can render price, duration and location. These
+// are the fields it reads; addedAt is merged per item from WishlistItem.
+const WISHLIST_TOUR_SELECT = {
+  id: true,
+  title: true,
+  slug: true,
+  description: true,
+  status: true,
+  coverPhoto: true,
+  photos: true,
+  category: true,
+  durationMinutes: true,
+  averageRating: true,
+  reviewCount: true,
+  totalBookings: true,
+  city: true,
+  country: true,
+  schedulesAndPricing: true,
+  productContent: true,
+  bookingAndTickets: true,
+  supplier: {
+    select: { id: true, name: true, photoURL: true }
   }
+};
+
+exports.getWishlist = catchAsync(async (req, res, next) => {
+  const items = await prisma.wishlistItem.findMany({
+    where: {
+      userId: req.user.id,
+      tour: { status: { not: 'DRAFT' } },
+    },
+    orderBy: { addedAt: 'desc' },
+    include: { tour: { select: WISHLIST_TOUR_SELECT } },
+  });
+
+  const tours = items
+    .filter((i) => i.tour)
+    .map((i) => ({ ...i.tour, addedAt: i.addedAt }));
 
   res.status(200).json({
     status: 'success',
@@ -207,32 +211,95 @@ exports.getWishlist = catchAsync(async (req, res, next) => {
   });
 });
 
-exports.toggleWishlist = catchAsync(async (req, res, next) => {
-  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
-  if (!user) return next(new AppError('User not found', 404));
+exports.addWishlist = catchAsync(async (req, res, next) => {
+  const { tourId } = req.params;
 
-  const tourId = req.params.tourId;
-
-  const tour = await prisma.tour.findUnique({
-    where: { id: tourId },
-    select: { id: true, status: true }
+  const tour = await prisma.tour.findFirst({
+    where: { id: tourId, status: { not: 'DRAFT' } },
+    select: { id: true },
   });
   if (!tour) return next(new AppError('Tour not found', 404));
 
-  const isWishlisted = user.wishlist.includes(tourId);
-  const nextWishlist = isWishlisted
-    ? user.wishlist.filter((id) => id !== tourId)
-    : [...user.wishlist, tourId];
+  const existing = await prisma.wishlistItem.findUnique({
+    where: { userId_tourId: { userId: req.user.id, tourId } },
+    select: { id: true },
+  });
+  if (!existing) {
+    await prisma.wishlistItem.create({ data: { userId: req.user.id, tourId } });
 
-  const updatedUser = await prisma.user.update({
-    where: { id: req.user.id },
-    data: { wishlist: nextWishlist },
+    await logActivity({
+      userId: req.user.id,
+      action: 'user.wishlist_added',
+      resource: 'User',
+      resourceId: req.user.id,
+      metadata: { tourId }
+    });
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: { isWishlisted: true }
+  });
+});
+
+exports.removeWishlist = catchAsync(async (req, res, next) => {
+  const { tourId } = req.params;
+
+  const deleted = await prisma.wishlistItem.deleteMany({
+    where: { userId: req.user.id, tourId },
+  });
+  if (deleted.count > 0) {
+    await logActivity({
+      userId: req.user.id,
+      action: 'user.wishlist_removed',
+      resource: 'User',
+      resourceId: req.user.id,
+      metadata: { tourId }
+    });
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: { isWishlisted: false }
+  });
+});
+
+exports.toggleWishlist = catchAsync(async (req, res, next) => {
+  const { tourId } = req.params;
+
+  const tour = await prisma.tour.findFirst({
+    where: { id: tourId, status: { not: 'DRAFT' } },
+    select: { id: true },
+  });
+  if (!tour) return next(new AppError('Tour not found', 404));
+
+  const existing = await prisma.wishlistItem.findUnique({
+    where: { userId_tourId: { userId: req.user.id, tourId } },
+    select: { id: true },
   });
 
-  // Log activity
+  if (existing) {
+    await prisma.wishlistItem.delete({ where: { id: existing.id } });
+
+    await logActivity({
+      userId: req.user.id,
+      action: 'user.wishlist_removed',
+      resource: 'User',
+      resourceId: req.user.id,
+      metadata: { tourId }
+    });
+
+    return res.status(200).json({
+      status: 'success',
+      data: { isWishlisted: false }
+    });
+  }
+
+  await prisma.wishlistItem.create({ data: { userId: req.user.id, tourId } });
+
   await logActivity({
     userId: req.user.id,
-    action: isWishlisted ? 'user.wishlist_removed' : 'user.wishlist_added',
+    action: 'user.wishlist_added',
     resource: 'User',
     resourceId: req.user.id,
     metadata: { tourId }
@@ -240,10 +307,7 @@ exports.toggleWishlist = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: {
-      wishlist: updatedUser.wishlist,
-      isWishlisted: !isWishlisted
-    }
+    data: { isWishlisted: true }
   });
 });
 

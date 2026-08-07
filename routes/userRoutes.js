@@ -408,7 +408,9 @@ router.get('/wishlist', userController.getWishlist);
  *         $ref: '#/components/responses/UnauthorizedError'
  */
 router.get('/wishlist', userController.getWishlist);
+router.post('/wishlist/:tourId', userController.addWishlist);
 router.patch('/wishlist/:tourId', userController.toggleWishlist);
+router.delete('/wishlist/:tourId', userController.removeWishlist);
 
 /**
  * @swagger

@@ -4,6 +4,7 @@ jest.mock('../../utils/prismaClient', () => ({
   expeditionTour: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
   tour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn() },
   user: { findUnique: jest.fn(), update: jest.fn() },
+  wishlistItem: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), delete: jest.fn() },
   booking: { findMany: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn(), deleteMany: jest.fn() },
   review: { findMany: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
   newsletterSubscriber: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
