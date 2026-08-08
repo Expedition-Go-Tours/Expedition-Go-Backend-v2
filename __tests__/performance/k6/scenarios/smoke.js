@@ -20,14 +20,14 @@ export default function () {
   const tours = http.get(`${BASE_URL}/api/expedition/tours`);
   check(tours, {
     'tours returns 200': (r) => r.status === 200,
-    'tours has results': (r) => JSON.parse(r.body).results > 0,
+    'tours has results': (r) => JSON.parse(r.body).data.tours.length > 0,
   });
 
   // 3. Get tour by slug
   const detail = http.get(`${BASE_URL}/api/expedition/tours/${TOUR_SLUG}`);
   check(detail, {
     'tour detail returns 200': (r) => r.status === 200,
-    'tour detail has correct slug': (r) => JSON.parse(r.body).data.tour.slug === TOUR_SLUG,
+    'tour detail has correct slug': (r) => JSON.parse(r.body).data.tour.tour.slug === TOUR_SLUG,
   });
 
   // 4. Calculate checkout pricing (public)

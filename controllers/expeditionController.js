@@ -1298,7 +1298,7 @@ exports.getExpeditionWishlist = catchAsync(async (req, res, next) => {
       userId: req.user.id,
       tour: {
         status: { not: 'DRAFT' },
-        expeditionTours: { some: { isActive: true } },
+        expeditionTour: { isActive: true },
       },
     },
     orderBy: { addedAt: 'desc' },

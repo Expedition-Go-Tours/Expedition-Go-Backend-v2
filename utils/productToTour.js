@@ -1,6 +1,6 @@
 /**
  * Maps the flat 13-step product builder store shape into:
- *   - 5 JSON blobs (categorization, theme, productContent, schedulesAndPricing, bookingAndTickets)
+ *   - 4 JSON blobs (categorization, productContent, schedulesAndPricing, bookingAndTickets)
  *   - normalized columns (city, country, category, slug, tags, etc.)
  *
  * Inverse of the frontend's tourToProduct() mapper.
@@ -13,7 +13,6 @@ function productToTour(flat) {
   if (!flat || typeof flat !== 'object') return {};
 
   const categorization = buildCategorization(flat);
-  const theme = buildTheme(flat);
   const productContent = buildProductContent(flat);
   const schedulesAndPricing = buildSchedulesAndPricing(flat);
   const bookingAndTickets = buildBookingAndTickets(flat);
@@ -25,7 +24,6 @@ function productToTour(flat) {
     description: flat.fullDescription || '',
     referenceCode: flat.referenceCode || null,
     categorization,
-    theme,
     productContent,
     schedulesAndPricing,
     bookingAndTickets,
@@ -42,7 +40,6 @@ function productToTour(flat) {
     activityType: categorization?.activityType || null,
     difficulty: categorization?.difficulty || null,
     durationMinutes: computeDurationMinutes(flat),
-    primaryTheme: theme?.primaryTheme || theme?.primary || null,
   };
 
   // Remove undefined fields so they don't overwrite existing values on update
@@ -75,14 +72,6 @@ function buildCategorization(flat) {
     transportModes: Array.isArray(src.transportModes) ? src.transportModes : [],
     transportServices: Array.isArray(src.transportServices) ? src.transportServices : [],
     accommodationIncluded: src.accommodationIncluded != null ? !!src.accommodationIncluded : null,
-  };
-}
-
-function buildTheme(flat) {
-  const src = asSource(flat, 'theme');
-  return {
-    primaryTheme: src.primaryTheme || src.primary || null,
-    secondary: Array.isArray(src.secondary) ? src.secondary : [],
   };
 }
 

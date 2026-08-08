@@ -758,16 +758,48 @@ describe('adminController', () => {
       expect(arg.where.status).toBeUndefined();
     });
 
-    it('searches by title or supplier name', async () => {
-      req.query = { status: 'PENDING_APPROVAL', search: 'Accra', page: 1, limit: 20 };
+    it('includes live-tour pending edits in the default PENDING_APPROVAL view', async () => {
+      req.query = { page: 1, limit: 20 };
 
       await controller.getTourReviewQueue(req, res, next);
 
       const arg = prisma.tour.findMany.mock.calls[0][0];
       expect(arg.where.OR).toEqual([
-        { title: { contains: 'Accra', mode: 'insensitive' } },
-        { supplier: { name: { contains: 'Accra', mode: 'insensitive' } } },
+        { status: 'PENDING_APPROVAL' },
+        { draftStatus: 'PENDING_APPROVAL' },
       ]);
+    });
+
+    it('searches by title or supplier name (combined with the status filter)', async () => {
+      req.query = { status: 'PENDING_APPROVAL', search: 'Accra', page: 1, limit: 20 };
+
+      await controller.getTourReviewQueue(req, res, next);
+
+      const arg = prisma.tour.findMany.mock.calls[0][0];
+      expect(arg.where.AND).toEqual([
+        { OR: [{ status: 'PENDING_APPROVAL' }, { draftStatus: 'PENDING_APPROVAL' }] },
+        {
+          OR: [
+            { title: { contains: 'Accra', mode: 'insensitive' } },
+            { supplier: { name: { contains: 'Accra', mode: 'insensitive' } } },
+          ],
+        },
+      ]);
+    });
+
+    it('keeps plain search filtering for a non-default status', async () => {
+      req.query = { status: 'REJECTED', search: 'Accra', page: 1, limit: 20 };
+
+      await controller.getTourReviewQueue(req, res, next);
+
+      const arg = prisma.tour.findMany.mock.calls[0][0];
+      expect(arg.where).toEqual({
+        status: 'REJECTED',
+        OR: [
+          { title: { contains: 'Accra', mode: 'insensitive' } },
+          { supplier: { name: { contains: 'Accra', mode: 'insensitive' } } },
+        ],
+      });
     });
 
     it('computes pagination from counts', async () => {
