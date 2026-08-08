@@ -600,7 +600,7 @@ describe('expeditionController', () => {
             userId: 'user-1',
             tour: {
               status: { not: 'DRAFT' },
-              expeditionTours: { some: { isActive: true } },
+              expeditionTour: { isActive: true },
             },
           }),
           orderBy: { addedAt: 'desc' },
