@@ -360,7 +360,7 @@ jobs:
 
       - name: Start application in background
         run: |
-          node server.js &
+          node server.js > /tmp/server.log 2>&1 &
           APP_PID=$!
           echo "APP_PID=$APP_PID" >> $GITHUB_ENV
 
@@ -385,6 +385,22 @@ jobs:
           echo "Warming up tour detail..."
           curl -sf http://localhost:5000/api/expedition/tours/perf-safari-adventure > /dev/null
           echo "Warm-up complete"
+
+      - name: Diagnose wishlist endpoint
+        run: |
+          TOKEN=$(curl -s -X POST http://localhost:5000/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"perf-customer@test.com","password":"Password123!"}' \
+            | node -e "process.stdin.on('data',d=>process.stdout.write((JSON.parse(d).data||{}).accessToken||''))")
+          echo "token_length=${#TOKEN}"
+          curl -s -o /tmp/wishlist.json -w "HTTP %{http_code}\n" \
+            http://localhost:5000/api/expedition/wishlist -H "Authorization: Bearer ${TOKEN}"
+          echo "--- body ---"
+          cat /tmp/wishlist.json
+          echo ""
+          echo "--- server log tail ---"
+          tail -40 /tmp/server.log
+          echo "--- end diagnostic ---"
 
       - name: Install k6
         run: |
