@@ -183,6 +183,144 @@ describe('tourDraft utils', () => {
   });
 });
 
+const weeklySchedule = {
+  Monday: [{ startTime: '08:00', endTime: '18:00' }],
+  Tuesday: [{ startTime: '08:00', endTime: '18:00' }],
+  Wednesday: [{ startTime: '08:00', endTime: '18:00' }],
+  Thursday: [{ startTime: '08:00', endTime: '18:00' }],
+  Friday: [{ startTime: '08:00', endTime: '18:00' }],
+  Saturday: [{ startTime: '08:00', endTime: '18:00' }],
+  Sunday: [{ startTime: '08:00', endTime: '18:00' }],
+};
+
+// Legacy layout: pricing/cutoffs live on schedulesAndPricing.bookingAndTickets
+const legacyRow = {
+  title: 'Legacy Tour',
+  description: 'desc',
+  coverPhoto: 'c.jpg',
+  photos: [],
+  tags: [],
+  metaTitle: null,
+  metaDescription: null,
+  categorization: {
+    category: 'tour',
+    difficulty: 'challenging',
+    duration: { unit: 'hours', value: 19 },
+  },
+  productContent: {
+    options: [
+      { id: 'o1', title: 'Ticket' },
+    ],
+  },
+  schedulesAndPricing: {
+    availability: {
+      scheduleType: 'operatingHours',
+      weeklySchedule,
+      operatingHoursStart: '09:00',
+      operatingHoursEnd: '17:00',
+    },
+    pricingSchedules: {
+      currency: 'USD',
+      schedules: [
+        {
+          name: 'Ticket',
+          type: 'operatingHours',
+          currency: 'USD',
+          weeklySchedule,
+          pricingModel: 'perPerson',
+          pricingApproach: 'dependsOnAge',
+          minParticipants: 1,
+          maxParticipants: 18,
+          pricingCategories: [{ name: 'Adult', price: 100, tiers: [] }],
+          prices: [{ ageGroup: 'Adult', retailPrice: 100 }],
+        },
+      ],
+    },
+  },
+  bookingAndTickets: { cutoffMinutes: 30, perSlotCutoff: false, lastMinuteBookings: true },
+};
+
+// Editor layout: the same facts nested inside productContent.options[i]
+const nestedRow = JSON.parse(JSON.stringify(legacyRow));
+nestedRow.categorization = { ...legacyRow.categorization, accommodationIncluded: false };
+nestedRow.schedulesAndPricing.pricingSchedules = {};
+nestedRow.productContent.options[0].availability = {
+  timezone: 'UTC',
+  scheduleType: 'operatingHours',
+  weeklySchedule,
+  operatingHoursStart: '09:00',
+  operatingHoursEnd: '17:00',
+  schedules: [
+    {
+      name: 'Ticket',
+      type: 'operatingHours',
+      currency: 'USD',
+      weeklySchedule,
+    },
+  ],
+};
+nestedRow.productContent.options[0].pricing = {
+  currency: 'USD',
+  pricingModel: 'perPerson',
+  pricingApproach: 'dependsOnAge',
+  minParticipants: 1,
+  maxParticipants: 18,
+  pricingCategories: [{ name: 'Adult', price: 100, tiers: [] }],
+};
+nestedRow.productContent.options[0].cutoff = { cutoffMinutes: 30, perSlotCutoff: false, perSlotCutoffs: {}, lastMinuteBookings: true };
+nestedRow.bookingAndTickets.perSlotCutoffs = {};
+
+describe('tourDraft canonical diff', () => {
+  it('treats equivalent legacy/editor layouts as identical (no phantom rows)', () => {
+    const diff = tourDraft.buildTourDiff(legacyRow, nestedRow);
+
+    expect(diff.map((d) => d.path)).toEqual([]);
+  });
+
+  it('suppresses operatingHours drift when the weekly schedule agrees', () => {
+    const draft = JSON.parse(JSON.stringify(nestedRow));
+    draft.schedulesAndPricing.availability.operatingHoursStart = '08:00';
+    draft.schedulesAndPricing.availability.operatingHoursEnd = '18:00';
+
+    const diff = tourDraft.buildTourDiff(legacyRow, draft);
+
+    expect(diff.map((d) => d.path)).toEqual([]);
+  });
+
+  it('still shows real pricing changes inside the nested layout', () => {
+    const draft = JSON.parse(JSON.stringify(nestedRow));
+    draft.productContent.options[0].pricing.pricingCategories[0].price = 250;
+
+    const diff = tourDraft.buildTourDiff(legacyRow, draft);
+
+    const paths = diff.map((d) => d.path);
+    expect(paths).toContain('schedulesAndPricing.pricingSchedules.schedules[0].pricingCategories[0]');
+    expect(paths).toContain('schedulesAndPricing.pricingSchedules.schedules[0].prices[0]');
+  });
+
+  it('still shows real category/difficulty edits', () => {
+    const draft = JSON.parse(JSON.stringify(nestedRow));
+    draft.categorization.category = 'activity';
+    draft.categorization.difficulty = 'extreme';
+
+    const diff = tourDraft.buildTourDiff(legacyRow, draft);
+
+    const paths = diff.map((d) => d.path);
+    expect(paths).toContain('categorization.category');
+    expect(paths).toContain('categorization.difficulty');
+  });
+
+  it('ignores empty-structure sentinels ({} perSlotCutoffs vs missing, false vs missing)', () => {
+    const plain = JSON.parse(JSON.stringify(legacyRow));
+    plain.bookingAndTickets.perSlotCutoffs = {};
+    plain.categorization.accommodationIncluded = false;
+
+    const diff = tourDraft.buildTourDiff(legacyRow, plain);
+
+    expect(diff.map((d) => d.path)).toEqual([]);
+  });
+});
+
 describe('updateTour (draft path)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
