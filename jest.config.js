@@ -7,6 +7,7 @@ module.exports = {
   coverageReporters: ['text', 'lcov', 'json-summary'],
   coveragePathIgnorePatterns: ['/node_modules/', '/generated/'],
   setupFiles: ['./jest.setup.js'],
+  globalSetup: './jest.globalSetup.js',
   testTimeout: 30000,
   forceExit: true,
   coverageThreshold: {

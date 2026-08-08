@@ -23,7 +23,7 @@ async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end
   const parsed = parseBlob(schedulesAndPricing) || {};
   const [maxTravelersFallback, limitedRatio, fullRatio] = await Promise.all([
     getConfig('booking.max_travelers', '50'),
-    getConfig('availability.limited_ratio', '0.5'),
+    getConfig('availability.limited_ratio', '0.7'),
     getConfig('availability.full_ratio', '1'),
   ]);
 

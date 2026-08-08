@@ -1,7 +1,10 @@
 const request = require('supertest');
 const app = require('../../app');
 
-describe('GET /health', () => {
+const dbAvailable = process.env.TEST_DB_AVAILABLE === 'true';
+const describeDb = dbAvailable ? describe : describe.skip;
+
+describeDb('GET /health', () => {
   it('returns 200 with service check results', async () => {
     const res = await request(app).get('/health');
 

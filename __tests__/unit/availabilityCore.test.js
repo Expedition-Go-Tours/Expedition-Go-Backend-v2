@@ -1,6 +1,6 @@
 jest.mock('../../utils/getConfig', () =>
   jest.fn(async (key) => {
-    if (key === 'availability.limited_ratio') return '0.5';
+    if (key === 'availability.limited_ratio') return '0.7';
     if (key === 'availability.full_ratio') return '1';
     return '50';
   })
@@ -195,10 +195,11 @@ describe('computeStatus', () => {
     expect(core.computeStatus(1, 10, 'AVAILABLE', true)).toBe('AVAILABLE');
   });
 
-  it('computes FULL/LIMITED from the occupancy ratio', () => {
+  it('computes FULL/LIMITED from the occupancy ratio (LIMITED at 70%)', () => {
     expect(core.computeStatus(10, 10, null, true)).toBe('FULL');
     expect(core.computeStatus(8, 10, null, true)).toBe('LIMITED');
-    expect(core.computeStatus(5, 10, null, true)).toBe('LIMITED');
+    expect(core.computeStatus(7, 10, null, true)).toBe('LIMITED');
+    expect(core.computeStatus(5, 10, null, true)).toBe('AVAILABLE');
     expect(core.computeStatus(4, 10, null, true)).toBe('AVAILABLE');
     expect(core.computeStatus(2, 10, null, true)).toBe('AVAILABLE');
   });
@@ -435,6 +436,25 @@ describe('checkTourAvailability', () => {
     const ok = await checkTourAvailability('t1', MONDAY, { selectedTime: '14:00', travelers: { adults: 2 } });
     expect(ok.available).toBe(true);
     expect(ok.availableSpots).toBe(2);
+  });
+
+  it('allows a day override ABOVE the template max to increase the day capacity', async () => {
+    // Template max is 10 (perPersonTour); supplier raised this day to 15.
+    prisma.tourDateOverride.findFirst.mockResolvedValue({ status: 'AVAILABLE', capacity: 15, timeSlotOverrides: null });
+
+    // 12 already booked — more than the template max but under the override.
+    prisma.$queryRawUnsafe.mockResolvedValue([{ currentBookings: '12', groupCount: '0' }]);
+    const ok = await checkTourAvailability('t1', MONDAY, { selectedTime: '14:00', travelers: { adults: 3 } });
+    expect(ok.available).toBe(true);
+    expect(ok.availableSpots).toBe(3);
+
+    // 13 booked → only 2 of the 15 left; a 4-person party overflows.
+    prisma.$queryRawUnsafe.mockResolvedValue([{ currentBookings: '13', groupCount: '0' }]);
+    const overflow = await checkTourAvailability('t1', MONDAY, { selectedTime: '14:00', travelers: { adults: 4 } });
+    expect(overflow.available).toBe(false);
+
+    const fits = await checkTourAvailability('t1', MONDAY, { selectedTime: '14:00', travelers: { adults: 2 } });
+    expect(fits.available).toBe(true);
   });
 });
 
