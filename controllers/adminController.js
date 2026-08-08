@@ -2071,11 +2071,16 @@ exports.getExpeditionSupplierTours = catchAsync(async (req, res, next) => {
  */
 exports.getTourReviewQueue = catchAsync(async (req, res) => {
   const {
-    status = 'PENDING_APPROVAL',
+    status,
     page = 1,
     limit = 20,
     search,
   } = req.query;
+
+  // Empty status means "show everything" (the All tab). A missing/blank
+  // value must NOT silently narrow to PENDING_APPROVAL — that is what made
+  // the moderation page look empty while pending edits existed.
+  const requestedStatus = typeof status === 'string' ? status.trim() : '';
 
   const validStatuses = ['PENDING_APPROVAL', 'REJECTED', 'ACTIVE', 'PENDING_EDITS'];
   const searchOR = search && search.trim()
@@ -2086,19 +2091,27 @@ exports.getTourReviewQueue = catchAsync(async (req, res) => {
     : null;
 
   const where = {};
-  if (status === 'PENDING_EDITS') {
+  // Live-tour edits keep `status: ACTIVE` while the edit itself lives in
+  // draftStatus — a tab must look at BOTH columns to see what it promised.
+  if (requestedStatus === 'PENDING_EDITS') {
     where.draftStatus = 'PENDING_APPROVAL';
-  } else if (status === 'PENDING_APPROVAL') {
-    // The default moderation view shows BOTH new submissions (status
-    // PENDING_APPROVAL) and live-tour pending edits (draftStatus
-    // PENDING_APPROVAL) — otherwise the queue hides the most common case.
+  } else if (requestedStatus === 'PENDING_APPROVAL') {
     const statusOR = [{ status: 'PENDING_APPROVAL' }, { draftStatus: 'PENDING_APPROVAL' }];
     if (searchOR) {
       where.AND = [{ OR: statusOR }, { OR: searchOR }];
     } else {
       where.OR = statusOR;
     }
-  } else if (validStatuses.includes(status)) {
+  } else if (requestedStatus === 'REJECTED') {
+    // New submissions are rejected via `status`, live-tour edits via
+    // `draftStatus` — the tab must show both.
+    const statusOR = [{ status: 'REJECTED' }, { draftStatus: 'REJECTED' }];
+    if (searchOR) {
+      where.AND = [{ OR: statusOR }, { OR: searchOR }];
+    } else {
+      where.OR = statusOR;
+    }
+  } else if (validStatuses.includes(requestedStatus)) {
     where.status = status;
     if (searchOR) {
       where.OR = searchOR;
@@ -2129,8 +2142,11 @@ exports.getTourReviewQueue = catchAsync(async (req, res) => {
       },
     }),
     prisma.tour.count({ where }),
-    prisma.tour.count({ where: { status: 'PENDING_APPROVAL' } }),
-    prisma.tour.count({ where: { status: 'REJECTED' } }),
+    // Counts mirror each tab's semantics — pending includes live-tour edits,
+    // and rejected includes rejected live-tour edits — so the stat cards
+    // never disagree with the list below them.
+    prisma.tour.count({ where: { OR: [{ status: 'PENDING_APPROVAL' }, { draftStatus: 'PENDING_APPROVAL' }] } }),
+    prisma.tour.count({ where: { OR: [{ status: 'REJECTED' }, { draftStatus: 'REJECTED' }] } }),
     prisma.tour.count({ where: { status: 'ACTIVE' } }),
     prisma.tour.count({ where: { draftStatus: 'PENDING_APPROVAL' } }),
   ]);

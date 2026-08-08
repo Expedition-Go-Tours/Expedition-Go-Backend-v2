@@ -17,6 +17,7 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices, reconcileAvailability, durationToMinutes } = require('../utils/tourHelpers');
+const { cancelPaymentIntent } = require('../utils/stripeHelpers');
 const { productToTour } = require('../utils/productToTour');
 const { tourContentSnapshot, mergeDraftContent, buildTourDiff, computeChangesSummary, buildLiveUpdateData, applyFlatToBlobMapping } = require('../utils/tourDraft');
 const { logActivity } = require('../utils/auditLogger');
@@ -1561,8 +1562,31 @@ exports.deleteTour = catchAsync(async (req, res, next) => {
     return next(new AppError('Cannot delete tour with confirmed bookings. Cancel them first.', 400));
   }
 
-  // Auto-cancel any PENDING (unpaid) bookings left behind by abandoned checkouts
+  // Auto-cancel any PENDING bookings left behind by abandoned checkouts.
+  // Rules (GetYourGuide-style):
+  //  - CONFIRMED blocks (above) — always honored.
+  //  - A PENDING booking with a live Stripe charge (paymentStatus PROCESSING)
+  //    is only safe to cancel once Stripe confirms the intent is cancelable.
+  //    If the money already went through (succeeded) or the intent is stuck
+  //    in flight, block the delete instead of silently cancelling a charged
+  //    booking.
+  //  - PENDING bookings without a live charge (abandoned, failed, expired)
+  //    are cancelled locally.
   const pendingBookings = tour.bookings.filter((b) => b.status === 'PENDING');
+  const livePayments = pendingBookings.filter(
+    (b) => b.stripePaymentIntentId && b.paymentStatus === 'PROCESSING'
+  );
+
+  for (const booking of livePayments) {
+    const result = await cancelPaymentIntent(booking.stripePaymentIntentId);
+    if (!result.ok) {
+      if (result.reason === 'status_succeeded') {
+        return next(new AppError('Cannot delete this tour: a payment for it already succeeded and is being confirmed. Please handle that booking before deleting.', 409));
+      }
+      return next(new AppError('A payment for this tour is currently in flight. Please try deleting it again in a few minutes.', 409));
+    }
+  }
+
   if (pendingBookings.length > 0) {
     await prisma.$transaction(async (tx) => {
       await tx.booking.updateMany({
