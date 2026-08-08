@@ -138,7 +138,7 @@ function buildProductContent(flat) {
     shipInfoRequired: !!src.shipInfoRequired,
     trainInfoRequired: !!src.trainInfoRequired,
     hotelInfoRequired: !!src.hotelInfoRequired,
-    contactPhone: normalizeToE164(src.contactPhone),
+    contactPhone: normalizeToE164(src.contactPhone) || '',
     crossCityTravel: !!src.crossCityTravel,
     planPickupTimes: !!src.planPickupTimes,
     pickupStartTime: src.pickupStartTime || '08:00',

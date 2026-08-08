@@ -499,6 +499,7 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
   const {
     status,
     category,
+    search,
     page = 1,
     limit = 20,
     sortBy = 'totalRevenue',
@@ -514,6 +515,16 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
   // category filtering via JSON is expensive at scale; accept this for now.
   if (category) {
     where.categorization = { path: ['category'], equals: category };
+  }
+  // Search must run server-side: the admin table only fetches one page
+  // (sorted by revenue), so a client-side filter over rawTours would hide
+  // any tour that is not already on the page.
+  if (search && search.trim()) {
+    const term = search.trim();
+    where.OR = [
+      { title: { contains: term, mode: 'insensitive' } },
+      { supplier: { name: { contains: term, mode: 'insensitive' } } },
+    ];
   }
 
   const skip = (parseInt(page) - 1) * parseInt(limit);

@@ -1524,6 +1524,11 @@ exports.getTourDraft = catchAsync(async (req, res, next) => {
 
 /**
  * Delete tour (suppliers only - own tours)
+ *
+ * Deletion is blocked only by CONFIRMED bookings (paid, real commitments).
+ * PENDING bookings (payment never succeeded — checkout abandoned) are
+ * auto-cancelled as part of the deletion so suppliers are not locked out
+ * of their own tours forever by stale, unpaid checkout rows.
  */
 exports.deleteTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
@@ -1550,9 +1555,28 @@ exports.deleteTour = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found or access denied', 404));
   }
 
-  // Check for active bookings
-  if (tour.bookings.length > 0) {
-    return next(new AppError('Cannot delete tour with active bookings', 400));
+  // Check for confirmed (paid) bookings — real commitments, block deletion
+  const confirmedBookings = tour.bookings.filter((b) => b.status === 'CONFIRMED');
+  if (confirmedBookings.length > 0) {
+    return next(new AppError('Cannot delete tour with confirmed bookings. Cancel them first.', 400));
+  }
+
+  // Auto-cancel any PENDING (unpaid) bookings left behind by abandoned checkouts
+  const pendingBookings = tour.bookings.filter((b) => b.status === 'PENDING');
+  if (pendingBookings.length > 0) {
+    await prisma.$transaction(async (tx) => {
+      await tx.booking.updateMany({
+        where: {
+          id: { in: pendingBookings.map((b) => b.id) },
+          status: 'PENDING'
+        },
+        data: {
+          status: 'CANCELLED',
+          cancellationReason: 'Tour deleted by supplier',
+          cancelledAt: new Date()
+        }
+      });
+    });
   }
 
   // Delete associated images from Cloudinary
