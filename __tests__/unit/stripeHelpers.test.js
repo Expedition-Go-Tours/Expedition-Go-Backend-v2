@@ -23,13 +23,15 @@ jest.mock('../../utils/emailService', () => ({}));
 jest.mock('../../utils/getConfig', () => jest.fn((key, defaultValue) => Promise.resolve(defaultValue)));
 
 const mockConstructEvent = jest.fn();
+let mockStripeInstance;
 jest.mock('stripe', () => {
-  return jest.fn().mockImplementation(() => ({
+  mockStripeInstance = {
     webhooks: { constructEvent: mockConstructEvent },
     accounts: { create: jest.fn(), createLoginLink: jest.fn() },
     accountLinks: { create: jest.fn() },
-    paymentIntents: { create: jest.fn() },
-  }));
+    paymentIntents: { create: jest.fn(), retrieve: jest.fn(), cancel: jest.fn() },
+  };
+  return jest.fn(() => mockStripeInstance);
 });
 beforeAll(() => {
   process.env.STRIPE_SECRET_KEY = 'sk_test_mock';
@@ -39,6 +41,7 @@ const {
   calculateCommission,
   processStripeWebhook,
   verifyWebhookSignature,
+  cancelPaymentIntent,
 } = require('../../utils/stripeHelpers');
 
 const mockBooking = {
@@ -197,9 +200,48 @@ describe('processStripeWebhook', () => {
     const stripeEvent = mockStripeEvent('payment_intent.succeeded');
     await processStripeWebhook(stripeEvent);
 
-    expect(tx.booking.updateMany).toHaveBeenCalled();
+    expect(tx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: 'PENDING' }),
+      }),
+    );
     expect(enqueueEmail).toHaveBeenCalled();
     expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'booking.completed' }));
+  });
+
+  it('does not resurrect already-cancelled bookings on a late succeeded event', async () => {
+    tx = {
+      stripeEvent: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockResolvedValue({}),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      booking: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findMany: jest.fn(),
+      },
+      notification: { create: jest.fn().mockResolvedValue({}) },
+      payout: { create: jest.fn().mockResolvedValue({ id: 'payout-1', status: 'PENDING' }) },
+      payoutMethod: { findFirst: jest.fn().mockResolvedValue({ id: 'pm-1', type: 'bank' }) },
+      supplierProfile: { update: jest.fn().mockResolvedValue({}) },
+      tour: { update: jest.fn().mockResolvedValue({}) },
+      specialOffer: { update: jest.fn().mockResolvedValue({}) },
+    };
+    prisma.$transaction.mockImplementation(async (cb) => {
+      await cb(tx);
+    });
+    enqueueEmail.mockClear();
+    enqueueEvent.mockClear();
+
+    await processStripeWebhook(mockStripeEvent('payment_intent.succeeded'));
+
+    expect(tx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: 'PENDING' }),
+      }),
+    );
+    expect(tx.booking.findMany).not.toHaveBeenCalled();
+    expect(enqueueEmail).not.toHaveBeenCalled();
   });
 
   it('handles payment_intent.payment_failed', async () => {
@@ -208,6 +250,7 @@ describe('processStripeWebhook', () => {
 
     expect(tx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: expect.objectContaining({ status: 'PENDING' }),
         data: expect.objectContaining({ paymentStatus: 'FAILED' }),
       }),
     );
@@ -233,6 +276,59 @@ describe('processStripeWebhook', () => {
     await processStripeWebhook(stripeEvent);
 
     expect(tx.booking.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('cancelPaymentIntent', () => {
+  beforeEach(() => {
+    mockStripeInstance.paymentIntents.retrieve.mockReset();
+    mockStripeInstance.paymentIntents.cancel.mockReset();
+  });
+
+  it('reports ok when the intent is already canceled', async () => {
+    mockStripeInstance.paymentIntents.retrieve.mockResolvedValue({ status: 'canceled' });
+
+    await expect(cancelPaymentIntent('pi_x')).resolves.toEqual({ ok: true });
+    expect(mockStripeInstance.paymentIntents.cancel).not.toHaveBeenCalled();
+  });
+
+  it('blocks when the intent already succeeded', async () => {
+    mockStripeInstance.paymentIntents.retrieve.mockResolvedValue({ status: 'succeeded' });
+
+    await expect(cancelPaymentIntent('pi_x')).resolves.toEqual({ ok: false, reason: 'status_succeeded' });
+    expect(mockStripeInstance.paymentIntents.cancel).not.toHaveBeenCalled();
+  });
+
+  it('blocks when the intent is still processing', async () => {
+    mockStripeInstance.paymentIntents.retrieve.mockResolvedValue({ status: 'processing' });
+
+    await expect(cancelPaymentIntent('pi_x')).resolves.toEqual({ ok: false, reason: 'status_processing' });
+  });
+
+  it('cancels a cancelable intent and reports success', async () => {
+    mockStripeInstance.paymentIntents.retrieve.mockResolvedValue({ status: 'requires_payment_method' });
+    mockStripeInstance.paymentIntents.cancel.mockResolvedValue({ status: 'canceled' });
+
+    await expect(cancelPaymentIntent('pi_x')).resolves.toEqual({ ok: true });
+    expect(mockStripeInstance.paymentIntents.cancel).toHaveBeenCalledWith('pi_x');
+  });
+
+  it('reports cancel_failed when Stripe rejects the cancel', async () => {
+    mockStripeInstance.paymentIntents.retrieve.mockResolvedValue({ status: 'requires_payment_method' });
+    mockStripeInstance.paymentIntents.cancel.mockRejectedValue(new Error('cannot cancel this intent'));
+
+    await expect(cancelPaymentIntent('pi_x')).resolves.toEqual({ ok: false, reason: 'cancel_failed' });
+  });
+
+  it('reports unavailable when the intent cannot be retrieved', async () => {
+    mockStripeInstance.paymentIntents.retrieve.mockRejectedValue(new Error('network error'));
+
+    await expect(cancelPaymentIntent('pi_x')).resolves.toEqual({ ok: false, reason: 'unavailable' });
+  });
+
+  it('treats missing id as nothing to cancel', async () => {
+    await expect(cancelPaymentIntent(null)).resolves.toEqual({ ok: true });
+    await expect(cancelPaymentIntent('')).resolves.toEqual({ ok: true });
   });
 });
 

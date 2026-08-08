@@ -31,6 +31,7 @@ jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn(
 jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
 jest.mock('../../utils/tourHelpers', () => ({ createSlug: jest.fn(), validateTourData: jest.fn(), validateStoredPricing: jest.fn(), rebuildSchedulePrices: jest.fn(), reconcileAvailability: jest.fn((b) => b), durationToMinutes: jest.fn() }));
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
+jest.mock('../../utils/stripeHelpers', () => ({ cancelPaymentIntent: jest.fn() }));
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn() }));
 jest.mock('../../utils/tourFilterBuilder', () => ({ buildTourFilters: jest.fn(), buildSortOptions: jest.fn(), getAvailableFilterOptions: jest.fn(), validateFilterParams: jest.fn(), findNearbyTourIds: jest.fn(), getTourDistances: jest.fn() }));
 jest.mock('../../utils/popularityScorer', () => ({ getPopularByCategory: jest.fn() }));
@@ -44,6 +45,7 @@ const { emit } = require('../../utils/eventEmitter');
 const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
 const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices, durationToMinutes } = require('../../utils/tourHelpers');
 const { logActivity } = require('../../utils/auditLogger');
+const { cancelPaymentIntent } = require('../../utils/stripeHelpers');
 const { cloudinaryUrl } = require('../../utils/imageOptimizer');
 const {
   buildTourFilters,
@@ -988,6 +990,8 @@ describe('tourController', () => {
     beforeEach(() => {
       req.params = { id: 'tour-1' };
       prisma.tour.findFirst.mockResolvedValue({ ...mockTour, bookings: [] });
+      cancelPaymentIntent.mockReset();
+      cancelPaymentIntent.mockResolvedValue({ ok: true });
     });
 
     it('deletes a tour (archives it)', async () => {
@@ -1044,6 +1048,75 @@ expect(prisma.booking.updateMany).toHaveBeenCalledWith(
       expect(prisma.tour.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'tour-1' } })
       );
+      expect(res.status).toHaveBeenCalledWith(204);
+    });
+
+    it('cancels the live Stripe intent before cancelling its PENDING booking', async () => {
+      prisma.tour.findFirst.mockResolvedValue({
+        ...mockTour,
+        bookings: [
+          { id: 'b1', status: 'PENDING', stripePaymentIntentId: 'pi_1', paymentStatus: 'PROCESSING' },
+          { id: 'b2', status: 'PENDING' },
+        ],
+      });
+
+      await controller.deleteTour(req, res, next);
+
+      expect(cancelPaymentIntent).toHaveBeenCalledWith('pi_1');
+      expect(prisma.booking.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ['b1', 'b2'] }, status: 'PENDING' },
+        })
+      );
+      expect(res.status).toHaveBeenCalledWith(204);
+    });
+
+    it('blocks deletion with 409 when the live payment already succeeded', async () => {
+      cancelPaymentIntent.mockResolvedValue({ ok: false, reason: 'status_succeeded' });
+      prisma.tour.findFirst.mockResolvedValue({
+        ...mockTour,
+        bookings: [
+          { id: 'b1', status: 'PENDING', stripePaymentIntentId: 'pi_1', paymentStatus: 'PROCESSING' },
+        ],
+      });
+
+      await controller.deleteTour(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 409, message: expect.stringContaining('already succeeded') })
+      );
+      expect(prisma.booking.updateMany).not.toHaveBeenCalled();
+      expect(prisma.tour.update).not.toHaveBeenCalled();
+    });
+
+    it('blocks deletion with 409 when the live payment is in flight', async () => {
+      cancelPaymentIntent.mockResolvedValue({ ok: false, reason: 'cancel_failed' });
+      prisma.tour.findFirst.mockResolvedValue({
+        ...mockTour,
+        bookings: [
+          { id: 'b1', status: 'PENDING', stripePaymentIntentId: 'pi_1', paymentStatus: 'PROCESSING' },
+        ],
+      });
+
+      await controller.deleteTour(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 409 })
+      );
+      expect(prisma.tour.update).not.toHaveBeenCalled();
+    });
+
+    it('leaves abandoned PENDING bookings (no live charge) alone in Stripe', async () => {
+      prisma.tour.findFirst.mockResolvedValue({
+        ...mockTour,
+        bookings: [
+          { id: 'b1', status: 'PENDING', stripePaymentIntentId: null, paymentStatus: 'PENDING' },
+        ],
+      });
+
+      await controller.deleteTour(req, res, next);
+
+      expect(cancelPaymentIntent).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(204);
     });
 

@@ -87,6 +87,44 @@ async function createRefund(paymentIntentId, amount = null) {
 }
 
 /**
+ * Try to cancel a PaymentIntent before deleting a tour.
+ *
+ * Returns:
+ *   { ok: true }            — intent is canceled (or was already canceled)
+ *   { ok: false, reason }   — cannot prove it is cancelable, caller must block:
+ *                             'status_succeeded' | 'status_processing' |
+ *                             'cancel_failed' | 'unavailable'
+ *
+ * Never throws. If we cannot PROVE the intent is canceled we report failure,
+ * because the alternative is silently cancelling a booking whose money may
+ * be in flight.
+ */
+async function cancelPaymentIntent(paymentIntentId) {
+  if (!paymentIntentId) return { ok: true };
+
+  let intent;
+  try {
+    intent = await getStripe().paymentIntents.retrieve(paymentIntentId);
+  } catch (error) {
+    console.error('[Stripe] PaymentIntent retrieve failed:', paymentIntentId, error.message);
+    return { ok: false, reason: 'unavailable' };
+  }
+
+  if (intent.status === 'canceled') return { ok: true };
+  if (intent.status === 'succeeded' || intent.status === 'processing') {
+    return { ok: false, reason: `status_${intent.status}` };
+  }
+
+  try {
+    await getStripe().paymentIntents.cancel(paymentIntentId);
+    return { ok: true };
+  } catch (error) {
+    console.error('[Stripe] PaymentIntent cancel failed:', paymentIntentId, error.message);
+    return { ok: false, reason: 'cancel_failed' };
+  }
+}
+
+/**
  * Calculate commission based on supplier tier and booking amount
  */
 async function calculateCommission(bookingAmount, supplierProfile) {
@@ -257,7 +295,11 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
       const updatedBookings = await client.booking.updateMany({
         where: {
           id: { in: bookingIds },
-          stripePaymentIntentId: paymentIntent.id
+          stripePaymentIntentId: paymentIntent.id,
+          // Only still-pending bookings may be confirmed — a booking the
+          // supplier already cancelled (e.g. their tour was deleted) must
+          // never be resurrected by a late webhook.
+          status: 'PENDING'
         },
         data: {
           status: 'CONFIRMED',
@@ -268,13 +310,15 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
 
       console.log(` Updated ${updatedBookings.count} bookings to CONFIRMED`);
 
-      bookings = await client.booking.findMany({
-        where: { id: { in: bookingIds } },
-        include: {
-          customer: true,
-          tour: { include: { supplier: true } }
-        }
-      });
+      if (updatedBookings.count > 0) {
+        bookings = await client.booking.findMany({
+          where: { id: { in: bookingIds } },
+          include: {
+            customer: true,
+            tour: { include: { supplier: true } }
+          }
+        });
+      }
     }
 
     // Fallback: find expedition booking by stripePaymentIntentId
@@ -399,7 +443,8 @@ async function handlePaymentFailed(paymentIntent, tx = null) {
     await client.booking.updateMany({
       where: {
         id: { in: bookingIds },
-        stripePaymentIntentId: paymentIntent.id
+        stripePaymentIntentId: paymentIntent.id,
+        status: 'PENDING'
       },
       data: {
         status: 'CANCELLED',
@@ -448,6 +493,7 @@ function verifyWebhookSignature(payload, signature, endpointSecret) {
 module.exports = {
   createPaymentIntent,
   createRefund,
+  cancelPaymentIntent,
   calculateCommission,
   processStripeWebhook,
   verifyWebhookSignature,
