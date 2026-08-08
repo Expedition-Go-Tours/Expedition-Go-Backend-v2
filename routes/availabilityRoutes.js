@@ -180,12 +180,19 @@ router.get('/:tourId/availability', resolveSupplier, requireTeamPermission('tour
  *           schema:
  *             type: object
  *             properties:
-  *               status:
-  *                 type: string
-  *                 enum: [BLOCKED]
-  *                 description: Only BLOCKED can be set manually — Available, Limited and Full are automatic. Remove an override to unblock.
-  *                 example: BLOCKED
-  *               timeSlotOverrides:
+*               status:
+ *                 type: string
+ *                 enum: [BLOCKED]
+ *                 description: Only BLOCKED can be set manually — Available, Limited and Full are automatic. Remove an override to unblock.
+ *                 example: BLOCKED
+ *               capacity:
+ *                 type: integer
+ *                 nullable: true
+ *                 minimum: 1
+ *                 maximum: 100000
+ *                 description: Per-day capacity override, in the day's capacity unit (people or group slots). Values below the tour default limit the day; values above it increase it. Null removes the override and reverts to the tour default.
+ *                 example: 5
+ *               timeSlotOverrides:
   *                 type: array
   *                 description: Override time slot definitions
   *                 items:
@@ -238,11 +245,10 @@ router.get('/:tourId/availability', resolveSupplier, requireTeamPermission('tour
   *                         status:
   *                           type: string
   *                           enum: [AVAILABLE, LIMITED, FULL, BLOCKED]
-  *                         capacity:
-  *                           type: integer
-  *                           nullable: true
-  *                           deprecated: true
-  *                           description: Deprecated — this date-level capacity is ignored. Day capacity derives from the tour's schedulesAndPricing; set capacity per slot via timeSlotOverrides.
+*                         capacity:
+ *                           type: integer
+ *                           nullable: true
+ *                           description: Per-day capacity override (null = no override; the day uses the tour default). Enforced for bookings across the whole day.
  *                         timeSlotOverrides:
  *                           type: array
  *                           nullable: true

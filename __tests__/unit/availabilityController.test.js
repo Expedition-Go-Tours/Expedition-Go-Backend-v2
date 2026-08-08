@@ -9,7 +9,7 @@ jest.mock('../../utils/prismaClient', () => ({
 
 jest.mock('../../utils/getConfig', () =>
   jest.fn(async (key) => {
-    if (key === 'availability.limited_ratio') return '0.5';
+    if (key === 'availability.limited_ratio') return '0.7';
     if (key === 'availability.full_ratio') return '1';
     return '50';
   })

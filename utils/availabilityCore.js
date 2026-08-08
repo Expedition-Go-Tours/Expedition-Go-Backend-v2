@@ -300,13 +300,13 @@ function buildTimeSlots(parsed, override, fallbackCapacity) {
  * Available / Limited / Full are fully automatic (derived from bookings vs
  * capacity). The only manual override honored is BLOCKED. The LIMITED/FULL
  * ratios are configurable (`availability.limited_ratio` / `availability.full_ratio`)
- * and default to 0.5 / 1.0. */
-function computeStatus(bookedCount, totalCapacity, overrideStatus, operating, limitedRatio = 0.5, fullRatio = 1) {
+ * and default to 0.7 / 1.0. */
+function computeStatus(bookedCount, totalCapacity, overrideStatus, operating, limitedRatio = 0.7, fullRatio = 1) {
   if (!operating) return 'BLOCKED';
   if (overrideStatus === 'BLOCKED') return 'BLOCKED';
   if (totalCapacity <= 0) return 'BLOCKED';
 
-  const limited = Number.isFinite(Number(limitedRatio)) ? Number(limitedRatio) : 0.5;
+  const limited = Number.isFinite(Number(limitedRatio)) ? Number(limitedRatio) : 0.7;
   const full = Number.isFinite(Number(fullRatio)) ? Number(fullRatio) : 1;
   const ratio = bookedCount / totalCapacity;
   if (ratio >= full) return 'FULL';

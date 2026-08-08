@@ -1,6 +1,9 @@
 const prisma = require('../utils/prismaClient');
 
-describe('User model', () => {
+const dbAvailable = process.env.TEST_DB_AVAILABLE === 'true';
+const describeDb = dbAvailable ? describe : describe.skip;
+
+describeDb('User model', () => {
   const testEmail = `integration-${Date.now()}@test.com`;
 
   afterAll(async () => {

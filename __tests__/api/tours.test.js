@@ -2,7 +2,10 @@ const request = require('supertest');
 const app = require('../../app');
 const prisma = require('../../utils/prismaClient');
 
-describe('GET /api/tours', () => {
+const dbAvailable = process.env.TEST_DB_AVAILABLE === 'true';
+const describeDb = dbAvailable ? describe : describe.skip;
+
+describeDb('GET /api/tours', () => {
   jest.setTimeout(30000);
 
   beforeAll(async () => {
