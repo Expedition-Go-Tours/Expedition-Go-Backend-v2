@@ -333,9 +333,129 @@ function truncate(value, max = 400) {
   return value;
 }
 
+function isDeeplyEmpty(value) {
+  if (value === undefined || value === null || value === '' || value === false) return true;
+  if (typeof value === 'object') return Array.isArray(value) ? value.length === 0 : Object.keys(value).length === 0;
+  return false;
+}
+
+function deepClone(value) {
+  if (Array.isArray(value)) return value.map(deepClone);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const key of Object.keys(value)) out[key] = deepClone(value[key]);
+    return out;
+  }
+  return value;
+}
+
+// Operating hours are stored twice: explicitly AND inside weeklySchedule.
+// The editor rebuilds the explicit values FROM the daily schedule, so a
+// stale explicit pair (09:00–17:00) next to a schedule that says 08:00–18:00
+// creates a phantom "hours changed" row on every unrelated edit. Deriving
+// the explicit values from the schedule cancels the layout difference while
+// keeping real hour changes visible (they change the weeklySchedule too).
+function normalizeOperatingHours(availability) {
+  if (!availability || typeof availability !== 'object') return;
+  const firstDay = availability.weeklySchedule && Object.values(availability.weeklySchedule)[0];
+  const firstSlot = Array.isArray(firstDay) && firstDay[0];
+  if (firstSlot && firstSlot.startTime && firstSlot.endTime) {
+    availability.operatingHoursStart = firstSlot.startTime;
+    availability.operatingHoursEnd = firstSlot.endTime;
+  }
+}
+
+// The editor keeps each option's schedule, pricing and cutoffs inside
+// productContent.options[i].availability/.pricing/.cutoff, while tours
+// persisted in the legacy layout store the same facts under
+// schedulesAndPricing.pricingSchedules.schedules and bookingAndTickets.
+// Comparing raw trees invents "added/removed" rows for keys that merely
+// moved locations. This folds the nested layout back into the legacy
+// positions (merging, never overwriting), so both sides render identical
+// unless the supplier actually changed a value.
+function foldNestedOptionLayout(src) {
+  const sp = src.schedulesAndPricing;
+  const options = src.productContent && src.productContent.options;
+  if (!sp || !Array.isArray(options)) return;
+
+  const existing = sp.pricingSchedules && Array.isArray(sp.pricingSchedules.schedules)
+    ? sp.pricingSchedules.schedules
+    : [];
+  const schedules = existing.map((sched) => deepClone(sched));
+
+  options.forEach((option, i) => {
+    if (!option || typeof option !== 'object') return;
+    if (!schedules[i]) schedules[i] = {};
+
+    const nested = option.availability && option.availability.schedules && option.availability.schedules[0];
+    const pricing = option.pricing || {};
+
+    if (nested && typeof nested === 'object') {
+      for (const key of ['name', 'type', 'currency', 'startDate', 'endDate', 'hasEndDate']) {
+        if (scheduleMissing(schedules[i][key])) schedules[i][key] = nested[key];
+      }
+      if (schedules[i].weeklySchedule === undefined && nested.weeklySchedule) {
+        schedules[i].weeklySchedule = deepClone(nested.weeklySchedule);
+      }
+    }
+    if (pricing && typeof pricing === 'object') {
+      for (const key of ['currency', 'pricingModel', 'pricingApproach', 'minParticipants', 'maxParticipants', 'uniformPrice', 'groupSizes', 'pricingCategories']) {
+        if (scheduleMissing(schedules[i][key])) schedules[i][key] = deepClone(pricing[key]);
+      }
+      // legacy derived array — must be identical to what the legacy
+      // persistence writes, or the same values diff as separate rows
+      if (!schedules[i].prices && Array.isArray(pricing.pricingCategories)) {
+        schedules[i].prices = pricing.pricingCategories
+          .filter((c) => c && c.name)
+          .map((c) => ({ ageGroup: c.name, retailPrice: c.price }));
+      }
+    }
+    if (option.cutoff && typeof option.cutoff === 'object' && src.bookingAndTickets && typeof src.bookingAndTickets === 'object') {
+      for (const key of ['cutoffMinutes', 'perSlotCutoff', 'perSlotCutoffs', 'lastMinuteBookings']) {
+        if (scheduleMissing(src.bookingAndTickets[key])) src.bookingAndTickets[key] = deepClone(option.cutoff[key]);
+      }
+    }
+
+    // Keys the nested layout must not leak into the diff
+    delete options[i].availability;
+    delete options[i].cutoff;
+    delete options[i].pricing;
+  });
+
+  if (schedules.some((s) => s && Object.keys(s).length)) {
+    sp.pricingSchedules = { schedules };
+  } else if (sp.pricingSchedules) {
+    sp.pricingSchedules = {};
+  }
+}
+
+function scheduleMissing(value) {
+  return value === undefined;
+}
+
+function canonicalizeForDiff(src) {
+  const out = deepClone(src);
+  const root = out && typeof out === 'object' ? out : {};
+  if (root.schedulesAndPricing && typeof root.schedulesAndPricing === 'object') {
+    normalizeOperatingHours(root.schedulesAndPricing.availability);
+    if (root.schedulesAndPricing.pricingSchedules) {
+      // schedule-level currency is authoritative; the top-level copy is legacy noise
+      delete root.schedulesAndPricing.pricingSchedules.currency;
+    }
+  }
+  const options = root.productContent && root.productContent.options;
+  if (Array.isArray(options)) {
+    for (const option of options) {
+      normalizeOperatingHours(option && option.availability);
+    }
+  }
+  foldNestedOptionLayout(root);
+  return root;
+}
+
 function buildTourDiff(live, draft, maxDepth = 4) {
-  const liveSrc = live || {};
-  const draftSrc = draft || {};
+  const liveSrc = canonicalizeForDiff(live) || {};
+  const draftSrc = canonicalizeForDiff(draft) || {};
   const diffs = [];
   const record = (path, kind, before, after) => diffs.push({ path, kind, before, after });
 
@@ -351,12 +471,13 @@ function buildTourDiff(live, draft, maxDepth = 4) {
 
   const walk = (a, b, path, depth) => {
     if (a === b && (typeof a !== 'object' || a === null)) return;
-    // Empty-equivalence for scalars: '' ≡ null ≡ undefined. The rebuild
-    // pipeline produces these sentinels interchangeably (e.g. contactPhone
-    // '' live vs normalized null draft) — diffing them would invent phantom
-    // add/remove rows on every unrelated edit of the same blob.
-    const aEmpty = (a === undefined || a === null || a === '') && (typeof a !== 'object' || a === null);
-    const bEmpty = (b === undefined || b === null || b === '') && (typeof b !== 'object' || b === null);
+    // Empty-equivalence: '' ≡ null ≡ undefined ≡ false ≡ {} ≡ [] and
+    // combinations thereof. The rebuild pipeline produces these sentinels
+    // interchangeably (contactPhone '' vs null, accommodationIncluded false
+    // vs missing, perSlotCutoffs {} vs absent) — diffing them would invent
+    // phantom add/remove rows on every unrelated edit of the same blob.
+    const aEmpty = isDeeplyEmpty(a);
+    const bEmpty = isDeeplyEmpty(b);
     if (aEmpty && bEmpty) return;
     if (a === undefined || a === null) {
       record(path, 'added', undefined, truncate(b));
