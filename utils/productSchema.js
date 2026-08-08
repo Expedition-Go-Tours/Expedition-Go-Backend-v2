@@ -260,7 +260,7 @@ const schedulesAndPricingSchema = z.object({
   promotions: z.array(promotionSchema).optional(),
 });
 
-const productSchema = z.object({
+const productObjectSchema = z.object({
   // Step 1
   language: z.string().min(1, 'Select a language').max(50, 'Language must be at most 50 characters'),
   // Step 2
@@ -398,8 +398,12 @@ const productSchema = z.object({
   timezone: z.string().optional(),
   planPickupTimes: z.boolean().optional(),
   pickupStartTime: z.string().optional(),
-}).superRefine((data, ctx) => {
-  // Conditional validation: require accommodationIncluded when duration >= 24 hours
+});
+
+/**
+ * Conditional validation: require accommodationIncluded when duration >= 24 hours
+ */
+function accommodationInclusionRefinement(data, ctx) {
   if (data.duration != null && data.durationUnit) {
     const durationInHours = data.durationUnit === 'days' ? data.duration * 24
       : data.durationUnit === 'hours' ? data.duration
@@ -412,6 +416,14 @@ const productSchema = z.object({
       });
     }
   }
-});
+}
 
-module.exports = { productSchema, locationSchema, attractionSchema };
+// Full schema used for strict validation (submit-for-review).
+const productSchema = productObjectSchema.superRefine(accommodationInclusionRefinement);
+
+// Partial variant for progressive wizard/draft saves. Built from the plain
+// object schema so `.partial()` does not throw — Zod 4 forbids `.partial()`
+// on schemas that already carry refinements (advanced schemas).
+const productSchemaPartial = productObjectSchema.partial().superRefine(accommodationInclusionRefinement);
+
+module.exports = { productSchema, productSchemaPartial, locationSchema, attractionSchema };

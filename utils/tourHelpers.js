@@ -134,12 +134,15 @@ function parseJsonFields(data) {
  * and legacy nested JSON blob shape for backward compatibility.
  */
 function validateTourData(data, isPartial = false) {
-  const { productSchema } = require('./productSchema');
+  const { productSchema, productSchemaPartial } = require('./productSchema');
 
   try {
-    // Use Zod validation schema
+    // Use Zod validation schema. The partial variant is pre-built in
+    // productSchema: Zod 4 forbids calling `.partial()` on schemas that
+    // contain refinements, so `.partial()` is applied to the plain object
+    // schema there before the refinement is attached.
     const parsed = isPartial
-      ? productSchema.partial().safeParse(data)
+      ? productSchemaPartial.safeParse(data)
       : productSchema.safeParse(data);
 
     if (!parsed.success) {
