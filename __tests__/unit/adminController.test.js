@@ -745,7 +745,7 @@ describe('adminController', () => {
       await controller.getTourReviewQueue(req, res, next);
 
       expect(prisma.tour.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ status: 'REJECTED' }) })
+        expect.objectContaining({ where: expect.objectContaining({ OR: [{ status: 'REJECTED' }, { draftStatus: 'REJECTED' }] }) })
       );
     });
 
@@ -758,8 +758,8 @@ describe('adminController', () => {
       expect(arg.where.status).toBeUndefined();
     });
 
-    it('includes live-tour pending edits in the default PENDING_APPROVAL view', async () => {
-      req.query = { page: 1, limit: 20 };
+    it('includes live-tour pending edits in the PENDING_APPROVAL view', async () => {
+      req.query = { status: 'PENDING_APPROVAL', page: 1, limit: 20 };
 
       await controller.getTourReviewQueue(req, res, next);
 
@@ -768,6 +768,41 @@ describe('adminController', () => {
         { status: 'PENDING_APPROVAL' },
         { draftStatus: 'PENDING_APPROVAL' },
       ]);
+    });
+
+    it('shows ALL tours when no status is provided (All tab)', async () => {
+      req.query = { page: 1, limit: 20 };
+
+      await controller.getTourReviewQueue(req, res, next);
+
+      const arg = prisma.tour.findMany.mock.calls[0][0];
+      expect(arg.where).toEqual({});
+    });
+
+    it('includes rejected live-tour edits in the REJECTED view', async () => {
+      req.query = { status: 'REJECTED', page: 1, limit: 20 };
+
+      await controller.getTourReviewQueue(req, res, next);
+
+      const arg = prisma.tour.findMany.mock.calls[0][0];
+      expect(arg.where.OR).toEqual([
+        { status: 'REJECTED' },
+        { draftStatus: 'REJECTED' },
+      ]);
+    });
+
+    it('counts rejected items including rejected live-tour edits', async () => {
+      prisma.tour.count.mockResolvedValueOnce(5); // findMany totalCount
+      prisma.tour.count.mockResolvedValueOnce(2); // pending
+      prisma.tour.count.mockResolvedValueOnce(3); // rejected (incl. edits)
+      prisma.tour.count.mockResolvedValueOnce(1); // active
+      prisma.tour.count.mockResolvedValueOnce(4); // pendingEdits
+      req.query = { status: 'REJECTED', page: 1, limit: 20 };
+
+      await controller.getTourReviewQueue(req, res, next);
+
+      const body = res.json.mock.calls[0][0];
+      expect(body.data.counts).toEqual({ pending: 2, rejected: 3, active: 1, pendingEdits: 4 });
     });
 
     it('searches by title or supplier name (combined with the status filter)', async () => {
@@ -793,13 +828,15 @@ describe('adminController', () => {
       await controller.getTourReviewQueue(req, res, next);
 
       const arg = prisma.tour.findMany.mock.calls[0][0];
-      expect(arg.where).toEqual({
-        status: 'REJECTED',
-        OR: [
-          { title: { contains: 'Accra', mode: 'insensitive' } },
-          { supplier: { name: { contains: 'Accra', mode: 'insensitive' } } },
-        ],
-      });
+      expect(arg.where.AND).toEqual([
+        { OR: [{ status: 'REJECTED' }, { draftStatus: 'REJECTED' }] },
+        {
+          OR: [
+            { title: { contains: 'Accra', mode: 'insensitive' } },
+            { supplier: { name: { contains: 'Accra', mode: 'insensitive' } } },
+          ],
+        },
+      ]);
     });
 
     it('computes pagination from counts', async () => {
