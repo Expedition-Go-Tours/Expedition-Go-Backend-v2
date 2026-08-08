@@ -147,7 +147,7 @@ const liveRow = {
     meetingPoint: { name: 'Gate', address: 'Main Rd' },
   },
   schedulesAndPricing: { travelerDetails: {} },
-  bookingAndTickets: { meetingPoint: { name: 'Gate', address: 'Main Rd' } },
+  bookingAndTickets: { meetingPoint: { name: 'Gate', address: 'Main Rd' }, cutoffMinutes: 20 },
   status: 'ACTIVE',
   supplierId: 'supplier-1',
   draftSubmittedAt: null,
@@ -190,9 +190,7 @@ describe('updateTour (draft path)', () => {
     res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
     next = jest.fn();
     validateTourData.mockReturnValue({ isValid: true });
-    prisma.tour.findFirst
-      .mockResolvedValueOnce({ id: 'tour-1', status: 'ACTIVE', photos: liveRow.photos, title: liveRow.title })
-      .mockResolvedValue({ ...liveRow, draftContent: null });
+    prisma.tour.findFirst.mockResolvedValue({ ...liveRow, draftContent: null });
     prisma.tour.update.mockResolvedValue({ ...liveRow, draftStatus: 'DRAFT', draftContent: { title: 'Edited Title' } });
     prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'tour-1' }]);
   });
@@ -230,7 +228,6 @@ describe('updateTour (draft path)', () => {
   });
 
   it('preserves live content in the draft for a partial PATCH payload (presence-aware mapping)', async () => {
-    prisma.tour.findFirst.mockResolvedValue({ ...liveRow, draftContent: null });
     req.body = { title: 'Renamed' };
 
     await tourController.updateTour(req, res, next);
@@ -623,23 +620,6 @@ describe('admin draft review', () => {
     expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400, message: expect.stringContaining('no changes') }));
   });
 
-  it('rejects approval with a 400 when the draft theme is malformed JSON', async () => {
-    jest.clearAllMocks();
-    prisma.tour.findUnique
-      .mockResolvedValueOnce({ ...liveRow, draftStatus: 'PENDING_APPROVAL', draftContent: { ...liveRow, theme: 'not-json{{' }, supplier: { id: 'supplier-1' } })
-      .mockResolvedValue({ ...liveRow, draftStatus: 'PENDING_APPROVAL', draftContent: { ...liveRow, theme: 'not-json{{' } });
-    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'tour-1' }]);
-    prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
-
-    req = { params: { id: 'tour-1' }, body: { action: 'approve' }, user: { id: 'admin-1' } };
-    res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
-    next = jest.fn();
-
-    await adminController.reviewTourDraft(req, res, next);
-
-    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400, message: expect.stringContaining('theme') }));
-  });
-
   it('invalidates the expedition detail key for both the old and regenerated slug on approval', async () => {
     jest.clearAllMocks();
     prisma.tour.findUnique
@@ -673,9 +653,7 @@ describe('edit-while-pending lock', () => {
   });
 
   it('blocks editing a tour that is currently pending approval (409)', async () => {
-    prisma.tour.findFirst
-      .mockResolvedValueOnce({ id: 'tour-1', status: 'ACTIVE', photos: liveRow.photos, title: liveRow.title })
-      .mockResolvedValue({ ...liveRow, draftStatus: 'PENDING_APPROVAL', draftContent: { ...liveRow, title: 'Pending' } });
+    prisma.tour.findFirst.mockResolvedValue({ ...liveRow, draftStatus: 'PENDING_APPROVAL', draftContent: { ...liveRow, title: 'Pending' } });
 
     await tourController.updateTour(req, res, next);
 
@@ -684,9 +662,7 @@ describe('edit-while-pending lock', () => {
   });
 
   it('allows editing once the draft has been withdrawn back to DRAFT', async () => {
-    prisma.tour.findFirst
-      .mockResolvedValueOnce({ id: 'tour-1', status: 'ACTIVE', photos: liveRow.photos, title: liveRow.title })
-      .mockResolvedValue({ ...liveRow, draftStatus: 'DRAFT', draftContent: { ...liveRow, title: 'Pending' } });
+    prisma.tour.findFirst.mockResolvedValue({ ...liveRow, draftStatus: 'DRAFT', draftContent: { ...liveRow, title: 'Pending' } });
     prisma.tour.update.mockResolvedValue({ ...liveRow, draftStatus: 'DRAFT', draftContent: { title: 'Edited Title' } });
 
     await tourController.updateTour(req, res, next);

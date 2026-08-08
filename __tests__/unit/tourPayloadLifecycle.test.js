@@ -78,7 +78,7 @@ jest.mock('../../utils/tourHelpers', () => {
     validateTourData: jest.fn(() => ({ isValid: true, errors: [] })),
   };
 });
-jest.mock('../../utils/AppError', () => {
+jest.mock('../../utils/appError', () => {
   class AppError extends Error {
     constructor(msg, code) { super(msg); this.statusCode = code; this.status = code; }
   }

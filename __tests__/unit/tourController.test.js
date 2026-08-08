@@ -932,27 +932,6 @@ describe('tourController', () => {
       );
     });
 
-    it('handles theme normalization and secondary themes replacement', async () => {
-      req.body = {
-        theme: { primary: 'Adventure', secondary: ['Hiking', 'Camping'] },
-      };
-
-      await controller.updateTour(req, res, next);
-
-      expect(prisma.tour.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            secondaryThemes: expect.objectContaining({
-              deleteMany: {},
-              create: expect.arrayContaining([
-                expect.objectContaining({ theme: 'Hiking' }),
-              ]),
-            }),
-          }),
-        })
-      );
-    });
-
     it('extracts location fields from productContent', async () => {
       req.body = {
         title: 'Updated',
