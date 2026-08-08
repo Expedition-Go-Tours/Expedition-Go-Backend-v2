@@ -174,12 +174,17 @@ function injectLiveValues(view, blob, table) {
  * Presence-aware flat→blob mapping for the product builder.
  *
  * Maps flat 13-step store fields into the nested JSON blobs without letting
- * productToTour's defaults poison content the payload did not include — at
- * BLOB granularity:
- *  - a blob key the payload explicitly sent as a nested object always wins;
- *  - a blob whose flat inputs the payload touches is rebuilt, but the rebuild
+ * productToTour's defaults poison content the payload did not include — the
+ * flat form inputs are the source of truth at BLOB granularity:
+ *  - a blob whose flat inputs the payload touches is rebuilt, and the rebuild
  *    runs on a flat view seeded with live values for every omitted key, so
  *    untouched fields keep their live content (no default flood);
+ *  - an explicit nested blob never overrides the flat inputs: the frontend
+ *    can send a blob verbatim from a previous load, so trusting it would
+ *    silently drop the supplier's edits (admin would see an empty diff for a
+ *    real submission);
+ *  - an explicit nested blob WITHOUT flat drivers stays authoritative (admin
+ *    tooling / bulk imports send whole blobs);
  *  - a blob the payload never touches is left alone — the later
  *    mergeDraftContent keeps the live snapshot verbatim.
  * Flat duration/durationUnit remain the authoritative source for
@@ -211,21 +216,31 @@ function applyFlatToBlobMapping(body, baseTour) {
   const mapped = productToTour(view);
 
   for (const key of Object.keys(mapped)) {
-    if (hasExplicitBlob(key)) continue;
     if (JSON_BLOB_KEYS.includes(key)) {
-      if (touched[key]) {
-        // Carry forward any live blob keys the builder does not emit (legacy
-        // fields such as productContent.meetingPoint). Otherwise a rebuild
-        // silently drops them: the stored draft loses content and the admin
-        // diff invents a spurious "removed" row on every unrelated edit.
+      // Rebuild the blob when the payload carries the flat form inputs for it.
+      // Flat keys are the builder's source of truth even if an explicit nested
+      // object is also present — the frontend may send the nested blob
+      // verbatim from the page's previous load, in which case trusting it
+      // would silently drop the supplier's edits and the admin would see an
+      // empty diff ("0 changes") for a real submission. An explicit blob with
+      // NO flat drivers stays authoritative (admin tooling / bulk imports).
+      const flatDriven = FLAT_BLOB_SOURCES[key]
+        ? FLAT_BLOB_SOURCES[key].some((driver) => body[driver] !== undefined)
+        : false;
+      if (touched[key] && flatDriven) {
+        // Carry forward any keys the builder does not emit (legacy fields such
+        // as productContent.meetingPoint) from the explicit blob when present,
+        // else from the live blob. Otherwise a rebuild silently drops them: the
+        // stored draft loses the content and the admin diff invents a spurious
+        // "removed" row on every unrelated edit.
         const rebuilt = mapped[key];
-        const liveBlob = baseTour && baseTour[key];
+        const sourceBlob = (hasExplicitBlob(key) && body[key]) || (baseTour && baseTour[key]);
         if (
           rebuilt && typeof rebuilt === 'object' && !Array.isArray(rebuilt) &&
-          liveBlob && typeof liveBlob === 'object' && !Array.isArray(liveBlob)
+          sourceBlob && typeof sourceBlob === 'object' && !Array.isArray(sourceBlob)
         ) {
-          for (const legacyKey of Object.keys(liveBlob)) {
-            if (!(legacyKey in rebuilt)) rebuilt[legacyKey] = liveBlob[legacyKey];
+          for (const legacyKey of Object.keys(sourceBlob)) {
+            if (!(legacyKey in rebuilt)) rebuilt[legacyKey] = sourceBlob[legacyKey];
           }
         }
         body[key] = rebuilt;

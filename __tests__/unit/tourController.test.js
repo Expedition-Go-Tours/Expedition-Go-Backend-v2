@@ -1,15 +1,18 @@
-jest.mock('../../utils/prismaClient', () => ({
-  tour: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), groupBy: jest.fn(), aggregate: jest.fn() },
-  booking: { groupBy: jest.fn(), aggregate: jest.fn() },
-  review: { aggregate: jest.fn() },
-  supplierProfile: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
-  tourSecondaryTheme: { deleteMany: jest.fn(), createMany: jest.fn() },
-  payoutMethod: { findFirst: jest.fn() },
-  media: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-  $queryRaw: jest.fn(),
-  $transaction: jest.fn(),
-  $queryRawUnsafe: jest.fn(),
-}));
+jest.mock('../../utils/prismaClient', () => {
+  const booking = { groupBy: jest.fn(), aggregate: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 0 }) };
+  return {
+    tour: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), groupBy: jest.fn(), aggregate: jest.fn() },
+    booking,
+    review: { aggregate: jest.fn() },
+    supplierProfile: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
+    tourSecondaryTheme: { deleteMany: jest.fn(), createMany: jest.fn() },
+    payoutMethod: { findFirst: jest.fn() },
+    media: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    $queryRaw: jest.fn(),
+    $transaction: jest.fn((fn) => fn({ booking })),
+    $queryRawUnsafe: jest.fn(),
+  };
+});
 
 jest.mock('../../utils/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
@@ -1016,6 +1019,32 @@ describe('tourController', () => {
       await controller.deleteTour(req, res, next);
 
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('auto-cancels PENDING bookings instead of blocking deletion', async () => {
+      prisma.tour.findFirst.mockResolvedValue({
+        ...mockTour,
+        bookings: [
+          { id: 'b1', status: 'PENDING' },
+          { id: 'b2', status: 'PENDING' },
+        ],
+      });
+
+      await controller.deleteTour(req, res, next);
+
+expect(prisma.booking.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ['b1', 'b2'] }, status: 'PENDING' },
+          data: expect.objectContaining({
+            status: 'CANCELLED',
+            cancellationReason: 'Tour deleted by supplier',
+          }),
+        })
+      );
+      expect(prisma.tour.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'tour-1' } })
+      );
+      expect(res.status).toHaveBeenCalledWith(204);
     });
 
     it('deletes associated photos from Cloudinary', async () => {
