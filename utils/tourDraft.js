@@ -1,4 +1,259 @@
 const { createSlug, durationToMinutes, rebuildSchedulePrices, reconcileAvailability } = require('./tourHelpers');
+const { productToTour } = require('./productToTour');
+
+const JSON_BLOB_KEYS = ['categorization', 'productContent', 'schedulesAndPricing', 'bookingAndTickets'];
+
+// Flat source keys that drive each blob builder in utils/productToTour.js. A
+// payload touching ANY of these keys means the corresponding blob is being
+// edited; a payload touching NONE of them means the blob stays untouched.
+// Keys mirror the builder's `src.X` / `flat.X` reads (line-for-line).
+const FLAT_BLOB_SOURCES = {
+  categorization: [
+    'category', 'subcategory', 'activityType', 'difficulty', 'duration', 'durationUnit',
+    'transportMode', 'transportModes', 'transportServices', 'accommodationIncluded',
+  ],
+  productContent: [
+    'writingLanguage', 'language', 'shortSummary', 'shortDescription', 'highlights', 'locations',
+    'attractions', 'activitiesIncluded', 'pickupTransportTypes', 'included', 'whatsIncluded',
+    'excluded', 'whatsNotIncluded', 'guideType', 'guideMaterials', 'foodProvided', 'meals',
+    'mealType', 'showDietaryRestrictions', 'drinksIncluded', 'dietaryOptions',
+    'transportationProvided', 'transportationType', 'notSuitableFor', 'notAllowed', 'petFriendly',
+    'mandatoryItems', 'knowBeforeYouGo', 'emergencyCountryCode', 'emergencyPhone', 'voucherInfo',
+    'copyrightConfirmed', 'options', 'meetingPointDescription', 'meetingMode',
+    'meetingPointPicture', 'arrivalTime', 'arrivalTimeType', 'arrivalTimeCustom', 'pickupProvided',
+    'pickupAvailable', 'pickupType', 'pickupDescription', 'pickupTiming',
+    'pickupFinalLocationTiming', 'referenceStartTime', 'pickupAreas', 'pickupLocations',
+    'pickupGeoshape', 'dropoffProvided', 'dropoffAvailable', 'dropoffOption', 'dropoffLocation',
+    'dropoffDescription', 'isPrivateActivity', 'passportRequired', 'flightInfoRequired',
+    'shipInfoRequired', 'trainInfoRequired', 'hotelInfoRequired', 'contactPhone', 'crossCityTravel',
+    'planPickupTimes', 'pickupStartTime',
+  ],
+  schedulesAndPricing: [
+    'pricingModel', 'pricingApproach', 'uniformPrice', 'pricingCategories', 'ageGroups',
+    'minParticipants', 'maxParticipants', 'groupSizes', 'additionalPersonsEnabled',
+    'additionalPersonPrice', 'maxGroupsPerTimeSlot', 'currency', 'scheduleName',
+    'scheduleStartDate', 'scheduleHasEndDate', 'scheduleEndDate', 'timeSlots', 'dateExceptions',
+    'weeklySchedule', 'scheduleType', 'timezone',
+  ],
+  bookingAndTickets: [
+    'cancellationType', 'cutoffHours', 'cutoffMinutes', 'supplierCanCancelBadWeather',
+    'supplierCanCancelNotEnoughTravelers', 'meetingPoint', 'arrivalTime', 'pickupProvided',
+    'pickupType', 'pickupDescription', 'pickupTiming', 'pickupFinalLocationTiming',
+    'referenceStartTime', 'pickupAreas', 'pickupLocations', 'pickupGeoshape', 'dropoffOption',
+    'dropoffProvided', 'dropoffLocation', 'dropoffDescription', 'ticketType', 'instantBooking',
+    'instantConfirmation', 'maxQuantity', 'bookingWindow', 'minAdvanceBookingHours',
+    'travelerRequiredInfo', 'lastMinuteBookings', 'perSlotCutoff', 'perSlotCutoffs', 'timezone',
+  ],
+};
+
+// How each blob's LIVE values are re-injected into the flat view before the
+// mapping runs. Most fields are 1:1 (`flatKey -> liveBlob[flatKey]`); the
+// composites (duration, nested scheduler fields) get explicit resolvers.
+const FLAT_BLOB_INJECTS = {
+  categorization: {
+    own: ['category', 'subcategory', 'activityType', 'difficulty', 'transportMode', 'transportModes', 'transportServices', 'accommodationIncluded'],
+    duration: (blob) => (blob && blob.duration && typeof blob.duration === 'object'
+      ? { duration: blob.duration.value, durationUnit: blob.duration.unit }
+      : {}),
+  },
+  productContent: {
+    own: [
+      'writingLanguage', 'shortSummary', 'highlights', 'locations', 'attractions',
+      'activitiesIncluded', 'pickupTransportTypes', 'guideType', 'guideMaterials',
+      'foodProvided', 'meals', 'mealType', 'showDietaryRestrictions', 'drinksIncluded',
+      'dietaryOptions', 'transportationProvided', 'transportationType', 'notAllowed',
+      'petFriendly', 'emergencyCountryCode', 'emergencyPhone', 'voucherInfo',
+      'copyrightConfirmed', 'options', 'meetingMode', 'meetingPointPicture', 'arrivalTime',
+      'arrivalTimeType', 'arrivalTimeCustom', 'pickupProvided', 'pickupAvailable', 'pickupType',
+      'pickupDescription', 'pickupTiming', 'pickupFinalLocationTiming', 'referenceStartTime',
+      'pickupAreas', 'pickupLocations', 'pickupGeoshape', 'dropoffProvided', 'dropoffAvailable',
+      'dropoffOption', 'dropoffLocation', 'dropoffDescription', 'isPrivateActivity',
+      'passportRequired', 'flightInfoRequired', 'shipInfoRequired', 'trainInfoRequired',
+      'hotelInfoRequired', 'contactPhone', 'crossCityTravel', 'planPickupTimes',
+      'pickupStartTime', 'whatToBring', 'additionalInfo', 'meetingInstructions',
+      'healthRestrictions',
+    ],
+    // Primary key + the alias flat keys the builder falls back to. When the
+    // payload carries ANY form of the pair, the injected primary is discarded
+    // so the request's own value is the one that maps through.
+    aliases: {
+      included: ['whatsIncluded'],
+      excluded: ['whatsNotIncluded'],
+      shortSummary: ['shortDescription'],
+      writingLanguage: ['language'],
+    },
+    // Canonical blob name -> flat name the builder reads (reverse aliases).
+    reverse: {
+      healthRestrictions: 'notSuitableFor',
+      whatToBring: 'mandatoryItems',
+      additionalInfo: 'knowBeforeYouGo',
+      meetingInstructions: 'meetingPointDescription',
+    },
+  },
+  schedulesAndPricing: {
+    paths: {
+      pricingModel: ['travelerDetails', 'pricingModel'],
+      pricingApproach: ['travelerDetails', 'pricingApproach'],
+      uniformPrice: ['travelerDetails', 'uniformPrice'],
+      minParticipants: ['travelerDetails', 'minParticipants'],
+      maxParticipants: ['travelerDetails', 'maxParticipants'],
+      groupSizes: ['travelerDetails', 'groupSizes'],
+      additionalPersonsEnabled: ['travelerDetails', 'additionalPersonsEnabled'],
+      additionalPersonPrice: ['travelerDetails', 'additionalPersonPrice'],
+      maxGroupsPerTimeSlot: ['travelerDetails', 'maxGroupsPerTimeSlot'],
+      pricingCategories: ['travelerDetails', 'pricingCategories'],
+      ageGroups: ['travelerDetails', 'pricingCategories'],
+      currency: ['pricingSchedules', 'currency'],
+      scheduleName: ['pricingSchedules', 'schedules', 0, 'name'],
+      scheduleStartDate: ['pricingSchedules', 'schedules', 0, 'startDate'],
+      scheduleHasEndDate: ['pricingSchedules', 'schedules', 0, 'hasEndDate'],
+      scheduleEndDate: ['pricingSchedules', 'schedules', 0, 'endDate'],
+      timeSlots: ['pricingSchedules', 'schedules', 0, 'timeSlots'],
+      dateExceptions: ['pricingSchedules', 'schedules', 0, 'dateExceptions'],
+      weeklySchedule: ['availability', 'weeklySchedule'],
+      scheduleType: ['availability', 'scheduleType'],
+      timezone: ['availability', 'timezone'],
+    },
+  },
+  bookingAndTickets: {
+    own: [
+      'meetingPoint', 'arrivalTime', 'pickupProvided', 'pickupType', 'pickupDescription',
+      'pickupTiming', 'pickupFinalLocationTiming', 'referenceStartTime', 'pickupAreas',
+      'pickupLocations', 'pickupGeoshape', 'dropoffOption', 'dropoffProvided', 'dropoffLocation',
+      'dropoffDescription', 'ticketType', 'instantBooking', 'instantConfirmation', 'maxQuantity',
+      'bookingWindow', 'minAdvanceBookingHours', 'travelerRequiredInfo', 'cutoffMinutes',
+      'lastMinuteBookings', 'perSlotCutoff', 'perSlotCutoffs', 'timezone',
+    ],
+    paths: {
+      cancellationType: ['cancellationPolicy', 'type'],
+      supplierCanCancelBadWeather: ['cancellationPolicy', 'supplierCanCancelBadWeather'],
+      supplierCanCancelNotEnoughTravelers: ['cancellationPolicy', 'supplierCanCancelNotEnoughTravelers'],
+      cutoffHours: ['cancellationPolicy', 'cutoffHours'],
+    },
+  },
+};
+
+function getPath(obj, paths) {
+  if (!obj || typeof obj !== 'object') return undefined;
+  let node = obj;
+  for (let i = 0; i < paths.length; i += 1) {
+    if (node === null || typeof node !== 'object') return undefined;
+    node = node[paths[i]];
+  }
+  return node;
+}
+
+function injectLiveValues(view, blob, table) {
+  if (!blob || typeof blob !== 'object') return;
+  for (const [primary, aliases] of Object.entries(table.aliases || {})) {
+    const inGroup = [primary, ...aliases];
+    if (view[primary] !== undefined) continue;
+    if (!inGroup.some((k) => view[k] !== undefined) && blob[primary] !== undefined) view[primary] = blob[primary];
+  }
+  for (const flatKey of table.own || []) {
+    if (view[flatKey] === undefined && blob[flatKey] !== undefined) view[flatKey] = blob[flatKey];
+  }
+  for (const [canonical, flatKey] of Object.entries(table.canonicalMap || table.reverse || {})) {
+    if (view[flatKey] === undefined && blob[canonical] !== undefined) view[flatKey] = blob[canonical];
+  }
+  for (const [flatKey, paths] of Object.entries(table.paths || {})) {
+    if (view[flatKey] === undefined) {
+      const value = getPath(blob, paths);
+      if (value !== undefined) view[flatKey] = value;
+    }
+  }
+  if (table.duration) {
+    const pair = table.duration(blob);
+    for (const [k, v] of Object.entries(pair)) {
+      if (view[k] === undefined && v !== undefined) view[k] = v;
+    }
+  }
+}
+
+/**
+ * Presence-aware flat→blob mapping for the product builder.
+ *
+ * Maps flat 13-step store fields into the nested JSON blobs without letting
+ * productToTour's defaults poison content the payload did not include — at
+ * BLOB granularity:
+ *  - a blob key the payload explicitly sent as a nested object always wins;
+ *  - a blob whose flat inputs the payload touches is rebuilt, but the rebuild
+ *    runs on a flat view seeded with live values for every omitted key, so
+ *    untouched fields keep their live content (no default flood);
+ *  - a blob the payload never touches is left alone — the later
+ *    mergeDraftContent keeps the live snapshot verbatim.
+ * Flat duration/durationUnit remain the authoritative source for
+ * categorization.duration in both directions.
+ */
+function applyFlatToBlobMapping(body, baseTour) {
+  if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length === 0) return body;
+
+  const hasExplicitBlob = (key) => body[key] && typeof body[key] === 'object' && !Array.isArray(body[key]) && JSON_BLOB_KEYS.includes(key);
+
+  const touched = {};
+  for (const key of JSON_BLOB_KEYS) {
+    if (hasExplicitBlob(key)) {
+      touched[key] = true;
+      continue;
+    }
+    if (FLAT_BLOB_SOURCES[key] && FLAT_BLOB_SOURCES[key].some((driver) => body[driver] !== undefined)) {
+      touched[key] = true;
+    }
+  }
+  if (!JSON_BLOB_KEYS.some((key) => touched[key])) return body;
+
+  const view = { ...body };
+  for (const key of JSON_BLOB_KEYS) delete view[key];
+  for (const key of JSON_BLOB_KEYS) {
+    if (touched[key] && baseTour) injectLiveValues(view, baseTour[key], FLAT_BLOB_INJECTS[key]);
+  }
+
+  const mapped = productToTour(view);
+
+  for (const key of Object.keys(mapped)) {
+    if (hasExplicitBlob(key)) continue;
+    if (JSON_BLOB_KEYS.includes(key)) {
+      if (touched[key]) body[key] = mapped[key];
+      continue;
+    }
+  }
+  for (const key of ['title', 'description', 'metaTitle', 'metaDescription', 'referenceCode']) {
+    if (body[key] !== undefined && mapped[key] !== undefined) body[key] = mapped[key];
+  }
+  if (touched.categorization || hasExplicitBlob('categorization')) {
+    for (const key of ['category', 'subcategory', 'activityType', 'difficulty', 'durationMinutes']) {
+      if (body[key] !== undefined || mapped[key] !== undefined) body[key] = mapped[key];
+    }
+  }
+  if (body.tags === undefined && (body.keywords !== undefined) && mapped.tags !== undefined) {
+    body.tags = mapped.tags;
+  }
+  const locationDrivers = ['locations', 'city', 'country', 'region', 'meetingPoint', 'latitude', 'longitude'];
+  if (locationDrivers.some((k) => body[k] !== undefined)) {
+    for (const key of ['city', 'country', 'region', 'latitude', 'longitude']) {
+      if (mapped[key] !== undefined) body[key] = mapped[key];
+    }
+  }
+
+  // Flat duration/durationUnit are authoritative — they are the form's source
+  // of truth for both the flattened and the nested representations.
+  const hasFlatDuration = typeof body.duration === 'number' && typeof body.durationUnit === 'string' && body.durationUnit;
+  const catObj = body.categorization && typeof body.categorization === 'object' ? body.categorization : null;
+  const nestedDuration = catObj && catObj.duration && typeof catObj.duration === 'object' ? catObj.duration : null;
+  if (!hasFlatDuration && nestedDuration && typeof nestedDuration.value === 'number' && nestedDuration.unit) {
+    body.duration = nestedDuration.value;
+    body.durationUnit = nestedDuration.unit;
+  }
+  if (hasFlatDuration) {
+    if (catObj) {
+      body.categorization = { ...catObj, duration: { value: body.duration, unit: body.durationUnit } };
+    } else {
+      body.categorization = { duration: { value: body.duration, unit: body.durationUnit } };
+    }
+  }
+
+  return body;
+}
 
 const CONTENT_FIELDS = [
   'title',
@@ -9,7 +264,6 @@ const CONTENT_FIELDS = [
   'metaTitle',
   'metaDescription',
   'categorization',
-  'theme',
   'productContent',
   'schedulesAndPricing',
   'bookingAndTickets',
@@ -25,7 +279,6 @@ function tourContentSnapshot(tour) {
     metaTitle: tour.metaTitle ?? null,
     metaDescription: tour.metaDescription ?? null,
     categorization: tour.categorization,
-    theme: tour.theme,
     productContent: tour.productContent,
     schedulesAndPricing: tour.schedulesAndPricing,
     bookingAndTickets: tour.bookingAndTickets,
@@ -33,18 +286,12 @@ function tourContentSnapshot(tour) {
 }
 
 function mergeDraftContent(liveRow, draftContent) {
-  console.log('[DEBUG mergeDraftContent] liveRow.categorization:', liveRow?.categorization);
-  console.log('[DEBUG mergeDraftContent] draftContent.categorization:', draftContent?.categorization);
-  console.log('[DEBUG mergeDraftContent] draftContent.duration:', draftContent?.duration);
-  
   const snapshot = tourContentSnapshot(liveRow);
   if (!draftContent || typeof draftContent !== 'object') return snapshot;
   const merged = {
     ...snapshot,
     ...Object.fromEntries(CONTENT_FIELDS.map((f) => [f, draftContent[f] !== undefined ? draftContent[f] : snapshot[f]])),
   };
-  console.log('[DEBUG mergeDraftContent] merged.categorization:', merged.categorization);
-  console.log('[DEBUG mergeDraftContent] merged.duration:', merged.duration);
   return merged;
 }
 
@@ -56,11 +303,6 @@ function truncate(value, max = 400) {
 }
 
 function buildTourDiff(live, draft, maxDepth = 4) {
-  console.log('[DEBUG buildTourDiff] live.categorization:', live?.categorization);
-  console.log('[DEBUG buildTourDiff] draft.categorization:', draft?.categorization);
-  console.log('[DEBUG buildTourDiff] live.duration:', live?.duration);
-  console.log('[DEBUG buildTourDiff] draft.duration:', draft?.duration);
-  
   const liveSrc = live || {};
   const draftSrc = draft || {};
   const diffs = [];
@@ -155,7 +397,6 @@ async function buildLiveUpdateData(tx, liveRow, draftContent) {
     metaTitle: merged.metaTitle,
     metaDescription: merged.metaDescription,
     categorization: merged.categorization,
-    theme: merged.theme,
     productContent: merged.productContent,
     // Re-normalize the derived prices AND reconcile the availability aggregate
     // before the snapshot goes live. This is the last gate before the public
@@ -182,11 +423,6 @@ async function buildLiveUpdateData(tx, liveRow, draftContent) {
     updateData.durationMinutes = durationToMinutes(cat.duration);
   }
 
-  const th = parseJson(merged.theme);
-  if (th && typeof th === 'object') {
-    updateData.primaryTheme = th.primaryTheme || th.primary || null;
-  }
-
   const pc = parseJson(merged.productContent);
   const firstLoc = Array.isArray(pc && pc.locations) ? pc.locations[0] : (pc && pc.location) || null;
   updateData.city = firstLoc ? firstLoc.city || null : null;
@@ -202,9 +438,11 @@ async function buildLiveUpdateData(tx, liveRow, draftContent) {
 
 module.exports = {
   CONTENT_FIELDS,
+  JSON_BLOB_KEYS,
   tourContentSnapshot,
   mergeDraftContent,
   buildTourDiff,
   computeChangesSummary,
   buildLiveUpdateData,
+  applyFlatToBlobMapping,
 };

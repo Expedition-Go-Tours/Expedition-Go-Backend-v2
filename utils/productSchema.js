@@ -373,9 +373,6 @@ const productSchema = z.object({
   // validateStoredPricing.
   schedulesAndPricing: schedulesAndPricingSchema.nullable().optional(),
 
-  // Theme fields
-  primaryTheme: z.string().optional(),
-  secondaryThemes: z.array(z.string()).optional(),
   // Cancellation
   cutoffHours: z.number().min(0).optional(),
   cancellationType: z.enum(['standard', 'all_sales_final']).optional(),

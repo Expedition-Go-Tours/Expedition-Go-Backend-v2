@@ -99,6 +99,7 @@ jest.mock('../../utils/productToTour', () => ({
     },
     bookingAndTickets: {
       meetingPoint: flat.meetingPoint || { name: 'Gate', address: 'Main Rd' },
+      pickupProvided: !!flat.pickupProvided,
       cutoffMinutes: flat.cutoffMinutes || 20,
       cancellationPolicy: flat.cancellationPolicy || { type: 'standard' },
     }
@@ -227,6 +228,20 @@ describe('updateTour (draft path)', () => {
     const draftCall = prisma.tour.update.mock.calls.find((c) => c[0] && c[0].data && c[0].data.draftStatus === 'DRAFT');
     expect(draftCall).toBeUndefined();
   });
+
+  it('preserves live content in the draft for a partial PATCH payload (presence-aware mapping)', async () => {
+    prisma.tour.findFirst.mockResolvedValue({ ...liveRow, draftContent: null });
+    req.body = { title: 'Renamed' };
+
+    await tourController.updateTour(req, res, next);
+
+    const draft = prisma.tour.update.mock.calls[0][0].data.draftContent;
+    expect(draft.title).toBe('Renamed');
+    expect(draft.categorization.category).toBe('Adventure');
+    expect(draft.productContent.writingLanguage).toBe('English');
+    expect(draft.tags).toEqual(['nature']);
+    expect(draft.photos).toEqual(liveRow.photos);
+  });
 });
 
 describe('submitTourForReview (live tour with draft)', () => {
@@ -298,7 +313,44 @@ describe('submitTourForReview (live tour with draft)', () => {
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
-  it('rolls back when the submitted payload fails review validation (no update)', async () => {
+  it('maps flat builder edits (difficulty/duration) into the submitted nested draft', async () => {
+    const withDraft = { ...liveRow, draftContent: { ...liveRow, title: 'Old Draft' } };
+    prisma.tour.findFirst.mockResolvedValue({ ...withDraft, supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    prisma.tour.update.mockResolvedValue({ ...withDraft, draftSubmittedAt: new Date(), draftStatus: 'PENDING_APPROVAL', supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    req.body = { title: 'Edited Tour', difficulty: 'extreme', duration: 10, durationUnit: 'days' };
+
+    await tourController.submitTourForReview(req, res, next);
+
+    const updateCall = prisma.tour.update.mock.calls[0][0];
+    expect(updateCall.data.draftContent.categorization.difficulty).toBe('extreme');
+    expect(updateCall.data.draftContent.categorization.duration).toEqual({ value: 10, unit: 'days' });
+    expect(updateCall.data.draftContent.title).toBe('Edited Tour');
+  });
+
+  it('does not leak the pre-submission draft into the admin changes summary', async () => {
+    // Stored draft is an unchanged copy of the live tour — a truly stale draft.
+    prisma.tour.findFirst.mockResolvedValue({ ...liveRow, draftContent: { ...liveRow }, supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    // The persisted row carries the FRESH submitted content.
+    prisma.tour.update.mockResolvedValue({
+      ...liveRow,
+      title: 'Edited Tour',
+      draftContent: { ...liveRow, title: 'Edited Tour', categorization: { category: 'Adventure', difficulty: 'extreme' } },
+      draftSubmittedAt: new Date(),
+      draftStatus: 'PENDING_APPROVAL',
+      supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null },
+    });
+    req.body = { title: 'Edited Tour', difficulty: 'extreme' };
+
+    await tourController.submitTourForReview(req, res, next);
+
+    const summary = notifyAdmin.mock.calls[0][0].data.changesSummary;
+    expect(summary.count).toBeGreaterThan(0);
+    const paths = summary.sections.flatMap((s) => s.paths);
+    expect(paths).toContain('title');
+    expect(paths).toContain('categorization.difficulty');
+  });
+
+  it('rejects a submission whose pricing fails validation', async () => {
     const withDraft = { ...liveRow, draftContent: { ...liveRow, title: 'Old Draft' } };
     prisma.tour.findFirst.mockResolvedValue({ ...withDraft, supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
     req.body = { title: 'Has Bad Pricing', schedulesAndPricing: { travelerDetails: { pricingCategories: [{ name: 'Child', price: null }] } } };
@@ -341,6 +393,100 @@ describe('submitTourForReview (live tour with draft)', () => {
     expect(updateCall.data.status).toBe('PENDING_APPROVAL');
     expect(updateCall.data.title).toBe('Draft Tour Name');
     expect(updateCall.data.photos).toEqual(liveRow.photos);
+  });
+
+  it('submits the TOTAL flat builder state as a fully nested payload for a fresh (non-live) tour', async () => {
+    prisma.tour.findFirst.mockResolvedValue({ ...liveRow, status: 'DRAFT', supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    prisma.tour.update.mockResolvedValue({ ...liveRow, status: 'PENDING_APPROVAL', supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    req.body = {
+      title: 'Fresh Nested Tour',
+      description: 'Every flat field must land somewhere nested',
+      category: 'Adventure',
+      subcategory: 'Water',
+      difficulty: 'moderate',
+      duration: 5,
+      durationUnit: 'hours',
+      pickupProvided: true,
+      cutoffMinutes: 45,
+      options: [{ id: 'opt-1', name: 'Standard', price: 99 }],
+    };
+
+    await tourController.submitTourForReview(req, res, next);
+
+    const updateCall = prisma.tour.update.mock.calls[0][0];
+    const data = updateCall.data;
+    expect(data.status).toBe('PENDING_APPROVAL');
+    expect(data.title).toBe('Fresh Nested Tour');
+    expect(data.categorization).toEqual(expect.objectContaining({
+      category: 'Adventure',
+      difficulty: 'moderate',
+      duration: { value: 5, unit: 'hours' },
+    }));
+    expect(data.productContent.options).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'opt-1' })]));
+    expect(data.bookingAndTickets).toEqual(expect.objectContaining({
+      pickupProvided: true,
+      cutoffMinutes: 45,
+    }));
+    expect(data.schedulesAndPricing).toEqual(expect.objectContaining({ travelerDetails: expect.any(Object) }));
+  });
+
+  it('preserves live content the partial payload did not include (no default poisoning)', async () => {
+    const withDraft = { ...liveRow, draftContent: { ...liveRow, title: 'Stale Draft' } };
+    prisma.tour.findFirst.mockResolvedValue({ ...withDraft, supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    prisma.tour.update.mockResolvedValue({ ...withDraft, draftSubmittedAt: new Date(), draftStatus: 'PENDING_APPROVAL', supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    req.body = { title: 'Renamed Only' };
+
+    await tourController.submitTourForReview(req, res, next);
+
+    const draft = prisma.tour.update.mock.calls[0][0].data.draftContent;
+    expect(draft.title).toBe('Renamed Only');
+    expect(draft.categorization.category).toBe('Adventure');
+    expect(draft.productContent.writingLanguage).toBe('English');
+    expect(draft.productContent.highlights).toEqual(['Scenic views']);
+    expect(draft.tags).toEqual(['nature']);
+    expect(draft.bookingAndTickets.cutoffMinutes).toBe(20);
+    expect(draft.photos).toEqual(liveRow.photos);
+  });
+
+  it('keeps the admin diff surface minimal for a small edit (no default flood)', async () => {
+    const withDraft = { ...liveRow, draftContent: { ...liveRow, title: 'Old Draft' } };
+    prisma.tour.findFirst.mockResolvedValue({ ...withDraft, supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    prisma.tour.update.mockResolvedValue({ ...withDraft, draftSubmittedAt: new Date(), draftStatus: 'PENDING_APPROVAL', supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    req.body = { title: 'Renamed Only' };
+
+    await tourController.submitTourForReview(req, res, next);
+
+    const summary = notifyAdmin.mock.calls[0][0].data.changesSummary;
+    const paths = summary.sections.flatMap((s) => s.paths);
+    expect(paths).toContain('title');
+    expect(paths).not.toContain('productContent.writingLanguage');
+    expect(paths).not.toContain('tags');
+    expect(paths).not.toContain('bookingAndTickets.cutoffMinutes');
+  });
+
+  it('never approves a coverless listing — cleared cover falls back to photos[0]', async () => {
+    const withDraft = { ...liveRow, draftContent: { ...liveRow, title: 'Old Draft' } };
+    prisma.tour.findFirst.mockResolvedValue({ ...withDraft, supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    prisma.tour.update.mockResolvedValue({ ...withDraft, draftSubmittedAt: new Date(), draftStatus: 'PENDING_APPROVAL', supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    req.body = { title: 'Coverless', coverPhoto: '' };
+
+    await tourController.submitTourForReview(req, res, next);
+
+    const draft = prisma.tour.update.mock.calls[0][0].data.draftContent;
+    expect(draft.coverPhoto).toBe(liveRow.photos[0]);
+  });
+
+  it('normalizes empty metadata strings to null in the submitted draft', async () => {
+    const withDraft = { ...liveRow, draftContent: { ...liveRow, title: 'Old Draft' } };
+    prisma.tour.findFirst.mockResolvedValue({ ...withDraft, supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    prisma.tour.update.mockResolvedValue({ ...withDraft, draftSubmittedAt: new Date(), draftStatus: 'PENDING_APPROVAL', supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    req.body = { title: 'Seo Edit', metaTitle: '', metaDescription: '' };
+
+    await tourController.submitTourForReview(req, res, next);
+
+    const draft = prisma.tour.update.mock.calls[0][0].data.draftContent;
+    expect(draft.metaTitle).toBeNull();
+    expect(draft.metaDescription).toBeNull();
   });
 });
 

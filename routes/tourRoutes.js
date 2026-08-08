@@ -673,7 +673,7 @@ router.get('/supplier/my-tours', resolveSupplier, requireTeamPermission('tours.v
  *   post:
  *     summary: Create new tour (suppliers only)
  *     description: |
- *       Create a new tour listing. Complex fields (categorization, theme, productContent, schedulesAndPricing, bookingAndTickets) 
+ *       Create a new tour listing. Complex fields (categorization, productContent, schedulesAndPricing, bookingAndTickets) 
  *       should be sent as JSON strings in the multipart form data.
  *       
  *       **Note:** When using multipart/form-data, JSON objects must be stringified.
@@ -714,13 +714,6 @@ router.get('/supplier/my-tours', resolveSupplier, requireTeamPermission('tours.v
  *                   - duration: Duration in minutes (integer)
  *                   - transportMode: Object with air/land/water arrays (e.g., {"land":["Walking","4x4/Jeep"],"air":["Plane"]})
  *                 example: '{"category":"Cultural","subcategory":"Walking Tours","difficulty":"Easy","duration":120,"transportMode":{"land":["Walking","4x4/Jeep"],"air":["Plane"]}}'
- *               theme:
- *                 type: string
- *                 description: |
- *                   JSON string containing:
- *                   - primaryTheme: Main theme
- *                   - secondaryThemes: Array of additional themes
- *                 example: '{"primaryTheme":"Nature & Wildlife","secondaryThemes":["Photography","Adventure"]}'
  *               productContent:
  *                 type: string
  *                 description: |
@@ -847,9 +840,6 @@ router.post('/', resolveSupplier, requireTeamPermission('tours.create'), uploadT
  *               categorization:
  *                 type: string
  *                 description: JSON string with category, subcategory, difficulty, and duration
- *               theme:
- *                 type: string
- *                 description: JSON string with theme details
  *               productContent:
  *                 type: string
  *                 description: JSON string with highlights, included items, excluded items, etc.
