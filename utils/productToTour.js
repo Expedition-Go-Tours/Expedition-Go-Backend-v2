@@ -53,107 +53,117 @@ function productToTour(flat) {
   return result;
 }
 
+function asSource(flat, key) {
+  // prefer nested blob (flat[key]) if present, otherwise use top-level flat
+  if (flat[key] && typeof flat[key] === 'object') return flat[key];
+  return flat;
+}
+
 function buildCategorization(flat) {
-  const durationValue = flat.duration != null
-    ? { value: flat.duration, unit: flat.durationUnit || 'hours' }
+  const src = asSource(flat, 'categorization');
+  const durationValue = src.duration != null
+    ? { value: src.duration, unit: src.durationUnit || 'hours' }
     : null;
 
   return {
-    category: flat.category || null,
-    subcategory: flat.subcategory || null,
-    activityType: flat.activityType || null,
-    difficulty: flat.difficulty || null,
+    category: src.category || null,
+    subcategory: src.subcategory || null,
+    activityType: src.activityType || null,
+    difficulty: src.difficulty || null,
     duration: durationValue,
-    transportMode: flat.transportMode || null,
-    transportModes: Array.isArray(flat.transportModes) ? flat.transportModes : [],
-    transportServices: Array.isArray(flat.transportServices) ? flat.transportServices : [],
-    accommodationIncluded: flat.accommodationIncluded != null ? !!flat.accommodationIncluded : null,
+    transportMode: src.transportMode || null,
+    transportModes: Array.isArray(src.transportModes) ? src.transportModes : [],
+    transportServices: Array.isArray(src.transportServices) ? src.transportServices : [],
+    accommodationIncluded: src.accommodationIncluded != null ? !!src.accommodationIncluded : null,
   };
 }
 
 function buildTheme(flat) {
+  const src = asSource(flat, 'theme');
   return {
-    primaryTheme: flat.primaryTheme || null,
-    secondary: Array.isArray(flat.secondaryThemes) ? flat.secondaryThemes : [],
+    primaryTheme: src.primaryTheme || src.primary || null,
+    secondary: Array.isArray(src.secondary) ? src.secondary : [],
   };
 }
 
 function buildProductContent(flat) {
+  const src = asSource(flat, 'productContent');
   return {
-    writingLanguage: flat.language || '',
-    shortSummary: flat.shortDescription || '',
-    highlights: Array.isArray(flat.highlights) ? flat.highlights : [],
-    locations: Array.isArray(flat.locations) ? flat.locations : [],
-    attractions: Array.isArray(flat.attractions) ? flat.attractions : [],
-    activitiesIncluded: Array.isArray(flat.activitiesIncluded) ? flat.activitiesIncluded : [],
-    pickupTransportTypes: Array.isArray(flat.pickupTransportTypes) ? flat.pickupTransportTypes : [],
-    included: Array.isArray(flat.whatsIncluded) ? flat.whatsIncluded : [],
-    excluded: Array.isArray(flat.whatsNotIncluded) ? flat.whatsNotIncluded : [],
-    guideType: flat.guideType || 'tour-guide',
-    guideMaterials: flat.guideMaterials || { audioGuide: false, infoBooklet: false },
-    foodProvided: !!flat.foodProvided,
-    meals: Array.isArray(flat.meals) ? flat.meals : [],
-    mealType: flat.mealType || '',
-    showDietaryRestrictions: !!flat.showDietaryRestrictions,
-    drinksIncluded: !!flat.drinksIncluded,
-    dietaryOptions: Array.isArray(flat.dietaryOptions) ? flat.dietaryOptions : [],
-    transportationProvided: !!flat.transportationProvided,
-    transportationType: flat.transportationType || '',
-    healthRestrictions: Array.isArray(flat.notSuitableFor) ? flat.notSuitableFor : [],
-    notAllowed: Array.isArray(flat.notAllowed) ? flat.notAllowed : [],
-    petFriendly: !!flat.petFriendly,
-    whatToBring: Array.isArray(flat.mandatoryItems) ? flat.mandatoryItems : [],
-    additionalInfo: flat.knowBeforeYouGo || '',
+    writingLanguage: src.writingLanguage || src.language || '',
+    shortSummary: src.shortSummary || src.shortDescription || '',
+    highlights: Array.isArray(src.highlights) ? src.highlights : [],
+    locations: Array.isArray(src.locations) ? src.locations : [],
+    attractions: Array.isArray(src.attractions) ? src.attractions : [],
+    activitiesIncluded: Array.isArray(src.activitiesIncluded) ? src.activitiesIncluded : [],
+    pickupTransportTypes: Array.isArray(src.pickupTransportTypes) ? src.pickupTransportTypes : [],
+    included: Array.isArray(src.included) ? src.included : (Array.isArray(src.whatsIncluded) ? src.whatsIncluded : []),
+    excluded: Array.isArray(src.excluded) ? src.excluded : (Array.isArray(src.whatsNotIncluded) ? src.whatsNotIncluded : []),
+    guideType: src.guideType || 'tour-guide',
+    guideMaterials: src.guideMaterials || { audioGuide: false, infoBooklet: false },
+    foodProvided: !!src.foodProvided,
+    meals: Array.isArray(src.meals) ? src.meals : [],
+    mealType: src.mealType || '',
+    showDietaryRestrictions: !!src.showDietaryRestrictions,
+    drinksIncluded: !!src.drinksIncluded,
+    dietaryOptions: Array.isArray(src.dietaryOptions) ? src.dietaryOptions : [],
+    transportationProvided: !!src.transportationProvided,
+    transportationType: src.transportationType || '',
+    healthRestrictions: Array.isArray(src.notSuitableFor) ? src.notSuitableFor : [],
+    notAllowed: Array.isArray(src.notAllowed) ? src.notAllowed : [],
+    petFriendly: !!src.petFriendly,
+    whatToBring: Array.isArray(src.mandatoryItems) ? src.mandatoryItems : [],
+    additionalInfo: src.knowBeforeYouGo || '',
     emergencyCountryCode: (() => {
-      if (flat.emergencyCountryCode) return flat.emergencyCountryCode;
-      if (flat.emergencyPhone) return extractCountryFromE164(flat.emergencyPhone) || '';
+      if (src.emergencyCountryCode) return src.emergencyCountryCode;
+      if (src.emergencyPhone) return extractCountryFromE164(src.emergencyPhone) || '';
       return '';
     })(),
-    emergencyPhone: normalizeToE164(flat.emergencyPhone) || '',
-    voucherInfo: flat.voucherInfo || '',
-    copyrightConfirmed: !!flat.copyrightConfirmed,
-    options: Array.isArray(flat.options) ? flat.options : [],
-    meetingInstructions: flat.meetingPointDescription || '',
-    meetingMode: flat.meetingMode || 'meeting_point',
-    meetingPointPicture: flat.meetingPointPicture || '',
-    arrivalTime: flat.arrivalTime || '',
-    arrivalTimeType: flat.arrivalTimeType || 'none',
-    arrivalTimeCustom: flat.arrivalTimeCustom || '',
-    pickupProvided: flat.meetingMode === 'pickup',
-    pickupAvailable: flat.meetingMode === 'pickup',
-    pickupType: flat.pickupType || 'area',
-    pickupDescription: flat.pickupDescription || '',
-    pickupTiming: flat.pickupTiming || 'at_start',
-    pickupFinalLocationTiming: flat.pickupFinalLocationTiming || 'day_before',
-    referenceStartTime: flat.referenceStartTime || '',
-    pickupAreas: Array.isArray(flat.pickupAreas) ? flat.pickupAreas : [],
-    pickupLocations: Array.isArray(flat.pickupLocations) ? flat.pickupLocations : [],
-    pickupGeoshape: flat.pickupGeoshape || null,
-    dropoffProvided: flat.dropoffOption && flat.dropoffOption !== 'none',
-    dropoffAvailable: flat.dropoffOption && flat.dropoffOption !== 'none',
-    dropoffOption: flat.dropoffOption || 'none',
-    dropoffLocation: flat.dropoffLocation || null,
-    dropoffDescription: flat.dropoffDescription || '',
-    isPrivateActivity: !!flat.isPrivateActivity,
-    passportRequired: !!flat.passportRequired,
-    flightInfoRequired: !!flat.flightInfoRequired,
-    shipInfoRequired: !!flat.shipInfoRequired,
-    trainInfoRequired: !!flat.trainInfoRequired,
-    hotelInfoRequired: !!flat.hotelInfoRequired,
-    contactPhone: normalizeToE164(flat.contactPhone),
-    crossCityTravel: !!flat.crossCityTravel,
-    planPickupTimes: !!flat.planPickupTimes,
-    pickupStartTime: flat.pickupStartTime || '08:00',
+    emergencyPhone: normalizeToE164(src.emergencyPhone) || '',
+    voucherInfo: src.voucherInfo || '',
+    copyrightConfirmed: !!src.copyrightConfirmed,
+    options: Array.isArray(src.options) ? src.options : [],
+    meetingInstructions: src.meetingPointDescription || '',
+    meetingMode: src.meetingMode || 'meeting_point',
+    meetingPointPicture: src.meetingPointPicture || '',
+    arrivalTime: src.arrivalTime || '',
+    arrivalTimeType: src.arrivalTimeType || 'none',
+    arrivalTimeCustom: src.arrivalTimeCustom || '',
+    pickupProvided: src.meetingMode === 'pickup',
+    pickupAvailable: src.meetingMode === 'pickup',
+    pickupType: src.pickupType || 'area',
+    pickupDescription: src.pickupDescription || '',
+    pickupTiming: src.pickupTiming || 'at_start',
+    pickupFinalLocationTiming: src.pickupFinalLocationTiming || 'day_before',
+    referenceStartTime: src.referenceStartTime || '',
+    pickupAreas: Array.isArray(src.pickupAreas) ? src.pickupAreas : [],
+    pickupLocations: Array.isArray(src.pickupLocations) ? src.pickupLocations : [],
+    pickupGeoshape: src.pickupGeoshape || null,
+    dropoffProvided: src.dropoffOption && src.dropoffOption !== 'none',
+    dropoffAvailable: src.dropoffOption && src.dropoffOption !== 'none',
+    dropoffOption: src.dropoffOption || 'none',
+    dropoffLocation: src.dropoffLocation || null,
+    dropoffDescription: src.dropoffDescription || '',
+    isPrivateActivity: !!src.isPrivateActivity,
+    passportRequired: !!src.passportRequired,
+    flightInfoRequired: !!src.flightInfoRequired,
+    shipInfoRequired: !!src.shipInfoRequired,
+    trainInfoRequired: !!src.trainInfoRequired,
+    hotelInfoRequired: !!src.hotelInfoRequired,
+    contactPhone: normalizeToE164(src.contactPhone),
+    crossCityTravel: !!src.crossCityTravel,
+    planPickupTimes: !!src.planPickupTimes,
+    pickupStartTime: src.pickupStartTime || '08:00',
   };
 }
 
 function buildSchedulesAndPricing(flat) {
-  const cats = Array.isArray(flat.pricingCategories) ? flat.pricingCategories : (Array.isArray(flat.ageGroups) ? flat.ageGroups : [])
+  const src = asSource(flat, 'schedulesAndPricing');
+  const cats = Array.isArray(src.pricingCategories) ? src.pricingCategories : (Array.isArray(src.ageGroups) ? src.ageGroups : [])
 
   const prices = []
-  if (flat.pricingModel === 'perGroup') {
-    if (Array.isArray(flat.groupSizes)) {
-      for (const gs of flat.groupSizes) {
+  if (src.pricingModel === 'perGroup') {
+    if (Array.isArray(src.groupSizes)) {
+      for (const gs of src.groupSizes) {
         if (gs.price != null) {
           prices.push({ label: gs.from === gs.to ? `Group of ${gs.from}` : `Group of ${gs.from}-${gs.to}`, retailPrice: gs.price, groupSize: true })
         }
@@ -169,39 +179,40 @@ function buildSchedulesAndPricing(flat) {
 
   return {
     travelerDetails: {
-      pricingModel: flat.pricingModel || 'perPerson',
-      pricingApproach: flat.pricingApproach || 'dependsOnAge',
-      uniformPrice: flat.uniformPrice ?? null,
+      pricingModel: src.pricingModel || 'perPerson',
+      pricingApproach: src.pricingApproach || 'dependsOnAge',
+      uniformPrice: src.uniformPrice ?? null,
       pricingCategories: cats,
       ageGroups: cats.map(c => ({ label: c.name, minAge: c.minAge, maxAge: c.maxAge })),
-      minParticipants: flat.minParticipants ?? null,
-      maxParticipants: flat.maxParticipants ?? null,
-      groupSizes: Array.isArray(flat.groupSizes) ? flat.groupSizes : [],
-      additionalPersonsEnabled: !!flat.additionalPersonsEnabled,
-      additionalPersonPrice: flat.additionalPersonPrice ?? null,
-      maxGroupsPerTimeSlot: flat.maxGroupsPerTimeSlot ?? 1,
+      minParticipants: src.minParticipants ?? null,
+      maxParticipants: src.maxParticipants ?? null,
+      groupSizes: Array.isArray(src.groupSizes) ? src.groupSizes : [],
+      additionalPersonsEnabled: !!src.additionalPersonsEnabled,
+      additionalPersonPrice: src.additionalPersonPrice ?? null,
+      maxGroupsPerTimeSlot: src.maxGroupsPerTimeSlot ?? 1,
     },
     pricingSchedules: {
-      currency: flat.currency || '',
+      currency: src.currency || '',
       schedules: [
         {
-          name: flat.scheduleName || '',
-          startDate: flat.scheduleStartDate || '',
-          hasEndDate: !!flat.scheduleHasEndDate,
-          endDate: flat.scheduleHasEndDate ? (flat.scheduleEndDate || '') : null,
-          timeSlots: Array.isArray(flat.timeSlots) ? flat.timeSlots : [],
-          dateExceptions: Array.isArray(flat.dateExceptions) ? flat.dateExceptions : [],
+          name: src.scheduleName || '',
+          startDate: src.scheduleStartDate || '',
+          hasEndDate: !!src.scheduleHasEndDate,
+          endDate: src.scheduleHasEndDate ? (src.scheduleEndDate || '') : null,
+          timeSlots: Array.isArray(src.timeSlots) ? src.timeSlots : [],
+          dateExceptions: Array.isArray(src.dateExceptions) ? src.dateExceptions : [],
           pricingCategories: cats,
           prices,
         },
       ],
     },
-    availability: buildAvailability(flat),
+    availability: buildAvailability(src),
   };
 }
 
 function buildAvailability(flat) {
-  const weekly = flat.weeklySchedule
+  const src = asSource(flat, 'schedulesAndPricing');
+  const weekly = src.weeklySchedule
   let daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
   let operatingHoursStart = '09:00'
   let operatingHoursEnd = '17:00'
@@ -243,24 +254,25 @@ function buildAvailability(flat) {
 }
 
 function buildBookingAndTickets(flat) {
+  const src = asSource(flat, 'bookingAndTickets');
   const cancellationPolicy = {};
 
-  if (flat.cancellationType === 'standard') {
+  if (src.cancellationType === 'standard') {
     cancellationPolicy.type = 'standard';
     cancellationPolicy.label = 'Free cancellation up to 24 hours before';
     cancellationPolicy.cancellationWindowHours = 24;
     cancellationPolicy.refundPercentage = 100;
-  } else if (flat.cancellationType === 'all_sales_final') {
+  } else if (src.cancellationType === 'all_sales_final') {
     cancellationPolicy.type = 'all_sales_final';
     cancellationPolicy.label = 'No refunds';
     cancellationPolicy.cancellationWindowHours = 0;
     cancellationPolicy.refundPercentage = 0;
   }
 
-  if (flat.supplierCanCancelBadWeather) cancellationPolicy.supplierCanCancelBadWeather = true;
-  if (flat.supplierCanCancelNotEnoughTravelers) cancellationPolicy.supplierCanCancelNotEnoughTravelers = true;
+  if (src.supplierCanCancelBadWeather) cancellationPolicy.supplierCanCancelBadWeather = true;
+  if (src.supplierCanCancelNotEnoughTravelers) cancellationPolicy.supplierCanCancelNotEnoughTravelers = true;
 
-  if (flat.cutoffHours != null) cancellationPolicy.cutoffHours = flat.cutoffHours;
+  if (src.cutoffHours != null) cancellationPolicy.cutoffHours = src.cutoffHours;
 
   return {
     meetingPoint: flat.meetingPoint || null,
@@ -294,13 +306,6 @@ function buildBookingAndTickets(flat) {
   };
 }
 
-/**
- * Sanitize the per-slot cut-off map. Only keeps entries whose key is a
- * non-empty string (slot start time) and whose value is a finite number
- * within the supported 0..600 minute (10 h) range. Never trusts raw input —
- * a malformed map must degrade to {} (global cutoff applies) rather than
- * crashing a save or disabling the cutoff.
- */
 function normalizePerSlotCutoffs(map) {
   if (!map || typeof map !== 'object' || Array.isArray(map)) return {};
   const out = {};
