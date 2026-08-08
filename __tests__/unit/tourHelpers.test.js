@@ -134,6 +134,20 @@ describe('validateTourData', () => {
     expect(r.errors).not.toContain('Title is required');
   });
 
+  it('partial updates do not throw on refined schemas (zod .partial() regression)', () => {
+    const r = validateTourData({ difficulty: 'extreme', price: 75 }, true);
+    expect(r.isValid).toBe(true);
+    expect(r.errors.some((e) => e.startsWith('Validation error'))).toBe(false);
+  });
+
+  it('partial updates still apply accommodation inclusion refinement when duration present', () => {
+    const r = validateTourData(
+      { duration: 40, durationUnit: 'hours', accommodationIncluded: undefined },
+      true
+    );
+    expect(r.errors.join(', ')).toContain('accommodationIncluded');
+  });
+
   // ---------------------------------------------------------------------------
   // Pricing-related validations via productSchema
   // ---------------------------------------------------------------------------
