@@ -213,7 +213,23 @@ function applyFlatToBlobMapping(body, baseTour) {
   for (const key of Object.keys(mapped)) {
     if (hasExplicitBlob(key)) continue;
     if (JSON_BLOB_KEYS.includes(key)) {
-      if (touched[key]) body[key] = mapped[key];
+      if (touched[key]) {
+        // Carry forward any live blob keys the builder does not emit (legacy
+        // fields such as productContent.meetingPoint). Otherwise a rebuild
+        // silently drops them: the stored draft loses content and the admin
+        // diff invents a spurious "removed" row on every unrelated edit.
+        const rebuilt = mapped[key];
+        const liveBlob = baseTour && baseTour[key];
+        if (
+          rebuilt && typeof rebuilt === 'object' && !Array.isArray(rebuilt) &&
+          liveBlob && typeof liveBlob === 'object' && !Array.isArray(liveBlob)
+        ) {
+          for (const legacyKey of Object.keys(liveBlob)) {
+            if (!(legacyKey in rebuilt)) rebuilt[legacyKey] = liveBlob[legacyKey];
+          }
+        }
+        body[key] = rebuilt;
+      }
       continue;
     }
   }
@@ -320,6 +336,13 @@ function buildTourDiff(live, draft, maxDepth = 4) {
 
   const walk = (a, b, path, depth) => {
     if (a === b && (typeof a !== 'object' || a === null)) return;
+    // Empty-equivalence for scalars: '' ≡ null ≡ undefined. The rebuild
+    // pipeline produces these sentinels interchangeably (e.g. contactPhone
+    // '' live vs normalized null draft) — diffing them would invent phantom
+    // add/remove rows on every unrelated edit of the same blob.
+    const aEmpty = (a === undefined || a === null || a === '') && (typeof a !== 'object' || a === null);
+    const bEmpty = (b === undefined || b === null || b === '') && (typeof b !== 'object' || b === null);
+    if (aEmpty && bEmpty) return;
     if (a === undefined || a === null) {
       record(path, 'added', undefined, truncate(b));
       return;
