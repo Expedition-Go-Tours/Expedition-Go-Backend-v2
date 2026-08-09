@@ -574,15 +574,21 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     throw err; // Re-throw so catchAsync handles it
   });
 
-  // Update Stripe PaymentIntent metadata with real booking IDs (fire-and-forget)
-  getStripe().paymentIntents.update(paymentIntent.id, {
-    metadata: {
-      customerId,
-      bookingIds: result.bookings.map(b => b.id).join(',')
-    }
-  }).catch(err => {
+  // Update Stripe PaymentIntent metadata with real booking IDs (fire-and-forget).
+  // Wrapped defensively so a missing/failing getStripe() (e.g. the helper not
+  // being available in some runtime contexts) never fails the booking request.
+  try {
+    getStripe().paymentIntents.update(paymentIntent.id, {
+      metadata: {
+        customerId,
+        bookingIds: result.bookings.map(b => b.id).join(',')
+      }
+    }).catch(err => {
+      console.error(` Failed to update PaymentIntent metadata for ${paymentIntent.id}:`, err.message);
+    });
+  } catch (err) {
     console.error(` Failed to update PaymentIntent metadata for ${paymentIntent.id}:`, err.message);
-  });
+  }
 
   // Send notifications through the queue (async)
   for (const booking of result.bookings) {
