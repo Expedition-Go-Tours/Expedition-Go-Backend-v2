@@ -139,6 +139,10 @@ async function setupQueueWorkers() {
   }, 5 * 60 * 1000));
 
   intervals.push(setInterval(() => {
+    enqueueCleanup('cleanup-stale-bookings').catch((err) => logger.warn('[scheduler] cleanup-stale-bookings failed:', err?.message));
+  }, 5 * 60 * 1000));
+
+  intervals.push(setInterval(() => {
     enqueueAggregation('refresh-popularity').catch((err) => logger.warn('[scheduler] refresh-popularity failed:', err?.message));
   }, 60 * 60 * 1000));
 
@@ -155,6 +159,7 @@ async function setupQueueWorkers() {
   }, 24 * 60 * 60 * 1000));
 
   enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] startup cleanup-expired-cart failed:', err?.message));
+  enqueueCleanup('cleanup-stale-bookings').catch((err) => logger.warn('[scheduler] startup cleanup-stale-bookings failed:', err?.message));
   enqueueAggregation('refresh-popularity').catch((err) => logger.warn('[scheduler] startup refresh-popularity failed:', err?.message));
   enqueueAggregation('cleanup-events').catch((err) => logger.warn('[scheduler] startup cleanup-events failed:', err?.message));
   enqueueCleanup('cleanup-notifications').catch((err) => logger.warn('[scheduler] startup cleanup-notifications failed:', err?.message));

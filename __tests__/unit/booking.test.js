@@ -9,6 +9,7 @@ jest.mock('../../utils/prismaClient', () => ({
   stripeEvent: { findUnique: jest.fn(), upsert: jest.fn(), update: jest.fn() },
   tourEvent: { create: jest.fn(), findMany: jest.fn(), update: jest.fn(), delete: jest.fn(), count: jest.fn() },
   auditLog: { create: jest.fn(), findMany: jest.fn(), deleteMany: jest.fn(), count: jest.fn() },
+  payout: { create: jest.fn(), updateMany: jest.fn(), findMany: jest.fn() },
   $transaction: jest.fn(),
   $disconnect: jest.fn(),
 }));
@@ -28,6 +29,13 @@ jest.mock('../../utils/stripeHelpers', () => ({
   createPaymentIntent: jest.fn(),
   createRefund: jest.fn(),
   calculateCommission: jest.fn(),
+  getStripe: jest.fn(() => ({
+    paymentIntents: {
+      confirm: jest.fn(() => Promise.resolve({ id: 'pi_123', status: 'succeeded', client_secret: 'secret_123' })),
+      retrieve: jest.fn(() => Promise.resolve({ id: 'pi_123', status: 'succeeded', client_secret: 'secret_123' })),
+      update: jest.fn(() => Promise.resolve({})),
+    },
+  })),
 }));
 jest.mock('../../utils/bookingHelpers', () => ({
   generateBookingNumber: jest.fn(() => 'BK-TEST-001'),
@@ -174,6 +182,8 @@ const mockTx = {
   supplierProfile: { update: jest.fn().mockResolvedValue({}) },
   tour: { update: jest.fn().mockResolvedValue({}) },
   cartItem: { deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
+  payout: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+  specialOffer: { update: jest.fn().mockResolvedValue({}) },
 };
 
 beforeEach(() => {

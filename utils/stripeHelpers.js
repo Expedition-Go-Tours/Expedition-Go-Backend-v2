@@ -324,11 +324,14 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
     // Fallback: find expedition booking by stripePaymentIntentId
     // (booking was created after PI confirmation, metadata updated async)
     if (!bookings || bookings.length === 0) {
+      // Match PENDING *and* PROCESSING: TRAVIO checkouts create bookings with
+      // paymentStatus PROCESSING, Expedition uses PENDING. Either way a
+      // booking that is still awaiting settlement is confirmable.
       const updated = await client.booking.updateMany({
         where: {
           stripePaymentIntentId: paymentIntent.id,
           status: 'PENDING',
-          paymentStatus: 'PENDING'
+          paymentStatus: { in: ['PENDING', 'PROCESSING'] }
         },
         data: {
           status: 'CONFIRMED',
@@ -462,7 +465,7 @@ async function handlePaymentFailed(paymentIntent, tx = null) {
     where: {
       stripePaymentIntentId: paymentIntent.id,
       status: 'PENDING',
-      paymentStatus: 'PENDING'
+      paymentStatus: { in: ['PENDING', 'PROCESSING'] }
     },
     data: {
       status: 'CANCELLED',
@@ -491,10 +494,13 @@ function verifyWebhookSignature(payload, signature, endpointSecret) {
 }
 
 module.exports = {
+  getStripe,
   createPaymentIntent,
   createRefund,
   cancelPaymentIntent,
   calculateCommission,
   processStripeWebhook,
+  handlePaymentSucceeded,
+  handlePaymentFailed,
   verifyWebhookSignature,
 };

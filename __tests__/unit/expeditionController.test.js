@@ -3,12 +3,13 @@ jest.mock('../../utils/prismaClient', () => ({
   tour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn() },
   user: { findUnique: jest.fn(), update: jest.fn() },
   wishlistItem: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), delete: jest.fn() },
-  booking: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn(), deleteMany: jest.fn() },
+  booking: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn(), count: jest.fn(), deleteMany: jest.fn() },
   tourDateOverride: { findFirst: jest.fn() },
   review: { findMany: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
   newsletterSubscriber: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
   cartItem: { deleteMany: jest.fn() },
   supplierProfile: { findFirst: jest.fn() },
+  payout: { create: jest.fn(), updateMany: jest.fn(), findMany: jest.fn() },
   $transaction: jest.fn(),
   $queryRawUnsafe: jest.fn(),
 }));
@@ -41,11 +42,26 @@ jest.mock('../../utils/tourHelpers', () => ({
   calculateTourPrice: jest.fn(),
 }));
 
-jest.mock('../../utils/stripeHelpers', () => ({
-  createPaymentIntent: jest.fn(),
-  calculateCommission: jest.fn(),
-  createRefund: jest.fn(),
-}));
+jest.mock('../../utils/stripeHelpers', () => {
+  let stripeInstance = null;
+  return {
+    createPaymentIntent: jest.fn(),
+    calculateCommission: jest.fn(),
+    createRefund: jest.fn(),
+    getStripe: jest.fn(() => {
+      if (!stripeInstance) {
+        stripeInstance = {
+          paymentIntents: {
+            confirm: jest.fn(),
+            retrieve: jest.fn(),
+            update: jest.fn(() => Promise.resolve({})),
+          },
+        };
+      }
+      return stripeInstance;
+    }),
+  };
+});
 
 jest.mock('../../utils/getConfig', () => jest.fn((key, def) => Promise.resolve(def)));
 
@@ -61,7 +77,7 @@ const { sendEmail } = require('../../utils/emailService');
 const { enqueueEvent, enqueueNotification } = require('../../utils/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy } = require('../../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../../utils/tourHelpers');
-const { createPaymentIntent, calculateCommission, createRefund } = require('../../utils/stripeHelpers');
+const { createPaymentIntent, calculateCommission, createRefund, getStripe } = require('../../utils/stripeHelpers');
 const { logActivity } = require('../../utils/auditLogger');
 
 const controller = require('../../controllers/expeditionController');
@@ -155,6 +171,9 @@ describe('expeditionController', () => {
     validateTravelerInfo.mockReturnValue({ isValid: true, errors: [] });
     generateBookingNumber.mockResolvedValue('TB00000001ABCD');
     createPaymentIntent.mockResolvedValue({ id: 'pi_mock_123' });
+    getStripe().paymentIntents.confirm.mockResolvedValue({ id: 'pi_mock_123', status: 'succeeded', client_secret: 'cs_mock_123' });
+    getStripe().paymentIntents.retrieve.mockResolvedValue({ id: 'pi_mock_123', status: 'succeeded', client_secret: 'cs_mock_123' });
+    prisma.booking.updateMany.mockResolvedValue({ count: 0 });
     calculateCommission.mockResolvedValue({ rate: 0.15, amount: 15.75, supplierPayout: 89.25 });
     cache.getOrSet.mockImplementation((key, fn) => fn());
   });
@@ -581,6 +600,42 @@ describe('expeditionController', () => {
       await controller.confirmBooking(req, res, next);
 
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('releases the booking with a 400 when the card is declined', async () => {
+      req.body = validBookingBody;
+      getStripe().paymentIntents.confirm.mockRejectedValue(new Error('Your card was declined.'));
+      getStripe().paymentIntents.retrieve.mockResolvedValue({ id: 'pi_mock_123', status: 'requires_payment_method', client_secret: 'cs_mock_123' });
+      prisma.booking.updateMany.mockResolvedValue({ count: 1 });
+
+      await controller.confirmBooking(req, res, next);
+
+      expect(prisma.booking.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: 'PENDING', paymentStatus: 'PENDING', stripePaymentIntentId: 'pi_mock_123' }),
+          data: expect.objectContaining({ status: 'CANCELLED', paymentStatus: 'FAILED', cancellationReason: 'Payment declined' }),
+        }),
+      );
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400, message: 'Payment was declined. Please try another card.' }));
+      expect(res.status).not.toHaveBeenCalledWith(201);
+    });
+
+    it('returns requiresAction with the client secret for a 3DS challenge', async () => {
+      req.body = validBookingBody;
+      getStripe().paymentIntents.confirm.mockRejectedValue(new Error('authentication_required'));
+      getStripe().paymentIntents.retrieve.mockResolvedValue({ id: 'pi_mock_123', status: 'requires_action', client_secret: 'cs_mock_123' });
+
+      await controller.confirmBooking(req, res, next);
+
+      const jsonArg = res.json.mock.calls[0][0];
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect(jsonArg.data.paymentIntent).toEqual({
+        id: 'pi_mock_123',
+        clientSecret: 'cs_mock_123',
+        status: 'requires_action',
+        requiresAction: true,
+      });
+      expect(prisma.booking.updateMany).not.toHaveBeenCalled();
     });
   });
 

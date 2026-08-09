@@ -16,7 +16,7 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
-const { createPaymentIntent, createRefund, calculateCommission } = require('../utils/stripeHelpers');
+const { createPaymentIntent, createRefund, calculateCommission, getStripe } = require('../utils/stripeHelpers');
 const { generateBookingNumber, validateTravelerInfo, evaluateCancellationPolicy } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey } = require('../utils/availabilityCore');
@@ -575,8 +575,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
   });
 
   // Update Stripe PaymentIntent metadata with real booking IDs (fire-and-forget)
-  const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-  stripe.paymentIntents.update(paymentIntent.id, {
+  getStripe().paymentIntents.update(paymentIntent.id, {
     metadata: {
       customerId,
       bookingIds: result.bookings.map(b => b.id).join(',')
@@ -639,7 +638,8 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       bookings: result.bookings,
       paymentIntent: {
         id: result.paymentIntent.id,
-        clientSecret: result.paymentIntent.client_secret
+        clientSecret: result.paymentIntent.client_secret,
+        status: result.paymentIntent.status
       }
     }
   });
@@ -861,13 +861,22 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
           refundedAt: new Date()
         }
       });
+
+      // A refunded booking must never pay the supplier — close any payout
+      // that was queued when the payment succeeded.
+      await tx.payout.updateMany({
+        where: { bookingId: id, status: 'PENDING' },
+        data: { status: 'CANCELLED', processedAt: new Date() },
+      });
     }
 
-    // Decrement spotsSold for applied special offer
+    // Decrement spotsSold for applied special offer (one per traveler — the
+    // same count that was incremented at confirmation time)
     if (booking.appliedOfferId) {
+      const travelerCount = (booking.travelers?.adults || 0) + (booking.travelers?.children || 0) + (booking.travelers?.infants || 0);
       await tx.specialOffer.update({
         where: { id: booking.appliedOfferId },
-        data: { spotsSold: { decrement: 1 } },
+        data: { spotsSold: { decrement: travelerCount } },
       });
     }
 
