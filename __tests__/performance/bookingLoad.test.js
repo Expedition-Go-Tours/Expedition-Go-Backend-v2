@@ -9,6 +9,7 @@ jest.mock('../../utils/prismaClient', () => ({
   stripeEvent: { findUnique: jest.fn(), upsert: jest.fn(), update: jest.fn() },
   tourEvent: { create: jest.fn(), findMany: jest.fn(), update: jest.fn(), delete: jest.fn(), count: jest.fn() },
   auditLog: { create: jest.fn(), findMany: jest.fn(), deleteMany: jest.fn(), count: jest.fn() },
+  adminNotification: { create: jest.fn().mockResolvedValue({ id: 'notif-load-1', createdAt: new Date().toISOString() }) },
   $transaction: jest.fn(),
   $disconnect: jest.fn(),
 }));
@@ -96,6 +97,9 @@ function setupMocks() {
   calculateCommission.mockReturnValue({ rate: 0.15, amount: 57.75, supplierPayout: 327.25 });
   createPaymentIntent.mockResolvedValue({ id: `pi_${counter}`, client_secret: `secret_${counter}` });
   prisma.tour.findFirst.mockResolvedValue(tourTemplate);
+  prisma.cartItem.findMany.mockResolvedValue([]);
+  prisma.booking.findMany.mockResolvedValue([]);
+  prisma.booking.count.mockResolvedValue(0);
   return uid;
 }
 
