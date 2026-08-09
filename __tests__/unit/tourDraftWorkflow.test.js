@@ -517,6 +517,75 @@ describe('submitTourForReview (live tour with draft)', () => {
     expect(prisma.tour.update).not.toHaveBeenCalled();
   });
 
+  it('treats an identical re-submission of a live tour as a no-op (200, nothing queued)', async () => {
+    prisma.tour.findFirst.mockResolvedValue({
+      ...liveRow,
+      coverPhoto: liveRow.photos[0],
+      draftSubmittedAt: new Date(),
+      supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null },
+    });
+    req.body = {
+      title: liveRow.title,
+      description: liveRow.description,
+      photos: liveRow.photos,
+      coverPhoto: liveRow.photos[0],
+    };
+
+    await tourController.submitTourForReview(req, res, next);
+
+    expect(prisma.tour.update).not.toHaveBeenCalled();
+    expect(notifyAdmin).not.toHaveBeenCalled();
+    expect(logActivity).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ noChanges: true }) })
+    );
+  });
+
+  it('treats an identical re-submission of a previously-submitted new tour as a no-op', async () => {
+    prisma.tour.findFirst.mockResolvedValue({
+      ...liveRow,
+      status: 'DRAFT',
+      coverPhoto: liveRow.photos[0],
+      submittedAt: new Date(),
+      supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null },
+    });
+    req.body = {
+      title: liveRow.title,
+      description: liveRow.description,
+      photos: liveRow.photos,
+      coverPhoto: liveRow.photos[0],
+    };
+
+    await tourController.submitTourForReview(req, res, next);
+
+    expect(prisma.tour.update).not.toHaveBeenCalled();
+    expect(notifyAdmin).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ noChanges: true }) })
+    );
+  });
+
+  it('never marks a FIRST submission of a new tour as a no-op (submittedAt is null)', async () => {
+    prisma.tour.findFirst.mockResolvedValue({ ...liveRow, status: 'DRAFT', supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    prisma.tour.update.mockResolvedValue({ ...liveRow, status: 'PENDING_APPROVAL', supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
+    req.body = {
+      title: liveRow.title,
+      description: liveRow.description,
+      photos: liveRow.photos,
+      coverPhoto: liveRow.photos[0],
+    };
+
+    await tourController.submitTourForReview(req, res, next);
+
+    expect(prisma.tour.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'PENDING_APPROVAL' }) })
+    );
+    expect(res.json).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ noChanges: true }) })
+    );
+  });
+
   it('persists a submitted payload into the live columns for a non-live tour', async () => {
     prisma.tour.findFirst.mockResolvedValue({ ...liveRow, status: 'DRAFT', supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
     prisma.tour.update.mockResolvedValue({ ...liveRow, status: 'PENDING_APPROVAL', supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null } });
