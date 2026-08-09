@@ -1385,7 +1385,11 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
     // genuinely "no changes".
     const hasLiveOrDraftSubmission =
       isLiveTour ? Boolean(tour.draftSubmittedAt) : Boolean(tour.submittedAt);
-    const noChanges = hasLiveOrDraftSubmission && buildTourDiff(tour, submitted).length === 0;
+    // One canonical diff serves both the no-op guard and the admin changes
+    // summary — `submitted` is exactly what gets persisted as the draft, so the
+    // notifier's merge-based diff would recompute identical trees.
+    const contentDiff = buildTourDiff(tour, submitted);
+    const noChanges = hasLiveOrDraftSubmission && contentDiff.length === 0;
     if (noChanges) {
       return { noChanges, tour, updated: null };
     }
@@ -1400,10 +1404,10 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
       }
     });
 
-    return { tour, updated };
+    return { tour, updated, contentDiff };
   });
 
-  const { tour, updated, noChanges } = result;
+  const { tour, updated, noChanges, contentDiff } = result;
 
   // Idempotent duplicate submission: content identical to what is already
   // applied. Respond success (200) without touching the queue, logging
@@ -1431,10 +1435,10 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
     metadata: { title: tour.title }
   });
 
-  // Notify admins (bell + admin-room socket). The diff is computed against the
-  // draft that was JUST persisted from the submitted payload (updated.draftContent),
-  // never the pre-submission stored draft — otherwise the admin sees stale content.
-  const merged = hasDraft ? mergeDraftContent(tour, updated.draftContent) : null;
+  // Notify admins (bell + admin-room socket). The changes summary reuses the
+  // diff computed against the submitted payload inside the transaction —
+  // `submitted` IS the persisted draft (updated.draftContent), so the summary
+  // never reflects the pre-submission stored draft.
   await notifyAdmin({
     type: 'TOUR_SUBMITTED_FOR_REVIEW',
     title: hasDraft ? 'Tour Update Pending Approval' : 'Tour Pending Approval',
@@ -1447,7 +1451,7 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
       tourTitle: updated.title,
       submittedAt: hasDraft ? updated.draftSubmittedAt : updated.submittedAt,
       isResubmission: hasDraft,
-      changesSummary: hasDraft ? computeChangesSummary(buildTourDiff(tour, merged)) : undefined,
+      changesSummary: hasDraft ? computeChangesSummary(contentDiff) : undefined,
     },
   });
 
