@@ -6,6 +6,7 @@ jest.mock('../../utils/prismaClient', () => ({
   supplierProfile: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn() },
   cartItem: { findMany: jest.fn(), count: jest.fn() },
   notification: { findMany: jest.fn(), count: jest.fn() },
+  adminNotification: { create: jest.fn().mockResolvedValue({ id: 'notif-load-1', createdAt: new Date().toISOString() }) },
   tourSecondaryTheme: { findMany: jest.fn() },
   $queryRaw: jest.fn(),
   $disconnect: jest.fn(),

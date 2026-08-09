@@ -7,7 +7,7 @@ jest.mock('../../utils/prismaClient', () => ({
   stripeEvent: { findUnique: jest.fn(), upsert: jest.fn(), update: jest.fn() },
   payoutMethod: { findFirst: jest.fn() },
   specialOffer: { update: jest.fn() },
-  adminNotification: { create: jest.fn() },
+  adminNotification: { create: jest.fn().mockResolvedValue({ id: 'notif-load-1', createdAt: new Date().toISOString() }) },
   $transaction: jest.fn(),
   $disconnect: jest.fn(),
 }));
