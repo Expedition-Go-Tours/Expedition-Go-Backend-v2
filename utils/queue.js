@@ -422,6 +422,11 @@ function registerWorkers() {
         await cleanupOldLogs(365);
         break;
       }
+      case 'cleanup-stale-bookings': {
+        const { cancelStalePendingBookings } = require('./bookingCleanup');
+        await cancelStalePendingBookings();
+        break;
+      }
       case 'cleanup-notifications': {
         const { cleanupOldNotifications } = require('./notificationService');
         await cleanupOldNotifications(90);
