@@ -1014,6 +1014,9 @@ router.delete('/:id/photos', resolveSupplier, requireTeamPermission('tours.updat
  *       and a verified-payout-method check, then moves the tour to
  *       PENDING_APPROVAL and notifies admins. The tour only becomes ACTIVE
  *       after an admin approves it via the moderation endpoint.
+ *       Duplicate submissions of content identical to what is already applied
+ *       (no server-side change) are idempotent: the request succeeds with
+ *       noChanges:true but nothing is queued or re-notified.
  *     tags: [Tours, Supplier]
  *     security:
  *       - bearerAuth: []
@@ -1041,6 +1044,10 @@ router.delete('/:id/photos', resolveSupplier, requireTeamPermission('tours.updat
  *                 data:
  *                   type: object
  *                   properties:
+ *                     noChanges:
+ *                       type: boolean
+ *                       example: false
+ *                       description: true when the submit was an idempotent duplicate (nothing queued)
  *                     tour:
  *                       $ref: '#/components/schemas/Tour'
  *       400:

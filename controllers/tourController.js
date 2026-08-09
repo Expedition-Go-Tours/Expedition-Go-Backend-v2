@@ -1375,6 +1375,21 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
       throw new AppError(`Cannot submit for review: ${reviewErrors.join(', ')}`, 400);
     }
 
+    // Idempotent no-op guard: if the submitted content is byte-equivalent to
+    // what is ALREADY applied (a live tour's current content, or the content
+    // stored for an already-submitted new tour), re-queuing it would only
+    // re-notify admins and churn the review pool. First submissions of a new
+    // tour (never submittedAt) are exempt — the supplier may send their stored
+    // builder state as-is. buildTourDiff canonicalizes empty/absence
+    // differences exactly like the admin approve path, so a clean diff here is
+    // genuinely "no changes".
+    const hasLiveOrDraftSubmission =
+      isLiveTour ? Boolean(tour.draftSubmittedAt) : Boolean(tour.submittedAt);
+    const noChanges = hasLiveOrDraftSubmission && buildTourDiff(tour, submitted).length === 0;
+    if (noChanges) {
+      return { noChanges, tour, updated: null };
+    }
+
     const updated = await tx.tour.update({
       where: { id },
       data: updateData,
@@ -1388,7 +1403,20 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
     return { tour, updated };
   });
 
-  const { tour, updated } = result;
+  const { tour, updated, noChanges } = result;
+
+  // Idempotent duplicate submission: content identical to what is already
+  // applied. Respond success (200) without touching the queue, logging
+  // activity, or re-notifying admins — the frontend gates the button, this is
+  // the server-side guarantee for stale retries / API callers.
+  if (noChanges) {
+    return res.status(200).json({
+      status: 'success',
+      message: 'No changes to submit — the request was ignored',
+      data: { noChanges: true, tour }
+    });
+  }
+
   const hasDraft = tour.status === 'ACTIVE';
 
   if (!hasDraft) {
