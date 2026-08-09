@@ -276,13 +276,15 @@ describe('E2E: Expedition Checkout Flow', () => {
     const result = await processStripeWebhook(stripeEvent);
     expect(result.success).toBe(true);
 
-    // Falls back to updating by stripePaymentIntentId for PENDING bookings
+    // Falls back to updating by stripePaymentIntentId. The fallback matches both
+    // PENDING and PROCESSING: TRAVIO checkouts create bookings with
+    // paymentStatus PROCESSING, Expedition uses PENDING — either is confirmable.
     expect(webhookTx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           stripePaymentIntentId: 'pi_exp_e2e',
           status: 'PENDING',
-          paymentStatus: 'PENDING',
+          paymentStatus: { in: ['PENDING', 'PROCESSING'] },
         }),
       }),
     );
