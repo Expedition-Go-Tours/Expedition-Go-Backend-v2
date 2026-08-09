@@ -490,19 +490,50 @@ jobs:
       - coverage
     runs-on: ubuntu-latest
     steps:
-      - name: Wait for deploy
-        run: sleep 90
-
       - name: Verify live health endpoint
         run: |
-          RESPONSE=$(curl -sf https://api.travioafrica.com/health)
-          echo "$RESPONSE"
-          echo "$RESPONSE" | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);process.exit(j.status==='success'?0:1)})"
-          echo "Production health check passed"
+          # Deploy swaps and cold starts can surface gateway 502/503/504 for
+          # the first tens of seconds. Poll until the endpoint settles instead
+          # of failing the whole release on one cold-start hiccup.
+          attempts=10
+          delay=15
+          for i in $(seq 1 "$attempts"); do
+            HTTP_CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" https://api.travioafrica.com/health)
+            echo "attempt $i/$attempts: HTTP $HTTP_CODE"
+            if [ "$HTTP_CODE" = "200" ]; then
+              STATUS=$(node -pe "const j=JSON.parse(require('fs').readFileSync('/tmp/health.json','utf8'));j.status||''" 2>/dev/null || true)
+              echo "status: $STATUS"
+              if [ "$STATUS" = "success" ]; then
+                cat /tmp/health.json
+                echo "Production health check passed"
+                exit 0
+              fi
+            fi
+            if [ "$i" -lt "$attempts" ]; then sleep "$delay"; fi
+          done
+          echo "::error::Production health check failed after $attempts attempts"
+          echo "Last response body:"
+          cat /tmp/health.json 2>/dev/null || true
+          exit 1
 
       - name: Smoke test live tours endpoint
         run: |
-          HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" https://api.travioafrica.com/api/expedition/tours)
-          echo "HTTP $HTTP_CODE"
-          cat response.json | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);process.exit(j.status==='success'?0:1)})"
-          echo "Production tours endpoint OK"
+          attempts=5
+          delay=15
+          for i in $(seq 1 "$attempts"); do
+            HTTP_CODE=$(curl -s -o /tmp/tours.json -w "%{http_code}" https://api.travioafrica.com/api/expedition/tours)
+            echo "attempt $i/$attempts: HTTP $HTTP_CODE"
+            if [ "$HTTP_CODE" = "200" ]; then
+              STATUS=$(node -pe "const j=JSON.parse(require('fs').readFileSync('/tmp/tours.json','utf8'));j.status||''" 2>/dev/null || echo "")
+              echo "status: $STATUS"
+              if [ "$STATUS" = "success" ]; then
+                echo "Production tours endpoint OK"
+                exit 0
+              fi
+            fi
+            if [ "$i" -lt "$attempts" ]; then sleep "$delay"; fi
+          done
+          echo "::error::Production tours endpoint failed after $attempts attempts"
+          echo "Last response body:"
+          cat /tmp/tours.json 2>/dev/null || true
+          exit 1
