@@ -70,9 +70,11 @@ const FLAT_BLOB_INJECTS = {
       'dropoffOption', 'dropoffLocation', 'dropoffDescription', 'isPrivateActivity',
       'passportRequired', 'flightInfoRequired', 'shipInfoRequired', 'trainInfoRequired',
       'hotelInfoRequired', 'contactPhone', 'crossCityTravel', 'planPickupTimes',
-      'pickupStartTime', 'whatToBring', 'additionalInfo', 'meetingInstructions',
-      'healthRestrictions',
+      'pickupStartTime',
     ],
+    // The reverse map below drives these flat keys (notSuitableFor, mandatoryItems,
+    // knowBeforeYouGo, meetingPointDescription); the canonical blob names here
+    // are never read by productToTour, so they must not be injected directly.
     // Primary key + the alias flat keys the builder falls back to. When the
     // payload carries ANY form of the pair, the injected primary is discarded
     // so the request's own value is the one that maps through.
@@ -91,6 +93,9 @@ const FLAT_BLOB_INJECTS = {
     },
   },
   schedulesAndPricing: {
+    aliases: {
+      pricingCategories: ['ageGroups'],
+    },
     paths: {
       pricingModel: ['travelerDetails', 'pricingModel'],
       pricingApproach: ['travelerDetails', 'pricingApproach'],
@@ -145,18 +150,32 @@ function getPath(obj, paths) {
 
 function injectLiveValues(view, blob, table) {
   if (!blob || typeof blob !== 'object') return;
+  // Primary key -> every key in its alias group. When the payload carries ANY
+  // form of the group, the injected primary must stay out of the view so the
+  // builder's `primary || alias` reads resolve to the supplier's own value.
+  const groups = new Map();
+  for (const [primary, aliases] of Object.entries(table.aliases || {})) {
+    groups.set(primary, [primary, ...aliases]);
+  }
+  const groupPresent = (flatKey) => {
+    const group = groups.get(flatKey);
+    return group ? group.some((k) => view[k] !== undefined) : false;
+  };
+
   for (const [primary, aliases] of Object.entries(table.aliases || {})) {
     const inGroup = [primary, ...aliases];
     if (view[primary] !== undefined) continue;
     if (!inGroup.some((k) => view[k] !== undefined) && blob[primary] !== undefined) view[primary] = blob[primary];
   }
   for (const flatKey of table.own || []) {
+    if (groupPresent(flatKey)) continue;
     if (view[flatKey] === undefined && blob[flatKey] !== undefined) view[flatKey] = blob[flatKey];
   }
   for (const [canonical, flatKey] of Object.entries(table.canonicalMap || table.reverse || {})) {
     if (view[flatKey] === undefined && blob[canonical] !== undefined) view[flatKey] = blob[canonical];
   }
   for (const [flatKey, paths] of Object.entries(table.paths || {})) {
+    if (groupPresent(flatKey)) continue;
     if (view[flatKey] === undefined) {
       const value = getPath(blob, paths);
       if (value !== undefined) view[flatKey] = value;
