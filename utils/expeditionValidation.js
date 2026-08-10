@@ -1,10 +1,45 @@
 const { z } = require('zod');
 const { isValidPhoneNumber } = require('libphonenumber-js');
 
+// Non-numeric metadata keys allowed inside the travelers object (they are never
+// counted toward capacity or pricing). Everything else must be a traveler count.
+const TRAVELER_META_KEYS = new Set(['phoneNumber', 'location', 'details']);
+
+/** Sum every numeric traveler-count key in the travelers object. */
+function sumTravelerCounts(travelers) {
+  if (!travelers || typeof travelers !== 'object') return 0;
+  let total = 0;
+  for (const [key, value] of Object.entries(travelers)) {
+    if (TRAVELER_META_KEYS.has(key)) continue;
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0) total += value;
+  }
+  return total;
+}
+
 const travelerSchema = z.object({
-  adults: z.number().int().min(1).max(50),
+  adults: z.number().int().min(0).max(50).default(0),
   children: z.number().int().min(0).max(50).default(0),
   infants: z.number().int().min(0).max(50).default(0),
+}).passthrough().superRefine((val, ctx) => {
+  // Any additional category keys (seniors, students, youth, …) must be valid
+  // non-negative integer counts, and the total must be at least 1.
+  for (const [key, value] of Object.entries(val)) {
+    if (TRAVELER_META_KEYS.has(key)) continue;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 50) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: `Traveler count for "${key}" must be a non-negative integer up to 50`,
+      });
+    }
+  }
+  if (sumTravelerCounts(val) < 1) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [],
+      message: 'At least one traveler is required',
+    });
+  }
 });
 
 const travelerWithDetailsSchema = travelerSchema.extend({

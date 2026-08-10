@@ -19,7 +19,7 @@ const AppError = require('../utils/appError');
 const { createPaymentIntent, createRefund, calculateCommission, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
 const { generateBookingNumber, validateTravelerInfo, evaluateCancellationPolicy } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
-const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey } = require('../utils/availabilityCore');
+const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount } = require('../utils/availabilityCore');
 const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../utils/queue');
 const getConfig = require('../utils/getConfig');
 const { generatePrintableTicketHtml } = require('../utils/emailService');
@@ -446,7 +446,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       ));
     }
 
-    const totalTravelers = (item.travelers.adults || 0) + (item.travelers.children || 0) + (item.travelers.infants || 0);
+    const totalTravelers = travelerCount(item.travelers);
     if (totalTravelers > systemMaxTravelers) {
       return next(new AppError(
         `Total travelers (${totalTravelers}) exceeds the maximum of ${systemMaxTravelers} per booking`,
@@ -619,7 +619,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
         currency: booking.currency,
         supplierPayout: parseFloat(booking.supplierPayout),
         commissionAmount: parseFloat(booking.commissionAmount),
-        travelerCount: (booking.travelers?.adults || 0) + (booking.travelers?.children || 0) + (booking.travelers?.infants || 0),
+        travelerCount: travelerCount(booking.travelers),
         status: booking.status,
       },
     });
@@ -882,10 +882,10 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     // Decrement spotsSold for applied special offer (one per traveler — the
     // same count that was incremented at confirmation time)
     if (booking.appliedOfferId) {
-      const travelerCount = (booking.travelers?.adults || 0) + (booking.travelers?.children || 0) + (booking.travelers?.infants || 0);
+      const travelerCountValue = travelerCount(booking.travelers);
       await tx.specialOffer.update({
         where: { id: booking.appliedOfferId },
-        data: { spotsSold: { decrement: travelerCount } },
+        data: { spotsSold: { decrement: travelerCountValue } },
       });
     }
 
