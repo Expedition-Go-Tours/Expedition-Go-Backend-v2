@@ -48,6 +48,7 @@ jest.mock('../../utils/stripeHelpers', () => {
     createPaymentIntent: jest.fn(),
     calculateCommission: jest.fn(),
     createRefund: jest.fn(),
+    ensureStripeCustomer: jest.fn(async (user) => user?.stripeCustomerId || null),
     getStripe: jest.fn(() => {
       if (!stripeInstance) {
         stripeInstance = {

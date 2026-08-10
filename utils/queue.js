@@ -234,7 +234,12 @@ async function enqueueCreateStripeCustomer(data) {
       backoff: { type: 'exponential', delay: 2000 },
     });
   } catch {
-    console.error('[Queue] Redis unavailable — Stripe customer creation skipped');
+    // Redis unavailable — create the customer inline so signups never silently
+    // lose their Stripe customer (same pattern as enqueueEmail).
+    const { createStripeCustomer } = require('./stripeHelpers');
+    createStripeCustomer(data).catch((err) => {
+      console.error('[Queue] Inline Stripe customer creation failed:', err.message);
+    });
   }
 }
 
@@ -324,21 +329,11 @@ function registerWorkers() {
    * STRIPE WORKER (concurrency 5)
    * ------------------------------------------------------------------ */
   createWorker(QUEUE_NAMES.STRIPE, async (job) => {
-    const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-    const prisma = require('./prismaClient');
+    // Lazily required to avoid a circular dependency (stripeHelpers requires ./queue).
+    const { createStripeCustomer } = require('./stripeHelpers');
 
     const { userId, email, name } = job.data;
-
-    const customer = await stripe.customers.create({
-      email,
-      name,
-      metadata: { source: 'local_auth' },
-    });
-
-    await prisma.user.update({
-      where: { id: userId },
-      data: { stripeCustomerId: customer.id },
-    });
+    await createStripeCustomer({ userId, email, name });
   }, 5);
 
   /* ------------------------------------------------------------------

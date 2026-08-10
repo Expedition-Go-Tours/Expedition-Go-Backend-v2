@@ -32,9 +32,18 @@ const prisma = require('./prismaClient');
 const { enqueueEmail, enqueueEvent } = require('./queue');
 const { notifyAdmin } = require('./adminNotificationService');
 const getConfig = require('./getConfig');
+const redis = require('./redisClient');
+const { invalidateUserCache } = require('../middleware/authMiddleware');
 
 /**
- * Create Payment Intent with commission split
+ * A valid Stripe Customer ID is a non-empty `cus_...` string.
+ */
+function isValidStripeCustomerId(id) {
+  return typeof id === 'string' && /^cus_[A-Za-z0-9]{3,}$/.test(id);
+}
+
+/**
+ * Create a Payment Intent with commission split
  */
 async function createPaymentIntent({
   amount,
@@ -46,16 +55,22 @@ async function createPaymentIntent({
   confirm = true
 }) {
   try {
+    // Only attach a customer when we have a real Stripe Customer ID. Stripe
+    // rejects an empty string for 'customer' and a PaymentIntent is valid
+    // without one, so a user whose async customer creation never completed
+    // can still check out.
     const paymentIntentData = {
       amount,
       currency: currency.toLowerCase(),
-      customer: customerId,
       payment_method: paymentMethodId,
       confirmation_method: 'manual',
       confirm,
       return_url: `${process.env.CLIENT_URL}/booking/complete`,
       metadata
     };
+    if (isValidStripeCustomerId(customerId)) {
+      paymentIntentData.customer = customerId;
+    }
 
     const options = idempotencyKey ? { idempotencyKey } : {};
     const paymentIntent = await getStripe().paymentIntents.create(paymentIntentData, options);
@@ -66,6 +81,108 @@ async function createPaymentIntent({
     console.error(' Payment Intent creation failed:', error);
     throw new Error(`Failed to create payment: ${error.message}`);
   }
+}
+
+/**
+ * Create a Stripe Customer for a user and persist the ID on the User row.
+ *
+ * Idempotent per user for 24h via the idempotency key — concurrent checkouts
+ * and queue retries resolve to the same Customer instead of duplicating it.
+ *
+ * @param {{ userId: string, email?: string, name?: string }} data
+ * @returns {Promise<string>} the Stripe customer ID
+ */
+async function createStripeCustomer({ userId, email, name }) {
+  const customer = await getStripe().customers.create(
+    {
+      email,
+      name,
+      metadata: { userId, source: 'local_auth' },
+    },
+    { idempotencyKey: `create-customer:${userId}` }
+  );
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { stripeCustomerId: customer.id },
+  });
+
+  return customer.id;
+}
+
+/**
+ * Ensure a user has a Stripe Customer, creating one lazily if missing.
+ *
+ * Returns the existing/created customer ID, or `null` when one could not be
+ * produced — the caller may then charge WITHOUT a customer (graceful
+ * degradation), since a PaymentIntent does not require one.
+ *
+ * Concurrency: a short-lived Redis lock (SET NX) serializes creation per user
+ * so two simultaneous checkouts cannot create duplicate customers. When Redis
+ * is unavailable the lock is skipped and creation is attempted directly (the
+ * idempotency key still guards duplicates). If another request holds the lock,
+ * we poll briefly for the freshly persisted ID before giving up.
+ */
+async function ensureStripeCustomer(user) {
+  if (!user || !user.id) return null;
+  if (isValidStripeCustomerId(user.stripeCustomerId)) {
+    return user.stripeCustomerId;
+  }
+
+  const lockKey = `stripe:customer-lock:${user.id}`;
+  const acquired = await redis.setnx(lockKey, 10);
+
+  const createAndPersist = async () => {
+    try {
+      const customerId = await createStripeCustomer({
+        userId: user.id,
+        email: user.email,
+        name: user.name,
+      });
+      invalidateUserCache(user.id);
+      return customerId;
+    } catch (err) {
+      console.error(`[Stripe] Failed to create customer for user ${user.id}:`, err.message);
+      notifyAdmin({
+        type: 'STRIPE_CUSTOMER_CREATE_FAILED',
+        title: 'Stripe customer creation failed',
+        message: `Could not create a Stripe customer for user ${user.id} (${user.email || 'no email'}). Checkout proceeded without a customer.`,
+        data: { userId: user.id },
+      }).catch(() => {});
+      return null;
+    }
+  };
+
+  if (acquired === true) {
+    try {
+      return await createAndPersist();
+    } finally {
+      await redis.del(lockKey).catch(() => {});
+    }
+  }
+
+  if (acquired === null) {
+    // Redis unavailable — cannot lock. Attempt creation directly (best-effort).
+    return createAndPersist();
+  }
+
+  // Lock held by a concurrent request — wait for it to persist the customer.
+  for (let i = 0; i < 10; i += 1) {
+    await new Promise((r) => setTimeout(r, 150));
+    try {
+      const fresh = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { stripeCustomerId: true },
+      });
+      if (fresh && isValidStripeCustomerId(fresh.stripeCustomerId)) {
+        return fresh.stripeCustomerId;
+      }
+    } catch {
+      // transient read failure — keep polling
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -496,6 +613,8 @@ function verifyWebhookSignature(payload, signature, endpointSecret) {
 module.exports = {
   getStripe,
   createPaymentIntent,
+  createStripeCustomer,
+  ensureStripeCustomer,
   createRefund,
   cancelPaymentIntent,
   calculateCommission,

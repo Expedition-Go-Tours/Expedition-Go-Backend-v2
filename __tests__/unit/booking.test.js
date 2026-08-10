@@ -29,6 +29,7 @@ jest.mock('../../utils/stripeHelpers', () => ({
   createPaymentIntent: jest.fn(),
   createRefund: jest.fn(),
   calculateCommission: jest.fn(),
+  ensureStripeCustomer: jest.fn(async (user) => user?.stripeCustomerId || null),
   getStripe: jest.fn(() => ({
     paymentIntents: {
       confirm: jest.fn(() => Promise.resolve({ id: 'pi_123', status: 'succeeded', client_secret: 'secret_123' })),

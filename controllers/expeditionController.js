@@ -8,7 +8,7 @@ const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/qu
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey } = require('../utils/availabilityCore');
-const { createPaymentIntent, calculateCommission, createRefund, getStripe } = require('../utils/stripeHelpers');
+const { createPaymentIntent, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const getConfig = require('../utils/getConfig');
 const { logActivity } = require('../utils/auditLogger');
@@ -1125,10 +1125,13 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       .createHash('md5')
       .update(`expedition:${customerId}:${tourId}:${selectedDate}`)
       .digest('hex');
+    // Attach a Stripe customer if one exists or can be created lazily; `null`
+    // means "charge without a customer" (PaymentIntents don't require one).
+    const stripeCustomerId = await ensureStripeCustomer(req.user);
     paymentIntent = await createPaymentIntent({
       amount: Math.round(pricing.total * 100),
       currency: pricing.currency,
-      customerId: req.user.stripeCustomerId,
+      customerId: stripeCustomerId,
       paymentMethodId: req.body.paymentMethodId,
       idempotencyKey,
       confirm: false,

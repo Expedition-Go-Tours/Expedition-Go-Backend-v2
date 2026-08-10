@@ -19,6 +19,10 @@ jest.mock('../../utils/queue', () => ({
 jest.mock('../../utils/eventEmitter', () => ({
   emit: jest.fn(),
 }));
+jest.mock('../../utils/redisClient', () => ({
+  setnx: jest.fn(async () => null),
+  del: jest.fn(async () => undefined),
+}));
 jest.mock('../../utils/emailService', () => ({}));
 jest.mock('../../utils/getConfig', () => jest.fn((key, defaultValue) => Promise.resolve(defaultValue)));
 
@@ -29,6 +33,7 @@ jest.mock('stripe', () => {
     webhooks: { constructEvent: mockConstructEvent },
     accounts: { create: jest.fn(), createLoginLink: jest.fn() },
     accountLinks: { create: jest.fn() },
+    customers: { create: jest.fn(), list: jest.fn() },
     paymentIntents: { create: jest.fn(), retrieve: jest.fn(), cancel: jest.fn() },
   };
   return jest.fn(() => mockStripeInstance);
@@ -42,7 +47,11 @@ const {
   processStripeWebhook,
   verifyWebhookSignature,
   cancelPaymentIntent,
+  createPaymentIntent,
+  createStripeCustomer,
+  ensureStripeCustomer,
 } = require('../../utils/stripeHelpers');
+const redis = require('../../utils/redisClient');
 
 const mockBooking = {
   id: 'booking-1',
@@ -345,5 +354,151 @@ describe('verifyWebhookSignature', () => {
     const result = verifyWebhookSignature('payload', 'good_sig', 'secret');
     expect(result).toEqual(fakeEvent);
     expect(mockConstructEvent).toHaveBeenCalledWith('payload', 'good_sig', 'secret');
+  });
+});
+
+describe('createPaymentIntent customer guard', () => {
+  beforeEach(() => {
+    mockStripeInstance.paymentIntents.create.mockClear();
+    mockStripeInstance.paymentIntents.create.mockResolvedValue({ id: 'pi_123', client_secret: 'secret_123' });
+  });
+
+  it('omits customer when customerId is an empty string', async () => {
+    await createPaymentIntent({ amount: 1000, customerId: '' });
+    const [data] = mockStripeInstance.paymentIntents.create.mock.calls[0];
+    expect(data).not.toHaveProperty('customer');
+  });
+
+  it('omits customer when customerId is null', async () => {
+    await createPaymentIntent({ amount: 1000, customerId: null });
+    const [data] = mockStripeInstance.paymentIntents.create.mock.calls[0];
+    expect(data).not.toHaveProperty('customer');
+  });
+
+  it('omits customer when customerId is undefined', async () => {
+    await createPaymentIntent({ amount: 1000 });
+    const [data] = mockStripeInstance.paymentIntents.create.mock.calls[0];
+    expect(data).not.toHaveProperty('customer');
+  });
+
+  it('omits customer when customerId is not a cus_ id', async () => {
+    await createPaymentIntent({ amount: 1000, customerId: 'not-a-customer' });
+    const [data] = mockStripeInstance.paymentIntents.create.mock.calls[0];
+    expect(data).not.toHaveProperty('customer');
+  });
+
+  it('includes customer when customerId is a valid cus_ id', async () => {
+    await createPaymentIntent({ amount: 1000, customerId: 'cus_abc123' });
+    const [data] = mockStripeInstance.paymentIntents.create.mock.calls[0];
+    expect(data.customer).toBe('cus_abc123');
+  });
+
+  it('still sends amount, payment method and metadata', async () => {
+    await createPaymentIntent({ amount: 1000, currency: 'USD', paymentMethodId: 'pm_1', metadata: { tourId: 't1' } });
+    const [data] = mockStripeInstance.paymentIntents.create.mock.calls[0];
+    expect(data.amount).toBe(1000);
+    expect(data.currency).toBe('usd');
+    expect(data.payment_method).toBe('pm_1');
+    expect(data.metadata).toEqual({ tourId: 't1' });
+  });
+});
+
+describe('createStripeCustomer', () => {
+  beforeEach(() => {
+    mockStripeInstance.customers.create.mockReset();
+    prisma.user.update.mockReset();
+  });
+
+  it('creates the customer in Stripe and persists the id on the user', async () => {
+    mockStripeInstance.customers.create.mockResolvedValue({ id: 'cus_new' });
+    prisma.user.update.mockResolvedValue({});
+
+    const id = await createStripeCustomer({ userId: 'u1', email: 'a@b.com', name: 'A B' });
+
+    expect(id).toBe('cus_new');
+    expect(mockStripeInstance.customers.create).toHaveBeenCalledWith(
+      { email: 'a@b.com', name: 'A B', metadata: { userId: 'u1', source: 'local_auth' } },
+      { idempotencyKey: 'create-customer:u1' }
+    );
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'u1' },
+      data: { stripeCustomerId: 'cus_new' },
+    });
+  });
+
+  it('propagates Stripe failures', async () => {
+    mockStripeInstance.customers.create.mockRejectedValue(new Error('stripe down'));
+    await expect(createStripeCustomer({ userId: 'u1', email: 'a@b.com' })).rejects.toThrow('stripe down');
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('ensureStripeCustomer', () => {
+  beforeEach(() => {
+    redis.setnx.mockReset();
+    redis.del.mockReset();
+    redis.setnx.mockResolvedValue(null);
+    redis.del.mockResolvedValue(undefined);
+    mockStripeInstance.customers.create.mockReset();
+    prisma.user.update.mockReset();
+    prisma.user.findUnique.mockReset();
+  });
+
+  it('returns the existing valid customer id without creating one', async () => {
+    const user = { id: 'u1', stripeCustomerId: 'cus_existing', email: 'a@b.com' };
+    await expect(ensureStripeCustomer(user)).resolves.toBe('cus_existing');
+    expect(mockStripeInstance.customers.create).not.toHaveBeenCalled();
+    expect(redis.setnx).not.toHaveBeenCalled();
+  });
+
+  it('creates a customer lazily when missing (Redis unavailable)', async () => {
+    redis.setnx.mockResolvedValue(null);
+    mockStripeInstance.customers.create.mockResolvedValue({ id: 'cus_new' });
+    prisma.user.update.mockResolvedValue({});
+
+    const user = { id: 'u1', email: 'a@b.com', name: 'A B', stripeCustomerId: null };
+    await expect(ensureStripeCustomer(user)).resolves.toBe('cus_new');
+    expect(mockStripeInstance.customers.create).toHaveBeenCalled();
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'u1' },
+      data: { stripeCustomerId: 'cus_new' },
+    });
+  });
+
+  it('releases the lock after creating', async () => {
+    redis.setnx.mockResolvedValue(true);
+    mockStripeInstance.customers.create.mockResolvedValue({ id: 'cus_new' });
+    prisma.user.update.mockResolvedValue({});
+
+    const user = { id: 'u1', email: 'a@b.com', stripeCustomerId: null };
+    await ensureStripeCustomer(user);
+    expect(redis.del).toHaveBeenCalledWith('stripe:customer-lock:u1');
+  });
+
+  it('returns null when creation fails (graceful, no throw)', async () => {
+    redis.setnx.mockResolvedValue(true);
+    mockStripeInstance.customers.create.mockRejectedValue(new Error('stripe down'));
+    prisma.user.update.mockResolvedValue({});
+
+    const user = { id: 'u1', email: 'a@b.com', stripeCustomerId: null };
+    await expect(ensureStripeCustomer(user)).resolves.toBeNull();
+  });
+
+  it('waits for a concurrent creator and returns the persisted id', async () => {
+    redis.setnx.mockResolvedValue(false);
+    prisma.user.findUnique.mockResolvedValue({ stripeCustomerId: 'cus_persisted' });
+
+    const user = { id: 'u1', email: 'a@b.com', stripeCustomerId: null };
+    await expect(ensureStripeCustomer(user)).resolves.toBe('cus_persisted');
+    expect(mockStripeInstance.customers.create).not.toHaveBeenCalled();
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { id: 'u1' },
+      select: { stripeCustomerId: true },
+    });
+  });
+
+  it('returns null for a missing user', async () => {
+    await expect(ensureStripeCustomer(null)).resolves.toBeNull();
+    await expect(ensureStripeCustomer({})).resolves.toBeNull();
   });
 });
