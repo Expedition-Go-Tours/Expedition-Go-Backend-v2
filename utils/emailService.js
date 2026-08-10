@@ -15,6 +15,7 @@
 const sgMail = require('@sendgrid/mail');
 const prisma = require('./prismaClient');
 const getConfig = require('./getConfig');
+const { travelerCount } = require('./availabilityCore');
 
 const TEMPLATE_IDS = {
   'supplier-approved': 'd-2f3d5b9302ae459b8ac94758a70d6ce6',
@@ -334,7 +335,7 @@ async function sendSupplierBookingNotification(booking) {
 
     if (!supplier || !tour) throw new Error('Supplier data incomplete');
 
-    const travelerCount = (booking.travelers?.adults || 0) + (booking.travelers?.children || 0) + (booking.travelers?.infants || 0);
+    const travelerCountValue = travelerCount(booking.travelers);
 
     await sendEmail({
       to: supplier.email,
@@ -347,7 +348,7 @@ async function sendSupplierBookingNotification(booking) {
         customerName: customer?.name || 'Guest',
         selectedDate: new Date(booking.selectedDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
         selectedTime: booking.selectedTime,
-        travelerCount,
+        travelerCount: travelerCountValue,
         totalAmount: booking.total,
         currency: booking.currency,
         customerPhone: booking.travelers?.phoneNumber || '',

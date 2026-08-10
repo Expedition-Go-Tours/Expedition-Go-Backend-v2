@@ -34,6 +34,7 @@ const { notifyAdmin } = require('./adminNotificationService');
 const getConfig = require('./getConfig');
 const redis = require('./redisClient');
 const { invalidateUserCache } = require('../middleware/authMiddleware');
+const { travelerCount } = require('./availabilityCore');
 
 /**
  * A valid Stripe Customer ID is a non-empty `cus_...` string.
@@ -512,10 +513,10 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
       });
 
       if (booking.appliedOfferId) {
-        const travelerCount = (booking.travelers?.adults || 0) + (booking.travelers?.children || 0) + (booking.travelers?.infants || 0);
+        const travelerCountValue = travelerCount(booking.travelers);
         await client.specialOffer.update({
           where: { id: booking.appliedOfferId },
-          data: { spotsSold: { increment: travelerCount } },
+          data: { spotsSold: { increment: travelerCountValue } },
         });
       }
 

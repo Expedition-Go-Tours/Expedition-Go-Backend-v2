@@ -23,8 +23,13 @@ const BOOKABLE_STATUSES = ['PENDING', 'CONFIRMED'];
 const statusLiteral = BOOKABLE_STATUSES.map((s) => `'${s}'`).join(', ');
 
 // SQL fragment — traveler count of a Booking row (JSONB `travelers` object).
-// Shared verbatim with the checkout transactions' raw queries.
-const TRAVELER_COUNT_SQL = `COALESCE((travelers->>'adults')::int, 0) + COALESCE((travelers->>'children')::int, 0) + COALESCE((travelers->>'infants')::int, 0)`;
+// Generic: sums every numeric key so supplier-defined categories (adults,
+// children, infants, seniors, students, youth, …) all occupy capacity.
+// Non-numeric metadata (phoneNumber/location/details) is excluded by the
+// numeric regex. Shared verbatim with the checkout transactions' raw queries.
+const TRAVELER_COUNT_SQL = `COALESCE((SELECT SUM(COALESCE((elem.value)::numeric, 0))
+  FROM jsonb_each_text(travelers) elem
+  WHERE elem.value ~ '^[0-9]+$'), 0)`;
 
 /**
  * Timezone-safe day key. Prisma @db.Date values and YYYY-MM-DD strings are both
@@ -76,7 +81,17 @@ function travelerCount(travelers) {
     const n = Number(v);
     return Number.isFinite(n) && n > 0 ? n : 0;
   };
-  return num(travelers.adults) + num(travelers.children) + num(travelers.infants);
+  let total = 0;
+  for (const value of Object.values(travelers)) {
+    // Only pure numeric values count as travelers — metadata (phone numbers,
+    // locations, details arrays) must never inflate the headcount.
+    if (typeof value === 'number') {
+      total += num(value);
+    } else if (typeof value === 'string' && /^[0-9]+$/.test(value)) {
+      total += num(value);
+    }
+  }
+  return total;
 }
 
 function isPerGroupTour(parsed) {

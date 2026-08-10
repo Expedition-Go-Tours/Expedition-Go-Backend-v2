@@ -92,6 +92,19 @@ describe('travelerCount', () => {
     expect(core.travelerCount({ adults: 2, children: 1, infants: 1 })).toBe(4);
   });
 
+  it('counts supplier-defined categories (seniors, students, …)', () => {
+    expect(core.travelerCount({ adults: 1, seniors: 1, students: 2 })).toBe(4);
+  });
+
+  it('never counts non-numeric metadata (phone/location/details)', () => {
+    expect(core.travelerCount({
+      adults: 1,
+      phoneNumber: '+233201234567',
+      location: 'Accra, Ghana',
+      details: [{ name: 'A', age: 30, ageGroup: 'adult' }],
+    })).toBe(1);
+  });
+
   it('coerces numeric strings', () => {
     expect(core.travelerCount({ adults: '2', children: '1' })).toBe(3);
   });

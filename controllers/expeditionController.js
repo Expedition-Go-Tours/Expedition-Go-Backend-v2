@@ -7,7 +7,8 @@ const { sendEmail } = require('../utils/emailService');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
-const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey } = require('../utils/availabilityCore');
+const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../utils/availabilityCore');
+const { validatePassengerMix } = require('../utils/passengerMix');
 const { createPaymentIntent, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const getConfig = require('../utils/getConfig');
@@ -970,12 +971,19 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
       throw new AppError('Tour is not available on Expedition', 400);
     }
 
+    // Enforce supplier passenger-mix rules (min/max, disallowed categories,
+    // requires-adult supervision) before pricing.
+    const mixResult = validatePassengerMix(parseBlob(tour.schedulesAndPricing), travelers);
+    if (!mixResult.ok) {
+      throw new AppError(mixResult.errors[0], 400);
+    }
+
     const availability = await checkTourAvailability(tourId, selectedDate, null);
     if (!availability.available) {
       throw new AppError(availability.reason || 'Tour is not available on the selected date', 400);
     }
 
-    const totalTravelers = (travelers.adults || 0) + (travelers.children || 0) + (travelers.infants || 0);
+    const totalTravelers = travelerCount(travelers);
     if (totalTravelers > availability.availableSpots) {
       throw new AppError(`Only ${availability.availableSpots} spots available, but ${totalTravelers} travelers requested`, 400);
     }
@@ -1046,6 +1054,13 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError('Supplier is not active', 400));
   }
 
+  // Enforce supplier passenger-mix rules (min/max, disallowed categories,
+  // requires-adult supervision) before any charge.
+  const mixResult = validatePassengerMix(parseBlob(tour.schedulesAndPricing), travelers);
+  if (!mixResult.ok) {
+    return next(new AppError(mixResult.errors[0], 400));
+  }
+
   const pricing = await calculateTourPrice(tour, travelers, selectedDate, selectedTime || null, null, customerId)
     .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
 
@@ -1098,7 +1113,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
   }
 
   const appliedOffer = pricing.appliedOffer || null;
-  const totalTravelers = (travelers.adults || 0) + (travelers.children || 0) + (travelers.infants || 0);
+  const totalTravelers = travelerCount(travelers);
 
   // Dedup: prevent duplicate bookings on retry (slot-scoped when one is chosen)
   const existingBooking = await prisma.booking.findFirst({
