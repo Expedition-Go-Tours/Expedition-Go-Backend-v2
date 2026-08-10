@@ -8,8 +8,14 @@ const travelerSchema = z.object({
 });
 
 const travelerWithDetailsSchema = travelerSchema.extend({
-  phoneNumber: z.string()
-    .refine((val) => isValidPhoneNumber(val), 'Invalid phone number. Use international format (e.g., +12025551234)'),
+  phoneNumber: z.string().superRefine((val, ctx) => {
+    if (!isValidPhoneNumber(val)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Invalid phone number "${val}". Use international format (e.g., +12025551234)`,
+      });
+    }
+  }),
   location: z.string().min(2).max(200),
   details: z
     .array(
