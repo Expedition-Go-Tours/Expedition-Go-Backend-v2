@@ -16,7 +16,7 @@ const travelerWithDetailsSchema = travelerSchema.extend({
       });
     }
   }),
-  location: z.string().min(2).max(200),
+  location: z.string().min(3).max(200),
   details: z
     .array(
       z.object({
