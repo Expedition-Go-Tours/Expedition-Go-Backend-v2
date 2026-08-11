@@ -213,7 +213,7 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
     // still be a closed day, outside the operating days-of-week, overridden to
     // BLOCKED, or fully booked. Re-evaluate each buffered tour against the
     // exact per-day rules (same computeDayEntry the calendar uses) with two
-    // batched queries — no N+1 — and keep the first `limit` truly available.
+    // batched queries â€” no N+1 â€” and keep the first `limit` truly available.
     if (req.query.availableDate) {
       const targetDate = toUtcDate(req.query.availableDate);
       if (targetDate && optimizedTours.length > 0) {
@@ -381,7 +381,7 @@ exports.getPopularByCategory = catchAsync(async (req, res, next) => {
 
     params.push(limit * 20);
 
-    // Score + fetch in a single SQL query — no full-table JS iteration
+    // Score + fetch in a single SQL query â€” no full-table JS iteration
     const scored = await prisma.$queryRawUnsafe(`
       SELECT t.id, t.title, t.slug, t."coverPhoto", t.photos, t.description,
         t.category, t."averageRating", t."reviewCount", t."viewCount", t."totalBookings",
@@ -400,7 +400,7 @@ exports.getPopularByCategory = catchAsync(async (req, res, next) => {
       LIMIT $${paramIdx}
     `, ...params);
 
-    // Group by category in JS (small result set — at most limit*20 rows)
+    // Group by category in JS (small result set â€” at most limit*20 rows)
     const optimized = {};
     for (const row of scored) {
       const cat = row.category || 'Other';
@@ -458,7 +458,7 @@ exports.getPopularByCategory = catchAsync(async (req, res, next) => {
 exports.getTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
-  // ── Optional auth: check if the requester is the tour owner ──
+  // â”€â”€ Optional auth: check if the requester is the tour owner â”€â”€
   let isOwner = false;
   let ownerSupplierId = null;
   if (req.headers.authorization?.startsWith('Bearer ')) {
@@ -489,7 +489,7 @@ exports.getTour = catchAsync(async (req, res, next) => {
         }
       }
     } catch {
-      // Invalid token — continue as public request
+      // Invalid token â€” continue as public request
     }
   }
 
@@ -507,7 +507,7 @@ exports.getTour = catchAsync(async (req, res, next) => {
       where.status = 'ACTIVE';
     }
 
-    // Main tour query — lighter includes (no deep reviews/specialOffers)
+    // Main tour query â€” lighter includes (no deep reviews/specialOffers)
     const tour = await prisma.tour.findFirst({
       where,
       include: {
@@ -573,7 +573,7 @@ exports.getTour = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found', 404));
   }
 
-  // ── View tracking: count each unique external visitor once per 30 minutes ──
+  // â”€â”€ View tracking: count each unique external visitor once per 30 minutes â”€â”€
   // Admins, expedition staff, the tour owner and ACTIVE suppliers are excluded
   // from viewCount (and from the analytics event emitted below).
   if (await shouldCountTourView({ req, tourSupplierId: result.supplierId })) {
@@ -626,7 +626,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
     return next(new AppError('Only active suppliers can create tours', 403));
   }
 
-  // ── Submit-for-review workflow ──
+  // â”€â”€ Submit-for-review workflow â”€â”€
   // Suppliers can no longer publish tours directly. Any ACTIVE/PUBLISHED status
   // sent by the supplier is coerced to DRAFT here; a tour reaches ACTIVE only
   // after an admin approves it via the tour moderation endpoint.
@@ -654,7 +654,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Ensure flat duration/durationUnit are authoritative — they are the form's
+  // Ensure flat duration/durationUnit are authoritative â€” they are the form's
   // source of truth. Always override categorization.duration with them so a
   // stale nested blob can never silently overwrite the user's edit.
   if (req.body.duration != null && req.body.durationUnit) {
@@ -678,7 +678,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
     }
   }
 
-  // ── Regenerate derived schedule prices from the authoritative source ──
+  // â”€â”€ Regenerate derived schedule prices from the authoritative source â”€â”€
   // The dashboard's autosave may send an empty/stale `prices` array; the server
   // always recomputes it from travelerDetails so the stored blob matches what
   // checkout (calculateTourPrice) and the public price display consume.
@@ -693,7 +693,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Validate tour data — partial validation allows progressive draft saves from
+  // Validate tour data â€” partial validation allows progressive draft saves from
   // the step-by-step wizard. Full validation + pricing completeness is enforced
   // by the submit-for-review endpoint (tours can no longer be created live).
   const validationResult = validateTourData(req.body, true);
@@ -724,7 +724,8 @@ exports.createTour = catchAsync(async (req, res, next) => {
     specialOffers,
     city,
     country,
-    region
+    region,
+    theme
   } = req.body;
 
   // Get uploaded Cloudinary URLs from multer
@@ -752,7 +753,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
 
   const parsedCategory = typeof categorization === 'string' ? JSON.parse(categorization) : categorization;
 
-  // ─── BLOCKING PHASE: Database writes ───
+  // â”€â”€â”€ BLOCKING PHASE: Database writes â”€â”€â”€
   const tour = await prisma.tour.create({
     data: {
       supplierId,
@@ -775,6 +776,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
       city: city ?? null,
       country: country ?? null,
       region: region ?? null,
+      theme: theme || { primary: null, secondary: [] },
       category: parsedCategory?.category || null,
       subcategory: parsedCategory?.subcategory || null,
       activityType: parsedCategory?.activityType || null,
@@ -792,13 +794,13 @@ exports.createTour = catchAsync(async (req, res, next) => {
     }
   });
 
-  // ─── RESPONSE PHASE: Return immediately ───
+  // â”€â”€â”€ RESPONSE PHASE: Return immediately â”€â”€â”€
   res.status(201).json({
     status: 'success',
     data: { tour }
   });
 
-  // ─── ASYNC PHASE: Deferred cleanup (never blocks client) ───
+  // â”€â”€â”€ ASYNC PHASE: Deferred cleanup (never blocks client) â”€â”€â”€
   // Use setImmediate() to run after response is sent but on same event loop tick
   setImmediate(async () => {
     try {
@@ -862,14 +864,14 @@ exports.createTour = catchAsync(async (req, res, next) => {
             extra: { tourId: tour.id, supplierId }
           });
         }
-      } catch { /* Sentry unavailable — ignore */ }
+      } catch { /* Sentry unavailable â€” ignore */ }
     }
   });
 });
 
 /**
  * Merge the incoming product-editor payload over the current live content to
- * produce the full draft snapshot. Live columns are never touched here — the
+ * produce the full draft snapshot. Live columns are never touched here â€” the
  * draft waits in draftContent until an admin approves it.
  */
 function buildDraftFromBody(existingTour, body, files) {
@@ -890,7 +892,7 @@ function buildDraftFromBody(existingTour, body, files) {
   if (!merged.coverPhoto && merged.photos.length > 0) {
     merged.coverPhoto = merged.photos[0];
   }
-  // Empty metadata strings are meaningless on the storefront — normalize to
+  // Empty metadata strings are meaningless on the storefront â€” normalize to
   // null so title-based meta fallbacks kick in instead of blank tags.
   if (merged.metaTitle === '') merged.metaTitle = null;
   if (merged.metaDescription === '') merged.metaDescription = null;
@@ -913,8 +915,8 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const supplierId = req.supplierId;
 
-  // Find tour and verify ownership (non-locking — used for early 404 check and
-  // as the seed for the presence-aware flat→blob mapping below)
+  // Find tour and verify ownership (non-locking â€” used for early 404 check and
+  // as the seed for the presence-aware flatâ†’blob mapping below)
   const existingTour = await prisma.tour.findFirst({
     where: { id, supplierId }
   });
@@ -922,9 +924,9 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found or access denied', 404));
   }
 
-  // ── Submit-for-review workflow ──
+  // â”€â”€ Submit-for-review workflow â”€â”€
   // Suppliers can no longer publish tours directly. Attempting to set a tour to
-  // ACTIVE/PUBLISHED is rejected — use the submit-for-review endpoint and await
+  // ACTIVE/PUBLISHED is rejected â€” use the submit-for-review endpoint and await
   // admin approval instead.
   if (req.body.status === 'ACTIVE' || req.body.status === 'PUBLISHED') {
     return next(new AppError('Tours can no longer be published directly. Submit the tour for review and an admin will approve it.', 400));
@@ -955,14 +957,14 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Validate update data — partial validation (draft saves). Full validation
+  // Validate update data â€” partial validation (draft saves). Full validation
   // is enforced by the submit-for-review endpoint.
   const validationResult = validateTourData(req.body, true);
   if (!validationResult.isValid) {
     return next(new AppError(`Validation failed: ${validationResult.errors.join(', ')}`, 400));
   }
 
-  // ── Draft path: editing a live tour ──
+  // â”€â”€ Draft path: editing a live tour â”€â”€
   // Edits to an ACTIVE tour are captured in draftContent and never touch the
   // live columns. The live listing keeps selling the current approved version
   // until an admin approves the draft. Terminal statuses (PAUSED/ARCHIVED)
@@ -970,7 +972,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   const editingLiveTour = existingTour.status === 'ACTIVE'
     && (!req.body.status || ['DRAFT', 'REJECTED', 'PENDING_APPROVAL', 'ACTIVE', 'PUBLISHED'].includes(req.body.status));
   if (editingLiveTour) {
-    // ── Edit-while-pending lock ──
+    // â”€â”€ Edit-while-pending lock â”€â”€
     // A tour already in the moderation queue must not be mutated underneath the
     // reviewer. The supplier withdraws the submission (POST /withdraw-review)
     // before editing again; otherwise the pending draft could silently drop out
@@ -1018,7 +1020,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   // Host the update in a transaction with row lock so two concurrent PATCH
   // requests cannot overwrite each other's changes.
   const result = await prisma.$transaction(async (tx) => {
-    // Lock the tour row — blocks any other concurrent transaction writing to it
+    // Lock the tour row â€” blocks any other concurrent transaction writing to it
     const [locked] = await tx.$queryRawUnsafe(
       'SELECT id FROM "Tour" WHERE id = $1 AND "supplierId" = $2 FOR UPDATE',
       id, supplierId
@@ -1032,7 +1034,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
       where: { id, supplierId }
     });
 
-    // ── Edit-while-pending lock ──
+    // â”€â”€ Edit-while-pending lock â”€â”€
     // Covers the non-draft path: a NEW tour awaiting approval (status
     // PENDING_APPROVAL) must also be frozen while an admin reviews it. The
     // supplier withdraws the submission (POST /withdraw-review) before editing.
@@ -1049,7 +1051,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     } = req.body;
     let { schedulesAndPricing } = req.body;
 
-    // ── Server-authoritative derived pricing + live-data completeness ──
+    // â”€â”€ Server-authoritative derived pricing + live-data completeness â”€â”€
     // The dashboard's autosave may send an empty/stale `prices` array; the
     // server always regenerates it from the authoritative travelerDetails so
     // the stored blob matches what checkout (calculateTourPrice) consumes.
@@ -1074,7 +1076,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     if (bookingAndTickets !== undefined) updateData.bookingAndTickets = bookingAndTickets;
     if (coverPhoto !== undefined) updateData.coverPhoto = coverPhoto;
     if (tags !== undefined) updateData.tags = tags;
-    // ── Live-tour edits stay live ──
+    // â”€â”€ Live-tour edits stay live â”€â”€
     // An ACTIVE tour only leaves ACTIVE when the supplier explicitly pauses or
     // archives it. Draft/review statuses sent while editing a live tour are
     // ignored so autosaves never unpublish a live listing.
@@ -1125,7 +1127,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     }
 
     // Update slug if title changed (uses tx so slug uniqueness check sees
-    // the transaction's pending writes — prevents duplicate slugs)
+    // the transaction's pending writes â€” prevents duplicate slugs)
     if (req.body.title && req.body.title !== existingTour.title) {
       updateData.slug = await createSlug(req.body.title, tx);
     }
@@ -1168,7 +1170,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
       }
     });
 
-    // Handle special offers if provided — upsert by promoCode, remove stale offers
+    // Handle special offers if provided â€” upsert by promoCode, remove stale offers
     const parsedSpecialOffers = typeof specialOffers === 'string' ? JSON.parse(specialOffers) : specialOffers;
     if (Array.isArray(parsedSpecialOffers)) {
       const incomingPromoCodes = parsedSpecialOffers.map(o => o.promoCode).filter(Boolean);
@@ -1290,14 +1292,14 @@ function validateTourForReview(tour) {
  * The tour only becomes ACTIVE when an admin approves it.
  *
  * A live tour with a pending draft keeps selling its current approved version
- * while the edits wait in the moderation queue — only the draft status changes.
+ * while the edits wait in the moderation queue â€” only the draft status changes.
  */
 exports.submitTourForReview = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const supplierId = req.supplierId;
   const hasBody = req.body && typeof req.body === 'object' && !Array.isArray(req.body) && Object.keys(req.body).length > 0;
 
-  // Money needs somewhere to go — a verified payout method is required
+  // Money needs somewhere to go â€” a verified payout method is required
   const hasVerifiedMethod = await prisma.payoutMethod.findFirst({
     where: { supplierId, verified: true },
     select: { id: true },
@@ -1307,10 +1309,10 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
   }
 
   // Persist the submitted payload and validate it atomically so the review
-  // decision always reflects exactly what the supplier submitted — never a
+  // decision always reflects exactly what the supplier submitted â€” never a
   // stale stored draft. If validation fails the whole transaction rolls back.
   const result = await prisma.$transaction(async (tx) => {
-    // Lock the tour row — blocks any concurrent autosave PATCH racing this submit
+    // Lock the tour row â€” blocks any concurrent autosave PATCH racing this submit
     const [locked] = await tx.$queryRawUnsafe(
       'SELECT id FROM "Tour" WHERE id = $1 AND "supplierId" = $2 FOR UPDATE',
       id, supplierId
@@ -1340,7 +1342,7 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
 
     // Presence-aware mapping runs here, inside the lock, so it can seed from the
     // CURRENT live row: flat fields in the payload stay authoritative, anything
-    // absent keeps its live value — productToTour defaults never poison the
+    // absent keeps its live value â€” productToTour defaults never poison the
     // submitted snapshot for partial payloads.
     if (hasBody) {
       applyFlatToBlobMapping(req.body, tour);
@@ -1354,7 +1356,7 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
     if (hasBody) {
       // The supplier submitted their current builder state. Build the merged
       // content snapshot exactly like a draft save (photos + rebuilt prices),
-      // persist it, then validate THAT — the submitted truth, not stored data.
+      // persist it, then validate THAT â€” the submitted truth, not stored data.
       submitted = buildDraftFromBody(tour, req.body, req.files);
       if (isLiveTour) {
         updateData = {
@@ -1407,14 +1409,14 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
     // what is ALREADY applied (a live tour's current content, or the content
     // stored for an already-submitted new tour), re-queuing it would only
     // re-notify admins and churn the review pool. First submissions of a new
-    // tour (never submittedAt) are exempt — the supplier may send their stored
+    // tour (never submittedAt) are exempt â€” the supplier may send their stored
     // builder state as-is. buildTourDiff canonicalizes empty/absence
     // differences exactly like the admin approve path, so a clean diff here is
     // genuinely "no changes".
     const hasLiveOrDraftSubmission =
       isLiveTour ? Boolean(tour.draftSubmittedAt) : Boolean(tour.submittedAt);
     // One canonical diff serves both the no-op guard and the admin changes
-    // summary — `submitted` is exactly what gets persisted as the draft, so the
+    // summary â€” `submitted` is exactly what gets persisted as the draft, so the
     // notifier's merge-based diff would recompute identical trees.
     const contentDiff = buildTourDiff(tour, submitted);
     const noChanges = hasLiveOrDraftSubmission && contentDiff.length === 0;
@@ -1439,12 +1441,12 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
 
   // Idempotent duplicate submission: content identical to what is already
   // applied. Respond success (200) without touching the queue, logging
-  // activity, or re-notifying admins — the frontend gates the button, this is
+  // activity, or re-notifying admins â€” the frontend gates the button, this is
   // the server-side guarantee for stale retries / API callers.
   if (noChanges) {
     return res.status(200).json({
       status: 'success',
-      message: 'No changes to submit — the request was ignored',
+      message: 'No changes to submit â€” the request was ignored',
       data: { noChanges: true, tour }
     });
   }
@@ -1464,7 +1466,7 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
   });
 
   // Notify admins (bell + admin-room socket). The changes summary reuses the
-  // diff computed against the submitted payload inside the transaction —
+  // diff computed against the submitted payload inside the transaction â€”
   // `submitted` IS the persisted draft (updated.draftContent), so the summary
   // never reflects the pre-submission stored draft.
   await notifyAdmin({
@@ -1504,7 +1506,7 @@ exports.withdrawTourForReview = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
 
   const result = await prisma.$transaction(async (tx) => {
-    // Lock the tour row — blocks a concurrent admin review racing the withdrawal.
+    // Lock the tour row â€” blocks a concurrent admin review racing the withdrawal.
     const [locked] = await tx.$queryRawUnsafe(
       'SELECT id FROM "Tour" WHERE id = $1 AND "supplierId" = $2 FOR UPDATE',
       id, supplierId
@@ -1587,7 +1589,7 @@ exports.getTourDraft = catchAsync(async (req, res, next) => {
  * Delete tour (suppliers only - own tours)
  *
  * Deletion is blocked only by CONFIRMED bookings (paid, real commitments).
- * PENDING bookings (payment never succeeded — checkout abandoned) are
+ * PENDING bookings (payment never succeeded â€” checkout abandoned) are
  * auto-cancelled as part of the deletion so suppliers are not locked out
  * of their own tours forever by stale, unpaid checkout rows.
  */
@@ -1616,7 +1618,7 @@ exports.deleteTour = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found or access denied', 404));
   }
 
-  // Check for confirmed (paid) bookings — real commitments, block deletion
+  // Check for confirmed (paid) bookings â€” real commitments, block deletion
   const confirmedBookings = tour.bookings.filter((b) => b.status === 'CONFIRMED');
   if (confirmedBookings.length > 0) {
     return next(new AppError('Cannot delete tour with confirmed bookings. Cancel them first.', 400));
@@ -1624,7 +1626,7 @@ exports.deleteTour = catchAsync(async (req, res, next) => {
 
   // Auto-cancel any PENDING bookings left behind by abandoned checkouts.
   // Rules (GetYourGuide-style):
-  //  - CONFIRMED blocks (above) — always honored.
+  //  - CONFIRMED blocks (above) â€” always honored.
   //  - A PENDING booking with a live Stripe charge (paymentStatus PROCESSING)
   //    is only safe to cancel once Stripe confirms the intent is cancelable.
   //    If the money already went through (succeeded) or the intent is stuck
@@ -2247,7 +2249,7 @@ async function buildPriceIdConstraint(prisma, minPrice, maxPrice, priceRange) {
   }
 
   // `safePrice` guards against legacy rows where retailPrice is a non-numeric
-  // string — those become NULL and simply never match, instead of throwing.
+  // string â€” those become NULL and simply never match, instead of throwing.
   const sql = `
     SELECT DISTINCT t.id
     FROM "Tour" t,
@@ -2268,9 +2270,9 @@ async function buildPriceIdConstraint(prisma, minPrice, maxPrice, priceRange) {
 
 /**
  * Upsert a special offer by promoCode.
- * - If promoCode exists and belongs to the same supplier → update it + ensure tour target.
- * - If promoCode belongs to a different supplier → skip (log warning).
- * - If promoCode is null or not found → create a new offer.
+ * - If promoCode exists and belongs to the same supplier â†’ update it + ensure tour target.
+ * - If promoCode belongs to a different supplier â†’ skip (log warning).
+ * - If promoCode is null or not found â†’ create a new offer.
  */
 async function upsertSpecialOffer(prisma, supplierId, tourId, offer) {
   // If offer has an id, try to update by id first (for re-publish of existing offers)
@@ -2299,7 +2301,7 @@ async function upsertSpecialOffer(prisma, supplierId, tourId, offer) {
       }
       return updated;
     }
-    // id provided not found for this supplier — fall through to create
+    // id provided not found for this supplier â€” fall through to create
   }
 
   // No id or id not found: try upsert by promoCode
@@ -2325,7 +2327,7 @@ async function upsertSpecialOffer(prisma, supplierId, tourId, offer) {
 
   if (existing) {
     if (existing.supplierId !== supplierId) {
-      console.warn(`Promo code "${offer.promoCode}" belongs to another supplier — skipping`);
+      console.warn(`Promo code "${offer.promoCode}" belongs to another supplier â€” skipping`);
       return null;
     }
     const updated = await prisma.specialOffer.update({
