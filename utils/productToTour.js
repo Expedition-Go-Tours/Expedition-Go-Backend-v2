@@ -100,6 +100,7 @@ function buildProductContent(flat) {
     healthRestrictions: Array.isArray(src.notSuitableFor) ? src.notSuitableFor : [],
     notAllowed: Array.isArray(src.notAllowed) ? src.notAllowed : [],
     petFriendly: !!src.petFriendly,
+    wifiIncluded: !!src.wifiIncluded,
     whatToBring: Array.isArray(src.mandatoryItems) ? src.mandatoryItems : [],
     additionalInfo: src.knowBeforeYouGo || '',
     emergencyCountryCode: (() => {
