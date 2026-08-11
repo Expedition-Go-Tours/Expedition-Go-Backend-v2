@@ -669,9 +669,16 @@ exports.createTour = catchAsync(async (req, res, next) => {
     for (const key of Object.keys(req.body)) {
       if (JSON_BLOB_KEYS.has(key)) continue
       const val = req.body[key]
-      if (val === '' || val === null) { delete req.body[key]; continue }
+      if (val === '' || val === null || val === undefined) { delete req.body[key]; continue }
+      if (typeof val === 'object' && !Array.isArray(val) && Object.keys(val).length === 0) { delete req.body[key]; continue }
       if (Array.isArray(val)) {
-        const filtered = val.filter(v => v !== '' && v !== null)
+        const filtered = val.filter(v => {
+          if (v === '' || v === null || v === undefined) return false
+          if (typeof v === 'object' && !Array.isArray(v)) {
+            return Object.values(v).some(c => c !== '' && c != null && c !== undefined)
+          }
+          return true
+        })
         if (filtered.length === 0) { delete req.body[key]; continue }
         req.body[key] = filtered
       }
@@ -948,9 +955,16 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     for (const key of Object.keys(req.body)) {
       if (JSON_BLOB_KEYS.has(key)) continue
       const val = req.body[key]
-      if (val === '' || val === null) { delete req.body[key]; continue }
+      if (val === '' || val === null || val === undefined) { delete req.body[key]; continue }
+      if (typeof val === 'object' && !Array.isArray(val) && Object.keys(val).length === 0) { delete req.body[key]; continue }
       if (Array.isArray(val)) {
-        const filtered = val.filter(v => v !== '' && v !== null)
+        const filtered = val.filter(v => {
+          if (v === '' || v === null || v === undefined) return false
+          if (typeof v === 'object' && !Array.isArray(v)) {
+            return Object.values(v).some(c => c !== '' && c != null && c !== undefined)
+          }
+          return true
+        })
         if (filtered.length === 0) { delete req.body[key]; continue }
         req.body[key] = filtered
       }

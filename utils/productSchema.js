@@ -421,9 +421,25 @@ function accommodationInclusionRefinement(data, ctx) {
 // Full schema used for strict validation (submit-for-review).
 const productSchema = productObjectSchema.superRefine(accommodationInclusionRefinement);
 
-// Partial variant for progressive wizard/draft saves. Built from the plain
-// object schema so `.partial()` does not throw — Zod 4 forbids `.partial()`
-// on schemas that already carry refinements (advanced schemas).
+// Partial variant for progressive wizard/draft saves. Each field is optional
+// so the wizard can save progress step-by-step. Fields that enforce
+// completeness in the full schema (e.g. photos.min(4), highlights.min(3))
+// are relaxed here — the submit-for-review endpoint enforces completeness
+// via validateTourForReview() instead.
 const productSchemaPartial = productObjectSchema.partial().superRefine(accommodationInclusionRefinement);
+// Override strict .min() constraints that block autosave of incomplete drafts.
+// Keep type/max-length validation for structural correctness.
+productSchemaPartial._def.shape = {
+  ...productSchemaPartial._def.shape,
+  language: z.string().max(50).optional(),
+  category: z.string().optional(),
+  title: z.string().max(60).optional(),
+  shortDescription: z.string().max(200).optional(),
+  fullDescription: z.string().max(3000).optional(),
+  highlights: z.array(z.string()).optional(),
+  photos: z.array(photoObjectSchema).optional(),
+  meetingMode: z.enum(['meeting_point', 'pickup', 'none']).optional(),
+  guideMaterials: z.object({ audioGuide: z.boolean(), infoBooklet: z.boolean() }).optional(),
+};
 
 module.exports = { productSchema, productSchemaPartial, locationSchema, attractionSchema };
