@@ -44,7 +44,7 @@ const productOptionSchema = z.object({
   description: z.string().optional(),
   isPrivate: z.boolean(),
   skipTheLine: z.enum(['none', 'skip_tickets', 'separate_entrance', 'express_security', 'express_elevators']),
-  wheelchairAccessible: z.boolean(),
+  wheelchairAccessible: z.boolean().catch(false),
   audioGuide: z.boolean().optional(),
   infoBooklet: z.boolean().optional(),
   maxGroupSize: z.number().nullable().optional(),

@@ -23,4 +23,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
 
 # Matches the previous Render startCommand: sync schema, backfill the legacy
 # wishlist column into WishlistItem, then boot.
-CMD ["sh", "-c", "npx prisma db push --accept-data-loss && node scripts/backfill-wishlist.js && node server.js"]
+CMD ["sh", "-c", "npx prisma db push --accept-data-loss && node server.js"]

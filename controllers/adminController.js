@@ -2083,9 +2083,8 @@ exports.getTourReviewQueue = catchAsync(async (req, res) => {
     search,
   } = req.query;
 
-  // Empty status means "show everything" (the All tab). A missing/blank
-  // value must NOT silently narrow to PENDING_APPROVAL — that is what made
-  // the moderation page look empty while pending edits existed.
+  // Empty status means "show all pending" (the All tab) — both new
+  // submissions awaiting review and live tours with pending edits.
   const requestedStatus = typeof status === 'string' ? status.trim() : '';
 
   const validStatuses = ['PENDING_APPROVAL', 'REJECTED', 'ACTIVE', 'PENDING_EDITS'];
@@ -2122,13 +2121,19 @@ exports.getTourReviewQueue = catchAsync(async (req, res) => {
     if (searchOR) {
       where.OR = searchOR;
     }
-  } else if (searchOR) {
-    where.OR = searchOR;
+  } else {
+    // Default "All" tab: only show pending items (new submissions + live-tour edits)
+    const pendingOR = [{ status: 'PENDING_APPROVAL' }, { draftStatus: 'PENDING_APPROVAL' }];
+    if (searchOR) {
+      where.AND = [{ OR: pendingOR }, { OR: searchOR }];
+    } else {
+      where.OR = pendingOR;
+    }
   }
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  const [tours, totalCount, pendingCount, rejectedCount, activeCount, pendingEditsCount] = await Promise.all([
+  const [tours, totalCount, pendingCount, rejectedCount, pendingEditsCount] = await Promise.all([
     prisma.tour.findMany({
       where,
       orderBy: [
@@ -2153,7 +2158,6 @@ exports.getTourReviewQueue = catchAsync(async (req, res) => {
     // never disagree with the list below them.
     prisma.tour.count({ where: { OR: [{ status: 'PENDING_APPROVAL' }, { draftStatus: 'PENDING_APPROVAL' }] } }),
     prisma.tour.count({ where: { OR: [{ status: 'REJECTED' }, { draftStatus: 'REJECTED' }] } }),
-    prisma.tour.count({ where: { status: 'ACTIVE' } }),
     prisma.tour.count({ where: { draftStatus: 'PENDING_APPROVAL' } }),
   ]);
 
@@ -2161,7 +2165,7 @@ exports.getTourReviewQueue = catchAsync(async (req, res) => {
     status: 'success',
     data: {
       tours,
-      counts: { pending: pendingCount, rejected: rejectedCount, active: activeCount, pendingEdits: pendingEditsCount },
+      counts: { pending: pendingCount, rejected: rejectedCount, pendingEdits: pendingEditsCount },
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(totalCount / parseInt(limit)),

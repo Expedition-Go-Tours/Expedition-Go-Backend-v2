@@ -700,7 +700,12 @@ exports.createTour = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Validate tour data â€” partial validation allows progressive draft saves from
+  // Normalize wheelchairAccessible in options — it's now a top-level productContent field
+  if (Array.isArray(req.body.options)) {
+    req.body.options = req.body.options.map((o) => ({ ...o, wheelchairAccessible: !!o.wheelchairAccessible }));
+  }
+
+  // Validate tour data — partial validation allows progressive draft saves from
   // the step-by-step wizard. Full validation + pricing completeness is enforced
   // by the submit-for-review endpoint (tours can no longer be created live).
   const validationResult = validateTourData(req.body, true);
@@ -971,7 +976,12 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Validate update data â€” partial validation (draft saves). Full validation
+  // Normalize wheelchairAccessible in options — it's now a top-level productContent field
+  if (Array.isArray(req.body.options)) {
+    req.body.options = req.body.options.map((o) => ({ ...o, wheelchairAccessible: !!o.wheelchairAccessible }));
+  }
+
+  // Validate update data — partial validation (draft saves). Full validation
   // is enforced by the submit-for-review endpoint.
   const validationResult = validateTourData(req.body, true);
   if (!validationResult.isValid) {

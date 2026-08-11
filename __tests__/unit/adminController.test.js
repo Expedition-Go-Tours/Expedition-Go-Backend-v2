@@ -733,7 +733,7 @@ describe('adminController', () => {
       expect(res.status).toHaveBeenCalledWith(200);
       const body = res.json.mock.calls[0][0];
       expect(body.data.tours).toEqual([mockTour]);
-      expect(body.data.counts).toEqual({ pending: 1, rejected: 1, active: 1, pendingEdits: 1 });
+      expect(body.data.counts).toEqual({ pending: 1, rejected: 1, pendingEdits: 1 });
       expect(body.data.pagination).toEqual(
         expect.objectContaining({ currentPage: 1, totalPages: 1, totalCount: 1, limit: 20 })
       );
@@ -770,13 +770,16 @@ describe('adminController', () => {
       ]);
     });
 
-    it('shows ALL tours when no status is provided (All tab)', async () => {
+    it('shows only pending tours when no status is provided (All tab)', async () => {
       req.query = { page: 1, limit: 20 };
 
       await controller.getTourReviewQueue(req, res, next);
 
       const arg = prisma.tour.findMany.mock.calls[0][0];
-      expect(arg.where).toEqual({});
+      expect(arg.where.OR).toEqual([
+        { status: 'PENDING_APPROVAL' },
+        { draftStatus: 'PENDING_APPROVAL' },
+      ]);
     });
 
     it('includes rejected live-tour edits in the REJECTED view', async () => {
@@ -795,14 +798,13 @@ describe('adminController', () => {
       prisma.tour.count.mockResolvedValueOnce(5); // findMany totalCount
       prisma.tour.count.mockResolvedValueOnce(2); // pending
       prisma.tour.count.mockResolvedValueOnce(3); // rejected (incl. edits)
-      prisma.tour.count.mockResolvedValueOnce(1); // active
       prisma.tour.count.mockResolvedValueOnce(4); // pendingEdits
       req.query = { status: 'REJECTED', page: 1, limit: 20 };
 
       await controller.getTourReviewQueue(req, res, next);
 
       const body = res.json.mock.calls[0][0];
-      expect(body.data.counts).toEqual({ pending: 2, rejected: 3, active: 1, pendingEdits: 4 });
+      expect(body.data.counts).toEqual({ pending: 2, rejected: 3, pendingEdits: 4 });
     });
 
     it('searches by title or supplier name (combined with the status filter)', async () => {
