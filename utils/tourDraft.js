@@ -21,7 +21,7 @@ const FLAT_BLOB_SOURCES = {
     'wheelchairAccessible', 'wifiIncluded', 'mandatoryItems', 'knowBeforeYouGo', 'emergencyCountryCode', 'emergencyPhone', 'voucherInfo',
     'copyrightConfirmed', 'options', 'meetingPointDescription', 'meetingMode',
     'meetingPointPicture', 'arrivalTime', 'arrivalTimeType', 'arrivalTimeCustom', 'pickupProvided',
-    'pickupAvailable', 'pickupType', 'pickupDescription', 'pickupTiming',
+    'pickupAvailable', 'pickupType', 'pickupDescription', 'pickupTiming', 'pickupAtSpecificTime',
     'pickupFinalLocationTiming', 'referenceStartTime', 'pickupAreas', 'pickupLocations',
     'pickupGeoshape', 'dropoffProvided', 'dropoffAvailable', 'dropoffOption', 'dropoffLocation',
     'dropoffDescription', 'isPrivateActivity', 'passportRequired', 'flightInfoRequired',
@@ -123,7 +123,7 @@ const FLAT_BLOB_INJECTS = {
   bookingAndTickets: {
     own: [
       'meetingPoint', 'arrivalTime', 'pickupProvided', 'pickupType', 'pickupDescription',
-      'pickupTiming', 'pickupFinalLocationTiming', 'referenceStartTime', 'pickupAreas',
+      'pickupTiming', 'pickupAtSpecificTime', 'pickupFinalLocationTiming', 'referenceStartTime', 'pickupAreas',
       'pickupLocations', 'pickupGeoshape', 'dropoffOption', 'dropoffProvided', 'dropoffLocation',
       'dropoffDescription', 'ticketType', 'instantBooking', 'instantConfirmation', 'maxQuantity',
       'bookingWindow', 'minAdvanceBookingHours', 'travelerRequiredInfo', 'cutoffMinutes',

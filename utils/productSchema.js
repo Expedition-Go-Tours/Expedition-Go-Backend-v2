@@ -334,6 +334,7 @@ const productObjectSchema = z.object({
   pickupType: z.enum(['area', 'address']).optional(),
   pickupDescription: z.string().max(500).optional(),
   pickupTiming: z.enum(['at_start', 'before_start']).optional(),
+  pickupAtSpecificTime: z.boolean().optional(),
   pickupFinalLocationTiming: z.enum(['day_before', 'after_selection']).optional(),
   referenceStartTime: z.string().max(20).optional(),
   pickupAreas: z.array(pickupAreaSchema).optional(),
