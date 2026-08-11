@@ -139,6 +139,14 @@ exports.resolveSupplier = catchAsync(async (req, res, next) => {
   }
 
   if (req.user.roles.includes('admin')) {
+    const profile = await prisma.supplierProfile.findFirst({
+      where: { userId: req.user.id },
+      select: { id: true },
+    });
+    if (!profile) {
+      return next(new AppError('No supplier profile linked to this admin account', 403));
+    }
+    req.supplierId = req.user.id;
     return next();
   }
 
