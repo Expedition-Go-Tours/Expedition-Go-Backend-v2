@@ -3,7 +3,8 @@ jest.mock('../../utils/prismaClient', () => {
   return {
     tour: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), groupBy: jest.fn(), aggregate: jest.fn() },
     booking,
-    review: { aggregate: jest.fn() },
+    review: { aggregate: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+    specialOfferTarget: { findMany: jest.fn().mockResolvedValue([]) },
     supplierProfile: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
     tourSecondaryTheme: { deleteMany: jest.fn(), createMany: jest.fn() },
     payoutMethod: { findFirst: jest.fn() },
@@ -349,7 +350,16 @@ describe('tourController', () => {
 
       await controller.getPopularByCategory(req, res, next);
 
-      expect(getPopularByCategory).toHaveBeenCalled();
+      // New implementation uses SQL directly — verify it returned results
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'success',
+          data: expect.objectContaining({
+            categories: expect.any(Object),
+          }),
+        })
+      );
     });
 
     it('filters by theme when query param is provided', async () => {
@@ -357,7 +367,16 @@ describe('tourController', () => {
 
       await controller.getPopularByCategory(req, res, next);
 
-      expect(getPopularByCategory).toHaveBeenCalled();
+      // New implementation uses SQL directly — verify it returned results
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'success',
+          data: expect.objectContaining({
+            categories: expect.any(Object),
+          }),
+        })
+      );
     });
 
     it('clamps perCategory between 1 and 20', async () => {

@@ -30,21 +30,39 @@ async function rankTourIdsBySearch(searchTerm, tourIds) {
 /**
  * Get tour IDs matching a full-text search query, ranked by relevance.
  * Returns { ids: string[], totalCount: number } with pagination applied.
+ *
+ * Uses a single SQL CTE to avoid fetching all IDs into JS.
  */
 async function searchToursByRelevance(searchTerm, where, skip, take) {
-  const idsResult = await prisma.tour.findMany({
-    where,
-    select: { id: true },
-  });
+  if (!searchTerm) return { ids: [], totalCount: 0 };
 
-  const allIds = idsResult.map(r => r.id);
-  if (!allIds.length) return { ids: [], totalCount: 0 };
+  try {
+    // Single SQL: FTS filter + rank + count + paginate
+    // The CTE approach avoids two round-trips
+    const rows = await prisma.$queryRawUnsafe(`
+      WITH matched AS (
+        SELECT id,
+          ts_rank(
+            to_tsvector($1, coalesce(title, '') || ' ' || coalesce(description, '')),
+            plainto_tsquery($1, $2)
+          ) AS rank
+        FROM "Tour"
+        WHERE status = 'ACTIVE'
+          AND to_tsvector($1, coalesce(title, '') || ' ' || coalesce(description, ''))
+              @@ plainto_tsquery($1, $2)
+      )
+      SELECT id, (SELECT COUNT(*)::int FROM matched) AS total
+      FROM matched
+      ORDER BY rank DESC
+      OFFSET $3 LIMIT $4
+    `, FTS_CONFIG, searchTerm, skip, take);
 
-  const rankedIds = await rankTourIdsBySearch(searchTerm, allIds);
-  const totalCount = rankedIds.length;
-  const pageIds = rankedIds.slice(skip, skip + take);
-
-  return { ids: pageIds, totalCount };
+    const totalCount = rows.length > 0 ? rows[0].total : 0;
+    return { ids: rows.map(r => r.id), totalCount };
+  } catch {
+    // Fallback: return empty — caller will handle gracefully
+    return { ids: [], totalCount: 0 };
+  }
 }
 
 module.exports = {

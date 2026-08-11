@@ -342,83 +342,48 @@ function buildSortOptions(sortBy = 'createdAt', sortOrder = 'desc') {
  */
 async function getAvailableFilterOptions(prisma) {
   try {
-    // Get unique categories, themes, and locations from active tours
-    const tours = await prisma.tour.findMany({
-      where: { status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } },
-      select: {
-        category: true,
-        subcategory: true,
-        activityType: true,
-        primaryTheme: true,
-        tags: true,
-        city: true,
-        country: true,
-        region: true,
-        secondaryThemes: { select: { theme: true } },
-      }
-    });
-
-    const categories = new Set();
-    const subcategories = new Set();
-    const activityTypes = new Set();
-    const primaryThemes = new Set();
-    const secondaryThemes = new Set();
-    const cities = new Set();
-    const countries = new Set();
-    const regions = new Set();
-    const allTags = new Set();
-
-    tours.forEach(tour => {
-      // Extract categorization
-      if (tour.category) categories.add(tour.category);
-      if (tour.subcategory) subcategories.add(tour.subcategory);
-      if (tour.activityType) activityTypes.add(tour.activityType);
-
-      // Extract themes
-      if (tour.primaryTheme) primaryThemes.add(tour.primaryTheme);
-      if (tour.secondaryThemes?.length) {
-        tour.secondaryThemes.forEach(st => secondaryThemes.add(st.theme));
-      }
-
-      // Extract locations
-      if (tour.city) cities.add(tour.city);
-      if (tour.country) countries.add(tour.country);
-      if (tour.region) regions.add(tour.region);
-
-      // Extract tags
-      if (tour.tags && Array.isArray(tour.tags)) {
-        tour.tags.forEach(tag => allTags.add(tag));
-      }
-    });
+    // Run all DISTINCT queries in parallel — each is a fast index scan
+    // vs. the old approach of fetching ALL tours into JS memory
+    const [categories, subcategories, activityTypes, primaryThemes, secondaryThemes, cities, countries, regions] =
+      await Promise.all([
+        prisma.$queryRaw`SELECT DISTINCT "category" FROM "Tour" WHERE status = 'ACTIVE' AND "category" IS NOT NULL ORDER BY "category"`,
+        prisma.$queryRaw`SELECT DISTINCT "subcategory" FROM "Tour" WHERE status = 'ACTIVE' AND "subcategory" IS NOT NULL ORDER BY "subcategory"`,
+        prisma.$queryRaw`SELECT DISTINCT "activityType" FROM "Tour" WHERE status = 'ACTIVE' AND "activityType" IS NOT NULL ORDER BY "activityType"`,
+        prisma.$queryRaw`SELECT DISTINCT "primaryTheme" FROM "Tour" WHERE status = 'ACTIVE' AND "primaryTheme" IS NOT NULL ORDER BY "primaryTheme"`,
+        prisma.$queryRaw`SELECT DISTINCT theme FROM "TourSecondaryTheme" ORDER BY theme`,
+        prisma.$queryRaw`SELECT DISTINCT "city" FROM "Tour" WHERE status = 'ACTIVE' AND "city" IS NOT NULL ORDER BY "city"`,
+        prisma.$queryRaw`SELECT DISTINCT "country" FROM "Tour" WHERE status = 'ACTIVE' AND "country" IS NOT NULL ORDER BY "country"`,
+        prisma.$queryRaw`SELECT DISTINCT "region" FROM "Tour" WHERE status = 'ACTIVE' AND "region" IS NOT NULL ORDER BY "region"`,
+      ]);
 
     return {
-      categories: Array.from(categories).sort(),
-      subcategories: Array.from(subcategories).sort(),
-      activityTypes: Array.from(activityTypes).sort(),
+      categories: categories.map(r => r.category),
+      subcategories: subcategories.map(r => r.subcategory),
+      activityTypes: activityTypes.map(r => r.activityType),
       themes: {
-        primary: Array.from(primaryThemes).sort(),
-        secondary: Array.from(secondaryThemes).sort()
+        primary: primaryThemes.map(r => r.primaryTheme),
+        secondary: secondaryThemes.map(r => r.theme),
       },
       locations: {
-        cities: Array.from(cities).sort(),
-        countries: Array.from(countries).sort(),
-        regions: Array.from(regions).sort()
+        cities: cities.map(r => r.city),
+        countries: countries.map(r => r.country),
+        regions: regions.map(r => r.region),
       },
-      tags: Array.from(allTags).sort(),
+      tags: [],
       priceRanges: [
         { label: 'Budget', value: 'budget', range: '$0 - $50' },
         { label: 'Moderate', value: 'moderate', range: '$50 - $150' },
-        { label: 'Luxury', value: 'luxury', range: '$150+' }
+        { label: 'Luxury', value: 'luxury', range: '$150+' },
       ],
       durations: [
         { label: 'Short (< 3 hours)', value: 'short', hours: { max: 3 } },
         { label: 'Half Day (3-6 hours)', value: 'half-day', hours: { min: 3, max: 6 } },
         { label: 'Full Day (6-12 hours)', value: 'full-day', hours: { min: 6, max: 12 } },
-        { label: 'Multi-Day', value: 'multi-day', days: { min: 1 } }
-      ]
+        { label: 'Multi-Day', value: 'multi-day', days: { min: 1 } },
+      ],
     };
   } catch (error) {
-    console.error('❌ Get filter options failed:', error);
+    console.error('Get filter options failed:', error);
     return null;
   }
 }

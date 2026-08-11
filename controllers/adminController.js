@@ -182,7 +182,6 @@ exports.getOverview = catchAsync(async (req, res, next) => {
     bookingStatusDist,
     recentEvents,
     recentAuditLogs,
-    allUsers,
   ] = await Promise.all([
 
     /* Revenue + booking volume in a single scan (FILTER aggregation) */
@@ -354,12 +353,19 @@ exports.getOverview = catchAsync(async (req, res, next) => {
         createdAt: true,
       },
     }),
-
-    /* User names for event feed */
-    prisma.user.findMany({
-      select: { id: true, name: true },
-    }),
   ]);
+
+  // Batch-fetch only the users that appear in the event feed (not ALL users)
+  const eventUserIds = [...new Set([
+    ...recentEvents.map((e) => e.userId).filter(Boolean),
+    ...recentAuditLogs.map((a) => a.userId).filter(Boolean),
+  ])];
+  const allUsers = eventUserIds.length > 0
+    ? await prisma.user.findMany({
+        where: { id: { in: eventUserIds } },
+        select: { id: true, name: true },
+      })
+    : [];
 
   const bAgg = bookingAgg[0] || {};
   const uAgg = userAgg[0] || {};

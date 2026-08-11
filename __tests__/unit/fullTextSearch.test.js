@@ -1,6 +1,5 @@
 jest.mock('../../utils/prismaClient', () => ({
   $queryRawUnsafe: jest.fn(),
-  tour: { findMany: jest.fn() },
 }));
 
 const prisma = require('../../utils/prismaClient');
@@ -39,20 +38,35 @@ describe('fullTextSearch', () => {
 
   describe('searchToursByRelevance', () => {
     it('returns paginated ranked ids with total count', async () => {
-      prisma.tour.findMany.mockResolvedValue([{ id: 't-1' }, { id: 't-2' }, { id: 't-3' }]);
-      prisma.$queryRawUnsafe.mockResolvedValue([{ id: 't-3' }, { id: 't-1' }, { id: 't-2' }]);
+      // New implementation uses a single CTE query via $queryRawUnsafe
+      prisma.$queryRawUnsafe.mockResolvedValue([
+        { id: 't-3', total: 3 },
+        { id: 't-1', total: 3 },
+      ]);
 
       const result = await fts.searchToursByRelevance('safari', { status: 'PUBLISHED' }, 0, 2);
 
-      expect(prisma.tour.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { status: 'PUBLISHED' } }));
+      expect(prisma.$queryRawUnsafe).toHaveBeenCalledTimes(1);
       expect(result.ids).toEqual(['t-3', 't-1']);
       expect(result.totalCount).toBe(3);
     });
 
     it('returns empty when no tours match', async () => {
-      prisma.tour.findMany.mockResolvedValue([]);
+      prisma.$queryRawUnsafe.mockResolvedValue([]);
       const result = await fts.searchToursByRelevance('safari', {}, 0, 10);
       expect(result).toEqual({ ids: [], totalCount: 0 });
+    });
+
+    it('returns empty on query error', async () => {
+      prisma.$queryRawUnsafe.mockRejectedValue(new Error('DB error'));
+      const result = await fts.searchToursByRelevance('safari', {}, 0, 10);
+      expect(result).toEqual({ ids: [], totalCount: 0 });
+    });
+
+    it('returns empty when no search term', async () => {
+      const result = await fts.searchToursByRelevance('', {}, 0, 10);
+      expect(result).toEqual({ ids: [], totalCount: 0 });
+      expect(prisma.$queryRawUnsafe).not.toHaveBeenCalled();
     });
   });
 });

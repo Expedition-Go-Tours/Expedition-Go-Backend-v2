@@ -29,7 +29,6 @@ const {
   findNearbyTourIds,
   getTourDistances
 } = require('../utils/tourFilterBuilder');
-const { getPopularByCategory } = require('../utils/popularityScorer');
 const { shouldCountTourView } = require('../utils/viewTracking');
 const eventEmitter = require('../utils/eventEmitter');
 
@@ -362,49 +361,77 @@ exports.getPopularByCategory = catchAsync(async (req, res, next) => {
   const limit = Math.min(Math.max(parseInt(perCategory) || 6, 1), 20);
 
   const result = await cache.getOrSet(cache.TOUR_POPULAR_KEY, async () => {
-    const tours = await prisma.tour.findMany({
-      where: { status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } },
-      include: {
-        supplier: {
-          select: {
-            id: true,
-            name: true,
-            photoURL: true,
-            supplierProfile: {
-              select: {
-                averageRating: true,
-                totalBookings: true,
-              },
-            },
-          },
-        },
-      },
-    });
+    // Build optional WHERE conditions for category/theme filtering
+    const conditions = ["t.status = 'ACTIVE'", "sp.status = 'ACTIVE'"];
+    const params = [];
+    let paramIdx = 1;
 
-    let filtered = tours;
     if (filterCategory) {
-      filtered = filtered.filter(t => t.categorization?.category === filterCategory);
+      conditions.push(`t.category = $${paramIdx}`);
+      params.push(filterCategory);
+      paramIdx++;
     }
     if (theme) {
-      filtered = filtered.filter(t =>
-        t.theme?.primary === theme ||
-        (Array.isArray(t.theme?.secondary) && t.theme.secondary.includes(theme))
-      );
+      conditions.push(`(t."primaryTheme" = $${paramIdx} OR EXISTS (
+        SELECT 1 FROM "TourSecondaryTheme" tst WHERE tst."tourId" = t.id AND tst.theme = $${paramIdx}
+      ))`);
+      params.push(theme);
+      paramIdx++;
     }
 
-    const popular = getPopularByCategory(filtered, limit);
+    params.push(limit * 20);
 
+    // Score + fetch in a single SQL query — no full-table JS iteration
+    const scored = await prisma.$queryRawUnsafe(`
+      SELECT t.id, t.title, t.slug, t."coverPhoto", t.photos, t.description,
+        t.category, t."averageRating", t."reviewCount", t."viewCount", t."totalBookings",
+        t."durationMinutes", t.city, t.country,
+        u.id AS "supplierId", u.name AS "supplierName", u."photoURL" AS "supplierPhoto",
+        sp."averageRating" AS "supplierRating", sp."totalBookings" AS "supplierBookings",
+        (COALESCE(t."totalBookings", 0) * 0.40 +
+         COALESCE(t."averageRating", 0) * 0.25 +
+         COALESCE(t."reviewCount", 0) * 0.20 +
+         COALESCE(t."viewCount", 0) * 0.15) AS score
+      FROM "Tour" t
+      JOIN "SupplierProfile" sp ON sp."userId" = t."supplierId"
+      JOIN "User" u ON u.id = t."supplierId"
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY score DESC
+      LIMIT $${paramIdx}
+    `, ...params);
+
+    // Group by category in JS (small result set — at most limit*20 rows)
     const optimized = {};
-    for (const [cat, tours] of Object.entries(popular)) {
-      optimized[cat] = tours.map(t => ({
-        ...t,
-        photos: t.photos,
-        coverPhoto: t.coverPhoto || null,
+    for (const row of scored) {
+      const cat = row.category || 'Other';
+      if (!optimized[cat]) optimized[cat] = [];
+      if (optimized[cat].length >= limit) continue;
+
+      optimized[cat].push({
+        id: row.id,
+        title: row.title,
+        slug: row.slug,
+        coverPhoto: row.coverPhoto || null,
+        photos: row.photos,
+        description: row.description,
+        category: row.category,
+        averageRating: row.averageRating ? Number(row.averageRating) : null,
+        reviewCount: row.reviewCount,
+        viewCount: row.viewCount,
+        totalBookings: row.totalBookings,
+        durationMinutes: row.durationMinutes,
+        city: row.city,
+        country: row.country,
         supplier: {
-          ...t.supplier,
-          photoURL: t.supplier.photoURL || null,
+          id: row.supplierId,
+          name: row.supplierName,
+          photoURL: row.supplierPhoto || null,
+          supplierProfile: {
+            averageRating: row.supplierRating ? Number(row.supplierRating) : null,
+            totalBookings: row.supplierBookings,
+          },
         },
-      }));
+      });
     }
 
     return {
@@ -480,6 +507,7 @@ exports.getTour = catchAsync(async (req, res, next) => {
       where.status = 'ACTIVE';
     }
 
+    // Main tour query — lighter includes (no deep reviews/specialOffers)
     const tour = await prisma.tour.findFirst({
       where,
       include: {
@@ -497,29 +525,10 @@ exports.getTour = catchAsync(async (req, res, next) => {
             }
           }
         },
-        reviews: {
-          where: { status: 'APPROVED' },
-          include: {
-            customer: {
-              select: {
-                id: true,
-                name: true,
-                photoURL: true
-              }
-            }
-          },
-          orderBy: { createdAt: 'desc' },
-          take: 10
-        },
         _count: {
           select: {
             reviews: true,
             bookings: true
-          }
-        },
-        specialOfferTargets: {
-          include: {
-            specialOffer: true
           }
         },
         expeditionTour: true
@@ -528,13 +537,32 @@ exports.getTour = catchAsync(async (req, res, next) => {
 
     if (!tour) return null;
 
+    // Fetch reviews + special offers in parallel (separate from main query)
+    const [reviews, specialOfferTargets] = await Promise.all([
+      prisma.review.findMany({
+        where: { tourId: tour.id, status: 'APPROVED' },
+        include: {
+          customer: {
+            select: { id: true, name: true, photoURL: true }
+          }
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10
+      }),
+      prisma.specialOfferTarget.findMany({
+        where: { tourId: tour.id },
+        include: { specialOffer: true }
+      })
+    ]);
+
     // Transform specialOfferTargets into a flat specialOffers array
-    const specialOffers = (tour.specialOfferTargets || [])
+    const specialOffers = specialOfferTargets
       .map(t => t.specialOffer)
       .filter(Boolean);
 
     return {
       ...tour,
+      reviews,
       photos: tour.photos,
       specialOffers,
       coverPhoto: tour.coverPhoto || null,
