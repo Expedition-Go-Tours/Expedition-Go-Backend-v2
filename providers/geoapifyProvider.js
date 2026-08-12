@@ -12,7 +12,7 @@ async function search(query, limit = 5) {
   const apiKey = getApiKey();
   const url = `${BASE_URL}/search`;
   const { data } = await axios.get(url, {
-    params: { text: query, apiKey, limit, format: 'json' },
+    params: { text: query, apiKey, limit, format: 'geojson' },
     timeout: 5000,
   });
   return data;
@@ -22,7 +22,7 @@ async function autocomplete(query, limit = 5) {
   const apiKey = getApiKey();
   const url = `${BASE_URL}/autocomplete`;
   const { data } = await axios.get(url, {
-    params: { text: query, apiKey, limit, format: 'json' },
+    params: { text: query, apiKey, limit, format: 'geojson' },
     timeout: 5000,
   });
   return data;
@@ -32,7 +32,7 @@ async function reverse(lat, lng) {
   const apiKey = getApiKey();
   const url = `${BASE_URL}/reverse`;
   const { data } = await axios.get(url, {
-    params: { lat, lon: lng, apiKey, format: 'json' },
+    params: { lat, lon: lng, apiKey, format: 'geojson' },
     timeout: 5000,
   });
   return data;

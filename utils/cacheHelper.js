@@ -76,7 +76,7 @@ function ensureConnected() {
   return initPromise;
 }
 
-async function getOrSet(key, fetchFn, ttlSeconds = 300) {
+async function getOrSet(key, fetchFn, ttlSeconds = 300, { cacheEmpty = true } = {}) {
   // L1: memory cache
   const fromMem = memGet(key);
   if (fromMem !== undefined) {
@@ -116,6 +116,13 @@ async function getOrSet(key, fetchFn, ttlSeconds = 300) {
   const promise = (async () => {
     try {
       const data = await fetchFn();
+
+      // When cacheEmpty is false, empty arrays are treated as "no result yet"
+      // and are NOT persisted — so a transient provider outage can't be baked
+      // into the cache for the full TTL (the next call retries the fetch).
+      if (!cacheEmpty && Array.isArray(data) && data.length === 0) {
+        return data;
+      }
 
       // Store null results as sentinel to prevent repeated fetches
       const storeVal = data === null || data === undefined ? NULL_SENTINEL : data;

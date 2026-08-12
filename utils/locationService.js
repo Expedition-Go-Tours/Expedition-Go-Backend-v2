@@ -18,7 +18,10 @@ const DEDUP_THRESHOLD = 0.01;
 function cacheKey(prefix, ...parts) {
   const input = parts.join(':').toLowerCase();
   const hash = crypto.createHash('md5').update(input).digest('hex');
-  return `geo:${prefix}:${hash}`;
+  // `v2` bumps the namespace: the v1 provider used Geoapify's `format=json`
+  // (which the normalizer couldn't parse), so v1 cache entries may be stale
+  // empty results. Versioning invalidates them without a manual cache flush.
+  return `geo:v2:${prefix}:${hash}`;
 }
 
 function isSameLocation(a, b) {
@@ -86,7 +89,7 @@ async function search(query, limit = 5) {
         return normalizer.normalizePhotonResponse(raw);
       },
     ], limit);
-  }, TTL.SEARCH);
+  }, TTL.SEARCH, { cacheEmpty: false });
 }
 
 async function autocomplete(query, limit = 5) {
@@ -106,7 +109,7 @@ async function autocomplete(query, limit = 5) {
         return normalizer.normalizePhotonResponse(raw);
       },
     ], limit);
-  }, TTL.AUTOCOMPLETE);
+  }, TTL.AUTOCOMPLETE, { cacheEmpty: false });
 }
 
 async function reverse(lat, lng) {
