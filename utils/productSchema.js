@@ -48,12 +48,16 @@ const productOptionSchema = z.object({
   audioGuide: z.boolean().optional(),
   infoBooklet: z.boolean().optional(),
   maxGroupSize: z.number().nullable().optional(),
-  duration: z.number().nullable(),
-  durationUnit: z.enum(['minutes', 'hours', 'days']).nullable(),
+  duration: z.number().nullable().optional(),
+  durationUnit: z.enum(['minutes', 'hours', 'days']).nullable().optional(),
   validity: z.number().nullable(),
   validityUnit: z.enum(['days', 'weeks', 'months']).nullable(),
   validityEnabled: z.boolean().optional(),
-  validityType: z.enum(['date_picked', 'from_activation', 'period']).optional(),
+  // The frontend labels the "from activation" validity type as "open_ended".
+  // Accept the frontend's value and normalize it to the canonical stored value.
+  validityType: z.enum(['date_picked', 'from_activation', 'period', 'open_ended'])
+    .transform((v) => (v === 'open_ended' ? 'from_activation' : v))
+    .optional(),
   validityStartDate: z.string().optional(),
   validityEndDate: z.string().optional(),
 });
