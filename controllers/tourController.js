@@ -465,7 +465,7 @@ exports.getTour = catchAsync(async (req, res, next) => {
     try {
       const token = req.headers.authorization.split(' ')[1];
       const decoded = verifyAccessToken(token);
-      ownerSupplierId = decoded.id;
+      ownerSupplierId = decoded.userId;
       const profile = await prisma.supplierProfile.findFirst({
         where: { userId: decoded.id },
         select: { id: true },
