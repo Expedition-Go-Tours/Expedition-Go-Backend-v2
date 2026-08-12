@@ -307,6 +307,14 @@ const productObjectSchema = z.object({
   showDietaryRestrictions: z.boolean().optional(),
   drinksIncluded: z.boolean().optional(),
   dietaryOptions: z.array(z.string()).optional(),
+  dayLogistics: z.record(z.object({
+    accommodation: z.string().nullable().optional(),
+    meals: z.array(z.object({
+      type: z.string().optional(),
+      format: z.string().optional(),
+    })).optional(),
+    drinksIncluded: z.boolean().optional(),
+  })).optional(),
   transportationProvided: z.boolean().optional(),
   transportationType: z.string().optional(),
   // Step 8

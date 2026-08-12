@@ -95,6 +95,7 @@ function buildProductContent(flat) {
     showDietaryRestrictions: !!src.showDietaryRestrictions,
     drinksIncluded: !!src.drinksIncluded,
     dietaryOptions: Array.isArray(src.dietaryOptions) ? src.dietaryOptions : [],
+    dayLogistics: (src.dayLogistics && typeof src.dayLogistics === 'object') ? src.dayLogistics : {},
     transportationProvided: !!src.transportationProvided,
     transportationType: src.transportationType || '',
     healthRestrictions: Array.isArray(src.notSuitableFor) ? src.notSuitableFor : [],
