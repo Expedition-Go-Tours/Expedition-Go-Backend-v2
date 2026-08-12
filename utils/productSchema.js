@@ -13,7 +13,7 @@ const locationSchema = z.object({
   description: z.string().optional(),
   timeSpent: z.number().nullable().optional(),
   timeSpentUnit: z.enum(['minutes', 'hours']).optional(),
-  admissionIncluded: z.enum(['yes', 'no', 'na']).optional(),
+  admissionIncluded: z.enum(['yes', 'no', 'passby']).optional(),
   isDropoff: z.boolean().optional(),
   isPickup: z.boolean().optional(),
 });
@@ -32,7 +32,7 @@ const attractionSchema = z.object({
   description: z.string().optional(),
   timeSpent: z.number().nullable(),
   timeSpentUnit: z.enum(['minutes', 'hours']),
-  admissionIncluded: z.enum(['yes', 'no', 'na']),
+  admissionIncluded: z.enum(['yes', 'no', 'passby']),
   lat: z.number().nullable().optional(),
   lng: z.number().nullable().optional(),
 });
@@ -306,7 +306,7 @@ const productObjectSchema = z.object({
   transportationProvided: z.boolean().optional(),
   transportationType: z.string().optional(),
   // Step 8
-  photos: z.array(photoObjectSchema).min(4, 'Upload at least 4 photos'),
+  photos: z.array(photoObjectSchema).min(5, 'Upload at least 5 photos'),
   copyrightConfirmed: z.literal(true, {
     message: 'You must confirm copyright ownership',
   }).optional(),
@@ -419,8 +419,49 @@ function accommodationInclusionRefinement(data, ctx) {
   }
 }
 
+const MINUTES_PER = {
+  minutes: 1,
+  hours: 60,
+  days: 60 * 24,
+};
+
+function durationToMinutes(value, unit) {
+  if (value == null || Number.isNaN(Number(value))) return 0;
+  const factor = MINUTES_PER[unit] || MINUTES_PER.minutes;
+  return Number(value) * factor;
+}
+
+function sumStopMinutes(locations) {
+  if (!Array.isArray(locations)) return 0;
+  return locations.reduce((sum, loc) => {
+    if (!loc || loc.timeSpent == null || Number.isNaN(Number(loc.timeSpent))) return sum;
+    const factor = MINUTES_PER[loc.timeSpentUnit] || MINUTES_PER.minutes;
+    return sum + Number(loc.timeSpent) * factor;
+  }, 0);
+}
+
+/**
+ * The sum of stop durations in the itinerary must not exceed the product
+ * duration declared in the category step.
+ */
+function locationDurationRefinement(data, ctx) {
+  if (data.duration == null || Number.isNaN(Number(data.duration))) return;
+  const productMin = durationToMinutes(data.duration, data.durationUnit || 'hours');
+  if (productMin <= 0) return;
+  const stopsMin = sumStopMinutes(data.locations);
+  if (stopsMin > productMin) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['locations'],
+      message: `Total stop time exceeds the product duration (${productMin} minutes)`,
+    });
+  }
+}
+
 // Full schema used for strict validation (submit-for-review).
-const productSchema = productObjectSchema.superRefine(accommodationInclusionRefinement);
+const productSchema = productObjectSchema
+  .superRefine(accommodationInclusionRefinement)
+  .superRefine(locationDurationRefinement);
 
 // Partial variant for progressive wizard/draft saves. Each field is optional
 // so the wizard can save progress step-by-step. Fields that enforce

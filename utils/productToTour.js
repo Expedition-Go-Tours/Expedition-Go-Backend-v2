@@ -237,7 +237,7 @@ function buildAvailability(flat) {
     operatingHoursEnd,
     daysOfWeek,
     weeklySchedule: flat.weeklySchedule || null,
-    timeSlots: Array.isArray(flat.timeSlots) ? flat.timeSlots.map(t => t.startTime) : [],
+    timeSlots: Array.isArray(flat.timeSlots) ? flat.timeSlots.map(t => typeof t === 'string' ? { startTime: t, endTime: '' } : t) : [],
     startDate: flat.scheduleStartDate || '',
     endDate: flat.scheduleHasEndDate ? (flat.scheduleEndDate || '') : null,
     timezone: flat.timezone || 'UTC',

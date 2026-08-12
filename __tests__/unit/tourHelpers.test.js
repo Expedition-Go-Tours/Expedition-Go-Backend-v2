@@ -119,6 +119,54 @@ describe('validateTourData', () => {
     expect(r.errors.length).toBeGreaterThan(0);
   });
 
+  it('rejects stop durations that exceed the product duration', () => {
+    const r = validateTourData(validProduct({
+      duration: 4,
+      durationUnit: 'hours',
+      locations: [
+        { name: 'A', timeSpent: 3, timeSpentUnit: 'hours', admissionIncluded: 'yes' },
+        { name: 'B', timeSpent: 2, timeSpentUnit: 'hours', admissionIncluded: 'yes' },
+      ],
+    }));
+    expect(r.isValid).toBe(false);
+    expect(r.errors.join(' ')).toMatch(/locations: Total stop time exceeds the product duration/);
+  });
+
+  it('accepts stop durations that are within the product duration', () => {
+    const r = validateTourData(validProduct({
+      duration: 4,
+      durationUnit: 'hours',
+      locations: [
+        { name: 'A', timeSpent: 2, timeSpentUnit: 'hours', admissionIncluded: 'yes' },
+        { name: 'B', timeSpent: 90, timeSpentUnit: 'minutes', admissionIncluded: 'yes' },
+      ],
+    }));
+    expect(r.isValid).toBe(true);
+  });
+
+  it('accepts stop durations equal to the product duration', () => {
+    const r = validateTourData(validProduct({
+      duration: 4,
+      durationUnit: 'hours',
+      locations: [
+        { name: 'A', timeSpent: 2, timeSpentUnit: 'hours', admissionIncluded: 'yes' },
+        { name: 'B', timeSpent: 2, timeSpentUnit: 'hours', admissionIncluded: 'yes' },
+      ],
+    }));
+    expect(r.isValid).toBe(true);
+  });
+
+  it('skips the duration cross-check when product duration is not set', () => {
+    const r = validateTourData(validProduct({
+      duration: null,
+      durationUnit: 'hours',
+      locations: [
+        { name: 'A', timeSpent: 10, timeSpentUnit: 'hours', admissionIncluded: 'yes' },
+      ],
+    }));
+    expect(r.errors.join(' ')).not.toMatch(/Total stop time exceeds the product duration/);
+  });
+
   it('validates keywords max count', () => {
     const r = validateTourData(validProduct({ keywords: new Array(16).fill('k') }));
     expect(r.errors.length).toBeGreaterThan(0);
