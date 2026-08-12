@@ -1314,6 +1314,17 @@ function validateTourForReview(tour) {
     }
   }
 
+  // Accommodation completeness: when the supplier marks accommodation as
+  // included, at least one itinerary day must have a valid overnight type.
+  if (cat && cat.accommodationIncluded === true) {
+    const dl = (pc && typeof pc === 'object' && pc.dayLogistics) || {};
+    const days = Object.values(dl).filter((d) => d && typeof d === 'object');
+    const hasAccommodation = days.some((d) => d.accommodation);
+    if (!hasAccommodation) {
+      errors.push('Select an accommodation type for at least one day (accommodation is included)');
+    }
+  }
+
   const pricingErrors = validateStoredPricing(tour.schedulesAndPricing);
   if (pricingErrors.length > 0) {
     errors.push(...pricingErrors);

@@ -309,7 +309,7 @@ const productObjectSchema = z.object({
   drinksIncluded: z.boolean().optional(),
   dietaryOptions: z.array(z.string()).optional(),
   dayLogistics: z.record(z.object({
-    accommodation: z.string().nullable().optional(),
+    accommodation: z.enum(['budget', 'midrange', 'premium']).nullable().optional(),
     meals: z.array(z.object({
       type: z.string().optional(),
       format: z.string().optional(),
