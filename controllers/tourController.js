@@ -1292,6 +1292,14 @@ function validateTourForReview(tour) {
     if (!Array.isArray(pc.highlights) || pc.highlights.length < 1) {
       errors.push('Add at least one highlight');
     }
+    if (Array.isArray(pc.locations)) {
+      for (let i = 0; i < pc.locations.length; i++) {
+        const loc = pc.locations[i];
+        if (!loc || !loc.name || !String(loc.name).trim()) {
+          errors.push(`Location ${i + 1} is missing a name`);
+        }
+      }
+    }
     if (pc.meetingMode === 'meeting_point') {
       const mp = tour.bookingAndTickets?.meetingPoint || pc.meetingPoint;
       if (!mp || !mp.name || !mp.address) {

@@ -3,7 +3,8 @@ const { isValidPhoneNumber } = require('libphonenumber-js');
 const { MAX_PRICE, isValidCurrencyCode } = require('./currencyCodes');
 
 const locationSchema = z.object({
-  name: z.string().min(1, 'Location name is required'),
+  day: z.number().optional(),
+  name: z.string().max(200).optional(),
   address: z.string().optional(),
   lat: z.number().optional(),
   lng: z.number().optional(),
