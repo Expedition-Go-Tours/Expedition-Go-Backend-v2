@@ -37,6 +37,7 @@ jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn() }));
 jest.mock('../../utils/tourFilterBuilder', () => ({ buildTourFilters: jest.fn(), buildSortOptions: jest.fn(), getAvailableFilterOptions: jest.fn(), validateFilterParams: jest.fn(), findNearbyTourIds: jest.fn(), getTourDistances: jest.fn() }));
 jest.mock('../../utils/popularityScorer', () => ({ getPopularByCategory: jest.fn() }));
 jest.mock('../../utils/fullTextSearch', () => ({ rankTourIdsBySearch: jest.fn() }));
+jest.mock('../../config/jwt', () => ({ verifyAccessToken: jest.fn() }));
 
 const prisma = require('../../utils/prismaClient');
 const cache = require('../../utils/cacheHelper');
@@ -58,6 +59,7 @@ const {
 } = require('../../utils/tourFilterBuilder');
 const { getPopularByCategory } = require('../../utils/popularityScorer');
 const { rankTourIdsBySearch } = require('../../utils/fullTextSearch');
+const { verifyAccessToken } = require('../../config/jwt');
 
 const controller = require('../../controllers/tourController');
 
@@ -423,6 +425,40 @@ describe('tourController', () => {
           }),
         })
       );
+    });
+
+    it('lets a logged-in supplier view a public ACTIVE tour they do not own', async () => {
+      req.params = { id: 'tour-1' };
+      verifyAccessToken.mockReturnValue({ id: 'supplier-2', userId: 'supplier-2' });
+      req.headers.authorization = 'Bearer supplier-token';
+      req.user = { id: 'supplier-2', roles: ['supplier'] };
+      prisma.supplierProfile.findFirst.mockResolvedValue({ id: 'profile-2', status: 'ACTIVE' });
+
+      await controller.getTour(req, res, next);
+
+      const where = prisma.tour.findFirst.mock.calls[0][0].where;
+      expect(where).toEqual(expect.objectContaining({
+        OR: [{ id: 'tour-1' }, { slug: 'tour-1' }],
+        AND: [{ OR: [{ status: 'ACTIVE' }, { supplierId: 'supplier-2' }] }],
+      }));
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('lets a supplier fetch their own non-ACTIVE (draft) tour', async () => {
+      req.params = { id: 'tour-1' };
+      verifyAccessToken.mockReturnValue({ id: 'supplier-1', userId: 'supplier-1' });
+      prisma.tour.findFirst.mockResolvedValue({ ...mockTour, status: 'DRAFT', supplierId: 'supplier-1' });
+      req.headers.authorization = 'Bearer owner-token';
+      req.user = { id: 'supplier-1', roles: ['supplier'] };
+      prisma.supplierProfile.findFirst.mockResolvedValue({ id: 'profile-1', status: 'PENDING' });
+
+      await controller.getTour(req, res, next);
+
+      const where = prisma.tour.findFirst.mock.calls[0][0].where;
+      expect(where).toEqual(expect.objectContaining({
+        AND: [{ OR: [{ status: 'ACTIVE' }, { supplierId: 'supplier-1' }] }],
+      }));
+      expect(res.status).toHaveBeenCalledWith(200);
     });
 
     it('returns 404 when tour is not found', async () => {

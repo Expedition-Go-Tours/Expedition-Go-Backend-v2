@@ -502,7 +502,13 @@ exports.getTour = catchAsync(async (req, res, next) => {
       OR: [{ id }, { slug: id }],
     };
     if (isOwner) {
-      where.supplierId = ownerSupplierId;
+      // A supplier can view any ACTIVE tour (like everyone else) AND their own
+      // tour in any status (e.g. drafts) — but NOT other suppliers' non-active
+      // tours. Previously every supplier was treated as the tour owner, which
+      // scoped the query to their own supplierId and 404'd every public tour
+      // they didn't own (dropping the itinerary + productContent details on
+      // the frontend for logged-in suppliers).
+      where.AND = [{ OR: [{ status: 'ACTIVE' }, { supplierId: ownerSupplierId }] }];
     } else {
       where.status = 'ACTIVE';
     }
