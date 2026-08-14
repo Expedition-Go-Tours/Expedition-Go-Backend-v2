@@ -366,4 +366,33 @@ describe('payoutMethodController', () => {
       );
     });
   });
+
+  // ============================
+  // getPayoutMethodSummary (admin)
+  // ============================
+  describe('getPayoutMethodSummary', () => {
+    it('computes coverage, readiness, and type mix', async () => {
+      const suppliers = [
+        { id: 's-1', name: 'A', email: 'a@t.com', payoutMethods: [{ id: 'm1', type: 'BANK_TRANSFER', verified: true, isDefault: true }] },
+        { id: 's-2', name: 'B', email: 'b@t.com', payoutMethods: [{ id: 'm2', type: 'PAYPAL', verified: false, isDefault: false }, { id: 'm3', type: 'PAYPAL', verified: true, isDefault: true }] },
+        { id: 's-3', name: 'C', email: 'c@t.com', payoutMethods: [] },
+        { id: 's-4', name: 'D', email: 'd@t.com', payoutMethods: [{ id: 'm4', type: 'BANK_TRANSFER', verified: true, isDefault: true }] },
+      ];
+      prisma.user.findMany.mockResolvedValue(suppliers);
+
+      await controller.getPayoutMethodSummary(req, res, next);
+
+      const body = res.json.mock.calls[0][0];
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(body.data.totalSuppliers).toBe(4);
+      expect(body.data.withMethod).toBe(3);
+      expect(body.data.needSetup).toBe(1);
+      expect(body.data.unverified).toBe(1);
+      expect(body.data.hasDefault).toBe(3);
+      expect(body.data.typeMix).toEqual({
+        BANK_TRANSFER: { total: 2, verified: 2 },
+        PAYPAL: { total: 2, verified: 1 },
+      });
+    });
+  });
 });

@@ -529,9 +529,13 @@ describe('expeditionController', () => {
   });
 
   describe('confirmBooking', () => {
+    // Booking date must clear the advance-booking cutoff (default 24h) and stay
+    // under the max advance window, so derive it from "now" instead of a fixed
+    // date that ages out and flakes the suite.
+    const bookingDate = () => new Date(Date.now() + 45 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const validBookingBody = {
       tourId: 'tour-1',
-      selectedDate: '2026-08-15',
+      selectedDate: bookingDate(),
       travelers: { adults: 2, children: 1, phoneNumber: '+1-555-123-4567', location: 'Cape Town' },
       paymentMethodId: 'pm_123',
     };

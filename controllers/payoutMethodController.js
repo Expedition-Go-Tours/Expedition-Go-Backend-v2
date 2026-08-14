@@ -64,6 +64,10 @@ exports.addMethod = catchAsync(async (req, res, next) => {
     return next(new AppError('Payout method type is required', 400));
   }
 
+  if (!['BANK_TRANSFER', 'PAYPAL'].includes(type)) {
+    return next(new AppError('Unsupported payout method type', 400));
+  }
+
   // Validate required fields per type
   if (type === 'BANK_TRANSFER' && (!accountName || !accountNumber)) {
     return next(new AppError('Bank transfer requires accountName and accountNumber', 400));
@@ -346,6 +350,64 @@ exports.getAllSuppliersMethods = catchAsync(async (req, res) => {
         totalCount,
         limit: parseInt(limit),
       },
+    },
+  });
+});
+
+/**
+ * GET /payout-methods/admin/summary
+ * Payout method coverage + readiness for the finance dashboard
+ */
+exports.getPayoutMethodSummary = catchAsync(async (req, res) => {
+  const suppliers = await prisma.user.findMany({
+    where: { roles: { has: 'supplier' } },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      payoutMethods: {
+        select: { id: true, type: true, verified: true, isDefault: true },
+      },
+    },
+  });
+
+  let withMethod = 0;
+  let needSetup = 0;
+  let unverified = 0;
+  const typeMix = {};
+  const verifiedMix = {};
+
+  suppliers.forEach((s) => {
+    const methods = s.payoutMethods || [];
+    const methodCount = methods.length;
+    if (methodCount > 0) {
+      withMethod += 1;
+      const unverifiedCount = methods.filter((m) => !m.verified).length;
+      if (unverifiedCount > 0) unverified += 1;
+    } else {
+      needSetup += 1;
+    }
+    methods.forEach((m) => {
+      typeMix[m.type] = (typeMix[m.type] || 0) + 1;
+      if (m.verified) verifiedMix[m.type] = (verifiedMix[m.type] || 0) + 1;
+    });
+  });
+
+  const typeOrder = ['BANK_TRANSFER', 'PAYPAL'];
+  const mix = typeOrder.reduce((acc, t) => {
+    if (typeMix[t]) acc[t] = { total: typeMix[t], verified: verifiedMix[t] || 0 };
+    return acc;
+  }, {});
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      totalSuppliers: suppliers.length,
+      withMethod,
+      needSetup,
+      unverified,
+      hasDefault: suppliers.filter((s) => (s.payoutMethods || []).some((m) => m.isDefault)).length,
+      typeMix: mix,
     },
   });
 });

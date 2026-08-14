@@ -39,8 +39,6 @@ exports.getMyPayouts = catchAsync(async (req, res, next) => {
             sortCode: true,
             branchCode: true,
             swiftCode: true,
-            mobileProvider: true,
-            mobileNumber: true,
             paypalEmail: true
           }
         }
@@ -81,14 +79,43 @@ exports.getMyPayouts = catchAsync(async (req, res, next) => {
  * Get all pending/approved payouts (admin only)
  */
 exports.getAllPayouts = catchAsync(async (req, res, next) => {
-  const { page = 1, limit = 20, status } = req.query;
+  const { page = 1, limit = 20, status, search, startDate, endDate, supplierId } = req.query;
 
   const where = {};
   if (status) where.status = status;
+  if (supplierId) where.supplierId = supplierId;
+  if (startDate || endDate) {
+    where.OR = [
+      { paidAt: {} },
+      { createdAt: {} }
+    ];
+    if (startDate) {
+      where.OR[0].paidAt.gte = new Date(startDate);
+      where.OR[1].createdAt.gte = new Date(startDate);
+    }
+    if (endDate) {
+      where.OR[0].paidAt.lte = new Date(endDate);
+      where.OR[1].createdAt.lte = new Date(endDate);
+    }
+  }
+  if (search) {
+    const term = search.trim();
+    if (term) {
+      where.AND = [
+        {
+          OR: [
+            { supplier: { name: { contains: term, mode: 'insensitive' } } },
+            { supplier: { email: { contains: term, mode: 'insensitive' } } },
+            { booking: { bookingNumber: { contains: term, mode: 'insensitive' } } }
+          ]
+        }
+      ];
+    }
+  }
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  const [payouts, totalCount, summary] = await Promise.all([
+  const [payouts, totalCount, summary, statusCounts] = await Promise.all([
     prisma.payout.findMany({
       where,
       include: {
@@ -98,8 +125,10 @@ exports.getAllPayouts = catchAsync(async (req, res, next) => {
             name: true,
             email: true,
             phone: true,
+            photoURL: true,
             supplierProfile: {
               select: {
+                status: true,
                 payoutInfo: true,
                 businessInfo: true,
               }
@@ -126,8 +155,6 @@ exports.getAllPayouts = catchAsync(async (req, res, next) => {
             sortCode: true,
             branchCode: true,
             swiftCode: true,
-            mobileProvider: true,
-            mobileNumber: true,
             paypalEmail: true
           }
         }
@@ -141,15 +168,24 @@ exports.getAllPayouts = catchAsync(async (req, res, next) => {
       where,
       _sum: { amount: true, commissionAmount: true },
       _count: true
+    }),
+    prisma.payout.groupBy({
+      by: ['status'],
+      _count: { _all: true }
     })
   ]);
 
   const totalPages = Math.ceil(totalCount / parseInt(limit));
+  const counts = { PENDING: 0, APPROVED: 0, PROCESSING: 0, PAID: 0, FAILED: 0 };
+  statusCounts.forEach((row) => {
+    if (counts[row.status] !== undefined) counts[row.status] = row._count._all;
+  });
 
   res.status(200).json({
     status: 'success',
     data: {
       payouts,
+      statusCounts: counts,
       summary: {
         totalAmount: summary._sum.amount || 0,
         totalCommission: summary._sum.commissionAmount || 0,
@@ -262,8 +298,10 @@ exports.approvePayout = catchAsync(async (req, res, next) => {
 });
 
 /**
- * Mark payout as paid (admin only) — moves APPROVED → PAID
- * Records which specific payout method was used for a complete audit trail.
+ * Release a payout (admin only) — moves APPROVED → PROCESSING.
+ * The payment is initiated (in transit); a separate settle action confirms
+ * the funds actually landed. Records which specific payout method was used
+ * for a complete audit trail.
  */
 exports.releasePayout = catchAsync(async (req, res, next) => {
   const { id } = req.params;
@@ -314,8 +352,7 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
     prisma.payout.update({
       where: { id },
       data: {
-        status: 'PAID',
-        paidAt: new Date(),
+        status: 'PROCESSING',
         processedBy: adminId,
         processedAt: new Date(),
         payoutMethodId: method.id,
@@ -329,8 +366,8 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
   enqueueNotification({
     userId: payout.supplierId,
     type: 'PAYOUT_PROCESSED',
-    title: 'Payout Completed',
-    message: `Your payout of ${payout.currency} ${payout.amount} has been sent via ${method.type.replace('_', ' ')}.`,
+    title: 'Payout In Transit',
+    message: `Your payout of ${payout.currency} ${payout.amount} is being sent via ${method.type.replace('_', ' ')} and will reflect shortly.`,
     data: { payoutId: payout.id, amount: payout.amount, paymentMethod, payoutMethodId: method.id }
   }).catch((err) => console.error('[Notification] enqueueNotification failed:', err.message));
 
@@ -338,7 +375,7 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
 
   enqueueEmail({
     to: payout.supplier.email,
-    subject: 'Payout Released - Travio Africa',
+    subject: 'Payout In Transit - Travio Africa',
     template: 'payout-notification',
     data: {
       supplierName: payout.supplier.name,
@@ -354,7 +391,7 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
 
   await notifyAdmin({
     type: 'PAYOUT_NEEDS_APPROVAL',
-    title: 'Payout Released',
+    title: 'Payout In Transit',
     message: `${payout.supplier.name}: Payout of ${payout.currency} ${payout.amount} was released via ${method.type.replace('_', ' ')}`,
     data: { payoutId: payout.id, supplierId: payout.supplierId, amount: payout.amount, action: 'released' },
   });
@@ -369,6 +406,98 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
       amount: payout.amount,
       paymentMethod,
       payoutMethodId: method.id,
+      reference
+    }
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { payout: updated }
+  });
+});
+
+/**
+ * Settle a payout (admin only) — moves PROCESSING → PAID.
+ * Confirms the funds have been received by the supplier.
+ */
+exports.settlePayout = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const adminId = req.user.id;
+  const { reference, notes } = req.body;
+
+  const payout = await prisma.payout.findUnique({
+    where: { id },
+    include: {
+      supplier: { select: { id: true, name: true, email: true } },
+      booking: {
+        select: { tour: { select: { title: true } } }
+      }
+    }
+  });
+
+  if (!payout) {
+    return next(new AppError('Payout not found', 404));
+  }
+
+  if (payout.status !== 'PROCESSING') {
+    return next(new AppError('Only processing payouts can be settled', 400));
+  }
+
+  const updated = await prisma.payout.update({
+    where: { id },
+    data: {
+      status: 'PAID',
+      paidAt: new Date(),
+      processedBy: adminId,
+      processedAt: new Date(),
+      reference: reference || payout.reference || null,
+      notes: notes || payout.notes || null
+    }
+  });
+
+  enqueueNotification({
+    userId: payout.supplierId,
+    type: 'PAYOUT_PROCESSED',
+    title: 'Payout Paid',
+    message: `Your payout of ${payout.currency} ${payout.amount} has been sent via ${(payout.paymentMethod || 'your payout method').replace('_', ' ')}.`,
+    data: { payoutId: payout.id, amount: payout.amount, paymentMethod: payout.paymentMethod }
+  }).catch((err) => console.error('[Notification] enqueueNotification failed:', err.message));
+
+  const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
+
+  enqueueEmail({
+    to: payout.supplier.email,
+    subject: 'Payout Paid - Travio Africa',
+    template: 'payout-notification',
+    data: {
+      supplierName: payout.supplier.name,
+      tourTitle: payout.booking?.tour?.title || '',
+      payoutAmount: payout.amount,
+      currency: payout.currency,
+      payoutDate: new Date().toISOString(),
+      payoutId: payout.id,
+      payoutMethod: payout.paymentMethod ? payout.paymentMethod.replace('_', ' ') : '',
+      dashboardUrl: `${CLIENT_URL}/supplier/earnings`
+    }
+  }).catch((err) => console.error('[Email] Payout settled email failed:', err.message));
+
+  await notifyAdmin({
+    type: 'PAYOUT_NEEDS_APPROVAL',
+    title: 'Payout Settled',
+    message: `${payout.supplier.name}: Payout of ${payout.currency} ${payout.amount} was confirmed paid`,
+    data: { payoutId: payout.id, supplierId: payout.supplierId, amount: payout.amount, action: 'settled' },
+  });
+
+  await logActivity({
+    userId: adminId,
+    action: 'payout.settled',
+    resource: 'Payout',
+    resourceId: payout.id,
+    metadata: {
+      supplierId: payout.supplierId,
+      amount: payout.amount,
+      paymentMethod: payout.paymentMethod,
+      payoutMethodId: payout.payoutMethodId,
       reference
     }
   });
@@ -474,10 +603,25 @@ exports.failPayout = catchAsync(async (req, res, next) => {
  * Get payout summary / stats for the admin dashboard
  */
 exports.getPayoutSummary = catchAsync(async (req, res, next) => {
-  const [pendingCount, pendingTotal, paidThisMonth, monthlyBreakdown] = await Promise.all([
-    prisma.payout.count({ where: { status: 'PENDING' } }),
+  const [pending, approved, processing, failed, paidThisMonth, monthlyBreakdown] = await Promise.all([
     prisma.payout.aggregate({
       where: { status: 'PENDING' },
+      _count: true,
+      _sum: { amount: true }
+    }),
+    prisma.payout.aggregate({
+      where: { status: 'APPROVED' },
+      _count: true,
+      _sum: { amount: true }
+    }),
+    prisma.payout.aggregate({
+      where: { status: 'PROCESSING' },
+      _count: true,
+      _sum: { amount: true }
+    }),
+    prisma.payout.aggregate({
+      where: { status: 'FAILED' },
+      _count: true,
       _sum: { amount: true }
     }),
     prisma.payout.aggregate({
@@ -487,7 +631,7 @@ exports.getPayoutSummary = catchAsync(async (req, res, next) => {
           gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1)
         }
       },
-      _sum: { amount: true },
+      _sum: { amount: true, commissionAmount: true },
       _count: true
     }),
     prisma.$queryRaw`
@@ -504,17 +648,41 @@ exports.getPayoutSummary = catchAsync(async (req, res, next) => {
     `
   ]);
 
+  const paidCount = paidThisMonth._count;
+  const paidTotal = paidThisMonth._sum.amount || 0;
+  const paidCommission = paidThisMonth._sum.commissionAmount || 0;
+  const approvedTotal = approved._sum.amount || 0;
+  const processingTotal = processing._sum.amount || 0;
+
   res.status(200).json({
     status: 'success',
     data: {
       pending: {
-        count: pendingCount,
-        total: pendingTotal._sum.amount || 0
+        count: pending._count,
+        total: pending._sum.amount || 0
+      },
+      approved: {
+        count: approved._count,
+        total: approvedTotal
+      },
+      processing: {
+        count: processing._count,
+        total: processingTotal
+      },
+      failed: {
+        count: failed._count,
+        total: failed._sum.amount || 0
+      },
+      outstanding: {
+        count: approved._count + processing._count,
+        total: approvedTotal + processingTotal
       },
       paidThisMonth: {
-        count: paidThisMonth._count,
-        total: paidThisMonth._sum.amount || 0
+        count: paidCount,
+        total: paidTotal,
+        commission: paidCommission
       },
+      avgCommission: paidCount ? paidCommission / paidTotal : 0,
       monthlyBreakdown
     }
   });
@@ -524,7 +692,7 @@ exports.getPayoutSummary = catchAsync(async (req, res, next) => {
  * Export payouts as CSV (admin only)
  */
 exports.exportPayouts = catchAsync(async (req, res, next) => {
-  const { status, supplierId, startDate, endDate } = req.query;
+  const { status, supplierId, startDate, endDate, search } = req.query;
 
   const where = {};
   if (status) where.status = status;
@@ -533,6 +701,18 @@ exports.exportPayouts = catchAsync(async (req, res, next) => {
     where.createdAt = {};
     if (startDate) where.createdAt.gte = new Date(startDate);
     if (endDate) where.createdAt.lte = new Date(endDate);
+  }
+  const term = search?.trim();
+  if (term) {
+    where.AND = [
+      {
+        OR: [
+          { supplier: { name: { contains: term, mode: 'insensitive' } } },
+          { supplier: { email: { contains: term, mode: 'insensitive' } } },
+          { booking: { bookingNumber: { contains: term, mode: 'insensitive' } } }
+        ]
+      }
+    ];
   }
 
   const payouts = await prisma.payout.findMany({
@@ -547,7 +727,7 @@ exports.exportPayouts = catchAsync(async (req, res, next) => {
         }
       },
       payoutMethod: {
-        select: { type: true, bankName: true, mobileProvider: true, paypalEmail: true }
+        select: { type: true, bankName: true, paypalEmail: true }
       }
     },
     orderBy: { createdAt: 'desc' }

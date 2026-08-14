@@ -173,11 +173,11 @@ router.patch('/admin/:id/approve', restrictTo('admin'), requirePermission('payou
  * @swagger
  * /payouts/admin/{id}/release:
  *   patch:
- *     summary: Release/confirm payout (admin)
+ *     summary: Release/initiate payout (admin)
  *     description: |
- *       Marks an APPROVED payout as PAID. Records which specific payout method was used,
+ *       Moves an APPROVED payout to PROCESSING (payment initiated, in transit). Records which specific payout method was used,
  *       a transaction reference, and admin notes. The payoutMethodId is optional — if omitted
- *       the supplier's default verified method is auto-selected.
+ *       the supplier's default verified method is auto-selected. A subsequent settle action confirms the funds landed (PAID).
  *     tags: [Payouts]
  *     security:
  *       - bearerAuth: []
@@ -201,6 +201,38 @@ router.patch('/admin/:id/approve', restrictTo('admin'), requirePermission('payou
  *         description: Supplier has no verified payout method or invalid payout method ID
  */
 router.patch('/admin/:id/release', restrictTo('admin'), requirePermission('payouts.approve'), payoutController.releasePayout);
+
+/**
+ * @swagger
+ * /payouts/admin/{id}/settle:
+ *   patch:
+ *     summary: Settle a payout (admin)
+ *     description: Moves a PROCESSING payout to PAID, confirming the funds were received.
+ *     tags: [Payouts]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Payout ID
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               reference:
+ *                 type: string
+ *               notes:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Payout settled and marked as paid
+ */
+router.patch('/admin/:id/settle', restrictTo('admin'), requirePermission('payouts.approve'), payoutController.settlePayout);
 
 /**
  * @swagger

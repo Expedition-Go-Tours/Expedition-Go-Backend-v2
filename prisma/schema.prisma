@@ -332,10 +332,6 @@ model PayoutMethod {
   sortCode       String?              // Sort code (UK, Ghana, etc.)
   branchCode     String?              // Branch/bank code (Nigeria, etc.)
 
-  // Mobile Money fields
-  mobileProvider String?           // e.g. "MTN", "Orange", "Airtel", "Vodafone"
-  mobileNumber   String?
-
   // PayPal fields
   paypalEmail    String?
 
@@ -636,7 +632,7 @@ model Payout {
   payoutMethod   PayoutMethod? @relation(fields: [payoutMethodId], references: [id])
 
   // Payment details
-  paymentMethod  String?      // "bank_transfer", "mobile_money", "stripe"
+  paymentMethod  String?      // "bank_transfer", "paypal"
   reference      String?      // Transaction reference from payment provider
   notes          String?      // Admin notes
 

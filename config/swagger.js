@@ -2895,7 +2895,7 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
       description: 'Add/update a payout method',
       required: ['type'],
       properties: {
-        type: { type: 'string', enum: ['BANK_TRANSFER', 'MOBILE_MONEY', 'PAYPAL'], description: 'Payout method type' },
+        type: { type: 'string', enum: ['BANK_TRANSFER', 'PAYPAL'], description: 'Payout method type' },
         isDefault: { type: 'boolean', description: 'Set as default method' },
         currency: { type: 'string', example: 'USD' },
         bankName: { type: 'string', description: 'Bank name (required for BANK_TRANSFER)' },

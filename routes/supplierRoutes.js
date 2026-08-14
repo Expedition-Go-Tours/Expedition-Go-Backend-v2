@@ -1295,5 +1295,8 @@ router.get('/admin/:id/tours', restrictTo('admin'), requirePermission('suppliers
 router.patch('/admin/:id/activate', restrictTo('admin'), requirePermission('suppliers.approve'), supplierController.activateSupplier);
 router.post('/admin/:id/archive', restrictTo('admin'), requirePermission('suppliers.suspend'), supplierController.archiveSupplier);
 router.post('/admin/:id/restore', restrictTo('admin'), requirePermission('suppliers.suspend'), supplierController.restoreSupplier);
+router.get('/admin/:id/profile', restrictTo('admin'), requirePermission('suppliers.view'), supplierController.getSupplierProfile);
+router.get('/admin/:id/reviews', restrictTo('admin'), requirePermission('suppliers.view', 'reviews.view'), supplierController.getSupplierReviews);
+router.get('/admin/:id/analytics', restrictTo('admin'), requirePermission('suppliers.view', 'dashboard.revenue'), supplierController.getSupplierAnalytics);
 
 module.exports = router;

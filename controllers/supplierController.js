@@ -941,6 +941,257 @@ exports.getSupplierOverview = catchAsync(async (req, res, next) => {
   });
 });
 
+/**
+ * GET /suppliers/admin/:id/profile
+ * Full supplier profile for the admin detail page (admin)
+ */
+exports.getSupplierProfile = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+
+  const include = {
+    user: { select: { id: true, name: true, email: true, phone: true, photoURL: true, firebaseUid: true, createdAt: true } },
+  };
+
+  let supplier = await prisma.supplierProfile.findUnique({
+    where: { id },
+    include,
+  });
+
+  if (!supplier) {
+    supplier = await prisma.supplierProfile.findUnique({
+      where: { userId: id },
+      include,
+    });
+  }
+
+  if (!supplier) {
+    return next(new AppError('Supplier not found', 404));
+  }
+
+  let photoURL = supplier.user?.photoURL || '';
+  if (!photoURL && supplier.user?.firebaseUid) {
+    try {
+      const firebaseRecord = await admin.auth().getUser(supplier.user.firebaseUid);
+      photoURL = firebaseRecord.photoURL || '';
+    } catch { /* ignore */ }
+  }
+
+  const { userId } = supplier;
+
+  const [tourStats, bookingStats, reviewStats, bookingCount, commissionSum, toursWithBooking] = await Promise.all([
+    prisma.tour.groupBy({ by: ['status'], where: { supplierId: userId }, _count: true }),
+    prisma.booking.groupBy({ by: ['status'], where: { tour: { supplierId: userId } }, _count: true }),
+    prisma.review.aggregate({ where: { tour: { supplierId: userId } }, _avg: { rating: true }, _count: true }),
+    prisma.booking.count({ where: { tour: { supplierId: userId } } }),
+    prisma.booking.aggregate({ where: { tour: { supplierId: userId } }, _sum: { commissionAmount: true } }),
+    prisma.tour.findMany({
+      where: { supplierId: userId },
+      select: {
+        id: true,
+        title: true,
+        coverPhoto: true,
+        status: true,
+        _count: { select: { bookings: true } },
+        bookings: {
+          select: { commissionAmount: true, total: true, status: true },
+          where: { status: { not: 'CANCELLED' } },
+        },
+      },
+    }),
+  ]);
+
+  const tourMap = Object.fromEntries(tourStats.map(t => [t.status, t._count]));
+  const bookingMap = Object.fromEntries(bookingStats.map(b => [b.status, b._count]));
+
+  const tourCommissions = toursWithBooking.map((t) => {
+    const totalCommission = t.bookings.reduce((sum, b) => sum + Number(b.commissionAmount), 0);
+    const totalRevenue = t.bookings.reduce((sum, b) => sum + Number(b.total), 0);
+    return {
+      id: t.id,
+      title: t.title,
+      coverPhoto: t.coverPhoto,
+      status: t.status,
+      bookings: t._count.bookings,
+      commission: totalCommission,
+      revenue: totalRevenue,
+    };
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      supplier: {
+        id: supplier.id,
+        userId: supplier.userId,
+        name: supplier.user?.name || 'Unnamed Supplier',
+        email: supplier.user?.email || '',
+        phone: supplier.user?.phone || '',
+        photoURL,
+        status: supplier.status,
+        createdAt: supplier.createdAt,
+        updatedAt: supplier.updatedAt,
+        businessInfo: supplier.businessInfo,
+        operatingInfo: supplier.operatingInfo,
+        representativeInfo: supplier.representativeInfo,
+        businessDocuments: supplier.businessDocuments,
+        payoutInfo: supplier.payoutInfo,
+        compliance: supplier.compliance,
+        adminNotes: supplier.adminNotes,
+        archivedAt: supplier.archiveSnapshot?.archivedAt || null,
+      },
+      stats: {
+        earnings: Number(supplier.totalEarnings),
+        totalBookings: bookingCount,
+        totalCommission: Number(commissionSum._sum.commissionAmount) || 0,
+        averageRating: Number(supplier.averageRating) || Number(reviewStats._avg.rating) || 0,
+        totalReviews: reviewStats._count,
+        tours: {
+          total: Object.values(tourMap).reduce((a, b) => a + b, 0),
+          active: tourMap.ACTIVE || 0,
+          draft: tourMap.DRAFT || 0,
+          paused: tourMap.PAUSED || 0,
+          archived: tourMap.ARCHIVED || 0,
+        },
+        bookings: {
+          total: Object.values(bookingMap).reduce((a, b) => a + b, 0),
+          pending: bookingMap.PENDING || 0,
+          confirmed: bookingMap.CONFIRMED || 0,
+          completed: bookingMap.COMPLETED || 0,
+          cancelled: bookingMap.CANCELLED || 0,
+        },
+      },
+      tourCommissions,
+    },
+  });
+});
+
+/**
+ * GET /suppliers/admin/:id/reviews
+ * Supplier's reviews with rating summary + distribution (admin)
+ */
+exports.getSupplierReviews = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { page = 1, limit = 10 } = req.query;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.min(50, Math.max(1, parseInt(limit, 10) || 10));
+  const skip = (pageNum - 1) * limitNum;
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { id },
+    select: { userId: true },
+  });
+
+  if (!supplierProfile) {
+    return next(new AppError('Supplier not found', 404));
+  }
+
+  const where = { tour: { supplierId: supplierProfile.userId } };
+
+  const [reviews, totalCount, aggregate, distribution] = await Promise.all([
+    prisma.review.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limitNum,
+      select: {
+        id: true,
+        rating: true,
+        title: true,
+        comment: true,
+        travelMonth: true,
+        createdAt: true,
+        verified: true,
+        supplierResponse: true,
+        customer: { select: { id: true, name: true, photoURL: true } },
+        tour: { select: { id: true, title: true, coverPhoto: true } },
+      },
+    }),
+    prisma.review.count({ where }),
+    prisma.review.aggregate({ where, _avg: { rating: true }, _count: true }),
+    prisma.review.groupBy({ by: ['rating'], where, _count: true }),
+  ]);
+
+  const dist = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+  distribution.forEach((d) => { dist[d.rating] = d._count; });
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      reviews,
+      averageRating: Number(aggregate._avg.rating) || 0,
+      totalReviews: aggregate._count,
+      distribution: dist,
+      pagination: {
+        currentPage: pageNum,
+        totalPages: Math.ceil(totalCount / limitNum),
+        totalCount,
+        hasNextPage: pageNum * limitNum < totalCount,
+        limit: limitNum,
+      },
+    },
+  });
+});
+
+/**
+ * GET /suppliers/admin/:id/analytics
+ * Monthly bookings / gross / commission trend (admin)
+ */
+exports.getSupplierAnalytics = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { months = 12 } = req.query;
+  const monthsNum = Math.min(24, Math.max(3, parseInt(months, 10) || 12));
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { id },
+    select: { userId: true },
+  });
+
+  if (!supplierProfile) {
+    return next(new AppError('Supplier not found', 404));
+  }
+
+  const since = new Date();
+  since.setMonth(since.getMonth() - (monthsNum - 1));
+  since.setDate(1);
+  since.setHours(0, 0, 0, 0);
+
+  const bookings = await prisma.booking.findMany({
+    where: {
+      tour: { supplierId: supplierProfile.userId },
+      createdAt: { gte: since },
+    },
+    select: { createdAt: true, total: true, commissionAmount: true, status: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const monthMap = new Map();
+  const cursor = new Date(since);
+  const now = new Date();
+  while (cursor <= now) {
+    const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`;
+    monthMap.set(key, { month: key, bookings: 0, gross: 0, commission: 0 });
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  bookings.forEach((b) => {
+    if (b.status === 'CANCELLED') return;
+    const key = `${b.createdAt.getFullYear()}-${String(b.createdAt.getMonth() + 1).padStart(2, '0')}`;
+    const entry = monthMap.get(key);
+    if (!entry) return;
+    entry.bookings += 1;
+    entry.gross += Number(b.total);
+    entry.commission += Number(b.commissionAmount);
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      months: monthsNum,
+      series: Array.from(monthMap.values()),
+    },
+  });
+});
+
 exports.getSupplierTours = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { page = 1, limit = 20, status } = req.query;

@@ -52,7 +52,7 @@ async function addTestPayoutMethods() {
           type: 'BANK_TRANSFER',
           accountName: supplier.name || 'Test Account',
           bankName: 'Test Bank (Dev)',
-          accountNumber: '****1234',
+          accountNumber: '0011223344',
           routingNumber: '110000000',
           swiftCode: 'TESTUS33',
           currency: 'USD',

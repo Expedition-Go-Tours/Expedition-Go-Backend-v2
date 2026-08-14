@@ -1412,7 +1412,7 @@ exports.getMe = catchAsync(async (req, res, next) => {
  * Returns paginated bookings with optional status filter, search, and date range.
  */
 exports.getBookings = catchAsync(async (req, res) => {
-  const { page = '1', limit = '20', status = '', search = '', startDate, endDate } = req.query;
+  const { page = '1', limit = '20', status = '', search = '', startDate, endDate, supplierId } = req.query;
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
   const skip = (pageNum - 1) * limitNum;
@@ -1431,6 +1431,10 @@ exports.getBookings = catchAsync(async (req, res) => {
       { tour: { title: { contains: q, mode: 'insensitive' } } },
       { tour: { supplier: { name: { contains: q, mode: 'insensitive' } } } },
     ];
+  }
+
+  if (supplierId) {
+    where.tour = { ...(where.tour || {}), supplierId };
   }
 
   if (startDate || endDate) {

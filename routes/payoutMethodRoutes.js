@@ -152,6 +152,21 @@ router.get('/admin', restrictTo('admin'), requirePermission('payout-methods.view
 
 /**
  * @swagger
+ * /payout-methods/admin/summary:
+ *   get:
+ *     summary: Payout method coverage summary (admin)
+ *     description: Coverage + readiness stats for the finance dashboard (suppliers with methods, need setup, unverified, default coverage, type mix).
+ *     tags: [Payout Methods]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Coverage summary
+ */
+router.get('/admin/summary', restrictTo('admin'), requirePermission('payout-methods.view'), payoutMethodController.getPayoutMethodSummary);
+
+/**
+ * @swagger
  * /payout-methods/admin/{id}/verify:
  *   patch:
  *     summary: Verify/unverify a payout method (admin)

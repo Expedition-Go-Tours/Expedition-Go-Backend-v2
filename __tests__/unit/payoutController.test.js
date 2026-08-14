@@ -1,5 +1,5 @@
 jest.mock('../../utils/prismaClient', () => ({
-  payout: { findMany: jest.fn(), findUnique: jest.fn(), count: jest.fn(), update: jest.fn(), aggregate: jest.fn() },
+  payout: { findMany: jest.fn(), findUnique: jest.fn(), count: jest.fn(), update: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn().mockResolvedValue([]) },
   payoutMethod: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   booking: { findMany: jest.fn() },
   supplierProfile: { update: jest.fn() },
@@ -141,6 +141,41 @@ describe('payoutController', () => {
       const body = res.json.mock.calls[0][0];
       expect(body.data.pagination.totalPages).toBe(3);
     });
+
+    it('returns statusCounts for each lifecycle status', async () => {
+      prisma.payout.groupBy.mockResolvedValue([
+        { status: 'PENDING', _count: { _all: 2 } },
+        { status: 'PROCESSING', _count: { _all: 1 } },
+        { status: 'PAID', _count: { _all: 7 } },
+      ]);
+      await controller.getAllPayouts(req, res, next);
+      const body = res.json.mock.calls[0][0];
+      expect(body.data.statusCounts).toEqual({
+        PENDING: 2,
+        APPROVED: 0,
+        PROCESSING: 1,
+        PAID: 7,
+        FAILED: 0,
+      });
+    });
+
+    it('filters by search across supplier and booking', async () => {
+      req.query = { search: 'john' };
+      await controller.getAllPayouts(req, res, next);
+      expect(prisma.payout.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: [
+              expect.objectContaining({
+                OR: expect.arrayContaining([
+                  expect.objectContaining({ supplier: expect.objectContaining({ name: expect.objectContaining({ contains: 'john' }) }) }),
+                ]),
+              }),
+            ],
+          }),
+        })
+      );
+    });
   });
 
   // ============================
@@ -236,6 +271,64 @@ describe('payoutController', () => {
 
       expect(res.status).toHaveBeenCalledWith(200);
     });
+
+    it('moves APPROVED to PROCESSING (in transit), not PAID', async () => {
+      req.params = { id: 'p-1' };
+      prisma.payout.findUnique.mockResolvedValue({ ...mockPayout, status: 'APPROVED', amount: '500', supplier: mockSupplier });
+
+      await controller.releasePayout(req, res, next);
+
+      expect(prisma.payout.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'PROCESSING' }) })
+      );
+      expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'payout.released' }));
+    });
+  });
+
+  // ============================
+  // settlePayout (admin)
+  // ============================
+  describe('settlePayout', () => {
+    it('returns 404 when payout not found', async () => {
+      req.params = { id: 'nonexistent' };
+      prisma.payout.findUnique.mockResolvedValue(null);
+      await controller.settlePayout(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
+    });
+
+    it('returns 400 when payout not in PROCESSING status', async () => {
+      req.params = { id: 'p-1' };
+      req.body = { reference: 'TXN-1' };
+      prisma.payout.findUnique.mockResolvedValue({ ...mockPayout, status: 'APPROVED' });
+      await controller.settlePayout(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('settles a PROCESSING payout to PAID with reference', async () => {
+      req.params = { id: 'p-1' };
+      req.body = { reference: 'TXN-9' };
+      prisma.payout.findUnique.mockResolvedValue({
+        ...mockPayout,
+        status: 'PROCESSING',
+        supplier: mockSupplier,
+        paymentMethod: 'BANK_TRANSFER',
+        payoutMethodId: 'pm-1',
+      });
+
+      await controller.settlePayout(req, res, next);
+
+      expect(prisma.payout.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: 'PAID',
+            paidAt: expect.any(Date),
+            reference: 'TXN-9',
+          }),
+        })
+      );
+      expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'payout.settled' }));
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
   });
 
   // ============================
@@ -275,26 +368,29 @@ describe('payoutController', () => {
   // getPayoutSummary (admin)
   // ============================
   describe('getPayoutSummary', () => {
-    it('returns payout summary with stats', async () => {
-      prisma.payout.aggregate.mockResolvedValueOnce({ _sum: { amount: 10000, fee: 500 } });
-      prisma.payout.count.mockResolvedValueOnce(5);
-      prisma.payout.aggregate.mockResolvedValueOnce({ _sum: { amount: 3000, fee: 150 }, _count: { amount: 3 } });
+    it('returns payout summary with lifecycle stats', async () => {
+      prisma.payout.aggregate
+        .mockResolvedValueOnce({ _count: 2, _sum: { amount: 1000 } })
+        .mockResolvedValueOnce({ _count: 1, _sum: { amount: 500 } })
+        .mockResolvedValueOnce({ _count: 3, _sum: { amount: 1500 } })
+        .mockResolvedValueOnce({ _count: 1, _sum: { amount: 100 } })
+        .mockResolvedValueOnce({ _count: 4, _sum: { amount: 4000, commissionAmount: 200 } });
       prisma.$queryRaw.mockResolvedValue([
-        { month: new Date('2026-01-01'), payouts: 3, total: '1500', fees: '75' },
+        { month: new Date('2026-01-01'), count: 4, totalAmount: '4000', commission: '200' },
       ]);
 
       await controller.getPayoutSummary(req, res, next);
 
+      const body = res.json.mock.calls[0][0];
       expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            pending: expect.any(Object),
-            paidThisMonth: expect.any(Object),
-            monthlyBreakdown: expect.any(Array),
-          }),
-        })
-      );
+      expect(body.data.pending).toEqual(expect.objectContaining({ count: 2, total: 1000 }));
+      expect(body.data.processing).toEqual(expect.objectContaining({ count: 3, total: 1500 }));
+      expect(body.data.approved).toEqual(expect.objectContaining({ count: 1, total: 500 }));
+      expect(body.data.failed).toEqual(expect.objectContaining({ count: 1, total: 100 }));
+      expect(body.data.outstanding).toEqual(expect.objectContaining({ count: 4, total: 2000 }));
+      expect(body.data.paidThisMonth).toEqual(expect.objectContaining({ count: 4, total: 4000, commission: 200 }));
+      expect(body.data.avgCommission).toBeCloseTo(0.05);
+      expect(body.data.monthlyBreakdown).toEqual(expect.any(Array));
     });
   });
 
@@ -322,6 +418,28 @@ describe('payoutController', () => {
 
       expect(prisma.payout.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: expect.objectContaining({ status: 'PAID', supplierId: 's-1' }) })
+      );
+    });
+
+    it('filters by search term', async () => {
+      req.query = { search: 'safari co' };
+      prisma.payout.findMany.mockResolvedValue([]);
+      prisma.payout.count.mockResolvedValue(0);
+
+      await controller.exportPayouts(req, res, next);
+
+      expect(prisma.payout.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: [
+              expect.objectContaining({
+                OR: expect.arrayContaining([
+                  expect.objectContaining({ booking: expect.objectContaining({ bookingNumber: expect.objectContaining({ contains: 'safari co' }) }) }),
+                ]),
+              }),
+            ],
+          }),
+        })
       );
     });
 
