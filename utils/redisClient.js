@@ -256,6 +256,46 @@ async function delPattern(pattern) {
   } catch { /* silent fail */ }
 }
 
+/**
+ * Pub/sub clients for the Socket.IO Redis adapter, derived from the SAME
+ * underlying connection (options + degraded-mode state) as everything else.
+ *
+ * Each client gets an `error` handler that funnels into `markUnavailable`, so
+ * an Upstash throttle or dropped TLS socket can never surface as an unhandled
+ * 'error' event (previously an uncaughtException that crashed the process).
+ * Their retry strategy keeps slowly retrying during quota cooldown so the
+ * adapter auto-reconnects once Upstash resets the limit window.
+ *
+ * @returns {{ pub: import('ioredis').Redis, sub: import('ioredis').Redis }}
+ */
+function getPubSubClients() {
+  const base = getConnection();
+  const make = () => {
+    const client = base.duplicate({
+      retryStrategy(times) {
+        if (connectionFailed && lastErrorKind === 'limit' && Date.now() - connectionFailedAt < QUOTA_COOLDOWN_MS) {
+          return QUOTA_COOLDOWN_MS;
+        }
+        if (times > 20) return null;
+        return Math.min(times * 200, 3000);
+      },
+    });
+    client.on('error', (err) => {
+      if (isLimitError(err)) {
+        const wasFailed = connectionFailed;
+        markUnavailable(err);
+        if (!wasFailed) {
+          console.warn('[Socket.IO] Upstash request limit exceeded — adapter degraded, retrying slowly');
+        }
+      } else if (process.env.NODE_ENV !== 'production') {
+        console.warn('[Socket.IO] Redis adapter error:', err.message);
+      }
+    });
+    return client;
+  };
+  return { pub: make(), sub: make() };
+}
+
 async function quit() {
   if (recoveryTimer) {
     clearTimeout(recoveryTimer);
@@ -281,6 +321,7 @@ module.exports = {
   probe,
   markUnavailable,
   isLimitError,
+  getPubSubClients,
   get,
   set,
   setnx,

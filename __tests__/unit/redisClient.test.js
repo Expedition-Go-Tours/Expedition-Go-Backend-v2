@@ -2,7 +2,7 @@ let mockRedis;
 
 function createMockRedis() {
   const handlers = {};
-  mockRedis = {
+  const instance = {
     connect: jest.fn().mockResolvedValue(),
     quit: jest.fn().mockResolvedValue(),
     get: jest.fn(),
@@ -17,6 +17,9 @@ function createMockRedis() {
     on: jest.fn((evt, cb) => { handlers[evt] = cb; }),
     _handlers: handlers,
   };
+  instance.duplicate = jest.fn(() => createMockRedis());
+  mockRedis = instance;
+  return instance;
 }
 
 createMockRedis();
@@ -115,6 +118,35 @@ describe('redisClient', () => {
       redis = loadRedis();
       const result = await redis.quit();
       expect(result).toBeUndefined();
+    });
+  });
+
+  describe('getPubSubClients', () => {
+    it('returns pub/sub clients derived from the shared connection with error handlers', async () => {
+      process.env.REDIS_URL = 'redis://localhost:6379';
+      redis = loadRedis();
+      await redis.connect();
+
+      const { pub, sub } = redis.getPubSubClients();
+      expect(pub).toBeDefined();
+      expect(sub).toBeDefined();
+      expect(redis.getClient().duplicate).toHaveBeenCalled();
+      // Each derived client must have an 'error' handler so a throttled/socket
+      // error can never become an unhandled 'error' event (process crash).
+      expect(pub._handlers.error).toBeDefined();
+      expect(sub._handlers.error).toBeDefined();
+    });
+
+    it('degrades the shared state when a derived client hits the Upstash limit', async () => {
+      process.env.REDIS_URL = 'redis://localhost:6379';
+      redis = loadRedis();
+      await redis.connect();
+
+      const { pub } = redis.getPubSubClients();
+      expect(redis.isReady()).toBe(true);
+
+      pub._handlers.error(new Error('ERR max requests limit exceeded. Limit: 500000, Usage: 500006'));
+      expect(redis.isReady()).toBe(false);
     });
   });
 

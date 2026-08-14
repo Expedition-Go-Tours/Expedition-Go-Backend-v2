@@ -49,7 +49,20 @@ const shutdown = async (reason, err) => {
   }
 };
 
+// Known non-fatal error classes that must never take down the process. These
+// are infrastructure blips (Upstash throttling, dropped TLS sockets) that the
+// app already degrades around; log-and-continue instead of shutting down.
+function isNonFatalError(err) {
+  if (!err || typeof err.message !== 'string') return false;
+  const msg = `${err.message} ${err.stack || ''}`;
+  return /Socket closed unexpectedly|ECONNRESET|ECONNREFUSED|ETIMEDOUT|max requests limit|@redis\/client|ioredis|Redis connection/.test(msg);
+}
+
 process.on('uncaughtException', (err) => {
+  if (isNonFatalError(err)) {
+    console.warn('[uncaughtException] Non-fatal error — continuing:', err.message);
+    return;
+  }
   shutdown('UNCAUGHT EXCEPTION', err);
 });
 
@@ -101,16 +114,20 @@ setupSocketIO();
 function setupRedisAdapter() {
   if (!process.env.REDIS_URL) return;
   (async () => {
+    // Gate on the shared degraded-mode state first: if Redis is already
+    // quota-limited/unavailable, don't even create the pub/sub clients — an
+    // orphaned, unguarded client is exactly what used to crash the process.
+    if (!(await redisClient.isRedisAvailable())) {
+      console.warn('[Socket.IO] Redis unavailable — using in-process adapter (single instance fallback)');
+      return;
+    }
     try {
       const { createAdapter } = require('@socket.io/redis-adapter');
-      const { createClient } = require('redis');
-      const pubClient = createClient({
-        url: process.env.REDIS_URL,
-        socket: { connectTimeout: 10000, reconnectStrategy: false },
-      });
-      const subClient = pubClient.duplicate();
-      await Promise.all([pubClient.connect(), subClient.connect()]);
-      io.adapter(createAdapter(pubClient, subClient));
+      // Pub/sub clients share the same ioredis connection, degraded-mode state
+      // and error handling as the rest of the app (no separate `redis` stack).
+      const { pub, sub } = redisClient.getPubSubClients();
+      await Promise.all([pub.connect(), sub.connect()]);
+      io.adapter(createAdapter(pub, sub));
       console.log('[Socket.IO] Redis adapter connected');
     } catch (err) {
       console.warn('[Socket.IO] Redis adapter unavailable:', err?.message);
