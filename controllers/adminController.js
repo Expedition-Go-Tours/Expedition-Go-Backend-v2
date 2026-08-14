@@ -1970,7 +1970,11 @@ exports.getExpeditionSuppliers = catchAsync(async (req, res) => {
       email: true,
       photoURL: true,
       _count: {
-        select: { tours: true },
+        select: {
+          // ARCHIVED is a soft-delete: deleted tours must never count as
+          // inventory or as "on Expedition" anywhere.
+          tours: { where: { status: { not: 'ARCHIVED' } } },
+        },
       },
       tours: {
         select: {
@@ -1978,7 +1982,10 @@ exports.getExpeditionSuppliers = catchAsync(async (req, res) => {
             select: { isActive: true, bookingFlow: true },
           },
         },
-        where: { expeditionTour: { isNot: null } },
+        where: {
+          status: { not: 'ARCHIVED' },
+          expeditionTour: { isNot: null },
+        },
       },
     },
     orderBy: { name: 'asc' },

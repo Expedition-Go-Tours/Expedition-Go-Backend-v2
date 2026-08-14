@@ -959,4 +959,79 @@ describe('adminController', () => {
       expect(cache.invalidateTourCaches).toHaveBeenCalledWith('t1', 'pending-tour');
     });
   });
+
+  // ============================
+  // getExpeditionSuppliers
+  // ============================
+  describe('getExpeditionSuppliers', () => {
+    it('excludes ARCHIVED (soft-deleted) tours from total and expedition counts', async () => {
+      prisma.user.findMany.mockResolvedValue([
+        {
+          id: 's1',
+          name: 'Expedition-Go Tours LTD',
+          email: 'x@test.com',
+          photoURL: null,
+          _count: { tours: 3 }, // 3 non-archived (29 total, 26 archived)
+          tours: [
+            { expeditionTour: { isActive: true, bookingFlow: 'EXTERNAL' } },
+            { expeditionTour: { isActive: true, bookingFlow: 'EXTERNAL' } },
+            { expeditionTour: { isActive: true, bookingFlow: 'EXTERNAL' } },
+          ],
+        },
+      ]);
+
+      await controller.getExpeditionSuppliers(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const suppliers = res.json.mock.calls[0][0].data.suppliers;
+      expect(suppliers).toHaveLength(1);
+      expect(suppliers[0]).toMatchObject({
+        totalTours: 3,
+        onExpedition: 3,
+        activeOnExpedition: 3,
+        directCount: 0,
+      });
+      // The query must filter out archived tours on both the inventory count
+      // and the expedition subquery.
+      const findManyArgs = prisma.user.findMany.mock.calls[0][0];
+      expect(findManyArgs.select._count.select.tours.where.status.not).toBe('ARCHIVED');
+      expect(findManyArgs.select.tours.where.status.not).toBe('ARCHIVED');
+    });
+
+    it('does not count deleted-only tours toward expedition stats', async () => {
+      prisma.user.findMany.mockResolvedValue([
+        {
+          id: 's2',
+          name: 'Gideon Wilson',
+          email: 'y@test.com',
+          photoURL: null,
+          _count: { tours: 4 }, // 4 non-archived (5 total, 1 archived)
+          tours: [], // none of the non-archived tours are on expedition
+        },
+      ]);
+
+      await controller.getExpeditionSuppliers(req, res, next);
+
+      const suppliers = res.json.mock.calls[0][0].data.suppliers;
+      expect(suppliers[0]).toMatchObject({ totalTours: 4, onExpedition: 0, activeOnExpedition: 0 });
+    });
+
+    it('drops suppliers whose only tours are archived', async () => {
+      prisma.user.findMany.mockResolvedValue([
+        {
+          id: 's3',
+          name: 'Old Supplier',
+          email: 'z@test.com',
+          photoURL: null,
+          _count: { tours: 0 },
+          tours: [],
+        },
+      ]);
+
+      await controller.getExpeditionSuppliers(req, res, next);
+
+      const suppliers = res.json.mock.calls[0][0].data.suppliers;
+      expect(suppliers).toHaveLength(0);
+    });
+  });
 });
