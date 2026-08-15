@@ -3,6 +3,19 @@ jest.mock('../../utils/prismaClient', () => ({
   $disconnect: jest.fn(),
 }));
 
+// calculateTourPrice delegates the discount decision to the special-offer
+// engine; its own behavior is covered by specialOfferEngine.test.js. A
+// zero-discount default keeps pricing tests focused on base pricing.
+jest.mock('../../utils/specialOfferEngine', () => ({
+  findApplicableOffers: jest.fn(async () => []),
+  findBestDiscount: jest.fn(async ({ basePrice }) => ({
+    discountAmount: 0,
+    finalPrice: basePrice,
+    appliedOffer: null,
+    discountType: null,
+  })),
+}));
+
 const prisma = require('../../utils/prismaClient');
 
 beforeEach(() => {
@@ -1001,5 +1014,52 @@ describe('calculateTourPrice', () => {
     const result = await calculateTourPrice(tour, { adult: 2 }, '2026-06-15');
     expect(result.success).toBe(false);
     expect(result.error).toContain('No pricing available');
+  });
+
+  it('threads the promo code into the special-offer engine', async () => {
+    const { findBestDiscount } = require('../../utils/specialOfferEngine');
+    findBestDiscount.mockClear();
+
+    await calculateTourPrice(baseTour, { adult: 1, child: 0 }, '2026-06-15', null, null, null, 'SAVE20');
+
+    expect(findBestDiscount).toHaveBeenCalledWith(expect.objectContaining({ promoCode: 'SAVE20' }));
+  });
+
+  it('does not send a promo code when none was provided', async () => {
+    const { findBestDiscount } = require('../../utils/specialOfferEngine');
+    findBestDiscount.mockClear();
+
+    await calculateTourPrice(baseTour, { adult: 1 }, '2026-06-15');
+
+    expect(findBestDiscount).toHaveBeenCalledWith(expect.objectContaining({ promoCode: null }));
+  });
+
+  it('applies the special-offer engine discount to the total', async () => {
+    const { findBestDiscount } = require('../../utils/specialOfferEngine');
+    findBestDiscount.mockResolvedValue({
+      discountAmount: 25,
+      finalPrice: 75,
+      appliedOffer: { id: 'o1', name: 'Summer Sale' },
+      discountType: 'PERCENTAGE',
+    });
+
+    const result = await calculateTourPrice(baseTour, { adult: 1 }, '2026-06-15', null, null, null, 'SAVE20');
+
+    expect(result.success).toBe(true);
+    expect(result.total).toBe(75);
+    expect(result.discount).toBe(25);
+    expect(result.appliedOffer.id).toBe('o1');
+  });
+
+  it('fails loud when the special-offer engine throws', async () => {
+    const { findBestDiscount } = require('../../utils/specialOfferEngine');
+    findBestDiscount.mockRejectedValue(new Error('engine down'));
+
+    const result = await calculateTourPrice(baseTour, { adult: 1 }, '2026-06-15');
+
+    // A broken engine must surface to the caller (checkout refuses), never
+    // silently discount the customer to full price.
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('engine down');
   });
 });

@@ -945,13 +945,13 @@ exports.getTourAvailability = catchAsync(async (req, res, next) => {
 // ================================
 
 exports.calculateCheckout = catchAsync(async (req, res, next) => {
-  const { tourId, selectedDate, travelers } = req.body;
+  const { tourId, selectedDate, travelers, promoCode } = req.body;
 
   if (!tourId || !selectedDate || !travelers) {
     return next(new AppError('tourId, selectedDate, and travelers are required', 400));
   }
 
-  const cacheKey = `${CACHE_PREFIX}checkout:${crypto.createHash('md5').update(JSON.stringify({ tourId, selectedDate, travelers })).digest('hex')}`;
+  const cacheKey = `${CACHE_PREFIX}checkout:${crypto.createHash('md5').update(JSON.stringify({ tourId, selectedDate, travelers, promoCode: promoCode || null })).digest('hex')}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
     const tour = await prisma.tour.findFirst({
@@ -988,7 +988,7 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
       throw new AppError(`Only ${availability.availableSpots} spots available, but ${totalTravelers} travelers requested`, 400);
     }
 
-    const pricing = await calculateTourPrice(tour, travelers, selectedDate, null, null, req.user?.id)
+    const pricing = await calculateTourPrice(tour, travelers, selectedDate, null, null, req.user?.id, promoCode || null)
       .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
 
     if (!pricing.success) {
@@ -1061,7 +1061,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError(mixResult.errors[0], 400));
   }
 
-  const pricing = await calculateTourPrice(tour, travelers, selectedDate, selectedTime || null, null, customerId)
+  const pricing = await calculateTourPrice(tour, travelers, selectedDate, selectedTime || null, null, customerId, req.body.promoCode || null)
     .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
 
   if (!pricing.success) {

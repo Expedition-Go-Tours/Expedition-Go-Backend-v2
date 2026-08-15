@@ -6,6 +6,25 @@ jest.mock('../../utils/prismaClient', () => ({
 const prisma = require('../../utils/prismaClient');
 const { findApplicableOffers, findBestDiscount } = require('../../utils/specialOfferEngine');
 
+// Simulate Prisma semantics: include.targets.where narrows each offer's
+// returned targets to the requested scope, so offers left with zero matching
+// targets are not returned at all.
+function scopedOfferMock(offers) {
+  prisma.specialOffer.findMany.mockImplementation(async ({ include }) => {
+    const narrower = include?.targets?.where || null;
+    return offers
+      .map((o) => ({
+        ...o,
+        targets: narrower ? o.targets.filter((t) => {
+          if (narrower.tourId !== undefined && t.tourId !== narrower.tourId) return false;
+          if (narrower.tourOptionKey !== undefined && (t.tourOptionKey || null) !== (narrower.tourOptionKey || null)) return false;
+          return true;
+        }) : o.targets,
+      }))
+      .filter((o) => o.targets.length > 0);
+  });
+}
+
 function makeOffer(overrides = {}) {
   return {
     id: 'offer-1',
@@ -120,6 +139,48 @@ describe('specialOfferEngine', () => {
 
       const result = await findApplicableOffers({ tourId: 'tour-1', selectedDate: '2026-07-01', customerId: 'cust-1' });
       expect(result).toHaveLength(1);
+    });
+
+    it('does not match option-scoped offers to bookings without an option', async () => {
+      const offer = makeOffer({ id: 'opt-offer', targets: [{ tourId: 'tour-1', tourOptionKey: 'bedouin-camp' }] });
+      scopedOfferMock([offer]);
+
+      const result = await findApplicableOffers({ tourId: 'tour-1', selectedDate: '2026-07-01' });
+
+      expect(result).toHaveLength(0);
+      // The query itself must only consider whole-tour targets.
+      expect(prisma.specialOffer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            targets: { some: { tourId: 'tour-1', tourOptionKey: null } },
+          }),
+        })
+      );
+    });
+
+    it('matches option-scoped offers when that option is selected', async () => {
+      const offer = makeOffer({ id: 'opt-offer', targets: [{ tourId: 'tour-1', tourOptionKey: 'bedouin-camp' }] });
+      scopedOfferMock([offer]);
+
+      const result = await findApplicableOffers({ tourId: 'tour-1', tourOptionKey: 'bedouin-camp', selectedDate: '2026-07-01' });
+
+      expect(result).toHaveLength(1);
+      expect(prisma.specialOffer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            targets: { some: { tourId: 'tour-1', tourOptionKey: 'bedouin-camp' } },
+          }),
+        })
+      );
+    });
+
+    it('never matches an option-scoped offer when a different option is selected', async () => {
+      const offer = makeOffer({ id: 'opt-offer', targets: [{ tourId: 'tour-1', tourOptionKey: 'bedouin-camp' }] });
+      scopedOfferMock([offer]);
+
+      const result = await findApplicableOffers({ tourId: 'tour-1', tourOptionKey: 'sunrise-trek', selectedDate: '2026-07-01' });
+
+      expect(result).toHaveLength(0);
     });
   });
 

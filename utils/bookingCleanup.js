@@ -20,7 +20,7 @@
  * Runs every 5 minutes from the system-cleanup queue (see server.js).
  */
 
-const { getStripe, handlePaymentSucceeded } = require('./stripeHelpers');
+const { getStripe, handlePaymentSucceeded, createRefund } = require('./stripeHelpers');
 const { enqueueNotification, enqueueEvent } = require('./queue');
 const { logActivity } = require('./auditLogger');
 
@@ -114,7 +114,15 @@ async function cancelStalePendingBookings() {
       // Payment settled but its webhook never landed — settle the booking now.
       // Idempotent: rows already CONFIRMED are untouched by the updates below.
       try {
-        await handlePaymentSucceeded(intent);
+        const { oversold } = await handlePaymentSucceeded(intent);
+        // Offer capacity was exhausted before settlement: the booking was
+        // cancelled inside the transaction, so the customer's money must go
+        // back immediately (best-effort — failures are logged for follow-up).
+        for (const ob of oversold || []) {
+          await createRefund(ob.stripePaymentIntentId).catch((err) => {
+            console.error('[BookingCleanup] Refund failed for oversold booking', ob.id, err.message);
+          });
+        }
         confirmed += 1;
       } catch (err) {
         console.error('[BookingCleanup] Manual settlement failed for', booking.id, err.message);

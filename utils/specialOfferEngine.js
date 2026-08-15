@@ -15,13 +15,17 @@ function daysBefore(dateA, dateB) {
 }
 
 async function findApplicableOffers({ tourId, tourOptionKey, selectedDate, promoCode, customerId }) {
+  // Option scoping: a target with tourOptionKey = null covers the WHOLE tour,
+  // a target with a specific key covers ONLY that option. A booking without a
+  // selected option can therefore only ever match whole-tour offers.
+  const targetWhere = tourOptionKey
+    ? { tourId, tourOptionKey }
+    : { tourId, tourOptionKey: null };
+
   const where = {
     isActive: true,
     targets: {
-      some: {
-        tourId,
-        ...(tourOptionKey ? { tourOptionKey } : {}),
-      },
+      some: targetWhere,
     },
   };
 
@@ -31,15 +35,18 @@ async function findApplicableOffers({ tourId, tourOptionKey, selectedDate, promo
     where,
     include: {
       targets: {
-        where: {
-          tourId,
-          ...(tourOptionKey ? { tourOptionKey } : {}),
-        },
+        where: targetWhere,
       },
     },
   });
 
-  const filtered = offers.filter((offer) => {
+  // Defensive: the include `where` already narrows targets to the requested
+  // scope, so any offer left with zero matching targets is out of scope and
+  // must not apply (e.g. an option-scoped offer reaching a null-option
+  // booking or vice versa).
+  const scoped = offers.filter((offer) => offer.targets?.length > 0);
+
+  const filtered = scoped.filter((offer) => {
     if (offer.startDate && new Date(selectedDate) < new Date(offer.startDate)) return false;
     if (offer.endDate && new Date(selectedDate) > new Date(offer.endDate)) return false;
 

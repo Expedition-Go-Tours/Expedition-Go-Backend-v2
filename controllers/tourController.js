@@ -561,10 +561,28 @@ exports.getTour = catchAsync(async (req, res, next) => {
       })
     ]);
 
-    // Transform specialOfferTargets into a flat specialOffers array
+    // Customer-facing embed: only ACTIVE offers whose date window includes
+    // today (a window-less offer never expires). Projected so internal fields
+    // like promoCode/supplierId/spotsSold never leak to the public API.
+    const now = new Date();
     const specialOffers = specialOfferTargets
       .map(t => t.specialOffer)
-      .filter(Boolean);
+      .filter(Boolean)
+      .filter(o => o.isActive
+        && (!o.startDate || now >= new Date(o.startDate))
+        && (!o.endDate || now <= new Date(o.endDate)))
+      .filter((offer, index, arr) => arr.findIndex(x => x.id === offer.id) === index)
+      .map(o => ({
+        id: o.id,
+        name: o.name,
+        offerType: o.offerType,
+        discountType: o.discountType,
+        discountPercentage: o.discountPercentage,
+        fixedDiscountValue: o.fixedDiscountValue,
+        startDate: o.startDate,
+        endDate: o.endDate,
+        isActive: o.isActive,
+      }));
 
     return {
       ...tour,
@@ -2220,7 +2238,7 @@ exports.getOfferListings = catchAsync(async (req, res, next) => {
 });
 
 exports.validatePromoCode = catchAsync(async (req, res, next) => {
-  const { promoCode, tourId, selectedDate } = req.body;
+  const { promoCode, tourId, selectedDate, basePrice, quantity, tourOptionKey } = req.body;
 
   if (!promoCode || promoCode.length < 3) {
     return next(new AppError('Promo code must be at least 3 characters', 400));
@@ -2232,12 +2250,15 @@ exports.validatePromoCode = catchAsync(async (req, res, next) => {
     return next(new AppError('Selected date is required', 400));
   }
 
-  const { findApplicableOffers } = require('../utils/specialOfferEngine');
+  const { findBestDiscount, findApplicableOffers } = require('../utils/specialOfferEngine');
+  const effectiveOptionKey = tourOptionKey || null;
 
   const offers = await findApplicableOffers({
     tourId,
+    tourOptionKey: effectiveOptionKey,
     selectedDate: new Date(selectedDate),
     promoCode,
+    customerId: req.user?.id,
   });
 
   if (offers.length === 0) {
@@ -2249,10 +2270,52 @@ exports.validatePromoCode = catchAsync(async (req, res, next) => {
 
   const offer = offers[0];
 
+  // Derive the concrete discount so the client never has to re-derive it.
+  // If the client doesn't send a basePrice, fall back to the tour's adult
+  // price so the endpoint still works for simple "is my code valid?" checks.
+  let effectiveBasePrice = basePrice ?? null;
+
+  if (effectiveBasePrice == null) {
+    const tour = await prisma.tour.findFirst({
+      where: { id: tourId, status: 'ACTIVE' },
+      select: { schedulesAndPricing: true },
+    });
+    if (tour) {
+      const parsed = typeof tour.schedulesAndPricing === 'string'
+        ? (() => { try { return JSON.parse(tour.schedulesAndPricing); } catch { return null; } })()
+        : tour.schedulesAndPricing;
+      const adultPrice = parsed?.pricingSchedules?.schedules
+        ?.flatMap((s) => s.prices || [])
+        .find((p) => String(p.ageGroup).toLowerCase() === 'adult')?.retailPrice;
+      const numeric = adultPrice != null ? parseFloat(adultPrice) : NaN;
+      if (Number.isFinite(numeric)) effectiveBasePrice = numeric;
+    }
+  }
+  if (effectiveBasePrice == null) {
+    return next(new AppError('Unable to determine the tour price — provide basePrice to validate the code', 400));
+  }
+
+  const result = await findBestDiscount({
+    tourId,
+    tourOptionKey: effectiveOptionKey,
+    selectedDate: new Date(selectedDate),
+    basePrice: effectiveBasePrice,
+    quantity: quantity ?? 1,
+    promoCode,
+    customerId: req.user?.id,
+  });
+
+  const appliedOffers = Array.isArray(result.appliedOffer)
+    ? result.appliedOffer
+    : [result.appliedOffer].filter(Boolean);
+
   res.json({
     status: 'success',
     data: {
-      valid: true,
+      valid: result.discountAmount > 0,
+      message: result.discountAmount > 0
+        ? 'Promo code applied'
+        : 'Promo code does not meet the offer conditions for this booking',
       offer: {
         id: offer.id,
         name: offer.name,
@@ -2260,6 +2323,13 @@ exports.validatePromoCode = catchAsync(async (req, res, next) => {
         discountType: offer.discountType,
         discountPercentage: offer.discountPercentage,
         fixedDiscountValue: offer.fixedDiscountValue,
+      },
+      discount: {
+        amount: result.discountAmount,
+        type: result.discountType,
+        basePrice: effectiveBasePrice,
+        finalPrice: result.finalPrice,
+        appliedOffers,
       },
     },
   });
@@ -2359,7 +2429,7 @@ async function upsertSpecialOffer(prisma, supplierId, tourId, offer) {
       data: {
         supplierId,
         name: offer.name || 'Special Offer',
-        offerType: offer.offerType || 'PROMO_CODE',
+        offerType: offer.offerType || 'LIMITED_TIME',
         discountType: offer.discountType || 'PERCENTAGE',
         discountPercentage: offer.discountPercentage || 10,
         fixedDiscountValue: offer.fixedDiscountValue || null,
@@ -2405,7 +2475,7 @@ async function upsertSpecialOffer(prisma, supplierId, tourId, offer) {
     data: {
       supplierId,
       name: offer.name || 'Special Offer',
-      offerType: offer.offerType || 'PROMO_CODE',
+      offerType: offer.offerType || 'LIMITED_TIME',
       discountType: offer.discountType || 'PERCENTAGE',
       discountPercentage: offer.discountPercentage || 10,
       fixedDiscountValue: offer.fixedDiscountValue || null,

@@ -12,6 +12,82 @@ function computeStatus(offer) {
   return 'active';
 }
 
+// Only published tours may carry offers — matches the supplier picker UI.
+const ALLOWED_TARGET_STATUSES = ['ACTIVE', 'PAUSED'];
+
+async function validateTargets(targets, supplierId) {
+  const tourIds = [...new Set(targets.map((t) => t.tourId))];
+  const tours = await prisma.tour.findMany({
+    where: { id: { in: tourIds } },
+    select: { id: true, title: true, supplierId: true, status: true },
+  });
+  const byId = new Map(tours.map((t) => [t.id, t]));
+
+  for (const target of targets) {
+    const tour = byId.get(target.tourId);
+    if (!tour) throw new AppError(`Target tour not found: ${target.tourId}`, 400);
+    if (tour.supplierId !== supplierId) {
+      throw new AppError('You can only target tours you own', 400);
+    }
+    if (!ALLOWED_TARGET_STATUSES.includes(tour.status)) {
+      throw new AppError(
+        `Tour "${tour.title}" is not published (status: ${tour.status}) — only ACTIVE or PAUSED tours can receive offers`,
+        400
+      );
+    }
+  }
+}
+
+// Null dates are treated as open-ended windows (this is how window-less
+// EARLY_BIRD/LAST_MINUTE offers behave: they may apply on any travel date).
+function windowsOverlap(aStart, aEnd, bStart, bEnd) {
+  const aStartMs = aStart ? new Date(aStart).getTime() : null;
+  const aEndMs = aEnd ? new Date(aEnd).getTime() : null;
+  const bStartMs = bStart ? new Date(bStart).getTime() : null;
+  const bEndMs = bEnd ? new Date(bEnd).getTime() : null;
+  const overlapsStart = aStartMs === null || bEndMs === null || aStartMs < bEndMs;
+  const overlapsEnd = bStartMs === null || aEndMs === null || bStartMs < aEndMs;
+  return overlapsStart && overlapsEnd;
+}
+
+// GYG-style guard: two active offers of the same supplier may never cover the
+// same tour (+ option) with overlapping date windows. `selfId` excludes the
+// offer being edited so an update never conflicts with itself.
+async function assertNoOverlap({ supplierId, targets, startDate, endDate, selfId = null }) {
+  const tourIds = [...new Set(targets.map((t) => t.tourId))];
+  const active = await prisma.specialOffer.findMany({
+    where: {
+      supplierId,
+      isActive: true,
+      ...(selfId ? { id: { not: selfId } } : {}),
+      targets: { some: { tourId: { in: tourIds } } },
+    },
+    select: {
+      id: true,
+      name: true,
+      offerType: true,
+      startDate: true,
+      endDate: true,
+      targets: { select: { tourId: true, tourOptionKey: true } },
+    },
+  });
+
+  for (const offer of active) {
+    for (const target of targets) {
+      const optionKey = target.tourOptionKey || null;
+      const sameTarget = offer.targets.some(
+        (t) => t.tourId === target.tourId && (t.tourOptionKey || null) === optionKey
+      );
+      if (sameTarget && windowsOverlap(startDate, endDate, offer.startDate, offer.endDate)) {
+        throw new AppError(
+          `This offer overlaps with "${offer.name}" on the same product — an offer can't cover a product already covered by another active offer in the same period`,
+          409
+        );
+      }
+    }
+  }
+}
+
 exports.createOffer = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
   const {
@@ -27,8 +103,12 @@ exports.createOffer = catchAsync(async (req, res, next) => {
   if (offerType === 'LIMITED_TIME') {
     if (!startDate || !endDate) return next(new AppError('Start and end dates are required', 400));
     if (new Date(startDate) >= new Date(endDate)) return next(new AppError('Start date must be before end date', 400));
+  } else if (startDate && endDate && new Date(startDate) >= new Date(endDate)) {
+    return next(new AppError('End date must be after start date', 400));
   }
   if (!targets || targets.length === 0) return next(new AppError('At least one target product is required', 400));
+  await validateTargets(targets, supplierId);
+  await assertNoOverlap({ supplierId, targets, startDate, endDate });
 
   const dType = discountType || 'PERCENTAGE';
   if (dType === 'PERCENTAGE') {
@@ -48,6 +128,10 @@ exports.createOffer = catchAsync(async (req, res, next) => {
   if (promoCode) {
     const existing = await prisma.specialOffer.findUnique({ where: { promoCode } });
     if (existing) return next(new AppError('Promo code already in use', 409));
+  }
+
+  if ((capacityType || 'UNLIMITED') === 'CAPPED' && (!maxSpots || maxSpots < 1)) {
+    return next(new AppError('Max spots is required for capped offers', 400));
   }
 
   const offer = await prisma.$transaction(async (tx) => {
@@ -177,8 +261,45 @@ exports.updateOffer = catchAsync(async (req, res, next) => {
     if (taken) return next(new AppError('Promo code already in use', 409));
   }
 
+  // Merged view of the offer once this update applies, used for all invariants.
+  const effectiveType = offerType || existing.offerType;
+  const effectiveStart = startDate !== undefined ? (startDate ? new Date(startDate) : null) : existing.startDate;
+  const effectiveEnd = endDate !== undefined ? (endDate ? new Date(endDate) : null) : existing.endDate;
+  const effectiveCapacityType = capacityType || existing.capacityType;
+  const effectiveMaxSpots = maxSpots !== undefined ? maxSpots : existing.maxSpots;
+
+  if (effectiveType === 'LIMITED_TIME') {
+    if (!effectiveStart || !effectiveEnd) return next(new AppError('Start and end dates are required', 400));
+    if (new Date(effectiveStart) >= new Date(effectiveEnd)) return next(new AppError('Start date must be before end date', 400));
+  } else if (effectiveStart && effectiveEnd && new Date(effectiveStart) >= new Date(effectiveEnd)) {
+    return next(new AppError('End date must be after start date', 400));
+  }
+
+  if (effectiveCapacityType === 'CAPPED' && (!effectiveMaxSpots || effectiveMaxSpots < 1)) {
+    return next(new AppError('Max spots is required for capped offers', 400));
+  }
+
+  if (targets !== undefined && targets.length === 0) return next(new AppError('At least one target product is required', 400));
+  // Overlap must be checked even when only the window changes — use the
+  // existing targets when the payload doesn't replace them.
+  const overlapTargets = targets !== undefined
+    ? targets
+    : (existing.targets || []).map((t) => ({ tourId: t.tourId, tourOptionKey: t.tourOptionKey || null, tourOptionLabel: t.tourOptionLabel || null }));
+  if (overlapTargets.length > 0) {
+    if (targets !== undefined) {
+      await validateTargets(targets, existing.supplierId);
+    }
+    await assertNoOverlap({
+      supplierId: existing.supplierId,
+      targets: overlapTargets,
+      startDate: effectiveStart,
+      endDate: effectiveEnd,
+      selfId: id,
+    });
+  }
+
   const offer = await prisma.$transaction(async (tx) => {
-    if (targets) {
+    if (targets !== undefined) {
       await tx.specialOfferTarget.deleteMany({ where: { specialOfferId: id } });
       await tx.specialOfferTarget.createMany({
         data: targets.map((t) => ({
@@ -198,11 +319,11 @@ exports.updateOffer = catchAsync(async (req, res, next) => {
         ...(discountType !== undefined && { discountType }),
         ...(discountPercentage !== undefined && { discountPercentage: dType === 'PERCENTAGE' ? discountPercentage : 0 }),
         ...(fixedDiscountValue !== undefined && { fixedDiscountValue: dType === 'FIXED_AMOUNT' ? fixedDiscountValue : null }),
-        ...(startDate !== undefined && { startDate: new Date(startDate) }),
-        ...(endDate !== undefined && { endDate: new Date(endDate) }),
+        ...(startDate !== undefined && { startDate: startDate ? new Date(startDate) : null }),
+        ...(endDate !== undefined && { endDate: endDate ? new Date(endDate) : null }),
         ...(isActive !== undefined && { isActive }),
         ...(capacityType !== undefined && { capacityType }),
-        ...(maxSpots !== undefined && { maxSpots: capacityType === 'CAPPED' ? maxSpots : null }),
+        ...(maxSpots !== undefined && { maxSpots: effectiveCapacityType === 'CAPPED' ? maxSpots : null }),
         ...(timeSlotMode !== undefined && { timeSlotMode }),
         ...(specificWeekdays !== undefined && { specificWeekdays }),
         ...(earlyBirdAdvanceDays !== undefined && { earlyBirdAdvanceDays }),

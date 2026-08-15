@@ -50,6 +50,7 @@ const {
   createPaymentIntent,
   createStripeCustomer,
   ensureStripeCustomer,
+  handlePaymentSucceeded,
 } = require('../../utils/stripeHelpers');
 const redis = require('../../utils/redisClient');
 
@@ -285,6 +286,70 @@ describe('processStripeWebhook', () => {
     await processStripeWebhook(stripeEvent);
 
     expect(tx.booking.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('handlePaymentSucceeded offer capacity guard', () => {
+  function baseClient() {
+    return {
+      booking: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findMany: jest.fn().mockResolvedValue([{ ...mockBooking, appliedOfferId: 'offer-1' }]),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      specialOffer: {
+        findUnique: jest.fn().mockResolvedValue({ capacityType: 'CAPPED', maxSpots: 10, spotsSold: 5 }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      $executeRaw: jest.fn().mockResolvedValue(1),
+      notification: { create: jest.fn().mockResolvedValue({}) },
+      supplierProfile: { update: jest.fn().mockResolvedValue({}) },
+      tour: { update: jest.fn().mockResolvedValue({}) },
+      payoutMethod: { findFirst: jest.fn().mockResolvedValue(null) },
+      payout: { create: jest.fn().mockResolvedValue({}) },
+    };
+  }
+
+  it('consumes capacity atomically for capped offers with room left', async () => {
+    const client = baseClient();
+
+    const result = await handlePaymentSucceeded({ id: 'pi_1', metadata: { bookingIds: 'booking-1' } }, client);
+
+    expect(client.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(client.specialOffer.update).not.toHaveBeenCalled();
+    expect(result.bookings).toHaveLength(1);
+    expect(result.oversold).toHaveLength(0);
+  });
+
+  it('cancels the booking and flags it for refund when capacity is exhausted', async () => {
+    const client = baseClient();
+    client.$executeRaw.mockResolvedValue(0);
+
+    const result = await handlePaymentSucceeded({ id: 'pi_1', metadata: { bookingIds: 'booking-1' } }, client);
+
+    expect(client.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'booking-1' },
+        data: expect.objectContaining({ status: 'CANCELLED', paymentStatus: 'FAILED' }),
+      })
+    );
+    expect(result.bookings).toHaveLength(0);
+    expect(result.oversold).toHaveLength(1);
+    expect(result.oversold[0].id).toBe('booking-1');
+  });
+
+  it('keeps the legacy increment for uncapped offers', async () => {
+    const client = baseClient();
+    client.specialOffer.findUnique.mockResolvedValue({ capacityType: 'UNLIMITED', maxSpots: null, spotsSold: 0 });
+
+    const result = await handlePaymentSucceeded({ id: 'pi_1', metadata: { bookingIds: 'booking-1' } }, client);
+
+    expect(client.$executeRaw).not.toHaveBeenCalled();
+    expect(client.specialOffer.update).toHaveBeenCalledWith({
+      where: { id: 'offer-1' },
+      data: { spotsSold: { increment: 2 } },
+    });
+    expect(result.oversold).toHaveLength(0);
   });
 });
 

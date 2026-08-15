@@ -725,7 +725,7 @@ async function checkTourAvailability(tourId, selectedDate, selectedTimeOrOptions
 /**
  * Get tour pricing for specific date and travelers
  */
-async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = null, tourOptionKey = null, customerId = null) {
+async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = null, tourOptionKey = null, customerId = null, promoCode = null) {
   try {
     const pricing = tour.schedulesAndPricing;
     if (!pricing || !pricing.pricingSchedules) {
@@ -912,6 +912,8 @@ async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = 
     let appliedOffer = null;
 
     const totalTravelers = Object.values(travelers).reduce((sum, count) => sum + (typeof count === 'number' ? count : 0), 0);
+    // Fail loud: a broken special-offer computation must never silently
+    // discount the customer to full price (or worse, fail closed to zero).
     const specialOfferResult = await findBestDiscount({
       tourId: tour.id,
       tourOptionKey,
@@ -919,7 +921,8 @@ async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = 
       basePrice: subtotal,
       quantity: totalTravelers,
       customerId,
-    }).catch(() => ({ discountAmount: 0, finalPrice: subtotal, appliedOffer: null, discountType: null }));
+      promoCode,
+    });
 
     const finalPrice = Number.isFinite(specialOfferResult.finalPrice) ? specialOfferResult.finalPrice : subtotal;
     const specialDiscount = subtotal - Math.min(finalPrice, subtotal);

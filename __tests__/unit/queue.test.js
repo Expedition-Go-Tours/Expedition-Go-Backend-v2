@@ -16,6 +16,7 @@ jest.mock('../../utils/prismaClient', () => ({
   booking: { findUnique: jest.fn() },
   cartItem: { findMany: jest.fn(), deleteMany: jest.fn() },
   event: { deleteMany: jest.fn() },
+  specialOffer: { findMany: jest.fn(), updateMany: jest.fn() },
 }));
 
 jest.mock('../../utils/emailService', () => ({
@@ -308,6 +309,36 @@ describe('queue', () => {
       await workerCallback({ name: 'purge-archived-tours' });
 
       expect(purgeArchivedTours).toHaveBeenCalled();
+    });
+
+    it('cleanup worker expires finished special offers and notifies suppliers', async () => {
+      queue.registerWorkers();
+      const workerCallback = Worker.mock.calls.find(c => c[0] === 'system-cleanup')[1];
+      prisma.specialOffer.findMany.mockResolvedValue([
+        { id: 'o-1', name: 'Summer Sale', supplierId: 's-1', endDate: new Date('2026-07-01') },
+      ]);
+      prisma.specialOffer.updateMany.mockResolvedValue({ count: 1 });
+
+      await workerCallback({ name: 'expire-special-offers' });
+
+      expect(prisma.specialOffer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ isActive: true, endDate: { lte: expect.any(Date) } }) })
+      );
+      expect(prisma.specialOffer.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['o-1'] } },
+        data: { isActive: false },
+      });
+      expect(eventEmitter.emit).toHaveBeenCalledWith(expect.objectContaining({ name: 'offer.expired' }));
+    });
+
+    it('cleanup worker skips expiring when nothing is finished', async () => {
+      queue.registerWorkers();
+      const workerCallback = Worker.mock.calls.find(c => c[0] === 'system-cleanup')[1];
+      prisma.specialOffer.findMany.mockResolvedValue([]);
+
+      await workerCallback({ name: 'expire-special-offers' });
+
+      expect(prisma.specialOffer.updateMany).not.toHaveBeenCalled();
     });
   });
 

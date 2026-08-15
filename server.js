@@ -179,6 +179,10 @@ async function setupQueueWorkers() {
     enqueueCleanup('purge-archived-tours').catch((err) => logger.warn('[scheduler] purge-archived-tours failed:', err?.message));
   }, 24 * 60 * 60 * 1000));
 
+  intervals.push(setInterval(() => {
+    enqueueCleanup('expire-special-offers').catch((err) => logger.warn('[scheduler] expire-special-offers failed:', err?.message));
+  }, 24 * 60 * 60 * 1000));
+
   enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] startup cleanup-expired-cart failed:', err?.message));
   enqueueCleanup('cleanup-stale-bookings').catch((err) => logger.warn('[scheduler] startup cleanup-stale-bookings failed:', err?.message));
   enqueueAggregation('refresh-popularity').catch((err) => logger.warn('[scheduler] startup refresh-popularity failed:', err?.message));
@@ -186,6 +190,7 @@ async function setupQueueWorkers() {
   enqueueCleanup('cleanup-notifications').catch((err) => logger.warn('[scheduler] startup cleanup-notifications failed:', err?.message));
   enqueueCleanup('cleanup-audit-logs').catch((err) => logger.warn('[scheduler] startup cleanup-audit-logs failed:', err?.message));
   enqueueCleanup('purge-archived-tours').catch((err) => logger.warn('[scheduler] startup purge-archived-tours failed:', err?.message));
+  enqueueCleanup('expire-special-offers').catch((err) => logger.warn('[scheduler] startup expire-special-offers failed:', err?.message));
 }
 
 function setupSocketIO() {

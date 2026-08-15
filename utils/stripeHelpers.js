@@ -288,6 +288,7 @@ async function processStripeWebhook(event) {
   console.log(` Processing Stripe webhook: ${event.type}`);
 
   let bookings = [];
+  let oversoldBookings = [];
 
   await prisma.$transaction(async (tx) => {
     // Re-check inside the transaction — serialized by Postgres, no race
@@ -313,9 +314,12 @@ async function processStripeWebhook(event) {
     });
 
     switch (event.type) {
-      case 'payment_intent.succeeded':
-        bookings = await handlePaymentSucceeded(event.data.object, tx);
+      case 'payment_intent.succeeded': {
+        const result = await handlePaymentSucceeded(event.data.object, tx);
+        bookings = result.bookings;
+        oversoldBookings = result.oversold;
         break;
+      }
 
       case 'payment_intent.payment_failed':
         await handlePaymentFailed(event.data.object, tx);
@@ -389,6 +393,31 @@ async function processStripeWebhook(event) {
     });
   }
 
+  // ── Oversold offer capacity: refund immediately ─────────────────────
+  // The booking was cancelled inside the transaction; money must go back
+  // to the customer. Best-effort: failures are logged so an operator can
+  // follow up, but they never affect the already-committed booking state.
+  for (const booking of oversoldBookings) {
+    const wasExpedition = booking.source === 'EXPEDITION';
+    createRefund(booking.stripePaymentIntentId)
+      .then((refund) => {
+        console.log(` Refunded oversold booking ${booking.id}: ${refund.id}`);
+        enqueueEmail({
+          type: wasExpedition ? 'expedition-booking-refunded' : 'booking-refunded',
+          bookingId: booking.id,
+        }).catch(() => {});
+      })
+      .catch((err) => {
+        console.error(`[Oversold] Booking ${booking.id} cancelled but refund failed: ${err.message}`);
+        notifyAdmin({
+          type: 'REFUND_NEEDS_ATTENTION',
+          title: 'Oversold Offer Refund Pending',
+          message: `Booking #${booking.bookingNumber} was cancelled (offer capacity exceeded) but the Stripe refund failed: ${err.message}`,
+          data: { bookingId: booking.id, paymentIntentId: booking.stripePaymentIntentId },
+        }).catch(() => {});
+      });
+  }
+
   return { success: true, message: 'Event processed' };
 }
 
@@ -405,6 +434,7 @@ async function processStripeWebhook(event) {
 async function handlePaymentSucceeded(paymentIntent, tx = null) {
   const bookingIds = paymentIntent.metadata.bookingIds?.split(',') || [];
   let bookings;
+  const oversoldBookings = [];
   const payoutMinThreshold = parseFloat(await getConfig('payout.min_threshold', '0'));
 
   const dbWork = async (client) => {
@@ -514,10 +544,46 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
 
       if (booking.appliedOfferId) {
         const travelerCountValue = travelerCount(booking.travelers);
-        await client.specialOffer.update({
+        const offer = await client.specialOffer.findUnique({
           where: { id: booking.appliedOfferId },
-          data: { spotsSold: { increment: travelerCountValue } },
+          select: { capacityType: true, maxSpots: true, spotsSold: true },
         });
+
+        if (offer?.capacityType === 'CAPPED') {
+          // Atomic capacity guard: consume the spots only if they are actually
+          // available. A plain read-then-increment can oversell when two
+          // payments for the same capped offer confirm concurrently.
+          const consumed = await client.$executeRaw`
+            UPDATE "SpecialOffer"
+            SET "spotsSold" = "spotsSold" + ${travelerCountValue}
+            WHERE id = ${booking.appliedOfferId}
+              AND "spotsSold" + ${travelerCountValue} <= "maxSpots"
+          `;
+
+          if (consumed === 0) {
+            // The offer sold out between checkout and payment. Revoke the
+            // booking and refund so the customer never pays for a discount
+            // that no longer exists (refund is issued after commit).
+            await client.booking.update({
+              where: { id: booking.id },
+              data: {
+                status: 'CANCELLED',
+                paymentStatus: 'FAILED',
+                paidAt: null,
+                cancellationReason: 'Offer capacity was exhausted before payment could be confirmed',
+                cancelledAt: new Date(),
+              },
+            });
+            oversoldBookings.push(booking);
+            bookings = bookings.filter((b) => b.id !== booking.id);
+            continue;
+          }
+        } else {
+          await client.specialOffer.update({
+            where: { id: booking.appliedOfferId },
+            data: { spotsSold: { increment: travelerCountValue } },
+          });
+        }
       }
 
       if (parseFloat(booking.supplierPayout) >= payoutMinThreshold) {
@@ -547,7 +613,7 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
     await prisma.$transaction(dbWork);
   }
 
-  return bookings || [];
+  return { bookings: bookings || [], oversold: oversoldBookings };
 }
 
 /**

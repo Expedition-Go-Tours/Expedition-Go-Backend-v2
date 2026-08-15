@@ -463,6 +463,31 @@ function registerWorkers() {
         await purgeArchivedTours();
         break;
       }
+      case 'expire-special-offers': {
+        const prisma = require('./prismaClient');
+        const expired = await prisma.specialOffer.findMany({
+          where: { isActive: true, endDate: { lte: new Date() } },
+          select: { id: true, name: true, supplierId: true, endDate: true },
+        });
+        if (expired.length === 0) break;
+        const result = await prisma.specialOffer.updateMany({
+          where: { id: { in: expired.map((o) => o.id) } },
+          data: { isActive: false },
+        });
+        const event = require('./eventEmitter');
+        for (const offer of expired) {
+          event.emit({
+            name: 'offer.expired',
+            userId: offer.supplierId,
+            resource: 'SpecialOffer',
+            resourceId: offer.id,
+            properties: { offerName: offer.name, endedAt: offer.endDate },
+            source: 'system',
+          });
+        }
+        console.log(`[Queue] Expired ${result.count} special offers`);
+        break;
+      }
       default:
         console.log('[Queue] Unknown cleanup job:', job.name);
     }

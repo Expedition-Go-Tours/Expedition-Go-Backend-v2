@@ -39,7 +39,8 @@ exports.addToCart = catchAsync(async (req, res, next) => {
     tourId,
     selectedDate,
     selectedTime,
-    travelers
+    travelers,
+    promoCode
   } = req.body;
 
   // Validate tour exists and is bookable
@@ -70,7 +71,7 @@ exports.addToCart = catchAsync(async (req, res, next) => {
   }
 
   // Calculate pricing based on tour's pricing model (includes special offers)
-  const pricingCalculation = await calculateTourPrice(tour, travelers, selectedDate, selectedTime || null, null, customerId)
+  const pricingCalculation = await calculateTourPrice(tour, travelers, selectedDate, selectedTime || null, null, customerId, promoCode || null)
     .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
   
   if (!pricingCalculation.success) {
@@ -252,7 +253,8 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     travelers,
     specialRequests,
     paymentMethodId,
-    useCart = false
+    useCart = false,
+    promoCode
   } = req.body;
 
   // Validate traveler contact info
@@ -315,7 +317,8 @@ exports.createBooking = catchAsync(async (req, res, next) => {
         item.selectedDate.toISOString().split('T')[0],
         item.selectedTime || null,
         null,
-        customerId
+        customerId,
+        promoCode || null
       ).catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
 
       if (!pricing.success) {
@@ -359,7 +362,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       return next(new AppError('Tour not found or not available', 404));
     }
 
-    const pricingCalculation = await calculateTourPrice(tour, travelers, selectedDate, selectedTime || null, null, customerId)
+    const pricingCalculation = await calculateTourPrice(tour, travelers, selectedDate, selectedTime || null, null, customerId, promoCode || null)
       .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
     
     if (!pricingCalculation.success) {

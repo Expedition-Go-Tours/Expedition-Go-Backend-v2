@@ -16,7 +16,8 @@ jest.mock('../../utils/stripeHelpers', () => {
       }
       return stripeInstance;
     }),
-    handlePaymentSucceeded: jest.fn(() => Promise.resolve()),
+    handlePaymentSucceeded: jest.fn(() => Promise.resolve({ bookings: [], oversold: [] })),
+    createRefund: jest.fn(() => Promise.resolve({ id: 're_mock' })),
   };
 });
 
