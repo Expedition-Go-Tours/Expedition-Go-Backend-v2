@@ -35,6 +35,10 @@ jest.mock('../../utils/auditLogger', () => ({
   cleanupOldLogs: jest.fn(),
 }));
 
+jest.mock('../../utils/tourPurge', () => ({
+  purgeArchivedTours: jest.fn(() => Promise.resolve({ scanned: 0, purged: 0, skipped: 0, failed: 0 })),
+}));
+
 jest.mock('../../utils/cacheHelper', () => ({
   invalidateKeys: jest.fn(),
   TOUR_POPULAR_KEY: 'tour:popular',
@@ -294,6 +298,16 @@ describe('queue', () => {
 
       expect(prisma.cartItem.deleteMany).toHaveBeenCalled();
       expect(eventEmitter.emit).toHaveBeenCalledWith(expect.objectContaining({ name: 'cart.abandoned' }));
+    });
+
+    it('cleanup worker handles purge-archived-tours', async () => {
+      queue.registerWorkers();
+      const workerCallback = Worker.mock.calls.find(c => c[0] === 'system-cleanup')[1];
+      const { purgeArchivedTours } = require('../../utils/tourPurge');
+
+      await workerCallback({ name: 'purge-archived-tours' });
+
+      expect(purgeArchivedTours).toHaveBeenCalled();
     });
   });
 

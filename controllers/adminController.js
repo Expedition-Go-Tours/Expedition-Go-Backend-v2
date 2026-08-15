@@ -517,7 +517,12 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
   const order = sortOrder === 'asc' ? 'asc' : 'desc';
 
   const filterStatus = status && status !== 'all' ? status.toUpperCase() : undefined;
-  const where = { ...(filterStatus && { status: filterStatus }) };
+  // ARCHIVED is a soft-delete: deleted tours must never appear in the default
+  // view or KPI totals. Admins can still audit them via the explicit
+  // status=ARCHIVED filter, which bypasses this exclusion.
+  const where = filterStatus
+    ? { status: filterStatus }
+    : { status: { not: 'ARCHIVED' } };
   // category filtering via JSON is expensive at scale; accept this for now.
   if (category) {
     where.categorization = { path: ['category'], equals: category };

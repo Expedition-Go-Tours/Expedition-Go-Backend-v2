@@ -458,6 +458,11 @@ function registerWorkers() {
         }
         break;
       }
+      case 'purge-archived-tours': {
+        const { purgeArchivedTours } = require('./tourPurge');
+        await purgeArchivedTours();
+        break;
+      }
       default:
         console.log('[Queue] Unknown cleanup job:', job.name);
     }

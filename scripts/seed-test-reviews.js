@@ -68,6 +68,7 @@ async function main() {
         bookingNumber: finalBN,
         customerId: customer.id,
         tourId: tour.id,
+        isSimulated: true,
         status: 'COMPLETED',
         paymentStatus: 'SUCCEEDED',
         travelers: [{ firstName: customer.name?.split(' ')[0] || 'Guest', lastName: customer.name?.split(' ').slice(1).join(' ') || '' }],

@@ -314,6 +314,7 @@ async function runE2E() {
           bookingNumber: `AVTEST-${ts}-${num}`,
           customerId: customer.id,
           tourId,
+          isSimulated: true,
           travelers,
           selectedDate: new Date(`${opDay}T00:00:00.000Z`),
           selectedTime,

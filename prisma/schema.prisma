@@ -550,6 +550,7 @@ model Booking {
   travelers    Json          // Traveler information
   selectedDate DateTime
   selectedTime String?
+  isSimulated  Boolean       @default(false)
   
   // Pricing
   subtotal     Decimal       @db.Decimal(10,2)

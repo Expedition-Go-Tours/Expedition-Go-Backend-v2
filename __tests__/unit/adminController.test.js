@@ -295,14 +295,38 @@ describe('adminController', () => {
       expect(body.data.pagination.totalPages).toBe(3);
     });
 
-    it('skips status filter when value is "all"', async () => {
+    it('excludes ARCHIVED (soft-deleted) tours when no status filter is given', async () => {
+      req.query = {};
+
+      await controller.getTourPerformance(req, res, next);
+
+      expect(prisma.tour.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: { not: 'ARCHIVED' } }),
+        })
+      );
+    });
+
+    it('excludes ARCHIVED (soft-deleted) tours when status is "all"', async () => {
       req.query.status = 'all';
 
       await controller.getTourPerformance(req, res, next);
 
       expect(prisma.tour.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: {},
+          where: expect.objectContaining({ status: { not: 'ARCHIVED' } }),
+        })
+      );
+    });
+
+    it('includes ARCHIVED tours when status is explicitly requested (audit view)', async () => {
+      req.query.status = 'ARCHIVED';
+
+      await controller.getTourPerformance(req, res, next);
+
+      expect(prisma.tour.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: 'ARCHIVED' }),
         })
       );
     });

@@ -52,6 +52,7 @@ async function main() {
         customerId: reviewer.id,
         tourId: tour.id,
         source: 'TRAVIO',
+        isSimulated: true,
         status,
         paymentStatus: status === 'CONFIRMED' || status === 'COMPLETED' ? 'SUCCEEDED' : 'PENDING',
         travelers: [{ firstName: reviewer.name.split(' ')[0] || 'Guest', lastName: reviewer.name.split(' ').slice(1).join(' ') || '' }],
