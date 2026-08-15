@@ -61,6 +61,79 @@ function clampPrice(value) {
 }
 
 /**
+ * Cheapest retail price a discount preview can quote against — the "from $X"
+ * price. Tiers live on the adult category, so when an adult category exists
+ * only its base/tier prices are considered (child/infant rates would make the
+ * quoted discount math diverge from a real adult booking); otherwise the
+ * cheapest price across all categories wins. Mirrors the pricing-model
+ * resolution used by calculateTourPrice. Returns null when nothing is
+ * priceable.
+ */
+function cheapestRetailPrice(blob) {
+  const parsed = typeof blob === 'string'
+    ? (() => { try { return JSON.parse(blob); } catch { return null; } })()
+    : blob;
+  if (!parsed || typeof parsed !== 'object') return null;
+
+  const td = parsed.travelerDetails || {};
+  const pricingModel = td.pricingModel || 'perPerson';
+  const pricingApproach = td.pricingApproach || 'dependsOnAge';
+
+  if (pricingModel === 'perGroup') {
+    const groupPrices = (Array.isArray(td.groupSizes) ? td.groupSizes : [])
+      .map((gs) => toFinitePrice(gs && gs.price))
+      .filter((p) => p != null);
+    if (groupPrices.length > 0) return Math.min(...groupPrices);
+    return null;
+  }
+
+  if (pricingApproach === 'sameForEveryone') {
+    return toFinitePrice(td.uniformPrice);
+  }
+
+  const cats = (Array.isArray(td.pricingCategories) && td.pricingCategories.length > 0)
+    ? td.pricingCategories
+    : (Array.isArray(td.ageGroups) ? td.ageGroups : []);
+
+  const adultish = cats.filter((cat) => {
+    const label = String((cat && (cat.name ?? cat.label)) ?? '').toLowerCase();
+    return label === 'adult' || label === 'adults';
+  });
+  const base = adultish.length > 0 ? adultish : cats;
+
+  const candidates = [];
+  for (const cat of base) {
+    if (!cat) continue;
+    if (cat.price != null) candidates.push(toFinitePrice(cat.price));
+    if (Array.isArray(cat.tiers)) {
+      for (const tier of cat.tiers) {
+        if (tier && tier.pricePerPerson != null) candidates.push(toFinitePrice(tier.pricePerPerson));
+      }
+    }
+  }
+  const finite = candidates.filter((p) => p != null);
+  if (finite.length > 0) return Math.min(...finite);
+
+  // Last resort: derived schedule prices on legacy blobs that predate
+  // travelerDetails.
+  const schedules = parsed.pricingSchedules?.schedules;
+  if (Array.isArray(schedules)) {
+    const legacy = [];
+    for (const s of schedules) {
+      if (Array.isArray(s && s.prices)) {
+        for (const p of s.prices) {
+          const n = toFinitePrice(p && p.retailPrice);
+          if (n != null) legacy.push(n);
+        }
+      }
+    }
+    if (legacy.length > 0) return Math.min(...legacy);
+  }
+
+  return null;
+}
+
+/**
  * Classify a stored price value into a validation issue (or null when valid).
  * Used by validateStoredPricing at publish time. Policy: tours must charge a
  * positive, finite, in-range amount; free categories are expressed via
@@ -966,5 +1039,6 @@ module.exports = {
   reconcileAvailability,
   durationToMinutes,
   checkTourAvailability,
+  cheapestRetailPrice,
   calculateTourPrice,
 };

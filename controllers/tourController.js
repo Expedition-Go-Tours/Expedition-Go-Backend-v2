@@ -16,7 +16,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
-const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices, reconcileAvailability, durationToMinutes } = require('../utils/tourHelpers');
+const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices, reconcileAvailability, durationToMinutes, cheapestRetailPrice } = require('../utils/tourHelpers');
 const { cancelPaymentIntent } = require('../utils/stripeHelpers');
 const { productToTour } = require('../utils/productToTour');
 const { tourContentSnapshot, mergeDraftContent, buildTourDiff, computeChangesSummary, buildLiveUpdateData, applyFlatToBlobMapping } = require('../utils/tourDraft');
@@ -2284,11 +2284,11 @@ exports.validatePromoCode = catchAsync(async (req, res, next) => {
       const parsed = typeof tour.schedulesAndPricing === 'string'
         ? (() => { try { return JSON.parse(tour.schedulesAndPricing); } catch { return null; } })()
         : tour.schedulesAndPricing;
-      const adultPrice = parsed?.pricingSchedules?.schedules
-        ?.flatMap((s) => s.prices || [])
-        .find((p) => String(p.ageGroup).toLowerCase() === 'adult')?.retailPrice;
-      const numeric = adultPrice != null ? parseFloat(adultPrice) : NaN;
-      if (Number.isFinite(numeric)) effectiveBasePrice = numeric;
+      // Tier-aware: the cheapest retail price (lowest tier pricePerPerson, or
+      // the base/adult price when the tour has no tiers) so quoted discounts
+      // match what a real checkout computes via calculateTourPrice.
+      const numeric = cheapestRetailPrice(parsed);
+      if (numeric != null) effectiveBasePrice = numeric;
     }
   }
   if (effectiveBasePrice == null) {

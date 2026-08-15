@@ -30,6 +30,7 @@ const {
   rebuildSchedulePrices,
   reconcileAvailability,
   durationToMinutes,
+  cheapestRetailPrice,
   calculateTourPrice,
 } = require('../../utils/tourHelpers');
 
@@ -1061,5 +1062,155 @@ describe('calculateTourPrice', () => {
     // silently discount the customer to full price.
     expect(result.success).toBe(false);
     expect(result.error).toBe('engine down');
+  });
+
+  it('discounts the tier-adjusted subtotal, not the base category price', async () => {
+    const { findBestDiscount } = require('../../utils/specialOfferEngine');
+    // The previous test leaves a mockRejectedValue behind and clearAllMocks
+    // only clears usage data — restore the zero-discount default explicitly.
+    findBestDiscount.mockClear();
+    findBestDiscount.mockImplementation(async ({ basePrice }) => ({
+      discountAmount: 0,
+      finalPrice: basePrice,
+      appliedOffer: null,
+      discountType: null,
+    }));
+
+    const tieredTour = {
+      id: 'tiered-1',
+      schedulesAndPricing: {
+        travelerDetails: {
+          pricingModel: 'perPerson',
+          pricingApproach: 'dependsOnAge',
+          pricingCategories: [{
+            name: 'Adult',
+            price: 100,
+            tiers: [
+              { from: 1, to: 4, pricePerPerson: 100 },
+              { from: 5, to: 99, pricePerPerson: 80 },
+            ],
+          }],
+        },
+        pricingSchedules: {
+          currency: 'USD',
+          schedules: [{
+            startDate: '2026-01-01',
+            endDate: '2026-12-31',
+            prices: [],
+          }],
+        },
+      },
+    };
+
+    const result = await calculateTourPrice(tieredTour, { adult: 6 }, '2026-06-15');
+
+    expect(result.success).toBe(true);
+    // 6 travelers match the 5+ tier at $80 → the offer engine must receive
+    // the tiered subtotal so a % discount quotes against the real price.
+    expect(result.subtotal).toBe(480);
+    expect(findBestDiscount).toHaveBeenCalledWith(expect.objectContaining({ basePrice: 480, quantity: 6 }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cheapestRetailPrice
+// ---------------------------------------------------------------------------
+describe('cheapestRetailPrice', () => {
+  it('returns the lowest adult tier, ignoring cheaper child/infant rates', () => {
+    const blob = {
+      travelerDetails: {
+        pricingModel: 'perPerson',
+        pricingApproach: 'dependsOnAge',
+        pricingCategories: [
+          { name: 'Adult', price: 150, tiers: [
+            { from: 1, to: 4, pricePerPerson: 150 },
+            { from: 5, to: 9, pricePerPerson: 130 },
+            { from: 10, to: 99, pricePerPerson: 110 },
+          ] },
+          { name: 'Child', price: 75 },
+        ],
+      },
+      pricingSchedules: { schedules: [] },
+    };
+    expect(cheapestRetailPrice(blob)).toBe(110);
+  });
+
+  it('falls back to the cheapest category when no adult category exists', () => {
+    const blob = {
+      travelerDetails: {
+        pricingModel: 'perPerson',
+        pricingApproach: 'dependsOnAge',
+        pricingCategories: [{ name: 'Child', price: 75 }],
+      },
+      pricingSchedules: { schedules: [] },
+    };
+    expect(cheapestRetailPrice(blob)).toBe(75);
+  });
+
+  it('falls back to the base category price when no tiers exist', () => {
+    const blob = {
+      travelerDetails: {
+        pricingModel: 'perPerson',
+        pricingApproach: 'dependsOnAge',
+        pricingCategories: [{ name: 'Adult', price: 100 }],
+      },
+      pricingSchedules: { schedules: [] },
+    };
+    expect(cheapestRetailPrice(blob)).toBe(100);
+  });
+
+  it('uses uniformPrice for sameForEveryone tours', () => {
+    const blob = {
+      travelerDetails: {
+        pricingModel: 'perPerson',
+        pricingApproach: 'sameForEveryone',
+        uniformPrice: 75,
+      },
+      pricingSchedules: { schedules: [] },
+    };
+    expect(cheapestRetailPrice(blob)).toBe(75);
+  });
+
+  it('uses the cheapest group size for perGroup tours', () => {
+    const blob = {
+      travelerDetails: {
+        pricingModel: 'perGroup',
+        groupSizes: [
+          { from: 1, to: 4, price: 300 },
+          { from: 5, to: 10, price: 500 },
+        ],
+      },
+      pricingSchedules: { schedules: [] },
+    };
+    expect(cheapestRetailPrice(blob)).toBe(300);
+  });
+
+  it('falls back to derived schedule prices on legacy blobs', () => {
+    const blob = {
+      pricingSchedules: {
+        schedules: [{
+          prices: [
+            { ageGroup: 'Adult', retailPrice: 120 },
+            { ageGroup: 'Child', retailPrice: 60 },
+          ],
+        }],
+      },
+    };
+    expect(cheapestRetailPrice(blob)).toBe(60);
+  });
+
+  it('parses JSON-string blobs', () => {
+    const blob = JSON.stringify({
+      travelerDetails: { pricingModel: 'perPerson', pricingApproach: 'sameForEveryone', uniformPrice: 90 },
+      pricingSchedules: { schedules: [] },
+    });
+    expect(cheapestRetailPrice(blob)).toBe(90);
+  });
+
+  it('returns null for unpriceable data', () => {
+    expect(cheapestRetailPrice(null)).toBeNull();
+    expect(cheapestRetailPrice('not json')).toBeNull();
+    expect(cheapestRetailPrice({ travelerDetails: { pricingModel: 'perPerson' }, pricingSchedules: { schedules: [] } })).toBeNull();
+    expect(cheapestRetailPrice({ travelerDetails: { pricingModel: 'perGroup', groupSizes: [] }, pricingSchedules: { schedules: [] } })).toBeNull();
   });
 });
