@@ -206,7 +206,7 @@ describe('E2E: Expedition Checkout Flow', () => {
   it('Step 1: calculates checkout pricing for valid tour', async () => {
     const res = await request(app)
       .post('/api/expedition/checkout/calculate')
-      .send({ tourId: 'tour-exp-e2e', selectedDate: '2026-08-15', travelers: { adults: 2, children: 1 } });
+      .send({ tourId: 'tour-exp-e2e', selectedDate: '2027-06-15', travelers: { adults: 2, children: 1 } });
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('success');
@@ -222,7 +222,7 @@ describe('E2E: Expedition Checkout Flow', () => {
       .set('Authorization', 'Bearer valid-exp-token')
       .send({
         tourId: 'tour-exp-e2e',
-        selectedDate: '2026-08-15',
+        selectedDate: '2027-06-15',
         travelers: { adults: 2, children: 1, infants: 0, phoneNumber: '+254700123456', location: 'Nairobi, Kenya' },
         paymentMethodId: 'pm_exp_e2e',
       });
@@ -299,7 +299,7 @@ describe('E2E: Expedition Checkout Flow', () => {
 
     const calcRes = await request(app)
       .post('/api/expedition/checkout/calculate')
-      .send({ tourId: 'tour-exp-e2e', selectedDate: '2026-08-15', travelers: { adults: 2 } });
+      .send({ tourId: 'tour-exp-e2e', selectedDate: '2027-06-15', travelers: { adults: 2 } });
     expect(calcRes.status).toBe(200);
     expect(calcRes.body.data.pricing.subtotal).toBe(500);
 
@@ -312,7 +312,7 @@ describe('E2E: Expedition Checkout Flow', () => {
       .set('Authorization', 'Bearer full-exp-token')
       .send({
         tourId: 'tour-exp-e2e',
-        selectedDate: '2026-08-15',
+        selectedDate: '2027-06-15',
         travelers: { adults: 2, phoneNumber: '+254700123456', location: 'Nairobi, Kenya' },
         paymentMethodId: 'pm_full',
       });

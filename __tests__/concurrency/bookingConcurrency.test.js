@@ -34,6 +34,7 @@ jest.mock('../../utils/stripeHelpers', () => {
   return {
     createPaymentIntent: jest.fn(),
     calculateCommission: jest.fn(),
+    ensureStripeCustomer: jest.fn(async (user) => user?.stripeCustomerId || null),
     processStripeWebhook: actual.processStripeWebhook,
     verifyWebhookSignature: actual.verifyWebhookSignature,
   };
