@@ -980,6 +980,12 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
             title: true,
             photos: true
           }
+        },
+        appliedOffer: {
+          select: {
+            id: true,
+            name: true
+          }
         }
       },
       orderBy: { createdAt: 'desc' },
