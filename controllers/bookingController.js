@@ -19,8 +19,10 @@ const AppError = require('../utils/appError');
 const { createPaymentIntent, createRefund, calculateCommission, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
 const { generateBookingNumber, validateTravelerInfo, evaluateCancellationPolicy } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
-const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount } = require('../utils/availabilityCore');
+const { Prisma } = require('@prisma/client');
+const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../utils/availabilityCore');
 const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../utils/queue');
+const { resolvePickupSelection } = require('../utils/geoUtils');
 const getConfig = require('../utils/getConfig');
 const { generatePrintableTicketHtml } = require('../utils/emailService');
 const { logActivity } = require('../utils/auditLogger');
@@ -254,7 +256,8 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     specialRequests,
     paymentMethodId,
     useCart = false,
-    promoCode
+    promoCode,
+    pickup,
   } = req.body;
 
   // Validate traveler contact info
@@ -390,6 +393,23 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       discounts: discount,
       appliedOfferId: appliedOffer?.id || null
     }];
+  }
+
+  // Validate pickup selection (direct bookings only — cart items cannot carry
+  // a per-item pickup selection). The snapshot is re-validated against the
+  // tour's current pickup config so a stale/garbage payload can never be
+  // charged.
+  let pickupSnapshot = null;
+  if (pickup) {
+    if (useCart) {
+      return next(new AppError('Pickup selection is only supported for direct bookings', 400));
+    }
+    const pickupConfig = parseBlob(bookingItems[0]?.tour?.bookingAndTickets) || {};
+    const pickupResult = resolvePickupSelection(pickup, pickupConfig);
+    if (!pickupResult.ok) {
+      return next(new AppError(pickupResult.error, 400));
+    }
+    pickupSnapshot = pickupResult.pickup;
   }
 
   // Validate all suppliers are active
@@ -539,6 +559,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
           commissionAmount: commission.amount,
           supplierPayout: commission.supplierPayout,
           specialRequests,
+          ...(pickupSnapshot && { pickup: pickupSnapshot }),
           stripePaymentIntentId: paymentIntent.id,
           paymentStatus: 'PROCESSING',
           ...(item.appliedOfferId && { appliedOfferId: item.appliedOfferId }),
@@ -796,6 +817,7 @@ exports.getBookingTicket = catchAsync(async (req, res, next) => {
     subtotal: booking.subtotal,
     taxes: booking.taxes,
     meetingPoint: ticketData.meetingPoint || null,
+    pickup: booking.pickup || null,
     checkInProcess: ticketData.checkInProcess || null,
     cancellationPolicy: ticketData.cancellationPolicy || null,
     included: product.included || [],
@@ -1008,6 +1030,146 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
         limit: parseInt(limit)
       }
     }
+  });
+});
+
+/**
+ * Get supplier's upcoming bookings that carry a pickup selection
+ * (GetYourGuide-style pickup planner).
+ */
+exports.getPickupPlanner = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  const { from, to, status, page = 1, limit = 50, tourId } = req.query;
+
+  // Verify supplier status
+  const supplierProfile = await prisma.supplierProfile.findUnique({
+    where: { userId: supplierId }
+  });
+  if (!supplierProfile || supplierProfile.status !== 'ACTIVE') {
+    return next(new AppError('Access denied', 403));
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const fromDate = from ? new Date(from) : today;
+  const toDate = to
+    ? new Date(to)
+    : new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+  if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime()) || fromDate > toDate) {
+    return next(new AppError('Invalid date range', 400));
+  }
+
+  const where = {
+    tour: { supplierId },
+    // Only bookings with a stored pickup snapshot (JSON column is DB NULL otherwise).
+    pickup: { not: Prisma.DbNull },
+    selectedDate: { gte: fromDate, lte: toDate },
+    ...(status ? { status } : {}),
+    ...(tourId ? { tourId } : {}),
+  };
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+
+  const [bookings, totalCount] = await Promise.all([
+    prisma.booking.findMany({
+      where,
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            photoURL: true
+          }
+        },
+        tour: {
+          select: {
+            id: true,
+            title: true,
+            photos: true
+          }
+        }
+      },
+      orderBy: [{ selectedDate: 'asc' }, { selectedTime: 'asc' }],
+      skip,
+      take: parseInt(limit)
+    }),
+    prisma.booking.count({ where })
+  ]);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      bookings,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(totalCount / parseInt(limit)),
+        totalCount,
+        limit: parseInt(limit)
+      }
+    }
+  });
+});
+
+/**
+ * Update a booking's pickup details (suppliers only) and notify the customer.
+ */
+exports.updateBookingPickup = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  const { id } = req.params;
+  const { pickupTime, pickupPlace, instructions, locationName, areaName } = req.body;
+
+  const booking = await prisma.booking.findFirst({
+    where: { id, tour: { supplierId } },
+    include: { customer: { select: { id: true, name: true, email: true } } }
+  });
+
+  if (!booking) {
+    return next(new AppError('Booking not found or access denied', 404));
+  }
+
+  const current = typeof booking.pickup === 'string'
+    ? (() => { try { return JSON.parse(booking.pickup); } catch { return null; } })()
+    : booking.pickup || {};
+
+  const updatedPickup = {
+    ...current,
+    ...(pickupTime !== undefined ? { time: String(pickupTime) } : {}),
+    ...(pickupPlace !== undefined ? { place: String(pickupPlace) } : {}),
+    ...(instructions !== undefined ? { instructions: String(instructions) } : {}),
+    ...(locationName !== undefined ? { locationName: String(locationName) } : {}),
+    ...(areaName !== undefined ? { areaName: String(areaName) } : {}),
+    updatedBy: req.user.id,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const updatedBooking = await prisma.booking.update({
+    where: { id },
+    data: { pickup: updatedPickup }
+  });
+
+  // Notify the customer (in-app + WS; email is a known infra gap).
+  enqueueNotification({
+    userId: booking.customerId,
+    type: 'BOOKING_STATUS_UPDATED',
+    title: 'Pickup details updated',
+    message: 'Your pickup details have been updated by the supplier. Please check your booking.',
+    data: { bookingId: booking.id, pickup: true }
+  }).catch((err) => console.error('[Notification] enqueueNotification (pickup update) failed:', err.message));
+
+  logActivity({
+    userId: supplierId,
+    action: 'booking.pickup_updated',
+    resource: 'Booking',
+    resourceId: id,
+    metadata: { hadPickup: !!booking.pickup }
+  }).catch((err) => logger.warn('[booking] logActivity failed:', err?.message));
+
+  res.status(200).json({
+    status: 'success',
+    data: { booking: updatedBooking }
   });
 });
 

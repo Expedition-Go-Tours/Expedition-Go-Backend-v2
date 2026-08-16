@@ -493,6 +493,90 @@ router.get('/supplier/bookings', resolveSupplier, requireTeamPermission('booking
 
 /**
  * @swagger
+ * /bookings/supplier/pickup-planner:
+ *   get:
+ *     summary: Get supplier's bookings that have pickup selections (pickup planner)
+ *     tags: [Bookings, Supplier]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: from
+ *         in: query
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - name: to
+ *         in: query
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - name: status
+ *         in: query
+ *         schema:
+ *           type: string
+ *       - name: page
+ *         in: query
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - name: limit
+ *         in: query
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *     responses:
+ *       200:
+ *         description: Pickup bookings retrieved successfully
+ *       403:
+ *         description: Access denied
+ */
+router.get('/supplier/pickup-planner', resolveSupplier, requireTeamPermission('bookings.view'), bookingController.getPickupPlanner);
+
+/**
+ * @swagger
+ * /bookings/supplier/pickup-planner/{id}:
+ *   patch:
+ *     summary: Update a booking's pickup details (suppliers only)
+ *     tags: [Bookings, Supplier]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         description: Booking ID
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               pickupTime:
+ *                 type: string
+ *                 example: "08:15"
+ *               pickupPlace:
+ *                 type: string
+ *                 example: "Main entrance, Marriott Hotel"
+ *               instructions:
+ *                 type: string
+ *                 example: "Look for the blue van with our logo"
+ *               areaName:
+ *                 type: string
+ *               locationName:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Booking pickup updated successfully
+ *       403:
+ *         description: Access denied
+ */
+router.patch('/supplier/pickup-planner/:id', resolveSupplier, requireTeamPermission('bookings.manage'), bookingController.updateBookingPickup);
+
+/**
+ * @swagger
  * /bookings/{id}/status:
  *   patch:
  *     summary: Update booking status (suppliers only)

@@ -8,6 +8,7 @@ const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/qu
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../utils/availabilityCore');
+const { resolvePickupSelection } = require('../utils/geoUtils');
 const { validatePassengerMix } = require('../utils/passengerMix');
 const { createPaymentIntent, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
 const { notifyAdmin } = require('../utils/adminNotificationService');
@@ -438,6 +439,20 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
       included: productContent.included || [],
       whatToBring: productContent.whatToBring || [],
       meetingPoint: bookingAndTickets.meetingPoint || null,
+      pickup: {
+        pickupType: bookingAndTickets.pickupType || null,
+        pickupAreas: Array.isArray(bookingAndTickets.pickupAreas) ? bookingAndTickets.pickupAreas : [],
+        pickupLocations: Array.isArray(bookingAndTickets.pickupLocations) ? bookingAndTickets.pickupLocations : [],
+        pickupDescription: bookingAndTickets.pickupDescription || '',
+        pickupTiming: bookingAndTickets.pickupTiming || null,
+        pickupAtSpecificTime: !!bookingAndTickets.pickupAtSpecificTime,
+        pickupFinalLocationTiming: bookingAndTickets.pickupFinalLocationTiming || null,
+        referenceStartTime: bookingAndTickets.referenceStartTime || '',
+        planPickupTimes: !!bookingAndTickets.planPickupTimes,
+        pickupStartTime: bookingAndTickets.pickupStartTime || null,
+        dropoffProvided: !!bookingAndTickets.dropoffProvided,
+        dropoffLocation: bookingAndTickets.dropoffLocation || null,
+      },
       cancellationPolicy: bookingAndTickets.cancellationPolicy || null,
       confirmationType: bookingAndTickets.confirmationType || null,
       supplierName: t.supplier?.name || null,
@@ -1022,7 +1037,7 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
 
 exports.confirmBooking = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
-  const { tourId, selectedDate, selectedTime, travelers, specialRequests } = req.body;
+  const { tourId, selectedDate, selectedTime, travelers, specialRequests, pickup } = req.body;
 
   if (!tourId || !selectedDate || !travelers) {
     return next(new AppError('tourId, selectedDate, and travelers are required', 400));
@@ -1052,6 +1067,17 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
 
   if (tour.supplier.supplierProfile.status !== 'ACTIVE') {
     return next(new AppError('Supplier is not active', 400));
+  }
+
+  // Validate pickup selection against the tour's current pickup config.
+  let pickupSnapshot = null;
+  if (pickup) {
+    const pickupConfig = parseBlob(tour.bookingAndTickets) || {};
+    const pickupResult = resolvePickupSelection(pickup, pickupConfig);
+    if (!pickupResult.ok) {
+      return next(new AppError(pickupResult.error, 400));
+    }
+    pickupSnapshot = pickupResult.pickup;
   }
 
   // Enforce supplier passenger-mix rules (min/max, disallowed categories,
@@ -1204,6 +1230,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         commissionAmount: commission.amount,
         supplierPayout: commission.supplierPayout,
         specialRequests,
+        ...(pickupSnapshot && { pickup: pickupSnapshot }),
         stripePaymentIntentId: paymentIntent.id,
         appliedOfferId: appliedOffer?.id || null,
         paymentStatus: 'PENDING',

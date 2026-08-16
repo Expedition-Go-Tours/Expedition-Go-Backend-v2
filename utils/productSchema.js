@@ -63,9 +63,19 @@ const productOptionSchema = z.object({
   validityEndDate: z.string().optional(),
 });
 
+// A polygon is an ordered list of [lat, lng] vertices (minimum 3 to close a shape).
+const polygonSchema = z.array(z.tuple([z.number(), z.number()])).min(3, 'Pickup area polygon requires at least 3 points');
+
 const pickupAreaSchema = z.object({
   name: z.string().min(1, 'Pickup area name is required'),
   time: z.string(),
+  // Point anchor (kept for legacy/fallback display) plus the drawn geoshape.
+  address: z.string().optional(),
+  lat: z.number().optional(),
+  lng: z.number().optional(),
+  // Geoshape: the drawn service zone + optional exclusion zones inside it.
+  polygon: polygonSchema.optional(),
+  exclusions: z.array(polygonSchema).optional(),
 });
 
 const timeSlotSchema = z.object({

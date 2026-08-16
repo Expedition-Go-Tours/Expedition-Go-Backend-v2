@@ -145,6 +145,7 @@ async function sendBookingConfirmationEmail(booking) {
         totalAmount: booking.total,
         currency: booking.currency,
         meetingPoint: ticket.meetingPoint || null,
+        pickup: booking.pickup || null,
         checkInProcess: ticket.checkInProcess || null,
         cancellationPolicy: ticket.cancellationPolicy || null,
         included: product.included || [],
@@ -482,6 +483,16 @@ function generatePrintableTicketHtml(data) {
 
   const includedHtml = (data.included || []).map(i => `<li>${i}</li>`).join('');
 
+  // Prefer the customer-selected pickup snapshot; fall back to the tour's
+  // static meeting point so legacy bookings keep rendering.
+  const pickupLabel = data.pickup
+    ? (data.pickup.place || data.pickup.areaName || data.pickup.locationName || (data.pickup.address && (data.pickup.address.name || data.pickup.address.address)) || '')
+    : (data.meetingPoint && (data.meetingPoint.address || data.meetingPoint.name)) || '';
+  const pickupInstructions = data.pickup
+    ? (data.pickup.instructions || '')
+    : (data.meetingPoint && data.meetingPoint.instructions) || '';
+  const pickupTime = (data.pickup && data.pickup.time) ? data.pickup.time : '';
+
   const formattedDate = new Date(data.selectedDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
   return `<!DOCTYPE html>
@@ -531,7 +542,7 @@ function generatePrintableTicketHtml(data) {
     <tr><td><div class="stitle">Traveler</div><div class="svalue">${data.customerName}</div></td>
         <td><div class="stitle">Participants</div><div class="svalue">${travelers.join(', ') || '1 Adult'}</div></td></tr>
   </table>
-  ${data.meetingPoint ? `<div class="section"><div class="stitle">Pickup Point</div><div class="svalue">${data.meetingPoint.address}</div>${data.meetingPoint.instructions ? `<div style="color:#666;font-size:13px;">${data.meetingPoint.instructions}</div>` : ''}</div>` : ''}
+  ${data.pickup || data.meetingPoint ? `<div class="section"><div class="stitle">Pickup Point</div><div class="svalue">${pickupLabel}${pickupTime ? ` &mdash; ${pickupTime}` : ''}</div>${pickupInstructions ? `<div style="color:#666;font-size:13px;">${pickupInstructions}</div>` : ''}</div>` : ''}
   ${includedHtml ? `<div class="section"><div class="stitle">Includes</div><ul>${includedHtml}</ul></div>` : ''}
   ${data.restrictions ? `<div class="section"><div class="stitle">Important</div><div style="font-size:14px;">${data.restrictions}</div></div>` : ''}
   <div class="section"><div class="stitle">Cancellation Policy</div><div style="font-size:14px;">${data.cancellationPolicy || 'Free cancellation up to 24 hours before'}</div></div>

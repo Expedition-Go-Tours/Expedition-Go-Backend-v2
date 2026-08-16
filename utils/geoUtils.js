@@ -1,0 +1,210 @@
+/**
+ * Geographic helpers for pickup geoshapes (GetYourGuide-style service zones).
+ *
+ * A pickup geoshape is a closed polygon (ordered [lat, lng] vertices) that
+ * defines where a supplier offers area-based pickup. Customers pick an
+ * address at checkout; the address is valid only if it falls inside one of
+ * the supplier's polygons and outside every exclusion zone.
+ */
+
+/**
+ * Ray-casting point-in-polygon test.
+ * @param {number} lat
+ * @param {number} lng
+ * @param {Array<Array<number>>} polygon - ordered [lat, lng] vertices
+ * @returns {boolean}
+ */
+function pointInPolygon(lat, lng, polygon) {
+  if (!Array.isArray(polygon) || polygon.length < 3) return false;
+
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [, lngI] = polygon[i];
+    const [latI] = polygon[i];
+    const [, lngJ] = polygon[j];
+    const [latJ] = polygon[j];
+    const intersect =
+      latI > lat !== latJ > lat &&
+      lng < ((lngJ - lngI) * (lat - latI)) / (latJ - latI) + lngI;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * Haversine distance in meters between two points.
+ * @param {number} lat1
+ * @param {number} lng1
+ * @param {number} lat2
+ * @param {number} lng2
+ * @returns {number}
+ */
+function distanceMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+const NORMALIZE_NAME = (v) => String(v || '').trim().toLowerCase();
+
+/**
+ * Resolve whether an address falls inside any area of a geoshape and outside
+ * all of its exclusion zones.
+ * @param {{ lat: number, lng: number }} address
+ * @param {Array<{ name: string, polygon?: Array, exclusions?: Array }>} pickupAreas
+ * @returns {object|null} matching area, or null when no area matches
+ */
+function findPickupAreaForAddress(address, pickupAreas) {
+  if (!Array.isArray(pickupAreas) || !address || !Number.isFinite(address.lat) || !Number.isFinite(address.lng)) {
+    return null;
+  }
+
+  for (const area of pickupAreas) {
+    const polygon = Array.isArray(area.polygon) ? area.polygon : null;
+    const hasShape = !!polygon && polygon.length >= 3;
+
+    if (!hasShape) {
+      // Legacy area without a drawn geoshape: match by name only (old
+      // dropdown behaviour) so pre-geoshape products keep working.
+      if (NORMALIZE_NAME(address.name) === NORMALIZE_NAME(area.name)) return area;
+      continue;
+    }
+
+    if (!pointInPolygon(address.lat, address.lng, polygon)) continue;
+
+    // Inside the service zone — reject addresses inside any exclusion zone.
+    const excludedBy = (area.exclusions || []).find(
+      (exclusion) => Array.isArray(exclusion) && pointInPolygon(address.lat, address.lng, exclusion)
+    );
+    if (excludedBy) return { ...area, _excluded: true };
+
+    return area;
+  }
+
+  return null;
+}
+
+/**
+ * Validate + normalize a customer pickup selection against the tour's pickup
+ * configuration (the `bookingAndTickets` JSON blob).
+ *
+ * @param {object} selection - from checkout body: `{ mode, areaName, locationName, address, time, instructions }`
+ * @param {object} pickupConfig - `{ pickupType, pickupAreas, pickupLocations }`
+ * @returns {{ ok: true, pickup: object } | { ok: false, error: string }}
+ */
+function resolvePickupSelection(selection, pickupConfig = {}) {
+  if (!selection || typeof selection !== 'object') {
+    return { ok: true, pickup: null };
+  }
+
+  const config = pickupConfig && typeof pickupConfig === 'object' ? pickupConfig : {};
+  const pickupType = config.pickupType || 'area';
+  const skipValidation = !!selection.skipValidation;
+  const mode = selection.mode || pickupType;
+  const requestedArea = NORMALIZE_NAME(selection.areaName);
+  const requestedLocation = NORMALIZE_NAME(selection.locationName);
+  const address = selection.address && typeof selection.address === 'object' ? selection.address : null;
+
+  // ---- Area-based pickup -------------------------------------------------
+  if (mode === 'area') {
+    const areas = Array.isArray(config.pickupAreas) ? config.pickupAreas : [];
+    if (areas.length === 0) {
+      return { ok: false, error: 'This tour does not offer pickup' };
+    }
+
+    let area = null;
+    if (address) {
+      const found = findPickupAreaForAddress(address, areas);
+      if (found && found._excluded) {
+        return { ok: false, error: 'Pickup is not available at the provided address (outside the pickup zone)' };
+      }
+      if (found) {
+        area = found;
+      } else if (!skipValidation && requestedArea) {
+        area = areas.find((a) => NORMALIZE_NAME(a.name) === requestedArea) || null;
+      }
+    } else if (requestedArea) {
+      area = areas.find((a) => NORMALIZE_NAME(a.name) === requestedArea) || null;
+    }
+
+    if (!area && !skipValidation) {
+      return { ok: false, error: 'Pickup is not available at the provided address' };
+    }
+
+    const time = (selection.time && String(selection.time)) || area?.time || '';
+    return {
+      ok: true,
+      pickup: {
+        mode: 'area',
+        areaName: area ? area.name : (selection.areaName || ''),
+        address: address || null,
+        time,
+        instructions: selection.instructions || '',
+      },
+    };
+  }
+
+  // ---- Pickup location list ----------------------------------------------
+  const locations = Array.isArray(config.pickupLocations) ? config.pickupLocations : [];
+  if (locations.length === 0) {
+    return { ok: false, error: 'This tour does not offer pickup' };
+  }
+
+  let location = null;
+  if (requestedLocation) {
+    location = locations.find((l) => NORMALIZE_NAME(l.name) === requestedLocation) || null;
+  }
+  if (!location && address && Number.isFinite(address.lat) && Number.isFinite(address.lng)) {
+    // Allow a nearby match (~200 m) for autocomplete-sourced addresses.
+    const match = locations.find(
+      (l) => Number.isFinite(l.lat) && Number.isFinite(l.lng) &&
+        distanceMeters(address.lat, address.lng, l.lat, l.lng) <= 200
+    );
+    if (match) location = match;
+  }
+  if (!location && !skipValidation) {
+    return { ok: false, error: 'Pickup location is not available for this tour' };
+  }
+
+  const time = (selection.time && String(selection.time)) || location?.pickupTime || '';
+  return {
+    ok: true,
+    pickup: {
+      mode: 'address',
+      locationName: location ? location.name : (selection.locationName || ''),
+      address: address || null,
+      time,
+      instructions: selection.instructions || '',
+    },
+  };
+}
+
+/**
+ * True when a booking's stored pickup still matches the tour's current
+ * pickup configuration (used when supplier edits a booking's pickup).
+ */
+function isPickupBookable(pickup, pickupConfig = {}) {
+  if (!pickup || typeof pickup !== 'object') return false;
+  return resolvePickupSelection(
+    {
+      mode: pickup.mode,
+      areaName: pickup.areaName,
+      locationName: pickup.locationName,
+      address: pickup.address,
+    },
+    pickupConfig
+  ).ok;
+}
+
+module.exports = {
+  pointInPolygon,
+  distanceMeters,
+  findPickupAreaForAddress,
+  resolvePickupSelection,
+  isPickupBookable,
+};
