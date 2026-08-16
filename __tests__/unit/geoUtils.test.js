@@ -100,6 +100,29 @@ describe('findPickupAreaForAddress', () => {
     expect(findPickupAreaForAddress(null, AREAS)).toBeNull();
     expect(findPickupAreaForAddress({ lat: 'x', lng: null }, AREAS)).toBeNull();
   });
+
+  test('matches a location-only area by proximity to its saved point', () => {
+    const pointAreas = [{ name: 'Kumasi', lat: 6.6871, lng: -1.6219, exclusions: [] }];
+    const near = findPickupAreaForAddress({ name: 'Some Rd', lat: 6.6971, lng: -1.6219 }, pointAreas);
+    expect(near && near.name).toBe('Kumasi');
+  });
+
+  test('rejects an address beyond the radius of a location-only area', () => {
+    const pointAreas = [{ name: 'Kumasi', lat: 6.6871, lng: -1.6219 }];
+    expect(findPickupAreaForAddress({ name: 'Some Rd', lat: 6.0, lng: -1.6219 }, pointAreas)).toBeNull();
+  });
+
+  test('exact name still matches a location-only area beyond the radius', () => {
+    const pointAreas = [{ name: 'Kumasi', lat: 6.6871, lng: -1.6219 }];
+    const match = findPickupAreaForAddress({ name: 'Kumasi', lat: 6.0, lng: -1.6219 }, pointAreas);
+    expect(match && match.name).toBe('Kumasi');
+  });
+
+  test('location-only areas without coordinates keep the legacy name match', () => {
+    const noCoords = [{ name: 'Legacy Area', exclusions: [] }];
+    const match = findPickupAreaForAddress({ name: 'Legacy Area', lat: 6.0, lng: -1.6 }, noCoords);
+    expect(match && match.name).toBe('Legacy Area');
+  });
 });
 
 describe('resolvePickupSelection', () => {
@@ -142,6 +165,15 @@ describe('resolvePickupSelection', () => {
     const result = resolvePickupSelection({ mode: 'area', areaName: 'Legacy Area' }, CONFIG);
     expect(result.ok).toBe(true);
     expect(result.pickup.areaName).toBe('Legacy Area');
+  });
+
+  test('accepts a customer address near a location-only area by proximity', () => {
+    const result = resolvePickupSelection(
+      { mode: 'area', address: { name: 'Some Cbd Address', lat: 6.7, lng: -1.62 } },
+      { pickupType: 'area', pickupAreas: [{ name: 'Kumasi', lat: 6.6871, lng: -1.6219, time: '07:30' }] }
+    );
+    expect(result.ok).toBe(true);
+    expect(result.pickup).toMatchObject({ mode: 'area', areaName: 'Kumasi', time: '07:30' });
   });
 
   test('matches a pickup location by name', () => {

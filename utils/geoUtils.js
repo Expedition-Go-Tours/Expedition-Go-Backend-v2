@@ -4,8 +4,17 @@
  * A pickup geoshape is a closed polygon (ordered [lat, lng] vertices) that
  * defines where a supplier offers area-based pickup. Customers pick an
  * address at checkout; the address is valid only if it falls inside one of
- * the supplier's polygons and outside every exclusion zone.
+ * the supplier's polygons and outside every exclusion zone. Areas saved as
+ * a location point only (no drawn shape) match by proximity to that point.
  */
+
+/**
+ * Radius (meters) around a location-only area's saved point within which a
+ * customer address counts as inside the area. Must match the customer app's
+ * LOCATION_AREA_RADIUS_M (src/lib/pickupZone.ts) — server and client
+ * verdicts must never disagree.
+ */
+const LOCATION_AREA_RADIUS_M = 5000;
 
 /**
  * Ray-casting point-in-polygon test.
@@ -69,8 +78,16 @@ function findPickupAreaForAddress(address, pickupAreas) {
     const hasShape = !!polygon && polygon.length >= 3;
 
     if (!hasShape) {
-      // Legacy area without a drawn geoshape: match by name only (old
-      // dropdown behaviour) so pre-geoshape products keep working.
+      // Legacy area without a drawn geoshape: match the saved location point
+      // by proximity, or fall back to the old exact-name match for areas
+      // without coordinates so pre-geoshape products keep working.
+      if (
+        Number.isFinite(area.lat) &&
+        Number.isFinite(area.lng) &&
+        distanceMeters(address.lat, address.lng, area.lat, area.lng) <= LOCATION_AREA_RADIUS_M
+      ) {
+        return area;
+      }
       if (NORMALIZE_NAME(address.name) === NORMALIZE_NAME(area.name)) return area;
       continue;
     }
@@ -202,6 +219,7 @@ function isPickupBookable(pickup, pickupConfig = {}) {
 }
 
 module.exports = {
+  LOCATION_AREA_RADIUS_M,
   pointInPolygon,
   distanceMeters,
   findPickupAreaForAddress,
