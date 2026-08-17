@@ -569,6 +569,8 @@ model Booking {
   stripePaymentIntentId String?
   paymentStatus PaymentStatus @default(PENDING)
   paidAt       DateTime?
+  // 'now' = charged at booking (Pay now), 'later' = Reserve now, pay later
+  paymentTiming String     @default("now")
   
   // Cancellation
   cancellationReason String?

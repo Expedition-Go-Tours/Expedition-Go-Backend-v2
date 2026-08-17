@@ -1043,10 +1043,21 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
 
 exports.confirmBooking = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
-  const { tourId, selectedDate, selectedTime, travelers, specialRequests, pickup } = req.body;
+  const {
+    tourId,
+    selectedDate,
+    selectedTime,
+    travelers,
+    specialRequests,
+    pickup,
+    paymentTiming = 'now',
+  } = req.body;
 
   if (!tourId || !selectedDate || !travelers) {
     return next(new AppError('tourId, selectedDate, and travelers are required', 400));
+  }
+  if (paymentTiming !== 'now' && paymentTiming !== 'later') {
+    return next(new AppError("paymentTiming must be 'now' or 'later'", 400));
   }
 
   const travelerValidation = validateTravelerInfo(travelers);
@@ -1168,9 +1179,17 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
   // Create Stripe PaymentIntent (no charge yet — confirm: false)
   let paymentIntent;
   try {
+    // Idempotency key MUST be unique per distinct request. Stripe rejects a key
+    // that was already used with different parameters — so include everything
+    // that changes the charge: time slot, total, payment method and traveler
+    // mix. Identical retries still replay the same PaymentIntent (safe).
+    const travelerHash = crypto
+      .createHash('md5')
+      .update(JSON.stringify(travelers))
+      .digest('hex');
     const idempotencyKey = crypto
       .createHash('md5')
-      .update(`expedition:${customerId}:${tourId}:${selectedDate}`)
+      .update(`expedition:${customerId}:${tourId}:${selectedDate}:${selectedTime || ''}:${Math.round(pricing.total * 100)}:${req.body.paymentMethodId || ''}:${travelerHash}`)
       .digest('hex');
     // Attach a Stripe customer if one exists or can be created lazily; `null`
     // means "charge without a customer" (PaymentIntents don't require one).
@@ -1239,8 +1258,12 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         ...(pickupSnapshot && { pickup: pickupSnapshot }),
         stripePaymentIntentId: paymentIntent.id,
         appliedOfferId: appliedOffer?.id || null,
+        paymentTiming,
         paymentStatus: 'PENDING',
-        status: 'PENDING',
+        // Reserve-now-pay-later: the spot is secured immediately (confirmed),
+        // payment is collected later. Pay-now stays PENDING until the webhook
+        // settles it.
+        status: paymentTiming === 'later' ? 'CONFIRMED' : 'PENDING',
       },
       include: {
         tour: { select: { id: true, title: true, slug: true, coverPhoto: true } },
@@ -1250,6 +1273,81 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
 
     return booking;
   });
+
+  // Reserve-now-pay-later: the card is validated (PaymentIntent attached) but
+  // never charged here — payment is collected before the activity. Skip the
+  // confirm step entirely.
+  if (paymentTiming === 'later') {
+    const reserved = await prisma.booking.updateMany({
+      where: { id: result.id, status: 'CONFIRMED', paymentStatus: 'PENDING' },
+      data: { paymentStatus: 'PENDING', status: 'CONFIRMED' },
+    });
+    if (reserved.count === 0) {
+      console.log(`[Expedition] Reserve-now-pay-later booking ${result.id} was not in CONFIRMED/PENDING state`);
+    }
+
+    // Attach booking ID to PI metadata so a later settlement can find it
+    try {
+      await getStripe().paymentIntents.update(paymentIntent.id, {
+        metadata: { bookingIds: result.id, source: 'expedition', paymentTiming: 'later' },
+      });
+    } catch (err) {
+      console.error('[Expedition] Failed to update PI metadata:', err.message);
+    }
+
+    // Clean up any cart items for this tour+date+customer
+    prisma.cartItem
+      .deleteMany({
+        where: { customerId, tourId, selectedDate: new Date(selectedDate) },
+      })
+      .catch(() => {});
+
+    enqueueNotification({
+      userId: tour.supplierId,
+      type: 'BOOKING_CONFIRMED',
+      title: 'New Expedition Booking',
+      message: `A new reserve-now-pay-later booking (${result.bookingNumber}) was made through Expedition Go Tours for "${tour.title}"`,
+      data: { bookingId: result.id, source: 'expedition' },
+    });
+
+    notifyAdmin({
+      type: 'BOOKING_CREATED',
+      title: 'New Expedition Booking (Reserve now, pay later)',
+      message: `Booking #${result.bookingNumber} — $${parseFloat(pricing.total).toFixed(2)} for "${tour.title}" — reserved, payment pending`,
+      data: { bookingId: result.id, tourTitle: tour.title, total: pricing.total, source: 'expedition' },
+    }).catch(() => {});
+
+    enqueueEvent({
+      name: 'expedition.booking_reserved',
+      userId: customerId,
+      req,
+      resource: 'Booking',
+      resourceId: result.id,
+      properties: {
+        tourId,
+        total: pricing.total,
+        currency: pricing.currency,
+        travelers: totalTravelers,
+        paymentTiming: 'later',
+      },
+    });
+
+    cache.invalidateKeys([`${CACHE_PREFIX}checkout:*`]).catch(() => {});
+
+    return res.status(201).json({
+      status: 'success',
+      data: {
+        booking: result,
+        paymentIntent: {
+          id: paymentIntent.id,
+          clientSecret: paymentIntent.client_secret,
+          status: paymentIntent.status,
+          requiresAction: false,
+        },
+        message: 'Your spot is reserved. Payment will be collected before the activity.',
+      },
+    });
+  }
 
   // Charge the card now that the booking is safely created.
   let intentStatus = 'pending';

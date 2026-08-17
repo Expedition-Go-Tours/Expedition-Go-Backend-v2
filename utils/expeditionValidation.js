@@ -122,6 +122,7 @@ const confirmBookingSchema = z.object({
     selectedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format'),
     travelers: travelerWithDetailsSchema,
     paymentMethodId: z.string().min(1).max(100),
+    paymentTiming: z.enum(['now', 'later']).optional(),
     specialRequests: z.string().max(1000).optional(),
   }),
   query: z.any().optional(),

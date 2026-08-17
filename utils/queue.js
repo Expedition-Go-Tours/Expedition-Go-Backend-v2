@@ -422,6 +422,11 @@ function registerWorkers() {
         await cancelStalePendingBookings();
         break;
       }
+      case 'charge-pay-later-bookings': {
+        const { chargePayLaterBookings } = require('./payLaterSweep');
+        await chargePayLaterBookings();
+        break;
+      }
       case 'cleanup-notifications': {
         const { cleanupOldNotifications } = require('./notificationService');
         await cleanupOldNotifications(90);

@@ -444,10 +444,14 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
         where: {
           id: { in: bookingIds },
           stripePaymentIntentId: paymentIntent.id,
-          // Only still-pending bookings may be confirmed — a booking the
-          // supplier already cancelled (e.g. their tour was deleted) must
-          // never be resurrected by a late webhook.
-          status: 'PENDING'
+          // Still-unsettled bookings may be paid out:
+          //  - normal flow: status PENDING until the webhook settles it
+          //  - reserve-now-pay-later: status CONFIRMED from creation but
+          //    paymentStatus stays PENDING until the deferred charge lands.
+          // A booking the supplier already cancelled must never be
+          // resurrected by a late webhook, so we gate on paymentStatus.
+          paymentStatus: { in: ['PENDING', 'PROCESSING'] },
+          OR: [{ status: 'PENDING' }, { paymentTiming: 'later' }],
         },
         data: {
           status: 'CONFIRMED',
@@ -473,13 +477,15 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
     // (booking was created after PI confirmation, metadata updated async)
     if (!bookings || bookings.length === 0) {
       // Match PENDING *and* PROCESSING: TRAVIO checkouts create bookings with
-      // paymentStatus PROCESSING, Expedition uses PENDING. Either way a
-      // booking that is still awaiting settlement is confirmable.
+      // paymentStatus PROCESSING, Expedition uses PENDING. Reserve-now-pay-later
+      // bookings are CONFIRMED from creation but stay PENDING payment-wise until
+      // the deferred charge lands, so they are matched here too. A booking that
+      // is still awaiting settlement is confirmable.
       const updated = await client.booking.updateMany({
         where: {
           stripePaymentIntentId: paymentIntent.id,
-          status: 'PENDING',
-          paymentStatus: { in: ['PENDING', 'PROCESSING'] }
+          paymentStatus: { in: ['PENDING', 'PROCESSING'] },
+          OR: [{ status: 'PENDING' }, { paymentTiming: 'later' }]
         },
         data: {
           status: 'CONFIRMED',
@@ -631,12 +637,14 @@ async function handlePaymentFailed(paymentIntent, tx = null) {
       where: {
         id: { in: bookingIds },
         stripePaymentIntentId: paymentIntent.id,
-        status: 'PENDING'
+        paymentStatus: { in: ['PENDING', 'PROCESSING'] },
+        OR: [{ status: 'PENDING' }, { paymentTiming: 'later' }]
       },
       data: {
         status: 'CANCELLED',
         paymentStatus: 'FAILED',
-        cancellationReason: 'Payment failed'
+        cancellationReason: 'Payment failed',
+        cancelledAt: new Date()
       }
     });
 
@@ -648,13 +656,14 @@ async function handlePaymentFailed(paymentIntent, tx = null) {
   const updated = await client.booking.updateMany({
     where: {
       stripePaymentIntentId: paymentIntent.id,
-      status: 'PENDING',
-      paymentStatus: { in: ['PENDING', 'PROCESSING'] }
+      paymentStatus: { in: ['PENDING', 'PROCESSING'] },
+      OR: [{ status: 'PENDING' }, { paymentTiming: 'later' }]
     },
     data: {
       status: 'CANCELLED',
       paymentStatus: 'FAILED',
-      cancellationReason: 'Payment failed'
+      cancellationReason: 'Payment failed',
+      cancelledAt: new Date()
     }
   });
 

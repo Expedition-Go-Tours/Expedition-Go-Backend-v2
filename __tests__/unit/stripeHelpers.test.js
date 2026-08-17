@@ -212,7 +212,7 @@ describe('processStripeWebhook', () => {
 
     expect(tx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ status: 'PENDING' }),
+        where: expect.objectContaining({ paymentStatus: { in: ['PENDING', 'PROCESSING'] } }),
       }),
     );
     expect(enqueueEmail).toHaveBeenCalled();
@@ -247,7 +247,7 @@ describe('processStripeWebhook', () => {
 
     expect(tx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ status: 'PENDING' }),
+        where: expect.objectContaining({ paymentStatus: { in: ['PENDING', 'PROCESSING'] } }),
       }),
     );
     expect(tx.booking.findMany).not.toHaveBeenCalled();
@@ -260,7 +260,7 @@ describe('processStripeWebhook', () => {
 
     expect(tx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ status: 'PENDING' }),
+        where: expect.objectContaining({ paymentStatus: { in: ['PENDING', 'PROCESSING'] } }),
         data: expect.objectContaining({ paymentStatus: 'FAILED' }),
       }),
     );
@@ -274,7 +274,6 @@ describe('processStripeWebhook', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           stripePaymentIntentId: 'pi_123',
-          status: 'PENDING',
           paymentStatus: { in: ['PENDING', 'PROCESSING'] },
         }),
       }),

@@ -258,7 +258,12 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     useCart = false,
     promoCode,
     pickup,
+    paymentTiming = 'now',
   } = req.body;
+
+  if (paymentTiming !== 'now' && paymentTiming !== 'later') {
+    return next(new AppError("paymentTiming must be 'now' or 'later'", 400));
+  }
 
   // Validate traveler contact info
   const travelerValidation = validateTravelerInfo(travelers);
@@ -562,6 +567,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
           ...(pickupSnapshot && { pickup: pickupSnapshot }),
           stripePaymentIntentId: paymentIntent.id,
           paymentStatus: 'PROCESSING',
+          paymentTiming,
           ...(item.appliedOfferId && { appliedOfferId: item.appliedOfferId }),
           status: 'PENDING'
         },
@@ -1119,7 +1125,7 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
 exports.updateBookingPickup = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
   const { id } = req.params;
-  const { pickupTime, pickupPlace, instructions, locationName, areaName } = req.body;
+  const { pickupTime, pickupPlace, instructions, locationName, areaName, lat, lng } = req.body;
 
   const booking = await prisma.booking.findFirst({
     where: { id, tour: { supplierId } },
@@ -1141,6 +1147,8 @@ exports.updateBookingPickup = catchAsync(async (req, res, next) => {
     ...(instructions !== undefined ? { instructions: String(instructions) } : {}),
     ...(locationName !== undefined ? { locationName: String(locationName) } : {}),
     ...(areaName !== undefined ? { areaName: String(areaName) } : {}),
+    ...(lat !== undefined ? { lat: lat !== null ? Number(lat) : null } : {}),
+    ...(lng !== undefined ? { lng: lng !== null ? Number(lng) : null } : {}),
     updatedBy: req.user.id,
     updatedAt: new Date().toISOString(),
   };
