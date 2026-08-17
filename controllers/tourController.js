@@ -600,7 +600,7 @@ exports.getTour = catchAsync(async (req, res, next) => {
   // â”€â”€ View tracking: count each unique external visitor once per 30 minutes â”€â”€
   // Admins, expedition staff, the tour owner and ACTIVE suppliers are excluded
   // from viewCount (and from the analytics event emitted below).
-  if (await shouldCountTourView({ req, tourSupplierId: result.supplierId })) {
+  if (await shouldCountTourView({ req, res, tourSupplierId: result.supplierId, tourId: result.id })) {
     prisma.tour.update({
       where: { id: result.id },
       data: { viewCount: { increment: 1 } },

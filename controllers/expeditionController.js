@@ -487,7 +487,13 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
   // View tracking — count each unique external visitor once per 30 minutes.
   // Admins, expedition staff, the tour owner and ACTIVE suppliers are excluded.
   const tourSupId = result.data?.tour?.tour?.supplierId || result.data?.tour?.tour?.id;
-  if (await shouldCountTourView({ req, tourSupplierId: tourSupId, prefix: 'expedition:view' })) {
+  if (await shouldCountTourView({
+    req,
+    res,
+    tourSupplierId: tourSupId,
+    tourId: result.data?.tour?.tour?.id,
+    prefix: 'expedition:view',
+  })) {
     prisma.tour
       .update({
         where: { slug },
