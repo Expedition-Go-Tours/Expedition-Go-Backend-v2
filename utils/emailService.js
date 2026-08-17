@@ -1,383 +1,987 @@
 /**
- * Email Service - Production Ready
- * Handles transactional emails using SendGrid
- * 
- * Features:
- * - Template-based emails
- * - Booking confirmations and updates
- * - Supplier notifications
- * - System alerts and notifications
- * 
+ * Email Service — Resend + locally compiled templates.
+ *
+ * Every transactional email renders a compiled HTML document from
+ * sendgrid-templates/generated/<key>.html using utils/emailRenderer.js and is
+ * delivered through Resend (raw HTML — no cloud template sync required).
+ *
+ * The 28 template keys mirror scripts/buildEmailTemplates.js so the send layer
+ * and the templates can never drift apart. Legacy helpers (sendEmail,
+ * sendBookingConfirmationEmail, ...) remain exported so queue workers,
+ * controllers and tests keep working unchanged.
+ *
  * @author Tour Platform Team
- * @version 1.0.0
+ * @version 2.0.0
  */
 
-const sgMail = require('@sendgrid/mail');
+const fs = require('fs');
+const path = require('path');
+const { Resend } = require('resend');
 const prisma = require('./prismaClient');
 const getConfig = require('./getConfig');
-const { travelerCount } = require('./availabilityCore');
+const { render } = require('./emailRenderer');
+const fmt = require('./emailFormatting');
+const emailUrls = require('../config/emailUrls');
 
-const TEMPLATE_IDS = {
-  'supplier-approved': 'd-2f3d5b9302ae459b8ac94758a70d6ce6',
-  'booking-confirmation': 'd-0a159d1f1c43422d85195f8d8f898506',
-  'supplier-rejected': 'd-46112aefe32a4e1a846ec72b5ddc38e4',
-  'supplier-activated': 'd-493cd6b3347e4552a09f6c7d70a4a933',
-  'review-notification': 'd-3fd7be6a230d418e92090c8bc888f8e7',
-  'payout-notification': 'd-78cb9803209e42f6a80cfe45b9cdfc3b',
-  'supplier-booking-notification': 'd-2973e0ab70734472985569ca1e20b220',
-  'generic-notification': 'd-12b0cfb8cf1f4211a22db258e13c9f30',
-  'booking-cancellation': 'd-3b94f590c23f4530a05152bbdca561b0',
-  'supplier-under-review': 'd-875a87dd2cf14a11a4f1075d053fc6b1',
-  'supplier-suspended': 'd-d09364df53b4467ea43a7128483295e3',
-};
+const GENERATED_DIR = path.join(__dirname, '..', 'sendgrid-templates', 'generated');
 
-// Lazy initialization: set API key on first send to avoid crash/warning
-// when env var is missing during test/CI.
-let sgMailInitialized = false;
+// Lazy Resend client: only initialized when RESEND_API_KEY is present so tests
+// and CI can require this module without a configured provider.
+let resendClient = null;
+let resendWarned = false;
 
-function ensureSgMail() {
-  if (sgMailInitialized) return;
-  if (process.env.SENDGRID_API_KEY) {
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-  } else {
-    console.error('[Email] CRITICAL: SENDGRID_API_KEY is not set in environment variables');
+function getResend() {
+  if (!process.env.RESEND_API_KEY) {
+    if (!resendWarned) {
+      console.error('[Email] CRITICAL: RESEND_API_KEY is not set in environment variables');
+      resendWarned = true;
+    }
+    return null;
   }
-  sgMailInitialized = true;
+  if (!resendClient) resendClient = new Resend(process.env.RESEND_API_KEY);
+  return resendClient;
+}
+
+// ---------------------------------------------------------------------------
+// Shared shell values (resolved once per process from config + env)
+// ---------------------------------------------------------------------------
+let shellCache = null;
+let shellPromise = null;
+
+async function getShellVars() {
+  if (shellCache) return shellCache;
+  if (shellPromise) return shellPromise;
+
+  shellPromise = (async () => {
+    try {
+      const [brandName, supportEmail, logoUrl] = await Promise.all([
+        getConfig('platform.name'),
+        getConfig('email.support_email'),
+        getConfig('email.logo_url'),
+      ]);
+      shellCache = {
+        brandName: brandName || 'Travio Africa',
+        supportEmail: supportEmail || process.env.SUPPORT_EMAIL || 'support@travioafrica.com',
+        logoUrl: logoUrl || process.env.LOGO_URL || 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1778862668/TRAVOI_AFRICA_NEW_kd1tnr.png',
+        year: new Date().getFullYear(),
+      };
+    } catch (err) {
+      shellCache = {
+        brandName: 'Travio Africa',
+        supportEmail: process.env.SUPPORT_EMAIL || 'support@travioafrica.com',
+        logoUrl: process.env.LOGO_URL || 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1778862668/TRAVOI_AFRICA_NEW_kd1tnr.png',
+        year: new Date().getFullYear(),
+      };
+    }
+    return shellCache;
+  })();
+
+  return shellPromise;
+}
+
+// ---------------------------------------------------------------------------
+// Template loading + rendering
+// ---------------------------------------------------------------------------
+const templateCache = new Map();
+
+function loadTemplate(key) {
+  if (templateCache.has(key)) return templateCache.get(key);
+  const file = path.join(GENERATED_DIR, `${key}.html`);
+  if (!fs.existsSync(file)) return null;
+  const html = fs.readFileSync(file, 'utf-8');
+  templateCache.set(key, html);
+  return html;
 }
 
 /**
- * Send email using SendGrid
+ * Render a compiled template against `data` and inject shell vars.
+ * Unknown vars render as '' — safe against missing optional fields.
  */
-async function sendEmail({ to, subject, template, data = {}, attachments = [] }) {
-  ensureSgMail();
+async function renderTemplate(key, data = {}, opts = {}) {
+  const source = loadTemplate(key);
+  if (source === null) throw new Error(`[Email] Template not found: ${key}`);
+  const shell = await getShellVars();
+  const merged = {
+    ...shell,
+    preheader: opts.preheader || data.preheader || '',
+    ...data,
+  };
+  return render(source, merged);
+}
+
+function parseFrom() {
+  const fromRaw = process.env.EMAIL_FROM || '';
+  const match = fromRaw.match(/^(.*?)\s*<([^>]+)>$/);
+  return {
+    from: fromRaw || 'Travio Africa <notifications@travioafrica.com>',
+    email: match ? match[2].trim() : fromRaw || 'notifications@travioafrica.com',
+    name: match ? match[1].trim() : 'Travio Africa',
+  };
+}
+
+function normalizeAttachments(attachments = []) {
+  return attachments
+    .filter((a) => a && (a.content || a.path))
+    .map((a) => ({
+      filename: a.filename || 'attachment',
+      content: a.content || a.path,
+    }));
+}
+
+/**
+ * Core delivery — render a compiled template and send via Resend.
+ */
+async function sendHtml({ to, subject, html, text = '', attachments = [] }) {
+  const client = getResend();
+
+  if (!client) {
+    console.error(`[Email] Skipped send (no RESEND_API_KEY) to ${to}: ${subject}`);
+    return { success: false, reason: 'no-provider', html };
+  }
+
   try {
-    const [configBrandName, configSupportEmail, configLogoUrl, configHeroImageUrl] = await Promise.all([
-      getConfig('platform.name'),
-      getConfig('email.support_email'),
-      getConfig('email.logo_url'),
-      getConfig('email.hero_image_url'),
-    ]);
-
-    const fromRaw = process.env.EMAIL_FROM || '';
-    const fromMatch = fromRaw.match(/^(.*?)\s*<([^>]+)>$/);
-    const fromEmail = fromMatch ? fromMatch[2].trim() : fromRaw;
-    const fromName = fromMatch ? fromMatch[1].trim() : configBrandName || 'Travio Africa';
-
-    const templateId = TEMPLATE_IDS[template];
-    const msg = {
+    const fromInfo = parseFrom();
+    const { data: result, error } = await client.emails.send({
+      from: fromInfo.from,
       to,
-      from: { email: fromEmail, name: fromName },
-      replyTo: process.env.EMAIL_REPLY_TO,
       subject,
-      attachments
-    };
+      html,
+      ...(text ? { text } : {}),
+      ...(process.env.EMAIL_REPLY_TO ? { reply_to: process.env.EMAIL_REPLY_TO } : {}),
+      ...(attachments.length ? { attachments: normalizeAttachments(attachments) } : {}),
+    });
 
-    if (templateId) {
-      msg.templateId = templateId;
-      msg.dynamicTemplateData = {
-        supportEmail: configSupportEmail || process.env.SUPPORT_EMAIL,
-        logoUrl: configLogoUrl || process.env.LOGO_URL || 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1778862668/TRAVOI_AFRICA_NEW_kd1tnr.png',
-        heroImageUrl: configHeroImageUrl || process.env.HERO_IMAGE_URL || 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1747318000/email-hero-capetown.jpg',
-        brandName: configBrandName || 'Travio Africa',
-        year: new Date().getFullYear(),
-        ...data,
-      };
-    } else {
-      const enrichedData = {
-        ...data,
-        supportEmail: data.supportEmail || configSupportEmail || process.env.SUPPORT_EMAIL,
-        logoUrl: data.logoUrl || configLogoUrl || process.env.LOGO_URL || 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1778862668/TRAVOI_AFRICA_NEW_kd1tnr.png',
-        brandName: data.brandName || configBrandName || 'Travio Africa',
-        year: data.year || new Date().getFullYear()
-      };
-      const emailContent = generateEmailContent(template, enrichedData);
-      msg.html = emailContent.html;
-      msg.text = emailContent.text;
-    }
+    if (error) throw new Error(error.message);
 
-    const result = await sgMail.send(msg);
-    console.log(` Email sent successfully to ${to}: ${subject}`);
-    
-    return { success: true, messageId: result[0]?.headers?.['x-message-id'] };
+    console.log(`[Email] Sent to ${to}: ${subject}`);
+    return { success: true, messageId: result?.id, html };
   } catch (error) {
     console.error(`[Email] Failed to send to ${to}: ${subject}`, error.message);
-    
-    if (error.response) {
-      console.error('[Email] SendGrid response body:', JSON.stringify(error.response.body, null, 2));
-    }
-    
     throw new Error(`Failed to send email: ${error.message}`);
   }
 }
 
+async function sendRendered({ to, subject, key, data = {}, attachments = [], opts = {} }) {
+  const html = await renderTemplate(key, data, opts);
+  return sendHtml({ to, subject, html, text: opts.text || '', attachments });
+}
+
 /**
- * Send booking confirmation email with full ticket details
+ * Generic send — accepts a template key (compiled) or a legacy template name.
+ * Legacy names without a compiled document fall back to inline generation so
+ * account/status emails (team invites, supplier status, notifications) keep
+ * working without cloud templates.
  */
+async function sendEmail({ to, subject, template, data = {}, attachments = [], opts = {} }) {
+  if (template && loadTemplate(template)) {
+    return sendRendered({ to, subject, key: template, data, attachments, opts });
+  }
+  // Legacy / inline path
+  const content = generateEmailContent(template, data);
+  if (content && content.html) {
+    const shell = await getShellVars();
+    const merged = { ...shell, year: shell.year, ...data };
+    let html = content.html;
+    for (const [k, v] of Object.entries(merged)) {
+      html = html.split(`{{${k}}}`).join(v == null ? '' : String(v));
+    }
+    return sendHtml({ to, subject, html, text: content.text || '', attachments });
+  }
+  throw new Error(`[Email] No template or inline generator for: ${template}`);
+}
+
+// ---------------------------------------------------------------------------
+// Booking context resolution + shared data assembly
+// ---------------------------------------------------------------------------
+const BOOKING_CONTEXT_INCLUDE = {
+  customer: { select: { id: true, name: true, email: true, phone: true, location: true } },
+  tour: {
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      photos: true,
+      productContent: true,
+      bookingAndTickets: true,
+      categorization: true,
+      durationMinutes: true,
+      supplier: { select: { id: true, name: true, email: true, phone: true } },
+    },
+  },
+};
+
+/**
+ * Resolve a booking to include customer + tour + supplier. Accepts either an
+ * already-enriched booking (queue workers pass includes) or a plain object /
+ * id — missing relations are fetched.
+ */
+async function resolveBookingContext(bookingOrId) {
+  let booking = typeof bookingOrId === 'string' ? { id: bookingOrId } : bookingOrId;
+  if (typeof bookingOrId === 'string' || !booking.customer || !booking.tour) {
+    booking = await prisma.booking.findUnique({
+      where: { id: booking.id },
+      include: BOOKING_CONTEXT_INCLUDE,
+    });
+  }
+  if (!booking) throw new Error(`Booking not found: ${bookingOrId?.id ?? bookingOrId}`);
+  return booking;
+}
+
+function paymentStatusLabel(status) {
+  const map = {
+    PENDING: 'Pending',
+    PROCESSING: 'Processing',
+    SUCCEEDED: 'Paid',
+    FAILED: 'Failed',
+    CANCELLED: 'Cancelled',
+    REFUNDED: 'Refunded',
+  };
+  return map[status] || 'Pending';
+}
+
+/**
+ * Shared booking data used by every booking-scoped template.
+ * Callers can override any field afterwards.
+ */
+function buildBookingBase(booking) {
+  const customer = booking.customer || {};
+  const tour = booking.tour || {};
+  const supplier = tour.supplier || {};
+  const travelers = fmt.formatTravelers(booking.travelers);
+  const pickup = fmt.getPickupInfo(booking, tour);
+  const currency = booking.currency || 'USD';
+
+  const paidNow = booking.paymentTiming !== 'later';
+  const amountPaid =
+    booking.paymentStatus === 'SUCCEEDED' || booking.paymentStatus === 'REFUNDED'
+      ? Number(booking.total)
+      : paidNow
+        ? Number(booking.total)
+        : 0;
+
+  const base = {
+    // identity
+    customerName: customer.name || 'Guest',
+    customerEmail: customer.email || '',
+    customerPhone: fmt.travelerPhone(booking.travelers) || customer.phone || '',
+    customerLocation: fmt.travelerLocation(booking.travelers) || customer.location || '',
+    supplierName: supplier.name || '',
+    supplierContact: supplier.phone || supplier.email || '',
+    brandSubtext: 'by Expedition-Go Tours',
+
+    // booking
+    bookingNumber: booking.bookingNumber,
+    tourTitle: tour.title || '',
+    tourDescription: tour.description || '',
+    dateLabel: fmt.formatLongDate(booking.selectedDate),
+    timeLabel: fmt.formatTime(booking.selectedTime),
+    durationLabel: fmt.getDurationLabel(tour),
+    travelersLabel: travelers.label,
+    languageLabel: fmt.getLanguageLabel(tour),
+    bookingTypeLabel: fmt.getBookingTypeLabel(tour),
+    specialRequirements: booking.specialRequests || '',
+
+    // pickup / meeting
+    pickupIncludedLabel: pickup.pickupIncluded ? 'Yes' : 'No',
+    pickupLocation: pickup.pickupLocation,
+    pickupTime: pickup.pickupTime,
+    pickupInstructions: pickup.pickupInstructions,
+    meetingPoint: pickup.meetingPoint,
+    meetingTime: pickup.meetingTime,
+    locationLabel: pickup.locationLabel,
+    directionsUrl: emailUrls.getDirections(pickup.locationLabel || pickup.meetingPoint) || '',
+
+    // money
+    currency,
+    totalLabel: fmt.formatCurrency(booking.total, currency),
+    subtotalLabel: fmt.formatCurrency(booking.subtotal, currency),
+    taxesLabel: fmt.formatCurrency(booking.taxes, currency),
+    amountPaidLabel: fmt.formatCurrency(amountPaid, currency),
+    amountPaidTodayLabel: fmt.formatCurrency(paidNow ? amountPaid : 0, currency),
+    scheduledPaymentLabel: fmt.formatCurrency(paidNow ? 0 : Number(booking.total), currency),
+    paymentStatusLabel: paymentStatusLabel(booking.paymentStatus),
+    paymentMethodLabel: '',
+    commissionLabel: fmt.formatCurrency(booking.commissionAmount, currency),
+    payoutAmountLabel: fmt.formatCurrency(booking.supplierPayout, currency),
+
+    // customer URLs
+    bookingUrl: emailUrls.viewBooking(booking.id),
+    voucherUrl: emailUrls.downloadVoucher(booking.id),
+    manageUrl: emailUrls.manageBooking(booking.id),
+    managePaymentUrl: emailUrls.managePaymentMethod(booking.id),
+    pickupUrl: emailUrls.addPickupLocation(booking.id),
+    reviewUrl: emailUrls.writeReview(booking.id),
+    refundUrl: emailUrls.viewRefund(booking.id),
+    cancellationUrl: emailUrls.viewCancellation(booking.id),
+    browseUrl: emailUrls.browseExperiences(),
+    supportUrl: emailUrls.contactSupport(),
+
+    // supplier URLs
+    supplierBookingUrl: emailUrls.supplierViewBooking(booking.id),
+    supplierPayoutUrl: emailUrls.supplierPayouts(),
+    dashboardUrl: emailUrls.supplierDashboard(),
+  };
+
+  return base;
+}
+
+// ---------------------------------------------------------------------------
+// Customer emails
+// ---------------------------------------------------------------------------
+
+async function sendBookingConfirmedEmail(booking) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const ticket = b.tour?.bookingAndTickets || {};
+  const data = {
+    ...base,
+    cancellationPolicyText:
+      (typeof ticket.cancellationPolicy === 'object' && ticket.cancellationPolicy.text) ||
+      (typeof ticket.cancellationPolicy === 'string' && ticket.cancellationPolicy) ||
+      'Free cancellation up to 24 hours before your experience.',
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: `Booking Confirmed — ${base.tourTitle} (Ref: ${base.bookingNumber})`,
+    key: 'booking-confirmed',
+    data,
+  });
+}
+
+async function sendReserveLaterConfirmedEmail(booking) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const data = {
+    ...base,
+    paymentDateLabel: fmt.formatLongDate(b.selectedDate),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: `Your booking is confirmed — payment scheduled (Ref: ${base.bookingNumber})`,
+    key: 'reserve-later-confirmed',
+    data,
+  });
+}
+
+async function sendPaymentReminderEmail(booking, { paymentDate, paymentAmount } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const data = {
+    ...base,
+    paymentAmountLabel: fmt.formatCurrency(paymentAmount ?? b.total, b.currency),
+    paymentDateLabel: fmt.formatLongDate(paymentDate || b.selectedDate),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: 'Upcoming payment for your booking',
+    key: 'payment-reminder',
+    data,
+  });
+}
+
+async function sendPaymentSuccessfulEmail(booking, { paymentReference, amount } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const paid = Number(amount ?? b.total);
+  const outstanding = Math.max(0, Number(b.total) - paid);
+  const data = {
+    ...base,
+    paymentReference: paymentReference || b.stripePaymentIntentId || '',
+    paymentAmountLabel: fmt.formatCurrency(paid, b.currency),
+    outstandingBalanceLabel: fmt.formatCurrency(outstanding, b.currency),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: `Payment received — ${base.tourTitle} (Ref: ${base.bookingNumber})`,
+    key: 'payment-successful',
+    data,
+  });
+}
+
+async function sendPaymentUnsuccessfulEmail(booking, { deadline, amount } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const data = {
+    ...base,
+    paymentAmountLabel: fmt.formatCurrency(amount ?? b.total, b.currency),
+    deadlineLabel: fmt.formatLongDate(deadline || b.selectedDate),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: 'Action required: We couldn\u2019t process your payment',
+    key: 'payment-unsuccessful',
+    data,
+  });
+}
+
+async function sendCustomerBookingChangedEmail(booking, { changes = [], previousTotal, adjustment, newTotal } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const currency = b.currency || 'USD';
+  const data = {
+    ...base,
+    changes,
+    previousTotalLabel: fmt.formatCurrency(previousTotal ?? b.total, currency),
+    adjustmentLabel: fmt.formatCurrency(adjustment ?? 0, currency),
+    newTotalLabel: fmt.formatCurrency(newTotal ?? b.total, currency),
+    paymentStatusLabel: paymentStatusLabel(b.paymentStatus),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: 'Your booking has been updated',
+    key: 'customer-booking-changed',
+    data,
+  });
+}
+
+async function sendPickupDetailsUpdatedEmail(booking, { previousPickupLocation = '' } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const data = {
+    ...base,
+    previousPickupLocation,
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: 'Your pickup information has been updated',
+    key: 'pickup-details-updated',
+    data,
+  });
+}
+
+async function sendPickupLocationRequiredEmail(booking, { deadline } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const data = {
+    ...base,
+    deadlineLabel: fmt.formatLongDate(deadline || b.selectedDate),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: 'Action required: Add your pickup location',
+    key: 'pickup-location-required',
+    data,
+  });
+}
+
+async function sendBookingReminderEmail(booking, { items = [] } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const ticket = b.tour?.bookingAndTickets || {};
+  const product = b.tour?.productContent || {};
+  const reminderItems =
+    items.length > 0
+      ? items
+      : [
+          ...(product.whatToBring || []).slice(0, 5),
+          ...(ticket.checkInProcess ? [`Check-in: ${ticket.checkInProcess}`] : []),
+        ];
+  const data = {
+    ...base,
+    items: reminderItems,
+    supplierContact: b.tour?.supplier?.phone || b.tour?.supplier?.email || '',
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: `Reminder: ${base.tourTitle} on ${fmt.formatShortDate(b.selectedDate)}`,
+    key: 'booking-reminder',
+    data,
+  });
+}
+
+async function sendCustomerCancelledFullRefundEmail(booking, { cancelledAt, refundAmount } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const data = {
+    ...base,
+    cancelledAtLabel: fmt.formatDateTime(cancelledAt || b.cancelledAt || new Date()),
+    cancellationReason: b.cancellationReason || '',
+    refundAmountLabel: fmt.formatCurrency(refundAmount ?? b.refundAmount ?? b.total, b.currency),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: 'Your booking has been cancelled',
+    key: 'customer-cancelled-full-refund',
+    data,
+  });
+}
+
+async function sendCustomerCancelledNoRefundEmail(booking, { cancelledAt, cancellationFee, refundAmount = 0 } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const deadline = fmt.getCancelDeadline(b, b.tour || {});
+  const data = {
+    ...base,
+    cancelledAtLabel: fmt.formatDateTime(cancelledAt || b.cancelledAt || new Date()),
+    cancellationDeadlineLabel: fmt.formatDateTime(deadline),
+    cancellationFeeLabel: fmt.formatCurrency(cancellationFee ?? b.total, b.currency),
+    refundAmountLabel: fmt.formatCurrency(refundAmount ?? 0, b.currency),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: 'Your booking has been cancelled',
+    key: 'customer-cancelled-no-refund',
+    data,
+  });
+}
+
+async function sendRefundProcessingEmail(booking, { refundReference } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const data = {
+    ...base,
+    refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.total, b.currency),
+    refundReference: refundReference || '',
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: 'Your refund is being processed',
+    key: 'refund-processing',
+    data,
+  });
+}
+
+async function sendRefundCompletedEmail(booking, { refundReference, refundedAt } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const data = {
+    ...base,
+    refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.total, b.currency),
+    refundReference: refundReference || '',
+    refundedAtLabel: fmt.formatDateTime(refundedAt || b.refundedAt || new Date()),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: 'Your refund has been issued',
+    key: 'refund-completed',
+    data,
+  });
+}
+
+async function sendSupplierChangedBookingEmail(booking, { changes = [], changeReason, needsAcceptance = false } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const data = {
+    ...base,
+    changes,
+    changeReason: changeReason || '',
+    needsAcceptance,
+    acceptUrl: emailUrls.manageBooking(b.id),
+    rescheduleUrl: emailUrls.manageBooking(b.id),
+    cancelUrl: emailUrls.viewCancellation(b.id),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: 'Important update to your booking',
+    key: 'supplier-changed-booking',
+    data,
+  });
+}
+
+async function sendSupplierCancelledBookingEmail(booking, { reason, refundAmount } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const data = {
+    ...base,
+    cancellationReason: reason || b.cancellationReason || '',
+    refundAmountLabel: fmt.formatCurrency(refundAmount ?? b.refundAmount ?? b.total, b.currency),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: 'Important: Your booking has been cancelled',
+    key: 'supplier-cancelled-booking',
+    data,
+  });
+}
+
+async function sendReviewRequestEmail(booking) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const data = {
+    ...base,
+    reviewUrl: emailUrls.writeReview(b.id),
+    browseUrl: emailUrls.browseExperiences(),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: 'How was your experience?',
+    key: 'review-request',
+    data,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Supplier emails
+// ---------------------------------------------------------------------------
+
+async function sendSupplierNewBookingEmail(booking) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const data = {
+    ...base,
+    supplierName: supplier.name || 'Supplier',
+    customerEmail: base.customerEmail,
+    customerPhone: base.customerPhone,
+    totalLabel: base.totalLabel,
+    commissionLabel: base.commissionLabel,
+    payoutAmountLabel: base.payoutAmountLabel,
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: supplier.email,
+    subject: `New confirmed booking — ${base.tourTitle} (Ref: ${base.bookingNumber})`,
+    key: 'supplier-new-booking',
+    data,
+  });
+}
+
+async function sendSupplierBookingChangedEmail(booking, { changes = [], previousPayout, newPayout, payoutAdjustment } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const currency = b.currency || 'USD';
+  const data = {
+    ...base,
+    changes,
+    previousPayoutLabel: fmt.formatCurrency(previousPayout ?? b.supplierPayout, currency),
+    newPayoutLabel: fmt.formatCurrency(newPayout ?? b.supplierPayout, currency),
+    payoutAdjustmentLabel: fmt.formatCurrency(payoutAdjustment ?? 0, currency),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: supplier.email,
+    subject: 'A confirmed booking has been updated',
+    key: 'supplier-booking-changed',
+    data,
+  });
+}
+
+async function sendSupplierContactUpdatedEmail(booking, { customerPhone, customerEmail, emergencyContact } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const data = {
+    ...base,
+    customerPhone: customerPhone || base.customerPhone,
+    customerEmail: customerEmail || base.customerEmail,
+    emergencyContact: emergencyContact || '',
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: supplier.email,
+    subject: 'Traveller details have changed',
+    key: 'supplier-customer-contact-updated',
+    data,
+  });
+}
+
+async function sendSupplierPickupUpdatedEmail(booking, { previousPickupLocation = '' } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const data = {
+    ...base,
+    previousPickupLocation,
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: supplier.email,
+    subject: 'Customer pickup location updated',
+    key: 'supplier-pickup-updated',
+    data,
+  });
+}
+
+async function sendSupplierBookingReminderEmail(booking) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const data = {
+    ...base,
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: supplier.email,
+    subject: `Upcoming booking: ${base.tourTitle} (${fmt.formatShortDate(b.selectedDate)})`,
+    key: 'supplier-booking-reminder',
+    data,
+  });
+}
+
+async function sendSupplierCustomerCancelledFreeEmail(booking, { cancelledAt } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const data = {
+    ...base,
+    cancelledAtLabel: fmt.formatDateTime(cancelledAt || b.cancelledAt || new Date()),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: supplier.email,
+    subject: 'Booking cancelled — do not operate',
+    key: 'supplier-customer-cancelled-free',
+    data,
+  });
+}
+
+async function sendSupplierCustomerCancelledLateEmail(booking, { cancelledAt } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const deadline = fmt.getCancelDeadline(b, b.tour || {});
+  const data = {
+    ...base,
+    cancelledAtLabel: fmt.formatDateTime(cancelledAt || b.cancelledAt || new Date()),
+    cancellationDeadlineLabel: fmt.formatDateTime(deadline),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: supplier.email,
+    subject: 'Late customer cancellation',
+    key: 'supplier-customer-cancelled-late',
+    data,
+  });
+}
+
+async function sendSupplierPlatformCancelledEmail(booking, { reason, compensation } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const data = {
+    ...base,
+    cancellationReason: reason || b.cancellationReason || '',
+    compensationLabel: fmt.formatCurrency(compensation ?? 0, b.currency),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: supplier.email,
+    subject: 'Booking cancelled by Expedition-Go Tours',
+    key: 'supplier-platform-cancelled',
+    data,
+  });
+}
+
+async function sendSupplierCancellationRecordedEmail(booking, { reason } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const data = {
+    ...base,
+    cancellationReason: reason || b.cancellationReason || '',
+    refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.total, b.currency),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: supplier.email,
+    subject: 'Supplier cancellation confirmed',
+    key: 'supplier-cancellation-recorded',
+    data,
+  });
+}
+
+async function sendSupplierPayoutScheduledEmail({ booking, payout, payoutDate } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const currency = b.currency || 'USD';
+  const data = {
+    ...base,
+    payoutAmountLabel: fmt.formatCurrency(payout?.amount ?? b.supplierPayout, currency),
+    payoutReference: payout?.id || payout?.reference || '',
+    payoutDateLabel: fmt.formatLongDate(payoutDate || payout?.date),
+    paymentDestination: payout?.methodLabel || payout?.destination || '',
+    statusLabel: 'Scheduled',
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: supplier.email,
+    subject: 'Your payout is scheduled',
+    key: 'supplier-payout-scheduled',
+    data,
+  });
+}
+
+async function sendSupplierPayoutCompletedEmail({ booking, payout, payoutDate } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const currency = b.currency || 'USD';
+  const data = {
+    ...base,
+    payoutAmountLabel: fmt.formatCurrency(payout?.amount ?? b.supplierPayout, currency),
+    payoutReference: payout?.id || payout?.reference || '',
+    payoutDateLabel: fmt.formatLongDate(payoutDate || payout?.date),
+    paymentDestination: payout?.methodLabel || payout?.destination || '',
+    statusLabel: 'Completed',
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: supplier.email,
+    subject: 'Your payout has been sent',
+    key: 'supplier-payout-completed',
+    data,
+  });
+}
+
+async function sendSupplierPayoutFailedEmail({ booking, payout, reason } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const currency = b.currency || 'USD';
+  const data = {
+    ...base,
+    payoutAmountLabel: fmt.formatCurrency(payout?.amount ?? b.supplierPayout, currency),
+    payoutReason: reason || payout?.failureReason || '',
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: supplier.email,
+    subject: 'Action required: Payout unsuccessful',
+    key: 'supplier-payout-failed',
+    data,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Legacy helpers (keep the pre-Resend API surface intact)
+// ---------------------------------------------------------------------------
+
 async function sendBookingConfirmationEmail(booking) {
   try {
-    const [customer, tour] = await Promise.all([
-      prisma.user.findUnique({ where: { id: booking.customerId } }),
-      prisma.tour.findUnique({
-        where: { id: booking.tourId },
-        include: { supplier: { select: { name: true, email: true, phone: true } } }
-      })
-    ]);
-
-    if (!customer || !tour) throw new Error('Booking data incomplete');
-
-    const product = tour.productContent || {};
-    const ticket = tour.bookingAndTickets || {};
-
-    await sendEmail({
-      to: customer.email,
-      subject: `Booking Confirmed — ${tour.title} (Ref: ${booking.bookingNumber})`,
-      template: 'booking-confirmation',
-      data: {
-        customerName: customer.name,
-        bookingNumber: booking.bookingNumber,
-        tourTitle: tour.title,
-        tourDescription: tour.description,
-        selectedDate: new Date(booking.selectedDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
-        selectedTime: booking.selectedTime,
-        travelers: booking.travelers,
-        subtotal: booking.subtotal,
-        taxes: booking.taxes,
-        totalAmount: booking.total,
-        currency: booking.currency,
-        meetingPoint: ticket.meetingPoint || null,
-        pickup: booking.pickup || null,
-        checkInProcess: ticket.checkInProcess || null,
-        cancellationPolicy: ticket.cancellationPolicy || null,
-        included: product.included || [],
-        whatToBring: product.whatToBring || [],
-        highlights: product.highlights || [],
-        restrictions: product.restrictions || null,
-        supplierName: tour.supplier.name,
-        supplierContact: tour.supplier.phone || tour.supplier.email,
-        bookingUrl: `${process.env.CLIENT_URL}/bookings/${booking.id}`,
-        ticketUrl: `${process.env.CLIENT_URL}/bookings/${booking.id}/ticket`,
-        supportEmail: process.env.SUPPORT_EMAIL
-      }
-    });
+    return await sendBookingConfirmedEmail(booking);
   } catch (error) {
     console.error('Booking confirmation email failed:', error);
   }
 }
 
-/**
- * Send booking cancellation email
- */
 async function sendBookingCancellationEmail(booking, refundAmount = null) {
   try {
-    const customer = await prisma.user.findUnique({
-      where: { id: booking.customerId }
-    });
-
-    const tour = await prisma.tour.findUnique({
-      where: { id: booking.tourId }
-    });
-
-    await sendEmail({
-      to: customer.email,
-      subject: `Booking Cancelled - ${tour.title}`,
-      template: 'booking-cancellation',
-      data: {
-        customerName: customer.name,
-        bookingNumber: booking.bookingNumber,
-        tourTitle: tour.title,
-        selectedDate: new Date(booking.selectedDate).toLocaleDateString(),
-        cancellationReason: booking.cancellationReason,
-        refundAmount: refundAmount,
-        currency: booking.currency,
-        supportEmail: process.env.SUPPORT_EMAIL
-      }
-    });
-
-    console.log(` Booking cancellation sent for booking ${booking.bookingNumber}`);
+    const hasRefund = Number(refundAmount) > 0;
+    if (hasRefund) return await sendCustomerCancelledFullRefundEmail(booking, { refundAmount });
+    return await sendCustomerCancelledNoRefundEmail(booking);
   } catch (error) {
-    console.error(' Booking cancellation email failed:', error);
+    console.error('Booking cancellation email failed:', error);
     throw error;
   }
 }
 
-/**
- * Send supplier status update email
- */
 async function sendSupplierStatusEmail(email, status, data = {}) {
-  try {
-    const statusTemplates = {
-      APPROVED: {
-        subject: 'Supplier Application Approved - Welcome!',
-        template: 'supplier-approved'
-      },
-      REJECTED: {
-        subject: 'Supplier Application Update',
-        template: 'supplier-rejected'
-      },
-      UNDER_REVIEW: {
-        subject: 'Additional Information Required',
-        template: 'supplier-under-review'
-      },
-      ACTIVE: {
-        subject: 'Supplier Account Activated',
-        template: 'supplier-activated'
-      },
-      SUSPENDED: {
-        subject: 'Supplier Account Suspended',
-        template: 'supplier-suspended'
-      }
-    };
+  const statusConfig = {
+    APPROVED: { subject: 'Supplier Application Approved - Welcome!', heading: 'Welcome to Travio Africa' },
+    REJECTED: { subject: 'Supplier Application Update', heading: 'Application Update' },
+    UNDER_REVIEW: { subject: 'Additional Information Required', heading: 'Action Required' },
+    ACTIVE: { subject: 'Supplier Account Activated', heading: 'Your account is active' },
+    SUSPENDED: { subject: 'Supplier Account Suspended', heading: 'Account Suspended' },
+  };
+  const config = statusConfig[status];
+  if (!config) throw new Error(`Unknown supplier status: ${status}`);
 
-    const config = statusTemplates[status];
-    if (!config) {
-      throw new Error(`Unknown supplier status: ${status}`);
-    }
-
-    await sendEmail({
-      to: email,
-      subject: config.subject,
-      template: config.template,
-      data: {
-        ...data,
-        status,
-        brandSubtext: 'by Expedition-Go Tours',
-        supplierBusinessName: data.name,
-        approvalDate: new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
-        dashboardUrl: `${process.env.CLIENT_URL}/supplier/dashboard`,
-      }
-    });
-
-    console.log(` Supplier status email sent: ${status} to ${email}`);
-  } catch (error) {
-    console.error(' Supplier status email failed:', error);
-    throw error;
-  }
+  return sendEmail({
+    to: email,
+    subject: config.subject,
+    template: 'generic-notification',
+    data: {
+      ...data,
+      header: config.heading,
+      message: data.message || `Your supplier account status has changed to ${status}.`,
+      buttonText: 'Open dashboard',
+      buttonUrl: emailUrls.supplierDashboard(),
+      userName: data.name || 'Supplier',
+      supplierBusinessName: data.name,
+      approvalDate: new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
+      dashboardUrl: emailUrls.supplierDashboard(),
+      brandSubtext: 'by Expedition-Go Tours',
+    },
+  });
 }
 
-/**
- * Send review notification email to supplier
- */
 async function sendReviewNotificationEmail(review) {
-  try {
-    const tour = review.tour
-      ? review.tour
-      : await prisma.tour.findUnique({ where: { id: review.tourId }, select: { id: true, title: true, supplierId: true } });
+  const tour = review.tour
+    ? review.tour
+    : await prisma.tour.findUnique({ where: { id: review.tourId }, select: { id: true, title: true, supplierId: true } });
+  if (!tour) throw new Error(`Tour ${review.tourId} not found for review ${review.id}`);
 
-    if (!tour) throw new Error(`Tour ${review.tourId} not found for review ${review.id}`);
+  const [supplier, customer] = await Promise.all([
+    prisma.user.findUnique({ where: { id: tour.supplierId } }),
+    prisma.user.findUnique({ where: { id: review.customerId } }),
+  ]);
 
-    const [supplier, customer] = await Promise.all([
-      prisma.user.findUnique({ where: { id: tour.supplierId } }),
-      prisma.user.findUnique({ where: { id: review.customerId } })
-    ]);
-
-    await sendEmail({
-      to: supplier.email,
-      subject: `New ${review.rating}-Star Review Received`,
-      template: 'review-notification',
-      data: {
-        supplierName: supplier.name,
-        tourTitle: tour.title,
-        customerName: customer.name,
-        rating: review.rating,
-        reviewTitle: review.title,
-        reviewComment: review.comment,
-        reviewDate: new Date(review.createdAt).toLocaleDateString(),
-        reviewUrl: `${process.env.CLIENT_URL}/supplier/reviews/${review.id}`
-      }
-    });
-
-    console.log(` Review notification sent to supplier for review ${review.id}`);
-  } catch (error) {
-    console.error(' Review notification email failed:', error);
-    throw error;
-  }
+  return sendEmail({
+    to: supplier.email,
+    subject: `New ${review.rating}-Star Review Received`,
+    template: 'generic-notification',
+    data: {
+      header: `New ${review.rating}-Star Review`,
+      message: `${customer?.name || 'A traveller'} reviewed "${tour.title}": "${review.comment || review.title || ''}".`,
+      buttonText: 'View review',
+      buttonUrl: emailUrls.supplierReview(review.id),
+      userName: supplier.name,
+      supplierName: supplier.name,
+      tourTitle: tour.title,
+      reviewUrl: emailUrls.supplierReview(review.id),
+      reviewDate: new Date(review.createdAt).toLocaleDateString(),
+    },
+  });
 }
 
-/**
- * Send payout notification email
- */
 async function sendPayoutNotificationEmail(supplierId, payoutData) {
-  try {
-    const supplier = await prisma.user.findUnique({
-      where: { id: supplierId }
-    });
+  const supplier = await prisma.user.findUnique({ where: { id: supplierId } });
+  if (!supplier?.email) throw new Error(`Supplier ${supplierId} has no email`);
 
-    await sendEmail({
-      to: supplier.email,
-      subject: 'Payout Processed',
-      template: 'payout-notification',
-      data: {
-        supplierName: supplier.name,
-        payoutAmount: payoutData.amount,
-        currency: payoutData.currency,
-        payoutDate: new Date(payoutData.date).toLocaleDateString(),
-        payoutId: payoutData.id,
-        dashboardUrl: `${process.env.CLIENT_URL}/supplier/earnings`
-      }
-    });
-
-    console.log(`Payout notification sent to supplier ${supplierId}`);
-  } catch (error) {
-    console.error(' Payout notification email failed:', error);
-    throw error;
-  }
+  const currency = payoutData.currency || 'USD';
+  return sendEmail({
+    to: supplier.email,
+    subject: 'Payout Processed',
+    template: 'generic-notification',
+    data: {
+      header: 'Payout Processed',
+      message: `Your payout of ${fmt.formatCurrency(payoutData.amount, currency)} has been ${payoutData.statusLabel ? payoutData.statusLabel.toLowerCase() : 'processed'}.`,
+      buttonText: 'View earnings',
+      buttonUrl: emailUrls.supplierEarnings(),
+      userName: supplier.name,
+      supplierName: supplier.name,
+      payoutAmount: payoutData.amount,
+      currency,
+      payoutDate: new Date(payoutData.date).toLocaleDateString(),
+      payoutId: payoutData.id,
+      dashboardUrl: emailUrls.supplierEarnings(),
+    },
+  });
 }
 
-/**
- * Send supplier booking notification
- */
 async function sendSupplierBookingNotification(booking) {
   try {
-    const [supplier, tour, customer] = await Promise.all([
-      prisma.user.findUnique({ where: { id: booking.tour.supplierId } }),
-      prisma.tour.findUnique({ where: { id: booking.tourId } }),
-      prisma.user.findUnique({ where: { id: booking.customerId } })
-    ]);
-
-    if (!supplier || !tour) throw new Error('Supplier data incomplete');
-
-    const travelerCountValue = travelerCount(booking.travelers);
-
-    await sendEmail({
-      to: supplier.email,
-      subject: `New Booking — ${tour.title}`,
-      template: 'supplier-booking-notification',
-      data: {
-        supplierName: supplier.name,
-        tourTitle: tour.title,
-        bookingNumber: booking.bookingNumber,
-        customerName: customer?.name || 'Guest',
-        selectedDate: new Date(booking.selectedDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
-        selectedTime: booking.selectedTime,
-        travelerCount: travelerCountValue,
-        totalAmount: booking.total,
-        currency: booking.currency,
-        customerPhone: booking.travelers?.phoneNumber || '',
-        customerLocation: booking.travelers?.location || customer?.location || '',
-        dashboardUrl: `${process.env.CLIENT_URL}/supplier/bookings/${booking.id}`,
-        supportEmail: process.env.SUPPORT_EMAIL
-      }
-    });
+    return await sendSupplierNewBookingEmail(booking);
   } catch (error) {
     console.error('Supplier booking notification failed:', error);
   }
 }
 
-/**
- * Send team invitation email
- */
 async function sendTeamInviteEmail({ to, supplierName, role, inviteUrl, invitedBy }) {
   try {
-    await sendEmail({
+    return await sendEmail({
       to,
       subject: `You've been invited to join ${supplierName}'s team`,
       template: 'team-invite',
-      data: {
-        brandName: supplierName,
-        role,
-        inviteLink: inviteUrl,
-        invitedBy,
-      }
+      data: { brandName: supplierName, role, inviteLink: inviteUrl, invitedBy },
     });
   } catch (error) {
     console.error('Team invite email failed:', error);
@@ -385,50 +989,66 @@ async function sendTeamInviteEmail({ to, supplierName, role, inviteUrl, invitedB
   }
 }
 
-/**
- * Send team invitation revoked email
- */
 async function sendTeamInviteRevokedEmail({ to, supplierName, role, invitedBy }) {
   try {
-    await sendEmail({
+    return await sendEmail({
       to,
       subject: `Invitation to join ${supplierName}'s team has been revoked`,
       template: 'team-invite-revoked',
-      data: {
-        brandName: supplierName,
-        role,
-        invitedBy,
-      }
+      data: { brandName: supplierName, role, invitedBy },
     });
   } catch (error) {
     console.error('Team invite revoked email failed:', error);
   }
 }
 
-/**
- * Generate email content from template
- */
+// ---------------------------------------------------------------------------
+// Inline template generation (legacy names without a compiled document)
+// ---------------------------------------------------------------------------
+
 function generateEmailContent(template, data) {
   const templates = {
     'team-invite': generateTeamInviteEmail,
     'team-invite-revoked': generateTeamInviteRevokedEmail,
+    'generic-notification': generateGenericNotificationEmail,
   };
-
-  const templateFunction = templates[template];
-  if (!templateFunction) {
-    return { html: '<p>Email template not found</p>', text: 'Email template not found' };
-  }
-
-  return templateFunction(data);
+  const fn = templates[template];
+  if (!fn) return { html: '', text: '' };
+  return fn(data);
 }
 
-/**
- * Generate team invite email from local HTML template
- */
-function generateTeamInviteEmail(data) {
-  const fs = require('fs');
-  const path = require('path');
+function generateGenericNotificationEmail(data) {
+  const heading = data.header || data.title || 'Notification';
+  const body = data.message || data.messageBody || '';
+  const btnUrl = data.buttonUrl || data.buttonText && data.buttonUrl;
+  const btnText = data.buttonText || 'Open';
 
+  const buttonHtml = data.buttonUrl
+    ? `<tr><td align="center" style="padding:24px 40px 8px 40px;"><a href="${data.buttonUrl}" style="display:inline-block;background-color:#0E9F6E;color:#ffffff;font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;border-radius:10px;padding:14px 34px;">${data.buttonText || 'Open'}</a></td></tr>`
+    : '';
+
+  const metaRows = ['supplierBusinessName', 'approvalDate', 'reviewDate']
+    .filter((k) => data[k])
+    .map((k) => `<p style="margin:2px 0;font-size:13px;color:#64748B;">${data[k]}</p>`)
+    .join('');
+
+  return {
+    html: `<div style="font-family:'Plus Jakarta Sans',Arial,sans-serif;background:#F8FAFC;padding:32px 16px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center">
+      <table role="presentation" width="100%" style="max-width:640px;background:#ffffff;border:1px solid #E2E8F0;border-radius:16px;" cellspacing="0" cellpadding="0" border="0">
+        <tr><td align="center" style="padding:36px 40px 4px 40px;"><h1 style="margin:0 0 12px;font-size:28px;font-weight:800;color:#001F3F;text-align:center;">${heading}</h1></td></tr>
+        <tr><td align="center" style="padding:0 40px 4px 40px;">${metaRows}</td></tr>
+        <tr><td style="padding:16px 40px 0 40px;"><p style="margin:0;font-size:15px;color:#334155;line-height:1.7;text-align:center;">${body}</p></td></tr>
+        ${buttonHtml}
+        <tr><td align="center" style="padding:16px 40px 0 40px;"><span style="font-size:13px;color:#64748B;">Need help? <a href="mailto:{{supportEmail}}" style="color:#0E9F6E;">Contact support</a></span></td></tr>
+      </table>
+      <p style="margin:24px 0 0;text-align:center;font-size:11px;color:#94A3B8;">&copy; {{year}} {{brandName}}. All rights reserved.</p>
+      </td></tr></table></div>`,
+    text: `${heading}\n\n${body}\n${data.buttonUrl ? `Open: ${data.buttonUrl}` : ''}`,
+  };
+}
+
+function generateTeamInviteEmail(data) {
   const templatePath = path.join(__dirname, '..', 'sendgrid-templates', 'team-invite.html');
   let html = fs.readFileSync(templatePath, 'utf-8');
 
@@ -475,13 +1095,17 @@ function generateTeamInviteRevokedEmail(data) {
   return { html, text: `${data.invitedBy || 'A team member'} has revoked your invitation to join ${data.brandName || 'their team'} as ${data.role || 'member'}.` };
 }
 
+// ---------------------------------------------------------------------------
+// Printable ticket (unchanged — used by the ticket endpoint)
+// ---------------------------------------------------------------------------
+
 function generatePrintableTicketHtml(data) {
   const travelers = [];
   if (data.travelers?.adults) travelers.push(`${data.travelers.adults} Adult(s)`);
   if (data.travelers?.children) travelers.push(`${data.travelers.children} Child(ren)`);
   if (data.travelers?.infants) travelers.push(`${data.travelers.infants} Infant(s)`);
 
-  const includedHtml = (data.included || []).map(i => `<li>${i}</li>`).join('');
+  const includedHtml = (data.included || []).map((i) => `<li>${i}</li>`).join('');
 
   // Prefer the customer-selected pickup snapshot; fall back to the tour's
   // static meeting point so legacy bookings keep rendering.
@@ -554,9 +1178,45 @@ function generatePrintableTicketHtml(data) {
 </body></html>`;
 }
 
-
 module.exports = {
+  // core
   sendEmail,
+  renderTemplate,
+  getShellVars,
+
+  // customer
+  sendBookingConfirmedEmail,
+  sendReserveLaterConfirmedEmail,
+  sendPaymentReminderEmail,
+  sendPaymentSuccessfulEmail,
+  sendPaymentUnsuccessfulEmail,
+  sendCustomerBookingChangedEmail,
+  sendPickupDetailsUpdatedEmail,
+  sendPickupLocationRequiredEmail,
+  sendBookingReminderEmail,
+  sendCustomerCancelledFullRefundEmail,
+  sendCustomerCancelledNoRefundEmail,
+  sendRefundProcessingEmail,
+  sendRefundCompletedEmail,
+  sendSupplierChangedBookingEmail,
+  sendSupplierCancelledBookingEmail,
+  sendReviewRequestEmail,
+
+  // supplier
+  sendSupplierNewBookingEmail,
+  sendSupplierBookingChangedEmail,
+  sendSupplierContactUpdatedEmail,
+  sendSupplierPickupUpdatedEmail,
+  sendSupplierBookingReminderEmail,
+  sendSupplierCustomerCancelledFreeEmail,
+  sendSupplierCustomerCancelledLateEmail,
+  sendSupplierPlatformCancelledEmail,
+  sendSupplierCancellationRecordedEmail,
+  sendSupplierPayoutScheduledEmail,
+  sendSupplierPayoutCompletedEmail,
+  sendSupplierPayoutFailedEmail,
+
+  // legacy
   sendBookingConfirmationEmail,
   sendBookingCancellationEmail,
   sendSupplierStatusEmail,
@@ -566,5 +1226,5 @@ module.exports = {
   sendTeamInviteEmail,
   sendTeamInviteRevokedEmail,
   generatePrintableTicketHtml,
-  generateEmailContent
+  generateEmailContent,
 };

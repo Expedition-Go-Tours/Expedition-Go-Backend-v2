@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Payment received</title>
+<style>
+  body { margin:0; padding:0; width:100% !important; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; background-color:#F8FAFC; }
+  table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; border-collapse:collapse; }
+  img { border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; }
+  .font-main { font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  @media only screen and (max-width:640px) {
+    .container { width:100% !important; }
+    .pad { padding-left:20px !important; padding-right:20px !important; }
+    .pad-top { padding-top:28px !important; }
+    .stack { display:block !important; width:100% !important; box-sizing:border-box !important; }
+    .stack-td { display:block !important; width:100% !important; box-sizing:border-box !important; text-align:left !important; }
+    .btn { width:100% !important; display:block !important; text-align:center !important; box-sizing:border-box !important; }
+    .btn-wrap { width:100% !important; display:block !important; text-align:center !important; }
+    .h1 { font-size:24px !important; }
+    .h2 { font-size:18px !important; }
+    .body-lg { font-size:16px !important; }
+    .hide-mobile { display:none !important; }
+  }
+</style>
+</head>
+<body style="margin:0;padding:0;background-color:#F8FAFC;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+    <tr>
+      <td align="center" style="padding:32px 16px;" class="pad">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="container" style="max-width:640px;">
+          <!-- Preheader (hidden) -->
+          <tr><td style="display:none;max-height:0;overflow:hidden;mso-hide:all;">{{preheader}}</td></tr>
+          <!-- Header -->
+          <tr>
+            <td align="center" style="padding:0 0 24px 0;">
+              <img src="{{logoUrl}}" alt="{{brandName}}" width="170" style="display:block;width:170px;max-width:170px;height:auto;border:0;outline:none;">
+            </td>
+          </tr>
+          <!-- Card -->
+          <tr>
+            <td style="background-color:#FFFFFF;border:1px solid #E2E8F0;border-radius:16px;padding:0;">
+              
+      
+  <tr><td class="pad" style="padding:36px 40px 4px 40px;">
+    <h1 class="h1 font-main" style="margin:0 0 12px 0;font-size:28px;font-weight:800;color:#001F3F;line-height:1.25;text-align:center;">Your payment was successful</h1>
+    
+    <tr><td align="center" style="padding:0px 0 0 0;">
+         <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
+           <tr><td style="background-color:#E6F6F0;border-radius:20px;padding:6px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:700;color:#00A669;line-height:1.2;">&#10003;&nbsp;&nbsp;Paid</td></tr>
+         </table>
+       </td></tr>
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:16px 40px 0 40px;">
+    <p style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#334155;line-height:1.7;text-align:left;">We successfully received <strong>{{paymentAmountLabel}}</strong> for your booking.</p>
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:28px 40px 4px 40px;">
+    <div class="h2 font-main" style="font-size:15px;font-weight:800;color:#001F3F;letter-spacing:0.4px;text-transform:uppercase;line-height:1.3;">Payment details</div>
+  </td></tr>
+      {{#if paymentReference}}
+      <tr>
+        <td style="padding:7px 40px 7px 40px;" class="pad">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+            <tr>
+              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#64748B;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Payment reference</td>
+              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span style="color:#001F3F;font-weight:600;">{{paymentReference}}</span></td>
+            </tr>
+          </table>
+        </td>
+      </tr>{{/if}}
+      <tr>
+        <td style="padding:7px 40px 7px 40px;" class="pad">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+            <tr>
+              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#64748B;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Amount paid</td>
+              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span style="color:#001F3F;font-weight:600;">{{paymentAmountLabel}}</span></td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:7px 40px 7px 40px;" class="pad">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+            <tr>
+              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#64748B;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Outstanding balance</td>
+              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span style="color:#001F3F;font-weight:600;">{{outstandingBalanceLabel}}</span></td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:7px 40px 7px 40px;" class="pad">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+            <tr>
+              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#64748B;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Payment status</td>
+              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span style="color:#001F3F;font-weight:600;">Paid</span></td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      
+  <tr><td class="pad" style="padding:28px 40px 8px 40px;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
+      <tr>
+        <td style="padding:0 8px 0 0;vertical-align:middle;">
+          <a href="{{bookingUrl}}" class="btn" style="display:inline-block;background-color:#00A669;color:#ffffff;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">View receipt</a>
+        </td>
+        <td style="padding:0 8px 0 0;vertical-align:middle;">
+          <a href="{{bookingUrl}}" class="btn" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">View booking</a>
+        </td></tr>
+    </table>
+  </td></tr>
+    
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td align="center" style="padding:28px 20px 0 20px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="center" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#64748B;line-height:1.6;padding:0 0 6px 0;">
+                    Need help? <a href="mailto:{{supportEmail}}" style="color:#00A669;text-decoration:none;font-weight:600;">Contact support</a>
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;color:#94A3B8;line-height:1.6;">
+                    &copy; {{year}} {{brandName}}. All rights reserved.
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

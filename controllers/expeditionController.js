@@ -1179,27 +1179,18 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
   // Create Stripe PaymentIntent (no charge yet — confirm: false)
   let paymentIntent;
   try {
-    // Idempotency key MUST be unique per distinct request. Stripe rejects a key
-    // that was already used with different parameters — so include everything
-    // that changes the charge: time slot, total, payment method and traveler
-    // mix. Identical retries still replay the same PaymentIntent (safe).
-    const travelerHash = crypto
-      .createHash('md5')
-      .update(JSON.stringify(travelers))
-      .digest('hex');
-    const idempotencyKey = crypto
-      .createHash('md5')
-      .update(`expedition:${customerId}:${tourId}:${selectedDate}:${selectedTime || ''}:${Math.round(pricing.total * 100)}:${req.body.paymentMethodId || ''}:${travelerHash}`)
-      .digest('hex');
     // Attach a Stripe customer if one exists or can be created lazily; `null`
     // means "charge without a customer" (PaymentIntents don't require one).
+    // The idempotency key is derived inside createPaymentIntent from the final
+    // request body, so a retry whose customer attachment changed (async
+    // creation completing in between) can never collide with the earlier
+    // customer-less request.
     const stripeCustomerId = await ensureStripeCustomer(req.user);
     paymentIntent = await createPaymentIntent({
       amount: Math.round(pricing.total * 100),
       currency: pricing.currency,
       customerId: stripeCustomerId,
       paymentMethodId: req.body.paymentMethodId,
-      idempotencyKey,
       confirm: false,
       metadata: {
         customerId,

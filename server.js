@@ -166,6 +166,17 @@ async function setupQueueWorkers() {
     enqueueCleanup('charge-pay-later-bookings').catch((err) => logger.warn('[scheduler] charge-pay-later-bookings failed:', err?.message));
   }, 30 * 60 * 1000));
 
+  // Plan + dispatch time-based booking reminder emails (payment due, 24h-before,
+  // pickup required, review request). Planning runs hourly; dispatch every 15
+  // minutes so due reminders go out on time. Both are idempotent.
+  intervals.push(setInterval(() => {
+    enqueueCleanup('plan-booking-reminders').catch((err) => logger.warn('[scheduler] plan-booking-reminders failed:', err?.message));
+  }, 60 * 60 * 1000));
+
+  intervals.push(setInterval(() => {
+    enqueueCleanup('dispatch-booking-reminders').catch((err) => logger.warn('[scheduler] dispatch-booking-reminders failed:', err?.message));
+  }, 15 * 60 * 1000));
+
   intervals.push(setInterval(() => {
     enqueueAggregation('refresh-popularity').catch((err) => logger.warn('[scheduler] refresh-popularity failed:', err?.message));
   }, 60 * 60 * 1000));
@@ -193,6 +204,8 @@ async function setupQueueWorkers() {
   enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] startup cleanup-expired-cart failed:', err?.message));
   enqueueCleanup('cleanup-stale-bookings').catch((err) => logger.warn('[scheduler] startup cleanup-stale-bookings failed:', err?.message));
   enqueueCleanup('charge-pay-later-bookings').catch((err) => logger.warn('[scheduler] startup charge-pay-later-bookings failed:', err?.message));
+  enqueueCleanup('plan-booking-reminders').catch((err) => logger.warn('[scheduler] startup plan-booking-reminders failed:', err?.message));
+  enqueueCleanup('dispatch-booking-reminders').catch((err) => logger.warn('[scheduler] startup dispatch-booking-reminders failed:', err?.message));
   enqueueAggregation('refresh-popularity').catch((err) => logger.warn('[scheduler] startup refresh-popularity failed:', err?.message));
   enqueueAggregation('cleanup-events').catch((err) => logger.warn('[scheduler] startup cleanup-events failed:', err?.message));
   enqueueCleanup('cleanup-notifications').catch((err) => logger.warn('[scheduler] startup cleanup-notifications failed:', err?.message));

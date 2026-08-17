@@ -467,6 +467,46 @@ describe('createPaymentIntent customer guard', () => {
   });
 });
 
+describe('createPaymentIntent derived idempotency key', () => {
+  beforeEach(() => {
+    mockStripeInstance.paymentIntents.create.mockClear();
+    mockStripeInstance.paymentIntents.create.mockResolvedValue({ id: 'pi_123', client_secret: 'secret_123' });
+  });
+
+  const keyOf = (call) => call[1]?.idempotencyKey;
+
+  it('uses an explicit idempotencyKey verbatim', async () => {
+    await createPaymentIntent({ amount: 1000, customerId: 'cus_abc123', idempotencyKey: 'client-key-1' });
+    expect(keyOf(mockStripeInstance.paymentIntents.create.mock.calls[0])).toBe('client-key-1');
+  });
+
+  it('derives a stable key for identical requests', async () => {
+    await createPaymentIntent({ amount: 1000, customerId: 'cus_abc123', paymentMethodId: 'pm_1' });
+    await createPaymentIntent({ amount: 1000, customerId: 'cus_abc123', paymentMethodId: 'pm_1' });
+    const [first, second] = mockStripeInstance.paymentIntents.create.mock.calls;
+    expect(keyOf(first)).toBe(keyOf(second));
+    expect(keyOf(first)).toMatch(/^pi-create:[0-9a-f]{64}$/);
+  });
+
+  it('derives a DIFFERENT key when a customer is attached on retry', async () => {
+    // Regression: a retry whose customer attachment changed (async customer
+    // creation completing in between) must not reuse the earlier key — Stripe
+    // rejects a key reused with different parameters.
+    await createPaymentIntent({ amount: 1000, customerId: null, paymentMethodId: 'pm_1' });
+    await createPaymentIntent({ amount: 1000, customerId: 'cus_abc123', paymentMethodId: 'pm_1' });
+    const [first, second] = mockStripeInstance.paymentIntents.create.mock.calls;
+    expect(keyOf(first)).not.toBe(keyOf(second));
+  });
+
+  it('derives a different key when the amount or payment method changes', async () => {
+    await createPaymentIntent({ amount: 1000, paymentMethodId: 'pm_1' });
+    await createPaymentIntent({ amount: 2000, paymentMethodId: 'pm_1' });
+    await createPaymentIntent({ amount: 1000, paymentMethodId: 'pm_2' });
+    const keys = mockStripeInstance.paymentIntents.create.mock.calls.map(keyOf);
+    expect(new Set(keys).size).toBe(3);
+  });
+});
+
 describe('createStripeCustomer', () => {
   beforeEach(() => {
     mockStripeInstance.customers.create.mockReset();

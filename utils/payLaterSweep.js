@@ -36,14 +36,13 @@ async function settleBooking(booking, intent) {
   }
 
   enqueueEmail({
-    type: 'booking-confirmation',
+    type: 'payment-successful',
     bookingId: booking.id,
     data: {
-      brandName: process.env.EXPEDITION_BRAND_NAME || 'Expedition Go Tours',
-      logoUrl: process.env.EXPEDITION_LOGO_URL || process.env.LOGO_URL,
-      supportEmail: process.env.EXPEDITION_SUPPORT_EMAIL || process.env.SUPPORT_EMAIL || 'support@expeditiongo.com',
+      amount: booking.total,
+      paymentReference: intent?.id,
     },
-  }).catch((err) => console.error('[PayLater] Confirmation email failed:', err.message));
+  }).catch((err) => console.error('[PayLater] Payment successful email failed:', err.message));
 
   enqueueNotification({
     userId: booking.customerId,
@@ -65,6 +64,15 @@ async function settleBooking(booking, intent) {
 }
 
 async function notifyCustomerToCompletePayment(booking) {
+  enqueueEmail({
+    type: 'payment-unsuccessful',
+    bookingId: booking.id,
+    data: {
+      amount: booking.total,
+      deadline: booking.selectedDate,
+    },
+  }).catch((err) => console.error('[PayLater] Payment action email failed:', err.message));
+
   enqueueNotification({
     userId: booking.customerId,
     type: 'PAYMENT_ACTION_REQUIRED',
@@ -75,6 +83,16 @@ async function notifyCustomerToCompletePayment(booking) {
 }
 
 async function notifyPaymentFailed(booking, reason) {
+  enqueueEmail({
+    type: 'payment-unsuccessful',
+    bookingId: booking.id,
+    data: {
+      amount: booking.total,
+      deadline: booking.selectedDate,
+      failureReason: reason,
+    },
+  }).catch((err) => console.error('[PayLater] Payment failed email failed:', err.message));
+
   enqueueNotification({
     userId: booking.customerId,
     type: 'PAYMENT_FAILED',
@@ -111,6 +129,22 @@ async function cancelBooking(booking, reason) {
     },
   });
   if (updated.count === 0) return;
+
+  enqueueEmail({
+    type: 'customer-cancelled-no-refund',
+    bookingId: booking.id,
+    data: {
+      cancelledAt: new Date().toISOString(),
+      cancellationFee: booking.total,
+      refundAmount: 0,
+    },
+  }).catch((err) => console.error('[PayLater] Cancellation email failed:', err.message));
+
+  enqueueEmail({
+    type: 'supplier-customer-cancelled-free',
+    bookingId: booking.id,
+    data: { cancelledAt: new Date().toISOString() },
+  }).catch((err) => console.error('[PayLater] Supplier cancellation email failed:', err.message));
 
   enqueueNotification({
     userId: booking.customerId,

@@ -89,16 +89,108 @@ async function enqueueEvent(eventData) {
 }
 
 /**
+ * Booking include used by every booking-scoped email job so workers never
+ * re-fetch the same relations per send.
+ */
+const EMAIL_BOOKING_INCLUDE = {
+  customer: { select: { id: true, name: true, email: true, phone: true, location: true } },
+  tour: {
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      photos: true,
+      productContent: true,
+      bookingAndTickets: true,
+      categorization: true,
+      durationMinutes: true,
+      supplier: { select: { id: true, name: true, email: true, phone: true } },
+    },
+  },
+};
+
+/**
+ * Map a typed email job to its send function + the payload shape it accepts.
+ * Each entry is [fnName, needsBooking] — jobs pass bookingId, the worker
+ * fetches the booking (with relations) and forwards job.data as extras.
+ */
+const EMAIL_JOB_DISPATCH = {
+  // customer
+  'booking-confirmed': ['sendBookingConfirmedEmail', true],
+  'reserve-later-confirmed': ['sendReserveLaterConfirmedEmail', true],
+  'payment-reminder': ['sendPaymentReminderEmail', true],
+  'payment-successful': ['sendPaymentSuccessfulEmail', true],
+  'payment-unsuccessful': ['sendPaymentUnsuccessfulEmail', true],
+  'customer-booking-changed': ['sendCustomerBookingChangedEmail', true],
+  'pickup-details-updated': ['sendPickupDetailsUpdatedEmail', true],
+  'pickup-location-required': ['sendPickupLocationRequiredEmail', true],
+  'booking-reminder': ['sendBookingReminderEmail', true],
+  'customer-cancelled-full-refund': ['sendCustomerCancelledFullRefundEmail', true],
+  'customer-cancelled-no-refund': ['sendCustomerCancelledNoRefundEmail', true],
+  'refund-processing': ['sendRefundProcessingEmail', true],
+  'refund-completed': ['sendRefundCompletedEmail', true],
+  'supplier-changed-booking': ['sendSupplierChangedBookingEmail', true],
+  'supplier-cancelled-booking': ['sendSupplierCancelledBookingEmail', true],
+  'review-request': ['sendReviewRequestEmail', true],
+  // supplier
+  'supplier-new-booking': ['sendSupplierNewBookingEmail', true],
+  'supplier-booking-changed': ['sendSupplierBookingChangedEmail', true],
+  'supplier-customer-contact-updated': ['sendSupplierContactUpdatedEmail', true],
+  'supplier-pickup-updated': ['sendSupplierPickupUpdatedEmail', true],
+  'supplier-booking-reminder': ['sendSupplierBookingReminderEmail', true],
+  'supplier-customer-cancelled-free': ['sendSupplierCustomerCancelledFreeEmail', true],
+  'supplier-customer-cancelled-late': ['sendSupplierCustomerCancelledLateEmail', true],
+  'supplier-platform-cancelled': ['sendSupplierPlatformCancelledEmail', true],
+  'supplier-cancellation-recorded': ['sendSupplierCancellationRecordedEmail', true],
+};
+
+/**
  * Process an email job directly (used by both the worker and the fallback
  * when Redis/BullMQ is unavailable).  This mirrors the logic in the EMAIL
  * WORKER section below so there is a single source of truth.
  */
 async function processEmailJob(job) {
   const prisma = require('./prismaClient');
+  const emailService = require('./emailService');
+
+  // ── New 28-template dispatch ──────────────────────────────────────────
+  const dispatch = EMAIL_JOB_DISPATCH[job.type];
+  if (dispatch) {
+    const [fnName, needsBooking] = dispatch;
+    let booking = null;
+    if (needsBooking) {
+      booking = await prisma.booking.findUnique({
+        where: { id: job.bookingId },
+        include: EMAIL_BOOKING_INCLUDE,
+      });
+      if (!booking) throw new Error(`Booking ${job.bookingId} not found`);
+    }
+    await emailService[fnName](booking, job.data || {});
+    return;
+  }
+
+  // ── Payout emails need booking + payout payloads ──────────────────────
+  if (job.type === 'supplier-payout-scheduled') {
+    const booking = await prisma.booking.findUnique({ where: { id: job.bookingId }, include: EMAIL_BOOKING_INCLUDE });
+    if (!booking) throw new Error(`Booking ${job.bookingId} not found`);
+    await emailService.sendSupplierPayoutScheduledEmail({ booking, ...(job.data || {}) });
+    return;
+  }
+  if (job.type === 'supplier-payout-completed') {
+    const booking = await prisma.booking.findUnique({ where: { id: job.bookingId }, include: EMAIL_BOOKING_INCLUDE });
+    if (!booking) throw new Error(`Booking ${job.bookingId} not found`);
+    await emailService.sendSupplierPayoutCompletedEmail({ booking, ...(job.data || {}) });
+    return;
+  }
+  if (job.type === 'supplier-payout-failed') {
+    const booking = await prisma.booking.findUnique({ where: { id: job.bookingId }, include: EMAIL_BOOKING_INCLUDE });
+    if (!booking) throw new Error(`Booking ${job.bookingId} not found`);
+    await emailService.sendSupplierPayoutFailedEmail({ booking, ...(job.data || {}) });
+    return;
+  }
 
   switch (job.type) {
     case 'booking-confirmation': {
-      const { sendBookingConfirmationEmail } = require('./emailService');
       const booking = await prisma.booking.findUnique({
         where: { id: job.bookingId },
         include: {
@@ -113,53 +205,38 @@ async function processEmailJob(job) {
         },
       });
       if (!booking) throw new Error(`Booking ${job.bookingId} not found`);
-      await sendBookingConfirmationEmail(booking);
+      await emailService.sendBookingConfirmationEmail(booking);
       break;
     }
 
     case 'booking-cancellation': {
-      const { sendBookingCancellationEmail } = require('./emailService');
       const booking = await prisma.booking.findUnique({
         where: { id: job.bookingId },
-        include: {
-          customer: { select: { id: true, name: true, email: true } },
-          tour: { select: { id: true, title: true } },
-        },
+        include: EMAIL_BOOKING_INCLUDE,
       });
       if (!booking) throw new Error(`Booking ${job.bookingId} not found`);
-      await sendBookingCancellationEmail(booking, job.refundAmount);
+      await emailService.sendBookingCancellationEmail(booking, job.refundAmount);
       break;
     }
 
     case 'supplier-booking-notification': {
-      const { sendSupplierBookingNotification } = require('./emailService');
       const booking = await prisma.booking.findUnique({
         where: { id: job.bookingId },
-        include: {
-          customer: { select: { id: true, name: true, email: true, phone: true } },
-          tour: {
-            select: {
-              id: true, title: true,
-              supplier: { select: { id: true, name: true, email: true } },
-            },
-          },
-        },
+        include: EMAIL_BOOKING_INCLUDE,
       });
       if (!booking) throw new Error(`Booking ${job.bookingId} not found`);
-      await sendSupplierBookingNotification(booking);
+      await emailService.sendSupplierBookingNotification(booking);
       break;
     }
 
     case 'supplier-status-email': {
-      const { sendSupplierStatusEmail } = require('./emailService');
-      await sendSupplierStatusEmail(job.email, job.status, job.data || {});
+      await emailService.sendSupplierStatusEmail(job.email, job.status, job.data || {});
       break;
     }
 
     default: {
       const { to, subject, template, data, attachments } = job;
-      const { sendEmail } = require('./emailService');
-      await sendEmail({ to, subject, template, data, attachments });
+      await emailService.sendEmail({ to, subject, template, data, attachments });
     }
   }
 }
@@ -425,6 +502,16 @@ function registerWorkers() {
       case 'charge-pay-later-bookings': {
         const { chargePayLaterBookings } = require('./payLaterSweep');
         await chargePayLaterBookings();
+        break;
+      }
+      case 'plan-booking-reminders': {
+        const { planBookingReminders } = require('./bookingReminders');
+        await planBookingReminders();
+        break;
+      }
+      case 'dispatch-booking-reminders': {
+        const { dispatchDueReminders } = require('./bookingReminders');
+        await dispatchDueReminders();
         break;
       }
       case 'cleanup-notifications': {

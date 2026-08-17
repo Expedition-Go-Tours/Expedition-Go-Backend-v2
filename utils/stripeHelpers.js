@@ -12,6 +12,7 @@
  * @version 1.0.0
  */
 
+const crypto = require('crypto');
 const Stripe = require('stripe');
 
 let _stripe = null;
@@ -44,6 +45,22 @@ function isValidStripeCustomerId(id) {
 }
 
 /**
+ * Deterministic string form of a JSON value (recursive key sort) so identical
+ * logical objects always serialize identically regardless of key insertion
+ * order.
+ */
+function canonicalStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalStringify).join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    const keys = Object.keys(value).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalStringify(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
  * Create a Payment Intent with commission split
  */
 async function createPaymentIntent({
@@ -73,7 +90,14 @@ async function createPaymentIntent({
       paymentIntentData.customer = customerId;
     }
 
-    const options = idempotencyKey ? { idempotencyKey } : {};
+    // Idempotency: an explicit key wins, otherwise derive one from the FINAL
+    // request body so the key changes iff the request changes. A hand-picked
+    // field list would silently break whenever a body field is added or
+    // removed between retries (e.g. a customer attached once async creation
+    // completes) — Stripe rejects a reused key with different parameters.
+    const options = idempotencyKey
+      ? { idempotencyKey }
+      : { idempotencyKey: `pi-create:${crypto.createHash('sha256').update(canonicalStringify(paymentIntentData)).digest('hex')}` };
     const paymentIntent = await getStripe().paymentIntents.create(paymentIntentData, options);
 
     console.log(` Payment Intent created: ${paymentIntent.id} for amount: ${amount}`);
@@ -346,17 +370,10 @@ async function processStripeWebhook(event) {
 
   for (const booking of bookings) {
     const isExpedition = booking.source === 'EXPEDITION';
-    const emailData = isExpedition
-      ? {
-          brandName: process.env.EXPEDITION_BRAND_NAME || 'Expedition Go Tours',
-          logoUrl: process.env.EXPEDITION_LOGO_URL || process.env.LOGO_URL,
-          supportEmail: process.env.EXPEDITION_SUPPORT_EMAIL || process.env.SUPPORT_EMAIL || 'support@expeditiongo.com',
-        }
-      : {};
 
-    enqueueEmail({ type: 'booking-confirmation', bookingId: booking.id, data: emailData })
+    enqueueEmail({ type: 'booking-confirmed', bookingId: booking.id })
       .catch((err) => console.error('[Email] Booking confirmation failed:', err.message));
-    enqueueEmail({ type: 'supplier-booking-notification', bookingId: booking.id })
+    enqueueEmail({ type: 'supplier-new-booking', bookingId: booking.id })
       .catch((err) => console.error('[Email] Supplier notification failed:', err.message));
 
     if (isExpedition) {
@@ -398,13 +415,13 @@ async function processStripeWebhook(event) {
   // to the customer. Best-effort: failures are logged so an operator can
   // follow up, but they never affect the already-committed booking state.
   for (const booking of oversoldBookings) {
-    const wasExpedition = booking.source === 'EXPEDITION';
     createRefund(booking.stripePaymentIntentId)
       .then((refund) => {
         console.log(` Refunded oversold booking ${booking.id}: ${refund.id}`);
         enqueueEmail({
-          type: wasExpedition ? 'expedition-booking-refunded' : 'booking-refunded',
+          type: 'refund-completed',
           bookingId: booking.id,
+          data: { refundReference: refund.id, refundedAt: new Date().toISOString() },
         }).catch(() => {});
       })
       .catch((err) => {

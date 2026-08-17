@@ -491,7 +491,11 @@ exports.createBooking = catchAsync(async (req, res, next) => {
   }
 
   // Create Stripe PaymentIntent FIRST (outside DB transaction — avoids holding connection open during network I/O)
-  const idempotencyKey = req.headers['idempotency-key'] || `booking:${customerId}:${Date.now()}`;
+  // A client-supplied idempotency key wins; otherwise createPaymentIntent
+  // derives one from the final request body (unique per distinct charge, so a
+  // retry that gained a Stripe customer can never collide with the earlier
+  // customer-less request).
+  const idempotencyKey = req.headers['idempotency-key'];
   // Attach a Stripe customer if one exists or can be created lazily; `null`
   // means "charge without a customer" (PaymentIntents don't require one).
   const stripeCustomerId = await ensureStripeCustomer(req.user);

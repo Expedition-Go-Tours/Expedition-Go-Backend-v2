@@ -546,6 +546,15 @@ describe('expeditionController', () => {
       await controller.confirmBooking(req, res, next);
 
       expect(createPaymentIntent).toHaveBeenCalled();
+      // Idempotency key is derived inside createPaymentIntent from the final
+      // body — the controller must not hand-roll one (Stripe rejects a key
+      // reused with different parameters, e.g. when the customer attachment
+      // changes between retries).
+      expect(createPaymentIntent.mock.calls[0][0]).toEqual(expect.objectContaining({
+        customerId: 'cus_123',
+        confirm: false,
+      }));
+      expect(createPaymentIntent.mock.calls[0][0]).not.toHaveProperty('idempotencyKey');
       expect(res.status).toHaveBeenCalledWith(201);
       expect(enqueueNotification).toHaveBeenCalled();
       expect(enqueueEvent).toHaveBeenCalled();

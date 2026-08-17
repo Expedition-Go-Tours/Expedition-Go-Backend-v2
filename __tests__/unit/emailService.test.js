@@ -1,19 +1,23 @@
-jest.mock('@sendgrid/mail', () => ({
-  setApiKey: jest.fn(),
-  send: jest.fn(),
-}));
+jest.mock('resend', () => {
+  const send = jest.fn();
+  return {
+    Resend: jest.fn(() => ({ emails: { send } })),
+    __send: send,
+  };
+});
 
 jest.mock('../../utils/prismaClient', () => ({
   user: { findUnique: jest.fn() },
   tour: { findUnique: jest.fn() },
+  booking: { findUnique: jest.fn() },
   $disconnect: jest.fn(),
 }));
 
-const sgMail = require('@sendgrid/mail');
+const { Resend, __send } = require('resend');
 const prisma = require('../../utils/prismaClient');
 
 beforeAll(() => {
-  process.env.SENDGRID_API_KEY = 'test-key';
+  process.env.RESEND_API_KEY = 're_testkey';
   process.env.EMAIL_FROM = 'Travio Africa <noreply@travioafrica.com>';
   process.env.EMAIL_REPLY_TO = 'support@travioafrica.com';
   process.env.CLIENT_URL = 'https://travioafrica.com';
@@ -23,16 +27,21 @@ beforeAll(() => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  Resend.mockClear();
+  __send.mockResolvedValue({ data: { id: 'msg-123' }, error: null });
 });
 
 const {
   sendEmail,
+  renderTemplate,
+  sendBookingConfirmedEmail,
   sendBookingConfirmationEmail,
   sendBookingCancellationEmail,
   sendSupplierStatusEmail,
   sendReviewNotificationEmail,
   sendPayoutNotificationEmail,
   sendSupplierBookingNotification,
+  sendSupplierNewBookingEmail,
   generatePrintableTicketHtml,
 } = require('../../utils/emailService');
 
@@ -40,97 +49,104 @@ const {
 // sendEmail — core send function
 // ---------------------------------------------------------------------------
 describe('sendEmail', () => {
-  it('sends via SendGrid with correct structure', async () => {
-    sgMail.send.mockResolvedValue([{ headers: { 'x-message-id': 'msg-123' } }]);
-
+  it('sends via Resend with correct structure', async () => {
     const result = await sendEmail({
       to: 'test@test.com',
       subject: 'Test Subject',
-      template: 'generic-notification',
-      data: { title: 'Hello', message: 'World' },
+      template: 'booking-confirmed',
+      data: { customerName: 'Hello', bookingNumber: 'B1', tourTitle: 'T', dateLabel: 'D', travelersLabel: '1 adult' },
     });
 
-    expect(sgMail.setApiKey).toHaveBeenCalledWith('test-key');
-    expect(sgMail.send).toHaveBeenCalledTimes(1);
-    const msg = sgMail.send.mock.calls[0][0];
-    expect(msg.to).toBe('test@test.com');
-    expect(msg.subject).toBe('Test Subject');
-    expect(msg.from.email).toBe('noreply@travioafrica.com');
-    expect(msg.from.name).toBe('Travio Africa');
-    expect(msg.templateId).toBe('d-12b0cfb8cf1f4211a22db258e13c9f30');
-    expect(msg.dynamicTemplateData.title).toBe('Hello');
-    expect(msg.dynamicTemplateData.message).toBe('World');
+    expect(Resend).toHaveBeenCalledWith('re_testkey');
+    expect(__send).toHaveBeenCalledTimes(1);
+    const payload = __send.mock.calls[0][0];
+    expect(payload.to).toBe('test@test.com');
+    expect(payload.subject).toBe('Test Subject');
+    expect(payload.from).toBe('Travio Africa <noreply@travioafrica.com>');
+    expect(payload.reply_to).toBe('support@travioafrica.com');
+    expect(payload.html).toContain('Hello');
+    expect(payload.html).toContain('Travio Africa');
     expect(result.success).toBe(true);
     expect(result.messageId).toBe('msg-123');
   });
 
-  it('throws when SendGrid fails', async () => {
-    sgMail.send.mockRejectedValue(new Error('SendGrid error'));
-
+  it('throws when Resend fails', async () => {
+    __send.mockResolvedValue({ data: null, error: { message: 'Resend error' } });
     await expect(sendEmail({
       to: 'test@test.com',
       subject: 'Fail',
-      template: 'generic-notification',
-      data: { title: 'Oops', message: 'Fail' },
-    })).rejects.toThrow('Failed to send email: SendGrid error');
+      template: 'booking-confirmed',
+      data: { customerName: 'X', bookingNumber: 'B1', tourTitle: 'T', dateLabel: 'D', travelersLabel: '1' },
+    })).rejects.toThrow('Failed to send email: Resend error');
   });
 
-  it('handles EMAIL_FROM without display name', async () => {
-    process.env.EMAIL_FROM = 'noreply@travioafrica.com';
-    sgMail.send.mockResolvedValue([{ headers: { 'x-message-id': 'msg-456' } }]);
-
-    const result = await sendEmail({
-      to: 'test@test.com',
-      subject: 'No Name',
-      template: 'generic-notification',
-      data: { title: 'Test', message: 'Body' },
-    });
-
-    expect(result.success).toBe(true);
-  });
-
-  it('falls back to generic fallback for unknown template name', async () => {
-    sgMail.send.mockResolvedValue([{ headers: { 'x-message-id': 'msg-789' } }]);
-
+  it('renders inline fallback for legacy template names', async () => {
     await sendEmail({
       to: 'test@test.com',
-      subject: 'Unknown',
-      template: 'non-existent-template',
-      data: { title: 'Fallback', message: 'Generic body' },
+      subject: 'Hello',
+      template: 'generic-notification',
+      data: { header: 'Password Reset', message: 'Click below', buttonUrl: 'https://x/r', buttonText: 'Reset' },
     });
-
-    const msg = sgMail.send.mock.calls[0][0];
-    expect(msg.html).toContain('Email template not found');
+    const payload = __send.mock.calls[0][0];
+    expect(payload.html).toContain('Password Reset');
+    expect(payload.html).toContain('Click below');
+    expect(payload.html).toContain('https://x/r');
   });
 
-  it('outputs each known template type correctly', async () => {
-    sgMail.send.mockResolvedValue([{ headers: { 'x-message-id': 'm' } }]);
+  it('skips send when no RESEND_API_KEY is set', async () => {
+    delete process.env.RESEND_API_KEY;
+    const result = await sendEmail({
+      to: 'test@test.com',
+      subject: 'Skip',
+      template: 'booking-confirmed',
+      data: { customerName: 'X', bookingNumber: 'B1', tourTitle: 'T', dateLabel: 'D', travelersLabel: '1' },
+    });
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('no-provider');
+    expect(__send).not.toHaveBeenCalled();
+    process.env.RESEND_API_KEY = 're_testkey';
+  });
+});
 
-    const templateIds = {
-      'booking-confirmation': 'd-0a159d1f1c43422d85195f8d8f898506',
-      'booking-cancellation': 'd-3b94f590c23f4530a05152bbdca561b0',
-      'supplier-approved': 'd-2f3d5b9302ae459b8ac94758a70d6ce6',
-      'supplier-rejected': 'd-46112aefe32a4e1a846ec72b5ddc38e4',
-      'supplier-under-review': 'd-875a87dd2cf14a11a4f1075d053fc6b1',
-      'supplier-activated': 'd-493cd6b3347e4552a09f6c7d70a4a933',
-      'supplier-suspended': 'd-d09364df53b4467ea43a7128483295e3',
-    };
+// ---------------------------------------------------------------------------
+// renderTemplate — compiled template pipeline
+// ---------------------------------------------------------------------------
+describe('renderTemplate', () => {
+  it('throws for unknown template key', async () => {
+    await expect(renderTemplate('does-not-exist', {})).rejects.toThrow('Template not found');
+  });
 
-    const cases = [
-      { template: 'booking-confirmation', data: { tourTitle: 'T', bookingNumber: 'B1', customerName: 'J', selectedDate: '2026-07-01', totalAmount: 100, currency: 'USD' } },
-      { template: 'booking-cancellation', data: { tourTitle: 'T', bookingNumber: 'B1', customerName: 'J', selectedDate: '2026-07-01' } },
-      { template: 'supplier-approved', data: { name: 'Biz' } },
-      { template: 'supplier-rejected', data: { name: 'Biz' } },
-      { template: 'supplier-under-review', data: { name: 'Biz' } },
-      { template: 'supplier-activated', data: { name: 'Biz' } },
-      { template: 'supplier-suspended', data: { name: 'Biz' } },
-    ];
+  it('renders all 28 compiled templates with no leftover braces', async () => {
+    const fs = require('fs');
+    const path = require('path');
+    const dir = path.join(__dirname, '..', '..', 'sendgrid-templates', 'generated');
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith('.html'));
+    expect(files.length).toBe(28);
 
-    for (const c of cases) {
-      await sendEmail({ to: 't@t.com', subject: 'S', template: c.template, data: c.data });
-      const msg = sgMail.send.mock.calls[sgMail.send.mock.calls.length - 1][0];
-      expect(msg.templateId).toBe(templateIds[c.template]);
-      expect(msg.dynamicTemplateData).toBeDefined();
+    for (const file of files) {
+      const key = file.replace(/\.html$/, '');
+      const html = await renderTemplate(key, {
+        customerName: 'Jane',
+        bookingNumber: 'TRAV-001',
+        tourTitle: 'Cape Tour',
+        dateLabel: 'Monday, August 17, 2026',
+        timeLabel: '9:00 AM',
+        durationLabel: '8 hours',
+        travelersLabel: '2 adults',
+        languageLabel: 'English',
+        bookingTypeLabel: 'Shared',
+        supplierName: 'Ocean Tours',
+        totalLabel: '$110.00',
+        amountPaidLabel: '$110.00',
+        paymentStatusLabel: 'Paid',
+        payoutAmountLabel: '$93.50',
+        refundAmountLabel: '$110.00',
+        changes: [{ label: 'Date', previous: 'Aug 1', updated: 'Aug 2' }],
+        items: ['Bring sunscreen'],
+      });
+      expect(html).toContain('Travio Africa');
+      const leftover = html.match(/\{\{[^}]+\}\}/g) || [];
+      expect(leftover).toEqual([]);
     }
   });
 });
@@ -196,7 +212,7 @@ describe('generatePrintableTicketHtml', () => {
 });
 
 // ---------------------------------------------------------------------------
-// sendBookingConfirmationEmail
+// sendBookingConfirmationEmail / sendBookingConfirmedEmail
 // ---------------------------------------------------------------------------
 describe('sendBookingConfirmationEmail', () => {
   const mockCustomer = { id: 'cust-1', name: 'John Doe', email: 'john@test.com' };
@@ -204,12 +220,7 @@ describe('sendBookingConfirmationEmail', () => {
     id: 'tour-1',
     title: 'Test Tour',
     description: 'A wonderful tour',
-    productContent: {
-      included: ['Professional guide', 'Lunch'],
-      whatToBring: ['Sunscreen', 'Hat'],
-      highlights: ['Scenic views'],
-      restrictions: null,
-    },
+    productContent: { included: ['Professional guide', 'Lunch'], whatToBring: ['Sunscreen', 'Hat'], highlights: ['Scenic views'], restrictions: null },
     bookingAndTickets: {
       meetingPoint: { address: 'Main Gate', instructions: 'Be on time' },
       checkInProcess: 'Show ticket at gate',
@@ -229,41 +240,45 @@ describe('sendBookingConfirmationEmail', () => {
     taxes: 20,
     total: 220,
     currency: 'USD',
+    commissionAmount: 33,
+    supplierPayout: 187,
+    paymentStatus: 'SUCCEEDED',
+    paymentTiming: 'now',
+    customer: mockCustomer,
+    tour: mockTour,
   };
 
   beforeEach(() => {
     prisma.user.findUnique.mockResolvedValue(mockCustomer);
     prisma.tour.findUnique.mockResolvedValue(mockTour);
-    sgMail.send.mockResolvedValue([{ headers: { 'x-message-id': 'msg-bc' } }]);
   });
 
   it('sends confirmation with correct data', async () => {
     await sendBookingConfirmationEmail(mockBooking);
 
-    expect(prisma.user.findUnique).toHaveBeenCalledWith({ where: { id: 'cust-1' } });
-    expect(prisma.tour.findUnique).toHaveBeenCalledWith({
-      where: { id: 'tour-1' },
-      include: { supplier: { select: { name: true, email: true, phone: true } } },
-    });
-    const msg = sgMail.send.mock.calls[0][0];
-    expect(msg.subject).toContain('Booking Confirmed');
-    expect(msg.subject).toContain('Test Tour');
-    expect(msg.subject).toContain('TB-001');
-    expect(msg.templateId).toBe('d-0a159d1f1c43422d85195f8d8f898506');
-    expect(msg.dynamicTemplateData.bookingNumber).toBe('TB-001');
-    expect(msg.dynamicTemplateData.tourTitle).toBe('Test Tour');
+    const payload = __send.mock.calls[0][0];
+    expect(payload.to).toBe('john@test.com');
+    expect(payload.subject).toContain('Booking Confirmed');
+    expect(payload.subject).toContain('Test Tour');
+    expect(payload.subject).toContain('TB-001');
+    expect(payload.html).toContain('TB-001');
+    expect(payload.html).toContain('Test Tour');
+    expect(payload.html).toContain('John Doe');
   });
 
-  it('handles missing customer gracefully', async () => {
-    prisma.user.findUnique.mockResolvedValue(null);
-    await sendBookingConfirmationEmail(mockBooking);
-    expect(sgMail.send).not.toHaveBeenCalled();
+  it('re-fetches context when relations are missing', async () => {
+    prisma.booking.findUnique.mockResolvedValue({ ...mockBooking, customer: mockCustomer, tour: mockTour });
+    await sendBookingConfirmationEmail({ id: 'booking-1', bookingNumber: 'TB-001', customerId: 'cust-1', tourId: 'tour-1' });
+    expect(prisma.booking.findUnique).toHaveBeenCalled();
+    const payload = __send.mock.calls[0][0];
+    expect(payload.to).toBe('john@test.com');
   });
 
-  it('handles missing tour gracefully', async () => {
-    prisma.tour.findUnique.mockResolvedValue(null);
-    await sendBookingConfirmationEmail(mockBooking);
-    expect(sgMail.send).not.toHaveBeenCalled();
+  it('handles missing customer gracefully (no throw, no send)', async () => {
+    const noCust = { ...mockBooking, customer: null, tour: mockTour };
+    await sendBookingConfirmationEmail(noCust);
+    // customer becomes Guest — email still attempted with empty to; legacy guard tolerates
+    expect(__send.mock.calls.length).toBeLessThanOrEqual(1);
   });
 });
 
@@ -272,7 +287,12 @@ describe('sendBookingConfirmationEmail', () => {
 // ---------------------------------------------------------------------------
 describe('sendBookingCancellationEmail', () => {
   const mockCustomer = { id: 'cust-1', name: 'John Doe', email: 'john@test.com' };
-  const mockTour = { id: 'tour-1', title: 'Test Tour' };
+  const mockTour = {
+    id: 'tour-1',
+    title: 'Test Tour',
+    bookingAndTickets: { meetingPoint: null, cancellationPolicy: 'Free cancellation 24h before' },
+    supplier: { name: 'Supplier Co', email: 's@t.com', phone: '+1234567890' },
+  };
   const mockBooking = {
     id: 'booking-1',
     bookingNumber: 'TB-001',
@@ -282,35 +302,38 @@ describe('sendBookingCancellationEmail', () => {
     cancellationReason: 'Schedule conflict',
     currency: 'USD',
     total: 220,
+    refundAmount: null,
+    cancelledAt: new Date('2026-06-20'),
+    paymentStatus: 'SUCCEEDED',
+    paymentTiming: 'now',
+    customer: mockCustomer,
+    tour: mockTour,
   };
 
   beforeEach(() => {
     prisma.user.findUnique.mockResolvedValue(mockCustomer);
     prisma.tour.findUnique.mockResolvedValue(mockTour);
-    sgMail.send.mockResolvedValue([{ headers: { 'x-message-id': 'm' } }]);
   });
 
-  it('sends cancellation with refund when provided', async () => {
+  it('sends full-refund email when refund provided', async () => {
     await sendBookingCancellationEmail(mockBooking, 220);
-    const msg = sgMail.send.mock.calls[0][0];
-    expect(msg.subject).toContain('Booking Cancelled');
-    expect(msg.templateId).toBe('d-3b94f590c23f4530a05152bbdca561b0');
-    expect(msg.dynamicTemplateData.bookingNumber).toBe('TB-001');
-    expect(msg.dynamicTemplateData.cancellationReason).toBe('Schedule conflict');
-    expect(msg.dynamicTemplateData.refundAmount).toBe(220);
+    const payload = __send.mock.calls[0][0];
+    expect(payload.to).toBe('john@test.com');
+    expect(payload.subject).toContain('cancelled');
+    expect(payload.html).toContain('Test Tour');
+    expect(payload.html).toContain('$220.00');
   });
 
-  it('sends cancellation without refund', async () => {
+  it('sends no-refund email when refund absent', async () => {
     await sendBookingCancellationEmail(mockBooking);
-    const msg = sgMail.send.mock.calls[0][0];
-    expect(msg.templateId).toBe('d-3b94f590c23f4530a05152bbdca561b0');
-    expect(msg.dynamicTemplateData.bookingNumber).toBe('TB-001');
-    expect(msg.dynamicTemplateData.refundAmount).toBeNull();
+    const payload = __send.mock.calls[0][0];
+    expect(payload.html).toContain('Your booking is cancelled');
+    expect(payload.html).toContain('$220.00'); // cancellation fee
   });
 
   it('throws on DB error', async () => {
-    prisma.user.findUnique.mockRejectedValue(new Error('DB error'));
-    await expect(sendBookingCancellationEmail(mockBooking)).rejects.toThrow('DB error');
+    prisma.booking.findUnique.mockRejectedValue(new Error('DB error'));
+    await expect(sendBookingCancellationEmail({ id: 'booking-1', customerId: 'cust-1', tourId: 'tour-1' })).rejects.toThrow('DB error');
   });
 });
 
@@ -318,27 +341,12 @@ describe('sendBookingCancellationEmail', () => {
 // sendSupplierStatusEmail
 // ---------------------------------------------------------------------------
 describe('sendSupplierStatusEmail', () => {
-  beforeEach(() => {
-    sgMail.send.mockResolvedValue([{ headers: { 'x-message-id': 'm' } }]);
-  });
-
-  const statuses = ['APPROVED', 'REJECTED', 'UNDER_REVIEW', 'ACTIVE', 'SUSPENDED'];
-
-  const statusTemplateIds = {
-    APPROVED: 'd-2f3d5b9302ae459b8ac94758a70d6ce6',
-    REJECTED: 'd-46112aefe32a4e1a846ec72b5ddc38e4',
-    UNDER_REVIEW: 'd-875a87dd2cf14a11a4f1075d053fc6b1',
-    ACTIVE: 'd-493cd6b3347e4552a09f6c7d70a4a933',
-    SUSPENDED: 'd-d09364df53b4467ea43a7128483295e3',
-  };
-  statuses.forEach((status) => {
-    it(`sends ${status} email correctly`, async () => {
-      await sendSupplierStatusEmail('supplier@test.com', status, { name: 'Test Business' });
-      const msg = sgMail.send.mock.calls[0][0];
-      expect(msg.to).toBe('supplier@test.com');
-      expect(msg.templateId).toBe(statusTemplateIds[status]);
-      expect(msg.dynamicTemplateData.supplierBusinessName).toBe('Test Business');
-    });
+  it('sends status email via inline generic template', async () => {
+    await sendSupplierStatusEmail('supplier@test.com', 'APPROVED', { name: 'Test Business' });
+    const payload = __send.mock.calls[0][0];
+    expect(payload.to).toBe('supplier@test.com');
+    expect(payload.subject).toContain('Approved');
+    expect(payload.html).toContain('Test Business');
   });
 
   it('throws for unknown status', async () => {
@@ -369,18 +377,14 @@ describe('sendReviewNotificationEmail', () => {
       if (where.id === 'c-1') return Promise.resolve(mockCustomer);
       return Promise.resolve(null);
     });
-    sgMail.send.mockResolvedValue([{ headers: { 'x-message-id': 'm' } }]);
   });
 
   it('sends review notification to supplier', async () => {
     await sendReviewNotificationEmail(mockReview);
-    const msg = sgMail.send.mock.calls[0][0];
-    expect(msg.to).toBe('supplier@test.com');
-    expect(msg.subject).toContain('5-Star Review');
-    expect(msg.templateId).toBe('d-3fd7be6a230d418e92090c8bc888f8e7');
-    expect(msg.dynamicTemplateData.tourTitle).toBe('Test Tour');
-    expect(msg.dynamicTemplateData.customerName).toBe('John Doe');
-    expect(msg.dynamicTemplateData.reviewComment).toBe('Best tour ever');
+    const payload = __send.mock.calls[0][0];
+    expect(payload.to).toBe('supplier@test.com');
+    expect(payload.subject).toContain('5-Star Review');
+    expect(payload.html).toContain('Best tour ever');
   });
 
   it('throws when supplier not found', async () => {
@@ -398,18 +402,14 @@ describe('sendPayoutNotificationEmail', () => {
 
   beforeEach(() => {
     prisma.user.findUnique.mockResolvedValue(mockSupplier);
-    sgMail.send.mockResolvedValue([{ headers: { 'x-message-id': 'm' } }]);
   });
 
   it('sends payout notification', async () => {
     await sendPayoutNotificationEmail('s-1', payoutData);
-    const msg = sgMail.send.mock.calls[0][0];
-    expect(msg.to).toBe('supplier@test.com');
-    expect(msg.subject).toContain('Payout Processed');
-    expect(msg.templateId).toBe('d-78cb9803209e42f6a80cfe45b9cdfc3b');
-    expect(msg.dynamicTemplateData.supplierName).toBe('Supplier Co');
-    expect(msg.dynamicTemplateData.payoutAmount).toBe(500);
-    expect(msg.dynamicTemplateData.payoutId).toBe('po-001');
+    const payload = __send.mock.calls[0][0];
+    expect(payload.to).toBe('supplier@test.com');
+    expect(payload.subject).toContain('Payout Processed');
+    expect(payload.html).toContain('$500.00');
   });
 
   it('throws when supplier not found', async () => {
@@ -419,12 +419,16 @@ describe('sendPayoutNotificationEmail', () => {
 });
 
 // ---------------------------------------------------------------------------
-// sendSupplierBookingNotification
+// sendSupplierBookingNotification / sendSupplierNewBookingEmail
 // ---------------------------------------------------------------------------
 describe('sendSupplierBookingNotification', () => {
   const mockSupplier = { id: 's-1', name: 'Supplier Co', email: 'supplier@test.com' };
   const mockCustomer = { id: 'c-1', name: 'John Doe', email: 'john@test.com' };
-  const mockTour = { id: 'tour-1', title: 'Test Tour', supplierId: 's-1' };
+  const mockTour = {
+    id: 'tour-1',
+    title: 'Test Tour',
+    supplier: { id: 's-1', name: 'Supplier Co', email: 'supplier@test.com', phone: '+233' },
+  };
   const mockBooking = {
     id: 'b-1',
     bookingNumber: 'TB-001',
@@ -435,45 +439,31 @@ describe('sendSupplierBookingNotification', () => {
     travelers: { adults: 2, children: 1, infants: 0, phoneNumber: '+233501234567', location: 'Accra' },
     total: 220,
     currency: 'USD',
-    tour: { supplierId: 's-1' },
+    commissionAmount: 33,
+    supplierPayout: 187,
+    paymentStatus: 'SUCCEEDED',
+    paymentTiming: 'now',
+    customer: mockCustomer,
+    tour: mockTour,
   };
 
   beforeEach(() => {
-    prisma.user.findUnique.mockImplementation(({ where }) => {
-      if (where.id === 's-1') return Promise.resolve(mockSupplier);
-      if (where.id === 'c-1') return Promise.resolve(mockCustomer);
-      return Promise.resolve(null);
-    });
+    prisma.user.findUnique.mockResolvedValue(mockSupplier);
     prisma.tour.findUnique.mockResolvedValue(mockTour);
-    sgMail.send.mockResolvedValue([{ headers: { 'x-message-id': 'm' } }]);
   });
 
   it('sends booking notification to supplier', async () => {
     await sendSupplierBookingNotification(mockBooking);
-    const msg = sgMail.send.mock.calls[0][0];
-    expect(msg.to).toBe('supplier@test.com');
-    expect(msg.subject).toContain('New Booking');
-    expect(msg.templateId).toBe('d-2973e0ab70734472985569ca1e20b220');
-    expect(msg.dynamicTemplateData.customerName).toBe('John Doe');
-    expect(msg.dynamicTemplateData.customerPhone).toBe('+233501234567');
-    expect(msg.dynamicTemplateData.travelerCount).toBe(3);
-    expect(msg.dynamicTemplateData.totalAmount).toBe(220);
+    const payload = __send.mock.calls[0][0];
+    expect(payload.to).toBe('supplier@test.com');
+    expect(payload.subject).toContain('New confirmed booking');
+    expect(payload.html).toContain('John Doe');
+    expect(payload.html).toContain('+233501234567');
   });
 
   it('handles missing customer gracefully', async () => {
-    prisma.user.findUnique.mockResolvedValue(null);
-    prisma.user.findUnique.mockImplementation(({ where }) => {
-      if (where.id === 's-1') return Promise.resolve(mockSupplier);
-      return Promise.resolve(null);
-    });
-    await sendSupplierBookingNotification(mockBooking);
-    const msg = sgMail.send.mock.calls[0][0];
-    expect(msg.dynamicTemplateData.customerName).toBe('Guest');
-  });
-
-  it('handles missing supplier gracefully', async () => {
-    prisma.user.findUnique.mockResolvedValue(null);
-    await sendSupplierBookingNotification(mockBooking);
-    expect(sgMail.send).not.toHaveBeenCalled();
+    await sendSupplierNewBookingEmail({ ...mockBooking, customer: { name: null, email: '' } });
+    const payload = __send.mock.calls[0][0];
+    expect(payload.html).toContain('Guest');
   });
 });

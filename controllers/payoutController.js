@@ -271,24 +271,17 @@ exports.approvePayout = catchAsync(async (req, res, next) => {
     }
   });
 
-  const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
-
   enqueueEmail({
-    to: payout.supplier.email,
-    subject: 'Payout Approved - Travio Africa',
-    template: 'payout-notification',
+    type: 'supplier-payout-scheduled',
+    bookingId: payout.bookingId,
     data: {
-      title: 'Payout Approved',
-      message: `Your payout of ${payout.currency} ${payout.amount} has been approved and is being processed.`,
-      statusLabel: 'Approved',
-      supplierName: payout.supplier.name,
-      tourTitle: payout.booking?.tour?.title || '',
-      payoutAmount: payout.amount,
-      currency: payout.currency,
+      payout: {
+        amount: payout.amount,
+        id: payout.id,
+        methodLabel: payout.paymentMethod ? payout.paymentMethod.replace('_', ' ') : '',
+      },
       payoutDate: new Date().toISOString(),
-      payoutId: payout.id,
-      dashboardUrl: `${CLIENT_URL}/supplier/earnings`
-    }
+    },
   }).catch((err) => console.error('[Email] Payout approved email failed:', err.message));
 
   res.status(200).json({
@@ -371,22 +364,17 @@ exports.releasePayout = catchAsync(async (req, res, next) => {
     data: { payoutId: payout.id, amount: payout.amount, paymentMethod, payoutMethodId: method.id }
   }).catch((err) => console.error('[Notification] enqueueNotification failed:', err.message));
 
-  const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
-
   enqueueEmail({
-    to: payout.supplier.email,
-    subject: 'Payout In Transit - Travio Africa',
-    template: 'payout-notification',
+    type: 'supplier-payout-scheduled',
+    bookingId: payout.bookingId,
     data: {
-      supplierName: payout.supplier.name,
-      tourTitle: payout.booking?.tour?.title || '',
-      payoutAmount: payout.amount,
-      currency: payout.currency,
+      payout: {
+        amount: payout.amount,
+        id: payout.id,
+        methodLabel: method.type.replace('_', ' '),
+      },
       payoutDate: new Date().toISOString(),
-      payoutId: payout.id,
-      payoutMethod: method.type.replace('_', ' '),
-      dashboardUrl: `${CLIENT_URL}/supplier/earnings`
-    }
+    },
   }).catch((err) => console.error('[Email] Payout released email failed:', err.message));
 
   await notifyAdmin({
@@ -463,22 +451,17 @@ exports.settlePayout = catchAsync(async (req, res, next) => {
     data: { payoutId: payout.id, amount: payout.amount, paymentMethod: payout.paymentMethod }
   }).catch((err) => console.error('[Notification] enqueueNotification failed:', err.message));
 
-  const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
-
   enqueueEmail({
-    to: payout.supplier.email,
-    subject: 'Payout Paid - Travio Africa',
-    template: 'payout-notification',
+    type: 'supplier-payout-completed',
+    bookingId: payout.bookingId,
     data: {
-      supplierName: payout.supplier.name,
-      tourTitle: payout.booking?.tour?.title || '',
-      payoutAmount: payout.amount,
-      currency: payout.currency,
+      payout: {
+        amount: payout.amount,
+        id: payout.id,
+        methodLabel: payout.paymentMethod ? payout.paymentMethod.replace('_', ' ') : '',
+      },
       payoutDate: new Date().toISOString(),
-      payoutId: payout.id,
-      payoutMethod: payout.paymentMethod ? payout.paymentMethod.replace('_', ' ') : '',
-      dashboardUrl: `${CLIENT_URL}/supplier/earnings`
-    }
+    },
   }).catch((err) => console.error('[Email] Payout settled email failed:', err.message));
 
   await notifyAdmin({
@@ -552,26 +535,13 @@ exports.failPayout = catchAsync(async (req, res, next) => {
     data: { payoutId: payout.id, reason }
   }).catch((err) => console.error('[Notification] enqueueNotification failed:', err.message));
 
-  const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
-
   enqueueEmail({
-    to: payout.supplier.email,
-    subject: 'Payout Failed - Travio Africa',
-    template: 'payout-notification',
+    type: 'supplier-payout-failed',
+    bookingId: payout.bookingId,
     data: {
-      title: 'Payout Failed',
-      message: `Your payout of ${payout.currency} ${payout.amount} has failed. Please contact support for more information.`,
-      statusLabel: 'Failed',
-      statusColor: '#FEF2F2',
-      statusTextColor: '#DC2626',
-      supplierName: payout.supplier.name,
-      tourTitle: payout.booking?.tour?.title || '',
-      payoutAmount: payout.amount,
-      currency: payout.currency,
-      payoutDate: new Date().toISOString(),
-      payoutId: payout.id,
-      dashboardUrl: `${CLIENT_URL}/supplier/earnings`
-    }
+      payout: { amount: payout.amount, id: payout.id },
+      reason,
+    },
   }).catch((err) => console.error('[Email] Payout failed email failed:', err.message));
 
   await notifyAdmin({

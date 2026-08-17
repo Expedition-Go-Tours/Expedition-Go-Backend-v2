@@ -139,49 +139,27 @@ async function sendWebSocketNotification(userId, notificationData) {
  */
 async function sendNotificationEmail(user, { type, title, message, data, template }) {
   const emailTemplates = {
-    BOOKING_CONFIRMED: {
-      subject: 'Booking Confirmation',
-      template: 'booking-confirmation'
-    },
-    BOOKING_CANCELLED: {
-      subject: 'Booking Cancelled',
-      template: 'booking-cancellation'
-    },
-    REVIEW_RECEIVED: {
-      subject: 'New Review Received',
-      template: 'review-notification'
-    },
-    SUPPLIER_APPROVED: {
-      subject: 'Supplier Application Approved',
-      template: 'supplier-approved'
-    },
-    SUPPLIER_REJECTED: {
-      subject: 'Supplier Application Update',
-      template: 'supplier-rejected'
-    },
-    PAYMENT_RECEIVED: {
-      subject: 'Payment Received',
-      template: 'payment-confirmation'
-    },
-    PAYOUT_PROCESSED: {
-      subject: 'Payout Processed',
-      template: 'payout-notification'
-    },
-    PAYOUT_APPROVED: {
-      subject: 'Payout Approved',
-      template: 'payout-notification'
-    }
+    BOOKING_CONFIRMED: { subject: 'Booking Confirmation' },
+    BOOKING_CANCELLED: { subject: 'Booking Cancelled' },
+    REVIEW_RECEIVED: { subject: 'New Review Received' },
+    SUPPLIER_APPROVED: { subject: 'Supplier Application Approved' },
+    SUPPLIER_REJECTED: { subject: 'Supplier Application Update' },
+    PAYMENT_RECEIVED: { subject: 'Payment Received' },
+    PAYOUT_PROCESSED: { subject: 'Payout Processed' },
+    PAYOUT_APPROVED: { subject: 'Payout Approved' }
   };
 
   const emailConfig = emailTemplates[type] || {
     subject: title,
-    template: 'generic-notification'
   };
 
+  // Rich booking emails are sent by their dedicated typed functions (see
+  // emailService). This generic path renders the inline "generic-notification"
+  // document — guaranteed to resolve, unlike the legacy SendGrid names.
   await sendEmail({
     to: user.email,
     subject: emailConfig.subject,
-    template: template || emailConfig.template,
+    template: template || 'generic-notification',
     data: {
       userName: user.name,
       title,

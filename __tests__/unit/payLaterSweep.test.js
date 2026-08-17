@@ -77,7 +77,7 @@ describe('chargePayLaterBookings', () => {
 
     expect(getStripe().paymentIntents.confirm).toHaveBeenCalledWith('pi_later');
     expect(handlePaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ id: 'pi_later', status: 'succeeded' }));
-    expect(enqueueEmail).toHaveBeenCalledWith(expect.objectContaining({ type: 'booking-confirmation' }));
+    expect(enqueueEmail).toHaveBeenCalledWith(expect.objectContaining({ type: 'payment-successful' }));
     expect(enqueueNotification).toHaveBeenCalled();
     expect(result).toEqual({ checked: 1, charged: 1, settled: 0, needsAction: 0, failed: 0, cancelled: 0 });
   });

@@ -593,6 +593,8 @@ model Booking {
   // Relationships
   review       Review?
   payouts      Payout[]
+  reminders    BookingReminder[]
+  changes      BookingChange[]
 
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
@@ -608,9 +610,39 @@ model Booking {
   @@index([status, selectedDate])               // Admin/supplier date-range queries
 }
 
+model BookingReminder {
+  id           String        @id @default(cuid())
+  bookingId    String
+  booking      Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  type         String        // e.g. PAYMENT_DUE_24H, BOOKING_24H, REVIEW_REQUEST, PICKUP_LOCATION_REQUIRED
+  scheduledFor DateTime
+  sentAt       DateTime?
+  status       String        @default("PENDING") // PENDING | SENT | FAILED | SKIPPED
+  error        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@unique([bookingId, type])
+  @@index([type, status, scheduledFor])
+}
+
+model BookingChange {
+  id          String   @id @default(cuid())
+  bookingId   String
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  changedBy   String   // customer | supplier | platform
+  reason      String?
+  previous    Json     // Snapshot of the changed fields before (e.g. { selectedDate, travelers })
+  updated     Json     // Snapshot of the changed fields after
+  createdAt   DateTime @default(now())
+
+  @@index([bookingId])
+  @@index([changedBy])
+}
+
 model Payout {
   id             String       @id @default(cuid())
-  
+    
   // Who gets paid
   supplierId     String
   supplier       User         @relation(fields: [supplierId], references: [id])

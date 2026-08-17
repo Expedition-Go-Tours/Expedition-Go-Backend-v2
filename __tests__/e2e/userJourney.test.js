@@ -376,10 +376,10 @@ describe('E2E: Full User Journey', () => {
 
     // Verify confirmation emails were queued
     expect(enqueueEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'booking-confirmation', bookingId: 'booking-e2e-1' }),
+      expect.objectContaining({ type: 'booking-confirmed', bookingId: 'booking-e2e-1' }),
     );
     expect(enqueueEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'supplier-booking-notification', bookingId: 'booking-e2e-1' }),
+      expect.objectContaining({ type: 'supplier-new-booking', bookingId: 'booking-e2e-1' }),
     );
 
     // Verify analytics event emitted
@@ -450,10 +450,10 @@ describe('E2E: Full User Journey', () => {
 
     // 5. Verify email was queued
     expect(enqueueEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'booking-confirmation' }),
+      expect.objectContaining({ type: 'booking-confirmed' }),
     );
     expect(enqueueEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'supplier-booking-notification' }),
+      expect.objectContaining({ type: 'supplier-new-booking' }),
     );
 
     // 6. Verify analytics
