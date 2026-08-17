@@ -465,6 +465,19 @@ describe('createPaymentIntent customer guard', () => {
     expect(data.payment_method).toBe('pm_1');
     expect(data.metadata).toEqual({ tourId: 't1' });
   });
+
+  it('omits return_url when confirm is false (Stripe rejects it otherwise)', async () => {
+    await createPaymentIntent({ amount: 1000, confirm: false });
+    const [data] = mockStripeInstance.paymentIntents.create.mock.calls[0];
+    expect(data).not.toHaveProperty('return_url');
+  });
+
+  it('includes return_url when confirm is true', async () => {
+    process.env.CLIENT_URL = 'https://example.com';
+    await createPaymentIntent({ amount: 1000, confirm: true });
+    const [data] = mockStripeInstance.paymentIntents.create.mock.calls[0];
+    expect(data.return_url).toBe('https://example.com/booking/complete');
+  });
 });
 
 describe('createPaymentIntent derived idempotency key', () => {

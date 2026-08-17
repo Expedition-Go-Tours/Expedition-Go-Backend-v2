@@ -83,7 +83,10 @@ async function createPaymentIntent({
       payment_method: paymentMethodId,
       confirmation_method: 'manual',
       confirm,
-      return_url: `${process.env.CLIENT_URL}/booking/complete`,
+      // Stripe only allows return_url when confirm=true — omit it otherwise
+      // (expedition creates with confirm:false and charges via a later
+      // confirm() call, where redirects are handled through client_secret).
+      ...(confirm ? { return_url: `${process.env.CLIENT_URL}/booking/complete` } : {}),
       metadata
     };
     if (isValidStripeCustomerId(customerId)) {
