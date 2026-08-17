@@ -240,6 +240,74 @@ function validateTourData(data, isPartial = false) {
   }
 }
 
+const CANCEL_TYPES = new Set(['standard', 'all_sales_final']);
+
+function flattenTransportModes(value) {
+  if (typeof value === 'string') return value;
+  if (!value || typeof value !== 'object') return '';
+  const modes = [];
+  for (const items of Object.values(value)) {
+    if (Array.isArray(items)) {
+      for (const item of items) {
+        if (typeof item === 'string' && item.trim()) modes.push(item.trim());
+      }
+    } else if (typeof items === 'string' && items.trim()) {
+      modes.push(items.trim());
+    }
+  }
+  return [...new Set(modes)].join(', ');
+}
+
+function normalizeCategoryName(category) {
+  if (!category || typeof category !== 'object') return category;
+  if (!category.name && category.label) return { ...category, name: category.label };
+  return category;
+}
+
+/**
+ * Normalize legacy/stored product payloads into the strict flat builder shape
+ * before validation. Without this, editing pre-existing tours whose JSON blobs
+ * use the looser "stored" schema (object transportMode, label-only pricing
+ * categories, out-of-enum cancellationType, over-long meeting descriptions)
+ * fails Zod validation on autosave.
+ */
+function normalizeProductPayload(data) {
+  if (!data || typeof data !== 'object') return data;
+
+  if (typeof data.transportMode === 'object') {
+    data.transportModes = Array.isArray(data.transportModes) ? data.transportModes : [];
+    const flattened = flattenTransportModes(data.transportMode);
+    if (flattened) {
+      for (const mode of flattened.split(', ')) {
+        if (!data.transportModes.includes(mode)) data.transportModes.push(mode);
+      }
+    }
+    data.transportMode = '';
+  }
+
+  if (typeof data.meetingPointDescription === 'string' && data.meetingPointDescription.length > 1000) {
+    data.meetingPointDescription = data.meetingPointDescription.slice(0, 1000);
+  }
+
+  if (Array.isArray(data.pricingCategories)) {
+    data.pricingCategories = data.pricingCategories.map(normalizeCategoryName);
+  }
+  if (Array.isArray(data.ageGroups)) {
+    data.ageGroups = data.ageGroups.map(normalizeCategoryName);
+  }
+
+  if (data.cancellationType !== undefined && data.cancellationType !== null) {
+    if (typeof data.cancellationType === 'string') {
+      data.cancellationType = data.cancellationType.trim();
+    }
+    if (!CANCEL_TYPES.has(data.cancellationType)) {
+      data.cancellationType = 'standard';
+    }
+  }
+
+  return data;
+}
+
 /**
  * Convert a categorization.duration object into minutes. Supports the supplier
  * dashboard's `{ value, unit }` shape as well as the legacy `{ hours }`,
@@ -1034,6 +1102,7 @@ module.exports = {
   createSlug,
   parseJsonFields,
   validateTourData,
+  normalizeProductPayload,
   validateStoredPricing,
   rebuildSchedulePrices,
   reconcileAvailability,

@@ -30,7 +30,7 @@ jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
 jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()), enqueueNotification: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn(() => Promise.resolve()), emitToRoom: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
-jest.mock('../../utils/tourHelpers', () => ({ createSlug: jest.fn(), validateTourData: jest.fn(), validateStoredPricing: jest.fn(), rebuildSchedulePrices: jest.fn(), reconcileAvailability: jest.fn((b) => b), durationToMinutes: jest.fn() }));
+jest.mock('../../utils/tourHelpers', () => ({ createSlug: jest.fn(), validateTourData: jest.fn(), normalizeProductPayload: jest.fn((d) => d), validateStoredPricing: jest.fn(), rebuildSchedulePrices: jest.fn(), reconcileAvailability: jest.fn((b) => b), durationToMinutes: jest.fn() }));
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
 jest.mock('../../utils/stripeHelpers', () => ({ cancelPaymentIntent: jest.fn() }));
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn() }));

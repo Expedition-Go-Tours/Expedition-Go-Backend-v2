@@ -35,6 +35,7 @@ jest.mock('../../utils/cloudinaryHelper', () => ({
 jest.mock('../../utils/tourHelpers', () => ({
   createSlug: jest.fn(),
   validateTourData: jest.fn(),
+  normalizeProductPayload: jest.fn((d) => d),
   validateStoredPricing: jest.fn(),
   rebuildSchedulePrices: jest.fn((b) => b),
   reconcileAvailability: jest.fn((b) => b),

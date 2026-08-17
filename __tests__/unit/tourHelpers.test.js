@@ -26,6 +26,7 @@ const {
   createSlug,
   parseJsonFields,
   validateTourData,
+  normalizeProductPayload,
   validateStoredPricing,
   rebuildSchedulePrices,
   reconcileAvailability,
@@ -224,6 +225,97 @@ describe('validateTourData', () => {
       const r = validateTourData(validProduct({ pricingModel: model }));
       expect(r.isValid).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeProductPayload
+// ---------------------------------------------------------------------------
+describe('normalizeProductPayload', () => {
+  it('returns data unchanged if not an object', () => {
+    expect(normalizeProductPayload(null)).toBeNull();
+    expect(normalizeProductPayload('string')).toBe('string');
+    expect(normalizeProductPayload(42)).toBe(42);
+  });
+
+  it('flattens an object transportMode into transportModes and clears transportMode', () => {
+    const data = {
+      transportMode: { land: ['Walking', '4x4/Jeep'], air: ['Plane'], water: ['Boat', 'Walking'] },
+    };
+    const result = normalizeProductPayload(data);
+    expect(result.transportMode).toBe('');
+    expect(result.transportModes).toEqual(['Walking', '4x4/Jeep', 'Plane', 'Boat']);
+  });
+
+  it('merges object transportMode into an existing transportModes array without duplicates', () => {
+    const data = {
+      transportMode: { land: ['Walking'] },
+      transportModes: ['Plane', 'Walking'],
+    };
+    const result = normalizeProductPayload(data);
+    expect(result.transportModes).toEqual(['Plane', 'Walking']);
+  });
+
+  it('leaves a string transportMode untouched', () => {
+    const data = { transportMode: 'Walking' };
+    expect(normalizeProductPayload(data).transportMode).toBe('Walking');
+  });
+
+  it('trims meetingPointDescription to 1000 characters', () => {
+    const data = { meetingPointDescription: 'x'.repeat(1200) };
+    const result = normalizeProductPayload(data);
+    expect(result.meetingPointDescription.length).toBe(1000);
+  });
+
+  it('leaves short meetingPointDescription untouched', () => {
+    const data = { meetingPointDescription: 'short' };
+    expect(normalizeProductPayload(data).meetingPointDescription).toBe('short');
+  });
+
+  it('maps label to name for pricingCategories missing name', () => {
+    const data = {
+      pricingCategories: [
+        { label: 'Child', price: 45 },
+        { label: 'Adult', price: 75 },
+      ],
+    };
+    const result = normalizeProductPayload(data);
+    expect(result.pricingCategories[0].name).toBe('Child');
+    expect(result.pricingCategories[1].name).toBe('Adult');
+    expect(result.pricingCategories[0].price).toBe(45);
+  });
+
+  it('maps label to name for ageGroups missing name', () => {
+    const data = { ageGroups: [{ label: 'Infant', minAge: 0, maxAge: 5 }] };
+    const result = normalizeProductPayload(data);
+    expect(result.ageGroups[0].name).toBe('Infant');
+  });
+
+  it('preserves an explicit name over label', () => {
+    const data = { pricingCategories: [{ name: 'Adult', label: 'Grown up' }] };
+    const result = normalizeProductPayload(data);
+    expect(result.pricingCategories[0].name).toBe('Adult');
+  });
+
+  it('coerces unknown cancellationType values to standard', () => {
+    const data = { cancellationType: 'free_cancellation' };
+    expect(normalizeProductPayload(data).cancellationType).toBe('standard');
+  });
+
+  it('preserves valid cancellationType values', () => {
+    expect(normalizeProductPayload({ cancellationType: 'standard' }).cancellationType).toBe('standard');
+    expect(normalizeProductPayload({ cancellationType: 'all_sales_final' }).cancellationType).toBe('all_sales_final');
+  });
+
+  it('leaves undefined cancellationType untouched', () => {
+    const data = { cancellationType: undefined };
+    expect(normalizeProductPayload(data)).toEqual({ cancellationType: undefined });
+  });
+
+  it('does not mutate non-target fields', () => {
+    const data = { title: 'Keep me', transportMode: { land: ['Walking'] }, pricingCategories: [{ label: 'Adult' }] };
+    const result = normalizeProductPayload(data);
+    expect(result.title).toBe('Keep me');
   });
 });
 

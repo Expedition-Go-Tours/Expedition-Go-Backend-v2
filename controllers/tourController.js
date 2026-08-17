@@ -16,7 +16,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
-const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices, reconcileAvailability, durationToMinutes, cheapestRetailPrice } = require('../utils/tourHelpers');
+const { createSlug, validateTourData, normalizeProductPayload, validateStoredPricing, rebuildSchedulePrices, reconcileAvailability, durationToMinutes, cheapestRetailPrice } = require('../utils/tourHelpers');
 const { cancelPaymentIntent } = require('../utils/stripeHelpers');
 const { productToTour } = require('../utils/productToTour');
 const { tourContentSnapshot, mergeDraftContent, buildTourDiff, computeChangesSummary, buildLiveUpdateData, applyFlatToBlobMapping } = require('../utils/tourDraft');
@@ -729,6 +729,10 @@ exports.createTour = catchAsync(async (req, res, next) => {
     req.body.options = req.body.options.map((o) => ({ ...o, wheelchairAccessible: !!o.wheelchairAccessible }));
   }
 
+  // Normalize legacy/stored shapes into the strict flat builder schema before
+  // validating (object transportMode, label-only pricing categories, etc.).
+  normalizeProductPayload(req.body);
+
   // Validate tour data — partial validation allows progressive draft saves from
   // the step-by-step wizard. Full validation + pricing completeness is enforced
   // by the submit-for-review endpoint (tours can no longer be created live).
@@ -1004,6 +1008,10 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   if (Array.isArray(req.body.options)) {
     req.body.options = req.body.options.map((o) => ({ ...o, wheelchairAccessible: !!o.wheelchairAccessible }));
   }
+
+  // Normalize legacy/stored shapes into the strict flat builder schema before
+  // validating (object transportMode, label-only pricing categories, etc.).
+  normalizeProductPayload(req.body);
 
   // Validate update data — partial validation (draft saves). Full validation
   // is enforced by the submit-for-review endpoint.
