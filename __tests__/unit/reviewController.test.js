@@ -731,5 +731,122 @@ describe('reviewController', () => {
 
       expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'review.approve' }));
     });
+
+    it('clears the supplier flag trail when a flagged review is resolved', async () => {
+      prisma.review.findUnique.mockResolvedValue({
+        ...mockReview, status: 'FLAGGED', flaggedBy: 'supplier-1', flagComment: 'Suspicious', flagReason: 'Spam',
+      });
+      req.body = { action: 'approve' };
+      let txUpdate;
+      prisma.$transaction.mockImplementation(async (cb) => {
+        const tx = mockTx();
+        txUpdate = tx.review.update;
+        tx.review.update.mockResolvedValue({ ...mockReview, status: 'APPROVED' });
+        return cb(tx);
+      });
+
+      await controller.moderateReview(req, res, next);
+
+      expect(txUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ flaggedBy: null, flaggedAt: null, flagComment: null }),
+        }),
+      );
+    });
+
+    it('notifies the supplier who flagged when the admin resolves the flag', async () => {
+      prisma.review.findUnique.mockResolvedValue({
+        ...mockReview, status: 'FLAGGED', flaggedBy: 'supplier-1',
+      });
+      req.body = { action: 'approve' };
+
+      await controller.moderateReview(req, res, next);
+
+      expect(enqueueNotification).toHaveBeenCalledWith(expect.objectContaining({ userId: 'supplier-1' }));
+    });
+
+    it('does not notify a flagger when admin flags a review directly', async () => {
+      prisma.review.findUnique.mockResolvedValue({ ...mockReview, status: 'PENDING' });
+      req.body = { action: 'flag', reason: 'Spam' };
+
+      await controller.moderateReview(req, res, next);
+
+      const supplierNotifs = enqueueNotification.mock.calls.filter(
+        (c) => c[0]?.title === 'Flag resolved',
+      );
+      expect(supplierNotifs.length).toBe(0);
+    });
+  });
+
+  // ============================
+  // flagReview (supplier)
+  // ============================
+  describe('flagReview', () => {
+    const mockReview = {
+      id: 'r1', rating: 4, status: 'APPROVED', customerId: 'c1', tourId: 't1',
+      tour: { supplierId: 's1' },
+    };
+
+    beforeEach(() => {
+      req.params = { id: 'r1' };
+      req.supplierId = 's1';
+      req.body = { reason: 'Spam or self-promotion' };
+      prisma.review.findUnique.mockResolvedValue(mockReview);
+      prisma.$transaction.mockImplementation(async (cb) => {
+        const tx = mockTx();
+        tx.review.update.mockResolvedValue({ ...mockReview, status: 'FLAGGED', flagReason: req.body.reason });
+        return cb(tx);
+      });
+    });
+
+    it('flags a review and hides it from the rating average', async () => {
+      let txUpdate;
+      prisma.$transaction.mockImplementation(async (cb) => {
+        const tx = mockTx();
+        txUpdate = tx.review.update;
+        tx.review.update.mockResolvedValue({ ...mockReview, status: 'FLAGGED', flagReason: req.body.reason });
+        return cb(tx);
+      });
+
+      await controller.flagReview(req, res, next);
+
+      expect(txUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: 'FLAGGED',
+            flagReason: 'Spam or self-promotion',
+            flaggedBy: 's1',
+          }),
+        }),
+      );
+      expect(removeApprovedRating).toHaveBeenCalled();
+      expect(recalculateSupplierRating).toHaveBeenCalled();
+      expect(notifyAdmin).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('returns 400 for an invalid flag reason', async () => {
+      req.body = { reason: 'Not a real reason' };
+
+      await controller.flagReview(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('returns 403 when the review is not on the supplier tour', async () => {
+      prisma.review.findUnique.mockResolvedValue({ ...mockReview, tour: { supplierId: 'other-supplier' } });
+
+      await controller.flagReview(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 403 }));
+    });
+
+    it('returns 409 when the review is already flagged', async () => {
+      prisma.review.findUnique.mockResolvedValue({ ...mockReview, status: 'FLAGGED' });
+
+      await controller.flagReview(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 409 }));
+    });
   });
 });

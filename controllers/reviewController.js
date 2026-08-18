@@ -727,11 +727,121 @@ exports.deleteSupplierResponse = catchAsync(async (req, res, next) => {
 /**
  * Get reviews for supplier's tours
  */
+// ================================
+// SUPPLIER REVIEW FLAGGING
+// ================================
+
+const FLAG_REASONS = [
+  'Inappropriate content (abusive, hateful, or sexual)',
+  'Not appropriate or family-friendly',
+  'Spam or self-promotion',
+  'Off-topic / not about this tour',
+  'Reviewer did not take this tour / did not experience this business',
+  'Posted to the wrong business',
+  'Describes an experience from more than a year ago',
+  'Written by a competitor or their employee',
+  'Privacy violation',
+  'Contains false or misleading information',
+  'Duplicate review',
+  'Conflict of interest (incentivized or unverified)',
+];
+
+/**
+ * POST /reviews/:id/flag
+ * A supplier flags a review on one of their tours for admin review. The review
+ * is hidden from the public immediately (removed from the rating average) until
+ * an admin approves or deletes it.
+ */
+exports.flagReview = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  const { id } = req.params;
+  const { reason, comment } = req.body;
+
+  if (!reason || !FLAG_REASONS.includes(reason)) {
+    return next(new AppError('A valid flag reason is required', 400));
+  }
+  if (comment && String(comment).length > 2000) {
+    return next(new AppError('Flag comment must be 2000 characters or fewer', 400));
+  }
+
+  const review = await prisma.review.findUnique({
+    where: { id },
+    include: { tour: { select: { supplierId: true } } },
+  });
+
+  if (!review) {
+    return next(new AppError('Review not found', 404));
+  }
+  if (review.tour.supplierId !== supplierId) {
+    return next(new AppError('You can only flag reviews on your own tours', 403));
+  }
+  if (review.status === 'FLAGGED') {
+    return next(new AppError('This review has already been flagged', 409));
+  }
+  if (review.status === 'REJECTED') {
+    return next(new AppError('This review is no longer visible', 400));
+  }
+
+  const [updatedReview] = await prisma.$transaction(async (tx) => {
+    const updated = await tx.review.update({
+      where: { id },
+      data: {
+        status: 'FLAGGED',
+        flagReason: reason,
+        flagComment: comment ? String(comment).trim() : null,
+        flaggedBy: supplierId,
+        flaggedAt: new Date(),
+        reportCount: { increment: 1 },
+      },
+    });
+
+    // If it was counting toward the rating average, remove it until the admin
+    // decides — a disputed review must not influence ratings while pending.
+    if (review.status === 'APPROVED') {
+      await removeApprovedRating(tx, review.tourId, review.rating);
+      await recalculateSupplierRating(tx, supplierId);
+    }
+
+    return [updated];
+  });
+
+  cache.invalidateReviewCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+  cache.invalidateTourCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+
+  await notifyAdmin({
+    type: 'REVIEW_NEEDS_MODERATION',
+    title: 'Review flagged by supplier',
+    message: `Supplier flagged review #${review.id.slice(0, 8)} — ${reason}`,
+    data: {
+      reviewId: review.id,
+      reason,
+      comment: comment || null,
+      supplierId,
+      tourId: review.tourId,
+      customerId: review.customerId,
+    },
+  });
+
+  await logActivity({
+    userId: supplierId,
+    action: 'review.flag',
+    resource: 'Review',
+    resourceId: review.id,
+    metadata: { reason, comment: comment || null, tourId: review.tourId },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Review flagged for our team to review',
+    data: { review: updatedReview },
+  });
+});
+
 exports.getSupplierReviews = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
   const {
     tourId,
-    status = 'APPROVED',
+    status,
     page = 1,
     limit = 10,
     rating
@@ -743,7 +853,14 @@ exports.getSupplierReviews = catchAsync(async (req, res, next) => {
     }
   };
 
-  if (status) where.status = status;
+  if (status) {
+    where.status = status;
+  } else {
+    // No status filter → show the supplier every review on their tours
+    // (approved, pending, flagged) except rejected ones, so they can reply
+    // to and flag their reviews without managing moderation states.
+    where.status = { not: 'REJECTED' };
+  }
   if (tourId) where.tourId = tourId;
   if (rating) where.rating = parseInt(rating);
 
@@ -898,7 +1015,11 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
         status: statusMap[action],
         moderatedBy: adminId,
         moderatedAt: new Date(),
-        flagReason: action === 'flag' ? reason : null
+        // Flag = record the reason. Approve/reject resolve the flag, so clear
+        // the supplier flag trail.
+        flagReason: action === 'flag' ? reason : null,
+        flagComment: action === 'flag' ? review.flagComment : null,
+        ...(action === 'flag' ? {} : { flaggedBy: null, flaggedAt: null }),
       }
     });
 
@@ -940,6 +1061,19 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
     message: `Review #${review.id.slice(0, 8)} by customer ${review.customerId.slice(0, 8)} was ${action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'flagged'}${reason ? ` — ${reason}` : ''}`,
     data: { reviewId: review.id, action, reason, customerId: review.customerId, tourId: review.tourId },
   });
+
+  // Close the loop: tell the supplier who flagged it how the admin resolved it.
+  if (review.flaggedBy && action !== 'flag') {
+    enqueueNotification({
+      userId: review.flaggedBy,
+      type: 'REVIEW_RECEIVED',
+      title: 'Flag resolved',
+      message: action === 'approve'
+        ? 'Your flag was reviewed — this review was kept and is back on your tour page.'
+        : 'Your flag was reviewed — this review was removed from your tour page.',
+      data: { reviewId: review.id, action, reason },
+    }).catch((err) => console.error('[Notification] enqueueNotification (flag resolution) failed:', err.message));
+  }
 
   await logActivity({
     userId: adminId,
@@ -1087,6 +1221,17 @@ exports.adminDeleteReview = catchAsync(async (req, res, next) => {
       customerId: review.customerId,
     },
   });
+
+  // Close the loop: tell the supplier who flagged it that the review was removed.
+  if (review.flaggedBy) {
+    enqueueNotification({
+      userId: review.flaggedBy,
+      type: 'REVIEW_RECEIVED',
+      title: 'Flag resolved',
+      message: 'Your flag was reviewed — this review was removed from your tour page.',
+      data: { reviewId: review.id, action: 'delete' },
+    }).catch((err) => console.error('[Notification] enqueueNotification (flag resolution) failed:', err.message));
+  }
 
   res.status(204).json({ status: 'success', data: null });
 });

@@ -873,6 +873,11 @@ model Review {
   moderatedAt DateTime?
   flagReason  String?
 
+  // Supplier flagging (review reported by its supplier for admin review)
+  flaggedBy   String? // Supplier user ID who flagged the review
+  flagComment String? // Supplier's additional detail
+  flaggedAt   DateTime?
+
   // Supplier Response
   supplierResponse   String?
   supplierResponseAt DateTime?

@@ -332,6 +332,7 @@ router.delete('/:id', reviewController.deleteReview);
  *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.post('/:id/response', resolveSupplier, requireTeamPermission('reviews.respond'), reviewController.addSupplierResponse);
+router.post('/:id/flag', resolveSupplier, requireTeamPermission('reviews.respond'), reviewController.flagReview);
 
 /**
  * @swagger
