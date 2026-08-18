@@ -11,7 +11,8 @@ const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { resolveSupplier } = require('../middleware/teamRoleMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
 const supplierController = require('../controllers/supplierController');
-const { uploadSupplierDocuments, uploadSupplierLogo } = require('../middleware/uploadMiddleware');
+const verificationController = require('../controllers/supplierVerificationController');
+const { uploadSupplierDocuments, uploadSupplierDocument, uploadSupplierLogo } = require('../middleware/uploadMiddleware');
 
 const router = express.Router();
 
@@ -341,6 +342,29 @@ router.get('/application/status', supplierController.getApplicationStatus);
  *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.patch('/application', uploadSupplierDocuments, supplierController.updateApplication);
+
+// ================================
+// SUPPLIER VERIFICATION (owner-scoped)
+// ================================
+
+/**
+ * Suppliers manage their own vehicles, guides, and re-upload rejected or
+ * expired documents. `resolveSupplier` lets team members act on behalf of
+ * their company while scoping every write to the owning profile.
+ */
+
+// Re-upload a rejected / replacement-requested / expired document
+router.post('/documents/:docId/replace', resolveSupplier, uploadSupplierDocument, verificationController.replaceDocument);
+
+// Vehicles
+router.post('/vehicles', resolveSupplier, uploadSupplierDocuments, verificationController.addVehicle);
+router.patch('/vehicles/:vehicleId', resolveSupplier, verificationController.updateVehicle);
+router.delete('/vehicles/:vehicleId', resolveSupplier, verificationController.deleteVehicle);
+
+// Guides
+router.post('/guides', resolveSupplier, verificationController.addGuide);
+router.patch('/guides/:guideId', resolveSupplier, verificationController.updateGuide);
+router.delete('/guides/:guideId', resolveSupplier, verificationController.deleteGuide);
 
 // ================================
 // SUPPLIER DASHBOARD
@@ -1298,5 +1322,15 @@ router.post('/admin/:id/restore', restrictTo('admin'), requirePermission('suppli
 router.get('/admin/:id/profile', restrictTo('admin'), requirePermission('suppliers.view'), supplierController.getSupplierProfile);
 router.get('/admin/:id/reviews', restrictTo('admin'), requirePermission('suppliers.view', 'reviews.view'), supplierController.getSupplierReviews);
 router.get('/admin/:id/analytics', restrictTo('admin'), requirePermission('suppliers.view', 'dashboard.revenue'), supplierController.getSupplierAnalytics);
+
+// ================================
+// ADMIN VERIFICATION (per-document / vehicle / guide + QC dashboard)
+// ================================
+
+router.get('/admin/qc-dashboard', restrictTo('admin'), requirePermission('suppliers.view'), verificationController.getQcDashboard);
+router.get('/admin/:id/verification', restrictTo('admin'), requirePermission('suppliers.view'), verificationController.getSupplierVerification);
+router.patch('/admin/documents/:docId', restrictTo('admin'), requirePermission('suppliers.approve'), verificationController.reviewDocument);
+router.patch('/admin/vehicles/:vehicleId', restrictTo('admin'), requirePermission('suppliers.approve'), verificationController.reviewVehicle);
+router.patch('/admin/guides/:guideId', restrictTo('admin'), requirePermission('suppliers.approve'), verificationController.reviewGuide);
 
 module.exports = router;

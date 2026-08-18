@@ -15,6 +15,13 @@ const { sendSupplierStatusEmail } = require('../utils/emailService');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const { enqueueNotification } = require('../utils/queue');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
+const {
+  parseDocuments,
+  parseVehiclePhotos,
+  parseVehicles,
+  parseGuides,
+  upsertVerificationRecords,
+} = require('../utils/supplierVerification');
 const admin = require('../config/firebaseAdmin');
 const logger = require('../utils/logger');
 
@@ -74,17 +81,40 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
     }
   });
 
-  const supplierProfile = await prisma.supplierProfile.create({
-    data: {
-      userId,
-      status: 'PENDING',
-      businessInfo: parse(businessInfo),
-      operatingInfo: parse(operatingInfo),
-      representativeInfo: parse(representativeInfo),
-      payoutInfo: parse(payoutInfo),
-      businessDocuments,
-      compliance: parse(compliance) || { termsAccepted: false },
-    },
+  const supplierType = req.body.supplierType
+    ? String(req.body.supplierType).toUpperCase()
+    : 'TOUR_COMPANY';
+
+  const documents = parseDocuments(req);
+  const vehiclePhotos = parseVehiclePhotos(req);
+  const vehicles = parseVehicles(req.body);
+  const guides = parseGuides(req.body);
+
+  const supplierProfile = await prisma.$transaction(async (tx) => {
+    const profile = await tx.supplierProfile.create({
+      data: {
+        userId,
+        status: 'PENDING',
+        supplierType,
+        businessInfo: parse(businessInfo),
+        operatingInfo: parse(operatingInfo),
+        representativeInfo: parse(representativeInfo),
+        payoutInfo: parse(payoutInfo),
+        businessDocuments,
+        compliance: parse(compliance) || { termsAccepted: false },
+      },
+    });
+
+    await upsertVerificationRecords(tx, {
+      profileId: profile.id,
+      documents,
+      vehicles,
+      guides,
+      vehiclePhotos,
+      action: 'APPLICATION_SUBMITTED',
+    });
+
+    return profile;
   });
 
   // Add supplier role to user
@@ -122,6 +152,11 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
 exports.getApplicationStatus = catchAsync(async (req, res, next) => {
   const supplierProfile = await prisma.supplierProfile.findUnique({
     where: { userId: req.user.id },
+    include: {
+      documents: { orderBy: { createdAt: 'asc' } },
+      vehicles: { orderBy: { createdAt: 'asc' } },
+      guides: { orderBy: { createdAt: 'asc' } },
+    },
   });
 
   if (!supplierProfile) {
@@ -187,9 +222,30 @@ exports.updateApplication = catchAsync(async (req, res, next) => {
     updateData.businessDocuments = { ...oldDocs, ...newDocs };
   }
 
-  const updated = await prisma.supplierProfile.update({
-    where: { userId: req.user.id },
-    data: updateData,
+  if (req.body.supplierType) {
+    updateData.supplierType = String(req.body.supplierType).toUpperCase();
+  }
+
+  const documents = parseDocuments(req);
+  const vehiclePhotos = parseVehiclePhotos(req);
+  const vehicles = parseVehicles(req.body);
+  const guides = parseGuides(req.body);
+
+  let updated;
+  await prisma.$transaction(async (tx) => {
+    updated = await tx.supplierProfile.update({
+      where: { userId: req.user.id },
+      data: updateData,
+    });
+
+    await upsertVerificationRecords(tx, {
+      profileId: updated.id,
+      documents,
+      vehicles,
+      guides,
+      vehiclePhotos,
+      action: 'APPLICATION_UPDATED',
+    });
   });
 
   res.status(200).json({

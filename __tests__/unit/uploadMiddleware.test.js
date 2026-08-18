@@ -6,6 +6,7 @@ jest.mock('../../config/cloudinary', () => ({
   },
   documentUpload: {
     fields: jest.fn(),
+    single: jest.fn(),
     _cloudinaryMissing: false,
   },
 }));
@@ -20,6 +21,7 @@ describe('uploadMiddleware', () => {
     config.imageUpload.single.mockReturnValue(mockFn);
     config.imageUpload.array.mockReturnValue((req, res, cb) => cb(null));
     config.documentUpload.fields.mockReturnValue((req, res, cb) => cb(null));
+    config.documentUpload.single.mockReturnValue((req, res, cb) => cb(null));
     jest.isolateModules(() => {
       middleware = require('../../middleware/uploadMiddleware');
     });
@@ -56,7 +58,14 @@ describe('uploadMiddleware', () => {
       { name: 'proofOfAddress', maxCount: 1 },
       { name: 'idDocument', maxCount: 1 },
       { name: 'licenses', maxCount: 5 },
+      { name: 'documents', maxCount: 30 },
+      { name: 'vehiclePhotos', maxCount: 30 },
     ]);
+  });
+
+  it('uploadSupplierDocument calls documentUpload.single with document', () => {
+    middleware.uploadSupplierDocument(req, res, next);
+    expect(config.documentUpload.single).toHaveBeenCalledWith('document');
   });
 
   it('uploadChatImage calls imageUpload.single with file', () => {

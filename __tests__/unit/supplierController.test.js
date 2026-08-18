@@ -1,12 +1,20 @@
-jest.mock('../../utils/prismaClient', () => ({
-  supplierProfile: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), findMany: jest.fn(), count: jest.fn() },
-  user: { update: jest.fn(), findUnique: jest.fn() },
-  tour: { groupBy: jest.fn(), findMany: jest.fn(), count: jest.fn(), updateMany: jest.fn() },
-  booking: { groupBy: jest.fn(), findMany: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
-  review: { findMany: jest.fn(), aggregate: jest.fn(), count: jest.fn() },
-  payout: { findMany: jest.fn(), count: jest.fn() },
-  media: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-}));
+jest.mock('../../utils/prismaClient', () => {
+  const mock = {
+    supplierProfile: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), findMany: jest.fn(), count: jest.fn() },
+    user: { update: jest.fn(), findUnique: jest.fn() },
+    tour: { groupBy: jest.fn(), findMany: jest.fn(), count: jest.fn(), updateMany: jest.fn() },
+    booking: { groupBy: jest.fn(), findMany: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
+    review: { findMany: jest.fn(), aggregate: jest.fn(), count: jest.fn() },
+    payout: { findMany: jest.fn(), count: jest.fn() },
+    media: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    supplierDocument: { create: jest.fn().mockResolvedValue({}) },
+    vehicle: { create: jest.fn().mockResolvedValue({}) },
+    guide: { create: jest.fn().mockResolvedValue({}) },
+    verificationEvent: { create: jest.fn().mockResolvedValue({}) },
+    $transaction: jest.fn((fn) => fn(mock)),
+  };
+  return mock;
+});
 
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
 jest.mock('../../utils/emailService', () => ({ sendSupplierStatusEmail: jest.fn() }));

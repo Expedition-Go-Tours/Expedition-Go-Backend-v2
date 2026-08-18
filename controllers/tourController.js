@@ -155,7 +155,9 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
               supplierProfile: {
                 select: {
                   averageRating: true,
-                  totalBookings: true
+                  totalBookings: true,
+                  status: true,
+                  supplierType: true
                 }
               }
             }
@@ -181,6 +183,7 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
     }
 
     const optimizedTours = tours.map((tour) => {
+      const sp = tour.supplier?.supplierProfile;
       const t = {
         ...tour,
         photos: tour.photos,
@@ -188,6 +191,8 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
         supplier: {
           ...tour.supplier,
           photoURL: tour.supplier.photoURL || null,
+          supplierType: sp?.supplierType || null,
+          verified: sp?.status === 'ACTIVE' || sp?.status === 'APPROVED',
         },
       };
       if (hasGeo) {
@@ -388,6 +393,7 @@ exports.getPopularByCategory = catchAsync(async (req, res, next) => {
         t."durationMinutes", t.city, t.country,
         u.id AS "supplierId", u.name AS "supplierName", u."photoURL" AS "supplierPhoto",
         sp."averageRating" AS "supplierRating", sp."totalBookings" AS "supplierBookings",
+        sp."supplierType" AS "supplierType",
         (COALESCE(t."totalBookings", 0) * 0.40 +
          COALESCE(t."averageRating", 0) * 0.25 +
          COALESCE(t."reviewCount", 0) * 0.20 +
@@ -426,6 +432,8 @@ exports.getPopularByCategory = catchAsync(async (req, res, next) => {
           id: row.supplierId,
           name: row.supplierName,
           photoURL: row.supplierPhoto || null,
+          supplierType: row.supplierType || null,
+          verified: true,
           supplierProfile: {
             averageRating: row.supplierRating ? Number(row.supplierRating) : null,
             totalBookings: row.supplierBookings,
@@ -526,7 +534,9 @@ exports.getTour = catchAsync(async (req, res, next) => {
               select: {
                 averageRating: true,
                 totalBookings: true,
-                businessInfo: true
+                businessInfo: true,
+                status: true,
+                supplierType: true
               }
             }
           }
@@ -542,6 +552,12 @@ exports.getTour = catchAsync(async (req, res, next) => {
     });
 
     if (!tour) return null;
+
+    if (tour.supplier) {
+      const sp = tour.supplier.supplierProfile;
+      tour.supplier.supplierType = sp?.supplierType || null;
+      tour.supplier.verified = sp?.status === 'ACTIVE' || sp?.status === 'APPROVED';
+    }
 
     // Fetch reviews + special offers in parallel (separate from main query)
     const [reviews, specialOfferTargets] = await Promise.all([

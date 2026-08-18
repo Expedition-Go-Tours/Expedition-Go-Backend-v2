@@ -24,21 +24,74 @@ enum UserRole {
 }
 
 enum SupplierStatus {
-  PENDING         // Initial application submitted
-  UNDER_REVIEW    // Admin reviewing application
-  APPROVED        // Admin approved
-  ACTIVE          // Fully verified and can receive payouts
-  SUSPENDED       // Temporarily suspended
-  REJECTED        // Application rejected
+  PENDING // Initial application submitted
+  UNDER_REVIEW // Admin reviewing application
+  APPROVED // Admin approved
+  ACTIVE // Fully verified and can receive payouts
+  SUSPENDED // Temporarily suspended
+  REJECTED // Application rejected
+  EXPIRED // Required document(s) expired — services hidden until renewed
+}
+
+enum SupplierType {
+  TOUR_GUIDE
+  TOUR_COMPANY
+  ACCOMMODATION_PROVIDER
+  TRANSPORTATION_PROVIDER
+  VEHICLE_OPERATOR
+  OTHER_SERVICE_PROVIDER
+}
+
+enum DocumentType {
+  GHANA_CARD
+  NATIONAL_ID
+  TOUR_GUIDE_LICENCE
+  DRIVERS_LICENCE
+  BUSINESS_CERTIFICATE
+  GTA_CERTIFICATE
+  PROOF_OF_ADDRESS
+  PROFILE_PHOTO
+  PASSENGER_TRANSPORT_LICENCE
+  VEHICLE_REGISTRATION
+  VEHICLE_OWNERSHIP
+  VEHICLE_ROADWORTHINESS
+  VEHICLE_INSURANCE
+  OTHER
+}
+
+enum DocumentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REPLACEMENT_REQUESTED
+  EXPIRED
+}
+
+enum VerificationTarget {
+  SUPPLIER
+  VEHICLE
+  GUIDE
+}
+
+enum VehicleStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum GuideStatus {
+  PENDING
+  VERIFIED
+  REJECTED
 }
 
 enum PayoutStatus {
-  PENDING         // Booking confirmed, awaiting finance approval
-  APPROVED        // Finance approved, queued for payment
-  PROCESSING      // Payment initiated
-  PAID            // Funds sent to supplier
-  FAILED          // Payment failed
-  CANCELLED       // Payout cancelled
+  PENDING // Booking confirmed, awaiting finance approval
+  APPROVED // Finance approved, queued for payment
+  PROCESSING // Payment initiated
+  PAID // Funds sent to supplier
+  FAILED // Payment failed
+  CANCELLED // Payout cancelled
 }
 
 enum PayoutMethodType {
@@ -52,17 +105,17 @@ enum BookingSource {
 }
 
 enum BookingFlow {
-  DIRECT    // Booked on Expedition Go (EG's own supplier tours)
-  EXTERNAL  // Redirected to TravioAfrica (other suppliers)
+  DIRECT // Booked on Expedition Go (EG's own supplier tours)
+  EXTERNAL // Redirected to TravioAfrica (other suppliers)
 }
 
 enum BookingStatus {
-  PENDING         // Payment processing
-  CONFIRMED       // Payment successful
-  CANCELLED       // Cancelled by customer
-  REFUNDED        // Refunded
-  COMPLETED       // Tour completed
-  NO_SHOW         // Customer didn't show up
+  PENDING // Payment processing
+  CONFIRMED // Payment successful
+  CANCELLED // Cancelled by customer
+  REFUNDED // Refunded
+  COMPLETED // Tour completed
+  NO_SHOW // Customer didn't show up
 }
 
 enum PaymentStatus {
@@ -88,6 +141,9 @@ enum NotificationType {
   TOUR_SUBMITTED
   TOUR_APPROVED
   TOUR_FLAGGED
+  DOCUMENT_REJECTED
+  DOCUMENT_EXPIRY_REMINDER
+  DOCUMENT_EXPIRED
 }
 
 enum AdminNotificationType {
@@ -100,6 +156,8 @@ enum AdminNotificationType {
   TOUR_SUBMITTED_FOR_REVIEW
   BOOKING_CREATED
   BOOKING_CONFIRMED
+  DOCUMENT_EXPIRING
+  DOCUMENT_EXPIRED
 }
 
 enum ReviewStatus {
@@ -165,16 +223,16 @@ enum MediaStatus {
 }
 
 model Media {
-  id        String      @id @default(cuid())
-  url       String      @unique
-  publicId  String?
-  userId    String?
-  status    MediaStatus @default(PENDING)
-  entity    String?
-  entityId  String?
+  id       String      @id @default(cuid())
+  url      String      @unique
+  publicId String?
+  userId   String?
+  status   MediaStatus @default(PENDING)
+  entity   String?
+  entityId String?
 
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status])
   @@index([url])
@@ -198,59 +256,59 @@ model User {
   logoUrl      String?
   phone        String?
   roles        UserRole[] @default([customer])
-  
+
   // Stripe Integration
   stripeCustomerId String? @unique
-  
+
   // Profile & Preferences
   // Legacy wishlist storage (plain tour-ID array, no per-item timestamps).
   // Kept for the one-time data backfill — WishlistItem is now the source of
   // truth and this column is no longer read by any controller. Drop it in a
   // follow-up deploy once scripts/backfill-wishlist.js has confirmed the copy.
-  wishlist     String[]
-  likes        String[]
-  language     String    @default("en")
-  timezone     String    @default("UTC")
-  
+  wishlist String[]
+  likes    String[]
+  language String   @default("en")
+  timezone String   @default("UTC")
+
   // Notification Preferences (JSON object with email/push categories)
   notificationPreferences Json?
-  
+
   // Account Status
-  active       Boolean   @default(true)
-  emailVerified Boolean  @default(false)
-  lastLoginAt  DateTime?
-  
+  active        Boolean   @default(true)
+  emailVerified Boolean   @default(false)
+  lastLoginAt   DateTime?
+
   // Admin Role (only for admins — determines granular permissions)
-  adminRoleId    String?
-  adminRole      AdminRole?    @relation(fields: [adminRoleId], references: [id])
-  
+  adminRoleId String?
+  adminRole   AdminRole? @relation(fields: [adminRoleId], references: [id])
+
   // Supplier Information (only for suppliers)
   supplierProfile SupplierProfile?
-  
+
   // Relationships
-  tours        Tour[]
-  bookings     Booking[]
-  payouts      Payout[]
-  payoutMethods PayoutMethod[]
-  reviews      Review[]
-  notifications Notification[]
-  cartItems    CartItem[]
-  teamMembers  TeamMember[]     @relation("SupplierTeam")
-  teamInvitations TeamMember[]  @relation("TeamInviter")
-  chatParticipants ConversationParticipant[]
-  messages     Message[]
-  specialOffers SpecialOffer[]
-  expeditionTours ExpeditionTour[]
-  publishedExpeditionTours ExpeditionTour[] @relation("ExpeditionPublishedBy")
-  unpublishedExpeditionTours ExpeditionTour[] @relation("ExpeditionUnpublishedBy")
-  articles      Article[]
-  keywordRequests KeywordRequest[]
-  wishlistItems WishlistItem[]
+  tours                      Tour[]
+  bookings                   Booking[]
+  payouts                    Payout[]
+  payoutMethods              PayoutMethod[]
+  reviews                    Review[]
+  notifications              Notification[]
+  cartItems                  CartItem[]
+  teamMembers                TeamMember[]              @relation("SupplierTeam")
+  teamInvitations            TeamMember[]              @relation("TeamInviter")
+  chatParticipants           ConversationParticipant[]
+  messages                   Message[]
+  specialOffers              SpecialOffer[]
+  expeditionTours            ExpeditionTour[]
+  publishedExpeditionTours   ExpeditionTour[]          @relation("ExpeditionPublishedBy")
+  unpublishedExpeditionTours ExpeditionTour[]          @relation("ExpeditionUnpublishedBy")
+  articles                   Article[]
+  keywordRequests            KeywordRequest[]
+  wishlistItems              WishlistItem[]
 
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@index([roles], type: Gin)      // GIN for array column performance
+  @@index([roles], type: Gin) // GIN for array column performance
   @@index([email])
   @@index([createdAt])
   @@index([stripeCustomerId])
@@ -274,169 +332,265 @@ model WishlistItem {
 }
 
 model SupplierProfile {
-  id           String        @id @default(cuid())
-  userId       String        @unique
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   // Status & Verification
   status       SupplierStatus @default(PENDING)
-  
+  supplierType SupplierType   @default(TOUR_COMPANY)
+
   // Business Information
-  businessInfo Json          // Structured business details
-  operatingInfo Json         // Operating information
-  representativeInfo Json    // Representative details
-  businessDocuments Json     // Document URLs
-  payoutInfo   Json          // Payout preferences
-  compliance   Json          // Terms acceptance & verification
-  
+  businessInfo       Json // Structured business details
+  operatingInfo      Json // Operating information
+  representativeInfo Json // Representative details
+  businessDocuments  Json // Document URLs
+  payoutInfo         Json // Payout preferences
+  compliance         Json // Terms acceptance & verification
+
   // Admin Review
-  adminNotes   String?
-  reviewedBy   String?       // Admin user ID
-  reviewedAt   DateTime?
+  adminNotes String?
+  reviewedBy String? // Admin user ID
+  reviewedAt DateTime?
+
+  // Verification sub-records (documents, vehicles, guides, history)
+  documents          SupplierDocument[]
+  vehicles           Vehicle[]
+  guides             Guide[]
+  verificationEvents VerificationEvent[]
 
   // Archive/Restore (soft-delete lifecycle)
   // JSON: { "archivedAt": ISO string, "tourIds": string[] } — captures exactly
   // which tours the archive action hid, so restore reactivates only those.
   archiveSnapshot Json?
-  
+
   // Statistics
-  totalEarnings Decimal      @default(0) @db.Decimal(10,2)
-  totalBookings Int          @default(0)
-  averageRating Decimal?     @db.Decimal(3,2)
-  
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  totalEarnings Decimal  @default(0) @db.Decimal(10, 2)
+  totalBookings Int      @default(0)
+  averageRating Decimal? @db.Decimal(3, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status])
   @@index([createdAt])
 }
 
-model PayoutMethod {
-  id             String            @id @default(cuid())
-  supplierId     String
-  supplier       User              @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+// An individual verification document (one row per uploaded file). Gives
+// per-document status, expiry and a permanent decision history — replacing
+// the legacy businessDocuments JSON blob for all new applications.
+model SupplierDocument {
+  id         String          @id @default(cuid())
+  supplierId String
+  supplier   SupplierProfile @relation(fields: [supplierId], references: [id], onDelete: Cascade)
 
-  type           PayoutMethodType
-  isDefault      Boolean           @default(false)
-  currency       String            @default("USD")
+  ownerType VerificationTarget @default(SUPPLIER)
+  ownerId   String? // vehicleId / guideId when ownerType != SUPPLIER
+  type      DocumentType
+
+  url      String
+  filename String?
+
+  status     DocumentStatus @default(PENDING)
+  expiryDate DateTime? // recorded for licences/certificates with a valid-until date
+  reviewNote String?
+
+  reviewedBy String? // Admin user ID
+  reviewedAt DateTime? // last review decision timestamp
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([supplierId, status])
+  @@index([ownerType, ownerId])
+  @@index([status, expiryDate])
+  @@index([type])
+}
+
+// Immutable audit trail: what was verified, when, when it expires, and by whom.
+model VerificationEvent {
+  id         String          @id @default(cuid())
+  supplierId String
+  supplier   SupplierProfile @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  entityType VerificationTarget
+  entityId   String?
+  action     String // APPROVED | REJECTED | REPLACEMENT_REQUESTED | EXPIRED | STATUS_CHANGE
+  actorId    String? // Admin user ID (or SYSTEM for scheduled expiry)
+  note       String?
+
+  createdAt DateTime @default(now())
+
+  @@index([supplierId, createdAt])
+  @@index([entityType, entityId])
+}
+
+model Vehicle {
+  id         String          @id @default(cuid())
+  supplierId String
+  supplier   SupplierProfile @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  make               String
+  model              String
+  year               Int?
+  registrationNumber String
+  photos             String[]
+
+  status     VehicleStatus @default(PENDING)
+  reviewNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([supplierId, status])
+  @@index([registrationNumber])
+}
+
+model Guide {
+  id         String          @id @default(cuid())
+  supplierId String
+  supplier   SupplierProfile @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  userId   String? // optional link to a User when the guide has their own account
+  fullName String
+  phone    String?
+  email    String?
+
+  status     GuideStatus @default(PENDING)
+  reviewNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([supplierId, status])
+}
+
+model PayoutMethod {
+  id         String @id @default(cuid())
+  supplierId String
+  supplier   User   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  type      PayoutMethodType
+  isDefault Boolean          @default(false)
+  currency  String           @default("USD")
 
   // Bank Transfer fields
-  bankName       String?
-  bankAddress    String?
-  bankCountry    String?              // ISO 3166-1 alpha-2, e.g. GH, NG, US
-  accountName    String?
-  accountNumber  String?
-  routingNumber  String?              // ABA routing (US)
-  swiftCode      String?              // SWIFT/BIC (international)
-  iban           String?              // International Bank Account Number
-  sortCode       String?              // Sort code (UK, Ghana, etc.)
-  branchCode     String?              // Branch/bank code (Nigeria, etc.)
+  bankName      String?
+  bankAddress   String?
+  bankCountry   String? // ISO 3166-1 alpha-2, e.g. GH, NG, US
+  accountName   String?
+  accountNumber String?
+  routingNumber String? // ABA routing (US)
+  swiftCode     String? // SWIFT/BIC (international)
+  iban          String? // International Bank Account Number
+  sortCode      String? // Sort code (UK, Ghana, etc.)
+  branchCode    String? // Branch/bank code (Nigeria, etc.)
 
   // PayPal fields
-  paypalEmail    String?
+  paypalEmail String?
 
   // Status
-  verified       Boolean           @default(false)
+  verified Boolean @default(false)
 
-  payouts        Payout[]          // Payouts that used this method
+  payouts Payout[] // Payouts that used this method
 
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([supplierId])
 }
 
 model Tour {
-  id           String      @id @default(cuid())
-  supplierId   String
-  supplier     User        @relation(fields: [supplierId], references: [id], onDelete: Cascade)
-  
+  id         String @id @default(cuid())
+  supplierId String
+  supplier   User   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
   // Basic Information
-  title        String
-  description  String
+  title         String
+  description   String
   referenceCode String?
-  photos       String[]
-  coverPhoto   String?
-  status       TourStatus  @default(DRAFT)
+  photos        String[]
+  coverPhoto    String?
+  status        TourStatus @default(DRAFT)
 
   // Review / Moderation (submit-for-review workflow)
-  submittedAt  DateTime?   // When supplier last submitted for review
-  reviewedBy   String?     // Admin user ID who made the last review decision
-  reviewedAt   DateTime?   // When the last review decision was made
-  reviewNote   String?     // Admin note shown to the supplier when flagged
+  submittedAt DateTime? // When supplier last submitted for review
+  reviewedBy  String? // Admin user ID who made the last review decision
+  reviewedAt  DateTime? // When the last review decision was made
+  reviewNote  String? // Admin note shown to the supplier when flagged
 
   // Draft / Edit-approval (live-tour edits wait here; the live version keeps selling)
-  draftContent     Json?      // Full edited product snapshot (live columns stay untouched)
-  draftStatus      String?    // DRAFT | PENDING_APPROVAL | REJECTED
+  draftContent     Json? // Full edited product snapshot (live columns stay untouched)
+  draftStatus      String? // DRAFT | PENDING_APPROVAL | REJECTED
   draftSubmittedAt DateTime?
   draftReviewedAt  DateTime?
-  draftReviewNote  String?    // Admin note for a rejected draft
+  draftReviewNote  String? // Admin note for a rejected draft
 
   // Categorization (JSON structure as per your model)
   categorization Json
-  theme        Json
-  
+  theme          Json
+
   // Product Content
   productContent Json
-  
+
   // Schedules & Pricing
   schedulesAndPricing Json
-  
+
   // Booking & Tickets
   bookingAndTickets Json
-  
+
   // SEO & Marketing
-  slug         String      @unique
-  metaTitle    String?
+  slug            String   @unique
+  metaTitle       String?
   metaDescription String?
-  tags         String[]
-  
+  tags            String[]
+
   // Location (PostGIS coordinates)
-  latitude     Float?      // Used with PostGIS ST_DWithin for geo-search
-  longitude    Float?      // Used with PostGIS ST_DWithin for geo-search
-  city         String?     // Extracted from productContent.location.city for indexed filtering
-  country      String?     // Extracted from productContent.location.country for indexed filtering
-  region       String?     // Extracted from productContent.location.region for indexed filtering
+  latitude  Float? // Used with PostGIS ST_DWithin for geo-search
+  longitude Float? // Used with PostGIS ST_DWithin for geo-search
+  city      String? // Extracted from productContent.location.city for indexed filtering
+  country   String? // Extracted from productContent.location.country for indexed filtering
+  region    String? // Extracted from productContent.location.region for indexed filtering
 
   // Normalized categorization (extracted from categorization JSON for indexed filtering)
-  category     String?     // e.g. "Adventure", "Cultural", "Nature"
-  subcategory  String?     // e.g. "Walking Tours", "Hiking"
-  activityType String?     // e.g. "Guided Tour", "Self-Guided"
-  difficulty   String?     // e.g. "Easy", "Moderate", "Challenging", "Expert"
-  durationMinutes Int?    // Extracted from categorization.duration (hours*60 or days*1440)
+  category        String? // e.g. "Adventure", "Cultural", "Nature"
+  subcategory     String? // e.g. "Walking Tours", "Hiking"
+  activityType    String? // e.g. "Guided Tour", "Self-Guided"
+  difficulty      String? // e.g. "Easy", "Moderate", "Challenging", "Expert"
+  durationMinutes Int? // Extracted from categorization.duration (hours*60 or days*1440)
 
   // Normalized theme (extracted from theme JSON)
-  primaryTheme String?     // e.g. "Nature & Wildlife", "History & Culture"
+  primaryTheme String? // e.g. "Nature & Wildlife", "History & Culture"
 
   // PostGIS geography column — managed via raw SQL, not by Prisma
   // (trigger function update_tour_location() populates it from lat/lng)
   location_geom Unsupported("geography(Point, 4326)")?
 
   // Statistics
-  totalBookings Int        @default(0)
-  totalRevenue Decimal     @default(0) @db.Decimal(10,2)
-  averageRating Decimal?   @db.Decimal(3,2)
-  reviewCount  Int         @default(0)
-  viewCount    Int         @default(0)
-  
+  totalBookings Int      @default(0)
+  totalRevenue  Decimal  @default(0) @db.Decimal(10, 2)
+  averageRating Decimal? @db.Decimal(3, 2)
+  reviewCount   Int      @default(0)
+  viewCount     Int      @default(0)
+
   // Relationships
-  bookings     Booking[]
-  reviews      Review[]
-  cartItems    CartItem[]
-  dateOverrides TourDateOverride[]
-  secondaryThemes TourSecondaryTheme[]
+  bookings            Booking[]
+  reviews             Review[]
+  cartItems           CartItem[]
+  dateOverrides       TourDateOverride[]
+  secondaryThemes     TourSecondaryTheme[]
   specialOfferTargets SpecialOfferTarget[]
   expeditionTour      ExpeditionTour?
   articles            ArticleTour[]
   wishlistItems       WishlistItem[]
 
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([supplierId])
-  @@index([supplierId, status])                  // Supplier dashboard: my tours by status
+  @@index([supplierId, status]) // Supplier dashboard: my tours by status
   @@index([status])
-  @@index([status, submittedAt])                 // Admin moderation queue ordering
+  @@index([status, submittedAt]) // Admin moderation queue ordering
   @@index([slug])
   @@index([createdAt])
   @@index([averageRating])
@@ -453,14 +607,14 @@ model Tour {
 }
 
 model TourDateOverride {
-  id                 String         @id @default(cuid())
-  tourId             String
-  tour               Tour           @relation(fields: [tourId], references: [id], onDelete: Cascade)
-  date               DateTime       @db.Date
-  status             OverrideStatus @default(AVAILABLE)
-  capacity           Int?
-  timeSlotOverrides  Json?          // [{ time: "09:00", capacity: 10, booked: 0 }, ...]
-  notes              String?
+  id                String         @id @default(cuid())
+  tourId            String
+  tour              Tour           @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  date              DateTime       @db.Date
+  status            OverrideStatus @default(AVAILABLE)
+  capacity          Int?
+  timeSlotOverrides Json? // [{ time: "09:00", capacity: 10, booked: 0 }, ...]
+  notes             String?
 
   @@unique([tourId, date])
   @@index([tourId, date])
@@ -478,40 +632,40 @@ model TourSecondaryTheme {
 }
 
 model SpecialOffer {
-  id                 String                     @id @default(cuid())
-  supplierId         String
-  supplier           User                       @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  id         String @id @default(cuid())
+  supplierId String
+  supplier   User   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
 
   name               String
   offerType          SpecialOfferType
-  discountType       DiscountType               @default(PERCENTAGE)
-  discountPercentage Int                        @default(10)
+  discountType       DiscountType     @default(PERCENTAGE)
+  discountPercentage Int              @default(10)
   fixedDiscountValue Float?
   startDate          DateTime?
   endDate            DateTime?
-  isActive           Boolean                    @default(true)
+  isActive           Boolean          @default(true)
 
-  capacityType       SpecialOfferCapacityType   @default(UNLIMITED)
-  maxSpots           Int?
-  spotsSold          Int                        @default(0)
+  capacityType SpecialOfferCapacityType @default(UNLIMITED)
+  maxSpots     Int?
+  spotsSold    Int                      @default(0)
 
-  timeSlotMode       SpecialOfferTimeSlotMode   @default(ALL_DAYS)
-  specificWeekdays   String[]                   @default([])
+  timeSlotMode     SpecialOfferTimeSlotMode @default(ALL_DAYS)
+  specificWeekdays String[]                 @default([])
 
-  earlyBirdAdvanceDays   Int?
-  lastMinuteWindowHours  Int?
+  earlyBirdAdvanceDays  Int?
+  lastMinuteWindowHours Int?
 
-  promoCode                String?  @unique
-  minQuantity              Int?
-  minSpendAmount           Float?
+  promoCode                 String? @unique
+  minQuantity               Int?
+  minSpendAmount            Float?
   maxRedemptionsPerCustomer Int?
-  stackable                Boolean  @default(false)
+  stackable                 Boolean @default(false)
 
-  targets            SpecialOfferTarget[]
-  bookings           Booking[]
+  targets  SpecialOfferTarget[]
+  bookings Booking[]
 
-  createdAt          DateTime                   @default(now())
-  updatedAt          DateTime                   @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([supplierId])
   @@index([isActive, startDate, endDate])
@@ -519,85 +673,85 @@ model SpecialOffer {
 }
 
 model SpecialOfferTarget {
-  id              String       @id @default(cuid())
-  specialOfferId  String
-  specialOffer    SpecialOffer @relation(fields: [specialOfferId], references: [id], onDelete: Cascade)
+  id             String       @id @default(cuid())
+  specialOfferId String
+  specialOffer   SpecialOffer @relation(fields: [specialOfferId], references: [id], onDelete: Cascade)
 
-  tourId          String
-  tour            Tour         @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  tourId String
+  tour   Tour   @relation(fields: [tourId], references: [id], onDelete: Cascade)
 
   tourOptionKey   String?
   tourOptionLabel String?
 
+  @@unique([specialOfferId, tourId, tourOptionKey])
   @@index([tourId])
   @@index([tourOptionKey])
-  @@unique([specialOfferId, tourId, tourOptionKey])
 }
 
 model Booking {
-  id           String        @id @default(cuid())
-  bookingNumber String       @unique // Human-readable booking reference
-  
+  id            String @id @default(cuid())
+  bookingNumber String @unique // Human-readable booking reference
+
   // Relationships
-  customerId   String
-  customer     User          @relation(fields: [customerId], references: [id])
-  tourId       String
-  tour         Tour          @relation(fields: [tourId], references: [id])
-  
+  customerId String
+  customer   User   @relation(fields: [customerId], references: [id])
+  tourId     String
+  tour       Tour   @relation(fields: [tourId], references: [id])
+
   // Booking Details
   source       BookingSource @default(TRAVIO)
   status       BookingStatus @default(PENDING)
-  travelers    Json          // Traveler information
+  travelers    Json // Traveler information
   selectedDate DateTime
   selectedTime String?
   isSimulated  Boolean       @default(false)
-  
+
   // Pricing
-  subtotal     Decimal       @db.Decimal(10,2)
-  taxes        Decimal       @default(0) @db.Decimal(10,2)
-  fees         Decimal       @default(0) @db.Decimal(10,2)
-  discounts    Decimal       @default(0) @db.Decimal(10,2)
-  total        Decimal       @db.Decimal(10,2)
-  currency     String        @default("USD")
-  
+  subtotal  Decimal @db.Decimal(10, 2)
+  taxes     Decimal @default(0) @db.Decimal(10, 2)
+  fees      Decimal @default(0) @db.Decimal(10, 2)
+  discounts Decimal @default(0) @db.Decimal(10, 2)
+  total     Decimal @db.Decimal(10, 2)
+  currency  String  @default("USD")
+
   // Commission & Payouts
-  commissionRate Decimal     @db.Decimal(5,4) // e.g., 0.1500 for 15%
-  commissionAmount Decimal   @db.Decimal(10,2)
-  supplierPayout Decimal     @db.Decimal(10,2)
-  
+  commissionRate   Decimal @db.Decimal(5, 4) // e.g., 0.1500 for 15%
+  commissionAmount Decimal @db.Decimal(10, 2)
+  supplierPayout   Decimal @db.Decimal(10, 2)
+
   // Payment Information
   stripePaymentIntentId String?
-  paymentStatus PaymentStatus @default(PENDING)
-  paidAt       DateTime?
+  paymentStatus         PaymentStatus @default(PENDING)
+  paidAt                DateTime?
   // 'now' = charged at booking (Pay now), 'later' = Reserve now, pay later
-  paymentTiming String     @default("now")
-  
+  paymentTiming         String        @default("now")
+
   // Cancellation
   cancellationReason String?
-  cancelledAt  DateTime?
-  refundAmount Decimal?      @db.Decimal(10,2)
-  refundedAt   DateTime?
-  
+  cancelledAt        DateTime?
+  refundAmount       Decimal?  @db.Decimal(10, 2)
+  refundedAt         DateTime?
+
   // Communication
   specialRequests String?
-  supplierNotes String?
+  supplierNotes   String?
 
   // Customer-selected pickup snapshot (mode, area/location, address, time).
   // Null when the tour has no pickup service.
   pickup Json?
-  
+
   // Applied special offer (if any)
   appliedOfferId String?
   appliedOffer   SpecialOffer? @relation(fields: [appliedOfferId], references: [id], onDelete: SetNull)
-  
-  // Relationships
-  review       Review?
-  payouts      Payout[]
-  reminders    BookingReminder[]
-  changes      BookingChange[]
 
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  // Relationships
+  review    Review?
+  payouts   Payout[]
+  reminders BookingReminder[]
+  changes   BookingChange[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([customerId])
   @@index([tourId])
@@ -605,78 +759,78 @@ model Booking {
   @@index([selectedDate])
   @@index([bookingNumber])
   @@index([stripePaymentIntentId])
-  @@index([tourId, status, selectedDate])       // Capacity checks + supplier booking lookup
-  @@index([customerId, status, selectedDate])   // "My bookings" filtered pages
-  @@index([status, selectedDate])               // Admin/supplier date-range queries
+  @@index([tourId, status, selectedDate]) // Capacity checks + supplier booking lookup
+  @@index([customerId, status, selectedDate]) // "My bookings" filtered pages
+  @@index([status, selectedDate]) // Admin/supplier date-range queries
 }
 
 model BookingReminder {
-  id           String        @id @default(cuid())
+  id           String    @id @default(cuid())
   bookingId    String
-  booking      Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  type         String        // e.g. PAYMENT_DUE_24H, BOOKING_24H, REVIEW_REQUEST, PICKUP_LOCATION_REQUIRED
+  booking      Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  type         String // e.g. PAYMENT_DUE_24H, BOOKING_24H, REVIEW_REQUEST, PICKUP_LOCATION_REQUIRED
   scheduledFor DateTime
   sentAt       DateTime?
-  status       String        @default("PENDING") // PENDING | SENT | FAILED | SKIPPED
+  status       String    @default("PENDING") // PENDING | SENT | FAILED | SKIPPED
   error        String?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   @@unique([bookingId, type])
   @@index([type, status, scheduledFor])
 }
 
 model BookingChange {
-  id          String   @id @default(cuid())
-  bookingId   String
-  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  changedBy   String   // customer | supplier | platform
-  reason      String?
-  previous    Json     // Snapshot of the changed fields before (e.g. { selectedDate, travelers })
-  updated     Json     // Snapshot of the changed fields after
-  createdAt   DateTime @default(now())
+  id        String   @id @default(cuid())
+  bookingId String
+  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  changedBy String // customer | supplier | platform
+  reason    String?
+  previous  Json // Snapshot of the changed fields before (e.g. { selectedDate, travelers })
+  updated   Json // Snapshot of the changed fields after
+  createdAt DateTime @default(now())
 
   @@index([bookingId])
   @@index([changedBy])
 }
 
 model Payout {
-  id             String       @id @default(cuid())
-    
+  id String @id @default(cuid())
+
   // Who gets paid
-  supplierId     String
-  supplier       User         @relation(fields: [supplierId], references: [id])
-  
+  supplierId String
+  supplier   User   @relation(fields: [supplierId], references: [id])
+
   // What booking this payout is for
-  bookingId      String
-  booking        Booking      @relation(fields: [bookingId], references: [id])
-  
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id])
+
   // Amounts
-  amount         Decimal      @db.Decimal(10,2)
-  currency       String       @default("USD")
-  commissionAmount Decimal    @db.Decimal(10,2)
-  
+  amount           Decimal @db.Decimal(10, 2)
+  currency         String  @default("USD")
+  commissionAmount Decimal @db.Decimal(10, 2)
+
   // Status
-  status         PayoutStatus @default(PENDING)
-  
+  status PayoutStatus @default(PENDING)
+
   // Finance processing
-  approvedAt     DateTime?
-  approvedBy     String?      // Admin user ID who approved
-  processedAt    DateTime?
-  processedBy    String?      // Admin user ID who processed
-  paidAt         DateTime?
-  
+  approvedAt  DateTime?
+  approvedBy  String? // Admin user ID who approved
+  processedAt DateTime?
+  processedBy String? // Admin user ID who processed
+  paidAt      DateTime?
+
   // The specific payout method used (linked record)
   payoutMethodId String?
   payoutMethod   PayoutMethod? @relation(fields: [payoutMethodId], references: [id])
 
   // Payment details
-  paymentMethod  String?      // "bank_transfer", "paypal"
-  reference      String?      // Transaction reference from payment provider
-  notes          String?      // Admin notes
+  paymentMethod String? // "bank_transfer", "paypal"
+  reference     String? // Transaction reference from payment provider
+  notes         String? // Admin notes
 
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([supplierId])
   @@index([status])
@@ -688,50 +842,50 @@ model Payout {
 }
 
 model Review {
-  id           String      @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Relationships
-  bookingId    String?
-  booking      Booking?    @relation(fields: [bookingId], references: [id], onDelete: SetNull)
-  customerId   String
-  customer     User        @relation(fields: [customerId], references: [id])
-  tourId       String
-  tour         Tour        @relation(fields: [tourId], references: [id])
-  
+  bookingId  String?
+  booking    Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  customerId String
+  customer   User     @relation(fields: [customerId], references: [id])
+  tourId     String
+  tour       Tour     @relation(fields: [tourId], references: [id])
+
   // Review Content
-  rating       Int         // 1-5 stars
-  title        String?
-  comment      String?
-  photos       String[]    // Review photos
-  
+  rating  Int // 1-5 stars
+  title   String?
+  comment String?
+  photos  String[] // Review photos
+
   // Sub-ratings
   valueForMoneyRating Int?
   guideRating         Int?
   meetingRating       Int?
-  
+
   // Travel metadata
-  travelMonth  String?
-  companions   String[]
-  
+  travelMonth String?
+  companions  String[]
+
   // Moderation
-  status       ReviewStatus @default(PENDING)
-  moderatedBy  String?     // Admin user ID
-  moderatedAt  DateTime?
-  flagReason   String?
-  
+  status      ReviewStatus @default(PENDING)
+  moderatedBy String? // Admin user ID
+  moderatedAt DateTime?
+  flagReason  String?
+
   // Supplier Response
-  supplierResponse String?
+  supplierResponse   String?
   supplierResponseAt DateTime?
-  
+
   // Verified Badge
-  verified     Boolean     @default(true) // True = booking ownership verified
-  
+  verified Boolean @default(true) // True = booking ownership verified
+
   // Helpfulness
-  helpfulCount Int         @default(0)
-  reportCount  Int         @default(0)
-  
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  helpfulCount Int @default(0)
+  reportCount  Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([bookingId])
   @@index([tourId])
@@ -739,36 +893,36 @@ model Review {
   @@index([rating])
   @@index([status])
   @@index([createdAt])
-  @@index([tourId, status, rating])              // Tour page: approved reviews sorted by rating
-  @@index([status, createdAt])                   // Moderation queue
+  @@index([tourId, status, rating]) // Tour page: approved reviews sorted by rating
+  @@index([status, createdAt]) // Moderation queue
 }
 
 model CartItem {
-  id           String      @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Relationships
-  customerId   String
-  customer     User        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  tourId       String
-  tour         Tour        @relation(fields: [tourId], references: [id], onDelete: Cascade)
-  
+  customerId String
+  customer   User   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tourId     String
+  tour       Tour   @relation(fields: [tourId], references: [id], onDelete: Cascade)
+
   // Selection Details
   selectedDate DateTime
   selectedTime String?
-  travelers    Json        // Traveler count and details
-  
+  travelers    Json // Traveler count and details
+
   // Pricing (calculated at time of adding to cart)
-  subtotal     Decimal     @db.Decimal(10,2)
-  total        Decimal     @db.Decimal(10,2)
-  currency     String      @default("USD")
-  discounts    Decimal     @default(0) @db.Decimal(10,2)
+  subtotal       Decimal @db.Decimal(10, 2)
+  total          Decimal @db.Decimal(10, 2)
+  currency       String  @default("USD")
+  discounts      Decimal @default(0) @db.Decimal(10, 2)
   appliedOfferId String?
-  
+
   // Cart Management
-  expiresAt    DateTime    // Cart items expire after X hours
-  
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  expiresAt DateTime // Cart items expire after X hours
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([customerId, tourId, selectedDate, selectedTime])
   @@index([customerId])
@@ -787,11 +941,11 @@ enum ConversationType {
 }
 
 model Conversation {
-  id           String               @id @default(cuid())
-  type         ConversationType     @default(SUPPLIER_ADMIN)
-  title        String?              // Auto-generated for 1-on-1: other participant's name
-  createdAt    DateTime             @default(now())
-  updatedAt    DateTime             @updatedAt
+  id        String           @id @default(cuid())
+  type      ConversationType @default(SUPPLIER_ADMIN)
+  title     String? // Auto-generated for 1-on-1: other participant's name
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
 
   participants ConversationParticipant[]
   messages     Message[]
@@ -800,59 +954,59 @@ model Conversation {
 }
 
 model ConversationParticipant {
-  id             String       @id @default(cuid())
+  id             String   @id @default(cuid())
   conversationId String
   userId         String
-  joinedAt       DateTime     @default(now())
-  lastReadAt     DateTime     @default(now())
+  joinedAt       DateTime @default(now())
+  lastReadAt     DateTime @default(now())
 
-  conversation  Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([conversationId, userId])
   @@index([userId])
 }
 
 model Message {
-  id             String        @id @default(cuid())
+  id             String    @id @default(cuid())
   conversationId String
   senderId       String
   content        String
-  attachmentUrl  String?       // Cloudinary URL
-  attachmentType String?       // "image" | "document"
+  attachmentUrl  String? // Cloudinary URL
+  attachmentType String? // "image" | "document"
   editedAt       DateTime?
-  createdAt      DateTime      @default(now())
+  createdAt      DateTime  @default(now())
 
-  conversation  Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender        User          @relation(fields: [senderId], references: [id])
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id])
 
   @@index([conversationId, createdAt])
 }
 
 model Notification {
-  id           String           @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Relationships
-  userId       String
-  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   // Notification Content
-  type         NotificationType
-  title        String
-  message      String
-  data         Json?            // Additional structured data
-  
+  type    NotificationType
+  title   String
+  message String
+  data    Json? // Additional structured data
+
   // Status
-  read         Boolean          @default(false)
-  readAt       DateTime?
-  
+  read   Boolean   @default(false)
+  readAt DateTime?
+
   // Delivery
-  emailSent    Boolean          @default(false)
-  emailSentAt  DateTime?
-  pushSent     Boolean          @default(false)
-  pushSentAt   DateTime?
-  
-  createdAt    DateTime         @default(now())
+  emailSent   Boolean   @default(false)
+  emailSentAt DateTime?
+  pushSent    Boolean   @default(false)
+  pushSentAt  DateTime?
+
+  createdAt DateTime @default(now())
 
   @@index([userId])
   @@index([type])
@@ -861,20 +1015,20 @@ model Notification {
 }
 
 model AdminNotification {
-  id           String               @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Notification Content
-  type         AdminNotificationType
-  title        String
-  message      String
-  data         Json?                // Additional structured data (supplierId, reviewId, payoutId, etc.)
-  
+  type    AdminNotificationType
+  title   String
+  message String
+  data    Json? // Additional structured data (supplierId, reviewId, payoutId, etc.)
+
   // Status
-  acknowledged Boolean              @default(false)
+  acknowledged   Boolean   @default(false)
   acknowledgedAt DateTime?
-  acknowledgedBy String?            // Admin user ID who acknowledged
-  
-  createdAt    DateTime             @default(now())
+  acknowledgedBy String? // Admin user ID who acknowledged
+
+  createdAt DateTime @default(now())
 
   @@index([type])
   @@index([acknowledged])
@@ -886,13 +1040,13 @@ model AdminNotification {
 // ================================
 
 model StripeEvent {
-  id           String      @id @default(cuid())
-  stripeEventId String     @unique
-  eventType    String
-  processed    Boolean     @default(false)
-  data         Json
-  
-  createdAt    DateTime    @default(now())
+  id            String  @id @default(cuid())
+  stripeEventId String  @unique
+  eventType     String
+  processed     Boolean @default(false)
+  data          Json
+
+  createdAt DateTime @default(now())
 
   @@index([stripeEventId])
   @@index([processed])
@@ -900,13 +1054,13 @@ model StripeEvent {
 }
 
 model SystemConfig {
-  id           String      @id @default(cuid())
-  key          String      @unique
-  value        Json
-  description  String?
-  
-  updatedAt    DateTime    @updatedAt
-  updatedBy    String      // Admin user ID
+  id          String  @id @default(cuid())
+  key         String  @unique
+  value       Json
+  description String?
+
+  updatedAt DateTime @updatedAt
+  updatedBy String // Admin user ID
 
   @@index([key])
 }
@@ -916,34 +1070,34 @@ model SystemConfig {
 // ================================
 
 model AdminPermission {
-  id           String   @id @default(cuid())
-  key          String   @unique   // e.g. "suppliers.approve", "payouts.view"
-  name         String              // e.g. "Approve Suppliers"
-  description  String?
-  category     String              // e.g. "Suppliers", "Finance", "Reviews"
-  isSystem     Boolean  @default(false) // cannot be deleted
+  id          String  @id @default(cuid())
+  key         String  @unique // e.g. "suppliers.approve", "payouts.view"
+  name        String // e.g. "Approve Suppliers"
+  description String?
+  category    String // e.g. "Suppliers", "Finance", "Reviews"
+  isSystem    Boolean @default(false) // cannot be deleted
 
-  roles        AdminRolePermission[]
+  roles AdminRolePermission[]
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([category])
   @@index([key])
 }
 
 model AdminRole {
-  id           String   @id @default(cuid())
-  name         String   @unique    // e.g. "super_admin", "finance_admin"
-  description  String?
-  isSystem     Boolean  @default(false) // super_admin cannot be deleted or modified
-  isDefault    Boolean  @default(false) // auto-assigned to new admins if not specified
+  id          String  @id @default(cuid())
+  name        String  @unique // e.g. "super_admin", "finance_admin"
+  description String?
+  isSystem    Boolean @default(false) // super_admin cannot be deleted or modified
+  isDefault   Boolean @default(false) // auto-assigned to new admins if not specified
 
-  permissions  AdminRolePermission[]
-  users        User[]
+  permissions AdminRolePermission[]
+  users       User[]
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([name])
 }
@@ -952,8 +1106,8 @@ model AdminRolePermission {
   roleId       String
   permissionId String
 
-  role         AdminRole       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission   AdminPermission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  role       AdminRole       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission AdminPermission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
   @@id([roleId, permissionId])
   @@index([roleId])
@@ -965,25 +1119,25 @@ model AdminRolePermission {
 // ================================
 
 model Event {
-  id           String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  name         String   // Dot-notation event name — "booking.completed", "tour.viewed", "search.executed"
-  userId       String?  // Authenticated user who triggered the event
-  sessionId    String?  // Anonymous session for unauthenticated tracking
+  name      String // Dot-notation event name — "booking.completed", "tour.viewed", "search.executed"
+  userId    String? // Authenticated user who triggered the event
+  sessionId String? // Anonymous session for unauthenticated tracking
 
-  resource     String?  // Affected entity type — "Booking", "Tour", "Review", "User"
-  resourceId   String?  // Affected entity ID
+  resource   String? // Affected entity type — "Booking", "Tour", "Review", "User"
+  resourceId String? // Affected entity ID
 
-  properties   Json     // Arbitrary event payload (query params, tour IDs, amounts, etc.)
-  source       String?  // Where the event originated — "web", "mobile", "api", "webhook"
+  properties Json // Arbitrary event payload (query params, tour IDs, amounts, etc.)
+  source     String? // Where the event originated — "web", "mobile", "api", "webhook"
 
-  createdAt    DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([name])
   @@index([userId])
   @@index([resource, resourceId])
   @@index([createdAt])
-  @@index([name, createdAt])         // Coverage for time-series analytics queries
+  @@index([name, createdAt]) // Coverage for time-series analytics queries
   @@index([userId, name, createdAt]) // Coverage for user-journey / funnel queries
 }
 
@@ -992,19 +1146,19 @@ model Event {
 // ================================
 
 model TeamMember {
-  id             String     @id @default(cuid())
+  id             String    @id @default(cuid())
   supplierId     String
-  supplier       User       @relation("SupplierTeam", fields: [supplierId], references: [id], onDelete: Cascade)
+  supplier       User      @relation("SupplierTeam", fields: [supplierId], references: [id], onDelete: Cascade)
   email          String
-  role           String     @default("editor")
-  status         String     @default("PENDING")
+  role           String    @default("editor")
+  status         String    @default("PENDING")
   invitedById    String?
-  invitedBy      User?      @relation("TeamInviter", fields: [invitedById], references: [id])
-  inviteToken    String?    @unique
+  invitedBy      User?     @relation("TeamInviter", fields: [invitedById], references: [id])
+  inviteToken    String?   @unique
   tokenExpiresAt DateTime?
   acceptedAt     DateTime?
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@unique([supplierId, email])
   @@index([supplierId])
@@ -1017,41 +1171,41 @@ model TeamMember {
 // ================================
 
 model ExpeditionTour {
-  id              String        @id @default(cuid())
-  tourId          String        @unique
-  tour            Tour          @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  tourId String @unique
+  tour   Tour   @relation(fields: [tourId], references: [id], onDelete: Cascade)
 
   // Listing state
-  isActive        Boolean       @default(false)
-  bookingFlow     BookingFlow   @default(DIRECT)
-  externalUrl     String?
+  isActive    Boolean     @default(false)
+  bookingFlow BookingFlow @default(DIRECT)
+  externalUrl String?
 
   // Display
-  displayOrder    Int           @default(0)
-  isFeatured      Boolean       @default(false)
+  displayOrder Int     @default(0)
+  isFeatured   Boolean @default(false)
 
   // Audit — publish
-  publishedById   String?
-  publishedBy     User?         @relation("ExpeditionPublishedBy", fields: [publishedById], references: [id])
-  publishedAt     DateTime?
+  publishedById String?
+  publishedBy   User?     @relation("ExpeditionPublishedBy", fields: [publishedById], references: [id])
+  publishedAt   DateTime?
 
   // Audit — unpublish
   unpublishedById String?
-  unpublishedBy   User?         @relation("ExpeditionUnpublishedBy", fields: [unpublishedById], references: [id])
+  unpublishedBy   User?     @relation("ExpeditionUnpublishedBy", fields: [unpublishedById], references: [id])
   unpublishedAt   DateTime?
   unpublishReason String?
 
   // Sync tracking
-  syncStatus      String?       // synced | pending | failed
-  lastSyncAt      DateTime?
-  syncError       String?
+  syncStatus String? // synced | pending | failed
+  lastSyncAt DateTime?
+  syncError  String?
 
   // Legacy adder tracker
-  addedById       String?
-  addedBy         User?         @relation(fields: [addedById], references: [id], onDelete: SetNull)
+  addedById String?
+  addedBy   User?   @relation(fields: [addedById], references: [id], onDelete: SetNull)
 
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([isActive, displayOrder])
   @@index([isActive, isFeatured, displayOrder])
@@ -1066,7 +1220,7 @@ model Article {
   title           String
   slug            String        @unique
   excerpt         String        @db.Text
-  body            Json          // Portable Text (structured JSON from Sanity)
+  body            Json // Portable Text (structured JSON from Sanity)
   featuredImage   String?
   images          Json?
   metaTitle       String?
@@ -1079,15 +1233,15 @@ model Article {
   viewCount       Int           @default(0)
   shareCount      Int           @default(0)
 
-  authorId        String
-  author          User          @relation(fields: [authorId], references: [id])
-  categoryId      String?
-  category        ArticleCategory? @relation(fields: [categoryId], references: [id])
-  tags            ArticleTagOnArticle[]
-  relatedTours    ArticleTour[]
+  authorId     String
+  author       User                  @relation(fields: [authorId], references: [id])
+  categoryId   String?
+  category     ArticleCategory?      @relation(fields: [categoryId], references: [id])
+  tags         ArticleTagOnArticle[]
+  relatedTours ArticleTour[]
 
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([slug])
   @@index([status])
@@ -1100,26 +1254,26 @@ model Article {
 }
 
 model ArticleCategory {
-  id          String    @id @default(cuid())
+  id          String            @id @default(cuid())
   name        String
-  slug        String    @unique
+  slug        String            @unique
   description String?
   parentId    String?
-  parent      ArticleCategory? @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  parent      ArticleCategory?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
   children    ArticleCategory[] @relation("CategoryHierarchy")
   articles    Article[]
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
 
   @@index([slug])
   @@index([parentId])
 }
 
 model ArticleTag {
-  id        String    @id @default(cuid())
-  name      String
-  slug      String    @unique
-  articles  ArticleTagOnArticle[]
+  id       String                @id @default(cuid())
+  name     String
+  slug     String                @unique
+  articles ArticleTagOnArticle[]
 
   @@index([slug])
 }
@@ -1127,7 +1281,7 @@ model ArticleTag {
 model ArticleTagOnArticle {
   articleId String
   tagId     String
-  article   Article   @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  article   Article    @relation(fields: [articleId], references: [id], onDelete: Cascade)
   tag       ArticleTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
   @@id([articleId, tagId])
@@ -1147,29 +1301,29 @@ model ArticleTour {
 }
 
 model AuditLog {
-  id           String      @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Actor
-  userId       String?
-  userEmail    String?
-  ipAddress    String?
-  userAgent    String?
-  
+  userId    String?
+  userEmail String?
+  ipAddress String?
+  userAgent String?
+
   // Action
-  action       String      // e.g., "user.created", "booking.cancelled"
-  resource     String      // e.g., "User", "Booking"
-  resourceId   String?
-  
+  action     String // e.g., "user.created", "booking.cancelled"
+  resource   String // e.g., "User", "Booking"
+  resourceId String?
+
   // Details
-  oldValues    Json?
-  newValues    Json?
-  metadata     Json?
+  oldValues Json?
+  newValues Json?
+  metadata  Json?
 
   // Tamper evidence (hash chain)
-  prevHash     String?
-  hash         String?
-  
-  createdAt    DateTime    @default(now())
+  prevHash String?
+  hash     String?
+
+  createdAt DateTime @default(now())
 
   @@index([userId])
   @@index([action])
@@ -1179,30 +1333,30 @@ model AuditLog {
 }
 
 model AuditLogArchive {
-  id           String      @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Actor
-  userId       String?
-  userEmail    String?
-  ipAddress    String?
-  userAgent    String?
-  
+  userId    String?
+  userEmail String?
+  ipAddress String?
+  userAgent String?
+
   // Action
-  action       String
-  resource     String
-  resourceId   String?
-  
+  action     String
+  resource   String
+  resourceId String?
+
   // Details
-  oldValues    Json?
-  newValues    Json?
-  metadata     Json?
+  oldValues Json?
+  newValues Json?
+  metadata  Json?
 
   // Tamper evidence (hash chain)
-  prevHash     String?
-  hash         String?
-  
-  createdAt    DateTime
-  archivedAt   DateTime    @default(now())
+  prevHash String?
+  hash     String?
+
+  createdAt  DateTime
+  archivedAt DateTime @default(now())
 
   @@index([userId])
   @@index([action])
@@ -1220,28 +1374,28 @@ model BookingCounter {
 }
 
 model NewsletterSubscriber {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  source    String   @default("EXPEDITION")
-  subscribed Boolean @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String   @id @default(cuid())
+  email      String   @unique
+  name       String?
+  source     String   @default("EXPEDITION")
+  subscribed Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   @@index([email])
   @@index([subscribed])
 }
 
 model KeywordRequest {
-  id          String               @id @default(cuid())
-  keyword     String
-  supplierId  String
-  supplier    User                 @relation(fields: [supplierId], references: [id], onDelete: Cascade)
-  status      KeywordRequestStatus @default(PENDING)
-  reviewedBy  String?
-  reviewedAt  DateTime?
-  createdAt   DateTime             @default(now())
-  updatedAt   DateTime             @updatedAt
+  id         String               @id @default(cuid())
+  keyword    String
+  supplierId String
+  supplier   User                 @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  status     KeywordRequestStatus @default(PENDING)
+  reviewedBy String?
+  reviewedAt DateTime?
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
 
   @@index([supplierId])
   @@index([status])

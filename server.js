@@ -201,6 +201,15 @@ async function setupQueueWorkers() {
     enqueueCleanup('expire-special-offers').catch((err) => logger.warn('[scheduler] expire-special-offers failed:', err?.message));
   }, 24 * 60 * 60 * 1000));
 
+  // Document expiration + 60/30/7-day licence/certificate reminders.
+  intervals.push(setInterval(() => {
+    enqueueCleanup('expire-supplier-documents').catch((err) => logger.warn('[scheduler] expire-supplier-documents failed:', err?.message));
+  }, 24 * 60 * 60 * 1000));
+
+  intervals.push(setInterval(() => {
+    enqueueCleanup('plan-doc-expiry-reminders').catch((err) => logger.warn('[scheduler] plan-doc-expiry-reminders failed:', err?.message));
+  }, 24 * 60 * 60 * 1000));
+
   enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] startup cleanup-expired-cart failed:', err?.message));
   enqueueCleanup('cleanup-stale-bookings').catch((err) => logger.warn('[scheduler] startup cleanup-stale-bookings failed:', err?.message));
   enqueueCleanup('charge-pay-later-bookings').catch((err) => logger.warn('[scheduler] startup charge-pay-later-bookings failed:', err?.message));
@@ -212,6 +221,8 @@ async function setupQueueWorkers() {
   enqueueCleanup('cleanup-audit-logs').catch((err) => logger.warn('[scheduler] startup cleanup-audit-logs failed:', err?.message));
   enqueueCleanup('purge-archived-tours').catch((err) => logger.warn('[scheduler] startup purge-archived-tours failed:', err?.message));
   enqueueCleanup('expire-special-offers').catch((err) => logger.warn('[scheduler] startup expire-special-offers failed:', err?.message));
+  enqueueCleanup('expire-supplier-documents').catch((err) => logger.warn('[scheduler] startup expire-supplier-documents failed:', err?.message));
+  enqueueCleanup('plan-doc-expiry-reminders').catch((err) => logger.warn('[scheduler] startup plan-doc-expiry-reminders failed:', err?.message));
 }
 
 function setupSocketIO() {

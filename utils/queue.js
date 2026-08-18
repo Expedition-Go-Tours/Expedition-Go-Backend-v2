@@ -580,6 +580,17 @@ function registerWorkers() {
         console.log(`[Queue] Expired ${result.count} special offers`);
         break;
       }
+      case 'expire-supplier-documents': {
+        const { expireExpiredDocuments } = require('./documentExpiry');
+        const { expiredDocuments } = await expireExpiredDocuments();
+        if (expiredDocuments > 0) console.log(`[Queue] Expired ${expiredDocuments} supplier documents`);
+        break;
+      }
+      case 'plan-doc-expiry-reminders': {
+        const { planDocumentExpiryReminders } = require('./documentExpiry');
+        await planDocumentExpiryReminders();
+        break;
+      }
       default:
         console.log('[Queue] Unknown cleanup job:', job.name);
     }
