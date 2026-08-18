@@ -14,7 +14,7 @@ const { logActivity } = require('../utils/auditLogger');
 const { enqueueNotification } = require('../utils/queue');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
-const { parseDocuments, parseVehiclePhotos, parseVehicles, parseGuides } = require('../utils/supplierVerification');
+const { parseDocuments, parseVehiclePhotos, parseVehicles } = require('../utils/supplierVerification');
 const logger = require('../utils/logger');
 
 const DOCUMENT_REPLACEABLE = ['REJECTED', 'REPLACEMENT_REQUESTED', 'EXPIRED'];
@@ -74,6 +74,61 @@ async function maybeRestoreExpiredSupplier(supplierProfileId, actorId) {
 // ================================
 // SUPPLIER-FACING (owner-scoped)
 // ================================
+
+const KNOWN_DOCUMENT_TYPES = [
+  'GHANA_CARD', 'NATIONAL_ID', 'TOUR_GUIDE_LICENCE', 'DRIVERS_LICENCE',
+  'BUSINESS_CERTIFICATE', 'GTA_CERTIFICATE', 'PROOF_OF_ADDRESS', 'PROFILE_PHOTO',
+  'PASSENGER_TRANSPORT_LICENCE', 'VEHICLE_REGISTRATION', 'VEHICLE_OWNERSHIP',
+  'VEHICLE_ROADWORTHINESS', 'VEHICLE_INSURANCE', 'OTHER',
+];
+
+/**
+ * POST /suppliers/documents
+ * Supplier uploads an additional document for review (not a replacement).
+ */
+exports.addDocument = catchAsync(async (req, res, next) => {
+  const profile = await resolveProfileByUserId(req.supplierId || req.user.id);
+  if (!profile) return next(new AppError('No supplier application found', 404));
+
+  const file = req.file;
+  const type = req.body?.type ? String(req.body.type).toUpperCase() : '';
+  if (!file || !isValidCloudinaryUrl(file.path)) {
+    return next(new AppError('A valid document file is required', 400));
+  }
+  if (!KNOWN_DOCUMENT_TYPES.includes(type)) {
+    return next(new AppError('A valid document type is required', 400));
+  }
+
+  const doc = await prisma.supplierDocument.create({
+    data: {
+      supplierId: profile.id,
+      ownerType: 'SUPPLIER',
+      ownerId: profile.id,
+      type,
+      url: file.path,
+      filename: file.originalname || null,
+      expiryDate: req.body?.expiryDate ? new Date(req.body.expiryDate) : null,
+      status: 'PENDING',
+    },
+  });
+
+  await recordEvent({
+    supplierProfileId: profile.id,
+    entityType: 'SUPPLIER',
+    entityId: doc.id,
+    action: 'APPLICATION_UPDATED',
+    actorId: req.user.id,
+  });
+
+  await notifyAdmin({
+    type: 'NEW_SUPPLIER_APPLICATION',
+    title: 'New document uploaded',
+    message: `A supplier added "${type}" for review.`,
+    data: { supplierId: profile.id, documentId: doc.id, documentType: type },
+  }).catch(() => {});
+
+  res.status(201).json({ status: 'success', data: { document: doc } });
+});
 
 /**
  * POST /suppliers/documents/:docId/replace

@@ -353,6 +353,9 @@ router.patch('/application', uploadSupplierDocuments, supplierController.updateA
  * their company while scoping every write to the owning profile.
  */
 
+// Upload an additional document for review
+router.post('/documents', resolveSupplier, uploadSupplierDocument, verificationController.addDocument);
+
 // Re-upload a rejected / replacement-requested / expired document
 router.post('/documents/:docId/replace', resolveSupplier, uploadSupplierDocument, verificationController.replaceDocument);
 
