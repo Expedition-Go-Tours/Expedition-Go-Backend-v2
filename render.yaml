@@ -117,6 +117,7 @@ projects:
         value: "8"
       region: oregon
       buildCommand: npm install && npx prisma generate
+      preDeployCommand: npx prisma migrate deploy
       startCommand: node server.js
       healthCheckPath: /health
       autoDeployTrigger: checksPass

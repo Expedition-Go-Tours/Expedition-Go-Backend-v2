@@ -261,15 +261,26 @@ describe('normalizeProductPayload', () => {
     expect(normalizeProductPayload(data).transportMode).toBe('Walking');
   });
 
-  it('trims meetingPointDescription to 1000 characters', () => {
-    const data = { meetingPointDescription: 'x'.repeat(1200) };
+  it('trims meetingPointDescription to 200 characters', () => {
+    const data = { meetingPointDescription: 'x'.repeat(250) };
     const result = normalizeProductPayload(data);
-    expect(result.meetingPointDescription.length).toBe(1000);
+    expect(result.meetingPointDescription.length).toBe(200);
   });
 
   it('leaves short meetingPointDescription untouched', () => {
     const data = { meetingPointDescription: 'short' };
     expect(normalizeProductPayload(data).meetingPointDescription).toBe('short');
+  });
+
+  it('trims pickupDescription to 200 characters', () => {
+    const data = { pickupDescription: 'x'.repeat(250) };
+    const result = normalizeProductPayload(data);
+    expect(result.pickupDescription.length).toBe(200);
+  });
+
+  it('leaves short pickupDescription untouched', () => {
+    const data = { pickupDescription: 'short' };
+    expect(normalizeProductPayload(data).pickupDescription).toBe('short');
   });
 
   it('maps label to name for pricingCategories missing name', () => {

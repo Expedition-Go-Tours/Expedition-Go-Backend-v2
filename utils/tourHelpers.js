@@ -285,8 +285,12 @@ function normalizeProductPayload(data) {
     data.transportMode = '';
   }
 
-  if (typeof data.meetingPointDescription === 'string' && data.meetingPointDescription.length > 1000) {
-    data.meetingPointDescription = data.meetingPointDescription.slice(0, 1000);
+  if (typeof data.meetingPointDescription === 'string' && data.meetingPointDescription.length > 200) {
+    data.meetingPointDescription = data.meetingPointDescription.slice(0, 200);
+  }
+
+  if (typeof data.pickupDescription === 'string' && data.pickupDescription.length > 200) {
+    data.pickupDescription = data.pickupDescription.slice(0, 200);
   }
 
   if (Array.isArray(data.pricingCategories)) {

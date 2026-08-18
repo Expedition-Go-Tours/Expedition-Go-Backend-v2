@@ -68,7 +68,9 @@ const polygonSchema = z.array(z.tuple([z.number(), z.number()])).min(3, 'Pickup 
 
 const pickupAreaSchema = z.object({
   name: z.string().min(1, 'Pickup area name is required'),
-  time: z.string(),
+  // Optional: the frontend only requires a time when pickupAtSpecificTime is
+  // set (stepValidation.js); legacy/hydrated areas may omit it entirely.
+  time: z.string().optional(),
   // Point anchor (kept for legacy/fallback display) plus the drawn geoshape.
   address: z.string().optional(),
   lat: z.number().optional(),
@@ -351,11 +353,11 @@ const productObjectSchema = z.object({
   meetingMode: z.enum(['meeting_point', 'pickup', 'none']),
   meetingPoint: locationPointSchema.nullable().optional(),
   meetingPointPicture: z.string().max(2000).optional(),
-  meetingPointDescription: z.string().max(1000).optional(),
-  arrivalTimeType: z.enum(['none', '5min', '10min', '15min', '30min', 'notified', 'custom']).optional(),
+  meetingPointDescription: z.string().max(200).optional(),
+  arrivalTimeType: z.enum(['none', '5min', '10min', '15min', '20min', '25min', '30min', 'notified', 'custom']).optional(),
   arrivalTimeCustom: z.string().max(20).optional(),
   pickupType: z.enum(['area', 'address']).optional(),
-  pickupDescription: z.string().max(500).optional(),
+  pickupDescription: z.string().max(200).optional(),
   pickupTiming: z.enum(['at_start', 'before_start']).optional(),
   pickupAtSpecificTime: z.boolean().optional(),
   pickupFinalLocationTiming: z.enum(['day_before', 'after_selection']).optional(),
