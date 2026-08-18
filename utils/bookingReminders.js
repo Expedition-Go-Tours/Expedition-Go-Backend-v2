@@ -39,7 +39,9 @@ async function planBookingReminders() {
 
   const upcoming = await prisma.booking.findMany({
     where: {
-      status: 'CONFIRMED',
+      // Pay-later bookings stay PENDING until the deferred charge settles, so
+      // reminders must plan for them regardless of status.
+      OR: [{ status: 'CONFIRMED' }, { paymentTiming: 'later' }],
       selectedDate: { gte: now, lte: in72h },
     },
     select: {

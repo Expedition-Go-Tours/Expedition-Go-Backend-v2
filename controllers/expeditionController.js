@@ -1251,10 +1251,10 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         appliedOfferId: appliedOffer?.id || null,
         paymentTiming,
         paymentStatus: 'PENDING',
-        // Reserve-now-pay-later: the spot is secured immediately (confirmed),
-        // payment is collected later. Pay-now stays PENDING until the webhook
-        // settles it.
-        status: paymentTiming === 'later' ? 'CONFIRMED' : 'PENDING',
+        // Reserve-now-pay-later: the spot is secured immediately but the
+        // booking stays PENDING until the deferred charge settles it.
+        // Pay-now also starts PENDING until the webhook confirms payment.
+        status: 'PENDING',
       },
       include: {
         tour: { select: { id: true, title: true, slug: true, coverPhoto: true } },
@@ -1267,16 +1267,8 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
 
   // Reserve-now-pay-later: the card is validated (PaymentIntent attached) but
   // never charged here — payment is collected before the activity. Skip the
-  // confirm step entirely.
+  // confirm step entirely; the booking stays PENDING until the charge lands.
   if (paymentTiming === 'later') {
-    const reserved = await prisma.booking.updateMany({
-      where: { id: result.id, status: 'CONFIRMED', paymentStatus: 'PENDING' },
-      data: { paymentStatus: 'PENDING', status: 'CONFIRMED' },
-    });
-    if (reserved.count === 0) {
-      console.log(`[Expedition] Reserve-now-pay-later booking ${result.id} was not in CONFIRMED/PENDING state`);
-    }
-
     // Attach booking ID to PI metadata so a later settlement can find it
     try {
       await getStripe().paymentIntents.update(paymentIntent.id, {
@@ -1551,7 +1543,13 @@ exports.getMyBookings = catchAsync(async (req, res, next) => {
   const { status, page = 1, limit = 10 } = req.query;
 
   const where = { customerId, source: 'EXPEDITION' };
-  if (status) where.status = status;
+  // Accept a single status or a comma-separated list (e.g. status=CONFIRMED,PENDING)
+  // so the navbar counter can include reserve-now-pay-later bookings, which are
+  // PENDING until the deferred charge settles.
+  if (status) {
+    const list = String(status).split(',').map((s) => s.trim()).filter(Boolean);
+    where.status = list.length === 1 ? list[0] : { in: list };
+  }
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const take = Math.min(parseInt(limit), 100);

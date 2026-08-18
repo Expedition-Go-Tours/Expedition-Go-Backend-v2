@@ -8,6 +8,9 @@
  *    (PI is requires_payment_method / canceled),
  *  - the payment settled but its webhook was lost beyond retry (rare).
  *
+ * Reserve-now-pay-later bookings are excluded: they stay PENDING on purpose
+ * until payLaterSweep collects the deferred charge near the activity date.
+ *
  * Stale PENDING bookings leak capacity (availability sums PENDING bookings)
  * and block re-booking via the checkout dedup guard, so they must be
  * reconciled. For each stale booking we ask Stripe for the authoritative
@@ -84,6 +87,10 @@ async function cancelStalePendingBookings() {
       status: 'PENDING',
       paymentStatus: { in: ['PENDING', 'PROCESSING'] },
       paidAt: null,
+      // Reserve-now-pay-later bookings are intentionally PENDING until the
+      // deferred charge window (payLaterSweep collects them near the activity
+      // date) — they are never "stale" and must not be cancelled here.
+      paymentTiming: { not: 'later' },
       createdAt: { lt: cutoff },
     },
     include: { tour: { select: { title: true } } },

@@ -82,6 +82,17 @@ describe('chargePayLaterBookings', () => {
     expect(result).toEqual({ checked: 1, charged: 1, settled: 0, needsAction: 0, failed: 0, cancelled: 0 });
   });
 
+  it('charges a PENDING pay-later booking (the current creation state)', async () => {
+    prisma.booking.findMany.mockResolvedValue([dueBooking({ status: 'PENDING' })]);
+    getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'requires_confirmation' });
+
+    const result = await chargePayLaterBookings();
+
+    expect(getStripe().paymentIntents.confirm).toHaveBeenCalledWith('pi_later');
+    expect(handlePaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ id: 'pi_later', status: 'succeeded' }));
+    expect(result.charged).toBe(1);
+  });
+
   it('settles a booking whose intent already succeeded (webhook was lost)', async () => {
     prisma.booking.findMany.mockResolvedValue([dueBooking()]);
     getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'succeeded' });

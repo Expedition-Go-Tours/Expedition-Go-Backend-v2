@@ -1,7 +1,7 @@
 /**
  * Pay-Later Sweep — collects deferred payment for reserve-now-pay-later bookings.
  *
- * A reserve-now-pay-later booking is created CONFIRMED with paymentStatus PENDING
+ * A reserve-now-pay-later booking is created PENDING with paymentStatus PENDING
  * and an unattached (unconfirmed) Stripe PaymentIntent: the card is validated at
  * checkout but never charged. This sweep runs on a schedule (see server.js) and,
  * as the activity date approaches, confirms the PaymentIntent to charge the card.
@@ -188,13 +188,15 @@ async function chargePayLaterBookings() {
   const now = new Date();
   const windowEnd = new Date(now.getTime() + chargeBeforeHours * 60 * 60 * 1000);
 
-  // Due: pay-later, unpaid, still confirmed, activity date within the charge
-  // window (includes overdue bookings so they are collected rather than lost).
+  // Due: pay-later, unpaid, still reserved (PENDING or CONFIRMED), activity
+  // date within the charge window (includes overdue bookings so they are
+  // collected rather than lost). CONFIRMED is kept for legacy rows created
+  // before pay-later bookings became PENDING.
   const due = await prisma.booking.findMany({
     where: {
       paymentTiming: 'later',
       paymentStatus: 'PENDING',
-      status: 'CONFIRMED',
+      status: { in: ['CONFIRMED', 'PENDING'] },
       paidAt: null,
       selectedDate: { lte: windowEnd },
     },
