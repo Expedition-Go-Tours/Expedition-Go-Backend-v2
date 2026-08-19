@@ -1820,6 +1820,13 @@ exports.getMyTours = catchAsync(async (req, res, next) => {
           include: {
             specialOffer: true
           }
+        },
+        expeditionTour: {
+          select: {
+            isActive: true,
+            bookingFlow: true,
+            externalUrl: true
+          }
         }
       },
       orderBy: { createdAt: 'desc' },
