@@ -1781,7 +1781,7 @@ exports.toggleExpeditionPublish = catchAsync(async (req, res, next) => {
     data.bookingFlow = hasExpeditionRole ? 'DIRECT' : 'EXTERNAL';
     data.externalUrl = hasExpeditionRole
       ? null
-      : `https://travioafrica.com/tours/${tour.slug}?ref=expedition`;
+      : `https://travioafrica.com/tour/${tour.slug}?ref=expedition`;
 
     data.publishedById = adminId;
     data.publishedAt = new Date();
@@ -1897,7 +1897,7 @@ exports.bulkExpeditionPublish = catchAsync(async (req, res, next) => {
             bookingFlow: hasExpeditionRole ? 'DIRECT' : 'EXTERNAL',
             externalUrl: hasExpeditionRole
               ? null
-              : `https://travioafrica.com/tours/${tour.slug}?ref=expedition`,
+              : `https://travioafrica.com/tour/${tour.slug}?ref=expedition`,
             publishedById: adminId,
             publishedAt: new Date(),
           },
@@ -1906,7 +1906,7 @@ exports.bulkExpeditionPublish = catchAsync(async (req, res, next) => {
             bookingFlow: hasExpeditionRole ? 'DIRECT' : 'EXTERNAL',
             externalUrl: hasExpeditionRole
               ? null
-              : `https://travioafrica.com/tours/${tour.slug}?ref=expedition`,
+              : `https://travioafrica.com/tour/${tour.slug}?ref=expedition`,
             publishedById: adminId,
             publishedAt: new Date(),
             unpublishedById: null,

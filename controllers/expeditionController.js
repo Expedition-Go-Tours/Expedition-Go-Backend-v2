@@ -117,7 +117,7 @@ function buildTourSchemaUrl(tour) {
       price: tour.startingPrice ?? undefined,
       priceCurrency: tour.currency ?? 'USD',
       availability: 'https://schema.org/InStock',
-      url: `https://travioafrica.com/tours/${tour.slug}`,
+      url: `https://travioafrica.com/tour/${tour.slug}`,
     },
     ...(tour.averageRating
       ? {
@@ -566,7 +566,7 @@ exports.submitContact = catchAsync(async (req, res, next) => {
     `Name: ${name}`,
     `Email: ${email}`,
     phone ? `Phone: ${phone}` : null,
-    tourSlug ? `Tour: https://travioafrica.com/tours/${tourSlug}` : null,
+    tourSlug ? `Tour: https://travioafrica.com/tour/${tourSlug}` : null,
     '',
     'Message:',
     message,
