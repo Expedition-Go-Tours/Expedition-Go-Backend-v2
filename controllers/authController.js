@@ -150,7 +150,13 @@ exports.refresh = catchAsync(async (req, res, next) => {
     return next(new AppError('Invalid or expired refresh token', 401));
   }
 
-  const rotated = await rotateRefreshToken(decoded.userId, refreshToken, signRefreshToken({ userId: decoded.userId }));
+  const newAccessToken = signAccessToken({ userId: decoded.userId });
+  const newRefreshToken = signRefreshToken({ userId: decoded.userId });
+
+  // Sign the refresh token ONCE and store exactly what gets returned. Rotating
+  // to a different token than the one sent back left the client with a refresh
+  // token that could never validate again, breaking the session ~1h later.
+  const rotated = await rotateRefreshToken(decoded.userId, refreshToken, newRefreshToken);
   if (!rotated) {
     return next(new AppError('Refresh token has been revoked. Please log in again.', 401));
   }
@@ -163,9 +169,6 @@ exports.refresh = catchAsync(async (req, res, next) => {
   if (!user || !user.active) {
     return next(new AppError('User not found or deactivated', 401));
   }
-
-  const newAccessToken = signAccessToken({ userId: user.id });
-  const newRefreshToken = signRefreshToken({ userId: user.id });
 
   setAuthCookies(res, newAccessToken, newRefreshToken);
 

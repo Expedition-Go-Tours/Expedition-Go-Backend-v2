@@ -19,12 +19,37 @@ describe('refreshTokenHelper', () => {
   beforeEach(() => jest.clearAllMocks());
 
   describe('storeRefreshToken', () => {
-    it('hashes and stores the refresh token', async () => {
+    it('hashes and stores the refresh token in a family array', async () => {
       prisma.user.update.mockResolvedValue();
       await storeRefreshToken('user-1', 'my-refresh-token');
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: 'user-1' },
-        data: { refreshToken: hashToken('my-refresh-token') },
+        data: { refreshToken: JSON.stringify([hashToken('my-refresh-token')]) },
+      });
+    });
+
+    it('keeps the most recent 5 tokens (capped family)', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        refreshToken: JSON.stringify(['a', 'b', 'c', 'd', 'e']),
+      });
+      prisma.user.update.mockResolvedValue();
+      await storeRefreshToken('user-1', 'f');
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: { refreshToken: JSON.stringify([hashToken('f'), 'a', 'b', 'c', 'd']) },
+      });
+    });
+
+    it('dedupes a token already present in the family', async () => {
+      const hashedX = hashToken('x');
+      prisma.user.findUnique.mockResolvedValue({
+        refreshToken: JSON.stringify([hashedX, 'y']),
+      });
+      prisma.user.update.mockResolvedValue();
+      await storeRefreshToken('user-1', 'x');
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: { refreshToken: JSON.stringify([hashedX, 'y']) },
       });
     });
   });
@@ -53,16 +78,33 @@ describe('refreshTokenHelper', () => {
   });
 
   describe('rotateRefreshToken', () => {
-    it('rotates when old token is valid', async () => {
+    it('rotates when old token is valid, keeping the old token in the family', async () => {
       const oldToken = 'old-token';
       prisma.user.findUnique.mockResolvedValue({ refreshToken: hashToken(oldToken) });
       prisma.user.update.mockResolvedValue();
 
       const result = await rotateRefreshToken('user-1', oldToken, 'new-token');
       expect(result).toBe(true);
+      // The used token stays valid so an overlapping concurrent refresh in
+      // another tab/device still validates.
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: 'user-1' },
-        data: { refreshToken: hashToken('new-token') },
+        data: { refreshToken: JSON.stringify([hashToken('new-token'), hashToken(oldToken)]) },
+      });
+    });
+
+    it('rotates within an existing family', async () => {
+      const oldToken = 'old-token';
+      prisma.user.findUnique.mockResolvedValue({
+        refreshToken: JSON.stringify([hashToken(oldToken), 'other']),
+      });
+      prisma.user.update.mockResolvedValue();
+
+      const result = await rotateRefreshToken('user-1', oldToken, 'new-token');
+      expect(result).toBe(true);
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: { refreshToken: JSON.stringify([hashToken('new-token'), hashToken(oldToken), 'other']) },
       });
     });
 
