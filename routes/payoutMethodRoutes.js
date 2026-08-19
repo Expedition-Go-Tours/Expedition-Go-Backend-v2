@@ -3,6 +3,12 @@ const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 const payoutMethodController = require('../controllers/payoutMethodController');
+const validate = require('../middleware/validate');
+const {
+  payoutMethodInputSchema,
+  payoutMethodPatchSchema,
+  verifyPayoutMethodSchema,
+} = require('../utils/payoutMethodValidation');
 
 const router = express.Router();
 
@@ -61,7 +67,13 @@ router.get('/me', resolveSupplier, requireTeamPermission('payout-methods.view'),
  *       201:
  *         description: Payout method created
  */
-router.post('/', resolveSupplier, requireTeamPermission('payout-methods.manage'), payoutMethodController.addMethod);
+router.post(
+  '/',
+  resolveSupplier,
+  requireTeamPermission('payout-methods.manage'),
+  validate(payoutMethodInputSchema),
+  payoutMethodController.addMethod,
+);
 
 /**
  * @swagger
@@ -101,7 +113,13 @@ router.post('/', resolveSupplier, requireTeamPermission('payout-methods.manage')
  *       200:
  *         description: Payout method deleted
  */
-router.patch('/:id', resolveSupplier, requireTeamPermission('payout-methods.manage'), payoutMethodController.updateMethod);
+router.patch(
+  '/:id',
+  resolveSupplier,
+  requireTeamPermission('payout-methods.manage'),
+  validate(payoutMethodPatchSchema),
+  payoutMethodController.updateMethod,
+);
 router.delete('/:id', resolveSupplier, requireTeamPermission('payout-methods.manage'), payoutMethodController.deleteMethod);
 
 // ── Admin routes ──
@@ -197,6 +215,12 @@ router.get('/admin/summary', restrictTo('admin'), requirePermission('payout-meth
  *       200:
  *         description: Payout method verification status updated
  */
-router.patch('/admin/:id/verify', restrictTo('admin'), requirePermission('payout-methods.verify'), payoutMethodController.verifyPayoutMethod);
+router.patch(
+  '/admin/:id/verify',
+  restrictTo('admin'),
+  requirePermission('payout-methods.verify'),
+  validate(verifyPayoutMethodSchema),
+  payoutMethodController.verifyPayoutMethod,
+);
 
 module.exports = router;
