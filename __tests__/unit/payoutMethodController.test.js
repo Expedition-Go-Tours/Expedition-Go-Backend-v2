@@ -35,6 +35,7 @@ describe('payoutMethodController', () => {
     iban: null,
     sortCode: null,
     branchCode: null,
+    branchName: null,
     paypalEmail: null,
     createdAt: new Date(),
     supplier: { id: 's-1', name: 'Supplier', email: 's@t.com' },
@@ -110,6 +111,17 @@ describe('payoutMethodController', () => {
       );
       expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'payout_method.added' }));
       expect(notifyAdmin).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    it('persists optional bank branch fields', async () => {
+      req.body = { type: 'BANK_TRANSFER', accountName: 'Supplier', accountNumber: '123456', branchName: 'Oxford Circus', branchCode: '20-33-44' };
+
+      await controller.addMethod(req, res, next);
+
+      expect(prisma.payoutMethod.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ branchName: 'Oxford Circus', branchCode: '20-33-44' }) })
+      );
       expect(res.status).toHaveBeenCalledWith(201);
     });
 
@@ -189,6 +201,18 @@ describe('payoutMethodController', () => {
       expect(prisma.payoutMethod.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ paypalEmail: 'new@pp.com', verified: false }) })
       );
+    });
+
+    it('updates branch fields', async () => {
+      req.params = { id: 'pm-1' };
+      req.body = { branchName: 'Oxford Circus', branchCode: '20-33-44' };
+
+      await controller.updateMethod(req, res, next);
+
+      expect(prisma.payoutMethod.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ branchName: 'Oxford Circus', branchCode: '20-33-44', verified: false }) })
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
     });
   });
 

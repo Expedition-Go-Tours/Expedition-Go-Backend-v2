@@ -2905,6 +2905,7 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
         accountNumber: { type: 'string', description: 'Account number (required if no IBAN)' },
         sortCode: { type: 'string', description: 'Sort code (UK, Ghana, etc.)' },
         branchCode: { type: 'string', description: 'Branch/bank code (Nigeria, etc.)' },
+        branchName: { type: 'string', description: 'Bank branch name, e.g. Oxford Circus' },
         routingNumber: { type: 'string', description: 'Routing/ABA number (US)' },
         swiftCode: { type: 'string', description: 'SWIFT/BIC code (international)' },
         iban: { type: 'string', description: 'IBAN (required if no account number)' },

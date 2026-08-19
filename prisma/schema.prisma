@@ -485,6 +485,7 @@ model PayoutMethod {
   iban          String? // International Bank Account Number
   sortCode      String? // Sort code (UK, Ghana, etc.)
   branchCode    String? // Branch/bank code (Nigeria, etc.)
+  branchName    String? // Bank branch name, e.g. Oxford Circus
 
   // PayPal fields
   paypalEmail String?

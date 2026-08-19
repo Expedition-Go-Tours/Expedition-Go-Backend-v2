@@ -56,6 +56,7 @@ exports.addMethod = catchAsync(async (req, res, next) => {
     iban,
     sortCode,
     branchCode,
+    branchName,
     // PayPal
     paypalEmail,
   } = req.body;
@@ -96,6 +97,7 @@ exports.addMethod = catchAsync(async (req, res, next) => {
       iban,
       sortCode,
       branchCode,
+      branchName,
       paypalEmail,
     },
     include: {
@@ -157,6 +159,7 @@ exports.updateMethod = catchAsync(async (req, res, next) => {
     iban,
     sortCode,
     branchCode,
+    branchName,
     paypalEmail,
     isDefault,
   } = req.body;
@@ -183,6 +186,7 @@ exports.updateMethod = catchAsync(async (req, res, next) => {
       ...(iban !== undefined && { iban }),
       ...(sortCode !== undefined && { sortCode }),
       ...(branchCode !== undefined && { branchCode }),
+      ...(branchName !== undefined && { branchName }),
       ...(paypalEmail !== undefined && { paypalEmail }),
       ...(isDefault !== undefined && { isDefault }),
       // Reset verification when details change
