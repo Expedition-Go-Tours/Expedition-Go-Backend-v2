@@ -1,6 +1,6 @@
 jest.mock('../../utils/prismaClient', () => ({
   booking: { aggregate: jest.fn(), count: jest.fn(), groupBy: jest.fn(), findMany: jest.fn() },
-  user: { count: jest.fn(), findMany: jest.fn(), findUnique: jest.fn() },
+  user: { count: jest.fn(), findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
   adminRole: { findUnique: jest.fn() },
   tour: { findMany: jest.fn(), count: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
   event: { findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
@@ -12,7 +12,7 @@ jest.mock('../../utils/prismaClient', () => ({
 jest.mock('../../utils/imageOptimizer', () => ({
   cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`),
 }));
-jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()), invalidateTourCaches: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()), invalidateTourCaches: jest.fn(() => Promise.resolve()), invalidateKey: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/queue', () => ({ enqueueNotification: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn(() => Promise.resolve()), emitToRoom: jest.fn(() => Promise.resolve()) }));
@@ -48,6 +48,7 @@ describe('adminController', () => {
     prisma.user.count.mockResolvedValue(mockCount());
     prisma.user.findMany.mockResolvedValue([]);
     prisma.user.findUnique.mockResolvedValue(null);
+    prisma.user.update.mockResolvedValue({ id: 's-1', roles: [] });
     prisma.tour.findMany.mockResolvedValue([]);
     prisma.tour.count.mockResolvedValue(0);
     prisma.tour.findUnique.mockResolvedValue(null);
@@ -1056,6 +1057,128 @@ describe('adminController', () => {
 
       const suppliers = res.json.mock.calls[0][0].data.suppliers;
       expect(suppliers).toHaveLength(0);
+    });
+  });
+
+  // ============================
+  // searchAdminTours
+  // ============================
+  describe('searchAdminTours', () => {
+    it('searches tours across all statuses with compact fields', async () => {
+      req.query = { q: 'safari' };
+      prisma.tour.findMany.mockResolvedValue([
+        {
+          id: 't1', title: 'Safari Adventure', slug: 'safari-adventure',
+          coverPhoto: 'cover.jpg', status: 'ACTIVE', category: 'Nature',
+          city: 'Arusha', country: 'Tanzania',
+          supplier: { id: 's1', name: 'Savanna Co' },
+        },
+      ]);
+
+      await controller.searchAdminTours(req, res, next);
+
+      expect(prisma.tour.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: expect.arrayContaining([
+              expect.objectContaining({ title: { contains: 'safari', mode: 'insensitive' } }),
+            ]),
+          }),
+          take: 12,
+        }),
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      const tours = res.json.mock.calls[0][0].data.tours;
+      expect(tours).toHaveLength(1);
+      expect(tours[0]).toMatchObject({ title: 'Safari Adventure', supplierName: 'Savanna Co' });
+    });
+
+    it('returns empty list for blank query', async () => {
+      req.query = { q: '   ' };
+      prisma.tour.findMany.mockResolvedValue([]);
+
+      await controller.searchAdminTours(req, res, next);
+
+      expect(prisma.tour.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: {} })
+      );
+      expect(res.json.mock.calls[0][0].data.tours).toEqual([]);
+    });
+  });
+
+  // ============================
+  // toggleSupplierExpeditionRole
+  // ============================
+  describe('toggleSupplierExpeditionRole', () => {
+    const supplierWithProfile = (roles = []) => ({
+      id: 's-1', name: 'Savanna Co', email: 's@test.com', roles,
+      supplierProfile: { id: 'sp-1' },
+    });
+
+    it('returns 400 when enabled is not a boolean', async () => {
+      req.params = { id: 's-1' };
+      req.body = { enabled: 'yes' };
+
+      await controller.toggleSupplierExpeditionRole(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('returns 404 when supplier not found', async () => {
+      req.params = { id: 'nope' };
+      req.body = { enabled: true };
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await controller.toggleSupplierExpeditionRole(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
+    });
+
+    it('adds the expedition role when enabled', async () => {
+      req.params = { id: 's-1' };
+      req.body = { enabled: true };
+      prisma.user.findUnique.mockResolvedValue(supplierWithProfile(['supplier']));
+      prisma.user.update.mockResolvedValue({ id: 's-1', roles: ['supplier', 'expedition'] });
+
+      await controller.toggleSupplierExpeditionRole(req, res, next);
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 's-1' },
+          data: { roles: ['supplier', 'expedition'] },
+        }),
+      );
+      expect(cache.invalidateKey).toHaveBeenCalledWith('auth:user:s-1');
+      expect(cache.invalidateKey).toHaveBeenCalledWith('supplier:profile:userId:s-1');
+      expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'supplier.expedition_role_enabled' }));
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json.mock.calls[0][0].data.user.roles).toEqual(['supplier', 'expedition']);
+    });
+
+    it('removes the expedition role when disabled', async () => {
+      req.params = { id: 's-1' };
+      req.body = { enabled: false };
+      prisma.user.findUnique.mockResolvedValue(supplierWithProfile(['supplier', 'expedition']));
+      prisma.user.update.mockResolvedValue({ id: 's-1', roles: ['supplier'] });
+
+      await controller.toggleSupplierExpeditionRole(req, res, next);
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { roles: ['supplier'] } }),
+      );
+      expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'supplier.expedition_role_disabled' }));
+    });
+
+    it('no-ops when already in the requested state', async () => {
+      req.params = { id: 's-1' };
+      req.body = { enabled: true };
+      prisma.user.findUnique.mockResolvedValue(supplierWithProfile(['supplier', 'expedition']));
+
+      await controller.toggleSupplierExpeditionRole(req, res, next);
+
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json.mock.calls[0][0].data.user.roles).toEqual(['supplier', 'expedition']);
     });
   });
 });

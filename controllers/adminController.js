@@ -2029,7 +2029,7 @@ exports.getExpeditionSupplierTours = catchAsync(async (req, res, next) => {
 
   const supplier = await prisma.user.findUnique({
     where: { id },
-    select: { id: true, name: true, photoURL: true, email: true },
+    select: { id: true, name: true, photoURL: true, email: true, roles: true },
   });
   if (!supplier) return next(new AppError('Supplier not found', 404));
 
@@ -2079,6 +2079,138 @@ exports.getExpeditionSupplierTours = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: { supplier, tours },
+  });
+});
+
+/**
+ * GET /admin/search/tours
+ * Lightweight admin search across ALL tours (any status), matching by title,
+ * reference code, city, country, category or supplier name. Used by the admin
+ * dashboard search bar. Returns compact fields only.
+ */
+exports.searchAdminTours = catchAsync(async (req, res) => {
+  const { q = '' } = req.query;
+  const search = typeof q === 'string' ? q.trim() : '';
+
+  const where = search
+    ? {
+        OR: [
+          { title: { contains: search, mode: 'insensitive' } },
+          { referenceCode: { contains: search, mode: 'insensitive' } },
+          { city: { contains: search, mode: 'insensitive' } },
+          { country: { contains: search, mode: 'insensitive' } },
+          { category: { contains: search, mode: 'insensitive' } },
+          { supplier: { name: { contains: search, mode: 'insensitive' } } },
+        ],
+      }
+    : {};
+
+  const tours = await prisma.tour.findMany({
+    where,
+    orderBy: { updatedAt: 'desc' },
+    take: 12,
+    select: {
+      id: true,
+      title: true,
+      slug: true,
+      coverPhoto: true,
+      status: true,
+      category: true,
+      city: true,
+      country: true,
+      supplier: { select: { id: true, name: true } },
+    },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      tours: tours.map((t) => ({
+        id: t.id,
+        title: t.title,
+        slug: t.slug,
+        coverPhoto: t.coverPhoto || null,
+        status: t.status,
+        category: t.category,
+        city: t.city,
+        country: t.country,
+        supplierId: t.supplier?.id || null,
+        supplierName: t.supplier?.name || null,
+      })),
+    },
+  });
+});
+
+/**
+ * PATCH /admin/suppliers/:id/expedition-role
+ * Grant or revoke the "expedition" role for a supplier. Suppliers with the
+ * role publish to Expedition Go with a DIRECT booking flow; without it they
+ * publish as EXTERNAL (redirecting to Travio Africa).
+ * Body: { enabled: boolean }
+ */
+exports.toggleSupplierExpeditionRole = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { enabled } = req.body;
+
+  if (typeof enabled !== 'boolean') {
+    return next(new AppError('enabled must be a boolean', 400));
+  }
+
+  const supplier = await prisma.user.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      roles: true,
+      supplierProfile: { select: { id: true } },
+    },
+  });
+
+  if (!supplier || !supplier.supplierProfile) {
+    return next(new AppError('Supplier not found', 404));
+  }
+
+  const currentRoles = Array.isArray(supplier.roles) ? supplier.roles : [];
+  const hasExpeditionRole = currentRoles.includes('expedition');
+
+  if (enabled === hasExpeditionRole) {
+    // Already in the requested state — no-op, return current roles.
+    return res.status(200).json({
+      status: 'success',
+      data: { user: { id: supplier.id, roles: currentRoles } },
+    });
+  }
+
+  const roles = enabled
+    ? [...new Set([...currentRoles, 'expedition'])]
+    : currentRoles.filter((r) => r !== 'expedition');
+
+  const updated = await prisma.user.update({
+    where: { id },
+    data: { roles },
+    select: { id: true, roles: true },
+  });
+
+  // Auth + supplier profile lookups are cached — invalidate so the new role
+  // takes effect immediately for the supplier's own requests.
+  cache.invalidateKey(`auth:user:${id}`).catch(() => {});
+  cache.invalidateKey(`supplier:profile:userId:${id}`).catch(() => {});
+
+  logActivity({
+    action: enabled ? 'supplier.expedition_role_enabled' : 'supplier.expedition_role_disabled',
+    userId: req.user.id,
+    resource: 'User',
+    resourceId: id,
+    metadata: {
+      supplierName: supplier.name,
+      supplierEmail: supplier.email,
+    },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { user: updated },
   });
 });
 

@@ -941,4 +941,8 @@ router.get('/expedition/suppliers/:id/tours', adminController.getExpeditionSuppl
 router.patch('/tours/:tourId/expedition-publish', adminController.toggleExpeditionPublish);
 router.patch('/expedition/bulk-publish', adminController.bulkExpeditionPublish);
 
+// Admin search bar — tours (all statuses) + supplier expedition-role management
+router.get('/search/tours', requirePermission('tours.view'), adminController.searchAdminTours);
+router.patch('/suppliers/:id/expedition-role', requirePermission('suppliers.approve'), adminController.toggleSupplierExpeditionRole);
+
 module.exports = router;
