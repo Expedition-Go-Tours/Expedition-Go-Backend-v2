@@ -55,7 +55,7 @@ const shutdown = async (reason, err) => {
 function isNonFatalError(err) {
   if (!err || typeof err.message !== 'string') return false;
   const msg = `${err.message} ${err.stack || ''}`;
-  return /Socket closed unexpectedly|ECONNRESET|ECONNREFUSED|ETIMEDOUT|max requests limit|@redis\/client|ioredis|Redis connection/.test(msg);
+  return /Socket closed unexpectedly|Connection is closed|Connection closed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|max requests limit|@redis\/client|ioredis|Redis connection/.test(msg);
 }
 
 process.on('uncaughtException', (err) => {
@@ -76,6 +76,15 @@ const app = require('./app');
 const port = process.env.PORT || 5000;
 
 process.on('unhandledRejection', (err) => {
+  // ioredis rejects in-flight commands with "Connection is closed" when the
+  // Upstash TLS socket drops (e.g. request-limit throttling). That's an
+  // infrastructure blip, not an app bug — log it and keep serving; the
+  // degraded-mode fallbacks handle the actual work. Anything else still shuts
+  // down so real bugs stay loud.
+  if (isNonFatalError(err)) {
+    console.warn('[unhandledRejection] Non-fatal error — continuing:', err?.message);
+    return;
+  }
   shutdown('UNHANDLED REJECTION', err);
 });
 
