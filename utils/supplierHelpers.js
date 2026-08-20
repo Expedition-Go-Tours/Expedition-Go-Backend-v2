@@ -7,6 +7,7 @@
  */
 
 const getConfig = require('./getConfig');
+const { normalizeCommissionRate } = require('./commission');
 
 /**
  * Validate supplier application data
@@ -339,7 +340,9 @@ function generateVerificationChecklist(supplierProfile) {
 async function getSupplierTier(supplierProfile) {
   const { totalBookings, averageRating, totalEarnings } = supplierProfile;
 
-  const baseRate = parseFloat(await getConfig('commission.default_rate', '0.15'));
+  // Normalize the config value: tolerates both "0.15" and "15" so a
+  // percentage-style config can never produce an invalid tier rate.
+  const baseRate = normalizeCommissionRate(await getConfig('commission.default_rate', '0.15'));
 
   if (totalBookings >= 100 && averageRating >= 4.8 && totalEarnings >= 10000) {
     return {

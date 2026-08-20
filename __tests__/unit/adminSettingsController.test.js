@@ -97,6 +97,52 @@ describe('adminSettingsController', () => {
       await controller.updateSettings(req, res, next);
       expect(prisma.systemConfig.findMany).toHaveBeenCalledTimes(1);
     });
+
+    it('normalizes commission.default_rate percentage to fraction', async () => {
+      req.body = { settings: { 'commission.default_rate': '15' } };
+      await controller.updateSettings(req, res, next);
+      expect(prisma.systemConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ value: '0.15' }) })
+      );
+    });
+
+    it('stores fraction commission.default_rate unchanged', async () => {
+      req.body = { settings: { 'commission.default_rate': '0.15' } };
+      await controller.updateSettings(req, res, next);
+      expect(prisma.systemConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ value: '0.15' }) })
+      );
+    });
+
+    it('rejects an invalid commission.default_rate without writing anything', async () => {
+      req.body = { settings: { 'commission.default_rate': 'abc' } };
+      await controller.updateSettings(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.systemConfig.upsert).not.toHaveBeenCalled();
+    });
+
+    it('rejects non-numeric booking config values', async () => {
+      req.body = { settings: { 'booking.max_travelers': 'fifty' } };
+      await controller.updateSettings(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.systemConfig.upsert).not.toHaveBeenCalled();
+    });
+
+    it('normalizes numeric settings to string values', async () => {
+      req.body = { settings: { 'booking.max_travelers': 50 } };
+      await controller.updateSettings(req, res, next);
+      expect(prisma.systemConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ value: '50' }) })
+      );
+    });
+
+    it('passes through unknown settings unchanged', async () => {
+      req.body = { settings: { 'site.name': 'New Name' } };
+      await controller.updateSettings(req, res, next);
+      expect(prisma.systemConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ value: 'New Name' }) })
+      );
+    });
   });
 
   // ============================

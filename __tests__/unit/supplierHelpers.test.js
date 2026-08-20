@@ -307,6 +307,13 @@ describe('getSupplierTier', () => {
     expect(result.commissionRate).toBeCloseTo(0.01, 5);
   });
 
+  it('tolerates percentage-style config (15 → 0.15)', async () => {
+    getConfig.mockResolvedValue('15');
+    const result = await getSupplierTier({ totalBookings: 0, averageRating: 0, totalEarnings: 0 });
+    expect(result.tier).toBe('bronze');
+    expect(result.commissionRate).toBeCloseTo(0.15, 5);
+  });
+
   it('returns bronze when some conditions not met', async () => {
     const result = await getSupplierTier({ totalBookings: 100, averageRating: 3.0, totalEarnings: 10000 });
     expect(result.tier).toBe('bronze');

@@ -53,6 +53,7 @@ const {
   handlePaymentSucceeded,
 } = require('../../utils/stripeHelpers');
 const redis = require('../../utils/redisClient');
+const getConfig = require('../../utils/getConfig');
 
 const mockBooking = {
   id: 'booking-1',
@@ -156,6 +157,24 @@ describe('calculateCommission', () => {
     expect(result.rate).toBe(0.15);
     expect(result.amount).toBe(30);
     expect(result.supplierPayout).toBe(170);
+  });
+
+  it('tolerates percentage-style config (15 → 0.15)', async () => {
+    getConfig.mockResolvedValueOnce('15');
+    const profile = { totalBookings: 5, averageRating: null };
+    const result = await calculateCommission(100, profile);
+
+    expect(result.rate).toBe(0.15);
+    expect(result.amount).toBe(15);
+    expect(result.supplierPayout).toBe(85);
+  });
+
+  it('clamps an oversized config to at most 100%', async () => {
+    getConfig.mockResolvedValueOnce('150');
+    const profile = { totalBookings: 5, averageRating: null };
+    const result = await calculateCommission(100, profile);
+
+    expect(result.rate).toBe(1);
   });
 });
 

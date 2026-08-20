@@ -5,6 +5,61 @@ const { logActivity } = require('../utils/auditLogger');
 const { buildAuditMessage } = require('./adminController');
 const { clearCache: clearMaintCache } = require('../middleware/maintenanceMode');
 const getConfig = require('../utils/getConfig');
+const { normalizeCommissionRate } = require('../utils/commission');
+
+// Settings keys that must be numeric (stored as strings). Values are coerced
+// and validated so a bad value can never be persisted.
+const NUMERIC_KEYS = [
+  'availability.public_max_days',
+  'availability.limited_ratio',
+  'availability.full_ratio',
+  'booking.min_advance_hours',
+  'booking.max_advance_days',
+  'booking.max_travelers',
+  'payout.min_threshold',
+  'commission.platform_fee',
+];
+
+// Settings keys that must be a boolean string.
+const BOOLEAN_KEYS = ['system.maintenance_mode'];
+
+/**
+ * Validate/normalize a single setting value before it is persisted.
+ * Throws AppError (400) for invalid values so bad config can never be saved.
+ */
+function sanitizeSetting(key, value) {
+  if (key === 'commission.default_rate') {
+    // Accept either a fraction ("0.15") or a percentage ("15"); normalize to
+    // the fraction that Booking.commissionRate (Decimal(5,4)) expects.
+    const rate = normalizeCommissionRate(value, null);
+    if (rate === null) {
+      throw new AppError(
+        `commission.default_rate must be a number greater than 0 (e.g. "0.15" for 15%)`,
+        400
+      );
+    }
+    return String(rate);
+  }
+
+  if (NUMERIC_KEYS.includes(key)) {
+    const num = typeof value === 'number' ? value : parseFloat(value);
+    if (!Number.isFinite(num) || (typeof value === 'string' && value.trim() === '')) {
+      throw new AppError(`Setting "${key}" must be a valid number`, 400);
+    }
+    return String(num);
+  }
+
+  if (BOOLEAN_KEYS.includes(key)) {
+    const normalized = String(value).toLowerCase();
+    if (normalized !== 'true' && normalized !== 'false') {
+      throw new AppError(`Setting "${key}" must be true or false`, 400);
+    }
+    return normalized;
+  }
+
+  // Unknown/other keys pass through unchanged.
+  return value;
+}
 
 exports.getSettings = catchAsync(async (req, res, next) => {
   const configs = await prisma.systemConfig.findMany({
@@ -29,8 +84,15 @@ exports.updateSettings = catchAsync(async (req, res, next) => {
     return next(new AppError('Please provide settings object', 400));
   }
 
-  const results = [];
+  // Validate/normalize every value up-front so nothing is written (and no
+  // partial updates happen) if any key is invalid.
+  const safeSettings = {};
   for (const [key, value] of Object.entries(settings)) {
+    safeSettings[key] = sanitizeSetting(key, value);
+  }
+
+  const results = [];
+  for (const [key, value] of Object.entries(safeSettings)) {
     const updated = await prisma.systemConfig.upsert({
       where: { key },
       update: {
@@ -46,7 +108,7 @@ exports.updateSettings = catchAsync(async (req, res, next) => {
     results.push(updated);
   }
 
-  if ('system.maintenance_mode' in settings) {
+  if ('system.maintenance_mode' in safeSettings) {
     clearMaintCache();
   }
 
@@ -58,7 +120,7 @@ exports.updateSettings = catchAsync(async (req, res, next) => {
     userEmail: req.user.email,
     action: 'settings.updated',
     resource: 'SystemConfig',
-    newValues: settings,
+    newValues: safeSettings,
   });
 
   const allConfigs = await prisma.systemConfig.findMany({

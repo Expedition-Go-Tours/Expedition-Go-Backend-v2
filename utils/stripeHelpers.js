@@ -33,6 +33,7 @@ const prisma = require('./prismaClient');
 const { enqueueEmail, enqueueEvent } = require('./queue');
 const { notifyAdmin } = require('./adminNotificationService');
 const getConfig = require('./getConfig');
+const { normalizeCommissionRate } = require('./commission');
 const redis = require('./redisClient');
 const { invalidateUserCache } = require('../middleware/authMiddleware');
 const { travelerCount } = require('./availabilityCore');
@@ -275,7 +276,9 @@ async function cancelPaymentIntent(paymentIntentId) {
 async function calculateCommission(bookingAmount, supplierProfile) {
   const amount = parseFloat(bookingAmount);
 
-  const defaultRate = parseFloat(await getConfig('commission.default_rate', '0.15'));
+  // Normalize the config value: tolerates both "0.15" and "15" so a
+  // percentage-style config can never overflow Decimal(5,4).
+  const defaultRate = normalizeCommissionRate(await getConfig('commission.default_rate', '0.15'));
   let commissionRate = defaultRate;
 
   // Adjust rate based on supplier performance
