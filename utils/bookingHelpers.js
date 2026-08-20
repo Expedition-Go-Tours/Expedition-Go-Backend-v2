@@ -66,6 +66,11 @@ function validateTravelerInfo(travelers) {
   };
 }
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function isValidEmail(email) {
+  return typeof email === 'string' && EMAIL_REGEX.test(email.trim());
+}
+
 /**
  * Calculate booking totals including taxes and fees
  */
@@ -421,6 +426,7 @@ async function getUpcomingBookings(hoursAhead = 24) {
 module.exports = {
   generateBookingNumber,
   validateTravelerInfo,
+  isValidEmail,
   calculateBookingTotals,
   checkBookingConflicts,
   getBookingStats,

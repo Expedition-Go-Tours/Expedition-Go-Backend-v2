@@ -251,6 +251,13 @@ function buildBookingBase(booking) {
   const pickup = fmt.getPickupInfo(booking, tour);
   const currency = booking.currency || 'USD';
 
+  // Lead traveler (entered on the storefront) is available to templates as
+  // separate fields, but confirmation emails are still sent to (and address)
+  // the booking-owner account — see customerEmail/customerName below.
+  const leadName = booking.leadTravelerName || '';
+  const leadEmail = booking.leadTravelerEmail || '';
+  const leadPhone = booking.leadTravelerPhone || '';
+
   const paidNow = booking.paymentTiming !== 'later';
   const amountPaid =
     booking.paymentStatus === 'SUCCEEDED' || booking.paymentStatus === 'REFUNDED'
@@ -260,11 +267,15 @@ function buildBookingBase(booking) {
         : 0;
 
   const base = {
-    // identity
+    // identity — account holder (the recipient / addressee of emails)
     customerName: customer.name || 'Guest',
     customerEmail: customer.email || '',
     customerPhone: fmt.travelerPhone(booking.travelers) || customer.phone || '',
     customerLocation: fmt.travelerLocation(booking.travelers) || customer.location || '',
+    // Lead traveler (the person going on the trip) — for templates that want it
+    leadTravelerName: leadName || customer.name || '',
+    leadTravelerEmail: leadEmail || customer.email || '',
+    leadTravelerPhone: leadPhone || fmt.travelerPhone(booking.travelers) || customer.phone || '',
     supplierName: supplier.name || '',
     supplierContact: supplier.phone || supplier.email || '',
     brandSubtext: 'by Expedition-Go Tours',

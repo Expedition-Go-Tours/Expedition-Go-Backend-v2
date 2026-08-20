@@ -5,7 +5,7 @@ const AppError = require('../utils/appError');
 const cache = require('../utils/cacheHelper');
 const { sendEmail } = require('../utils/emailService');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/queue');
-const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy } = require('../utils/bookingHelpers');
+const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, isValidEmail } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../utils/availabilityCore');
 const { resolvePickupSelection } = require('../utils/geoUtils');
@@ -1051,6 +1051,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     specialRequests,
     pickup,
     paymentTiming = 'now',
+    leadTraveler,
   } = req.body;
 
   if (!tourId || !selectedDate || !travelers) {
@@ -1058,6 +1059,20 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
   }
   if (paymentTiming !== 'now' && paymentTiming !== 'later') {
     return next(new AppError("paymentTiming must be 'now' or 'later'", 400));
+  }
+
+  // Lead traveler is the person going on the trip (entered on the storefront's
+  // "Lead Traveler Details" step); it is distinct from the customer account
+  // that placed the booking. Stored so the supplier dashboard and emails can
+  // surface it instead of the booking owner.
+  if (leadTraveler != null && typeof leadTraveler !== 'object') {
+    return next(new AppError('leadTraveler must be an object', 400));
+  }
+  const leadName = typeof leadTraveler?.name === 'string' ? leadTraveler.name.trim() : '';
+  const leadEmail = typeof leadTraveler?.email === 'string' ? leadTraveler.email.trim() : '';
+  const leadPhone = typeof leadTraveler?.phone === 'string' ? leadTraveler.phone.trim() : '';
+  if (leadName && !isValidEmail(leadEmail)) {
+    return next(new AppError('A valid leadTraveler.email is required when a lead traveler name is provided', 400));
   }
 
   const travelerValidation = validateTravelerInfo(travelers);
@@ -1280,13 +1295,18 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         commissionRate: commission.rate,
         commissionAmount: commission.amount,
         supplierPayout: commission.supplierPayout,
-        specialRequests,
-        ...(pickupSnapshot && { pickup: pickupSnapshot }),
-        ...(paymentIntent && { stripePaymentIntentId: paymentIntent.id }),
-        appliedOfferId: appliedOffer?.id || null,
-        paymentTiming,
-        paymentStatus: 'PENDING',
-        // Reserve-now-pay-later: the spot is secured immediately but the
+         specialRequests,
+         ...(pickupSnapshot && { pickup: pickupSnapshot }),
+         ...(paymentIntent && { stripePaymentIntentId: paymentIntent.id }),
+         appliedOfferId: appliedOffer?.id || null,
+         paymentTiming,
+         paymentStatus: 'PENDING',
+         // Lead traveler (the person going on the trip), distinct from the
+         // customer account that placed the booking.
+         leadTravelerName: leadName || null,
+         leadTravelerEmail: leadEmail || null,
+         leadTravelerPhone: leadPhone || null,
+         // Reserve-now-pay-later: the spot is secured immediately but the
         // booking stays PENDING until the deferred charge settles it.
         // Pay-now also starts PENDING until the webhook confirms payment.
         status: 'PENDING',
