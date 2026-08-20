@@ -721,9 +721,10 @@ model Booking {
   supplierPayout   Decimal @db.Decimal(10, 2)
 
   // Payment Information
-  stripePaymentIntentId String?
-  paymentStatus         PaymentStatus @default(PENDING)
-  paidAt                DateTime?
+  stripePaymentIntentId   String?
+  stripeCheckoutSessionId String?
+  paymentStatus           PaymentStatus @default(PENDING)
+  paidAt                  DateTime?
   // 'now' = charged at booking (Pay now), 'later' = Reserve now, pay later
   paymentTiming         String        @default("now")
 
@@ -760,6 +761,7 @@ model Booking {
   @@index([selectedDate])
   @@index([bookingNumber])
   @@index([stripePaymentIntentId])
+  @@index([stripeCheckoutSessionId])
   @@index([tourId, status, selectedDate]) // Capacity checks + supplier booking lookup
   @@index([customerId, status, selectedDate]) // "My bookings" filtered pages
   @@index([status, selectedDate]) // Admin/supplier date-range queries

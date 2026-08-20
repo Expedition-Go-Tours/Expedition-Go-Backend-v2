@@ -105,6 +105,44 @@ async function cancelStalePendingBookings() {
 
   for (const booking of stale) {
     if (!booking.stripePaymentIntentId) {
+      // Pay-now bookings await their hosted Checkout Session before any
+      // PaymentIntent exists. Reconcile by session state rather than assuming
+      // payment never started: an open/in-flight session keeps the booking,
+      // a completed session settles it (webhook lost), anything else cancels.
+      if (booking.stripeCheckoutSessionId) {
+        let session;
+        try {
+          session = await getStripe().checkout.sessions.retrieve(booking.stripeCheckoutSessionId);
+        } catch (err) {
+          console.error('[BookingCleanup] Could not retrieve Checkout Session', booking.stripeCheckoutSessionId, err.message);
+          continue;
+        }
+
+        if (['open', 'processing', 'incomplete'].includes(session.status)) {
+          // Session still valid / payment in flight — leave the booking alone.
+          continue;
+        }
+
+        if (session.payment_intent) {
+          // Session completed but its webhook never landed — settle now
+          // (idempotent: rows already CONFIRMED are untouched).
+          try {
+            const { oversold } = await handlePaymentSucceeded(
+              { id: session.payment_intent, metadata: { bookingIds: booking.id } }
+            );
+            for (const ob of oversold || []) {
+              await createRefund(ob.stripePaymentIntentId).catch((err) => {
+                console.error('[BookingCleanup] Refund failed for oversold booking', ob.id, err.message);
+              });
+            }
+            confirmed += 1;
+          } catch (err) {
+            console.error('[BookingCleanup] Manual settlement failed for', booking.id, err.message);
+          }
+          continue;
+        }
+      }
+
       cancelled += await expireBooking(booking, 'Payment was not completed');
       continue;
     }

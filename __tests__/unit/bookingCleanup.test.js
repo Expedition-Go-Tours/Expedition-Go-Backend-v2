@@ -12,6 +12,11 @@ jest.mock('../../utils/stripeHelpers', () => {
             retrieve: jest.fn(),
             cancel: jest.fn(() => Promise.resolve({})),
           },
+          checkout: {
+            sessions: {
+              retrieve: jest.fn(),
+            },
+          },
         };
       }
       return stripeInstance;
@@ -124,5 +129,72 @@ describe('cancelStalePendingBookings', () => {
     const result = await cancelStalePendingBookings();
 
     expect(result.cancelled).toBe(0);
+  });
+
+  it('settles a pay-now booking whose Checkout Session completed but webhook was lost', async () => {
+    prisma.booking.findMany.mockResolvedValue([
+      pendingBooking({ stripePaymentIntentId: null, stripeCheckoutSessionId: 'cs_complete' }),
+    ]);
+    getStripe().checkout.sessions.retrieve.mockResolvedValue({
+      id: 'cs_complete',
+      status: 'complete',
+      payment_intent: 'pi_complete',
+    });
+
+    const result = await cancelStalePendingBookings();
+
+    expect(getStripe().checkout.sessions.retrieve).toHaveBeenCalledWith('cs_complete');
+    expect(getStripe().paymentIntents.retrieve).not.toHaveBeenCalled();
+    expect(handlePaymentSucceeded).toHaveBeenCalledWith({
+      id: 'pi_complete',
+      metadata: { bookingIds: 'b-pending-1' },
+    });
+    expect(result).toEqual({ stale: 1, confirmed: 1, cancelled: 0 });
+  });
+
+  it('skips pay-now bookings whose Checkout Session is still open or in flight', async () => {
+    prisma.booking.findMany.mockResolvedValue([
+      pendingBooking({ stripePaymentIntentId: null, stripeCheckoutSessionId: 'cs_open' }),
+    ]);
+    getStripe().checkout.sessions.retrieve.mockResolvedValue({ status: 'open' });
+
+    const result = await cancelStalePendingBookings();
+
+    expect(handlePaymentSucceeded).not.toHaveBeenCalled();
+    expect(prisma.booking.updateMany).not.toHaveBeenCalled();
+    expect(result).toEqual({ stale: 1, confirmed: 0, cancelled: 0 });
+  });
+
+  it('cancels a pay-now booking whose Checkout Session ended without payment', async () => {
+    prisma.booking.findMany.mockResolvedValue([
+      pendingBooking({ stripePaymentIntentId: null, stripeCheckoutSessionId: 'cs_expired' }),
+    ]);
+    getStripe().checkout.sessions.retrieve.mockResolvedValue({ status: 'expired', payment_intent: null });
+
+    const result = await cancelStalePendingBookings();
+
+    expect(prisma.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 'b-pending-1' }),
+        data: expect.objectContaining({
+          status: 'CANCELLED',
+          paymentStatus: 'FAILED',
+          cancellationReason: 'Payment was not completed',
+        }),
+      }),
+    );
+    expect(result).toEqual({ stale: 1, confirmed: 0, cancelled: 1 });
+  });
+
+  it('skips a pay-now booking whose session cannot be retrieved (retried next sweep)', async () => {
+    prisma.booking.findMany.mockResolvedValue([
+      pendingBooking({ stripePaymentIntentId: null, stripeCheckoutSessionId: 'cs_down' }),
+    ]);
+    getStripe().checkout.sessions.retrieve.mockRejectedValue(new Error('network down'));
+
+    const result = await cancelStalePendingBookings();
+
+    expect(prisma.booking.updateMany).not.toHaveBeenCalled();
+    expect(result).toEqual({ stale: 1, confirmed: 0, cancelled: 0 });
   });
 });

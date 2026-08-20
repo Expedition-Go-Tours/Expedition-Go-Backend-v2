@@ -82,4 +82,11 @@ describe('confirmBookingSchema phone validation', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it('accepts a pay-now payload without a payment method', () => {
+    const body = { ...basePayload.body };
+    delete body.paymentMethodId;
+    const result = confirmBookingSchema.safeParse({ ...basePayload, body });
+    expect(result.success).toBe(true);
+  });
 });

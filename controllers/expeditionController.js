@@ -10,7 +10,7 @@ const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelp
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../utils/availabilityCore');
 const { resolvePickupSelection } = require('../utils/geoUtils');
 const { validatePassengerMix } = require('../utils/passengerMix');
-const { createPaymentIntent, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
+const { createPaymentIntent, createCheckoutSession, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const getConfig = require('../utils/getConfig');
 const { logActivity } = require('../utils/auditLogger');
@@ -1176,30 +1176,65 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     ));
   }
 
-  // Create Stripe PaymentIntent (no charge yet — confirm: false)
-  let paymentIntent;
-  try {
-    // Attach a Stripe customer if one exists or can be created lazily; `null`
-    // means "charge without a customer" (PaymentIntents don't require one).
-    // The idempotency key is derived inside createPaymentIntent from the final
-    // request body, so a retry whose customer attachment changed (async
-    // creation completing in between) can never collide with the earlier
-    // customer-less request.
-    const stripeCustomerId = await ensureStripeCustomer(req.user);
-    paymentIntent = await createPaymentIntent({
-      amount: Math.round(pricing.total * 100),
-      currency: pricing.currency,
-      customerId: stripeCustomerId,
-      paymentMethodId: req.body.paymentMethodId,
-      confirm: false,
-      metadata: {
+  // Reserve-now-pay-later captures the card (uncharged) so the pay-later sweep
+  // can auto-charge it near the activity date. Pay-now uses Stripe's hosted
+  // Checkout page instead — no PaymentIntent is created here.
+  let paymentIntent = null;
+  if (paymentTiming === 'later') {
+    if (!req.body.paymentMethodId) {
+      return next(new AppError('A payment method is required to reserve now and pay later.', 400));
+    }
+    try {
+      // Attach a Stripe customer if one exists or can be created lazily; `null`
+      // means "charge without a customer" (PaymentIntents don't require one).
+      // The idempotency key is derived inside createPaymentIntent from the final
+      // request body, so a retry whose customer attachment changed (async
+      // creation completing in between) can never collide with the earlier
+      // customer-less request.
+      const stripeCustomerId = await ensureStripeCustomer(req.user);
+      const piMetadata = {
         customerId,
         tourId,
         source: 'expedition',
-      },
-    });
-  } catch (err) {
-    return next(new AppError(`Payment failed: ${err.message}`, 400));
+        paymentTiming: 'later',
+        // Selected date/time are part of the idempotency-relevant request so
+        // rebooking the same tour on a different date creates a fresh PI
+        // instead of colliding (via the derived idempotency key) with a
+        // previously cancelled one.
+        selectedDate: typeof selectedDate === 'string' ? selectedDate.slice(0, 10) : String(selectedDate).slice(0, 10),
+        ...(selectedTime ? { selectedTime } : {}),
+      };
+      paymentIntent = await createPaymentIntent({
+        amount: Math.round(pricing.total * 100),
+        currency: pricing.currency,
+        customerId: stripeCustomerId,
+        paymentMethodId: req.body.paymentMethodId,
+        confirm: false,
+        metadata: piMetadata,
+      });
+      // Stripe idempotency replays return the ORIGINAL creation response (status
+      // "requires_confirmation") even when the live PaymentIntent was since
+      // charged or cancelled. Check the LIVE status so a stale replay of a
+      // previously-settled intent is detected and replaced.
+      const liveIntent = await getStripe().paymentIntents.retrieve(paymentIntent.id);
+      if (liveIntent.status !== 'requires_confirmation') {
+        // Collision with a stale PI from a prior attempt on the same request
+        // shape (same customer/tour/date/amount) — e.g. a previously charged or
+        // cancelled intent whose idempotency key matched. Recreate with a
+        // unique key so the booking is never stuck on a dead PaymentIntent.
+        paymentIntent = await createPaymentIntent({
+          amount: Math.round(pricing.total * 100),
+          currency: pricing.currency,
+          customerId: stripeCustomerId,
+          paymentMethodId: req.body.paymentMethodId,
+          confirm: false,
+          metadata: piMetadata,
+          idempotencyKey: `paylater:${crypto.randomUUID()}`,
+        });
+      }
+    } catch (err) {
+      return next(new AppError(`Payment failed: ${err.message}`, 400));
+    }
   }
 
   // Create booking in transaction
@@ -1247,7 +1282,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         supplierPayout: commission.supplierPayout,
         specialRequests,
         ...(pickupSnapshot && { pickup: pickupSnapshot }),
-        stripePaymentIntentId: paymentIntent.id,
+        ...(paymentIntent && { stripePaymentIntentId: paymentIntent.id }),
         appliedOfferId: appliedOffer?.id || null,
         paymentTiming,
         paymentStatus: 'PENDING',
@@ -1300,6 +1335,12 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       data: { bookingId: result.id, tourTitle: tour.title, total: pricing.total, source: 'expedition' },
     }).catch(() => {});
 
+    enqueueEmail({
+      type: 'reserve-later-confirmed',
+      bookingId: result.id,
+      brandName: 'Expedition',
+    }).catch((err) => console.error('[Expedition] Reserve-later confirmation email failed:', err.message));
+
     enqueueEvent({
       name: 'expedition.booking_reserved',
       userId: customerId,
@@ -1321,67 +1362,49 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       status: 'success',
       data: {
         booking: result,
-        paymentIntent: {
-          id: paymentIntent.id,
-          clientSecret: paymentIntent.client_secret,
-          status: paymentIntent.status,
-          requiresAction: false,
-        },
+        checkout: null,
         message: 'Your spot is reserved. Payment will be collected before the activity.',
       },
     });
   }
 
-  // Charge the card now that the booking is safely created.
-  let intentStatus = 'pending';
+  // Pay now: redirect the customer to Stripe's hosted Checkout page. The
+  // booking is already committed (PENDING) — capacity is held until the
+  // checkout.session.completed webhook settles it or the session expires
+  // (checkout.session.expired webhook / stale-PENDING cleanup cancel it).
+  let checkout;
   try {
-    const confirmResult = await getStripe().paymentIntents.confirm(paymentIntent.id);
-    paymentIntent = confirmResult;
-    intentStatus = confirmResult.status;
-  } catch (confirmErr) {
-    // confirm() throws for declined cards and 3DS challenges. Retrieve the
-    // authoritative state instead of trusting the error alone.
-    console.log(`[Expedition] confirm threw: ${confirmErr.message}`);
-    try {
-      paymentIntent = await getStripe().paymentIntents.retrieve(paymentIntent.id);
-      intentStatus = paymentIntent.status;
-    } catch (retrieveErr) {
-      console.error('[Expedition] Failed to retrieve PI after confirm error:', retrieveErr.message);
-    }
-    console.log(`[Expedition] PaymentIntent ${paymentIntent.id} confirm returned status: ${intentStatus}`);
-  }
-
-  // Decline / unattachable payment method: release the booking immediately so
-  // the customer can retry (the dedup guard only blocks PENDING/CONFIRMED).
-  if (intentStatus === 'requires_payment_method' || intentStatus === 'canceled') {
-    const cancelled = await prisma.booking.updateMany({
-      where: {
-        id: result.id,
-        status: 'PENDING',
-        paymentStatus: 'PENDING',
-        stripePaymentIntentId: paymentIntent.id,
-      },
+    checkout = await createCheckoutSession({
+      amount: Math.round(pricing.total * 100),
+      currency: pricing.currency,
+      bookingId: result.id,
+      tourTitle: tour.title,
+      customerEmail: req.user?.email,
+    });
+  } catch (err) {
+    console.error('[Expedition] Failed to create Checkout Session:', err.message);
+    // Release the booking so the customer can retry (the dedup guard only
+    // blocks PENDING/CONFIRMED bookings).
+    await prisma.booking.updateMany({
+      where: { id: result.id, status: 'PENDING', paymentStatus: 'PENDING' },
       data: {
         status: 'CANCELLED',
         paymentStatus: 'FAILED',
-        cancellationReason: 'Payment declined',
+        cancellationReason: 'Checkout session could not be created',
         cancelledAt: new Date(),
       },
     });
-    if (cancelled.count > 0) {
-      console.log(`[Expedition] Booking ${result.id} released after payment decline`);
-    }
-    return next(new AppError('Payment was declined. Please try another card.', 400));
+    return next(new AppError('Payment could not be started. Please try again.', 500));
   }
 
-  // Attach booking ID to PI metadata so the webhook can find it
-  try {
-    await getStripe().paymentIntents.update(paymentIntent.id, {
-      metadata: { bookingIds: result.id, source: 'expedition' },
-    });
-  } catch (err) {
-    console.error('[Expedition] Failed to update PI metadata:', err.message);
-  }
+  // Persist the session id so the stale-PENDING cleanup can reconcile
+  // abandoned sessions (open -> skip, expired -> cancel).
+  prisma.booking
+    .updateMany({
+      where: { id: result.id },
+      data: { stripeCheckoutSessionId: checkout.id },
+    })
+    .catch((err) => console.error('[Expedition] Failed to store Checkout Session id:', err.message));
 
   // Clean up any cart items for this tour+date+customer
   prisma.cartItem
@@ -1428,15 +1451,8 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     status: 'success',
     data: {
       booking: result,
-      paymentIntent: {
-        id: paymentIntent.id,
-        clientSecret: paymentIntent.client_secret,
-        status: intentStatus,
-        requiresAction: intentStatus === 'requires_action',
-      },
-      message: intentStatus === 'requires_action'
-        ? 'Additional authentication is required to complete your booking.'
-        : 'Booking is being processed. You will receive a confirmation email shortly.',
+      checkout: { id: checkout.id, url: checkout.url },
+      message: 'Redirecting to secure payment…',
     },
   });
 });

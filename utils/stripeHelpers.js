@@ -30,7 +30,7 @@ function getStripe() {
   return _stripe;
 }
 const prisma = require('./prismaClient');
-const { enqueueEmail, enqueueEvent } = require('./queue');
+const { enqueueEmail, enqueueEvent, enqueueNotification } = require('./queue');
 const { notifyAdmin } = require('./adminNotificationService');
 const getConfig = require('./getConfig');
 const { normalizeCommissionRate } = require('./commission');
@@ -110,6 +110,75 @@ async function createPaymentIntent({
     console.error(' Payment Intent creation failed:', error);
     throw new Error(`Failed to create payment: ${error.message}`);
   }
+}
+
+/**
+ * Create a hosted Stripe Checkout Session for an expedition booking.
+ *
+ * Pay-now bookings redirect the customer to Stripe's hosted payment page; the
+ * `checkout.session.completed` webhook reconciles the booking (attaches the
+ * session's PaymentIntent and settles it through the same idempotent path as
+ * PaymentIntents). Pay-later payment links reuse this with an `expiresAt`.
+ *
+ * @param {object} opts
+ * @param {number} opts.amount - total in minor units (e.g. cents)
+ * @param {string} [opts.currency] - ISO currency code (default 'USD')
+ * @param {string} opts.bookingId - Booking id (client_reference_id + metadata)
+ * @param {string} [opts.tourTitle] - product name shown on the payment page
+ * @param {string} [opts.customerId] - Stripe Customer id (optional)
+ * @param {string} [opts.customerEmail] - fallback email when no customer
+ * @param {Date} [opts.expiresAt] - session expiry (pay-later payment links)
+ * @returns {Promise<object>} the Stripe Checkout Session
+ */
+async function createCheckoutSession({
+  amount,
+  currency = 'USD',
+  bookingId,
+  tourTitle,
+  customerId,
+  customerEmail,
+  expiresAt,
+}) {
+  if (!bookingId) throw new Error('bookingId is required to create a Checkout Session');
+  if (!amount || amount <= 0) throw new Error('amount must be a positive value in minor units');
+
+  const successUrl = `${process.env.CLIENT_URL}/booking/confirmation/${bookingId}`;
+  const cancelUrl = `${process.env.CLIENT_URL}/booking`;
+
+  return getStripe().checkout.sessions.create({
+    mode: 'payment',
+    client_reference_id: bookingId,
+    line_items: [
+      {
+        quantity: 1,
+        price_data: {
+          currency: currency.toLowerCase(),
+          unit_amount: amount,
+          product_data: { name: tourTitle || 'Expedition booking' },
+        },
+      },
+    ],
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    // Booking already exists at session creation, so the session and its
+    // PaymentIntent both carry the booking id for idempotent reconciliation.
+    metadata: { bookingIds: bookingId, source: 'expedition' },
+    payment_intent_data: { metadata: { bookingIds: bookingId, source: 'expedition' } },
+    ...(customerId ? { customer: customerId } : {}),
+    ...((!customerId && customerEmail) ? { customer_email: customerEmail } : {}),
+    ...(expiresAt ? { expires_at: Math.floor(expiresAt.getTime() / 1000) } : {}),
+  });
+}
+
+/**
+ * Resolve the booking id(s) a Checkout Session belongs to. Sessions created by
+ * this app set `metadata.bookingIds`; `client_reference_id` is the fallback.
+ */
+function resolveSessionBookingIds(session) {
+  const meta = session?.metadata?.bookingIds;
+  if (typeof meta === 'string') return meta.split(',').map((s) => s.trim()).filter(Boolean);
+  if (session?.client_reference_id) return [session.client_reference_id];
+  return [];
 }
 
 /**
@@ -319,6 +388,8 @@ async function processStripeWebhook(event) {
 
   let bookings = [];
   let oversoldBookings = [];
+  let cancelledBookings = [];
+  let reconciledPaymentIntentId = null;
 
   await prisma.$transaction(async (tx) => {
     // Re-check inside the transaction — serialized by Postgres, no race
@@ -348,12 +419,65 @@ async function processStripeWebhook(event) {
         const result = await handlePaymentSucceeded(event.data.object, tx);
         bookings = result.bookings;
         oversoldBookings = result.oversold;
+        reconciledPaymentIntentId = event.data.object?.id;
         break;
       }
 
       case 'payment_intent.payment_failed':
         await handlePaymentFailed(event.data.object, tx);
         break;
+
+      case 'checkout.session.completed': {
+        const session = event.data.object;
+        const bookingIds = resolveSessionBookingIds(session);
+        if (bookingIds.length > 0 && session?.payment_intent) {
+          // The booking was created (PENDING) before the session, so it has no
+          // PaymentIntent yet. Attach the session + its PI, then settle through
+          // the shared idempotent path (gated on paymentStatus PENDING, so a
+          // racing payment_intent.succeeded is harmless).
+          await tx.booking.updateMany({
+            where: { id: { in: bookingIds }, paymentStatus: 'PENDING', paidAt: null },
+            data: {
+              stripePaymentIntentId: session.payment_intent,
+              ...(session.id ? { stripeCheckoutSessionId: session.id } : {}),
+            },
+          });
+          const result = await handlePaymentSucceeded(
+            { id: session.payment_intent, metadata: { bookingIds: bookingIds.join(',') } },
+            tx
+          );
+          bookings = result.bookings;
+          oversoldBookings = result.oversold;
+          reconciledPaymentIntentId = session.payment_intent;
+        }
+        break;
+      }
+
+      case 'checkout.session.expired': {
+        const session = event.data.object;
+        const bookingIds = resolveSessionBookingIds(session);
+        if (bookingIds.length > 0) {
+          const cancelled = await tx.booking.updateMany({
+            where: { id: { in: bookingIds }, status: 'PENDING', paymentStatus: 'PENDING', paidAt: null },
+            data: {
+              status: 'CANCELLED',
+              paymentStatus: 'FAILED',
+              cancellationReason: 'Payment session expired before completion',
+              cancelledAt: new Date(),
+            },
+          });
+          if (cancelled.count > 0) {
+            cancelledBookings = await tx.booking.findMany({
+              where: { id: { in: bookingIds } },
+              include: {
+                customer: true,
+                tour: { select: { id: true, title: true, supplierId: true } },
+              },
+            });
+          }
+        }
+        break;
+      }
 
       default:
         console.log(` Unhandled event type: ${event.type}`);
@@ -376,11 +500,19 @@ async function processStripeWebhook(event) {
 
   for (const booking of bookings) {
     const isExpedition = booking.source === 'EXPEDITION';
+    const chargedReservation = booking.paymentTiming === 'later';
 
-    enqueueEmail({ type: 'booking-confirmed', bookingId: booking.id })
-      .catch((err) => console.error('[Email] Booking confirmation failed:', err.message));
-    enqueueEmail({ type: 'supplier-new-booking', bookingId: booking.id })
-      .catch((err) => console.error('[Email] Supplier notification failed:', err.message));
+    // A reserve-now-pay-later booking being charged gets a distinct "your
+    // reservation was charged" email for the customer and supplier instead of
+    // the pay-now "new confirmed booking" confirmation.
+    enqueueEmail(chargedReservation
+      ? { type: 'pay-later-charged', bookingId: booking.id }
+      : { type: 'booking-confirmed', bookingId: booking.id })
+      .catch((err) => console.error(`[Email] ${chargedReservation ? 'Reservation charge' : 'Booking confirmation'} failed:`, err.message));
+    enqueueEmail(chargedReservation
+      ? { type: 'supplier-pay-later-charged', bookingId: booking.id }
+      : { type: 'supplier-new-booking', bookingId: booking.id })
+      .catch((err) => console.error(`[Email] ${chargedReservation ? 'Supplier reservation charge' : 'Supplier notification'} failed:`, err.message));
 
     if (isExpedition) {
       notifyAdmin({
@@ -410,7 +542,7 @@ async function processStripeWebhook(event) {
         supplierPayout: parseFloat(booking.supplierPayout),
         commissionAmount: parseFloat(booking.commissionAmount),
         supplierId: booking.tour?.supplierId,
-        paymentIntentId: event.data.object?.id,
+        paymentIntentId: reconciledPaymentIntentId || event.data.object?.id,
       },
       source: isExpedition ? 'expedition' : 'webhook',
     });
@@ -439,6 +571,27 @@ async function processStripeWebhook(event) {
           data: { bookingId: booking.id, paymentIntentId: booking.stripePaymentIntentId },
         }).catch(() => {});
       });
+  }
+
+  // ── Expired Checkout Sessions: cancelled bookings ──────────────────────
+  // The booking was cancelled inside the transaction; these side effects run
+  // only after the commit. Fire-and-forget like the settlement notifications.
+  for (const booking of cancelledBookings) {
+    enqueueNotification({
+      userId: booking.customerId,
+      type: 'BOOKING_CANCELLED',
+      title: 'Booking Not Completed',
+      message: `Your booking for "${booking.tour?.title || 'the tour'}" was cancelled because payment was not completed. You can rebook anytime.`,
+      data: { bookingId: booking.id },
+    }).catch((err) => console.error('[Webhook] Cancellation notification failed:', err.message));
+
+    enqueueEvent({
+      name: 'booking.expired',
+      userId: booking.customerId,
+      resource: 'Booking',
+      resourceId: booking.id,
+      properties: { tourId: booking.tourId, reason: 'checkout session expired', source: 'stripe' },
+    }).catch(() => {});
   }
 
   return { success: true, message: 'Event processed' };
@@ -714,6 +867,8 @@ module.exports = {
   createPaymentIntent,
   createStripeCustomer,
   ensureStripeCustomer,
+  createCheckoutSession,
+  resolveSessionBookingIds,
   createRefund,
   cancelPaymentIntent,
   calculateCommission,

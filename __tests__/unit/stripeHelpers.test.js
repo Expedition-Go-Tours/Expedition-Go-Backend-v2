@@ -10,10 +10,11 @@ jest.mock('../../utils/prismaClient', () => ({
 }));
 
 const prisma = require('../../utils/prismaClient');
-const { enqueueEmail, enqueueEvent } = require('../../utils/queue');
+const { enqueueEmail, enqueueEvent, enqueueNotification } = require('../../utils/queue');
 jest.mock('../../utils/queue', () => ({
   enqueueEmail: jest.fn(() => Promise.resolve()),
   enqueueEvent: jest.fn(() => Promise.resolve()),
+  enqueueNotification: jest.fn(() => Promise.resolve()),
   enqueueWebhookRetry: jest.fn(() => Promise.resolve()),
 }));
 jest.mock('../../utils/eventEmitter', () => ({
@@ -304,6 +305,73 @@ describe('processStripeWebhook', () => {
     await processStripeWebhook(stripeEvent);
 
     expect(tx.booking.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('handles checkout.session.completed by attaching the PI and settling the booking', async () => {
+    enqueueEmail.mockClear();
+    enqueueEvent.mockClear();
+
+    const stripeEvent = {
+      id: `evt_${Date.now()}`,
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_test_123',
+          payment_intent: 'pi_456',
+          metadata: { bookingIds: 'booking-1', source: 'expedition' },
+        },
+      },
+    };
+
+    const result = await processStripeWebhook(stripeEvent);
+
+    expect(result.success).toBe(true);
+    // Attach the session's PaymentIntent to the booking.
+    expect(tx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: { in: ['booking-1'] } }),
+        data: expect.objectContaining({ stripePaymentIntentId: 'pi_456', stripeCheckoutSessionId: 'cs_test_123' }),
+      }),
+    );
+    // Settle the booking to CONFIRMED.
+    expect(tx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ paymentStatus: { in: ['PENDING', 'PROCESSING'] } }),
+        data: expect.objectContaining({ status: 'CONFIRMED', paymentStatus: 'SUCCEEDED' }),
+      }),
+    );
+    expect(enqueueEmail).toHaveBeenCalled();
+    expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'booking.completed' }));
+  });
+
+  it('handles checkout.session.expired by cancelling pending bookings', async () => {
+    enqueueNotification.mockClear();
+    enqueueEvent.mockClear();
+
+    const stripeEvent = {
+      id: `evt_${Date.now()}`,
+      type: 'checkout.session.expired',
+      data: {
+        object: {
+          id: 'cs_test_123',
+          metadata: { bookingIds: 'booking-1', source: 'expedition' },
+        },
+      },
+    };
+
+    const result = await processStripeWebhook(stripeEvent);
+
+    expect(result.success).toBe(true);
+    expect(tx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: { in: ['booking-1'] } }),
+        data: expect.objectContaining({ status: 'CANCELLED', paymentStatus: 'FAILED' }),
+      }),
+    );
+    expect(enqueueNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'BOOKING_CANCELLED' }),
+    );
+    expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'booking.expired' }));
   });
 });
 

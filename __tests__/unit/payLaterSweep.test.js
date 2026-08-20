@@ -75,9 +75,8 @@ describe('chargePayLaterBookings', () => {
 
     const result = await chargePayLaterBookings();
 
-    expect(getStripe().paymentIntents.confirm).toHaveBeenCalledWith('pi_later');
+    expect(getStripe().paymentIntents.confirm).toHaveBeenCalledWith('pi_later', expect.objectContaining({ return_url: expect.any(String) }));
     expect(handlePaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ id: 'pi_later', status: 'succeeded' }));
-    expect(enqueueEmail).toHaveBeenCalledWith(expect.objectContaining({ type: 'payment-successful' }));
     expect(enqueueNotification).toHaveBeenCalled();
     expect(result).toEqual({ checked: 1, charged: 1, settled: 0, needsAction: 0, failed: 0, cancelled: 0 });
   });
@@ -88,7 +87,7 @@ describe('chargePayLaterBookings', () => {
 
     const result = await chargePayLaterBookings();
 
-    expect(getStripe().paymentIntents.confirm).toHaveBeenCalledWith('pi_later');
+    expect(getStripe().paymentIntents.confirm).toHaveBeenCalledWith('pi_later', expect.objectContaining({ return_url: expect.any(String) }));
     expect(handlePaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ id: 'pi_later', status: 'succeeded' }));
     expect(result.charged).toBe(1);
   });

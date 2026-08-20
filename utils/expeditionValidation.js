@@ -121,7 +121,9 @@ const confirmBookingSchema = z.object({
     tourId: z.string().min(1).max(100),
     selectedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format'),
     travelers: travelerWithDetailsSchema,
-    paymentMethodId: z.string().min(1).max(100),
+    // Required for reserve-now-pay-later (card captured for auto-charge).
+    // Pay-now uses Stripe's hosted Checkout page and does not send a card.
+    paymentMethodId: z.string().min(1).max(100).optional(),
     paymentTiming: z.enum(['now', 'later']).optional(),
     specialRequests: z.string().max(1000).optional(),
   }),

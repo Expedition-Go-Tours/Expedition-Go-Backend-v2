@@ -93,7 +93,7 @@ async function enqueueEvent(eventData) {
  * re-fetch the same relations per send.
  */
 const EMAIL_BOOKING_INCLUDE = {
-  customer: { select: { id: true, name: true, email: true, phone: true, location: true } },
+  customer: { select: { id: true, name: true, email: true, phone: true } },
   tour: {
     select: {
       id: true,
@@ -120,6 +120,7 @@ const EMAIL_JOB_DISPATCH = {
   'reserve-later-confirmed': ['sendReserveLaterConfirmedEmail', true],
   'payment-reminder': ['sendPaymentReminderEmail', true],
   'payment-successful': ['sendPaymentSuccessfulEmail', true],
+  'pay-later-charged': ['sendPayLaterChargedEmail', true],
   'payment-unsuccessful': ['sendPaymentUnsuccessfulEmail', true],
   'customer-booking-changed': ['sendCustomerBookingChangedEmail', true],
   'pickup-details-updated': ['sendPickupDetailsUpdatedEmail', true],
@@ -134,6 +135,7 @@ const EMAIL_JOB_DISPATCH = {
   'review-request': ['sendReviewRequestEmail', true],
   // supplier
   'supplier-new-booking': ['sendSupplierNewBookingEmail', true],
+  'supplier-pay-later-charged': ['sendSupplierPayLaterChargedEmail', true],
   'supplier-booking-changed': ['sendSupplierBookingChangedEmail', true],
   'supplier-customer-contact-updated': ['sendSupplierContactUpdatedEmail', true],
   'supplier-pickup-updated': ['sendSupplierPickupUpdatedEmail', true],

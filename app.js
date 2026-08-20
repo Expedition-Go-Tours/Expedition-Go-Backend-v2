@@ -178,6 +178,11 @@ if (process.env.NODE_ENV === 'development') {
 app.use(passport.initialize());
 
 app.use(require('cookie-parser')());
+// Stripe webhook signature verification needs the RAW request body (a Buffer
+// of the original bytes), so parse it BEFORE the global express.json() below
+// consumes the stream. `express.json()` will then skip this path because the
+// body was already parsed (body-parser sets req._body = true).
+app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 

@@ -35,14 +35,8 @@ async function settleBooking(booking, intent) {
     return false;
   }
 
-  enqueueEmail({
-    type: 'payment-successful',
-    bookingId: booking.id,
-    data: {
-      amount: booking.total,
-      paymentReference: intent?.id,
-    },
-  }).catch((err) => console.error('[PayLater] Payment successful email failed:', err.message));
+  // handlePaymentSucceeded already enqueues the pay-later-charged emails
+  // (customer + supplier), so no separate payment-successful email here.
 
   enqueueNotification({
     userId: booking.customerId,
@@ -257,7 +251,12 @@ async function chargePayLaterBookings() {
       default: {
         let confirmed;
         try {
-          confirmed = await getStripe().paymentIntents.confirm(booking.stripePaymentIntentId);
+          // Accounts with dashboard-enabled payment methods require a
+          // return_url on confirm. The captured card never redirects, so this
+          // URL is only consumed by Stripe's validation.
+          confirmed = await getStripe().paymentIntents.confirm(booking.stripePaymentIntentId, {
+            return_url: `${process.env.CLIENT_URL}/booking/complete`,
+          });
         } catch (err) {
           console.error('[PayLater] Confirm failed', booking.stripePaymentIntentId, err.message);
           await notifyPaymentFailed(booking, err.message);

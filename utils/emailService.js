@@ -194,7 +194,7 @@ async function sendEmail({ to, subject, template, data = {}, attachments = [], o
 // Booking context resolution + shared data assembly
 // ---------------------------------------------------------------------------
 const BOOKING_CONTEXT_INCLUDE = {
-  customer: { select: { id: true, name: true, email: true, phone: true, location: true } },
+  customer: { select: { id: true, name: true, email: true, phone: true } },
   tour: {
     select: {
       id: true,
@@ -398,6 +398,25 @@ async function sendPaymentSuccessfulEmail(booking, { paymentReference, amount } 
     to: base.customerEmail,
     subject: `Payment received — ${base.tourTitle} (Ref: ${base.bookingNumber})`,
     key: 'payment-successful',
+    data,
+  });
+}
+
+async function sendPayLaterChargedEmail(booking, { paymentReference, chargedAt } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const data = {
+    ...base,
+    amountChargedLabel: base.totalLabel,
+    paymentReference: paymentReference || b.stripePaymentIntentId || '',
+    chargedAtLabel: fmt.formatLongDate(chargedAt || b.paidAt || new Date()),
+    paymentStatusLabel: 'Paid',
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: `Your reservation is confirmed — payment collected (Ref: ${base.bookingNumber})`,
+    key: 'pay-later-charged',
     data,
   });
 }
@@ -648,6 +667,30 @@ async function sendSupplierNewBookingEmail(booking) {
     to: supplier.email,
     subject: `New confirmed booking — ${base.tourTitle} (Ref: ${base.bookingNumber})`,
     key: 'supplier-new-booking',
+    data,
+  });
+}
+
+async function sendSupplierPayLaterChargedEmail(booking, { paymentReference, chargedAt } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const data = {
+    ...base,
+    supplierName: supplier.name || 'Supplier',
+    customerEmail: base.customerEmail,
+    customerPhone: base.customerPhone,
+    totalLabel: base.totalLabel,
+    commissionLabel: base.commissionLabel,
+    payoutAmountLabel: base.payoutAmountLabel,
+    paymentReference: paymentReference || b.stripePaymentIntentId || '',
+    chargedAtLabel: fmt.formatLongDate(chargedAt || b.paidAt || new Date()),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: supplier.email,
+    subject: `Reservation payment collected — booking confirmed (Ref: ${base.bookingNumber})`,
+    key: 'supplier-pay-later-charged',
     data,
   });
 }
@@ -1189,6 +1232,7 @@ module.exports = {
   sendReserveLaterConfirmedEmail,
   sendPaymentReminderEmail,
   sendPaymentSuccessfulEmail,
+  sendPayLaterChargedEmail,
   sendPaymentUnsuccessfulEmail,
   sendCustomerBookingChangedEmail,
   sendPickupDetailsUpdatedEmail,
@@ -1204,6 +1248,7 @@ module.exports = {
 
   // supplier
   sendSupplierNewBookingEmail,
+  sendSupplierPayLaterChargedEmail,
   sendSupplierBookingChangedEmail,
   sendSupplierContactUpdatedEmail,
   sendSupplierPickupUpdatedEmail,

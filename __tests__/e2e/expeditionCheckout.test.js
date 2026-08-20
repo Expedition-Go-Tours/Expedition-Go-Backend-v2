@@ -58,6 +58,7 @@ jest.mock('../../utils/stripeHelpers', () => {
   const actual = jest.requireActual('../../utils/stripeHelpers');
   return {
     createPaymentIntent: jest.fn(),
+    createCheckoutSession: jest.fn(),
     calculateCommission: jest.fn(),
     createRefund: jest.fn(),
     ensureStripeCustomer: jest.fn(async (user) => user?.stripeCustomerId || null),
@@ -78,7 +79,7 @@ const app = require('../../app');
 const prisma = require('../../utils/prismaClient');
 const tourHelpers = require('../../utils/tourHelpers');
 const bookingHelpers = require('../../utils/bookingHelpers');
-const { createPaymentIntent, calculateCommission, processStripeWebhook } = require('../../utils/stripeHelpers');
+const { createPaymentIntent, createCheckoutSession, calculateCommission, processStripeWebhook } = require('../../utils/stripeHelpers');
 
 
 const mockUser = {
@@ -199,6 +200,7 @@ describe('E2E: Expedition Checkout Flow', () => {
     });
     bookingHelpers.generateBookingNumber.mockResolvedValue('BK-EXP-E2E-001');
     createPaymentIntent.mockResolvedValue({ id: 'pi_exp_e2e', client_secret: 'secret_exp_e2e' });
+    createCheckoutSession.mockResolvedValue({ id: 'cs_exp_e2e', url: 'https://checkout.stripe.com/c/pay/cs_exp_e2e' });
     calculateCommission.mockResolvedValue({ rate: 0.15, amount: 78.75, supplierPayout: 446.25 });
   });
 
@@ -216,7 +218,7 @@ describe('E2E: Expedition Checkout Flow', () => {
   });
 
   // ── Step 2: confirmBooking (auth required) ─────────────────────────
-  it('Step 2: confirms booking with Stripe payment', async () => {
+  it('Step 2: confirms booking and redirects to hosted Checkout', async () => {
     const res = await request(app)
       .post('/api/expedition/checkout/confirm')
       .set('Authorization', 'Bearer valid-exp-token')
@@ -224,27 +226,58 @@ describe('E2E: Expedition Checkout Flow', () => {
         tourId: 'tour-exp-e2e',
         selectedDate: '2027-06-15',
         travelers: { adults: 2, children: 1, infants: 0, phoneNumber: '+254700123456', location: 'Nairobi, Kenya' },
-        paymentMethodId: 'pm_exp_e2e',
+        paymentTiming: 'now',
       });
 
     expect(res.status).toBe(201);
     expect(res.body.status).toBe('success');
     expect(res.body.data.booking).toBeDefined();
     expect(res.body.data.booking.id).toBe('booking-exp-e2e-1');
+    expect(res.body.data.checkout).toBeDefined();
+    expect(res.body.data.checkout.url).toBe('https://checkout.stripe.com/c/pay/cs_exp_e2e');
 
-    expect(createPaymentIntent).toHaveBeenCalledWith(
+    expect(createCheckoutSession).toHaveBeenCalledWith(
       expect.objectContaining({
         amount: 52500,
-        paymentMethodId: 'pm_exp_e2e',
-        metadata: expect.objectContaining({ source: 'expedition' }),
+        bookingId: 'booking-exp-e2e-1',
       }),
     );
+    expect(createPaymentIntent).not.toHaveBeenCalled();
 
     expect(mockVerifyAccessToken).toHaveBeenCalledWith('valid-exp-token');
     expect(prisma.$transaction).toHaveBeenCalled();
     expect(mockTx.booking.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ source: 'EXPEDITION' }) }),
     );
+  });
+
+  // ── Step 2b: reserve-now-pay-later captures the card (uncharged) ───
+  it('reserve-now-pay-later still captures a PaymentIntent for auto-charge', async () => {
+    const res = await request(app)
+      .post('/api/expedition/checkout/confirm')
+      .set('Authorization', 'Bearer valid-exp-token')
+      .send({
+        tourId: 'tour-exp-e2e',
+        selectedDate: '2027-06-15',
+        travelers: { adults: 2, children: 1, infants: 0, phoneNumber: '+254700123456', location: 'Nairobi, Kenya' },
+        paymentTiming: 'later',
+        paymentMethodId: 'pm_exp_e2e',
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('success');
+    expect(res.body.data.checkout).toBeNull();
+    expect(res.body.data.message).toContain('reserved');
+
+    expect(createPaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 52500,
+        paymentMethodId: 'pm_exp_e2e',
+        confirm: false,
+        metadata: expect.objectContaining({ source: 'expedition', paymentTiming: 'later' }),
+      }),
+    );
+    expect(createCheckoutSession).not.toHaveBeenCalled();
   });
 
   // ── Step 3: Stripe webhook falls back to PI ID lookup when no bookingIds ──
@@ -306,7 +339,7 @@ describe('E2E: Expedition Checkout Flow', () => {
 
     prisma.tour.findFirst.mockResolvedValue(mockTour);
     prisma.$transaction.mockImplementation((cb) => cb(mockTx));
-    createPaymentIntent.mockResolvedValue({ id: 'pi_exp_e2e_full', client_secret: 'secret_full' });
+    createCheckoutSession.mockResolvedValue({ id: 'cs_exp_e2e_full', url: 'https://checkout.stripe.com/c/pay/cs_exp_e2e_full' });
 
     const confirmRes = await request(app)
       .post('/api/expedition/checkout/confirm')
@@ -315,12 +348,13 @@ describe('E2E: Expedition Checkout Flow', () => {
         tourId: 'tour-exp-e2e',
         selectedDate: '2027-06-15',
         travelers: { adults: 2, phoneNumber: '+254700123456', location: 'Nairobi, Kenya' },
-        paymentMethodId: 'pm_full',
+        paymentTiming: 'now',
       });
     expect(confirmRes.status).toBe(201);
     expect(confirmRes.body.data.booking.id).toBe('booking-exp-e2e-1');
+    expect(confirmRes.body.data.checkout.url).toContain('checkout.stripe.com');
 
-    expect(createPaymentIntent).toHaveBeenCalledWith(
+    expect(createCheckoutSession).toHaveBeenCalledWith(
       expect.objectContaining({ amount: 52500 }),
     );
 

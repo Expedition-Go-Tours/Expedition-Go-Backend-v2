@@ -183,6 +183,34 @@ const paymentSuccessful = {
   },
 };
 
+const payLaterCharged = {
+  key: 'pay-later-charged',
+  name: 'Customer · Reservation charged & confirmed',
+  build() {
+    return B.shell('Your reservation is confirmed — payment collected', `
+      ${B.hero({ heading: 'Your reservation is now confirmed', badgeText: '&#10003;&nbsp;&nbsp;Paid', badgeColor: 'accent', subtitle: 'Hello {{customerName}},<br>Your reserved experience has been charged and is now fully confirmed.' })}
+      ${B.paragraph('We\u2019ve collected <strong>{{amountChargedLabel}}</strong> from your saved payment method for <strong>{{tourTitle}}</strong> on <strong>{{dateLabel}}</strong>. Your booking is confirmed — see you there!')}
+      ${B.sectionTitle('Booking details')}
+      ${customerBookingDetailsRows()}
+      ${B.divider()}
+      ${B.sectionTitle('Payment')}
+      ${B.detailRows([
+        { label: 'Booking total', value: '{{totalLabel}}' },
+        { label: 'Amount charged', value: '{{amountChargedLabel}}' },
+        { label: 'Charged on', value: '{{chargedAtLabel}}' },
+        { label: 'Payment reference', value: '{{paymentReference}}', if: '{{paymentReference}}' },
+        { label: 'Payment status', value: 'Paid' },
+      ])}
+      ${B.callout('This payment was the scheduled collection for your reserve-now-pay-later booking.', 'success')}
+      ${B.buttons([
+        { label: 'View booking', href: '{{bookingUrl}}' },
+        { label: 'Download voucher', href: '{{voucherUrl}}' },
+        { label: 'Manage booking', href: '{{manageUrl}}', kind: 'secondary' },
+      ])}
+    `);
+  },
+};
+
 const paymentUnsuccessful = {
   key: 'payment-unsuccessful',
   name: 'Customer · Payment unsuccessful',
@@ -478,6 +506,39 @@ const supplierNewBooking = {
   },
 };
 
+const supplierPayLaterCharged = {
+  key: 'supplier-pay-later-charged',
+  name: 'Supplier · Reservation charged & confirmed',
+  build() {
+    return B.shell('Reservation payment collected — booking confirmed', `
+      ${B.hero({ heading: 'Reservation payment collected', badgeText: '&#10003;&nbsp;&nbsp;Paid', badgeColor: 'accent', subtitle: 'Hello {{supplierName}},<br>The payment for a reserved booking has been collected. This booking is now confirmed and ready to operate.' })}
+      ${B.callout('This was a reserve-now-pay-later booking — the customer\u2019s card has now been charged.', 'success')}
+      ${B.sectionTitle('Booking details')}
+      ${supplierBookingDetailsRows()}
+      {{#if specialRequirements}}
+      ${B.detailRows([
+        { label: 'Special requirements', value: '{{specialRequirements}}' },
+      ])}
+      {{/if}}
+      ${B.divider()}
+      ${B.sectionTitle('Customer details')}
+      ${customerContactRows()}
+      ${B.divider()}
+      ${B.sectionTitle('Supplier payout')}
+      ${B.summaryRows([
+        { label: 'Retail value', value: '{{totalLabel}}' },
+        { label: 'Commission', value: '{{commissionLabel}}' },
+        { label: 'Supplier payout', value: '{{payoutAmountLabel}}', total: true },
+      ])}
+      ${B.detailRows([
+        { label: 'Payment collected', value: '{{chargedAtLabel}}' },
+        { label: 'Payout status', value: 'Scheduled' },
+      ])}
+      ${B.buttonPrimary('View booking', '{{supplierBookingUrl}}')}
+    `);
+  },
+};
+
 const supplierBookingChanged = {
   key: 'supplier-booking-changed',
   name: 'Supplier · Customer changed booking',
@@ -693,6 +754,7 @@ const TEMPLATE_DEFS = [
   reserveLaterConfirmed,
   paymentReminder,
   paymentSuccessful,
+  payLaterCharged,
   paymentUnsuccessful,
   customerBookingChanged,
   pickupDetailsUpdated,
@@ -706,6 +768,7 @@ const TEMPLATE_DEFS = [
   supplierCancelledBooking,
   reviewRequest,
   supplierNewBooking,
+  supplierPayLaterCharged,
   supplierBookingChanged,
   supplierContactUpdated,
   supplierPickupUpdated,

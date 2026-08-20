@@ -46,6 +46,7 @@ jest.mock('../../utils/stripeHelpers', () => {
   let stripeInstance = null;
   return {
     createPaymentIntent: jest.fn(),
+    createCheckoutSession: jest.fn(),
     calculateCommission: jest.fn(),
     createRefund: jest.fn(),
     ensureStripeCustomer: jest.fn(async (user) => user?.stripeCustomerId || null),
@@ -78,7 +79,7 @@ const { sendEmail } = require('../../utils/emailService');
 const { enqueueEvent, enqueueNotification } = require('../../utils/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy } = require('../../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../../utils/tourHelpers');
-const { createPaymentIntent, calculateCommission, createRefund, getStripe } = require('../../utils/stripeHelpers');
+const { createPaymentIntent, createCheckoutSession, calculateCommission, createRefund, getStripe } = require('../../utils/stripeHelpers');
 const { logActivity } = require('../../utils/auditLogger');
 
 const controller = require('../../controllers/expeditionController');
@@ -172,6 +173,7 @@ describe('expeditionController', () => {
     validateTravelerInfo.mockReturnValue({ isValid: true, errors: [] });
     generateBookingNumber.mockResolvedValue('TB00000001ABCD');
     createPaymentIntent.mockResolvedValue({ id: 'pi_mock_123' });
+    createCheckoutSession.mockResolvedValue({ id: 'cs_mock_123', url: 'https://checkout.stripe.com/c/pay/cs_mock_123' });
     getStripe().paymentIntents.confirm.mockResolvedValue({ id: 'pi_mock_123', status: 'succeeded', client_secret: 'cs_mock_123' });
     getStripe().paymentIntents.retrieve.mockResolvedValue({ id: 'pi_mock_123', status: 'succeeded', client_secret: 'cs_mock_123' });
     prisma.booking.updateMany.mockResolvedValue({ count: 0 });
@@ -537,11 +539,27 @@ describe('expeditionController', () => {
       tourId: 'tour-1',
       selectedDate: bookingDate(),
       travelers: { adults: 2, children: 1, phoneNumber: '+1-555-123-4567', location: 'Cape Town' },
-      paymentMethodId: 'pm_123',
+      paymentTiming: 'now',
     };
 
-    it('creates booking and returns 201', async () => {
+    it('creates booking and redirects to hosted Checkout (pay now)', async () => {
       req.body = validBookingBody;
+
+      await controller.confirmBooking(req, res, next);
+
+      expect(createCheckoutSession).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: 'et-1' }),
+      );
+      expect(createPaymentIntent).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(201);
+      const jsonArg = res.json.mock.calls[0][0];
+      expect(jsonArg.data.checkout).toEqual(expect.objectContaining({ url: 'https://checkout.stripe.com/c/pay/cs_mock_123' }));
+      expect(enqueueNotification).toHaveBeenCalled();
+      expect(enqueueEvent).toHaveBeenCalled();
+    });
+
+    it('captures a PaymentIntent for reserve-now-pay-later', async () => {
+      req.body = { ...validBookingBody, paymentTiming: 'later', paymentMethodId: 'pm_123' };
 
       await controller.confirmBooking(req, res, next);
 
@@ -553,11 +571,24 @@ describe('expeditionController', () => {
       expect(createPaymentIntent.mock.calls[0][0]).toEqual(expect.objectContaining({
         customerId: 'cus_123',
         confirm: false,
+        paymentMethodId: 'pm_123',
       }));
       expect(createPaymentIntent.mock.calls[0][0]).not.toHaveProperty('idempotencyKey');
+      expect(createCheckoutSession).not.toHaveBeenCalled();
+      const jsonArg = res.json.mock.calls[0][0];
+      expect(jsonArg.data.checkout).toBeNull();
       expect(res.status).toHaveBeenCalledWith(201);
       expect(enqueueNotification).toHaveBeenCalled();
       expect(enqueueEvent).toHaveBeenCalled();
+    });
+
+    it('returns 400 when pay-later has no payment method', async () => {
+      req.body = { ...validBookingBody, paymentTiming: 'later' };
+
+      await controller.confirmBooking(req, res, next);
+
+      expect(createPaymentIntent).not.toHaveBeenCalled();
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
 
     it('returns 400 when required fields missing', async () => {
@@ -598,8 +629,8 @@ describe('expeditionController', () => {
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
 
-    it('returns 400 when payment fails', async () => {
-      req.body = validBookingBody;
+    it('returns 400 when pay-later payment capture fails', async () => {
+      req.body = { ...validBookingBody, paymentTiming: 'later', paymentMethodId: 'pm_123' };
       createPaymentIntent.mockRejectedValue(new Error('Insufficient funds'));
 
       await controller.confirmBooking(req, res, next);
@@ -616,40 +647,21 @@ describe('expeditionController', () => {
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
 
-    it('releases the booking with a 400 when the card is declined', async () => {
+    it('releases the booking with a 500 when the Checkout Session cannot be created', async () => {
       req.body = validBookingBody;
-      getStripe().paymentIntents.confirm.mockRejectedValue(new Error('Your card was declined.'));
-      getStripe().paymentIntents.retrieve.mockResolvedValue({ id: 'pi_mock_123', status: 'requires_payment_method', client_secret: 'cs_mock_123' });
+      createCheckoutSession.mockRejectedValue(new Error('stripe is down'));
       prisma.booking.updateMany.mockResolvedValue({ count: 1 });
 
       await controller.confirmBooking(req, res, next);
 
       expect(prisma.booking.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ status: 'PENDING', paymentStatus: 'PENDING', stripePaymentIntentId: 'pi_mock_123' }),
-          data: expect.objectContaining({ status: 'CANCELLED', paymentStatus: 'FAILED', cancellationReason: 'Payment declined' }),
+          where: expect.objectContaining({ status: 'PENDING', paymentStatus: 'PENDING' }),
+          data: expect.objectContaining({ status: 'CANCELLED', paymentStatus: 'FAILED', cancellationReason: 'Checkout session could not be created' }),
         }),
       );
-      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400, message: 'Payment was declined. Please try another card.' }));
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 500 }));
       expect(res.status).not.toHaveBeenCalledWith(201);
-    });
-
-    it('returns requiresAction with the client secret for a 3DS challenge', async () => {
-      req.body = validBookingBody;
-      getStripe().paymentIntents.confirm.mockRejectedValue(new Error('authentication_required'));
-      getStripe().paymentIntents.retrieve.mockResolvedValue({ id: 'pi_mock_123', status: 'requires_action', client_secret: 'cs_mock_123' });
-
-      await controller.confirmBooking(req, res, next);
-
-      const jsonArg = res.json.mock.calls[0][0];
-      expect(res.status).toHaveBeenCalledWith(201);
-      expect(jsonArg.data.paymentIntent).toEqual({
-        id: 'pi_mock_123',
-        clientSecret: 'cs_mock_123',
-        status: 'requires_action',
-        requiresAction: true,
-      });
-      expect(prisma.booking.updateMany).not.toHaveBeenCalled();
     });
   });
 

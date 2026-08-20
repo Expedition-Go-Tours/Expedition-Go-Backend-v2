@@ -118,6 +118,7 @@ const SENDERS = [
   ['reserve-later-confirmed', email.sendReserveLaterConfirmedEmail, {}],
   ['payment-reminder', email.sendPaymentReminderEmail, { paymentDate: new Date(Date.now() + 2 * 86400000).toISOString(), paymentAmount: '385.00' }],
   ['payment-successful', email.sendPaymentSuccessfulEmail, { paymentReference: 'pi_3SimRef0001', amount: '385.00' }],
+  ['pay-later-charged', email.sendPayLaterChargedEmail, { paymentReference: 'pi_3SimRef0001' }],
   ['payment-unsuccessful', email.sendPaymentUnsuccessfulEmail, { deadline: new Date(Date.now() + 1 * 86400000).toISOString(), amount: '385.00' }],
   ['customer-booking-changed', email.sendCustomerBookingChangedEmail, { changes: mockChanges(), previousTotal: '350.00', adjustment: '35.00', newTotal: '385.00' }],
   ['pickup-details-updated', email.sendPickupDetailsUpdatedEmail, { previousPickupLocation: 'V&A Waterfront, Cape Town' }],
@@ -132,6 +133,7 @@ const SENDERS = [
   ['review-request', email.sendReviewRequestEmail, {}],
   // Supplier emails (12)
   ['supplier-new-booking', email.sendSupplierNewBookingEmail, {}],
+  ['supplier-pay-later-charged', email.sendSupplierPayLaterChargedEmail, { paymentReference: 'pi_3SimRef0001' }],
   ['supplier-booking-changed', email.sendSupplierBookingChangedEmail, { changes: mockChanges(), previousPayout: '315.00', newPayout: '327.25', payoutAdjustment: '12.25' }],
   ['supplier-customer-contact-updated', email.sendSupplierContactUpdatedEmail, { customerPhone: '+27 82 555 0142', customerEmail: TO, emergencyContact: '+27 83 555 0177 (Susan, traveller)' }],
   ['supplier-pickup-updated', email.sendSupplierPickupUpdatedEmail, { previousPickupLocation: 'V&A Waterfront, Cape Town' }],
@@ -150,12 +152,14 @@ const BASE_VARIANTS = {
   'reserve-later-confirmed': mockBooking({ paymentTiming: 'later', paymentStatus: 'PENDING' }),
   'payment-reminder': mockBooking({ paymentTiming: 'later', paymentStatus: 'PENDING' }),
   'payment-successful': mockBooking({ paymentTiming: 'later', paymentStatus: 'SUCCEEDED' }),
+  'pay-later-charged': mockBooking({ paymentTiming: 'later', paymentStatus: 'SUCCEEDED', paidAt: new Date() }),
   'payment-unsuccessful': mockBooking({ paymentTiming: 'later', paymentStatus: 'FAILED' }),
   'customer-cancelled-full-refund': mockBooking({ status: 'CANCELLED', paymentStatus: 'REFUNDED', refundAmount: '385.00', refundedAt: new Date(), cancelledAt: new Date(), cancellationReason: 'Change of plans' }),
   'customer-cancelled-no-refund': mockBooking({ status: 'CANCELLED', paymentStatus: 'SUCCEEDED', cancelledAt: new Date(), cancellationReason: 'Late cancellation' }),
   'refund-processing': mockBooking({ paymentStatus: 'REFUNDED', refundAmount: '385.00' }),
   'refund-completed': mockBooking({ paymentStatus: 'REFUNDED', refundAmount: '385.00' }),
   'review-request': mockBooking({ status: 'COMPLETED', paymentStatus: 'SUCCEEDED', selectedDate: new Date(Date.now() - 5 * 86400000) }),
+  'supplier-pay-later-charged': mockBooking({ paymentTiming: 'later', paymentStatus: 'SUCCEEDED', paidAt: new Date() }),
 };
 
 async function main() {
