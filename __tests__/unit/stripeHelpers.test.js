@@ -439,6 +439,64 @@ describe('handlePaymentSucceeded offer capacity guard', () => {
   });
 });
 
+describe('handlePaymentSucceeded manual confirmation', () => {
+  function clientFor(booking) {
+    return {
+      booking: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findMany: jest.fn().mockResolvedValue([booking]),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      specialOffer: {
+        findUnique: jest.fn().mockResolvedValue({ capacityType: 'UNLIMITED', maxSpots: null, spotsSold: 0 }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      $executeRaw: jest.fn().mockResolvedValue(1),
+      notification: { create: jest.fn().mockResolvedValue({}) },
+      supplierProfile: { update: jest.fn().mockResolvedValue({}) },
+      tour: { update: jest.fn().mockResolvedValue({}) },
+      payoutMethod: { findFirst: jest.fn().mockResolvedValue(null) },
+      payout: { create: jest.fn().mockResolvedValue({}) },
+    };
+  }
+
+  it('holds the booking PENDING (paid) when the tour is manual-confirmation', async () => {
+    const booking = {
+      ...mockBooking,
+      tour: { ...mockBooking.tour, bookingAndTickets: { instantConfirmation: false } },
+    };
+    const client = clientFor(booking);
+
+    const result = await handlePaymentSucceeded({ id: 'pi_1', metadata: { bookingIds: 'booking-1' } }, client);
+
+    // The corrective updateMany re-holds the paid booking as PENDING.
+    expect(client.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: { in: ['booking-1'] } }),
+        data: expect.objectContaining({ status: 'PENDING' }),
+      })
+    );
+    expect(result.bookings[0].status).toBe('PENDING');
+    // Customer notification reflects awaiting-confirmation, not confirmed.
+    const notifCall = client.notification.create.mock.calls.find(
+      (c) => c[0].data.userId === 'customer-1'
+    );
+    expect(notifCall[0].data.type).toBe('BOOKING_AWAITING_CONFIRMATION');
+  });
+
+  it('auto-confirms when instantConfirmation is unset (default instant)', async () => {
+    const client = clientFor(mockBooking); // tour has no bookingAndTickets
+
+    const result = await handlePaymentSucceeded({ id: 'pi_1', metadata: { bookingIds: 'booking-1' } }, client);
+
+    const confirmCall = client.booking.updateMany.mock.calls.find(
+      (c) => c[0].data && c[0].data.status === 'CONFIRMED'
+    );
+    expect(confirmCall).toBeTruthy();
+    expect(result.bookings[0].status).toBe('CONFIRMED');
+  });
+});
+
 describe('cancelPaymentIntent', () => {
   beforeEach(() => {
     mockStripeInstance.paymentIntents.retrieve.mockReset();

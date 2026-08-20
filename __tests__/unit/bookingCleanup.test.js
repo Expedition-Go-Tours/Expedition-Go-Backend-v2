@@ -35,7 +35,7 @@ jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(() => Promise
 
 const prisma = require('../../utils/prismaClient');
 const { getStripe, handlePaymentSucceeded } = require('../../utils/stripeHelpers');
-const { cancelStalePendingBookings } = require('../../utils/bookingCleanup');
+const { cancelStalePendingBookings, autoCompleteBookings } = require('../../utils/bookingCleanup');
 
 const pendingBooking = (overrides = {}) => ({
   id: 'b-pending-1',
@@ -196,5 +196,28 @@ describe('cancelStalePendingBookings', () => {
 
     expect(prisma.booking.updateMany).not.toHaveBeenCalled();
     expect(result).toEqual({ stale: 1, confirmed: 0, cancelled: 0 });
+  });
+});
+
+describe('autoCompleteBookings', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.booking.updateMany.mockResolvedValue({ count: 3 });
+  });
+
+  it('flips CONFIRMED bookings whose activity date has passed to COMPLETED', async () => {
+    const result = await autoCompleteBookings();
+
+    const call = prisma.booking.updateMany.mock.calls[0];
+    expect(call[0].where).toEqual(expect.objectContaining({ status: 'CONFIRMED' }));
+    expect(call[0].where.selectedDate).toEqual(expect.objectContaining({ lt: expect.any(Date) }));
+    expect(call[0].data).toEqual(expect.objectContaining({ status: 'COMPLETED' }));
+    expect(result).toEqual({ completed: 3 });
+  });
+
+  it('returns zero when nothing is due', async () => {
+    prisma.booking.updateMany.mockResolvedValue({ count: 0 });
+    const result = await autoCompleteBookings();
+    expect(result).toEqual({ completed: 0 });
   });
 });

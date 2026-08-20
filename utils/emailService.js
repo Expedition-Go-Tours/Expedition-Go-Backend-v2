@@ -432,6 +432,28 @@ async function sendPayLaterChargedEmail(booking, { paymentReference, chargedAt }
   });
 }
 
+// Manual-confirmation tours: payment landed but the booking is NOT confirmed
+// yet — the supplier must accept it first. The customer is told payment was
+// received and confirmation is pending.
+async function sendAwaitingConfirmationEmail(booking, { paymentReference, paidAt } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = buildBookingBase(b);
+  const data = {
+    ...base,
+    amountPaidLabel: base.totalLabel,
+    paymentReference: paymentReference || b.stripePaymentIntentId || '',
+    paidAtLabel: fmt.formatLongDate(paidAt || b.paidAt || new Date()),
+    paymentStatusLabel: 'Paid',
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: `Payment received — awaiting confirmation (Ref: ${base.bookingNumber})`,
+    key: 'awaiting-confirmation',
+    data,
+  });
+}
+
 async function sendPaymentUnsuccessfulEmail(booking, { deadline, amount } = {}) {
   const b = await resolveBookingContext(booking);
   const base = buildBookingBase(b);
@@ -1244,6 +1266,7 @@ module.exports = {
   sendPaymentReminderEmail,
   sendPaymentSuccessfulEmail,
   sendPayLaterChargedEmail,
+  sendAwaitingConfirmationEmail,
   sendPaymentUnsuccessfulEmail,
   sendCustomerBookingChangedEmail,
   sendPickupDetailsUpdatedEmail,

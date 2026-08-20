@@ -121,6 +121,7 @@ const EMAIL_JOB_DISPATCH = {
   'payment-reminder': ['sendPaymentReminderEmail', true],
   'payment-successful': ['sendPaymentSuccessfulEmail', true],
   'pay-later-charged': ['sendPayLaterChargedEmail', true],
+  'awaiting-confirmation': ['sendAwaitingConfirmationEmail', true],
   'payment-unsuccessful': ['sendPaymentUnsuccessfulEmail', true],
   'customer-booking-changed': ['sendCustomerBookingChangedEmail', true],
   'pickup-details-updated': ['sendPickupDetailsUpdatedEmail', true],
@@ -499,6 +500,11 @@ function registerWorkers() {
       case 'cleanup-stale-bookings': {
         const { cancelStalePendingBookings } = require('./bookingCleanup');
         await cancelStalePendingBookings();
+        break;
+      }
+      case 'auto-complete-bookings': {
+        const { autoCompleteBookings } = require('./bookingCleanup');
+        await autoCompleteBookings();
         break;
       }
       case 'charge-pay-later-bookings': {

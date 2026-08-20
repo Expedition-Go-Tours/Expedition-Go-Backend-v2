@@ -1010,7 +1010,8 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
           select: {
             id: true,
             title: true,
-            photos: true
+            photos: true,
+            bookingAndTickets: true,
           }
         },
         appliedOffer: {
@@ -1251,6 +1252,13 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
       message: statusMessages[status],
       data: { bookingId: booking.id }
     }).catch((err) => console.error('[Notification] enqueueNotification (booking update) failed:', err.message));
+  }
+
+  // Manual-confirmation flow: when a supplier accepts a previously-awaiting
+  // (paid PENDING) booking, the customer receives the confirmation email.
+  if (status === 'CONFIRMED' && booking.status === 'PENDING' && booking.paymentStatus === 'SUCCEEDED') {
+    enqueueEmail({ type: 'booking-confirmed', bookingId: booking.id })
+      .catch((err) => console.error('[Email] booking-confirmed (manual accept) failed:', err.message));
   }
 
   // Log activity (fire-and-forget)

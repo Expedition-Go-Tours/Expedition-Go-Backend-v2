@@ -455,6 +455,9 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
       },
       cancellationPolicy: bookingAndTickets.cancellationPolicy || null,
       confirmationType: bookingAndTickets.confirmationType || null,
+      // Manual-confirmation tours (instantConfirmation === false) hold bookings
+      // PENDING (paid) until the supplier accepts them.
+      instantConfirmation: bookingAndTickets.instantConfirmation !== false,
       supplierName: t.supplier?.name || null,
       supplierPhoto: t.supplier?.photoURL
         ? t.supplier.photoURL

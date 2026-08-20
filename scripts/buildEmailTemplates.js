@@ -211,6 +211,33 @@ const payLaterCharged = {
   },
 };
 
+const awaitingConfirmation = {
+  key: 'awaiting-confirmation',
+  name: 'Customer · Payment received, awaiting confirmation',
+  build() {
+    return B.shell('Payment received — awaiting confirmation', `
+      ${B.hero({ heading: 'Payment received', badgeText: 'Paid', badgeColor: 'info', subtitle: 'Hello {{customerName}},<br>Your payment for <strong>{{tourTitle}}</strong> has been received. Your booking is not confirmed yet — the tour provider will confirm it shortly.' })}
+      ${B.paragraph('We\u2019ve received <strong>{{amountPaidLabel}}</strong> for <strong>{{tourTitle}}</strong> on <strong>{{dateLabel}}</strong>. Because this tour is confirmed manually by the provider, your booking will be confirmed once they accept it. You\u2019ll receive a confirmation email when that happens.')}
+      ${B.sectionTitle('Booking details')}
+      ${customerBookingDetailsRows()}
+      ${B.divider()}
+      ${B.sectionTitle('Payment')}
+      ${B.detailRows([
+        { label: 'Booking total', value: '{{totalLabel}}' },
+        { label: 'Amount received', value: '{{amountPaidLabel}}' },
+        { label: 'Received on', value: '{{paidAtLabel}}' },
+        { label: 'Payment reference', value: '{{paymentReference}}', if: '{{paymentReference}}' },
+        { label: 'Payment status', value: 'Paid' },
+      ])}
+      ${B.callout('Your booking is awaiting confirmation from the tour provider. We\u2019ll email you as soon as it\u2019s confirmed.', 'info')}
+      ${B.buttons([
+        { label: 'View booking', href: '{{bookingUrl}}' },
+        { label: 'Manage booking', href: '{{manageUrl}}', kind: 'secondary' },
+      ])}
+    `);
+  },
+};
+
 const paymentUnsuccessful = {
   key: 'payment-unsuccessful',
   name: 'Customer · Payment unsuccessful',
@@ -755,6 +782,7 @@ const TEMPLATE_DEFS = [
   paymentReminder,
   paymentSuccessful,
   payLaterCharged,
+  awaitingConfirmation,
   paymentUnsuccessful,
   customerBookingChanged,
   pickupDetailsUpdated,

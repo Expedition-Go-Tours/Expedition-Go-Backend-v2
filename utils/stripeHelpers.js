@@ -36,7 +36,7 @@ const getConfig = require('./getConfig');
 const { normalizeCommissionRate } = require('./commission');
 const redis = require('./redisClient');
 const { invalidateUserCache } = require('../middleware/authMiddleware');
-const { travelerCount } = require('./availabilityCore');
+const { travelerCount, parseBlob } = require('./availabilityCore');
 
 /**
  * A valid Stripe Customer ID is a non-empty `cus_...` string.
@@ -501,14 +501,19 @@ async function processStripeWebhook(event) {
   for (const booking of bookings) {
     const isExpedition = booking.source === 'EXPEDITION';
     const chargedReservation = booking.paymentTiming === 'later';
+    // Manual-confirmation tour: customer gets "payment received — awaiting
+    // confirmation" instead of a confirmation email.
+    const manualHold = (parseBlob(booking.tour?.bookingAndTickets) || {}).instantConfirmation === false;
 
     // A reserve-now-pay-later booking being charged gets a distinct "your
     // reservation was charged" email for the customer and supplier instead of
     // the pay-now "new confirmed booking" confirmation.
-    enqueueEmail(chargedReservation
-      ? { type: 'pay-later-charged', bookingId: booking.id }
-      : { type: 'booking-confirmed', bookingId: booking.id })
-      .catch((err) => console.error(`[Email] ${chargedReservation ? 'Reservation charge' : 'Booking confirmation'} failed:`, err.message));
+    enqueueEmail(manualHold
+      ? { type: 'awaiting-confirmation', bookingId: booking.id }
+      : chargedReservation
+        ? { type: 'pay-later-charged', bookingId: booking.id }
+        : { type: 'booking-confirmed', bookingId: booking.id })
+      .catch((err) => console.error(`[Email] ${manualHold ? 'Awaiting confirmation' : chargedReservation ? 'Reservation charge' : 'Booking confirmation'} failed:`, err.message));
     enqueueEmail(chargedReservation
       ? { type: 'supplier-pay-later-charged', bookingId: booking.id }
       : { type: 'supplier-new-booking', bookingId: booking.id })
@@ -643,7 +648,7 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
           where: { id: { in: bookingIds } },
           include: {
             customer: true,
-            tour: { include: { supplier: true } }
+            tour: { include: { supplier: true, bookingAndTickets: true } }
           }
         });
       }
@@ -676,7 +681,7 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
           where: { stripePaymentIntentId: paymentIntent.id },
           include: {
             customer: true,
-            tour: { include: { supplier: true } }
+            tour: { include: { supplier: true, bookingAndTickets: true } }
           }
         });
       }
@@ -687,13 +692,34 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
       return;
     }
 
+    // Manual-confirmation tours: the money is captured but the booking must NOT
+    // be auto-confirmed — it stays PENDING (paid) until the supplier accepts it
+    // via the dashboard. The updateMany above claimed the rows as CONFIRMED, so
+    // re-hold the manual ones here (same transaction).
+    const manualHoldIds = (bookings || [])
+      .filter((b) => (parseBlob(b.tour?.bookingAndTickets) || {}).instantConfirmation === false)
+      .map((b) => b.id);
+    if (manualHoldIds.length > 0) {
+      const reverted = await client.booking.updateMany({
+        where: { id: { in: manualHoldIds } },
+        data: { status: 'PENDING' },
+      });
+      console.log(` ${reverted.count} booking(s) held PENDING for manual confirmation`);
+      for (const b of bookings) {
+        if (manualHoldIds.includes(b.id)) b.status = 'PENDING';
+      }
+    }
+
     for (const booking of bookings) {
+      const manualHold = manualHoldIds.includes(booking.id);
       await client.notification.create({
         data: {
           userId: booking.customerId,
-          type: 'BOOKING_CONFIRMED',
-          title: 'Booking Confirmed',
-          message: `Your booking for "${booking.tour.title}" has been confirmed!`,
+          type: manualHold ? 'BOOKING_AWAITING_CONFIRMATION' : 'BOOKING_CONFIRMED',
+          title: manualHold ? 'Payment received — awaiting confirmation' : 'Booking Confirmed',
+          message: manualHold
+            ? `Your payment for "${booking.tour.title}" was received. The tour provider will confirm your booking shortly.`
+            : `Your booking for "${booking.tour.title}" has been confirmed!`,
           data: { bookingId: booking.id }
         }
       });

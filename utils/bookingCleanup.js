@@ -191,4 +191,37 @@ async function cancelStalePendingBookings() {
   return { stale: stale.length, confirmed, cancelled };
 }
 
-module.exports = { cancelStalePendingBookings, expireBooking };
+/**
+ * Auto-complete bookings.
+ *
+ * A CONFIRMED booking whose activity date has already passed is considered
+ * completed — the supplier no longer needs to manually mark it COMPLETED. Runs
+ * periodically (e.g. every 30 minutes) and is idempotent: only rows still
+ * CONFIRMED are flipped, so a completed booking is never touched again.
+ */
+async function autoCompleteBookings() {
+  const prisma = require('./prismaClient');
+  const now = new Date();
+  // The activity date is stored at midnight UTC in the tour's timezone context;
+  // once `selectedDate` is strictly before today (start of day), the activity is
+  // in the past.
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const updated = await prisma.booking.updateMany({
+    where: {
+      status: 'CONFIRMED',
+      selectedDate: { lt: startOfToday },
+    },
+    data: {
+      status: 'COMPLETED',
+      updatedAt: new Date(),
+    },
+  });
+
+  if (updated.count > 0) {
+    console.log(`[BookingCleanup] Auto-completed ${updated.count} past booking(s) → COMPLETED`);
+  }
+  return { completed: updated.count };
+}
+
+module.exports = { cancelStalePendingBookings, expireBooking, autoCompleteBookings };
