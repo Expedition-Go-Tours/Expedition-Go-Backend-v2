@@ -368,7 +368,7 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
          THEN ${TRAVELER_COUNT_SQL} ELSE 0 END), 0)::int AS "currentBookings",
        COALESCE(COUNT(*) FILTER (WHERE status IN (${statusLiteral})), 0)::int AS "groupCount"
      FROM "Booking"
-     WHERE "tourId" = $1 AND "travelDate" = $2::date
+     WHERE "tourId" = $1 AND "selectedDate" = $2::date
        ${selectedTime && !dayWide ? 'AND "selectedTime" = $3' : ''}`,
     tour.id,
     dateKey,

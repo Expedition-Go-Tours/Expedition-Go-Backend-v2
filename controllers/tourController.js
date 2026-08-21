@@ -1928,14 +1928,14 @@ exports.getTourAnalytics = catchAsync(async (req, res, next) => {
     // Monthly bookings trend (last 12 months)
     prisma.$queryRaw`
       SELECT 
-        DATE_TRUNC('month', "travelDate") as month,
+        DATE_TRUNC('month', "selectedDate") as month,
         COUNT(*) as bookings,
         SUM("total") as revenue
       FROM "Booking" 
       WHERE "tourId" = ${id} 
-        AND "travelDate" >= NOW() - INTERVAL '12 months'
+        AND "selectedDate" >= NOW() - INTERVAL '12 months'
         AND "status" = 'CONFIRMED'
-      GROUP BY DATE_TRUNC('month', "travelDate")
+      GROUP BY DATE_TRUNC('month', "selectedDate")
       ORDER BY month DESC
     `
   ]);

@@ -216,15 +216,15 @@ async function getBookingStats(supplierId = null, startDate, endDate) {
       
       prisma.$queryRaw`
         SELECT 
-          DATE("travelDate") as date,
+          DATE("selectedDate") as date,
           COUNT(*) as bookings,
           SUM(CASE WHEN status = 'CONFIRMED' THEN "total" ELSE 0 END) as revenue
         FROM "Booking" b
         ${supplierId ? `JOIN "Tour" t ON b."tourId" = t.id` : ''}
-        WHERE b."travelDate" >= ${new Date(startDate)}
-          AND b."travelDate" <= ${new Date(endDate)}
+        WHERE b."selectedDate" >= ${new Date(startDate)}
+          AND b."selectedDate" <= ${new Date(endDate)}
           ${supplierId ? `AND t."supplierId" = ${supplierId}` : ''}
-        GROUP BY DATE("travelDate")
+        GROUP BY DATE("selectedDate")
         ORDER BY date
       `
     ]);
