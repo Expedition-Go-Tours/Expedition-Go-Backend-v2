@@ -24,7 +24,8 @@
  */
 
 const { getStripe, handlePaymentSucceeded, createRefund } = require('./stripeHelpers');
-const { enqueueNotification, enqueueEvent } = require('./queue');
+const { enqueueNotification, enqueueEvent, enqueueEmail } = require('./queue');
+const { notifyAdmin } = require('./adminNotificationService');
 const { logActivity } = require('./auditLogger');
 
 const DEFAULT_GRACE_MINUTES = 30;
@@ -286,6 +287,21 @@ async function expireCheckoutHolds() {
         const result = await materializeHold(draft.id, session, session.payment_intent);
         if (result.ok) {
           materialized += 1;
+          // Send confirmation emails (webhook path was lost; sweep is the
+          // settlement source so we must fire notifications here).
+          const booking = result.booking;
+          if (booking) {
+            enqueueEmail({ type: 'booking-confirmed', bookingId: booking.id })
+              .catch((err) => console.error('[BookingCleanup] Customer email failed:', err.message));
+            enqueueEmail({ type: 'supplier-new-booking', bookingId: booking.id })
+              .catch((err) => console.error('[BookingCleanup] Supplier email failed:', err.message));
+            notifyAdmin({
+              type: 'BOOKING_CONFIRMED',
+              title: 'Expedition Booking Confirmed',
+              message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.grossAmount).toFixed(2)} for "${booking.tour?.title}" has been confirmed`,
+              data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.grossAmount, source: 'expedition' },
+            }).catch(() => {});
+          }
         } else if (result.oversold) {
           // Capacity gone — refund.
           const { createRefund: refund } = require('./stripeHelpers');

@@ -1257,8 +1257,12 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Create booking in transaction
-  const result = await prisma.$transaction(async (tx) => {
+  // Create booking in transaction (pay-later only — pay-now uses a draft hold
+  // that gets materialized into a Booking by the checkout.session.completed
+  // webhook or the expire-checkout-holds sweep).
+  let result = null;
+  if (paymentTiming === 'later') {
+    result = await prisma.$transaction(async (tx) => {
     // Lock tour row FOR UPDATE — the serialization point for this tour. Every
     // write path (both checkouts + override writes) takes this lock first.
     const [lockedTour] = await tx.$queryRawUnsafe(
@@ -1324,6 +1328,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
 
     return booking;
   });
+  }
 
   // Reserve-now-pay-later: the card is validated (PaymentIntent attached) but
   // never charged here — payment is collected before the activity. Skip the
@@ -1439,6 +1444,8 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       currency: pricing.currency,
       bookingId: holdResult.draftId, // draft id goes into metadata + client_reference_id
       tourTitle: tour.title,
+      tourDescription: tour.description || null,
+      tourCoverPhoto: tour.coverPhoto || (Array.isArray(tour.photos) ? tour.photos[0] : null),
       customerEmail: req.user?.email,
       expiresAt: holdResult.expiresAt,
       // Stripe replaces {CHECKOUT_SESSION_ID} with the real session id after creation.

@@ -125,6 +125,8 @@ async function createPaymentIntent({
  * @param {string} [opts.currency] - ISO currency code (default 'USD')
  * @param {string} opts.bookingId - Booking id (client_reference_id + metadata)
  * @param {string} [opts.tourTitle] - product name shown on the payment page
+ * @param {string} [opts.tourDescription] - product description shown on the payment page (max 500 chars)
+ * @param {string} [opts.tourCoverPhoto] - product image URL shown on the payment page
  * @param {string} [opts.customerId] - Stripe Customer id (optional)
  * @param {string} [opts.customerEmail] - fallback email when no customer
  * @param {Date} [opts.expiresAt] - session expiry (pay-later payment links)
@@ -135,6 +137,8 @@ async function createCheckoutSession({
   currency = 'USD',
   bookingId,
   tourTitle,
+  tourDescription,
+  tourCoverPhoto,
   customerId,
   customerEmail,
   expiresAt,
@@ -160,7 +164,11 @@ async function createCheckoutSession({
         price_data: {
           currency: currency.toLowerCase(),
           unit_amount: amount,
-          product_data: { name: tourTitle || 'Expedition booking' },
+          product_data: {
+            name: tourTitle || 'Expedition booking',
+            ...(tourDescription ? { description: tourDescription.slice(0, 500) } : {}),
+            ...(tourCoverPhoto ? { images: [tourCoverPhoto] } : {}),
+          },
         },
       },
     ],
