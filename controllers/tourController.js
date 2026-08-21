@@ -230,7 +230,7 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
           prisma.booking.findMany({
             where: {
               tourId: { in: tourIds },
-              selectedDate: targetDate,
+              travelDate: targetDate,
               status: { in: BOOKABLE_STATUSES },
             },
             select: { tourId: true, selectedTime: true, travelers: true },
@@ -1908,11 +1908,11 @@ exports.getTourAnalytics = catchAsync(async (req, res, next) => {
         status: 'CONFIRMED'
       },
       _sum: {
-        total: true,
+        grossAmount: true,
         supplierPayout: true
       },
       _avg: {
-        total: true
+        grossAmount: true
       }
     }),
     
@@ -1928,14 +1928,14 @@ exports.getTourAnalytics = catchAsync(async (req, res, next) => {
     // Monthly bookings trend (last 12 months)
     prisma.$queryRaw`
       SELECT 
-        DATE_TRUNC('month', "selectedDate") as month,
+        DATE_TRUNC('month', "travelDate") as month,
         COUNT(*) as bookings,
         SUM("total") as revenue
       FROM "Booking" 
       WHERE "tourId" = ${id} 
-        AND "selectedDate" >= NOW() - INTERVAL '12 months'
+        AND "travelDate" >= NOW() - INTERVAL '12 months'
         AND "status" = 'CONFIRMED'
-      GROUP BY DATE_TRUNC('month', "selectedDate")
+      GROUP BY DATE_TRUNC('month', "travelDate")
       ORDER BY month DESC
     `
   ]);
@@ -2269,7 +2269,7 @@ exports.getOfferListings = catchAsync(async (req, res, next) => {
 });
 
 exports.validatePromoCode = catchAsync(async (req, res, next) => {
-  const { promoCode, tourId, selectedDate, basePrice, quantity, tourOptionKey } = req.body;
+  const { promoCode, tourId, travelDate, basePrice, quantity, tourOptionKey } = req.body;
 
   if (!promoCode || promoCode.length < 3) {
     return next(new AppError('Promo code must be at least 3 characters', 400));
@@ -2277,7 +2277,7 @@ exports.validatePromoCode = catchAsync(async (req, res, next) => {
   if (!tourId) {
     return next(new AppError('Tour ID is required', 400));
   }
-  if (!selectedDate) {
+  if (!travelDate) {
     return next(new AppError('Selected date is required', 400));
   }
 
@@ -2287,7 +2287,7 @@ exports.validatePromoCode = catchAsync(async (req, res, next) => {
   const offers = await findApplicableOffers({
     tourId,
     tourOptionKey: effectiveOptionKey,
-    selectedDate: new Date(selectedDate),
+    travelDate: new Date(travelDate),
     promoCode,
     customerId: req.user?.id,
   });
@@ -2329,7 +2329,7 @@ exports.validatePromoCode = catchAsync(async (req, res, next) => {
   const result = await findBestDiscount({
     tourId,
     tourOptionKey: effectiveOptionKey,
-    selectedDate: new Date(selectedDate),
+    travelDate: new Date(travelDate),
     basePrice: effectiveBasePrice,
     quantity: quantity ?? 1,
     promoCode,

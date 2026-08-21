@@ -339,9 +339,9 @@ describe('calculateSupplierMetrics', () => {
 
   it('calculates cancellation rate correctly', () => {
     const bookings = [
-      { status: 'CANCELLED', total: '100', customerId: 'c1' },
-      { status: 'CONFIRMED', total: '200', customerId: 'c1' },
-      { status: 'CONFIRMED', total: '300', customerId: 'c2' },
+      { status: 'CANCELLED', grossAmount: '100', customerId: 'c1' },
+      { status: 'CONFIRMED', grossAmount: '200', customerId: 'c1' },
+      { status: 'CONFIRMED', grossAmount: '300', customerId: 'c2' },
     ];
     const result = calculateSupplierMetrics(profile, bookings, []);
     expect(result.cancellationRate).toBe(33.33333333333333);
@@ -349,25 +349,25 @@ describe('calculateSupplierMetrics', () => {
 
   it('calculates average booking value from confirmed bookings', () => {
     const bookings = [
-      { status: 'CONFIRMED', total: '100', customerId: 'c1' },
-      { status: 'CONFIRMED', total: '200', customerId: 'c2' },
-      { status: 'CANCELLED', total: '300', customerId: 'c3' },
+      { status: 'CONFIRMED', grossAmount: '100', customerId: 'c1' },
+      { status: 'CONFIRMED', grossAmount: '200', customerId: 'c2' },
+      { status: 'CANCELLED', grossAmount: '300', customerId: 'c3' },
     ];
     const result = calculateSupplierMetrics(profile, bookings, []);
     expect(result.averageBookingValue).toBe(150);
   });
 
   it('skips average booking value when no confirmed bookings', () => {
-    const bookings = [{ status: 'CANCELLED', total: '100', customerId: 'c1' }];
+    const bookings = [{ status: 'CANCELLED', grossAmount: '100', customerId: 'c1' }];
     const result = calculateSupplierMetrics(profile, bookings, []);
     expect(result.averageBookingValue).toBe(0);
   });
 
   it('calculates repeat customer rate correctly', () => {
     const bookings = [
-      { status: 'CONFIRMED', total: '100', customerId: 'c1' },
-      { status: 'CONFIRMED', total: '200', customerId: 'c1' },
-      { status: 'CONFIRMED', total: '300', customerId: 'c2' },
+      { status: 'CONFIRMED', grossAmount: '100', customerId: 'c1' },
+      { status: 'CONFIRMED', grossAmount: '200', customerId: 'c1' },
+      { status: 'CONFIRMED', grossAmount: '300', customerId: 'c2' },
     ];
     const result = calculateSupplierMetrics(profile, bookings, []);
     expect(result.repeatCustomerRate).toBe(33.33333333333333);
@@ -375,7 +375,7 @@ describe('calculateSupplierMetrics', () => {
 
   it('handles single customer bookings', () => {
     const bookings = [
-      { status: 'CONFIRMED', total: '100', customerId: 'c1' },
+      { status: 'CONFIRMED', grossAmount: '100', customerId: 'c1' },
     ];
     const result = calculateSupplierMetrics(profile, bookings, []);
     expect(result.repeatCustomerRate).toBe(0);

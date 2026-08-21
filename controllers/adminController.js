@@ -759,8 +759,8 @@ exports.getCLV = catchAsync(async (req, res, next) => {
         u.name,
         u.email,
         COUNT(*)::int                         AS "totalBookings",
-        ROUND(SUM(b.total)::numeric, 2)       AS "totalSpent",
-        ROUND(AVG(b.total)::numeric, 2)       AS "avgBookingValue",
+        ROUND(SUM(b.grossAmount)::numeric, 2)       AS "totalSpent",
+        ROUND(AVG(b.grossAmount)::numeric, 2)       AS "avgBookingValue",
         MAX(b."paidAt")                       AS "lastBookingDate"
       FROM "Booking" b
       JOIN "User" u ON u.id = b."customerId"
@@ -784,7 +784,7 @@ exports.getCLV = catchAsync(async (req, res, next) => {
           sc."signupMonth",
           COUNT(DISTINCT sc.id)::int            AS "users",
           COUNT(DISTINCT b.id)::int             AS "bookings",
-          ROUND(COALESCE(SUM(b.total), 0)::numeric, 2) AS "revenue"
+          ROUND(COALESCE(SUM(b.grossAmount), 0)::numeric, 2) AS "revenue"
         FROM signup_cohorts sc
         LEFT JOIN "Booking" b ON b."customerId" = sc.id AND b."paymentStatus" = 'SUCCEEDED'
         GROUP BY sc."signupMonth"
@@ -1306,8 +1306,8 @@ exports.getUser = catchAsync(async (req, res, next) => {
         id: true,
         bookingNumber: true,
         status: true,
-        selectedDate: true,
-        total: true,
+        travelDate: true,
+        grossAmount: true,
         currency: true,
         createdAt: true,
         tour: {
@@ -1443,9 +1443,9 @@ exports.getBookings = catchAsync(async (req, res) => {
   }
 
   if (startDate || endDate) {
-    where.selectedDate = {};
-    if (startDate) where.selectedDate.gte = new Date(startDate);
-    if (endDate) where.selectedDate.lte = new Date(endDate);
+    where.travelDate = {};
+    if (startDate) where.travelDate.gte = new Date(startDate);
+    if (endDate) where.travelDate.lte = new Date(endDate);
   }
 
   const [bookings, totalCount, counts] = await Promise.all([
@@ -1456,15 +1456,15 @@ exports.getBookings = catchAsync(async (req, res) => {
         bookingNumber: true,
         status: true,
         paymentStatus: true,
-        total: true,
+        grossAmount: true,
         currency: true,
-        selectedDate: true,
+        travelDate: true,
         subtotal: true,
         taxes: true,
         fees: true,
         discounts: true,
         commissionRate: true,
-        commissionAmount: true,
+        platformCommission: true,
         supplierPayout: true,
         travelers: true,
         specialRequests: true,
@@ -1503,12 +1503,12 @@ exports.getBookings = catchAsync(async (req, res) => {
 
   const optimized = bookings.map((b) => ({
     ...b,
-    total: Number(b.total),
+    grossAmount: Number(b.grossAmount),
     subtotal: Number(b.subtotal),
     taxes: Number(b.taxes),
     fees: Number(b.fees),
     discounts: Number(b.discounts),
-    commissionAmount: Number(b.commissionAmount),
+    platformCommission: Number(b.platformCommission),
     supplierPayout: Number(b.supplierPayout),
     customer: {
       ...b.customer,
@@ -1546,16 +1546,16 @@ exports.getBookingById = catchAsync(async (req, res, next) => {
       bookingNumber: true,
       status: true,
       paymentStatus: true,
-      total: true,
+      grossAmount: true,
       currency: true,
-      selectedDate: true,
+      travelDate: true,
       selectedTime: true,
       subtotal: true,
       taxes: true,
       fees: true,
       discounts: true,
       commissionRate: true,
-      commissionAmount: true,
+      platformCommission: true,
       supplierPayout: true,
       travelers: true,
       specialRequests: true,
@@ -1588,12 +1588,12 @@ exports.getBookingById = catchAsync(async (req, res, next) => {
     status: 'success',
     data: {
       ...booking,
-      total: Number(booking.total),
+      grossAmount: Number(booking.grossAmount),
       subtotal: Number(booking.subtotal),
       taxes: Number(booking.taxes),
       fees: Number(booking.fees),
       discounts: Number(booking.discounts),
-      commissionAmount: Number(booking.commissionAmount),
+      platformCommission: Number(booking.platformCommission),
       supplierPayout: Number(booking.supplierPayout),
       customer: {
         ...booking.customer,

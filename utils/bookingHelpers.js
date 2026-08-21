@@ -31,7 +31,7 @@ async function generateBookingNumber(prefix = 'TRA') {
 /**
  * Validate traveler information
  */
-function validateTravelerInfo(travelers) {
+function validateTravelerInfo(travelers, opts = {}) {
   const errors = [];
 
   if (!travelers || typeof travelers !== 'object') {
@@ -55,7 +55,10 @@ function validateTravelerInfo(travelers) {
     }
   }
 
-  if (!travelers.location || travelers.location.trim().length < 3) {
+  // Location is required for address-based pickup flows. Area-based pickup
+  // (Expedition storefront) validates location via resolvePickupSelection
+  // instead, so callers can skip this check with { requireLocation: false }.
+  if (opts.requireLocation !== false && (!travelers.location || travelers.location.trim().length < 3)) {
     errors.push('Your location (city/country) is required');
   }
 
@@ -115,13 +118,13 @@ async function calculateBookingTotals(subtotal, currency = 'USD', promoCode = nu
 /**
  * Check booking conflicts for supplier
  */
-async function checkBookingConflicts(supplierId, selectedDate, selectedTime, excludeBookingId = null) {
+async function checkBookingConflicts(supplierId, travelDate, selectedTime, excludeBookingId = null) {
   try {
     const where = {
       tour: {
         supplierId
       },
-      selectedDate: new Date(selectedDate),
+      travelDate: new Date(travelDate),
       status: {
         in: ['PENDING', 'CONFIRMED']
       }
@@ -170,7 +173,7 @@ async function checkBookingConflicts(supplierId, selectedDate, selectedTime, exc
 async function getBookingStats(supplierId = null, startDate, endDate) {
   try {
     const where = {
-      selectedDate: {
+      travelDate: {
         gte: new Date(startDate),
         lte: new Date(endDate)
       }
@@ -202,26 +205,26 @@ async function getBookingStats(supplierId = null, startDate, endDate) {
           status: 'CONFIRMED'
         },
         _sum: {
-          total: true,
+          grossAmount: true,
           supplierPayout: true,
-          commissionAmount: true
+          platformCommission: true
         },
         _avg: {
-          total: true
+          grossAmount: true
         }
       }),
       
       prisma.$queryRaw`
         SELECT 
-          DATE("selectedDate") as date,
+          DATE("travelDate") as date,
           COUNT(*) as bookings,
           SUM(CASE WHEN status = 'CONFIRMED' THEN "total" ELSE 0 END) as revenue
         FROM "Booking" b
         ${supplierId ? `JOIN "Tour" t ON b."tourId" = t.id` : ''}
-        WHERE b."selectedDate" >= ${new Date(startDate)}
-          AND b."selectedDate" <= ${new Date(endDate)}
+        WHERE b."travelDate" >= ${new Date(startDate)}
+          AND b."travelDate" <= ${new Date(endDate)}
           ${supplierId ? `AND t."supplierId" = ${supplierId}` : ''}
-        GROUP BY DATE("selectedDate")
+        GROUP BY DATE("travelDate")
         ORDER BY date
       `
     ]);
@@ -230,10 +233,10 @@ async function getBookingStats(supplierId = null, startDate, endDate) {
       totalBookings,
       bookingsByStatus,
       revenue: {
-        total: revenueStats._sum.total || 0,
+        total: revenueStats._sum.grossAmount || 0,
         supplierPayout: revenueStats._sum.supplierPayout || 0,
-        commission: revenueStats._sum.commissionAmount || 0,
-        average: revenueStats._avg.total || 0
+        commission: revenueStats._sum.platformCommission || 0,
+        average: revenueStats._avg.grossAmount || 0
       },
       dailyTrend: dailyBookings
     };
@@ -259,7 +262,7 @@ function generateBookingConfirmation(booking, tour, customer) {
       photos: tour.photos
     },
     schedule: {
-      date: booking.selectedDate,
+      date: booking.travelDate,
       time: booking.selectedTime
     },
     travelers: booking.travelers,
@@ -267,7 +270,7 @@ function generateBookingConfirmation(booking, tour, customer) {
       subtotal: booking.subtotal,
       taxes: booking.taxes,
       fees: booking.fees,
-      total: booking.total,
+      total: booking.grossAmount,
       currency: booking.currency
     },
     specialRequests: booking.specialRequests,
@@ -290,7 +293,7 @@ function canModifyBooking(booking, tour) {
   
   // Check modification cutoff time
   const now = new Date();
-  const bookingDate = new Date(booking.selectedDate);
+  const bookingDate = new Date(booking.travelDate);
   const hoursUntilBooking = (bookingDate - now) / (1000 * 60 * 60);
   
   const cutoffHours = tour.bookingAndTickets?.modificationCutoffHours || 24;
@@ -317,7 +320,7 @@ function canModifyBooking(booking, tour) {
  * - A cancellationWindowHours of 0 is valid (window is open); it must not fall back to 24
  */
 function evaluateCancellationPolicy(booking, tour, cancellationDate = new Date()) {
-  const bookingDate = new Date(booking.selectedDate);
+  const bookingDate = new Date(booking.travelDate);
   const hoursUntilBooking = (bookingDate - cancellationDate) / (1000 * 60 * 60);
 
   const policy = tour?.bookingAndTickets?.cancellationPolicy;
@@ -327,7 +330,7 @@ function evaluateCancellationPolicy(booking, tour, cancellationDate = new Date()
     const eligible = Number.isFinite(hoursUntilBooking) && hoursUntilBooking >= 24;
     return {
       allowed: eligible,
-      refundAmount: eligible ? parseFloat(booking.total) : 0,
+      refundAmount: eligible ? parseFloat(booking.grossAmount) : 0,
       refundPercentage: eligible ? 100 : 0,
       reason: eligible ? 'Full refund (24+ hours notice)' : 'No refund (less than 24 hours)',
       windowHours: 24
@@ -358,7 +361,7 @@ function evaluateCancellationPolicy(booking, tour, cancellationDate = new Date()
     };
   }
 
-  const refundAmount = Math.round(parseFloat(booking.total) * (refundPercentage / 100) * 100) / 100;
+  const refundAmount = Math.round(parseFloat(booking.grossAmount) * (refundPercentage / 100) * 100) / 100;
   return {
     allowed: true,
     refundAmount,
@@ -387,7 +390,7 @@ async function getUpcomingBookings(hoursAhead = 24) {
     const bookings = await prisma.booking.findMany({
       where: {
         status: 'CONFIRMED',
-        selectedDate: {
+        travelDate: {
           gte: new Date(),
           lte: reminderTime
         }

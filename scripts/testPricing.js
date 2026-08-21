@@ -44,7 +44,7 @@ function dump(label, value) {
 }
 
 function reqPayload(tour, travelers, date, extra = {}) {
-  return { tourId: tour.id, selectedDate: date, travelers, ...extra };
+  return { tourId: tour.id, travelDate: date, travelers, ...extra };
 }
 
 function weekday(dateStr) {
@@ -103,7 +103,7 @@ async function runSynthetic() {
     // dependsOnAge from travelerDetails.pricingCategories
     const tour = makeTour('s-t1', baseBlob());
     const req = reqPayload(tour, { adults: 2, children: 1, infants: 1 }, DATE_OK);
-    const res = await calculateTourPrice(tour, req.travelers, req.selectedDate, null, null, null);
+    const res = await calculateTourPrice(tour, req.travelers, req.travelDate, null, null, null);
     dump('req', req);
     dump('res', res);
     check('2 adults + 1 child + 1 infant = 2*50 + 25 + 0 = 125', res.success && res.subtotal === 125, `subtotal=${res.subtotal}`);

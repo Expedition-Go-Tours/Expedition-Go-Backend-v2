@@ -43,7 +43,7 @@ jest.mock('../../utils/bookingHelpers', () => ({
   validateTravelerInfo: jest.fn(() => ({ isValid: true, errors: [] })),
   evaluateCancellationPolicy: jest.fn((booking) => ({
     allowed: true,
-    refundAmount: parseFloat(booking.total || 0),
+    refundAmount: parseFloat(booking.grossAmount || 0),
     refundPercentage: 100,
     reason: 'Full refund available',
     windowHours: 24,
@@ -126,7 +126,7 @@ const mockCartItem = {
   id: 'cart-1',
   customerId: 'customer-1',
   tourId: 'tour-1',
-  selectedDate: new Date('2026-07-01'),
+  travelDate: new Date('2026-07-01'),
   selectedTime: '',
   travelers: { adults: 2, children: 0, infants: 0 },
   subtotal: 350,
@@ -142,17 +142,17 @@ const mockBooking = {
   customerId: 'customer-1',
   tourId: 'tour-1',
   status: 'PENDING',
-  selectedDate: new Date('2026-07-01'),
+  travelDate: new Date('2026-07-01'),
   selectedTime: null,
   travelers: { adults: 2, children: 0, infants: 0 },
   subtotal: 350,
   taxes: 0,
   fees: 0,
   discounts: 0,
-  total: 385,
+  grossAmount: 385,
   currency: 'USD',
   commissionRate: 0.15,
-  commissionAmount: 57.75,
+  platformCommission: 57.75,
   supplierPayout: 327.25,
   stripePaymentIntentId: 'pi_123',
   paymentStatus: 'PROCESSING',
@@ -184,6 +184,14 @@ const mockTx = {
   tour: { update: jest.fn().mockResolvedValue({}) },
   cartItem: { deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
   payout: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+  payoutRequestItem: {
+    findMany: jest.fn().mockResolvedValue([]),
+    deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+  },
+  payoutRequest: {
+    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    update: jest.fn().mockResolvedValue({}),
+  },
   specialOffer: { update: jest.fn().mockResolvedValue({}) },
 };
 
@@ -208,7 +216,7 @@ describe('Booking Controller', () => {
     it('adds a tour to the cart', async () => {
       prisma.tour.findFirst.mockResolvedValue(activeTour);
       prisma.cartItem.upsert.mockResolvedValue(mockCartItem);
-      const req = mockReq({ body: { tourId: 'tour-1', selectedDate: '2026-07-01', travelers: { adults: 2 } } });
+      const req = mockReq({ body: { tourId: 'tour-1', travelDate: '2026-07-01', travelers: { adults: 2 } } });
       const res = mockRes();
 
       await bookingController.addToCart(req, res);
@@ -223,7 +231,7 @@ describe('Booking Controller', () => {
 
     it('returns 404 if tour not found or inactive', async () => {
       prisma.tour.findFirst.mockResolvedValue(null);
-      const req = mockReq({ body: { tourId: 'nonexistent', selectedDate: '2026-07-01', travelers: { adults: 1 } } });
+      const req = mockReq({ body: { tourId: 'nonexistent', travelDate: '2026-07-01', travelers: { adults: 1 } } });
       const res = mockRes();
       const next = jest.fn();
 
@@ -235,7 +243,7 @@ describe('Booking Controller', () => {
     it('returns 400 if pricing calculation fails', async () => {
       calculateTourPrice.mockResolvedValueOnce({ success: false, error: 'Unable to calculate pricing' });
       prisma.tour.findFirst.mockResolvedValue({ ...activeTour, schedulesAndPricing: {} });
-      const req = mockReq({ body: { tourId: 'tour-1', selectedDate: '2026-07-01', travelers: { adults: 1 } } });
+      const req = mockReq({ body: { tourId: 'tour-1', travelDate: '2026-07-01', travelers: { adults: 1 } } });
       const res = mockRes();
       const next = jest.fn();
 
@@ -325,7 +333,7 @@ describe('Booking Controller', () => {
       const req = mockReq({
         body: {
           tourId: 'tour-1',
-          selectedDate: futureDate,
+          travelDate: futureDate,
           travelers: { adults: 2, children: 0, infants: 0 },
           paymentMethodId: 'pm_123',
         },
@@ -348,7 +356,7 @@ describe('Booking Controller', () => {
     });
 
     it('creates bookings from cart items when useCart=true', async () => {
-      const futureCartItem = { ...mockCartItem, selectedDate: new Date(Date.now() + 7 * 24 * 3600000) };
+      const futureCartItem = { ...mockCartItem, travelDate: new Date(Date.now() + 7 * 24 * 3600000) };
       prisma.cartItem.findMany.mockResolvedValue([futureCartItem]);
       const req = mockReq({
         body: {
@@ -380,7 +388,7 @@ describe('Booking Controller', () => {
     it('returns 400 if traveler info is invalid', async () => {
       bookingHelpers.validateTravelerInfo.mockReturnValueOnce({ isValid: false, errors: ['Phone number is required'] });
       prisma.tour.findFirst.mockResolvedValue(activeTour);
-      const req = mockReq({ body: { tourId: 'tour-1', selectedDate: '2026-07-01', travelers: {}, paymentMethodId: 'pm_123' } });
+      const req = mockReq({ body: { tourId: 'tour-1', travelDate: '2026-07-01', travelers: {}, paymentMethodId: 'pm_123' } });
       const res = mockRes();
       const next = jest.fn();
 
@@ -391,7 +399,7 @@ describe('Booking Controller', () => {
 
     it('returns 400 if tour is not available', async () => {
       prisma.tour.findFirst.mockResolvedValue(null);
-      const req = mockReq({ body: { tourId: 'nonexistent', selectedDate: '2026-07-01', travelers: { adults: 1 }, paymentMethodId: 'pm_123' } });
+      const req = mockReq({ body: { tourId: 'nonexistent', travelDate: '2026-07-01', travelers: { adults: 1 }, paymentMethodId: 'pm_123' } });
       const res = mockRes();
       const next = jest.fn();
 
@@ -409,7 +417,7 @@ describe('Booking Controller', () => {
         },
       };
       prisma.tour.findFirst.mockResolvedValue(inactiveTour);
-      const req = mockReq({ body: { tourId: 'tour-1', selectedDate: '2026-07-01', travelers: { adults: 1 }, paymentMethodId: 'pm_123' } });
+      const req = mockReq({ body: { tourId: 'tour-1', travelDate: '2026-07-01', travelers: { adults: 1 }, paymentMethodId: 'pm_123' } });
       const res = mockRes();
       const next = jest.fn();
 
@@ -426,7 +434,7 @@ describe('Booking Controller', () => {
         ...mockBooking,
         status: 'CONFIRMED',
         paymentStatus: 'SUCCEEDED',
-        selectedDate: futureDate,
+        travelDate: futureDate,
         tour: { ...mockBooking.tour, bookingAndTickets: { cancellationPolicy: { cancellationWindowHours: 24 } } },
       };
       prisma.booking.findFirst.mockResolvedValue(bookableBooking);
@@ -456,7 +464,7 @@ describe('Booking Controller', () => {
       const soonDate = new Date(Date.now() + 3600000);
       const soonBooking = {
         ...mockBooking,
-        selectedDate: soonDate,
+        travelDate: soonDate,
         status: 'CONFIRMED',
         tour: { ...mockBooking.tour, bookingAndTickets: { cancellationPolicy: { cancellationWindowHours: 48 } } },
       };
@@ -483,7 +491,7 @@ describe('Booking Controller', () => {
         ...mockBooking,
         status: 'CONFIRMED',
         paymentStatus: 'SUCCEEDED',
-        selectedDate: futureDate,
+        travelDate: futureDate,
         tour: {
           ...mockBooking.tour,
           bookingAndTickets: {
@@ -514,7 +522,7 @@ describe('Booking Controller', () => {
         ...mockBooking,
         status: 'CONFIRMED',
         paymentStatus: 'PENDING',
-        selectedDate: futureDate,
+        travelDate: futureDate,
         tour: { ...mockBooking.tour, bookingAndTickets: {} },
       };
       prisma.booking.findFirst.mockResolvedValue(noPolicyBooking);

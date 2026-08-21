@@ -401,7 +401,7 @@ function calculateSupplierMetrics(supplierProfile, bookings, reviews) {
     // Calculate average booking value
     const confirmedBookings = bookings.filter(b => b.status === 'CONFIRMED');
     if (confirmedBookings.length > 0) {
-      const totalValue = confirmedBookings.reduce((sum, b) => sum + parseFloat(b.total), 0);
+      const totalValue = confirmedBookings.reduce((sum, b) => sum + parseFloat(b.grossAmount), 0);
       metrics.averageBookingValue = totalValue / confirmedBookings.length;
     }
 

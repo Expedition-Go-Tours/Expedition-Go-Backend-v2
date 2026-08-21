@@ -210,7 +210,7 @@ describe('autoCompleteBookings', () => {
 
     const call = prisma.booking.updateMany.mock.calls[0];
     expect(call[0].where).toEqual(expect.objectContaining({ status: 'CONFIRMED' }));
-    expect(call[0].where.selectedDate).toEqual(expect.objectContaining({ lt: expect.any(Date) }));
+    expect(call[0].where.travelDate).toEqual(expect.objectContaining({ lt: expect.any(Date) }));
     expect(call[0].data).toEqual(expect.objectContaining({ status: 'COMPLETED' }));
     expect(result).toEqual({ completed: 3 });
   });

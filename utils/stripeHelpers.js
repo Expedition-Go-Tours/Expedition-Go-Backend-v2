@@ -138,11 +138,17 @@ async function createCheckoutSession({
   customerId,
   customerEmail,
   expiresAt,
+  successPath,
 }) {
   if (!bookingId) throw new Error('bookingId is required to create a Checkout Session');
   if (!amount || amount <= 0) throw new Error('amount must be a positive value in minor units');
 
-  const successUrl = `${process.env.CLIENT_URL}/booking/confirmation/${bookingId}`;
+  // `successPath` lets callers customize where Stripe redirects after payment.
+  // When omitted, falls back to the legacy /booking/confirmation/:bookingId.
+  // Use {CHECKOUT_SESSION_ID} for the Stripe-generated session id template.
+  const successUrl = successPath
+    ? `${process.env.CLIENT_URL}${successPath}`
+    : `${process.env.CLIENT_URL}/booking/confirmation/${bookingId}`;
   const cancelUrl = `${process.env.CLIENT_URL}/booking`;
 
   return getStripe().checkout.sessions.create({
@@ -160,8 +166,6 @@ async function createCheckoutSession({
     ],
     success_url: successUrl,
     cancel_url: cancelUrl,
-    // Booking already exists at session creation, so the session and its
-    // PaymentIntent both carry the booking id for idempotent reconciliation.
     metadata: { bookingIds: bookingId, source: 'expedition' },
     payment_intent_data: { metadata: { bookingIds: bookingId, source: 'expedition' } },
     ...(customerId ? { customer: customerId } : {}),
@@ -429,12 +433,28 @@ async function processStripeWebhook(event) {
 
       case 'checkout.session.completed': {
         const session = event.data.object;
+        // ── Draft-based hold (pay-now) ──────────────────────────────
+        // If the session's metadata.bookingIds refers to a CheckoutDraft
+        // (not a Booking), materialize it into a real Booking.
+        const draftId = resolveSessionBookingIds(session)[0];
+        const draftRow = draftId
+          ? await tx.checkoutDraft.findUnique({ where: { id: draftId } }).catch(() => null)
+          : null;
+        if (draftRow) {
+          const { materializeHold } = require('./checkoutHold');
+          const result = await materializeHold(draftId, session, session.payment_intent);
+          if (result.ok) {
+            bookings = [result.booking];
+          } else if (result.oversold) {
+            // Capacity vanished mid-hold — auto-refund the PI.
+            oversoldBookings = [{ stripePaymentIntentId: session.payment_intent }];
+          }
+          reconciledPaymentIntentId = session.payment_intent || null;
+          break;
+        }
+        // ── Legacy flow (booking created before session) ────────────
         const bookingIds = resolveSessionBookingIds(session);
         if (bookingIds.length > 0 && session?.payment_intent) {
-          // The booking was created (PENDING) before the session, so it has no
-          // PaymentIntent yet. Attach the session + its PI, then settle through
-          // the shared idempotent path (gated on paymentStatus PENDING, so a
-          // racing payment_intent.succeeded is harmless).
           await tx.booking.updateMany({
             where: { id: { in: bookingIds }, paymentStatus: 'PENDING', paidAt: null },
             data: {
@@ -455,6 +475,20 @@ async function processStripeWebhook(event) {
 
       case 'checkout.session.expired': {
         const session = event.data.object;
+        // ── Draft-based hold (pay-now) ──────────────────────────────
+        // Release the hold (seats freed immediately).
+        const draftId = resolveSessionBookingIds(session)[0];
+        const draftRow = draftId
+          ? await tx.checkoutDraft.findUnique({ where: { id: draftId } }).catch(() => null)
+          : null;
+        if (draftRow && draftRow.status === 'HOLDING') {
+          await tx.checkoutDraft.update({
+            where: { id: draftId },
+            data: { status: 'EXPIRED' },
+          });
+          break;
+        }
+        // ── Legacy flow (booking created before session) ────────────
         const bookingIds = resolveSessionBookingIds(session);
         if (bookingIds.length > 0) {
           const cancelled = await tx.booking.updateMany({
@@ -523,8 +557,8 @@ async function processStripeWebhook(event) {
       notifyAdmin({
         type: 'BOOKING_CONFIRMED',
         title: 'Expedition Booking Confirmed',
-        message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.total).toFixed(2)} for "${booking.tour.title}" has been confirmed`,
-        data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.total, source: 'expedition' },
+        message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.grossAmount).toFixed(2)} for "${booking.tour.title}" has been confirmed`,
+        data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.grossAmount, source: 'expedition' },
       }).catch((err) => console.error('[AdminNotification] Expedition notification failed:', err.message));
     } else {
       notifyAdmin({
@@ -542,10 +576,10 @@ async function processStripeWebhook(event) {
       resourceId: booking.id,
       properties: {
         tourId: booking.tourId,
-        total: parseFloat(booking.total),
+        total: parseFloat(booking.grossAmount),
         currency: booking.currency,
         supplierPayout: parseFloat(booking.supplierPayout),
-        commissionAmount: parseFloat(booking.commissionAmount),
+        commissionAmount: parseFloat(booking.platformCommission),
         supplierId: booking.tour?.supplierId,
         paymentIntentId: reconciledPaymentIntentId || event.data.object?.id,
       },
@@ -616,7 +650,6 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
   const bookingIds = paymentIntent.metadata.bookingIds?.split(',') || [];
   let bookings;
   const oversoldBookings = [];
-  const payoutMinThreshold = parseFloat(await getConfig('payout.min_threshold', '0'));
 
   const dbWork = async (client) => {
     // Try to find bookings by metadata.bookingIds (main flow: bookings exist before PI)
@@ -746,7 +779,7 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
         where: { id: booking.tourId },
         data: {
           totalBookings: { increment: 1 },
-          totalRevenue: { increment: booking.total }
+          totalRevenue: { increment: booking.grossAmount }
         }
       });
 
@@ -794,24 +827,10 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
         }
       }
 
-      if (parseFloat(booking.supplierPayout) >= payoutMinThreshold) {
-        const defaultMethod = await client.payoutMethod.findFirst({
-          where: { supplierId: booking.tour.supplierId, verified: true },
-          orderBy: { isDefault: 'desc' }
-        });
-
-        await client.payout.create({
-          data: {
-            supplierId: booking.tour.supplierId,
-            bookingId: booking.id,
-            amount: booking.supplierPayout,
-            currency: booking.currency,
-            commissionAmount: booking.commissionAmount,
-            status: 'PENDING',
-            payoutMethodId: defaultMethod?.id || null
-          }
-        });
-      }
+      // Finance v2: no per-booking Payout rows are created here anymore.
+      // Bookings start with payoutStatus PENDING; the earnings-eligibility
+      // sweep flips them to ELIGIBLE after travel date, and immutable ledger
+      // Payout rows are only written when a supplier payout request completes.
     }
   };
 

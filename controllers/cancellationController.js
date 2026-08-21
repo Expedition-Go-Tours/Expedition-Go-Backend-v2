@@ -60,14 +60,14 @@ exports.getCancellationSummary = catchAsync(async (req, res, next) => {
 
   const bookingWhere = {
     tour: { supplierId },
-    selectedDate: { gte: sinceDate },
+    travelDate: { gte: sinceDate },
     status: { in: ['CONFIRMED', 'COMPLETED', 'CANCELLED', 'REFUNDED'] },
   };
   if (productId) bookingWhere.tourId = productId;
 
   const bookings = await prisma.booking.findMany({
     where: bookingWhere,
-    select: { id: true, status: true, cancellationReason: true, total: true, selectedDate: true },
+    select: { id: true, status: true, cancellationReason: true, grossAmount: true, travelDate: true },
   });
 
   const totalEligible = bookings.length;
@@ -83,13 +83,13 @@ exports.getCancellationSummary = catchAsync(async (req, res, next) => {
   const cancellationRate = totalEligible > 0 ? (cancelledCount / totalEligible) * 100 : 0;
 
   const now = new Date();
-  const pastBookings = bookings.filter((b) => new Date(b.selectedDate) < now);
+  const pastBookings = bookings.filter((b) => new Date(b.travelDate) < now);
   const pastCompletedCount = pastBookings.filter((b) => b.status === 'COMPLETED').length;
   const completionRate = pastBookings.length > 0
     ? (pastCompletedCount / pastBookings.length) * 100
     : 0;
 
-  const bookingValueLost = supplierCancelled.reduce((sum, b) => sum + Number(b.total), 0);
+  const bookingValueLost = supplierCancelled.reduce((sum, b) => sum + Number(b.grossAmount), 0);
 
   const reasonCounts = {};
   supplierCancelled.forEach((b) => {
@@ -136,14 +136,14 @@ exports.getCancellationRecords = catchAsync(async (req, res, next) => {
   const where = {
     tour: { supplierId },
     status: 'CANCELLED',
-    selectedDate: { gte: sinceDate },
+    travelDate: { gte: sinceDate },
   };
   if (productId) where.tourId = productId;
 
   // Fetch all matching cancelled bookings (no pagination yet — filter first, paginate after)
   const allCancelled = await prisma.booking.findMany({
     where,
-    orderBy: { selectedDate: 'desc' },
+    orderBy: { travelDate: 'desc' },
     include: { tour: { select: { id: true, title: true } } },
   });
 
@@ -160,11 +160,11 @@ exports.getCancellationRecords = catchAsync(async (req, res, next) => {
     data: {
       records: paged.map((r) => ({
         id: r.id,
-        travelDate: r.selectedDate.toISOString().split('T')[0],
+        travelDate: r.travelDate.toISOString().split('T')[0],
         reason: r.cancellationReason || 'Unknown',
         bookingReference: r.bookingNumber,
         productName: r.tour.title,
-        bookingValue: Number(r.total),
+        bookingValue: Number(r.grossAmount),
         refundAmount: r.refundAmount != null ? Number(r.refundAmount) : null,
       })),
       pagination: {

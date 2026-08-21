@@ -3,7 +3,7 @@ const { confirmBookingSchema } = require('../../utils/expeditionValidation');
 const basePayload = {
   body: {
     tourId: 'tour-1',
-    selectedDate: '2026-08-15',
+    travelDate: '2026-08-15',
     travelers: { adults: 1, phoneNumber: '+12025551234', location: 'New York, USA' },
     paymentMethodId: 'pm_123',
   },

@@ -109,7 +109,7 @@ const trackClickSchema = z.object({
 const calculateCheckoutSchema = z.object({
   body: z.object({
     tourId: z.string().min(1).max(100),
-    selectedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format'),
+    travelDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format'),
     travelers: travelerSchema,
   }),
   query: z.any().optional(),
@@ -119,7 +119,7 @@ const calculateCheckoutSchema = z.object({
 const confirmBookingSchema = z.object({
   body: z.object({
     tourId: z.string().min(1).max(100),
-    selectedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format'),
+    travelDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format'),
     travelers: travelerWithDetailsSchema,
     // Required for reserve-now-pay-later (card captured for auto-charge).
     // Pay-now uses Stripe's hosted Checkout page and does not send a card.

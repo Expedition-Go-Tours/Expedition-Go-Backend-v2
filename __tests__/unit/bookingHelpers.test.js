@@ -191,7 +191,7 @@ describe('checkBookingConflicts', () => {
 describe('getBookingStats', () => {
   it('returns booking stats with revenue data', async () => {
     const mockGroupBy = [{ status: 'CONFIRMED', _count: 5 }];
-    const mockAgg = { _sum: { total: 10000, supplierPayout: 8000, commissionAmount: 2000 }, _avg: { total: 200 } };
+    const mockAgg = { _sum: { grossAmount: 10000, supplierPayout: 8000, platformCommission: 2000 }, _avg: { grossAmount: 200 } };
     const mockDaily = [{ date: '2026-01-01', bookings: 2, revenue: 400 }];
     prisma.booking.count.mockResolvedValue(10);
     prisma.booking.groupBy.mockResolvedValue(mockGroupBy);
@@ -212,7 +212,7 @@ describe('getBookingStats', () => {
   it('includes supplierId filter when provided', async () => {
     prisma.booking.count.mockResolvedValue(0);
     prisma.booking.groupBy.mockResolvedValue([]);
-    prisma.booking.aggregate.mockResolvedValue({ _sum: { total: null, supplierPayout: null, commissionAmount: null }, _avg: { total: null } });
+    prisma.booking.aggregate.mockResolvedValue({ _sum: { grossAmount: null, supplierPayout: null, platformCommission: null }, _avg: { grossAmount: null } });
     prisma.$queryRaw.mockResolvedValue([]);
 
     const result = await getBookingStats('s1', '2026-01-01', '2026-12-31');
@@ -232,14 +232,14 @@ describe('getBookingStats', () => {
 // ---------------------------------------------------------------------------
 describe('generateBookingConfirmation', () => {
   it('generates confirmation object', () => {
-    const booking = { bookingNumber: 'TB001', selectedDate: new Date('2026-06-15'), selectedTime: '10:00', travelers: { adults: 2 }, subtotal: 100, taxes: 8, fees: 2.5, total: 110.5, currency: 'USD', specialRequests: 'None', status: 'CONFIRMED', createdAt: new Date() };
+    const booking = { bookingNumber: 'TB001', travelDate: new Date('2026-06-15'), selectedTime: '10:00', travelers: { adults: 2 }, subtotal: 100, taxes: 8, fees: 2.5, grossAmount: 110.5, currency: 'USD', specialRequests: 'None', status: 'CONFIRMED', createdAt: new Date() };
     const tour = { title: 'Amazing Tour', supplier: { name: 'Supplier Co' }, photos: ['photo1.jpg'] };
     const customer = { name: 'John Doe', email: 'john@test.com' };
     const result = generateBookingConfirmation(booking, tour, customer);
     expect(result.bookingNumber).toBe('TB001');
     expect(result.customer.name).toBe('John Doe');
     expect(result.tour.title).toBe('Amazing Tour');
-    expect(result.schedule.date).toEqual(booking.selectedDate);
+    expect(result.schedule.date).toEqual(booking.travelDate);
     expect(result.pricing.total).toBe(110.5);
   });
 });
@@ -248,9 +248,9 @@ describe('generateBookingConfirmation', () => {
 // canModifyBooking
 // ---------------------------------------------------------------------------
 describe('canModifyBooking', () => {
-  const futureBooking = { status: 'CONFIRMED', selectedDate: new Date(Date.now() + 48 * 60 * 60 * 1000) };
-  const completedBooking = { status: 'COMPLETED', selectedDate: new Date() };
-  const nearFutureBooking = { status: 'CONFIRMED', selectedDate: new Date(Date.now() + 2 * 60 * 60 * 1000) };
+  const futureBooking = { status: 'CONFIRMED', travelDate: new Date(Date.now() + 48 * 60 * 60 * 1000) };
+  const completedBooking = { status: 'COMPLETED', travelDate: new Date() };
+  const nearFutureBooking = { status: 'CONFIRMED', travelDate: new Date(Date.now() + 2 * 60 * 60 * 1000) };
 
   it('allows modification for future bookings outside cutoff', () => {
     const result = canModifyBooking(futureBooking, { bookingAndTickets: { modificationCutoffHours: 24 } });
@@ -281,8 +281,8 @@ describe('canModifyBooking', () => {
 // calculateRefundAmount
 // ---------------------------------------------------------------------------
 describe('calculateRefundAmount', () => {
-  const longLeadBooking = { total: '500', selectedDate: new Date(Date.now() + 72 * 60 * 60 * 1000) };
-  const shortLeadBooking = { total: '500', selectedDate: new Date(Date.now() + 6 * 60 * 60 * 1000) };
+  const longLeadBooking = { grossAmount: '500', travelDate: new Date(Date.now() + 72 * 60 * 60 * 1000) };
+  const shortLeadBooking = { grossAmount: '500', travelDate: new Date(Date.now() + 6 * 60 * 60 * 1000) };
 
   it('returns full refund for >24h lead with no policy', () => {
     const result = calculateRefundAmount(longLeadBooking, {});
@@ -321,8 +321,8 @@ describe('calculateRefundAmount', () => {
 // evaluateCancellationPolicy
 // ---------------------------------------------------------------------------
 describe('evaluateCancellationPolicy', () => {
-  const longLeadBooking = { total: '500', selectedDate: new Date(Date.now() + 72 * 60 * 60 * 1000) };
-  const shortLeadBooking = { total: '500', selectedDate: new Date(Date.now() + 6 * 60 * 60 * 1000) };
+  const longLeadBooking = { grossAmount: '500', travelDate: new Date(Date.now() + 72 * 60 * 60 * 1000) };
+  const shortLeadBooking = { grossAmount: '500', travelDate: new Date(Date.now() + 6 * 60 * 60 * 1000) };
 
   it('returns allowed + full refund for >24h lead with no policy', () => {
     const result = evaluateCancellationPolicy(longLeadBooking, {});
@@ -380,7 +380,7 @@ describe('evaluateCancellationPolicy', () => {
         cancellationPolicy: { type: 'standard', cancellationWindowHours: 48, refundPercentage: 100 },
       },
     };
-    const short48Booking = { total: '500', selectedDate: new Date(Date.now() + 30 * 60 * 60 * 1000) };
+    const short48Booking = { grossAmount: '500', travelDate: new Date(Date.now() + 30 * 60 * 60 * 1000) };
     const result = evaluateCancellationPolicy(short48Booking, tour);
     expect(result.allowed).toBe(false);
     expect(result.refundAmount).toBe(0);
@@ -393,7 +393,7 @@ describe('evaluateCancellationPolicy', () => {
 describe('getUpcomingBookings', () => {
   it('returns upcoming bookings with related data', async () => {
     const mockBookings = [
-      { id: 'b1', status: 'CONFIRMED', selectedDate: new Date(), customer: { id: 'c1', name: 'C', email: 'c@t.com', phone: '+1' }, tour: { title: 'Tour', supplier: { name: 'S', phone: '+2', email: 's@t.com' } } },
+      { id: 'b1', status: 'CONFIRMED', travelDate: new Date(), customer: { id: 'c1', name: 'C', email: 'c@t.com', phone: '+1' }, tour: { title: 'Tour', supplier: { name: 'S', phone: '+2', email: 's@t.com' } } },
     ];
     prisma.booking.findMany.mockResolvedValue(mockBookings);
 

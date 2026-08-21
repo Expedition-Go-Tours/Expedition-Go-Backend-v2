@@ -539,13 +539,13 @@ router.post('/track-click', validate(trackClickSchema), expeditionController.tra
  *         application/json:
  *           schema:
  *             type: object
- *             required: [tourId, selectedDate, travelers]
+ *             required: [tourId, travelDate, travelers]
  *             properties:
  *               tourId:
  *                 type: string
  *                 description: ID of the tour
  *                 example: cmp2hql3c0001tzv0460pbckm
- *               selectedDate:
+ *               travelDate:
  *                 type: string
  *                 format: date
  *                 description: Desired tour date (YYYY-MM-DD)
@@ -609,13 +609,13 @@ router.post('/checkout/calculate', calculateLimiter, validate(calculateCheckoutS
  *         application/json:
  *           schema:
  *             type: object
- *             required: [tourId, selectedDate, travelers, paymentMethodId]
+ *             required: [tourId, travelDate, travelers, paymentMethodId]
  *             properties:
  *               tourId:
  *                 type: string
  *                 description: ID of the tour to book
  *                 example: cmp2hql3c0001tzv0460pbckm
- *               selectedDate:
+ *               travelDate:
  *                 type: string
  *                 format: date
  *                 description: Tour date (YYYY-MM-DD)
@@ -786,6 +786,32 @@ router.patch('/wishlist/:tourId', protect, restrictTo('customer'), validate(tour
  *         description: Authentication required
  */
 router.get('/bookings', protect, restrictTo('customer'), validate(getBookingsSchema), expeditionController.getMyBookings);
+
+/**
+ * @swagger
+ * /api/expedition/bookings/by-session/{sessionId}:
+ *   get:
+ *     summary: Get checkout status by Stripe session id
+ *     description: |
+ *       Returns the checkout draft status (HOLDING / PAID / EXPIRED / REFUNDED)
+ *       for a pay-now session. The frontend polls this endpoint after Stripe
+ *       redirects back until the webhook materializes a Booking.
+ *     tags: [Expedition]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: sessionId
+ *         required: true
+ *         schema: { type: string }
+ *         description: Stripe Checkout Session id
+ *     responses:
+ *       200:
+ *         description: Checkout status
+ *       404:
+ *         description: Session not found
+ */
+router.get('/bookings/by-session/:sessionId', protect, restrictTo('customer'), expeditionController.getBookingBySession);
 
 /**
  * @swagger

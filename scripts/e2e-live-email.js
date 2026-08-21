@@ -168,7 +168,7 @@ const travelersPayload = (name) => ({
   console.log('2) PAY-NOW booking on ' + dates[0]);
   const confNow = await api('POST', '/expedition/checkout/confirm', {
     tourId: tour.id,
-    selectedDate: dates[0],
+    travelDate: dates[0],
     travelers: travelersPayload('PayNow Tester'),
     paymentTiming: 'now',
   }, token);
@@ -207,7 +207,7 @@ const travelersPayload = (name) => ({
   console.log('3) PAY-LATER booking on ' + dates[1] + ' (card captured, NOT charged)');
   const confLater = await api('POST', '/expedition/checkout/confirm', {
     tourId: tour.id,
-    selectedDate: dates[1],
+    travelDate: dates[1],
     travelers: travelersPayload('PayLater Tester'),
     paymentMethodId: 'pm_card_visa',
     paymentTiming: 'later',

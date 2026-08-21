@@ -21,6 +21,9 @@ const PERMISSIONS = [
   { key: 'payouts.view', name: 'View Payouts', description: 'View payout list and summary', category: 'Finance' },
   { key: 'payouts.export', name: 'Export Payouts', description: 'Export payout data to CSV/Excel', category: 'Finance' },
   { key: 'payouts.approve', name: 'Approve Payouts', description: 'Approve and release supplier payouts', category: 'Finance' },
+  { key: 'payouts.request', name: 'Request Payouts', description: 'Supplier-side: request payouts during withdrawal windows', category: 'Finance' },
+  { key: 'disputes.view', name: 'View Disputes', description: 'View customer disputes queue', category: 'Finance' },
+  { key: 'disputes.resolve', name: 'Resolve Disputes', description: 'Resolve or dismiss customer disputes', category: 'Finance' },
   { key: 'payout-methods.view', name: 'View Payout Methods', description: 'View supplier payout methods', category: 'Finance' },
   { key: 'payout-methods.verify', name: 'Verify Payout Methods', description: 'Verify supplier payout method details', category: 'Finance' },
   { key: 'chat.suppliers', name: 'Chat — Suppliers', description: 'Access supplier chat conversations', category: 'Chat' },
@@ -58,6 +61,7 @@ const ROLE_DEFINITIONS = [
     permissionKeys: [
       'dashboard.*', 'dashboard.revenue', 'analytics.view', 'bookings.view',
       'bookings.confirm-payment', 'payouts.view', 'payouts.export', 'payouts.approve',
+      'payouts.request', 'disputes.view', 'disputes.resolve',
       'payout-methods.view', 'payout-methods.verify', 'notifications.view',
     ],
   },

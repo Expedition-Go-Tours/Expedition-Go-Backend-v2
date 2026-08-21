@@ -42,13 +42,13 @@ async function planBookingReminders() {
       // Pay-later bookings stay PENDING until the deferred charge settles, so
       // reminders must plan for them regardless of status.
       OR: [{ status: 'CONFIRMED' }, { paymentTiming: 'later' }],
-      selectedDate: { gte: now, lte: in72h },
+      travelDate: { gte: now, lte: in72h },
     },
     select: {
       id: true,
       paymentTiming: true,
       paymentStatus: true,
-      selectedDate: true,
+      travelDate: true,
       pickup: true,
       tour: {
         select: {
@@ -61,7 +61,7 @@ async function planBookingReminders() {
 
   const reminders = [];
   for (const booking of upcoming) {
-    const date = booking.selectedDate;
+    const date = booking.travelDate;
 
     // 24h-before reminders (both customer + supplier)
     if (date <= in24h) {
@@ -121,10 +121,10 @@ async function planBookingReminders() {
   const reviewDue = await prisma.booking.findMany({
     where: {
       status: 'COMPLETED',
-      selectedDate: { lte: new Date(now.getTime() - REVIEW_REQUEST_HOURS_AFTER * 60 * 60 * 1000) },
+      travelDate: { lte: new Date(now.getTime() - REVIEW_REQUEST_HOURS_AFTER * 60 * 60 * 1000) },
       review: { none: {} },
     },
-    select: { id: true, selectedDate: true },
+    select: { id: true, travelDate: true },
   });
   for (const booking of reviewDue) {
     try {
@@ -133,7 +133,7 @@ async function planBookingReminders() {
         create: {
           bookingId: booking.id,
           type: 'REVIEW_REQUEST',
-          scheduledFor: new Date(booking.selectedDate.getTime() + REVIEW_REQUEST_HOURS_AFTER * 60 * 60 * 1000),
+          scheduledFor: new Date(booking.travelDate.getTime() + REVIEW_REQUEST_HOURS_AFTER * 60 * 60 * 1000),
         },
         update: {},
       });

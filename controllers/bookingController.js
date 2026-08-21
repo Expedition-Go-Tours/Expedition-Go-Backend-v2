@@ -24,6 +24,7 @@ const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTou
 const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../utils/queue');
 const { resolvePickupSelection } = require('../utils/geoUtils');
 const getConfig = require('../utils/getConfig');
+const { detachBookingFromActiveRequests } = require('../utils/financeHelpers');
 const { generatePrintableTicketHtml } = require('../utils/emailService');
 const { logActivity } = require('../utils/auditLogger');
 const logger = require('../utils/logger');
@@ -39,7 +40,7 @@ exports.addToCart = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
   const {
     tourId,
-    selectedDate,
+    travelDate,
     selectedTime,
     travelers,
     promoCode
@@ -67,13 +68,13 @@ exports.addToCart = catchAsync(async (req, res, next) => {
 
   // Fail fast: the date (+ slot) must be bookable and have room for this party
   // before it can ever sit in the cart.
-  const availability = await checkTourAvailability(tourId, selectedDate, { selectedTime, travelers });
+  const availability = await checkTourAvailability(tourId, travelDate, { selectedTime, travelers });
   if (!availability.available) {
     return next(new AppError(availability.reason || 'Tour is not available on the selected date', 400));
   }
 
   // Calculate pricing based on tour's pricing model (includes special offers)
-  const pricingCalculation = await calculateTourPrice(tour, travelers, selectedDate, selectedTime || null, null, customerId, promoCode || null)
+  const pricingCalculation = await calculateTourPrice(tour, travelers, travelDate, selectedTime || null, null, customerId, promoCode || null)
     .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
   
   if (!pricingCalculation.success) {
@@ -93,7 +94,7 @@ exports.addToCart = catchAsync(async (req, res, next) => {
       customerId_tourId_selectedDate_selectedTime: {
         customerId,
         tourId,
-        selectedDate: new Date(selectedDate),
+        travelDate: new Date(travelDate),
         selectedTime: normalizedTime
       }
     },
@@ -108,7 +109,7 @@ exports.addToCart = catchAsync(async (req, res, next) => {
     create: {
       customerId,
       tourId,
-      selectedDate: new Date(selectedDate),
+      travelDate: new Date(travelDate),
       selectedTime: normalizedTime,
       travelers,
       subtotal: pricingCalculation.subtotal,
@@ -250,7 +251,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
   const {
     tourId,
-    selectedDate,
+    travelDate,
     selectedTime,
     travelers,
     specialRequests,
@@ -301,12 +302,12 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     for (const item of cartItems) {
       const availability = await checkTourAvailability(
         item.tourId,
-        item.selectedDate.toISOString().split('T')[0],
+        item.travelDate.toISOString().split('T')[0],
         { selectedTime: item.selectedTime || null, travelers: item.travelers }
       );
       if (!availability.available) {
         return next(new AppError(
-          `"${item.tour.title}" is no longer available on ${item.selectedDate.toISOString().split('T')[0]}${item.selectedTime ? ` at ${item.selectedTime}` : ''} (${availability.reason || 'no availability'})`,
+          `"${item.tour.title}" is no longer available on ${item.travelDate.toISOString().split('T')[0]}${item.selectedTime ? ` at ${item.selectedTime}` : ''} (${availability.reason || 'no availability'})`,
           400
         ));
       }
@@ -322,7 +323,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       const pricing = await calculateTourPrice(
         item.tour,
         item.travelers,
-        item.selectedDate.toISOString().split('T')[0],
+        item.travelDate.toISOString().split('T')[0],
         item.selectedTime || null,
         null,
         customerId,
@@ -339,7 +340,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       recomputedItems.push({
         tourId: item.tourId,
         tour: item.tour,
-        selectedDate: item.selectedDate,
+        travelDate: item.travelDate,
         selectedTime: item.selectedTime,
         travelers: item.travelers,
         subtotal: pricing.subtotal,
@@ -370,7 +371,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       return next(new AppError('Tour not found or not available', 404));
     }
 
-    const pricingCalculation = await calculateTourPrice(tour, travelers, selectedDate, selectedTime || null, null, customerId, promoCode || null)
+    const pricingCalculation = await calculateTourPrice(tour, travelers, travelDate, selectedTime || null, null, customerId, promoCode || null)
       .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
     
     if (!pricingCalculation.success) {
@@ -381,7 +382,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     const appliedOffer = pricingCalculation.appliedOffer || null;
 
     // Check availability for the selected date (+ slot), enforcing capacity for this party
-    const availability = await checkTourAvailability(tourId, selectedDate, { selectedTime, travelers });
+    const availability = await checkTourAvailability(tourId, travelDate, { selectedTime, travelers });
     if (!availability.available) {
       return next(new AppError(availability.reason || 'Tour is not available on the selected date', 400));
     }
@@ -389,7 +390,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     bookingItems = [{
       tourId: tour.id,
       tour,
-      selectedDate: new Date(selectedDate),
+      travelDate: new Date(travelDate),
       selectedTime: selectedTime || null,
       travelers,
       subtotal: pricingCalculation.subtotal,
@@ -446,7 +447,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     const effectiveCutoff = resolveSlotCutoffHours(parsedBt, item.selectedTime, minAdvanceHours);
     const tourTz = getTourTimezone(parsedBt);
 
-    const dateAt = new Date(item.selectedDate);
+    const dateAt = new Date(item.travelDate);
     let startAt;
     if (item.selectedTime && perSlotCutoff) {
       // Anchor the cutoff clock to the slot's local wall clock in the tour's
@@ -537,9 +538,9 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     //    traveler-based sum incl. PENDING, TourDateOverride, closed days,
     //    per-slot capacity and per-group cap).
     for (const item of bookingItems) {
-      const dateKey = item.selectedDate instanceof Date
-        ? item.selectedDate.toISOString().split('T')[0]
-        : String(item.selectedDate).slice(0, 10);
+      const dateKey = item.travelDate instanceof Date
+        ? item.travelDate.toISOString().split('T')[0]
+        : String(item.travelDate).slice(0, 10);
       const evalResult = await evaluateBookingAvailability(tx, item.tour, dateKey, item.selectedTime || null, item.travelers);
       if (!evalResult.ok) {
         throw new Error(evalResult.reason);
@@ -557,15 +558,15 @@ exports.createBooking = catchAsync(async (req, res, next) => {
           bookingNumber,
           customerId,
           tourId: item.tourId,
-          selectedDate: item.selectedDate,
+          travelDate: item.travelDate,
           selectedTime: item.selectedTime,
           travelers: item.travelers,
           subtotal: item.subtotal,
-          total: item.total,
+          grossAmount: item.total,
           discounts: item.discounts || 0,
           currency: item.currency,
           commissionRate: commission.rate,
-          commissionAmount: commission.amount,
+          platformCommission: commission.amount,
           supplierPayout: commission.supplierPayout,
           specialRequests,
           ...(pickupSnapshot && { pickup: pickupSnapshot }),
@@ -649,10 +650,10 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       properties: {
         tourId: booking.tourId,
         tourTitle: booking.tour.title,
-        total: parseFloat(booking.total),
+        total: parseFloat(booking.grossAmount),
         currency: booking.currency,
         supplierPayout: parseFloat(booking.supplierPayout),
-        commissionAmount: parseFloat(booking.commissionAmount),
+        commissionAmount: parseFloat(booking.platformCommission),
         travelerCount: travelerCount(booking.travelers),
         status: booking.status,
       },
@@ -668,7 +669,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       metadata: {
         tourId: booking.tourId,
         tourTitle: booking.tour.title,
-        total: parseFloat(booking.total),
+        total: parseFloat(booking.grossAmount),
         currency: booking.currency,
         status: booking.status,
       },
@@ -819,10 +820,10 @@ exports.getBookingTicket = catchAsync(async (req, res, next) => {
     customerName: booking.customer.name,
     tourTitle: booking.tour.title,
     tourDescription: booking.tour.description,
-    selectedDate: booking.selectedDate,
+    travelDate: booking.travelDate,
     selectedTime: booking.selectedTime,
     travelers: booking.travelers,
-    total: booking.total,
+    total: booking.grossAmount,
     currency: booking.currency,
     subtotal: booking.subtotal,
     taxes: booking.taxes,
@@ -839,6 +840,69 @@ exports.getBookingTicket = catchAsync(async (req, res, next) => {
   });
 
   res.type('html').send(html);
+});
+
+/**
+ * GET /bookings/:id/cancellation-quote
+ * Read-only preview of what cancelling now would mean for this booking:
+ * policy outcome, refund amount, and a customer-facing message. Lets the
+ * storefront show exact terms BEFORE the customer commits to cancelling.
+ */
+exports.getCancellationQuote = catchAsync(async (req, res, next) => {
+  const booking = await prisma.booking.findFirst({
+    where: { id: req.params.id, customerId: req.user.id },
+    include: { tour: { select: { title: true, bookingAndTickets: { select: { cancellationPolicy: true } } } } },
+  });
+  if (!booking) return next(new AppError('Booking not found', 404));
+
+  const cancellableStatuses = ['PENDING', 'CONFIRMED'];
+  if (!cancellableStatuses.includes(booking.status)) {
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        quote: {
+          canCancel: false,
+          allowed: false,
+          refundAmount: 0,
+          refundPercentage: 0,
+          reason: `This booking is ${booking.status.toLowerCase()} and can no longer be cancelled`,
+          windowHours: null,
+        },
+      },
+    });
+  }
+
+  if (booking.payoutStatus === 'PAID') {
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        quote: {
+          canCancel: false,
+          allowed: false,
+          refundAmount: 0,
+          refundPercentage: 0,
+          reason: 'This booking has already been settled — contact support to request a refund',
+          windowHours: null,
+        },
+      },
+    });
+  }
+
+  const check = evaluateCancellationPolicy(booking, booking.tour);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      quote: {
+        canCancel: check.allowed,
+        allowed: check.allowed,
+        refundAmount: check.refundAmount,
+        refundPercentage: check.refundPercentage,
+        reason: check.reason,
+        windowHours: check.windowHours,
+      },
+    },
+  });
 });
 
 /**
@@ -868,6 +932,12 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     return next(new AppError('Booking not found or cannot be cancelled', 404));
   }
 
+  // Settled bookings have left the platform's hands — refunds go through
+  // support, not self-service.
+  if (booking.payoutStatus === 'PAID') {
+    return next(new AppError('This booking has already been settled — contact support to request a refund', 400));
+  }
+
   // Check cancellation policy
   const cancellationCheck = evaluateCancellationPolicy(booking, booking.tour);
   if (!cancellationCheck.allowed) {
@@ -882,7 +952,8 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
       data: {
         status: 'CANCELLED',
         cancellationReason: reason,
-        cancelledAt: new Date()
+        cancelledAt: new Date(),
+        payoutStatus: 'CANCELLED'
       }
     });
 
@@ -913,6 +984,10 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
         data: { status: 'CANCELLED', processedAt: new Date() },
       });
     }
+
+    // Finance v2: detach from any active payout request so the supplier's
+    // pending request total no longer includes this booking.
+    await detachBookingFromActiveRequests(tx, id);
 
     // Decrement spotsSold for applied special offer (one per traveler — the
     // same count that was incremented at confirmation time)
@@ -953,7 +1028,7 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     req,
     resource: 'Booking',
     resourceId: booking.id,
-    properties: { reason, refundAmount: cancellationCheck.refundAmount, tourId: booking.tourId, total: parseFloat(booking.total) },
+    properties: { reason, refundAmount: cancellationCheck.refundAmount, tourId: booking.tourId, total: parseFloat(booking.grossAmount) },
   });
 
   res.status(200).json({
@@ -1075,7 +1150,7 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
     tour: { supplierId },
     // Only bookings with a stored pickup snapshot (JSON column is DB NULL otherwise).
     pickup: { not: Prisma.DbNull },
-    selectedDate: { gte: fromDate, lte: toDate },
+    travelDate: { gte: fromDate, lte: toDate },
     ...(status ? { status } : {}),
     ...(tourId ? { tourId } : {}),
   };
@@ -1103,7 +1178,7 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
           }
         }
       },
-      orderBy: [{ selectedDate: 'asc' }, { selectedTime: 'asc' }],
+      orderBy: [{ travelDate: 'asc' }, { selectedTime: 'asc' }],
       skip,
       take: parseInt(limit)
     }),

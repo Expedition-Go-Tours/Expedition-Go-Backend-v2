@@ -116,7 +116,7 @@ describe('Expedition API — public endpoints', () => {
     it('returns 200 on valid request', async () => {
       const res = await request(app)
         .post('/api/expedition/checkout/calculate')
-        .send({ tourId: 'tour-1', selectedDate: '2026-08-15', travelers: { adults: 2 } });
+        .send({ tourId: 'tour-1', travelDate: '2026-08-15', travelers: { adults: 2 } });
       expect(res.status).toBe(200);
       expect(res.body.data.pricing.total).toBe(105);
     });
@@ -128,7 +128,7 @@ describe('Expedition API — auth-gated endpoints', () => {
     it('returns 401 without auth token', async () => {
       const res = await request(app)
         .post('/api/expedition/checkout/confirm')
-        .send({ tourId: 'tour-1', selectedDate: '2026-08-15', travelers: { adults: 2, phoneNumber: '+123', location: 'Test' }, paymentMethodId: 'pm_123' });
+        .send({ tourId: 'tour-1', travelDate: '2026-08-15', travelers: { adults: 2, phoneNumber: '+123', location: 'Test' }, paymentMethodId: 'pm_123' });
       expect(res.status).toBe(401);
     });
   });

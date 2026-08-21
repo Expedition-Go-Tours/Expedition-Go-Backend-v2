@@ -42,7 +42,7 @@ export default function () {
       `${BASE_URL}/api/expedition/checkout/calculate`,
       JSON.stringify({
         tourId: TOUR_ID,
-        selectedDate: '2026-08-15',
+        travelDate: '2026-08-15',
         travelers: { adults: 2 },
       }),
       { headers: { 'Content-Type': 'application/json' } }
@@ -56,7 +56,7 @@ export default function () {
       `${BASE_URL}/api/expedition/checkout/calculate`,
       JSON.stringify({
         tourId: TOUR_ID,
-        selectedDate: '2026-08-15',
+        travelDate: '2026-08-15',
         travelers: { adults: 2 },
       }),
       { headers: { 'Content-Type': 'application/json' } }

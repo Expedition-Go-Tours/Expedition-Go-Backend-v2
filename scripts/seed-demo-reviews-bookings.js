@@ -45,7 +45,7 @@ async function main() {
 
   const makeBooking = async ({ tour, daysAgo, status }) => {
     const bookingNum = generateBookingNumber();
-    const selectedDate = new Date(Date.now() - daysAgo * 86400000);
+    const travelDate = new Date(Date.now() - daysAgo * 86400000);
     return prisma.booking.create({
       data: {
         bookingNumber: bookingNum,
@@ -56,18 +56,18 @@ async function main() {
         status,
         paymentStatus: status === 'CONFIRMED' || status === 'COMPLETED' ? 'SUCCEEDED' : 'PENDING',
         travelers: [{ firstName: reviewer.name.split(' ')[0] || 'Guest', lastName: reviewer.name.split(' ').slice(1).join(' ') || '' }],
-        selectedDate,
+        travelDate,
         selectedTime: '09:00',
         subtotal: 120,
         taxes: 12,
         fees: 3,
         discounts: 0,
-        total: 135,
+        grossAmount: 135,
         currency: 'USD',
         commissionRate: 0.15,
-        commissionAmount: 20.25,
+        platformCommission: 20.25,
         supplierPayout: 114.75,
-        paidAt: status === 'CONFIRMED' || status === 'COMPLETED' ? selectedDate : null,
+        paidAt: status === 'CONFIRMED' || status === 'COMPLETED' ? travelDate : null,
       },
     });
   };

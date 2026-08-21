@@ -1,5 +1,6 @@
 jest.mock('../../utils/prismaClient', () => ({
   payout: { findMany: jest.fn(), findUnique: jest.fn(), count: jest.fn(), update: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn().mockResolvedValue([]) },
+  payoutRequest: { groupBy: jest.fn().mockResolvedValue([]) },
   payoutMethod: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   booking: { findMany: jest.fn() },
   supplierProfile: { update: jest.fn() },

@@ -153,8 +153,8 @@ const expectedBooking = {
   stripePaymentIntentId: 'pi_exp_e2e',
   paymentStatus: 'SUCCEEDED',
   supplierPayout: 446.25,
-  commissionAmount: 78.75,
-  total: 525,
+  platformCommission: 78.75,
+  grossAmount: 525,
   currency: 'USD',
   tour: {
     title: 'Expedition E2E Safari',
@@ -208,7 +208,7 @@ describe('E2E: Expedition Checkout Flow', () => {
   it('Step 1: calculates checkout pricing for valid tour', async () => {
     const res = await request(app)
       .post('/api/expedition/checkout/calculate')
-      .send({ tourId: 'tour-exp-e2e', selectedDate: '2027-06-15', travelers: { adults: 2, children: 1 } });
+      .send({ tourId: 'tour-exp-e2e', travelDate: '2027-06-15', travelers: { adults: 2, children: 1 } });
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('success');
@@ -224,7 +224,7 @@ describe('E2E: Expedition Checkout Flow', () => {
       .set('Authorization', 'Bearer valid-exp-token')
       .send({
         tourId: 'tour-exp-e2e',
-        selectedDate: '2027-06-15',
+        travelDate: '2027-06-15',
         travelers: { adults: 2, children: 1, infants: 0, phoneNumber: '+254700123456', location: 'Nairobi, Kenya' },
         paymentTiming: 'now',
       });
@@ -258,7 +258,7 @@ describe('E2E: Expedition Checkout Flow', () => {
       .set('Authorization', 'Bearer valid-exp-token')
       .send({
         tourId: 'tour-exp-e2e',
-        selectedDate: '2027-06-15',
+        travelDate: '2027-06-15',
         travelers: { adults: 2, children: 1, infants: 0, phoneNumber: '+254700123456', location: 'Nairobi, Kenya' },
         paymentTiming: 'later',
         paymentMethodId: 'pm_exp_e2e',
@@ -333,7 +333,7 @@ describe('E2E: Expedition Checkout Flow', () => {
 
     const calcRes = await request(app)
       .post('/api/expedition/checkout/calculate')
-      .send({ tourId: 'tour-exp-e2e', selectedDate: '2027-06-15', travelers: { adults: 2 } });
+      .send({ tourId: 'tour-exp-e2e', travelDate: '2027-06-15', travelers: { adults: 2 } });
     expect(calcRes.status).toBe(200);
     expect(calcRes.body.data.pricing.subtotal).toBe(500);
 
@@ -346,7 +346,7 @@ describe('E2E: Expedition Checkout Flow', () => {
       .set('Authorization', 'Bearer full-exp-token')
       .send({
         tourId: 'tour-exp-e2e',
-        selectedDate: '2027-06-15',
+        travelDate: '2027-06-15',
         travelers: { adults: 2, phoneNumber: '+254700123456', location: 'Nairobi, Kenya' },
         paymentTiming: 'now',
       });
@@ -386,13 +386,13 @@ describe('E2E: Stripe Webhook Idempotency', () => {
       customerId: 'cust-idemp',
       tourId: 'tour-idemp',
       status: 'CONFIRMED',
-      total: 500,
+      grossAmount: 500,
       currency: 'USD',
       stripePaymentIntentId: 'pi_idemp_1',
       paymentStatus: 'SUCCEEDED',
       paidAt: new Date(),
       supplierPayout: 425,
-      commissionAmount: 75,
+      platformCommission: 75,
       tour: {
         title: 'Idempotent Test Tour',
         supplierId: 'supplier-idemp',
@@ -458,13 +458,13 @@ describe('E2E: Stripe Webhook Idempotency', () => {
       customerId: 'cust-cc',
       tourId: 'tour-cc',
       status: 'CONFIRMED',
-      total: 300,
+      grossAmount: 300,
       currency: 'USD',
       stripePaymentIntentId: 'pi_concurrent_1',
       paymentStatus: 'SUCCEEDED',
       paidAt: new Date(),
       supplierPayout: 255,
-      commissionAmount: 45,
+      platformCommission: 45,
       tour: {
         title: 'Concurrent Test Tour',
         supplierId: 'supplier-cc',

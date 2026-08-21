@@ -375,7 +375,7 @@ exports.getEarnings = catchAsync(async (req, res) => {
     prisma.supplierProfile.findUnique({ where: { userId: supplierId } }),
     prisma.booking.aggregate({
       where,
-      _sum: { total: true, commissionAmount: true, supplierPayout: true },
+      _sum: { grossAmount: true, platformCommission: true, supplierPayout: true },
     }),
   ]);
 
@@ -386,19 +386,19 @@ exports.getEarnings = catchAsync(async (req, res) => {
     data: {
       summary: {
         totalEarnings: Number(profile?.totalEarnings || 0),
-        totalRevenue: Number(aggregates._sum.total || 0),
-        totalCommission: Number(aggregates._sum.commissionAmount || 0),
+        totalRevenue: Number(aggregates._sum.grossAmount || 0),
+        totalCommission: Number(aggregates._sum.platformCommission || 0),
         totalBookings: totalCount,
         currency: 'USD',
       },
       earnings: bookings.map((b) => ({
         id: b.id,
         bookingNumber: b.bookingNumber,
-        selectedDate: b.selectedDate,
+        travelDate: b.travelDate,
         paidAt: b.paidAt,
-        total: Number(b.total),
+        grossAmount: Number(b.grossAmount),
         supplierPayout: Number(b.supplierPayout),
-        commissionAmount: Number(b.commissionAmount),
+        platformCommission: Number(b.platformCommission),
         commissionRate: Number(b.commissionRate),
         currency: b.currency,
         tour: b.tour,
@@ -939,7 +939,7 @@ exports.getSupplierOverview = catchAsync(async (req, res, next) => {
     prisma.booking.count({ where: { tour: { supplierId: userId } } }),
     prisma.booking.aggregate({
       where: { tour: { supplierId: userId } },
-      _sum: { commissionAmount: true },
+      _sum: { platformCommission: true },
     }),
     prisma.tour.findMany({
       where: { supplierId: userId },
@@ -948,7 +948,7 @@ exports.getSupplierOverview = catchAsync(async (req, res, next) => {
         title: true,
         _count: { select: { bookings: true } },
         bookings: {
-          select: { commissionAmount: true, total: true, status: true },
+          select: { platformCommission: true, grossAmount: true, status: true },
           where: { status: { not: 'CANCELLED' } },
         },
       },
@@ -959,8 +959,8 @@ exports.getSupplierOverview = catchAsync(async (req, res, next) => {
   const bookingMap = Object.fromEntries(bookingStats.map(b => [b.status, b._count]));
 
   const tourCommissions = toursWithBooking.map((t) => {
-    const totalCommission = t.bookings.reduce((sum, b) => sum + Number(b.commissionAmount), 0);
-    const totalRevenue = t.bookings.reduce((sum, b) => sum + Number(b.total), 0);
+    const totalCommission = t.bookings.reduce((sum, b) => sum + Number(b.platformCommission), 0);
+    const totalRevenue = t.bookings.reduce((sum, b) => sum + Number(b.grossAmount), 0);
     return {
       id: t.id,
       title: t.title,
@@ -975,7 +975,7 @@ exports.getSupplierOverview = catchAsync(async (req, res, next) => {
     data: {
       earnings: Number(supplierProfile.totalEarnings),
       totalBookings: bookingCount,
-      totalCommission: Number(commissionSum._sum.commissionAmount) || 0,
+      totalCommission: Number(commissionSum._sum.platformCommission) || 0,
       averageRating: Number(supplierProfile.averageRating) || Number(reviewStats._avg.rating) || 0,
       totalReviews: reviewStats._count,
       tours: {
@@ -1039,7 +1039,7 @@ exports.getSupplierProfile = catchAsync(async (req, res, next) => {
     prisma.booking.groupBy({ by: ['status'], where: { tour: { supplierId: userId } }, _count: true }),
     prisma.review.aggregate({ where: { tour: { supplierId: userId } }, _avg: { rating: true }, _count: true }),
     prisma.booking.count({ where: { tour: { supplierId: userId } } }),
-    prisma.booking.aggregate({ where: { tour: { supplierId: userId } }, _sum: { commissionAmount: true } }),
+    prisma.booking.aggregate({ where: { tour: { supplierId: userId } }, _sum: { platformCommission: true } }),
     prisma.tour.findMany({
       where: { supplierId: userId },
       select: {
@@ -1049,7 +1049,7 @@ exports.getSupplierProfile = catchAsync(async (req, res, next) => {
         status: true,
         _count: { select: { bookings: true } },
         bookings: {
-          select: { commissionAmount: true, total: true, status: true },
+          select: { platformCommission: true, grossAmount: true, status: true },
           where: { status: { not: 'CANCELLED' } },
         },
       },
@@ -1060,8 +1060,8 @@ exports.getSupplierProfile = catchAsync(async (req, res, next) => {
   const bookingMap = Object.fromEntries(bookingStats.map(b => [b.status, b._count]));
 
   const tourCommissions = toursWithBooking.map((t) => {
-    const totalCommission = t.bookings.reduce((sum, b) => sum + Number(b.commissionAmount), 0);
-    const totalRevenue = t.bookings.reduce((sum, b) => sum + Number(b.total), 0);
+    const totalCommission = t.bookings.reduce((sum, b) => sum + Number(b.platformCommission), 0);
+    const totalRevenue = t.bookings.reduce((sum, b) => sum + Number(b.grossAmount), 0);
     return {
       id: t.id,
       title: t.title,
@@ -1098,7 +1098,7 @@ exports.getSupplierProfile = catchAsync(async (req, res, next) => {
       stats: {
         earnings: Number(supplier.totalEarnings),
         totalBookings: bookingCount,
-        totalCommission: Number(commissionSum._sum.commissionAmount) || 0,
+        totalCommission: Number(commissionSum._sum.platformCommission) || 0,
         averageRating: Number(supplier.averageRating) || Number(reviewStats._avg.rating) || 0,
         totalReviews: reviewStats._count,
         tours: {
@@ -1216,7 +1216,7 @@ exports.getSupplierAnalytics = catchAsync(async (req, res, next) => {
       tour: { supplierId: supplierProfile.userId },
       createdAt: { gte: since },
     },
-    select: { createdAt: true, total: true, commissionAmount: true, status: true },
+    select: { createdAt: true, grossAmount: true, platformCommission: true, status: true },
     orderBy: { createdAt: 'asc' },
   });
 
@@ -1235,8 +1235,8 @@ exports.getSupplierAnalytics = catchAsync(async (req, res, next) => {
     const entry = monthMap.get(key);
     if (!entry) return;
     entry.bookings += 1;
-    entry.gross += Number(b.total);
-    entry.commission += Number(b.commissionAmount);
+    entry.gross += Number(b.grossAmount);
+    entry.commission += Number(b.platformCommission);
   });
 
   res.status(200).json({

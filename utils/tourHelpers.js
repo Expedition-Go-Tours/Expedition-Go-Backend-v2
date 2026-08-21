@@ -725,12 +725,12 @@ function validateStoredPricing(blob) {
  * per-slot capacity) are identical to the checkout transactions.
  *
  * @param {string} tourId
- * @param {string|Date} selectedDate   YYYY-MM-DD (UTC) or Date
+ * @param {string|Date} travelDate   YYYY-MM-DD (UTC) or Date
  * @param {object|string|null} selectedTimeOrOptions
  *   - string: the requested time slot (legacy positional arg)
  *   - object: { selectedTime, travelers } — travelers enables capacity pre-check
  */
-async function checkTourAvailability(tourId, selectedDate, selectedTimeOrOptions = null) {
+async function checkTourAvailability(tourId, travelDate, selectedTimeOrOptions = null) {
   try {
     const tour = await prisma.tour.findUnique({
       where: { id: tourId },
@@ -750,7 +750,7 @@ async function checkTourAvailability(tourId, selectedDate, selectedTimeOrOptions
     }
 
     const parsed = parseBlob(tour.schedulesAndPricing);
-    const dateObj = toUtcDate(selectedDate);
+    const dateObj = toUtcDate(travelDate);
     if (!dateObj) return { available: false, reason: 'Invalid date' };
     const dateKey = toDateKey(dateObj);
 
@@ -774,7 +774,7 @@ async function checkTourAvailability(tourId, selectedDate, selectedTimeOrOptions
            THEN ${TRAVELER_COUNT_SQL} ELSE 0 END), 0)::int AS "currentBookings",
          COALESCE(COUNT(*) FILTER (WHERE status IN (${statusLiteral})), 0)::int AS "groupCount"
        FROM "Booking"
-       WHERE "tourId" = $1 AND "selectedDate" = $2::date
+       WHERE "tourId" = $1 AND "travelDate" = $2::date
          ${selectedTime && !dayWide ? 'AND "selectedTime" = $3' : ''}`,
       tourId,
       dateKey,
@@ -859,7 +859,7 @@ async function checkTourAvailability(tourId, selectedDate, selectedTimeOrOptions
   } catch (error) {
     logger.error('Check availability failed', {
       tourId,
-      selectedDate,
+      travelDate,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
@@ -870,7 +870,7 @@ async function checkTourAvailability(tourId, selectedDate, selectedTimeOrOptions
 /**
  * Get tour pricing for specific date and travelers
  */
-async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = null, tourOptionKey = null, customerId = null, promoCode = null) {
+async function calculateTourPrice(tour, travelers, travelDate, selectedTime = null, tourOptionKey = null, customerId = null, promoCode = null) {
   try {
     const pricing = tour.schedulesAndPricing;
     if (!pricing || !pricing.pricingSchedules) {
@@ -884,7 +884,7 @@ async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = 
     const applicableSchedule = schedules.find(schedule => {
       const startDate = new Date(schedule.startDate);
       const endDate = schedule.endDate ? new Date(schedule.endDate) : null;
-      const bookingDate = new Date(selectedDate);
+      const bookingDate = new Date(travelDate);
 
       if (bookingDate < startDate) return false;
       if (endDate && bookingDate > endDate) return false;
@@ -1062,7 +1062,7 @@ async function calculateTourPrice(tour, travelers, selectedDate, selectedTime = 
     const specialOfferResult = await findBestDiscount({
       tourId: tour.id,
       tourOptionKey,
-      selectedDate: new Date(selectedDate),
+      travelDate: new Date(travelDate),
       basePrice: subtotal,
       quantity: totalTravelers,
       customerId,

@@ -239,7 +239,7 @@ exports.updateDateAvailability = catchAsync(async (req, res, next) => {
       `SELECT COALESCE(SUM(CASE WHEN status IN (${statusLiteral})
          THEN ${TRAVELER_COUNT_SQL} ELSE 0 END), 0)::int AS "live"
        FROM "Booking"
-       WHERE "tourId" = $1 AND "selectedDate" = $2::date`,
+       WHERE "tourId" = $1 AND "travelDate" = $2::date`,
       tourId,
       dateKey
     );
@@ -405,12 +405,12 @@ exports.batchUpdateAvailability = catchAsync(async (req, res, next) => {
     if (needsLiveCount) {
       const dateKeys = parsedUpdates.map((u) => u.dateKey);
       const rows = await tx.$queryRawUnsafe(
-        `SELECT "selectedDate"::date AS "d",
+        `SELECT "travelDate"::date AS "d",
                 COALESCE(SUM(CASE WHEN status IN (${statusLiteral})
                   THEN ${TRAVELER_COUNT_SQL} ELSE 0 END), 0)::int AS "live"
          FROM "Booking"
-         WHERE "tourId" = $1 AND "selectedDate" = ANY($2::date[])
-         GROUP BY "selectedDate"`,
+         WHERE "tourId" = $1 AND "travelDate" = ANY($2::date[])
+         GROUP BY "travelDate"`,
         tourId,
         dateKeys
       );

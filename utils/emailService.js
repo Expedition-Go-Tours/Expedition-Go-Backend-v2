@@ -261,9 +261,9 @@ function buildBookingBase(booking) {
   const paidNow = booking.paymentTiming !== 'later';
   const amountPaid =
     booking.paymentStatus === 'SUCCEEDED' || booking.paymentStatus === 'REFUNDED'
-      ? Number(booking.total)
+      ? Number(booking.grossAmount)
       : paidNow
-        ? Number(booking.total)
+        ? Number(booking.grossAmount)
         : 0;
 
   const base = {
@@ -284,7 +284,7 @@ function buildBookingBase(booking) {
     bookingNumber: booking.bookingNumber,
     tourTitle: tour.title || '',
     tourDescription: tour.description || '',
-    dateLabel: fmt.formatLongDate(booking.selectedDate),
+    dateLabel: fmt.formatLongDate(booking.travelDate),
     timeLabel: fmt.formatTime(booking.selectedTime),
     durationLabel: fmt.getDurationLabel(tour),
     travelersLabel: travelers.label,
@@ -304,15 +304,15 @@ function buildBookingBase(booking) {
 
     // money
     currency,
-    totalLabel: fmt.formatCurrency(booking.total, currency),
+    totalLabel: fmt.formatCurrency(booking.grossAmount, currency),
     subtotalLabel: fmt.formatCurrency(booking.subtotal, currency),
     taxesLabel: fmt.formatCurrency(booking.taxes, currency),
     amountPaidLabel: fmt.formatCurrency(amountPaid, currency),
     amountPaidTodayLabel: fmt.formatCurrency(paidNow ? amountPaid : 0, currency),
-    scheduledPaymentLabel: fmt.formatCurrency(paidNow ? 0 : Number(booking.total), currency),
+    scheduledPaymentLabel: fmt.formatCurrency(paidNow ? 0 : Number(booking.grossAmount), currency),
     paymentStatusLabel: paymentStatusLabel(booking.paymentStatus),
     paymentMethodLabel: '',
-    commissionLabel: fmt.formatCurrency(booking.commissionAmount, currency),
+    commissionLabel: fmt.formatCurrency(booking.platformCommission, currency),
     payoutAmountLabel: fmt.formatCurrency(booking.supplierPayout, currency),
 
     // customer URLs
@@ -365,7 +365,7 @@ async function sendReserveLaterConfirmedEmail(booking) {
   const base = buildBookingBase(b);
   const data = {
     ...base,
-    paymentDateLabel: fmt.formatLongDate(b.selectedDate),
+    paymentDateLabel: fmt.formatLongDate(b.travelDate),
     supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
@@ -381,8 +381,8 @@ async function sendPaymentReminderEmail(booking, { paymentDate, paymentAmount } 
   const base = buildBookingBase(b);
   const data = {
     ...base,
-    paymentAmountLabel: fmt.formatCurrency(paymentAmount ?? b.total, b.currency),
-    paymentDateLabel: fmt.formatLongDate(paymentDate || b.selectedDate),
+    paymentAmountLabel: fmt.formatCurrency(paymentAmount ?? b.grossAmount, b.currency),
+    paymentDateLabel: fmt.formatLongDate(paymentDate || b.travelDate),
     supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
@@ -396,8 +396,8 @@ async function sendPaymentReminderEmail(booking, { paymentDate, paymentAmount } 
 async function sendPaymentSuccessfulEmail(booking, { paymentReference, amount } = {}) {
   const b = await resolveBookingContext(booking);
   const base = buildBookingBase(b);
-  const paid = Number(amount ?? b.total);
-  const outstanding = Math.max(0, Number(b.total) - paid);
+  const paid = Number(amount ?? b.grossAmount);
+  const outstanding = Math.max(0, Number(b.grossAmount) - paid);
   const data = {
     ...base,
     paymentReference: paymentReference || b.stripePaymentIntentId || '',
@@ -459,8 +459,8 @@ async function sendPaymentUnsuccessfulEmail(booking, { deadline, amount } = {}) 
   const base = buildBookingBase(b);
   const data = {
     ...base,
-    paymentAmountLabel: fmt.formatCurrency(amount ?? b.total, b.currency),
-    deadlineLabel: fmt.formatLongDate(deadline || b.selectedDate),
+    paymentAmountLabel: fmt.formatCurrency(amount ?? b.grossAmount, b.currency),
+    deadlineLabel: fmt.formatLongDate(deadline || b.travelDate),
     supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
@@ -478,9 +478,9 @@ async function sendCustomerBookingChangedEmail(booking, { changes = [], previous
   const data = {
     ...base,
     changes,
-    previousTotalLabel: fmt.formatCurrency(previousTotal ?? b.total, currency),
+    previousTotalLabel: fmt.formatCurrency(previousTotal ?? b.grossAmount, currency),
     adjustmentLabel: fmt.formatCurrency(adjustment ?? 0, currency),
-    newTotalLabel: fmt.formatCurrency(newTotal ?? b.total, currency),
+    newTotalLabel: fmt.formatCurrency(newTotal ?? b.grossAmount, currency),
     paymentStatusLabel: paymentStatusLabel(b.paymentStatus),
     supportEmail: (await getShellVars()).supportEmail,
   };
@@ -513,7 +513,7 @@ async function sendPickupLocationRequiredEmail(booking, { deadline } = {}) {
   const base = buildBookingBase(b);
   const data = {
     ...base,
-    deadlineLabel: fmt.formatLongDate(deadline || b.selectedDate),
+    deadlineLabel: fmt.formatLongDate(deadline || b.travelDate),
     supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
@@ -544,7 +544,7 @@ async function sendBookingReminderEmail(booking, { items = [] } = {}) {
   };
   return sendRendered({
     to: base.customerEmail,
-    subject: `Reminder: ${base.tourTitle} on ${fmt.formatShortDate(b.selectedDate)}`,
+    subject: `Reminder: ${base.tourTitle} on ${fmt.formatShortDate(b.travelDate)}`,
     key: 'booking-reminder',
     data,
   });
@@ -557,7 +557,7 @@ async function sendCustomerCancelledFullRefundEmail(booking, { cancelledAt, refu
     ...base,
     cancelledAtLabel: fmt.formatDateTime(cancelledAt || b.cancelledAt || new Date()),
     cancellationReason: b.cancellationReason || '',
-    refundAmountLabel: fmt.formatCurrency(refundAmount ?? b.refundAmount ?? b.total, b.currency),
+    refundAmountLabel: fmt.formatCurrency(refundAmount ?? b.refundAmount ?? b.grossAmount, b.currency),
     supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
@@ -576,7 +576,7 @@ async function sendCustomerCancelledNoRefundEmail(booking, { cancelledAt, cancel
     ...base,
     cancelledAtLabel: fmt.formatDateTime(cancelledAt || b.cancelledAt || new Date()),
     cancellationDeadlineLabel: fmt.formatDateTime(deadline),
-    cancellationFeeLabel: fmt.formatCurrency(cancellationFee ?? b.total, b.currency),
+    cancellationFeeLabel: fmt.formatCurrency(cancellationFee ?? b.grossAmount, b.currency),
     refundAmountLabel: fmt.formatCurrency(refundAmount ?? 0, b.currency),
     supportEmail: (await getShellVars()).supportEmail,
   };
@@ -593,7 +593,7 @@ async function sendRefundProcessingEmail(booking, { refundReference } = {}) {
   const base = buildBookingBase(b);
   const data = {
     ...base,
-    refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.total, b.currency),
+    refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.grossAmount, b.currency),
     refundReference: refundReference || '',
     supportEmail: (await getShellVars()).supportEmail,
   };
@@ -610,7 +610,7 @@ async function sendRefundCompletedEmail(booking, { refundReference, refundedAt }
   const base = buildBookingBase(b);
   const data = {
     ...base,
-    refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.total, b.currency),
+    refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.grossAmount, b.currency),
     refundReference: refundReference || '',
     refundedAtLabel: fmt.formatDateTime(refundedAt || b.refundedAt || new Date()),
     supportEmail: (await getShellVars()).supportEmail,
@@ -650,7 +650,7 @@ async function sendSupplierCancelledBookingEmail(booking, { reason, refundAmount
   const data = {
     ...base,
     cancellationReason: reason || b.cancellationReason || '',
-    refundAmountLabel: fmt.formatCurrency(refundAmount ?? b.refundAmount ?? b.total, b.currency),
+    refundAmountLabel: fmt.formatCurrency(refundAmount ?? b.refundAmount ?? b.grossAmount, b.currency),
     supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
@@ -795,7 +795,7 @@ async function sendSupplierBookingReminderEmail(booking) {
   };
   return sendRendered({
     to: supplier.email,
-    subject: `Upcoming booking: ${base.tourTitle} (${fmt.formatShortDate(b.selectedDate)})`,
+    subject: `Upcoming booking: ${base.tourTitle} (${fmt.formatShortDate(b.travelDate)})`,
     key: 'supplier-booking-reminder',
     data,
   });
@@ -862,7 +862,7 @@ async function sendSupplierCancellationRecordedEmail(booking, { reason } = {}) {
   const data = {
     ...base,
     cancellationReason: reason || b.cancellationReason || '',
-    refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.total, b.currency),
+    refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.grossAmount, b.currency),
     supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
@@ -933,6 +933,60 @@ async function sendSupplierPayoutFailedEmail({ booking, payout, reason } = {}) {
     subject: 'Action required: Payout unsuccessful',
     key: 'supplier-payout-failed',
     data,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Finance v2 — payout request + dispute emails (generic inline template)
+// ---------------------------------------------------------------------------
+
+async function sendFinancePayoutRequestEmail(eventType, request) {
+  const fmtAmount = `${parseFloat(request.amount).toFixed(2)} ${request.currency}`;
+  const supplier = request.supplier || {};
+  const config = {
+    'payout-request-submitted': {
+      subject: `Payout request received — ${fmtAmount}`,
+      heading: 'Payout Request Received',
+      message: `We received your payout request ${request.requestNumber} for ${fmtAmount} covering ${request.bookingCount} booking(s) from the "${request.cycleLabel}" cycle. Our team will review and process it shortly.`,
+    },
+    'payout-request-approved': {
+      subject: `Payout approved — ${fmtAmount}`,
+      heading: 'Payout Approved',
+      message: `Your payout request ${request.requestNumber} has been approved. The transfer of ${fmtAmount} to your registered payout method is being arranged.`,
+    },
+    'payout-completed': {
+      subject: `Payout sent — ${fmtAmount}`,
+      heading: 'Your Payout Has Been Sent',
+      message: `Your payout of ${fmtAmount} (${request.requestNumber}) has been sent.${request.reference ? ` Transaction reference: ${request.reference}.` : ''} Funds typically arrive within 1–3 business days.`,
+    },
+  }[eventType];
+  if (!config) throw new Error(`Unknown finance email event: ${eventType}`);
+
+  return sendEmail({
+    to: supplier.email,
+    subject: config.subject,
+    template: 'generic-notification',
+    data: {
+      header: config.heading,
+      message: config.message,
+      supplierBusinessName: supplier.name || '',
+    },
+  });
+}
+
+async function sendDisputeOpenedEmail(dispute) {
+  const booking = dispute.booking || {};
+  const tour = booking.tour || {};
+  const supplier = dispute.supplier || {};
+  return sendEmail({
+    to: supplier.email,
+    subject: `Refund request received - ${dispute.disputeNumber}`,
+    template: 'generic-notification',
+    data: {
+      header: 'Refund Request Submitted',
+      message: `Your refund request ${dispute.disputeNumber} (reason: ${(dispute.reason || '').replace(/_/g, ' ').toLowerCase()}) for booking ${booking.bookingNumber || ''} - "${tour.title || ''}" has been submitted for review. Payouts for this booking are on hold until a decision is made. We will notify you as soon as it is resolved.`,
+      supplierBusinessName: supplier.name || '',
+    },
   });
 }
 
@@ -1193,7 +1247,7 @@ function generatePrintableTicketHtml(data) {
     : (data.meetingPoint && data.meetingPoint.instructions) || '';
   const pickupTime = (data.pickup && data.pickup.time) ? data.pickup.time : '';
 
-  const formattedDate = new Date(data.selectedDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const formattedDate = new Date(data.travelDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
   return `<!DOCTYPE html>
 <html data-ogsc="" data-ogsb=""><head><meta charset="utf-8"><meta name="color-scheme" content="light only">
@@ -1294,6 +1348,10 @@ module.exports = {
   sendSupplierPayoutScheduledEmail,
   sendSupplierPayoutCompletedEmail,
   sendSupplierPayoutFailedEmail,
+
+  // finance v2
+  sendFinancePayoutRequestEmail,
+  sendDisputeOpenedEmail,
 
   // legacy
   sendBookingConfirmationEmail,

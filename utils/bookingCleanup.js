@@ -203,14 +203,14 @@ async function autoCompleteBookings() {
   const prisma = require('./prismaClient');
   const now = new Date();
   // The activity date is stored at midnight UTC in the tour's timezone context;
-  // once `selectedDate` is strictly before today (start of day), the activity is
+  // once `travelDate` is strictly before today (start of day), the activity is
   // in the past.
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   const updated = await prisma.booking.updateMany({
     where: {
       status: 'CONFIRMED',
-      selectedDate: { lt: startOfToday },
+      travelDate: { lt: startOfToday },
     },
     data: {
       status: 'COMPLETED',
@@ -224,4 +224,89 @@ async function autoCompleteBookings() {
   return { completed: updated.count };
 }
 
-module.exports = { cancelStalePendingBookings, expireBooking, autoCompleteBookings };
+/**
+ * Expire stale CheckoutDraft holds.
+ *
+ * Holds past their `expiresAt` (plus a grace window) are unrecoverable if
+ * the Stripe session is still open — the customer left. For each stale hold
+ * we ask Stripe for the authoritative session state:
+ *  - session paid (webhook lost) → materialize into a Booking
+ *  - session open / expired / incomplete → release the hold (EXPIRED)
+ *  - Stripe unreachable → skip; retried on the next sweep
+ *
+ * Runs every 5 minutes from the CLEANUP worker (same cadence as stale
+ * PENDING bookings).
+ */
+const HOLD_GRACE_MINUTES = 10;
+
+async function expireCheckoutHolds() {
+  const prisma = require('./prismaClient');
+  const { materializeHold, releaseHold } = require('./checkoutHold');
+
+  const graceCutoff = new Date(Date.now() - (DEFAULT_GRACE_MINUTES + HOLD_GRACE_MINUTES) * 60 * 1000);
+
+  const stale = await prisma.checkoutDraft.findMany({
+    where: {
+      status: 'HOLDING',
+      expiresAt: { lt: graceCutoff },
+    },
+    orderBy: { createdAt: 'asc' },
+    take: SWEEP_LIMIT,
+  });
+
+  if (stale.length === 0) return { stale: 0, materialized: 0, released: 0 };
+
+  let materialized = 0;
+  let released = 0;
+
+  for (const draft of stale) {
+    if (!draft.stripeSessionId) {
+      // No session ever created — release directly.
+      await releaseHold(draft.id, 'expired').catch(() => {});
+      released += 1;
+      continue;
+    }
+
+    let session;
+    try {
+      session = await getStripe().checkout.sessions.retrieve(draft.stripeSessionId);
+    } catch (err) {
+      console.error('[BookingCleanup] Could not retrieve Checkout Session', draft.stripeSessionId, err.message);
+      continue; // retry next sweep
+    }
+
+    if (['open', 'processing', 'incomplete'].includes(session.status)) {
+      // Session still valid / payment in flight — leave the hold alone.
+      continue;
+    }
+
+    if (session.payment_status === 'paid' && session.payment_intent) {
+      // Session completed but its webhook never landed — materialize now.
+      try {
+        const result = await materializeHold(draft.id, session, session.payment_intent);
+        if (result.ok) {
+          materialized += 1;
+        } else if (result.oversold) {
+          // Capacity gone — refund.
+          const { createRefund: refund } = require('./stripeHelpers');
+          await refund(session.payment_intent).catch((err) => {
+            console.error('[BookingCleanup] Refund failed for oversold hold', draft.id, err.message);
+          });
+          released += 1;
+        }
+      } catch (err) {
+        console.error('[BookingCleanup] Materialize failed for', draft.id, err.message);
+      }
+      continue;
+    }
+
+    // Session completed without payment (shouldn't happen) or expired.
+    await releaseHold(draft.id, 'expired').catch(() => {});
+    released += 1;
+  }
+
+  console.log(`[BookingCleanup] Hold sweep: ${stale.length} stale → ${materialized} materialized, ${released} released`);
+  return { stale: stale.length, materialized, released };
+}
+
+module.exports = { cancelStalePendingBookings, expireBooking, autoCompleteBookings, expireCheckoutHolds };

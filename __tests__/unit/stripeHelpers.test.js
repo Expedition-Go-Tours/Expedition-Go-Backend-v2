@@ -62,10 +62,10 @@ const mockBooking = {
   customerId: 'customer-1',
   tourId: 'tour-1',
   status: 'CONFIRMED',
-  total: 385,
+  grossAmount: 385,
   currency: 'USD',
   commissionRate: 0.15,
-  commissionAmount: 57.75,
+  platformCommission: 57.75,
   supplierPayout: 327.25,
   stripePaymentIntentId: 'pi_123',
   subtotal: 350,
@@ -75,7 +75,7 @@ const mockBooking = {
   paymentStatus: 'SUCCEEDED',
   paidAt: new Date(),
   travelers: { adults: 2, children: 0, infants: 0 },
-  selectedDate: new Date('2026-07-01'),
+  travelDate: new Date('2026-07-01'),
   selectedTime: null,
   cancellationReason: null,
   customer: {
@@ -201,6 +201,7 @@ describe('processStripeWebhook', () => {
         supplierProfile: { update: jest.fn().mockResolvedValue({}) },
         tour: { update: jest.fn().mockResolvedValue({}) },
         specialOffer: { update: jest.fn().mockResolvedValue({}) },
+        checkoutDraft: { findUnique: jest.fn().mockResolvedValue(null), update: jest.fn().mockResolvedValue({}) },
       };
       await cb(tx);
     });
@@ -256,6 +257,7 @@ describe('processStripeWebhook', () => {
       supplierProfile: { update: jest.fn().mockResolvedValue({}) },
       tour: { update: jest.fn().mockResolvedValue({}) },
       specialOffer: { update: jest.fn().mockResolvedValue({}) },
+      checkoutDraft: { findUnique: jest.fn().mockResolvedValue(null), update: jest.fn().mockResolvedValue({}) },
     };
     prisma.$transaction.mockImplementation(async (cb) => {
       await cb(tx);

@@ -10,6 +10,15 @@ jest.mock('../../utils/prismaClient', () => ({
   cartItem: { deleteMany: jest.fn() },
   supplierProfile: { findFirst: jest.fn() },
   payout: { create: jest.fn(), updateMany: jest.fn(), findMany: jest.fn() },
+  payoutRequestItem: {
+    findMany: jest.fn().mockResolvedValue([]),
+    deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+  },
+  payoutRequest: {
+    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    update: jest.fn().mockResolvedValue({}),
+  },
+  checkoutDraft: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
   $transaction: jest.fn(),
   $queryRawUnsafe: jest.fn(),
 }));
@@ -69,6 +78,12 @@ jest.mock('../../utils/getConfig', () => jest.fn((key, def) => Promise.resolve(d
 
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
 
+jest.mock('../../utils/checkoutHold', () => ({
+  acquireHold: jest.fn(),
+  releaseHold: jest.fn(),
+  HOLD_MINUTES: 30,
+}));
+
 jest.mock('../../utils/availabilityCalendar', () => ({
   buildAvailabilityCalendar: jest.fn(() => Promise.resolve([])),
 }));
@@ -80,6 +95,7 @@ const { enqueueEvent, enqueueNotification } = require('../../utils/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy } = require('../../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../../utils/tourHelpers');
 const { createPaymentIntent, createCheckoutSession, calculateCommission, createRefund, getStripe } = require('../../utils/stripeHelpers');
+const { acquireHold, releaseHold } = require('../../utils/checkoutHold');
 const { logActivity } = require('../../utils/auditLogger');
 
 const controller = require('../../controllers/expeditionController');
@@ -176,6 +192,7 @@ describe('expeditionController', () => {
     createCheckoutSession.mockResolvedValue({ id: 'cs_mock_123', url: 'https://checkout.stripe.com/c/pay/cs_mock_123' });
     getStripe().paymentIntents.confirm.mockResolvedValue({ id: 'pi_mock_123', status: 'succeeded', client_secret: 'cs_mock_123' });
     getStripe().paymentIntents.retrieve.mockResolvedValue({ id: 'pi_mock_123', status: 'succeeded', client_secret: 'cs_mock_123' });
+    prisma.booking.findFirst.mockResolvedValue(null);
     prisma.booking.updateMany.mockResolvedValue({ count: 0 });
     calculateCommission.mockResolvedValue({ rate: 0.15, amount: 15.75, supplierPayout: 89.25 });
     cache.getOrSet.mockImplementation((key, fn) => fn());
@@ -478,7 +495,7 @@ describe('expeditionController', () => {
 
   describe('calculateCheckout', () => {
     it('returns pricing breakdown on valid request', async () => {
-      req.body = { tourId: 'tour-1', selectedDate: '2026-08-15', travelers: { adults: 2, children: 1 } };
+      req.body = { tourId: 'tour-1', travelDate: '2026-08-15', travelers: { adults: 2, children: 1 } };
 
       await controller.calculateCheckout(req, res, next);
 
@@ -503,7 +520,7 @@ describe('expeditionController', () => {
     });
 
     it('returns 404 when tour not found', async () => {
-      req.body = { tourId: 'non-existent', selectedDate: '2026-08-15', travelers: { adults: 1 } };
+      req.body = { tourId: 'non-existent', travelDate: '2026-08-15', travelers: { adults: 1 } };
       prisma.tour.findFirst.mockResolvedValue(null);
 
       await controller.calculateCheckout(req, res, next);
@@ -512,7 +529,7 @@ describe('expeditionController', () => {
     });
 
     it('returns 400 when tour is not available on date', async () => {
-      req.body = { tourId: 'tour-1', selectedDate: '2026-08-15', travelers: { adults: 1 } };
+      req.body = { tourId: 'tour-1', travelDate: '2026-08-15', travelers: { adults: 1 } };
       checkTourAvailability.mockResolvedValue({ available: false, reason: 'No availability on selected date' });
 
       await controller.calculateCheckout(req, res, next);
@@ -521,7 +538,7 @@ describe('expeditionController', () => {
     });
 
     it('returns 400 when spots are insufficient', async () => {
-      req.body = { tourId: 'tour-1', selectedDate: '2026-08-15', travelers: { adults: 20 } };
+      req.body = { tourId: 'tour-1', travelDate: '2026-08-15', travelers: { adults: 20 } };
       checkTourAvailability.mockResolvedValue({ available: true, availableSpots: 5 });
 
       await controller.calculateCheckout(req, res, next);
@@ -537,25 +554,27 @@ describe('expeditionController', () => {
     const bookingDate = () => new Date(Date.now() + 45 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const validBookingBody = {
       tourId: 'tour-1',
-      selectedDate: bookingDate(),
+      travelDate: bookingDate(),
       travelers: { adults: 2, children: 1, phoneNumber: '+1-555-123-4567', location: 'Cape Town' },
       paymentTiming: 'now',
     };
 
-    it('creates booking and redirects to hosted Checkout (pay now)', async () => {
+    it('creates hold and redirects to hosted Checkout (pay now)', async () => {
       req.body = validBookingBody;
+      acquireHold.mockResolvedValue({ ok: true, draftId: 'draft_123', expiresAt: new Date(Date.now() + 1800000) });
 
       await controller.confirmBooking(req, res, next);
 
+      expect(acquireHold).toHaveBeenCalled();
       expect(createCheckoutSession).toHaveBeenCalledWith(
-        expect.objectContaining({ bookingId: 'et-1' }),
+        expect.objectContaining({ bookingId: 'draft_123' }),
       );
       expect(createPaymentIntent).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(201);
       const jsonArg = res.json.mock.calls[0][0];
       expect(jsonArg.data.checkout).toEqual(expect.objectContaining({ url: 'https://checkout.stripe.com/c/pay/cs_mock_123' }));
-      expect(enqueueNotification).toHaveBeenCalled();
-      expect(enqueueEvent).toHaveBeenCalled();
+      // Pay-now no longer notifies at creation — notifications fire on payment settlement.
+      expect(enqueueNotification).not.toHaveBeenCalled();
     });
 
     it('captures a PaymentIntent for reserve-now-pay-later', async () => {
@@ -647,19 +666,15 @@ describe('expeditionController', () => {
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
 
-    it('releases the booking with a 500 when the Checkout Session cannot be created', async () => {
+    it('releases the hold with a 500 when the Checkout Session cannot be created', async () => {
       req.body = validBookingBody;
+      acquireHold.mockResolvedValue({ ok: true, draftId: 'draft_123', expiresAt: new Date(Date.now() + 1800000) });
       createCheckoutSession.mockRejectedValue(new Error('stripe is down'));
-      prisma.booking.updateMany.mockResolvedValue({ count: 1 });
+      releaseHold.mockResolvedValue(true);
 
       await controller.confirmBooking(req, res, next);
 
-      expect(prisma.booking.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ status: 'PENDING', paymentStatus: 'PENDING' }),
-          data: expect.objectContaining({ status: 'CANCELLED', paymentStatus: 'FAILED', cancellationReason: 'Checkout session could not be created' }),
-        }),
-      );
+      expect(releaseHold).toHaveBeenCalledWith('draft_123', 'expired');
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 500 }));
       expect(res.status).not.toHaveBeenCalledWith(201);
     });
@@ -900,12 +915,12 @@ describe('expeditionController', () => {
       status: 'CONFIRMED',
       paymentStatus: 'SUCCEEDED',
       travelers: { adults: 2, children: 0, infants: 0 },
-      selectedDate: new Date('2026-08-15'),
+      travelDate: new Date('2026-08-15'),
       subtotal: 100,
       taxes: 0,
       fees: 5,
       discounts: 0,
-      total: 105,
+      grossAmount: 105,
       currency: 'USD',
       createdAt: new Date(),
       tour: {
@@ -987,8 +1002,8 @@ describe('expeditionController', () => {
       status: 'CONFIRMED',
       paymentStatus: 'SUCCEEDED',
       travelers: { adults: 2 },
-      selectedDate: new Date('2026-08-15'),
-      total: 105,
+      travelDate: new Date('2026-08-15'),
+      grossAmount: 105,
       currency: 'USD',
       createdAt: new Date(),
       tour: {
@@ -1052,8 +1067,8 @@ describe('expeditionController', () => {
       source: 'EXPEDITION',
       status: 'CONFIRMED',
       paymentStatus: 'SUCCEEDED',
-      selectedDate: futureDate,
-      total: 105,
+      travelDate: futureDate,
+      grossAmount: 105,
       stripePaymentIntentId: 'pi_mock_123',
       tour: {
         id: 'tour-1',
@@ -1107,7 +1122,7 @@ describe('expeditionController', () => {
     it('returns 400 when within cancellation window', async () => {
       const soonDate = new Date();
       soonDate.setHours(soonDate.getHours() + 1);
-      const soonBooking = { ...cancelBookingData, selectedDate: soonDate };
+      const soonBooking = { ...cancelBookingData, travelDate: soonDate };
       req.params.id = 'booking-1';
       req.body = {};
       prisma.booking.findFirst.mockResolvedValue(soonBooking);
@@ -1127,7 +1142,7 @@ describe('expeditionController', () => {
     it('cancels an all-sales-final booking without issuing a refund', async () => {
       const finalSaleBooking = {
         ...cancelBookingData,
-        total: 105,
+        grossAmount: 105,
         tour: {
           ...cancelBookingData.tour,
           bookingAndTickets: {

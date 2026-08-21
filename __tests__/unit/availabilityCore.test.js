@@ -486,7 +486,7 @@ describe('buildAvailabilityCalendar', () => {
 
   it('reflects traveler bookings in slot remaining counts', async () => {
     prisma.booking.findMany.mockResolvedValue([
-      { selectedDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 3 } },
+      { travelDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 3 } },
     ]);
     const calendar = await buildAvailabilityCalendar('t1', perPersonTour.schedulesAndPricing, MONDAY, MONDAY, FIXED_TODAY);
     const slot = calendar[0].timeSlots.find((s) => s.time === '10:00');
@@ -523,7 +523,7 @@ describe('buildAvailabilityCalendar', () => {
 
   it('reports groups for perGroup tours with unit-aware day capacity', async () => {
     prisma.booking.findMany.mockResolvedValue([
-      { selectedDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 4 } },
+      { travelDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 4 } },
     ]);
     const calendar = await buildAvailabilityCalendar('t2', perGroupTour.schedulesAndPricing, MONDAY, MONDAY, FIXED_TODAY);
     const slot = calendar[0].timeSlots[0];
@@ -542,9 +542,9 @@ describe('buildAvailabilityCalendar', () => {
     // 3 groups of 1 traveler each = every group slot taken. Under the old
     // traveler-based math this was 3/150 (Available); group-based it is FULL.
     prisma.booking.findMany.mockResolvedValue([
-      { selectedDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 1 } },
-      { selectedDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 1 } },
-      { selectedDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 1 } },
+      { travelDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 1 } },
+      { travelDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 1 } },
+      { travelDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 1 } },
     ]);
     const calendar = await buildAvailabilityCalendar('t2', perGroupTour.schedulesAndPricing, MONDAY, MONDAY, FIXED_TODAY);
     expect(calendar[0].booked).toBe(3);
@@ -563,7 +563,7 @@ describe('buildAvailabilityCalendar', () => {
       { date: new Date(`${MONDAY}T00:00:00.000Z`), status: 'AVAILABLE', capacity: 2, timeSlotOverrides: null },
     ]);
     prisma.booking.findMany.mockResolvedValue([
-      { selectedDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 4 } },
+      { travelDate: new Date(`${MONDAY}T00:00:00.000Z`), selectedTime: '10:00', travelers: { adults: 4 } },
     ]);
     const calendar = await buildAvailabilityCalendar('t2', perGroupTour.schedulesAndPricing, MONDAY, MONDAY, FIXED_TODAY);
     // Day limit (2 groups) replaces the template's 3 groups/slot × 1 slot.

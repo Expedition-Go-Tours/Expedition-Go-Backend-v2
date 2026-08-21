@@ -103,7 +103,7 @@ describe('findPickupAreaForAddress', () => {
 
   test('matches a location-only area by proximity to its saved point', () => {
     const pointAreas = [{ name: 'Kumasi', lat: 6.6871, lng: -1.6219, exclusions: [] }];
-    const near = findPickupAreaForAddress({ name: 'Some Rd', lat: 6.6971, lng: -1.6219 }, pointAreas);
+    const near = findPickupAreaForAddress({ name: 'Some Rd', lat: 6.6921, lng: -1.6219 }, pointAreas);
     expect(near && near.name).toBe('Kumasi');
   });
 
@@ -169,7 +169,7 @@ describe('resolvePickupSelection', () => {
 
   test('accepts a customer address near a location-only area by proximity', () => {
     const result = resolvePickupSelection(
-      { mode: 'area', address: { name: 'Some Cbd Address', lat: 6.7, lng: -1.62 } },
+      { mode: 'area', address: { name: 'Some Cbd Address', lat: 6.688, lng: -1.622 } },
       { pickupType: 'area', pickupAreas: [{ name: 'Kumasi', lat: 6.6871, lng: -1.6219, time: '07:30' }] }
     );
     expect(result.ok).toBe(true);

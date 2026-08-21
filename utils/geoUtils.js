@@ -14,7 +14,7 @@
  * LOCATION_AREA_RADIUS_M (src/lib/pickupZone.ts) — server and client
  * verdicts must never disagree.
  */
-const LOCATION_AREA_RADIUS_M = 5000;
+const LOCATION_AREA_RADIUS_M = 1000;
 
 /**
  * Ray-casting point-in-polygon test.
@@ -78,13 +78,15 @@ function findPickupAreaForAddress(address, pickupAreas) {
     const hasShape = !!polygon && polygon.length >= 3;
 
     if (!hasShape) {
-      // Legacy area without a drawn geoshape: match the saved location point
-      // by proximity, or fall back to the old exact-name match for areas
-      // without coordinates so pre-geoshape products keep working.
+      // Radius-based or legacy area without a drawn geoshape: match the saved
+      // location point by proximity using the per-area radiusKm (converted to
+      // meters), falling back to the default LOCATION_AREA_RADIUS_M for legacy
+      // areas that don't have radiusKm set.
+      const radiusM = Number.isFinite(area.radiusKm) ? area.radiusKm * 1000 : LOCATION_AREA_RADIUS_M;
       if (
         Number.isFinite(area.lat) &&
         Number.isFinite(area.lng) &&
-        distanceMeters(address.lat, address.lng, area.lat, area.lng) <= LOCATION_AREA_RADIUS_M
+        distanceMeters(address.lat, address.lng, area.lat, area.lng) <= radiusM
       ) {
         return area;
       }

@@ -192,6 +192,29 @@ async function processEmailJob(job) {
     return;
   }
 
+  // ── Finance v2: payout request + dispute emails ───────────────────────
+  if (['payout-request-submitted', 'payout-request-approved', 'payout-completed'].includes(job.type)) {
+    const request = await prisma.payoutRequest.findUnique({
+      where: { id: job.payoutRequestId },
+      include: { supplier: { select: { name: true, email: true } } },
+    });
+    if (!request) throw new Error(`PayoutRequest ${job.payoutRequestId} not found`);
+    await emailService.sendFinancePayoutRequestEmail(job.type, request);
+    return;
+  }
+  if (job.type === 'dispute-opened') {
+    const dispute = await prisma.dispute.findUnique({
+      where: { id: job.disputeId },
+      include: {
+        supplier: { select: { name: true, email: true } },
+        booking: { select: { bookingNumber: true, tour: { select: { title: true } } } },
+      },
+    });
+    if (!dispute) throw new Error(`Dispute ${job.disputeId} not found`);
+    await emailService.sendDisputeOpenedEmail(dispute);
+    return;
+  }
+
   switch (job.type) {
     case 'booking-confirmation': {
       const booking = await prisma.booking.findUnique({
@@ -505,6 +528,16 @@ function registerWorkers() {
       case 'auto-complete-bookings': {
         const { autoCompleteBookings } = require('./bookingCleanup');
         await autoCompleteBookings();
+        break;
+      }
+      case 'expire-checkout-holds': {
+        const { expireCheckoutHolds } = require('./bookingCleanup');
+        await expireCheckoutHolds();
+        break;
+      }
+      case 'earnings-eligibility-sweep': {
+        const { sweepEarningsEligibility } = require('./payoutCycles');
+        await sweepEarningsEligibility();
         break;
       }
       case 'charge-pay-later-bookings': {

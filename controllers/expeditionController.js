@@ -11,8 +11,10 @@ const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTou
 const { resolvePickupSelection } = require('../utils/geoUtils');
 const { validatePassengerMix } = require('../utils/passengerMix');
 const { createPaymentIntent, createCheckoutSession, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
+const { acquireHold, releaseHold, HOLD_MINUTES } = require('../utils/checkoutHold');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const getConfig = require('../utils/getConfig');
+const { detachBookingFromActiveRequests } = require('../utils/financeHelpers');
 const { logActivity } = require('../utils/auditLogger');
 const { shouldCountTourView } = require('../utils/viewTracking');
 const eventEmitter = require('../utils/eventEmitter');
@@ -969,13 +971,13 @@ exports.getTourAvailability = catchAsync(async (req, res, next) => {
 // ================================
 
 exports.calculateCheckout = catchAsync(async (req, res, next) => {
-  const { tourId, selectedDate, travelers, promoCode } = req.body;
+  const { tourId, travelDate, travelers, promoCode } = req.body;
 
-  if (!tourId || !selectedDate || !travelers) {
-    return next(new AppError('tourId, selectedDate, and travelers are required', 400));
+  if (!tourId || !travelDate || !travelers) {
+    return next(new AppError('tourId, travelDate, and travelers are required', 400));
   }
 
-  const cacheKey = `${CACHE_PREFIX}checkout:${crypto.createHash('md5').update(JSON.stringify({ tourId, selectedDate, travelers, promoCode: promoCode || null })).digest('hex')}`;
+  const cacheKey = `${CACHE_PREFIX}checkout:${crypto.createHash('md5').update(JSON.stringify({ tourId, travelDate, travelers, promoCode: promoCode || null })).digest('hex')}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
     const tour = await prisma.tour.findFirst({
@@ -1002,7 +1004,7 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
       throw new AppError(mixResult.errors[0], 400);
     }
 
-    const availability = await checkTourAvailability(tourId, selectedDate, null);
+    const availability = await checkTourAvailability(tourId, travelDate, null);
     if (!availability.available) {
       throw new AppError(availability.reason || 'Tour is not available on the selected date', 400);
     }
@@ -1012,7 +1014,7 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
       throw new AppError(`Only ${availability.availableSpots} spots available, but ${totalTravelers} travelers requested`, 400);
     }
 
-    const pricing = await calculateTourPrice(tour, travelers, selectedDate, null, null, req.user?.id, promoCode || null)
+    const pricing = await calculateTourPrice(tour, travelers, travelDate, null, null, req.user?.id, promoCode || null)
       .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
 
     if (!pricing.success) {
@@ -1048,7 +1050,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
   const {
     tourId,
-    selectedDate,
+    travelDate,
     selectedTime,
     travelers,
     specialRequests,
@@ -1057,8 +1059,8 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     leadTraveler,
   } = req.body;
 
-  if (!tourId || !selectedDate || !travelers) {
-    return next(new AppError('tourId, selectedDate, and travelers are required', 400));
+  if (!tourId || !travelDate || !travelers) {
+    return next(new AppError('tourId, travelDate, and travelers are required', 400));
   }
   if (paymentTiming !== 'now' && paymentTiming !== 'later') {
     return next(new AppError("paymentTiming must be 'now' or 'later'", 400));
@@ -1078,7 +1080,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError('A valid leadTraveler.email is required when a lead traveler name is provided', 400));
   }
 
-  const travelerValidation = validateTravelerInfo(travelers);
+  const travelerValidation = validateTravelerInfo(travelers, pickup ? { requireLocation: false } : undefined);
   if (!travelerValidation.isValid) {
     return next(new AppError(`Traveler information: ${travelerValidation.errors.join(', ')}`, 400));
   }
@@ -1122,7 +1124,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError(mixResult.errors[0], 400));
   }
 
-  const pricing = await calculateTourPrice(tour, travelers, selectedDate, selectedTime || null, null, customerId, req.body.promoCode || null)
+  const pricing = await calculateTourPrice(tour, travelers, travelDate, selectedTime || null, null, customerId, req.body.promoCode || null)
     .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
 
   if (!pricing.success) {
@@ -1132,7 +1134,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError('Booking total must be greater than 0', 400));
   }
 
-  const availability = await checkTourAvailability(tourId, selectedDate, { selectedTime, travelers });
+  const availability = await checkTourAvailability(tourId, travelDate, { selectedTime, travelers });
   if (!availability.available) {
     return next(new AppError(availability.reason || 'Tour is not available on the selected date', 400));
   }
@@ -1154,7 +1156,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
   const effectiveCutoff = resolveSlotCutoffHours(parsedBt, selectedTime, minAdvanceHours);
   const tourTz = getTourTimezone(parsedBt);
 
-  const dateAt = new Date(selectedDate);
+  const dateAt = new Date(travelDate);
   let startAt;
   if (selectedTime && perSlotCutoff) {
     // Anchor the cutoff clock to the slot's local wall clock in the tour's
@@ -1181,7 +1183,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     where: {
       customerId,
       tourId,
-      selectedDate: new Date(selectedDate),
+      travelDate: new Date(travelDate),
       ...(selectedTime ? { selectedTime } : {}),
       status: { in: ['PENDING', 'CONFIRMED'] },
     },
@@ -1219,7 +1221,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         // rebooking the same tour on a different date creates a fresh PI
         // instead of colliding (via the derived idempotency key) with a
         // previously cancelled one.
-        selectedDate: typeof selectedDate === 'string' ? selectedDate.slice(0, 10) : String(selectedDate).slice(0, 10),
+        travelDate: typeof travelDate === 'string' ? travelDate.slice(0, 10) : String(travelDate).slice(0, 10),
         ...(selectedTime ? { selectedTime } : {}),
       };
       paymentIntent = await createPaymentIntent({
@@ -1271,7 +1273,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     const evalResult = await evaluateBookingAvailability(
       tx,
       tour,
-      String(selectedDate).slice(0, 10),
+      String(travelDate).slice(0, 10),
       selectedTime || null,
       travelers
     );
@@ -1288,15 +1290,15 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         customerId,
         tourId,
         source: 'EXPEDITION',
-        selectedDate: new Date(selectedDate),
+        travelDate: new Date(travelDate),
         selectedTime: selectedTime || null,
         travelers,
         subtotal: pricing.subtotal,
-        total: pricing.total,
+        grossAmount: pricing.total,
         discounts: pricing.discount || 0,
         currency: pricing.currency,
         commissionRate: commission.rate,
-        commissionAmount: commission.amount,
+        platformCommission: commission.amount,
         supplierPayout: commission.supplierPayout,
          specialRequests,
          ...(pickupSnapshot && { pickup: pickupSnapshot }),
@@ -1339,7 +1341,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     // Clean up any cart items for this tour+date+customer
     prisma.cartItem
       .deleteMany({
-        where: { customerId, tourId, selectedDate: new Date(selectedDate) },
+        where: { customerId, tourId, travelDate: new Date(travelDate) },
       })
       .catch(() => {});
 
@@ -1391,81 +1393,72 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     });
   }
 
-  // Pay now: redirect the customer to Stripe's hosted Checkout page. The
-  // booking is already committed (PENDING) — capacity is held until the
-  // checkout.session.completed webhook settles it or the session expires
-  // (checkout.session.expired webhook / stale-PENDING cleanup cancel it).
+  // Pay now: acquire an atomic seat hold, then redirect the customer to
+  // Stripe's hosted Checkout page. NO Booking row exists until the
+  // checkout.session.completed webhook materializes one from the hold.
+  // Abandoned sessions are released by the expired-session webhook or
+  // the expire-checkout-holds sweep.
+  const commission = await calculateCommission(pricing.total, tour.supplier.supplierProfile);
+  let holdResult;
+  try {
+    holdResult = await acquireHold({
+      customerId,
+      tourId,
+      tour,
+      travelDate: new Date(travelDate),
+      selectedTime,
+      travelers,
+      payload: {
+        travelers,
+        selectedTime,
+        pickup,
+        specialRequests,
+        leadTraveler: { name: leadName, email: leadEmail, phone: leadPhone },
+        promoCode: req.body.promoCode || null,
+      },
+      pricing: {
+        subtotal: pricing.subtotal,
+        total: pricing.total,
+        discount: pricing.discount || 0,
+        currency: pricing.currency,
+      },
+      commission,
+    });
+  } catch (err) {
+    console.error('[Expedition] Failed to acquire hold:', err.message);
+    return next(new AppError(err.message || 'Could not reserve your spot. Please try again.', 409));
+  }
+  if (!holdResult.ok) {
+    return next(new AppError(holdResult.reason || 'No longer available', 409));
+  }
+
   let checkout;
   try {
     checkout = await createCheckoutSession({
       amount: Math.round(pricing.total * 100),
       currency: pricing.currency,
-      bookingId: result.id,
+      bookingId: holdResult.draftId, // draft id goes into metadata + client_reference_id
       tourTitle: tour.title,
       customerEmail: req.user?.email,
+      expiresAt: holdResult.expiresAt,
+      // Stripe replaces {CHECKOUT_SESSION_ID} with the real session id after creation.
+      successPath: '/booking/confirmation?session_id={CHECKOUT_SESSION_ID}',
     });
   } catch (err) {
     console.error('[Expedition] Failed to create Checkout Session:', err.message);
-    // Release the booking so the customer can retry (the dedup guard only
-    // blocks PENDING/CONFIRMED bookings).
-    await prisma.booking.updateMany({
-      where: { id: result.id, status: 'PENDING', paymentStatus: 'PENDING' },
-      data: {
-        status: 'CANCELLED',
-        paymentStatus: 'FAILED',
-        cancellationReason: 'Checkout session could not be created',
-        cancelledAt: new Date(),
-      },
-    });
+    // Release the hold so the customer can retry.
+    await releaseHold(holdResult.draftId, 'expired').catch(() => {});
     return next(new AppError('Payment could not be started. Please try again.', 500));
   }
 
-  // Persist the session id so the stale-PENDING cleanup can reconcile
-  // abandoned sessions (open -> skip, expired -> cancel).
-  prisma.booking
+  // Persist the session id on the draft so the sweep can reconcile
+  // abandoned sessions (open -> skip, completed -> materialize, expired -> release).
+  prisma.checkoutDraft
     .updateMany({
-      where: { id: result.id },
-      data: { stripeCheckoutSessionId: checkout.id },
+      where: { id: holdResult.draftId, status: 'HOLDING' },
+      data: { stripeSessionId: checkout.id },
     })
     .catch((err) => console.error('[Expedition] Failed to store Checkout Session id:', err.message));
-
-  // Clean up any cart items for this tour+date+customer
-  prisma.cartItem
-    .deleteMany({
-      where: { customerId, tourId, selectedDate: new Date(selectedDate) },
-    })
-    .catch(() => {});
-
-  // Notify supplier immediately
-  enqueueNotification({
-    userId: tour.supplierId,
-    type: 'BOOKING_CONFIRMED',
-    title: 'New Expedition Booking',
-    message: `A new booking (${result.bookingNumber}) was made through Expedition Go Tours for "${tour.title}"`,
-    data: { bookingId: result.id, source: 'expedition' },
-  });
-
-  // Notify expedition admins
-  notifyAdmin({
-    type: 'BOOKING_CREATED',
-    title: 'New Expedition Booking',
-    message: `Booking #${result.bookingNumber} — $${parseFloat(pricing.total).toFixed(2)} for "${tour.title}" — payment processing`,
-    data: { bookingId: result.id, tourTitle: tour.title, total: pricing.total, source: 'expedition' },
-  }).catch(() => {});
-
-  enqueueEvent({
-    name: 'expedition.booking_created',
-    userId: customerId,
-    req,
-    resource: 'Booking',
-    resourceId: result.id,
-    properties: {
-      tourId,
-      total: pricing.total,
-      currency: pricing.currency,
-      travelers: totalTravelers,
-    },
-  });
 
   // Invalidate checkout cache so availability is re-checked on next request
   cache.invalidateKeys([`${CACHE_PREFIX}checkout:*`]).catch(() => {});
@@ -1473,7 +1466,6 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
   res.status(201).json({
     status: 'success',
     data: {
-      booking: result,
       checkout: { id: checkout.id, url: checkout.url },
       message: 'Redirecting to secure payment…',
     },
@@ -1654,6 +1646,63 @@ exports.getBooking = catchAsync(async (req, res, next) => {
   res.status(200).json({ status: 'success', data: { booking } });
 });
 
+/**
+ * GET /expedition/bookings/by-session/:sessionId
+ *
+ * Returns the checkout status for a pay-now session. The frontend polls this
+ * after Stripe redirects back until the webhook materializes a Booking.
+ *
+ * Response shapes:
+ *  - { status: 'HOLDING' }                          — webhook hasn't landed yet
+ *  - { status: 'PAID', booking: { … } }             — materialized
+ *  - { status: 'EXPIRED' }                          — abandoned / swept
+ *  - { status: 'REFUNDED' }                         — capacity lost, money returned
+ */
+exports.getBookingBySession = catchAsync(async (req, res, next) => {
+  const { sessionId } = req.params;
+  const customerId = req.user.id;
+
+  if (!sessionId) return next(new AppError('sessionId is required', 400));
+
+  const draft = await prisma.checkoutDraft.findFirst({
+    where: { stripeSessionId: sessionId, customerId },
+    select: {
+      id: true,
+      status: true,
+      bookingId: true,
+      expiresAt: true,
+      createdAt: true,
+    },
+  });
+
+  if (!draft) return next(new AppError('Checkout session not found', 404));
+
+  // If materialized, load the booking for the frontend.
+  let booking = null;
+  if (draft.status === 'PAID' && draft.bookingId) {
+    booking = await prisma.booking.findUnique({
+      where: { id: draft.bookingId },
+      include: {
+        tour: {
+          include: {
+            supplier: { select: { id: true, name: true, photoURL: true } },
+          },
+        },
+      },
+    });
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      status: draft.status,
+      expiresAt: draft.expiresAt,
+      createdAt: draft.createdAt,
+      booking,
+    },
+  });
+});
+
 exports.cancelBooking = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { reason } = req.body;
@@ -1677,7 +1726,7 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
   const result = await prisma.$transaction(async (tx) => {
     const updated = await tx.booking.update({
       where: { id },
-      data: { status: 'CANCELLED', cancellationReason: reason || null, cancelledAt: new Date() },
+      data: { status: 'CANCELLED', cancellationReason: reason || null, cancelledAt: new Date(), payoutStatus: 'CANCELLED' },
     });
 
     if (booking.paymentStatus === 'SUCCEEDED' && refundAmount > 0) {
@@ -1700,6 +1749,10 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
         data: { status: 'CANCELLED', processedAt: new Date() },
       });
     }
+
+    // Finance v2: detach from any active payout request so the supplier's
+    // pending request total no longer includes this booking.
+    await detachBookingFromActiveRequests(tx, id);
 
     // Decrement special offer spotsSold if an offer was applied
     if (booking.appliedOfferId) {
@@ -1865,7 +1918,7 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
     return next(new AppError('Booking not found or not yours', 404));
   }
 
-  if (status === 'COMPLETED' && new Date(booking.selectedDate) >= new Date()) {
+  if (status === 'COMPLETED' && new Date(booking.travelDate) >= new Date()) {
     return next(new AppError('Cannot mark a future booking as COMPLETED', 400));
   }
 

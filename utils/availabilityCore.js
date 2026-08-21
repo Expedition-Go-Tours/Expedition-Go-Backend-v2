@@ -335,10 +335,16 @@ function computeStatus(bookedCount, totalCapacity, overrideStatus, operating, li
  * checkTourAvailability so the pre-check and the point-of-charge can never
  * disagree. `db` is the transaction client.
  *
+ * Options (5th param):
+ *   excludeDraftId — when set, the active hold for this draft is excluded from
+ *   the hold count. Used during materialization so converting hold→booking
+ *   doesn't double-count the same seats.
+ *
  * Returns { ok, reason?, availableSpots, groupsRemaining, maxCapacity,
  * currentBookings, isPerGroup, maxGroups, daySlots }.
  */
-async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, travelers) {
+async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, travelers, options = {}) {
+  const { excludeDraftId = null } = options;
   const parsed = parseBlob(tour.schedulesAndPricing);
   const dateObj = toUtcDate(dateKey);
   if (!dateObj) return { ok: false, reason: 'Invalid date' };
@@ -362,15 +368,35 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
          THEN ${TRAVELER_COUNT_SQL} ELSE 0 END), 0)::int AS "currentBookings",
        COALESCE(COUNT(*) FILTER (WHERE status IN (${statusLiteral})), 0)::int AS "groupCount"
      FROM "Booking"
-     WHERE "tourId" = $1 AND "selectedDate" = $2::date
+     WHERE "tourId" = $1 AND "travelDate" = $2::date
        ${selectedTime && !dayWide ? 'AND "selectedTime" = $3' : ''}`,
     tour.id,
     dateKey,
     ...(selectedTime && !dayWide ? [selectedTime] : [])
   );
 
-  const currentBookings = parseInt(counts?.currentBookings, 10) || 0;
-  const groupCount = parseInt(counts?.groupCount, 10) || 0;
+  // Active holds (CheckoutDraft status='HOLDING', unexpired) also occupy
+  // capacity. A materialization webhook may exclude its own hold via
+  // `excludeDraftId` so conversion from hold→booking doesn't double-count.
+  const holdWhereExtra = excludeDraftId ? `AND "id" != '${excludeDraftId}'` : '';
+  const [holds] = await db.$queryRawUnsafe(
+    `SELECT
+       COALESCE(SUM("seats"), 0)::int AS "holdSeats",
+       COALESCE(COUNT(*), 0)::int    AS "holdGroups"
+     FROM "CheckoutDraft"
+     WHERE "tourId" = $1 AND "selectedDate" = $2::date
+       AND "status" = 'HOLDING' AND "expiresAt" > NOW()
+       ${selectedTime && !dayWide ? `AND "selectedTime" = $3` : ''}
+       ${holdWhereExtra}`,
+    tour.id,
+    dateKey,
+    ...(selectedTime && !dayWide ? [selectedTime] : [])
+  );
+
+  const currentBookings = (parseInt(counts?.currentBookings, 10) || 0)
+                        + (parseInt(holds?.holdSeats, 10) || 0);
+  const groupCount = (parseInt(counts?.groupCount, 10) || 0)
+                   + (parseInt(holds?.holdGroups, 10) || 0);
 
   const closedDate = isClosedDate(parsed, dateKey);
   const operating = isOperatingDay(parsed, dateObj);

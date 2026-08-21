@@ -62,8 +62,8 @@ async function notifyCustomerToCompletePayment(booking) {
     type: 'payment-unsuccessful',
     bookingId: booking.id,
     data: {
-      amount: booking.total,
-      deadline: booking.selectedDate,
+      amount: booking.grossAmount,
+      deadline: booking.travelDate,
     },
   }).catch((err) => console.error('[PayLater] Payment action email failed:', err.message));
 
@@ -81,8 +81,8 @@ async function notifyPaymentFailed(booking, reason) {
     type: 'payment-unsuccessful',
     bookingId: booking.id,
     data: {
-      amount: booking.total,
-      deadline: booking.selectedDate,
+      amount: booking.grossAmount,
+      deadline: booking.travelDate,
       failureReason: reason,
     },
   }).catch((err) => console.error('[PayLater] Payment failed email failed:', err.message));
@@ -106,7 +106,7 @@ async function notifyPaymentFailed(booking, reason) {
   notifyAdmin({
     type: 'PAYMENT_COLLECTION_FAILED',
     title: 'Pay-later payment collection failed',
-    message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.total).toFixed(2)} for "${booking.tour?.title || 'a tour'}". Card charge failed: ${reason}`,
+    message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.grossAmount).toFixed(2)} for "${booking.tour?.title || 'a tour'}". Card charge failed: ${reason}`,
     data: { bookingId: booking.id },
   }).catch(() => {});
 }
@@ -129,7 +129,7 @@ async function cancelBooking(booking, reason) {
     bookingId: booking.id,
     data: {
       cancelledAt: new Date().toISOString(),
-      cancellationFee: booking.total,
+      cancellationFee: booking.grossAmount,
       refundAmount: 0,
     },
   }).catch((err) => console.error('[PayLater] Cancellation email failed:', err.message));
@@ -192,13 +192,13 @@ async function chargePayLaterBookings() {
       paymentStatus: 'PENDING',
       status: { in: ['CONFIRMED', 'PENDING'] },
       paidAt: null,
-      selectedDate: { lte: windowEnd },
+      travelDate: { lte: windowEnd },
     },
     include: {
       tour: { select: { id: true, title: true, supplierId: true } },
       customer: { select: { id: true, email: true } },
     },
-    orderBy: { selectedDate: 'asc' },
+    orderBy: { travelDate: 'asc' },
     take: SWEEP_LIMIT,
   });
 

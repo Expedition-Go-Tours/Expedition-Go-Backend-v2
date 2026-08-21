@@ -24,7 +24,7 @@ exports.getMyPayouts = catchAsync(async (req, res, next) => {
         booking: {
           select: {
             bookingNumber: true,
-            total: true,
+            grossAmount: true,
             tour: { select: { title: true } }
           }
         },
@@ -115,7 +115,7 @@ exports.getAllPayouts = catchAsync(async (req, res, next) => {
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  const [payouts, totalCount, summary, statusCounts] = await Promise.all([
+  const [payouts, totalCount, summary, statusCounts, requestInFlight] = await Promise.all([
     prisma.payout.findMany({
       where,
       include: {
@@ -138,7 +138,7 @@ exports.getAllPayouts = catchAsync(async (req, res, next) => {
         booking: {
           select: {
             bookingNumber: true,
-            total: true,
+            grossAmount: true,
             paidAt: true,
             tour: { select: { title: true } }
           }
@@ -172,6 +172,15 @@ exports.getAllPayouts = catchAsync(async (req, res, next) => {
     prisma.payout.groupBy({
       by: ['status'],
       _count: { _all: true }
+    }),
+    // Finance v2: batch withdrawal requests that haven't been paid out yet.
+    // These never appear as Payout ledger rows until an admin marks the
+    // request as sent, so surface them here to keep the register complete.
+    prisma.payoutRequest.groupBy({
+      by: ['status'],
+      where: { status: { in: ['PROCESSING', 'APPROVED'] } },
+      _count: { _all: true },
+      _sum: { amount: true }
     })
   ]);
 
@@ -181,11 +190,23 @@ exports.getAllPayouts = catchAsync(async (req, res, next) => {
     if (counts[row.status] !== undefined) counts[row.status] = row._count._all;
   });
 
+  const inFlight = { awaitingApproval: { count: 0, total: 0 }, approvedAwaitingTransfer: { count: 0, total: 0 } };
+  requestInFlight.forEach((row) => {
+    if (row.status === 'PROCESSING') {
+      inFlight.awaitingApproval.count = row._count._all;
+      inFlight.awaitingApproval.total = parseFloat(row._sum.amount || 0);
+    } else if (row.status === 'APPROVED') {
+      inFlight.approvedAwaitingTransfer.count = row._count._all;
+      inFlight.approvedAwaitingTransfer.total = parseFloat(row._sum.amount || 0);
+    }
+  });
+
   res.status(200).json({
     status: 'success',
     data: {
       payouts,
       statusCounts: counts,
+      inFlight,
       summary: {
         totalAmount: summary._sum.amount || 0,
         totalCommission: summary._sum.commissionAmount || 0,
@@ -573,7 +594,7 @@ exports.failPayout = catchAsync(async (req, res, next) => {
  * Get payout summary / stats for the admin dashboard
  */
 exports.getPayoutSummary = catchAsync(async (req, res, next) => {
-  const [pending, approved, processing, failed, paidThisMonth, monthlyBreakdown] = await Promise.all([
+  const [pending, approved, processing, failed, paidThisMonth, monthlyBreakdown, requestStages] = await Promise.all([
     prisma.payout.aggregate({
       where: { status: 'PENDING' },
       _count: true,
@@ -615,7 +636,16 @@ exports.getPayoutSummary = catchAsync(async (req, res, next) => {
         AND "paidAt" >= NOW() - INTERVAL '12 months'
       GROUP BY DATE_TRUNC('month', "paidAt")
       ORDER BY month DESC
-    `
+    `,
+    // Finance v2: the live approval queue is batch PayoutRequests, not legacy
+    // per-booking Payout rows. PROCESSING = awaiting admin approval,
+    // APPROVED = authorized but money not sent yet.
+    prisma.payoutRequest.groupBy({
+      by: ['status'],
+      where: { status: { in: ['PROCESSING', 'APPROVED'] } },
+      _count: { _all: true },
+      _sum: { amount: true }
+    })
   ]);
 
   const paidCount = paidThisMonth._count;
@@ -623,6 +653,17 @@ exports.getPayoutSummary = catchAsync(async (req, res, next) => {
   const paidCommission = paidThisMonth._sum.commissionAmount || 0;
   const approvedTotal = approved._sum.amount || 0;
   const processingTotal = processing._sum.amount || 0;
+
+  const requests = { awaitingApproval: { count: 0, total: 0 }, approvedAwaitingTransfer: { count: 0, total: 0 } };
+  requestStages.forEach((row) => {
+    if (row.status === 'PROCESSING') {
+      requests.awaitingApproval.count = row._count._all;
+      requests.awaitingApproval.total = parseFloat(row._sum.amount || 0);
+    } else if (row.status === 'APPROVED') {
+      requests.approvedAwaitingTransfer.count = row._count._all;
+      requests.approvedAwaitingTransfer.total = parseFloat(row._sum.amount || 0);
+    }
+  });
 
   res.status(200).json({
     status: 'success',
@@ -653,7 +694,8 @@ exports.getPayoutSummary = catchAsync(async (req, res, next) => {
         commission: paidCommission
       },
       avgCommission: paidCount ? paidCommission / paidTotal : 0,
-      monthlyBreakdown
+      monthlyBreakdown,
+      requests
     }
   });
 });
@@ -692,7 +734,7 @@ exports.exportPayouts = catchAsync(async (req, res, next) => {
       booking: {
         select: {
           bookingNumber: true,
-          total: true,
+          grossAmount: true,
           tour: { select: { title: true } }
         }
       },

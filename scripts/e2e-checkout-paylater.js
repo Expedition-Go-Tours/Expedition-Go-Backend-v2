@@ -76,7 +76,7 @@ function addDays(days) {
   const tours = await api('GET', '/expedition/tours?limit=20');
   const list = tours.data?.tours || [];
   let tour = null;
-  let selectedDate = null;
+  let travelDate = null;
   for (const t of list) {
     const slug = t.tour?.slug;
     const tourId = t.tour?.id;
@@ -92,17 +92,17 @@ function addDays(days) {
     const day = (cal.data?.calendar || []).find((d) => d.status === 'AVAILABLE' || d.status === 'LIMITED');
     if (day) {
       tour = t.tour;
-      selectedDate = day.date;
+      travelDate = day.date;
       break;
     }
   }
-  check('found tour + available date', !!tour && !!selectedDate, tour ? `${tour.slug} @ ${selectedDate}` : '');
-  if (!tour || !selectedDate) throw new Error('No bookable tour found');
+  check('found tour + available date', !!tour && !!travelDate, tour ? `${tour.slug} @ ${travelDate}` : '');
+  if (!tour || !travelDate) throw new Error('No bookable tour found');
 
   console.log('3) Confirm booking (reserve now, pay later — card token sent)');
   const conf = await api('POST', '/expedition/checkout/confirm', {
     tourId: tour.id,
-    selectedDate,
+    travelDate,
     travelers: {
       adults: 1,
       children: 0,
@@ -131,7 +131,7 @@ function addDays(days) {
   const uncharged = pi.status === 'requires_payment_method' || pi.status === 'requires_confirmation';
   check('PI uncharged (requires_payment_method/requires_confirmation)', uncharged, pi.status);
   check('amount_received === 0 (nothing billed)', pi.amount_received === 0, String(pi.amount_received));
-  check('PI amount matches booking total', pi.amount === Math.round(Number(booking.total) * 100), `${pi.amount} vs ${booking.total}`);
+  check('PI amount matches booking total', pi.amount === Math.round(Number(booking.grossAmount) * 100), `${pi.amount} vs ${booking.grossAmount}`);
   check('PI metadata carries bookingIds', pi.metadata?.bookingIds === bookingId);
 
   console.log('5) Best-effort cleanup: cancel (voids PI, no charge to refund)');

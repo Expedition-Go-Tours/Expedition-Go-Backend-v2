@@ -117,7 +117,7 @@ async function postSignedWebhook(event) {
   check('tours listed', list.length > 0);
 
   let tour = null;
-  let selectedDate = null;
+  let travelDate = null;
   for (const t of list) {
     const slug = t.tour?.slug;
     const tourId = t.tour?.id;
@@ -133,19 +133,19 @@ async function postSignedWebhook(event) {
     const day = (cal.data?.calendar || []).find((d) => d.status === 'AVAILABLE' || d.status === 'LIMITED');
     if (day) {
       tour = t.tour;
-      selectedDate = day.date;
+      travelDate = day.date;
       break;
     }
   }
-  check('found tour + available date', !!tour && !!selectedDate, tour ? `${tour.slug} @ ${selectedDate}` : '');
-  if (!tour || !selectedDate) throw new Error('No bookable tour found');
+  check('found tour + available date', !!tour && !!travelDate, tour ? `${tour.slug} @ ${travelDate}` : '');
+  if (!tour || !travelDate) throw new Error('No bookable tour found');
   results.tourId = tour.id;
-  results.selectedDate = selectedDate;
+  results.travelDate = travelDate;
 
   console.log('3) Confirm booking (pay now — no card token)');
   const payload = {
     tourId: tour.id,
-    selectedDate,
+    travelDate,
     travelers: {
       adults: 1,
       children: 0,
@@ -162,7 +162,7 @@ async function postSignedWebhook(event) {
   results.bookingId = booking.id;
   results.bookingNumber = booking.bookingNumber;
   results.checkoutId = checkout.id;
-  results.total = booking.total;
+  results.total = booking.grossAmount;
   results.currency = booking.currency;
 
   check('booking created', !!booking.id, `#${booking.bookingNumber}`);
@@ -180,7 +180,7 @@ async function postSignedWebhook(event) {
   // what the hosted page does: create the PI (with the session's metadata) and
   // charge the test card on it.
   const pi = await stripe.paymentIntents.create({
-    amount: Math.round(Number(booking.total) * 100),
+    amount: Math.round(Number(booking.grossAmount) * 100),
     currency: booking.currency,
     confirm: false,
     metadata: { bookingIds: booking.id, source: 'expedition', checkout: checkout.id },

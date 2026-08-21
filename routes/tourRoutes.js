@@ -541,13 +541,13 @@ router.get('/:id', tourController.getTour);
  *         application/json:
  *           schema:
  *             type: object
- *             required: [promoCode, tourId, selectedDate]
+ *             required: [promoCode, tourId, travelDate]
  *             properties:
  *               promoCode:
  *                 type: string
  *               tourId:
  *                 type: string
- *               selectedDate:
+ *               travelDate:
  *                 type: string
  *                 format: date
  *               quantity:

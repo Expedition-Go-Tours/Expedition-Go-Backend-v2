@@ -1455,7 +1455,7 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
         Booking: {
           type: 'object',
           description: 'Complete booking information with payment details',
-          required: ['id', 'bookingNumber', 'customerId', 'tourId', 'status', 'travelers', 'selectedDate', 'total'],
+          required: ['id', 'bookingNumber', 'customerId', 'tourId', 'status', 'travelers', 'travelDate', 'grossAmount'],
           properties: {
             id: {
               type: 'string',
@@ -1538,7 +1538,7 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
                 ]
               }
             },
-            selectedDate: {
+            travelDate: {
               type: 'string',
               format: 'date-time',
               description: 'Selected tour date and time',
@@ -1579,7 +1579,7 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
               minimum: 0,
               example: 5.00
             },
-            total: {
+            grossAmount: {
               type: 'number',
               format: 'decimal',
               description: 'Final total amount',
@@ -1600,7 +1600,7 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
               maximum: 1,
               example: 0.15
             },
-            commissionAmount: {
+            platformCommission: {
               type: 'number',
               format: 'decimal',
               description: 'Platform commission amount',
@@ -1721,7 +1721,7 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
               pattern: '^c[a-z0-9]{24}$',
               example: 'cmp2hql3c0001tzv0460pbckm'
             },
-            selectedDate: {
+            travelDate: {
               type: 'string',
               format: 'date',
               description: 'Selected tour date (required for direct booking)',
@@ -1759,7 +1759,7 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
         CartItem: {
           type: 'object',
           description: 'Shopping cart item',
-          required: ['id', 'customerId', 'tourId', 'selectedDate', 'travelers', 'total'],
+          required: ['id', 'customerId', 'tourId', 'travelDate', 'travelers', 'total'],
           properties: {
             id: {
               type: 'string',
@@ -1779,7 +1779,7 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
               pattern: '^c[a-z0-9]{24}$',
               example: 'cmp2hql3c0001tzv0460pbckm'
             },
-            selectedDate: {
+            travelDate: {
               type: 'string',
               format: 'date-time',
               description: 'Selected tour date',
@@ -1850,14 +1850,14 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
         CartItemInput: {
           type: 'object',
           description: 'Add to cart input',
-          required: ['tourId', 'selectedDate', 'travelers'],
+          required: ['tourId', 'travelDate', 'travelers'],
           properties: {
             tourId: {
               type: 'string',
               pattern: '^c[a-z0-9]{24}$',
               example: 'cmp2hql3c0001tzv0460pbckm'
             },
-            selectedDate: {
+            travelDate: {
               type: 'string',
               format: 'date',
               example: '2026-05-15'
@@ -2039,7 +2039,7 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
               properties: {
                 id: { type: 'string', example: 'cmp2hql3c0001tzv0460pbckm' },
                 bookingNumber: { type: 'string', example: 'EXP-2026-001' },
-                selectedDate: { type: 'string', format: 'date-time', example: '2026-05-15T10:00:00.000Z' }
+                travelDate: { type: 'string', format: 'date-time', example: '2026-05-15T10:00:00.000Z' }
               }
             }
           }
@@ -3092,8 +3092,8 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
         bookingNumber: { type: 'string' },
         status: { type: 'string', enum: ['PENDING', 'CONFIRMED', 'CANCELLED', 'REFUNDED', 'COMPLETED', 'NO_SHOW'] },
         paymentStatus: { type: 'string', enum: ['PENDING', 'PROCESSING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'REFUNDED'] },
-        selectedDate: { type: 'string', format: 'date' },
-        total: { type: 'number' },
+        travelDate: { type: 'string', format: 'date' },
+        grossAmount: { type: 'number' },
         currency: { type: 'string' },
         createdAt: { type: 'string', format: 'date-time' },
         tour: {
@@ -3129,13 +3129,13 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
         status: { type: 'string', enum: ['PENDING', 'CONFIRMED', 'CANCELLED', 'REFUNDED', 'COMPLETED', 'NO_SHOW'] },
         paymentStatus: { type: 'string', enum: ['PENDING', 'PROCESSING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'REFUNDED'] },
         travelers: { type: 'object' },
-        selectedDate: { type: 'string', format: 'date' },
+        travelDate: { type: 'string', format: 'date' },
         selectedTime: { type: 'string', nullable: true },
         subtotal: { type: 'number' },
         taxes: { type: 'number' },
         fees: { type: 'number' },
         discounts: { type: 'number' },
-        total: { type: 'number' },
+        grossAmount: { type: 'number' },
         currency: { type: 'string' },
         specialRequests: { type: 'string', nullable: true },
         cancellationReason: { type: 'string', nullable: true },

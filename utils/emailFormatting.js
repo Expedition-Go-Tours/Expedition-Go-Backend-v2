@@ -207,7 +207,7 @@ function getPickupInfo(booking, tour = {}) {
 function getCancelDeadline(booking, tour = {}) {
   const policy = tour.bookingAndTickets?.cancellationPolicy;
   if (!policy) {
-    const date = new Date(booking?.selectedDate);
+    const date = new Date(booking?.travelDate);
     if (!Number.isNaN(date.getTime())) {
       return new Date(date.getTime() - 24 * 60 * 60 * 1000);
     }
@@ -215,7 +215,7 @@ function getCancelDeadline(booking, tour = {}) {
   }
   if (policy.type === 'all_sales_final') return null;
   const windowHours = Number.isFinite(policy.cancellationWindowHours) ? policy.cancellationWindowHours : 24;
-  const date = new Date(booking?.selectedDate);
+  const date = new Date(booking?.travelDate);
   if (Number.isNaN(date.getTime())) return null;
   return new Date(date.getTime() - windowHours * 60 * 60 * 1000);
 }

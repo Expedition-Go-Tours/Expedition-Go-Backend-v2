@@ -71,7 +71,7 @@ exports.createReview = catchAsync(async (req, res, next) => {
         customerId,
         status: 'COMPLETED',
         paymentStatus: 'SUCCEEDED',
-        selectedDate: { lte: new Date() }
+        travelDate: { lte: new Date() }
       },
       include: {
         tour: { include: { supplier: true } },

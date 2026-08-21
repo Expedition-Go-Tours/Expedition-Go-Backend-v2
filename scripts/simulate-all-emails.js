@@ -23,7 +23,7 @@ function mockBooking(overrides = {}) {
   const booking = {
     id: 'sim-booking-1',
     bookingNumber: 'TRA-SIM-0001',
-    selectedDate: new Date(Date.now() + 3 * 86400000),
+    travelDate: new Date(Date.now() + 3 * 86400000),
     selectedTime: '09:00',
     specialRequests: 'Vegetarian meals for all travellers, please.',
     travelers: {
@@ -48,10 +48,10 @@ function mockBooking(overrides = {}) {
     paidAt: new Date(),
     status: 'CONFIRMED',
     currency: 'USD',
-    total: '385.00',
+    grossAmount: '385.00',
     subtotal: '350.00',
     taxes: '35.00',
-    commissionAmount: '57.75',
+    platformCommission: '57.75',
     supplierPayout: '327.25',
     refundAmount: null,
     refundedAt: null,
@@ -160,7 +160,7 @@ const BASE_VARIANTS = {
   'customer-cancelled-no-refund': mockBooking({ status: 'CANCELLED', paymentStatus: 'SUCCEEDED', cancelledAt: new Date(), cancellationReason: 'Late cancellation' }),
   'refund-processing': mockBooking({ paymentStatus: 'REFUNDED', refundAmount: '385.00' }),
   'refund-completed': mockBooking({ paymentStatus: 'REFUNDED', refundAmount: '385.00' }),
-  'review-request': mockBooking({ status: 'COMPLETED', paymentStatus: 'SUCCEEDED', selectedDate: new Date(Date.now() - 5 * 86400000) }),
+  'review-request': mockBooking({ status: 'COMPLETED', paymentStatus: 'SUCCEEDED', travelDate: new Date(Date.now() - 5 * 86400000) }),
   'supplier-pay-later-charged': mockBooking({ paymentTiming: 'later', paymentStatus: 'SUCCEEDED', paidAt: new Date() }),
 };
 

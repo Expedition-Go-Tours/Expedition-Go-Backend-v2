@@ -70,7 +70,7 @@ describe('supplierController', () => {
     { id: 'r1', rating: 5, comment: 'Great', customer: { id: 'c1', name: 'C', photoURL: null }, tour: { id: 't1', title: 'T' } },
   ];
   const mockBookings = () => [
-    { id: 'b1', bookingNumber: 'BN-001', selectedDate: new Date(), paidAt: new Date(), total: '200', supplierPayout: '170', commissionAmount: '30', commissionRate: '0.15', currency: 'USD', tour: { id: 't1', title: 'Tour' }, customer: { id: 'c1', name: 'C', email: 'c@t.com' }, payouts: [{ id: 'p1', status: 'PAID', paidAt: new Date() }] },
+    { id: 'b1', bookingNumber: 'BN-001', travelDate: new Date(), paidAt: new Date(), grossAmount: '200', supplierPayout: '170', platformCommission: '30', commissionRate: '0.15', currency: 'USD', tour: { id: 't1', title: 'Tour' }, customer: { id: 'c1', name: 'C', email: 'c@t.com' }, payouts: [{ id: 'p1', status: 'PAID', paidAt: new Date() }] },
   ];
   const mockPayouts = () => [
     { id: 'p1', amount: '500', status: 'PAID', createdAt: new Date(), booking: { tour: { title: 'Tour' } } },
@@ -96,7 +96,7 @@ describe('supplierController', () => {
     prisma.booking.groupBy.mockResolvedValue(mockBookingGroupBy());
     prisma.booking.findMany.mockResolvedValue([]);
     prisma.booking.count.mockResolvedValue(0);
-    prisma.booking.aggregate.mockResolvedValue({ _sum: { total: '5000', commissionAmount: '800', supplierPayout: '4000' } });
+    prisma.booking.aggregate.mockResolvedValue({ _sum: { grossAmount: '5000', platformCommission: '800', supplierPayout: '4000' } });
     prisma.review.findMany.mockResolvedValue([]);
     prisma.review.aggregate.mockResolvedValue({ _avg: { rating: 4.5 }, _count: 10 });
     prisma.payout.findMany.mockResolvedValue([]);
@@ -996,8 +996,8 @@ describe('supplierController', () => {
           title: 'Tour 1',
           _count: { bookings: 2 },
           bookings: [
-            { commissionAmount: '30', total: '200', status: 'CONFIRMED' },
-            { commissionAmount: '20', total: '150', status: 'COMPLETED' },
+            { platformCommission: '30', grossAmount: '200', status: 'CONFIRMED' },
+            { platformCommission: '20', grossAmount: '150', status: 'COMPLETED' },
           ],
         },
       ]);

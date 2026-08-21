@@ -14,7 +14,7 @@ function daysBefore(dateA, dateB) {
   return Math.round((new Date(dateB) - new Date(dateA)) / (1000 * 60 * 60 * 24));
 }
 
-async function findApplicableOffers({ tourId, tourOptionKey, selectedDate, promoCode, customerId }) {
+async function findApplicableOffers({ tourId, tourOptionKey, travelDate, promoCode, customerId }) {
   // Option scoping: a target with tourOptionKey = null covers the WHOLE tour,
   // a target with a specific key covers ONLY that option. A booking without a
   // selected option can therefore only ever match whole-tour offers.
@@ -47,10 +47,10 @@ async function findApplicableOffers({ tourId, tourOptionKey, selectedDate, promo
   const scoped = offers.filter((offer) => offer.targets?.length > 0);
 
   const filtered = scoped.filter((offer) => {
-    if (offer.startDate && new Date(selectedDate) < new Date(offer.startDate)) return false;
-    if (offer.endDate && new Date(selectedDate) > new Date(offer.endDate)) return false;
+    if (offer.startDate && new Date(travelDate) < new Date(offer.startDate)) return false;
+    if (offer.endDate && new Date(travelDate) > new Date(offer.endDate)) return false;
 
-    const dayName = getDayName(selectedDate);
+    const dayName = getDayName(travelDate);
     if (offer.timeSlotMode === 'SPECIFIC_WEEKDAYS' && !offer.specificWeekdays.includes(dayName)) {
       return false;
     }
@@ -83,14 +83,14 @@ async function findApplicableOffers({ tourId, tourOptionKey, selectedDate, promo
   return filtered;
 }
 
-async function findBestDiscount({ tourId, tourOptionKey, selectedDate, basePrice, promoCode, quantity, customerId }) {
-  const offers = await findApplicableOffers({ tourId, tourOptionKey, selectedDate, promoCode, customerId });
+async function findBestDiscount({ tourId, tourOptionKey, travelDate, basePrice, promoCode, quantity, customerId }) {
+  const offers = await findApplicableOffers({ tourId, tourOptionKey, travelDate, promoCode, customerId });
 
   if (offers.length === 0) return { discountAmount: 0, finalPrice: basePrice, appliedOffer: null, discountType: null };
 
   const now = new Date();
-  const diffHours = hoursBefore(now, selectedDate);
-  const diffDays = daysBefore(now, selectedDate);
+  const diffHours = hoursBefore(now, travelDate);
+  const diffDays = daysBefore(now, travelDate);
 
   const valid = offers.filter((offer) => {
     if (offer.offerType === 'EARLY_BIRD') {

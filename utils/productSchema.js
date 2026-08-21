@@ -75,6 +75,8 @@ const pickupAreaSchema = z.object({
   address: z.string().optional(),
   lat: z.number().optional(),
   lng: z.number().optional(),
+  // Radius in kilometers — used for radius-based pickup areas (Viator model).
+  radiusKm: z.number().min(0.5).max(100).optional(),
   // Geoshape: the drawn service zone + optional exclusion zones inside it.
   polygon: polygonSchema.optional(),
   exclusions: z.array(polygonSchema).optional(),

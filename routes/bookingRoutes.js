@@ -50,12 +50,12 @@ router.get('/cart', bookingController.getCart);
  *             type: object
  *             required:
  *               - tourId
- *               - selectedDate
+ *               - travelDate
  *               - travelers
  *             properties:
  *               tourId:
  *                 type: string
- *               selectedDate:
+ *               travelDate:
  *                 type: string
  *                 format: date
  *               travelers:
@@ -145,7 +145,7 @@ router.delete('/cart/clear', bookingController.clearCart);
  *       
  *       **Cart Booking:** Set `useCart: true` to book all items in the cart.
  *       
- *       **Direct Booking:** Provide tourId, selectedDate, and travelers to book a single tour directly.
+ *       **Direct Booking:** Provide tourId, travelDate, and travelers to book a single tour directly.
  *     tags: [Bookings]
  *     security:
  *       - bearerAuth: []
@@ -162,7 +162,7 @@ router.delete('/cart/clear', bookingController.clearCart);
  *                 type: string
  *                 description: Tour ID (required for direct booking)
  *                 example: cmp2hql3c0001tzv0460pbckm
- *               selectedDate:
+ *               travelDate:
  *                 type: string
  *                 format: date
  *                 description: Tour date (required for direct booking)
@@ -241,7 +241,7 @@ router.delete('/cart/clear', bookingController.clearCart);
  *               summary: Direct booking example
  *               value:
  *                 tourId: cmp2hql3c0001tzv0460pbckm
- *                 selectedDate: "2026-05-20"
+ *                 travelDate: "2026-05-20"
  *                 travelers:
  *                   adults: 2
  *                   children: 1
@@ -451,6 +451,49 @@ router.get('/:id', bookingController.getBooking);
  *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.patch('/:id/cancel', bookingController.cancelBooking);
+
+/**
+ * @swagger
+ * /bookings/{id}/cancellation-quote:
+ *   get:
+ *     summary: Preview cancellation terms for my booking
+ *     description: >
+ *       Read-only. Returns what cancelling now would mean — whether it's
+ *       allowed, the refund amount/percentage per the tour's policy, and a
+ *       customer-facing explanation. Call before showing a cancel confirmation.
+ *     tags: [Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Cancellation quote
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status: { type: string }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     quote:
+ *                       type: object
+ *                       properties:
+ *                         canCancel: { type: boolean }
+ *                         allowed: { type: boolean }
+ *                         refundAmount: { type: number }
+ *                         refundPercentage: { type: number }
+ *                         reason: { type: string }
+ *                         windowHours: { type: number, nullable: true }
+ *       404:
+ *         description: Booking not found
+ */
+router.get('/:id/cancellation-quote', bookingController.getCancellationQuote);
 
 // ================================
 // SUPPLIER BOOKING MANAGEMENT

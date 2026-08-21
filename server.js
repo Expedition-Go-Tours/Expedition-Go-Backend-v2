@@ -168,6 +168,12 @@ async function setupQueueWorkers() {
     enqueueCleanup('cleanup-stale-bookings').catch((err) => logger.warn('[scheduler] cleanup-stale-bookings failed:', err?.message));
   }, 5 * 60 * 1000));
 
+  // Expire stale CheckoutDraft holds (pay-now seat reservations).
+  // Same cadence as stale bookings — idempotent.
+  intervals.push(setInterval(() => {
+    enqueueCleanup('expire-checkout-holds').catch((err) => logger.warn('[scheduler] expire-checkout-holds failed:', err?.message));
+  }, 5 * 60 * 1000));
+
   // Auto-complete CONFIRMED bookings once their activity date has passed.
   intervals.push(setInterval(() => {
     enqueueCleanup('auto-complete-bookings').catch((err) => logger.warn('[scheduler] auto-complete-bookings failed:', err?.message));
@@ -178,6 +184,12 @@ async function setupQueueWorkers() {
   // is measured in hours, and re-runs are idempotent.
   intervals.push(setInterval(() => {
     enqueueCleanup('charge-pay-later-bookings').catch((err) => logger.warn('[scheduler] charge-pay-later-bookings failed:', err?.message));
+  }, 30 * 60 * 1000));
+
+  // Finance v2: flip past-travel-date bookings from PENDING to ELIGIBLE so
+  // suppliers can include them in payout requests. Idempotent.
+  intervals.push(setInterval(() => {
+    enqueueCleanup('earnings-eligibility-sweep').catch((err) => logger.warn('[scheduler] earnings-eligibility-sweep failed:', err?.message));
   }, 30 * 60 * 1000));
 
   // Plan + dispatch time-based booking reminder emails (payment due, 24h-before,
@@ -226,8 +238,10 @@ async function setupQueueWorkers() {
 
   enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] startup cleanup-expired-cart failed:', err?.message));
   enqueueCleanup('cleanup-stale-bookings').catch((err) => logger.warn('[scheduler] startup cleanup-stale-bookings failed:', err?.message));
+  enqueueCleanup('expire-checkout-holds').catch((err) => logger.warn('[scheduler] startup expire-checkout-holds failed:', err?.message));
   enqueueCleanup('auto-complete-bookings').catch((err) => logger.warn('[scheduler] startup auto-complete-bookings failed:', err?.message));
   enqueueCleanup('charge-pay-later-bookings').catch((err) => logger.warn('[scheduler] startup charge-pay-later-bookings failed:', err?.message));
+  enqueueCleanup('earnings-eligibility-sweep').catch((err) => logger.warn('[scheduler] startup earnings-eligibility-sweep failed:', err?.message));
   enqueueCleanup('plan-booking-reminders').catch((err) => logger.warn('[scheduler] startup plan-booking-reminders failed:', err?.message));
   enqueueCleanup('dispatch-booking-reminders').catch((err) => logger.warn('[scheduler] startup dispatch-booking-reminders failed:', err?.message));
   enqueueAggregation('refresh-popularity').catch((err) => logger.warn('[scheduler] startup refresh-popularity failed:', err?.message));

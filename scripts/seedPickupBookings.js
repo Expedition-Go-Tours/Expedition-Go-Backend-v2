@@ -45,16 +45,16 @@ async function seedPickupBookings() {
         location: 'Accra Mall, Spintex Road, Ghana',
         details: [{ name: customer.name, age: 30, ageGroup: 'adult' }],
       },
-      selectedDate: new Date(today.getTime() + 1 * 24 * 60 * 60 * 1000),
+      travelDate: new Date(today.getTime() + 1 * 24 * 60 * 60 * 1000),
       selectedTime: '09:00',
       subtotal: 150.00,
       taxes: 15.00,
       fees: 10.00,
       discounts: 0,
-      total: 175.00,
+      grossAmount: 175.00,
       currency: 'USD',
       commissionRate: 0.15,
-      commissionAmount: 26.25,
+      platformCommission: 26.25,
       supplierPayout: 148.75,
       paymentStatus: 'SUCCEEDED',
       paymentTiming: 'now',
@@ -86,16 +86,16 @@ async function seedPickupBookings() {
           { name: 'Bob Johnson', age: 32, ageGroup: 'adult' },
         ],
       },
-      selectedDate: new Date(today.getTime() + 2 * 24 * 60 * 60 * 1000),
+      travelDate: new Date(today.getTime() + 2 * 24 * 60 * 60 * 1000),
       selectedTime: '08:30',
       subtotal: 300.00,
       taxes: 30.00,
       fees: 20.00,
       discounts: 0,
-      total: 350.00,
+      grossAmount: 350.00,
       currency: 'USD',
       commissionRate: 0.15,
-      commissionAmount: 52.50,
+      platformCommission: 52.50,
       supplierPayout: 297.50,
       paymentStatus: 'SUCCEEDED',
       paymentTiming: 'now',
@@ -124,16 +124,16 @@ async function seedPickupBookings() {
         location: 'Manhyia, Kumasi',
         details: [{ name: 'Samuel Mensah', age: 45, ageGroup: 'adult' }],
       },
-      selectedDate: new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000),
+      travelDate: new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000),
       selectedTime: '10:00',
       subtotal: 120.00,
       taxes: 12.00,
       fees: 8.00,
       discounts: 10.00,
-      total: 130.00,
+      grossAmount: 130.00,
       currency: 'USD',
       commissionRate: 0.15,
-      commissionAmount: 19.50,
+      platformCommission: 19.50,
       supplierPayout: 110.50,
       paymentStatus: 'SUCCEEDED',
       paymentTiming: 'now',
@@ -167,9 +167,9 @@ async function seedPickupBookings() {
     const pickup = typeof created.pickup === 'string' ? JSON.parse(created.pickup) : created.pickup;
     console.log(`✅ Booking ${created.bookingNumber} created`);
     console.log(`   Tour: ${created.tour.title}`);
-    console.log(`   Date: ${created.selectedDate.toISOString().split('T')[0]} at ${created.selectedTime}`);
+    console.log(`   Date: ${created.travelDate.toISOString().split('T')[0]} at ${created.selectedTime}`);
     console.log(`   Pickup: ${pickup.place} (${pickup.time})`);
-    console.log(`   Total: $${created.total}\n`);
+    console.log(`   Total: $${created.grossAmount}\n`);
   }
 
   console.log('Done! 3 pickup planner bookings seeded.');

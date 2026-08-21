@@ -33,7 +33,7 @@ exports.getAnalyticsOverview = catchAsync(async (req, res, next) => {
       }),
       prisma.booking.aggregate({
         where: { source: 'EXPEDITION', paymentStatus: 'SUCCEEDED', createdAt: { gte: start, lte: end } },
-        _sum: { total: true },
+        _sum: { grossAmount: true },
       }),
       prisma.expeditionTour.count({ where: { isActive: true } }),
       prisma.booking.groupBy({
@@ -57,7 +57,7 @@ exports.getAnalyticsOverview = catchAsync(async (req, res, next) => {
       cancellationRate: totalBookings > 0
         ? parseFloat(((totalBookings - confirmedBookings) / totalBookings * 100).toFixed(1))
         : 0,
-      totalRevenue: revenue._sum.total || 0,
+      totalRevenue: revenue._sum.grossAmount || 0,
       activeTours,
       uniqueCustomers: totalCustomers.length,
       pendingPayouts: pendingPayouts._sum.amount || 0,
@@ -80,7 +80,7 @@ exports.getRevenueTrend = catchAsync(async (req, res, next) => {
         paymentStatus: 'SUCCEEDED',
         paidAt: { gte: start, lte: end },
       },
-      select: { total: true, paidAt: true },
+      select: { grossAmount: true, paidAt: true },
       orderBy: { paidAt: 'asc' },
     });
 
@@ -98,7 +98,7 @@ exports.getRevenueTrend = catchAsync(async (req, res, next) => {
       } else {
         key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       }
-      buckets[key] = (buckets[key] || 0) + parseFloat(b.total);
+      buckets[key] = (buckets[key] || 0) + parseFloat(b.grossAmount);
     }
 
     const trend = Object.entries(buckets).map(([date, revenue]) => ({ date, revenue: parseFloat(revenue.toFixed(2)) }));
@@ -125,7 +125,7 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
       by: ['tourId'],
       where: { source: 'EXPEDITION', createdAt: { gte: start, lte: end } },
       _count: { id: true },
-      _sum: { total: true },
+      _sum: { grossAmount: true },
       orderBy: { _count: { id: 'desc' } },
     });
 
@@ -147,7 +147,7 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
         coverPhoto: t.coverPhoto || null,
         averageRating: t.averageRating || null,
         totalBookings: b._count.id,
-        totalRevenue: parseFloat((b._sum.total || 0).toFixed(2)),
+        totalRevenue: parseFloat((b._sum.grossAmount || 0).toFixed(2)),
       };
     });
 
@@ -176,7 +176,7 @@ exports.getBookingAnalytics = catchAsync(async (req, res, next) => {
       (async () => {
         const records = await prisma.booking.findMany({
           where: { source: 'EXPEDITION', createdAt: { gte: start, lte: end } },
-          select: { createdAt: true, total: true, status: true },
+          select: { createdAt: true, grossAmount: true, status: true },
           orderBy: { createdAt: 'asc' },
         });
 
@@ -185,7 +185,7 @@ exports.getBookingAnalytics = catchAsync(async (req, res, next) => {
           const day = r.createdAt.toISOString().slice(0, 10);
           if (!days[day]) days[day] = { date: day, bookings: 0, revenue: 0, completed: 0, cancelled: 0 };
           days[day].bookings += 1;
-          days[day].revenue += parseFloat(r.total || 0);
+          days[day].revenue += parseFloat(r.grossAmount || 0);
           if (r.status === 'COMPLETED') days[day].completed += 1;
           if (r.status === 'CANCELLED') days[day].cancelled += 1;
         }
@@ -277,7 +277,7 @@ exports.getCustomerAnalytics = catchAsync(async (req, res, next) => {
   const result = await cache.getOrSet(cacheKey, async () => {
     const bookings = await prisma.booking.findMany({
       where: { source: 'EXPEDITION', createdAt: { gte: start, lte: end } },
-      select: { customerId: true, total: true, createdAt: true },
+      select: { customerId: true, grossAmount: true, createdAt: true },
     });
 
     const customerMap = new Map();
@@ -287,7 +287,7 @@ exports.getCustomerAnalytics = catchAsync(async (req, res, next) => {
       }
       const c = customerMap.get(b.customerId);
       c.bookings += 1;
-      c.totalSpent += parseFloat(b.total || 0);
+      c.totalSpent += parseFloat(b.grossAmount || 0);
       if (b.createdAt < c.firstBooking) c.firstBooking = b.createdAt;
       if (b.createdAt > c.lastBooking) c.lastBooking = b.createdAt;
     }

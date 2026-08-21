@@ -65,7 +65,7 @@ describe('reviewController', () => {
   describe('createReview', () => {
     const mockBooking = {
       id: 'b1', tourId: 't1', status: 'COMPLETED', paymentStatus: 'SUCCEEDED',
-      selectedDate: new Date('2024-01-01'), tour: { id: 't1', title: 'Tour', supplierId: 's1', supplier: { id: 's1' } },
+      travelDate: new Date('2024-01-01'), tour: { id: 't1', title: 'Tour', supplierId: 's1', supplier: { id: 's1' } },
       review: null,
     };
     const mockReview = {

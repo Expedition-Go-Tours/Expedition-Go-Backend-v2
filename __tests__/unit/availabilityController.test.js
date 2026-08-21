@@ -75,7 +75,7 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
       const dates = args[2] || [];
       return dates.map((d) => ({ id: `ov-${d}`, date: d, status: 'BLOCKED' }));
     }
-    if (query.includes('GROUP BY "selectedDate"')) {
+    if (query.includes('GROUP BY "travelDate"')) {
       // Batch live-count query returns one row per target date (arg $2).
       const dateKeys = args[1] || [];
       return dateKeys.map((d) => ({ d: new Date(`${String(d).slice(0, 10)}T00:00:00.000Z`), live }));

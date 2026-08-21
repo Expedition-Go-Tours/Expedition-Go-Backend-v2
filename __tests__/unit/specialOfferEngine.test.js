@@ -61,7 +61,7 @@ describe('specialOfferEngine', () => {
       const offer = makeOffer();
       prisma.specialOffer.findMany.mockResolvedValue([offer]);
 
-      const result = await findApplicableOffers({ tourId: 'tour-1', selectedDate: '2026-07-01' });
+      const result = await findApplicableOffers({ tourId: 'tour-1', travelDate: '2026-07-01' });
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe('offer-1');
     });
@@ -70,7 +70,7 @@ describe('specialOfferEngine', () => {
       const offer = makeOffer({ endDate: '2026-01-01' });
       prisma.specialOffer.findMany.mockResolvedValue([offer]);
 
-      const result = await findApplicableOffers({ tourId: 'tour-1', selectedDate: '2026-07-01' });
+      const result = await findApplicableOffers({ tourId: 'tour-1', travelDate: '2026-07-01' });
       expect(result).toHaveLength(0);
     });
 
@@ -78,7 +78,7 @@ describe('specialOfferEngine', () => {
       const offer = makeOffer({ startDate: '2027-01-01' });
       prisma.specialOffer.findMany.mockResolvedValue([offer]);
 
-      const result = await findApplicableOffers({ tourId: 'tour-1', selectedDate: '2026-07-01' });
+      const result = await findApplicableOffers({ tourId: 'tour-1', travelDate: '2026-07-01' });
       expect(result).toHaveLength(0);
     });
 
@@ -87,7 +87,7 @@ describe('specialOfferEngine', () => {
       prisma.specialOffer.findMany.mockResolvedValue([offer]);
 
       // 2026-07-01 is a Wednesday
-      const result = await findApplicableOffers({ tourId: 'tour-1', selectedDate: '2026-07-01' });
+      const result = await findApplicableOffers({ tourId: 'tour-1', travelDate: '2026-07-01' });
       expect(result).toHaveLength(0);
     });
 
@@ -95,7 +95,7 @@ describe('specialOfferEngine', () => {
       const offer = makeOffer({ timeSlotMode: 'SPECIFIC_WEEKDAYS', specificWeekdays: ['wednesday'] });
       prisma.specialOffer.findMany.mockResolvedValue([offer]);
 
-      const result = await findApplicableOffers({ tourId: 'tour-1', selectedDate: '2026-07-01' });
+      const result = await findApplicableOffers({ tourId: 'tour-1', travelDate: '2026-07-01' });
       expect(result).toHaveLength(1);
     });
 
@@ -103,7 +103,7 @@ describe('specialOfferEngine', () => {
       const offer = makeOffer({ capacityType: 'CAPPED', maxSpots: 10, spotsSold: 10 });
       prisma.specialOffer.findMany.mockResolvedValue([offer]);
 
-      const result = await findApplicableOffers({ tourId: 'tour-1', selectedDate: '2026-07-01' });
+      const result = await findApplicableOffers({ tourId: 'tour-1', travelDate: '2026-07-01' });
       expect(result).toHaveLength(0);
     });
 
@@ -111,13 +111,13 @@ describe('specialOfferEngine', () => {
       const offer = makeOffer({ capacityType: 'CAPPED', maxSpots: 10, spotsSold: 5 });
       prisma.specialOffer.findMany.mockResolvedValue([offer]);
 
-      const result = await findApplicableOffers({ tourId: 'tour-1', selectedDate: '2026-07-01' });
+      const result = await findApplicableOffers({ tourId: 'tour-1', travelDate: '2026-07-01' });
       expect(result).toHaveLength(1);
     });
 
     it('filters by promoCode when provided', async () => {
       prisma.specialOffer.findMany.mockResolvedValue([]);
-      await findApplicableOffers({ tourId: 'tour-1', selectedDate: '2026-07-01', promoCode: 'SAVE20' });
+      await findApplicableOffers({ tourId: 'tour-1', travelDate: '2026-07-01', promoCode: 'SAVE20' });
       expect(prisma.specialOffer.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: expect.objectContaining({ promoCode: 'SAVE20' }) })
       );
@@ -128,7 +128,7 @@ describe('specialOfferEngine', () => {
       prisma.specialOffer.findMany.mockResolvedValue([offer]);
       prisma.booking.count.mockResolvedValue(2);
 
-      const result = await findApplicableOffers({ tourId: 'tour-1', selectedDate: '2026-07-01', customerId: 'cust-1' });
+      const result = await findApplicableOffers({ tourId: 'tour-1', travelDate: '2026-07-01', customerId: 'cust-1' });
       expect(result).toHaveLength(0);
     });
 
@@ -137,7 +137,7 @@ describe('specialOfferEngine', () => {
       prisma.specialOffer.findMany.mockResolvedValue([offer]);
       prisma.booking.count.mockResolvedValue(1);
 
-      const result = await findApplicableOffers({ tourId: 'tour-1', selectedDate: '2026-07-01', customerId: 'cust-1' });
+      const result = await findApplicableOffers({ tourId: 'tour-1', travelDate: '2026-07-01', customerId: 'cust-1' });
       expect(result).toHaveLength(1);
     });
 
@@ -145,7 +145,7 @@ describe('specialOfferEngine', () => {
       const offer = makeOffer({ id: 'opt-offer', targets: [{ tourId: 'tour-1', tourOptionKey: 'bedouin-camp' }] });
       scopedOfferMock([offer]);
 
-      const result = await findApplicableOffers({ tourId: 'tour-1', selectedDate: '2026-07-01' });
+      const result = await findApplicableOffers({ tourId: 'tour-1', travelDate: '2026-07-01' });
 
       expect(result).toHaveLength(0);
       // The query itself must only consider whole-tour targets.
@@ -162,7 +162,7 @@ describe('specialOfferEngine', () => {
       const offer = makeOffer({ id: 'opt-offer', targets: [{ tourId: 'tour-1', tourOptionKey: 'bedouin-camp' }] });
       scopedOfferMock([offer]);
 
-      const result = await findApplicableOffers({ tourId: 'tour-1', tourOptionKey: 'bedouin-camp', selectedDate: '2026-07-01' });
+      const result = await findApplicableOffers({ tourId: 'tour-1', tourOptionKey: 'bedouin-camp', travelDate: '2026-07-01' });
 
       expect(result).toHaveLength(1);
       expect(prisma.specialOffer.findMany).toHaveBeenCalledWith(
@@ -178,7 +178,7 @@ describe('specialOfferEngine', () => {
       const offer = makeOffer({ id: 'opt-offer', targets: [{ tourId: 'tour-1', tourOptionKey: 'bedouin-camp' }] });
       scopedOfferMock([offer]);
 
-      const result = await findApplicableOffers({ tourId: 'tour-1', tourOptionKey: 'sunrise-trek', selectedDate: '2026-07-01' });
+      const result = await findApplicableOffers({ tourId: 'tour-1', tourOptionKey: 'sunrise-trek', travelDate: '2026-07-01' });
 
       expect(result).toHaveLength(0);
     });
@@ -187,7 +187,7 @@ describe('specialOfferEngine', () => {
   describe('findBestDiscount', () => {
     it('returns zero discount when no offers', async () => {
       prisma.specialOffer.findMany.mockResolvedValue([]);
-      const result = await findBestDiscount({ tourId: 'tour-1', selectedDate: '2026-07-01', basePrice: 100 });
+      const result = await findBestDiscount({ tourId: 'tour-1', travelDate: '2026-07-01', basePrice: 100 });
       expect(result.discountAmount).toBe(0);
       expect(result.finalPrice).toBe(100);
       expect(result.appliedOffer).toBeNull();
@@ -197,7 +197,7 @@ describe('specialOfferEngine', () => {
       const offer = makeOffer({ discountType: 'PERCENTAGE', discountPercentage: 20 });
       prisma.specialOffer.findMany.mockResolvedValue([offer]);
 
-      const result = await findBestDiscount({ tourId: 'tour-1', selectedDate: '2026-07-01', basePrice: 100 });
+      const result = await findBestDiscount({ tourId: 'tour-1', travelDate: '2026-07-01', basePrice: 100 });
       expect(result.discountAmount).toBe(20);
       expect(result.finalPrice).toBe(80);
       expect(result.discountType).toBe('PERCENTAGE');
@@ -207,7 +207,7 @@ describe('specialOfferEngine', () => {
       const offer = makeOffer({ discountType: 'FIXED', fixedDiscountValue: 15 });
       prisma.specialOffer.findMany.mockResolvedValue([offer]);
 
-      const result = await findBestDiscount({ tourId: 'tour-1', selectedDate: '2026-07-01', basePrice: 100 });
+      const result = await findBestDiscount({ tourId: 'tour-1', travelDate: '2026-07-01', basePrice: 100 });
       expect(result.discountAmount).toBe(15);
       expect(result.finalPrice).toBe(85);
     });
@@ -216,7 +216,7 @@ describe('specialOfferEngine', () => {
       const offer = makeOffer({ discountType: 'FIXED', fixedDiscountValue: 200 });
       prisma.specialOffer.findMany.mockResolvedValue([offer]);
 
-      const result = await findBestDiscount({ tourId: 'tour-1', selectedDate: '2026-07-01', basePrice: 100 });
+      const result = await findBestDiscount({ tourId: 'tour-1', travelDate: '2026-07-01', basePrice: 100 });
       expect(result.discountAmount).toBe(100);
       expect(result.finalPrice).toBe(0);
     });
@@ -226,7 +226,7 @@ describe('specialOfferEngine', () => {
       const offer2 = makeOffer({ id: 'o2', discountType: 'PERCENTAGE', discountPercentage: 30 });
       prisma.specialOffer.findMany.mockResolvedValue([offer1, offer2]);
 
-      const result = await findBestDiscount({ tourId: 'tour-1', selectedDate: '2026-07-01', basePrice: 100 });
+      const result = await findBestDiscount({ tourId: 'tour-1', travelDate: '2026-07-01', basePrice: 100 });
       expect(result.discountAmount).toBe(30);
       expect(result.appliedOffer.id).toBe('o2');
     });
@@ -236,7 +236,7 @@ describe('specialOfferEngine', () => {
       const offer2 = makeOffer({ id: 'o2', discountType: 'FIXED', fixedDiscountValue: 5, stackable: true });
       prisma.specialOffer.findMany.mockResolvedValue([offer1, offer2]);
 
-      const result = await findBestDiscount({ tourId: 'tour-1', selectedDate: '2026-07-01', basePrice: 100 });
+      const result = await findBestDiscount({ tourId: 'tour-1', travelDate: '2026-07-01', basePrice: 100 });
       expect(result.discountType).toBe('STACKED');
       expect(result.discountAmount).toBe(15);
       expect(result.finalPrice).toBe(85);
@@ -249,7 +249,7 @@ describe('specialOfferEngine', () => {
       // Date is tomorrow — less than 30 days ahead
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
-      const result = await findBestDiscount({ tourId: 'tour-1', selectedDate: tomorrow.toISOString(), basePrice: 100 });
+      const result = await findBestDiscount({ tourId: 'tour-1', travelDate: tomorrow.toISOString(), basePrice: 100 });
       expect(result.discountAmount).toBe(0);
     });
 
@@ -259,7 +259,7 @@ describe('specialOfferEngine', () => {
 
       const future = new Date();
       future.setDate(future.getDate() + 14);
-      const result = await findBestDiscount({ tourId: 'tour-1', selectedDate: future.toISOString(), basePrice: 100 });
+      const result = await findBestDiscount({ tourId: 'tour-1', travelDate: future.toISOString(), basePrice: 100 });
       expect(result.discountAmount).toBe(20);
     });
 
@@ -269,7 +269,7 @@ describe('specialOfferEngine', () => {
 
       // Date is 48 hours from now — beyond 24h window
       const future = new Date(Date.now() + 48 * 60 * 60 * 1000);
-      const result = await findBestDiscount({ tourId: 'tour-1', selectedDate: future.toISOString(), basePrice: 100 });
+      const result = await findBestDiscount({ tourId: 'tour-1', travelDate: future.toISOString(), basePrice: 100 });
       expect(result.discountAmount).toBe(0);
     });
 
@@ -278,7 +278,7 @@ describe('specialOfferEngine', () => {
       prisma.specialOffer.findMany.mockResolvedValue([offer]);
 
       const soon = new Date(Date.now() + 12 * 60 * 60 * 1000);
-      const result = await findBestDiscount({ tourId: 'tour-1', selectedDate: soon.toISOString(), basePrice: 100 });
+      const result = await findBestDiscount({ tourId: 'tour-1', travelDate: soon.toISOString(), basePrice: 100 });
       expect(result.discountAmount).toBe(20);
     });
 
@@ -286,7 +286,7 @@ describe('specialOfferEngine', () => {
       const offer = makeOffer({ minQuantity: 3 });
       prisma.specialOffer.findMany.mockResolvedValue([offer]);
 
-      const result = await findBestDiscount({ tourId: 'tour-1', selectedDate: '2026-07-01', basePrice: 100, quantity: 2 });
+      const result = await findBestDiscount({ tourId: 'tour-1', travelDate: '2026-07-01', basePrice: 100, quantity: 2 });
       expect(result.discountAmount).toBe(0);
     });
 
@@ -294,7 +294,7 @@ describe('specialOfferEngine', () => {
       const offer = makeOffer({ minQuantity: 3 });
       prisma.specialOffer.findMany.mockResolvedValue([offer]);
 
-      const result = await findBestDiscount({ tourId: 'tour-1', selectedDate: '2026-07-01', basePrice: 100, quantity: 3 });
+      const result = await findBestDiscount({ tourId: 'tour-1', travelDate: '2026-07-01', basePrice: 100, quantity: 3 });
       expect(result.discountAmount).toBe(20);
     });
 
@@ -302,7 +302,7 @@ describe('specialOfferEngine', () => {
       const offer = makeOffer({ minSpendAmount: 200 });
       prisma.specialOffer.findMany.mockResolvedValue([offer]);
 
-      const result = await findBestDiscount({ tourId: 'tour-1', selectedDate: '2026-07-01', basePrice: 100 });
+      const result = await findBestDiscount({ tourId: 'tour-1', travelDate: '2026-07-01', basePrice: 100 });
       expect(result.discountAmount).toBe(0);
     });
 
@@ -312,7 +312,7 @@ describe('specialOfferEngine', () => {
 
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
-      const result = await findBestDiscount({ tourId: 'tour-1', selectedDate: tomorrow.toISOString(), basePrice: 100 });
+      const result = await findBestDiscount({ tourId: 'tour-1', travelDate: tomorrow.toISOString(), basePrice: 100 });
       expect(result.discountAmount).toBe(0);
       expect(result.appliedOffer).toBeNull();
     });

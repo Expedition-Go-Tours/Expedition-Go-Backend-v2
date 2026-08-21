@@ -43,7 +43,7 @@ const dueBooking = (overrides = {}) => ({
   bookingNumber: 'LAT-001',
   customerId: 'c1',
   tourId: 't1',
-  total: 175,
+  grossAmount: 175,
   tour: { id: 't1', title: 'Safari', supplierId: 's1' },
   customer: { id: 'c1', email: 'c@x.com' },
   stripePaymentIntentId: 'pi_later',
@@ -51,7 +51,7 @@ const dueBooking = (overrides = {}) => ({
   paymentStatus: 'PENDING',
   paidAt: null,
   paymentTiming: 'later',
-  selectedDate: new Date(Date.now() + 12 * 60 * 60 * 1000),
+  travelDate: new Date(Date.now() + 12 * 60 * 60 * 1000),
   ...overrides,
 });
 

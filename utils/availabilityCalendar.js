@@ -37,10 +37,10 @@ async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end
     prisma.booking.findMany({
       where: {
         tourId,
-        selectedDate: { gte: startDate, lte: endDate },
+        travelDate: { gte: startDate, lte: endDate },
         status: { in: BOOKABLE_STATUSES },
       },
-      select: { selectedDate: true, selectedTime: true, travelers: true },
+      select: { travelDate: true, selectedTime: true, travelers: true },
     }),
   ]);
 
@@ -53,7 +53,7 @@ async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end
   const bookingTimeSlotMap = new Map();
   const slotGroupCountMap = new Map();
   for (const b of bookings) {
-    const dateKey = toDateKey(b.selectedDate);
+    const dateKey = toDateKey(b.travelDate);
     const count = travelerCount(b.travelers);
     bookingCountMap.set(dateKey, (bookingCountMap.get(dateKey) || 0) + count);
 

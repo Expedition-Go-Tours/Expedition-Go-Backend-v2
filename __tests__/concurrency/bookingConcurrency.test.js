@@ -109,10 +109,10 @@ const mockBooking = {
   customerId: 'customer-1',
   tourId: 'tour-1',
   status: 'PENDING',
-  total: 385,
+  grossAmount: 385,
   currency: 'USD',
   commissionRate: 0.15,
-  commissionAmount: 57.75,
+  platformCommission: 57.75,
   supplierPayout: 327.25,
   stripePaymentIntentId: 'pi_concur_123',
   paymentStatus: 'PROCESSING',
@@ -126,7 +126,7 @@ function mockReq(uid, overrides = {}) {
     user: { id: uid, roles: ['customer'], stripeCustomerId: 'cus_123' },
     body: {
       tourId: 'tour-1',
-      selectedDate: futureDate,
+      travelDate: futureDate,
       travelers: { adults: 2, children: 0, infants: 0 },
       paymentMethodId: 'pm_123',
     },
@@ -216,7 +216,7 @@ describe('Concurrency — Double Booking Prevention', () => {
 
     const results = await concurrentCalls(
       () => bookingController.addToCart(
-        mockReq('customer-1', { body: { tourId: 'tour-1', selectedDate: '2026-07-01', travelers: { adults: 2 } } }),
+        mockReq('customer-1', { body: { tourId: 'tour-1', travelDate: '2026-07-01', travelers: { adults: 2 } } }),
         mockRes(),
         jest.fn(),
       ),
@@ -327,7 +327,7 @@ describe('Concurrency — Race Conditions', () => {
       id: 'booking-race-1',
       status: 'CONFIRMED',
       paymentStatus: 'SUCCEEDED',
-      selectedDate: futureDate,
+      travelDate: futureDate,
       tour: { ...mockBooking.tour, bookingAndTickets: { cancellationPolicy: { cancellationWindowHours: 24 } } },
     };
 
@@ -355,7 +355,7 @@ describe('Concurrency — Race Conditions', () => {
   it('prevents concurrent cart clear + createBooking from cart race', async () => {
     const cartItem = {
       id: 'cart-race-1', customerId: 'customer-race-2', tourId: 'tour-1',
-      selectedDate: new Date('2026-07-01'), selectedTime: '',
+      travelDate: new Date('2026-07-01'), selectedTime: '',
       travelers: { adults: 2 }, subtotal: 350, total: 385, currency: 'USD',
       expiresAt: new Date(Date.now() + 3600000),
       tour: tourTemplate,

@@ -94,6 +94,38 @@ enum PayoutStatus {
   CANCELLED // Payout cancelled
 }
 
+// Lifecycle of a booking's supplier payout portion (finance v2).
+// PENDING   → paid, in escrow until travel date passes (+ clearance buffer)
+// ELIGIBLE  → travel completed with no dispute; withdrawable during an open window
+// REQUESTED → included in a submitted PayoutRequest (locked)
+// PAID      → funds released to the supplier (ledger row exists)
+// DISPUTED  → an open dispute/refund freezes the funds
+// CANCELLED → terminal: refunded/cancelled, supplier never gets paid
+enum BookingPayoutStatus {
+  PENDING
+  ELIGIBLE
+  REQUESTED
+  PAID
+  DISPUTED
+  CANCELLED
+}
+
+enum PayoutRequestStatus {
+  PROCESSING // Supplier submitted the batch withdrawal request
+  APPROVED // Admin authorized the release
+  COMPLETED // Funds confirmed sent; ledger rows created
+  REJECTED // Admin rejected the request
+  CANCELLED // Withdrawn/superseded before completion
+}
+
+enum DisputeStatus {
+  OPEN // Supplier just filed the refund request, awaiting review
+  UNDER_REVIEW // Admin is actively reviewing
+  RESOLVED_CUSTOMER // Refund approved — customer refunded, supplier payout cancelled
+  RESOLVED_SUPPLIER // Request denied — payout unfrozen back to eligible
+  WITHDRAWN // Supplier withdrew their refund request
+}
+
 enum PayoutMethodType {
   BANK_TRANSFER
   PAYPAL
@@ -290,6 +322,10 @@ model User {
   bookings                   Booking[]
   payouts                    Payout[]
   payoutMethods              PayoutMethod[]
+  payoutRequests             PayoutRequest[]
+  disputesOpened             Dispute[]           @relation("DisputeOpener")
+  disputesAgainst            Dispute[]           @relation("DisputeSupplier")
+  disputesResolved           Dispute[]           @relation("DisputeResolver")
   reviews                    Review[]
   notifications              Notification[]
   cartItems                  CartItem[]
@@ -304,6 +340,7 @@ model User {
   articles                   Article[]
   keywordRequests            KeywordRequest[]
   wishlistItems              WishlistItem[]
+  checkoutDrafts             CheckoutDraft[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -494,6 +531,7 @@ model PayoutMethod {
   verified Boolean @default(false)
 
   payouts Payout[] // Payouts that used this method
+  payoutRequests PayoutRequest[] // Payout requests paid to this method
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -584,6 +622,7 @@ model Tour {
   expeditionTour      ExpeditionTour?
   articles            ArticleTour[]
   wishlistItems       WishlistItem[]
+  checkoutDrafts      CheckoutDraft[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -703,7 +742,7 @@ model Booking {
   source       BookingSource @default(TRAVIO)
   status       BookingStatus @default(PENDING)
   travelers    Json // Traveler information
-  selectedDate DateTime
+  travelDate   DateTime @map("selectedDate")
   selectedTime String?
   isSimulated  Boolean       @default(false)
 
@@ -719,13 +758,16 @@ model Booking {
   taxes     Decimal @default(0) @db.Decimal(10, 2)
   fees      Decimal @default(0) @db.Decimal(10, 2)
   discounts Decimal @default(0) @db.Decimal(10, 2)
-  total     Decimal @db.Decimal(10, 2)
+  grossAmount Decimal @map("total") @db.Decimal(10, 2)
   currency  String  @default("USD")
 
   // Commission & Payouts
   commissionRate   Decimal @db.Decimal(5, 4) // e.g., 0.1500 for 15%
-  commissionAmount Decimal @db.Decimal(10, 2)
+  platformCommission Decimal @map("commissionAmount") @db.Decimal(10, 2)
   supplierPayout   Decimal @db.Decimal(10, 2)
+
+  // Finance v2 — fund lifecycle (see BookingPayoutStatus enum)
+  payoutStatus BookingPayoutStatus @default(PENDING)
 
   // Payment Information
   stripePaymentIntentId   String?
@@ -756,6 +798,8 @@ model Booking {
   // Relationships
   review    Review?
   payouts   Payout[]
+  payoutRequestItems PayoutRequestItem[]
+  disputes  Dispute[]
   reminders BookingReminder[]
   changes   BookingChange[]
 
@@ -765,13 +809,14 @@ model Booking {
   @@index([customerId])
   @@index([tourId])
   @@index([status])
-  @@index([selectedDate])
+  @@index([travelDate])
   @@index([bookingNumber])
   @@index([stripePaymentIntentId])
   @@index([stripeCheckoutSessionId])
-  @@index([tourId, status, selectedDate]) // Capacity checks + supplier booking lookup
-  @@index([customerId, status, selectedDate]) // "My bookings" filtered pages
-  @@index([status, selectedDate]) // Admin/supplier date-range queries
+  @@index([tourId, status, travelDate]) // Capacity checks + supplier booking lookup
+  @@index([customerId, status, travelDate]) // "My bookings" filtered pages
+  @@index([status, travelDate]) // Admin/supplier date-range queries
+  @@index([payoutStatus]) // Finance eligibility sweeps + KPI queries
 }
 
 model BookingReminder {
@@ -802,6 +847,52 @@ model BookingChange {
 
   @@index([bookingId])
   @@index([changedBy])
+}
+
+// Pay-now checkout hold (Expedition storefront). A short-lived atomic seat
+// reservation created BEFORE the customer is redirected to Stripe Checkout.
+// No Booking row exists until the checkout.session.completed webhook
+// materializes one from the stored payload + pricing snapshot. Holds occupy
+// capacity (availabilityCore counts status='HOLDING', unexpired) and are
+// released by the expired-session webhook or the expire-checkout-holds sweep.
+model CheckoutDraft {
+  id             String   @id @default(cuid())
+  customerId     String
+  customer       User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tourId         String
+  tour           Tour     @relation(fields: [tourId], references: [id], onDelete: Cascade)
+
+  // Slot being held
+  travelDate   DateTime @map("selectedDate")
+  selectedTime String?
+  seats        Int // Numeric traveler headcount occupying capacity
+
+  // Frozen at acquisition: exact validated request body + server-computed
+  // pricing/commission, so the webhook can materialize the Booking without
+  // re-trusting anything from the client.
+  payload Json
+  pricing Json
+
+  commissionRate     Decimal @db.Decimal(5, 4)
+  platformCommission Decimal @map("commissionAmount") @db.Decimal(10, 2)
+  supplierPayout     Decimal @db.Decimal(10, 2)
+  currency           String  @default("USD")
+
+  stripeSessionId String? @unique
+  // HOLDING  — seats reserved, awaiting payment
+  // PAID     — converted to a Booking by the completed webhook
+  // EXPIRED  — released (expired session / sweep / abandoned)
+  // REFUNDED — payment landed but capacity vanished mid-hold; money returned
+  status    String   @default("HOLDING")
+  expiresAt DateTime
+  bookingId String? // Set when materialized (PAID/REFUNDED bookkeeping)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tourId, travelDate, status]) // Hold-aware capacity checks
+  @@index([status, expiresAt]) // Expiry sweep
+  @@index([customerId]) // "My checkouts" + dedup guard
 }
 
 model Payout {
@@ -849,6 +940,117 @@ model Payout {
   @@index([supplierId, createdAt])
   @@index([bookingId])
   @@index([payoutMethodId])
+}
+
+// ── Finance v2: batch withdrawal requests ──
+// A supplier groups their ELIGIBLE bookings into a single PayoutRequest during
+// an open bi-monthly window (16th–20th or 1st–5th). Admin approves → completes;
+// completion cascades ledger Payout rows + Booking.payoutStatus = PAID.
+
+model PayoutRequest {
+  id            String @id @default(cuid())
+  requestNumber String @unique // Human-readable reference e.g. PR-20260816-XXXX
+
+  // Who gets paid
+  supplierId String
+  supplier   User   @relation(fields: [supplierId], references: [id])
+
+  // Amounts (all items share one currency — mixed currencies split into separate requests)
+  amount       Decimal @db.Decimal(10, 2)
+  currency     String  @default("USD")
+  bookingCount Int
+
+  status PayoutRequestStatus @default(PROCESSING)
+
+  // Bi-monthly cycle this request belongs to
+  cycleStartDate DateTime
+  cycleEndDate   DateTime
+  cycleLabel     String // e.g. "Aug 1–15"
+
+  // Destination account snapshot at request time
+  payoutMethodId String?
+  payoutMethod   PayoutMethod? @relation(fields: [payoutMethodId], references: [id])
+
+  // Admin processing
+  approvedBy     String?
+  approvedAt     DateTime?
+  completedBy    String?
+  completedAt    DateTime?
+  rejectedBy     String?
+  rejectedAt     DateTime?
+  rejectedReason String?
+  reference      String? // Transaction reference from payment provider
+  notes          String?
+
+  items PayoutRequestItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([supplierId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([supplierId, status])
+}
+
+model PayoutRequestItem {
+  id              String        @id @default(cuid())
+  payoutRequestId String
+  payoutRequest   PayoutRequest @relation(fields: [payoutRequestId], references: [id], onDelete: Cascade)
+
+  // A booking can only ever be part of one payout request
+  bookingId String @unique
+  booking   Booking @relation(fields: [bookingId], references: [id])
+
+  // Immutable money snapshots at request time
+  grossAmount        Decimal @map("total") @db.Decimal(10, 2)
+  platformCommission Decimal @map("commissionAmount") @db.Decimal(10, 2)
+  supplierPayout     Decimal @db.Decimal(10, 2)
+  currency           String  @default("USD")
+
+  createdAt DateTime @default(now())
+
+  @@index([payoutRequestId])
+}
+
+// ── Finance v2: supplier-initiated refund requests ──
+// A supplier files a refund request (model named "Dispute" for historical
+// reasons) when a customer's money should go back. An open request freezes
+// the booking's supplier payout (DISPUTED). Admin approval refunds the
+// customer via Stripe and cancels the payout; denial or withdrawal unfreezes
+// the funds back to eligible.
+
+model Dispute {
+  id            String @id @default(cuid())
+  disputeNumber String @unique // Human-readable reference e.g. DS-20260821-XXXX
+
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id])
+
+  openedById String
+  opener     User    @relation("DisputeOpener", fields: [openedById], references: [id])
+  supplierId String
+  supplier   User    @relation("DisputeSupplier", fields: [supplierId], references: [id])
+
+  reason      String // OPERATIONAL, FORCE_MAJEURE, CUSTOMER_REQUESTED, OTHER
+  description String?
+
+  status DisputeStatus @default(OPEN)
+
+  // Resolution
+  resolution   String?
+  resolvedById String?
+  resolvedBy   User?   @relation("DisputeResolver", fields: [resolvedById], references: [id])
+  resolvedAt   DateTime?
+  refundAmount Decimal? @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([bookingId])
+  @@index([supplierId])
+  @@index([openedById])
+  @@index([status])
 }
 
 model Review {
