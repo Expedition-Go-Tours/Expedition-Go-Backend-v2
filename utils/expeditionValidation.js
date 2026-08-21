@@ -51,7 +51,7 @@ const travelerWithDetailsSchema = travelerSchema.extend({
       });
     }
   }),
-  location: z.string().min(3).max(200),
+  location: z.string().min(3).max(200).optional(),
   details: z
     .array(
       z.object({
@@ -109,8 +109,18 @@ const trackClickSchema = z.object({
 const calculateCheckoutSchema = z.object({
   body: z.object({
     tourId: z.string().min(1).max(100),
-    travelDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format'),
+    travelDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional(),
+    selectedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional(),
     travelers: travelerSchema,
+    promoCode: z.string().max(50).optional(),
+    selectedTime: z.string().max(50).optional(),
+  }).passthrough().superRefine((val, ctx) => {
+    if (!val.travelDate && val.selectedDate) {
+      val.travelDate = val.selectedDate;
+    }
+    if (!val.travelDate) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['travelDate'], message: 'travelDate is required (YYYY-MM-DD)' });
+    }
   }),
   query: z.any().optional(),
   params: z.object({}).optional(),
@@ -119,13 +129,29 @@ const calculateCheckoutSchema = z.object({
 const confirmBookingSchema = z.object({
   body: z.object({
     tourId: z.string().min(1).max(100),
-    travelDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format'),
+    travelDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional(),
+    selectedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format').optional(),
     travelers: travelerWithDetailsSchema,
     // Required for reserve-now-pay-later (card captured for auto-charge).
     // Pay-now uses Stripe's hosted Checkout page and does not send a card.
     paymentMethodId: z.string().min(1).max(100).optional(),
     paymentTiming: z.enum(['now', 'later']).optional(),
     specialRequests: z.string().max(1000).optional(),
+    selectedTime: z.string().max(50).optional(),
+    pickup: z.any().optional(),
+    leadTraveler: z.object({
+      name: z.string().max(200).optional(),
+      email: z.string().email().max(255).optional(),
+      phone: z.string().max(50).optional(),
+    }).optional(),
+    promoCode: z.string().max(50).optional(),
+  }).passthrough().superRefine((val, ctx) => {
+    if (!val.travelDate && val.selectedDate) {
+      val.travelDate = val.selectedDate;
+    }
+    if (!val.travelDate) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['travelDate'], message: 'travelDate is required (YYYY-MM-DD)' });
+    }
   }),
   query: z.any().optional(),
   params: z.object({}).optional(),

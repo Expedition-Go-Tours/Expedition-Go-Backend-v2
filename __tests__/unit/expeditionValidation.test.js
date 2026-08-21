@@ -1,4 +1,4 @@
-const { confirmBookingSchema } = require('../../utils/expeditionValidation');
+const { confirmBookingSchema, calculateCheckoutSchema } = require('../../utils/expeditionValidation');
 
 const basePayload = {
   body: {
@@ -88,5 +88,149 @@ describe('confirmBookingSchema phone validation', () => {
     delete body.paymentMethodId;
     const result = confirmBookingSchema.safeParse({ ...basePayload, body });
     expect(result.success).toBe(true);
+  });
+});
+
+describe('confirmBookingSchema selectedDate → travelDate alias', () => {
+  it('accepts selectedDate and maps it to travelDate', () => {
+    const result = confirmBookingSchema.safeParse({
+      ...basePayload,
+      body: { ...basePayload.body, selectedDate: '2026-09-01', travelDate: undefined },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data.body.travelDate).toBe('2026-09-01');
+  });
+
+  it('prefers travelDate over selectedDate when both present', () => {
+    const result = confirmBookingSchema.safeParse({
+      ...basePayload,
+      body: { ...basePayload.body, travelDate: '2026-09-01', selectedDate: '2026-10-01' },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data.body.travelDate).toBe('2026-09-01');
+  });
+
+  it('rejects when neither travelDate nor selectedDate is present', () => {
+    const body = { ...basePayload.body };
+    delete body.travelDate;
+    const result = confirmBookingSchema.safeParse({ ...basePayload, body });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('confirmBookingSchema optional travelers.location', () => {
+  it('accepts travelers without location', () => {
+    const result = confirmBookingSchema.safeParse({
+      ...basePayload,
+      body: {
+        ...basePayload.body,
+        travelers: { adults: 1, phoneNumber: '+12025551234' },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('still accepts travelers with location', () => {
+    const result = confirmBookingSchema.safeParse(basePayload);
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('confirmBookingSchema passthrough fields', () => {
+  it('passes through pickup', () => {
+    const result = confirmBookingSchema.safeParse({
+      ...basePayload,
+      body: { ...basePayload.body, pickup: { address: 'Hotel XYZ', time: '08:00' } },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data.body.pickup).toEqual({ address: 'Hotel XYZ', time: '08:00' });
+  });
+
+  it('passes through leadTraveler', () => {
+    const lt = { name: 'John Doe', email: 'john@example.com', phone: '+12025551234' };
+    const result = confirmBookingSchema.safeParse({
+      ...basePayload,
+      body: { ...basePayload.body, leadTraveler: lt },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data.body.leadTraveler).toEqual(lt);
+  });
+
+  it('passes through promoCode', () => {
+    const result = confirmBookingSchema.safeParse({
+      ...basePayload,
+      body: { ...basePayload.body, promoCode: 'SUMMER20' },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data.body.promoCode).toBe('SUMMER20');
+  });
+
+  it('passes through selectedTime', () => {
+    const result = confirmBookingSchema.safeParse({
+      ...basePayload,
+      body: { ...basePayload.body, selectedTime: '10:00' },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data.body.selectedTime).toBe('10:00');
+  });
+});
+
+describe('calculateCheckoutSchema', () => {
+  const baseCalc = {
+    body: {
+      tourId: 'tour-1',
+      travelDate: '2026-08-15',
+      travelers: { adults: 2, children: 1 },
+    },
+    query: {},
+    params: {},
+  };
+
+  it('accepts a valid payload', () => {
+    const result = calculateCheckoutSchema.safeParse(baseCalc);
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts selectedDate as alias for travelDate', () => {
+    const result = calculateCheckoutSchema.safeParse({
+      ...baseCalc,
+      body: { ...baseCalc.body, selectedDate: '2026-09-01', travelDate: undefined },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data.body.travelDate).toBe('2026-09-01');
+  });
+
+  it('prefers travelDate over selectedDate', () => {
+    const result = calculateCheckoutSchema.safeParse({
+      ...baseCalc,
+      body: { ...baseCalc.body, travelDate: '2026-09-01', selectedDate: '2026-10-01' },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data.body.travelDate).toBe('2026-09-01');
+  });
+
+  it('rejects when neither travelDate nor selectedDate is present', () => {
+    const body = { ...baseCalc.body };
+    delete body.travelDate;
+    const result = calculateCheckoutSchema.safeParse({ ...baseCalc, body });
+    expect(result.success).toBe(false);
+  });
+
+  it('passes through promoCode and selectedTime', () => {
+    const result = calculateCheckoutSchema.safeParse({
+      ...baseCalc,
+      body: { ...baseCalc.body, promoCode: 'FALL10', selectedTime: '14:00' },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data.body.promoCode).toBe('FALL10');
+    expect(result.data.body.selectedTime).toBe('14:00');
+  });
+
+  it('rejects travelDate with wrong format', () => {
+    const result = calculateCheckoutSchema.safeParse({
+      ...baseCalc,
+      body: { ...baseCalc.body, travelDate: '15-08-2026' },
+    });
+    expect(result.success).toBe(false);
   });
 });
