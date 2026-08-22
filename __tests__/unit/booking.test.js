@@ -1,6 +1,6 @@
 jest.mock('../../utils/prismaClient', () => ({
   user: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn() },
-  booking: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn(), count: jest.fn(), delete: jest.fn() },
+  booking: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn(), count: jest.fn(), delete: jest.fn(), aggregate: jest.fn() },
   cartItem: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), upsert: jest.fn(), update: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
   tour: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn() },
   review: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), aggregate: jest.fn(), count: jest.fn() },
@@ -622,6 +622,7 @@ describe('Booking Controller', () => {
       prisma.supplierProfile.findUnique.mockResolvedValue({ userId: 'supplier-1', status: 'ACTIVE' });
       prisma.booking.findMany.mockResolvedValue([mockBooking]);
       prisma.booking.count.mockResolvedValue(1);
+      prisma.booking.aggregate.mockResolvedValue({ _sum: { grossAmount: 100, supplierPayout: 85, platformCommission: 15 } });
       const supplierReq = mockReq({ user: { id: 'supplier-1', roles: ['supplier'] }, query: { page: '1', limit: '10' } });
       const res = mockRes();
 

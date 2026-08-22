@@ -1068,7 +1068,7 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  const [bookings, totalCount] = await Promise.all([
+  const [bookings, totalCount, aggregates] = await Promise.all([
     prisma.booking.findMany({
       where,
       include: {
@@ -1100,7 +1100,11 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
       skip,
       take: parseInt(limit)
     }),
-    prisma.booking.count({ where })
+    prisma.booking.count({ where }),
+    prisma.booking.aggregate({
+      where,
+      _sum: { grossAmount: true, supplierPayout: true, platformCommission: true },
+    }),
   ]);
 
   const totalPages = Math.ceil(totalCount / parseInt(limit));
@@ -1109,6 +1113,11 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
     status: 'success',
     data: {
       bookings,
+      summary: {
+        totalRevenue: Number(aggregates._sum.grossAmount || 0),
+        totalSupplierPayout: Number(aggregates._sum.supplierPayout || 0),
+        totalCommission: Number(aggregates._sum.platformCommission || 0),
+      },
       pagination: {
         currentPage: parseInt(page),
         totalPages,

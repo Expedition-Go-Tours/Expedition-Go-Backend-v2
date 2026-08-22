@@ -466,6 +466,29 @@ router.delete('/guides/:guideId', resolveSupplier, verificationController.delete
  */
 router.get('/dashboard', resolveSupplier, supplierController.getDashboard);
 
+/**
+ * @swagger
+ * /suppliers/monthly-revenue:
+ *   get:
+ *     summary: Monthly revenue breakdown
+ *     description: Returns gross revenue aggregated by month for chart display.
+ *     tags: [Suppliers]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: months
+ *         schema:
+ *           type: integer
+ *           default: 12
+ *           maximum: 24
+ *         description: Number of months to return
+ *     responses:
+ *       200:
+ *         description: Monthly revenue data
+ */
+router.get('/monthly-revenue', resolveSupplier, supplierController.getMonthlyRevenue);
+
 // ================================
 // SUPPLIER CANCELLATION RATE
 // ================================

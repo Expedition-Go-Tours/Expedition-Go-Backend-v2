@@ -415,6 +415,55 @@ exports.getEarnings = catchAsync(async (req, res) => {
 });
 
 /**
+ * GET /suppliers/monthly-revenue
+ * Returns monthly revenue breakdown for charts (gross amount per month).
+ */
+exports.getMonthlyRevenue = catchAsync(async (req, res) => {
+  const supplierId = req.supplierId;
+  const months = Math.min(24, Math.max(1, parseInt(req.query.months, 10) || 12));
+
+  const startDate = new Date();
+  startDate.setMonth(startDate.getMonth() - months + 1, 1);
+  startDate.setHours(0, 0, 0, 0);
+
+  const bookings = await prisma.booking.findMany({
+    where: {
+      tour: { supplierId },
+      createdAt: { gte: startDate },
+      paymentStatus: 'SUCCEEDED',
+    },
+    select: { grossAmount: true, createdAt: true },
+  });
+
+  const grouped = {};
+  for (const b of bookings) {
+    const d = b.createdAt;
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    if (!grouped[key]) grouped[key] = { grossAmount: 0, bookingCount: 0 };
+    grouped[key].grossAmount += Number(b.grossAmount);
+    grouped[key].bookingCount += 1;
+  }
+
+  const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const result = [];
+  const cursor = new Date(startDate);
+  const now = new Date();
+  while (cursor <= now) {
+    const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`;
+    result.push({
+      month: key,
+      label: MONTH_NAMES[cursor.getMonth()],
+      year: cursor.getFullYear(),
+      grossAmount: Math.round((grouped[key]?.grossAmount || 0) * 100) / 100,
+      bookingCount: grouped[key]?.bookingCount || 0,
+    });
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  res.json({ status: 'success', data: { months: result } });
+});
+
+/**
  * GET /suppliers/payouts
  * Supplier payout history
  */
