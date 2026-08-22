@@ -6,6 +6,8 @@ const { isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 
 function canAccessType(user, type) {
   if (!user.roles?.includes('admin') && !user.roles?.includes('expedition')) return true;
+  if (user.roles?.includes('supplier') && type === 'SUPPLIER_ADMIN') return true;
+  if (user.roles?.includes('customer') && type === 'USER_SUPPORT') return true;
   const keys = user.permissionKeys || [];
   if (keys.includes('dashboard.*')) return true;
   if (type === 'SUPPLIER_ADMIN') return keys.includes('chat.suppliers');
