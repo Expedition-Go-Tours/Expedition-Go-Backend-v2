@@ -6,7 +6,7 @@
  * Inverse of the frontend's tourToProduct() mapper.
  */
 
-const { normalizeToE164, extractCountryFromE164 } = require('./phoneValidation');
+const { normalizeToE164 } = require('./phoneValidation');
 const { durationToMinutes } = require('./tourHelpers');
 
 function productToTour(flat) {
@@ -91,7 +91,7 @@ function buildProductContent(flat) {
     guideMaterials: src.guideMaterials || { audioGuide: false, infoBooklet: false },
     foodProvided: !!src.foodProvided,
     meals: Array.isArray(src.meals) ? src.meals : [],
-    mealType: src.mealType || '',
+
     showDietaryRestrictions: !!src.showDietaryRestrictions,
     drinksIncluded: !!src.drinksIncluded,
     dietaryOptions: Array.isArray(src.dietaryOptions) ? src.dietaryOptions : [],
@@ -105,11 +105,6 @@ function buildProductContent(flat) {
     wifiIncluded: !!src.wifiIncluded,
     whatToBring: Array.isArray(src.mandatoryItems) ? src.mandatoryItems : [],
     additionalInfo: src.knowBeforeYouGo || '',
-    emergencyCountryCode: (() => {
-      if (src.emergencyCountryCode) return src.emergencyCountryCode;
-      if (src.emergencyPhone) return extractCountryFromE164(src.emergencyPhone) || '';
-      return '';
-    })(),
     emergencyPhone: normalizeToE164(src.emergencyPhone) || '',
     voucherInfo: src.voucherInfo || '',
     copyrightConfirmed: !!src.copyrightConfirmed,
@@ -117,7 +112,7 @@ function buildProductContent(flat) {
     meetingInstructions: src.meetingPointDescription || '',
     meetingMode: src.meetingMode || 'meeting_point',
     meetingPointPicture: src.meetingPointPicture || '',
-    arrivalTime: src.arrivalTime || '',
+    arrivalTime: src.arrivalTime || src.arrivalTimeCustom || '',
     arrivalTimeType: src.arrivalTimeType || 'none',
     arrivalTimeCustom: src.arrivalTimeCustom || '',
     pickupProvided: src.meetingMode === 'pickup',
@@ -246,7 +241,7 @@ function buildAvailability(flat) {
 }
 
 function buildBookingAndTickets(flat) {
-  const src = asSource(flat, 'bookingAndTickets');
+  const src = flat;
   const cancellationPolicy = {};
 
   if (src.cancellationType === 'standard') {
@@ -264,8 +259,6 @@ function buildBookingAndTickets(flat) {
   if (src.supplierCanCancelBadWeather) cancellationPolicy.supplierCanCancelBadWeather = true;
   if (src.supplierCanCancelNotEnoughTravelers) cancellationPolicy.supplierCanCancelNotEnoughTravelers = true;
 
-  if (src.cutoffHours != null) cancellationPolicy.cutoffHours = src.cutoffHours;
-
   return {
     meetingPoint: flat.meetingPoint || null,
     arrivalTime: flat.arrivalTime || '',
@@ -282,13 +275,7 @@ function buildBookingAndTickets(flat) {
     dropoffProvided: (flat.dropoffOption && flat.dropoffOption !== 'none') || !!flat.dropoffProvided,
     dropoffLocation: flat.dropoffLocation || null,
     dropoffDescription: flat.dropoffDescription || '',
-    ticketType: flat.ticketType || null,
-    instantBooking: flat.instantBooking ?? false,
     instantConfirmation: flat.instantConfirmation ?? false,
-    maxQuantity: flat.maxQuantity ?? null,
-    bookingWindow: flat.bookingWindow || null,
-    minAdvanceBookingHours: flat.minAdvanceBookingHours ?? null,
-    travelerRequiredInfo: Array.isArray(flat.travelerRequiredInfo) ? flat.travelerRequiredInfo : [],
     cancellationPolicy: Object.keys(cancellationPolicy).length > 0 ? cancellationPolicy : undefined,
     cutoffMinutes: flat.cutoffMinutes ?? 20,
     lastMinuteBookings: !!flat.lastMinuteBookings,

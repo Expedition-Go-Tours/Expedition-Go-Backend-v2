@@ -1,5 +1,4 @@
 const { z } = require('zod');
-const { isValidPhoneNumber } = require('libphonenumber-js');
 const { MAX_PRICE, isValidCurrencyCode } = require('./currencyCodes');
 
 const locationSchema = z.object({
@@ -122,7 +121,7 @@ const groupSizeSchema = z.object({
   price: z.number().min(0).nullable(),
 });
 
-const photoObjectSchema = z.string();
+const photoObjectSchema = z.union([z.string(), z.object({ id: z.string(), url: z.string() })]);
 
 /**
  * Coerce a price-like value to a finite number or null.
@@ -318,7 +317,6 @@ const productObjectSchema = z.object({
     type: z.string().optional(),
     format: z.string().optional(),
   })).optional(),
-  mealType: z.string().optional(),
   showDietaryRestrictions: z.boolean().optional(),
   drinksIncluded: z.boolean().optional(),
   dietaryOptions: z.array(z.string()).optional(),
@@ -344,9 +342,8 @@ const productObjectSchema = z.object({
   wifiIncluded: z.boolean({ required_error: 'WiFi/Internet availability is required' }),
   mandatoryItems: z.array(z.string()).optional(),
   knowBeforeYouGo: z.string().max(2000).optional(),
-  emergencyCountryCode: z.string().max(5).optional(),
   emergencyPhone: z.string()
-    .refine((val) => !val || isValidPhoneNumber(val), { message: 'Invalid phone number' })
+    .refine((val) => !val || /^\+[1-9]\d{2,14}$/.test(val), { message: 'Invalid phone number (must be E.164 format, e.g. +254700123456)' })
     .optional(),
   voucherInfo: z.string().max(500).optional(),
   // Step 10
@@ -402,14 +399,12 @@ const productObjectSchema = z.object({
   schedulesAndPricing: schedulesAndPricingSchema.nullable().optional(),
 
   // Cancellation
-  cutoffHours: z.number().min(0).optional(),
   cancellationType: z.enum(['standard', 'all_sales_final']).optional(),
   supplierCanCancelBadWeather: z.boolean().optional(),
   supplierCanCancelNotEnoughTravelers: z.boolean().optional(),
   // Prisma-level fields
   status: z.enum(['DRAFT', 'ACTIVE', 'PAUSED', 'ARCHIVED']).optional(),
   coverPhoto: z.string().optional(),
-  coverPhotoIndex: z.number().optional(),
   existingPhotos: z.array(z.string()).optional(),
   metaTitle: z.string().max(120).optional(),
   metaDescription: z.string().max(320).optional(),

@@ -10,12 +10,14 @@ jest.mock('../../utils/prismaClient', () => ({
   user: { findUnique: jest.fn() },
   booking: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn(), count: jest.fn() },
   notification: { create: jest.fn() },
+  adminNotification: { create: jest.fn().mockResolvedValue({ id: 'admin-notif-1', createdAt: new Date() }) },
   supplierProfile: { update: jest.fn() },
   stripeEvent: { findUnique: jest.fn(), upsert: jest.fn(), update: jest.fn() },
   cartItem: { deleteMany: jest.fn(() => Promise.resolve({ count: 0 })) },
   payout: { create: jest.fn() },
   payoutMethod: { findFirst: jest.fn() },
   specialOffer: { update: jest.fn() },
+  checkoutDraft: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue({ id: 'draft-exp-e2e-1', expiresAt: new Date(Date.now() + 30 * 60 * 1000) }), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
   $transaction: jest.fn(),
   $queryRawUnsafe: jest.fn(),
 }));
@@ -79,7 +81,7 @@ const app = require('../../app');
 const prisma = require('../../utils/prismaClient');
 const tourHelpers = require('../../utils/tourHelpers');
 const bookingHelpers = require('../../utils/bookingHelpers');
-const { createPaymentIntent, createCheckoutSession, calculateCommission, processStripeWebhook } = require('../../utils/stripeHelpers');
+const { createPaymentIntent, createCheckoutSession, calculateCommission, processStripeWebhook, getStripe } = require('../../utils/stripeHelpers');
 
 
 const mockUser = {
@@ -170,6 +172,10 @@ const mockTx = {
     return [{ currentBookings: '0' }];
   }),
   tourDateOverride: { findFirst: jest.fn().mockResolvedValue(null) },
+  checkoutDraft: {
+    findFirst: jest.fn().mockResolvedValue(null),
+    create: jest.fn().mockResolvedValue({ id: 'draft-exp-e2e-1', expiresAt: new Date(Date.now() + 30 * 60 * 1000) }),
+  },
   booking: {
     create: jest.fn().mockResolvedValue(expectedBooking),
   },
@@ -202,6 +208,11 @@ describe('E2E: Expedition Checkout Flow', () => {
     createPaymentIntent.mockResolvedValue({ id: 'pi_exp_e2e', client_secret: 'secret_exp_e2e' });
     createCheckoutSession.mockResolvedValue({ id: 'cs_exp_e2e', url: 'https://checkout.stripe.com/c/pay/cs_exp_e2e' });
     calculateCommission.mockResolvedValue({ rate: 0.15, amount: 78.75, supplierPayout: 446.25 });
+    getStripe.mockReturnValue({
+      paymentIntents: {
+        retrieve: jest.fn().mockResolvedValue({ id: 'pi_exp_e2e', status: 'requires_confirmation' }),
+      },
+    });
   });
 
   // ── Step 1: calculateCheckout (public, no auth) ────────────────────
@@ -231,24 +242,18 @@ describe('E2E: Expedition Checkout Flow', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.status).toBe('success');
-    expect(res.body.data.booking).toBeDefined();
-    expect(res.body.data.booking.id).toBe('booking-exp-e2e-1');
     expect(res.body.data.checkout).toBeDefined();
     expect(res.body.data.checkout.url).toBe('https://checkout.stripe.com/c/pay/cs_exp_e2e');
 
     expect(createCheckoutSession).toHaveBeenCalledWith(
       expect.objectContaining({
         amount: 52500,
-        bookingId: 'booking-exp-e2e-1',
       }),
     );
     expect(createPaymentIntent).not.toHaveBeenCalled();
 
     expect(mockVerifyAccessToken).toHaveBeenCalledWith('valid-exp-token');
     expect(prisma.$transaction).toHaveBeenCalled();
-    expect(mockTx.booking.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ source: 'EXPEDITION' }) }),
-    );
   });
 
   // ── Step 2b: reserve-now-pay-later captures the card (uncharged) ───
@@ -351,7 +356,6 @@ describe('E2E: Expedition Checkout Flow', () => {
         paymentTiming: 'now',
       });
     expect(confirmRes.status).toBe(201);
-    expect(confirmRes.body.data.booking.id).toBe('booking-exp-e2e-1');
     expect(confirmRes.body.data.checkout.url).toContain('checkout.stripe.com');
 
     expect(createCheckoutSession).toHaveBeenCalledWith(
