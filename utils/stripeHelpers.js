@@ -561,6 +561,12 @@ async function processStripeWebhook(event) {
       : { type: 'supplier-new-booking', bookingId: booking.id })
       .catch((err) => console.error(`[Email] ${chargedReservation ? 'Supplier reservation charge' : 'Supplier notification'} failed:`, err.message));
 
+    // If the customer selected pickup during checkout, notify the supplier.
+    if (booking.pickup) {
+      enqueueEmail({ type: 'supplier-pickup-updated', bookingId: booking.id })
+        .catch((err) => console.error('[Email] supplier-pickup-updated failed:', err.message));
+    }
+
     if (isExpedition) {
       notifyAdmin({
         type: 'BOOKING_CONFIRMED',

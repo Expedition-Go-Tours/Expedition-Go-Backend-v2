@@ -1371,6 +1371,11 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       brandName: 'Expedition',
     }).catch((err) => console.error('[Expedition] Reserve-later confirmation email failed:', err.message));
 
+    if (pickupSnapshot) {
+      enqueueEmail({ type: 'supplier-pickup-updated', bookingId: result.id })
+        .catch((err) => console.error('[Expedition] supplier-pickup-updated email failed:', err.message));
+    }
+
     enqueueEvent({
       name: 'expedition.booking_reserved',
       userId: customerId,

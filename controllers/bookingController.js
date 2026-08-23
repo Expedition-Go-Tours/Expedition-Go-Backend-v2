@@ -1247,7 +1247,7 @@ exports.updateBookingPickup = catchAsync(async (req, res, next) => {
     data: { pickup: updatedPickup }
   });
 
-  // Notify the customer (in-app + WS; email is a known infra gap).
+  // Notify the customer (in-app + email).
   enqueueNotification({
     userId: booking.customerId,
     type: 'BOOKING_STATUS_UPDATED',
@@ -1255,6 +1255,9 @@ exports.updateBookingPickup = catchAsync(async (req, res, next) => {
     message: 'Your pickup details have been updated by the supplier. Please check your booking.',
     data: { bookingId: booking.id, pickup: true }
   }).catch((err) => console.error('[Notification] enqueueNotification (pickup update) failed:', err.message));
+
+  enqueueEmail({ type: 'pickup-details-updated', bookingId: booking.id })
+    .catch((err) => console.error('[Email] pickup-details-updated failed:', err.message));
 
   logActivity({
     userId: supplierId,

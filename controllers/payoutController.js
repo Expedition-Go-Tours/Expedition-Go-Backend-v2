@@ -185,7 +185,7 @@ exports.getAllPayouts = catchAsync(async (req, res, next) => {
   ]);
 
   const totalPages = Math.ceil(totalCount / parseInt(limit));
-  const counts = { PENDING: 0, APPROVED: 0, PROCESSING: 0, PAID: 0, FAILED: 0 };
+  const counts = { PENDING: 0, APPROVED: 0, PROCESSING: 0, PAID: 0, FAILED: 0, CANCELLED: 0 };
   statusCounts.forEach((row) => {
     if (counts[row.status] !== undefined) counts[row.status] = row._count._all;
   });

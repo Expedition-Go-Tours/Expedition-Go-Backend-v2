@@ -157,6 +157,7 @@ describe('payoutController', () => {
         PROCESSING: 1,
         PAID: 7,
         FAILED: 0,
+        CANCELLED: 0,
       });
     });
 

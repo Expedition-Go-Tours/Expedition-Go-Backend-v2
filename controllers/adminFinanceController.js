@@ -12,7 +12,7 @@ function toNumber(v) {
   return v == null ? 0 : parseFloat(v);
 }
 
-const METHOD_SELECT = { id: true, type: true, bankName: true, paypalEmail: true, accountName: true, accountNumber: true, swiftCode: true, iban: true };
+const METHOD_SELECT = { id: true, type: true, isDefault: true, bankName: true, paypalEmail: true, accountName: true, accountNumber: true, swiftCode: true, iban: true };
 
 // Requests migrated from pre finance-v2 data were backfilled without a payout
 // method snapshot (payoutMethodId: null). Fall back to the supplier's current
