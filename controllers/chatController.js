@@ -107,6 +107,10 @@ exports.sendMessage = catchAsync(async (req, res) => {
     throw new AppError('Message content or attachment is required', 400);
   }
 
+  if (content && content.length > 5000) {
+    throw new AppError('Message too long (max 5000 characters)', 400);
+  }
+
   if (attachmentUrl && !isValidCloudinaryUrl(attachmentUrl)) {
     throw new AppError('Invalid attachment URL', 400);
   }

@@ -503,6 +503,7 @@ function setupSocketIO() {
 
         if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
         if (!content && !attachmentUrl) return ack?.({ status: 'error', message: 'content or attachment required' });
+        if (content && content.length > 5000) return ack?.({ status: 'error', message: 'Message too long (max 5000 characters)' });
 
         const effectiveUserId = socket.userRoles.includes('admin')
           ? (await chatService.getSharedAdminId()) || socket.userId
