@@ -319,11 +319,10 @@ exports.getOverview = catchAsync(async (req, res, next) => {
       LIMIT 10
     `,
 
-    /* Booking status distribution (filtered by period) */
+    /* Booking status distribution (platform-wide snapshot) */
     prisma.booking.groupBy({
       by: ['status'],
       _count: true,
-      where: { createdAt: { gte: currentPeriodStart } },
     }),
 
     /* Platform-wide recent events (last 20) */

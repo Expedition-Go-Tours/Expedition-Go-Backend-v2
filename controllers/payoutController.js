@@ -594,7 +594,7 @@ exports.failPayout = catchAsync(async (req, res, next) => {
  * Get payout summary / stats for the admin dashboard
  */
 exports.getPayoutSummary = catchAsync(async (req, res, next) => {
-  const [pending, approved, processing, failed, paidThisMonth, monthlyBreakdown, requestStages] = await Promise.all([
+  const [pending, approved, processing, failed, paidThisMonth, monthlyBreakdown, requestStages, outstandingFromBookings] = await Promise.all([
     prisma.payout.aggregate({
       where: { status: 'PENDING' },
       _count: true,
@@ -637,15 +637,22 @@ exports.getPayoutSummary = catchAsync(async (req, res, next) => {
       GROUP BY DATE_TRUNC('month', "paidAt")
       ORDER BY month DESC
     `,
-    // Finance v2: the live approval queue is batch PayoutRequests, not legacy
-    // per-booking Payout rows. PROCESSING = awaiting admin approval,
-    // APPROVED = authorized but money not sent yet.
     prisma.payoutRequest.groupBy({
       by: ['status'],
       where: { status: { in: ['PROCESSING', 'APPROVED'] } },
       _count: { _all: true },
       _sum: { amount: true }
-    })
+    }),
+    prisma.$queryRaw`
+      SELECT
+        COALESCE(SUM(b."supplierPayout"), 0)::float AS "totalOwed",
+        COUNT(*)::int AS "bookingCount"
+      FROM "Booking" b
+      WHERE b."paymentStatus" = 'SUCCEEDED'
+        AND NOT EXISTS (
+          SELECT 1 FROM "Payout" p WHERE p."bookingId" = b.id AND p."status" = 'PAID'
+        )
+    `
   ]);
 
   const paidCount = paidThisMonth._count;
@@ -685,8 +692,8 @@ exports.getPayoutSummary = catchAsync(async (req, res, next) => {
         total: failed._sum.amount || 0
       },
       outstanding: {
-        count: approved._count + processing._count,
-        total: approvedTotal + processingTotal
+        count: outstandingFromBookings[0]?.bookingCount || 0,
+        total: outstandingFromBookings[0]?.totalOwed || 0
       },
       paidThisMonth: {
         count: paidCount,

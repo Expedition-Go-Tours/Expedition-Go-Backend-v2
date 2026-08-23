@@ -377,9 +377,13 @@ describe('payoutController', () => {
         .mockResolvedValueOnce({ _count: 3, _sum: { amount: 1500 } })
         .mockResolvedValueOnce({ _count: 1, _sum: { amount: 100 } })
         .mockResolvedValueOnce({ _count: 4, _sum: { amount: 4000, commissionAmount: 200 } });
-      prisma.$queryRaw.mockResolvedValue([
-        { month: new Date('2026-01-01'), count: 4, totalAmount: '4000', commission: '200' },
-      ]);
+      prisma.$queryRaw
+        .mockResolvedValueOnce([
+          { month: new Date('2026-01-01'), count: 4, totalAmount: '4000', commission: '200' },
+        ])
+        .mockResolvedValueOnce([
+          { totalOwed: 1800, bookingCount: 3 },
+        ]);
 
       await controller.getPayoutSummary(req, res, next);
 
@@ -389,7 +393,7 @@ describe('payoutController', () => {
       expect(body.data.processing).toEqual(expect.objectContaining({ count: 3, total: 1500 }));
       expect(body.data.approved).toEqual(expect.objectContaining({ count: 1, total: 500 }));
       expect(body.data.failed).toEqual(expect.objectContaining({ count: 1, total: 100 }));
-      expect(body.data.outstanding).toEqual(expect.objectContaining({ count: 4, total: 2000 }));
+      expect(body.data.outstanding).toEqual({ count: 3, total: 1800 });
       expect(body.data.paidThisMonth).toEqual(expect.objectContaining({ count: 4, total: 4000, commission: 200 }));
       expect(body.data.avgCommission).toBeCloseTo(0.05);
       expect(body.data.monthlyBreakdown).toEqual(expect.any(Array));
