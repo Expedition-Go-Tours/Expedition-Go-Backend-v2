@@ -763,8 +763,8 @@ exports.getCLV = catchAsync(async (req, res, next) => {
         u.name,
         u.email,
         COUNT(*)::int                         AS "totalBookings",
-        ROUND(SUM(b.grossAmount)::numeric, 2)       AS "totalSpent",
-        ROUND(AVG(b.grossAmount)::numeric, 2)       AS "avgBookingValue",
+        ROUND(SUM(b."total")::numeric, 2)       AS "totalSpent",
+        ROUND(AVG(b."total")::numeric, 2)       AS "avgBookingValue",
         MAX(b."paidAt")                       AS "lastBookingDate"
       FROM "Booking" b
       JOIN "User" u ON u.id = b."customerId"
@@ -788,7 +788,7 @@ exports.getCLV = catchAsync(async (req, res, next) => {
           sc."signupMonth",
           COUNT(DISTINCT sc.id)::int            AS "users",
           COUNT(DISTINCT b.id)::int             AS "bookings",
-          ROUND(COALESCE(SUM(b.grossAmount), 0)::numeric, 2) AS "revenue"
+          ROUND(COALESCE(SUM(b."total"), 0)::numeric, 2) AS "revenue"
         FROM signup_cohorts sc
         LEFT JOIN "Booking" b ON b."customerId" = sc.id AND b."paymentStatus" = 'SUCCEEDED'
         GROUP BY sc."signupMonth"
