@@ -278,7 +278,7 @@ exports.getOverview = catchAsync(async (req, res, next) => {
       LEFT JOIN (
         SELECT "tourId", COUNT(*)::int AS booking_count, SUM(total)::float AS total_revenue
         FROM "Booking"
-        WHERE "paymentStatus" = 'SUCCEEDED' AND "createdAt" >= ${currentPeriodStart}
+        WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}
         GROUP BY "tourId"
       ) b ON b."tourId" = t.id
       LEFT JOIN (
@@ -311,7 +311,7 @@ exports.getOverview = catchAsync(async (req, res, next) => {
                MODE() WITHIN GROUP (ORDER BY bo.currency) AS currency
         FROM "Booking" bo
         JOIN "Tour" t ON t.id = bo."tourId"
-        WHERE bo."paymentStatus" = 'SUCCEEDED' AND bo."createdAt" >= ${currentPeriodStart}
+        WHERE bo."paymentStatus" = 'SUCCEEDED' AND bo."paidAt" >= ${currentPeriodStart}
         GROUP BY t."supplierId"
       ) period ON period."supplierId" = u.id
       WHERE sp.status = 'ACTIVE'
