@@ -1278,7 +1278,7 @@ exports.updateBookingPickup = catchAsync(async (req, res, next) => {
  */
 exports.updateBookingStatus = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const { status, supplierNotes } = req.body;
+  const { status, supplierNotes, reason } = req.body;
   const supplierId = req.supplierId;
 
   const booking = await prisma.booking.findFirst({
@@ -1315,6 +1315,106 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
     ));
   }
 
+  // ── Supplier-initiated cancellation ──
+  if (status === 'CANCELLED') {
+    const result = await prisma.$transaction(async (tx) => {
+      const updateData = {
+        status: 'CANCELLED',
+        cancellationReason: reason || null,
+        cancelledAt: new Date(),
+        payoutStatus: 'CANCELLED',
+        supplierNotes,
+        updatedAt: new Date(),
+      };
+
+      // Process refund if payment was successful
+      let refundAmount = 0;
+      if (booking.paymentStatus === 'SUCCEEDED') {
+        const cancellationCheck = evaluateCancellationPolicy(booking, booking.tour);
+        refundAmount = cancellationCheck.refundAmount;
+
+        if (refundAmount > 0) {
+          try {
+            const refundAmountCents = Math.round(refundAmount * 100);
+            await createRefund(booking.stripePaymentIntentId, refundAmountCents);
+          } catch (refundErr) {
+            console.error(`[Booking] Stripe refund failed for booking ${id}:`, refundErr.message);
+          }
+
+          updateData.paymentStatus = 'REFUNDED';
+          updateData.refundAmount = refundAmount;
+          updateData.refundedAt = new Date();
+
+          // Cancel pending payout rows
+          await tx.payout.updateMany({
+            where: { bookingId: id, status: 'PENDING' },
+            data: { status: 'CANCELLED', processedAt: new Date() },
+          });
+        }
+      }
+
+      const updatedBooking = await tx.booking.update({
+        where: { id },
+        data: updateData,
+      });
+
+      // Finance v2: detach from any active payout request
+      await detachBookingFromActiveRequests(tx, id);
+
+      // Decrement spotsSold for applied special offer
+      if (booking.appliedOfferId) {
+        const travelerCountValue = travelerCount(booking.travelers);
+        await tx.specialOffer.update({
+          where: { id: booking.appliedOfferId },
+          data: { spotsSold: { decrement: travelerCountValue } },
+        });
+      }
+
+      return { updatedBooking, refundAmount };
+    });
+
+    // Send supplier-cancelled-booking email to customer (fire-and-forget)
+    enqueueEmail({
+      type: 'supplier-cancelled-booking',
+      bookingId: booking.id,
+      reason,
+      refundAmount: result.refundAmount,
+    }).catch((err) => console.error('[Email] supplier-cancelled-booking failed:', err.message));
+
+    // Notify customer in-app
+    enqueueNotification({
+      userId: booking.customerId,
+      type: 'BOOKING_CANCELLED',
+      title: 'Booking Cancelled',
+      message: `Your booking "${booking.tour.title}" has been cancelled by the supplier`,
+      data: { bookingId: booking.id }
+    }).catch((err) => console.error('[Notification] enqueueNotification (supplier cancel) failed:', err.message));
+
+    // Log activity
+    logActivity({
+      userId: supplierId,
+      action: 'booking.cancelled',
+      resource: 'Booking',
+      resourceId: booking.id,
+      metadata: { reason, refundAmount: result.refundAmount }
+    }).catch((err) => logger.warn('[booking] logActivity failed:', err?.message));
+
+    enqueueEvent({
+      name: 'booking.cancelled',
+      userId: supplierId,
+      req,
+      resource: 'Booking',
+      resourceId: booking.id,
+      properties: { reason, refundAmount: result.refundAmount, tourId: booking.tourId },
+    });
+
+    return res.status(200).json({
+      status: 'success',
+      data: { booking: result.updatedBooking }
+    });
+  }
+
+  // ── Non-cancellation status transitions ──
   const updatedBooking = await prisma.booking.update({
     where: { id },
     data: {
