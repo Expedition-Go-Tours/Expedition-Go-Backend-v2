@@ -272,7 +272,8 @@ exports.getOverview = catchAsync(async (req, res, next) => {
         COALESCE(b.booking_count, 0)::int AS "totalBookings",
         COALESCE(b.total_revenue, 0)::float AS "totalRevenue",
         t."averageRating",
-        COALESCE(r.review_count, 0)::int AS "reviewCount"
+        COALESCE(r.review_count, 0)::int AS "reviewCount",
+        COALESCE((t."schedulesAndPricing"->>'currency'), 'USD') AS "currency"
       FROM "Tour" t
       LEFT JOIN (
         SELECT "tourId", COUNT(*)::int AS booking_count, SUM(total)::float AS total_revenue
@@ -299,13 +300,15 @@ exports.getOverview = catchAsync(async (req, res, next) => {
         u."photoURL",
         COALESCE(period.total_earnings, 0)::float AS "totalEarnings",
         COALESCE(period.booking_count, 0)::int AS "totalBookings",
+        COALESCE(period.currency, 'USD') AS "currency",
         sp."averageRating"
       FROM "SupplierProfile" sp
       JOIN "User" u ON u.id = sp."userId"
       LEFT JOIN (
         SELECT t."supplierId",
                COUNT(*)::int AS booking_count,
-               SUM(bo."supplierPayout")::float AS total_earnings
+               SUM(bo."supplierPayout")::float AS total_earnings,
+               MODE() WITHIN GROUP (ORDER BY bo.currency) AS currency
         FROM "Booking" bo
         JOIN "Tour" t ON t.id = bo."tourId"
         WHERE bo."paymentStatus" = 'SUCCEEDED' AND bo."createdAt" >= ${currentPeriodStart}
@@ -558,6 +561,7 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
         reviewCount: true,
         viewCount: true,
         createdAt: true,
+        schedulesAndPricing: true,
         supplier: { select: { id: true, name: true } },
         _count: { select: { bookings: true } },
         expeditionTour: { select: { isActive: true, bookingFlow: true, externalUrl: true } },
