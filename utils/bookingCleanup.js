@@ -226,6 +226,140 @@ async function autoCompleteBookings() {
 }
 
 /**
+ * Auto-cancel PENDING bookings whose activity date has passed.
+ *
+ * When a PENDING booking's travel date is more than 48 hours in the past and
+ * the supplier never confirmed, the booking is auto-cancelled. This prevents
+ * bookings from stuck in PENDING forever.
+ *
+ * - Paid bookings: refund via evaluateCancellationPolicy + createRefund
+ * - Reserve-now-pay-later: just cancel (no charge was made)
+ * - Sends email notification to customer explaining the auto-cancellation
+ *
+ * Runs every 30 minutes from the CLEANUP worker.
+ */
+const STALE_PENDING_GRACE_HOURS = 48;
+
+async function cancelStalePendingAfterTravelDate() {
+  const prisma = require('./prismaClient');
+  const { evaluateCancellationPolicy } = require('./bookingHelpers');
+
+  const graceCutoff = new Date();
+  graceCutoff.setHours(graceCutoff.getHours() - STALE_PENDING_GRACE_HOURS);
+
+  const stale = await prisma.booking.findMany({
+    where: {
+      status: 'PENDING',
+      travelDate: { lt: graceCutoff },
+    },
+    include: {
+      tour: { select: { title: true, supplierId: true } },
+    },
+    orderBy: { travelDate: 'asc' },
+    take: SWEEP_LIMIT,
+  });
+
+  if (stale.length === 0) return { stale: 0, cancelled: 0, refunded: 0 };
+
+  let cancelled = 0;
+  let refunded = 0;
+
+  for (const booking of stale) {
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        const updateData = {
+          status: 'CANCELLED',
+          cancellationReason: 'Activity date passed without supplier confirmation',
+          cancelledAt: new Date(),
+          payoutStatus: 'CANCELLED',
+          updatedAt: new Date(),
+        };
+
+        // Process refund if payment was successful
+        let refundAmount = 0;
+        if (booking.paymentStatus === 'SUCCEEDED') {
+          const cancellationCheck = evaluateCancellationPolicy(booking, booking.tour);
+          refundAmount = cancellationCheck.refundAmount;
+
+          if (refundAmount > 0) {
+            try {
+              const refundAmountCents = Math.round(refundAmount * 100);
+              await createRefund(booking.stripePaymentIntentId, refundAmountCents);
+              updateData.paymentStatus = 'REFUNDED';
+              updateData.refundAmount = refundAmount;
+              updateData.refundedAt = new Date();
+            } catch (err) {
+              console.error('[BookingCleanup] Refund failed for stale PENDING', booking.id, err.message);
+            }
+          }
+        }
+
+        // Cancel any pending payout rows
+        await tx.payout.updateMany({
+          where: { bookingId: booking.id, status: { in: ['PENDING', 'APPROVED'] } },
+          data: { status: 'CANCELLED', updatedAt: new Date() },
+        });
+
+        const updated = await tx.booking.update({
+          where: { id: booking.id },
+          data: updateData,
+        });
+
+        // Release capacity
+        try {
+          const { releaseCapacityForBooking } = require('./availabilityCore');
+          await releaseCapacityForBooking(booking);
+        } catch (err) {
+          console.error('[BookingCleanup] Capacity release failed for', booking.id, err.message);
+        }
+
+        return { updated, refundAmount };
+      });
+
+      // Send email notification to customer
+      enqueueEmail({
+        type: 'booking-auto-cancelled',
+        bookingId: booking.id,
+        reason: 'Activity date passed without supplier confirmation',
+      }).catch((err) => console.error('[BookingCleanup] Auto-cancel email failed:', err.message));
+
+      // Notify supplier
+      enqueueNotification({
+        userId: booking.tour?.supplierId,
+        type: 'BOOKING_CANCELLED',
+        title: 'Booking Auto-Cancelled',
+        message: `Booking #${booking.bookingNumber} for "${booking.tour?.title}" was auto-cancelled because the activity date passed without confirmation.`,
+        data: { bookingId: booking.id },
+      }).catch((err) => console.error('[BookingCleanup] Supplier notification failed:', err.message));
+
+      enqueueEvent({
+        name: 'booking.auto-cancelled',
+        userId: booking.customerId,
+        resource: 'Booking',
+        resourceId: booking.id,
+        properties: { tourId: booking.tourId, reason: 'stale-pending', source: 'system' },
+      }).catch(() => {});
+
+      logActivity({
+        userId: booking.customerId,
+        action: 'booking.auto-cancelled',
+        resource: 'Booking',
+        resourceId: booking.id,
+        metadata: { reason: 'Activity date passed without supplier confirmation', source: 'system' },
+      }).catch(() => {});
+
+      cancelled += 1;
+      if (result.refundAmount > 0) refunded += 1;
+    } catch (err) {
+      console.error('[BookingCleanup] Auto-cancel failed for', booking.id, err.message);
+    }
+  }
+
+  console.log(`[BookingCleanup] Stale PENDING sweep: ${stale.length} found → ${cancelled} cancelled, ${refunded} refunded`);
+  return { stale: stale.length, cancelled, refunded };
+}
+
+/**
  * Expire stale CheckoutDraft holds.
  *
  * Holds past their `expiresAt` (plus a grace window) are unrecoverable if
@@ -325,4 +459,4 @@ async function expireCheckoutHolds() {
   return { stale: stale.length, materialized, released };
 }
 
-module.exports = { cancelStalePendingBookings, expireBooking, autoCompleteBookings, expireCheckoutHolds };
+module.exports = { cancelStalePendingBookings, expireBooking, autoCompleteBookings, cancelStalePendingAfterTravelDate, expireCheckoutHolds };

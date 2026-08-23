@@ -245,6 +245,16 @@ async function processEmailJob(job) {
       break;
     }
 
+    case 'booking-auto-cancelled': {
+      const booking = await prisma.booking.findUnique({
+        where: { id: job.bookingId },
+        include: EMAIL_BOOKING_INCLUDE,
+      });
+      if (!booking) throw new Error(`Booking ${job.bookingId} not found`);
+      await emailService.sendBookingCancellationEmail(booking, booking.refundAmount);
+      break;
+    }
+
     case 'supplier-booking-notification': {
       const booking = await prisma.booking.findUnique({
         where: { id: job.bookingId },
@@ -528,6 +538,11 @@ function registerWorkers() {
       case 'auto-complete-bookings': {
         const { autoCompleteBookings } = require('./bookingCleanup');
         await autoCompleteBookings();
+        break;
+      }
+      case 'cancel-stale-pending-bookings': {
+        const { cancelStalePendingAfterTravelDate } = require('./bookingCleanup');
+        await cancelStalePendingAfterTravelDate();
         break;
       }
       case 'expire-checkout-holds': {

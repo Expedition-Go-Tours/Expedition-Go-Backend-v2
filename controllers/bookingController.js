@@ -1315,6 +1315,15 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
     ));
   }
 
+  // ── Guard: reject PENDING→CONFIRMED when activity date has passed ──
+  if (booking.status === 'PENDING' && status === 'CONFIRMED') {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (new Date(booking.travelDate) < today) {
+      return next(new AppError('Cannot confirm a booking with a past activity date. Cancel this booking instead.', 400));
+    }
+  }
+
   // ── Supplier-initiated cancellation ──
   if (status === 'CANCELLED') {
     const result = await prisma.$transaction(async (tx) => {

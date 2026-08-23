@@ -179,6 +179,11 @@ async function setupQueueWorkers() {
     enqueueCleanup('auto-complete-bookings').catch((err) => logger.warn('[scheduler] auto-complete-bookings failed:', err?.message));
   }, 30 * 60 * 1000));
 
+  // Auto-cancel PENDING bookings whose activity date has passed (48h grace).
+  intervals.push(setInterval(() => {
+    enqueueCleanup('cancel-stale-pending-bookings').catch((err) => logger.warn('[scheduler] cancel-stale-pending-bookings failed:', err?.message));
+  }, 30 * 60 * 1000));
+
   // Collect deferred payments for reserve-now-pay-later bookings as their
   // activity dates approach. Every 30 minutes is plenty — the charge window
   // is measured in hours, and re-runs are idempotent.
@@ -240,6 +245,7 @@ async function setupQueueWorkers() {
   enqueueCleanup('cleanup-stale-bookings').catch((err) => logger.warn('[scheduler] startup cleanup-stale-bookings failed:', err?.message));
   enqueueCleanup('expire-checkout-holds').catch((err) => logger.warn('[scheduler] startup expire-checkout-holds failed:', err?.message));
   enqueueCleanup('auto-complete-bookings').catch((err) => logger.warn('[scheduler] startup auto-complete-bookings failed:', err?.message));
+  enqueueCleanup('cancel-stale-pending-bookings').catch((err) => logger.warn('[scheduler] startup cancel-stale-pending-bookings failed:', err?.message));
   enqueueCleanup('charge-pay-later-bookings').catch((err) => logger.warn('[scheduler] startup charge-pay-later-bookings failed:', err?.message));
   enqueueCleanup('earnings-eligibility-sweep').catch((err) => logger.warn('[scheduler] startup earnings-eligibility-sweep failed:', err?.message));
   enqueueCleanup('plan-booking-reminders').catch((err) => logger.warn('[scheduler] startup plan-booking-reminders failed:', err?.message));

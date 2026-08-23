@@ -645,7 +645,9 @@ describe('Booking Controller', () => {
 
   describe('updateBookingStatus', () => {
     it('updates booking status by supplier', async () => {
-      const supplierBooking = { ...mockBooking, tour: { supplierId: 'supplier-1', title: 'Tour' }, customer: { id: 'c-1' } };
+      const futureDate = new Date();
+      futureDate.setDate(futureDate.getDate() + 7);
+      const supplierBooking = { ...mockBooking, travelDate: futureDate, tour: { supplierId: 'supplier-1', title: 'Tour' }, customer: { id: 'c-1' } };
       prisma.booking.findFirst.mockResolvedValue(supplierBooking);
       prisma.booking.update.mockResolvedValue({ ...supplierBooking, status: 'CONFIRMED' });
       const req = mockReq({
@@ -660,6 +662,25 @@ describe('Booking Controller', () => {
       expect(res.status).toHaveBeenCalledWith(200);
       expect(enqueueNotification).toHaveBeenCalled();
       expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'booking.status_confirmed' }));
+    });
+
+    it('rejects PENDING→CONFIRMED when activity date has passed', async () => {
+      const pastDate = new Date();
+      pastDate.setDate(pastDate.getDate() - 2);
+      const supplierBooking = { ...mockBooking, travelDate: pastDate, status: 'PENDING', tour: { supplierId: 'supplier-1', title: 'Tour' }, customer: { id: 'c-1' } };
+      prisma.booking.findFirst.mockResolvedValue(supplierBooking);
+      const req = mockReq({
+        user: { id: 'supplier-1', roles: ['supplier'] },
+        params: { id: 'booking-1' },
+        body: { status: 'CONFIRMED' },
+      });
+      const res = mockRes();
+      const next = jest.fn();
+
+      await bookingController.updateBookingStatus(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(next.mock.calls[0][0].message).toContain('past activity date');
     });
 
     it('returns 404 if booking not found for supplier', async () => {
