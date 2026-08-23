@@ -1627,12 +1627,12 @@ exports.confirmPayment = catchAsync(async (req, res, next) => {
     return next(new AppError('Booking not found', 404));
   }
 
-  if (booking.paymentStatus === 'PAID' || booking.paymentStatus === 'SUCCEEDED') {
+  if (booking.paymentStatus === 'SUCCEEDED') {
     return next(new AppError('Payment has already been confirmed for this booking', 400));
   }
 
   const updateData = {
-    paymentStatus: 'PAID',
+    paymentStatus: 'SUCCEEDED',
     paidAt: new Date(),
   };
 
