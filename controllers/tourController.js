@@ -579,9 +579,9 @@ exports.getTour = catchAsync(async (req, res, next) => {
 
     // Customer-facing embed: only ACTIVE offers whose date window includes
     // today (a window-less offer never expires). Projected so internal fields
-    // like supplierId/spotsSold never leak to the public API, while still
-    // exposing every term the customer-facing promo flow needs (the code,
-    // valid weekdays, capacity, thresholds and stackability).
+    // like supplierId never leak to the public API, while still exposing every
+    // term the customer-facing promo flow needs (the code, valid weekdays,
+    // capacity and its usage so far, thresholds and stackability).
     const now = new Date();
     const activeTargets = specialOfferTargets.filter(t =>
       t.specialOffer
@@ -616,6 +616,7 @@ exports.getTour = catchAsync(async (req, res, next) => {
         specificWeekdays: o.specificWeekdays || [],
         capacityType: o.capacityType,
         maxSpots: o.maxSpots ?? null,
+        spotsSold: o.spotsSold ?? 0,
         minQuantity: o.minQuantity ?? null,
         minSpendAmount: o.minSpendAmount ?? null,
         maxRedemptionsPerCustomer: o.maxRedemptionsPerCustomer ?? null,
@@ -2385,6 +2386,7 @@ exports.validatePromoCode = catchAsync(async (req, res, next) => {
         specificWeekdays: offer.specificWeekdays || [],
         capacityType: offer.capacityType,
         maxSpots: offer.maxSpots ?? null,
+        spotsSold: offer.spotsSold ?? 0,
         minQuantity: offer.minQuantity ?? null,
         minSpendAmount: offer.minSpendAmount ?? null,
         maxRedemptionsPerCustomer: offer.maxRedemptionsPerCustomer ?? null,
