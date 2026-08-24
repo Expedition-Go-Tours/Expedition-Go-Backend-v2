@@ -1481,6 +1481,22 @@ exports.getBookings = catchAsync(async (req, res) => {
         leadTravelerPhone: true,
         pickup: true,
         source: true,
+        offerName: true,
+        offerPromoCode: true,
+        offerDiscountType: true,
+        offerDiscountPct: true,
+        offerDiscountFix: true,
+        appliedOffer: {
+          select: {
+            id: true,
+            name: true,
+            offerType: true,
+            discountType: true,
+            discountPercentage: true,
+            fixedDiscountValue: true,
+            promoCode: true,
+          }
+        },
         customer: {
           select: { id: true, name: true, email: true, photoURL: true, phone: true },
         },
@@ -1577,6 +1593,22 @@ exports.getBookingById = catchAsync(async (req, res, next) => {
       leadTravelerPhone: true,
       pickup: true,
       source: true,
+      offerName: true,
+      offerPromoCode: true,
+      offerDiscountType: true,
+      offerDiscountPct: true,
+      offerDiscountFix: true,
+      appliedOffer: {
+        select: {
+          id: true,
+          name: true,
+          offerType: true,
+          discountType: true,
+          discountPercentage: true,
+          fixedDiscountValue: true,
+          promoCode: true,
+        }
+      },
       customer: {
         select: { id: true, name: true, email: true, photoURL: true, phone: true },
       },

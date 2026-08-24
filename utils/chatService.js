@@ -304,7 +304,7 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
         type: 'NEW_MESSAGE',
         title: `New message from ${sender.name}`,
         message: content.length > 100 ? content.slice(0, 100) + '...' : content,
-        data: { conversationId, senderId, senderName: sender.name, messageId: message.id, chatType }
+        data: { conversationId, senderId, senderName: sender.name, messageId: message.id, chatType, conversationType: participant.conversation.type }
       });
     }
 

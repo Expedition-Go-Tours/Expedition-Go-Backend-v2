@@ -186,7 +186,12 @@ async function materializeHold(draftId, session, paymentIntentId) {
         stripePaymentIntentId: paymentIntentId || null,
         stripeCheckoutSessionId: session.id || null,
         paymentTiming: 'now',
-        appliedOfferId: draftRecord.payload.promoCode ? null : null, // Will be resolved if needed
+        appliedOfferId: draftRecord.pricing?.appliedOffer?.id || null,
+        offerName: draftRecord.pricing?.appliedOffer?.name || null,
+        offerPromoCode: draftRecord.pricing?.appliedOffer?.promoCode || null,
+        offerDiscountType: draftRecord.pricing?.appliedOffer?.discountType || null,
+        offerDiscountPct: draftRecord.pricing?.appliedOffer?.discountPercentage || null,
+        offerDiscountFix: draftRecord.pricing?.appliedOffer?.fixedDiscountValue || null,
       },
       include: {
         tour: { select: { id: true, title: true, slug: true, coverPhoto: true, supplierId: true } },

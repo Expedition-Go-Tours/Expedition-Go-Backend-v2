@@ -347,7 +347,12 @@ exports.createBooking = catchAsync(async (req, res, next) => {
         total: pricing.total,
         currency: pricing.currency,
         discounts: pricing.discount || 0,
-        appliedOfferId: pricing.appliedOffer?.id || item.appliedOfferId || null
+        appliedOfferId: pricing.appliedOffer?.id || item.appliedOfferId || null,
+        offerName: pricing.appliedOffer?.name || null,
+        offerPromoCode: pricing.appliedOffer?.promoCode || null,
+        offerDiscountType: pricing.appliedOffer?.discountType || null,
+        offerDiscountPct: pricing.appliedOffer?.discountPercentage || null,
+        offerDiscountFix: pricing.appliedOffer?.fixedDiscountValue || null,
       });
     }
     bookingItems = recomputedItems;
@@ -397,7 +402,12 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       total: pricingCalculation.total,
       currency: pricingCalculation.currency,
       discounts: discount,
-      appliedOfferId: appliedOffer?.id || null
+      appliedOfferId: appliedOffer?.id || null,
+      offerName: appliedOffer?.name || null,
+      offerPromoCode: appliedOffer?.promoCode || null,
+      offerDiscountType: appliedOffer?.discountType || null,
+      offerDiscountPct: appliedOffer?.discountPercentage || null,
+      offerDiscountFix: appliedOffer?.fixedDiscountValue || null,
     }];
   }
 
@@ -574,6 +584,11 @@ exports.createBooking = catchAsync(async (req, res, next) => {
           paymentStatus: 'PROCESSING',
           paymentTiming,
           ...(item.appliedOfferId && { appliedOfferId: item.appliedOfferId }),
+          offerName: item.offerName || null,
+          offerPromoCode: item.offerPromoCode || null,
+          offerDiscountType: item.offerDiscountType || null,
+          offerDiscountPct: item.offerDiscountPct || null,
+          offerDiscountFix: item.offerDiscountFix || null,
           status: 'PENDING'
         },
         include: {
@@ -1092,7 +1107,12 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
         appliedOffer: {
           select: {
             id: true,
-            name: true
+            name: true,
+            offerType: true,
+            discountType: true,
+            discountPercentage: true,
+            fixedDiscountValue: true,
+            promoCode: true,
           }
         }
       },

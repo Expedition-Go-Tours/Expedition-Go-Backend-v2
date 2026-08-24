@@ -578,7 +578,7 @@ async function processStripeWebhook(event) {
         type: 'PAYOUT_NEEDS_APPROVAL',
         title: 'New Payout Pending',
         message: `Booking #${booking.bookingNumber}: $${parseFloat(booking.supplierPayout).toFixed(2)} payout awaiting approval`,
-        data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.supplierPayout },
+        data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.supplierPayout, supplierId: booking.tour?.supplierId },
       }).catch((err) => console.error('[AdminNotification] Payout notification failed:', err.message));
     }
 

@@ -194,6 +194,12 @@ enum AdminNotificationType {
   BOOKING_CONFIRMED
   DOCUMENT_EXPIRING
   DOCUMENT_EXPIRED
+  REFUND_REQUEST
+  PAYMENT_UPCOMING
+  PAYMENT_COLLECTED
+  PAYMENT_COLLECTION_FAILED
+  STRIPE_CUSTOMER_CREATE_FAILED
+  REFUND_NEEDS_ATTENTION
 }
 
 enum ReviewStatus {
@@ -798,6 +804,13 @@ model Booking {
   // Applied special offer (if any)
   appliedOfferId String?
   appliedOffer   SpecialOffer? @relation(fields: [appliedOfferId], references: [id], onDelete: SetNull)
+
+  // Offer snapshot fields (denormalized for historical accuracy — preserved even if the offer is edited/deleted)
+  offerName         String?
+  offerPromoCode    String?
+  offerDiscountType String?  // PERCENTAGE or FIXED
+  offerDiscountPct  Int?
+  offerDiscountFix  Float?
 
   // Relationships
   review    Review?

@@ -1308,6 +1308,11 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
          ...(pickupSnapshot && { pickup: pickupSnapshot }),
          ...(paymentIntent && { stripePaymentIntentId: paymentIntent.id }),
          appliedOfferId: appliedOffer?.id || null,
+         offerName: appliedOffer?.name || null,
+         offerPromoCode: appliedOffer?.promoCode || null,
+         offerDiscountType: appliedOffer?.discountType || null,
+         offerDiscountPct: appliedOffer?.discountPercentage || null,
+         offerDiscountFix: appliedOffer?.fixedDiscountValue || null,
          paymentTiming,
          paymentStatus: 'PENDING',
          // Lead traveler (the person going on the trip), distinct from the

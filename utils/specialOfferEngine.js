@@ -128,6 +128,7 @@ async function findBestDiscount({ tourId, tourOptionKey, travelDate, basePrice, 
           discountType: o.discountType,
           discountPercentage: o.discountPercentage,
           fixedDiscountValue: o.fixedDiscountValue,
+          promoCode: o.promoCode,
         });
       }
     }
@@ -174,6 +175,7 @@ async function findBestDiscount({ tourId, tourOptionKey, travelDate, basePrice, 
       discountType: best.discountType,
       discountPercentage: best.discountPercentage,
       fixedDiscountValue: best.fixedDiscountValue,
+      promoCode: best.promoCode,
     },
   };
 }
