@@ -166,7 +166,6 @@ async function createCheckoutSession({
           unit_amount: amount,
           product_data: {
             name: tourTitle || 'Expedition booking',
-            ...(tourDescription ? { description: tourDescription.slice(0, 500) } : {}),
             ...(tourCoverPhoto ? { images: [tourCoverPhoto] } : {}),
           },
         },
