@@ -579,16 +579,29 @@ exports.getTour = catchAsync(async (req, res, next) => {
 
     // Customer-facing embed: only ACTIVE offers whose date window includes
     // today (a window-less offer never expires). Projected so internal fields
-    // like promoCode/supplierId/spotsSold never leak to the public API.
+    // like supplierId/spotsSold never leak to the public API, while still
+    // exposing every term the customer-facing promo flow needs (the code,
+    // valid weekdays, capacity, thresholds and stackability).
     const now = new Date();
-    const specialOffers = specialOfferTargets
-      .map(t => t.specialOffer)
-      .filter(Boolean)
-      .filter(o => o.isActive
-        && (!o.startDate || now >= new Date(o.startDate))
-        && (!o.endDate || now <= new Date(o.endDate)))
-      .filter((offer, index, arr) => arr.findIndex(x => x.id === offer.id) === index)
-      .map(o => ({
+    const activeTargets = specialOfferTargets.filter(t =>
+      t.specialOffer
+      && t.specialOffer.isActive
+      && (!t.specialOffer.startDate || now >= new Date(t.specialOffer.startDate))
+      && (!t.specialOffer.endDate || now <= new Date(t.specialOffer.endDate)));
+    const seenOfferIds = new Set();
+    const specialOffers = [];
+    for (const t of activeTargets) {
+      const o = t.specialOffer;
+      if (seenOfferIds.has(o.id)) continue;
+      seenOfferIds.add(o.id);
+      const scopes = activeTargets
+        .filter(x => x.specialOffer.id === o.id)
+        .map(x => ({
+          tourId: x.tourId,
+          tourOptionKey: x.tourOptionKey ?? null,
+          tourOptionLabel: x.tourOptionLabel ?? null,
+        }));
+      specialOffers.push({
         id: o.id,
         name: o.name,
         offerType: o.offerType,
@@ -598,7 +611,20 @@ exports.getTour = catchAsync(async (req, res, next) => {
         startDate: o.startDate,
         endDate: o.endDate,
         isActive: o.isActive,
-      }));
+        promoCode: o.promoCode ?? null,
+        timeSlotMode: o.timeSlotMode,
+        specificWeekdays: o.specificWeekdays || [],
+        capacityType: o.capacityType,
+        maxSpots: o.maxSpots ?? null,
+        minQuantity: o.minQuantity ?? null,
+        minSpendAmount: o.minSpendAmount ?? null,
+        maxRedemptionsPerCustomer: o.maxRedemptionsPerCustomer ?? null,
+        stackable: o.stackable,
+        earlyBirdAdvanceDays: o.earlyBirdAdvanceDays ?? null,
+        lastMinuteWindowHours: o.lastMinuteWindowHours ?? null,
+        targets: scopes,
+      });
+    }
 
     return {
       ...tour,
@@ -2354,6 +2380,17 @@ exports.validatePromoCode = catchAsync(async (req, res, next) => {
         discountType: offer.discountType,
         discountPercentage: offer.discountPercentage,
         fixedDiscountValue: offer.fixedDiscountValue,
+        promoCode: offer.promoCode ?? null,
+        timeSlotMode: offer.timeSlotMode,
+        specificWeekdays: offer.specificWeekdays || [],
+        capacityType: offer.capacityType,
+        maxSpots: offer.maxSpots ?? null,
+        minQuantity: offer.minQuantity ?? null,
+        minSpendAmount: offer.minSpendAmount ?? null,
+        maxRedemptionsPerCustomer: offer.maxRedemptionsPerCustomer ?? null,
+        stackable: offer.stackable,
+        earlyBirdAdvanceDays: offer.earlyBirdAdvanceDays ?? null,
+        lastMinuteWindowHours: offer.lastMinuteWindowHours ?? null,
       },
       discount: {
         amount: result.discountAmount,
