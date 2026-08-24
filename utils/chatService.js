@@ -54,6 +54,8 @@ async function resolveChatUserId(userId) {
     select: { roles: true }
   });
   if (!user) return userId;
+  // Customers and suppliers are always reachable at their own ID
+  if (user.roles.includes('customer') || user.roles.includes('supplier')) return userId;
   if (user.roles.includes('expedition')) {
     const sharedId = await getSharedExpeditionId();
     return sharedId || userId;

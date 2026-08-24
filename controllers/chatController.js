@@ -66,7 +66,7 @@ exports.getOrCreateConversation = catchAsync(async (req, res) => {
 
   let type = requestedType;
   if (!type) {
-    if (isSenderSupplier && recipient.roles.includes('customer') && !recipient.roles.includes('admin')) {
+    if (isSenderSupplier && recipient.roles.includes('customer')) {
       type = 'SUPPLIER_CUSTOMER';
     } else if (isSenderSupplier || recipient.roles.includes('supplier') || recipient.roles.includes('admin')) {
       type = 'SUPPLIER_ADMIN';
