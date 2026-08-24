@@ -23,6 +23,7 @@
 
 const { enqueueEmail } = require('./queue');
 const prisma = require('./prismaClient');
+const { notifyAdmin } = require('./adminNotificationService');
 
 const BOOKING_24H_BEFORE_HOURS = 24;
 const PICKUP_REQUIRED_HOURS = 72;
@@ -171,6 +172,26 @@ async function dispatchDueReminders() {
       await enqueueEmail(email);
       await markReminder(reminder.id, 'SENT');
       sent += 1;
+
+      // Notify admin when a pay-later charge is upcoming
+      if (reminder.type === 'PAYMENT_DUE_24H') {
+        try {
+          const booking = await prisma.booking.findUnique({
+            where: { id: reminder.bookingId },
+            select: { bookingNumber: true, grossAmount: true, travelDate: true, tour: { select: { title: true } } },
+          });
+          if (booking) {
+            const amount = parseFloat(booking.grossAmount).toFixed(2);
+            const dateStr = booking.travelDate ? new Date(booking.travelDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'tomorrow';
+            notifyAdmin({
+              type: 'PAYMENT_UPCOMING',
+              title: 'Pay-later charge upcoming',
+              message: `Booking #${booking.bookingNumber} — $${amount} for "${booking.tour?.title || 'a tour'}" will be charged on ${dateStr}`,
+              data: { bookingId: reminder.bookingId, travelDate: booking.travelDate, source: 'expedition' },
+            }).catch(() => {});
+          }
+        } catch (_) { /* best-effort */ }
+      }
     } catch (err) {
       console.error(`[Reminders] Dispatch ${reminder.type} for booking ${reminder.bookingId} failed:`, err.message);
       await markReminder(reminder.id, 'FAILED', err.message);

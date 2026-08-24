@@ -46,6 +46,14 @@ async function settleBooking(booking, intent) {
     data: { bookingId: booking.id },
   }).catch(() => {});
 
+  const amount = parseFloat(booking.grossAmount).toFixed(2);
+  notifyAdmin({
+    type: 'PAYMENT_COLLECTED',
+    title: 'Pay-later payment collected',
+    message: `Booking #${booking.bookingNumber} — $${amount} for "${booking.tour?.title || 'a tour'}" charged successfully`,
+    data: { bookingId: booking.id, source: 'pay-later-sweep' },
+  }).catch(() => {});
+
   enqueueEvent({
     name: 'booking.payment_collected',
     userId: booking.customerId,

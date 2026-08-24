@@ -1361,8 +1361,8 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     notifyAdmin({
       type: 'BOOKING_CREATED',
       title: 'New Expedition Booking (Reserve now, pay later)',
-      message: `Booking #${result.bookingNumber} — $${parseFloat(pricing.total).toFixed(2)} for "${tour.title}" — reserved, payment pending`,
-      data: { bookingId: result.id, tourTitle: tour.title, total: pricing.total, source: 'expedition' },
+      message: `Booking #${result.bookingNumber} — $${parseFloat(pricing.total).toFixed(2)} for "${tour.title}" — reserved, payment pending (charges on ${travelDate})`,
+      data: { bookingId: result.id, tourTitle: tour.title, total: pricing.total, travelDate, source: 'expedition' },
     }).catch(() => {});
 
     enqueueEmail({
