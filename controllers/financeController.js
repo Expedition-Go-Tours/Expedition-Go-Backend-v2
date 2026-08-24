@@ -103,7 +103,7 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
 exports.getEarnings = catchAsync(async (req, res) => {
   const supplierId = req.supplierId;
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const skip = (page - 1) * limit;
 
   const where = { tour: { supplierId } };
