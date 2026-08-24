@@ -89,7 +89,9 @@ async function planBookingReminders() {
     // Pickup location still required (tour offers pickup but none chosen)
     const ticket = booking.tour?.bookingAndTickets || {};
     const offersPickup = !!ticket.pickupProvided;
-    if (offersPickup && !booking.pickup) {
+    const pickupObj = booking.pickup && typeof booking.pickup === 'object' ? booking.pickup : null;
+    const pickupDeferred = !!(pickupObj && pickupObj.pickupLater);
+    if (offersPickup && (!booking.pickup || pickupDeferred)) {
       reminders.push({
         bookingId: booking.id,
         type: 'PICKUP_LOCATION_REQUIRED',

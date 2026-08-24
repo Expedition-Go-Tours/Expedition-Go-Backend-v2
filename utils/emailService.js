@@ -294,6 +294,8 @@ function buildBookingBase(booking) {
 
     // pickup / meeting
     pickupIncludedLabel: pickup.pickupIncluded ? 'Yes' : 'No',
+    pickupRequiredLabel: pickup.pickupLater ? 'Yes — pending' : (pickup.pickupIncluded ? 'Yes' : 'No'),
+    pickupLater: !!pickup.pickupLater,
     pickupLocation: pickup.pickupLocation,
     pickupTime: pickup.pickupTime,
     pickupInstructions: pickup.pickupInstructions,
@@ -1239,6 +1241,7 @@ function generatePrintableTicketHtml(data) {
 
   // Prefer the customer-selected pickup snapshot; fall back to the tour's
   // static meeting point so legacy bookings keep rendering.
+  const pickupDeferred = !!(data.pickup && data.pickup.pickupLater);
   const pickupLabel = data.pickup
     ? (data.pickup.place || data.pickup.areaName || data.pickup.locationName || (data.pickup.address && (data.pickup.address.name || data.pickup.address.address)) || '')
     : (data.meetingPoint && (data.meetingPoint.address || data.meetingPoint.name)) || '';
@@ -1296,7 +1299,7 @@ function generatePrintableTicketHtml(data) {
     <tr><td><div class="stitle">Traveler</div><div class="svalue">${data.customerName}</div></td>
         <td><div class="stitle">Participants</div><div class="svalue">${travelers.join(', ') || '1 Adult'}</div></td></tr>
   </table>
-  ${data.pickup || data.meetingPoint ? `<div class="section"><div class="stitle">Pickup Point</div><div class="svalue">${pickupLabel}${pickupTime ? ` &mdash; ${pickupTime}` : ''}</div>${pickupInstructions ? `<div style="color:#666;font-size:13px;">${pickupInstructions}</div>` : ''}</div>` : ''}
+  ${data.pickup || data.meetingPoint ? `<div class="section"><div class="stitle">Pickup Point</div><div class="svalue">${pickupDeferred && !pickupLabel ? 'To be confirmed — the tour operator will confirm your pickup details' : pickupLabel}${pickupTime ? ` &mdash; ${pickupTime}` : ''}</div>${pickupInstructions ? `<div style="color:#666;font-size:13px;">${pickupInstructions}</div>` : ''}</div>` : ''}
   ${includedHtml ? `<div class="section"><div class="stitle">Includes</div><ul>${includedHtml}</ul></div>` : ''}
   ${data.restrictions ? `<div class="section"><div class="stitle">Important</div><div style="font-size:14px;">${data.restrictions}</div></div>` : ''}
   <div class="section"><div class="stitle">Cancellation Policy</div><div style="font-size:14px;">${data.cancellationPolicy || 'Free cancellation up to 24 hours before'}</div></div>

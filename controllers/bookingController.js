@@ -1194,10 +1194,21 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
     prisma.booking.count({ where })
   ]);
 
+  // Flag bookings where the customer deferred pickup selection so the
+  // supplier dashboard can display a clear "pending" indicator instead
+  // of blank pickup fields.
+  const enriched = bookings.map((b) => {
+    const p = b.pickup && typeof b.pickup === 'object' ? b.pickup : null;
+    if (p && p.pickupLater) {
+      return { ...b, pickupDeferred: true };
+    }
+    return b;
+  });
+
   res.status(200).json({
     status: 'success',
     data: {
-      bookings,
+      bookings: enriched,
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(totalCount / parseInt(limit)),

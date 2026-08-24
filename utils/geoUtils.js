@@ -160,6 +160,7 @@ function resolvePickupSelection(selection, pickupConfig = {}) {
       ok: true,
       pickup: {
         mode: 'area',
+        ...(skipValidation ? { pickupLater: true } : {}),
         areaName: area ? area.name : (selection.areaName || ''),
         address: address || null,
         time,
@@ -195,6 +196,7 @@ function resolvePickupSelection(selection, pickupConfig = {}) {
     ok: true,
     pickup: {
       mode: 'address',
+      ...(skipValidation ? { pickupLater: true } : {}),
       locationName: location ? location.name : (selection.locationName || ''),
       address: address || null,
       time,

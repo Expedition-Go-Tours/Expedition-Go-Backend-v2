@@ -177,6 +177,7 @@ function getPickupInfo(booking, tour = {}) {
   const ticket = tour.bookingAndTickets || {};
   const meeting = ticket.meetingPoint || {};
   const pickup = booking?.pickup || null;
+  const pickupLater = !!(pickup && pickup.pickupLater);
 
   const meetingAddress =
     meeting.address || meeting.name || meeting.place || '';
@@ -188,10 +189,11 @@ function getPickupInfo(booking, tour = {}) {
   const pickupTime = pickup?.time ? formatTime(pickup.time) : '';
 
   return {
-    pickupIncluded: !!(pickup && pickupAddress),
+    pickupIncluded: !!(pickup && pickupAddress) || pickupLater,
     pickupLocation: pickupAddress,
     pickupTime,
     pickupInstructions,
+    pickupLater,
     meetingPoint: meetingAddress,
     meetingTime: ticket.meetingTime ? formatTime(ticket.meetingTime) : '',
     meetingInstructions: meeting.instructions || '',
