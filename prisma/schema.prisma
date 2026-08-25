@@ -786,6 +786,9 @@ model Booking {
   paidAt                  DateTime?
   // 'now' = charged at booking (Pay now), 'later' = Reserve now, pay later
   paymentTiming         String        @default("now")
+  // Pay-later retry tracking (max 3 retries before cancellation)
+  chargeRetries         Int           @default(0)
+  nextRetryAt           DateTime?
 
   // Cancellation
   cancellationReason String?

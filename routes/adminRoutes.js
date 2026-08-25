@@ -824,6 +824,29 @@ router.patch('/bookings/:id/confirm-payment', requirePermission('bookings.confir
 
 /**
  * @swagger
+ * /admin/bookings/{id}/charge-now:
+ *   post:
+ *     summary: Manually charge a reserve-now-pay-later booking
+ *     tags: [Admin, Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Card charged successfully
+ *       400:
+ *         description: Booking not eligible for manual charge
+ *       404:
+ *         description: Booking not found
+ */
+router.post('/bookings/:id/charge-now', requirePermission('bookings.confirm-payment', 'dashboard.*'), adminController.chargePayLaterBooking);
+
+/**
+ * @swagger
  * /admin/tours/review:
  *   get:
  *     summary: Tour moderation queue (submit-for-review workflow)

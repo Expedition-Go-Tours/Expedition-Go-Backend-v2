@@ -26,6 +26,7 @@ const { logActivity } = require('./auditLogger');
 
 const SWEEP_LIMIT = 200;
 const DEFAULT_CHARGE_BEFORE_HOURS = 24;
+const MAX_CHARGE_RETRIES = 3;
 
 async function settleBooking(booking, intent) {
   try {
@@ -34,6 +35,13 @@ async function settleBooking(booking, intent) {
     console.error('[PayLater] Settlement failed for', booking.id, err.message);
     return false;
   }
+
+  // Reset retry counter on successful charge
+  const prisma = require('./prismaClient');
+  await prisma.booking.update({
+    where: { id: booking.id },
+    data: { chargeRetries: 0, nextRetryAt: null },
+  }).catch(() => {});
 
   // handlePaymentSucceeded already enqueues the pay-later-charged emails
   // (customer + supplier), so no separate payment-successful email here.
@@ -121,6 +129,31 @@ async function notifyPaymentFailed(booking, reason) {
 
 async function cancelBooking(booking, reason) {
   const prisma = require('./prismaClient');
+
+  // Check retry count before cancelling — only cancel after MAX_CHARGE_RETRIES
+  if ((booking.chargeRetries || 0) < MAX_CHARGE_RETRIES) {
+    const retryCount = (booking.chargeRetries || 0) + 1;
+    const backoffMinutes = Math.pow(2, retryCount) * 30; // 60min, 120min, 240min
+    const nextRetry = new Date(Date.now() + backoffMinutes * 60 * 1000);
+
+    await prisma.booking.update({
+      where: { id: booking.id },
+      data: { chargeRetries: retryCount, nextRetryAt: nextRetry },
+    });
+
+    console.log(`[PayLater] Booking ${booking.bookingNumber} charge failed — retry ${retryCount}/${MAX_CHARGE_RETRIES} scheduled at ${nextRetry.toISOString()}`);
+
+    notifyAdmin({
+      type: 'PAYMENT_COLLECTION_FAILED',
+      title: `Pay-later charge failed (retry ${retryCount}/${MAX_CHARGE_RETRIES})`,
+      message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.grossAmount).toFixed(2)} charge failed: ${reason}. Next retry at ${nextRetry.toLocaleString()}.`,
+      data: { bookingId: booking.id, retryCount, nextRetry: nextRetry.toISOString() },
+    }).catch(() => {});
+
+    return false; // not cancelled yet
+  }
+
+  // Max retries exceeded — cancel the booking
   const updated = await prisma.booking.updateMany({
     where: { id: booking.id, paymentTiming: 'later', paymentStatus: 'PENDING', paidAt: null },
     data: {
@@ -193,7 +226,7 @@ async function chargePayLaterBookings() {
   // Due: pay-later, unpaid, still reserved (PENDING or CONFIRMED), activity
   // date within the charge window (includes overdue bookings so they are
   // collected rather than lost). CONFIRMED is kept for legacy rows created
-  // before pay-later bookings became PENDING.
+  // before pay-later bookings became PENDING. Skip bookings waiting for retry.
   const due = await prisma.booking.findMany({
     where: {
       paymentTiming: 'later',
@@ -201,6 +234,10 @@ async function chargePayLaterBookings() {
       status: { in: ['CONFIRMED', 'PENDING'] },
       paidAt: null,
       travelDate: { lte: windowEnd },
+      OR: [
+        { nextRetryAt: null },
+        { nextRetryAt: { lte: now } },
+      ],
     },
     include: {
       tour: { select: { id: true, title: true, supplierId: true } },
@@ -210,18 +247,20 @@ async function chargePayLaterBookings() {
     take: SWEEP_LIMIT,
   });
 
-  if (due.length === 0) return { checked: 0, charged: 0, settled: 0, needsAction: 0, failed: 0, cancelled: 0 };
+  if (due.length === 0) return { checked: 0, charged: 0, settled: 0, needsAction: 0, failed: 0, cancelled: 0, retried: 0 };
 
   let charged = 0;
   let settled = 0;
   let needsAction = 0;
   let failed = 0;
   let cancelled = 0;
+  let retried = 0;
 
   for (const booking of due) {
     if (!booking.stripePaymentIntentId) {
-      await cancelBooking(booking, 'No payment method available to charge');
-      cancelled += 1;
+      const result = await cancelBooking(booking, 'No payment method available to charge');
+      if (result === false) retried += 1;
+      else cancelled += 1;
       continue;
     }
 
@@ -240,10 +279,12 @@ async function chargePayLaterBookings() {
         else failed += 1;
         break;
 
-      case 'canceled':
-        await cancelBooking(booking, 'Payment could not be collected');
-        cancelled += 1;
+      case 'canceled': {
+        const result = await cancelBooking(booking, 'Payment could not be collected');
+        if (result === false) retried += 1;
+        else cancelled += 1;
         break;
+      }
 
       case 'requires_action':
         await notifyCustomerToCompletePayment(booking);
@@ -268,7 +309,9 @@ async function chargePayLaterBookings() {
         } catch (err) {
           console.error('[PayLater] Confirm failed', booking.stripePaymentIntentId, err.message);
           await notifyPaymentFailed(booking, err.message);
-          failed += 1;
+          const result = await cancelBooking(booking, err.message);
+          if (result === false) retried += 1;
+          else cancelled += 1;
           break;
         }
 
@@ -279,8 +322,9 @@ async function chargePayLaterBookings() {
           await notifyCustomerToCompletePayment(booking);
           needsAction += 1;
         } else if (confirmed.status === 'canceled') {
-          await cancelBooking(booking, 'Payment could not be collected');
-          cancelled += 1;
+          const result = await cancelBooking(booking, 'Payment could not be collected');
+          if (result === false) retried += 1;
+          else cancelled += 1;
         } else {
           // processing / requires_payment_method — retry on the next sweep.
         }
@@ -289,9 +333,9 @@ async function chargePayLaterBookings() {
     }
   }
 
-  const summary = { checked: due.length, charged, settled, needsAction, failed, cancelled };
+  const summary = { checked: due.length, charged, settled, needsAction, failed, cancelled, retried };
   console.log(
-    `[PayLater] Sweep: ${due.length} due → ${charged} charged, ${settled} already settled, ${needsAction} need action, ${failed} failed, ${cancelled} cancelled`
+    `[PayLater] Sweep: ${due.length} due → ${charged} charged, ${settled} already settled, ${needsAction} need action, ${failed} failed, ${cancelled} cancelled, ${retried} retried`
   );
   return summary;
 }

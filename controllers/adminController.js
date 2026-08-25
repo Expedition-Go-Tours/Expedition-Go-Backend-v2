@@ -1459,6 +1459,7 @@ exports.getBookings = catchAsync(async (req, res) => {
         bookingNumber: true,
         status: true,
         paymentStatus: true,
+        paymentTiming: true,
         grossAmount: true,
         currency: true,
         travelDate: true,
@@ -1571,6 +1572,7 @@ exports.getBookingById = catchAsync(async (req, res, next) => {
       bookingNumber: true,
       status: true,
       paymentStatus: true,
+      paymentTiming: true,
       grossAmount: true,
       currency: true,
       travelDate: true,
@@ -1718,6 +1720,205 @@ exports.confirmPayment = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: updated,
+  });
+});
+
+/**
+ * POST /api/admin/bookings/:id/charge-now
+ *
+ * Manually charges the customer's card for a reserve-now-pay-later booking.
+ * Validates the booking is eligible, retrieves the Stripe PaymentIntent,
+ * confirms it, and handles success/failure.
+ */
+exports.chargePayLaterBooking = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+
+  const booking = await prisma.booking.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      bookingNumber: true,
+      status: true,
+      paymentStatus: true,
+      paymentTiming: true,
+      grossAmount: true,
+      currency: true,
+      stripePaymentIntentId: true,
+      tour: { select: { id: true, title: true, supplierId: true } },
+      customer: { select: { id: true, email: true } },
+    },
+  });
+
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  if (booking.paymentTiming !== 'later') {
+    return next(new AppError('This is not a reserve-now-pay-later booking', 400));
+  }
+
+  if (booking.paymentStatus === 'SUCCEEDED') {
+    return next(new AppError('Payment has already been collected for this booking', 400));
+  }
+
+  if (booking.paymentStatus === 'CANCELLED' || booking.status === 'CANCELLED') {
+    return next(new AppError('This booking has been cancelled and cannot be charged', 400));
+  }
+
+  if (!booking.stripePaymentIntentId) {
+    return next(new AppError('No payment method on file for this booking', 400));
+  }
+
+  // Retrieve the Stripe PaymentIntent
+  let intent;
+  try {
+    const { getStripe } = require('../utils/stripeHelpers');
+    intent = await getStripe().paymentIntents.retrieve(booking.stripePaymentIntentId);
+  } catch (err) {
+    return next(new AppError(`Could not retrieve payment method: ${err.message}`, 400));
+  }
+
+  if (intent.status === 'succeeded') {
+    // Already charged — settle the booking
+    const { handlePaymentSucceeded } = require('../utils/stripeHelpers');
+    try {
+      await handlePaymentSucceeded(intent);
+    } catch (err) {
+      console.error('[AdminCharge] Settlement failed:', err.message);
+    }
+    return res.status(200).json({
+      status: 'success',
+      data: { bookingId: booking.id, paymentIntentStatus: 'succeeded', message: 'Payment was already collected' },
+    });
+  }
+
+  if (intent.status === 'canceled') {
+    return next(new AppError('The payment method for this booking has been cancelled', 400));
+  }
+
+  // Confirm the PaymentIntent to charge the card
+  let confirmed;
+  try {
+    const { getStripe } = require('../utils/stripeHelpers');
+    confirmed = await getStripe().paymentIntents.confirm(booking.stripePaymentIntentId, {
+      return_url: `${process.env.CLIENT_URL}/booking/complete`,
+    });
+  } catch (err) {
+    // Notify admin + customer of failure
+    const { notifyAdmin } = require('../utils/adminNotificationService');
+    const { enqueueNotification, enqueueEmail } = require('../utils/queue');
+
+    notifyAdmin({
+      type: 'PAYMENT_COLLECTION_FAILED',
+      title: 'Manual charge failed',
+      message: `Booking #${booking.bookingNumber} — manual charge failed: ${err.message}`,
+      data: { bookingId: booking.id, source: 'admin-manual-charge' },
+    }).catch(() => {});
+
+    enqueueNotification({
+      userId: booking.customer.id,
+      type: 'PAYMENT_FAILED',
+      title: 'Payment Declined',
+      message: `Your card charge for "${booking.tour?.title || 'your tour'}" failed. Please update your payment details.`,
+      data: { bookingId: booking.id },
+    }).catch(() => {});
+
+    enqueueEmail({
+      type: 'payment-unsuccessful',
+      bookingId: booking.id,
+      data: { amount: booking.grossAmount, deadline: booking.travelDate, failureReason: err.message },
+    }).catch(() => {});
+
+    return next(new AppError(`Card charge failed: ${err.message}`, 400));
+  }
+
+  if (confirmed.status === 'succeeded') {
+    // Settle the booking
+    const { handlePaymentSucceeded } = require('../utils/stripeHelpers');
+    const { enqueueNotification, enqueueEvent, enqueueEmail } = require('../utils/queue');
+    const { notifyAdmin } = require('../utils/adminNotificationService');
+    const { logActivity } = require('../utils/auditLogger');
+
+    try {
+      await handlePaymentSucceeded(intent);
+    } catch (err) {
+      console.error('[AdminCharge] Settlement failed:', err.message);
+    }
+
+    // Reset retry counter on successful charge
+    await prisma.booking.update({
+      where: { id: booking.id },
+      data: { chargeRetries: 0, nextRetryAt: null },
+    });
+
+    enqueueNotification({
+      userId: booking.customer.id,
+      type: 'PAYMENT_COMPLETED',
+      title: 'Payment Completed',
+      message: `Your card was charged for "${booking.tour?.title || 'your tour'}". Payment received!`,
+      data: { bookingId: booking.id },
+    }).catch(() => {});
+
+    notifyAdmin({
+      type: 'PAYMENT_COLLECTED',
+      title: 'Manual payment collected',
+      message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.grossAmount).toFixed(2)} charged successfully via admin`,
+      data: { bookingId: booking.id, source: 'admin-manual-charge' },
+    }).catch(() => {});
+
+    logActivity({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      action: 'booking.pay_later_charged_manually',
+      resource: 'Booking',
+      resourceId: id,
+      metadata: { source: 'admin-manual-charge' },
+    }).catch(() => {});
+
+    return res.status(200).json({
+      status: 'success',
+      data: { bookingId: booking.id, paymentIntentStatus: 'succeeded', message: 'Card charged successfully' },
+    });
+  }
+
+  if (confirmed.status === 'requires_action') {
+    // 3DS required — notify customer to complete
+    const { enqueueNotification, enqueueEmail } = require('../utils/queue');
+    const { notifyAdmin } = require('../utils/adminNotificationService');
+
+    enqueueNotification({
+      userId: booking.customer.id,
+      type: 'PAYMENT_ACTION_REQUIRED',
+      title: 'Payment Action Required',
+      message: `Complete your payment for "${booking.tour?.title || 'your tour'}" to confirm your booking.`,
+      data: { bookingId: booking.id },
+    }).catch(() => {});
+
+    enqueueEmail({
+      type: 'payment-unsuccessful',
+      bookingId: booking.id,
+      data: { amount: booking.grossAmount, deadline: booking.travelDate },
+    }).catch(() => {});
+
+    notifyAdmin({
+      type: 'PAYMENT_COLLECTION_FAILED',
+      title: 'Manual charge requires customer action',
+      message: `Booking #${booking.bookingNumber} — 3D Secure authentication required. Customer has been notified.`,
+      data: { bookingId: booking.id, source: 'admin-manual-charge' },
+    }).catch(() => {});
+
+    return res.status(200).json({
+      status: 'success',
+      data: { bookingId: booking.id, paymentIntentStatus: 'requires_action', message: 'Customer action required' },
+    });
+  }
+
+  // processing or other status — will be picked up by the sweep
+  res.status(200).json({
+    status: 'success',
+    data: { bookingId: booking.id, paymentIntentStatus: confirmed.status, message: 'Charge is processing' },
   });
 });
 
