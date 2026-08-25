@@ -660,10 +660,15 @@ async function getTopAttractions(lat, lng, keywords = [], limit = DEFAULT_LIMIT)
     let tours;
 
     if (lat && lng) {
-      // Nearby tours via PostGIS (within 100km)
+      // Nearby tours via PostGIS (within 100km) — single query with distance
       const radiusMeters = 100 * 1000;
-      const nearbyIds = await prisma.$queryRaw`
-        SELECT id FROM "Tour"
+      const nearbyWithDistance = await prisma.$queryRaw`
+        SELECT id,
+          ST_DistanceSphere(
+            location_geom::geometry,
+            ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)
+          ) / 1000.0 AS distance_km
+        FROM "Tour"
         WHERE location_geom IS NOT NULL
           AND status = 'ACTIVE'
           AND ST_DWithin(
@@ -671,14 +676,12 @@ async function getTopAttractions(lat, lng, keywords = [], limit = DEFAULT_LIMIT)
             ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography,
             ${radiusMeters}
           )
-        ORDER BY ST_DistanceSphere(
-          location_geom::geometry,
-          ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)
-        )
+        ORDER BY distance_km
         LIMIT ${limit * 3}
       `;
 
-      const ids = nearbyIds.map(r => r.id);
+      const ids = nearbyWithDistance.map(r => r.id);
+      const distMap = new Map(nearbyWithDistance.map(d => [d.id, parseFloat(d.distance_km)]));
 
       const where = {
         id: { in: ids },
@@ -699,18 +702,6 @@ async function getTopAttractions(lat, lng, keywords = [], limit = DEFAULT_LIMIT)
         where,
         select: TOUR_SELECT,
       });
-
-      // Compute distances and sort by price
-      const distances = await prisma.$queryRaw`
-        SELECT id,
-          ST_DistanceSphere(
-            location_geom::geometry,
-            ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)
-          ) / 1000.0 AS distance_km
-        FROM "Tour"
-        WHERE id = ANY(${ids})
-      `;
-      const distMap = new Map(distances.map(d => [d.id, parseFloat(d.distance_km)]));
 
       tours = tours.map(t => ({
         ...t,
@@ -883,43 +874,60 @@ async function getMoodKeywords(userId, limit = 8) {
       .slice(0, limit)
       .map(([keyword]) => keyword);
 
-    // Fetch a representative tour image for each keyword
+    // Batch: fetch representative tours for ALL keywords in one query
+    const keywordOR = topKeywords.flatMap(keyword => [
+      { category: { equals: keyword, mode: 'insensitive' } },
+      { tags: { has: keyword.toLowerCase() } },
+      { city: { equals: keyword, mode: 'insensitive' } },
+      { title: { contains: keyword, mode: 'insensitive' } },
+    ]);
+
+    const candidateTours = await prisma.tour.findMany({
+      where: { status: 'ACTIVE', coverPhoto: { not: null }, OR: keywordOR },
+      select: { id: true, coverPhoto: true, photos: true, category: true, city: true, tags: true, totalBookings: true },
+      orderBy: { totalBookings: 'desc' },
+      take: limit * 6, // enough to cover all keywords
+    });
+
+    // Batch: count tours per category in one query
+    const categoryCounts = await prisma.tour.groupBy({
+      by: ['category'],
+      where: { status: 'ACTIVE', category: { not: null } },
+      _count: { id: true },
+    });
+    const categoryCountMap = new Map(categoryCounts.map(r => [r.category?.toLowerCase(), r._count.id]));
+
+    // Match best tour per keyword in JS (no more DB queries)
     const results = [];
+    const usedTourIds = new Set();
     for (const keyword of topKeywords) {
-      const tour = await prisma.tour.findFirst({
-        where: {
-          status: 'ACTIVE',
-          OR: [
-            { category: { equals: keyword, mode: 'insensitive' } },
-            { tags: { has: keyword.toLowerCase() } },
-            { city: { equals: keyword, mode: 'insensitive' } },
-            { title: { contains: keyword, mode: 'insensitive' } },
-          ],
-          coverPhoto: { not: null },
-        },
-        select: { id: true, coverPhoto: true, photos: true, category: true, city: true },
-        orderBy: { totalBookings: 'desc' },
+      const kwLower = keyword.toLowerCase();
+      const match = candidateTours.find(t => {
+        if (usedTourIds.has(t.id)) return false;
+        return (
+          t.category?.toLowerCase() === kwLower ||
+          t.tags?.some(tag => tag.toLowerCase() === kwLower) ||
+          t.city?.toLowerCase() === kwLower ||
+          t.title?.toLowerCase().includes(kwLower)
+        );
       });
 
-      if (tour) {
-        // Get actual tour count for this keyword
-        const count = await prisma.tour.count({
-          where: {
-            status: 'ACTIVE',
-            OR: [
-              { category: { equals: keyword, mode: 'insensitive' } },
-              { tags: { has: keyword.toLowerCase() } },
-              { city: { equals: keyword, mode: 'insensitive' } },
-            ],
-          },
-        });
+      if (match) {
+        usedTourIds.add(match.id);
+        // Count from pre-fetched category groupBy (covers category matches)
+        // For tags/city/title keywords, count from candidateTours as approximation
+        const tourCount = categoryCountMap.get(kwLower)
+          || candidateTours.filter(t =>
+            t.tags?.some(tag => tag.toLowerCase() === kwLower) ||
+            t.city?.toLowerCase() === kwLower
+          ).length;
 
         results.push({
           keyword,
-          image: tour.coverPhoto || tour.photos?.[0] || null,
-          tourCount: count,
-          category: tour.category,
-          city: tour.city,
+          image: match.coverPhoto || match.photos?.[0] || null,
+          tourCount: Math.max(tourCount, 1),
+          category: match.category,
+          city: match.city,
         });
       }
     }
