@@ -31,7 +31,7 @@ const cache = require('./cacheHelper');
 // ─── Constants ────────────────────────────────────────────────────────
 const BAYESIAN_C = 5;        // Confidence parameter (equivalent to 5 "virtual" reviews)
 const BAYESIAN_M = 3.0;      // Global prior (average rating across all tours)
-const MIN_REVIEWS_TOP_RATED = 3;
+const MIN_REVIEWS_TOP_RATED = 1;
 const MIN_BOOKINGS_SELL_OUT = 2;
 const MIN_VIEWS_TRENDING = 10;
 const TRENDING_GROWTH_CAP = 5; // Cap growth at 5x to prevent outliers
@@ -64,6 +64,13 @@ function normalize(value, max) {
  * Map a raw tour row to the card shape the frontend expects.
  */
 function mapTourCard(t) {
+  const price = extractStartingPrice(t.schedulesAndPricing);
+  const durationStr = t.durationMinutes
+    ? t.durationMinutes >= 1440
+      ? `${Math.round(t.durationMinutes / 1440)} days`
+      : `${Math.round(t.durationMinutes / 60)} hours`
+    : '';
+
   return {
     id: t.id,
     title: t.title,
@@ -76,8 +83,9 @@ function mapTourCard(t) {
     averageRating: t.averageRating ? parseFloat(t.averageRating) : null,
     reviewCount: t.reviewCount || 0,
     totalBookings: t.totalBookings || 0,
-    startingPrice: t.startingPrice ? parseFloat(t.startingPrice) : null,
-    currency: t.currency || 'USD',
+    startingPrice: price,
+    currency: 'USD',
+    duration: durationStr,
     durationMinutes: t.durationMinutes,
     difficulty: t.difficulty,
     tags: t.tags || [],
@@ -92,11 +100,51 @@ function mapTourCard(t) {
   };
 }
 
+/**
+ * Extract the lowest retail price from schedulesAndPricing JSON.
+ * Mirrors the logic in expeditionController.extractStartingPrice.
+ */
+function extractStartingPrice(schedulesAndPricing) {
+  if (!schedulesAndPricing) return null;
+  try {
+    const sp = typeof schedulesAndPricing === 'string'
+      ? JSON.parse(schedulesAndPricing)
+      : schedulesAndPricing;
+
+    const schedules = sp?.pricingSchedules?.schedules;
+    if (Array.isArray(schedules) && schedules.length > 0) {
+      let lowest = Infinity;
+      for (const s of schedules) {
+        const prices = s?.prices;
+        if (!Array.isArray(prices)) continue;
+        for (const p of prices) {
+          if (p.retailPrice != null) lowest = Math.min(lowest, Number(p.retailPrice));
+        }
+      }
+      if (lowest !== Infinity) return lowest;
+    }
+
+    const td = sp?.travelerDetails;
+    if (td?.pricingModel === 'perGroup' && Array.isArray(td?.groupSizes)) {
+      let lowest = Infinity;
+      for (const gs of td.groupSizes) {
+        if (gs.price != null) lowest = Math.min(lowest, Number(gs.price));
+      }
+      if (lowest !== Infinity) return lowest;
+    }
+
+    if (td?.uniformPrice != null) return Number(td.uniformPrice);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 const TOUR_SELECT = {
   id: true, title: true, slug: true, coverPhoto: true, photos: true,
   category: true, city: true, country: true, averageRating: true,
-  reviewCount: true, totalBookings: true, startingPrice: true,
-  currency: true, durationMinutes: true, difficulty: true, tags: true,
+  reviewCount: true, totalBookings: true, schedulesAndPricing: true,
+  durationMinutes: true, difficulty: true, tags: true,
   latitude: true, longitude: true, createdAt: true,
   supplier: {
     select: {
@@ -671,8 +719,8 @@ async function getTopAttractions(lat, lng, keywords = [], limit = DEFAULT_LIMIT)
 
       // Sort: primary = price ASC, secondary = distance ASC, tertiary = rating DESC
       tours.sort((a, b) => {
-        const pa = parseFloat(a.startingPrice) || 999999;
-        const pb = parseFloat(b.startingPrice) || 999999;
+        const pa = extractStartingPrice(a.schedulesAndPricing) ?? 999999;
+        const pb = extractStartingPrice(b.schedulesAndPricing) ?? 999999;
         if (Math.abs(pa - pb) > 5) return pa - pb;
         const da = a._distance ?? 9999;
         const db = b._distance ?? 9999;
@@ -690,7 +738,6 @@ async function getTopAttractions(lat, lng, keywords = [], limit = DEFAULT_LIMIT)
     tours = await prisma.tour.findMany({
       where: {
         status: 'ACTIVE',
-        startingPrice: { not: null },
         supplier: { supplierProfile: { status: 'ACTIVE' } },
       },
       select: TOUR_SELECT,
@@ -703,8 +750,8 @@ async function getTopAttractions(lat, lng, keywords = [], limit = DEFAULT_LIMIT)
 
     // Sort by price ASC, then rating DESC
     tours.sort((a, b) => {
-      const pa = parseFloat(a.startingPrice) || 999999;
-      const pb = parseFloat(b.startingPrice) || 999999;
+      const pa = extractStartingPrice(a.schedulesAndPricing) ?? 999999;
+      const pb = extractStartingPrice(b.schedulesAndPricing) ?? 999999;
       if (Math.abs(pa - pb) > 5) return pa - pb;
       return (parseFloat(b.averageRating) || 0) - (parseFloat(a.averageRating) || 0);
     });
@@ -902,7 +949,6 @@ async function getPopularDestinations(limit = 10) {
         COUNT(*)::int AS "tourCount",
         COALESCE(SUM(t."totalBookings"), 0)::int AS "totalBookings",
         ROUND(AVG(CASE WHEN t."averageRating" IS NOT NULL THEN t."averageRating"::numeric END), 2) AS "avgRating",
-        ROUND(AVG(CASE WHEN t."startingPrice" IS NOT NULL THEN t."startingPrice"::numeric END), 2) AS "avgPrice",
         (SELECT t2."coverPhoto" FROM "Tour" t2
          WHERE t2.city = t.city AND t2.status = 'ACTIVE' AND t2."coverPhoto" IS NOT NULL
          ORDER BY t2."totalBookings" DESC LIMIT 1) AS "heroImage"
@@ -923,7 +969,6 @@ async function getPopularDestinations(limit = 10) {
       tourCount: c.tourCount,
       totalBookings: c.totalBookings,
       avgRating: c.avgRating ? parseFloat(c.avgRating) : null,
-      avgPrice: c.avgPrice ? parseFloat(c.avgPrice) : null,
       heroImage: c.heroImage,
     }));
   }, ttl);
