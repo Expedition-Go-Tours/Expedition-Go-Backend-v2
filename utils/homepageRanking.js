@@ -890,12 +890,12 @@ async function getMoodKeywords(userId, limit = 8) {
     });
 
     // Batch: count tours per category in one query
-    const categoryCounts = await prisma.tour.groupBy({
+    const categoryCountRows = await prisma.tour.groupBy({
       by: ['category'],
       where: { status: 'ACTIVE', category: { not: null } },
       _count: { id: true },
     });
-    const categoryCountMap = new Map(categoryCounts.map(r => [r.category?.toLowerCase(), r._count.id]));
+    const categoryCountMap = new Map(categoryCountRows.map(r => [r.category?.toLowerCase(), r._count.id]));
 
     // Match best tour per keyword in JS (no more DB queries)
     const results = [];
