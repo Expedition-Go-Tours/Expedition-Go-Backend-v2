@@ -62,5 +62,10 @@ export default function () {
   const bookings = http.get(`${BASE_URL}/api/expedition/bookings`, authHeaders(token));
   check(bookings, {
     'bookings returns 200': (r) => r.status === 200,
+    'bookings has pagination': (r) => {
+      if (r.status !== 200) return false;
+      const body = JSON.parse(r.body);
+      return body.pagination && typeof body.pagination.totalCount === 'number';
+    },
   });
 }
