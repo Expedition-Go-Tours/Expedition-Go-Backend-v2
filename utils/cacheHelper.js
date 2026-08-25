@@ -175,6 +175,11 @@ const EXPEDITION_DETAIL_PREFIX = (slug) => `expedition:detail:${slug}`;
 const EXPEDITION_SIMILAR_PREFIX = (slug) => `expedition:similar:${slug}`;
 const EXPEDITION_REVIEWS_PREFIX = (slug) => `expedition:reviews:${slug}`;
 const EXPEDITION_SITEMAP_KEY = 'expedition:sitemap';
+const HOMEPAGE_SECTIONS_PREFIX = 'hp:sections:*';
+
+async function invalidateHomepageSections() {
+  await invalidateKeys([HOMEPAGE_SECTIONS_PREFIX]);
+}
 
 async function invalidateTourCaches(tourId, slug) {
   await invalidateKeys([
@@ -194,6 +199,7 @@ async function invalidateTourCaches(tourId, slug) {
       : ['expedition:similar:*', 'expedition:reviews:*']),
     EXPEDITION_SITEMAP_KEY,
     'reviews:tour:*',
+    HOMEPAGE_SECTIONS_PREFIX,
   ]);
   if (tourId) {
     await invalidateKey(TOUR_DETAIL_PREFIX(tourId));
@@ -220,6 +226,8 @@ module.exports = {
   invalidateKey,
   invalidateTourCaches,
   invalidateReviewCaches,
+  invalidateHomepageSections,
+  memSet,
   TOUR_LIST_PREFIX,
   TOUR_DETAIL_PREFIX,
   TOUR_FILTERS_KEY,
@@ -231,5 +239,6 @@ module.exports = {
   EXPEDITION_SIMILAR_PREFIX,
   EXPEDITION_REVIEWS_PREFIX,
   EXPEDITION_SITEMAP_KEY,
+  HOMEPAGE_SECTIONS_PREFIX,
   _clearMemory
 };

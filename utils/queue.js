@@ -30,6 +30,7 @@ const QUEUE_NAMES = {
   STRIPE:         'platform-stripe',
   WEBHOOK_RETRY:  'webhook-retry',
   CONTENT_SYNC:   'content-sync',
+  HOMEPAGE_PRECOMPUTE: 'homepage-precompute',
 };
 
 const DEFAULT_JOB_OPTIONS = {
@@ -71,6 +72,7 @@ const cleanupQueue     = () => getQueue(QUEUE_NAMES.CLEANUP);
 const stripeQueue      = () => getQueue(QUEUE_NAMES.STRIPE);
 const webhookRetryQueue = () => getQueue(QUEUE_NAMES.WEBHOOK_RETRY);
 const contentSyncQueue  = () => getQueue(QUEUE_NAMES.CONTENT_SYNC);
+const homepagePrecomputeQueue = () => getQueue(QUEUE_NAMES.HOMEPAGE_PRECOMPUTE);
 
 // ---------------------------------------------------------------------------
 // Enqueue helpers (typed so callers don't touch raw queue names)
@@ -388,6 +390,29 @@ async function enqueueContentSync(job) {
   } catch { /* Redis unavailable — skip content sync */ }
 }
 
+/**
+ * Enqueue a homepage pre-computation job.
+ * Debounced: only one pending job per 10-second window (via jobId).
+ * Falls back to inline execution when Redis is unavailable.
+ */
+async function enqueueHomepagePrecompute() {
+  try {
+    await homepagePrecomputeQueue().add('precompute', {}, {
+      jobId: `hp:precompute:${Math.floor(Date.now() / 10000)}`,
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 5000 },
+      removeOnComplete: { age: 3600, count: 10 },
+      removeOnFail: { age: 3600 },
+    });
+  } catch {
+    // Redis unavailable — run inline as fallback
+    try {
+      const { precomputeHomepageSections } = require('./homepagePrecompute');
+      precomputeHomepageSections().catch(() => {});
+    } catch { /* noop */ }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Worker registration — called once at startup from server.js
 // ---------------------------------------------------------------------------
@@ -702,6 +727,16 @@ function registerWorkers() {
     }
   });
 
+  /* ------------------------------------------------------------------
+   * HOMEPAGE PRECOMPUTE WORKER (concurrency 1)
+   * Pre-computes all 8 homepage ranking sections and stores in Redis.
+   * Concurrency=1 prevents redundant parallel precomputation.
+   * ------------------------------------------------------------------ */
+  createWorker(QUEUE_NAMES.HOMEPAGE_PRECOMPUTE, async () => {
+    const { precomputeHomepageSections } = require('./homepagePrecompute');
+    await precomputeHomepageSections();
+  }, 1);
+
   console.log('[Queue] All workers registered');
 }
 
@@ -773,6 +808,7 @@ module.exports = {
   enqueueCreateStripeCustomer,
   enqueueWebhookRetry,
   enqueueContentSync,
+  enqueueHomepagePrecompute,
   processEmailJob,
   registerWorkers,
   startResumeMonitor,

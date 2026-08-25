@@ -2,14 +2,40 @@
  * Homepage Controller
  *
  * Serves pre-computed, algorithmically ranked data for each homepage section.
- * Each endpoint returns a flat array of tour cards (or keyword objects)
- * ready for the frontend to render directly.
+ * Reads from Redis pre-computed keys first (0 DB queries), falls back to
+ * live computation when keys are missing or Redis is unavailable.
  *
- * @version 1.0.0
+ * @version 2.0.0
  */
 
 const catchAsync = require('../utils/catchAsync');
 const ranking = require('../utils/homepageRanking');
+const redis = require('../utils/redisClient');
+const { SECTION_KEYS, SECTION_TTLS } = require('../utils/homepagePrecompute');
+const { enqueueHomepagePrecompute } = require('../utils/queue');
+
+/**
+ * Try to read a pre-computed section from Redis.
+ * Returns the data if found, null otherwise.
+ */
+async function readPrecomputed(key) {
+  try {
+    const data = await redis.get(key);
+    return data || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fallback: compute live and enqueue background precompute.
+ */
+async function computeWithWarmup(limit, computeFn, precomputeKey) {
+  const data = await computeFn(limit);
+  // Warm cache in background (fire-and-forget)
+  enqueueHomepagePrecompute().catch(() => {});
+  return data;
+}
 
 /**
  * GET /api/homepage/sell-out
@@ -17,7 +43,11 @@ const ranking = require('../utils/homepageRanking');
  */
 exports.getSellOut = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
-  const tours = await ranking.getLikelySellOut(limit);
+  let tours = await readPrecomputed(SECTION_KEYS.sellOut);
+  if (tours) {
+    return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
+  }
+  tours = await computeWithWarmup(limit, ranking.getLikelySellOut, SECTION_KEYS.sellOut);
   res.json({ status: 'success', data: { tours } });
 });
 
@@ -27,7 +57,11 @@ exports.getSellOut = catchAsync(async (req, res) => {
  */
 exports.getTopRated = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
-  const tours = await ranking.getTopRated(limit);
+  let tours = await readPrecomputed(SECTION_KEYS.topRated);
+  if (tours) {
+    return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
+  }
+  tours = await computeWithWarmup(limit, ranking.getTopRated, SECTION_KEYS.topRated);
   res.json({ status: 'success', data: { tours } });
 });
 
@@ -37,7 +71,11 @@ exports.getTopRated = catchAsync(async (req, res) => {
  */
 exports.getTrending = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
-  const tours = await ranking.getTrending(limit);
+  let tours = await readPrecomputed(SECTION_KEYS.trending);
+  if (tours) {
+    return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
+  }
+  tours = await computeWithWarmup(limit, ranking.getTrending, SECTION_KEYS.trending);
   res.json({ status: 'success', data: { tours } });
 });
 
@@ -45,13 +83,28 @@ exports.getTrending = catchAsync(async (req, res) => {
  * GET /api/homepage/recommended
  * Personalized recommendations based on user behavior + tour quality.
  * Accepts optional lat/lng for proximity boost.
+ *
+ * When userId or location is provided, always computes live (pre-computed
+ * data is anonymous only). When anonymous, reads from pre-computed cache.
  */
 exports.getRecommended = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
   const userId = req.user?.id || null;
   const lat = req.query.lat ? parseFloat(req.query.lat) : null;
   const lng = req.query.lng ? parseFloat(req.query.lng) : null;
-  const tours = await ranking.getRecommended(userId, lat, lng, limit);
+
+  // Personalized: always compute live
+  if (userId || lat) {
+    const tours = await ranking.getRecommended(userId, lat, lng, limit);
+    return res.json({ status: 'success', data: { tours } });
+  }
+
+  // Anonymous: try pre-computed cache
+  let tours = await readPrecomputed(SECTION_KEYS.recommended);
+  if (tours) {
+    return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
+  }
+  tours = await computeWithWarmup(limit, (l) => ranking.getRecommended(null, null, null, l), SECTION_KEYS.recommended);
   res.json({ status: 'success', data: { tours } });
 });
 
@@ -61,7 +114,11 @@ exports.getRecommended = catchAsync(async (req, res) => {
  */
 exports.getNew = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
-  const tours = await ranking.getNewExperiences(limit);
+  let tours = await readPrecomputed(SECTION_KEYS.new);
+  if (tours) {
+    return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
+  }
+  tours = await computeWithWarmup(limit, ranking.getNewExperiences, SECTION_KEYS.new);
   res.json({ status: 'success', data: { tours } });
 });
 
@@ -69,13 +126,28 @@ exports.getNew = catchAsync(async (req, res) => {
  * GET /api/homepage/attractions
  * Nearby tours sorted by affordability + quality.
  * Accepts lat/lng for proximity, keywords for filtering.
+ *
+ * When lat/lng is provided, always computes live (pre-computed data
+ * is location-agnostic). When anonymous, reads from pre-computed cache.
  */
 exports.getAttractions = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
   const lat = req.query.lat ? parseFloat(req.query.lat) : null;
   const lng = req.query.lng ? parseFloat(req.query.lng) : null;
   const keywords = req.query.keywords ? req.query.keywords.split(',').map(k => k.trim()) : [];
-  const tours = await ranking.getTopAttractions(lat, lng, keywords, limit);
+
+  // Location-specific: always compute live
+  if (lat && lng) {
+    const tours = await ranking.getTopAttractions(lat, lng, keywords, limit);
+    return res.json({ status: 'success', data: { tours } });
+  }
+
+  // No location: try pre-computed cache
+  let tours = await readPrecomputed(SECTION_KEYS.attractions);
+  if (tours) {
+    return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
+  }
+  tours = await computeWithWarmup(limit, (l) => ranking.getTopAttractions(null, null, keywords, l), SECTION_KEYS.attractions);
   res.json({ status: 'success', data: { tours } });
 });
 
@@ -83,11 +155,25 @@ exports.getAttractions = catchAsync(async (req, res) => {
  * GET /api/homepage/mood
  * Dynamic keywords for "What do you want to do?" section.
  * Returns keywords with representative tour images.
+ *
+ * When userId is provided, always computes live (pre-computed is anonymous).
  */
 exports.getMood = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 8, 12);
   const userId = req.user?.id || null;
-  const keywords = await ranking.getMoodKeywords(userId, limit);
+
+  // Personalized: always compute live
+  if (userId) {
+    const keywords = await ranking.getMoodKeywords(userId, limit);
+    return res.json({ status: 'success', data: { keywords } });
+  }
+
+  // Anonymous: try pre-computed cache
+  let keywords = await readPrecomputed(SECTION_KEYS.mood);
+  if (keywords) {
+    return res.json({ status: 'success', data: { keywords: keywords.slice(0, limit) } });
+  }
+  keywords = await computeWithWarmup(limit, (l) => ranking.getMoodKeywords(null, l), SECTION_KEYS.mood);
   res.json({ status: 'success', data: { keywords } });
 });
 
@@ -97,43 +183,76 @@ exports.getMood = catchAsync(async (req, res) => {
  */
 exports.getDestinations = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 10, 15);
-  const destinations = await ranking.getPopularDestinations(limit);
+  let destinations = await readPrecomputed(SECTION_KEYS.destinations);
+  if (destinations) {
+    return res.json({ status: 'success', data: { destinations: destinations.slice(0, limit) } });
+  }
+  destinations = await computeWithWarmup(limit, ranking.getPopularDestinations, SECTION_KEYS.destinations);
   res.json({ status: 'success', data: { destinations } });
 });
 
 /**
  * GET /api/homepage
  * Unified endpoint — returns all sections in a single response.
- * Reduces homepage HTTP requests from 7+ to 1.
+ * Reduces homepage HTTP requests from 8 to 1.
+ *
+ * Reads from pre-computed cache when available, falls back to live
+ * computation for any missing keys.
  */
 exports.getHomepage = catchAsync(async (req, res) => {
   const userId = req.user?.id || null;
   const lat = req.query.lat ? parseFloat(req.query.lat) : null;
   const lng = req.query.lng ? parseFloat(req.query.lng) : null;
 
-  const [sellOut, topRated, trending, recommended, newExperiences, attractions, mood, destinations] =
+  // Read all sections from pre-computed cache in parallel
+  const [sellOut, topRated, trending, recommended, newExp, attractions, mood, destinations] =
     await Promise.all([
-      ranking.getLikelySellOut(12),
-      ranking.getTopRated(12),
-      ranking.getTrending(12),
-      ranking.getRecommended(userId, lat, lng, 12),
-      ranking.getNewExperiences(10),
-      ranking.getTopAttractions(lat, lng, [], 10),
-      ranking.getMoodKeywords(userId, 8),
-      ranking.getPopularDestinations(10),
+      readPrecomputed(SECTION_KEYS.sellOut),
+      readPrecomputed(SECTION_KEYS.topRated),
+      readPrecomputed(SECTION_KEYS.trending),
+      readPrecomputed(SECTION_KEYS.recommended),
+      readPrecomputed(SECTION_KEYS.new),
+      readPrecomputed(SECTION_KEYS.attractions),
+      readPrecomputed(SECTION_KEYS.mood),
+      readPrecomputed(SECTION_KEYS.destinations),
     ]);
+
+  // For personalized sections, compute live if userId/location provided
+  const resolvedRecommended = (userId || lat)
+    ? await ranking.getRecommended(userId, lat, lng, 12)
+    : (recommended || await ranking.getRecommended(null, null, null, 12));
+
+  const resolvedAttractions = (lat && lng)
+    ? await ranking.getTopAttractions(lat, lng, [], 10)
+    : (attractions || await ranking.getTopAttractions(null, null, [], 10));
+
+  const resolvedMood = userId
+    ? await ranking.getMoodKeywords(userId, 8)
+    : (mood || await ranking.getMoodKeywords(null, 8));
+
+  // For non-personalized sections, fall back to live computation if missing
+  const resolvedSellOut = sellOut || await ranking.getLikelySellOut(12);
+  const resolvedTopRated = topRated || await ranking.getTopRated(12);
+  const resolvedTrending = trending || await ranking.getTrending(12);
+  const resolvedNew = newExp || await ranking.getNewExperiences(10);
+  const resolvedDestinations = destinations || await ranking.getPopularDestinations(10);
+
+  // Warm cache if any section was computed live
+  if (!sellOut || !topRated || !trending || !recommended || !newExp || !attractions || !mood || !destinations) {
+    enqueueHomepagePrecompute().catch(() => {});
+  }
 
   res.json({
     status: 'success',
     data: {
-      sellOut,
-      topRated,
-      trending,
-      recommended,
-      newExperiences,
-      attractions,
-      mood,
-      destinations,
+      sellOut: resolvedSellOut,
+      topRated: resolvedTopRated,
+      trending: resolvedTrending,
+      recommended: resolvedRecommended,
+      newExperiences: resolvedNew,
+      attractions: resolvedAttractions,
+      mood: resolvedMood,
+      destinations: resolvedDestinations,
     },
   });
 });

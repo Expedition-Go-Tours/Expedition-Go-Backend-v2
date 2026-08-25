@@ -263,6 +263,10 @@ async function setupQueueWorkers() {
   enqueueCleanup('expire-special-offers').catch((err) => logger.warn('[scheduler] startup expire-special-offers failed:', err?.message));
   enqueueCleanup('expire-supplier-documents').catch((err) => logger.warn('[scheduler] startup expire-supplier-documents failed:', err?.message));
   enqueueCleanup('plan-doc-expiry-reminders').catch((err) => logger.warn('[scheduler] startup plan-doc-expiry-reminders failed:', err?.message));
+
+  // Pre-compute homepage sections so the first user request is served instantly
+  const { enqueueHomepagePrecompute } = require('./utils/queue');
+  enqueueHomepagePrecompute().catch((err) => logger.warn('[scheduler] startup homepage-precompute failed:', err?.message));
 }
 
 function setupSocketIO() {
