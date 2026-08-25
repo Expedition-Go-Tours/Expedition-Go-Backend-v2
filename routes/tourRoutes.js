@@ -487,6 +487,34 @@ router.get('/availability/public/:tourId', availabilityController.getPublicAvail
 
 /**
  * @swagger
+ * /tours/{id}/beacon:
+ *   post:
+ *     summary: View beacon — confirms human viewer (JS executed after 3s)
+ *     tags: [Tours]
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               token:
+ *                 type: string
+ *                 description: HMAC-signed beacon token from the tour page
+ *     responses:
+ *       200:
+ *         description: Beacon processed (always returns 200)
+ */
+router.post('/:id/beacon', tourController.viewBeacon);
+
+/**
+ * @swagger
  * /tours/offers:
  *   get:
  *     summary: Get active special offers (customer-facing)

@@ -1,5 +1,5 @@
 jest.mock('../../utils/prismaClient', () => ({
-  booking: { findMany: jest.fn(), updateMany: jest.fn() },
+  booking: { findMany: jest.fn(), updateMany: jest.fn(), update: jest.fn().mockResolvedValue({}) },
 }));
 
 jest.mock('../../utils/stripeHelpers', () => {
@@ -65,7 +65,7 @@ describe('chargePayLaterBookings', () => {
 
   it('returns zeros when no bookings are due', async () => {
     const result = await chargePayLaterBookings();
-    expect(result).toEqual({ checked: 0, charged: 0, settled: 0, needsAction: 0, failed: 0, cancelled: 0 });
+    expect(result).toEqual({ checked: 0, charged: 0, settled: 0, needsAction: 0, failed: 0, cancelled: 0, retried: 0 });
     expect(getStripe().paymentIntents.retrieve).not.toHaveBeenCalled();
   });
 
@@ -78,7 +78,7 @@ describe('chargePayLaterBookings', () => {
     expect(getStripe().paymentIntents.confirm).toHaveBeenCalledWith('pi_later', expect.objectContaining({ return_url: expect.any(String) }));
     expect(handlePaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ id: 'pi_later', status: 'succeeded' }));
     expect(enqueueNotification).toHaveBeenCalled();
-    expect(result).toEqual({ checked: 1, charged: 1, settled: 0, needsAction: 0, failed: 0, cancelled: 0 });
+    expect(result).toEqual({ checked: 1, charged: 1, settled: 0, needsAction: 0, failed: 0, cancelled: 0, retried: 0 });
   });
 
   it('charges a PENDING pay-later booking (the current creation state)', async () => {
@@ -114,8 +114,8 @@ describe('chargePayLaterBookings', () => {
     expect(result.needsAction).toBe(1);
   });
 
-  it('cancels the reservation when the intent was canceled', async () => {
-    prisma.booking.findMany.mockResolvedValue([dueBooking()]);
+  it('cancels the reservation when the intent was canceled (after max retries)', async () => {
+    prisma.booking.findMany.mockResolvedValue([dueBooking({ chargeRetries: 3 })]);
     getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'canceled' });
 
     const result = await chargePayLaterBookings();
@@ -128,21 +128,20 @@ describe('chargePayLaterBookings', () => {
     expect(result.cancelled).toBe(1);
   });
 
-  it('notifies failure and retries later when the charge is declined', async () => {
+  it('retries later when the charge is declined (under max retries)', async () => {
     prisma.booking.findMany.mockResolvedValue([dueBooking()]);
     getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'requires_payment_method' });
     getStripe().paymentIntents.confirm.mockRejectedValue(new Error('card declined'));
 
     const result = await chargePayLaterBookings();
 
-    expect(enqueueNotification).toHaveBeenCalled();
     expect(notifyAdmin).toHaveBeenCalled();
     expect(prisma.booking.updateMany).not.toHaveBeenCalled();
-    expect(result.failed).toBe(1);
+    expect(result.retried).toBe(1);
   });
 
-  it('cancels bookings with no payment intent on file', async () => {
-    prisma.booking.findMany.mockResolvedValue([dueBooking({ stripePaymentIntentId: null })]);
+  it('cancels bookings with no payment intent on file (after max retries)', async () => {
+    prisma.booking.findMany.mockResolvedValue([dueBooking({ stripePaymentIntentId: null, chargeRetries: 3 })]);
 
     const result = await chargePayLaterBookings();
 
@@ -158,6 +157,6 @@ describe('chargePayLaterBookings', () => {
 
     expect(getStripe().paymentIntents.confirm).not.toHaveBeenCalled();
     expect(handlePaymentSucceeded).not.toHaveBeenCalled();
-    expect(result).toEqual({ checked: 1, charged: 0, settled: 0, needsAction: 0, failed: 0, cancelled: 0 });
+    expect(result).toEqual({ checked: 1, charged: 0, settled: 0, needsAction: 0, failed: 0, cancelled: 0, retried: 0 });
   });
 });

@@ -26,7 +26,7 @@ jest.mock('../../utils/cacheHelper', () => ({
   REVIEWS_TOUR_PREFIX: (tourId) => `reviews:tour:${tourId}:*`,
 }));
 
-jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
+jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn(), deriveSessionId: jest.fn(() => 'test-session-id') }));
 jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()), enqueueNotification: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn(() => Promise.resolve()), emitToRoom: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));

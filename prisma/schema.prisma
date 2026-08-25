@@ -633,6 +633,7 @@ model Tour {
   articles            ArticleTour[]
   wishlistItems       WishlistItem[]
   checkoutDrafts      CheckoutDraft[]
+  dailyStats          DailyTourStats[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -668,6 +669,22 @@ model TourDateOverride {
 
   @@unique([tourId, date])
   @@index([tourId, date])
+}
+
+model DailyTourStats {
+  id              String   @id @default(cuid())
+  tourId          String
+  tour            Tour     @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  date            DateTime @db.Date
+  totalViews      Int      @default(0)
+  uniqueVisitors  Int      @default(0)
+  topCountry      String?  @db.VarChar(2)
+  topReferrer     String?
+  createdAt       DateTime @default(now())
+
+  @@unique([tourId, date])
+  @@index([tourId, date])
+  @@index([date])
 }
 
 model TourSecondaryTheme {

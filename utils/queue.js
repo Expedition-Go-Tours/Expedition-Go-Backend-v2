@@ -515,6 +515,56 @@ function registerWorkers() {
         cutoff.setFullYear(cutoff.getFullYear() - 2);
         await prisma.event.deleteMany({ where: { createdAt: { lt: cutoff } } });
         break;
+      case 'aggregate-daily-views': {
+        const prismaAgg = require('./prismaClient');
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        yesterday.setHours(0, 0, 0, 0);
+        const today = new Date(yesterday);
+        today.setDate(today.getDate() + 1);
+
+        // Query tour.viewed events from yesterday, grouped by tour
+        const events = await prismaAgg.event.findMany({
+          where: {
+            name: 'tour.viewed',
+            createdAt: { gte: yesterday, lt: today },
+            resourceId: { not: null },
+          },
+          select: { resourceId: true, userId: true, properties: true },
+        });
+
+        // Group by tour
+        const byTour = {};
+        for (const ev of events) {
+          const tourId = ev.resourceId;
+          if (!byTour[tourId]) byTour[tourId] = { views: 0, users: new Set(), countries: {} };
+          byTour[tourId].views++;
+          if (ev.userId) byTour[tourId].users.add(ev.userId);
+          const country = ev.properties?.viewerCountry || ev.properties?.country;
+          if (country) byTour[tourId].countries[country] = (byTour[tourId].countries[country] || 0) + 1;
+        }
+
+        // Upsert daily stats
+        for (const [tourId, data] of Object.entries(byTour)) {
+          const topCountry = Object.entries(data.countries).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+          await prismaAgg.dailyTourStats.upsert({
+            where: { tourId_date: { tourId, date: yesterday } },
+            update: {
+              totalViews: data.views,
+              uniqueVisitors: data.users.size,
+              topCountry,
+            },
+            create: {
+              tourId,
+              date: yesterday,
+              totalViews: data.views,
+              uniqueVisitors: data.users.size,
+              topCountry,
+            },
+          });
+        }
+        break;
+      }
       default:
         console.log('[Queue] Unknown aggregation job:', job.name);
     }

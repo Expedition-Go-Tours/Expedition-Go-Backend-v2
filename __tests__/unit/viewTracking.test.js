@@ -24,10 +24,9 @@ const buildReq = (overrides = {}) => ({
   },
   socket: { remoteAddress: '10.0.0.1' },
   secure: false,
+  ip: '41.220.100.10',
   ...overrides,
 });
-
-const buildRes = () => ({ cookie: jest.fn() });
 
 const BASE = { tourSupplierId: 'sup-1', tourId: 'tour-1' };
 
@@ -42,75 +41,65 @@ describe('viewTracking — shouldCountTourView', () => {
     });
   });
 
-  it('counts an anonymous first-time visitor and grants an anon cookie', async () => {
+  it('counts an anonymous first-time visitor (IP-based fingerprint)', async () => {
     const req = buildReq();
-    const res = buildRes();
 
-    const counted = await shouldCountTourView({ req, res, ...BASE });
+    const result = await shouldCountTourView({ req, ...BASE });
 
-    expect(counted).toBe(true);
-    expect(res.cookie).toHaveBeenCalledTimes(1);
-    const [name, value, opts] = res.cookie.mock.calls[0];
-    expect(name).toBe('tv_anon');
-    expect(value).toMatch(/^[0-9a-f]{32}$/);
-    expect(opts.httpOnly).toBe(true);
-    expect(opts.sameSite).toBe('lax');
-    expect(opts.maxAge).toBe(30 * 24 * 60 * 60 * 1000);
+    expect(result.counted).toBe(true);
+    expect(result.geo).toBeDefined();
 
     const keys = redis.setnx.mock.calls.map(([key]) => key);
     expect(keys[0]).toMatch(/^view:tour-1:ip:/);
-    expect(keys[1]).toBe(`view:tour-1:anon:${value}`);
   });
 
   it('dedups per tour: two tours of the same supplier both count', async () => {
     const req = buildReq();
-    const res = buildRes();
 
-    await shouldCountTourView({ req, res, tourSupplierId: 'sup-1', tourId: 'tour-A' });
-    await shouldCountTourView({ req, res, tourSupplierId: 'sup-1', tourId: 'tour-B' });
+    await shouldCountTourView({ req, tourSupplierId: 'sup-1', tourId: 'tour-A' });
+    await shouldCountTourView({ req, tourSupplierId: 'sup-1', tourId: 'tour-B' });
 
     const keyStarts = redis.setnx.mock.calls.map(([key]) => key.split(':').slice(0, 3).join(':'));
     expect(keyStarts).toEqual(expect.arrayContaining(['view:tour-A:ip', 'view:tour-B:ip']));
   });
 
   it('blocks a repeat view within the 30-minute cooldown', async () => {
-    const countedFirst = await shouldCountTourView({
-      req: buildReq(), res: buildRes(), ...BASE,
+    const resultFirst = await shouldCountTourView({
+      req: buildReq(), ...BASE,
     });
-    const countedSecond = await shouldCountTourView({
-      req: buildReq(), res: buildRes(), ...BASE,
+    const resultSecond = await shouldCountTourView({
+      req: buildReq(), ...BASE,
     });
 
-    expect(countedFirst).toBe(true);
-    expect(countedSecond).toBe(false);
+    expect(resultFirst.counted).toBe(true);
+    expect(resultSecond.counted).toBe(false);
     expect(redis.setnx.mock.calls.map(([key]) => key)[0]).toMatch(/^view:tour-1:ip:/);
   });
 
-  it('uses the tv_anon cookie identity when the client already carries one', async () => {
+  it('uses IP hash for anonymous visitors (no cookie identity)', async () => {
     const req = buildReq({ cookies: { tv_anon: 'abc123' } });
-    const res = buildRes();
 
-    const counted = await shouldCountTourView({ req, res, ...BASE });
+    const result = await shouldCountTourView({ req, ...BASE });
 
-    expect(counted).toBe(true);
-    expect(redis.setnx).toHaveBeenCalledWith('view:tour-1:anon:abc123', 1800);
-    expect(res.cookie).not.toHaveBeenCalled();
+    expect(result.counted).toBe(true);
+    // Should use IP hash, not cookie
+    expect(redis.setnx.mock.calls[0][0]).toMatch(/^view:tour-1:ip:/);
   });
 
   it('never counts the tour owner viewing their own listing', async () => {
     const req = buildReq({ user: { id: 'sup-1', roles: ['supplier'] } });
 
-    const counted = await shouldCountTourView({ req, res: buildRes(), ...BASE });
+    const result = await shouldCountTourView({ req, ...BASE });
 
-    expect(counted).toBe(false);
+    expect(result.counted).toBe(false);
     expect(redis.setnx).not.toHaveBeenCalled();
   });
 
   it('never counts admins or expedition staff', async () => {
     for (const roles of [['admin'], ['expedition']]) {
       const req = buildReq({ user: { id: 'staff-9', roles } });
-      const counted = await shouldCountTourView({ req, res: buildRes(), ...BASE });
-      expect(counted).toBe(false);
+      const result = await shouldCountTourView({ req, ...BASE });
+      expect(result.counted).toBe(false);
     }
     expect(redis.setnx).not.toHaveBeenCalled();
   });
@@ -118,11 +107,11 @@ describe('viewTracking — shouldCountTourView', () => {
   it('never counts suppliers with an ACTIVE profile but counts SUSPENDED ones', async () => {
     prisma.supplierProfile.findFirst.mockResolvedValueOnce({ status: 'ACTIVE' });
     const activeReq = buildReq({ user: { id: 'user-2', roles: ['supplier'] } });
-    expect(await shouldCountTourView({ req: activeReq, res: buildRes(), ...BASE })).toBe(false);
+    expect((await shouldCountTourView({ req: activeReq, ...BASE })).counted).toBe(false);
 
     prisma.supplierProfile.findFirst.mockResolvedValueOnce({ status: 'SUSPENDED' });
     const suspendedReq = buildReq({ user: { id: 'user-3', roles: ['supplier'] } });
-    expect(await shouldCountTourView({ req: suspendedReq, res: buildRes(), ...BASE })).toBe(true);
+    expect((await shouldCountTourView({ req: suspendedReq, ...BASE })).counted).toBe(true);
     expect(redis.setnx).toHaveBeenCalledTimes(1);
   });
 
@@ -137,8 +126,8 @@ describe('viewTracking — shouldCountTourView', () => {
     ];
     for (const ua of bots) {
       const req = buildReq({ headers: { 'user-agent': ua } });
-      const counted = await shouldCountTourView({ req, res: buildRes(), ...BASE });
-      expect(counted).toBe(false);
+      const result = await shouldCountTourView({ req, ...BASE });
+      expect(result.counted).toBe(false);
     }
     expect(redis.setnx).not.toHaveBeenCalled();
   });
@@ -147,11 +136,25 @@ describe('viewTracking — shouldCountTourView', () => {
     redis.setnx.mockResolvedValue(null);
 
     const req = buildReq();
-    const countedFirst = await shouldCountTourView({ req, res: buildRes(), ...BASE });
-    const countedSecond = await shouldCountTourView({ req, res: buildRes(), ...BASE });
+    const resultFirst = await shouldCountTourView({ req, ...BASE });
+    const resultSecond = await shouldCountTourView({ req, ...BASE });
 
-    expect(countedFirst).toBe(true);
-    expect(countedSecond).toBe(false);
+    expect(resultFirst.counted).toBe(true);
+    expect(resultSecond.counted).toBe(false);
+  });
+
+  it('returns geo data for anonymous visitors', async () => {
+    const req = buildReq({ 'x-forwarded-for': '102.128.0.1' });
+
+    const result = await shouldCountTourView({ req, ...BASE });
+
+    expect(result.counted).toBe(true);
+    expect(result.geo).toBeDefined();
+    // geo may be null for private IPs, but the field should exist
+    if (result.geo) {
+      expect(result.geo).toHaveProperty('country');
+      expect(result.geo).toHaveProperty('city');
+    }
   });
 });
 

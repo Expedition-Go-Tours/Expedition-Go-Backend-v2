@@ -307,11 +307,15 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
   res.status(200).json(result);
 
   // Fire-and-forget search analytics event (never blocks response)
+  // sessionId must be computed BEFORE enqueueing because req is not
+  // JSON-serializable and cannot travel through BullMQ.
   if (req.query.search || req.query.category || req.query.location || (req.query.lat && req.query.lng)) {
+    const { deriveSessionId } = require('../utils/eventEmitter');
     enqueueEvent({
       name: req.query.search ? 'search.executed' : 'browse.executed',
       userId: req.user?.id,
-      req,
+      sessionId: deriveSessionId(req),
+      source: 'web',
       properties: {
         query: req.query.search || null,
         category: req.query.category || null,
@@ -326,6 +330,11 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
         },
         resultCount: result?.data?.pagination?.totalCount || 0,
         sortBy: req.query.sortBy || 'createdAt',
+        referrer: req.headers?.referer || null,
+        utm_source: req.query.utm_source || null,
+        utm_medium: req.query.utm_medium || null,
+        utm_campaign: req.query.utm_campaign || null,
+        utm_term: req.query.utm_term || null,
       },
     });
   }
@@ -643,28 +652,112 @@ exports.getTour = catchAsync(async (req, res, next) => {
   // â”€â”€ View tracking: count each unique external visitor once per 30 minutes â”€â”€
   // Admins, expedition staff, the tour owner and ACTIVE suppliers are excluded
   // from viewCount (and from the analytics event emitted below).
-  if (await shouldCountTourView({ req, res, tourSupplierId: result.supplierId, tourId: result.id })) {
+  const { counted: viewCounted, geo: viewerGeo } = await shouldCountTourView({ req, tourSupplierId: result.supplierId, tourId: result.id });
+  if (viewCounted) {
     prisma.tour.update({
       where: { id: result.id },
       data: { viewCount: { increment: 1 } },
     }).catch(console.error);
 
-    eventEmitter.emit({ name: 'tour.viewed', userId: req.user?.id, req, resource: 'Tour', resourceId: result.id });
+    eventEmitter.emit({
+      name: 'tour.viewed',
+      userId: req.user?.id,
+      req,
+      resource: 'Tour',
+      resourceId: result.id,
+      properties: {
+        category: result.category || null,
+        city: result.city || null,
+        country: result.country || null,
+        price: result.startingPrice ? parseFloat(result.startingPrice) : null,
+        rating: result.averageRating ? parseFloat(result.averageRating) : null,
+        reviewCount: result.reviewCount || 0,
+        durationMinutes: result.durationMinutes || null,
+        tags: result.tags || [],
+        referrer: req.headers?.referer || null,
+        utm_term: req.query?.utm_term || null,
+        viewerCountry: viewerGeo?.country || null,
+        viewerCity: viewerGeo?.city || null,
+        viewerRegion: viewerGeo?.region || null,
+      },
+    });
   }
 
   // Tell browsers/CDNs: cache this response for 60 s, then revalidate.
   // This stops the frontend from hammering the endpoint on every re-render.
   res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
 
+  // Generate a beacon token for JS-based bot detection.
+  // The frontend sends this back after 3+ seconds on page to confirm a human viewer.
+  const beaconTimestamp = Date.now();
+  const beaconToken = crypto
+    .createHmac('sha256', process.env.JWT_SECRET || '')
+    .update(`${result.id}:${beaconTimestamp}`)
+    .digest('hex');
+
   res.status(200).json({
     status: 'success',
-    data: { tour: result },
+    data: {
+      tour: result,
+      beaconToken: `${beaconTimestamp}.${beaconToken}`,
+    },
   });
 });
 
 // ================================
 // SUPPLIER TOUR MANAGEMENT
 // ================================
+
+/**
+ * View beacon — confirms the viewer executed JavaScript (human, not a bot).
+ * Called by the frontend after 3+ seconds on the tour page. Validates an
+ * HMAC-signed token to prevent spoofing. Marks the view event as verified.
+ */
+exports.viewBeacon = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { token } = req.body || {};
+
+  if (!token || typeof token !== 'string') {
+    return res.status(200).json({ status: 'success', data: { verified: false } });
+  }
+
+  // Validate token: HMAC(tourId:timestamp, secret) — expires after 5 minutes
+  const parts = token.split('.');
+  if (parts.length !== 2) {
+    return res.status(200).json({ status: 'success', data: { verified: false } });
+  }
+
+  const [timestamp, signature] = parts;
+  const expectedSig = crypto
+    .createHmac('sha256', process.env.JWT_SECRET || '')
+    .update(`${id}:${timestamp}`)
+    .digest('hex');
+
+  if (signature !== expectedSig) {
+    return res.status(200).json({ status: 'success', data: { verified: false } });
+  }
+
+  const age = Date.now() - parseInt(timestamp, 10);
+  if (isNaN(age) || age < 0 || age > 5 * 60 * 1000) {
+    return res.status(200).json({ status: 'success', data: { verified: false } });
+  }
+
+  // Mark the most recent tour.viewed event for this tour as verified
+  const viewerId = req.user?.id || req.ip || 'unknown';
+  await prisma.event.updateMany({
+    where: {
+      name: 'tour.viewed',
+      resourceId: id,
+      createdAt: { gte: new Date(Date.now() - 10 * 60 * 1000) },
+      properties: { path: ['verified'], equals: null },
+    },
+    data: {
+      properties: { set: { verified: true } },
+    },
+  }).catch(() => {});
+
+  return res.status(200).json({ status: 'success', data: { verified: true } });
+});
 
 /**
  * Create new tour (suppliers only)

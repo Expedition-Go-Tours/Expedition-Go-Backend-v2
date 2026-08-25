@@ -240,6 +240,8 @@ const keywordRoutes = require('./routes/keywordRoutes');
 const expeditionRoutes = require('./routes/expeditionRoutes');
 const blogRoutes = require('./routes/blogRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');
+const homepageRoutes = require('./routes/homepageRoutes');
+const analyticsRoutes = require('./routes/analyticsRoutes');
 const maintenanceMode = require('./middleware/maintenanceMode');
 
 app.use('/api', maintenanceMode);
@@ -271,6 +273,8 @@ app.use('/api/keywords', keywordRoutes);
 app.use('/api/expedition', expeditionRoutes);
 app.use('/api/blog', blogRoutes);
 app.use('/api/media', mediaRoutes);
+app.use('/api/homepage', homepageRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 
 if (swaggerSpec && process.env.NODE_ENV !== 'production') {

@@ -241,6 +241,11 @@ async function setupQueueWorkers() {
     enqueueCleanup('plan-doc-expiry-reminders').catch((err) => logger.warn('[scheduler] plan-doc-expiry-reminders failed:', err?.message));
   }, 24 * 60 * 60 * 1000));
 
+  // Aggregate yesterday's tour views into DailyTourStats (runs daily at 00:05 UTC)
+  intervals.push(setInterval(() => {
+    enqueueAggregation('aggregate-daily-views').catch((err) => logger.warn('[scheduler] aggregate-daily-views failed:', err?.message));
+  }, 24 * 60 * 60 * 1000));
+
   enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] startup cleanup-expired-cart failed:', err?.message));
   enqueueCleanup('cleanup-stale-bookings').catch((err) => logger.warn('[scheduler] startup cleanup-stale-bookings failed:', err?.message));
   enqueueCleanup('expire-checkout-holds').catch((err) => logger.warn('[scheduler] startup expire-checkout-holds failed:', err?.message));

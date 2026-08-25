@@ -492,13 +492,13 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
   // View tracking — count each unique external visitor once per 30 minutes.
   // Admins, expedition staff, the tour owner and ACTIVE suppliers are excluded.
   const tourSupId = result.data?.tour?.tour?.supplierId || result.data?.tour?.tour?.id;
-  if (await shouldCountTourView({
+  const { counted: viewCounted, geo: viewerGeo } = await shouldCountTourView({
     req,
-    res,
     tourSupplierId: tourSupId,
     tourId: result.data?.tour?.tour?.id,
     prefix: 'expedition:view',
-  })) {
+  });
+  if (viewCounted) {
     prisma.tour
       .update({
         where: { slug },
@@ -506,13 +506,26 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
       })
       .catch(() => {});
 
+    const tourData = result.data?.tour?.tour;
     eventEmitter.emit({
       name: 'expedition.tour_viewed',
       userId: req.user?.id,
       req,
       resource: 'Tour',
-      resourceId: result.data.tour.tour.id,
-      properties: { slug, source: 'expedition' },
+      resourceId: tourData?.id,
+      properties: {
+        slug,
+        source: 'expedition',
+        category: tourData?.category || null,
+        city: tourData?.city || null,
+        country: tourData?.country || null,
+        price: tourData?.startingPrice ? parseFloat(tourData.startingPrice) : null,
+        rating: tourData?.averageRating ? parseFloat(tourData.averageRating) : null,
+        tags: tourData?.tags || [],
+        viewerCountry: viewerGeo?.country || null,
+        viewerCity: viewerGeo?.city || null,
+        viewerRegion: viewerGeo?.region || null,
+      },
     });
   }
 

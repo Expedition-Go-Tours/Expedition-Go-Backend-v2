@@ -18,5 +18,6 @@ router.get('/search', locationController.search);
 router.get('/autocomplete', locationController.autocomplete);
 router.get('/reverse', locationController.reverse);
 router.get('/nearby', locationController.nearby);
+router.get('/my-location', locationController.myLocation);
 
 module.exports = router;

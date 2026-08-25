@@ -19,14 +19,13 @@
  * across instances) with an in-process Map fallback so counting degrades
  * gracefully when Redis is unavailable.
  *
- * Identity: authenticated users use their DB id. First-time anonymous
- * viewers receive a 30-day `tv_anon` cookie so returning visitors keep
- * their cooldown across IP changes and NAT-grouped clients are not merged
- * into a single fingerprint. Where no cookie is present we fall back to a
- * hash of IP + User-Agent (raw IPs are never stored).
+ * Identity: authenticated users use their DB id. Anonymous visitors are
+ * identified by a SHA-256 hash of their real IP address (raw IPs are never
+ * stored). The same IP always maps to the same fingerprint regardless of
+ * browser or User-Agent.
  *
  * @author Tour Platform Team
- * @version 1.1.0
+ * @version 2.0.0
  */
 
 const crypto = require('crypto');
@@ -37,8 +36,6 @@ const redis = require('./redisClient');
 const VIEW_COOLDOWN_SECONDS = 30 * 60; // 30-minute cooldown per viewer per tour
 const MEMORY_FALLBACK_MAX = 10000;
 const SUPPLIER_PROFILE_CACHE_TTL = 300;
-const ANON_COOKIE_NAME = 'tv_anon';
-const ANON_COOKIE_MAX_AGE = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 const memoryFallback = new Map();
 
@@ -74,39 +71,54 @@ function isBotUA(userAgent = '') {
 }
 
 /**
- * Build a stable viewer fingerprint.
- * Authenticated users use their DB id; anonymous visitors use the
- * `tv_anon` cookie when the client already carries one, otherwise a hash
- * of their real IP + User-Agent (raw IPs are never stored).
+ * Extract the real client IP from the request, respecting X-Forwarded-For
+ * behind proxies/load balancers. Returns 'unknown' as a last resort.
  */
-function getViewerFingerprint(req) {
-  if (req.user?.id) return req.user.id;
-  const cookieId = req.cookies?.[ANON_COOKIE_NAME];
-  if (cookieId) return `anon:${cookieId}`;
-  const realIp =
+function getRealIp(req) {
+  return (
     (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
     req.socket?.remoteAddress ||
     req.ip ||
-    'unknown';
-  const ua = req.headers['user-agent'] || '';
-  return `ip:${crypto.createHash('sha256').update(`${realIp}:${ua}`).digest('hex').slice(0, 16)}`;
+    'unknown'
+  );
 }
 
 /**
- * Hand a new anonymous visitor a 30-day `tv_anon` cookie. Safe to call on
- * every counted request: no-op when the client already has a cookie, and
- * no-op when no `res` is available (e.g. unit tests / non-Express callers).
+ * Build a stable viewer fingerprint.
+ * Authenticated users use their DB id; anonymous visitors use a SHA-256
+ * hash of their IP address. Raw IPs are never stored. The same IP always
+ * produces the same fingerprint regardless of browser or User-Agent.
  */
-function grantAnonCookie(req, res) {
-  if (req.cookies?.[ANON_COOKIE_NAME] || typeof res?.cookie !== 'function') return null;
-  const id = crypto.randomBytes(16).toString('hex');
-  res.cookie(ANON_COOKIE_NAME, id, {
-    httpOnly: true,
-    sameSite: 'lax',
-    maxAge: ANON_COOKIE_MAX_AGE,
-    secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
-  });
-  return id;
+function getViewerFingerprint(req) {
+  if (req.user?.id) return req.user.id;
+  const realIp = getRealIp(req);
+  return `ip:${crypto.createHash('sha256').update(realIp).digest('hex').slice(0, 16)}`;
+}
+
+/**
+ * Resolve the viewer's geographic location from their IP using geoip-lite.
+ * Returns { country, region, city, timezone } or null when the IP cannot
+ * be resolved (e.g. private IPs, localhost, missing geoip-lite data).
+ */
+let geoip;
+try {
+  geoip = require('geoip-lite');
+} catch {
+  geoip = null;
+}
+
+function getViewerGeo(req) {
+  if (!geoip) return null;
+  const realIp = getRealIp(req);
+  if (!realIp || realIp === 'unknown' || realIp === '127.0.0.1' || realIp === '::1') return null;
+  const geo = geoip.lookup(realIp);
+  if (!geo) return null;
+  return {
+    country: geo.country || null,
+    region: geo.region || null,
+    city: geo.city || null,
+    timezone: geo.timezone || null,
+  };
 }
 
 /**
@@ -174,59 +186,35 @@ function memoryDedup(key) {
 /**
  * Decide whether this request should be counted as a view for the tour.
  *
- * When the view is counted and the anonymous visitor had no cookie yet, a
- * fresh `tv_anon` cookie is granted on the response AND the same cooldown is
- * pre-recorded under the cookie identity, so the IP-hash → cookie identity
- * switch never double-counts the same viewer within the cooldown window.
- *
  * @param {Object}   options
  * @param {import('express').Request}  options.req
- * @param {import('express').Response} [options.res] — needed to grant the anon cookie
  * @param {string}   options.tourSupplierId — id of the tour's owning supplier
  * @param {string}   options.tourId — id of the tour being viewed (dedup scope)
  * @param {string}   [options.prefix] — dedup key prefix ("view" | "expedition:view")
- * @returns {Promise<boolean>} true when the view should be counted + recorded
+ * @returns {Promise<{ counted: boolean, geo: object|null }>} result with geo data
  */
-async function shouldCountTourView({ req, res, tourSupplierId, tourId, prefix = 'view' }) {
+async function shouldCountTourView({ req, tourSupplierId, tourId, prefix = 'view' }) {
   // Never count the tour owner browsing their own listing.
-  if (req.user?.id && req.user.id === tourSupplierId) return false;
+  if (req.user?.id && req.user.id === tourSupplierId) return { counted: false, geo: null };
 
   // Never count crawlers / social link-preview bots.
-  if (isBotUA(req.headers['user-agent'])) return false;
+  if (isBotUA(req.headers['user-agent'])) return { counted: false, geo: null };
 
   // Never count internal accounts (admin / expedition / active suppliers).
-  if (await isInternalViewer(req.user)) return false;
+  if (await isInternalViewer(req.user)) return { counted: false, geo: null };
 
   const viewerId = getViewerFingerprint(req);
   const viewKey = `${prefix}:${tourId}:${viewerId}`;
+  const geo = getViewerGeo(req);
 
   // Redis-backed atomic dedup: true = newly recorded, false = already counted.
   const redisResult = await redis.setnx(viewKey, VIEW_COOLDOWN_SECONDS);
-  if (redisResult === true) {
-    preloadAnonCooldown(req, res, prefix, tourId);
-    return true;
-  }
-  if (redisResult === false) return false;
+  if (redisResult === true) return { counted: true, geo };
+  if (redisResult === false) return { counted: false, geo };
 
   // Redis unavailable → best-effort in-memory dedup.
-  if (!memoryDedup(viewKey)) return false;
-  preloadAnonCooldown(req, res, prefix, tourId);
-  return true;
+  if (!memoryDedup(viewKey)) return { counted: false, geo };
+  return { counted: true, geo };
 }
 
-/**
- * When a view is counted for an anonymous visitor that had no cookie yet,
- * grant one and pre-record the cooldown under the cookie identity so the
- * identity switch (ip-hash → cookie) cannot double-count this viewer for
- * the same tour within the cooldown window.
- */
-function preloadAnonCooldown(req, res, prefix, tourId) {
-  if (req.user?.id) return;
-  const granted = grantAnonCookie(req, res);
-  if (!granted) return;
-  const anonKey = `${prefix}:${tourId}:anon:${granted}`;
-  redis.setnx(anonKey, VIEW_COOLDOWN_SECONDS); // never throws (returns null when Redis is down)
-  memoryFallback.set(anonKey, Date.now());
-}
-
-module.exports = { shouldCountTourView, isInternalViewer };
+module.exports = { shouldCountTourView, isInternalViewer, getViewerGeo };
