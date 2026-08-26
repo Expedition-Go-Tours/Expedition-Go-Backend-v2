@@ -813,15 +813,25 @@ async function getAttractions(limit = DEFAULT_LIMIT) {
       }
 
       // Pick hero image deterministically from the attraction's photo pool.
-      // Hash the attraction name to distribute across photos — avoids
-      // collisions when multiple attractions share the same tour's photos.
+      // Hash the attraction name to distribute across photos, then check
+      // usedImages to avoid duplicates across attractions.
       const uniquePhotos = [...new Set(a.coverPhotos.filter(Boolean))];
       let heroImage = null;
       if (uniquePhotos.length > 0) {
-        heroImage = uniquePhotos[hashStr(a.name) % uniquePhotos.length];
+        const startIdx = hashStr(a.name) % uniquePhotos.length;
+        for (let i = 0; i < uniquePhotos.length; i++) {
+          const idx = (startIdx + i) % uniquePhotos.length;
+          if (!usedImages.has(uniquePhotos[idx])) {
+            heroImage = uniquePhotos[idx];
+            break;
+          }
+        }
+        // If all photos are already used, use the hash-selected one anyway
+        if (!heroImage) heroImage = uniquePhotos[startIdx];
       } else {
         heroImage = bestTour?.coverPhoto || bestTour?.photos?.[0] || null;
       }
+      if (heroImage) usedImages.add(heroImage);
 
       const avgRating = a.ratingCount > 0 ? Math.round((a.totalRating / a.ratingCount) * 10) / 10 : null;
 
