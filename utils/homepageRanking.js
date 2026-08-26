@@ -734,7 +734,13 @@ async function getAttractions(limit = DEFAULT_LIMIT) {
         }
         const a = attractionMap.get(key);
         a.tourIds.push(tour.id);
+        // Collect ALL available photos for more variety
         if (tour.coverPhoto) a.coverPhotos.push(tour.coverPhoto);
+        if (Array.isArray(tour.photos)) {
+          for (const p of tour.photos) {
+            if (p) a.coverPhotos.push(p);
+          }
+        }
         if (tour.averageRating) {
           a.totalRating += parseFloat(tour.averageRating);
           a.ratingCount++;
@@ -786,10 +792,12 @@ async function getAttractions(limit = DEFAULT_LIMIT) {
         }
       }
 
-      // Pick a unique hero image from the attraction's cover photos
+      // Pick a unique hero image from the attraction's photos
+      // Deduplicate the photo pool first
+      const uniquePhotos = [...new Set(a.coverPhotos.filter(Boolean))];
       let heroImage = null;
-      for (const photo of a.coverPhotos) {
-        if (photo && !usedImages.has(photo)) {
+      for (const photo of uniquePhotos) {
+        if (!usedImages.has(photo)) {
           heroImage = photo;
           break;
         }
