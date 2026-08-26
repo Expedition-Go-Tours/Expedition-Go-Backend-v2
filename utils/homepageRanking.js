@@ -660,10 +660,26 @@ async function getNewExperiences(limit = DEFAULT_LIMIT) {
       },
       select: TOUR_SELECT,
       orderBy: { createdAt: 'desc' },
-      take: limit,
+      take: limit * 2, // Over-fetch to allow dedup
     });
 
-    return tours.map(mapTourCard);
+    // Deduplicate by coverPhoto — prefer tours with unique images
+    const seenPhotos = new Set();
+    const uniqueTours = [];
+    for (const tour of tours) {
+      if (tour.coverPhoto && seenPhotos.has(tour.coverPhoto)) continue;
+      if (tour.coverPhoto) seenPhotos.add(tour.coverPhoto);
+      uniqueTours.push(tour);
+    }
+    // Fill with remaining tours if dedup removed too many
+    if (uniqueTours.length < limit) {
+      for (const tour of tours) {
+        if (!uniqueTours.includes(tour)) uniqueTours.push(tour);
+        if (uniqueTours.length >= limit) break;
+      }
+    }
+
+    return uniqueTours.slice(0, limit).map(mapTourCard);
   }, ttl);
 }
 
