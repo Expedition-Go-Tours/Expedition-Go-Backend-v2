@@ -798,8 +798,15 @@ async function getAttractions(limit = DEFAULT_LIMIT) {
       return Math.abs(h);
     }
 
-    return scored.slice(0, limit).map(a => {
-      // Find the tour with the best rating to use as hero
+    // Build results, skipping attractions that can't provide a unique image.
+    // This guarantees no duplicate images across attraction cards.
+    const usedImages = new Set();
+    const results = [];
+
+    for (const a of scored) {
+      if (results.length >= limit) break;
+
+      // Find the tour with the best rating
       let bestTour = null;
       let bestRating = -1;
       for (const tour of tours) {
@@ -812,9 +819,7 @@ async function getAttractions(limit = DEFAULT_LIMIT) {
         }
       }
 
-      // Pick hero image deterministically from the attraction's photo pool.
-      // Hash the attraction name to distribute across photos, then check
-      // usedImages to avoid duplicates across attractions.
+      // Try to find a unique photo from the attraction's pool
       const uniquePhotos = [...new Set(a.coverPhotos.filter(Boolean))];
       let heroImage = null;
       if (uniquePhotos.length > 0) {
@@ -826,26 +831,27 @@ async function getAttractions(limit = DEFAULT_LIMIT) {
             break;
           }
         }
-        // If all photos are already used, use the hash-selected one anyway
-        if (!heroImage) heroImage = uniquePhotos[startIdx];
-      } else {
-        heroImage = bestTour?.coverPhoto || bestTour?.photos?.[0] || null;
       }
-      if (heroImage) usedImages.add(heroImage);
 
+      // Skip this attraction if no unique photo available
+      if (!heroImage) continue;
+
+      usedImages.add(heroImage);
       const avgRating = a.ratingCount > 0 ? Math.round((a.totalRating / a.ratingCount) * 10) / 10 : null;
 
-      return {
+      results.push({
         name: a.name,
         tourCount: a.tourIds.length,
-        heroImage: bestTour?.coverPhoto || bestTour?.photos?.[0] || null,
+        heroImage,
         avgRating,
         totalBookings: a.totalBookings,
         startingPrice: a.minPrice === Infinity ? null : a.minPrice,
         lat: a.coordCount > 0 ? Math.round((a.latSum / a.coordCount) * 10000) / 10000 : null,
         lng: a.coordCount > 0 ? Math.round((a.lngSum / a.coordCount) * 10000) / 10000 : null,
-      };
-    });
+      });
+    }
+
+    return results;
   }, ttl);
 }
 
