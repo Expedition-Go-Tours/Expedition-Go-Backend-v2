@@ -117,6 +117,8 @@ function buildProductContent(flat) {
     options: Array.isArray(src.options) ? src.options.map((o) => ({ ...o, wheelchairAccessible: !!o.wheelchairAccessible })) : [],
     meetingInstructions: src.meetingPointDescription || '',
     meetingMode: src.meetingMode || 'meeting_point',
+    meetingPoint: src.meetingPoint || null,
+    meetingPoints: Array.isArray(src.meetingPoints) ? src.meetingPoints : [],
     meetingPointPicture: src.meetingPointPicture || '',
     arrivalTime: src.arrivalTime || src.arrivalTimeCustom || '',
     arrivalTimeType: src.arrivalTimeType || 'none',
@@ -267,6 +269,7 @@ function buildBookingAndTickets(flat) {
 
   return {
     meetingPoint: flat.meetingPoint || null,
+    meetingPoints: Array.isArray(flat.meetingPoints) ? flat.meetingPoints : [],
     arrivalTime: flat.arrivalTime || '',
     pickupProvided: flat.meetingMode === 'pickup' || !!flat.pickupProvided,
     pickupType: flat.pickupType || 'area',

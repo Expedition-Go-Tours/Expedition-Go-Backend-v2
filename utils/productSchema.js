@@ -51,7 +51,7 @@ const productOptionSchema = z.object({
   duration: z.number().nullable().optional(),
   durationUnit: z.enum(['minutes', 'hours', 'days']).nullable().optional(),
   validity: z.number().nullable(),
-  validityUnit: z.enum(['days', 'weeks', 'months']).nullable(),
+  validityUnit: z.enum(['hours', 'days', 'weeks', 'months']).nullable(),
   validityEnabled: z.boolean().optional(),
   // The frontend labels the "from activation" validity type as "open_ended".
   // Accept the frontend's value and normalize it to the canonical stored value.
@@ -299,7 +299,7 @@ const productObjectSchema = z.object({
   highlights: z.array(z.string().min(1, 'Each highlight must have at least 1 character')).min(3, 'Add at least 3 highlights').max(5, 'Maximum 5 highlights'),
   // Step 5
   locations: z.array(locationSchema).optional(),
-  attractions: z.array(attractionSchema).optional(),
+  attractions: z.array(z.union([z.string(), attractionSchema])).optional(),
   // Step 6
   keywords: z.array(z.string()).max(15, 'Maximum 15 keywords').optional(),
   // Step 7
@@ -327,6 +327,8 @@ const productObjectSchema = z.object({
       format: z.string().optional(),
     })).optional(),
     drinksIncluded: z.boolean().optional(),
+    returnToStart: z.boolean().optional(),
+    noSleepOver: z.boolean().optional(),
   })).optional(),
   transportationProvided: z.boolean().optional(),
   transportationType: z.string().optional(),
@@ -351,6 +353,7 @@ const productObjectSchema = z.object({
   // Step 11
   meetingMode: z.enum(['meeting_point', 'pickup', 'none']),
   meetingPoint: locationPointSchema.nullable().optional(),
+  meetingPoints: z.array(locationPointSchema).optional(),
   meetingPointPicture: z.string().max(2000).optional(),
   meetingPointDescription: z.string().max(200).optional(),
   arrivalTimeType: z.enum(['none', '5min', '10min', '15min', '20min', '25min', '30min', 'notified', 'custom']).optional(),
@@ -364,7 +367,7 @@ const productObjectSchema = z.object({
   pickupAreas: z.array(pickupAreaSchema).optional(),
   pickupLocations: z.array(locationPointSchema).optional(),
   pickupGeoshape: z.any().nullable().optional(),
-  dropoffOption: z.enum(['same_location', 'different_location', 'none', 'service']).optional(),
+  dropoffOption: z.enum(['same_location', 'different_location', 'customer_preferred', 'none', 'service']).optional(),
   dropoffLocation: locationPointSchema.nullable().optional(),
   dropoffDescription: z.string().max(500).optional(),
   // Step 12

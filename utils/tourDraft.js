@@ -20,7 +20,7 @@ const FLAT_BLOB_SOURCES = {
     'transportationProvided', 'transportationType', 'notSuitableFor', 'notAllowed', 'petFriendly',
     'wheelchairAccessible', 'wifiIncluded', 'mandatoryItems', 'knowBeforeYouGo', 'emergencyPhone', 'voucherInfo',
     'copyrightConfirmed', 'options', 'meetingPointDescription', 'meetingMode',
-    'meetingPointPicture', 'arrivalTime', 'arrivalTimeType', 'arrivalTimeCustom', 'pickupProvided',
+    'meetingPoint', 'meetingPoints', 'meetingPointPicture', 'arrivalTime', 'arrivalTimeType', 'arrivalTimeCustom', 'pickupProvided',
     'pickupAvailable', 'pickupType', 'pickupDescription', 'pickupTiming', 'pickupAtSpecificTime',
     'pickupFinalLocationTiming', 'referenceStartTime', 'pickupAreas', 'pickupLocations',
     'pickupGeoshape', 'dropoffProvided', 'dropoffAvailable', 'dropoffOption', 'dropoffLocation',
@@ -37,7 +37,7 @@ const FLAT_BLOB_SOURCES = {
   ],
   bookingAndTickets: [
     'cancellationType', 'cutoffMinutes', 'supplierCanCancelBadWeather',
-    'supplierCanCancelNotEnoughTravelers', 'meetingPoint', 'arrivalTime', 'pickupProvided',
+    'supplierCanCancelNotEnoughTravelers', 'meetingPoint', 'meetingPoints', 'arrivalTime', 'pickupProvided',
     'pickupType', 'pickupDescription', 'pickupTiming', 'pickupFinalLocationTiming',
     'referenceStartTime', 'pickupAreas', 'pickupLocations', 'pickupGeoshape', 'dropoffOption',
     'dropoffProvided', 'dropoffLocation', 'dropoffDescription',
@@ -62,7 +62,7 @@ const FLAT_BLOB_INJECTS = {
       'foodProvided', 'meals', 'showDietaryRestrictions', 'drinksIncluded',
       'dietaryOptions', 'dayLogistics', 'transportationProvided', 'transportationType', 'notAllowed',
       'petFriendly', 'wheelchairAccessible', 'wifiIncluded', 'emergencyPhone', 'voucherInfo',
-      'copyrightConfirmed', 'options', 'meetingMode', 'meetingPointPicture', 'arrivalTime',
+      'copyrightConfirmed', 'options', 'meetingMode', 'meetingPoint', 'meetingPoints', 'meetingPointPicture', 'arrivalTime',
       'arrivalTimeType', 'arrivalTimeCustom', 'pickupProvided', 'pickupAvailable', 'pickupType',
       'pickupDescription', 'pickupTiming', 'pickupFinalLocationTiming', 'referenceStartTime',
       'pickupAreas', 'pickupLocations', 'pickupGeoshape', 'dropoffProvided', 'dropoffAvailable',
@@ -121,7 +121,7 @@ const FLAT_BLOB_INJECTS = {
   },
   bookingAndTickets: {
     own: [
-      'meetingPoint', 'arrivalTime', 'pickupProvided', 'pickupType', 'pickupDescription',
+      'meetingPoint', 'meetingPoints', 'arrivalTime', 'pickupProvided', 'pickupType', 'pickupDescription',
       'pickupTiming', 'pickupAtSpecificTime', 'pickupFinalLocationTiming', 'referenceStartTime', 'pickupAreas',
       'pickupLocations', 'pickupGeoshape', 'dropoffOption', 'dropoffProvided', 'dropoffLocation',
       'dropoffDescription', 'instantConfirmation', 'cutoffMinutes',
@@ -281,9 +281,14 @@ function applyFlatToBlobMapping(body, baseTour) {
       if (mapped[key] !== undefined) body[key] = mapped[key];
     }
   }
-  // Auto-extract attractions from locations[].name
+  // Auto-extract attractions from locations[].name — but only if the frontend
+  // didn't already send structured attraction objects.
   if (body.locations !== undefined && Array.isArray(body.locations)) {
-    body.attractions = [...new Set(body.locations.map(l => l?.name).filter(n => n && n.trim()))];
+    const existing = Array.isArray(body.attractions) ? body.attractions : []
+    const hasObjects = existing.length > 0 && existing.every((a) => a && typeof a === 'object')
+    if (!hasObjects) {
+      body.attractions = [...new Set(body.locations.map(l => l?.name).filter(n => n && n.trim()))]
+    }
   }
 
   // Flat duration/durationUnit are authoritative — they are the form's source
@@ -608,9 +613,15 @@ async function buildLiveUpdateData(tx, liveRow, draftContent) {
   updateData.country = firstLoc ? firstLoc.country || null : null;
   updateData.region = firstLoc ? firstLoc.region || null : null;
 
-  // Extract unique attraction/stop names from all locations
+  // Extract unique attraction/stop names from all locations — but only if the
+  // frontend didn't already send structured attraction objects.
   if (Array.isArray(pc && pc.locations)) {
-    updateData.attractions = [...new Set(pc.locations.map(l => l?.name).filter(n => n && n.trim()))];
+    const existing = Array.isArray(updateData.attractions) ? updateData.attractions
+      : Array.isArray(pc.attractions) ? pc.attractions : []
+    const hasObjects = existing.length > 0 && existing.every((a) => a && typeof a === 'object')
+    if (!hasObjects) {
+      updateData.attractions = [...new Set(pc.locations.map(l => l?.name).filter(n => n && n.trim()))]
+    }
   }
 
   if (merged.title && merged.title !== liveRow.title) {
