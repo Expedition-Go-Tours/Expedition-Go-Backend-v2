@@ -248,12 +248,11 @@ async function computeOffersData() {
     include: {
       specialOffer: true,
       tour: {
-        where: { status: 'ACTIVE' },
         select: {
           id: true, title: true, slug: true, coverPhoto: true, photos: true,
           category: true, city: true, country: true, averageRating: true,
           reviewCount: true, totalBookings: true, schedulesAndPricing: true,
-          durationMinutes: true, difficulty: true, tags: true,
+          durationMinutes: true, difficulty: true, tags: true, status: true,
           supplier: {
             select: {
               id: true, name: true, photoURL: true,
@@ -267,7 +266,7 @@ async function computeOffersData() {
 
   const tourOffersMap = new Map();
   for (const t of targets) {
-    if (!t.tour) continue;
+    if (!t.tour || t.tour.status !== 'ACTIVE') continue;
     if (!tourOffersMap.has(t.tour.id)) tourOffersMap.set(t.tour.id, []);
     tourOffersMap.get(t.tour.id).push(t.specialOffer);
   }
@@ -277,7 +276,7 @@ async function computeOffersData() {
   const offerCards = [];
 
   for (const t of targets) {
-    if (!t.tour) continue;
+    if (!t.tour || t.tour.status !== 'ACTIVE') continue;
     if (seenOfferIds.has(t.specialOffer.id)) continue;
     seenOfferIds.add(t.specialOffer.id);
 

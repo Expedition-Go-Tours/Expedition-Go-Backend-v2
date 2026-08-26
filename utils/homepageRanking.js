@@ -908,7 +908,7 @@ async function getAttractions(limit = DEFAULT_LIMIT) {
     const tours = await prisma.tour.findMany({
       where: {
         status: 'ACTIVE',
-        attractions: { not: { isEmpty: true } },
+        attractions: { isEmpty: false },
         supplier: { supplierProfile: { status: 'ACTIVE' } },
       },
       select: {
