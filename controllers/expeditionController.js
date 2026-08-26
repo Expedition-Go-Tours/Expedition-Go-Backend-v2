@@ -160,7 +160,7 @@ exports.getTours = catchAsync(async (req, res) => {
     // Mood keyword filtering: case-insensitive tag matching
     let moodTourIds = null;
     if (mood) {
-      const { KEYWORD_CATEGORIES } = require('../utils/homepageRanking');
+      const KEYWORD_CATEGORIES = require('../utils/keywordCategories');
       if (KEYWORD_CATEGORIES && KEYWORD_CATEGORIES[mood]) {
         const keywords = KEYWORD_CATEGORIES[mood].map(k => k.toLowerCase());
         if (keywords.length > 0) {
