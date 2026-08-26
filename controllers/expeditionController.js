@@ -18,7 +18,6 @@ const { detachBookingFromActiveRequests } = require('../utils/financeHelpers');
 const { logActivity } = require('../utils/auditLogger');
 const { shouldCountTourView } = require('../utils/viewTracking');
 const eventEmitter = require('../utils/eventEmitter');
-const { KEYWORD_CATEGORIES } = require('../utils/homepageRanking');
 
 const CACHE_PREFIX = 'expedition:';
 const LIST_CACHE_KEY = `${CACHE_PREFIX}tours:list`;
@@ -160,18 +159,21 @@ exports.getTours = catchAsync(async (req, res) => {
     if (country) tourWhere.country = country;
     // Mood keyword filtering: case-insensitive tag matching
     let moodTourIds = null;
-    if (mood && KEYWORD_CATEGORIES[mood]) {
-      const keywords = KEYWORD_CATEGORIES[mood].map(k => k.toLowerCase());
-      if (keywords.length > 0) {
-        const matchingTours = await prisma.tour.findMany({
-          where: { status: 'ACTIVE' },
-          select: { id: true, tags: true },
-        });
-        moodTourIds = matchingTours
-          .filter(t => t.tags.some(tag => keywords.includes(tag.toLowerCase())))
-          .map(t => t.id);
-        if (moodTourIds.length === 0) {
-          moodTourIds = ['__no_match__'];
+    if (mood) {
+      const { KEYWORD_CATEGORIES } = require('../utils/homepageRanking');
+      if (KEYWORD_CATEGORIES && KEYWORD_CATEGORIES[mood]) {
+        const keywords = KEYWORD_CATEGORIES[mood].map(k => k.toLowerCase());
+        if (keywords.length > 0) {
+          const matchingTours = await prisma.tour.findMany({
+            where: { status: 'ACTIVE' },
+            select: { id: true, tags: true },
+          });
+          moodTourIds = matchingTours
+            .filter(t => t.tags.some(tag => keywords.includes(tag.toLowerCase())))
+            .map(t => t.id);
+          if (moodTourIds.length === 0) {
+            moodTourIds = ['__no_match__'];
+          }
         }
       }
     }
