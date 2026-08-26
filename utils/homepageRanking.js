@@ -381,7 +381,7 @@ const TOUR_SELECT = {
   id: true, title: true, slug: true, coverPhoto: true, photos: true,
   category: true, city: true, country: true, averageRating: true,
   reviewCount: true, totalBookings: true, schedulesAndPricing: true,
-  durationMinutes: true, difficulty: true, tags: true,
+  durationMinutes: true, difficulty: true, tags: true, attractions: true,
   latitude: true, longitude: true, createdAt: true,
   supplier: {
     select: {
@@ -813,12 +813,6 @@ async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT) {
         }
       }
 
-      // Location proximity boost (if user location available)
-      if (lat && lng && t.latitude && t.longitude) {
-        const dist = haversineKm(lat, lng, t.latitude, t.longitude);
-        if (dist < 50) score *= 1.0 + (1 - dist / 50) * 0.3; // Up to 30% boost for nearby
-      }
-
       // Recency boost for new tours (created in last 90 days)
       const age90 = new Date();
       age90.setDate(age90.getDate() - 90);
@@ -843,6 +837,20 @@ async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT) {
       categoryCount[cat] = (categoryCount[cat] || 0) + 1;
       diversified.push(tour);
       if (diversified.length >= limit) break;
+    }
+
+    // Re-rank by distance: nearest first
+    if (lat && lng) {
+      for (const tour of diversified) {
+        tour._distance = (tour.latitude && tour.longitude)
+          ? Math.round(haversineKm(lat, lng, tour.latitude, tour.longitude) * 10) / 10
+          : null;
+      }
+      diversified.sort((a, b) => {
+        if (a._distance === null) return 1;
+        if (b._distance === null) return -1;
+        return a._distance - b._distance;
+      });
     }
 
     return diversified;
@@ -877,95 +885,159 @@ async function getNewExperiences(limit = DEFAULT_LIMIT) {
   }, ttl);
 }
 
-// ─── 6. TOP ATTRACTIONS ───────────────────────────────────────────────
+// ─── 6. ATTRACTIONS ───────────────────────────────────────────────────
 /**
- * Nearby tours sorted by affordability + quality.
+ * Attractions derived from tour data — grouped by attraction name
+ * (productContent.locations[].name).
  *
- * Uses PostGIS ST_DWithin for proximity search when location is available.
- * Falls back to globally popular tours sorted by price when no location.
+ * Each unique attraction name becomes an entry with:
+ * - tourCount: how many tours visit this attraction
+ * - heroImage: best-rated tour's cover photo
+ * - startingPrice: cheapest tour price
+ * - avgRating: average rating across tours
+ * - lat/lng: centroid of tour coordinates
  *
- * @param {number|null} lat - User latitude
- * @param {number|null} lng - User longitude
- * @param {string[]} keywords - User's search keywords for filtering
- * @param {number} limit - Max results
+ * Sorted by tourCount desc, then avgRating desc.
  */
-async function getTopAttractions(lat, lng, keywords = [], limit = DEFAULT_LIMIT) {
-  const cacheKey = `hp:attr:${lat || 0}:${lng || 0}:${keywords.join(',')}:${limit}`;
+async function getAttractions(limit = DEFAULT_LIMIT) {
+  const cacheKey = `hp:attractions:${limit}`;
   const ttl = 600;
 
   return cache.getOrSet(cacheKey, async () => {
-    let tours;
-
-    if (lat && lng) {
-      // Nearby tours via PostGIS (within 100km) — single query with distance
-      const radiusMeters = 100 * 1000;
-      const nearbyWithDistance = await prisma.$queryRaw`
-        SELECT id,
-          ST_DistanceSphere(
-            location_geom::geometry,
-            ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)
-          ) / 1000.0 AS distance_km
-        FROM "Tour"
-        WHERE location_geom IS NOT NULL
-          AND status = 'ACTIVE'
-          AND ST_DWithin(
-            location_geom,
-            ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography,
-            ${radiusMeters}
-          )
-        ORDER BY distance_km
-        LIMIT ${limit * 3}
-      `;
-
-      const ids = nearbyWithDistance.map(r => r.id);
-      const distMap = new Map(nearbyWithDistance.map(d => [d.id, parseFloat(d.distance_km)]));
-
-      const where = {
-        id: { in: ids },
-        status: 'ACTIVE',
-        supplier: { supplierProfile: { status: 'ACTIVE' } },
-      };
-
-      // Apply keyword filter if available
-      if (keywords.length > 0) {
-        where.OR = [
-          { category: { in: keywords } },
-          { tags: { hasSome: keywords } },
-          { city: { in: keywords } },
-        ];
-      }
-
-      tours = await prisma.tour.findMany({
-        where,
-        select: TOUR_SELECT,
-      });
-
-      tours = tours.map(t => ({
-        ...t,
-        _distance: distMap.get(t.id) || null,
-      }));
-
-      // Sort: primary = price ASC, secondary = distance ASC, tertiary = rating DESC
-      tours.sort((a, b) => {
-        const pa = extractStartingPrice(a.schedulesAndPricing) ?? 999999;
-        const pb = extractStartingPrice(b.schedulesAndPricing) ?? 999999;
-        if (Math.abs(pa - pb) > 5) return pa - pb;
-        const da = a._distance ?? 9999;
-        const db = b._distance ?? 9999;
-        if (Math.abs(da - db) > 5) return da - db;
-        return (parseFloat(b.averageRating) || 0) - (parseFloat(a.averageRating) || 0);
-      });
-
-      return tours.slice(0, limit).map(t => ({
-        ...mapTourCard(t),
-        _distance: t._distance,
-      }));
-    }
-
-    // No location: globally popular tours sorted by price
-    tours = await prisma.tour.findMany({
+    // Find all active tours that have attraction names
+    const tours = await prisma.tour.findMany({
       where: {
         status: 'ACTIVE',
+        attractions: { not: { isEmpty: true } },
+        supplier: { supplierProfile: { status: 'ACTIVE' } },
+      },
+      select: {
+        id: true,
+        attractions: true,
+        coverPhoto: true,
+        photos: true,
+        averageRating: true,
+        totalBookings: true,
+        schedulesAndPricing: true,
+        latitude: true,
+        longitude: true,
+        city: true,
+        country: true,
+      },
+    });
+
+    if (tours.length === 0) return [];
+
+    // Build attraction map: attractionName → { tours, totalRating, count, ... }
+    const attractionMap = new Map();
+
+    for (const tour of tours) {
+      if (!Array.isArray(tour.attractions)) continue;
+      for (const name of tour.attractions) {
+        if (!name || !name.trim()) continue;
+        const key = name.trim();
+        if (!attractionMap.has(key)) {
+          attractionMap.set(key, {
+            name: key,
+            tourIds: [],
+            coverPhotos: [],
+            totalRating: 0,
+            ratingCount: 0,
+            totalBookings: 0,
+            latSum: 0,
+            lngSum: 0,
+            coordCount: 0,
+            minPrice: Infinity,
+          });
+        }
+        const a = attractionMap.get(key);
+        a.tourIds.push(tour.id);
+        if (tour.coverPhoto) a.coverPhotos.push(tour.coverPhoto);
+        if (tour.averageRating) {
+          a.totalRating += parseFloat(tour.averageRating);
+          a.ratingCount++;
+        }
+        a.totalBookings += tour.totalBookings || 0;
+        if (tour.latitude && tour.longitude) {
+          a.latSum += tour.latitude;
+          a.lngSum += tour.longitude;
+          a.coordCount++;
+        }
+        const price = extractStartingPrice(tour.schedulesAndPricing);
+        if (price != null && price < a.minPrice) a.minPrice = price;
+      }
+    }
+
+    // Filter out attractions with < 2 tours (need minimum to be interesting)
+    const candidates = [...attractionMap.values()].filter(a => a.tourIds.length >= 2);
+
+    // Score and sort
+    const maxTours = Math.max(...candidates.map(a => a.tourIds.length), 1);
+    const maxBookings = Math.max(...candidates.map(a => a.totalBookings), 1);
+
+    const scored = candidates.map(a => {
+      const nTours = a.tourIds.length / maxTours;
+      const nBookings = a.totalBookings / maxBookings;
+      const avgRating = a.ratingCount > 0 ? a.totalRating / a.ratingCount : 0;
+      return {
+        ...a,
+        _score: (nTours * 0.5) + (nBookings * 0.3) + (avgRating / 5 * 0.2),
+      };
+    });
+
+    scored.sort((a, b) => b._score - a._score);
+
+    // Pick hero image: cover photo of highest-rated tour in the attraction
+    return scored.slice(0, limit).map(a => {
+      // Find the tour with the best rating to use as hero
+      let bestTour = null;
+      let bestRating = -1;
+      for (const tour of tours) {
+        if (a.tourIds.includes(tour.id)) {
+          const r = tour.averageRating ? parseFloat(tour.averageRating) : 0;
+          if (r > bestRating) {
+            bestRating = r;
+            bestTour = tour;
+          }
+        }
+      }
+
+      const avgRating = a.ratingCount > 0 ? Math.round((a.totalRating / a.ratingCount) * 10) / 10 : null;
+
+      return {
+        name: a.name,
+        tourCount: a.tourIds.length,
+        heroImage: bestTour?.coverPhoto || bestTour?.photos?.[0] || null,
+        avgRating,
+        totalBookings: a.totalBookings,
+        startingPrice: a.minPrice === Infinity ? null : a.minPrice,
+        lat: a.coordCount > 0 ? Math.round((a.latSum / a.coordCount) * 10000) / 10000 : null,
+        lng: a.coordCount > 0 ? Math.round((a.lngSum / a.coordCount) * 10000) / 10000 : null,
+      };
+    });
+  }, ttl);
+}
+
+/**
+ * Tours that visit a specific attraction.
+ *
+ * Filters by the attractions array containment (PostgreSQL @>).
+ * Sorted by totalBookings desc (most popular first).
+ *
+ * @param {string} attractionName - The attraction name to filter by
+ * @param {number} limit - Max results
+ */
+async function getAttractionTours(attractionName, limit = DEFAULT_LIMIT) {
+  if (!attractionName) return [];
+
+  const cacheKey = `hp:attrTours:${attractionName}:${limit}`;
+  const ttl = 300;
+
+  return cache.getOrSet(cacheKey, async () => {
+    const tours = await prisma.tour.findMany({
+      where: {
+        status: 'ACTIVE',
+        attractions: { has: attractionName },
         supplier: { supplierProfile: { status: 'ACTIVE' } },
       },
       select: TOUR_SELECT,
@@ -973,18 +1045,10 @@ async function getTopAttractions(lat, lng, keywords = [], limit = DEFAULT_LIMIT)
         { totalBookings: 'desc' },
         { averageRating: 'desc' },
       ],
-      take: limit * 2,
+      take: limit,
     });
 
-    // Sort by price ASC, then rating DESC
-    tours.sort((a, b) => {
-      const pa = extractStartingPrice(a.schedulesAndPricing) ?? 999999;
-      const pb = extractStartingPrice(b.schedulesAndPricing) ?? 999999;
-      if (Math.abs(pa - pb) > 5) return pa - pb;
-      return (parseFloat(b.averageRating) || 0) - (parseFloat(a.averageRating) || 0);
-    });
-
-    return tours.slice(0, limit).map(mapTourCard);
+    return tours.map(mapTourCard);
   }, ttl);
 }
 
@@ -1327,7 +1391,8 @@ module.exports = {
   getTrending,
   getRecommended,
   getNewExperiences,
-  getTopAttractions,
+  getAttractions,
+  getAttractionTours,
   getMoodKeywords,
   getPopularDestinations,
   extractStartingPrice,

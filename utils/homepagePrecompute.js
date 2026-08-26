@@ -68,7 +68,7 @@ async function precomputeHomepageSections() {
         ranking.getTrending(12),
         ranking.getRecommended(null, null, null, 12),  // anonymous, no location
         ranking.getNewExperiences(10),
-        ranking.getTopAttractions(null, null, [], 10),  // no location
+        ranking.getAttractions(10),
         ranking.getMoodKeywords(null, 8),               // anonymous
         ranking.getPopularDestinations(10),
       ]);

@@ -19,6 +19,11 @@ function productToTour(flat) {
 
   const firstLoc = Array.isArray(flat.locations) && flat.locations.length > 0 ? flat.locations[0] : null;
 
+  // Extract unique attraction/stop names from all locations
+  const attractions = Array.isArray(flat.locations)
+    ? [...new Set(flat.locations.map(l => l?.name).filter(n => n && n.trim()))]
+    : [];
+
   const result = {
     title: flat.title || '',
     description: flat.fullDescription || '',
@@ -40,6 +45,7 @@ function productToTour(flat) {
     activityType: categorization?.activityType || null,
     difficulty: categorization?.difficulty || null,
     durationMinutes: computeDurationMinutes(flat),
+    attractions,
   };
 
   // Remove undefined fields so they don't overwrite existing values on update

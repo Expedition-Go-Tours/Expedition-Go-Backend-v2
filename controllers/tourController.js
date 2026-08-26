@@ -901,7 +901,8 @@ exports.createTour = catchAsync(async (req, res, next) => {
     city,
     country,
     region,
-    theme
+    theme,
+    attractions,
   } = req.body;
 
   // Get uploaded Cloudinary URLs from multer
@@ -952,6 +953,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
       city: city ?? null,
       country: country ?? null,
       region: region ?? null,
+      attractions: Array.isArray(attractions) ? attractions : [],
       theme: theme || { primary: null, secondary: [] },
       category: parsedCategory?.category || null,
       subcategory: parsedCategory?.subcategory || null,
@@ -1239,7 +1241,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
       categorization,
       productContent, bookingAndTickets,
       coverPhoto, tags, status, latitude, longitude, specialOffers,
-      city, country, region
+      city, country, region, attractions,
     } = req.body;
     let { schedulesAndPricing } = req.body;
 
@@ -1282,6 +1284,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     if (city !== undefined) updateData.city = city;
     if (country !== undefined) updateData.country = country;
     if (region !== undefined) updateData.region = region;
+    if (attractions !== undefined) updateData.attractions = Array.isArray(attractions) ? attractions : [];
 
     // Handle uploaded photos from multer
     const uploadedPhotos = (req.files || []).map(f => f.path).filter(isValidCloudinaryUrl);
@@ -1343,6 +1346,9 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     if (req.body.city === undefined) updateData.city = firstLoc?.city || null;
     if (req.body.country === undefined) updateData.country = firstLoc?.country || null;
     if (req.body.region === undefined) updateData.region = firstLoc?.region || null;
+    if (req.body.attractions === undefined && Array.isArray(pc?.locations)) {
+      updateData.attractions = [...new Set(pc.locations.map(l => l?.name).filter(n => n && n.trim()))];
+    }
 
     // Auto-unpublish from Expedition Go if status leaves ACTIVE
     if (effectiveStatus && effectiveStatus !== 'ACTIVE' && existingTour.status === 'ACTIVE') {

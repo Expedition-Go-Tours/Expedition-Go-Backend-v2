@@ -595,11 +595,12 @@ model Tour {
   tags            String[]
 
   // Location (PostGIS coordinates)
-  latitude  Float? // Used with PostGIS ST_DWithin for geo-search
-  longitude Float? // Used with PostGIS ST_DWithin for geo-search
-  city      String? // Extracted from productContent.location.city for indexed filtering
-  country   String? // Extracted from productContent.location.country for indexed filtering
-  region    String? // Extracted from productContent.location.region for indexed filtering
+  latitude   Float? // Used with PostGIS ST_DWithin for geo-search
+  longitude  Float? // Used with PostGIS ST_DWithin for geo-search
+  city       String? // Extracted from productContent.location.city for indexed filtering
+  country    String? // Extracted from productContent.location.country for indexed filtering
+  region     String? // Extracted from productContent.location.region for indexed filtering
+  attractions String[] @default([]) // Extracted from productContent.locations[].name — specific attraction/stop names
 
   // Normalized categorization (extracted from categorization JSON for indexed filtering)
   category        String? // e.g. "Adventure", "Cultural", "Nature"

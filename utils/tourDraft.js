@@ -281,6 +281,10 @@ function applyFlatToBlobMapping(body, baseTour) {
       if (mapped[key] !== undefined) body[key] = mapped[key];
     }
   }
+  // Auto-extract attractions from locations[].name
+  if (body.locations !== undefined && Array.isArray(body.locations)) {
+    body.attractions = [...new Set(body.locations.map(l => l?.name).filter(n => n && n.trim()))];
+  }
 
   // Flat duration/durationUnit are authoritative — they are the form's source
   // of truth for both the flattened and the nested representations.
@@ -603,6 +607,11 @@ async function buildLiveUpdateData(tx, liveRow, draftContent) {
   updateData.city = firstLoc ? firstLoc.city || null : null;
   updateData.country = firstLoc ? firstLoc.country || null : null;
   updateData.region = firstLoc ? firstLoc.region || null : null;
+
+  // Extract unique attraction/stop names from all locations
+  if (Array.isArray(pc && pc.locations)) {
+    updateData.attractions = [...new Set(pc.locations.map(l => l?.name).filter(n => n && n.trim()))];
+  }
 
   if (merged.title && merged.title !== liveRow.title) {
     updateData.slug = await createSlug(merged.title, tx);

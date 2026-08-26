@@ -34,7 +34,7 @@ describe('homepagePrecompute', () => {
     ranking.getTrending.mockResolvedValue([{ id: 'trending-1' }]);
     ranking.getRecommended.mockResolvedValue([{ id: 'rec-1' }]);
     ranking.getNewExperiences.mockResolvedValue([{ id: 'new-1' }]);
-    ranking.getTopAttractions.mockResolvedValue([{ id: 'attr-1' }]);
+    ranking.getAttractions.mockResolvedValue([{ name: 'Cape Coast Castle' }]);
     ranking.getMoodKeywords.mockResolvedValue([{ keyword: 'hiking' }]);
     ranking.getPopularDestinations.mockResolvedValue([{ city: 'Nairobi' }]);
   });
@@ -48,7 +48,7 @@ describe('homepagePrecompute', () => {
       expect(ranking.getTrending).toHaveBeenCalledWith(12);
       expect(ranking.getRecommended).toHaveBeenCalledWith(null, null, null, 12);
       expect(ranking.getNewExperiences).toHaveBeenCalledWith(10);
-      expect(ranking.getTopAttractions).toHaveBeenCalledWith(null, null, [], 10);
+      expect(ranking.getAttractions).toHaveBeenCalledWith(10);
       expect(ranking.getMoodKeywords).toHaveBeenCalledWith(null, 8);
       expect(ranking.getPopularDestinations).toHaveBeenCalledWith(10);
     });

@@ -37,7 +37,7 @@ describe('Homepage API', () => {
     ranking.getTrending.mockResolvedValue([{ id: 'trending-1', title: 'Trending Tour' }]);
     ranking.getRecommended.mockResolvedValue([{ id: 'rec-1', title: 'Recommended Tour' }]);
     ranking.getNewExperiences.mockResolvedValue([{ id: 'new-1', title: 'New Tour' }]);
-    ranking.getTopAttractions.mockResolvedValue([{ id: 'attr-1', title: 'Attraction Tour' }]);
+    ranking.getAttractions.mockResolvedValue([{ name: 'Cape Coast Castle', tourCount: 5, heroImage: null, avgRating: 4.7, totalBookings: 100, startingPrice: 45, lat: 5.1, lng: -1.2 }]);
     ranking.getMoodKeywords.mockResolvedValue([{ keyword: 'hiking', image: null, tourCount: 5 }]);
     ranking.getPopularDestinations.mockResolvedValue([{ city: 'Nairobi', country: 'Kenya', tourCount: 10, totalBookings: 100, avgRating: 4.5, heroImage: null }]);
   });
@@ -52,7 +52,8 @@ describe('Homepage API', () => {
         .mockResolvedValueOnce([{ id: 'new-1' }])       // new
         .mockResolvedValueOnce([{ id: 'attr-1' }])      // attractions
         .mockResolvedValueOnce([{ keyword: 'hiking' }]) // mood
-        .mockResolvedValueOnce([{ city: 'Nairobi' }]);  // destinations
+        .mockResolvedValueOnce([{ city: 'Nairobi' }])   // destinations
+        .mockResolvedValueOnce([{ offerId: 'off-1' }]); // offers
 
       const res = await request(app).get('/api/homepage');
       expect(res.status).toBe(200);
@@ -63,6 +64,19 @@ describe('Homepage API', () => {
     });
 
     it('falls back to live computation when cache is empty', async () => {
+      // Mock offers cache miss — computeOffersData needs prisma which isn't mocked,
+      // so pre-seed the offers cache to avoid a real DB call
+      redis.get
+        .mockResolvedValueOnce(null)  // sellOut
+        .mockResolvedValueOnce(null)  // topRated
+        .mockResolvedValueOnce(null)  // trending
+        .mockResolvedValueOnce(null)  // recommended
+        .mockResolvedValueOnce(null)  // new
+        .mockResolvedValueOnce(null)  // attractions
+        .mockResolvedValueOnce(null)  // mood
+        .mockResolvedValueOnce(null)  // destinations
+        .mockResolvedValueOnce([{ offerId: 'off-1', title: 'Offer Tour' }]); // offers
+
       const res = await request(app).get('/api/homepage');
       expect(res.status).toBe(200);
       expect(res.body.data.sellOut).toEqual([{ id: 'sellout-1', title: 'Sell Out Tour' }]);
@@ -76,9 +90,8 @@ describe('Homepage API', () => {
       const res = await request(app).get('/api/homepage?lat=1.2&lng=36.8');
 
       expect(res.status).toBe(200);
-      // recommended + attractions should come from live computation
+      // recommended should come from live computation
       expect(ranking.getRecommended).toHaveBeenCalled();
-      expect(ranking.getTopAttractions).toHaveBeenCalled();
     });
   });
 
@@ -154,17 +167,24 @@ describe('Homepage API', () => {
   });
 
   describe('GET /api/homepage/attractions', () => {
-    it('returns pre-computed data when no location', async () => {
-      redis.get.mockResolvedValueOnce([{ id: 'cached' }]);
+    it('returns pre-computed data when available', async () => {
+      redis.get.mockResolvedValueOnce([{ name: 'Cached Attraction' }]);
       const res = await request(app).get('/api/homepage/attractions');
       expect(res.status).toBe(200);
-      expect(res.body.data.tours).toEqual([{ id: 'cached' }]);
+      expect(res.body.data.attractions).toEqual([{ name: 'Cached Attraction' }]);
     });
 
-    it('computes live when lat/lng provided', async () => {
-      const res = await request(app).get('/api/homepage/attractions?lat=1.2&lng=36.8');
+    it('falls back to live computation on cache miss', async () => {
+      const res = await request(app).get('/api/homepage/attractions');
       expect(res.status).toBe(200);
-      expect(ranking.getTopAttractions).toHaveBeenCalledWith(1.2, 36.8, [], 12);
+      expect(ranking.getAttractions).toHaveBeenCalled();
+    });
+  });
+
+  describe('GET /api/homepage/attractions/tours', () => {
+    it('returns 400 when name is missing', async () => {
+      const res = await request(app).get('/api/homepage/attractions/tours');
+      expect(res.status).toBe(400);
     });
   });
 

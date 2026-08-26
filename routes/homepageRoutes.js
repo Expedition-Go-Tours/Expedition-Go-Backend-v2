@@ -16,12 +16,14 @@ const { optionalAuth } = require('../middleware/authMiddleware');
 // All routes use optionalAuth — authenticated users get personalized results,
 // anonymous users get popularity-based defaults.
 router.get('/offers', optionalAuth, homepageController.getOffers);
+router.get('/section-tour-ids', optionalAuth, homepageController.getSectionTourIds);
 router.get('/sell-out', optionalAuth, homepageController.getSellOut);
 router.get('/top-rated', optionalAuth, homepageController.getTopRated);
 router.get('/trending', optionalAuth, homepageController.getTrending);
 router.get('/recommended', optionalAuth, homepageController.getRecommended);
 router.get('/new', optionalAuth, homepageController.getNew);
 router.get('/attractions', optionalAuth, homepageController.getAttractions);
+router.get('/attractions/tours', optionalAuth, homepageController.getAttractionTours);
 router.get('/mood', optionalAuth, homepageController.getMood);
 router.get('/destinations', optionalAuth, homepageController.getDestinations);
 router.get('/', optionalAuth, homepageController.getHomepage);

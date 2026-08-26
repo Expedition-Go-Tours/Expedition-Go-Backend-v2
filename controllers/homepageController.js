@@ -125,30 +125,33 @@ exports.getNew = catchAsync(async (req, res) => {
 
 /**
  * GET /api/homepage/attractions
- * Nearby tours sorted by affordability + quality.
- * Accepts lat/lng for proximity, keywords for filtering.
- *
- * When lat/lng is provided, always computes live (pre-computed data
- * is location-agnostic). When anonymous, reads from pre-computed cache.
+ * Attractions derived from tour data — grouped by attraction name.
+ * Each unique name from productContent.locations[].name becomes an entry.
  */
 exports.getAttractions = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
-  const lat = req.query.lat ? parseFloat(req.query.lat) : null;
-  const lng = req.query.lng ? parseFloat(req.query.lng) : null;
-  const keywords = req.query.keywords ? req.query.keywords.split(',').map(k => k.trim()) : [];
 
-  // Location-specific: always compute live
-  if (lat && lng) {
-    const tours = await ranking.getTopAttractions(lat, lng, keywords, limit);
-    return res.json({ status: 'success', data: { tours } });
+  // Try pre-computed cache first
+  let attractions = await readPrecomputed(SECTION_KEYS.attractions);
+  if (attractions) {
+    return res.json({ status: 'success', data: { attractions: attractions.slice(0, limit) } });
   }
+  attractions = await computeWithWarmup(limit, ranking.getAttractions, SECTION_KEYS.attractions);
+  res.json({ status: 'success', data: { attractions } });
+});
 
-  // No location: try pre-computed cache
-  let tours = await readPrecomputed(SECTION_KEYS.attractions);
-  if (tours) {
-    return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
+/**
+ * GET /api/homepage/attractions/tours
+ * Tours that visit a specific attraction.
+ * Filters by the attractions array (PostgreSQL @>).
+ */
+exports.getAttractionTours = catchAsync(async (req, res) => {
+  const attractionName = req.query.name;
+  if (!attractionName) {
+    return res.status(400).json({ status: 'error', message: 'name query parameter is required' });
   }
-  tours = await computeWithWarmup(limit, (l) => ranking.getTopAttractions(null, null, keywords, l), SECTION_KEYS.attractions);
+  const limit = Math.min(parseInt(req.query.limit) || 12, 20);
+  const tours = await ranking.getAttractionTours(attractionName, limit);
   res.json({ status: 'success', data: { tours } });
 });
 
@@ -202,14 +205,44 @@ exports.getDestinations = catchAsync(async (req, res) => {
  */
 exports.getOffers = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
+
+  // Try pre-computed cache first (same pattern as other sections)
+  const cacheKey = 'hp:sections:offers';
+  let offerCards = await readPrecomputed(cacheKey);
+  if (!offerCards) {
+    offerCards = await computeOffersData();
+    // Cache for 5 minutes
+    try {
+      const redisAvailable = await redis.isRedisAvailable().catch(() => false);
+      if (redisAvailable) {
+        await redis.set(cacheKey, offerCards, 300);
+        const cache = require('./cacheHelper');
+        cache.memSet(cacheKey, offerCards);
+      }
+    } catch {}
+    enqueueHomepagePrecompute().catch(() => {});
+  }
+
+  res.json({
+    status: 'success',
+    data: { tours: offerCards.slice(0, limit) },
+  });
+});
+
+/**
+ * Compute offers data (shared by getOffers cache miss and getSectionTourIds fallback).
+ */
+async function computeOffersData() {
   const now = new Date();
 
   const targets = await prisma.specialOfferTarget.findMany({
     where: {
       specialOffer: {
         isActive: true,
-        startDate: { lte: now },
-        endDate: { gte: now },
+        AND: [
+          { OR: [{ startDate: null }, { startDate: { lte: now } }] },
+          { OR: [{ endDate: null }, { endDate: { gte: now } }] },
+        ],
       },
     },
     include: {
@@ -232,30 +265,42 @@ exports.getOffers = catchAsync(async (req, res) => {
     },
   });
 
-  // Group by tour, collect all offers per tour
-  const tourOfferMap = new Map();
+  const tourOffersMap = new Map();
   for (const t of targets) {
     if (!t.tour) continue;
-    const existing = tourOfferMap.get(t.tour.id);
-    if (existing) {
-      existing.offers.push(t.specialOffer);
-    } else {
-      tourOfferMap.set(t.tour.id, { tour: t.tour, offers: [t.specialOffer] });
-    }
+    if (!tourOffersMap.has(t.tour.id)) tourOffersMap.set(t.tour.id, []);
+    tourOffersMap.get(t.tour.id).push(t.specialOffer);
   }
 
-  // Map to homepage card shape with specialOffers included
   const { extractStartingPrice } = require('../utils/homepageRanking');
-  const tours = [];
-  for (const { tour, offers } of tourOfferMap.values()) {
-    const price = extractStartingPrice(t.schedulesAndPricing);
+  const seenOfferIds = new Set();
+  const offerCards = [];
+
+  for (const t of targets) {
+    if (!t.tour) continue;
+    if (seenOfferIds.has(t.specialOffer.id)) continue;
+    seenOfferIds.add(t.specialOffer.id);
+
+    const o = t.specialOffer;
+    const tour = t.tour;
+    const price = extractStartingPrice(tour.schedulesAndPricing);
     const durationStr = tour.durationMinutes
       ? tour.durationMinutes >= 1440
         ? `${Math.round(tour.durationMinutes / 1440)} days`
         : `${Math.round(tour.durationMinutes / 60)} hours`
       : '';
 
-    tours.push({
+    const allTourOffers = tourOffersMap.get(tour.id) || [];
+
+    offerCards.push({
+      offerId: o.id,
+      offerName: o.name || '',
+      offerType: o.offerType,
+      discountType: o.discountType,
+      discountPercentage: o.discountPercentage,
+      fixedDiscountValue: o.fixedDiscountValue,
+      startDate: o.startDate,
+      endDate: o.endDate,
       id: tour.id,
       title: tour.title,
       slug: tour.slug,
@@ -281,39 +326,70 @@ exports.getOffers = catchAsync(async (req, res) => {
           ? parseFloat(tour.supplier.supplierProfile.averageRating)
           : null,
       } : null,
-      specialOffers: offers.map(o => ({
-        id: o.id,
-        name: o.name || '',
-        offerType: o.offerType,
-        discountType: o.discountType,
-        discountPercentage: o.discountPercentage,
-        fixedDiscountValue: o.fixedDiscountValue,
-        startDate: o.startDate,
-        endDate: o.endDate,
-        promoCode: o.promoCode || null,
-        timeSlotMode: o.timeSlotMode,
-        specificWeekdays: o.specificWeekdays || [],
-        capacityType: o.capacityType,
-        maxSpots: o.maxSpots,
-        spotsSold: o.spotsSold,
-        minQuantity: o.minQuantity,
-        minSpendAmount: o.minSpendAmount,
-        maxRedemptionsPerCustomer: o.maxRedemptionsPerCustomer,
-        stackable: o.stackable,
-        earlyBirdAdvanceDays: o.earlyBirdAdvanceDays,
-        lastMinuteWindowHours: o.lastMinuteWindowHours,
+      specialOffers: allTourOffers.map(offer => ({
+        id: offer.id,
+        name: offer.name || '',
+        offerType: offer.offerType,
+        discountType: offer.discountType,
+        discountPercentage: offer.discountPercentage,
+        fixedDiscountValue: offer.fixedDiscountValue,
+        startDate: offer.startDate,
+        endDate: offer.endDate,
+        promoCode: offer.promoCode || null,
+        timeSlotMode: offer.timeSlotMode,
+        specificWeekdays: offer.specificWeekdays || [],
+        capacityType: offer.capacityType,
+        maxSpots: offer.maxSpots,
+        spotsSold: offer.spotsSold,
+        minQuantity: offer.minQuantity,
+        minSpendAmount: offer.minSpendAmount,
+        maxRedemptionsPerCustomer: offer.maxRedemptionsPerCustomer,
+        stackable: offer.stackable,
+        earlyBirdAdvanceDays: offer.earlyBirdAdvanceDays,
+        lastMinuteWindowHours: offer.lastMinuteWindowHours,
         targets: [{ tourId: tour.id, tourOptionKey: null, tourOptionLabel: null }],
       })),
     });
   }
 
-  // Sort by totalBookings (most popular tours with offers first)
-  tours.sort((a, b) => b.totalBookings - a.totalBookings);
+  offerCards.sort((a, b) => b.totalBookings - a.totalBookings);
+  return offerCards;
+}
 
-  res.json({
-    status: 'success',
-    data: { tours: tours.slice(0, limit) },
-  });
+/**
+ * GET /api/homepage/section-tour-ids
+ * Returns just the tour IDs for a given homepage section.
+ * Reads from pre-computed Redis cache (0 DB queries in the hot path).
+ * Used by AllToursPage to filter the tour list by section algorithm.
+ */
+exports.getSectionTourIds = catchAsync(async (req, res) => {
+  const { section } = req.query;
+  if (!section) {
+    return res.json({ status: 'success', data: { tourIds: [] } });
+  }
+
+  const sectionMap = {
+    'Recommended': { key: SECTION_KEYS.recommended, fallback: () => ranking.getRecommended(null, null, null, 50) },
+    'Top Rated': { key: SECTION_KEYS.topRated, fallback: () => ranking.getTopRated(50) },
+    'Sell Out': { key: SECTION_KEYS.sellOut, fallback: () => ranking.getLikelySellOut(50) },
+    'Last Minute Deals': { key: 'hp:sections:offers', fallback: () => computeOffersData() },
+    'New Experiences': { key: SECTION_KEYS.new, fallback: () => ranking.getNewExperiences(50) },
+    'Top Attractions Nearby': { key: SECTION_KEYS.attractions, fallback: () => ranking.getAttractions(50) },
+  };
+
+  const entry = sectionMap[section];
+  if (!entry) {
+    return res.json({ status: 'success', data: { tourIds: [] } });
+  }
+
+  let tours = await readPrecomputed(entry.key);
+  if (!tours) {
+    tours = await entry.fallback();
+    enqueueHomepagePrecompute().catch(() => {});
+  }
+
+  const tourIds = (tours || []).map(t => t.id).filter(Boolean);
+  res.json({ status: 'success', data: { tourIds } });
 });
 
 /**
@@ -329,8 +405,8 @@ exports.getHomepage = catchAsync(async (req, res) => {
   const lat = req.query.lat ? parseFloat(req.query.lat) : null;
   const lng = req.query.lng ? parseFloat(req.query.lng) : null;
 
-  // Read all sections from pre-computed cache in parallel
-  const [sellOut, topRated, trending, recommended, newExp, attractions, mood, destinations] =
+  // Read all sections from pre-computed cache in parallel (including offers)
+  const [sellOut, topRated, trending, recommended, newExp, attractions, mood, destinations, offers] =
     await Promise.all([
       readPrecomputed(SECTION_KEYS.sellOut),
       readPrecomputed(SECTION_KEYS.topRated),
@@ -340,6 +416,7 @@ exports.getHomepage = catchAsync(async (req, res) => {
       readPrecomputed(SECTION_KEYS.attractions),
       readPrecomputed(SECTION_KEYS.mood),
       readPrecomputed(SECTION_KEYS.destinations),
+      readPrecomputed('hp:sections:offers'),
     ]);
 
   // For personalized sections, compute live if userId/location provided
@@ -347,9 +424,7 @@ exports.getHomepage = catchAsync(async (req, res) => {
     ? await ranking.getRecommended(userId, lat, lng, 12)
     : (recommended || await ranking.getRecommended(null, null, null, 12));
 
-  const resolvedAttractions = (lat && lng)
-    ? await ranking.getTopAttractions(lat, lng, [], 10)
-    : (attractions || await ranking.getTopAttractions(null, null, [], 10));
+  const resolvedAttractions = attractions || await ranking.getAttractions(10);
 
   const resolvedMood = userId
     ? await ranking.getMoodKeywords(userId, 8)
@@ -361,9 +436,10 @@ exports.getHomepage = catchAsync(async (req, res) => {
   const resolvedTrending = trending || await ranking.getTrending(12);
   const resolvedNew = newExp || await ranking.getNewExperiences(10);
   const resolvedDestinations = destinations || await ranking.getPopularDestinations(10);
+  const resolvedOffers = offers || await computeOffersData();
 
   // Warm cache if any section was computed live
-  if (!sellOut || !topRated || !trending || !recommended || !newExp || !attractions || !mood || !destinations) {
+  if (!sellOut || !topRated || !trending || !recommended || !newExp || !attractions || !mood || !destinations || !offers) {
     enqueueHomepagePrecompute().catch(() => {});
   }
 
@@ -378,6 +454,7 @@ exports.getHomepage = catchAsync(async (req, res) => {
       attractions: resolvedAttractions,
       mood: resolvedMood,
       destinations: resolvedDestinations,
+      offers: resolvedOffers,
     },
   });
 });
