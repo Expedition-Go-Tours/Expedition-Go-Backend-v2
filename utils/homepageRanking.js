@@ -775,9 +775,13 @@ async function getAttractions(limit = DEFAULT_LIMIT) {
 
     scored.sort((a, b) => b._score - a._score);
 
-    // Pick hero image: cover photo of highest-rated tour in the attraction.
-    // Track used images to avoid duplicates across attractions.
-    const usedImages = new Set();
+    // Deterministic hash for picking unique photos per attraction
+    function hashStr(s) {
+      let h = 0;
+      for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+      return Math.abs(h);
+    }
+
     return scored.slice(0, limit).map(a => {
       // Find the tour with the best rating to use as hero
       let bestTour = null;
@@ -792,19 +796,16 @@ async function getAttractions(limit = DEFAULT_LIMIT) {
         }
       }
 
-      // Pick a unique hero image from the attraction's photos
-      // Deduplicate the photo pool first
+      // Pick hero image deterministically from the attraction's photo pool.
+      // Hash the attraction name to distribute across photos — avoids
+      // collisions when multiple attractions share the same tour's photos.
       const uniquePhotos = [...new Set(a.coverPhotos.filter(Boolean))];
       let heroImage = null;
-      for (const photo of uniquePhotos) {
-        if (!usedImages.has(photo)) {
-          heroImage = photo;
-          break;
-        }
+      if (uniquePhotos.length > 0) {
+        heroImage = uniquePhotos[hashStr(a.name) % uniquePhotos.length];
+      } else {
+        heroImage = bestTour?.coverPhoto || bestTour?.photos?.[0] || null;
       }
-      // Fallback to best tour's cover if all photos are already used
-      if (!heroImage) heroImage = bestTour?.coverPhoto || bestTour?.photos?.[0] || null;
-      if (heroImage) usedImages.add(heroImage);
 
       const avgRating = a.ratingCount > 0 ? Math.round((a.totalRating / a.ratingCount) * 10) / 10 : null;
 
