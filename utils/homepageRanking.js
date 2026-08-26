@@ -987,7 +987,9 @@ async function getAttractions(limit = DEFAULT_LIMIT) {
 
     scored.sort((a, b) => b._score - a._score);
 
-    // Pick hero image: cover photo of highest-rated tour in the attraction
+    // Pick hero image: cover photo of highest-rated tour in the attraction.
+    // Track used images to avoid duplicates across attractions.
+    const usedImages = new Set();
     return scored.slice(0, limit).map(a => {
       // Find the tour with the best rating to use as hero
       let bestTour = null;
@@ -1001,6 +1003,18 @@ async function getAttractions(limit = DEFAULT_LIMIT) {
           }
         }
       }
+
+      // Pick a unique hero image from the attraction's cover photos
+      let heroImage = null;
+      for (const photo of a.coverPhotos) {
+        if (photo && !usedImages.has(photo)) {
+          heroImage = photo;
+          break;
+        }
+      }
+      // Fallback to best tour's cover if all photos are already used
+      if (!heroImage) heroImage = bestTour?.coverPhoto || bestTour?.photos?.[0] || null;
+      if (heroImage) usedImages.add(heroImage);
 
       const avgRating = a.ratingCount > 0 ? Math.round((a.totalRating / a.ratingCount) * 10) / 10 : null;
 
@@ -1396,4 +1410,5 @@ module.exports = {
   getMoodKeywords,
   getPopularDestinations,
   extractStartingPrice,
+  KEYWORD_CATEGORIES,
 };
