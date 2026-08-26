@@ -9,6 +9,7 @@
  */
 
 const catchAsync = require('../utils/catchAsync');
+const prisma = require('../utils/prismaClient');
 const ranking = require('../utils/homepageRanking');
 const redis = require('../utils/redisClient');
 const { SECTION_KEYS, SECTION_TTLS } = require('../utils/homepagePrecompute');
@@ -189,6 +190,130 @@ exports.getDestinations = catchAsync(async (req, res) => {
   }
   destinations = await computeWithWarmup(limit, ranking.getPopularDestinations, SECTION_KEYS.destinations);
   res.json({ status: 'success', data: { destinations } });
+});
+
+/**
+ * GET /api/homepage/offers
+ * Tours with active special offers for the "Special Offers" homepage section.
+ *
+ * Single efficient query: SpecialOffer → SpecialOfferTarget → Tour.
+ * No N+1 — all data fetched in one Prisma call.
+ * Sorted by totalBookings (most popular first).
+ */
+exports.getOffers = catchAsync(async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 12, 20);
+  const now = new Date();
+
+  const targets = await prisma.specialOfferTarget.findMany({
+    where: {
+      specialOffer: {
+        isActive: true,
+        startDate: { lte: now },
+        endDate: { gte: now },
+      },
+    },
+    include: {
+      specialOffer: true,
+      tour: {
+        where: { status: 'ACTIVE' },
+        select: {
+          id: true, title: true, slug: true, coverPhoto: true, photos: true,
+          category: true, city: true, country: true, averageRating: true,
+          reviewCount: true, totalBookings: true, schedulesAndPricing: true,
+          durationMinutes: true, difficulty: true, tags: true,
+          supplier: {
+            select: {
+              id: true, name: true, photoURL: true,
+              supplierProfile: { select: { averageRating: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  // Group by tour, collect all offers per tour
+  const tourOfferMap = new Map();
+  for (const t of targets) {
+    if (!t.tour) continue;
+    const existing = tourOfferMap.get(t.tour.id);
+    if (existing) {
+      existing.offers.push(t.specialOffer);
+    } else {
+      tourOfferMap.set(t.tour.id, { tour: t.tour, offers: [t.specialOffer] });
+    }
+  }
+
+  // Map to homepage card shape with specialOffers included
+  const { extractStartingPrice } = require('../utils/homepageRanking');
+  const tours = [];
+  for (const { tour, offers } of tourOfferMap.values()) {
+    const price = extractStartingPrice(t.schedulesAndPricing);
+    const durationStr = tour.durationMinutes
+      ? tour.durationMinutes >= 1440
+        ? `${Math.round(tour.durationMinutes / 1440)} days`
+        : `${Math.round(tour.durationMinutes / 60)} hours`
+      : '';
+
+    tours.push({
+      id: tour.id,
+      title: tour.title,
+      slug: tour.slug,
+      coverPhoto: tour.coverPhoto,
+      photos: tour.photos,
+      category: tour.category,
+      city: tour.city,
+      country: tour.country,
+      averageRating: tour.averageRating ? parseFloat(tour.averageRating) : null,
+      reviewCount: tour.reviewCount || 0,
+      totalBookings: tour.totalBookings || 0,
+      startingPrice: price,
+      currency: 'USD',
+      duration: durationStr,
+      durationMinutes: tour.durationMinutes,
+      difficulty: tour.difficulty,
+      tags: tour.tags || [],
+      supplier: tour.supplier ? {
+        id: tour.supplier.id,
+        name: tour.supplier.name,
+        photo: tour.supplier.photoURL,
+        rating: tour.supplier.supplierProfile?.averageRating
+          ? parseFloat(tour.supplier.supplierProfile.averageRating)
+          : null,
+      } : null,
+      specialOffers: offers.map(o => ({
+        id: o.id,
+        name: o.name || '',
+        offerType: o.offerType,
+        discountType: o.discountType,
+        discountPercentage: o.discountPercentage,
+        fixedDiscountValue: o.fixedDiscountValue,
+        startDate: o.startDate,
+        endDate: o.endDate,
+        promoCode: o.promoCode || null,
+        timeSlotMode: o.timeSlotMode,
+        specificWeekdays: o.specificWeekdays || [],
+        capacityType: o.capacityType,
+        maxSpots: o.maxSpots,
+        spotsSold: o.spotsSold,
+        minQuantity: o.minQuantity,
+        minSpendAmount: o.minSpendAmount,
+        maxRedemptionsPerCustomer: o.maxRedemptionsPerCustomer,
+        stackable: o.stackable,
+        earlyBirdAdvanceDays: o.earlyBirdAdvanceDays,
+        lastMinuteWindowHours: o.lastMinuteWindowHours,
+        targets: [{ tourId: tour.id, tourOptionKey: null, tourOptionLabel: null }],
+      })),
+    });
+  }
+
+  // Sort by totalBookings (most popular tours with offers first)
+  tours.sort((a, b) => b.totalBookings - a.totalBookings);
+
+  res.json({
+    status: 'success',
+    data: { tours: tours.slice(0, limit) },
+  });
 });
 
 /**

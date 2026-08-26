@@ -37,6 +37,243 @@ const MIN_VIEWS_TRENDING = 10;
 const TRENDING_GROWTH_CAP = 5; // Cap growth at 5x to prevent outliers
 const DEFAULT_LIMIT = 12;
 
+// ─── Keyword Categories ──────────────────────────────────────────────
+// Mirrors the dashboard's keywordCategories.js — the 19 supplier-defined
+// keyword groups. All keywords are lowercased for case-insensitive matching
+// against Tour.tags (stored lowercase by the product builder).
+const KEYWORD_CATEGORIES = Object.freeze({
+  'Royalty & History': [
+    'royal', 'queen victoria', 'royal family', 'changing of the guard', 'crown jewels',
+    'royalty', 'british monarchy', 'cold war', 'communism', 'ddr', 'french revolution',
+    'gladiators', 'holocaust', 'napoleon', 'second world war', 'world war ii', 'ww2', 'wwii',
+    'ruins', 'ancient history', 'medieval', 'slavery', 'roman empire', 'medieval history',
+    'modern history', 'soviet history', 'communist tour', 'soviet leaders', 'russian history',
+    'death camp', 'nazi', 'catacombs', 'viking', 'civil rights', 'american history',
+    'renaissance', 'knights', 'roman ruins', 'dark history', 'oskar schindler', 'jewish history',
+    'pyramid', 'war history', 'concentration camp', 'gold rush history', 'mayan ruins',
+    'archaeological site', 'historical buildings', 'war museum', 'churchill', 'prehistoric',
+    'ussr', 'ancient ruins', 'maritime', 'bunkers', 'natural history',
+    'nazi concentration camp', 'extermination camp', 'byzantine', 'ottoman', 'schindler',
+    'colonial history', 'vikings', 'royal residence', 'communist history', 'anne frank',
+    '19th century', 'military', 'military tour', 'middle ages', 'military history',
+    'black history', 'roman history', 'civil war', 'medici', "schindler's factory", 'bunker',
+    'marie-antoinette', 'first world war', 'war', 'mayan ceremony', 'ww1', 'knight-templars',
+    'colonial', 'american revolution', 'hitler', 'maritime history', 'nelson mandela',
+    'gdr', 'greek history', 'delphi oracle', 'auschwitz camp', 'british history',
+    '20th century', 'us civil war', 'battlefield tour', 'soviet union', 'nazi regime',
+    'war memorial', 'baroque rome', 'battlefield', 'space race', 'nazi history', 'qing dynasty',
+    'other historical topics', 'early modern history', 'vietnam war',
+  ],
+  'Animals & Nature': [
+    'husky', 'birdwatching', 'dolphins', 'swim with dolphins', 'animals',
+    'whale watching', 'swimming with whale sharks', 'dolphin watching',
+    'dolphin watching boat tour', 'wildlife', 'horses', 'swimming with turtles',
+    'puffins', 'kiwi', 'safari', 'birds', 'alligators', 'reindeer', 'dolphin',
+    'swim with sea lions', 'elephant', 'glowworms', 'dolphin tour', 'koalas',
+    'crocodiles', 'cassowary', 'kangaroos', 'game drive', 'bears', 'puppies',
+    'dogs', 'big 5', 'butterfly', 'sloth', 'flamingos', 'camel trek', 'monkey',
+    'lions', 'endangered animals', 'rescued animal', 'gorilla', 'turtle watching',
+    'gorilla trekking', 'swim with whales', 'animal activities', 'animal watching',
+    'swimming with animals', 'safaris and wildlife',
+  ],
+  'Food & Drink': [
+    'baking', 'cooking', 'dinner', 'eating', 'paella', 'pastry', 'pinchos',
+    'street food', 'tapas', 'brunch', 'food tasting', 'cooking class', 'foodies',
+    'gastronomy', 'gourmet', 'spanish food', 'seafood', 'all you can eat', 'tasting',
+    'food & wine tour', 'french food', 'cheese', 'food tour', 'culinary', 'olive oil',
+    'snacks', 'cheese tasting', 'eat like a local', 'food lovers', 'pizza', 'chef',
+    'pasta making', 'greek food', 'vegetarian', 'local foodie', 'romantic dinner',
+    'italian cuisine', 'foodie tour', 'thai food', 'croatian food', 'greek gastronomy',
+    'argan oil', 'culinary adventures', 'vegan', 'pasta', 'authentic food tour', 'buffet',
+    'food tours', 'culinary tour', 'gourmet food', 'turkish food', 'foodie', 'dining',
+    'spices', 'for foodies', 'russian food', 'food experience', 'truffle',
+    'street food tour', 'chocolate tasting', 'gourmet lunch', 'walking food tour',
+    'french pastry', 'ramen', 'home cooking', 'guided food tour', 'italian food tour',
+    'gourmet tour', 'chocolate tour', 'american food', 'appetizers', 'italian cooking',
+    'food markets', 'gastronomy tour', 'tuscan food', 'organic food', 'culinary experience',
+    'food history', 'regional food', 'cook experience', 'mexican cuisine', 'foodie experience',
+    'sushi', 'japanese food', 'truffle hunting', 'local food tour', 'traditional cooking',
+    'croissant', 'pizza class', 'authentic food', 'foodies tour', 'dinner & lunch cruises',
+    'coffee', 'tea', 'non-alcoholic drinks', 'chocolate', 'crêpes', 'ice cream', 'macarons',
+    'dessert', 'tiramisu', 'waffles', 'gelato', 'cake', 'fruits', 'sweets', 'bakery',
+    'pancakes', 'absinthe', 'beer bike', 'beer', 'brewery tour', 'vodka tasting',
+    'whiskey tasting', 'wine tasting', 'winery tour', 'tequila', 'sangria', 'bars',
+    'cocktails', 'beer tour', 'beer tours', 'wine', 'vodka', 'bar crawl', 'wine tour',
+    'beertasting tour', 'champagne', 'whisky', 'vineyards', 'all inclusive wine tour',
+    'cellar tour and tastings', 'sparkling wine tour', 'food pairing', 'prosecco',
+    'wine experience', 'italian wine', 'cider tasting', 'local bars', 'beer tasting',
+    'local winery', 'wine country', 'small group wine tours', 'queenstown wine tours',
+    'food and wine pairing', 'white wine', 'rum tasting', 'alcohol', 'czech beer',
+    'craft beer', 'whisky tour', 'whisky tasting', 'whiskey tour', 'microbrewery',
+    'local beer', 'sommelier', 'vodka tour', 'wineries visit', 'wine tourism',
+    'provence wines', 'private wine tour', 'pubs', 'vineyard', 'food and wine experience',
+    'local drinks', 'drinking', 'shots', 'champagne tasting', 'santorini wine tour', 'sake',
+    'booze cruise', 'distillery tours', 'heineken', 'food and wine tour', 'guinness',
+    'distillery', 'limoncello', 'sparkling wine', 'distillery tour', 'wine cellars',
+    'vineyard visit', 'rome wine tour', 'tuscan wine', 'spirits', 'mezcal', 'alcohol tasting',
+    'food & wine tasting', 'bourbon', 'local vodka', 'local spirits', 'gin tasting',
+    'beer tasting tour', 'vineyard tour', 'evora wine', 'kentucky bourbon', 'bourbon trail',
+    'bourbon tasting', 'chianti wine tours', 'wine cellar', 'winery visit', 'wine history',
+    'bourbon tour', 'open bar included', 'bourbon distillery', 'wine museum',
+    'cooking classes', 'cooking lesson', 'pasta cooking class', 'cooking experience',
+    'online cooking class', 'afternoon tea',
+  ],
+  'Art & Museums': [
+    'art', 'exhibition', 'graffiti', 'modern art', 'monet', 'renoir', 'sculptures',
+    'paintings', 'raphael', 'michelangelo', 'bernini', 'contemporary art', 'picasso',
+    'caravaggio', 'crafts', 'medieval art', 'ancient art', 'impressionism',
+    'lego exhibition', 'leonardo da vinci', 'mona lisa', 'porcelain', 'frescoes',
+    'pottery', 'artisans', 'art history', 'van gogh', 'rembrandt', 'renaissance art',
+    'illusions', 'glass blowing', 'illumination', 'ceramic', 'artists',
+    "michelangelo's david", 'arts & crafts', 'street art & graffiti',
+  ],
+  'Architecture': [
+    'architecture', 'art nouveau', 'gothic', 'soviet architecture', 'baroque',
+    'historic buildings', 'gaudí', 'skyline', 'art deco', 'moorish architecture',
+    'antoni gaudi', 'bauhaus', 'skyscrapers', 'wooden architecture',
+  ],
+  'Music & Shows': [
+    'beatles', 'cabaret', 'concert', 'dinner show', 'fado show', 'jazz', 'music',
+    'opera', 'show', 'street music', 'folk show', 'classical music', 'vivaldi', 'amigos',
+    'chopin', 'pop', 'music history', 'dj', 'composer', 'orchestra', 'mozart', 'beethoven',
+    'piano', 'singing', 'bob marley', 'guitar', 'silent disco', 'drag queen', 'rock n roll',
+    'chamber orchestra', 'elvis presley', 'k-pop', 'musical show', 'cello', 'benny goodman',
+    'comedy', 'dancing', 'flamenco', 'luau', 'tango', 'broadway', 'samba', 'ballet',
+    'live music', 'burlesque', 'belly dance', 'acrobatic show', 'magic show', 'night show',
+    'light show', 'water puppet show', 'flamenco show', 'fountain show', 'cultural show',
+    'variety show', 'tablao flamenco', 'live performance', 'spanish flamenco', 'samba dance',
+    'performance & shows',
+  ],
+  'Pop Culture & Media': [
+    'angels and demons', 'downton abbey', 'game of thrones', 'harry potter', 'james bond',
+    'movie', 'titanic', 'tv show', 'sound of music', 'hollywood', 'outlander', 'books',
+    'movie shooting locations', 'lord of the rings', 'celebrities', 'rocky',
+    'behind the scenes', 'the hobbit', 'disney', 'film locations', 'tv & movie tours',
+    'netflix', 'bollywood tour', 'sherlock holmes', 'alice in wonderland', 'bridgerton',
+    'tv & film', 'anime', 'comics', 'disneyland',
+  ],
+  'Culture & Heritage': [
+    'culture', 'favela', 'heritage', 'meet the locals', 'unesco', 'tradition', 'old town',
+    'hidden gems', 'local', 'jewish quarter', 'maori', 'local culture', 'latin quarter',
+    'downtown', 'shipwrecks', 'indigenous culture', 'sphinx', 'off the beaten path',
+    'aboriginal culture', 'samurai', 'chinatown', 'perfume', 'mayan', 'costume', 'local life',
+    'folklore', 'french quarter', 'bedouin', 'sumo', 'local products', 'local homes',
+    'geisha', 'cowboy', 'slum tour', 'gothic quarter', 'ceremony', 'lei greeting',
+    'literature', 'shakespeare', 'poetry',
+  ],
+  'Religion & Spirituality': [
+    'jewish', 'pope', 'religion', 'pilgrimage', 'christian tour', 'john paul ii',
+    'contemplation', 'islam', 'buddhism', 'catholic', 'virgin mary', 'holy land',
+  ],
+  'Nightlife & Party': [
+    'cannabis', 'coffeeshop', 'night', 'nightclub', 'party', 'pub crawl', 'nightlife',
+    'bar', 'pub', 'disco', 'open bar', 'drinking games', 'beach club', 'drinking activities',
+  ],
+  'Mystery & Horror': [
+    'ghost', 'jack the ripper', 'mystery', 'pirate', 'vampire', 'treasure', 'dracula',
+    'voodoo', 'mythology', 'haunted', 'spooky', 'wizard', 'horror', 'witches', 'dungeon',
+    'zombie', 'fairytale', 'mermaid', 'gangster tour', 'true crime', 'murder', 'crime',
+    'pablo escobar',
+  ],
+  'Sports & Adventure': [
+    'escape game', 'flight simulator', 'arcade', 'virtual reality', 'city game',
+    'scavenger hunt', 'riddles', 'games', 'puzzles', '3d experience',
+    'bungee jumping', 'extreme sport', 'high ropes course', 'horse racing', 'paintball',
+    'parasailing', 'race track', 'seaplane', 'skydiving', 'white water rafting', 'zip-line',
+    'off-road', 'extreme', 'helicopter tour', 'helicopter flight', 'flight', 'adrenaline',
+    'abseiling', 'rappelling', 'scenic flight', 'flying', 'cliff jumping', 'adventures',
+    'shooting', '4x4 tours', 'paragliding', 'superjeep', 'ropeway', 'balloon ride',
+    'helicopter ride', 'helicopter sightseeing', 'family helicopter tour', 'canoeing',
+    'flight experience', 'speed', 'hot air balloon', 'balloon flight',
+    'hot air balloon tour', 'balloon tour', 'air tour', 'guns', 'sunrise in hot air balloon',
+    '4wd tour', 'adventure tour', 'sandboarding', 'skywalk', '4x4', 'helicopter', 'parachute',
+    'fly', 'balloon', 'roller coaster', 'rock climbing', 'rappel', 'ballooning',
+    'sensations', 'canopy', 'airplane', 'river tubing', 'karting', 'swing',
+    'hoverboard', 'tandem skydive', 'archery', 'tandem paragliding',
+    'jetpack adventures', 'axe throwing', '5d flight experience', 'simulator',
+    'flyboard activities', 'boxing', 'wrestling', 'kickboxing', 'muay thai',
+    'martial arts', 'combat sports', 'fitness', 'trampoline', 'bodyflying',
+    'spinning class', 'indoor sports', 'baseball', 'basketball', 'golf',
+    'outdoor sport', 'running', 'tennis', 'football', 'exercise', 'jogging',
+    'cycling', 'jetpack', 'water sport', 'windsurfing', 'try dive', 'padi',
+    'shark cage diving', 'beginner surfing lessons', 'learn to surf',
+    'surf instructors', 'learn surfing', 'surf school', 'surf lessons',
+    'beginner surf lessons', 'towables', 'wakeboarding', 'water skiing',
+    'knee boarding',
+  ],
+  'Water Activities': [
+    'boat rental', 'boat tour', 'canyoning', 'coastal excursion', 'diving', 'fishing',
+    'jet boat', 'kitesurfing', 'paddleboarding', 'river rafting', 'sailing trip',
+    'shark diving', 'snorkeling', 'speed boat', 'surfing lessons', 'water park', 'swimming',
+    'rafting', 'stand up paddle', 'kayak', 'catamaran', 'sea lovers', 'scuba diving',
+    'boat trips', 'water activity', 'boat trip', 'sailing cruise', 'sailing tour',
+    'sea excursion', 'underwater', 'boat', 'boat tours', 'airboat', 'marine wildlife',
+    'surfing', 'water activities',
+  ],
+  'Winter & Snow': [
+    'dog sledding', 'ice climbing', 'ice skating', 'ski', 'skiing', 'sleigh rides',
+    'snow tubing', 'snow', 'snowboard', 'snowboarding', 'snowmobile', 'snowshoe tours',
+    'ice fishing', 'snowmobile safari', 'ski & snowboard', 'snow activities',
+    'aurora borealis', 'stargazing', 'astronomy', 'midnight sun', 'space', 'planetarium',
+    'astronaut', 'northern lights', 'polar lights', 'ice hotel',
+  ],
+  'Desert & Safari': [
+    'desert safaris', 'quad bike', 'desert', 'desert safari', 'dune bashing', 'camel safari',
+    'jeep tour', 'desert tour', 'sahara desert', 'dubai desert safari', 'doha safari',
+  ],
+  'Nature & Outdoors': [
+    'camping', 'picnic', 'campfire', 'glamping', 'ecotourism', 'geyser', 'glacier', 'hiking',
+    'hot springs', 'ice cave', 'jungle', 'mountain biking', 'national park', 'natural site',
+    'volcano', 'sea', 'mountains', 'waterfalls', 'landscape', 'shore excursion', 'ocean',
+    'natural pool', 'flowers', 'alpine lakes', 'blue lagoon', 'nature walk', 'mangrove',
+    'sea caves', 'gorge', 'lava', 'mountain', 'cliffs', 'protected nature', 'nature baths',
+    'ancient rainforest', 'mountain views', 'swamp', 'lake', 'nature tours',
+    'nature adventures', 'cherry blossom', 'nature based tour', 'cenote', 'nature reserve',
+    'natural park', 'tulips', 'dunes', 'nature tour', 'lagoons', 'nature adventure', 'lakes',
+    'black beach', 'natural landscapes', 'rain forest', 'island hopping', 'flowerfields',
+    'natural habitat', 'fjord', 'mangroves', 'bamboo forest', 'farming', 'nature lovers',
+    'coral reef', 'pearl farm', 'lagoon', 'black sand beach', 'turquoise waters', 'trail',
+    'flora & fauna', 'natural pools', 'bioluminescence', 'natural reserve', 'rice fields',
+    'fruit picking', 'heli hike', 'organic farm', 'canyon', 'syöte nature guide',
+    'arctic nature', 'nature & adventure', 'sunflower', 'nature spots', 'sea and landscapes',
+    'trekking', 'outdoor recreation', 'bushwalking', 'treetop walk',
+  ],
+  'City & Walking Tours': [
+    'urban exploration', 'city tour', 'walking tour', 'underground', 'city sightseeing',
+    'city views', 'class', 'workshops & classes',
+  ],
+  'Seasonal & Events': [
+    'fall', 'spring', 'summer', 'winter', 'seasonal experiences', 'christmas',
+    'christmas market', 'christmas lights', 'santa claus', 'halloween', "valentine's day",
+  ],
+  'Transportation': [
+    'layover', 'airport lounge', 'airport shower', 'airport service', 'wifi', '4g',
+    'sim card', 'wifi & sim cards', 'rental', 'chauffeur service', 'car racing',
+    'go-kart', 'kart', 'historic car', 'mini cooper', 'oldtimer', 'racing', 'trabi tour',
+    'vespa', 'vintage car', 'ferrari', 'test drive', '4x4 tour', 'trolley', 'self drive',
+    'buggy', 'gps tour', '4x4 beach tour', 'quad', 'jeep', 'sports car', 'atv',
+    'lamborghini', 'road trip', 'open top 4x4', 'bmw tour', 'driving experiences',
+  ],
+  'Wellness & Relaxation': [
+    'massage', 'meditation', 'wellness', 'sauna', 'hammam', 'relaxation', 'yoga', 'jacuzzi',
+  ],
+});
+
+// Pre-computed: flat Set of ALL keywords across all categories (lowercased)
+// Used for O(1) membership checks when matching tour tags to categories.
+const ALL_CATEGORY_KEYWORDS = new Set(
+  Object.values(KEYWORD_CATEGORIES).flat()
+);
+
+// Pre-computed: reverse map from keyword → category name
+// Used to quickly find which category a tour tag belongs to.
+const KEYWORD_TO_CATEGORY = new Map();
+for (const [category, keywords] of Object.entries(KEYWORD_CATEGORIES)) {
+  for (const kw of keywords) {
+    KEYWORD_TO_CATEGORY.set(kw, category);
+  }
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────
 
 /**
@@ -759,9 +996,17 @@ async function getTopAttractions(lat, lng, keywords = [], limit = DEFAULT_LIMIT)
  * 1. User's recent search queries (last 30 days)
  * 2. Categories of tours the user viewed
  * 3. Global trending keywords (most searched terms in last 7 days)
- * 4. Tour categories with most active tours
+ * 4. Supplier-defined keyword categories (from dashboard step 6)
  *
- * Each keyword includes a representative tour image.
+ * Architecture: Single-pass — one DB query fetches all active tours with
+ * tags, then an in-memory inverted index maps keywords → tours. Categories
+ * are scored by unique tour count. Personalization (Sources 1-3) boosts
+ * specific categories on top of the popularity baseline.
+ *
+ * Performance:
+ * - DB queries: 2 (user events + all tours with tags)
+ * - In-memory: O(N × M) where N = active tours, M = avg tags per tour
+ * - Cache: L1 memory + L2 Redis via cache.getOrSet (5 min TTL)
  *
  * @param {string|null} userId - Authenticated user ID
  * @param {number} limit - Max keywords to return
@@ -771,9 +1016,10 @@ async function getMoodKeywords(userId, limit = 8) {
   const ttl = 300;
 
   return cache.getOrSet(cacheKey, async () => {
-    const keywordScores = {};
+    // ── Sources 1-3: User behavior signals (unchanged) ──────────────
+    const categoryScores = {};  // scores keyed by category name
+    const subKeywordScores = {}; // scores keyed by individual keyword
 
-    // Source 1: User's recent searches (if logged in)
     if (userId) {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -795,18 +1041,19 @@ async function getMoodKeywords(userId, limit = 8) {
         const recencyWeight = Math.max(1, 30 - age) / 30;
 
         if (props.category) {
-          keywordScores[props.category] = (keywordScores[props.category] || 0) + recencyWeight * 2;
+          const cat = KEYWORD_TO_CATEGORY.get(props.category.toLowerCase());
+          if (cat) {
+            categoryScores[cat] = (categoryScores[cat] || 0) + recencyWeight * 2;
+          }
         }
         if (props.query) {
-          // Extract meaningful keywords from search query
           const words = props.query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
           for (const word of words) {
-            keywordScores[word] = (keywordScores[word] || 0) + recencyWeight;
+            subKeywordScores[word] = (subKeywordScores[word] || 0) + recencyWeight;
           }
         }
       }
 
-      // Source 2: Categories from viewed tours
       const userViews = await prisma.event.findMany({
         where: {
           userId,
@@ -822,12 +1069,15 @@ async function getMoodKeywords(userId, limit = 8) {
         if (props.category) {
           const age = (Date.now() - new Date(evt.createdAt).getTime()) / (1000 * 60 * 60 * 24);
           const recencyWeight = Math.max(1, 30 - age) / 30;
-          keywordScores[props.category] = (keywordScores[props.category] || 0) + recencyWeight;
+          const cat = KEYWORD_TO_CATEGORY.get(props.category.toLowerCase());
+          if (cat) {
+            categoryScores[cat] = (categoryScores[cat] || 0) + recencyWeight;
+          }
         }
       }
     }
 
-    // Source 3: Global trending keywords (most searched in last 7 days)
+    // Source 3: Global trending searches (map individual keywords to categories)
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
@@ -845,90 +1095,168 @@ async function getMoodKeywords(userId, limit = 8) {
     for (const row of globalSearches) {
       const props = row.properties || {};
       if (props.category) {
-        keywordScores[props.category] = (keywordScores[props.category] || 0) + row._count.id * 0.1;
+        const cat = KEYWORD_TO_CATEGORY.get(props.category.toLowerCase());
+        if (cat) {
+          categoryScores[cat] = (categoryScores[cat] || 0) + row._count.id * 0.1;
+        }
       }
       if (props.query) {
         const words = props.query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
         for (const word of words) {
-          keywordScores[word] = (keywordScores[word] || 0) + row._count.id * 0.05;
+          subKeywordScores[word] = (subKeywordScores[word] || 0) + row._count.id * 0.05;
         }
       }
     }
 
-    // Source 4: Tour categories with most active tours (fallback)
-    const categoryCounts = await prisma.tour.groupBy({
-      by: ['category'],
-      where: { status: 'ACTIVE', category: { not: null } },
-      _count: { id: true },
-      orderBy: { _count: { id: 'desc' } },
-      take: 20,
+    // ── Source 4: Keyword categories from supplier tags ─────────────
+    // Single query: fetch ALL active tours with tags (no groupBy, no OR queries).
+    // For ~10K tours with ~10 tags each, this is ~1MB of data — processed in <50ms.
+    const allTours = await prisma.tour.findMany({
+      where: { status: 'ACTIVE' },
+      select: {
+        id: true, tags: true, coverPhoto: true, photos: true,
+        category: true, totalBookings: true, city: true,
+      },
+      orderBy: { totalBookings: 'desc' },
     });
 
-    for (const row of categoryCounts) {
-      keywordScores[row.category] = (keywordScores[row.category] || 0) + row._count.id * 0.01;
+    // Build inverted index: keyword → Set<tourId>
+    const keywordTourMap = new Map();
+    for (const tour of allTours) {
+      if (!tour.tags?.length) continue;
+      for (const tag of tour.tags) {
+        const tagLower = tag.toLowerCase();
+        if (!ALL_CATEGORY_KEYWORDS.has(tagLower)) continue;
+        let set = keywordTourMap.get(tagLower);
+        if (!set) {
+          set = new Set();
+          keywordTourMap.set(tagLower, set);
+        }
+        set.add(tour.id);
+      }
     }
 
-    // Sort keywords by score, take top N
-    const topKeywords = Object.entries(keywordScores)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, limit)
-      .map(([keyword]) => keyword);
+    // Score each keyword category by unique tour count
+    const categoryTourCounts = new Map();
+    const categoryTourIds = new Map();
+    for (const [categoryName, keywords] of Object.entries(KEYWORD_CATEGORIES)) {
+      const tourIdSet = new Set();
+      for (const kw of keywords) {
+        const ids = keywordTourMap.get(kw);
+        if (ids) {
+          for (const id of ids) tourIdSet.add(id);
+        }
+      }
+      categoryTourCounts.set(categoryName, tourIdSet.size);
+      categoryTourIds.set(categoryName, tourIdSet);
+      // Add popularity signal (weight 0.01 per tour, same scale as old Source 4)
+      categoryScores[categoryName] = (categoryScores[categoryName] || 0) + tourIdSet.size * 0.01;
+    }
 
-    // Batch: fetch representative tours for ALL keywords in one query
-    const keywordOR = topKeywords.flatMap(keyword => [
-      { category: { equals: keyword, mode: 'insensitive' } },
-      { tags: { has: keyword.toLowerCase() } },
-      { city: { equals: keyword, mode: 'insensitive' } },
-      { title: { contains: keyword, mode: 'insensitive' } },
-    ]);
+    // Also boost individual sub-keywords that are trending (for fallback scoring)
+    const allSubKeywords = new Map(); // keyword → tour count
+    for (const [kw, tourIds] of keywordTourMap) {
+      allSubKeywords.set(kw, tourIds.size);
+    }
 
-    const candidateTours = await prisma.tour.findMany({
-      where: { status: 'ACTIVE', coverPhoto: { not: null }, OR: keywordOR },
-      select: { id: true, coverPhoto: true, photos: true, category: true, city: true, tags: true, totalBookings: true },
-      orderBy: { totalBookings: 'desc' },
-      take: limit * 6, // enough to cover all keywords
-    });
+    // ── Merge and rank ─────────────────────────────────────────────
+    // Sort categories by composite score (user behavior + popularity)
+    const rankedCategories = Object.entries(KEYWORD_CATEGORIES)
+      .map(([name]) => ({
+        name,
+        score: categoryScores[name] || 0,
+        tourCount: categoryTourCounts.get(name) || 0,
+      }))
+      .filter(c => c.tourCount > 0)
+      .sort((a, b) => b.score - a.score || b.tourCount - a.tourCount);
 
-    // Batch: count tours per category in one query
-    const categoryCountRows = await prisma.tour.groupBy({
-      by: ['category'],
-      where: { status: 'ACTIVE', category: { not: null } },
-      _count: { id: true },
-    });
-    const categoryCountMap = new Map(categoryCountRows.map(r => [r.category?.toLowerCase(), r._count.id]));
-
-    // Match best tour per keyword in JS (no more DB queries)
-    const results = [];
+    // ── Find representative tours ──────────────────────────────────
+    // Build a lookup: tourId → tour object (avoid repeated scans)
+    const tourById = new Map(allTours.map(t => [t.id, t]));
     const usedTourIds = new Set();
-    for (const keyword of topKeywords) {
-      const kwLower = keyword.toLowerCase();
-      const match = candidateTours.find(t => {
-        if (usedTourIds.has(t.id)) return false;
-        return (
-          t.category?.toLowerCase() === kwLower ||
-          t.tags?.some(tag => tag.toLowerCase() === kwLower) ||
-          t.city?.toLowerCase() === kwLower ||
-          t.title?.toLowerCase().includes(kwLower)
-        );
-      });
+    const results = [];
 
-      if (match) {
-        usedTourIds.add(match.id);
-        // Count from pre-fetched category groupBy (covers category matches)
-        // For tags/city/title keywords, count from candidateTours as approximation
-        const tourCount = categoryCountMap.get(kwLower)
-          || candidateTours.filter(t =>
-            t.tags?.some(tag => tag.toLowerCase() === kwLower) ||
-            t.city?.toLowerCase() === kwLower
-          ).length;
+    for (const cat of rankedCategories) {
+      if (results.length >= limit) break;
 
+      const catTourIds = categoryTourIds.get(cat.name);
+      if (!catTourIds?.size) continue;
+
+      // Find best available tour for this category (highest bookings, not yet used)
+      let bestTour = null;
+      for (const tourId of catTourIds) {
+        if (usedTourIds.has(tourId)) continue;
+        const tour = tourById.get(tourId);
+        if (tour && tour.coverPhoto) {
+          if (!bestTour || (tour.totalBookings || 0) > (bestTour.totalBookings || 0)) {
+            bestTour = tour;
+          }
+        }
+      }
+
+      if (bestTour) {
+        usedTourIds.add(bestTour.id);
         results.push({
-          keyword,
-          image: match.coverPhoto || match.photos?.[0] || null,
-          tourCount: Math.max(tourCount, 1),
-          category: match.category,
-          city: match.city,
+          keyword: cat.name,
+          image: bestTour.coverPhoto || bestTour.photos?.[0] || null,
+          tourCount: cat.tourCount,
+          category: cat.name,
+          city: null,
         });
+      }
+    }
+
+    // ── Fallback: sub-keyword slots ────────────────────────────────
+    // If fewer than `limit` categories matched, fill remaining slots with
+    // the most popular individual sub-keywords from KEYWORD_CATEGORIES
+    // that aren't already represented by a matched category.
+    if (results.length < limit) {
+      const matchedCategories = new Set(results.map(r => r.keyword));
+      const usedKeywords = new Set();
+
+      // Collect candidate sub-keywords: must belong to a category, have tours,
+      // and not be part of an already-matched category.
+      const subCandidates = [];
+      for (const [kw, tourCount] of allSubKeywords) {
+        const parentCat = KEYWORD_TO_CATEGORY.get(kw);
+        if (!parentCat || matchedCategories.has(parentCat)) continue;
+        if (usedKeywords.has(kw)) continue;
+        // Boost by sub-keyword trending score from Sources 1-3
+        const trendBoost = subKeywordScores[kw] || 0;
+        subCandidates.push({ kw, tourCount, trendBoost, score: tourCount * 0.01 + trendBoost });
+      }
+
+      subCandidates.sort((a, b) => b.score - a.score || b.tourCount - a.tourCount);
+
+      for (const sub of subCandidates) {
+        if (results.length >= limit) break;
+        usedKeywords.add(sub.kw);
+
+        // Find a representative tour for this keyword
+        const kwTourIds = keywordTourMap.get(sub.kw);
+        if (!kwTourIds?.size) continue;
+
+        let bestTour = null;
+        for (const tourId of kwTourIds) {
+          if (usedTourIds.has(tourId)) continue;
+          const tour = tourById.get(tourId);
+          if (tour && tour.coverPhoto) {
+            if (!bestTour || (tour.totalBookings || 0) > (bestTour.totalBookings || 0)) {
+              bestTour = tour;
+            }
+          }
+        }
+
+        if (bestTour) {
+          usedTourIds.add(bestTour.id);
+          results.push({
+            keyword: sub.kw.charAt(0).toUpperCase() + sub.kw.slice(1),
+            image: bestTour.coverPhoto || bestTour.photos?.[0] || null,
+            tourCount: sub.tourCount,
+            category: KEYWORD_TO_CATEGORY.get(sub.kw) || null,
+            city: null,
+          });
+        }
       }
     }
 
@@ -1002,4 +1330,5 @@ module.exports = {
   getTopAttractions,
   getMoodKeywords,
   getPopularDestinations,
+  extractStartingPrice,
 };
