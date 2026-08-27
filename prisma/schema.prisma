@@ -616,6 +616,15 @@ model Tour {
   // (trigger function update_tour_location() populates it from lat/lng)
   location_geom Unsupported("geography(Point, 4326)")?
 
+  // AI enrichment (Populated asynchronously by MiMo via BullMQ)
+  aiPrimaryCategory     String?   // MiMo's primary classification (e.g. "sports_adventure")
+  aiSecondaryCategories String[]  @default([]) // MiMo's secondary classifications
+  aiMoodTags            String[]  @default([]) // AI-derived mood/vibe tags
+  aiActivityLevel       String?   // "low" | "medium" | "high"
+  aiConfidence          Float?    // 0.0–1.0, how confident MiMo is
+  aiScoredAt            DateTime? // When AI last processed this tour
+  aiProcessingStatus    String    @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED
+
   // Statistics
   totalBookings Int      @default(0)
   totalRevenue  Decimal  @default(0) @db.Decimal(10, 2)
@@ -635,6 +644,7 @@ model Tour {
   wishlistItems       WishlistItem[]
   checkoutDrafts      CheckoutDraft[]
   dailyStats          DailyTourStats[]
+  imageAnalyses       TourImageAnalysis[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1655,4 +1665,91 @@ model KeywordRequest {
   @@index([supplierId])
   @@index([status])
   @@index([keyword])
+}
+
+// ─── AI Image Analysis ────────────────────────────────────────────────
+// Stores per-image AI analysis from MiMo. Lives in PostgreSQL (source of truth),
+// not Redis. Survives cache invalidation and Redis outages.
+model TourImageAnalysis {
+  id              String   @id @default(cuid())
+  tourId          String
+  tour            Tour     @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  imageUrl        String   @unique
+
+  // MiMo output (stored durably)
+  aiLabels        String[] @default([]) // ["adventure", "outdoor", "kayaking"]
+  aiQualityScore  Float?               // 0.0–1.0
+  aiSubjects      String[] @default([]) // ["river", "forest", "person"]
+  aiDescription   String?              // "Person kayaking on a tropical river"
+  aiCategoryHint  String?              // MiMo's category guess
+  attractionRelevance Json?            // { "Cape Coast Castle": 0.95, "Kakum": 0.05 }
+  primaryAttraction   String?          // Which attraction this image best represents
+
+  // Metadata
+  aiModelVersion String?  // e.g. "mimo-v2.5"
+  aiProcessedAt  DateTime?
+  aiRetryCount   Int      @default(0)
+  aiStatus       String   @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tourId])
+  @@index([aiStatus])
+}
+
+// ─── Homepage Section Cache (Durable) ─────────────────────────────────
+// PostgreSQL-backed cache for homepage sections. Redis is the fast layer;
+// this is the durable fallback when Redis is down.
+model HomepageSectionCache {
+  id         String   @id @default(cuid())
+  sectionKey String   // "mood_keywords", "top_rated", "sell_out", etc.
+  region     String   @default("GH") // geographic variant
+  data       Json     // the computed array of section items
+  computedAt DateTime @default(now())
+  expiresAt  DateTime
+
+  @@unique([sectionKey, region])
+  @@index([sectionKey, region])
+}
+
+// ─── Attraction Entity ──────────────────────────────────────────────────
+// First-class attraction records, derived from tour data + AI analysis.
+// Enables accurate image selection and admin overrides for the
+// "Top Attractions Nearby" homepage section.
+model Attraction {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  slug            String   @unique
+
+  // Location
+  latitude        Float?
+  longitude       Float?
+
+  // AI-curated image selection
+  heroImage       String?           // best matching image URL
+  heroImageSource String?           // "ai_selected" | "manual" | "fallback"
+  heroImageTourId String?           // which tour the image comes from
+  imageRelevance  Float?            // AI confidence 0.0–1.0
+
+  // Cached metadata (refreshed periodically)
+  tourCount       Int      @default(0)
+  avgRating       Float?
+  totalBookings   Int      @default(0)
+  startingPrice   Float?
+
+  // Manual overrides (admin)
+  isFeatured      Boolean  @default(false)
+  manualOverride  Boolean  @default(false) // locks heroImage from AI updates
+
+  // Status
+  status          String   @default("ACTIVE")
+  lastComputedAt  DateTime?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status])
+  @@index([isFeatured])
+  @@index([tourCount])
 }

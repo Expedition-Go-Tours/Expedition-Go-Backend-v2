@@ -53,7 +53,7 @@ jest.mock('../../utils/cloudinaryHelper', () => ({
 jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((u) => u) }));
 jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
-jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()), enqueueNotification: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()), enqueueNotification: jest.fn(() => Promise.resolve()), enqueueAiScoring: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn(() => Promise.resolve()), emitToRoom: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/tourFilterBuilder', () => ({
   buildTourFilters: jest.fn(), buildSortOptions: jest.fn(), getAvailableFilterOptions: jest.fn(),

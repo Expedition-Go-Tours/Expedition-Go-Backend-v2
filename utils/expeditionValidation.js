@@ -138,7 +138,22 @@ const confirmBookingSchema = z.object({
     paymentTiming: z.enum(['now', 'later']).optional(),
     specialRequests: z.string().max(1000).optional(),
     selectedTime: z.string().max(50).optional(),
-    pickup: z.any().optional(),
+    pickup: z.union([
+      // Pickup later — customer will confirm location after booking
+      z.object({ skipValidation: z.literal(true) }),
+      // Has address or named area
+      z.object({
+        mode: z.enum(['area', 'address']).optional(),
+        areaName: z.string().max(200).optional(),
+        address: z.object({
+          name: z.string().max(500).optional(),
+          address: z.string().max(500).optional(),
+          lat: z.number().nullable().optional(),
+          lng: z.number().nullable().optional(),
+        }).optional(),
+        skipValidation: z.boolean().optional(),
+      }),
+    ]).optional(),
     leadTraveler: z.object({
       name: z.string().max(200).optional(),
       email: z.string().email().max(255).optional(),

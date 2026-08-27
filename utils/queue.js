@@ -31,6 +31,7 @@ const QUEUE_NAMES = {
   WEBHOOK_RETRY:  'webhook-retry',
   CONTENT_SYNC:   'content-sync',
   HOMEPAGE_PRECOMPUTE: 'homepage-precompute',
+  AI_SCORING: 'ai-scoring',
 };
 
 const DEFAULT_JOB_OPTIONS = {
@@ -73,6 +74,7 @@ const stripeQueue      = () => getQueue(QUEUE_NAMES.STRIPE);
 const webhookRetryQueue = () => getQueue(QUEUE_NAMES.WEBHOOK_RETRY);
 const contentSyncQueue  = () => getQueue(QUEUE_NAMES.CONTENT_SYNC);
 const homepagePrecomputeQueue = () => getQueue(QUEUE_NAMES.HOMEPAGE_PRECOMPUTE);
+const aiScoringQueue = () => getQueue(QUEUE_NAMES.AI_SCORING);
 
 // ---------------------------------------------------------------------------
 // Enqueue helpers (typed so callers don't touch raw queue names)
@@ -413,6 +415,55 @@ async function enqueueHomepagePrecompute() {
   }
 }
 
+/**
+ * Enqueue an AI scoring job for a tour.
+ * If Redis is unavailable, the tour stays PENDING in PostgreSQL.
+ * A reconciliation process will re-enqueue when Redis recovers.
+ */
+async function enqueueAiScoring(tourId) {
+  try {
+    await aiScoringQueue().add('score-tour', { tourId }, {
+      jobId: `ai:score:${tourId}:${Date.now()}`,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 10000 },
+      removeOnComplete: { age: 24 * 3600, count: 200 },
+      removeOnFail: { age: 7 * 24 * 3600 },
+    });
+  } catch {
+    // Redis unavailable — tour stays PENDING in DB
+    // Reconciliation will pick it up when Redis recovers
+  }
+}
+
+/**
+ * Enqueue AI scoring for all PENDING/FAILED tours (reconciliation).
+ * Called periodically when Redis recovers from an outage.
+ */
+async function reconcilePendingAiJobs() {
+  try {
+    const prisma = require('./prismaClient');
+    const pendingTours = await prisma.tour.findMany({
+      where: {
+        aiProcessingStatus: { in: ['PENDING', 'FAILED'] },
+        status: 'ACTIVE',
+        createdAt: { lt: new Date(Date.now() - 2 * 60 * 1000) }, // At least 2 min old
+      },
+      take: 50,
+      select: { id: true },
+    });
+
+    for (const tour of pendingTours) {
+      await enqueueAiScoring(tour.id);
+    }
+
+    if (pendingTours.length > 0) {
+      console.log(`[Queue] Reconciled ${pendingTours.length} pending AI scoring jobs`);
+    }
+  } catch {
+    // DB unavailable — will retry on next monitor cycle
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Worker registration — called once at startup from server.js
 // ---------------------------------------------------------------------------
@@ -737,6 +788,17 @@ function registerWorkers() {
     await precomputeHomepageSections();
   }, 1);
 
+  /* ------------------------------------------------------------------
+   * AI SCORING WORKER (concurrency 2)
+   * Processes MiMo image analysis and tour classification.
+   * Concurrency=2 respects MiMo's 100 RPM rate limit.
+   * ------------------------------------------------------------------ */
+  createWorker(QUEUE_NAMES.AI_SCORING, async (job) => {
+    const { processTourAI } = require('./aiContentAnalyzer');
+    const { tourId } = job.data;
+    await processTourAI(tourId);
+  }, 2);
+
   console.log('[Queue] All workers registered');
 }
 
@@ -767,6 +829,8 @@ function startResumeMonitor() {
           } else if (toResume.length > 0) {
             console.log('[Queue] Redis recovered — workers resumed');
           }
+          // Reconcile any AI scoring jobs that were pending during Redis outage
+          reconcilePendingAiJobs().catch(() => {});
         }
       }
     } catch { /* keep the monitor alive */ }
@@ -809,6 +873,7 @@ module.exports = {
   enqueueWebhookRetry,
   enqueueContentSync,
   enqueueHomepagePrecompute,
+  enqueueAiScoring,
   processEmailJob,
   registerWorkers,
   startResumeMonitor,

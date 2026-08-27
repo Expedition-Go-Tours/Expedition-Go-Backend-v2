@@ -1,0 +1,207 @@
+name: AI Debug
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  ai-debug:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      MAX_ATTEMPTS: 3
+      MAX_FILES: 10
+    steps:
+      - name: Fetch failed logs
+        run: |
+          mkdir -p .ci-results
+          RUN_ID="${{ github.event.workflow_run.id }}"
+          gh run view "$RUN_ID" --log-failed 2>/dev/null | tail -500 > .ci-results/failed-logs.txt || true
+          gh run view "$RUN_ID" --json jobs \
+            --jq '.jobs[] | select(.conclusion == "failure") | .name' \
+            > .ci-results/failed-jobs.txt 2>/dev/null || true
+          echo "${{ github.event.workflow_run.head_sha }}" > .ci-results/sha.txt
+          echo "${{ github.event.workflow_run.head_branch }}" > .ci-results/branch.txt
+          echo "=== Failed Jobs ==="
+          cat .ci-results/failed-jobs.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout failing branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run AI debug agent
+        id: debug
+        run: |
+          DEBUG_BRANCH="ai-fix/$(date +%s)"
+          git checkout -b "$DEBUG_BRANCH"
+
+          FAIL_LOG=$(cat .ci-results/failed-logs.txt 2>/dev/null | head -3000)
+          FAIL_JOBS=$(cat .ci-results/failed-jobs.txt 2>/dev/null)
+          TEMPLATE=$(cat .github/workflows/ai-debug-prompt.txt)
+
+          ATTEMPT=0
+          FIXED=false
+
+          while [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ] && [ "$FIXED" = "false" ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo ""
+            echo "=== AI Debug Attempt $ATTEMPT / $MAX_ATTEMPTS ==="
+            echo ""
+
+            # Build prompt from template
+            PROMPT=$(echo "$TEMPLATE" | sed "s|{{FAIL_LOG}}|$FAIL_LOG|g" | sed "s|{{FAIL_JOBS}}|$FAIL_JOBS|g")
+
+            if [ -z "$OPENROUTER_API_KEY" ]; then
+              echo "OPENROUTER_API_KEY not set — cannot call AI"
+              break
+            fi
+
+            # Escape prompt for JSON
+            PROMPT_JSON=$(echo "$PROMPT" | jq -Rs '.')
+
+            RESPONSE=$(curl -s --max-time 120 \
+              -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"model\":\"openai/gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}],\"max_tokens\":4096,\"temperature\":0.1}" \
+              "https://openrouter.ai/api/v1/chat/completions" 2>/dev/null)
+
+            CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+
+            if [ -z "$CONTENT" ]; then
+              echo "AI returned empty response"
+              continue
+            fi
+
+            # Extract JSON from response
+            PARSED=$(echo "$CONTENT" | jq '.' 2>/dev/null || echo "$CONTENT" | sed -n '/^{/,/^}/p' | jq '.' 2>/dev/null)
+
+            PATCH=$(echo "$PARSED" | jq -r '.patch // empty' 2>/dev/null)
+            CONFIDENCE=$(echo "$PARSED" | jq -r '.confidence // 0' 2>/dev/null)
+            ANALYSIS=$(echo "$PARSED" | jq -r '.analysis // "unknown"' 2>/dev/null)
+            VERIFY=$(echo "$PARSED" | jq -r '.verify_cmd // "npm run lint"' 2>/dev/null)
+
+            echo "Analysis: $ANALYSIS"
+            echo "Confidence: $CONFIDENCE"
+
+            IS_LOW=$(echo "$CONFIDENCE" | jq 'if type == "number" and . < 0.5 then true else false end' 2>/dev/null)
+            if [ "$IS_LOW" = "true" ]; then
+              echo "Confidence too low. Skipping."
+              continue
+            fi
+
+            if [ -z "$PATCH" ] || [ "$PATCH" = "null" ]; then
+              echo "No patch generated. Skipping."
+              continue
+            fi
+
+            echo "$PATCH" > .ci-results/fix.patch
+
+            if git apply --check .ci-results/fix.patch 2>/dev/null; then
+              git apply .ci-results/fix.patch
+              echo "Running verification: $VERIFY"
+              if eval "$VERIFY" 2>&1; then
+                echo ""
+                echo "Fix verified on attempt $ATTEMPT"
+                FIXED=true
+              else
+                echo "Verification failed. Reverting..."
+                git checkout -- .
+                rm -f .ci-results/fix.patch
+              fi
+            else
+              echo "Patch does not apply. Reverting..."
+              git checkout -- .
+              rm -f .ci-results/fix.patch
+            fi
+          done
+
+          echo "fixed=$FIXED" >> $GITHUB_OUTPUT
+          echo "debug_branch=$DEBUG_BRANCH" >> $GITHUB_OUTPUT
+          echo "attempts=$ATTEMPT" >> $GITHUB_OUTPUT
+
+      - name: Create draft PR
+        if: steps.debug.outputs.fixed == 'true'
+        run: |
+          DEBUG_BRANCH="${{ steps.debug.outputs.debug_branch }}"
+          ATTEMPTS="${{ steps.debug.outputs.attempts }}"
+
+          git add -A
+          COMMIT_MSG="fix: AI-generated patch for CI failure"$'\n\n'"Automated fix by ai-debug workflow."$'\n'"Attempts: $ATTEMPTS / $MAX_ATTEMPTS"$'\n'"Target: ${{ github.event.workflow_run.head_branch }}"$'\n\n'"Review before merging."
+          git commit -m "$COMMIT_MSG"
+
+          git push origin "$DEBUG_BRANCH"
+
+          PR_BODY="## AI-Generated Fix"$'\n\n'
+          PR_BODY+="**Target:** \`${{ github.event.workflow_run.head_branch }}\`"$'\n'
+          PR_BODY+="**Failed run:** [${{ github.event.workflow_run.id }}](${{ github.event.workflow_run.html_url }})"$'\n'
+          PR_BODY+="**Attempts:** $ATTEMPTS / $MAX_ATTEMPTS"$'\n\n'
+          PR_BODY+="### Safety Rules Enforced"$'\n'
+          PR_BODY+="- Max ${MAX_FILES} files changed"$'\n'
+          PR_BODY+="- No production secrets modified"$'\n'
+          PR_BODY+="- No deployment triggered"$'\n'
+          PR_BODY+="- Draft PR requires manual review"$'\n\n'
+          PR_BODY+="### Verify Locally"$'\n'
+          PR_BODY+='```bash'$'\n'
+          PR_BODY+="git fetch origin $DEBUG_BRANCH"$'\n'
+          PR_BODY+="git checkout $DEBUG_BRANCH"$'\n'
+          PR_BODY+='npm run lint && npm test'$'\n'
+          PR_BODY+='```'$'\n\n'
+          PR_BODY+="Generated by ai-debug.yml"
+
+          gh pr create --draft \
+            --title "fix: AI patch for CI failure" \
+            --body "$PR_BODY" \
+            --head "$DEBUG_BRANCH" \
+            --base "${{ github.event.workflow_run.head_branch }}"
+
+          gh label create "ai-generated" --description "AI-generated fix" --color "8470e8" 2>/dev/null || true
+          gh label create "needs-review" --description "Requires human review" --color "f5a623" 2>/dev/null || true
+          PR_NUMBER=$(gh pr list --head "$DEBUG_BRANCH" --json number --jq '.[0].number')
+          gh pr edit "$PR_NUMBER" --add-label "ai-generated,needs-review" 2>/dev/null || true
+          echo "PR created: #$PR_NUMBER"
+
+      - name: Create issue on failure
+        if: steps.debug.outputs.fixed != 'true'
+        run: |
+          ISSUE_BODY="## CI Failure"$'\n\n'
+          ISSUE_BODY+="**Branch:** \`${{ github.event.workflow_run.head_branch }}\`"$'\n'
+          ISSUE_BODY+="**Run:** [${{ github.event.workflow_run.id }}](${{ github.event.workflow_run.html_url }})"$'\n'
+          ISSUE_BODY+="**Attempts:** ${{ steps.debug.outputs.attempts }} / $MAX_ATTEMPTS"$'\n\n'
+          ISSUE_BODY+="AI debug agent could not resolve this. Manual fix needed."$'\n\n'
+          ISSUE_BODY+="1. Check the [failed CI logs](${{ github.event.workflow_run.html_url }})"$'\n'
+          ISSUE_BODY+="2. Fix manually"$'\n'
+          ISSUE_BODY+="3. Push to trigger CI again"$'\n\n'
+          ISSUE_BODY+="Generated by ai-debug.yml"
+
+          gh issue create \
+            --title "CI failure — AI debug unsuccessful" \
+            --body "$ISSUE_BODY" \
+            --label "ci-failure,needs-attention"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup
+        if: always()
+        run: |
+          git checkout main 2>/dev/null || git checkout master 2>/dev/null || true
+          git branch -D "${{ steps.debug.outputs.debug_branch }}" 2>/dev/null || true
+          rm -rf .ci-results

@@ -959,7 +959,10 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     return next(new AppError(cancellationCheck.reason, 400));
   }
 
-  // Process cancellation in transaction
+  const needsRefund = booking.paymentStatus === 'SUCCEEDED' && cancellationCheck.refundAmount > 0;
+
+  // Process cancellation in transaction — Stripe refund happens AFTER commit
+  // so a slow/failing Stripe call doesn't hold the DB connection open.
   const result = await prisma.$transaction(async (tx) => {
     // Update booking status
     const updatedBooking = await tx.booking.update({
@@ -972,28 +975,8 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
       }
     });
 
-    // Process refund if payment was successful
-    if (booking.paymentStatus === 'SUCCEEDED' && cancellationCheck.refundAmount > 0) {
-      // Call Stripe refund API
-      try {
-        const refundAmountCents = Math.round(parseFloat(cancellationCheck.refundAmount) * 100);
-        await createRefund(booking.stripePaymentIntentId, refundAmountCents);
-      } catch (refundErr) {
-        console.error(` Stripe refund failed for booking ${id}:`, refundErr.message);
-        // Continue — booking is cancelled in the DB; refund can be retried manually
-      }
-
-      await tx.booking.update({
-        where: { id },
-        data: {
-          paymentStatus: 'REFUNDED',
-          refundAmount: cancellationCheck.refundAmount,
-          refundedAt: new Date()
-        }
-      });
-
-      // A refunded booking must never pay the supplier — close any payout
-      // that was queued when the payment succeeded.
+    // Close any payout that was queued when the payment succeeded.
+    if (needsRefund) {
       await tx.payout.updateMany({
         where: { bookingId: id, status: 'PENDING' },
         data: { status: 'CANCELLED', processedAt: new Date() },
@@ -1017,8 +1000,30 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     return updatedBooking;
   });
 
+  // Attempt Stripe refund OUTSIDE the transaction. Only mark REFUNDED on success.
+  let refundSucceeded = false;
+  if (needsRefund) {
+    try {
+      const refundAmountCents = Math.round(parseFloat(cancellationCheck.refundAmount) * 100);
+      await createRefund(booking.stripePaymentIntentId, refundAmountCents);
+      refundSucceeded = true;
+      await prisma.booking.update({
+        where: { id },
+        data: {
+          paymentStatus: 'REFUNDED',
+          refundAmount: cancellationCheck.refundAmount,
+          refundedAt: new Date()
+        }
+      });
+    } catch (refundErr) {
+      console.error(` Stripe refund failed for booking ${id}:`, refundErr.message);
+      // Booking is already CANCELLED but paymentStatus stays SUCCEEDED so
+      // the refund can be retried manually from the admin dashboard.
+    }
+  }
+
   // Send cancellation email + notifications through the queue
-  enqueueEmail({ type: 'booking-cancellation', bookingId: booking.id, refundAmount: cancellationCheck.refundAmount }).catch((err) => console.error('[Email] Booking cancellation email failed:', err.message));
+  enqueueEmail({ type: 'booking-cancellation', bookingId: booking.id, refundAmount: refundSucceeded ? cancellationCheck.refundAmount : 0 }).catch((err) => console.error('[Email] Booking cancellation email failed:', err.message));
 
   enqueueNotification({
     userId: booking.tour.supplier.id,
@@ -1034,7 +1039,7 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     action: 'booking.cancelled',
     resource: 'Booking',
     resourceId: booking.id,
-    metadata: { reason, refundAmount: cancellationCheck.refundAmount }
+    metadata: { reason, refundAmount: refundSucceeded ? cancellationCheck.refundAmount : 0, refundSucceeded }
   }).catch((err) => logger.warn('[booking] logActivity failed:', err?.message));
 
   enqueueEvent({

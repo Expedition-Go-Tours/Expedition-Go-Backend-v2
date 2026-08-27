@@ -133,7 +133,12 @@ function resolvePickupSelection(selection, pickupConfig = {}) {
   if (mode === 'area') {
     const areas = Array.isArray(config.pickupAreas) ? config.pickupAreas : [];
     if (areas.length === 0) {
-      return { ok: false, error: 'This tour does not offer pickup' };
+      // No zones configured yet — accept gracefully so the booking isn't
+      // blocked. The supplier can collect pickup details after booking.
+      if (!address && !requestedArea) {
+        return { ok: true, pickup: null };
+      }
+      return { ok: false, error: 'This tour does not offer pickup at this time' };
     }
 
     let area = null;
@@ -172,7 +177,12 @@ function resolvePickupSelection(selection, pickupConfig = {}) {
   // ---- Pickup location list ----------------------------------------------
   const locations = Array.isArray(config.pickupLocations) ? config.pickupLocations : [];
   if (locations.length === 0) {
-    return { ok: false, error: 'This tour does not offer pickup' };
+    // No pickup points configured — accept gracefully so the booking isn't
+    // blocked. The supplier can collect pickup details after booking.
+    if (!address && !requestedLocation) {
+      return { ok: true, pickup: null };
+    }
+    return { ok: false, error: 'This tour does not offer pickup at this time' };
   }
 
   let location = null;

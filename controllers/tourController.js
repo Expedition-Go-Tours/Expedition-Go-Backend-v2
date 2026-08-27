@@ -743,7 +743,6 @@ exports.viewBeacon = catchAsync(async (req, res, next) => {
   }
 
   // Mark the most recent tour.viewed event for this tour as verified
-  const viewerId = req.user?.id || req.ip || 'unknown';
   await prisma.event.updateMany({
     where: {
       name: 'tour.viewed',
@@ -1030,6 +1029,12 @@ exports.createTour = catchAsync(async (req, res, next) => {
         metadata: { title, status }
       }).catch((err) => logger.error('[Event] enqueueEvent failed:', err?.message));
 
+      // AI scoring (fire-and-forget via BullMQ)
+      // Tour is saved in PostgreSQL; AI enriches asynchronously.
+      // If Redis/BullMQ is down, tour stays PENDING and gets reconciled later.
+      const { enqueueAiScoring } = require('../utils/queue');
+      enqueueAiScoring(tour.id).catch((err) => logger.warn('[AI] enqueueAiScoring failed:', err?.message));
+
     } catch (err) {
       // Catch-all: log any unexpected errors but never crash the process
       logger.error('[Tour Create Async] Post-response error:', err?.message);
@@ -1083,8 +1088,6 @@ function buildDraftFromBody(existingTour, body, files) {
   }
   return merged;
 }
-
-const JSON_BLOB_KEYS = new Set(['categorization', 'productContent', 'schedulesAndPricing', 'bookingAndTickets']);
 
 /**
  * Update tour (suppliers only - own tours)
@@ -1422,6 +1425,10 @@ exports.updateTour = catchAsync(async (req, res, next) => {
       data: { status: 'ATTACHED', entity: 'tour', entityId: id },
     }).catch(err => logger.warn('[Media] Failed to mark photos as ATTACHED:', err?.message));
   }
+
+  // AI scoring (fire-and-forget) — re-analyze when tour content changes
+  const { enqueueAiScoring } = require('../utils/queue');
+  enqueueAiScoring(id).catch((err) => logger.warn('[AI] enqueueAiScoring failed:', err?.message));
 
   res.status(200).json({
     status: 'success',

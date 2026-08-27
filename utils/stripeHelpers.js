@@ -166,6 +166,7 @@ async function createCheckoutSession({
           unit_amount: amount,
           product_data: {
             name: tourTitle || 'Expedition booking',
+            ...(tourDescription ? { description: tourDescription.slice(0, 500) } : {}),
             ...(tourCoverPhoto ? { images: [tourCoverPhoto] } : {}),
           },
         },
@@ -303,7 +304,9 @@ async function createRefund(paymentIntentId, amount = null) {
     if (amount !== null) {
       refundData.amount = amount;
     }
-    const refund = await getStripe().refunds.create(refundData);
+    // Idempotency key prevents duplicate refunds on network retries.
+    const idempotencyKey = `refund_${paymentIntentId}_${amount ?? 'full'}`;
+    const refund = await getStripe().refunds.create(refundData, { idempotencyKey });
     console.log(` Refund created: ${refund.id} for PaymentIntent: ${paymentIntentId}`);
     return refund;
   } catch (error) {
@@ -454,7 +457,7 @@ async function processStripeWebhook(event) {
             bookings = [result.booking];
           } else if (result.oversold) {
             // Capacity vanished mid-hold — auto-refund the PI.
-            oversoldBookings = [{ stripePaymentIntentId: session.payment_intent }];
+            oversoldBookings = [{ stripePaymentIntentId: session.payment_intent, id: draftId, bookingNumber: `DRAFT-${draftId}` }];
           }
           reconciledPaymentIntentId = session.payment_intent || null;
           break;

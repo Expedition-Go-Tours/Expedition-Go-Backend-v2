@@ -968,4 +968,10 @@ router.patch('/expedition/bulk-publish', adminController.bulkExpeditionPublish);
 router.get('/search/tours', requirePermission('tours.view'), adminController.searchAdminTours);
 router.patch('/suppliers/:id/expedition-role', requirePermission('suppliers.approve'), adminController.toggleSupplierExpeditionRole);
 
+// ── Attraction Management ──
+const adminAttractionController = require('../controllers/adminAttractionController');
+router.get('/attractions', adminAttractionController.getAttractions);
+router.patch('/attractions/:id', adminAttractionController.updateAttraction);
+router.post('/attractions/:id/recompute', adminAttractionController.recomputeAttraction);
+
 module.exports = router;

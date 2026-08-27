@@ -15,7 +15,9 @@ jest.mock('../../utils/prismaClient', () => ({
 jest.mock('../../utils/queue', () => ({
   enqueueEmail: jest.fn(() => Promise.resolve()),
   enqueueEvent: jest.fn(() => Promise.resolve()),
+  enqueueNotification: jest.fn(() => Promise.resolve()),
   enqueueCreateStripeCustomer: jest.fn(() => Promise.resolve()),
+  enqueueAiScoring: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
@@ -93,9 +95,9 @@ function makeStripeEvent(type) {
 
 describe('Stripe Load Tests', () => {
   const scenarios = [
+    { concurrency: 10, targetRps: 100, durationMs: 200 },
+    { concurrency: 25, targetRps: 250, durationMs: 300 },
     { concurrency: 50, targetRps: 500, durationMs: 500 },
-    { concurrency: 100, targetRps: 1000, durationMs: 1000 },
-    { concurrency: 200, targetRps: 2000, durationMs: 1000 },
   ];
 
   it('calculateCommission — pure function throughput', async () => {

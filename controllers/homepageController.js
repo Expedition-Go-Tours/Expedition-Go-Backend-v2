@@ -12,7 +12,7 @@ const catchAsync = require('../utils/catchAsync');
 const prisma = require('../utils/prismaClient');
 const ranking = require('../utils/homepageRanking');
 const redis = require('../utils/redisClient');
-const { SECTION_KEYS, SECTION_TTLS } = require('../utils/homepagePrecompute');
+const { SECTION_KEYS } = require('../utils/homepagePrecompute');
 const { enqueueHomepagePrecompute } = require('../utils/queue');
 
 /**
@@ -31,7 +31,7 @@ async function readPrecomputed(key) {
 /**
  * Fallback: compute live and enqueue background precompute.
  */
-async function computeWithWarmup(limit, computeFn, precomputeKey) {
+async function computeWithWarmup(limit, computeFn, _precomputeKey) {
   const data = await computeFn(limit);
   // Warm cache in background (fire-and-forget)
   enqueueHomepagePrecompute().catch(() => {});
@@ -130,8 +130,16 @@ exports.getNew = catchAsync(async (req, res) => {
  */
 exports.getAttractions = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
+  const lat = req.query.lat ? parseFloat(req.query.lat) : null;
+  const lng = req.query.lng ? parseFloat(req.query.lng) : null;
 
-  // Try pre-computed cache first
+  // When location provided, compute live (cache is location-specific)
+  if (lat && lng) {
+    const attractions = await ranking.getAttractions(limit, lat, lng);
+    return res.json({ status: 'success', data: { attractions } });
+  }
+
+  // Try pre-computed cache first (anonymous/global)
   let attractions = await readPrecomputed(SECTION_KEYS.attractions);
   if (attractions) {
     return res.json({ status: 'success', data: { attractions: attractions.slice(0, limit) } });
@@ -219,7 +227,7 @@ exports.getOffers = catchAsync(async (req, res) => {
         const cache = require('./cacheHelper');
         cache.memSet(cacheKey, offerCards);
       }
-    } catch {}
+    } catch { /* cache write best-effort */ }
     enqueueHomepagePrecompute().catch(() => {});
   }
 
@@ -423,7 +431,9 @@ exports.getHomepage = catchAsync(async (req, res) => {
     ? await ranking.getRecommended(userId, lat, lng, 12)
     : (recommended || await ranking.getRecommended(null, null, null, 12));
 
-  const resolvedAttractions = attractions || await ranking.getAttractions(10);
+  const resolvedAttractions = (lat && lng)
+    ? await ranking.getAttractions(10, lat, lng)
+    : (attractions || await ranking.getAttractions(10));
 
   const resolvedMood = userId
     ? await ranking.getMoodKeywords(userId, 8)

@@ -21,6 +21,8 @@ projects:
         sync: false
       - key: SENTRY_DSN
         sync: false
+      - key: MIMO_API_KEY
+        sync: false
       - key: SENDGRID_API_KEY
         sync: false
       - key: REDIS_URL

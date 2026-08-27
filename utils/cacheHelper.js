@@ -181,6 +181,9 @@ async function invalidateHomepageSections() {
   await invalidateKeys([HOMEPAGE_SECTIONS_PREFIX]);
 }
 
+// Alias used by AI analyzer and other modules
+const invalidateHomepageCaches = invalidateHomepageSections;
+
 async function invalidateTourCaches(tourId, slug) {
   await invalidateKeys([
     TOUR_LIST_PREFIX,
@@ -240,5 +243,6 @@ module.exports = {
   EXPEDITION_REVIEWS_PREFIX,
   EXPEDITION_SITEMAP_KEY,
   HOMEPAGE_SECTIONS_PREFIX,
+  invalidateHomepageCaches,
   _clearMemory
 };

@@ -1776,27 +1776,17 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     return next(new AppError(policyReason, 400));
   }
 
+  const needsRefund = booking.paymentStatus === 'SUCCEEDED' && refundAmount > 0;
+
   const result = await prisma.$transaction(async (tx) => {
     const updated = await tx.booking.update({
       where: { id },
       data: { status: 'CANCELLED', cancellationReason: reason || null, cancelledAt: new Date(), payoutStatus: 'CANCELLED' },
     });
 
-    if (booking.paymentStatus === 'SUCCEEDED' && refundAmount > 0) {
-      try {
-        const refundCents = Math.round(refundAmount * 100);
-        await createRefund(booking.stripePaymentIntentId, refundCents);
-      } catch (refundErr) {
-        console.error(`[Expedition] Stripe refund failed for booking ${id}:`, refundErr.message);
-      }
-
-      await tx.booking.update({
-        where: { id },
-        data: { paymentStatus: 'REFUNDED', refundAmount, refundedAt: new Date() },
-      });
-
-      // A refunded booking must never pay the supplier — close any payout
-      // that was queued when the payment succeeded.
+    // A cancelled booking must never pay the supplier — close any payout
+    // that was queued when the payment succeeded.
+    if (needsRefund) {
       await tx.payout.updateMany({
         where: { bookingId: id, status: 'PENDING' },
         data: { status: 'CANCELLED', processedAt: new Date() },
@@ -1819,10 +1809,29 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     return updated;
   });
 
+  // Attempt Stripe refund OUTSIDE the transaction so a slow/failing Stripe
+  // call doesn't hold the DB connection open. Only mark REFUNDED on success.
+  let refundSucceeded = false;
+  if (needsRefund) {
+    try {
+      const refundCents = Math.round(refundAmount * 100);
+      await createRefund(booking.stripePaymentIntentId, refundCents);
+      refundSucceeded = true;
+      await prisma.booking.update({
+        where: { id },
+        data: { paymentStatus: 'REFUNDED', refundAmount, refundedAt: new Date() },
+      });
+    } catch (refundErr) {
+      console.error(`[Expedition] Stripe refund failed for booking ${id}:`, refundErr.message);
+      // Booking is already CANCELLED but paymentStatus stays SUCCEEDED so
+      // the refund can be retried manually from the admin dashboard.
+    }
+  }
+
   enqueueEmail({
     type: 'booking-cancellation',
     bookingId: booking.id,
-    refundAmount,
+    refundAmount: refundSucceeded ? refundAmount : 0,
     brandName: 'Expedition',
   }).catch((err) => console.error('[Expedition] Cancellation email failed:', err.message));
 
@@ -1831,7 +1840,7 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     action: 'booking.cancelled',
     resource: 'Booking',
     resourceId: booking.id,
-    metadata: { reason, refundAmount, source: 'expedition' },
+    metadata: { reason, refundAmount: refundSucceeded ? refundAmount : 0, refundSucceeded, source: 'expedition' },
   }).catch(() => {});
 
   res.status(200).json({ status: 'success', data: { booking: result } });

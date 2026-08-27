@@ -56,6 +56,82 @@ for (const [category, keywords] of Object.entries(KEYWORD_CATEGORIES)) {
   }
 }
 
+// ─── Mood Keywords: Category Relevance Scoring ───────────────────────
+// Minimum relevance threshold: tours below this score are excluded from
+// representing a category, preventing cross-category image contamination.
+const MIN_CATEGORY_RELEVANCE = 0.3;
+
+// Mapping from KEYWORD_CATEGORIES display names → AI category slugs
+// (must match CATEGORY_SLUG_MAP in aiContentAnalyzer.js)
+const CATEGORY_NAME_TO_SLUG = {
+  'Sports & Adventure': 'sports_adventure',
+  'Food & Drink': 'food_drink',
+  'Art & Museums': 'art_museums',
+  'Architecture': 'architecture',
+  'Music & Shows': 'music_shows',
+  'Culture & Heritage': 'culture_heritage',
+  'Animals & Nature': 'animals_nature',
+  'Water Activities': 'water_activities',
+  'Winter & Snow': 'winter_snow',
+  'Desert & Safari': 'desert_safari',
+  'Nature & Outdoors': 'nature_outdoors',
+  'City & Walking Tours': 'city_walking',
+  'Seasonal & Events': 'seasonal_events',
+  'Wellness & Relaxation': 'wellness_relaxation',
+  'Royalty & History': 'royalty_history',
+  'Pop Culture & Media': 'pop_culture',
+  'Mystery & Horror': 'mystery_horror',
+  'Nightlife & Party': 'nightlife_party',
+  'Religion & Spirituality': 'religion_spirituality',
+  'Transportation': 'transportation',
+};
+
+/**
+ * Scores how well a tour matches a keyword category.
+ *
+ * Uses AI metadata (if available) as the primary signal, with tag-overlap
+ * as fallback for tours not yet processed by MiMo.
+ *
+ * AI-powered path (when aiPrimaryCategory exists):
+ *   - Primary category match → 1.0
+ *   - Secondary category match → 0.6
+ *   - No match → 0.1 (AI says it's something else)
+ *
+ * Fallback path (no AI data):
+ *   - Tag overlap ratio (matching tags / total mapped tags)
+ *
+ * @param {Object} tour - Tour object with tags, aiPrimaryCategory, aiSecondaryCategories
+ * @param {string} categoryName - Key from KEYWORD_CATEGORIES (e.g. "Sports & Adventure")
+ * @returns {number} Relevance score 0.0–1.0
+ */
+function computeCategoryRelevance(tour, categoryName) {
+  // AI-powered relevance (highest priority)
+  if (tour.aiPrimaryCategory) {
+    const targetSlug = CATEGORY_NAME_TO_SLUG[categoryName];
+    if (!targetSlug) return 0.5; // Unknown category — neutral score
+
+    if (tour.aiPrimaryCategory === targetSlug) return 1.0;
+    if ((tour.aiSecondaryCategories || []).includes(targetSlug)) return 0.6;
+    return 0.1; // AI says it's something else
+  }
+
+  // Fallback: tag overlap (for tours not yet processed by AI)
+  const categoryKeywords = KEYWORD_CATEGORIES[categoryName] || [];
+  if (!categoryKeywords.length || !tour.tags?.length) return 0;
+
+  const tourTagsLower = tour.tags.map(t => t.toLowerCase());
+  const matchingTags = tourTagsLower.filter(t => categoryKeywords.includes(t));
+
+  if (matchingTags.length === 0) return 0;
+
+  // Count how many tour tags map to ANY known category (not just this one)
+  const totalMappedTags = tourTagsLower.filter(t => ALL_CATEGORY_KEYWORDS.has(t)).length;
+
+  // Ratio of matching tags to total mapped tags
+  // Penalizes tours where most tags belong to OTHER categories
+  return matchingTags.length / (totalMappedTags + 1);
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────
 
 /**
@@ -458,8 +534,8 @@ async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT) {
   const ttl = 300;
 
   return cache.getOrSet(cacheKey, async () => {
-    let categoryAffinity = {};
-    let viewedTourIds = new Set();
+    const categoryAffinity = {};
+    const viewedTourIds = new Set();
 
     if (userId) {
       // Get user's recent behavior (last 30 days)
@@ -685,174 +761,258 @@ async function getNewExperiences(limit = DEFAULT_LIMIT) {
 
 // ─── 6. ATTRACTIONS ───────────────────────────────────────────────────
 /**
- * Attractions derived from tour data — grouped by attraction name
- * (productContent.locations[].name).
+ * Attractions for the "Top Attractions Nearby" section.
  *
- * Each unique attraction name becomes an entry with:
- * - tourCount: how many tours visit this attraction
- * - heroImage: best-rated tour's cover photo
- * - startingPrice: cheapest tour price
- * - avgRating: average rating across tours
- * - lat/lng: centroid of tour coordinates
+ * When lat/lng provided: filters within ~50km radius, sorts by distance.
+ * When no location: sorts by popularity (featured, tourCount, rating).
  *
- * Sorted by tourCount desc, then avgRating desc.
+ * Fast path: reads from the Attraction table (AI-curated images, cached metadata).
+ * Fallback: if Attraction table is empty (pre-backfill), derives from tour data
+ * using the legacy algorithm with improved image selection.
  */
-async function getAttractions(limit = DEFAULT_LIMIT) {
-  const cacheKey = `hp:attractions:${limit}`;
-  const ttl = 600;
+const NEARBY_RADIUS_KM = 50;
+
+async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null) {
+  const hasLocation = lat != null && lng != null;
+  const cacheKey = `hp:attractions:${limit}:${hasLocation ? `${lat}:${lng}` : 'global'}`;
+  const ttl = hasLocation ? 300 : 600; // shorter TTL for location-based (more variants)
 
   return cache.getOrSet(cacheKey, async () => {
-    // Find all active tours that have attraction names
-    const tours = await prisma.tour.findMany({
-      where: {
-        status: 'ACTIVE',
-        attractions: { isEmpty: false },
-        supplier: { supplierProfile: { status: 'ACTIVE' } },
-      },
-      select: {
-        id: true,
-        attractions: true,
-        coverPhoto: true,
-        photos: true,
-        averageRating: true,
-        totalBookings: true,
-        schedulesAndPricing: true,
-        latitude: true,
-        longitude: true,
-        city: true,
-        country: true,
-      },
-    });
+    // ── Fast path: Attraction table (AI-curated) ──
+    const attractionCount = await prisma.attraction.count({ where: { status: 'ACTIVE' } });
 
-    if (tours.length === 0) return [];
-
-    // Build attraction map: attractionName → { tours, totalRating, count, ... }
-    const attractionMap = new Map();
-
-    for (const tour of tours) {
-      if (!Array.isArray(tour.attractions)) continue;
-      for (const name of tour.attractions) {
-        if (!name || !name.trim()) continue;
-        const key = name.trim();
-        if (!attractionMap.has(key)) {
-          attractionMap.set(key, {
-            name: key,
-            tourIds: [],
-            coverPhotos: [],
-            totalRating: 0,
-            ratingCount: 0,
-            totalBookings: 0,
-            latSum: 0,
-            lngSum: 0,
-            coordCount: 0,
-            minPrice: Infinity,
-          });
-        }
-        const a = attractionMap.get(key);
-        a.tourIds.push(tour.id);
-        // Collect ALL available photos for more variety
-        if (tour.coverPhoto) a.coverPhotos.push(tour.coverPhoto);
-        if (Array.isArray(tour.photos)) {
-          for (const p of tour.photos) {
-            if (p) a.coverPhotos.push(p);
-          }
-        }
-        if (tour.averageRating) {
-          a.totalRating += parseFloat(tour.averageRating);
-          a.ratingCount++;
-        }
-        a.totalBookings += tour.totalBookings || 0;
-        if (tour.latitude && tour.longitude) {
-          a.latSum += tour.latitude;
-          a.lngSum += tour.longitude;
-          a.coordCount++;
-        }
-        const price = extractStartingPrice(tour.schedulesAndPricing);
-        if (price != null && price < a.minPrice) a.minPrice = price;
-      }
-    }
-
-    // Filter out attractions with < 2 tours (need minimum to be interesting)
-    const candidates = [...attractionMap.values()].filter(a => a.tourIds.length >= 2);
-
-    // Score and sort
-    const maxTours = Math.max(...candidates.map(a => a.tourIds.length), 1);
-    const maxBookings = Math.max(...candidates.map(a => a.totalBookings), 1);
-
-    const scored = candidates.map(a => {
-      const nTours = a.tourIds.length / maxTours;
-      const nBookings = a.totalBookings / maxBookings;
-      const avgRating = a.ratingCount > 0 ? a.totalRating / a.ratingCount : 0;
-      return {
-        ...a,
-        _score: (nTours * 0.5) + (nBookings * 0.3) + (avgRating / 5 * 0.2),
-      };
-    });
-
-    scored.sort((a, b) => b._score - a._score);
-
-    // Deterministic hash for picking unique photos per attraction
-    function hashStr(s) {
-      let h = 0;
-      for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-      return Math.abs(h);
-    }
-
-    // Build results, skipping attractions that can't provide a unique image.
-    // This guarantees no duplicate images across attraction cards.
-    const usedImages = new Set();
-    const results = [];
-
-    for (const a of scored) {
-      if (results.length >= limit) break;
-
-      // Find the tour with the best rating
-      let bestTour = null;
-      let bestRating = -1;
-      for (const tour of tours) {
-        if (a.tourIds.includes(tour.id)) {
-          const r = tour.averageRating ? parseFloat(tour.averageRating) : 0;
-          if (r > bestRating) {
-            bestRating = r;
-            bestTour = tour;
-          }
-        }
-      }
-
-      // Try to find a unique photo from the attraction's pool
-      const uniquePhotos = [...new Set(a.coverPhotos.filter(Boolean))];
-      let heroImage = null;
-      if (uniquePhotos.length > 0) {
-        const startIdx = hashStr(a.name) % uniquePhotos.length;
-        for (let i = 0; i < uniquePhotos.length; i++) {
-          const idx = (startIdx + i) % uniquePhotos.length;
-          if (!usedImages.has(uniquePhotos[idx])) {
-            heroImage = uniquePhotos[idx];
-            break;
-          }
-        }
-      }
-
-      // Skip this attraction if no unique photo available
-      if (!heroImage) continue;
-
-      usedImages.add(heroImage);
-      const avgRating = a.ratingCount > 0 ? Math.round((a.totalRating / a.ratingCount) * 10) / 10 : null;
-
-      results.push({
-        name: a.name,
-        tourCount: a.tourIds.length,
-        heroImage,
-        avgRating,
-        totalBookings: a.totalBookings,
-        startingPrice: a.minPrice === Infinity ? null : a.minPrice,
-        lat: a.coordCount > 0 ? Math.round((a.latSum / a.coordCount) * 10000) / 10000 : null,
-        lng: a.coordCount > 0 ? Math.round((a.lngSum / a.coordCount) * 10000) / 10000 : null,
+    if (attractionCount > 0) {
+      const attractions = await prisma.attraction.findMany({
+        where: { status: 'ACTIVE' },
+        orderBy: [
+          { isFeatured: 'desc' },
+          { tourCount: 'desc' },
+          { avgRating: 'desc' },
+        ],
+        take: hasLocation ? Math.max(limit * 3, 30) : limit, // over-fetch for proximity filter
       });
+
+      let results = attractions.map(a => ({
+        name: a.name,
+        tourCount: a.tourCount,
+        heroImage: a.heroImage,
+        avgRating: a.avgRating,
+        totalBookings: a.totalBookings,
+        startingPrice: a.startingPrice,
+        lat: a.latitude,
+        lng: a.longitude,
+      }));
+
+      if (hasLocation) {
+        // Compute distance and filter by radius
+        results = results
+          .map(r => ({
+            ...r,
+            _distance: (r.lat != null && r.lng != null)
+              ? Math.round(haversineKm(lat, lng, r.lat, r.lng) * 10) / 10
+              : null,
+          }))
+          .filter(r => r._distance !== null && r._distance <= NEARBY_RADIUS_KM)
+          .sort((a, b) => a._distance - b._distance)
+          .slice(0, limit);
+
+        // If too few nearby, fill with popular ones
+        if (results.length < limit) {
+          const nearbyNames = new Set(results.map(r => r.name));
+          const popular = attractions
+            .filter(a => !nearbyNames.has(a.name))
+            .slice(0, limit - results.length)
+            .map(a => ({
+              name: a.name,
+              tourCount: a.tourCount,
+              heroImage: a.heroImage,
+              avgRating: a.avgRating,
+              totalBookings: a.totalBookings,
+              startingPrice: a.startingPrice,
+              lat: a.latitude,
+              lng: a.longitude,
+              _distance: (a.latitude != null && a.longitude != null)
+                ? Math.round(haversineKm(lat, lng, a.latitude, a.longitude) * 10) / 10
+                : null,
+            }));
+          results = [...results, ...popular];
+        }
+      }
+
+      return results;
     }
 
-    return results;
+    // ── Fallback: derive from tour data (pre-backfill) ──
+    return getAttractionsLegacy(limit, lat, lng);
   }, ttl);
+}
+
+/**
+ * Legacy attraction derivation (fallback when Attraction table is empty).
+ * Improved over the original: uses best-rated tour's cover photo first,
+ * then gallery photos, avoiding the random-hash image mismatch bug.
+ */
+async function getAttractionsLegacy(limit = DEFAULT_LIMIT, lat = null, lng = null) {
+  const tours = await prisma.tour.findMany({
+    where: {
+      status: 'ACTIVE',
+      attractions: { isEmpty: false },
+      supplier: { supplierProfile: { status: 'ACTIVE' } },
+    },
+    select: {
+      id: true,
+      attractions: true,
+      coverPhoto: true,
+      photos: true,
+      averageRating: true,
+      totalBookings: true,
+      schedulesAndPricing: true,
+      latitude: true,
+      longitude: true,
+      city: true,
+      country: true,
+    },
+  });
+
+  if (tours.length === 0) return [];
+
+  // Build attraction map
+  const attractionMap = new Map();
+
+  for (const tour of tours) {
+    if (!Array.isArray(tour.attractions)) continue;
+    for (const name of tour.attractions) {
+      if (!name || !name.trim()) continue;
+      const key = name.trim();
+      if (!attractionMap.has(key)) {
+        attractionMap.set(key, {
+          name: key,
+          tourIds: [],
+          tours: [], // store full tour objects for image selection
+          totalRating: 0,
+          ratingCount: 0,
+          totalBookings: 0,
+          latSum: 0,
+          lngSum: 0,
+          coordCount: 0,
+          minPrice: Infinity,
+        });
+      }
+      const a = attractionMap.get(key);
+      a.tourIds.push(tour.id);
+      a.tours.push(tour);
+      if (tour.averageRating) {
+        a.totalRating += parseFloat(tour.averageRating);
+        a.ratingCount++;
+      }
+      a.totalBookings += tour.totalBookings || 0;
+      if (tour.latitude && tour.longitude) {
+        a.latSum += tour.latitude;
+        a.lngSum += tour.longitude;
+        a.coordCount++;
+      }
+      const price = extractStartingPrice(tour.schedulesAndPricing);
+      if (price != null && price < a.minPrice) a.minPrice = price;
+    }
+  }
+
+  // Filter: need at least 2 tours
+  const candidates = [...attractionMap.values()].filter(a => a.tourIds.length >= 2);
+
+  // Score and sort
+  const maxTours = Math.max(...candidates.map(a => a.tourIds.length), 1);
+  const maxBookings = Math.max(...candidates.map(a => a.totalBookings), 1);
+  const hasLocation = lat != null && lng != null;
+
+  const scored = candidates.map(a => {
+    const nTours = a.tourIds.length / maxTours;
+    const nBookings = a.totalBookings / maxBookings;
+    const avgRating = a.ratingCount > 0 ? a.totalRating / a.ratingCount : 0;
+    const centroidLat = a.coordCount > 0 ? a.latSum / a.coordCount : null;
+    const centroidLng = a.coordCount > 0 ? a.lngSum / a.coordCount : null;
+    const distance = (hasLocation && centroidLat != null && centroidLng != null)
+      ? haversineKm(lat, lng, centroidLat, centroidLng)
+      : null;
+    // Proximity boost: closer attractions get higher score
+    const proximityBoost = distance != null
+      ? Math.max(0, 1 - distance / NEARBY_RADIUS_KM) * 0.3
+      : 0;
+    return {
+      ...a,
+      _distance: distance != null ? Math.round(distance * 10) / 10 : null,
+      _score: (nTours * 0.5) + (nBookings * 0.3) + (avgRating / 5 * 0.2) + proximityBoost,
+    };
+  });
+
+  scored.sort((a, b) => {
+    // When location provided, prefer nearby attractions
+    if (hasLocation) {
+      const aNear = a._distance !== null && a._distance <= NEARBY_RADIUS_KM;
+      const bNear = b._distance !== null && b._distance <= NEARBY_RADIUS_KM;
+      if (aNear && !bNear) return -1;
+      if (!aNear && bNear) return 1;
+      if (aNear && bNear) return a._distance - b._distance;
+    }
+    return b._score - a._score;
+  });
+
+  // Image selection: prefer best-rated tour's cover photo, then gallery photos
+  const usedImages = new Set();
+  const results = [];
+
+  for (const a of scored) {
+    if (results.length >= limit) break;
+
+    // Sort tours by rating (best first) for image priority
+    const sortedTours = [...a.tours].sort((x, y) => {
+      const rx = x.averageRating ? parseFloat(x.averageRating) : 0;
+      const ry = y.averageRating ? parseFloat(y.averageRating) : 0;
+      return ry - rx;
+    });
+
+    // Build ordered image list: cover photos first (best-rated tour first), then gallery
+    const orderedImages = [];
+    for (const t of sortedTours) {
+      if (t.coverPhoto && !orderedImages.includes(t.coverPhoto)) {
+        orderedImages.push(t.coverPhoto);
+      }
+    }
+    for (const t of sortedTours) {
+      if (Array.isArray(t.photos)) {
+        for (const p of t.photos) {
+          if (p && !orderedImages.includes(p)) orderedImages.push(p);
+        }
+      }
+    }
+
+    // Pick first unused image
+    let heroImage = null;
+    for (const img of orderedImages) {
+      if (!usedImages.has(img)) {
+        heroImage = img;
+        break;
+      }
+    }
+
+    if (!heroImage) continue;
+
+    usedImages.add(heroImage);
+    const avgRating = a.ratingCount > 0 ? Math.round((a.totalRating / a.ratingCount) * 10) / 10 : null;
+
+    results.push({
+      name: a.name,
+      tourCount: a.tourIds.length,
+      heroImage,
+      avgRating,
+      totalBookings: a.totalBookings,
+      startingPrice: a.minPrice === Infinity ? null : a.minPrice,
+      lat: a.coordCount > 0 ? Math.round((a.latSum / a.coordCount) * 10000) / 10000 : null,
+      lng: a.coordCount > 0 ? Math.round((a.lngSum / a.coordCount) * 10000) / 10000 : null,
+      _distance: a._distance,
+    });
+  }
+
+  return results;
 }
 
 /**
@@ -1010,15 +1170,19 @@ async function getMoodKeywords(userId, limit = 8) {
     }
 
     // ── Source 4: Keyword categories from supplier tags ─────────────
-    // Single query: fetch ALL active tours with tags (no groupBy, no OR queries).
-    // For ~10K tours with ~10 tags each, this is ~1MB of data — processed in <50ms.
+    // Single query: fetch active tours with tags, ordered by popularity.
+    // Limit to 5000 to prevent OOM on large datasets while keeping good keyword coverage.
     const allTours = await prisma.tour.findMany({
       where: { status: 'ACTIVE' },
       select: {
         id: true, tags: true, coverPhoto: true, photos: true,
         category: true, totalBookings: true, city: true,
+        // AI enrichment (null for unprocessed tours — fallback to tag-based scoring)
+        aiPrimaryCategory: true, aiSecondaryCategories: true,
+        aiMoodTags: true, aiActivityLevel: true, aiConfidence: true,
       },
       orderBy: { totalBookings: 'desc' },
+      take: 5000,
     });
 
     // Build inverted index: keyword → Set<tourId>
@@ -1075,6 +1239,7 @@ async function getMoodKeywords(userId, limit = 8) {
     // Build a lookup: tourId → tour object (avoid repeated scans)
     const tourById = new Map(allTours.map(t => [t.id, t]));
     const usedTourIds = new Set();
+    const usedImages = new Set();
     const results = [];
 
     for (const cat of rankedCategories) {
@@ -1083,23 +1248,51 @@ async function getMoodKeywords(userId, limit = 8) {
       const catTourIds = categoryTourIds.get(cat.name);
       if (!catTourIds?.size) continue;
 
-      // Find best available tour for this category (highest bookings, not yet used)
+      // Find best available tour using RELEVANCE-WEIGHTED hybrid scoring.
+      // Pure booking count is replaced by: (relevance × 0.70) + (normalizedBookings × 0.30).
+      // This prevents food tours from representing "Sports & Adventure" just because
+      // they have one generic tag like "games" and high booking counts.
       let bestTour = null;
+      let bestScore = -1;
       for (const tourId of catTourIds) {
         if (usedTourIds.has(tourId)) continue;
         const tour = tourById.get(tourId);
-        if (tour && tour.coverPhoto) {
-          if (!bestTour || (tour.totalBookings || 0) > (bestTour.totalBookings || 0)) {
-            bestTour = tour;
-          }
+        if (!tour || !tour.coverPhoto) continue;
+
+        const relevance = computeCategoryRelevance(tour, cat.name);
+        if (relevance < MIN_CATEGORY_RELEVANCE) continue;
+
+        const normalizedBookings = Math.log10((tour.totalBookings || 0) + 1) / 6;
+        const hybridScore = (relevance * 0.70) + (normalizedBookings * 0.30);
+
+        if (hybridScore > bestScore) {
+          bestScore = hybridScore;
+          bestTour = tour;
         }
       }
 
       if (bestTour) {
         usedTourIds.add(bestTour.id);
+
+        // Image dedup: prefer unique images across keywords.
+        // If the best tour's coverPhoto is already used, scan its photos array.
+        let heroImage = bestTour.coverPhoto;
+        if (usedImages.has(heroImage)) {
+          for (const photo of (bestTour.photos || [])) {
+            if (photo && !usedImages.has(photo)) {
+              heroImage = photo;
+              break;
+            }
+          }
+        }
+
+        // Skip if we still couldn't find an unused image
+        if (!heroImage || usedImages.has(heroImage)) continue;
+        usedImages.add(heroImage);
+
         results.push({
           keyword: cat.name,
-          image: bestTour.coverPhoto || bestTour.photos?.[0] || null,
+          image: heroImage,
           tourCount: cat.tourCount,
           category: cat.name,
           city: null,
@@ -1133,26 +1326,51 @@ async function getMoodKeywords(userId, limit = 8) {
         if (results.length >= limit) break;
         usedKeywords.add(sub.kw);
 
-        // Find a representative tour for this keyword
+        // Find a representative tour for this keyword with relevance check
         const kwTourIds = keywordTourMap.get(sub.kw);
         if (!kwTourIds?.size) continue;
 
         let bestTour = null;
+        let bestScore = -1;
+        const parentCat = KEYWORD_TO_CATEGORY.get(sub.kw);
         for (const tourId of kwTourIds) {
           if (usedTourIds.has(tourId)) continue;
           const tour = tourById.get(tourId);
-          if (tour && tour.coverPhoto) {
-            if (!bestTour || (tour.totalBookings || 0) > (bestTour.totalBookings || 0)) {
-              bestTour = tour;
-            }
+          if (!tour || !tour.coverPhoto) continue;
+
+          // Relevance check: the tour's tag overlap with the parent category
+          const relevance = parentCat ? computeCategoryRelevance(tour, parentCat) : 0.5;
+          if (relevance < MIN_CATEGORY_RELEVANCE) continue;
+
+          const normalizedBookings = Math.log10((tour.totalBookings || 0) + 1) / 6;
+          const hybridScore = (relevance * 0.70) + (normalizedBookings * 0.30);
+
+          if (hybridScore > bestScore) {
+            bestScore = hybridScore;
+            bestTour = tour;
           }
         }
 
         if (bestTour) {
           usedTourIds.add(bestTour.id);
+
+          // Image dedup: ensure unique images across all keywords
+          let heroImage = bestTour.coverPhoto;
+          if (usedImages.has(heroImage)) {
+            for (const photo of (bestTour.photos || [])) {
+              if (photo && !usedImages.has(photo)) {
+                heroImage = photo;
+                break;
+              }
+            }
+          }
+
+          if (!heroImage || usedImages.has(heroImage)) continue;
+          usedImages.add(heroImage);
+
           results.push({
             keyword: sub.kw.charAt(0).toUpperCase() + sub.kw.slice(1),
-            image: bestTour.coverPhoto || bestTour.photos?.[0] || null,
+            image: heroImage,
             tourCount: sub.tourCount,
             category: KEYWORD_TO_CATEGORY.get(sub.kw) || null,
             city: null,
@@ -1179,6 +1397,8 @@ async function getPopularDestinations(limit = 10) {
 
   return cache.getOrSet(cacheKey, async () => {
     // Get cities with aggregated stats
+    // HAVING >= 3 tours filters out single-tour cities with no statistical significance
+    // Sort includes avgRating to surface quality destinations
     const cities = await prisma.$queryRaw`
       SELECT
         t.city,
@@ -1195,19 +1415,32 @@ async function getPopularDestinations(limit = 10) {
         AND t.city IS NOT NULL
         AND sp.status = 'ACTIVE'
       GROUP BY t.city, t.country
-      HAVING COUNT(*) >= 1
-      ORDER BY "totalBookings" DESC, "tourCount" DESC
-      LIMIT ${limit}
+      HAVING COUNT(*) >= 3
+      ORDER BY "totalBookings" DESC, "avgRating" DESC NULLS LAST, "tourCount" DESC
+      LIMIT ${limit + 5}
     `;
 
-    return cities.map(c => ({
-      city: c.city,
-      country: c.country,
-      tourCount: c.tourCount,
-      totalBookings: c.totalBookings,
-      avgRating: c.avgRating ? parseFloat(c.avgRating) : null,
-      heroImage: c.heroImage,
-    }));
+    // Image dedup: ensure no two cities share the same hero image
+    const usedImages = new Set();
+    const results = [];
+
+    for (const c of cities) {
+      if (results.length >= limit) break;
+      const heroImage = c.heroImage;
+      if (heroImage && usedImages.has(heroImage)) continue;
+      if (heroImage) usedImages.add(heroImage);
+
+      results.push({
+        city: c.city,
+        country: c.country,
+        tourCount: c.tourCount,
+        totalBookings: c.totalBookings,
+        avgRating: c.avgRating ? parseFloat(c.avgRating) : null,
+        heroImage,
+      });
+    }
+
+    return results;
   }, ttl);
 }
 
@@ -1234,4 +1467,6 @@ module.exports = {
   getPopularDestinations,
   extractStartingPrice,
   KEYWORD_CATEGORIES,
+  CATEGORY_NAME_TO_SLUG,
+  computeCategoryRelevance,
 };

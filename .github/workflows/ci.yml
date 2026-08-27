@@ -26,6 +26,7 @@ env:
     dummy-key
     -----END PRIVATE KEY-----
   SENTRY_DSN: ''
+  MIMO_API_KEY: ''
   ALLOWED_ORIGINS: http://localhost:3000
 
 jobs:

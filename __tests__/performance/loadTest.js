@@ -42,10 +42,11 @@ class LoadTest {
       }
     };
 
+    const safetyTimeoutMs = this.durationMs + 30_000;
     return new Promise((resolve) => {
       const interval = setInterval(() => {
         runBatch();
-        if (Date.now() >= endTime && running === 0) {
+        if ((Date.now() >= endTime && running === 0) || Date.now() - this.startTime > safetyTimeoutMs) {
           clearInterval(interval);
           this.endTime = Date.now();
           resolve();
