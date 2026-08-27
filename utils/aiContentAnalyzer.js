@@ -60,7 +60,7 @@ const VALID_CATEGORY_SLUGS = Object.values(CATEGORY_SLUG_MAP);
  * Call MiMo API with retry logic.
  * Uses the Token Plan (Singapore) endpoint with Bearer auth.
  */
-async function callMiMo(messages, maxTokens = 10240) {
+async function callMiMo(messages, maxTokens = 100000) {
   const apiKey = process.env.MIMO_API_KEY;
   if (!apiKey) {
     throw new Error('MIMO_API_KEY not set in environment');
@@ -186,7 +186,7 @@ Rules:
     },
   ];
 
-  const response = await callMiMo(messages, 10240);
+  const response = await callMiMo(messages, 100000);
   return parseJsonResponse(response);
 }
 
@@ -245,7 +245,7 @@ Rules:
     },
   ];
 
-  const response = await callMiMo(messages, 10240);
+  const response = await callMiMo(messages, 100000);
   return parseJsonResponse(response);
 }
 
