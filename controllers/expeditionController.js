@@ -6,7 +6,7 @@ const cache = require('../utils/cacheHelper');
 const { sendEmail } = require('../utils/emailService');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, isValidEmail } = require('../utils/bookingHelpers');
-const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
+const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../utils/tourHelpers');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../utils/availabilityCore');
 const { resolvePickupSelection } = require('../utils/geoUtils');
 const { validatePassengerMix } = require('../utils/passengerMix');
@@ -26,43 +26,15 @@ const DETAIL_CACHE_KEY = (slug) => `${CACHE_PREFIX}detail:${slug}`;
 const SITEMAP_CACHE_KEY = `${CACHE_PREFIX}sitemap`;
 const CHECKOUT_CACHE_TTL = 60;
 
+/**
+ * Cheapest price a card can quote as "From $X" — the lowest price of the
+ * ADULT tier (per-person base + tier prices, min across schedules), falling
+ * back to the per-group minimum band / uniform price / legacy schedule
+ * prices. Delegates to tourHelpers.cheapestRetailPrice so every surface
+ * (homepage, listings, blog, promo previews) quotes the same adult price.
+ */
 function extractStartingPrice(schedulesAndPricing) {
-  if (!schedulesAndPricing) return null;
-  try {
-    const sp = typeof schedulesAndPricing === 'string'
-      ? JSON.parse(schedulesAndPricing)
-      : schedulesAndPricing;
-
-    const schedules = sp?.pricingSchedules?.schedules;
-    if (Array.isArray(schedules) && schedules.length > 0) {
-      let lowest = Infinity;
-      for (const s of schedules) {
-        const prices = s?.prices;
-        if (!Array.isArray(prices)) continue;
-        for (const p of prices) {
-          if (p.retailPrice != null) {
-            lowest = Math.min(lowest, Number(p.retailPrice));
-          }
-        }
-      }
-      if (lowest !== Infinity) return lowest;
-    }
-
-    const td = sp?.travelerDetails;
-    if (td?.pricingModel === 'perGroup' && Array.isArray(td?.groupSizes)) {
-      let lowest = Infinity;
-      for (const gs of td.groupSizes) {
-        if (gs.price != null) lowest = Math.min(lowest, Number(gs.price));
-      }
-      if (lowest !== Infinity) return lowest;
-    }
-
-    if (td?.uniformPrice != null) return Number(td.uniformPrice);
-
-    return null;
-  } catch {
-    return null;
-  }
+  return cheapestRetailPrice(schedulesAndPricing);
 }
 
 function extractCurrency(schedulesAndPricing) {

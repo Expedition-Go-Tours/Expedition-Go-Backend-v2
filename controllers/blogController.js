@@ -6,6 +6,7 @@ const cache = require('../utils/cacheHelper');
 const { enqueueEvent } = require('../utils/queue');
 const { buildArticleSchema } = require('../utils/blogSEO');
 const { invalidateBlogCaches, LIST_CACHE_KEY, DETAIL_CACHE_KEY, SITEMAP_CACHE_KEY, CATEGORIES_CACHE_KEY, TAGS_CACHE_KEY } = require('../utils/blogCache');
+const { cheapestRetailPrice } = require('../utils/tourHelpers');
 
 const VIEW_CACHE_MAX = 10000;
 const viewTrackingCache = new Map();
@@ -101,40 +102,7 @@ function transformArticleDetail(article) {
 }
 
 function extractStartingPrice(schedulesAndPricing) {
-  if (!schedulesAndPricing) return null;
-  try {
-    const sp = typeof schedulesAndPricing === 'string' ? JSON.parse(schedulesAndPricing) : schedulesAndPricing;
-
-    const schedules = sp?.pricingSchedules?.schedules;
-    if (Array.isArray(schedules) && schedules.length > 0) {
-      let lowest = Infinity;
-      for (const s of schedules) {
-        const prices = s?.prices;
-        if (!Array.isArray(prices)) continue;
-        for (const p of prices) {
-          if (p.retailPrice != null) {
-            lowest = Math.min(lowest, Number(p.retailPrice));
-          }
-        }
-      }
-      if (lowest !== Infinity) return lowest;
-    }
-
-    const td = sp?.travelerDetails;
-    if (td?.pricingModel === 'perGroup' && Array.isArray(td?.groupSizes)) {
-      let lowest = Infinity;
-      for (const gs of td.groupSizes) {
-        if (gs.price != null) lowest = Math.min(lowest, Number(gs.price));
-      }
-      if (lowest !== Infinity) return lowest;
-    }
-
-    if (td?.uniformPrice != null) return Number(td.uniformPrice);
-
-    return null;
-  } catch {
-    return null;
-  }
+  return cheapestRetailPrice(schedulesAndPricing);
 }
 
 function extractCurrency(schedulesAndPricing) {

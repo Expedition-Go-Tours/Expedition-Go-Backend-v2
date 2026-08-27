@@ -49,6 +49,7 @@ jest.mock('../../utils/bookingHelpers', () => ({
 jest.mock('../../utils/tourHelpers', () => ({
   checkTourAvailability: jest.fn(),
   calculateTourPrice: jest.fn(),
+  cheapestRetailPrice: jest.fn(),
 }));
 
 jest.mock('../../utils/stripeHelpers', () => {
@@ -93,7 +94,7 @@ const cache = require('../../utils/cacheHelper');
 const { sendEmail } = require('../../utils/emailService');
 const { enqueueEvent, enqueueNotification } = require('../../utils/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy } = require('../../utils/bookingHelpers');
-const { checkTourAvailability, calculateTourPrice } = require('../../utils/tourHelpers');
+const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../../utils/tourHelpers');
 const { createPaymentIntent, createCheckoutSession, calculateCommission, createRefund, getStripe } = require('../../utils/stripeHelpers');
 const { acquireHold, releaseHold } = require('../../utils/checkoutHold');
 const { logActivity } = require('../../utils/auditLogger');
@@ -205,6 +206,27 @@ describe('expeditionController', () => {
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'success', data: expect.any(Object) })
+      );
+    });
+
+    it('projects the lowest ADULT-tier price as startingPrice (not the min across all traveler types)', async () => {
+      // The listing's "From $X" must come from cheapestRetailPrice (adult-only
+      // min over base + tier prices) so cards never show a cheaper child rate.
+      cheapestRetailPrice.mockReturnValue(150);
+
+      await controller.getTours(req, res, next);
+
+      expect(cheapestRetailPrice).toHaveBeenCalledWith(mockTour.schedulesAndPricing);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            tours: expect.arrayContaining([
+              expect.objectContaining({
+                tour: expect.objectContaining({ startingPrice: 150 }),
+              }),
+            ]),
+          }),
+        })
       );
     });
   });
