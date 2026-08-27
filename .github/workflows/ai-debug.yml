@@ -81,7 +81,7 @@ jobs:
             RESPONSE=$(curl -s --max-time 120 \
               -H "Authorization: Bearer $OPENROUTER_API_KEY" \
               -H "Content-Type: application/json" \
-              -d "{\"model\":\"openai/gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}],\"max_tokens\":4096,\"temperature\":0.1}" \
+              -d "{\"model\":\"openai/gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}],\"max_tokens\":100000,\"temperature\":0.1}" \
               "https://openrouter.ai/api/v1/chat/completions" 2>/dev/null)
 
             CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
