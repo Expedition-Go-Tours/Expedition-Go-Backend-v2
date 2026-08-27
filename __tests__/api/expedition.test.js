@@ -18,7 +18,7 @@ jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn(
 jest.mock('../../utils/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()), enqueueEmail: jest.fn(() => Promise.resolve()), enqueueNotification: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../utils/bookingHelpers', () => ({ validateTravelerInfo: jest.fn(), generateBookingNumber: jest.fn() }));
-jest.mock('../../utils/tourHelpers', () => ({ checkTourAvailability: jest.fn(), calculateTourPrice: jest.fn() }));
+jest.mock('../../utils/tourHelpers', () => ({ checkTourAvailability: jest.fn(), calculateTourPrice: jest.fn(), cheapestRetailPrice: jest.fn() }));
 jest.mock('../../utils/stripeHelpers', () => ({ createPaymentIntent: jest.fn(), createRefund: jest.fn(), calculateCommission: jest.fn() }));
 jest.mock('../../utils/getConfig', () => jest.fn((key, def) => Promise.resolve(def)));
 jest.mock('../../utils/availabilityCalendar', () => ({ buildAvailabilityCalendar: jest.fn(() => Promise.resolve([])) }));
