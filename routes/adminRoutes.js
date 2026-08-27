@@ -974,4 +974,10 @@ router.get('/attractions', adminAttractionController.getAttractions);
 router.patch('/attractions/:id', adminAttractionController.updateAttraction);
 router.post('/attractions/:id/recompute', adminAttractionController.recomputeAttraction);
 
+// ── AI Processing Status ──
+const adminAiController = require('../controllers/adminAiController');
+router.get('/ai/status', adminAiController.getAiStatus);
+router.get('/ai/failed', adminAiController.getFailedTours);
+router.post('/ai/retry', adminAiController.retryFailed);
+
 module.exports = router;

@@ -6,6 +6,7 @@ const { Server } = require('socket.io');
 const prisma = require('./utils/prismaClient');
 const { setIO, setupPrismaMiddleware } = require('./utils/dataChangeEmitter');
 const { registerWorkers, closeAll, enqueueNotification, enqueueCleanup, enqueueAggregation, enqueueEvent, probe, startResumeMonitor } = require('./utils/queue');
+const { startAiCronFallback } = require('./utils/aiCronFallback');
 const redisClient = require('./utils/redisClient');
 const logger = require('./utils/logger');
  
@@ -20,6 +21,11 @@ const shutdown = async (reason, err) => {
     console.log(err.name, err.message);
     console.error(err.stack);
   }
+
+  try {
+    const { stopAiCronFallback } = require('./utils/aiCronFallback');
+    stopAiCronFallback();
+  } catch {}
 
   try {
     if (io) {
@@ -118,6 +124,10 @@ setupSocketIO();
   setupPrismaMiddleware(prisma);
   setupRedisAdapter();
   await setupQueueWorkers();
+
+  // Start AI cron fallback — runs regardless of Redis availability
+  // Processes PENDING/FAILED tours directly via processTourAI()
+  startAiCronFallback();
 })();
 
 function setupRedisAdapter() {
