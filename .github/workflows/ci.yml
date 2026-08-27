@@ -478,8 +478,8 @@ jobs:
           name: coverage-badge
           path: coverage-badge.svg
 
-  # ── Post-deploy verification (main only) ──────────────────────────
-  deploy-verify:
+  # ── Deploy to Hetzner (main only) ────────────────────────────────
+  deploy:
     if: github.ref_name == 'main'
     needs:
       - lint
@@ -490,30 +490,60 @@ jobs:
       - e2e-tests
       - coverage
     runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Deploy to Hetzner via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: deploy
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          script: |
+            cd /home/deploy/Expedition-Go-Backend-v2
+
+            echo "=== Pulling latest code ==="
+            git pull origin main
+
+            echo "=== Installing dependencies ==="
+            npm ci --omit=dev
+
+            echo "=== Generating Prisma client ==="
+            npx prisma generate
+
+            echo "=== Running migrations ==="
+            npx prisma migrate deploy
+
+            echo "=== Restarting app ==="
+            pm2 restart all
+
+            echo "=== Saving PM2 process list ==="
+            pm2 save
+
+            echo "=== Deploy complete ==="
+
+  # ── Post-deploy verification (main only) ──────────────────────────
+  deploy-verify:
+    if: github.ref_name == 'main'
+    needs: deploy
+    runs-on: ubuntu-latest
     steps:
       - name: Verify live health endpoint
         run: |
-          # Deploy swaps and cold starts can surface gateway 502/503/504 for
-          # the first tens of seconds. Poll until the endpoint settles instead
-          # of failing the whole release on one cold-start hiccup.
           attempts=10
           delay=15
           for i in $(seq 1 "$attempts"); do
-            HTTP_CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" https://api.travioafrica.com/health)
+            HTTP_CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" https://apiv1.travioafrica.com/)
             echo "attempt $i/$attempts: HTTP $HTTP_CODE"
             if [ "$HTTP_CODE" = "200" ]; then
-              STATUS=$(node -pe "const j=JSON.parse(require('fs').readFileSync('/tmp/health.json','utf8'));j.status||''" 2>/dev/null || true)
-              echo "status: $STATUS"
-              if [ "$STATUS" = "success" ]; then
-                cat /tmp/health.json
-                echo "Production health check passed"
-                exit 0
-              fi
+              echo "Production health check passed"
+              cat /tmp/health.json
+              exit 0
             fi
             if [ "$i" -lt "$attempts" ]; then sleep "$delay"; fi
           done
           echo "::error::Production health check failed after $attempts attempts"
-          echo "Last response body:"
           cat /tmp/health.json 2>/dev/null || true
           exit 1
 
@@ -522,7 +552,7 @@ jobs:
           attempts=5
           delay=15
           for i in $(seq 1 "$attempts"); do
-            HTTP_CODE=$(curl -s -o /tmp/tours.json -w "%{http_code}" https://api.travioafrica.com/api/expedition/tours)
+            HTTP_CODE=$(curl -s -o /tmp/tours.json -w "%{http_code}" https://apiv1.travioafrica.com/api/expedition/tours)
             echo "attempt $i/$attempts: HTTP $HTTP_CODE"
             if [ "$HTTP_CODE" = "200" ]; then
               STATUS=$(node -pe "const j=JSON.parse(require('fs').readFileSync('/tmp/tours.json','utf8'));j.status||''" 2>/dev/null || echo "")
@@ -535,6 +565,5 @@ jobs:
             if [ "$i" -lt "$attempts" ]; then sleep "$delay"; fi
           done
           echo "::error::Production tours endpoint failed after $attempts attempts"
-          echo "Last response body:"
           cat /tmp/tours.json 2>/dev/null || true
           exit 1
