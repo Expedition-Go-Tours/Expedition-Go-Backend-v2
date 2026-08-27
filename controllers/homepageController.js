@@ -261,6 +261,7 @@ async function computeOffersData() {
           category: true, city: true, country: true, averageRating: true,
           reviewCount: true, totalBookings: true, schedulesAndPricing: true,
           durationMinutes: true, difficulty: true, tags: true, status: true,
+          createdAt: true,
           supplier: {
             select: {
               id: true, name: true, photoURL: true,
@@ -319,6 +320,7 @@ async function computeOffersData() {
       averageRating: tour.averageRating ? parseFloat(tour.averageRating) : null,
       reviewCount: tour.reviewCount || 0,
       totalBookings: tour.totalBookings || 0,
+      createdAt: tour.createdAt,
       startingPrice: price,
       currency: 'USD',
       duration: durationStr,
@@ -359,7 +361,19 @@ async function computeOffersData() {
     });
   }
 
-  offerCards.sort((a, b) => b.totalBookings - a.totalBookings);
+  // Sort by popularity, but give recently created tours a booking-equivalent
+  // boost so brand-new offer tours (0 bookings) still make the visible
+  // section instead of always sinking below older, more booked tours.
+  const NEW_TOUR_WINDOW_DAYS = 30;
+  const NEW_TOUR_BOOST = 5;
+  const newCutoff = new Date();
+  newCutoff.setDate(newCutoff.getDate() - NEW_TOUR_WINDOW_DAYS);
+  const isRecentTour = (card) => card.createdAt && new Date(card.createdAt) >= newCutoff;
+  offerCards.sort((a, b) => {
+    const aScore = (a.totalBookings || 0) + (isRecentTour(a) ? NEW_TOUR_BOOST : 0);
+    const bScore = (b.totalBookings || 0) + (isRecentTour(b) ? NEW_TOUR_BOOST : 0);
+    return bScore - aScore;
+  });
   return offerCards;
 }
 

@@ -27,6 +27,7 @@
 
 const prisma = require('./prismaClient');
 const cache = require('./cacheHelper');
+const { cheapestRetailPrice } = require('./tourHelpers');
 
 // ─── Constants ────────────────────────────────────────────────────────
 const BAYESIAN_C = 5;        // Confidence parameter (equivalent to 5 "virtual" reviews)
@@ -166,6 +167,43 @@ function mapTourCard(t) {
       : `${Math.round(t.durationMinutes / 60)} hours`
     : '';
 
+  // Active special offers attached to the tour (only projected by queries
+  // that include the specialOffers relation, e.g. New Experiences) — flatten
+  // the target rows to the same shape the tour-detail endpoint projects so
+  // the frontend can render offer tags/countdowns without extra lookups.
+  let specialOffers = undefined;
+  if (Array.isArray(t.specialOffers) && t.specialOffers.length > 0) {
+    specialOffers = t.specialOffers
+      .filter((target) => target && target.specialOffer)
+      .map((target) => ({
+        id: target.specialOffer.id,
+        name: target.specialOffer.name || '',
+        offerType: target.specialOffer.offerType,
+        discountType: target.specialOffer.discountType,
+        discountPercentage: target.specialOffer.discountPercentage,
+        fixedDiscountValue: target.specialOffer.fixedDiscountValue,
+        startDate: target.specialOffer.startDate,
+        endDate: target.specialOffer.endDate,
+        promoCode: target.specialOffer.promoCode || null,
+        timeSlotMode: target.specialOffer.timeSlotMode,
+        specificWeekdays: target.specialOffer.specificWeekdays || [],
+        capacityType: target.specialOffer.capacityType,
+        maxSpots: target.specialOffer.maxSpots,
+        spotsSold: target.specialOffer.spotsSold,
+        minQuantity: target.specialOffer.minQuantity,
+        minSpendAmount: target.specialOffer.minSpendAmount,
+        maxRedemptionsPerCustomer: target.specialOffer.maxRedemptionsPerCustomer,
+        stackable: target.specialOffer.stackable,
+        earlyBirdAdvanceDays: target.specialOffer.earlyBirdAdvanceDays,
+        lastMinuteWindowHours: target.specialOffer.lastMinuteWindowHours,
+        targets: [{
+          tourId: t.id,
+          tourOptionKey: target.tourOptionKey ?? null,
+          tourOptionLabel: target.tourOptionLabel ?? null,
+        }],
+      }));
+  }
+
   return {
     id: t.id,
     title: t.title,
@@ -184,6 +222,7 @@ function mapTourCard(t) {
     durationMinutes: t.durationMinutes,
     difficulty: t.difficulty,
     tags: t.tags || [],
+    specialOffers,
     supplier: t.supplier ? {
       id: t.supplier.id,
       name: t.supplier.name,
@@ -196,43 +235,14 @@ function mapTourCard(t) {
 }
 
 /**
- * Extract the lowest retail price from schedulesAndPricing JSON.
- * Mirrors the logic in expeditionController.extractStartingPrice.
+ * Extract the "From $X" price for a card — the lowest ADULT-tier per-person
+ * price (base + tier prices), falling back to the per-group minimum band,
+ * uniform price, or legacy schedule prices. Delegates to
+ * tourHelpers.cheapestRetailPrice so every homepage section quotes the same
+ * adult price as the listings and the booking widget.
  */
 function extractStartingPrice(schedulesAndPricing) {
-  if (!schedulesAndPricing) return null;
-  try {
-    const sp = typeof schedulesAndPricing === 'string'
-      ? JSON.parse(schedulesAndPricing)
-      : schedulesAndPricing;
-
-    const schedules = sp?.pricingSchedules?.schedules;
-    if (Array.isArray(schedules) && schedules.length > 0) {
-      let lowest = Infinity;
-      for (const s of schedules) {
-        const prices = s?.prices;
-        if (!Array.isArray(prices)) continue;
-        for (const p of prices) {
-          if (p.retailPrice != null) lowest = Math.min(lowest, Number(p.retailPrice));
-        }
-      }
-      if (lowest !== Infinity) return lowest;
-    }
-
-    const td = sp?.travelerDetails;
-    if (td?.pricingModel === 'perGroup' && Array.isArray(td?.groupSizes)) {
-      let lowest = Infinity;
-      for (const gs of td.groupSizes) {
-        if (gs.price != null) lowest = Math.min(lowest, Number(gs.price));
-      }
-      if (lowest !== Infinity) return lowest;
-    }
-
-    if (td?.uniformPrice != null) return Number(td.uniformPrice);
-    return null;
-  } catch {
-    return null;
-  }
+  return cheapestRetailPrice(schedulesAndPricing);
 }
 
 const TOUR_SELECT = {
@@ -734,7 +744,24 @@ async function getNewExperiences(limit = DEFAULT_LIMIT) {
         createdAt: { gte: cutoff },
         supplier: { supplierProfile: { status: 'ACTIVE' } },
       },
-      select: TOUR_SELECT,
+      select: {
+        ...TOUR_SELECT,
+        // New tours with active special offers appear here alongside the
+        // Special Offers section; project the offers so the cards can render
+        // the offer tag/countdown/promo price without extra lookups.
+        specialOffers: {
+          where: {
+            specialOffer: {
+              isActive: true,
+              AND: [
+                { OR: [{ startDate: null }, { startDate: { lte: new Date() } }] },
+                { OR: [{ endDate: null }, { endDate: { gte: new Date() } }] },
+              ],
+            },
+          },
+          include: { specialOffer: true },
+        },
+      },
       orderBy: { createdAt: 'desc' },
       take: limit * 2, // Over-fetch to allow dedup
     });
