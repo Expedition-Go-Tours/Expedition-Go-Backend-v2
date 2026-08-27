@@ -172,8 +172,8 @@ function mapTourCard(t) {
   // the target rows to the same shape the tour-detail endpoint projects so
   // the frontend can render offer tags/countdowns without extra lookups.
   let specialOffers = undefined;
-  if (Array.isArray(t.specialOffers) && t.specialOffers.length > 0) {
-    specialOffers = t.specialOffers
+  if (Array.isArray(t.specialOfferTargets) && t.specialOfferTargets.length > 0) {
+    specialOffers = t.specialOfferTargets
       .filter((target) => target && target.specialOffer)
       .map((target) => ({
         id: target.specialOffer.id,
@@ -749,7 +749,7 @@ async function getNewExperiences(limit = DEFAULT_LIMIT) {
         // New tours with active special offers appear here alongside the
         // Special Offers section; project the offers so the cards can render
         // the offer tag/countdown/promo price without extra lookups.
-        specialOffers: {
+        specialOfferTargets: {
           where: {
             specialOffer: {
               isActive: true,
