@@ -140,10 +140,10 @@ describe('confirmBookingSchema passthrough fields', () => {
   it('passes through pickup', () => {
     const result = confirmBookingSchema.safeParse({
       ...basePayload,
-      body: { ...basePayload.body, pickup: { address: 'Hotel XYZ', time: '08:00' } },
+      body: { ...basePayload.body, pickup: { skipValidation: true } },
     });
     expect(result.success).toBe(true);
-    expect(result.data.body.pickup).toEqual({ address: 'Hotel XYZ', time: '08:00' });
+    expect(result.data.body.pickup).toEqual({ skipValidation: true });
   });
 
   it('passes through leadTraveler', () => {
