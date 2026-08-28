@@ -5,6 +5,10 @@ on:
     workflows: ["CI"]
     types: [completed]
 
+concurrency:
+  group: ai-debug-fix
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write
@@ -13,7 +17,7 @@ permissions:
 
 jobs:
   ai-debug:
-    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    if: ${{ github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.head_branch == 'main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 18
     env:
@@ -104,6 +108,26 @@ jobs:
           if [ -f .ci-results/lint-errors.txt ] && [ -s .ci-results/lint-errors.txt ]; then
             LINT_ERRORS=$(cat .ci-results/lint-errors.txt | head -200)
             FAIL_LOG="$FAIL_LOG"$'\n'"==== LINT ERRORS ===="$'\n'"$LINT_ERRORS"
+          fi
+
+          # Guard: if startup-check is the ONLY failing job and it failed on a
+          # Docker pull (infra flake, not code), skip the AI loop and do NOT
+          # open an issue — nothing for the agent to fix.
+          SKIP_REASON=""
+          if [ "$(echo "$FAIL_JOBS" | tr -d '[:space:]')" = "startup-check" ]; then
+            if grep -q "Docker pull failed" .ci-results/failed-logs.txt 2>/dev/null; then
+              SKIP_REASON="infra_flake"
+            fi
+          fi
+          if [ "$SKIP_REASON" = "infra_flake" ]; then
+            echo "Skipping AI: only startup-check Docker pull flake detected (infra, not code)" | tee -a .ci-results/debug-log.txt
+            echo "fixed=false" >> $GITHUB_OUTPUT
+            echo "debug_branch=$DEBUG_BRANCH" >> $GITHUB_OUTPUT
+            echo "attempts=0" >> $GITHUB_OUTPUT
+            echo "last_analysis=startup-check Docker pull infra flake; no code change attempted" >> $GITHUB_OUTPUT
+            echo "last_confidence=0" >> $GITHUB_OUTPUT
+            echo "skip_reason=infra_flake" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
           echo "FAIL_LOG length: ${#FAIL_LOG}" | tee -a .ci-results/debug-log.txt
@@ -375,6 +399,7 @@ jobs:
         if: steps.debug.outputs.fixed == 'true'
         run: |
           set +e
+          set -o pipefail
           DEBUG_BRANCH="${{ steps.debug.outputs.debug_branch }}"
           ATTEMPTS="${{ steps.debug.outputs.attempts }}"
           OUTPUT=".ci-results/pr-output.log"
@@ -395,18 +420,48 @@ jobs:
             git push origin "$DEBUG_BRANCH" 2>&1
             echo "push exit code: $?"
             echo "--- REST create PR ---"
-            curl -sS -X POST \
+            PR_RESP=$(curl -sS -X POST \
               -H "Authorization: Bearer $GH_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/repos/Expedition-Go-Tours/Expedition-Go-Backend-v2/pulls" \
-              -d "{\"title\":\"fix: AI patch for CI failure\",\"head\":\"$DEBUG_BRANCH\",\"base\":\"${{ github.event.workflow_run.head_branch }}\",\"draft\":true,\"body\":\"AI-generated fix. Attempts: $ATTEMPTS / $MAX_ATTEMPTS. Review before merging.\"}"
-            echo ""
-            echo "pr-create exit code: $?"
+              -d "{\"title\":\"fix: AI patch for CI failure\",\"head\":\"$DEBUG_BRANCH\",\"base\":\"${{ github.event.workflow_run.head_branch }}\",\"draft\":true,\"body\":\"AI-generated fix. Attempts: $ATTEMPTS / $MAX_ATTEMPTS. Review before merging.\"}")
+            echo "$PR_RESP"
+            PR_NUM=$(echo "$PR_RESP" | jq -r '.number // empty' 2>/dev/null)
+            if [ -z "$PR_NUM" ]; then
+              echo "ERROR: PR creation failed"
+              echo "$PR_RESP" > .ci-results/pr-create-error.json
+              exit 1
+            fi
+            echo "PR #$PR_NUM created: https://github.com/Expedition-Go-Tours/Expedition-Go-Backend-v2/pull/$PR_NUM"
           } 2>&1 | tee -a $GITHUB_STEP_SUMMARY "$OUTPUT"
-          exit 0
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup stale AI artifacts
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          REPO="Expedition-Go-Tours/Expedition-Go-Backend-v2"
+          echo "Closing stale issues labeled ci-failure..."
+          gh issue list --repo "$REPO" --label "ci-failure" --state open --limit 100 \
+            --json number --jq '.[].number' 2>/dev/null | while read -r N; do
+            if [ -n "$N" ]; then
+              gh issue close "$N" --repo "$REPO" --reason completed \
+                --comment "Auto-closed by AI Debug cleanup" 2>/dev/null && echo "closed issue #$N"
+            fi
+          done
+          echo "Deleting stale ai-fix branches without an open PR..."
+          gh api "repos/$REPO/branches?per_page=100" --paginate --jq '.[].name' 2>/dev/null \
+            | grep '^ai-fix/' | while read -r BR; do
+              PR=$(gh pr list --repo "$REPO" --head "$BR" --state open --json number --jq '.[0].number // empty' 2>/dev/null)
+              if [ -z "$PR" ]; then
+                gh api -X DELETE "repos/$REPO/git/refs/heads/$BR" 2>/dev/null && echo "deleted branch $BR"
+              fi
+            done
+          echo "Cleanup done."
 
       - name: Report PR step output
         if: steps.debug.outputs.fixed == 'true'
@@ -429,7 +484,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create issue on failure
-        if: steps.debug.outputs.fixed != 'true'
+        if: steps.debug.outputs.fixed != 'true' && steps.debug.outputs.skip_reason != 'infra_flake'
         run: |
           ISSUE_BODY="## CI Failure"$'\n\n'
           ISSUE_BODY+="**Branch:** \`${{ github.event.workflow_run.head_branch }}\`"$'\n'
