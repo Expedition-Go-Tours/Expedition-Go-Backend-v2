@@ -2,18 +2,15 @@
  * Travio Ghana Admin Routes — Ghana-Isolated Admin API
  *
  * Mounted at /api/travioghana/admin/*
- * Every route uses: protect → restrictTo('admin') → requirePermission(...)
  *
- * Ghana-specific endpoints query Ghana-scoped data:
- *   - Tours: TravioGhanaTour model
- *   - Bookings: source = 'GHANA'
- *   - Suppliers: role = 'ghana'
- *   - Reviews: on Ghana tours
- *   - Analytics: Ghana-scoped
- *
- * Shared platform endpoints (notifications, settings, audit-log, roles,
- * admins, finance, suppliers, reviews, blog, chat) are proxied from the
- * existing controllers — same data, same permissions, same backend.
+ * Route paths are chosen to match exactly what the frontend interceptor sends.
+ * The interceptor rewrites:
+ *   /admin/*                        → /travioghana/admin/*
+ *   /reviews/admin/*                → /travioghana/admin/reviews/*
+ *   /reviews/:id/(moderate|admin*)  → /travioghana/admin/reviews/:id/...
+ *   /suppliers/admin/*              → /travioghana/admin/suppliers/*
+ *   /payouts/admin/*                → /travioghana/admin/payouts/*
+ *   /payout-methods/admin/*         → /travioghana/admin/payout-methods/*
  */
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
@@ -22,6 +19,8 @@ const { createLimiter } = require('../middleware/dynamicRateLimiter');
 
 const ghana = require('../controllers/travioGhanaAdminController');
 const adminController = require('../controllers/adminController');
+const adminAiController = require('../controllers/adminAiController');
+const verificationController = require('../controllers/supplierVerificationController');
 
 // Shared platform controllers (proxied — same data, same permissions)
 const adminNotifController = require('../controllers/adminNotificationController');
@@ -91,7 +90,7 @@ router.get('/analytics/cart-abandonment',
 );
 
 // ══════════════════════════════════════════════════════════════════════════
-// TOURS — TravioGhanaTour model
+// TOURS — TravioGhanaTour model + shared tour admin endpoints (proxied)
 // ══════════════════════════════════════════════════════════════════════════
 router.get('/tours',
   requirePermission('tours.view', 'dashboard.*'),
@@ -121,9 +120,21 @@ router.delete('/tours/:id',
   requirePermission('tours.approve'),
   ghana.deleteTour,
 );
+router.get('/tours/:id/draft',
+  requirePermission('tours.view', 'tours.approve'),
+  adminController.getTourDraftReview,
+);
+router.patch('/tours/:id/draft-review',
+  requirePermission('tours.approve'),
+  adminController.reviewTourDraft,
+);
+router.patch('/tours/:tourId/expedition-publish',
+  requirePermission('tours.approve'),
+  adminController.toggleExpeditionPublish,
+);
 
 // ══════════════════════════════════════════════════════════════════════════
-// BOOKINGS — source = 'GHANA'
+// BOOKINGS — source = 'GHANA' + shared booking endpoints (proxied)
 // ══════════════════════════════════════════════════════════════════════════
 router.get('/bookings',
   requirePermission('bookings.view', 'dashboard.*'),
@@ -141,6 +152,10 @@ router.patch('/bookings/:id/confirm-payment',
   requirePermission('bookings.confirm-payment', 'dashboard.*'),
   ghana.confirmPayment,
 );
+router.post('/bookings/:id/charge-now',
+  requirePermission('bookings.confirm-payment', 'dashboard.*'),
+  adminController.chargePayLaterBooking,
+);
 
 // ══════════════════════════════════════════════════════════════════════════
 // EXPEDITION — Ghana expedition management (proxied to admin controller)
@@ -153,37 +168,80 @@ router.get('/expedition/suppliers/:id/tours',
   requirePermission('tours.view', 'suppliers.view'),
   adminController.getExpeditionSupplierTours,
 );
-router.patch('/tours/:tourId/expedition-publish',
-  requirePermission('tours.approve'),
-  adminController.toggleExpeditionPublish,
-);
 router.patch('/expedition/bulk-publish',
   requirePermission('tours.approve'),
   adminController.bulkExpeditionPublish,
 );
 
 // ══════════════════════════════════════════════════════════════════════════
-// SUPPLIERS — role = 'ghana'
+// SUPPLIERS — role = 'ghana' + shared supplier management (proxied)
+//
+// IMPORTANT: Frontend sends /suppliers/admin/* which the interceptor rewrites
+// to /travioghana/admin/suppliers/*. All route paths below match that pattern.
 // ══════════════════════════════════════════════════════════════════════════
 router.get('/suppliers',
   requirePermission('suppliers.view'),
   ghana.getSuppliers,
 );
+router.get('/suppliers/applications',
+  requirePermission('suppliers.view'),
+  supplierController.getAllApplications,
+);
+router.get('/suppliers/qc-dashboard',
+  requirePermission('suppliers.view'),
+  verificationController.getQcDashboard,
+);
 router.get('/suppliers/:id',
   requirePermission('suppliers.view'),
   ghana.getSupplierDetail,
 );
+router.get('/suppliers/:id/profile',
+  requirePermission('suppliers.view'),
+  supplierController.getSupplierProfile,
+);
+router.get('/suppliers/:id/tours',
+  requirePermission('suppliers.view'),
+  supplierController.getSupplierTours,
+);
+router.get('/suppliers/:id/reviews',
+  requirePermission('suppliers.view'),
+  supplierController.getSupplierReviews,
+);
+router.get('/suppliers/:id/analytics',
+  requirePermission('suppliers.view'),
+  supplierController.getSupplierAnalytics,
+);
+router.get('/suppliers/:id/verification',
+  requirePermission('suppliers.view'),
+  verificationController.getSupplierVerification,
+);
+router.patch('/suppliers/applications/:id/review',
+  requirePermission('suppliers.approve'),
+  supplierController.reviewApplication,
+);
 router.patch('/suppliers/:id/suspend',
   requirePermission('suppliers.approve'),
-  ghana.suspendSupplier,
+  supplierController.suspendSupplier,
 );
 router.patch('/suppliers/:id/activate',
   requirePermission('suppliers.approve'),
-  ghana.activateSupplier,
+  supplierController.activateSupplier,
+);
+router.patch('/suppliers/documents/:docId',
+  requirePermission('suppliers.approve'),
+  verificationController.reviewDocument,
+);
+router.patch('/suppliers/vehicles/:vehicleId',
+  requirePermission('suppliers.approve'),
+  verificationController.reviewVehicle,
+);
+router.patch('/suppliers/guides/:guideId',
+  requirePermission('suppliers.approve'),
+  verificationController.reviewGuide,
 );
 
 // ══════════════════════════════════════════════════════════════════════════
-// USERS — role = 'ghana'
+// USERS — role = 'ghana' + shared user endpoints (proxied)
 // ══════════════════════════════════════════════════════════════════════════
 router.get('/users/active',
   requirePermission('users.view'),
@@ -193,9 +251,17 @@ router.get('/users/new-signups',
   requirePermission('users.view'),
   ghana.getRecentSignups,
 );
+router.get('/users/new',
+  requirePermission('users.view'),
+  ghana.getRecentSignups,
+);
 router.get('/users/search',
   requirePermission('users.view'),
   ghana.searchUsers,
+);
+router.get('/users/:id',
+  requirePermission('users.view'),
+  adminController.getUser,
 );
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -208,6 +274,10 @@ router.get('/ai/status',
 router.get('/ai/failed',
   requirePermission('tours.view'),
   ghana.getFailedTours,
+);
+router.post('/ai/retry',
+  requirePermission('tours.approve'),
+  adminAiController.retryFailed,
 );
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -434,42 +504,4 @@ router.patch('/payout-methods/:id/verify',
   payoutMethodController.verifyPayoutMethod,
 );
 
-// ══════════════════════════════════════════════════════════════════════════
-// SUPPLIER MANAGEMENT — shared platform endpoints (proxied)
-// ══════════════════════════════════════════════════════════════════════════
-router.get('/supplier-applications',
-  requirePermission('suppliers.view'),
-  supplierController.getAllApplications,
-);
-router.get('/supplier-applications/:id/profile',
-  requirePermission('suppliers.view'),
-  supplierController.getSupplierProfile,
-);
-router.get('/supplier-applications/:id/tours',
-  requirePermission('suppliers.view'),
-  supplierController.getSupplierTours,
-);
-router.get('/supplier-applications/:id/reviews',
-  requirePermission('suppliers.view'),
-  supplierController.getSupplierReviews,
-);
-router.get('/supplier-applications/:id/analytics',
-  requirePermission('suppliers.view'),
-  supplierController.getSupplierAnalytics,
-);
-router.patch('/supplier-applications/:id/review',
-  requirePermission('suppliers.approve'),
-  supplierController.reviewApplication,
-);
-router.patch('/supplier-applications/:id/suspend',
-  requirePermission('suppliers.approve'),
-  supplierController.suspendSupplier,
-);
-router.patch('/supplier-applications/:id/activate',
-  requirePermission('suppliers.approve'),
-  supplierController.activateSupplier,
-);
-
-// ══════════════════════════════════════════════════════════════════════════
-// REVIEW MANAGEMENT — shared platform endpoints (proxied)
 module.exports = router;
