@@ -238,6 +238,7 @@ const specialOfferRoutes = require('./routes/specialOfferRoutes');
 const locationRoutes = require('./routes/locationRoutes');
 const keywordRoutes = require('./routes/keywordRoutes');
 const expeditionRoutes = require('./routes/expeditionRoutes');
+const travioGhanaRoutes = require('./routes/travioGhanaRoutes');
 const blogRoutes = require('./routes/blogRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');
 const homepageRoutes = require('./routes/homepageRoutes');
