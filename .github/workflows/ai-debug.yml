@@ -196,7 +196,11 @@ jobs:
             echo "Patch length: ${#PATCH} chars"
 
             # Safety check: diffstat
-            CHANGED_FILES=$(echo "$PATCH" | grep '^diff --git' | wc -l)
+            CHANGED_FILES=$(echo "$PATCH" | grep -cE '^(diff --git|--- a/)' || true)
+            if [ "$CHANGED_FILES" -gt "$MAX_FILES" ]; then
+              # Try the more specific pattern
+              CHANGED_FILES=$(echo "$PATCH" | grep -c '^diff --git' || true)
+            fi
             echo "Files changed in patch: $CHANGED_FILES"
             if [ "$CHANGED_FILES" -gt "$MAX_FILES" ]; then
               echo "Patch touches $CHANGED_FILES files (max $MAX_FILES). Skipping."
@@ -217,8 +221,46 @@ jobs:
 
             echo "$PATCH" > .ci-results/fix.patch
 
+            APPLIED=false
             if git apply --check .ci-results/fix.patch 2>/dev/null; then
               git apply .ci-results/fix.patch
+              APPLIED=true
+            elif git apply --check --3way .ci-results/fix.patch 2>/dev/null; then
+              git apply --3way .ci-results/fix.patch
+              APPLIED=true
+            else
+              # Try to extract and apply individual file changes
+              echo "Attempting partial patch extraction..."
+              CURRENT_FILE=""
+              PARTIAL_PATCH=""
+              while IFS= read -r line; do
+                if echo "$line" | grep -qE '^diff --git'; then
+                  if [ -n "$CURRENT_FILE" ] && [ -n "$PARTIAL_PATCH" ]; then
+                    echo "$PARTIAL_PATCH" > .ci-results/partial.patch
+                    if git apply --check .ci-results/partial.patch 2>/dev/null; then
+                      git apply .ci-results/partial.patch
+                      APPLIED=true
+                    fi
+                    rm -f .ci-results/partial.patch
+                  fi
+                  CURRENT_FILE=$(echo "$line" | sed 's|diff --git a/\(.*\) b/.*|\1|')
+                  PARTIAL_PATCH="$line"$'\n'
+                elif [ -n "$CURRENT_FILE" ]; then
+                  PARTIAL_PATCH+="$line"$'\n'
+                fi
+              done <<< "$PATCH"
+              # Apply last chunk
+              if [ -n "$CURRENT_FILE" ] && [ -n "$PARTIAL_PATCH" ]; then
+                echo "$PARTIAL_PATCH" > .ci-results/partial.patch
+                if git apply --check .ci-results/partial.patch 2>/dev/null; then
+                  git apply .ci-results/partial.patch
+                  APPLIED=true
+                fi
+                rm -f .ci-results/partial.patch
+              fi
+            fi
+
+            if [ "$APPLIED" = "true" ]; then
               echo "Running verification: $VERIFY"
               if eval "$VERIFY" 2>&1; then
                 echo ""
