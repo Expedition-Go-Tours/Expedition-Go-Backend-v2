@@ -61,11 +61,13 @@ jobs:
           MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
         run: |
           set +e
+          mkdir -p .ci-results
+          echo "" > .ci-results/debug-log.txt
 
           DEBUG_BRANCH="ai-fix/$(date +%s)"
           git checkout -b "$DEBUG_BRANCH"
 
-          # Read files — use || true so bash -e doesn't kill us
+          # Read files
           FAIL_LOG=""
           FAIL_JOBS=""
           TEMPLATE=""
@@ -79,15 +81,17 @@ jobs:
             TEMPLATE=$(cat .github/workflows/ai-debug-prompt.txt)
           fi
 
-          echo "FAIL_LOG length: ${#FAIL_LOG}"
-          echo "FAIL_JOBS: $FAIL_JOBS"
-          echo "TEMPLATE length: ${#TEMPLATE}"
+          echo "FAIL_LOG length: ${#FAIL_LOG}" | tee -a .ci-results/debug-log.txt
+          echo "FAIL_JOBS: $FAIL_JOBS" | tee -a .ci-results/debug-log.txt
+          echo "TEMPLATE length: ${#TEMPLATE}" | tee -a .ci-results/debug-log.txt
 
           if [ -z "$TEMPLATE" ]; then
-            echo "ERROR: ai-debug-prompt.txt not found or empty"
+            echo "ERROR: ai-debug-prompt.txt not found or empty" | tee -a .ci-results/debug-log.txt
             echo "fixed=false" >> $GITHUB_OUTPUT
             echo "debug_branch=$DEBUG_BRANCH" >> $GITHUB_OUTPUT
             echo "attempts=0" >> $GITHUB_OUTPUT
+            echo "last_analysis=template not found" >> $GITHUB_OUTPUT
+            echo "last_confidence=0" >> $GITHUB_OUTPUT
             exit 1
           fi
 
@@ -97,15 +101,12 @@ jobs:
           while [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ] && [ "$FIXED" = "false" ]; do
             ATTEMPT=$((ATTEMPT + 1))
             echo ""
-            echo "=== AI Debug Attempt $ATTEMPT / $MAX_ATTEMPTS ==="
-            echo ""
+            echo "=== AI Debug Attempt $ATTEMPT / $MAX_ATTEMPTS ===" | tee -a .ci-results/debug-log.txt
 
             # Read content of files mentioned in error logs
-            # Strip absolute CI runner paths to get relative paths
             FILE_CONTEXT=""
             if [ -n "$FAIL_JOBS" ]; then
               for FILE_PATH in $(echo "$FAIL_LOG" | grep -oE '[a-zA-Z0-9_/.-]+\.(js|ts|jsx|tsx|mjs)' | sort -u | head -5); do
-                # Try to find the file by stripping common CI runner prefixes
                 REL_PATH="$FILE_PATH"
                 for PREFIX in "/home/runner/work/Expedition-Go-Backend-v2/Expedition-Go-Backend-v2/" "/home/runner/work/Expedition-Go-Backend-v2/" "/home/runner/work/"; do
                   if [[ "$REL_PATH" == "$PREFIX"* ]]; then
@@ -113,9 +114,8 @@ jobs:
                     break
                   fi
                 done
-                # Also try just the last 2-3 path components
                 SHORT_PATH=$(echo "$REL_PATH" | grep -oE '[^/]+/[^/]+/[^/]+$' || true)
-                  FINAL_PATH=""
+                FINAL_PATH=""
                 for CANDIDATE in "$REL_PATH" "$SHORT_PATH"; do
                   if [ -n "$CANDIDATE" ] && [ -f "$CANDIDATE" ]; then
                     FINAL_PATH="$CANDIDATE"
@@ -130,45 +130,43 @@ jobs:
                   FILE_CONTEXT+=$(cat /tmp/file_ctx_all.txt)$'\n'
                   FILE_CONTEXT+=$'\n'"=== END FILE: $FINAL_PATH ==="$'\n'
                   rm -f /tmp/file_ctx_all.txt
-                  echo "  Loaded: $FINAL_PATH ($LINE_COUNT lines)"
+                  echo "  Loaded: $FINAL_PATH ($LINE_COUNT lines)" | tee -a .ci-results/debug-log.txt
                 else
-                  echo "  Could not find: $FILE_PATH (tried $REL_PATH, $SHORT_PATH)"
+                  echo "  Could not find: $FILE_PATH (tried $REL_PATH, $SHORT_PATH)" | tee -a .ci-results/debug-log.txt
                 fi
               done
+            else
+              echo "  No FAIL_JOBS — skipping file loading" | tee -a .ci-results/debug-log.txt
             fi
-            echo "FILE_CONTEXT length: ${#FILE_CONTEXT}"
+            echo "FILE_CONTEXT length: ${#FILE_CONTEXT}" | tee -a .ci-results/debug-log.txt
 
-            # Build prompt from template using jq for safe escaping
-            PROMPT=$(jq -n --arg template "$TEMPLATE" --arg log "$FAIL_LOG" --arg jobs "$FAIL_JOBS" --arg files "$FILE_CONTEXT" \
-              '$template | gsub("\\{\\{FAIL_LOG\\}\\}"; $log) | gsub("\\{\\{FAIL_JOBS\\}\\}"; $jobs) | gsub("\\{\\{FILE_CONTENTS\\}\\}"; $files)' 2>/dev/null)
-
+            # Build prompt using simple sed replacement (avoids jq arg size limits)
+            PROMPT=$(echo "$TEMPLATE" | sed "s|{{FAIL_LOG}}|$FAIL_LOG|g; s|{{FAIL_JOBS}}|$FAIL_JOBS|g; s|{{FILE_CONTENTS}}|$FILE_CONTEXT|g")
             if [ -z "$PROMPT" ]; then
-              echo "ERROR: Failed to build prompt from template"
-              echo "TEMPLATE length: ${#TEMPLATE}"
-              echo "FAIL_LOG length: ${#FAIL_LOG}"
-              echo "FILE_CONTEXT length: ${#FILE_CONTEXT}"
+              echo "ERROR: Failed to build prompt" | tee -a .ci-results/debug-log.txt
               continue
             fi
 
-            echo "PROMPT length: ${#PROMPT}"
+            echo "PROMPT length: ${#PROMPT}" | tee -a .ci-results/debug-log.txt
 
             if [ -z "$MIMO_API_KEY" ]; then
-              echo "MIMO_API_KEY not set — cannot call AI"
+              echo "MIMO_API_KEY not set" | tee -a .ci-results/debug-log.txt
               break
             fi
 
-            # Build request body as a file to avoid shell interpolation issues with large payloads
+            # Build request body as a file to avoid shell interpolation issues
             jq -n --arg prompt "$PROMPT" \
               '{model:"mimo-v2.5",messages:[{role:"user",content:$prompt}],max_tokens:100000,temperature:0.1}' \
-              > /tmp/mimo_request.json 2>/dev/null
+              > /tmp/mimo_request.json 2>.ci-results/jq-error.txt
 
             if [ ! -s /tmp/mimo_request.json ]; then
-              echo "ERROR: Failed to build request JSON"
+              echo "ERROR: Failed to build request JSON" | tee -a .ci-results/debug-log.txt
+              echo "jq error: $(cat .ci-results/jq-error.txt)" | tee -a .ci-results/debug-log.txt
               continue
             fi
 
-            echo "Request body size: $(wc -c < /tmp/mimo_request.json) bytes"
-            echo "Calling MiMo API (max_tokens: 100000)..."
+            echo "Request body size: $(wc -c < /tmp/mimo_request.json) bytes" | tee -a .ci-results/debug-log.txt
+            echo "Calling MiMo API..." | tee -a .ci-results/debug-log.txt
 
             RESPONSE=$(curl -s --max-time 180 \
               -H "Authorization: Bearer $MIMO_API_KEY" \
@@ -179,127 +177,97 @@ jobs:
             echo "$RESPONSE" > .ci-results/last-response-attempt-$ATTEMPT.json 2>/dev/null || true
 
             if [ -z "$RESPONSE" ]; then
-              echo "ERROR: Empty response from API"
-              echo "curl exit code: $?"
+              echo "ERROR: Empty response from API (attempt $ATTEMPT)" | tee -a .ci-results/debug-log.txt
               continue
             fi
+
+            echo "Response size: ${#RESPONSE} bytes" | tee -a .ci-results/debug-log.txt
 
             # Check for API errors
             API_ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty' 2>/dev/null)
             if [ -n "$API_ERROR" ]; then
-              echo "API error: $API_ERROR"
-              echo "Full response: $(echo "$RESPONSE" | head -c 500)"
+              echo "API error: $API_ERROR" | tee -a .ci-results/debug-log.txt
               continue
             fi
 
-            # MiMo reasoning model: content may be in content or reasoning_content
-            # First try content, then reasoning_content
+            # Extract content - try content first, then reasoning_content
             CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // ""' 2>/dev/null)
+            FINISH_REASON=$(echo "$RESPONSE" | jq -r '.choices[0].finish_reason // "unknown"' 2>/dev/null)
+            echo "Finish reason: $FINISH_REASON, Content length: ${#CONTENT}" | tee -a .ci-results/debug-log.txt
+
             if [ -z "$CONTENT" ]; then
               CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.reasoning_content // ""' 2>/dev/null)
+              echo "Using reasoning_content fallback, length: ${#CONTENT}" | tee -a .ci-results/debug-log.txt
             fi
-            FINISH_REASON=$(echo "$RESPONSE" | jq -r '.choices[0].finish_reason // "unknown"' 2>/dev/null)
-            echo "Finish reason: $FINISH_REASON"
 
             if [ -z "$CONTENT" ] || [ "$CONTENT" = "null" ]; then
-              echo "AI returned empty response"
-              echo "Raw response keys: $(echo "$RESPONSE" | jq 'keys' 2>/dev/null)"
-              echo "Choices content preview: $(echo "$RESPONSE" | jq -r '.choices[0].message | keys' 2>/dev/null)"
+              echo "AI returned empty content (attempt $ATTEMPT)" | tee -a .ci-results/debug-log.txt
+              echo "Response keys: $(echo "$RESPONSE" | jq 'keys' 2>/dev/null)" | tee -a .ci-results/debug-log.txt
               continue
             fi
 
-            echo "Response length: ${#CONTENT} chars"
-            echo "Finish: $FINISH_REASON | Content: ${#CONTENT} chars" >> .ci-results/debug-log.txt
+            echo "Content length: ${#CONTENT} chars" | tee -a .ci-results/debug-log.txt
 
-            # Strip markdown code fences if present
+            # Strip markdown code fences
             CONTENT=$(echo "$CONTENT" | sed '/^```/d')
 
             # Extract JSON from response
             PARSED=$(echo "$CONTENT" | jq '.' 2>/dev/null)
             if [ -z "$PARSED" ] || [ "$PARSED" = "null" ]; then
-              # Try extracting JSON block from text
               PARSED=$(echo "$CONTENT" | sed -n '/^{/,/^}/p' | jq '.' 2>/dev/null)
             fi
 
             if [ -z "$PARSED" ] || [ "$PARSED" = "null" ]; then
-              echo "Failed to parse AI response as JSON"
-              echo "Content preview: $(echo "$CONTENT" | head -c 500)"
-              echo "PARSE FAILED attempt $ATTEMPT: $(echo "$CONTENT" | head -c 200)" >> .ci-results/debug-log.txt
+              echo "FAILED to parse JSON (attempt $ATTEMPT)" | tee -a .ci-results/debug-log.txt
+              echo "Content preview: $(echo "$CONTENT" | head -c 300)" | tee -a .ci-results/debug-log.txt
               continue
             fi
 
-            echo "PARSE OK attempt $ATTEMPT" >> .ci-results/debug-log.txt
+            echo "JSON parsed OK" | tee -a .ci-results/debug-log.txt
             ANALYSIS=$(echo "$PARSED" | jq -r '.analysis // "unknown"' 2>/dev/null)
             CONFIDENCE=$(echo "$PARSED" | jq -r '.confidence // 0' 2>/dev/null)
-            FIX_COUNT=$(echo "$PARSED" | jq -r '.fixes | length // 0' 2>/dev/null)
-            VERIFY=$(echo "$PARSED" | jq -r '.verify_cmd // ""' 2>/dev/null)
 
-            echo "Analysis: $ANALYSIS"
-            echo "Confidence: $CONFIDENCE"
-            echo "Fixes: $FIX_COUNT"
+            echo "Analysis: $ANALYSIS" | tee -a .ci-results/debug-log.txt
+            echo "Confidence: $CONFIDENCE" | tee -a .ci-results/debug-log.txt
 
-            # Safety check: skip if confidence too low
             IS_LOW=$(echo "$CONFIDENCE" | jq 'if type == "number" and . < 0.5 then true else false end' 2>/dev/null)
             if [ "$IS_LOW" = "true" ]; then
-              echo "Confidence too low ($CONFIDENCE). Skipping."
+              echo "Confidence too low ($CONFIDENCE). Skipping." | tee -a .ci-results/debug-log.txt
               continue
             fi
 
             APPLIED=false
 
-            # Apply fixes from the new format
+            FIX_COUNT=$(echo "$PARSED" | jq -r '.fixes | length // 0' 2>/dev/null)
             if [ -n "$FIX_COUNT" ] && [ "$FIX_COUNT" != "null" ] && [ "$FIX_COUNT" -gt 0 ]; then
-              echo "Applying $FIX_COUNT fix(es)..."
+              echo "Applying $FIX_COUNT fix(es)..." | tee -a .ci-results/debug-log.txt
               for i in $(seq 0 $((FIX_COUNT - 1))); do
                 FIX_FILE=$(echo "$PARSED" | jq -r ".fixes[$i].file" 2>/dev/null)
                 FIX_ACTION=$(echo "$PARSED" | jq -r ".fixes[$i].action" 2>/dev/null)
                 FIX_LINES=$(echo "$PARSED" | jq -r ".fixes[$i].line_numbers[]? // empty" 2>/dev/null)
-                FIX_OLD=$(echo "$PARSED" | jq -r ".fixes[$i].old_lines[]? // empty" 2>/dev/null)
-                FIX_NEW=$(echo "$PARSED" | jq -r ".fixes[$i].new_lines[]? // empty" 2>/dev/null)
 
-                echo "  Fix $((i+1)): $FIX_ACTION on $FIX_FILE (lines: $FIX_LINES)"
+                echo "  Fix $((i+1)): $FIX_ACTION on $FIX_FILE (lines: $FIX_LINES)" | tee -a .ci-results/debug-log.txt
 
                 if [ ! -f "$FIX_FILE" ]; then
-                  echo "  ERROR: File $FIX_FILE not found"
+                  echo "  ERROR: File $FIX_FILE not found" | tee -a .ci-results/debug-log.txt
                   continue
                 fi
 
-                # Backup
                 cp "$FIX_FILE" ".ci-results/fix-backup-$(echo $FIX_FILE | tr '/' '_')"
 
                 if [ "$FIX_ACTION" = "remove_lines" ]; then
-                  # Remove exact lines by line number (reverse order to preserve numbering)
                   for LN in $(echo "$FIX_LINES" | sort -rn); do
                     sed -i "${LN}d" "$FIX_FILE"
                   done
                   APPLIED=true
 
                 elif [ "$FIX_ACTION" = "replace_lines" ]; then
-                  # Read old lines and new lines into arrays
                   OLD_ARRAY=()
-                  while IFS= read -r line; do
-                    OLD_ARRAY+=("$line")
-                  done <<< "$FIX_OLD"
+                  while IFS= read -r line; do OLD_ARRAY+=("$line"); done <<< "$(echo "$PARSED" | jq -r ".fixes[$i].old_lines[]? // empty" 2>/dev/null)"
                   NEW_ARRAY=()
-                  while IFS= read -r line; do
-                    NEW_ARRAY+=("$line")
-                  done <<< "$FIX_NEW"
-
-                  # Find the first line number and replace
+                  while IFS= read -r line; do NEW_ARRAY+=("$line"); done <<< "$(echo "$PARSED" | jq -r ".fixes[$i].new_lines[]? // empty" 2>/dev/null)"
                   FIRST_LINE=$(echo "$FIX_LINES" | head -1)
                   OLD_COUNT=${#OLD_ARRAY[@]}
-                  NEW_COUNT=${#NEW_ARRAY[@]}
-
-                  # Build sed command: delete old lines, insert new lines
-                  SED_CMD="${FIRST_LINE}"
-                  for ((j=0; j<OLD_COUNT; j++)); do
-                    SED_CMD="${SED_CMD}d"
-                    if [ $((j+1)) -lt "$OLD_COUNT" ]; then
-                      SED_CMD="${SED_CMD};$((FIRST_LINE+j+1))"
-                    fi
-                  done
-
-                  # Use a temp approach: read file, replace lines
                   head -n $((FIRST_LINE - 1)) "$FIX_FILE" > /tmp/fix_top.txt
                   printf '%s\n' "${NEW_ARRAY[@]}" > /tmp/fix_mid.txt
                   tail -n +$((FIRST_LINE + OLD_COUNT)) "$FIX_FILE" > /tmp/fix_bot.txt
@@ -310,7 +278,9 @@ jobs:
                 elif [ "$FIX_ACTION" = "add_lines" ]; then
                   INSERT_AFTER=$(echo "$FIX_LINES" | tail -1)
                   head -n "$INSERT_AFTER" "$FIX_FILE" > /tmp/fix_top.txt
-                  printf '%s\n' $FIX_NEW > /tmp/fix_mid.txt
+                  NEW_ARRAY=()
+                  while IFS= read -r line; do NEW_ARRAY+=("$line"); done <<< "$(echo "$PARSED" | jq -r ".fixes[$i].new_lines[]? // empty" 2>/dev/null)"
+                  printf '%s\n' "${NEW_ARRAY[@]}" > /tmp/fix_mid.txt
                   tail -n +$((INSERT_AFTER + 1)) "$FIX_FILE" > /tmp/fix_bot.txt
                   cat /tmp/fix_top.txt /tmp/fix_mid.txt /tmp/fix_bot.txt > "$FIX_FILE"
                   rm -f /tmp/fix_top.txt /tmp/fix_mid.txt /tmp/fix_bot.txt
@@ -320,33 +290,42 @@ jobs:
             fi
 
             if [ "$APPLIED" = "true" ]; then
-              # Run verification — prefer npm test as fallback
               VERIFY_CMD="$VERIFY"
               if [ -z "$VERIFY_CMD" ] || [ "$VERIFY_CMD" = "null" ]; then
                 VERIFY_CMD="npm test -- --forceExit"
               fi
-              echo "Running verification: $VERIFY_CMD"
-              if bash -c "$VERIFY_CMD" 2>&1; then
-                echo ""
-                echo "Fix verified on attempt $ATTEMPT"
+              echo "Running verification: $VERIFY_CMD" | tee -a .ci-results/debug-log.txt
+              if bash -c "$VERIFY_CMD" 2>&1 | tee -a .ci-results/debug-log.txt; then
+                echo "Fix verified on attempt $ATTEMPT" | tee -a .ci-results/debug-log.txt
                 FIXED=true
               else
-                echo "Verification failed. Reverting..."
+                echo "Verification failed. Reverting..." | tee -a .ci-results/debug-log.txt
                 git checkout -- .
-                rm -f .ci-results/fix.patch .ci-results/fix-backup-*
+                rm -f .ci-results/fix-backup-*
               fi
             else
-              echo "Could not apply fix. Reverting..."
-              git checkout -- .
-              rm -f .ci-results/fix.patch .ci-results/fix-backup-*
+              echo "Could not apply fix (attempt $ATTEMPT)" | tee -a .ci-results/debug-log.txt
             fi
           done
 
           echo "fixed=$FIXED" >> $GITHUB_OUTPUT
           echo "debug_branch=$DEBUG_BRANCH" >> $GITHUB_OUTPUT
           echo "attempts=$ATTEMPT" >> $GITHUB_OUTPUT
-          echo "last_analysis=$ANALYSIS" >> $GITHUB_OUTPUT
-          echo "last_confidence=$CONFIDENCE" >> $GITHUB_OUTPUT
+          echo "last_analysis=${ANALYSIS:-}" >> $GITHUB_OUTPUT
+          echo "last_confidence=${CONFIDENCE:-}" >> $GITHUB_OUTPUT
+
+          # Write step summary
+          {
+            echo "## AI Debug Agent - Attempt $ATTEMPT"
+            echo ""
+            echo "**Fixed:** $FIXED"
+            echo "**Attempts:** $ATTEMPT / $MAX_ATTEMPTS"
+            echo ""
+            echo "### Debug Log"
+            echo '```'
+            cat .ci-results/debug-log.txt
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
 
       - name: Create draft PR
         if: steps.debug.outputs.fixed == 'true'
