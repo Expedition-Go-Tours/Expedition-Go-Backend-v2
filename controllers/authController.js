@@ -372,6 +372,30 @@ function getClientOrigin(req) {
   }
 }
 
+function getAllowedClientOrigins() {
+  const defaults = ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5174', 'http://127.0.0.1:5174'];
+  const configured = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return [...defaults, ...configured];
+}
+
+/**
+ * The OAuth `state` (the client origin the user should be returned to after
+ * Google) must come from the client's own request so a dev session returns to
+ * the dev origin — never derived from the Origin header, whose absence falls
+ * back to the production CLIENT_URL and could bounce dev tokens there.
+ * The value is validated against ALLOWED_ORIGINS before use.
+ */
+function resolveOAuthReturnOrigin(req) {
+  const requested = typeof req.query.state === 'string' ? req.query.state : '';
+  if (requested && getAllowedClientOrigins().includes(requested)) {
+    return requested;
+  }
+  return getClientOrigin(req);
+}
+
 exports.googleAuth = catchAsync(async (req, res, next) => {
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
     return res.redirect(`${getClientOrigin(req)}/login?error=Google sign-in is not configured. Contact an administrator.`);
@@ -379,7 +403,7 @@ exports.googleAuth = catchAsync(async (req, res, next) => {
   passport.authenticate('google', {
     session: false,
     scope: ['profile', 'email'],
-    state: getClientOrigin(req),
+    state: resolveOAuthReturnOrigin(req),
     prompt: req.query.prompt || 'select_account',
   })(req, res, next);
 });

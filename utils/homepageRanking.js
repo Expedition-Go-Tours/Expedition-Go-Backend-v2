@@ -181,9 +181,9 @@ function mapTourCard(t) {
     : '';
 
   // Active special offers attached to the tour (only projected by queries
-  // that include the specialOffers relation, e.g. New Experiences) — flatten
-  // the target rows to the same shape the tour-detail endpoint projects so
-  // the frontend can render offer tags/countdowns without extra lookups.
+  // that include the specialOfferTargets join, e.g. New Experiences) —
+  // flatten the target rows to the same shape the tour-detail endpoint
+  // projects so the frontend can render offer tags without extra lookups.
   let specialOffers = undefined;
   if (Array.isArray(t.specialOfferTargets) && t.specialOfferTargets.length > 0) {
     specialOffers = t.specialOfferTargets
@@ -791,7 +791,9 @@ async function getNewExperiences(limit = DEFAULT_LIMIT) {
         ...TOUR_SELECT,
         // New tours with active special offers appear here alongside the
         // Special Offers section; project the offers so the cards can render
-        // the offer tag/countdown/promo price without extra lookups.
+        // the offer tag/countdown/promo price without extra lookups. Tours relate to
+        // offers through specialOfferTargets (the join table) — the targets
+        // are flattened to `specialOffers` in mapTourCard.
         specialOfferTargets: {
           where: {
             specialOffer: {
@@ -825,7 +827,11 @@ async function getNewExperiences(limit = DEFAULT_LIMIT) {
       }
     }
 
-    return uniqueTours.slice(0, limit).map(mapTourCard);
+    // Feed the target rows to mapTourCard as `specialOffers` — it expects the
+    // join rows (with a nested .specialOffer) and flattens them.
+    return uniqueTours.slice(0, limit).map((t) =>
+      mapTourCard(t.specialOfferTargets ? { ...t, specialOffers: t.specialOfferTargets } : t)
+    );
   }, ttl);
 }
 
