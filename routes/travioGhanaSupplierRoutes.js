@@ -52,7 +52,7 @@ router.patch('/settings/booking-rules', resolveSupplier, supplierSettingsControl
 
 // Team (proxied to shared controller)
 router.get('/settings/team/my-role', resolveSupplier, teamController.getMyTeamRole);
-router.get('/settings/team/members', resolveSupplier, teamController.getTeamMembers);
+router.get('/settings/team/members', resolveSupplier, (req, res, next) => { if (typeof teamController.getTeamMembers === 'function') { return teamController.getTeamMembers(req, res, next); } next(new Error('teamController.getTeamMembers is not a function')); });
 router.post('/settings/team/invite', resolveSupplier, teamController.inviteTeamMember);
 router.patch('/settings/team/members/:id', resolveSupplier, teamController.updateTeamMember);
 router.delete('/settings/team/members/:id', resolveSupplier, teamController.removeTeamMember);
