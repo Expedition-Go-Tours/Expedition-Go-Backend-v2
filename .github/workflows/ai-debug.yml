@@ -70,7 +70,7 @@ jobs:
           FAIL_JOBS=""
           TEMPLATE=""
           if [ -f .ci-results/failed-logs.txt ]; then
-            FAIL_LOG=$(cat .ci-results/failed-logs.txt | head -3000)
+            FAIL_LOG=$(cat .ci-results/failed-logs.txt | head -2000)
           fi
           if [ -f .ci-results/failed-jobs.txt ]; then
             FAIL_JOBS=$(cat .ci-results/failed-jobs.txt)
@@ -100,17 +100,18 @@ jobs:
             echo "=== AI Debug Attempt $ATTEMPT / $MAX_ATTEMPTS ==="
             echo ""
 
-            # Try to read the relevant source files for context
+            # Try to read the relevant source files for context (limit to 10 files, 50 lines each)
             FILE_CONTEXT=""
             if [ -n "$FAIL_JOBS" ]; then
-              for FILE_PATH in $(echo "$FAIL_LOG" | grep -oE '[a-zA-Z0-9_/.-]+\.(js|ts|jsx|tsx|mjs)' | sort -u | head -20); do
+              for FILE_PATH in $(echo "$FAIL_LOG" | grep -oE '[a-zA-Z0-9_/.-]+\.(js|ts|jsx|tsx|mjs)' | sort -u | head -10); do
                 if [ -f "$FILE_PATH" ]; then
                   FILE_CONTEXT+=$'\n'"--- FILE: $FILE_PATH ---"$'\n'
-                  FILE_CONTEXT+=$(head -200 "$FILE_PATH")$'\n'
+                  FILE_CONTEXT+=$(head -50 "$FILE_PATH")$'\n'
                   FILE_CONTEXT+=$'\n'"--- END FILE: $FILE_PATH ---"$'\n'
                 fi
               done
             fi
+            echo "FILE_CONTEXT length: ${#FILE_CONTEXT}"
 
             # Build prompt from template using jq for safe escaping
             PROMPT=$(jq -n --arg template "$TEMPLATE" --arg log "$FAIL_LOG" --arg jobs "$FAIL_JOBS" --arg files "$FILE_CONTEXT" \
@@ -141,8 +142,11 @@ jobs:
               -d "{\"model\":\"mimo-v2.5\",\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}],\"max_tokens\":16000,\"temperature\":0.1}" \
               "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions" 2>/dev/null)
 
+            echo "$RESPONSE" > .ci-results/last-response.json 2>/dev/null || true
+
             if [ -z "$RESPONSE" ]; then
               echo "ERROR: Empty response from API"
+              echo "curl exit code: $?"
               continue
             fi
 
