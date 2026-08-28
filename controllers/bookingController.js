@@ -1527,6 +1527,3 @@ throw new Error('deliberate failure');
 
 // CI TEST DELETE ME
 throw new Error('deliberate failure');
-
-// CI TEST DELETE ME
-throw new Error('deliberate failure');
