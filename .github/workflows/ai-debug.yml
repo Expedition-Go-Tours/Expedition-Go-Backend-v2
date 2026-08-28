@@ -350,11 +350,15 @@ jobs:
           DEBUG_BRANCH="${{ steps.debug.outputs.debug_branch }}"
           ATTEMPTS="${{ steps.debug.outputs.attempts }}"
 
+          git config user.name "gideon211"
+          git config user.email "gideon211@users.noreply.github.com"
+
           git add -A
           COMMIT_MSG="fix: AI-generated patch for CI failure"$'\n\n'"Automated fix by ai-debug workflow."$'\n'"Attempts: $ATTEMPTS / $MAX_ATTEMPTS"$'\n'"Target: ${{ github.event.workflow_run.head_branch }}"$'\n\n'"Review before merging."
           git commit -m "$COMMIT_MSG"
 
-          git push origin "$DEBUG_BRANCH"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/Expedition-Go-Tours/Expedition-Go-Backend-v2.git"
+          git push origin "$DEBUG_BRANCH" 2>&1 | tail -20
 
           PR_BODY="## AI-Generated Fix"$'\n\n'
           PR_BODY+="**Target:** \`${{ github.event.workflow_run.head_branch }}\`"$'\n'
