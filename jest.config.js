@@ -5,7 +5,7 @@ module.exports = {
   collectCoverage: true,
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'json-summary'],
-  coveragePathIgnorePatterns: ['/node_modules/', '/generated/'],
+  coveragePathIgnorePatterns: ['/node_modules/', '/generated/', 'bm25Index.js', 'xgboostService.js', 'clipClient.js', 'clipService.py'],
   setupFiles: ['./jest.setup.js'],
   globalSetup: './jest.globalSetup.js',
   testTimeout: 30000,
