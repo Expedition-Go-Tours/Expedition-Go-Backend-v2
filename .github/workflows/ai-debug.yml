@@ -199,6 +199,7 @@ jobs:
             ANALYSIS=$(echo "$PARSED" | jq -r '.analysis // "unknown"' 2>/dev/null)
             CONFIDENCE=$(echo "$PARSED" | jq -r '.confidence // 0' 2>/dev/null)
             FIX_COUNT=$(echo "$PARSED" | jq -r '.fixes | length // 0' 2>/dev/null)
+            VERIFY=$(echo "$PARSED" | jq -r '.verify_cmd // ""' 2>/dev/null)
 
             echo "Analysis: $ANALYSIS"
             echo "Confidence: $CONFIDENCE"
