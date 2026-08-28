@@ -50,6 +50,23 @@ function extractCurrency(schedulesAndPricing) {
 }
 
 function transformForListing(tour, expeditionRecord) {
+  // Map specialOfferTargets to the shape the frontend expects
+  const specialOffers = Array.isArray(tour.specialOfferTargets)
+    ? tour.specialOfferTargets
+        .filter((t) => t && t.specialOffer)
+        .map((t) => ({
+          id: t.specialOffer.id,
+          name: t.specialOffer.name || '',
+          offerType: t.specialOffer.offerType,
+          discountType: t.specialOffer.discountType,
+          discountPercentage: t.specialOffer.discountPercentage,
+          fixedDiscountValue: t.specialOffer.fixedDiscountValue,
+          startDate: t.specialOffer.startDate,
+          endDate: t.specialOffer.endDate,
+          promoCode: t.specialOffer.promoCode || null,
+        }))
+    : undefined;
+
   return {
     id: tour.id,
     title: tour.title,
@@ -76,6 +93,7 @@ function transformForListing(tour, expeditionRecord) {
       : null,
     bookingFlow: expeditionRecord?.bookingFlow || null,
     externalUrl: expeditionRecord?.externalUrl || null,
+    ...(specialOffers ? { specialOffers } : {}),
   };
 }
 
@@ -210,6 +228,18 @@ exports.getTours = catchAsync(async (req, res) => {
             durationMinutes: true, averageRating: true, reviewCount: true, viewCount: true,
             city: true, country: true, schedulesAndPricing: true,
             supplier: { select: { name: true, photoURL: true } },
+            specialOfferTargets: {
+              where: {
+                specialOffer: {
+                  isActive: true,
+                  AND: [
+                    { OR: [{ startDate: null }, { startDate: { lte: new Date() } }] },
+                    { OR: [{ endDate: null }, { endDate: { gte: new Date() } }] },
+                  ],
+                },
+              },
+              include: { specialOffer: true },
+            },
           },
         },
       },
@@ -293,6 +323,37 @@ exports.getFeaturedTours = catchAsync(async (req, res) => {
         })),
       },
     };
+  }, 300);
+
+  res.status(200).json(result);
+});
+
+/**
+ * GET /expedition/tours/badges
+ *
+ * Lightweight endpoint returning only badge fields for all active tours.
+ * Used by the frontend to enrich tour cards with "Pickup included",
+ * "Free cancellation", "English Guide" badges without fetching full tour data.
+ */
+exports.getTourBadges = catchAsync(async (req, res) => {
+  const result = await cache.getOrSet('expedition:badges', async () => {
+    const tours = await prisma.tour.findMany({
+      where: {
+        status: 'ACTIVE',
+        supplier: { supplierProfile: { status: 'ACTIVE' } },
+      },
+      select: {
+        id: true,
+        slug: true,
+        pickupIncluded: true,
+        cancellationPolicy: true,
+        languages: true,
+        meetingMode: true,
+        accommodationIncluded: true,
+        difficulty: true,
+      },
+    });
+    return { status: 'success', data: { tours } };
   }, 300);
 
   res.status(200).json(result);

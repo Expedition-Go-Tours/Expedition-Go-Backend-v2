@@ -155,6 +155,19 @@ router.get('/tours/featured', expeditionController.getFeaturedTours);
 
 /**
  * @swagger
+ * /api/expedition/tours/badges:
+ *   get:
+ *     summary: Get lightweight badge data for all active tours
+ *     description: Returns only badge fields (pickupIncluded, cancellationPolicy, languages, etc.) for tour card enrichment.
+ *     tags: [Expedition]
+ *     responses:
+ *       200:
+ *         description: Badge data for all active tours
+ */
+router.get('/tours/badges', expeditionController.getTourBadges);
+
+/**
+ * @swagger
  * /api/expedition/tours/sitemap:
  *   get:
  *     summary: Get Expedition sitemap data
