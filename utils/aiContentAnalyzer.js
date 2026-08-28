@@ -551,10 +551,12 @@ function slugify(str) {
 /**
  * Select the best hero image for an attraction.
  *
- * Strategy: use the supplier's cover photo as default (they chose it to
- * represent their tour). CLIP only intervenes for DEDUP — if two attractions
- * would get the same image, CLIP picks a different one from the same tour's
- * photos or from other tours visiting this attraction.
+ * Strategy (in priority order):
+ * 1. Reference-based CLIP matching: fetch reference images from Wikimedia,
+ *    compare tour photos against them using CLIP embeddings, pick the best match.
+ * 2. Dedup fallback: if reference matching fails, use supplier's cover photo.
+ *    If already used by another attraction, try other photos from the same tour.
+ * 3. Cross-tour fallback: try cover photos from other tours visiting this attraction.
  *
  * @param {string} attractionName - The attraction name (e.g., "Cape Coast Castle")
  * @param {Set<string>} [usedImages] - Set of already-used image URLs for dedup
@@ -588,7 +590,45 @@ async function selectHeroImage(attractionName, usedImages = null) {
     return { heroImage: null, heroImageSource: 'none', heroImageTourId: null, imageRelevance: null };
   }
 
-  // Step 1: Try the best-rated tour's cover photo (supplier's choice)
+  // Collect ALL images from these tours
+  const allImages = [];
+  const imageToTour = new Map();
+  const seenUrls = new Set();
+  for (const tour of tours) {
+    const images = [tour.coverPhoto, ...(tour.photos || [])].filter(Boolean);
+    for (const imageUrl of images) {
+      if (!seenUrls.has(imageUrl)) {
+        seenUrls.add(imageUrl);
+        allImages.push(imageUrl);
+        imageToTour.set(imageUrl, tour);
+      }
+    }
+  }
+
+  // Step 1: Reference-based CLIP matching
+  // Fetch reference images from Wikimedia, compare against tour photos
+  try {
+    const { findBestMatch } = require('./referenceImageMatcher');
+    const unusedImages = allImages.filter(img => !usedImages.has(img));
+
+    if (unusedImages.length > 0) {
+      const match = await findBestMatch(attractionName, unusedImages);
+      if (match) {
+        usedImages.add(match.imageUrl);
+        const tour = imageToTour.get(match.imageUrl);
+        return {
+          heroImage: match.imageUrl,
+          heroImageSource: 'reference_match',
+          heroImageTourId: tour?.id || null,
+          imageRelevance: match.score,
+        };
+      }
+    }
+  } catch (err) {
+    logger.warn(`[selectHeroImage] Reference matching failed for "${attractionName}": ${err.message}`);
+  }
+
+  // Step 2: Dedup fallback — supplier's cover photo
   const bestTour = tours[0];
   if (bestTour.coverPhoto && !usedImages.has(bestTour.coverPhoto)) {
     usedImages.add(bestTour.coverPhoto);
@@ -600,8 +640,7 @@ async function selectHeroImage(attractionName, usedImages = null) {
     };
   }
 
-  // Step 2: Cover photo is already used by another attraction — find an
-  // unused image from the same tour's photos array.
+  // Step 3: Try other photos from the best tour
   if (bestTour.coverPhoto) {
     for (const photo of (bestTour.photos || [])) {
       if (photo && !usedImages.has(photo)) {
@@ -616,8 +655,7 @@ async function selectHeroImage(attractionName, usedImages = null) {
     }
   }
 
-  // Step 3: All images from the best tour are used — try cover photos
-  // from other tours visiting this attraction.
+  // Step 4: Try cover photos from other tours
   for (let i = 1; i < tours.length; i++) {
     const tour = tours[i];
     if (tour.coverPhoto && !usedImages.has(tour.coverPhoto)) {
@@ -629,7 +667,6 @@ async function selectHeroImage(attractionName, usedImages = null) {
         imageRelevance: null,
       };
     }
-    // Try photos from this tour too
     for (const photo of (tour.photos || [])) {
       if (photo && !usedImages.has(photo)) {
         usedImages.add(photo);
@@ -643,8 +680,7 @@ async function selectHeroImage(attractionName, usedImages = null) {
     }
   }
 
-  // Step 4: All images are used — return best tour's cover anyway (better
-  // than nothing, even if duplicated).
+  // Step 5: All images used — return best tour's cover anyway
   if (bestTour.coverPhoto) {
     return {
       heroImage: bestTour.coverPhoto,
