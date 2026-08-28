@@ -9,6 +9,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  actions: read
 
 jobs:
   ai-debug:
@@ -359,17 +360,17 @@ jobs:
             git config user.email "gideon211@users.noreply.github.com"
             echo "--- status ---"
             git status --short
-            git add -A
+            git add -A -- . ':(exclude).ci-results'
             echo "--- commit ---"
             git commit -m "fix: AI-generated patch for CI failure"$'\n\n'"Automated fix by ai-debug workflow."$'\n'"Attempts: $ATTEMPTS / $MAX_ATTEMPTS"
             echo "commit exit code: $?"
-            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/Expedition-Go-Tours/Expedition-Go-Backend-v2.git"
+            git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/Expedition-Go-Tours/Expedition-Go-Backend-v2.git"
             echo "--- push ---"
             git push origin "$DEBUG_BRANCH" 2>&1
             echo "push exit code: $?"
             echo "--- REST create PR ---"
             curl -sS -X POST \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Authorization: Bearer $GH_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/repos/Expedition-Go-Tours/Expedition-Go-Backend-v2/pulls" \
@@ -378,6 +379,8 @@ jobs:
             echo "pr-create exit code: $?"
           } 2>&1 | tee -a $GITHUB_STEP_SUMMARY "$OUTPUT"
           exit 0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Report PR step output
         if: steps.debug.outputs.fixed == 'true'
