@@ -1537,6 +1537,10 @@ exports.getMe = catchAsync(async (req, res, next) => {
     select: {
       id: true, name: true, email: true, photoURL: true,
       roles: true, createdAt: true,
+      adminRoleId: true,
+      adminRole: {
+        select: { id: true, name: true },
+      },
     },
   });
 
@@ -1544,5 +1548,28 @@ exports.getMe = catchAsync(async (req, res, next) => {
     return next(new AppError('User not found', 404));
   }
 
-  res.status(200).json({ status: 'success', data: { user } });
+  // Fetch permissions for the admin role
+  let permissions = [];
+  if (user.adminRoleId) {
+    const role = await prisma.adminRole.findUnique({
+      where: { id: user.adminRoleId },
+      include: {
+        permissions: {
+          include: { permission: true },
+        },
+      },
+    });
+    if (role) {
+      permissions = role.permissions.map((rp) => rp.permission.key);
+    }
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      ...user,
+      adminRoleId: user.adminRoleId || null,
+      adminRole: user.adminRole ? { ...user.adminRole, permissions } : null,
+    },
+  });
 });
