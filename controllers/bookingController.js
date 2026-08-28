@@ -1523,8 +1523,3 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
 
 module.exports = exports;
 
-// CI TEST DELETE ME
-throw new Error('deliberate failure');
-
-// CI TEST DELETE ME
-throw new Error('deliberate failure');

@@ -77,7 +77,7 @@ exports.getOverview = catchAsync(async (req, res, next) => {
           COUNT(*) FILTER (WHERE "createdAt" >= ${currentPeriodStart})::int AS "periodBookings",
           COUNT(*) FILTER (WHERE "createdAt" >= ${previousPeriodStart} AND "createdAt" < ${currentPeriodStart})::int AS "previousPeriodBookings"
         FROM "Booking"
-        WHERE "source" = ${GHANA_SOURCE}
+        WHERE "source"::text = ${GHANA_SOURCE}
           AND ("createdAt" >= ${scanStart} OR "paidAt" >= ${scanStart})
       `,
 
@@ -88,7 +88,7 @@ exports.getOverview = catchAsync(async (req, res, next) => {
           COUNT(*) FILTER (WHERE "createdAt" >= ${previousPeriodStart} AND "createdAt" < ${currentPeriodStart})::int AS "signupsPrevious",
           COUNT(*) FILTER (WHERE "lastLoginAt" >= ${currentPeriodStart} AND "active" = true)::int AS "activeNow"
         FROM "User"
-        WHERE ${GHANA_ROLE} = ANY("roles")
+        WHERE ${GHANA_ROLE} = ANY("roles"::text[])
           AND ("createdAt" >= ${scanStart} OR "lastLoginAt" >= ${scanStart})
       `,
 
@@ -173,7 +173,7 @@ exports.getRevenueTrend = catchAsync(async (req, res, next) => {
         ROUND(SUM("commissionAmount")::numeric, 2) AS commission,
         ROUND(SUM("supplierPayout")::numeric, 2)   AS "supplierPayout"
       FROM "Booking"
-      WHERE "source" = ${GHANA_SOURCE}
+      WHERE "source"::text = ${GHANA_SOURCE}
         AND "paidAt" >= NOW() - INTERVAL '24 months'
         AND "paymentStatus" = 'SUCCEEDED'
       GROUP BY DATE_TRUNC('month', "paidAt")
@@ -273,10 +273,10 @@ exports.getUserGrowth = catchAsync(async (req, res, next) => {
       SELECT
         DATE_TRUNC('month', "createdAt")::date AS month,
         COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE 'customer' = ANY("roles"))::int AS customers,
-        COUNT(*) FILTER (WHERE 'supplier' = ANY("roles"))::int AS suppliers
+        COUNT(*) FILTER (WHERE 'customer' = ANY("roles"::text[]))::int AS customers,
+        COUNT(*) FILTER (WHERE 'supplier' = ANY("roles"::text[]))::int AS suppliers
       FROM "User"
-      WHERE ${GHANA_ROLE} = ANY("roles")
+      WHERE ${GHANA_ROLE} = ANY("roles"::text[])
         AND "createdAt" >= NOW() - INTERVAL '24 months'
       GROUP BY DATE_TRUNC('month', "createdAt")
       ORDER BY month ASC
@@ -361,7 +361,7 @@ exports.getCLV = catchAsync(async (req, res, next) => {
           ROUND(AVG(b."total")::numeric, 2) AS "avgBookingValue",
           ROUND(SUM(b."total")::numeric, 2) AS "totalRevenue"
         FROM "Booking" b
-        WHERE b."paymentStatus" = 'SUCCEEDED' AND b."source" = ${GHANA_SOURCE}
+        WHERE b."paymentStatus" = 'SUCCEEDED' AND b."source"::text = ${GHANA_SOURCE}
       `,
       prisma.$queryRaw`
         SELECT
@@ -373,7 +373,7 @@ exports.getCLV = catchAsync(async (req, res, next) => {
         FROM (
           SELECT "customerId", COUNT(*) AS "bookingCount"
           FROM "Booking"
-          WHERE "paymentStatus" = 'SUCCEEDED' AND "source" = ${GHANA_SOURCE}
+          WHERE "paymentStatus" = 'SUCCEEDED' AND "source"::text = ${GHANA_SOURCE}
           GROUP BY "customerId"
         ) sub
       `,
@@ -391,7 +391,7 @@ exports.getCLV = catchAsync(async (req, res, next) => {
         FROM (
           SELECT "customerId", COUNT(*) AS booking_count
           FROM "Booking"
-          WHERE "paymentStatus" = 'SUCCEEDED' AND "source" = ${GHANA_SOURCE}
+          WHERE "paymentStatus" = 'SUCCEEDED' AND "source"::text = ${GHANA_SOURCE}
           GROUP BY "customerId"
         ) sub
         GROUP BY CASE
@@ -412,7 +412,7 @@ exports.getCLV = catchAsync(async (req, res, next) => {
           MAX(b."paidAt") AS "lastBookingDate"
         FROM "Booking" b
         JOIN "User" u ON u.id = b."customerId"
-        WHERE b."paymentStatus" = 'SUCCEEDED' AND b."source" = ${GHANA_SOURCE}
+        WHERE b."paymentStatus" = 'SUCCEEDED' AND b."source"::text = ${GHANA_SOURCE}
         GROUP BY u.id, u.name, u.email
         ORDER BY "totalSpent" DESC
         LIMIT 20

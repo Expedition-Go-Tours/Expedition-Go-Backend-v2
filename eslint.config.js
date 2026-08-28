@@ -38,6 +38,7 @@ module.exports = [
         exports: 'readonly',
         global: 'readonly',
         URL: 'readonly',
+        URLSearchParams: 'readonly',
         TextEncoder: 'readonly',
         TextDecoder: 'readonly',
         fetch: 'readonly',

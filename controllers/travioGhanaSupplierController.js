@@ -201,7 +201,7 @@ exports.getSupplierReviews = catchAsync(async (req, res) => {
 /**
  * GET /api/travioghana/supplier/availability/:tourId
  */
-exports.getAvailability = catchAsync(async (req, res) => {
+exports.getAvailability = catchAsync(async (req, res, next) => {
   const { tourId } = req.params;
   const { startDate, endDate } = req.query;
 
@@ -225,7 +225,7 @@ exports.getAvailability = catchAsync(async (req, res) => {
 /**
  * POST /api/travioghana/supplier/availability/:tourId
  */
-exports.setAvailability = catchAsync(async (req, res) => {
+exports.setAvailability = catchAsync(async (req, res, next) => {
   const { tourId } = req.params;
   const { date, available, maxBookings, note } = req.body;
 
