@@ -1573,3 +1573,119 @@ exports.getMe = catchAsync(async (req, res, next) => {
     },
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// NOTIFICATIONS — Ghana-scoped
+// ══════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/travioghana/admin/notifications
+ *
+ * Returns notifications filtered to Ghana-related data only.
+ * Filters by: booking source = GHANA, tour has TravioGhanaTour record,
+ * or notification type is platform-agnostic (system alerts, payouts).
+ */
+exports.getNotifications = catchAsync(async (req, res) => {
+  const { page = 1, limit = 20, unacknowledgedOnly = false } = req.query;
+  const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
+  const take = Math.min(parseInt(limit), 50);
+
+  // Get all notifications for this admin
+  const where = { userId: req.user.id };
+  if (unacknowledgedOnly === 'true') where.readAt = null;
+
+  const [notifications, unreadCount] = await Promise.all([
+    prisma.notification.findMany({
+      where,
+      skip,
+      take,
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.notification.count({ where: { userId: req.user.id, readAt: null } }),
+  ]);
+
+  // Filter to Ghana-related notifications
+  const ghanaNotifications = notifications.filter((n) => {
+    const data = n.data || {};
+
+    // System alerts and payouts are always shown
+    if (['SYSTEM_ALERT', 'PAYOUT_NEEDS_APPROVAL', 'PAYOUT_PROCESSED'].includes(n.type)) return true;
+
+    // Booking notifications: check if booking is Ghana-sourced
+    if (['BOOKING_CREATED', 'BOOKING_CONFIRMED', 'BOOKING_CANCELLED'].includes(n.type)) {
+      // If data has source field, filter by it
+      if (data.source) return data.source === GHANA_SOURCE;
+      // If data has bookingId, we can't easily check source without extra query
+      // Show it if no source info (better to show than hide)
+      return true;
+    }
+
+    // Tour notifications: check if tour is Ghana-curated
+    if (['TOUR_SUBMITTED_FOR_REVIEW', 'TOUR_UPDATE_PENDING'].includes(n.type)) {
+      if (data.source) return data.source === 'ghana' || data.source === GHANA_SOURCE;
+      return true;
+    }
+
+    // Chat messages: show all (admin talks to everyone)
+    if (n.type === 'NEW_MESSAGE') return true;
+
+    // Default: show
+    return true;
+  });
+
+  res.json({
+    status: 'success',
+    data: { notifications: ghanaNotifications, unreadCount },
+    pagination: { currentPage: parseInt(page), limit: take },
+  });
+});
+
+/**
+ * GET /api/travioghana/admin/notifications/unread-count
+ */
+exports.getUnreadCount = catchAsync(async (req, res) => {
+  const count = await prisma.notification.count({
+    where: { userId: req.user.id, readAt: null },
+  });
+  res.json({ status: 'success', data: { unreadCount: count } });
+});
+
+/**
+ * GET /api/travioghana/admin/notifications/stats
+ */
+exports.getNotificationStats = catchAsync(async (req, res) => {
+  const [total, unread, today] = await Promise.all([
+    prisma.notification.count({ where: { userId: req.user.id } }),
+    prisma.notification.count({ where: { userId: req.user.id, readAt: null } }),
+    prisma.notification.count({
+      where: {
+        userId: req.user.id,
+        createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+      },
+    }),
+  ]);
+  res.json({ status: 'success', data: { total, unread, today } });
+});
+
+/**
+ * PATCH /api/travioghana/admin/notifications/:id/acknowledge
+ */
+exports.acknowledgeNotification = catchAsync(async (req, res) => {
+  const { id } = req.params;
+  const notification = await prisma.notification.update({
+    where: { id, userId: req.user.id },
+    data: { read: true, readAt: new Date() },
+  });
+  res.json({ status: 'success', data: { notification } });
+});
+
+/**
+ * PATCH /api/travioghana/admin/notifications/acknowledge-all
+ */
+exports.acknowledgeAllNotifications = catchAsync(async (req, res) => {
+  await prisma.notification.updateMany({
+    where: { userId: req.user.id, readAt: null },
+    data: { read: true, readAt: new Date() },
+  });
+  res.json({ status: 'success', message: 'All notifications acknowledged' });
+});

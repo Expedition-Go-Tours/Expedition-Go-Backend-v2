@@ -309,28 +309,13 @@ router.delete('/reviews/:id/admin/response',
 );
 
 // ══════════════════════════════════════════════════════════════════════════
-// NOTIFICATIONS — shared platform endpoint (proxied)
+// NOTIFICATIONS — Ghana-scoped (filters by source)
 // ══════════════════════════════════════════════════════════════════════════
-router.get('/notifications',
-  requirePermission('notifications.view'),
-  adminNotifController.getNotifications,
-);
-router.get('/notifications/unread-count',
-  requirePermission('notifications.view'),
-  adminNotifController.getUnreadCount,
-);
-router.get('/notifications/stats',
-  requirePermission('notifications.view'),
-  adminNotifController.getStats,
-);
-router.patch('/notifications/:id/acknowledge',
-  requirePermission('notifications.view'),
-  adminNotifController.acknowledge,
-);
-router.patch('/notifications/acknowledge-all',
-  requirePermission('notifications.view'),
-  adminNotifController.acknowledgeAll,
-);
+router.get('/notifications', ghana.getNotifications);
+router.get('/notifications/unread-count', ghana.getUnreadCount);
+router.get('/notifications/stats', ghana.getNotificationStats);
+router.patch('/notifications/:id/acknowledge', ghana.acknowledgeNotification);
+router.patch('/notifications/acknowledge-all', ghana.acknowledgeAllNotifications);
 
 // ══════════════════════════════════════════════════════════════════════════
 // CHAT — proxied to shared chat controller (admin talks to all users)
