@@ -2,8 +2,8 @@ const express = require('express');
 const { createLimiter } = require('../middleware/dynamicRateLimiter');
 const { protect } = require('../middleware/authMiddleware');
 const { restrictTo } = require('../middleware/authMiddleware');
-const expeditionController = require('../controllers/travioGhanaController');
-const expeditionAnalyticsController = require('../controllers/travioGhanaAnalyticsController');
+const travioGhanaController = require('../controllers/travioGhanaController');
+const travioGhanaAnalyticsController = require('../controllers/travioGhanaAnalyticsController');
 const validate = require('../middleware/validate');
 const {
   getToursSchema,
@@ -122,7 +122,7 @@ const contactLimiter = createLimiter({
  *       500:
  *         description: Server error
  */
-router.get('/tours', validate(getToursSchema), expeditionController.getTours);
+router.get('/tours', validate(getToursSchema), travioGhanaController.getTours);
 
 /**
  * @swagger
@@ -151,7 +151,7 @@ router.get('/tours', validate(getToursSchema), expeditionController.getTours);
  *                       items:
  *                         $ref: '#/components/schemas/TravioGhanaTourListing'
  */
-router.get('/tours/featured', expeditionController.getFeaturedTours);
+router.get('/tours/featured', travioGhanaController.getFeaturedTours);
 
 /**
  * @swagger
@@ -180,7 +180,7 @@ router.get('/tours/featured', expeditionController.getFeaturedTours);
  *                       items:
  *                         $ref: '#/components/schemas/TravioGhanaSitemapEntry'
  */
-router.get('/tours/sitemap', expeditionController.getSitemap);
+router.get('/tours/sitemap', travioGhanaController.getSitemap);
 
 /**
  * @swagger
@@ -236,7 +236,7 @@ router.get('/tours/sitemap', expeditionController.getSitemap);
  *       404:
  *         description: Tour not found
  */
-router.get('/tours/:slug/reviews', validate(getTourReviewsSchema), expeditionController.getTourReviews);
+router.get('/tours/:slug/reviews', validate(getTourReviewsSchema), travioGhanaController.getTourReviews);
 
 /**
  * @swagger
@@ -273,7 +273,7 @@ router.get('/tours/:slug/reviews', validate(getTourReviewsSchema), expeditionCon
  *       404:
  *         description: Tour not found
  */
-router.get('/tours/:slug/similar', validate(slugParamSchema), expeditionController.getSimilarTours);
+router.get('/tours/:slug/similar', validate(slugParamSchema), travioGhanaController.getSimilarTours);
 
 /**
  * @swagger
@@ -332,7 +332,7 @@ router.get('/tours/:slug/similar', validate(slugParamSchema), expeditionControll
  *       404:
  *         description: Tour not found
  */
-router.get('/tours/:slug/availability', validate(availabilityCalendarSchema), expeditionController.getTourAvailability);
+router.get('/tours/:slug/availability', validate(availabilityCalendarSchema), travioGhanaController.getTourAvailability);
 
 /**
  * @swagger
@@ -372,7 +372,7 @@ router.get('/tours/:slug/availability', validate(availabilityCalendarSchema), ex
  *       404:
  *         description: Tour not found or not active
  */
-router.get('/tours/:slug', validate(slugParamSchema), expeditionController.getTourBySlug);
+router.get('/tours/:slug', validate(slugParamSchema), travioGhanaController.getTourBySlug);
 
 /**
  * @swagger
@@ -426,7 +426,7 @@ router.get('/tours/:slug', validate(slugParamSchema), expeditionController.getTo
  *       429:
  *         description: Too many requests — rate limit exceeded
  */
-router.post('/contact', contactLimiter, validate(contactSchema), expeditionController.submitContact);
+router.post('/contact', contactLimiter, validate(contactSchema), travioGhanaController.submitContact);
 
 /**
  * @swagger
@@ -476,7 +476,7 @@ const subscribeLimiter = createLimiter({
   defaultWindowMs: 60 * 1000,
   message: { status: 'fail', message: 'Too many subscription attempts, please try again later.' },
 });
-router.post('/subscribe', subscribeLimiter, validate(subscribeSchema), expeditionController.subscribe);
+router.post('/subscribe', subscribeLimiter, validate(subscribeSchema), travioGhanaController.subscribe);
 
 /**
  * @swagger
@@ -521,7 +521,7 @@ router.post('/subscribe', subscribeLimiter, validate(subscribeSchema), expeditio
  *               properties:
  *                 status: { type: string, example: success }
  */
-router.post('/track-click', validate(trackClickSchema), expeditionController.trackClick);
+router.post('/track-click', validate(trackClickSchema), travioGhanaController.trackClick);
 
 /**
  * @swagger
@@ -588,7 +588,7 @@ const confirmLimiter = createLimiter({
   message: { status: 'fail', message: 'Too many booking attempts, please try again later.' },
 });
 
-router.post('/checkout/calculate', calculateLimiter, validate(calculateCheckoutSchema), expeditionController.calculateCheckout);
+router.post('/checkout/calculate', calculateLimiter, validate(calculateCheckoutSchema), travioGhanaController.calculateCheckout);
 
 /**
  * @swagger
@@ -657,7 +657,7 @@ router.post('/checkout/calculate', calculateLimiter, validate(calculateCheckoutS
  *       404:
  *         description: Tour not found
  */
-router.post('/checkout/confirm', confirmLimiter, protect, restrictTo('customer'), validate(confirmBookingSchema), expeditionController.confirmBooking);
+router.post('/checkout/confirm', confirmLimiter, protect, restrictTo('customer'), validate(confirmBookingSchema), travioGhanaController.confirmBooking);
 
 /**
  * @swagger
@@ -691,7 +691,7 @@ router.post('/checkout/confirm', confirmLimiter, protect, restrictTo('customer')
  *       401:
  *         description: Authentication required
  */
-router.get('/wishlist', protect, restrictTo('customer'), expeditionController.getExpeditionWishlist);
+router.get('/wishlist', protect, restrictTo('customer'), travioGhanaController.getExpeditionWishlist);
 
 /**
  * @swagger
@@ -738,7 +738,7 @@ router.get('/wishlist', protect, restrictTo('customer'), expeditionController.ge
  *       404:
  *         description: Tour not available on Travio Ghana
  */
-router.patch('/wishlist/:tourId', protect, restrictTo('customer'), validate(tourIdParamSchema), expeditionController.toggleExpeditionWishlist);
+router.patch('/wishlist/:tourId', protect, restrictTo('customer'), validate(tourIdParamSchema), travioGhanaController.toggleExpeditionWishlist);
 
 /**
  * @swagger
@@ -785,7 +785,7 @@ router.patch('/wishlist/:tourId', protect, restrictTo('customer'), validate(tour
  *       401:
  *         description: Authentication required
  */
-router.get('/bookings', protect, restrictTo('customer'), validate(getBookingsSchema), expeditionController.getMyBookings);
+router.get('/bookings', protect, restrictTo('customer'), validate(getBookingsSchema), travioGhanaController.getMyBookings);
 
 /**
  * @swagger
@@ -811,7 +811,7 @@ router.get('/bookings', protect, restrictTo('customer'), validate(getBookingsSch
  *       404:
  *         description: Session not found
  */
-router.get('/bookings/by-session/:sessionId', protect, restrictTo('customer'), expeditionController.getBookingBySession);
+router.get('/bookings/by-session/:sessionId', protect, restrictTo('customer'), travioGhanaController.getBookingBySession);
 
 /**
  * @swagger
@@ -849,7 +849,7 @@ router.get('/bookings/by-session/:sessionId', protect, restrictTo('customer'), e
  *       404:
  *         description: Booking not found
  */
-router.get('/bookings/:id', protect, restrictTo('customer'), validate(bookingIdParamSchema), expeditionController.getBooking);
+router.get('/bookings/:id', protect, restrictTo('customer'), validate(bookingIdParamSchema), travioGhanaController.getBooking);
 
 /**
  * @swagger
@@ -902,7 +902,7 @@ router.get('/bookings/:id', protect, restrictTo('customer'), validate(bookingIdP
  *       404:
  *         description: Booking not found
  */
-router.patch('/bookings/:id/cancel', protect, restrictTo('customer'), validate(cancelBookingSchema), expeditionController.cancelBooking);
+router.patch('/bookings/:id/cancel', protect, restrictTo('customer'), validate(cancelBookingSchema), travioGhanaController.cancelBooking);
 
 /**
  * @swagger
@@ -948,7 +948,7 @@ router.patch('/bookings/:id/cancel', protect, restrictTo('customer'), validate(c
  *       404:
  *         description: Booking not found
  */
-router.post('/reviews', protect, restrictTo('customer'), validate(createReviewSchema), expeditionController.createReview);
+router.post('/reviews', protect, restrictTo('customer'), validate(createReviewSchema), travioGhanaController.createReview);
 
 // ================================
 // SUPPLIER ROUTES (protected)
@@ -983,7 +983,7 @@ router.post('/reviews', protect, restrictTo('customer'), validate(createReviewSc
  *       404:
  *         description: Supplier profile not found
  */
-router.get('/supplier/bookings', protect, restrictTo('supplier'), validate(getSupplierBookingsSchema), expeditionController.getSupplierBookings);
+router.get('/supplier/bookings', protect, restrictTo('supplier'), validate(getSupplierBookingsSchema), travioGhanaController.getSupplierBookings);
 
 /**
  * @swagger
@@ -1025,7 +1025,7 @@ router.get('/supplier/bookings', protect, restrictTo('supplier'), validate(getSu
  *       404:
  *         description: Booking not found
  */
-router.patch('/supplier/bookings/:id/status', protect, restrictTo('supplier'), validate(updateBookingStatusSchema), expeditionController.updateBookingStatus);
+router.patch('/supplier/bookings/:id/status', protect, restrictTo('supplier'), validate(updateBookingStatusSchema), travioGhanaController.updateBookingStatus);
 
 // ================================
 // ADMIN ROUTES (protected + rate-limited)
@@ -1093,7 +1093,7 @@ router.use('/admin', protect, restrictTo('admin'), adminLimiter);
  *       403:
  *         description: Admin role required
  */
-router.get('/admin/search', validate(searchToursSchema), expeditionController.searchTours);
+router.get('/admin/search', validate(searchToursSchema), travioGhanaController.searchTours);
 
 /**
  * @swagger
@@ -1172,8 +1172,8 @@ router.get('/admin/search', validate(searchToursSchema), expeditionController.se
  *       404:
  *         description: Tour not found
  */
-router.get('/admin/tours', validate(getAdminToursSchema), expeditionController.getAdminTours);
-router.post('/admin/tours', validate(addTourSchema), expeditionController.addTour);
+router.get('/admin/tours', validate(getAdminToursSchema), travioGhanaController.getAdminTours);
+router.post('/admin/tours', validate(addTourSchema), travioGhanaController.addTour);
 
 /**
  * @swagger
@@ -1239,8 +1239,8 @@ router.post('/admin/tours', validate(addTourSchema), expeditionController.addTou
  *       404:
  *         description: Travio Ghana tour not found
  */
-router.patch('/admin/tours/:id', validate(updateTourSchema), expeditionController.updateTour);
-router.delete('/admin/tours/:id', validate(removeTourSchema), expeditionController.removeTour);
+router.patch('/admin/tours/:id', validate(updateTourSchema), travioGhanaController.updateTour);
+router.delete('/admin/tours/:id', validate(removeTourSchema), travioGhanaController.removeTour);
 
 /**
  * @swagger
@@ -1275,7 +1275,7 @@ router.delete('/admin/tours/:id', validate(removeTourSchema), expeditionControll
  *       404:
  *         description: Travio Ghana tour not found (if specific ID provided)
  */
-router.post('/admin/refresh/:tourId?', validate(refreshCacheSchema), expeditionController.refreshCache);
+router.post('/admin/refresh/:tourId?', validate(refreshCacheSchema), travioGhanaController.refreshCache);
 
 /**
  * @swagger
@@ -1299,7 +1299,7 @@ router.post('/admin/refresh/:tourId?', validate(refreshCacheSchema), expeditionC
  *       200:
  *         description: Overview metrics
  */
-router.get('/admin/analytics/overview', validate(analyticsOverviewSchema), expeditionAnalyticsController.getAnalyticsOverview);
+router.get('/admin/analytics/overview', validate(analyticsOverviewSchema), travioGhanaAnalyticsController.getAnalyticsOverview);
 
 /**
  * @swagger
@@ -1325,7 +1325,7 @@ router.get('/admin/analytics/overview', validate(analyticsOverviewSchema), exped
  *       200:
  *         description: Revenue trend
  */
-router.get('/admin/analytics/revenue-trend', validate(analyticsRevenueTrendSchema), expeditionAnalyticsController.getRevenueTrend);
+router.get('/admin/analytics/revenue-trend', validate(analyticsRevenueTrendSchema), travioGhanaAnalyticsController.getRevenueTrend);
 
 /**
  * @swagger
@@ -1348,7 +1348,7 @@ router.get('/admin/analytics/revenue-trend', validate(analyticsRevenueTrendSchem
  *       200:
  *         description: Tour performance data
  */
-router.get('/admin/analytics/tour-performance', validate(analyticsOverviewSchema), expeditionAnalyticsController.getTourPerformance);
+router.get('/admin/analytics/tour-performance', validate(analyticsOverviewSchema), travioGhanaAnalyticsController.getTourPerformance);
 
 /**
  * @swagger
@@ -1371,7 +1371,7 @@ router.get('/admin/analytics/tour-performance', validate(analyticsOverviewSchema
  *       200:
  *         description: Booking analytics
  */
-router.get('/admin/analytics/bookings', validate(analyticsOverviewSchema), expeditionAnalyticsController.getBookingAnalytics);
+router.get('/admin/analytics/bookings', validate(analyticsOverviewSchema), travioGhanaAnalyticsController.getBookingAnalytics);
 
 /**
  * @swagger
@@ -1395,7 +1395,7 @@ router.get('/admin/analytics/bookings', validate(analyticsOverviewSchema), exped
  *       200:
  *         description: Funnel data
  */
-router.get('/admin/analytics/conversion-funnel', validate(analyticsFunnelSchema), expeditionAnalyticsController.getConversionFunnel);
+router.get('/admin/analytics/conversion-funnel', validate(analyticsFunnelSchema), travioGhanaAnalyticsController.getConversionFunnel);
 
 /**
  * @swagger
@@ -1419,7 +1419,7 @@ router.get('/admin/analytics/conversion-funnel', validate(analyticsFunnelSchema)
  *       200:
  *         description: Customer analytics
  */
-router.get('/admin/analytics/customers', validate(analyticsOverviewSchema), expeditionAnalyticsController.getCustomerAnalytics);
+router.get('/admin/analytics/customers', validate(analyticsOverviewSchema), travioGhanaAnalyticsController.getCustomerAnalytics);
 
 /**
  * @swagger
@@ -1442,7 +1442,7 @@ router.get('/admin/analytics/customers', validate(analyticsOverviewSchema), expe
  *       200:
  *         description: Cart abandonment data
  */
-router.get('/admin/analytics/cart-abandonment', validate(analyticsOverviewSchema), expeditionAnalyticsController.getCartAbandonment);
+router.get('/admin/analytics/cart-abandonment', validate(analyticsOverviewSchema), travioGhanaAnalyticsController.getCartAbandonment);
 
 /**
  * @swagger
@@ -1466,6 +1466,6 @@ router.get('/admin/analytics/cart-abandonment', validate(analyticsOverviewSchema
  *       200:
  *         description: Search analytics
  */
-router.get('/admin/analytics/search', validate(analyticsOverviewSchema), expeditionAnalyticsController.getSearchAnalytics);
+router.get('/admin/analytics/search', validate(analyticsOverviewSchema), travioGhanaAnalyticsController.getSearchAnalytics);
 
 module.exports = router;

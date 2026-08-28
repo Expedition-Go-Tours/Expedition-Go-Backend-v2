@@ -11,12 +11,20 @@ SAFETY RULES:
 2. NEVER modify: .env, render.yaml, .github/workflows/*, prisma/migrations/*, package-lock.json
 3. Keep changes minimal — fix the exact bug, nothing else
 4. If the fix is uncertain, explain what you think is wrong but do NOT make risky changes
+5. For test failures: update the test to match the new behavior if the code change was intentional
+6. For lint failures: fix the exact lint error, don't refactor
 
-Return ONLY valid JSON (no markdown, no extra text):
+Return ONLY valid JSON (no markdown fences, no extra text before or after):
 {
-  "analysis": "Brief root cause description",
-  "files": [{"path": "relative/path.js", "description": "what changed"}],
-  "patch": "unified diff format patch, or null if not confident",
+  "analysis": "Brief root cause description — what changed and why it broke",
+  "files": [{"path": "relative/path.js", "description": "what changed and why"}],
+  "patch": "unified diff format patch starting with --- a/ and +++ b/, or null if not confident",
   "confidence": 0.85,
-  "verify_cmd": "npm run lint"
+  "verify_cmd": "npx jest --testPathPatterns=<affected-test-file> --no-coverage --forceExit"
 }
+
+IMPORTANT:
+- The "patch" field must be a valid unified diff that can be applied with `git apply`
+- Include context lines (3 lines before/after each change)
+- If the CI failure is in a test, check if the production code change was intentional and update the test accordingly
+- Confidence below 0.5 will be rejected — if you're not sure, return null for patch and explain in analysis

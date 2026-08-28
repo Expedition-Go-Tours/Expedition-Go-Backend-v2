@@ -271,6 +271,7 @@ app.use('/api/suppliers/special-offers', specialOfferRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/keywords', keywordRoutes);
 app.use('/api/expedition', expeditionRoutes);
+app.use('/api/travioghana', travioGhanaRoutes);
 app.use('/api/blog', blogRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/homepage', homepageRoutes);
