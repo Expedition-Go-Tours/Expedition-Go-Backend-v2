@@ -19,26 +19,33 @@ jobs:
       MAX_ATTEMPTS: 3
       MAX_FILES: 10
     steps:
-      - name: Fetch failed logs
-        run: |
-          mkdir -p .ci-results
-          RUN_ID="${{ github.event.workflow_run.id }}"
-          gh run view "$RUN_ID" --log-failed 2>/dev/null | tail -500 > .ci-results/failed-logs.txt || true
-          gh run view "$RUN_ID" --json jobs \
-            --jq '.jobs[] | select(.conclusion == "failure") | .name' \
-            > .ci-results/failed-jobs.txt 2>/dev/null || true
-          echo "${{ github.event.workflow_run.head_sha }}" > .ci-results/sha.txt
-          echo "${{ github.event.workflow_run.head_branch }}" > .ci-results/branch.txt
-          echo "=== Failed Jobs ==="
-          cat .ci-results/failed-jobs.txt
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Checkout failing branch
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_branch }}
           fetch-depth: 0
+
+      - name: Fetch failed logs
+        run: |
+          set +e
+          mkdir -p .ci-results
+          RUN_ID="${{ github.event.workflow_run.id }}"
+
+          gh run view "$RUN_ID" --log-failed 2>/dev/null | tail -500 > .ci-results/failed-logs.txt || true
+          gh run view "$RUN_ID" --json jobs \
+            --jq '.jobs[] | select(.conclusion == "failure") | .name' \
+            > .ci-results/failed-jobs.txt 2>/dev/null || true
+
+          echo "${{ github.event.workflow_run.head_sha }}" > .ci-results/sha.txt
+          echo "${{ github.event.workflow_run.head_branch }}" > .ci-results/branch.txt
+
+          echo "=== Failed Jobs ==="
+          cat .ci-results/failed-jobs.txt || echo "(none)"
+          echo ""
+          echo "=== Failed Logs (last 100 lines) ==="
+          tail -100 .ci-results/failed-logs.txt || echo "(none)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -53,12 +60,36 @@ jobs:
         env:
           MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
         run: |
+          set +e
+
           DEBUG_BRANCH="ai-fix/$(date +%s)"
           git checkout -b "$DEBUG_BRANCH"
 
-          FAIL_LOG=$(cat .ci-results/failed-logs.txt 2>/dev/null | head -3000)
-          FAIL_JOBS=$(cat .ci-results/failed-jobs.txt 2>/dev/null)
-          TEMPLATE=$(cat .github/workflows/ai-debug-prompt.txt)
+          # Read files — use || true so bash -e doesn't kill us
+          FAIL_LOG=""
+          FAIL_JOBS=""
+          TEMPLATE=""
+          if [ -f .ci-results/failed-logs.txt ]; then
+            FAIL_LOG=$(cat .ci-results/failed-logs.txt | head -3000)
+          fi
+          if [ -f .ci-results/failed-jobs.txt ]; then
+            FAIL_JOBS=$(cat .ci-results/failed-jobs.txt)
+          fi
+          if [ -f .github/workflows/ai-debug-prompt.txt ]; then
+            TEMPLATE=$(cat .github/workflows/ai-debug-prompt.txt)
+          fi
+
+          echo "FAIL_LOG length: ${#FAIL_LOG}"
+          echo "FAIL_JOBS: $FAIL_JOBS"
+          echo "TEMPLATE length: ${#TEMPLATE}"
+
+          if [ -z "$TEMPLATE" ]; then
+            echo "ERROR: ai-debug-prompt.txt not found or empty"
+            echo "fixed=false" >> $GITHUB_OUTPUT
+            echo "debug_branch=$DEBUG_BRANCH" >> $GITHUB_OUTPUT
+            echo "attempts=0" >> $GITHUB_OUTPUT
+            exit 1
+          fi
 
           ATTEMPT=0
           FIXED=false
@@ -69,9 +100,14 @@ jobs:
             echo "=== AI Debug Attempt $ATTEMPT / $MAX_ATTEMPTS ==="
             echo ""
 
-            # Build prompt from template (use jq for safe escaping instead of sed)
+            # Build prompt from template using jq for safe escaping
             PROMPT=$(jq -n --arg template "$TEMPLATE" --arg log "$FAIL_LOG" --arg jobs "$FAIL_JOBS" \
-              '$template | gsub("\\{\\{FAIL_LOG\\}\\}"; $log) | gsub("\\{\\{FAIL_JOBS\\}\\}"; $jobs)')
+              '$template | gsub("\\{\\{FAIL_LOG\\}\\}"; $log) | gsub("\\{\\{FAIL_JOBS\\}\\}"; $jobs)' 2>/dev/null)
+
+            if [ -z "$PROMPT" ]; then
+              echo "ERROR: Failed to build prompt from template"
+              continue
+            fi
 
             if [ -z "$MIMO_API_KEY" ]; then
               echo "MIMO_API_KEY not set — cannot call AI"
@@ -80,34 +116,57 @@ jobs:
 
             # Escape prompt for JSON
             PROMPT_JSON=$(echo "$PROMPT" | jq -Rs '.')
+            if [ -z "$PROMPT_JSON" ] || [ "$PROMPT_JSON" = "null" ]; then
+              echo "ERROR: Failed to JSON-escape prompt"
+              continue
+            fi
+
+            echo "Calling MiMo API (max_tokens: 16000)..."
 
             RESPONSE=$(curl -s --max-time 120 \
               -H "Authorization: Bearer $MIMO_API_KEY" \
               -H "Content-Type: application/json" \
-              -d "{\"model\":\"mimo-v2.5\",\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}],\"max_completion_tokens\":16000,\"temperature\":0.1}" \
+              -d "{\"model\":\"mimo-v2.5\",\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}],\"max_tokens\":16000,\"temperature\":0.1}" \
               "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions" 2>/dev/null)
+
+            if [ -z "$RESPONSE" ]; then
+              echo "ERROR: Empty response from API"
+              continue
+            fi
 
             # Check for API errors
             API_ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty' 2>/dev/null)
             if [ -n "$API_ERROR" ]; then
-              echo "OpenRouter API error: $API_ERROR"
+              echo "API error: $API_ERROR"
+              echo "Full response: $(echo "$RESPONSE" | head -c 500)"
               continue
             fi
 
-            # MiMo is a reasoning model — content may be in content or reasoning_content
-            CONTENT=$(echo "$RESPONSE" | jq -r '(.choices[0].message.content // empty) // (.choices[0].message.reasoning_content // empty)' 2>/dev/null)
+            # MiMo reasoning model: content may be in content or reasoning_content
+            CONTENT=$(echo "$RESPONSE" | jq -r '
+              (.choices[0].message.content // "") as $c |
+              if ($c | length) > 0 then $c
+              else (.choices[0].message.reasoning_content // "") end
+            ' 2>/dev/null)
 
-            if [ -z "$CONTENT" ]; then
+            if [ -z "$CONTENT" ] || [ "$CONTENT" = "null" ]; then
               echo "AI returned empty response"
-              echo "Raw response: $(echo "$RESPONSE" | head -c 500)"
+              echo "Raw response keys: $(echo "$RESPONSE" | jq 'keys' 2>/dev/null)"
+              echo "Choices content preview: $(echo "$RESPONSE" | jq -r '.choices[0].message | keys' 2>/dev/null)"
               continue
             fi
 
-            # Strip markdown code fences if present (```json ... ```)
-            CONTENT=$(echo "$CONTENT" | sed 's/^```json//; s/^```//; s/```$//')
+            echo "Response length: ${#CONTENT} chars"
+
+            # Strip markdown code fences if present
+            CONTENT=$(echo "$CONTENT" | sed '/^```/d')
 
             # Extract JSON from response
-            PARSED=$(echo "$CONTENT" | jq '.' 2>/dev/null || echo "$CONTENT" | sed -n '/^{/,/^}/p' | jq '.' 2>/dev/null)
+            PARSED=$(echo "$CONTENT" | jq '.' 2>/dev/null)
+            if [ -z "$PARSED" ] || [ "$PARSED" = "null" ]; then
+              # Try extracting JSON block from text
+              PARSED=$(echo "$CONTENT" | sed -n '/^{/,/^}/p' | jq '.' 2>/dev/null)
+            fi
 
             if [ -z "$PARSED" ] || [ "$PARSED" = "null" ]; then
               echo "Failed to parse AI response as JSON"
@@ -134,6 +193,28 @@ jobs:
               continue
             fi
 
+            echo "Patch length: ${#PATCH} chars"
+
+            # Safety check: diffstat
+            CHANGED_FILES=$(echo "$PATCH" | grep '^diff --git' | wc -l)
+            echo "Files changed in patch: $CHANGED_FILES"
+            if [ "$CHANGED_FILES" -gt "$MAX_FILES" ]; then
+              echo "Patch touches $CHANGED_FILES files (max $MAX_FILES). Skipping."
+              continue
+            fi
+
+            # Block if patch touches secrets/config
+            if echo "$PATCH" | grep -qiE '(\.env|firebase.*key|service.account|private.key)'; then
+              echo "Patch touches sensitive files. Skipping."
+              continue
+            fi
+
+            # Block deployment changes
+            if echo "$PATCH" | grep -qiE '(vercel\.json|netlify\.toml|dockerfile|docker-compose|app\.yaml)'; then
+              echo "Patch touches deployment config. Skipping."
+              continue
+            fi
+
             echo "$PATCH" > .ci-results/fix.patch
 
             if git apply --check .ci-results/fix.patch 2>/dev/null; then
@@ -149,7 +230,7 @@ jobs:
                 rm -f .ci-results/fix.patch
               fi
             else
-              echo "Patch does not apply. Reverting..."
+              echo "Patch does not apply cleanly. Reverting..."
               git checkout -- .
               rm -f .ci-results/fix.patch
             fi
