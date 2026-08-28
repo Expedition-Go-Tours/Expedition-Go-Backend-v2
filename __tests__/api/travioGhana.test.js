@@ -3,16 +3,17 @@ const { signAccessToken } = require('../../config/jwt');
 
 jest.mock('../../utils/prismaClient', () => ({
   travioGhanaTour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
-  tour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn() },
+  tour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn() },
   user: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn() },
   supplierProfile: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
   adminRole: { findUnique: jest.fn() },
-  teamMember: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
+  teamMember: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
   review: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
   booking: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   specialOffer: { findMany: jest.fn(), count: jest.fn() },
   newsletterSubscriber: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
   tourDateOverride: { findMany: jest.fn() },
+  wishlistItem: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
   notification: { findMany: jest.fn(), count: jest.fn(), updateMany: jest.fn(), aggregate: jest.fn(), update: jest.fn() },
   payout: { findMany: jest.fn(), findFirst: jest.fn(), aggregate: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
   payoutRequest: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
@@ -74,7 +75,7 @@ const mockTour = {
 
 const mockGhanaTour = {
   id: 'ghana-tour-1', tourId: 'tour-1', isActive: true, isFeatured: true, displayOrder: 1,
-  bookingFlow: 'DIRECT', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  bookingFlow: 'DIRECT', createdAt: new Date(), updatedAt: new Date(),
   tour: mockTour,
 };
 
@@ -93,12 +94,17 @@ beforeEach(() => {
   jest.clearAllMocks();
 
   // Broad safe defaults — individual tests override as needed
-  const models = ['travioGhanaTour', 'tour', 'user', 'review', 'booking', 'specialOffer', 'payout', 'notification', 'teamMember', 'payoutRequest', 'dispute', 'chatConversation', 'cancellationRecord'];
+  const models = ['travioGhanaTour', 'tour', 'user', 'review', 'booking', 'specialOffer', 'payout', 'notification', 'teamMember', 'payoutRequest', 'dispute', 'chatConversation', 'cancellationRecord', 'wishlistItem'];
   for (const m of models) {
     prisma[m].findMany?.mockResolvedValue([]);
     prisma[m].count?.mockResolvedValue(0);
-    if (prisma[m].aggregate) prisma[m].aggregate.mockResolvedValue({ _sum: {}, _count: 0, _avg: null });
+    if (prisma[m].aggregate) prisma[m].aggregate.mockResolvedValue({ _sum: {}, _avg: {}, _count: 0, _min: {}, _max: {} });
     if (prisma[m].groupBy) prisma[m].groupBy.mockResolvedValue([]);
+    if (prisma[m].update) prisma[m].update.mockResolvedValue({});
+    if (prisma[m].updateMany) prisma[m].updateMany.mockResolvedValue({ count: 0 });
+    if (prisma[m].create) prisma[m].create.mockResolvedValue({});
+    if (prisma[m].delete) prisma[m].delete.mockResolvedValue({});
+    if (prisma[m].deleteMany) prisma[m].deleteMany.mockResolvedValue({ count: 0 });
   }
   prisma.tour.findFirst.mockResolvedValue(mockTour);
   prisma.tour.findUnique.mockResolvedValue(mockTour);
