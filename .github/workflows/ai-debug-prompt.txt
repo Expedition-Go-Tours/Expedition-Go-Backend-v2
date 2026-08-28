@@ -6,6 +6,9 @@ FAILED CI LOGS:
 FAILED JOBS:
 {{FAIL_JOBS}}
 
+RELEVANT SOURCE FILES:
+{{FILE_CONTENTS}}
+
 SAFETY RULES:
 1. Maximum 10 files can be changed
 2. NEVER modify: .env, render.yaml, .github/workflows/*, prisma/migrations/*, package-lock.json
@@ -13,6 +16,8 @@ SAFETY RULES:
 4. If the fix is uncertain, explain what you think is wrong but do NOT make risky changes
 5. For test failures: update the test to match the new behavior if the code change was intentional
 6. For lint failures: fix the exact lint error, don't refactor
+7. YOU MUST GENERATE A PATCH. Do NOT return null for patch unless the error is completely unclear.
+8. If you can identify the file and the error, you CAN generate a patch even without seeing the full file — use context from the error message.
 
 Return ONLY valid JSON (no markdown fences, no extra text before or after):
 {
@@ -47,5 +52,15 @@ index abc1234..def5678 100644
  }
 ```
 
-If you cannot produce a valid git diff with the exact line-by-line format above, return null for patch and explain what needs to change in the analysis field instead.
+For lint errors like "X is not defined (no-undef)":
+- Add `/* eslint-disable-next-line no-undef */` before the offending line, OR
+- Add the variable to eslint globals at the top of the file
+
+For thrown errors or debug code that should be removed:
+- Remove the offending lines entirely
+- Show the removal in the diff with `-` prefix
+
+For test failures:
+- Show both the test file and what changed in the source
+
 Confidence below 0.5 will be rejected — if you're not sure, return null for patch and explain in analysis

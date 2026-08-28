@@ -100,9 +100,21 @@ jobs:
             echo "=== AI Debug Attempt $ATTEMPT / $MAX_ATTEMPTS ==="
             echo ""
 
+            # Try to read the relevant source files for context
+            FILE_CONTEXT=""
+            if [ -n "$FAIL_JOBS" ]; then
+              for FILE_PATH in $(echo "$FAIL_LOG" | grep -oE '[a-zA-Z0-9_/.-]+\.(js|ts|jsx|tsx|mjs)' | sort -u | head -20); do
+                if [ -f "$FILE_PATH" ]; then
+                  FILE_CONTEXT+=$'\n'"--- FILE: $FILE_PATH ---"$'\n'
+                  FILE_CONTEXT+=$(head -200 "$FILE_PATH")$'\n'
+                  FILE_CONTEXT+=$'\n'"--- END FILE: $FILE_PATH ---"$'\n'
+                fi
+              done
+            fi
+
             # Build prompt from template using jq for safe escaping
-            PROMPT=$(jq -n --arg template "$TEMPLATE" --arg log "$FAIL_LOG" --arg jobs "$FAIL_JOBS" \
-              '$template | gsub("\\{\\{FAIL_LOG\\}\\}"; $log) | gsub("\\{\\{FAIL_JOBS\\}\\}"; $jobs)' 2>/dev/null)
+            PROMPT=$(jq -n --arg template "$TEMPLATE" --arg log "$FAIL_LOG" --arg jobs "$FAIL_JOBS" --arg files "$FILE_CONTEXT" \
+              '$template | gsub("\\{\\{FAIL_LOG\\}\\}"; $log) | gsub("\\{\\{FAIL_JOBS\\}\\}"; $jobs) | gsub("\\{\\{FILE_CONTENTS\\}\\}"; $files)' 2>/dev/null)
 
             if [ -z "$PROMPT" ]; then
               echo "ERROR: Failed to build prompt from template"
