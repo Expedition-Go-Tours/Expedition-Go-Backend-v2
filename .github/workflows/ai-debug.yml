@@ -350,6 +350,8 @@ jobs:
           set +e
           DEBUG_BRANCH="${{ steps.debug.outputs.debug_branch }}"
           ATTEMPTS="${{ steps.debug.outputs.attempts }}"
+          OUTPUT=".ci-results/pr-output.log"
+          truncate -s 0 "$OUTPUT"
           {
             echo "## Create Draft PR - $DEBUG_BRANCH"
             echo "Running: $(date -u)"
@@ -365,20 +367,44 @@ jobs:
             echo "--- push ---"
             git push origin "$DEBUG_BRANCH" 2>&1
             echo "push exit code: $?"
-            echo "--- gh pr create ---"
-            gh pr create --draft \
-              --title "fix: AI patch for CI failure" \
-              --body "AI-generated fix. Attempts: $ATTEMPTS / $MAX_ATTEMPTS. Review before merging." \
-              --head "$DEBUG_BRANCH" \
-              --base "${{ github.event.workflow_run.head_branch }}" 2>&1
+            echo "--- REST create PR ---"
+            curl -sS -X POST \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/Expedition-Go-Tours/Expedition-Go-Backend-v2/pulls" \
+              -d "{\"title\":\"fix: AI patch for CI failure\",\"head\":\"$DEBUG_BRANCH\",\"base\":\"${{ github.event.workflow_run.head_branch }}\",\"draft\":true,\"body\":\"AI-generated fix. Attempts: $ATTEMPTS / $MAX_ATTEMPTS. Review before merging.\"}"
+            echo ""
             echo "pr-create exit code: $?"
-            gh label create "ai-generated" --description "AI-generated fix" --color "8470e8" 2>/dev/null
-            gh label create "needs-review" --description "Requires human review" --color "f5a623" 2>/dev/null
-            PR_NUMBER=$(gh pr list --head "$DEBUG_BRANCH" --json number --jq '.[0].number')
-            gh pr edit "$PR_NUMBER" --add-label "ai-generated,needs-review" 2>&1
-            echo "PR created: $PR_NUMBER"
-          } 2>&1 | tee -a $GITHUB_STEP_SUMMARY
+          } 2>&1 | tee -a $GITHUB_STEP_SUMMARY "$OUTPUT"
           exit 0
+
+      - name: Report PR step output
+        if: steps.debug.outputs.fixed == 'true'
+        run: |
+          set +e
+          DEBUG_BRANCH="${{ steps.debug.outputs.debug_branch }}"
+          PR_NUM=$(gh pr list --head "$DEBUG_BRANCH" --json number --jq '.[0].number' 2>/dev/null)
+          if [ -z "$PR_NUM" ] && [ -f .ci-results/pr-output.log ]; then
+            LOG=$(cat .ci-results/pr-output.log | tail -c 6000)
+            gh issue create \
+              --title "AI Debug: fix applied, PR step output [$DEBUG_BRANCH]" \
+              --body "## PR step log - $DEBUG_BRANCH
+
+\`\`\`
+$LOG
+\`\`\`" \
+              --label "ci-failure" 2>/dev/null || \
+            gh issue create \
+              --title "AI Debug: fix applied, PR step output [$DEBUG_BRANCH]" \
+              --body "## PR step log - $DEBUG_BRANCH
+
+\`\`\`
+$LOG
+\`\`\`"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create issue on failure
         if: steps.debug.outputs.fixed != 'true'
