@@ -3,6 +3,7 @@ const { createLimiter } = require('../middleware/dynamicRateLimiter');
 const { protect } = require('../middleware/authMiddleware');
 const { restrictTo } = require('../middleware/authMiddleware');
 const travioGhanaController = require('../controllers/travioGhanaController');
+const travioGhanaHomepageController = require('../controllers/travioGhanaHomepageController');
 const validate = require('../middleware/validate');
 const {
   getToursSchema,
@@ -121,6 +122,9 @@ const contactLimiter = createLimiter({
  *       500:
  *         description: Server error
  */
+// Homepage — Ghana-scoped sections (mood, recommended, top-rated, etc.)
+router.get('/homepage', travioGhanaHomepageController.getGhanaHomepage);
+
 router.get('/tours', validate(getToursSchema), travioGhanaController.getTours);
 
 /**
