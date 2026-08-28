@@ -1389,45 +1389,36 @@ async function getMoodKeywords(userId, limit = 8) {
       if (bestTour) {
         usedTourIds.add(bestTour.id);
 
-        // CLIP-powered image selection: collect ALL images from tours in this
-        // category and pick the one that best represents the mood keyword.
+        // Use the best tour's cover photo. If already used, try other photos
+        // from the same tour or from other tours in this category.
         let heroImage = bestTour.coverPhoto;
-        try {
-          const clip = require('./clipClient');
-          const clipHealthy = await clip.isHealthy();
-          if (clipHealthy) {
-            // Collect images from ALL tours in this category (not just bestTour)
-            const categoryImages = [];
-            const seenCategoryImages = new Set();
-            for (const tourId of catTourIds) {
-              const t = tourById.get(tourId);
-              if (!t) continue;
-              for (const img of [t.coverPhoto, ...(t.photos || [])]) {
-                if (img && !seenCategoryImages.has(img) && !usedImages.has(img)) {
-                  seenCategoryImages.add(img);
-                  categoryImages.push(img);
-                }
-              }
-            }
-
-            if (categoryImages.length > 1) {
-              const categoryLabel = cat.name.toLowerCase();
-              let bestClipScore = 0;
-              for (const img of categoryImages.slice(0, 15)) {
-                try {
-                  const result = await clip.classifyImage(img, [categoryLabel, 'other']);
-                  if (result.confidence > bestClipScore) {
-                    bestClipScore = result.confidence;
-                    heroImage = img;
-                  }
-                } catch {
-                  // Skip failed images
-                }
-              }
+        if (usedImages.has(heroImage)) {
+          // Try other photos from the best tour
+          for (const photo of (bestTour.photos || [])) {
+            if (photo && !usedImages.has(photo)) {
+              heroImage = photo;
+              break;
             }
           }
-        } catch {
-          // CLIP unavailable — fall through to default cover photo
+          // Still duplicated? Try cover photos from other tours in this category
+          if (usedImages.has(heroImage)) {
+            for (const tourId of catTourIds) {
+              if (usedTourIds.has(tourId)) continue;
+              const t = tourById.get(tourId);
+              if (!t || !t.coverPhoto) continue;
+              if (!usedImages.has(t.coverPhoto)) {
+                heroImage = t.coverPhoto;
+                break;
+              }
+              for (const photo of (t.photos || [])) {
+                if (photo && !usedImages.has(photo)) {
+                  heroImage = photo;
+                  break;
+                }
+              }
+              if (!usedImages.has(heroImage)) break;
+            }
+          }
         }
 
         // Image dedup: prefer unique images across keywords.
@@ -1597,71 +1588,32 @@ async function getPopularDestinations(limit = 10, userId = null, lat = null, lng
 
     ranked.sort((a, b) => b._score - a._score);
 
-    // CLIP-powered hero image selection: collect ALL images from tours in
-    // each city (coverPhoto + photos[]) and pick the one that best
-    // represents the destination.
+    // Dedup: ensure no two destinations share the same hero image.
+    // If a destination's hero image is already used, pick a different
+    // image from tours in that city.
     const usedDestImages = new Set();
-    try {
-      const clip = require('./clipClient');
-      const clipHealthy = await clip.isHealthy();
-      if (clipHealthy) {
-        for (const dest of ranked) {
-          const cityTours = await prisma.tour.findMany({
-            where: { city: dest.city, status: 'ACTIVE' },
-            select: { coverPhoto: true, photos: true },
-            take: 10,
-          });
+    for (const dest of ranked) {
+      if (dest.heroImage && usedDestImages.has(dest.heroImage)) {
+        // Image already used — find an alternative from tours in this city
+        const cityTours = await prisma.tour.findMany({
+          where: { city: dest.city, status: 'ACTIVE' },
+          select: { coverPhoto: true, photos: true },
+          take: 10,
+        });
 
-          // Collect ALL images from tours in this city
-          const allImages = [];
-          const seen = new Set();
-          for (const t of cityTours) {
-            for (const img of [t.coverPhoto, ...(t.photos || [])]) {
-              if (img && !seen.has(img)) {
-                seen.add(img);
-                allImages.push(img);
-              }
+        let found = false;
+        for (const t of cityTours) {
+          for (const img of [t.coverPhoto, ...(t.photos || [])]) {
+            if (img && !usedDestImages.has(img)) {
+              dest.heroImage = img;
+              found = true;
+              break;
             }
           }
-
-          if (allImages.length <= 1) continue;
-
-          let bestImage = dest.heroImage;
-          let bestScore = 0;
-
-          for (const img of allImages.slice(0, 15)) {
-            if (usedDestImages.has(img)) continue;
-            try {
-              const result = await clip.classifyImage(img, [
-                `${dest.city} city landscape`,
-                `${dest.city} landmark architecture`,
-                `${dest.country} destination scenery`,
-                'food meal restaurant',
-                'people portrait selfie',
-              ]);
-
-              const cityScore =
-                (result.allScores?.[`${dest.city} city landscape`] || 0) +
-                (result.allScores?.[`${dest.city} landmark architecture`] || 0) +
-                (result.allScores?.[`${dest.country} destination scenery`] || 0);
-
-              if (cityScore > bestScore) {
-                bestScore = cityScore;
-                bestImage = img;
-              }
-            } catch {
-              // Skip failed images
-            }
-          }
-
-          if (bestImage) {
-            dest.heroImage = bestImage;
-            usedDestImages.add(bestImage);
-          }
+          if (found) break;
         }
       }
-    } catch {
-      // CLIP unavailable — fall through with SQL-based hero images
+      if (dest.heroImage) usedDestImages.add(dest.heroImage);
     }
 
     // Image dedup: ensure no two cities share the same hero image

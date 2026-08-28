@@ -21,6 +21,7 @@ const { requirePermission } = require('../middleware/permissionMiddleware');
 const { createLimiter } = require('../middleware/dynamicRateLimiter');
 
 const ghana = require('../controllers/travioGhanaAdminController');
+const adminController = require('../controllers/adminController');
 
 // Shared platform controllers (proxied — same data, same permissions)
 const adminNotifController = require('../controllers/adminNotificationController');
@@ -142,6 +143,26 @@ router.patch('/bookings/:id/confirm-payment',
 );
 
 // ══════════════════════════════════════════════════════════════════════════
+// EXPEDITION — Ghana expedition management (proxied to admin controller)
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/expedition/suppliers',
+  requirePermission('tours.view', 'suppliers.view'),
+  adminController.getExpeditionSuppliers,
+);
+router.get('/expedition/suppliers/:id/tours',
+  requirePermission('tours.view', 'suppliers.view'),
+  adminController.getExpeditionSupplierTours,
+);
+router.patch('/tours/:tourId/expedition-publish',
+  requirePermission('tours.approve'),
+  adminController.toggleExpeditionPublish,
+);
+router.patch('/expedition/bulk-publish',
+  requirePermission('tours.approve'),
+  adminController.bulkExpeditionPublish,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
 // SUPPLIERS — role = 'ghana'
 // ══════════════════════════════════════════════════════════════════════════
 router.get('/suppliers',
@@ -190,7 +211,7 @@ router.get('/ai/failed',
 );
 
 // ══════════════════════════════════════════════════════════════════════════
-// REVIEWS — Ghana tours only
+// REVIEWS — Ghana tours only + shared review moderation (proxied)
 // ══════════════════════════════════════════════════════════════════════════
 router.get('/reviews/pending',
   requirePermission('reviews.view'),
@@ -199,6 +220,22 @@ router.get('/reviews/pending',
 router.patch('/reviews/:id/moderate',
   requirePermission('reviews.moderate'),
   ghana.moderateReview,
+);
+router.patch('/reviews/:id/admin',
+  requirePermission('reviews.moderate'),
+  reviewController.adminUpdateReview,
+);
+router.delete('/reviews/:id/admin',
+  requirePermission('reviews.moderate'),
+  reviewController.adminDeleteReview,
+);
+router.patch('/reviews/:id/admin/response',
+  requirePermission('reviews.moderate'),
+  reviewController.adminUpdateSupplierResponse,
+);
+router.delete('/reviews/:id/admin/response',
+  requirePermission('reviews.moderate'),
+  reviewController.adminDeleteSupplierResponse,
 );
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -408,10 +445,6 @@ router.get('/supplier-applications/:id/profile',
   requirePermission('suppliers.view'),
   supplierController.getSupplierProfile,
 );
-router.get('/supplier-applications/:id/verification',
-  requirePermission('suppliers.view'),
-  supplierController.getSupplierVerification,
-);
 router.get('/supplier-applications/:id/tours',
   requirePermission('suppliers.view'),
   supplierController.getSupplierTours,
@@ -423,10 +456,6 @@ router.get('/supplier-applications/:id/reviews',
 router.get('/supplier-applications/:id/analytics',
   requirePermission('suppliers.view'),
   supplierController.getSupplierAnalytics,
-);
-router.get('/supplier-applications/qc-dashboard',
-  requirePermission('suppliers.view'),
-  supplierController.getQcDashboard,
 );
 router.patch('/supplier-applications/:id/review',
   requirePermission('suppliers.approve'),
@@ -440,45 +469,7 @@ router.patch('/supplier-applications/:id/activate',
   requirePermission('suppliers.approve'),
   supplierController.activateSupplier,
 );
-router.patch('/supplier-applications/documents/:docId',
-  requirePermission('suppliers.approve'),
-  supplierController.updateDocument,
-);
-router.patch('/supplier-applications/vehicles/:vehicleId',
-  requirePermission('suppliers.approve'),
-  supplierController.updateVehicle,
-);
-router.patch('/supplier-applications/guides/:guideId',
-  requirePermission('suppliers.approve'),
-  supplierController.updateGuide,
-);
 
 // ══════════════════════════════════════════════════════════════════════════
 // REVIEW MANAGEMENT — shared platform endpoints (proxied)
-// ══════════════════════════════════════════════════════════════════════════
-router.get('/reviews-queue',
-  requirePermission('reviews.view'),
-  reviewController.getPendingReviews,
-);
-router.patch('/reviews-queue/:id/moderate',
-  requirePermission('reviews.moderate'),
-  reviewController.moderateReview,
-);
-router.patch('/reviews-queue/:id/admin',
-  requirePermission('reviews.moderate'),
-  reviewController.adminUpdateReview,
-);
-router.delete('/reviews-queue/:id/admin',
-  requirePermission('reviews.moderate'),
-  reviewController.adminDeleteReview,
-);
-router.patch('/reviews-queue/:id/admin/response',
-  requirePermission('reviews.moderate'),
-  reviewController.adminUpdateResponse,
-);
-router.delete('/reviews-queue/:id/admin/response',
-  requirePermission('reviews.moderate'),
-  reviewController.adminDeleteResponse,
-);
-
 module.exports = router;

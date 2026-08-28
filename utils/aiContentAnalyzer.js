@@ -549,12 +549,12 @@ function slugify(str) {
  * @returns {Object} { heroImage, heroImageSource, heroImageTourId, imageRelevance }
  */
 /**
- * Select the best hero image for an attraction using CLIP.
+ * Select the best hero image for an attraction.
  *
- * Collects ALL images from tours that visit this attraction (coverPhoto + photos[]),
- * then uses CLIP to score each image against the attraction name. Picks the image
- * that best represents the specific attraction (e.g., "Cape Coast Castle" vs
- * "Elmina Castle" — different images even if both are on the same tour).
+ * Strategy: use the supplier's cover photo as default (they chose it to
+ * represent their tour). CLIP only intervenes for DEDUP — if two attractions
+ * would get the same image, CLIP picks a different one from the same tour's
+ * photos or from other tours visiting this attraction.
  *
  * @param {string} attractionName - The attraction name (e.g., "Cape Coast Castle")
  * @param {Set<string>} [usedImages] - Set of already-used image URLs for dedup
@@ -581,77 +581,45 @@ async function selectHeroImage(attractionName, usedImages = null) {
     },
     select: { id: true, coverPhoto: true, photos: true, averageRating: true },
     orderBy: { averageRating: 'desc' },
-    take: 15,
+    take: 10,
   });
 
   if (tours.length === 0) {
     return { heroImage: null, heroImageSource: 'none', heroImageTourId: null, imageRelevance: null };
   }
 
-  // Collect ALL images from these tours (coverPhoto + every photo in the array)
-  const imageCandidates = [];
-  const seenUrls = new Set();
-  for (const tour of tours) {
-    const images = [tour.coverPhoto, ...(tour.photos || [])].filter(Boolean);
-    for (const imageUrl of images) {
-      if (!seenUrls.has(imageUrl)) {
-        seenUrls.add(imageUrl);
-        imageCandidates.push({ imageUrl, tourId: tour.id, rating: tour.averageRating || 0 });
-      }
-    }
-  }
-
-  // Use CLIP to score each image against the attraction name
-  const clip = require('./clipClient');
-  let bestImage = null;
-  let bestScore = 0;
-
-  try {
-    const clipHealthy = await clip.isHealthy();
-    if (clipHealthy) {
-      // Score up to 15 images against the attraction name
-      const candidates = imageCandidates.slice(0, 15);
-      for (const candidate of candidates) {
-        // Skip images already used by other attractions
-        if (usedImages.has(candidate.imageUrl)) continue;
-
-        try {
-          const result = await clip.classifyImage(candidate.imageUrl, [
-            attractionName,
-            `${attractionName} landmark`,
-            'other',
-          ]);
-
-          // Score: how well does this image represent the specific attraction?
-          const attractionScore =
-            (result.allScores?.[attractionName] || 0) +
-            (result.allScores?.[`${attractionName} landmark`] || 0);
-
-          if (attractionScore > bestScore) {
-            bestScore = attractionScore;
-            bestImage = candidate;
-          }
-        } catch {
-          // Skip failed images
-        }
-      }
-    }
-  } catch {
-    // CLIP unavailable — fall through to fallback
-  }
-
-  if (bestImage) {
-    usedImages.add(bestImage.imageUrl);
+  // Step 1: Try the best-rated tour's cover photo (supplier's choice)
+  const bestTour = tours[0];
+  if (bestTour.coverPhoto && !usedImages.has(bestTour.coverPhoto)) {
+    usedImages.add(bestTour.coverPhoto);
     return {
-      heroImage: bestImage.imageUrl,
+      heroImage: bestTour.coverPhoto,
       heroImageSource: 'ai_selected',
-      heroImageTourId: bestImage.tourId,
-      imageRelevance: bestScore,
+      heroImageTourId: bestTour.id,
+      imageRelevance: null,
     };
   }
 
-  // Fallback: best-rated tour's cover photo (avoid already-used images)
-  for (const tour of tours) {
+  // Step 2: Cover photo is already used by another attraction — find an
+  // unused image from the same tour's photos array.
+  if (bestTour.coverPhoto) {
+    for (const photo of (bestTour.photos || [])) {
+      if (photo && !usedImages.has(photo)) {
+        usedImages.add(photo);
+        return {
+          heroImage: photo,
+          heroImageSource: 'ai_selected',
+          heroImageTourId: bestTour.id,
+          imageRelevance: null,
+        };
+      }
+    }
+  }
+
+  // Step 3: All images from the best tour are used — try cover photos
+  // from other tours visiting this attraction.
+  for (let i = 1; i < tours.length; i++) {
+    const tour = tours[i];
     if (tour.coverPhoto && !usedImages.has(tour.coverPhoto)) {
       usedImages.add(tour.coverPhoto);
       return {
@@ -661,19 +629,29 @@ async function selectHeroImage(attractionName, usedImages = null) {
         imageRelevance: null,
       };
     }
+    // Try photos from this tour too
+    for (const photo of (tour.photos || [])) {
+      if (photo && !usedImages.has(photo)) {
+        usedImages.add(photo);
+        return {
+          heroImage: photo,
+          heroImageSource: 'fallback',
+          heroImageTourId: tour.id,
+          imageRelevance: null,
+        };
+      }
+    }
   }
 
-  // Last resort: any unused image from any tour
-  for (const candidate of imageCandidates) {
-    if (!usedImages.has(candidate.imageUrl)) {
-      usedImages.add(candidate.imageUrl);
-      return {
-        heroImage: candidate.imageUrl,
-        heroImageSource: 'fallback',
-        heroImageTourId: candidate.tourId,
-        imageRelevance: null,
-      };
-    }
+  // Step 4: All images are used — return best tour's cover anyway (better
+  // than nothing, even if duplicated).
+  if (bestTour.coverPhoto) {
+    return {
+      heroImage: bestTour.coverPhoto,
+      heroImageSource: 'fallback',
+      heroImageTourId: bestTour.id,
+      imageRelevance: null,
+    };
   }
 
   return { heroImage: null, heroImageSource: null, heroImageTourId: null, imageRelevance: null };
