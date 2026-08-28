@@ -248,23 +248,24 @@ jobs:
               echo "Attempting direct line removal on $FIX_FILE..."
               cp "$FIX_FILE" ".ci-results/fix-backup-$(basename $FIX_FILE)"
               for LINE in $REMOVE_LINES; do
-                ESCAPED=$(printf '%s\n' "$LINE" | sed 's/[&/\]/\\&/g')
-                sed -i "/$ESCAPED/d" "$FIX_FILE"
+                grep -v -F "$LINE" "$FIX_FILE" > "$FIX_FILE.tmp" && mv "$FIX_FILE.tmp" "$FIX_FILE"
               done
               APPLIED=true
             fi
 
             if [ "$APPLIED" = "true" ]; then
               echo "Running verification: $VERIFY"
-              if eval "$VERIFY" 2>&1; then
+              if bash -c "$VERIFY" 2>&1; then
                 echo ""
                 echo "Fix verified on attempt $ATTEMPT"
                 FIXED=true
               else
                 echo "Verification failed. Reverting..."
                 for f in .ci-results/fix-backup-*; do
-                  BASENAME=$(basename "f" | sed 's/fix-backup-//')
-                  mv "$f" "$BASENAME" 2>/dev/null
+                  if [ -f "$f" ]; then
+                    BASENAME=$(echo "$f" | sed 's|.*/fix-backup-||')
+                    mv "$f" "$BASENAME" 2>/dev/null
+                  fi
                 done
                 APPLIED=false
               fi
@@ -293,7 +294,7 @@ jobs:
 
             if [ "$APPLIED" = "true" ]; then
               echo "Running verification: $VERIFY"
-              if eval "$VERIFY" 2>&1; then
+              if bash -c "$VERIFY" 2>&1; then
                 echo ""
                 echo "Fix verified on attempt $ATTEMPT"
                 FIXED=true
