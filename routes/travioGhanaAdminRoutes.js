@@ -333,6 +333,19 @@ router.patch('/notifications/acknowledge-all',
 );
 
 // ══════════════════════════════════════════════════════════════════════════
+// CHAT — proxied to shared chat controller (admin talks to all users)
+// ══════════════════════════════════════════════════════════════════════════
+const chatController = require('../controllers/chatController');
+router.get('/chat/conversations', chatController.getConversations);
+router.post('/chat/conversations', chatController.getOrCreateConversation);
+router.get('/chat/conversations/unread-count', chatController.getUnreadCount);
+router.get('/chat/conversations/:conversationId/messages', chatController.getMessages);
+router.post('/chat/conversations/:conversationId/messages', chatController.sendMessage);
+router.patch('/chat/conversations/:conversationId/read', chatController.markAsRead);
+router.post('/chat/upload', chatController.uploadChatImage);
+router.get('/chat/admin-support', chatController.getAdminSupport);
+
+// ══════════════════════════════════════════════════════════════════════════
 // SETTINGS — shared platform endpoint (proxied)
 // ══════════════════════════════════════════════════════════════════════════
 router.get('/settings',
