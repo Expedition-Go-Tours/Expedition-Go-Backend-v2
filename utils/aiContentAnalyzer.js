@@ -133,60 +133,84 @@ function parseJsonResponse(text) {
  * @returns {Object} AI analysis results
  */
 async function analyzeImage(imageUrl, tourContext) {
-  const attractions = tourContext.attractions || [];
-  const attractionList = attractions.length > 0
-    ? `\nCandidate attractions (only include ones visible in the image): ${JSON.stringify(attractions)}`
-    : '';
+  const clip = require('./clipClient');
 
+  // 1. CLIP zero-shot classification
+  let classification;
+  try {
+    classification = await clip.classifyImage(imageUrl);
+  } catch (err) {
+    logger.warn('CLIP classification failed, falling back to MiMo', { imageUrl: imageUrl.slice(0, 80), error: err.message });
+    // Fallback to MiMo text-only analysis using tour metadata
+    return analyzeImageFallback(tourContext);
+  }
+
+  // 2. CLIP quality scoring
+  let quality = { score: 0.5, issues: [] };
+  try {
+    quality = await clip.scoreQuality(imageUrl);
+  } catch (err) {
+    logger.warn('CLIP quality scoring failed', { error: err.message });
+  }
+
+  // 3. Build labels from CLIP subjects + category
+  const labels = [classification.label, ...(classification.subjects || [])];
+  const uniqueLabels = [...new Set(labels)].filter(Boolean);
+
+  // 4. Map CLIP category to our slug format
+  const categoryHint = classification.label || null;
+
+  return {
+    labels: uniqueLabels.slice(0, 8),
+    qualityScore: quality.score ?? 0.5,
+    subjects: classification.subjects || [],
+    description: null, // CLIP doesn't generate descriptions
+    categoryHint,
+    isRelevantToTour: classification.confidence >= 0.3,
+    attractionRelevance: {}, // CLIP can't detect specific attractions
+    primaryAttraction: null,
+    clipConfidence: classification.confidence,
+    clipAllScores: classification.allScores,
+  };
+}
+
+/**
+ * Fallback: use MiMo text-only analysis when CLIP fails.
+ * Analyzes tour metadata instead of the image.
+ */
+async function analyzeImageFallback(tourContext) {
   const messages = [
     {
       role: 'system',
-      content: 'You are an image analysis assistant for a travel platform (TravioAfrica/Expedition-Go). Analyze tour/experience images and return structured JSON. Be precise and concise.',
+      content: 'You are a travel tour classifier. Based on tour metadata, predict what the tour images likely show. Return structured JSON.',
     },
     {
       role: 'user',
-      content: [
-        {
-          type: 'image_url',
-          image_url: { url: imageUrl },
-        },
-        {
-          type: 'text',
-          text: `Analyze this travel tour image.
+      content: `Tour title: "${tourContext.title || 'Unknown'}"
+Category: "${tourContext.category || 'Unknown'}"
+Tags: ${JSON.stringify(tourContext.tags || [])}
 
-Tour title: "${tourContext.title || 'Unknown'}"
-Supplier category: "${tourContext.category || 'Unknown'}"
-Tour tags: ${JSON.stringify(tourContext.tags || [])}
-${attractionList}
+Based on this metadata, predict what images of this tour would show.
 
-Return JSON with exactly these fields:
+Return JSON:
 {
-  "labels": ["adventure", "outdoor", "kayaking"],
-  "qualityScore": 0.92,
-  "subjects": ["river", "forest", "person"],
-  "description": "Brief description of what the image shows",
-  "categoryHint": "sports_adventure",
+  "labels": ["adventure", "outdoor"],
+  "qualityScore": 0.5,
+  "subjects": ["nature", "people"],
+  "description": "Likely shows outdoor adventure activities",
+  "categoryHint": "${VALID_CATEGORY_SLUGS[0]}",
   "isRelevantToTour": true,
-  "attractionRelevance": { "Cape Coast Castle": 0.95, "Kakum National Park": 0.05 },
-  "primaryAttraction": "Cape Coast Castle"
+  "attractionRelevance": {},
+  "primaryAttraction": null
 }
 
 Rules:
-- labels: 3–8 lowercase descriptive terms (e.g. "adventure", "food", "architecture", "forest")
-- qualityScore: 0.0 (terrible) to 1.0 (professional quality). Consider sharpness, lighting, composition.
-- subjects: main visual subjects in the image
-- description: 1 sentence describing what the image shows
-- categoryHint: must be one of: ${VALID_CATEGORY_SLUGS.join(', ')}
-- isRelevantToTour: does this image actually match the tour described above?
-- attractionRelevance: for each candidate attraction, a 0.0–1.0 score of how well this image represents it. Only include attractions visible in the image. If no candidate attractions provided, return empty object {}
-- primaryAttraction: the single attraction this image best represents, or null if none
-- Return ONLY the JSON object, no other text.`,
-        },
-      ],
+- categoryHint must be one of: ${VALID_CATEGORY_SLUGS.join(', ')}
+- Return ONLY the JSON object.`,
     },
   ];
 
-  const response = await callMiMo(messages, 100000);
+  const response = await callMiMo(messages, 5000);
   return parseJsonResponse(response);
 }
 
@@ -364,10 +388,70 @@ async function processTourAI(tourId) {
       }
     }
 
-    // 4. Classify tour based on all image analyses
+    // 4. Compute CLIP embeddings for the tour
+    let tourClipEmbedding = null;
+    try {
+      const clip = require('./clipClient');
+      const embeddings = [];
+
+      // Get embedding for each image
+      for (const analysis of imageAnalyses) {
+        if (analysis.clipEmbedding) {
+          embeddings.push(analysis.clipEmbedding);
+        } else {
+          try {
+            const { embedding } = await clip.embedImage(analysis.imageUrl);
+            embeddings.push(embedding);
+            // Store on the image analysis record
+            await prisma.tourImageAnalysis.update({
+              where: { id: analysis.id },
+              data: { clipEmbedding: embedding, clipModelVersion: 'ViT-B/32', clipProcessedAt: new Date() },
+            });
+          } catch (err) {
+            logger.warn('CLIP embedding failed for image', { imageUrl: analysis.imageUrl?.slice(0, 80), error: err.message });
+          }
+        }
+      }
+
+      // Average embeddings across all images
+      if (embeddings.length > 0) {
+        const dim = embeddings[0].length;
+        const avg = new Array(dim).fill(0);
+        for (const emb of embeddings) {
+          for (let i = 0; i < dim; i++) avg[i] += emb[i];
+        }
+        for (let i = 0; i < dim; i++) avg[i] /= embeddings.length;
+        // Normalize
+        const norm = Math.sqrt(avg.reduce((s, v) => s + v * v, 0));
+        tourClipEmbedding = avg.map(v => v / norm);
+      }
+
+      // Get text embedding for the tour
+      let tourTextEmbedding = null;
+      try {
+        const text = `${tour.title} ${tour.description || ''} ${(tour.tags || []).join(' ')}`.slice(0, 500);
+        const { embedding } = await clip.embedText(text);
+        tourTextEmbedding = embedding;
+      } catch (err) {
+        logger.warn('CLIP text embedding failed', { tourId, error: err.message });
+      }
+
+      // Store embeddings on tour
+      await prisma.tour.update({
+        where: { id: tourId },
+        data: {
+          clipEmbedding: tourClipEmbedding,
+          clipTextEmbedding: tourTextEmbedding,
+        },
+      });
+    } catch (err) {
+      logger.warn('CLIP embedding pipeline failed', { tourId, error: err.message });
+    }
+
+    // 5. Classify tour based on all image analyses (MiMo text-based)
     await classifyAndUpdateTour(tour, imageAnalyses);
 
-    // 5. Upsert Attraction entities for this tour's attractions
+    // 6. Upsert Attraction entities for this tour's attractions
     if (Array.isArray(tour.attractions)) {
       for (const name of tour.attractions) {
         if (!name || !name.trim()) continue;
@@ -379,7 +463,7 @@ async function processTourAI(tourId) {
       }
     }
 
-    // 6. Invalidate homepage caches
+    // 7. Invalidate homepage caches
     try {
       const { invalidateHomepageCaches } = require('./cacheHelper');
       await invalidateHomepageCaches();

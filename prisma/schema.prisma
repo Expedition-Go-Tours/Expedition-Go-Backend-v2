@@ -625,6 +625,10 @@ model Tour {
   aiScoredAt            DateTime? // When AI last processed this tour
   aiProcessingStatus    String    @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED
 
+  // CLIP embeddings (self-hosted, zero-cost image/text vectors)
+  clipEmbedding     Json?       // Average CLIP image embedding (512 floats)
+  clipTextEmbedding Json?       // CLIP text embedding of title+description (512 floats)
+
   // Statistics
   totalBookings Int      @default(0)
   totalRevenue  Decimal  @default(0) @db.Decimal(10, 2)
@@ -1684,6 +1688,11 @@ model TourImageAnalysis {
   aiCategoryHint  String?              // MiMo's category guess
   attractionRelevance Json?            // { "Cape Coast Castle": 0.95, "Kakum": 0.05 }
   primaryAttraction   String?          // Which attraction this image best represents
+
+  // CLIP output (self-hosted image embeddings)
+  clipEmbedding    Json?       // CLIP image embedding vector (512 floats)
+  clipModelVersion String?     // e.g. "ViT-B/32"
+  clipProcessedAt  DateTime?
 
   // Metadata
   aiModelVersion String?  // e.g. "mimo-v2.5"
