@@ -1154,8 +1154,8 @@ exports.getSuppliers = catchAsync(async (req, res, next) => {
         roles: true, active: true, createdAt: true, lastLoginAt: true,
         supplierProfile: {
           select: {
-            status: true, averageRating: true, totalBookings: true,
-            totalRevenue: true, businessName: true,
+            id: true, status: true, averageRating: true, totalBookings: true,
+            totalEarnings: true, businessInfo: true,
           },
         },
         _count: { select: { tours: true } },
@@ -1185,28 +1185,33 @@ exports.getSuppliers = catchAsync(async (req, res, next) => {
 exports.getSupplierDetail = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
-  const supplier = await prisma.user.findFirst({
+  const user = await prisma.user.findFirst({
     where: { id, roles: { has: GHANA_ROLE } },
     select: {
       id: true, name: true, email: true, phone: true, photoURL: true,
       roles: true, active: true, createdAt: true, lastLoginAt: true,
-      supplierProfile: {
-        select: {
-          status: true, averageRating: true, totalBookings: true,
-          totalRevenue: true, businessName: true, description: true,
-          yearsExperience: true, languages: true,
-        },
-      },
     },
   });
 
-  if (!supplier) {
+  if (!user) {
     return next(new AppError('Ghana supplier not found', 404));
   }
 
+  const profile = await prisma.supplierProfile.findUnique({
+    where: { userId: user.id },
+    select: {
+      id: true, userId: true, status: true, supplierType: true,
+      businessInfo: true, operatingInfo: true, representativeInfo: true,
+      businessDocuments: true, payoutInfo: true, compliance: true,
+      totalEarnings: true, totalBookings: true, averageRating: true,
+    },
+  });
+
+  const supplier = { ...user, ...(profile || {}) };
+
   const [tours, recentBookings] = await Promise.all([
     prisma.travioGhanaTour.findMany({
-      where: { tour: { supplierId: id } },
+      where: { tour: { supplierId: user.id } },
       include: {
         tour: {
           select: {
@@ -1219,7 +1224,7 @@ exports.getSupplierDetail = catchAsync(async (req, res, next) => {
       take: 10,
     }),
     prisma.booking.findMany({
-      where: { source: GHANA_SOURCE, tour: { supplierId: id } },
+      where: { source: GHANA_SOURCE, tour: { supplierId: user.id } },
       select: {
         id: true, bookingNumber: true, status: true, grossAmount: true,
         currency: true, createdAt: true,
@@ -1388,13 +1393,13 @@ exports.getAiStatus = catchAsync(async (req, res, next) => {
   const [total, completed, failed, pending] = await Promise.all([
     prisma.travioGhanaTour.count(),
     prisma.travioGhanaTour.count({
-      where: { tour: { aiStatus: 'COMPLETED' } },
+      where: { tour: { aiProcessingStatus: 'COMPLETED' } },
     }),
     prisma.travioGhanaTour.count({
-      where: { tour: { aiStatus: 'FAILED' } },
+      where: { tour: { aiProcessingStatus: 'FAILED' } },
     }),
     prisma.travioGhanaTour.count({
-      where: { tour: { aiStatus: 'PENDING' } },
+      where: { tour: { aiProcessingStatus: 'PENDING' } },
     }),
   ]);
 
@@ -1416,12 +1421,12 @@ exports.getAiStatus = catchAsync(async (req, res, next) => {
  */
 exports.getFailedTours = catchAsync(async (req, res, next) => {
   const records = await prisma.travioGhanaTour.findMany({
-    where: { tour: { aiStatus: 'FAILED' } },
+    where: { tour: { aiProcessingStatus: 'FAILED' } },
     include: {
       tour: {
         select: {
           id: true, title: true, slug: true, coverPhoto: true,
-          aiError: true, createdAt: true,
+          aiScoredAt: true, createdAt: true,
           supplier: { select: { name: true } },
         },
       },

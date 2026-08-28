@@ -26,6 +26,8 @@ async function acquireHold({
   payload,
   pricing,
   commission,
+  source,
+  bookingPrefix,
 }) {
   const seats = travelerCount(travelers);
 
@@ -71,7 +73,7 @@ async function acquireHold({
         travelDate: new Date(travelDate),
         selectedTime: selectedTime || null,
         seats,
-        payload: payload ?? {},
+        payload: { ...(payload ?? {}), _source: source || 'EXPEDITION', _bookingPrefix: bookingPrefix || 'EXP' },
         pricing: pricing ?? {},
         commissionRate,
         platformCommission,
@@ -122,6 +124,10 @@ async function materializeHold(draftId, session, paymentIntentId) {
       return null; // Already materialized / expired — idempotent no-op
     }
 
+    // Read source/prefix from draft payload (set by acquireHold)
+    const source = draftRecord.payload?._source || 'EXPEDITION';
+    const bookingPrefix = draftRecord.payload?._bookingPrefix || 'EXP';
+
     // ── Lock the tour ──────────────────────────────────────────
     const [locked] = await tx.$queryRawUnsafe(
       `SELECT id FROM "Tour" WHERE id = $1 FOR UPDATE`,
@@ -158,13 +164,13 @@ async function materializeHold(draftId, session, paymentIntentId) {
     }
 
     // ── Create the Booking ─────────────────────────────────────
-    const bookingNumber = await generateBookingNumber('EXP');
+    const bookingNumber = await generateBookingNumber(bookingPrefix);
     const booking = await tx.booking.create({
       data: {
         bookingNumber,
         customerId: draftRecord.customerId,
         tourId: draftRecord.tourId,
-        source: 'EXPEDITION',
+        source,
         status: 'CONFIRMED',
         paymentStatus: 'SUCCEEDED',
         paidAt: new Date(),

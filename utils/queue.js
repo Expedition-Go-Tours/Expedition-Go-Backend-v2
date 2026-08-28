@@ -172,7 +172,12 @@ async function processEmailJob(job) {
       });
       if (!booking) throw new Error(`Booking ${job.bookingId} not found`);
     }
-    await emailService[fnName](booking, job.data || {});
+    // Merge brandName from job data so Ghana emails use "Travio Ghana" branding
+    const emailData = { ...(job.data || {}) };
+    if (job.brandName && !emailData.brandName) {
+      emailData.brandName = job.brandName;
+    }
+    await emailService[fnName](booking, emailData);
     return;
   }
 

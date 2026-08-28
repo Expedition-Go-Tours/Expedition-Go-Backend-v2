@@ -143,6 +143,7 @@ async function createCheckoutSession({
   customerEmail,
   expiresAt,
   successPath,
+  source = 'expedition',
 }) {
   if (!bookingId) throw new Error('bookingId is required to create a Checkout Session');
   if (!amount || amount <= 0) throw new Error('amount must be a positive value in minor units');
@@ -174,8 +175,8 @@ async function createCheckoutSession({
     ],
     success_url: successUrl,
     cancel_url: cancelUrl,
-    metadata: { bookingIds: bookingId, source: 'expedition' },
-    payment_intent_data: { metadata: { bookingIds: bookingId, source: 'expedition' } },
+    metadata: { bookingIds: bookingId, source },
+    payment_intent_data: { metadata: { bookingIds: bookingId, source } },
     ...(customerId ? { customer: customerId } : {}),
     ...((!customerId && customerEmail) ? { customer_email: customerEmail } : {}),
     ...(expiresAt ? { expires_at: Math.floor(expiresAt.getTime() / 1000) } : {}),

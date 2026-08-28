@@ -684,9 +684,10 @@ exports.submitContact = catchAsync(async (req, res, next) => {
   await sendEmail({
     to: supportEmail,
     subject,
-    template: null,
+    template: 'generic-notification',
     data: {
       subject,
+      header: `Travio Ghana Contact — ${name}`,
       messageBody,
       name,
       email,
@@ -1540,6 +1541,8 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         currency: pricing.currency,
       },
       commission,
+      source: 'GHANA',
+      bookingPrefix: 'GHA',
     });
   } catch (err) {
     console.error('[Travio Ghana] Failed to acquire hold:', err.message);
@@ -1562,6 +1565,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       expiresAt: holdResult.expiresAt,
       // Stripe replaces {CHECKOUT_SESSION_ID} with the real session id after creation.
       successPath: '/booking/confirmation?session_id={CHECKOUT_SESSION_ID}',
+      source: 'ghana',
     });
   } catch (err) {
     console.error('[Travio Ghana] Failed to create Checkout Session:', err.message);

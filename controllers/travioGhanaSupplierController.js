@@ -180,7 +180,7 @@ exports.getSupplierReviews = catchAsync(async (req, res) => {
       take,
       orderBy: { createdAt: 'desc' },
       include: {
-        user: { select: { id: true, name: true, photoURL: true } },
+        customer: { select: { id: true, name: true, photoURL: true } },
         tour: { select: { id: true, title: true, slug: true } },
       },
     }),
@@ -256,11 +256,12 @@ exports.getSettings = catchAsync(async (req, res) => {
     where: { id: req.user.id },
     select: {
       id: true, name: true, email: true, photoURL: true,
+      notificationPreferences: true,
       supplierProfile: {
         select: {
-          businessName: true, description: true, phone: true, website: true,
-          country: true, city: true, address: true,
-          notificationPreferences: true, bookingRules: true, taxInfo: true,
+          id: true, status: true, businessInfo: true, operatingInfo: true,
+          representativeInfo: true, payoutInfo: true,
+          totalEarnings: true, totalBookings: true, averageRating: true,
         },
       },
     },
@@ -275,19 +276,55 @@ exports.getSettings = catchAsync(async (req, res) => {
 exports.updateSettings = catchAsync(async (req, res) => {
   const { businessName, description, phone, website, notificationPreferences, bookingRules } = req.body;
 
-  const profile = await prisma.supplierProfile.update({
-    where: { userId: req.user.id },
-    data: {
-      ...(businessName !== undefined && { businessName }),
-      ...(description !== undefined && { description }),
-      ...(phone !== undefined && { phone }),
-      ...(website !== undefined && { website }),
-      ...(notificationPreferences && { notificationPreferences }),
-      ...(bookingRules && { bookingRules }),
-    },
-  });
+  const updates = [];
 
-  res.json({ status: 'success', data: { profile } });
+  if (businessName !== undefined || description !== undefined || phone !== undefined || website !== undefined) {
+    const existing = await prisma.supplierProfile.findUnique({
+      where: { userId: req.user.id },
+      select: { businessInfo: true },
+    });
+    if (existing) {
+      const businessInfo = {
+        ...(existing.businessInfo || {}),
+        ...(businessName !== undefined && { businessName }),
+        ...(description !== undefined && { description }),
+        ...(phone !== undefined && { phone }),
+        ...(website !== undefined && { website }),
+      };
+      updates.push(prisma.supplierProfile.update({
+        where: { userId: req.user.id },
+        data: { businessInfo },
+      }));
+    }
+  }
+
+  if (notificationPreferences !== undefined || bookingRules !== undefined) {
+    const existing = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { notificationPreferences: true },
+    });
+    updates.push(prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        ...(notificationPreferences !== undefined && {
+          notificationPreferences: {
+            ...(existing.notificationPreferences || {}),
+            ...notificationPreferences,
+          },
+        }),
+        ...(bookingRules !== undefined && {
+          notificationPreferences: {
+            ...(existing.notificationPreferences || {}),
+            bookingRules,
+          },
+        }),
+      },
+    }));
+  }
+
+  const results = await Promise.all(updates);
+
+  res.json({ status: 'success', data: { profile: results[0] || null, user: results[1] || null } });
 });
 
 // ══════════════════════════════════════════════════════════════════════════

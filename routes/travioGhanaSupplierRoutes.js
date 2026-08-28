@@ -11,7 +11,7 @@
 
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
-const { resolveSupplier } = require('../middleware/teamRoleMiddleware');
+const { resolveSupplier, requireTeamRole } = require('../middleware/teamRoleMiddleware');
 const ghanaSupplier = require('../controllers/travioGhanaSupplierController');
 
 // Shared controllers for proxied endpoints
@@ -43,19 +43,26 @@ router.get('/settings', ghanaSupplier.getSettings);
 router.patch('/settings', ghanaSupplier.updateSettings);
 
 // Settings sub-routes (proxied to shared controllers)
+router.get('/settings/business-profile', resolveSupplier, supplierSettingsController.getBusinessProfile);
+router.patch('/settings/business-profile', resolveSupplier, requireTeamRole('admin', 'editor'), supplierSettingsController.updateBusinessProfile);
 router.get('/settings/notification-preferences', resolveSupplier, supplierSettingsController.getNotificationPreferences);
-router.patch('/settings/notification-preferences', resolveSupplier, supplierSettingsController.updateNotificationPreferences);
+router.put('/settings/notification-preferences', resolveSupplier, requireTeamRole('admin'), supplierSettingsController.updateNotificationPreferences);
 router.get('/settings/tax-info', resolveSupplier, supplierSettingsController.getTaxInfo);
-router.patch('/settings/tax-info', resolveSupplier, supplierSettingsController.updateTaxInfo);
+router.patch('/settings/tax-info', resolveSupplier, requireTeamRole('admin', 'finance'), supplierSettingsController.updateTaxInfo);
 router.get('/settings/booking-rules', resolveSupplier, supplierSettingsController.getBookingRules);
-router.patch('/settings/booking-rules', resolveSupplier, supplierSettingsController.updateBookingRules);
+router.put('/settings/booking-rules', resolveSupplier, requireTeamRole('admin', 'editor'), supplierSettingsController.updateBookingRules);
 
 // Team (proxied to shared controller)
+router.get('/settings/team/invite/:token', teamController.getInviteDetails);
 router.get('/settings/team/my-role', resolveSupplier, teamController.getMyTeamRole);
-router.get('/settings/team/members', resolveSupplier, teamController.getMembers);
-router.post('/settings/team/invite', resolveSupplier, teamController.inviteMember);
-router.patch('/settings/team/members/:id', resolveSupplier, teamController.updateMemberRole);
-router.delete('/settings/team/members/:id', resolveSupplier, teamController.removeMember);
+router.get('/settings/team/members', resolveSupplier, requireTeamRole('admin'), teamController.getMembers);
+router.post('/settings/team/invite', resolveSupplier, requireTeamRole('admin'), teamController.inviteMember);
+router.post('/settings/team/invite/resend', resolveSupplier, requireTeamRole('admin'), teamController.resendInvite);
+router.post('/settings/team/invite/:token/accept', teamController.acceptInvite);
+router.post('/settings/team/invite/:token/decline', teamController.declineInvite);
+router.post('/settings/team/direct-add', resolveSupplier, requireTeamRole('admin'), teamController.directAddMember);
+router.patch('/settings/team/members/:id/role', resolveSupplier, requireTeamRole('admin'), teamController.updateMemberRole);
+router.delete('/settings/team/members/:id', resolveSupplier, requireTeamRole('admin'), teamController.removeMember);
 
 // Special Offers
 router.get('/special-offers', ghanaSupplier.getSpecialOffers);
