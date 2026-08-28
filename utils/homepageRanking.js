@@ -1585,6 +1585,60 @@ async function getPopularDestinations(limit = 10, userId = null, lat = null, lng
 
     ranked.sort((a, b) => b._score - a._score);
 
+    // CLIP-powered hero image selection: pick the image that best
+    // represents each destination city, not just the highest-rated tour's
+    // cover photo (which could be food, people, etc.).
+    try {
+      const clip = require('./clipClient');
+      const clipHealthy = await clip.isHealthy();
+      if (clipHealthy) {
+        for (const dest of ranked) {
+          const cityTours = await prisma.tour.findMany({
+            where: { city: dest.city, status: 'ACTIVE', coverPhoto: { not: null } },
+            select: { coverPhoto: true },
+            take: 8,
+          });
+
+          if (cityTours.length <= 1) continue;
+
+          let bestImage = dest.heroImage;
+          let bestScore = 0;
+
+          for (const t of cityTours) {
+            try {
+              const result = await clip.classifyImage(t.coverPhoto, [
+                `${dest.city} city landscape`,
+                `${dest.city} landmark architecture`,
+                `${dest.country} destination scenery`,
+                'food meal restaurant',
+                'people portrait selfie',
+              ]);
+
+              // Score: city/landmark/destination images get high scores,
+              // food/people images get low scores
+              const cityScore =
+                (result.allScores?.[`${dest.city} city landscape`] || 0) +
+                (result.allScores?.[`${dest.city} landmark architecture`] || 0) +
+                (result.allScores?.[`${dest.country} destination scenery`] || 0);
+
+              if (cityScore > bestScore) {
+                bestScore = cityScore;
+                bestImage = t.coverPhoto;
+              }
+            } catch {
+              // Skip failed images
+            }
+          }
+
+          if (bestImage && bestImage !== dest.heroImage) {
+            dest.heroImage = bestImage;
+          }
+        }
+      }
+    } catch {
+      // CLIP unavailable — fall through with SQL-based hero images
+    }
+
     // Image dedup: ensure no two cities share the same hero image
     const usedImages = new Set();
     const results = [];
