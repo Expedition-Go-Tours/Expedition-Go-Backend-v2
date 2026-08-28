@@ -45,6 +45,8 @@ module.exports = [
         Request: 'readonly',
         FormData: 'readonly',
         Headers: 'readonly',
+        AbortController: 'readonly',
+        AbortSignal: 'readonly',
       },
     },
     rules: {
