@@ -1546,8 +1546,8 @@ async function getPopularDestinations(limit = 10, userId = null, lat = null, lng
         COUNT(*)::int AS "tourCount",
         COALESCE(SUM(t."totalBookings"), 0)::int AS "totalBookings",
         ROUND(AVG(CASE WHEN t."averageRating" IS NOT NULL THEN t."averageRating"::numeric END), 2) AS "avgRating",
-        ROUND(AVG(t."latitude"), 4) AS "latitude",
-        ROUND(AVG(t."longitude"), 4) AS "longitude",
+        ROUND(AVG(t."latitude")::numeric, 4) AS "latitude",
+        ROUND(AVG(t."longitude")::numeric, 4) AS "longitude",
         (SELECT t2."coverPhoto" FROM "Tour" t2
          WHERE t2.city = t.city AND t2.status = 'ACTIVE' AND t2."coverPhoto" IS NOT NULL
          ORDER BY t2."totalBookings" DESC LIMIT 1) AS "heroImage"
