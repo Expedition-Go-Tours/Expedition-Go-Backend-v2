@@ -100,17 +100,39 @@ jobs:
             echo "=== AI Debug Attempt $ATTEMPT / $MAX_ATTEMPTS ==="
             echo ""
 
-            # Read FULL content of all files mentioned in error logs
+            # Read content of files mentioned in error logs
+            # Strip absolute CI runner paths to get relative paths
             FILE_CONTEXT=""
             if [ -n "$FAIL_JOBS" ]; then
-              for FILE_PATH in $(echo "$FAIL_LOG" | grep -oE '[a-zA-Z0-9_/.-]+\.(js|ts|jsx|tsx|mjs)' | sort -u | head -10); do
-                if [ -f "$FILE_PATH" ]; then
-                  LINE_COUNT=$(wc -l < "$FILE_PATH")
-                  FILE_CONTEXT+=$'\n'"=== FILE: $FILE_PATH ($LINE_COUNT lines) ==="$'\n'
-                  nl -ba "$FILE_PATH" > /tmp/file_ctx_$$.txt 2>/dev/null
-                  FILE_CONTEXT+=$(cat /tmp/file_ctx_$$.txt)$'\n'
-                  FILE_CONTEXT+=$'\n'"=== END FILE: $FILE_PATH ==="$'\n'
-                  rm -f /tmp/file_ctx_$$.txt
+              for FILE_PATH in $(echo "$FAIL_LOG" | grep -oE '[a-zA-Z0-9_/.-]+\.(js|ts|jsx|tsx|mjs)' | sort -u | head -5); do
+                # Try to find the file by stripping common CI runner prefixes
+                REL_PATH="$FILE_PATH"
+                for PREFIX in "/home/runner/work/Expedition-Go-Backend-v2/Expedition-Go-Backend-v2/" "/home/runner/work/Expedition-Go-Backend-v2/" "/home/runner/work/"; do
+                  if [[ "$REL_PATH" == "$PREFIX"* ]]; then
+                    REL_PATH="${REL_PATH#$PREFIX}"
+                    break
+                  fi
+                done
+                # Also try just the last 2-3 path components
+                SHORT_PATH=$(echo "$REL_PATH" | grep -oE '[^/]+/[^/]+/[^/]+$' || true)
+                  FINAL_PATH=""
+                for CANDIDATE in "$REL_PATH" "$SHORT_PATH"; do
+                  if [ -n "$CANDIDATE" ] && [ -f "$CANDIDATE" ]; then
+                    FINAL_PATH="$CANDIDATE"
+                    break
+                  fi
+                done
+                if [ -n "$FINAL_PATH" ]; then
+                  LINE_COUNT=$(wc -l < "$FINAL_PATH")
+                  FILE_CONTEXT+=$'\n'"=== FILE: $FINAL_PATH ($LINE_COUNT lines) ==="$'\n'
+                  rm -f /tmp/file_ctx_all.txt
+                  nl -ba "$FINAL_PATH" 2>/dev/null > /tmp/file_ctx_all.txt
+                  FILE_CONTEXT+=$(cat /tmp/file_ctx_all.txt)$'\n'
+                  FILE_CONTEXT+=$'\n'"=== END FILE: $FINAL_PATH ==="$'\n'
+                  rm -f /tmp/file_ctx_all.txt
+                  echo "  Loaded: $FINAL_PATH ($LINE_COUNT lines)"
+                else
+                  echo "  Could not find: $FILE_PATH (tried $REL_PATH, $SHORT_PATH)"
                 fi
               done
             fi
@@ -122,27 +144,36 @@ jobs:
 
             if [ -z "$PROMPT" ]; then
               echo "ERROR: Failed to build prompt from template"
+              echo "TEMPLATE length: ${#TEMPLATE}"
+              echo "FAIL_LOG length: ${#FAIL_LOG}"
+              echo "FILE_CONTEXT length: ${#FILE_CONTEXT}"
               continue
             fi
+
+            echo "PROMPT length: ${#PROMPT}"
 
             if [ -z "$MIMO_API_KEY" ]; then
               echo "MIMO_API_KEY not set — cannot call AI"
               break
             fi
 
-            # Escape prompt for JSON
-            PROMPT_JSON=$(echo "$PROMPT" | jq -Rs '.')
-            if [ -z "$PROMPT_JSON" ] || [ "$PROMPT_JSON" = "null" ]; then
-              echo "ERROR: Failed to JSON-escape prompt"
+            # Build request body as a file to avoid shell interpolation issues with large payloads
+            jq -n --arg prompt "$PROMPT" \
+              '{model:"mimo-v2.5",messages:[{role:"user",content:$prompt}],max_tokens:100000,temperature:0.1}' \
+              > /tmp/mimo_request.json 2>/dev/null
+
+            if [ ! -s /tmp/mimo_request.json ]; then
+              echo "ERROR: Failed to build request JSON"
               continue
             fi
 
+            echo "Request body size: $(wc -c < /tmp/mimo_request.json) bytes"
             echo "Calling MiMo API (max_tokens: 100000)..."
 
             RESPONSE=$(curl -s --max-time 180 \
               -H "Authorization: Bearer $MIMO_API_KEY" \
               -H "Content-Type: application/json" \
-              -d "{\"model\":\"mimo-v2.5\",\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}],\"max_tokens\":100000,\"temperature\":0.1}" \
+              -d @/tmp/mimo_request.json \
               "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions" 2>/dev/null)
 
             echo "$RESPONSE" > .ci-results/last-response-attempt-$ATTEMPT.json 2>/dev/null || true
@@ -178,6 +209,7 @@ jobs:
             fi
 
             echo "Response length: ${#CONTENT} chars"
+            echo "Finish: $FINISH_REASON | Content: ${#CONTENT} chars" >> .ci-results/debug-log.txt
 
             # Strip markdown code fences if present
             CONTENT=$(echo "$CONTENT" | sed '/^```/d')
@@ -192,9 +224,11 @@ jobs:
             if [ -z "$PARSED" ] || [ "$PARSED" = "null" ]; then
               echo "Failed to parse AI response as JSON"
               echo "Content preview: $(echo "$CONTENT" | head -c 500)"
+              echo "PARSE FAILED attempt $ATTEMPT: $(echo "$CONTENT" | head -c 200)" >> .ci-results/debug-log.txt
               continue
             fi
 
+            echo "PARSE OK attempt $ATTEMPT" >> .ci-results/debug-log.txt
             ANALYSIS=$(echo "$PARSED" | jq -r '.analysis // "unknown"' 2>/dev/null)
             CONFIDENCE=$(echo "$PARSED" | jq -r '.confidence // 0' 2>/dev/null)
             FIX_COUNT=$(echo "$PARSED" | jq -r '.fixes | length // 0' 2>/dev/null)
