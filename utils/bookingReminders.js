@@ -190,7 +190,9 @@ async function dispatchDueReminders() {
               data: { bookingId: reminder.bookingId, travelDate: booking.travelDate, source: 'expedition' },
             }).catch(() => {});
           }
-        } catch (_) { /* best-effort */ }
+        } catch (err) {
+          /* best-effort */
+        }
       }
     } catch (err) {
       console.error(`[Reminders] Dispatch ${reminder.type} for booking ${reminder.bookingId} failed:`, err.message);
