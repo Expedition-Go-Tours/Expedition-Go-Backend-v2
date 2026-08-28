@@ -103,10 +103,15 @@ jobs:
             echo ""
             echo "=== AI Debug Attempt $ATTEMPT / $MAX_ATTEMPTS ===" | tee -a .ci-results/debug-log.txt
 
-            # Read content of files mentioned in error logs
+            # Read content of files mentioned in error logs (prefer source over test files)
             FILE_CONTEXT=""
             if [ -n "$FAIL_JOBS" ]; then
-              for FILE_PATH in $(echo "$FAIL_LOG" | grep -oE '[a-zA-Z0-9_/.-]+\.(js|ts|jsx|tsx|mjs)' | sort -u | head -5); do
+              RAW_PATHS=$(echo "$FAIL_LOG" | grep -oE '[a-zA-Z0-9_/.-]+\.(js|ts|jsx|tsx|mjs)' | sort -u)
+              SRC_PATHS=$(echo "$RAW_PATHS" | grep -vE '(__tests__|/test/|/tests/|\.test\.|\.spec\.)' | head -5)
+              if [ -z "$SRC_PATHS" ]; then
+                SRC_PATHS=$(echo "$RAW_PATHS" | head -5)
+              fi
+              for FILE_PATH in $SRC_PATHS; do
                 REL_PATH="$FILE_PATH"
                 for PREFIX in "/home/runner/work/Expedition-Go-Backend-v2/Expedition-Go-Backend-v2/" "/home/runner/work/Expedition-Go-Backend-v2/" "/home/runner/work/"; do
                   if [[ "$REL_PATH" == "$PREFIX"* ]]; then
@@ -165,8 +170,9 @@ jobs:
               break
             fi
 
-            # Build request body as a file to avoid shell interpolation issues
-            jq -n --arg prompt "$PROMPT" \
+            # Build request body using --rawfile (prompt carries via file, avoids argv 128KB limit)
+            printf '%s' "$PROMPT" > /tmp/ai-prompt.txt
+            jq -n --rawfile prompt /tmp/ai-prompt.txt \
               '{model:"mimo-v2.5",messages:[{role:"user",content:$prompt}],max_tokens:100000,temperature:0.1}' \
               > /tmp/mimo_request.json 2>.ci-results/jq-error.txt
 
