@@ -19,7 +19,7 @@ const { logActivity } = require('../utils/auditLogger');
 const { shouldCountTourView } = require('../utils/viewTracking');
 const eventEmitter = require('../utils/eventEmitter');
 
-const CACHE_PREFIX = 'expedition:';
+const CACHE_PREFIX = 'ghana:';
 const LIST_CACHE_KEY = `${CACHE_PREFIX}tours:list`;
 const FEATURED_CACHE_KEY = `${CACHE_PREFIX}tours:featured`;
 const DETAIL_CACHE_KEY = (slug) => `${CACHE_PREFIX}detail:${slug}`;
@@ -597,7 +597,7 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
 
     const tourData = result.data?.tour?.tour;
     eventEmitter.emit({
-      name: 'expedition.tour_viewed',
+      name: 'ghana.tour_viewed',
       userId: req.user?.id,
       req,
       resource: 'Tour',
@@ -696,7 +696,7 @@ exports.submitContact = catchAsync(async (req, res, next) => {
   });
 
   enqueueEvent({
-    name: 'expedition.contact_submitted',
+    name: 'ghana.contact_submitted',
     userId: req.user?.id,
     req,
     properties: { email, tourSlug: tourSlug || null, source: 'expedition' },
@@ -712,7 +712,7 @@ exports.trackClick = catchAsync(async (req, res) => {
   const { tourId, tourSlug } = req.body;
 
   enqueueEvent({
-    name: 'expedition.outbound_click',
+    name: 'ghana.outbound_click',
     userId: req.user?.id,
     req,
     resource: 'Tour',
@@ -1008,7 +1008,7 @@ exports.subscribe = catchAsync(async (req, res, next) => {
   });
 
   enqueueEvent({
-    name: 'expedition.newsletter_subscribed',
+    name: 'ghana.newsletter_subscribed',
     properties: { email, name: name || null, source: 'expedition' },
   });
 
@@ -1484,7 +1484,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     }
 
     enqueueEvent({
-      name: 'expedition.booking_reserved',
+      name: 'ghana.booking_reserved',
       userId: customerId,
       req,
       resource: 'Booking',
@@ -1621,7 +1621,7 @@ exports.getExpeditionWishlist = catchAsync(async (req, res, next) => {
       userId: req.user.id,
       tour: {
         status: { not: 'DRAFT' },
-        expeditionTour: { isActive: true },
+        travioGhanaTour: { isActive: true },
       },
     },
     orderBy: { addedAt: 'desc' },
@@ -1954,7 +1954,7 @@ exports.createReview = catchAsync(async (req, res, next) => {
   });
 
   enqueueEvent({
-    name: 'expedition.review_created',
+    name: 'ghana.review_created',
     userId: customerId,
     req,
     resource: 'Review',
@@ -2085,7 +2085,7 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
   });
 
   enqueueEvent({
-    name: 'expedition.booking_status_updated',
+    name: 'ghana.booking_status_updated',
     userId: supplierId,
     req,
     resource: 'Booking',

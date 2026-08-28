@@ -3,7 +3,6 @@ const { createLimiter } = require('../middleware/dynamicRateLimiter');
 const { protect } = require('../middleware/authMiddleware');
 const { restrictTo } = require('../middleware/authMiddleware');
 const travioGhanaController = require('../controllers/travioGhanaController');
-const travioGhanaAnalyticsController = require('../controllers/travioGhanaAnalyticsController');
 const validate = require('../middleware/validate');
 const {
   getToursSchema,
