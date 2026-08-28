@@ -237,44 +237,57 @@ jobs:
               continue
             fi
 
-            echo "$PATCH" > .ci-results/fix.patch
-
             APPLIED=false
-            if git apply --check .ci-results/fix.patch 2>/dev/null; then
-              git apply .ci-results/fix.patch
+
+            # First try: direct text-based fix (remove/add specific lines)
+            REMOVE_LINES=$(echo "$PARSED" | jq -r '.remove_lines[]? // empty' 2>/dev/null)
+            ADD_LINES=$(echo "$PARSED" | jq -r '.add_lines[]? // empty' 2>/dev/null)
+            FIX_FILE=$(echo "$PARSED" | jq -r '.fix_file // empty' 2>/dev/null)
+
+            if [ -n "$FIX_FILE" ] && [ -f "$FIX_FILE" ] && [ -n "$REMOVE_LINES" ]; then
+              echo "Attempting direct line removal on $FIX_FILE..."
+              cp "$FIX_FILE" ".ci-results/fix-backup-$(basename $FIX_FILE)"
+              for LINE in $REMOVE_LINES; do
+                ESCAPED=$(printf '%s\n' "$LINE" | sed 's/[&/\]/\\&/g')
+                sed -i "/$ESCAPED/d" "$FIX_FILE"
+              done
               APPLIED=true
-            elif git apply --check --3way .ci-results/fix.patch 2>/dev/null; then
-              git apply --3way .ci-results/fix.patch
-              APPLIED=true
-            else
-              # Try to extract and apply individual file changes
-              echo "Attempting partial patch extraction..."
-              CURRENT_FILE=""
-              PARTIAL_PATCH=""
-              while IFS= read -r line; do
-                if echo "$line" | grep -qE '^diff --git'; then
-                  if [ -n "$CURRENT_FILE" ] && [ -n "$PARTIAL_PATCH" ]; then
-                    echo "$PARTIAL_PATCH" > .ci-results/partial.patch
-                    if git apply --check .ci-results/partial.patch 2>/dev/null; then
-                      git apply .ci-results/partial.patch
-                      APPLIED=true
-                    fi
-                    rm -f .ci-results/partial.patch
-                  fi
-                  CURRENT_FILE=$(echo "$line" | sed 's|diff --git a/\(.*\) b/.*|\1|')
-                  PARTIAL_PATCH="$line"$'\n'
-                elif [ -n "$CURRENT_FILE" ]; then
-                  PARTIAL_PATCH+="$line"$'\n'
-                fi
-              done <<< "$PATCH"
-              # Apply last chunk
-              if [ -n "$CURRENT_FILE" ] && [ -n "$PARTIAL_PATCH" ]; then
-                echo "$PARTIAL_PATCH" > .ci-results/partial.patch
-                if git apply --check .ci-results/partial.patch 2>/dev/null; then
-                  git apply .ci-results/partial.patch
-                  APPLIED=true
-                fi
-                rm -f .ci-results/partial.patch
+            fi
+
+            if [ "$APPLIED" = "true" ]; then
+              echo "Running verification: $VERIFY"
+              if eval "$VERIFY" 2>&1; then
+                echo ""
+                echo "Fix verified on attempt $ATTEMPT"
+                FIXED=true
+              else
+                echo "Verification failed. Reverting..."
+                for f in .ci-results/fix-backup-*; do
+                  BASENAME=$(basename "f" | sed 's/fix-backup-//')
+                  mv "$f" "$BASENAME" 2>/dev/null
+                done
+                APPLIED=false
+              fi
+            fi
+
+            # Second try: git apply with the patch
+            if [ "$APPLIED" = "false" ] && [ -n "$PATCH" ]; then
+              echo "$PATCH" > .ci-results/fix.patch
+              if git apply --check .ci-results/fix.patch 2>/dev/null; then
+                git apply .ci-results/fix.patch
+                APPLIED=true
+              elif git apply --check --3way .ci-results/fix.patch 2>/dev/null; then
+                git apply --3way .ci-results/fix.patch
+                APPLIED=true
+              fi
+            fi
+
+            # Third try: apply with relaxed whitespace matching
+            if [ "$APPLIED" = "false" ] && [ -n "$PATCH" ]; then
+              echo "Trying relaxed patch apply..."
+              if git apply --check -C0 --whitespace=nowarn .ci-results/fix.patch 2>/dev/null; then
+                git apply -C0 --whitespace=nowarn .ci-results/fix.patch
+                APPLIED=true
               fi
             fi
 
@@ -287,12 +300,12 @@ jobs:
               else
                 echo "Verification failed. Reverting..."
                 git checkout -- .
-                rm -f .ci-results/fix.patch
+                rm -f .ci-results/fix.patch .ci-results/fix-backup-*
               fi
             else
-              echo "Patch does not apply cleanly. Reverting..."
+              echo "Patch does not apply. Reverting..."
               git checkout -- .
-              rm -f .ci-results/fix.patch
+              rm -f .ci-results/fix.patch .ci-results/fix-backup-*
             fi
           done
 
