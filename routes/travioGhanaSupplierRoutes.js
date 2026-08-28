@@ -3,11 +3,21 @@
  *
  * Mounted at /api/travioghana/supplier/*
  * Every route requires: protect + restrictTo('supplier')
+ *
+ * Ghana-specific endpoints use travioGhanaSupplierController.
+ * Shared features (team, cancellation, settings sub-routes) proxy to
+ * the shared controllers — no code duplication.
  */
 
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { resolveSupplier } = require('../middleware/teamRoleMiddleware');
 const ghanaSupplier = require('../controllers/travioGhanaSupplierController');
+
+// Shared controllers for proxied endpoints
+const supplierSettingsController = require('../controllers/supplierSettingsController');
+const cancellationController = require('../controllers/cancellationController');
+const teamController = require('../controllers/teamController');
 
 const router = express.Router();
 
@@ -28,12 +38,31 @@ router.get('/reviews', ghanaSupplier.getSupplierReviews);
 router.get('/availability/:tourId', ghanaSupplier.getAvailability);
 router.post('/availability/:tourId', ghanaSupplier.setAvailability);
 
-// Settings
+// Settings (Ghana-scoped)
 router.get('/settings', ghanaSupplier.getSettings);
 router.patch('/settings', ghanaSupplier.updateSettings);
 
+// Settings sub-routes (proxied to shared controllers)
+router.get('/settings/notification-preferences', resolveSupplier, supplierSettingsController.getNotificationPreferences);
+router.patch('/settings/notification-preferences', resolveSupplier, supplierSettingsController.updateNotificationPreferences);
+router.get('/settings/tax-info', resolveSupplier, supplierSettingsController.getTaxInfo);
+router.patch('/settings/tax-info', resolveSupplier, supplierSettingsController.updateTaxInfo);
+router.get('/settings/booking-rules', resolveSupplier, supplierSettingsController.getBookingRules);
+router.patch('/settings/booking-rules', resolveSupplier, supplierSettingsController.updateBookingRules);
+
+// Team (proxied to shared controller)
+router.get('/settings/team/my-role', resolveSupplier, teamController.getMyTeamRole);
+router.get('/settings/team/members', resolveSupplier, teamController.getTeamMembers);
+router.post('/settings/team/invite', resolveSupplier, teamController.inviteTeamMember);
+router.patch('/settings/team/members/:id', resolveSupplier, teamController.updateTeamMember);
+router.delete('/settings/team/members/:id', resolveSupplier, teamController.removeTeamMember);
+
 // Special Offers
 router.get('/special-offers', ghanaSupplier.getSpecialOffers);
+
+// Cancellation (proxied to shared controller)
+router.get('/cancellation/summary', resolveSupplier, cancellationController.getCancellationSummary);
+router.get('/cancellation/records', resolveSupplier, cancellationController.getCancellationRecords);
 
 // Finance
 router.get('/finance/summary', ghanaSupplier.getFinanceSummary);
