@@ -342,7 +342,7 @@ router.get('/chat/conversations/unread-count', chatController.getUnreadCount);
 router.get('/chat/conversations/:conversationId/messages', chatController.getMessages);
 router.post('/chat/conversations/:conversationId/messages', chatController.sendMessage);
 router.patch('/chat/conversations/:conversationId/read', chatController.markAsRead);
-router.post('/chat/upload', chatController.uploadChatImage);
+router.post('/chat/upload', chatController.uploadImage);
 router.get('/chat/admin-support', chatController.getAdminSupport);
 
 // ══════════════════════════════════════════════════════════════════════════
