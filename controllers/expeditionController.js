@@ -356,29 +356,46 @@ exports.getSimilarTours = catchAsync(async (req, res, next) => {
   const result = await cache.getOrSet(cacheKey, async () => {
     const expeditionTour = await prisma.expeditionTour.findFirst({
       where: { tour: { slug }, isActive: true },
-      include: { tour: { select: { id: true, category: true } } },
+      include: {
+        tour: {
+          select: {
+            id: true, category: true, tags: true, city: true, country: true,
+            latitude: true, longitude: true, averageRating: true, totalBookings: true,
+            clipEmbedding: true, aiPrimaryCategory: true, aiMoodTags: true,
+            schedulesAndPricing: true,
+          },
+        },
+      },
     });
 
     if (!expeditionTour) return null;
 
-    const tours = await prisma.expeditionTour.findMany({
+    const currentTour = expeditionTour.tour;
+
+    // Fetch candidates: same category OR same city OR same AI category
+    const candidates = await prisma.expeditionTour.findMany({
       where: {
         isActive: true,
         tour: {
           status: 'ACTIVE',
           supplier: { supplierProfile: { status: 'ACTIVE' } },
-          id: { not: expeditionTour.tourId },
-          category: expeditionTour.tour.category,
+          id: { not: currentTour.id },
+          OR: [
+            { category: currentTour.category },
+            { city: currentTour.city },
+            { aiPrimaryCategory: currentTour.aiPrimaryCategory },
+          ],
         },
       },
-      orderBy: { displayOrder: 'asc' },
-      take: 4,
+      take: 20, // over-fetch for ranking
       include: {
         tour: {
           select: {
-            id: true, title: true, slug: true, coverPhoto: true,
+            id: true, title: true, slug: true, coverPhoto: true, photos: true,
             category: true, durationMinutes: true, averageRating: true,
-            reviewCount: true, city: true, country: true,
+            reviewCount: true, city: true, country: true, tags: true,
+            latitude: true, longitude: true, totalBookings: true,
+            clipEmbedding: true, aiPrimaryCategory: true, aiMoodTags: true,
             schedulesAndPricing: true,
             supplier: { select: { name: true, photoURL: true } },
           },
@@ -386,16 +403,74 @@ exports.getSimilarTours = catchAsync(async (req, res, next) => {
       },
     });
 
+    // Score each candidate using CLIP + XGBoost
+    const xgboost = require('../utils/xgboostService');
+    const currentTags = new Set([...(currentTour.tags || []), ...(currentTour.aiMoodTags || [])]);
+
+    // Parse current tour price for range similarity
+    let currentPrice = 0;
+    try {
+      const pricing = currentTour.schedulesAndPricing;
+      if (pricing?.pricingSchedules?.[0]?.price) {
+        currentPrice = parseFloat(pricing.pricingSchedules[0].price) || 0;
+      }
+    } catch {}
+
+    const scored = candidates.map(r => {
+      const t = r.tour;
+      let score = 0;
+
+      // 1. Category match (30%)
+      if (t.category === currentTour.category) score += 0.30;
+      else if (t.aiPrimaryCategory === currentTour.aiPrimaryCategory) score += 0.20;
+
+      // 2. Tag overlap (20%)
+      const candidateTags = new Set([...(t.tags || []), ...(t.aiMoodTags || [])]);
+      let tagOverlap = 0;
+      for (const tag of currentTags) {
+        if (candidateTags.has(tag)) tagOverlap++;
+      }
+      const tagScore = currentTags.size > 0 ? tagOverlap / currentTags.size : 0;
+      score += tagScore * 0.20;
+
+      // 3. CLIP embedding similarity (25%)
+      if (currentTour.clipEmbedding && t.clipEmbedding) {
+        const similarity = xgboost.cosineSimilarity(currentTour.clipEmbedding, t.clipEmbedding);
+        score += similarity * 0.25;
+      } else {
+        // No CLIP data — distribute weight to other signals
+        score += 0.125; // neutral
+      }
+
+      // 4. Location proximity (15%)
+      if (currentTour.latitude && currentTour.longitude && t.latitude && t.longitude) {
+        const dist = xgboost.haversineKm(currentTour.latitude, currentTour.longitude, t.latitude, t.longitude);
+        const proximityScore = Math.max(0, 1 - dist / 200); // 200km range
+        score += proximityScore * 0.15;
+      } else if (t.city === currentTour.city) {
+        score += 0.10; // same city bonus
+      }
+
+      // 5. Quality signal (10%)
+      const ratingScore = t.averageRating ? parseFloat(t.averageRating) / 5 : 0.5;
+      score += ratingScore * 0.10;
+
+      return { record: r, _score: score };
+    });
+
+    scored.sort((a, b) => b._score - a._score);
+    const topTours = scored.slice(0, 4);
+
     return {
       status: 'success',
       data: {
-        tours: tours.map((r) => ({
+        tours: topTours.map(({ record: r }) => ({
           id: r.id,
           tour: transformForListing(r.tour),
         })),
       },
     };
-  }, 600); // Cache for 10 minutes — similar tours rarely change
+  }, 600); // Cache for 10 minutes
 
   if (!result) return next(new AppError('Tour not found', 404));
   res.status(200).json(result);
