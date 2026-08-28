@@ -246,9 +246,10 @@ jobs:
 
             if [ -n "$FIX_FILE" ] && [ -f "$FIX_FILE" ] && [ -n "$REMOVE_LINES" ]; then
               echo "Attempting direct line removal on $FIX_FILE..."
-              cp "$FIX_FILE" ".ci-results/fix-backup-$(basename $FIX_FILE)"
+              cp "$FIX_FILE" ".ci-results/fix-backup"
               for LINE in $REMOVE_LINES; do
-                grep -v -F "$LINE" "$FIX_FILE" > "$FIX_FILE.tmp" && mv "$FIX_FILE.tmp" "$FIX_FILE"
+                # Use sed with exact line address to avoid removing wrong lines
+                sed -i "/^$(echo "$LINE" | sed 's/[&/\]/\\&/g')$/d" "$FIX_FILE"
               done
               APPLIED=true
             fi
