@@ -153,13 +153,32 @@ exports.getTours = catchAsync(async (req, res) => {
       tourWhere.id = { in: moodTourIds };
     }
     if (search) {
-      tourWhere.OR = [
-        { title: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-        { city: { contains: search, mode: 'insensitive' } },
-        { country: { contains: search, mode: 'insensitive' } },
-        { category: { contains: search, mode: 'insensitive' } },
-      ];
+      // Use BM25 for relevance-ranked search when available
+      const bm25 = require('../utils/bm25Index');
+      if (bm25.isReady()) {
+        const results = bm25.search(search, 100);
+        if (results.length > 0) {
+          const bm25Ids = results.map(r => r.tourId);
+          // Intersect with existing ID filter if present
+          if (tourWhere.id?.in) {
+            tourWhere.id.in = tourWhere.id.in.filter(id => bm25Ids.includes(id));
+          } else {
+            tourWhere.id = { in: bm25Ids };
+          }
+        } else {
+          // No BM25 results — return empty
+          tourWhere.id = { in: [] };
+        }
+      } else {
+        // Fallback to substring matching when BM25 index isn't ready
+        tourWhere.OR = [
+          { title: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } },
+          { city: { contains: search, mode: 'insensitive' } },
+          { country: { contains: search, mode: 'insensitive' } },
+          { category: { contains: search, mode: 'insensitive' } },
+        ];
+      }
     }
 
     const orderBy = [{ displayOrder: 'asc' }];

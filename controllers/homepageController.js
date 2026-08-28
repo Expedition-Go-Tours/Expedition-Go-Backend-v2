@@ -195,11 +195,21 @@ exports.getMood = catchAsync(async (req, res) => {
  */
 exports.getDestinations = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 10, 15);
+  const userId = req.user?.id || null;
+  const lat = parseFloat(req.query.lat) || null;
+  const lng = parseFloat(req.query.lng) || null;
+
+  // Personalized: compute live if user context available
+  if (userId || (lat && lng)) {
+    const destinations = await ranking.getPopularDestinations(limit, userId, lat, lng);
+    return res.json({ status: 'success', data: { destinations } });
+  }
+
   let destinations = await readPrecomputed(SECTION_KEYS.destinations);
   if (destinations) {
     return res.json({ status: 'success', data: { destinations: destinations.slice(0, limit) } });
   }
-  destinations = await computeWithWarmup(limit, ranking.getPopularDestinations, SECTION_KEYS.destinations);
+  destinations = await computeWithWarmup(limit, (l) => ranking.getPopularDestinations(l), SECTION_KEYS.destinations);
   res.json({ status: 'success', data: { destinations } });
 });
 
@@ -458,7 +468,7 @@ exports.getHomepage = catchAsync(async (req, res) => {
   const resolvedTopRated = topRated || await ranking.getTopRated(12);
   const resolvedTrending = trending || await ranking.getTrending(12);
   const resolvedNew = newExp || await ranking.getNewExperiences(10);
-  const resolvedDestinations = destinations || await ranking.getPopularDestinations(10);
+  const resolvedDestinations = destinations || await ranking.getPopularDestinations(10, userId, lat, lng);
   const resolvedOffers = offers || await computeOffersData();
 
   // Warm cache if any section was computed live

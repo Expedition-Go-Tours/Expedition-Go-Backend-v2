@@ -128,7 +128,23 @@ setupSocketIO();
   // Start AI cron fallback — runs regardless of Redis availability
   // Processes PENDING/FAILED tours directly via processTourAI()
   startAiCronFallback();
+
+  // Build BM25 search index in background (non-blocking)
+  buildBm25Index().catch(err => console.warn('[BM25] Index build failed:', err.message));
 })();
+
+async function buildBm25Index() {
+  const bm25 = require('./utils/bm25Index');
+  const prisma = require('./utils/prismaClient');
+  const tours = await prisma.tour.findMany({
+    where: { status: 'ACTIVE' },
+    select: {
+      id: true, title: true, description: true, tags: true, category: true,
+      city: true, country: true, attractions: true, aiMoodTags: true, aiPrimaryCategory: true,
+    },
+  });
+  bm25.buildIndex(tours);
+}
 
 function setupRedisAdapter() {
   if (!process.env.REDIS_URL) return;

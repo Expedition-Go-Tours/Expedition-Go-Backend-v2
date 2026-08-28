@@ -549,50 +549,68 @@ function slugify(str) {
  * @returns {Object} { heroImage, heroImageSource, heroImageTourId, imageRelevance }
  */
 async function selectHeroImage(attractionName) {
-  // Find all image analyses where this attraction has relevance > 0.3
-  const analyses = await prisma.tourImageAnalysis.findMany({
-    where: {
-      aiStatus: 'COMPLETED',
-      attractionRelevance: { path: [attractionName], gt: 0.3 },
-    },
-    orderBy: { aiQualityScore: 'desc' },
-    take: 20,
-  });
-
-  if (analyses.length > 0) {
-    // Pick the image with the highest relevance × quality score
-    let best = null;
-    let bestScore = 0;
-    for (const a of analyses) {
-      const relevance = a.attractionRelevance?.[attractionName] || 0;
-      const quality = a.aiQualityScore || 0.5;
-      const score = relevance * 0.7 + quality * 0.3;
-      if (score > bestScore) {
-        bestScore = score;
-        best = a;
-      }
-    }
-    if (best) {
-      return {
-        heroImage: best.imageUrl,
-        heroImageSource: 'ai_selected',
-        heroImageTourId: best.tourId,
-        imageRelevance: best.attractionRelevance?.[attractionName] || null,
-      };
-    }
-  }
-
-  // Fallback: find the best-rated tour that visits this attraction
-  const bestTour = await prisma.tour.findFirst({
+  // Find all tours that visit this attraction
+  const tours = await prisma.tour.findMany({
     where: {
       status: 'ACTIVE',
       attractions: { has: attractionName },
-      coverPhoto: { not: null },
     },
+    select: { id: true, coverPhoto: true, photos: true, averageRating: true },
     orderBy: { averageRating: 'desc' },
-    select: { id: true, coverPhoto: true },
+    take: 10,
   });
 
+  if (tours.length === 0) {
+    return { heroImage: null, heroImageSource: 'none', heroImageTourId: null, imageRelevance: null };
+  }
+
+  // Collect all images from these tours
+  const imageCandidates = [];
+  for (const tour of tours) {
+    const images = [tour.coverPhoto, ...(tour.photos || [])].filter(Boolean);
+    for (const imageUrl of images) {
+      imageCandidates.push({ imageUrl, tourId: tour.id, rating: tour.averageRating || 0 });
+    }
+  }
+
+  // Use CLIP to score image quality for each candidate
+  const clip = require('./clipClient');
+  let bestImage = null;
+  let bestScore = 0;
+
+  try {
+    const clipHealthy = await clip.isHealthy();
+    if (clipHealthy) {
+      // Score top 10 images (don't process all — rate limit)
+      const candidates = imageCandidates.slice(0, 10);
+      for (const candidate of candidates) {
+        try {
+          const quality = await clip.scoreQuality(candidate.imageUrl);
+          const score = (quality.score || 0) * 0.7 + (candidate.rating / 5) * 0.3;
+          if (score > bestScore) {
+            bestScore = score;
+            bestImage = candidate;
+          }
+        } catch {
+          // Skip failed images
+        }
+      }
+    }
+  } catch {
+    // CLIP unavailable — fall through to fallback
+  }
+
+  if (bestImage) {
+    return {
+      heroImage: bestImage.imageUrl,
+      heroImageSource: 'ai_selected',
+      heroImageTourId: bestImage.tourId,
+      imageRelevance: bestScore,
+    };
+  }
+
+  // Fallback: best-rated tour's cover photo
+  const bestTour = tours[0];
   if (bestTour?.coverPhoto) {
     return {
       heroImage: bestTour.coverPhoto,
