@@ -145,7 +145,7 @@ jobs:
               -d "{\"model\":\"mimo-v2.5\",\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}],\"max_tokens\":100000,\"temperature\":0.1}" \
               "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions" 2>/dev/null)
 
-            echo "$RESPONSE" > .ci-results/last-response.json 2>/dev/null || true
+            echo "$RESPONSE" > .ci-results/last-response-attempt-$ATTEMPT.json 2>/dev/null || true
 
             if [ -z "$RESPONSE" ]; then
               echo "ERROR: Empty response from API"
@@ -311,6 +311,8 @@ jobs:
           echo "fixed=$FIXED" >> $GITHUB_OUTPUT
           echo "debug_branch=$DEBUG_BRANCH" >> $GITHUB_OUTPUT
           echo "attempts=$ATTEMPT" >> $GITHUB_OUTPUT
+          echo "last_analysis=$ANALYSIS" >> $GITHUB_OUTPUT
+          echo "last_confidence=$CONFIDENCE" >> $GITHUB_OUTPUT
 
       - name: Create draft PR
         if: steps.debug.outputs.fixed == 'true'
@@ -359,7 +361,9 @@ jobs:
           ISSUE_BODY="## CI Failure"$'\n\n'
           ISSUE_BODY+="**Branch:** \`${{ github.event.workflow_run.head_branch }}\`"$'\n'
           ISSUE_BODY+="**Run:** [${{ github.event.workflow_run.id }}](${{ github.event.workflow_run.html_url }})"$'\n'
-          ISSUE_BODY+="**Attempts:** ${{ steps.debug.outputs.attempts }} / $MAX_ATTEMPTS"$'\n\n'
+          ISSUE_BODY+="**Attempts:** ${{ steps.debug.outputs.attempts }} / $MAX_ATTEMPTS"$'\n'
+          ISSUE_BODY+="**AI Analysis:** ${{ steps.debug.outputs.last_analysis }}"$'\n'
+          ISSUE_BODY+="**AI Confidence:** ${{ steps.debug.outputs.last_confidence }}"$'\n\n'
           ISSUE_BODY+="AI debug agent could not resolve this. Manual fix needed."$'\n\n'
           ISSUE_BODY+="1. Check the [failed CI logs](${{ github.event.workflow_run.html_url }})"$'\n'
           ISSUE_BODY+="2. Fix manually"$'\n'
@@ -379,9 +383,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Save debug artifacts
+        if: always()
+        run: |
+          mkdir -p /tmp/ai-debug-artifacts
+          cp -r .ci-results/* /tmp/ai-debug-artifacts/ 2>/dev/null || true
+          echo "Artifacts saved: $(ls /tmp/ai-debug-artifacts/ 2>/dev/null | tr '\n' ', ')"
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-debug-artifacts
+          path: /tmp/ai-debug-artifacts/
+          retention-days: 5
+
       - name: Cleanup
         if: always()
         run: |
           git checkout main 2>/dev/null || git checkout master 2>/dev/null || true
           git branch -D "${{ steps.debug.outputs.debug_branch }}" 2>/dev/null || true
-          rm -rf .ci-results
+          rm -rf .ci-results /tmp/ai-debug-artifacts
