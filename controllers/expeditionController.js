@@ -345,15 +345,32 @@ exports.getTourBadges = catchAsync(async (req, res) => {
       select: {
         id: true,
         slug: true,
-        pickupIncluded: true,
-        cancellationPolicy: true,
-        languages: true,
-        meetingMode: true,
-        accommodationIncluded: true,
         difficulty: true,
+        bookingAndTickets: true,
+        productContent: true,
+        categorization: true,
       },
     });
-    return { status: 'success', data: { tours } };
+
+    // Extract badge fields from JSON blobs server-side for a smaller payload
+    const badges = tours.map((t) => {
+      const bt = typeof t.bookingAndTickets === 'object' && t.bookingAndTickets !== null ? t.bookingAndTickets : {};
+      const pc = typeof t.productContent === 'object' && t.productContent !== null ? t.productContent : {};
+      const cat = typeof t.categorization === 'object' && t.categorization !== null ? t.categorization : {};
+
+      return {
+        id: t.id,
+        slug: t.slug,
+        difficulty: t.difficulty || null,
+        pickupIncluded: bt.pickupProvided || bt.pickupAvailable || false,
+        cancellationPolicy: bt.cancellationPolicy || null,
+        languages: cat.languages || pc.languages || [],
+        meetingMode: bt.meetingMode || null,
+        accommodationIncluded: bt.accommodationIncluded || false,
+      };
+    });
+
+    return { status: 'success', data: { tours: badges } };
   }, 300);
 
   res.status(200).json(result);
