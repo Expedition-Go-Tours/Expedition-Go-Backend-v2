@@ -346,11 +346,11 @@ describe('expeditionController', () => {
       tour: { ...mockTour, id: 'tour-2', slug: 'similar-tour', title: 'Similar Tour' },
     };
 
-    it('returns similar tours in same category', async () => {
+    it('returns similar tours ranked by ML', async () => {
       req.params = { slug: 'test-tour' };
       prisma.expeditionTour.findFirst.mockResolvedValue({
         tourId: 'tour-1',
-        tour: { id: 'tour-1', category: 'Adventure' },
+        tour: { id: 'tour-1', category: 'Adventure', tags: ['hiking'], city: 'Cape Town', country: 'South Africa', latitude: null, longitude: null, averageRating: 4.5, totalBookings: 10, clipEmbedding: null, aiPrimaryCategory: null, aiMoodTags: [], schedulesAndPricing: {} },
       });
       prisma.expeditionTour.findMany.mockResolvedValue([mockSimilarTour]);
 
@@ -360,9 +360,17 @@ describe('expeditionController', () => {
         expect.objectContaining({
           where: {
             isActive: true,
-            tour: expect.objectContaining({ category: 'Adventure', id: { not: 'tour-1' } }),
+            tour: expect.objectContaining({
+              status: 'ACTIVE',
+              id: { not: 'tour-1' },
+              OR: expect.arrayContaining([
+                { category: 'Adventure' },
+                { city: 'Cape Town' },
+                { aiPrimaryCategory: null },
+              ]),
+            }),
           },
-          take: 4,
+          take: 20,
         })
       );
       expect(res.status).toHaveBeenCalledWith(200);
