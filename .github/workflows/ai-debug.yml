@@ -100,14 +100,18 @@ jobs:
             echo "=== AI Debug Attempt $ATTEMPT / $MAX_ATTEMPTS ==="
             echo ""
 
-            # Try to read the relevant source files for context (limit to 10 files, 50 lines each)
+            # Read FULL content of all files mentioned in error logs
             FILE_CONTEXT=""
             if [ -n "$FAIL_JOBS" ]; then
               for FILE_PATH in $(echo "$FAIL_LOG" | grep -oE '[a-zA-Z0-9_/.-]+\.(js|ts|jsx|tsx|mjs)' | sort -u | head -10); do
                 if [ -f "$FILE_PATH" ]; then
-                  FILE_CONTEXT+=$'\n'"--- FILE: $FILE_PATH ---"$'\n'
-                  FILE_CONTEXT+=$(head -50 "$FILE_PATH")$'\n'
-                  FILE_CONTEXT+=$'\n'"--- END FILE: $FILE_PATH ---"$'\n'
+                  LINE_COUNT=$(wc -l < "$FILE_PATH")
+                  FILE_CONTEXT+=$'\n'"=== FILE: $FILE_PATH ($LINE_COUNT lines) ==="$'\n'
+                  # Add line numbers so MiMo can reference exact lines
+                  nl -ba "$FILE_PATH" >> /tmp/file_ctx.txt 2>/dev/null
+                  FILE_CONTEXT+=$(cat /tmp/file_ctx.txt)$'\n'
+                  FILE_CONTEXT+=$'\n'"=== END FILE: $FILE_PATH ==="$'\n'
+                  rm -f /tmp/file_ctx.txt
                 fi
               done
             fi
@@ -192,110 +196,103 @@ jobs:
               continue
             fi
 
-            PATCH=$(echo "$PARSED" | jq -r '.patch // empty' 2>/dev/null)
-            CONFIDENCE=$(echo "$PARSED" | jq -r '.confidence // 0' 2>/dev/null)
             ANALYSIS=$(echo "$PARSED" | jq -r '.analysis // "unknown"' 2>/dev/null)
-            VERIFY=$(echo "$PARSED" | jq -r '.verify_cmd // "npm test -- --forceExit"' 2>/dev/null)
+            CONFIDENCE=$(echo "$PARSED" | jq -r '.confidence // 0' 2>/dev/null)
+            FIX_COUNT=$(echo "$PARSED" | jq -r '.fixes | length // 0' 2>/dev/null)
 
             echo "Analysis: $ANALYSIS"
             echo "Confidence: $CONFIDENCE"
+            echo "Fixes: $FIX_COUNT"
 
+            # Safety check: skip if confidence too low
             IS_LOW=$(echo "$CONFIDENCE" | jq 'if type == "number" and . < 0.5 then true else false end' 2>/dev/null)
             if [ "$IS_LOW" = "true" ]; then
-              echo "Confidence too low. Skipping."
-              continue
-            fi
-
-            if [ -z "$PATCH" ] || [ "$PATCH" = "null" ]; then
-              echo "No patch generated. Skipping."
-              continue
-            fi
-
-            echo "Patch length: ${#PATCH} chars"
-
-            # Safety check: diffstat
-            CHANGED_FILES=$(echo "$PATCH" | grep -cE '^(diff --git|--- a/)' || true)
-            if [ "$CHANGED_FILES" -gt "$MAX_FILES" ]; then
-              # Try the more specific pattern
-              CHANGED_FILES=$(echo "$PATCH" | grep -c '^diff --git' || true)
-            fi
-            echo "Files changed in patch: $CHANGED_FILES"
-            if [ "$CHANGED_FILES" -gt "$MAX_FILES" ]; then
-              echo "Patch touches $CHANGED_FILES files (max $MAX_FILES). Skipping."
-              continue
-            fi
-
-            # Block if patch touches secrets/config
-            if echo "$PATCH" | grep -qiE '(\.env|firebase.*key|service.account|private.key)'; then
-              echo "Patch touches sensitive files. Skipping."
-              continue
-            fi
-
-            # Block deployment changes
-            if echo "$PATCH" | grep -qiE '(vercel\.json|netlify\.toml|dockerfile|docker-compose|app\.yaml)'; then
-              echo "Patch touches deployment config. Skipping."
+              echo "Confidence too low ($CONFIDENCE). Skipping."
               continue
             fi
 
             APPLIED=false
 
-            # First try: direct text-based fix (remove/add specific lines)
-            REMOVE_LINES=$(echo "$PARSED" | jq -r '.remove_lines[]? // empty' 2>/dev/null)
-            ADD_LINES=$(echo "$PARSED" | jq -r '.add_lines[]? // empty' 2>/dev/null)
-            FIX_FILE=$(echo "$PARSED" | jq -r '.fix_file // empty' 2>/dev/null)
+            # Apply fixes from the new format
+            if [ -n "$FIX_COUNT" ] && [ "$FIX_COUNT" != "null" ] && [ "$FIX_COUNT" -gt 0 ]; then
+              echo "Applying $FIX_COUNT fix(es)..."
+              for i in $(seq 0 $((FIX_COUNT - 1))); do
+                FIX_FILE=$(echo "$PARSED" | jq -r ".fixes[$i].file" 2>/dev/null)
+                FIX_ACTION=$(echo "$PARSED" | jq -r ".fixes[$i].action" 2>/dev/null)
+                FIX_LINES=$(echo "$PARSED" | jq -r ".fixes[$i].line_numbers[]? // empty" 2>/dev/null)
+                FIX_OLD=$(echo "$PARSED" | jq -r ".fixes[$i].old_lines[]? // empty" 2>/dev/null)
+                FIX_NEW=$(echo "$PARSED" | jq -r ".fixes[$i].new_lines[]? // empty" 2>/dev/null)
 
-            if [ -n "$FIX_FILE" ] && [ -f "$FIX_FILE" ] && [ -n "$REMOVE_LINES" ]; then
-              echo "Attempting direct line removal on $FIX_FILE..."
-              cp "$FIX_FILE" ".ci-results/fix-backup"
-              for LINE in $REMOVE_LINES; do
-                # Use sed with exact line address to avoid removing wrong lines
-                sed -i "/^$(echo "$LINE" | sed 's/[&/\]/\\&/g')$/d" "$FIX_FILE"
+                echo "  Fix $((i+1)): $FIX_ACTION on $FIX_FILE (lines: $FIX_LINES)"
+
+                if [ ! -f "$FIX_FILE" ]; then
+                  echo "  ERROR: File $FIX_FILE not found"
+                  continue
+                fi
+
+                # Backup
+                cp "$FIX_FILE" ".ci-results/fix-backup-$(echo $FIX_FILE | tr '/' '_')"
+
+                if [ "$FIX_ACTION" = "remove_lines" ]; then
+                  # Remove exact lines by line number (reverse order to preserve numbering)
+                  for LN in $(echo "$FIX_LINES" | sort -rn); do
+                    sed -i "${LN}d" "$FIX_FILE"
+                  done
+                  APPLIED=true
+
+                elif [ "$FIX_ACTION" = "replace_lines" ]; then
+                  # Read old lines and new lines into arrays
+                  OLD_ARRAY=()
+                  while IFS= read -r line; do
+                    OLD_ARRAY+=("$line")
+                  done <<< "$FIX_OLD"
+                  NEW_ARRAY=()
+                  while IFS= read -r line; do
+                    NEW_ARRAY+=("$line")
+                  done <<< "$FIX_NEW"
+
+                  # Find the first line number and replace
+                  FIRST_LINE=$(echo "$FIX_LINES" | head -1)
+                  OLD_COUNT=${#OLD_ARRAY[@]}
+                  NEW_COUNT=${#NEW_ARRAY[@]}
+
+                  # Build sed command: delete old lines, insert new lines
+                  SED_CMD="${FIRST_LINE}"
+                  for ((j=0; j<OLD_COUNT; j++)); do
+                    SED_CMD="${SED_CMD}d"
+                    if [ $((j+1)) -lt "$OLD_COUNT" ]; then
+                      SED_CMD="${SED_CMD};$((FIRST_LINE+j+1))"
+                    fi
+                  done
+
+                  # Use a temp approach: read file, replace lines
+                  head -n $((FIRST_LINE - 1)) "$FIX_FILE" > /tmp/fix_top.txt
+                  printf '%s\n' "${NEW_ARRAY[@]}" > /tmp/fix_mid.txt
+                  tail -n +$((FIRST_LINE + OLD_COUNT)) "$FIX_FILE" > /tmp/fix_bot.txt
+                  cat /tmp/fix_top.txt /tmp/fix_mid.txt /tmp/fix_bot.txt > "$FIX_FILE"
+                  rm -f /tmp/fix_top.txt /tmp/fix_mid.txt /tmp/fix_bot.txt
+                  APPLIED=true
+
+                elif [ "$FIX_ACTION" = "add_lines" ]; then
+                  INSERT_AFTER=$(echo "$FIX_LINES" | tail -1)
+                  head -n "$INSERT_AFTER" "$FIX_FILE" > /tmp/fix_top.txt
+                  printf '%s\n' $FIX_NEW > /tmp/fix_mid.txt
+                  tail -n +$((INSERT_AFTER + 1)) "$FIX_FILE" > /tmp/fix_bot.txt
+                  cat /tmp/fix_top.txt /tmp/fix_mid.txt /tmp/fix_bot.txt > "$FIX_FILE"
+                  rm -f /tmp/fix_top.txt /tmp/fix_mid.txt /tmp/fix_bot.txt
+                  APPLIED=true
+                fi
               done
-              APPLIED=true
             fi
 
             if [ "$APPLIED" = "true" ]; then
-              echo "Running verification: $VERIFY"
-              if bash -c "$VERIFY" 2>&1; then
-                echo ""
-                echo "Fix verified on attempt $ATTEMPT"
-                FIXED=true
-              else
-                echo "Verification failed. Reverting..."
-                for f in .ci-results/fix-backup-*; do
-                  if [ -f "$f" ]; then
-                    BASENAME=$(echo "$f" | sed 's|.*/fix-backup-||')
-                    mv "$f" "$BASENAME" 2>/dev/null
-                  fi
-                done
-                APPLIED=false
+              # Run verification — prefer npm test as fallback
+              VERIFY_CMD="$VERIFY"
+              if [ -z "$VERIFY_CMD" ] || [ "$VERIFY_CMD" = "null" ]; then
+                VERIFY_CMD="npm test -- --forceExit"
               fi
-            fi
-
-            # Second try: git apply with the patch
-            if [ "$APPLIED" = "false" ] && [ -n "$PATCH" ]; then
-              echo "$PATCH" > .ci-results/fix.patch
-              if git apply --check .ci-results/fix.patch 2>/dev/null; then
-                git apply .ci-results/fix.patch
-                APPLIED=true
-              elif git apply --check --3way .ci-results/fix.patch 2>/dev/null; then
-                git apply --3way .ci-results/fix.patch
-                APPLIED=true
-              fi
-            fi
-
-            # Third try: apply with relaxed whitespace matching
-            if [ "$APPLIED" = "false" ] && [ -n "$PATCH" ]; then
-              echo "Trying relaxed patch apply..."
-              if git apply --check -C0 --whitespace=nowarn .ci-results/fix.patch 2>/dev/null; then
-                git apply -C0 --whitespace=nowarn .ci-results/fix.patch
-                APPLIED=true
-              fi
-            fi
-
-            if [ "$APPLIED" = "true" ]; then
-              echo "Running verification: $VERIFY"
-              if bash -c "$VERIFY" 2>&1; then
+              echo "Running verification: $VERIFY_CMD"
+              if bash -c "$VERIFY_CMD" 2>&1; then
                 echo ""
                 echo "Fix verified on attempt $ATTEMPT"
                 FIXED=true
@@ -305,7 +302,7 @@ jobs:
                 rm -f .ci-results/fix.patch .ci-results/fix-backup-*
               fi
             else
-              echo "Patch does not apply. Reverting..."
+              echo "Could not apply fix. Reverting..."
               git checkout -- .
               rm -f .ci-results/fix.patch .ci-results/fix-backup-*
             fi
