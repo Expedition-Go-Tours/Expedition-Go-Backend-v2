@@ -485,8 +485,8 @@ exports.getUserGrowth = catchAsync(async (req, res, next) => {
       SELECT
         DATE_TRUNC('month', "createdAt")::date AS month,
         COUNT(*)::int                          AS total,
-        COUNT(*) FILTER (WHERE 'customer' = ANY("roles"))::int AS customers,
-        COUNT(*) FILTER (WHERE 'supplier'  = ANY("roles"))::int AS suppliers
+        COUNT(*) FILTER (WHERE 'customer' = ANY("roles"::text[]))::int AS customers,
+        COUNT(*) FILTER (WHERE 'supplier'  = ANY("roles"::text[]))::int AS suppliers
       FROM "User"
       WHERE "createdAt" >= NOW() - INTERVAL '24 months'
       GROUP BY DATE_TRUNC('month', "createdAt")
