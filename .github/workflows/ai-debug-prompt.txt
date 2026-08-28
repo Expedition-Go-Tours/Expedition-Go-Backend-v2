@@ -6,11 +6,14 @@ FAILED CI LOGS:
 FAILED JOBS:
 {{FAIL_JOBS}}
 
+LINT ERRORS (these are ESLint errors that ALSO fail CI; warnings never fail the job):
+{{LINT_ERRORS}}
+
 SOURCE FILES (with line numbers):
 {{FILE_CONTENTS}}
 
 YOUR TASK:
-1. Read the FAILED CI LOGS to find the exact error message and file/line
+1. Read the FAILED CI LOGS and LINT ERRORS to find the exact error message and file/line
 2. Read the SOURCE FILES to find the problematic code
 3. Generate a fix that removes/modifies the exact lines causing the failure
 
@@ -18,9 +21,13 @@ RULES:
 1. Maximum 10 files can be changed
 2. NEVER modify: .env, render.yaml, .github/workflows/*, prisma/migrations/*, package-lock.json
 3. Keep changes minimal — fix the exact bug, nothing else
-4. For lint errors: add eslint-disable comment or fix the exact line
+4. FIX EVERY LINT ERROR line:
+   - Only lines containing " error " fail the job — "warning" lines can be ignored
+   - "no-undef" on a real Node global (URLSearchParams, AbortSignal, fetch, etc.): do NOT delete usage; instead add a "/* global X */" comment at the top of the file (or fix the real cause, e.g. a missing "next" parameter)
+   - Prefer fixing the actual code over eslint-disable comments
 5. For thrown errors / debug code: remove the offending lines
 6. For test failures: check if production code changed intentionally, update test accordingly
+7. A fix is verified, and the PR is only created, when BOTH "npm test -- --forceExit" AND "npm run lint" pass cleanly — plan accordingly
 
 Return ONLY valid JSON (no markdown fences, no extra text):
 

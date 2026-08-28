@@ -56,6 +56,21 @@ jobs:
 
       - run: npm ci
 
+      - name: Run lint
+        run: |
+          mkdir -p .ci-results
+          set +e
+          npm run lint > .ci-results/lint-output.txt 2>&1
+          LINT_EXIT=$?
+          awk '
+            /^[^[:space:]]/    { if ($0 ~ /\.(js|ts|jsx|tsx|mjs)$/) { f=$0 } else { f="" } }
+            / error /          { if (f != "") { print f } ; print $0 }
+          ' .ci-results/lint-output.txt > .ci-results/lint-errors.txt
+          echo "Lint exit code: $LINT_EXIT"
+          echo "Lint error lines: $(grep -c ' error ' .ci-results/lint-output.txt)"
+          echo "--- lint errors (fed to AI) ---"
+          cat .ci-results/lint-errors.txt
+
       - name: Run AI debug agent
         id: debug
         env:
@@ -80,6 +95,15 @@ jobs:
           fi
           if [ -f .github/workflows/ai-debug-prompt.txt ]; then
             TEMPLATE=$(cat .github/workflows/ai-debug-prompt.txt)
+          fi
+
+          # Lint failures are a separate failure mode from test failures.
+          # Collect the error lines (with file paths) and also merge them into
+          # FAIL_LOG so the file loader below picks up the affected files.
+          LINT_ERRORS=""
+          if [ -f .ci-results/lint-errors.txt ] && [ -s .ci-results/lint-errors.txt ]; then
+            LINT_ERRORS=$(cat .ci-results/lint-errors.txt | head -200)
+            FAIL_LOG="$FAIL_LOG"$'\n'"==== LINT ERRORS ===="$'\n'"$LINT_ERRORS"
           fi
 
           echo "FAIL_LOG length: ${#FAIL_LOG}" | tee -a .ci-results/debug-log.txt
@@ -152,12 +176,14 @@ jobs:
             printf '%s' "$FAIL_LOG" > /tmp/ai-fail-log.txt
             printf '%s' "$FAIL_JOBS" > /tmp/ai-fail-jobs.txt
             printf '%s' "$FILE_CONTEXT" > /tmp/ai-file-context.txt
+            printf '%s' "$LINT_ERRORS" > /tmp/ai-lint-errors.txt
 
             PROMPT=$(jq -n --rawfile template /tmp/ai-template.txt \
               --rawfile log /tmp/ai-fail-log.txt \
               --rawfile jobs /tmp/ai-fail-jobs.txt \
               --rawfile files /tmp/ai-file-context.txt \
-              '$template | gsub("\\{\\{FAIL_LOG\\}\\}"; $log) | gsub("\\{\\{FAIL_JOBS\\}\\}"; $jobs) | gsub("\\{\\{FILE_CONTENTS\\}\\}"; $files)' 2>.ci-results/jq-prompt-error.txt)
+              --rawfile linterr /tmp/ai-lint-errors.txt \
+              '$template | gsub("\\{\\{FAIL_LOG\\}\\}"; $log) | gsub("\\{\\{FAIL_JOBS\\}\\}"; $jobs) | gsub("\\{\\{FILE_CONTENTS\\}\\}"; $files) | gsub("\\{\\{LINT_ERRORS\\}\\}"; $linterr)' 2>.ci-results/jq-prompt-error.txt)
             if [ -z "$PROMPT" ]; then
               echo "ERROR: Failed to build prompt" | tee -a .ci-results/debug-log.txt
               echo "jq prompt error: $(cat .ci-results/jq-prompt-error.txt)" | tee -a .ci-results/debug-log.txt
@@ -310,7 +336,7 @@ jobs:
             if [ "$APPLIED" = "true" ]; then
               VERIFY_CMD="$VERIFY"
               if [ -z "$VERIFY_CMD" ] || [ "$VERIFY_CMD" = "null" ]; then
-                VERIFY_CMD="npm test -- --forceExit"
+                VERIFY_CMD="npm test -- --forceExit && npm run lint"
               fi
               echo "Running verification: $VERIFY_CMD" | tee -a .ci-results/debug-log.txt
               if bash -c "$VERIFY_CMD" 2>&1 | tee -a .ci-results/debug-log.txt; then
