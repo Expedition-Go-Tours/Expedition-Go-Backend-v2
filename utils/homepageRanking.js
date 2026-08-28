@@ -1550,7 +1550,7 @@ async function getPopularDestinations(limit = 10, userId = null, lat = null, lng
         ROUND(AVG(t."longitude")::numeric, 4) AS "longitude",
         (SELECT t2."coverPhoto" FROM "Tour" t2
          WHERE t2.city = t.city AND t2.status = 'ACTIVE' AND t2."coverPhoto" IS NOT NULL
-         ORDER BY t2."totalBookings" DESC LIMIT 1) AS "heroImage"
+         ORDER BY t2."averageRating" DESC NULLS LAST, t2."reviewCount" DESC LIMIT 1) AS "heroImage"
       FROM "Tour" t
       JOIN "SupplierProfile" sp ON sp."userId" = t."supplierId"
       WHERE t.status = 'ACTIVE'
