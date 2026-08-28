@@ -548,7 +548,31 @@ function slugify(str) {
  * @param {string} attractionName
  * @returns {Object} { heroImage, heroImageSource, heroImageTourId, imageRelevance }
  */
-async function selectHeroImage(attractionName) {
+/**
+ * Select the best hero image for an attraction using CLIP.
+ *
+ * Collects ALL images from tours that visit this attraction (coverPhoto + photos[]),
+ * then uses CLIP to score each image against the attraction name. Picks the image
+ * that best represents the specific attraction (e.g., "Cape Coast Castle" vs
+ * "Elmina Castle" — different images even if both are on the same tour).
+ *
+ * @param {string} attractionName - The attraction name (e.g., "Cape Coast Castle")
+ * @param {Set<string>} [usedImages] - Set of already-used image URLs for dedup
+ * @returns {Object} { heroImage, heroImageSource, heroImageTourId, imageRelevance }
+ */
+async function selectHeroImage(attractionName, usedImages = null) {
+  // Build dedup set from existing attraction hero images in the database
+  if (!usedImages) {
+    usedImages = new Set();
+    const existingAttractions = await prisma.attraction.findMany({
+      where: { status: 'ACTIVE', heroImage: { not: null } },
+      select: { heroImage: true },
+    });
+    for (const a of existingAttractions) {
+      if (a.heroImage) usedImages.add(a.heroImage);
+    }
+  }
+
   // Find all tours that visit this attraction
   const tours = await prisma.tour.findMany({
     where: {
@@ -557,23 +581,27 @@ async function selectHeroImage(attractionName) {
     },
     select: { id: true, coverPhoto: true, photos: true, averageRating: true },
     orderBy: { averageRating: 'desc' },
-    take: 10,
+    take: 15,
   });
 
   if (tours.length === 0) {
     return { heroImage: null, heroImageSource: 'none', heroImageTourId: null, imageRelevance: null };
   }
 
-  // Collect all images from these tours
+  // Collect ALL images from these tours (coverPhoto + every photo in the array)
   const imageCandidates = [];
+  const seenUrls = new Set();
   for (const tour of tours) {
     const images = [tour.coverPhoto, ...(tour.photos || [])].filter(Boolean);
     for (const imageUrl of images) {
-      imageCandidates.push({ imageUrl, tourId: tour.id, rating: tour.averageRating || 0 });
+      if (!seenUrls.has(imageUrl)) {
+        seenUrls.add(imageUrl);
+        imageCandidates.push({ imageUrl, tourId: tour.id, rating: tour.averageRating || 0 });
+      }
     }
   }
 
-  // Use CLIP to score image quality for each candidate
+  // Use CLIP to score each image against the attraction name
   const clip = require('./clipClient');
   let bestImage = null;
   let bestScore = 0;
@@ -581,14 +609,26 @@ async function selectHeroImage(attractionName) {
   try {
     const clipHealthy = await clip.isHealthy();
     if (clipHealthy) {
-      // Score top 10 images (don't process all — rate limit)
-      const candidates = imageCandidates.slice(0, 10);
+      // Score up to 15 images against the attraction name
+      const candidates = imageCandidates.slice(0, 15);
       for (const candidate of candidates) {
+        // Skip images already used by other attractions
+        if (usedImages.has(candidate.imageUrl)) continue;
+
         try {
-          const quality = await clip.scoreQuality(candidate.imageUrl);
-          const score = (quality.score || 0) * 0.7 + (candidate.rating / 5) * 0.3;
-          if (score > bestScore) {
-            bestScore = score;
+          const result = await clip.classifyImage(candidate.imageUrl, [
+            attractionName,
+            `${attractionName} landmark`,
+            'other',
+          ]);
+
+          // Score: how well does this image represent the specific attraction?
+          const attractionScore =
+            (result.allScores?.[attractionName] || 0) +
+            (result.allScores?.[`${attractionName} landmark`] || 0);
+
+          if (attractionScore > bestScore) {
+            bestScore = attractionScore;
             bestImage = candidate;
           }
         } catch {
@@ -601,6 +641,7 @@ async function selectHeroImage(attractionName) {
   }
 
   if (bestImage) {
+    usedImages.add(bestImage.imageUrl);
     return {
       heroImage: bestImage.imageUrl,
       heroImageSource: 'ai_selected',
@@ -609,15 +650,30 @@ async function selectHeroImage(attractionName) {
     };
   }
 
-  // Fallback: best-rated tour's cover photo
-  const bestTour = tours[0];
-  if (bestTour?.coverPhoto) {
-    return {
-      heroImage: bestTour.coverPhoto,
-      heroImageSource: 'fallback',
-      heroImageTourId: bestTour.id,
-      imageRelevance: null,
-    };
+  // Fallback: best-rated tour's cover photo (avoid already-used images)
+  for (const tour of tours) {
+    if (tour.coverPhoto && !usedImages.has(tour.coverPhoto)) {
+      usedImages.add(tour.coverPhoto);
+      return {
+        heroImage: tour.coverPhoto,
+        heroImageSource: 'fallback',
+        heroImageTourId: tour.id,
+        imageRelevance: null,
+      };
+    }
+  }
+
+  // Last resort: any unused image from any tour
+  for (const candidate of imageCandidates) {
+    if (!usedImages.has(candidate.imageUrl)) {
+      usedImages.add(candidate.imageUrl);
+      return {
+        heroImage: candidate.imageUrl,
+        heroImageSource: 'fallback',
+        heroImageTourId: candidate.tourId,
+        imageRelevance: null,
+      };
+    }
   }
 
   return { heroImage: null, heroImageSource: null, heroImageTourId: null, imageRelevance: null };
