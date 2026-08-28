@@ -387,21 +387,14 @@ jobs:
           PR_NUM=$(gh pr list --head "$DEBUG_BRANCH" --json number --jq '.[0].number' 2>/dev/null)
           if [ -z "$PR_NUM" ] && [ -f .ci-results/pr-output.log ]; then
             LOG=$(cat .ci-results/pr-output.log | tail -c 6000)
+            BODY=$(printf '## PR step log - %s\n\n```\n%s\n```\n' "$DEBUG_BRANCH" "$LOG")
             gh issue create \
               --title "AI Debug: fix applied, PR step output [$DEBUG_BRANCH]" \
-              --body "## PR step log - $DEBUG_BRANCH
-
-\`\`\`
-$LOG
-\`\`\`" \
+              --body "$BODY" \
               --label "ci-failure" 2>/dev/null || \
             gh issue create \
               --title "AI Debug: fix applied, PR step output [$DEBUG_BRANCH]" \
-              --body "## PR step log - $DEBUG_BRANCH
-
-\`\`\`
-$LOG
-\`\`\`"
+              --body "$BODY"
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
