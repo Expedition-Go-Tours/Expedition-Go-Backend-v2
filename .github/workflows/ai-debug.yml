@@ -107,11 +107,10 @@ jobs:
                 if [ -f "$FILE_PATH" ]; then
                   LINE_COUNT=$(wc -l < "$FILE_PATH")
                   FILE_CONTEXT+=$'\n'"=== FILE: $FILE_PATH ($LINE_COUNT lines) ==="$'\n'
-                  # Add line numbers so MiMo can reference exact lines
-                  nl -ba "$FILE_PATH" >> /tmp/file_ctx.txt 2>/dev/null
-                  FILE_CONTEXT+=$(cat /tmp/file_ctx.txt)$'\n'
+                  nl -ba "$FILE_PATH" > /tmp/file_ctx_$$.txt 2>/dev/null
+                  FILE_CONTEXT+=$(cat /tmp/file_ctx_$$.txt)$'\n'
                   FILE_CONTEXT+=$'\n'"=== END FILE: $FILE_PATH ==="$'\n'
-                  rm -f /tmp/file_ctx.txt
+                  rm -f /tmp/file_ctx_$$.txt
                 fi
               done
             fi
