@@ -1,0 +1,484 @@
+/**
+ * Travio Ghana Admin Routes — Ghana-Isolated Admin API
+ *
+ * Mounted at /api/travioghana/admin/*
+ * Every route uses: protect → restrictTo('admin') → requirePermission(...)
+ *
+ * Ghana-specific endpoints query Ghana-scoped data:
+ *   - Tours: TravioGhanaTour model
+ *   - Bookings: source = 'GHANA'
+ *   - Suppliers: role = 'ghana'
+ *   - Reviews: on Ghana tours
+ *   - Analytics: Ghana-scoped
+ *
+ * Shared platform endpoints (notifications, settings, audit-log, roles,
+ * admins, finance, suppliers, reviews, blog, chat) are proxied from the
+ * existing controllers — same data, same permissions, same backend.
+ */
+const express = require('express');
+const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { requirePermission } = require('../middleware/permissionMiddleware');
+const { createLimiter } = require('../middleware/dynamicRateLimiter');
+
+const ghana = require('../controllers/travioGhanaAdminController');
+
+// Shared platform controllers (proxied — same data, same permissions)
+const adminNotifController = require('../controllers/adminNotificationController');
+const adminSettingsController = require('../controllers/adminSettingsController');
+const adminFinanceController = require('../controllers/adminFinanceController');
+const adminRoleController = require('../controllers/adminRoleController');
+const adminUserController = require('../controllers/adminUserController');
+const payoutController = require('../controllers/payoutController');
+const payoutMethodController = require('../controllers/payoutMethodController');
+const supplierController = require('../controllers/supplierController');
+const reviewController = require('../controllers/reviewController');
+
+const router = express.Router();
+
+const adminLimiter = createLimiter({
+  name: 'ghana-admin',
+  defaultMax: 200,
+  defaultWindowMs: 15 * 60 * 1000,
+  message: {
+    status: 'fail',
+    message: 'Too many requests from this IP, please try again later.',
+  },
+});
+
+// ── Global middleware for all Ghana admin routes ─────────────────────────
+router.use(protect, restrictTo('admin'), adminLimiter);
+
+// ══════════════════════════════════════════════════════════════════════════
+// SESSION
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/me', ghana.getMe);
+
+// ══════════════════════════════════════════════════════════════════════════
+// ANALYTICS — Ghana-scoped
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/analytics/overview',
+  requirePermission('dashboard.*', 'analytics.view'),
+  ghana.getOverview,
+);
+router.get('/analytics/revenue-trend',
+  requirePermission('analytics.view'),
+  ghana.getRevenueTrend,
+);
+router.get('/analytics/tour-performance',
+  requirePermission('analytics.view'),
+  ghana.getTourPerformance,
+);
+router.get('/analytics/user-growth',
+  requirePermission('analytics.view'),
+  ghana.getUserGrowth,
+);
+router.get('/analytics/funnel',
+  requirePermission('analytics.view'),
+  ghana.getFunnel,
+);
+router.get('/analytics/clv',
+  requirePermission('analytics.view'),
+  ghana.getCLV,
+);
+router.get('/analytics/search',
+  requirePermission('analytics.view'),
+  ghana.getSearchAnalytics,
+);
+router.get('/analytics/cart-abandonment',
+  requirePermission('analytics.view'),
+  ghana.getCartAbandonment,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// TOURS — TravioGhanaTour model
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/tours',
+  requirePermission('tours.view', 'dashboard.*'),
+  ghana.getTours,
+);
+router.get('/tours/review',
+  requirePermission('tours.view', 'tours.approve'),
+  ghana.getTourReviewQueue,
+);
+router.get('/tours/search',
+  requirePermission('tours.view'),
+  ghana.searchTours,
+);
+router.get('/tours/:id',
+  requirePermission('tours.view', 'tours.approve'),
+  ghana.getTourDetail,
+);
+router.patch('/tours/:id',
+  requirePermission('tours.approve'),
+  ghana.updateTour,
+);
+router.patch('/tours/:id/review',
+  requirePermission('tours.approve'),
+  ghana.reviewTour,
+);
+router.delete('/tours/:id',
+  requirePermission('tours.approve'),
+  ghana.deleteTour,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// BOOKINGS — source = 'GHANA'
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/bookings',
+  requirePermission('bookings.view', 'dashboard.*'),
+  ghana.getBookings,
+);
+router.get('/bookings/today',
+  requirePermission('dashboard.bookings', 'dashboard.revenue'),
+  ghana.getTodayBookings,
+);
+router.get('/bookings/:id',
+  requirePermission('bookings.view', 'dashboard.*'),
+  ghana.getBookingById,
+);
+router.patch('/bookings/:id/confirm-payment',
+  requirePermission('bookings.confirm-payment', 'dashboard.*'),
+  ghana.confirmPayment,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// SUPPLIERS — role = 'ghana'
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/suppliers',
+  requirePermission('suppliers.view'),
+  ghana.getSuppliers,
+);
+router.get('/suppliers/:id',
+  requirePermission('suppliers.view'),
+  ghana.getSupplierDetail,
+);
+router.patch('/suppliers/:id/suspend',
+  requirePermission('suppliers.approve'),
+  ghana.suspendSupplier,
+);
+router.patch('/suppliers/:id/activate',
+  requirePermission('suppliers.approve'),
+  ghana.activateSupplier,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// USERS — role = 'ghana'
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/users/active',
+  requirePermission('users.view'),
+  ghana.getActiveUsers,
+);
+router.get('/users/new-signups',
+  requirePermission('users.view'),
+  ghana.getRecentSignups,
+);
+router.get('/users/search',
+  requirePermission('users.view'),
+  ghana.searchUsers,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// AI PROCESSING
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/ai/status',
+  requirePermission('tours.view'),
+  ghana.getAiStatus,
+);
+router.get('/ai/failed',
+  requirePermission('tours.view'),
+  ghana.getFailedTours,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// REVIEWS — Ghana tours only
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/reviews/pending',
+  requirePermission('reviews.view'),
+  ghana.getPendingReviews,
+);
+router.patch('/reviews/:id/moderate',
+  requirePermission('reviews.moderate'),
+  ghana.moderateReview,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// NOTIFICATIONS — shared platform endpoint (proxied)
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/notifications',
+  requirePermission('notifications.view'),
+  adminNotifController.getNotifications,
+);
+router.get('/notifications/unread-count',
+  requirePermission('notifications.view'),
+  adminNotifController.getUnreadCount,
+);
+router.get('/notifications/stats',
+  requirePermission('notifications.view'),
+  adminNotifController.getStats,
+);
+router.patch('/notifications/:id/acknowledge',
+  requirePermission('notifications.view'),
+  adminNotifController.acknowledge,
+);
+router.patch('/notifications/acknowledge-all',
+  requirePermission('notifications.view'),
+  adminNotifController.acknowledgeAll,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// SETTINGS — shared platform endpoint (proxied)
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/settings',
+  requirePermission('settings.access'),
+  adminSettingsController.getSettings,
+);
+router.put('/settings',
+  requirePermission('settings.access'),
+  adminSettingsController.updateSettings,
+);
+router.get('/settings/:key',
+  requirePermission('settings.access'),
+  adminSettingsController.getSetting,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// AUDIT LOG — shared platform endpoint (proxied)
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/audit-log',
+  requirePermission('settings.access', 'audit.view'),
+  adminSettingsController.getAuditLog,
+);
+router.get('/audit-log/export',
+  requirePermission('settings.access', 'audit.view'),
+  adminSettingsController.exportAuditLog,
+);
+router.get('/audit-log/stats',
+  requirePermission('settings.access', 'audit.view'),
+  adminSettingsController.getAuditLogStats,
+);
+router.get('/audit-log/actions',
+  requirePermission('settings.access', 'audit.view'),
+  adminSettingsController.getAuditActions,
+);
+router.get('/audit-log/verify',
+  requirePermission('settings.access', 'audit.view'),
+  adminSettingsController.verifyAuditChain,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// ROLES — shared platform endpoint (proxied)
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/roles',
+  requirePermission('settings.access'),
+  adminRoleController.getRoles,
+);
+router.get('/roles/permissions',
+  requirePermission('settings.access'),
+  adminRoleController.getPermissions,
+);
+router.post('/roles',
+  requirePermission('settings.access'),
+  adminRoleController.createRole,
+);
+router.put('/roles/:id',
+  requirePermission('settings.access'),
+  adminRoleController.updateRole,
+);
+router.delete('/roles/:id',
+  requirePermission('settings.access'),
+  adminRoleController.deleteRole,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// ADMINS — shared platform endpoint (proxied)
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/admins',
+  requirePermission('settings.access'),
+  adminUserController.getAdminUsers,
+);
+router.post('/admins',
+  requirePermission('settings.access'),
+  adminUserController.addAdmin,
+);
+router.patch('/admins/:userId/role',
+  requirePermission('settings.access'),
+  adminUserController.updateAdminRole,
+);
+router.delete('/admins/:userId/revoke',
+  requirePermission('settings.access'),
+  adminUserController.revokeAdmin,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// FINANCE — shared platform endpoints (proxied)
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/finance/payout-requests',
+  requirePermission('payouts.view', 'dashboard.*'),
+  adminFinanceController.getPayoutRequests,
+);
+router.get('/finance/payout-requests/:id',
+  requirePermission('payouts.view', 'dashboard.*'),
+  adminFinanceController.getPayoutRequestById,
+);
+router.patch('/finance/payout-requests/:id/approve',
+  requirePermission('payouts.approve'),
+  adminFinanceController.approvePayoutRequest,
+);
+router.patch('/finance/payout-requests/:id/reject',
+  requirePermission('payouts.approve'),
+  adminFinanceController.rejectPayoutRequest,
+);
+router.patch('/finance/payout-requests/:id/complete',
+  requirePermission('payouts.approve'),
+  adminFinanceController.completePayoutRequest,
+);
+router.get('/finance/disputes',
+  requirePermission('payouts.view', 'dashboard.*'),
+  adminFinanceController.getDisputes,
+);
+router.get('/finance/disputes/:id',
+  requirePermission('payouts.view', 'dashboard.*'),
+  adminFinanceController.getDisputeById,
+);
+router.patch('/finance/disputes/:id/resolve',
+  requirePermission('payouts.approve'),
+  adminFinanceController.resolveDispute,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// PAYOUTS — shared platform endpoints (proxied)
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/payouts',
+  requirePermission('payouts.view'),
+  payoutController.getAllPayouts,
+);
+router.get('/payouts/summary',
+  requirePermission('payouts.view', 'dashboard.*'),
+  payoutController.getPayoutSummary,
+);
+router.get('/payouts/export',
+  requirePermission('payouts.view'),
+  payoutController.exportPayouts,
+);
+router.patch('/payouts/:id/approve',
+  requirePermission('payouts.approve'),
+  payoutController.approvePayout,
+);
+router.patch('/payouts/:id/release',
+  requirePermission('payouts.approve'),
+  payoutController.releasePayout,
+);
+router.patch('/payouts/:id/settle',
+  requirePermission('payouts.approve'),
+  payoutController.settlePayout,
+);
+router.patch('/payouts/:id/fail',
+  requirePermission('payouts.approve'),
+  payoutController.failPayout,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// PAYOUT METHODS — shared platform endpoints (proxied)
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/payout-methods',
+  requirePermission('payouts.view'),
+  payoutMethodController.getAllSuppliersMethods,
+);
+router.get('/payout-methods/summary',
+  requirePermission('payouts.view'),
+  payoutMethodController.getPayoutMethodSummary,
+);
+router.get('/payout-methods/suppliers/:supplierId',
+  requirePermission('payouts.view'),
+  payoutMethodController.getSupplierMethods,
+);
+router.patch('/payout-methods/:id/verify',
+  requirePermission('payouts.approve'),
+  payoutMethodController.verifyPayoutMethod,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// SUPPLIER MANAGEMENT — shared platform endpoints (proxied)
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/supplier-applications',
+  requirePermission('suppliers.view'),
+  supplierController.getAllApplications,
+);
+router.get('/supplier-applications/:id/profile',
+  requirePermission('suppliers.view'),
+  supplierController.getSupplierProfile,
+);
+router.get('/supplier-applications/:id/verification',
+  requirePermission('suppliers.view'),
+  supplierController.getSupplierVerification,
+);
+router.get('/supplier-applications/:id/tours',
+  requirePermission('suppliers.view'),
+  supplierController.getSupplierTours,
+);
+router.get('/supplier-applications/:id/reviews',
+  requirePermission('suppliers.view'),
+  supplierController.getSupplierReviews,
+);
+router.get('/supplier-applications/:id/analytics',
+  requirePermission('suppliers.view'),
+  supplierController.getSupplierAnalytics,
+);
+router.get('/supplier-applications/qc-dashboard',
+  requirePermission('suppliers.view'),
+  supplierController.getQcDashboard,
+);
+router.patch('/supplier-applications/:id/review',
+  requirePermission('suppliers.approve'),
+  supplierController.reviewApplication,
+);
+router.patch('/supplier-applications/:id/suspend',
+  requirePermission('suppliers.approve'),
+  supplierController.suspendSupplier,
+);
+router.patch('/supplier-applications/:id/activate',
+  requirePermission('suppliers.approve'),
+  supplierController.activateSupplier,
+);
+router.patch('/supplier-applications/documents/:docId',
+  requirePermission('suppliers.approve'),
+  supplierController.updateDocument,
+);
+router.patch('/supplier-applications/vehicles/:vehicleId',
+  requirePermission('suppliers.approve'),
+  supplierController.updateVehicle,
+);
+router.patch('/supplier-applications/guides/:guideId',
+  requirePermission('suppliers.approve'),
+  supplierController.updateGuide,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// REVIEW MANAGEMENT — shared platform endpoints (proxied)
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/reviews-queue',
+  requirePermission('reviews.view'),
+  reviewController.getPendingReviews,
+);
+router.patch('/reviews-queue/:id/moderate',
+  requirePermission('reviews.moderate'),
+  reviewController.moderateReview,
+);
+router.patch('/reviews-queue/:id/admin',
+  requirePermission('reviews.moderate'),
+  reviewController.adminUpdateReview,
+);
+router.delete('/reviews-queue/:id/admin',
+  requirePermission('reviews.moderate'),
+  reviewController.adminDeleteReview,
+);
+router.patch('/reviews-queue/:id/admin/response',
+  requirePermission('reviews.moderate'),
+  reviewController.adminUpdateResponse,
+);
+router.delete('/reviews-queue/:id/admin/response',
+  requirePermission('reviews.moderate'),
+  reviewController.adminDeleteResponse,
+);
+
+module.exports = router;

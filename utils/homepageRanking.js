@@ -1389,19 +1389,31 @@ async function getMoodKeywords(userId, limit = 8) {
       if (bestTour) {
         usedTourIds.add(bestTour.id);
 
-        // CLIP-powered image selection: pick the photo that best represents this category
+        // CLIP-powered image selection: collect ALL images from tours in this
+        // category and pick the one that best represents the mood keyword.
         let heroImage = bestTour.coverPhoto;
         try {
           const clip = require('./clipClient');
           const clipHealthy = await clip.isHealthy();
           if (clipHealthy) {
-            const allImages = [bestTour.coverPhoto, ...(bestTour.photos || [])].filter(Boolean);
-            const uniqueImages = allImages.filter(img => !usedImages.has(img));
-            if (uniqueImages.length > 1) {
-              // Classify each image against this category's keywords
+            // Collect images from ALL tours in this category (not just bestTour)
+            const categoryImages = [];
+            const seenCategoryImages = new Set();
+            for (const tourId of catTourIds) {
+              const t = tourById.get(tourId);
+              if (!t) continue;
+              for (const img of [t.coverPhoto, ...(t.photos || [])]) {
+                if (img && !seenCategoryImages.has(img) && !usedImages.has(img)) {
+                  seenCategoryImages.add(img);
+                  categoryImages.push(img);
+                }
+              }
+            }
+
+            if (categoryImages.length > 1) {
               const categoryLabel = cat.name.toLowerCase();
               let bestClipScore = 0;
-              for (const img of uniqueImages.slice(0, 5)) { // limit to 5 to stay fast
+              for (const img of categoryImages.slice(0, 15)) {
                 try {
                   const result = await clip.classifyImage(img, [categoryLabel, 'other']);
                   if (result.confidence > bestClipScore) {
@@ -1585,28 +1597,42 @@ async function getPopularDestinations(limit = 10, userId = null, lat = null, lng
 
     ranked.sort((a, b) => b._score - a._score);
 
-    // CLIP-powered hero image selection: pick the image that best
-    // represents each destination city, not just the highest-rated tour's
-    // cover photo (which could be food, people, etc.).
+    // CLIP-powered hero image selection: collect ALL images from tours in
+    // each city (coverPhoto + photos[]) and pick the one that best
+    // represents the destination.
+    const usedDestImages = new Set();
     try {
       const clip = require('./clipClient');
       const clipHealthy = await clip.isHealthy();
       if (clipHealthy) {
         for (const dest of ranked) {
           const cityTours = await prisma.tour.findMany({
-            where: { city: dest.city, status: 'ACTIVE', coverPhoto: { not: null } },
-            select: { coverPhoto: true },
-            take: 8,
+            where: { city: dest.city, status: 'ACTIVE' },
+            select: { coverPhoto: true, photos: true },
+            take: 10,
           });
 
-          if (cityTours.length <= 1) continue;
+          // Collect ALL images from tours in this city
+          const allImages = [];
+          const seen = new Set();
+          for (const t of cityTours) {
+            for (const img of [t.coverPhoto, ...(t.photos || [])]) {
+              if (img && !seen.has(img)) {
+                seen.add(img);
+                allImages.push(img);
+              }
+            }
+          }
+
+          if (allImages.length <= 1) continue;
 
           let bestImage = dest.heroImage;
           let bestScore = 0;
 
-          for (const t of cityTours) {
+          for (const img of allImages.slice(0, 15)) {
+            if (usedDestImages.has(img)) continue;
             try {
-              const result = await clip.classifyImage(t.coverPhoto, [
+              const result = await clip.classifyImage(img, [
                 `${dest.city} city landscape`,
                 `${dest.city} landmark architecture`,
                 `${dest.country} destination scenery`,
@@ -1614,8 +1640,6 @@ async function getPopularDestinations(limit = 10, userId = null, lat = null, lng
                 'people portrait selfie',
               ]);
 
-              // Score: city/landmark/destination images get high scores,
-              // food/people images get low scores
               const cityScore =
                 (result.allScores?.[`${dest.city} city landscape`] || 0) +
                 (result.allScores?.[`${dest.city} landmark architecture`] || 0) +
@@ -1623,15 +1647,16 @@ async function getPopularDestinations(limit = 10, userId = null, lat = null, lng
 
               if (cityScore > bestScore) {
                 bestScore = cityScore;
-                bestImage = t.coverPhoto;
+                bestImage = img;
               }
             } catch {
               // Skip failed images
             }
           }
 
-          if (bestImage && bestImage !== dest.heroImage) {
+          if (bestImage) {
             dest.heroImage = bestImage;
+            usedDestImages.add(bestImage);
           }
         }
       }
