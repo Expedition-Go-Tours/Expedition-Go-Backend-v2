@@ -26,6 +26,7 @@
  */
 
 const prisma = require('./prismaClient');
+const { Prisma } = require('@prisma/client');
 const cache = require('./cacheHelper');
 const { cheapestRetailPrice } = require('./tourHelpers');
 
@@ -1584,10 +1585,12 @@ async function getPopularDestinations(limit = 10, userId = null, lat = null, lng
   const ttl = 3600; // 1 hour (changes infrequently)
 
   return cache.getOrSet(cacheKey, async () => {
-    // Ghana scope: restrict to tours published on TravioGhana
+    // Ghana scope: restrict to tours published on TravioGhana.
+    // Prisma.sql/Prisma.empty are required — a plain `${string}` interpolation
+    // would be parameterized (escaped as a literal), not inlined as SQL.
     const ghanaJoin = ghanaOnly
-      ? `JOIN "TravioGhanaTour" tgt ON tgt."tourId" = t.id AND tgt."isActive" = true`
-      : '';
+      ? Prisma.sql`JOIN "TravioGhanaTour" tgt ON tgt."tourId" = t.id AND tgt."isActive" = true`
+      : Prisma.empty;
 
     // Get cities with aggregated stats
     const cities = await prisma.$queryRaw`
