@@ -182,10 +182,13 @@ exports.getTours = catchAsync(async (req, res) => {
     }
 
     const orderBy = [{ displayOrder: 'asc' }];
-    if (sortBy === 'rating') orderBy.unshift({ tour: { averageRating: { sort: 'desc', nulls: 'last' } } });
+    // Prisma relation ordering uses simple 'asc'/'desc' — the { sort, nulls }
+    // object form is only valid for top-level columns, not nested relations.
+    // Nulls-last is the default for descending order.
+    if (sortBy === 'rating') orderBy.unshift({ tour: { averageRating: 'desc' } });
     else if (sortBy === 'newest') orderBy.unshift({ createdAt: 'desc' });
-    else if (sortBy === 'popular') orderBy.unshift({ tour: { reviewCount: { sort: 'desc', nulls: 'last' } } });
-    else if (sortBy === 'views') orderBy.unshift({ tour: { viewCount: { sort: 'desc', nulls: 'last' } } });
+    else if (sortBy === 'popular') orderBy.unshift({ tour: { reviewCount: 'desc' } });
+    else if (sortBy === 'views') orderBy.unshift({ tour: { viewCount: 'desc' } });
     else if (sortBy === 'price_asc' || sortBy === 'price_desc') {
       orderBy.unshift({ createdAt: sortBy === 'price_asc' ? 'asc' : 'desc' });
     }
@@ -336,7 +339,12 @@ exports.getTourBadges = catchAsync(async (req, res) => {
         slug: t.slug,
         difficulty: t.difficulty || null,
         pickupIncluded: bt.pickupProvided || bt.pickupAvailable || false,
-        cancellationPolicy: bt.cancellationPolicy || null,
+        // cancellationPolicy is stored as a JSON object in bookingAndTickets
+        // ({type, label, refundPercentage, ...}) — extract the label string
+        // so the frontend never receives a non-string policy field.
+        cancellationPolicy: typeof bt.cancellationPolicy === 'string'
+          ? bt.cancellationPolicy
+          : bt.cancellationPolicy?.label || null,
         languages: cat.languages || pc.languages || [],
         meetingMode: bt.meetingMode || null,
         accommodationIncluded: bt.accommodationIncluded || false,
