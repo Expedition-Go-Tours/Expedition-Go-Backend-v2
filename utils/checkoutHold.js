@@ -233,7 +233,7 @@ async function materializeHold(draftId, session, paymentIntentId) {
   // platform so the message and data.source are correct for either storefront.
   try {
     const { enqueueNotification } = require('./queue');
-    const isGhana = source === 'GHANA';
+    const isGhana = (draft.payload?._source || 'EXPEDITION') === 'GHANA';
     enqueueNotification({
       userId: createdBooking.tour.supplierId,
       type: 'BOOKING_CONFIRMED',
