@@ -32,6 +32,7 @@ const QUEUE_NAMES = {
   CONTENT_SYNC:   'content-sync',
   HOMEPAGE_PRECOMPUTE: 'homepage-precompute',
   AI_SCORING: 'ai-scoring',
+  GHANA_PUBLISH: 'ghana-publish',
 };
 
 const DEFAULT_JOB_OPTIONS = {
@@ -75,6 +76,7 @@ const webhookRetryQueue = () => getQueue(QUEUE_NAMES.WEBHOOK_RETRY);
 const contentSyncQueue  = () => getQueue(QUEUE_NAMES.CONTENT_SYNC);
 const homepagePrecomputeQueue = () => getQueue(QUEUE_NAMES.HOMEPAGE_PRECOMPUTE);
 const aiScoringQueue = () => getQueue(QUEUE_NAMES.AI_SCORING);
+const ghanaPublishQueue = () => getQueue(QUEUE_NAMES.GHANA_PUBLISH);
 
 // ---------------------------------------------------------------------------
 // Enqueue helpers (typed so callers don't touch raw queue names)
@@ -437,6 +439,26 @@ async function enqueueAiScoring(tourId) {
   } catch {
     // Redis unavailable — tour stays PENDING in DB
     // Reconciliation will pick it up when Redis recovers
+  }
+}
+
+/**
+ * Enqueue a TravioGhana auto-publish job for a tour.
+ * Fire-and-forget (~1ms Redis add) — never blocks the tour create/update request.
+ * The worker is idempotent (upsert), so duplicates/retries are harmless.
+ * If Redis is unavailable, the periodic reconcileGhanaPublish sweep heals it.
+ */
+async function enqueueGhanaPublish(tourId, actorId) {
+  try {
+    await ghanaPublishQueue().add('publish-tour', { tourId, actorId }, {
+      jobId: `ghana:publish:${tourId}:${Date.now()}`,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 10000 },
+      removeOnComplete: { age: 24 * 3600, count: 200 },
+      removeOnFail: { age: 7 * 24 * 3600 },
+    });
+  } catch {
+    // Redis unavailable — sweep will pick it up when Redis recovers
   }
 }
 
@@ -804,6 +826,17 @@ function registerWorkers() {
     await processTourAI(tourId);
   }, 2);
 
+  /* ------------------------------------------------------------------
+   * GHANA PUBLISH WORKER (concurrency 5)
+   * Auto-publishes Ghana-based suppliers' tours to the TravioGhana
+   * storefront (TravioGhanaTour upsert) and maintains the 'ghana' role.
+   * ------------------------------------------------------------------ */
+  createWorker(QUEUE_NAMES.GHANA_PUBLISH, async (job) => {
+    const { publishTourToGhana } = require('./autoPublishGhana');
+    const { tourId, actorId } = job.data;
+    await publishTourToGhana(tourId, actorId);
+  }, 5);
+
   console.log('[Queue] All workers registered');
 }
 
@@ -879,6 +912,7 @@ module.exports = {
   enqueueContentSync,
   enqueueHomepagePrecompute,
   enqueueAiScoring,
+  enqueueGhanaPublish,
   processEmailJob,
   registerWorkers,
   startResumeMonitor,

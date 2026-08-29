@@ -272,6 +272,14 @@ async function setupQueueWorkers() {
     enqueueAggregation('aggregate-daily-views').catch((err) => logger.warn('[scheduler] aggregate-daily-views failed:', err?.message));
   }, 24 * 60 * 60 * 1000));
 
+  // Auto-publish reconciliation: re-enqueue any Ghana supplier tours that were
+  // missed by the queue, and deactivate Ghana listings whose source tour is gone.
+  // Idempotent — safe to re-run. First run doubles as the backfill.
+  intervals.push(setInterval(() => {
+    const { reconcileGhanaPublish } = require('./utils/autoPublishGhana');
+    reconcileGhanaPublish().catch((err) => logger.warn('[scheduler] ghana-publish reconcile failed:', err?.message));
+  }, 30 * 60 * 1000));
+
   enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] startup cleanup-expired-cart failed:', err?.message));
   enqueueCleanup('cleanup-stale-bookings').catch((err) => logger.warn('[scheduler] startup cleanup-stale-bookings failed:', err?.message));
   enqueueCleanup('expire-checkout-holds').catch((err) => logger.warn('[scheduler] startup expire-checkout-holds failed:', err?.message));
@@ -289,6 +297,10 @@ async function setupQueueWorkers() {
   enqueueCleanup('expire-special-offers').catch((err) => logger.warn('[scheduler] startup expire-special-offers failed:', err?.message));
   enqueueCleanup('expire-supplier-documents').catch((err) => logger.warn('[scheduler] startup expire-supplier-documents failed:', err?.message));
   enqueueCleanup('plan-doc-expiry-reminders').catch((err) => logger.warn('[scheduler] startup plan-doc-expiry-reminders failed:', err?.message));
+
+  // Backfill: publish all existing Ghana suppliers' tours on boot
+  const { reconcileGhanaPublish } = require('./utils/autoPublishGhana');
+  reconcileGhanaPublish().catch((err) => logger.warn('[scheduler] startup ghana-publish reconcile failed:', err?.message));
 
   // Pre-compute homepage sections so the first user request is served instantly
   const { enqueueHomepagePrecompute } = require('./utils/queue');

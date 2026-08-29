@@ -619,6 +619,23 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
     console.error('Supplier status email failed:', err.message);
   }
 
+  // Ghana-based suppliers get their tours auto-published immediately
+  // (the periodic reconcile sweep covers it within 30 min regardless).
+  if (action === 'approve' && supplierProfile.businessInfo?.country === 'Ghana') {
+    try {
+      const { enqueueGhanaPublish } = require('../utils/queue');
+      const tours = await prisma.tour.findMany({
+        where: { supplierId: supplierProfile.userId, status: 'ACTIVE' },
+        select: { id: true },
+      });
+      for (const t of tours) {
+        enqueueGhanaPublish(t.id, req.user.id).catch((err) => console.warn('[Ghana] enqueueGhanaPublish failed:', err.message));
+      }
+    } catch (err) {
+      console.warn('[Ghana] supplier-approval publish enqueue failed:', err.message);
+    }
+  }
+
   await logActivity({
     userId: req.user.id,
     action: `supplier.${action}`,
