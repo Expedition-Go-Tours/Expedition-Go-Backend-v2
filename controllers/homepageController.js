@@ -48,7 +48,7 @@ exports.getSellOut = catchAsync(async (req, res) => {
   if (tours) {
     return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
   }
-  tours = await computeWithWarmup(limit, ranking.getLikelySellOut, SECTION_KEYS.sellOut);
+  tours = await computeWithWarmup(limit, (l) => ranking.getLikelySellOut(l, null, false, true), SECTION_KEYS.sellOut);
   res.json({ status: 'success', data: { tours } });
 });
 
@@ -62,7 +62,7 @@ exports.getTopRated = catchAsync(async (req, res) => {
   if (tours) {
     return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
   }
-  tours = await computeWithWarmup(limit, ranking.getTopRated, SECTION_KEYS.topRated);
+  tours = await computeWithWarmup(limit, (l) => ranking.getTopRated(l, null, false, true), SECTION_KEYS.topRated);
   res.json({ status: 'success', data: { tours } });
 });
 
@@ -76,7 +76,7 @@ exports.getTrending = catchAsync(async (req, res) => {
   if (tours) {
     return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
   }
-  tours = await computeWithWarmup(limit, ranking.getTrending, SECTION_KEYS.trending);
+  tours = await computeWithWarmup(limit, (l) => ranking.getTrending(l, false, true), SECTION_KEYS.trending);
   res.json({ status: 'success', data: { tours } });
 });
 
@@ -96,7 +96,7 @@ exports.getRecommended = catchAsync(async (req, res) => {
 
   // Personalized: always compute live
   if (userId || lat) {
-    const tours = await ranking.getRecommended(userId, lat, lng, limit);
+    const tours = await ranking.getRecommended(userId, lat, lng, limit, false, true);
     return res.json({ status: 'success', data: { tours } });
   }
 
@@ -105,7 +105,7 @@ exports.getRecommended = catchAsync(async (req, res) => {
   if (tours) {
     return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
   }
-  tours = await computeWithWarmup(limit, (l) => ranking.getRecommended(null, null, null, l), SECTION_KEYS.recommended);
+  tours = await computeWithWarmup(limit, (l) => ranking.getRecommended(null, null, null, l, false, true), SECTION_KEYS.recommended);
   res.json({ status: 'success', data: { tours } });
 });
 
@@ -119,7 +119,7 @@ exports.getNew = catchAsync(async (req, res) => {
   if (tours) {
     return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
   }
-  tours = await computeWithWarmup(limit, ranking.getNewExperiences, SECTION_KEYS.new);
+  tours = await computeWithWarmup(limit, (l) => ranking.getNewExperiences(l, false, true), SECTION_KEYS.new);
   res.json({ status: 'success', data: { tours } });
 });
 
@@ -135,7 +135,7 @@ exports.getAttractions = catchAsync(async (req, res) => {
 
   // When location provided, compute live (cache is location-specific)
   if (lat && lng) {
-    const attractions = await ranking.getAttractions(limit, lat, lng);
+    const attractions = await ranking.getAttractions(limit, lat, lng, false, true);
     return res.json({ status: 'success', data: { attractions } });
   }
 
@@ -144,7 +144,7 @@ exports.getAttractions = catchAsync(async (req, res) => {
   if (attractions) {
     return res.json({ status: 'success', data: { attractions: attractions.slice(0, limit) } });
   }
-  attractions = await computeWithWarmup(limit, ranking.getAttractions, SECTION_KEYS.attractions);
+  attractions = await computeWithWarmup(limit, (l) => ranking.getAttractions(l, null, null, false, true), SECTION_KEYS.attractions);
   res.json({ status: 'success', data: { attractions } });
 });
 
@@ -159,7 +159,7 @@ exports.getAttractionTours = catchAsync(async (req, res) => {
     return res.status(400).json({ status: 'error', message: 'name query parameter is required' });
   }
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
-  const tours = await ranking.getAttractionTours(attractionName, limit);
+  const tours = await ranking.getAttractionTours(attractionName, limit, false, true);
   res.json({ status: 'success', data: { tours } });
 });
 
@@ -176,7 +176,7 @@ exports.getMood = catchAsync(async (req, res) => {
 
   // Personalized: always compute live
   if (userId) {
-    const keywords = await ranking.getMoodKeywords(userId, limit);
+    const keywords = await ranking.getMoodKeywords(userId, limit, false, true);
     return res.json({ status: 'success', data: { keywords } });
   }
 
@@ -185,7 +185,7 @@ exports.getMood = catchAsync(async (req, res) => {
   if (keywords) {
     return res.json({ status: 'success', data: { keywords: keywords.slice(0, limit) } });
   }
-  keywords = await computeWithWarmup(limit, (l) => ranking.getMoodKeywords(null, l), SECTION_KEYS.mood);
+  keywords = await computeWithWarmup(limit, (l) => ranking.getMoodKeywords(null, l, false, true), SECTION_KEYS.mood);
   res.json({ status: 'success', data: { keywords } });
 });
 
@@ -201,7 +201,7 @@ exports.getDestinations = catchAsync(async (req, res) => {
 
   // Personalized: compute live if user context available
   if (userId || (lat && lng)) {
-    const destinations = await ranking.getPopularDestinations(limit, userId, lat, lng);
+    const destinations = await ranking.getPopularDestinations(limit, userId, lat, lng, false, true);
     return res.json({ status: 'success', data: { destinations } });
   }
 
@@ -209,7 +209,7 @@ exports.getDestinations = catchAsync(async (req, res) => {
   if (destinations) {
     return res.json({ status: 'success', data: { destinations: destinations.slice(0, limit) } });
   }
-  destinations = await computeWithWarmup(limit, (l) => ranking.getPopularDestinations(l), SECTION_KEYS.destinations);
+  destinations = await computeWithWarmup(limit, (l) => ranking.getPopularDestinations(l, null, null, null, false, true), SECTION_KEYS.destinations);
   res.json({ status: 'success', data: { destinations } });
 });
 
@@ -255,6 +255,8 @@ async function computeOffersData() {
 
   const targets = await prisma.specialOfferTarget.findMany({
     where: {
+      // Only tours published to the Expedition storefront appear in the section
+      tour: { expeditionTour: { isActive: true } },
       specialOffer: {
         isActive: true,
         AND: [
@@ -400,12 +402,12 @@ exports.getSectionTourIds = catchAsync(async (req, res) => {
   }
 
   const sectionMap = {
-    'Recommended': { key: SECTION_KEYS.recommended, fallback: () => ranking.getRecommended(null, null, null, 50) },
-    'Top Rated': { key: SECTION_KEYS.topRated, fallback: () => ranking.getTopRated(50) },
-    'Sell Out': { key: SECTION_KEYS.sellOut, fallback: () => ranking.getLikelySellOut(50) },
+    'Recommended': { key: SECTION_KEYS.recommended, fallback: () => ranking.getRecommended(null, null, null, 50, false, true) },
+    'Top Rated': { key: SECTION_KEYS.topRated, fallback: () => ranking.getTopRated(50, null, false, true) },
+    'Sell Out': { key: SECTION_KEYS.sellOut, fallback: () => ranking.getLikelySellOut(50, null, false, true) },
     'Last Minute Deals': { key: 'hp:sections:offers', fallback: () => computeOffersData() },
-    'New Experiences': { key: SECTION_KEYS.new, fallback: () => ranking.getNewExperiences(50) },
-    'Top Attractions Nearby': { key: SECTION_KEYS.attractions, fallback: () => ranking.getAttractions(50) },
+    'New Experiences': { key: SECTION_KEYS.new, fallback: () => ranking.getNewExperiences(50, false, true) },
+    'Top Attractions Nearby': { key: SECTION_KEYS.attractions, fallback: () => ranking.getAttractions(50, null, null, false, true) },
   };
 
   const entry = sectionMap[section];
@@ -452,23 +454,23 @@ exports.getHomepage = catchAsync(async (req, res) => {
 
   // For personalized sections, compute live if userId/location provided
   const resolvedRecommended = (userId || lat)
-    ? await ranking.getRecommended(userId, lat, lng, 12)
-    : (recommended || await ranking.getRecommended(null, null, null, 12));
+    ? await ranking.getRecommended(userId, lat, lng, 12, false, true)
+    : (recommended || await ranking.getRecommended(null, null, null, 12, false, true));
 
   const resolvedAttractions = (lat && lng)
-    ? await ranking.getAttractions(10, lat, lng)
-    : (attractions || await ranking.getAttractions(10));
+    ? await ranking.getAttractions(10, lat, lng, false, true)
+    : (attractions || await ranking.getAttractions(10, null, null, false, true));
 
   const resolvedMood = userId
-    ? await ranking.getMoodKeywords(userId, 8)
-    : (mood || await ranking.getMoodKeywords(null, 8));
+    ? await ranking.getMoodKeywords(userId, 8, false, true)
+    : (mood || await ranking.getMoodKeywords(null, 8, false, true));
 
   // For non-personalized sections, fall back to live computation if missing
-  const resolvedSellOut = sellOut || await ranking.getLikelySellOut(12);
-  const resolvedTopRated = topRated || await ranking.getTopRated(12);
-  const resolvedTrending = trending || await ranking.getTrending(12);
-  const resolvedNew = newExp || await ranking.getNewExperiences(10);
-  const resolvedDestinations = destinations || await ranking.getPopularDestinations(10, userId, lat, lng);
+  const resolvedSellOut = sellOut || await ranking.getLikelySellOut(12, null, false, true);
+  const resolvedTopRated = topRated || await ranking.getTopRated(12, null, false, true);
+  const resolvedTrending = trending || await ranking.getTrending(12, false, true);
+  const resolvedNew = newExp || await ranking.getNewExperiences(10, false, true);
+  const resolvedDestinations = destinations || await ranking.getPopularDestinations(10, userId, lat, lng, false, true);
   const resolvedOffers = offers || await computeOffersData();
 
   // Warm cache if any section was computed live

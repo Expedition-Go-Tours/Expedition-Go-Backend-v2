@@ -48,10 +48,12 @@ const SECTION_TTLS = {
  * Run all 8 ranking functions and store results in Redis.
  *
  * Non-personalized sections (sell-out, top-rated, trending, new, destinations)
- * are pre-computed as-is. Personalized sections (recommended, mood) are
- * pre-computed with anonymous defaults (no userId). Attractions are
- * pre-computed without location — the controller enriches with location
- * on-demand when lat/lng are provided.
+ * are pre-computed as-is for the Expedition storefront — every call is scoped
+ * with expeditionOnly: true so only tours the admin published to Expedition
+ * (active ExpeditionTour record) appear in homepage sections. Personalized
+ * sections (recommended, mood) are pre-computed with anonymous defaults (no
+ * userId). Attractions are pre-computed without location — the controller
+ * enriches with location on-demand when lat/lng are provided.
  *
  * @returns {{ success: boolean, duration: number, sections: number }}
  */
@@ -60,17 +62,17 @@ async function precomputeHomepageSections() {
   const results = {};
 
   try {
-    // Run all 8 ranking functions in parallel
+    // Run all 8 ranking functions in parallel — Expedition storefront scope
     const [sellOut, topRated, trending, recommended, newExp, attractions, mood, destinations] =
       await Promise.all([
-        ranking.getLikelySellOut(12),
-        ranking.getTopRated(12),
-        ranking.getTrending(12),
-        ranking.getRecommended(null, null, null, 12),  // anonymous, no location
-        ranking.getNewExperiences(10),
-        ranking.getAttractions(10),
-        ranking.getMoodKeywords(null, 8),               // anonymous
-        ranking.getPopularDestinations(10),
+        ranking.getLikelySellOut(12, null, false, true),
+        ranking.getTopRated(12, null, false, true),
+        ranking.getTrending(12, false, true),
+        ranking.getRecommended(null, null, null, 12, false, true),  // anonymous, no location
+        ranking.getNewExperiences(10, false, true),
+        ranking.getAttractions(10, null, null, false, true),
+        ranking.getMoodKeywords(null, 8, false, true),               // anonymous
+        ranking.getPopularDestinations(10, null, null, null, false, true),
       ]);
 
     results.sellOut = sellOut;
