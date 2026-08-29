@@ -228,6 +228,23 @@ async function materializeHold(draftId, session, paymentIntentId) {
     return { ok: false, reason: oversold ? 'sold_out' : 'already_settled', oversold };
   }
 
+  // ── Supplier notification (after commit, fire-and-forget) ─────────────
+  // Pay-now bookings never notified the supplier before; the draft carries the
+  // platform so the message and data.source are correct for either storefront.
+  try {
+    const { enqueueNotification } = require('./queue');
+    const isGhana = source === 'GHANA';
+    enqueueNotification({
+      userId: createdBooking.tour.supplierId,
+      type: 'BOOKING_CONFIRMED',
+      title: isGhana ? 'New Travio Ghana Booking' : 'New Booking Received',
+      message: isGhana
+        ? `A new booking (${createdBooking.bookingNumber}) was made through Travio Ghana Tours for "${createdBooking.tour.title}"`
+        : `You have a new booking for "${createdBooking.tour.title}"`,
+      data: { bookingId: createdBooking.id, source: isGhana ? 'ghana' : 'expedition' },
+    }).catch(() => {});
+  } catch { /* notification is best-effort */ }
+
   return { ok: true, booking: createdBooking, oversold: false };
 }
 

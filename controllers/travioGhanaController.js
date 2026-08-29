@@ -1445,7 +1445,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     // Attach booking ID to PI metadata so a later settlement can find it
     try {
       await getStripe().paymentIntents.update(paymentIntent.id, {
-        metadata: { bookingIds: result.id, source: 'expedition', paymentTiming: 'later' },
+        metadata: { bookingIds: result.id, source: 'ghana', paymentTiming: 'later' },
       });
     } catch (err) {
       console.error('[Travio Ghana] Failed to update PI metadata:', err.message);
@@ -1463,7 +1463,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       type: 'BOOKING_CONFIRMED',
       title: 'New Travio Ghana Booking',
       message: `A new reserve-now-pay-later booking (${result.bookingNumber}) was made through Travio Ghana Tours for "${tour.title}"`,
-      data: { bookingId: result.id, source: 'expedition' },
+      data: { bookingId: result.id, source: 'ghana' },
     });
 
     notifyAdmin({
@@ -1986,7 +1986,9 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
 
   const where = {
     tour: { supplierId },
-    source: 'GHANA',
+    // No source filter: a supplier owns their tours, so every booking on them
+    // (Travio Ghana or Expedition storefront) is visible here. The frontend
+    // shows which platform each booking came from via the source field.
   };
   if (status) where.status = status;
 
@@ -2040,7 +2042,8 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
   const booking = await prisma.booking.findFirst({
     where: {
       id,
-      source: 'GHANA',
+      // No source filter — the supplier manages all bookings on their tours,
+      // regardless of which storefront (Travio Ghana / Expedition) they came from.
       tour: { supplierId },
     },
     include: { tour: { select: { id: true, title: true } } },

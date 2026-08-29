@@ -45,12 +45,14 @@ exports.getDashboard = catchAsync(async (req, res) => {
     });
     const tourIds = supplierTours.map(t => t.tourId);
 
+    // No source filter: bookings on the supplier's Ghana-published tours from
+    // EITHER storefront (Travio Ghana / Expedition) count toward their stats.
     const [totalBookings, todayBookings, weekBookings, totalRevenue, pendingBookings, activeTours] = await Promise.all([
-      prisma.booking.count({ where: { tourId: { in: tourIds }, source: GHANA_SOURCE } }),
-      prisma.booking.count({ where: { tourId: { in: tourIds }, source: GHANA_SOURCE, createdAt: { gte: todayStart } } }),
-      prisma.booking.count({ where: { tourId: { in: tourIds }, source: GHANA_SOURCE, createdAt: { gte: weekStart } } }),
-      prisma.booking.aggregate({ where: { tourId: { in: tourIds }, source: GHANA_SOURCE, paymentStatus: 'SUCCEEDED' }, _sum: { grossAmount: true } }),
-      prisma.booking.count({ where: { tourId: { in: tourIds }, source: GHANA_SOURCE, status: 'PENDING' } }),
+      prisma.booking.count({ where: { tourId: { in: tourIds } } }),
+      prisma.booking.count({ where: { tourId: { in: tourIds }, createdAt: { gte: todayStart } } }),
+      prisma.booking.count({ where: { tourId: { in: tourIds }, createdAt: { gte: weekStart } } }),
+      prisma.booking.aggregate({ where: { tourId: { in: tourIds }, paymentStatus: 'SUCCEEDED' }, _sum: { grossAmount: true } }),
+      prisma.booking.count({ where: { tourId: { in: tourIds }, status: 'PENDING' } }),
       prisma.travioGhanaTour.count({ where: { tour: { supplierId }, isActive: true } }),
     ]);
 
@@ -88,7 +90,6 @@ exports.getMonthlyRevenue = catchAsync(async (req, res) => {
   const bookings = await prisma.booking.findMany({
     where: {
       tourId: { in: tourIds },
-      source: GHANA_SOURCE,
       paymentStatus: 'SUCCEEDED',
       paidAt: { gte: cutoff },
     },
@@ -368,16 +369,16 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
 
   const [totalEarnings, pendingPayouts, completedPayouts] = await Promise.all([
     prisma.booking.aggregate({
-      where: { tourId: { in: tourIds }, source: GHANA_SOURCE, paymentStatus: 'SUCCEEDED' },
+      where: { tourId: { in: tourIds }, paymentStatus: 'SUCCEEDED' },
       _sum: { grossAmount: true, platformCommission: true, supplierPayout: true },
     }),
     prisma.payout.aggregate({
-      where: { booking: { tourId: { in: tourIds }, source: GHANA_SOURCE }, status: 'PENDING' },
+      where: { booking: { tourId: { in: tourIds } }, status: 'PENDING' },
       _sum: { amount: true },
       _count: true,
     }),
     prisma.payout.aggregate({
-      where: { booking: { tourId: { in: tourIds }, source: GHANA_SOURCE }, status: 'PAID' },
+      where: { booking: { tourId: { in: tourIds } }, status: 'PAID' },
       _sum: { amount: true },
       _count: true,
     }),
