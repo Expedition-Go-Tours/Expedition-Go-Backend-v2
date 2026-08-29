@@ -445,13 +445,13 @@ async function enqueueAiScoring(tourId) {
 /**
  * Enqueue a TravioGhana auto-publish job for a tour.
  * Fire-and-forget (~1ms Redis add) — never blocks the tour create/update request.
- * The worker is idempotent (upsert), so duplicates/retries are harmless.
+ * No custom jobId (BullMQ forbids ':' in custom IDs); the worker is idempotent
+ * (upsert), so duplicates/retries are harmless.
  * If Redis is unavailable, the periodic reconcileGhanaPublish sweep heals it.
  */
 async function enqueueGhanaPublish(tourId, actorId) {
   try {
     await ghanaPublishQueue().add('publish-tour', { tourId, actorId }, {
-      jobId: `ghana:publish:${tourId}:${Date.now()}`,
       attempts: 3,
       backoff: { type: 'exponential', delay: 10000 },
       removeOnComplete: { age: 24 * 3600, count: 200 },
