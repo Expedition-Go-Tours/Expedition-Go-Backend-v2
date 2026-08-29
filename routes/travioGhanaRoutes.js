@@ -137,6 +137,7 @@ router.get('/homepage/offers', travioGhanaHomepageController.getOffers);
 router.get('/homepage', travioGhanaHomepageController.getGhanaHomepage);
 
 router.get('/tours', validate(getToursSchema), travioGhanaController.getTours);
+router.get('/tours/badges', travioGhanaController.getTourBadges);
 
 /**
  * @swagger
