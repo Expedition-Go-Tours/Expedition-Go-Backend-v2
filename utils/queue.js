@@ -869,6 +869,9 @@ function startResumeMonitor() {
           }
           // Reconcile any AI scoring jobs that were pending during Redis outage
           reconcilePendingAiJobs().catch(() => {});
+          // Same for Ghana auto-publish jobs missed during the outage
+          const { reconcileGhanaPublish } = require('./autoPublishGhana');
+          reconcileGhanaPublish().catch(() => {});
         }
       }
     } catch { /* keep the monitor alive */ }

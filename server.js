@@ -176,12 +176,11 @@ async function setupQueueWorkers() {
 
   const intervals = [];
 
-  // Ghana auto-publish reconcile — DB-driven and self-healing, so it runs
-  // regardless of Redis state. enqueueGhanaPublish no-ops safely if Redis is
-  // down; the workers (registered below or by the resume monitor) process the
-  // jobs once Redis is available. First run doubles as the backfill.
+  // Ghana auto-publish reconcile — DB-driven and self-healing. The interval is
+  // registered unconditionally (before the Redis probe) so it survives degraded
+  // boots; the startup call below runs once Redis is confirmed available, and
+  // the resume monitor also triggers it after an outage. All idempotent.
   const { reconcileGhanaPublish } = require('./utils/autoPublishGhana');
-  reconcileGhanaPublish().catch((err) => logger.warn('[scheduler] startup ghana-publish reconcile failed:', err?.message));
   intervals.push(setInterval(() => {
     reconcileGhanaPublish().catch((err) => logger.warn('[scheduler] ghana-publish reconcile failed:', err?.message));
   }, 30 * 60 * 1000));
@@ -196,6 +195,9 @@ async function setupQueueWorkers() {
 
   registerWorkers(app);
   console.log('[Queue] Workers registered');
+
+  // Backfill: publish all existing Ghana suppliers' tours on boot
+  reconcileGhanaPublish().catch((err) => logger.warn('[scheduler] startup ghana-publish reconcile failed:', err?.message));
 
   intervals.push(setInterval(() => {
     enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] cleanup-expired-cart failed:', err?.message));
