@@ -29,6 +29,15 @@ const prisma = require('./prismaClient');
 const cache = require('./cacheHelper');
 const { cheapestRetailPrice } = require('./tourHelpers');
 
+/**
+ * Ghana platform scope — filters tour queries to tours published on
+ * TravioGhana (active TravioGhanaTour record). Expedition behavior is
+ * unchanged when ghanaOnly is false (the default).
+ */
+function ghanaScope(ghanaOnly) {
+  return ghanaOnly ? { travioGhanaTour: { isActive: true } } : {};
+}
+
 // ─── Constants ────────────────────────────────────────────────────────
 const BAYESIAN_C = 5;        // Confidence parameter (equivalent to 5 "virtual" reviews)
 const BAYESIAN_M = 3.0;      // Global prior (average rating across all tours)
@@ -283,8 +292,8 @@ const TOUR_SELECT = {
  * Fallback: If no tours meet the minimum threshold, return
  * tours sorted by lifetime totalBookings (most popular overall).
  */
-async function getLikelySellOut(limit = DEFAULT_LIMIT, userId = null) {
-  const cacheKey = `hp:sellout:${limit}:${userId || 'anon'}`;
+async function getLikelySellOut(limit = DEFAULT_LIMIT, userId = null, ghanaOnly = false) {
+  const cacheKey = `hp:sellout:${limit}:${userId || 'anon'}${ghanaOnly ? ':ghana' : ''}`;
   const ttl = 300; // 5 minutes
 
   return cache.getOrSet(cacheKey, async () => {
@@ -314,6 +323,7 @@ async function getLikelySellOut(limit = DEFAULT_LIMIT, userId = null) {
           id: { in: tourIds },
           status: 'ACTIVE',
           supplier: { supplierProfile: { status: 'ACTIVE' } },
+          ...ghanaScope(ghanaOnly),
         },
         select: TOUR_SELECT,
       });
@@ -328,6 +338,7 @@ async function getLikelySellOut(limit = DEFAULT_LIMIT, userId = null) {
           totalBookings: { gte: MIN_BOOKINGS_SELL_OUT },
           id: { notIn: [...existingIds] },
           supplier: { supplierProfile: { status: 'ACTIVE' } },
+          ...ghanaScope(ghanaOnly),
         },
         select: TOUR_SELECT,
         orderBy: { totalBookings: 'desc' },
@@ -390,8 +401,8 @@ async function getLikelySellOut(limit = DEFAULT_LIMIT, userId = null) {
  *
  * Minimum 3 reviews to qualify (avoids single-review inflation).
  */
-async function getTopRated(limit = DEFAULT_LIMIT, userId = null) {
-  const cacheKey = `hp:toprated:${limit}:${userId || 'anon'}`;
+async function getTopRated(limit = DEFAULT_LIMIT, userId = null, ghanaOnly = false) {
+  const cacheKey = `hp:toprated:${limit}:${userId || 'anon'}${ghanaOnly ? ':ghana' : ''}`;
   const ttl = 300;
 
   return cache.getOrSet(cacheKey, async () => {
@@ -401,6 +412,7 @@ async function getTopRated(limit = DEFAULT_LIMIT, userId = null) {
         reviewCount: { gte: MIN_REVIEWS_TOP_RATED },
         averageRating: { not: null },
         supplier: { supplierProfile: { status: 'ACTIVE' } },
+        ...ghanaScope(ghanaOnly),
       },
       select: TOUR_SELECT,
       orderBy: [
@@ -472,8 +484,8 @@ async function getTopRated(limit = DEFAULT_LIMIT, userId = null) {
  * Growth capped at 5x to prevent 1→5 views = 500% growth dominating.
  * Minimum 10 views in last 7 days to qualify (avoids noise).
  */
-async function getTrending(limit = DEFAULT_LIMIT) {
-  const cacheKey = `hp:trending:${limit}`;
+async function getTrending(limit = DEFAULT_LIMIT, ghanaOnly = false) {
+  const cacheKey = `hp:trending:${limit}${ghanaOnly ? ':ghana' : ''}`;
   const ttl = 300;
 
   return cache.getOrSet(cacheKey, async () => {
@@ -541,7 +553,7 @@ async function getTrending(limit = DEFAULT_LIMIT) {
 
     if (qualifiedIds.length === 0) {
       // Fallback: newest tours
-      return getNewExperiences(limit);
+      return getNewExperiences(limit, ghanaOnly);
     }
 
     const tours = await prisma.tour.findMany({
@@ -549,6 +561,7 @@ async function getTrending(limit = DEFAULT_LIMIT) {
         id: { in: qualifiedIds },
         status: 'ACTIVE',
         supplier: { supplierProfile: { status: 'ACTIVE' } },
+        ...ghanaScope(ghanaOnly),
       },
       select: TOUR_SELECT,
     });
@@ -601,8 +614,8 @@ async function getTrending(limit = DEFAULT_LIMIT) {
  * @param {number|null} lng - User longitude
  * @param {number} limit - Max results
  */
-async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT) {
-  const cacheKey = `hp:rec:${userId || 'anon'}:${lat || 0}:${lng || 0}:${limit}`;
+async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT, ghanaOnly = false) {
+  const cacheKey = `hp:rec:${userId || 'anon'}:${lat || 0}:${lng || 0}:${limit}${ghanaOnly ? ':ghana' : ''}`;
   const ttl = 300;
 
   return cache.getOrSet(cacheKey, async () => {
@@ -676,6 +689,7 @@ async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT) {
     const where = {
       status: 'ACTIVE',
       supplier: { supplierProfile: { status: 'ACTIVE' } },
+      ...ghanaScope(ghanaOnly),
     };
 
     // Exclude already-viewed tours
@@ -710,6 +724,7 @@ async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT) {
           status: 'ACTIVE',
           id: { notIn: [...existingIds, ...viewedTourIds] },
           supplier: { supplierProfile: { status: 'ACTIVE' } },
+          ...ghanaScope(ghanaOnly),
         },
         select: TOUR_SELECT,
         orderBy: { totalBookings: 'desc' },
@@ -773,8 +788,8 @@ async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT) {
  * Tours created in the last 30 days.
  * Simple freshness filter — no complex scoring needed.
  */
-async function getNewExperiences(limit = DEFAULT_LIMIT) {
-  const cacheKey = `hp:new:${limit}`;
+async function getNewExperiences(limit = DEFAULT_LIMIT, ghanaOnly = false) {
+  const cacheKey = `hp:new:${limit}${ghanaOnly ? ':ghana' : ''}`;
   const ttl = 600; // 10 minutes (changes less frequently)
 
   return cache.getOrSet(cacheKey, async () => {
@@ -786,6 +801,7 @@ async function getNewExperiences(limit = DEFAULT_LIMIT) {
         status: 'ACTIVE',
         createdAt: { gte: cutoff },
         supplier: { supplierProfile: { status: 'ACTIVE' } },
+        ...ghanaScope(ghanaOnly),
       },
       select: {
         ...TOUR_SELECT,
@@ -848,12 +864,30 @@ async function getNewExperiences(limit = DEFAULT_LIMIT) {
  */
 const NEARBY_RADIUS_KM = 50;
 
-async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null) {
+async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, ghanaOnly = false) {
   const hasLocation = lat != null && lng != null;
-  const cacheKey = `hp:attractions:${limit}:${hasLocation ? `${lat}:${lng}` : 'global'}`;
+  const cacheKey = `hp:attractions:${limit}:${hasLocation ? `${lat}:${lng}` : 'global'}${ghanaOnly ? ':ghana' : ''}`;
   const ttl = hasLocation ? 300 : 600; // shorter TTL for location-based (more variants)
 
   return cache.getOrSet(cacheKey, async () => {
+    // ── Ghana scope: attraction names present on Ghana-published tours ──
+    // The Attraction table is global (not platform-scoped), so restrict it to
+    // names that actually appear on TravioGhana tours.
+    let ghanaNames = null;
+    if (ghanaOnly) {
+      const ghanaTours = await prisma.tour.findMany({
+        where: { travioGhanaTour: { isActive: true } },
+        select: { attractions: true },
+      });
+      ghanaNames = new Set();
+      for (const t of ghanaTours) {
+        for (const n of (t.attractions || [])) {
+          if (n && typeof n === 'string') ghanaNames.add(n.trim().toLowerCase());
+        }
+      }
+      if (ghanaNames.size === 0) return getAttractionsLegacy(limit, lat, lng, ghanaOnly);
+    }
+
     // ── Fast path: Attraction table (AI-curated) ──
     const attractionCount = await prisma.attraction.count({ where: { status: 'ACTIVE' } });
 
@@ -880,6 +914,7 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null) {
         if (JUNK_PATTERNS.test(name)) return false;
         if (LOGISTICS_PATTERNS.test(name)) return false;
         if (name.length < 3) return false;
+        if (ghanaNames && !ghanaNames.has(name.trim().toLowerCase())) return false;
         return true;
       });
 
@@ -961,7 +996,7 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null) {
     }
 
     // ── Fallback: derive from tour data (pre-backfill) ──
-    return getAttractionsLegacy(limit, lat, lng);
+    return getAttractionsLegacy(limit, lat, lng, ghanaOnly);
   }, ttl);
 }
 
@@ -970,12 +1005,13 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null) {
  * Improved over the original: uses best-rated tour's cover photo first,
  * then gallery photos, avoiding the random-hash image mismatch bug.
  */
-async function getAttractionsLegacy(limit = DEFAULT_LIMIT, lat = null, lng = null) {
+async function getAttractionsLegacy(limit = DEFAULT_LIMIT, lat = null, lng = null, ghanaOnly = false) {
   const tours = await prisma.tour.findMany({
     where: {
       status: 'ACTIVE',
       attractions: { isEmpty: false },
       supplier: { supplierProfile: { status: 'ACTIVE' } },
+      ...ghanaScope(ghanaOnly),
     },
     select: {
       id: true,
@@ -1142,10 +1178,10 @@ async function getAttractionsLegacy(limit = DEFAULT_LIMIT, lat = null, lng = nul
  * @param {string} attractionName - The attraction name to filter by
  * @param {number} limit - Max results
  */
-async function getAttractionTours(attractionName, limit = DEFAULT_LIMIT) {
+async function getAttractionTours(attractionName, limit = DEFAULT_LIMIT, ghanaOnly = false) {
   if (!attractionName) return [];
 
-  const cacheKey = `hp:attrTours:${attractionName}:${limit}`;
+  const cacheKey = `hp:attrTours:${attractionName}:${limit}${ghanaOnly ? ':ghana' : ''}`;
   const ttl = 300;
 
   return cache.getOrSet(cacheKey, async () => {
@@ -1154,6 +1190,7 @@ async function getAttractionTours(attractionName, limit = DEFAULT_LIMIT) {
         status: 'ACTIVE',
         attractions: { has: attractionName },
         supplier: { supplierProfile: { status: 'ACTIVE' } },
+        ...ghanaScope(ghanaOnly),
       },
       select: TOUR_SELECT,
       orderBy: [
@@ -1190,8 +1227,8 @@ async function getAttractionTours(attractionName, limit = DEFAULT_LIMIT) {
  * @param {string|null} userId - Authenticated user ID
  * @param {number} limit - Max keywords to return
  */
-async function getMoodKeywords(userId, limit = 8) {
-  const cacheKey = `hp:mood:${userId || 'anon'}:${limit}`;
+async function getMoodKeywords(userId, limit = 8, ghanaOnly = false) {
+  const cacheKey = `hp:mood:${userId || 'anon'}:${limit}${ghanaOnly ? ':ghana' : ''}`;
   const ttl = 300;
 
   return cache.getOrSet(cacheKey, async () => {
@@ -1291,7 +1328,7 @@ async function getMoodKeywords(userId, limit = 8) {
     // Single query: fetch active tours with tags, ordered by popularity.
     // Limit to 5000 to prevent OOM on large datasets while keeping good keyword coverage.
     const allTours = await prisma.tour.findMany({
-      where: { status: 'ACTIVE' },
+      where: { status: 'ACTIVE', ...ghanaScope(ghanaOnly) },
       select: {
         id: true, tags: true, coverPhoto: true, photos: true,
         category: true, totalBookings: true, city: true,
@@ -1542,11 +1579,16 @@ async function getMoodKeywords(userId, limit = 8) {
  *
  * @param {number} limit - Max destinations
  */
-async function getPopularDestinations(limit = 10, userId = null, lat = null, lng = null) {
-  const cacheKey = `hp:destinations:${limit}:${userId || 'anon'}:${lat || 0}:${lng || 0}`;
+async function getPopularDestinations(limit = 10, userId = null, lat = null, lng = null, ghanaOnly = false) {
+  const cacheKey = `hp:destinations:${limit}:${userId || 'anon'}:${lat || 0}:${lng || 0}${ghanaOnly ? ':ghana' : ''}`;
   const ttl = 3600; // 1 hour (changes infrequently)
 
   return cache.getOrSet(cacheKey, async () => {
+    // Ghana scope: restrict to tours published on TravioGhana
+    const ghanaJoin = ghanaOnly
+      ? `JOIN "TravioGhanaTour" tgt ON tgt."tourId" = t.id AND tgt."isActive" = true`
+      : '';
+
     // Get cities with aggregated stats
     const cities = await prisma.$queryRaw`
       SELECT
@@ -1562,6 +1604,7 @@ async function getPopularDestinations(limit = 10, userId = null, lat = null, lng
          ORDER BY t2."averageRating" DESC NULLS LAST, t2."reviewCount" DESC LIMIT 1) AS "heroImage"
       FROM "Tour" t
       JOIN "SupplierProfile" sp ON sp."userId" = t."supplierId"
+      ${ghanaJoin}
       WHERE t.status = 'ACTIVE'
         AND t.city IS NOT NULL
         AND sp.status = 'ACTIVE'
@@ -1602,7 +1645,7 @@ async function getPopularDestinations(limit = 10, userId = null, lat = null, lng
       if (dest.heroImage && usedDestImages.has(dest.heroImage)) {
         // Image already used — find an alternative from tours in this city
         const cityTours = await prisma.tour.findMany({
-          where: { city: dest.city, status: 'ACTIVE' },
+          where: { city: dest.city, status: 'ACTIVE', ...ghanaScope(ghanaOnly) },
           select: { coverPhoto: true, photos: true },
           take: 10,
         });

@@ -122,7 +122,18 @@ const contactLimiter = createLimiter({
  *       500:
  *         description: Server error
  */
-// Homepage — Ghana-scoped sections (mood, recommended, top-rated, etc.)
+// Homepage — Ghana-scoped sections, mirroring the shared /homepage/* routes
+// (per-section endpoints + unified payload with all 9 section keys)
+router.get('/homepage/sell-out', travioGhanaHomepageController.getSellOut);
+router.get('/homepage/top-rated', travioGhanaHomepageController.getTopRated);
+router.get('/homepage/trending', travioGhanaHomepageController.getTrending);
+router.get('/homepage/recommended', travioGhanaHomepageController.getRecommended);
+router.get('/homepage/new', travioGhanaHomepageController.getNew);
+router.get('/homepage/attractions', travioGhanaHomepageController.getAttractions);
+router.get('/homepage/attractions/tours', travioGhanaHomepageController.getAttractionTours);
+router.get('/homepage/mood', travioGhanaHomepageController.getMood);
+router.get('/homepage/destinations', travioGhanaHomepageController.getDestinations);
+router.get('/homepage/offers', travioGhanaHomepageController.getOffers);
 router.get('/homepage', travioGhanaHomepageController.getGhanaHomepage);
 
 router.get('/tours', validate(getToursSchema), travioGhanaController.getTours);
