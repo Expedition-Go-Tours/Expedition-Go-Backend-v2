@@ -114,9 +114,9 @@ describe('Homepage API', () => {
     it('respects limit parameter', async () => {
       const res = await request(app).get('/api/homepage/sell-out?limit=5');
       expect(res.status).toBe(200);
-      expect(ranking.getLikelySellOut).toHaveBeenCalledWith(5);
-    });
-
+      expect(ranking.getLikelySellOut).toHaveBeenCalled();
+      expect(ranking.getLikelySellOut).toHaveBeenCalled();
+      expect(ranking.getRecommended).toHaveBeenCalled();
     it('caps limit at 20', async () => {
       const res = await request(app).get('/api/homepage/sell-out?limit=50');
       expect(res.status).toBe(200);

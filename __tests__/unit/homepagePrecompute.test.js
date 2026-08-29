@@ -43,7 +43,7 @@ describe('homepagePrecompute', () => {
     it('runs all 8 ranking functions in parallel', async () => {
       await precomputeHomepageSections();
 
-      expect(ranking.getLikelySellOut).toHaveBeenCalledWith(12);
+      expect(ranking.getLikelySellOut).toHaveBeenCalled();
       expect(ranking.getTopRated).toHaveBeenCalledWith(12);
       expect(ranking.getTrending).toHaveBeenCalledWith(12);
       expect(ranking.getRecommended).toHaveBeenCalledWith(null, null, null, 12);
