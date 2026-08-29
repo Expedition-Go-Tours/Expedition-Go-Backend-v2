@@ -369,9 +369,9 @@ exports.getTourBadges = catchAsync(async (req, res) => {
         cancellationPolicy: typeof bt.cancellationPolicy === 'string'
           ? bt.cancellationPolicy
           : bt.cancellationPolicy?.label || null,
-        languages: cat.languages || pc.languages || [],
+        languages: pc.writingLanguage ? [pc.writingLanguage] : (cat.languages || []),
         meetingMode: bt.meetingMode || null,
-        accommodationIncluded: bt.accommodationIncluded || false,
+        accommodationIncluded: !!cat.accommodationIncluded,
       };
     });
 
