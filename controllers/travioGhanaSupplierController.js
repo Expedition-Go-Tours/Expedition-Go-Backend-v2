@@ -38,22 +38,16 @@ exports.getDashboard = catchAsync(async (req, res) => {
     const weekStart = new Date(todayStart); weekStart.setDate(weekStart.getDate() - 7);
     const monthStart = new Date(todayStart); monthStart.setDate(monthStart.getDate() - 30);
 
-    // Get supplier's Ghana tour IDs
-    const supplierTours = await prisma.travioGhanaTour.findMany({
-      where: { tour: { supplierId }, isActive: true },
-      select: { tourId: true },
-    });
-    const tourIds = supplierTours.map(t => t.tourId);
-
-    // No source filter: bookings on the supplier's Ghana-published tours from
-    // EITHER storefront (Travio Ghana / Expedition) count toward their stats.
+    // Scoped to ALL the supplier's tours (not just Ghana-published ones) so the
+    // dashboard numbers match the bookings list — every booking on their tours
+    // from either storefront counts. No source filter.
     const [totalBookings, todayBookings, weekBookings, totalRevenue, pendingBookings, activeTours] = await Promise.all([
-      prisma.booking.count({ where: { tourId: { in: tourIds } } }),
-      prisma.booking.count({ where: { tourId: { in: tourIds }, createdAt: { gte: todayStart } } }),
-      prisma.booking.count({ where: { tourId: { in: tourIds }, createdAt: { gte: weekStart } } }),
-      prisma.booking.aggregate({ where: { tourId: { in: tourIds }, paymentStatus: 'SUCCEEDED' }, _sum: { grossAmount: true } }),
-      prisma.booking.count({ where: { tourId: { in: tourIds }, status: 'PENDING' } }),
-      prisma.travioGhanaTour.count({ where: { tour: { supplierId }, isActive: true } }),
+      prisma.booking.count({ where: { tour: { supplierId } } }),
+      prisma.booking.count({ where: { tour: { supplierId }, createdAt: { gte: todayStart } } }),
+      prisma.booking.count({ where: { tour: { supplierId }, createdAt: { gte: weekStart } } }),
+      prisma.booking.aggregate({ where: { tour: { supplierId }, paymentStatus: 'SUCCEEDED' }, _sum: { grossAmount: true } }),
+      prisma.booking.count({ where: { tour: { supplierId }, status: 'PENDING' } }),
+      prisma.tour.count({ where: { supplierId, status: 'ACTIVE' } }),
     ]);
 
     return {
@@ -78,18 +72,12 @@ exports.getMonthlyRevenue = catchAsync(async (req, res) => {
   const supplierId = req.user.id;
   const months = parseInt(req.query.months) || 12;
 
-  const supplierTours = await prisma.travioGhanaTour.findMany({
-    where: { tour: { supplierId }, isActive: true },
-    select: { tourId: true },
-  });
-  const tourIds = supplierTours.map(t => t.tourId);
-
   const cutoff = new Date();
   cutoff.setMonth(cutoff.getMonth() - months);
 
   const bookings = await prisma.booking.findMany({
     where: {
-      tourId: { in: tourIds },
+      tour: { supplierId },
       paymentStatus: 'SUCCEEDED',
       paidAt: { gte: cutoff },
     },
@@ -361,24 +349,18 @@ exports.getSpecialOffers = catchAsync(async (req, res) => {
 exports.getFinanceSummary = catchAsync(async (req, res) => {
   const supplierId = req.user.id;
 
-  const supplierTours = await prisma.travioGhanaTour.findMany({
-    where: { tour: { supplierId } },
-    select: { tourId: true },
-  });
-  const tourIds = supplierTours.map(t => t.tourId);
-
   const [totalEarnings, pendingPayouts, completedPayouts] = await Promise.all([
     prisma.booking.aggregate({
-      where: { tourId: { in: tourIds }, paymentStatus: 'SUCCEEDED' },
+      where: { tour: { supplierId }, paymentStatus: 'SUCCEEDED' },
       _sum: { grossAmount: true, platformCommission: true, supplierPayout: true },
     }),
     prisma.payout.aggregate({
-      where: { booking: { tourId: { in: tourIds } }, status: 'PENDING' },
+      where: { booking: { tour: { supplierId } }, status: 'PENDING' },
       _sum: { amount: true },
       _count: true,
     }),
     prisma.payout.aggregate({
-      where: { booking: { tourId: { in: tourIds } }, status: 'PAID' },
+      where: { booking: { tour: { supplierId } }, status: 'PAID' },
       _sum: { amount: true },
       _count: true,
     }),

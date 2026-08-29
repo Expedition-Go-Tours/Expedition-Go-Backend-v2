@@ -430,7 +430,9 @@ async function enqueueHomepagePrecompute() {
 async function enqueueAiScoring(tourId) {
   try {
     await aiScoringQueue().add('score-tour', { tourId }, {
-      jobId: `ai:score:${tourId}:${Date.now()}`,
+      // No custom jobId — BullMQ rejects ':' in custom IDs (the previous
+      // ai:score:<id>:<ts> form threw silently and jobs never landed; the
+      // processor is idempotent so dedup is unnecessary).
       attempts: 3,
       backoff: { type: 'exponential', delay: 10000 },
       removeOnComplete: { age: 24 * 3600, count: 200 },

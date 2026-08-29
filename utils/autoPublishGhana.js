@@ -51,10 +51,28 @@ async function publishTourToGhana(tourId, actorId) {
       return null;
     }
 
-    const ghanaTour = await prisma.travioGhanaTour.upsert({
-      where: { tourId },
-      update: { isActive: true },
-      create: {
+    // Manual unpublish must stick: if a Ghana admin explicitly unlisted this
+    // tour (unpublishedById set), never re-activate it — the auto-publish
+    // sweep guarantees existence, but the admin controls activation.
+    const existing = await prisma.travioGhanaTour.findUnique({ where: { tourId } });
+    if (existing) {
+      if (existing.isActive) {
+        return existing;
+      }
+      if (existing.unpublishedById) {
+        logger.info(`[Travio Ghana] Tour ${tourId} was manually unpublished, skipping auto-publish`);
+        return existing;
+      }
+      // Deactivated by the sweep (e.g. the tour was archived and is now
+      // ACTIVE again) — safe to re-activate.
+      return prisma.travioGhanaTour.update({
+        where: { tourId },
+        data: { isActive: true, lastSyncAt: new Date() },
+      });
+    }
+
+    const ghanaTour = await prisma.travioGhanaTour.create({
+      data: {
         tourId,
         isActive: true,
         bookingFlow: 'DIRECT',

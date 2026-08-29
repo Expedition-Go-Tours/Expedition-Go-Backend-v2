@@ -11,13 +11,14 @@
 
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
-const { resolveSupplier, requireTeamRole } = require('../middleware/teamRoleMiddleware');
+const { resolveSupplier, requireTeamRole, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 const ghanaSupplier = require('../controllers/travioGhanaSupplierController');
 
 // Shared controllers for proxied endpoints
 const supplierSettingsController = require('../controllers/supplierSettingsController');
 const cancellationController = require('../controllers/cancellationController');
 const teamController = require('../controllers/teamController');
+const bookingController = require('../controllers/bookingController');
 
 const router = express.Router();
 
@@ -70,6 +71,11 @@ router.get('/special-offers', ghanaSupplier.getSpecialOffers);
 // Cancellation (proxied to shared controller)
 router.get('/cancellation/summary', resolveSupplier, cancellationController.getCancellationSummary);
 router.get('/cancellation/records', resolveSupplier, cancellationController.getCancellationRecords);
+
+// Pickup planner (proxied to shared bookingController — the frontend rewrites
+// /bookings/supplier/pickup-planner to this Ghana namespace)
+router.get('/pickup-planner', resolveSupplier, requireTeamPermission('bookings.view'), bookingController.getPickupPlanner);
+router.patch('/pickup-planner/:id', resolveSupplier, requireTeamPermission('bookings.manage'), bookingController.updateBookingPickup);
 
 // Finance
 router.get('/finance/summary', ghanaSupplier.getFinanceSummary);
