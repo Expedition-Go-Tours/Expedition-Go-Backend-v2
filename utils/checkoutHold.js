@@ -116,6 +116,8 @@ async function releaseHold(draftId, reason = 'expired') {
 async function materializeHold(draftId, session, paymentIntentId) {
   let createdBooking = null;
   let oversold = false;
+  let source = 'EXPEDITION';
+  let oversold = false;
 
   const draft = await prisma.$transaction(async (tx) => {
     // ── Load draft (guarded: only HOLDING) ─────────────────────
@@ -123,7 +125,7 @@ async function materializeHold(draftId, session, paymentIntentId) {
     if (!draftRecord || draftRecord.status !== 'HOLDING') {
       return null; // Already materialized / expired — idempotent no-op
     }
-
+    source = draftRecord.payload?._source || 'EXPEDITION';
     // Read source/prefix from draft payload (set by acquireHold)
     const source = draftRecord.payload?._source || 'EXPEDITION';
     const bookingPrefix = draftRecord.payload?._bookingPrefix || 'EXP';
