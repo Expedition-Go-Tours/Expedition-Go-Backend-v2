@@ -43,14 +43,14 @@ describe('homepagePrecompute', () => {
     it('runs all 8 ranking functions in parallel', async () => {
       await precomputeHomepageSections();
 
-      expect(ranking.getLikelySellOut).toHaveBeenCalledWith(12);
-      expect(ranking.getTopRated).toHaveBeenCalledWith(12);
-      expect(ranking.getTrending).toHaveBeenCalledWith(12);
-      expect(ranking.getRecommended).toHaveBeenCalledWith(null, null, null, 12);
-      expect(ranking.getNewExperiences).toHaveBeenCalledWith(10);
-      expect(ranking.getAttractions).toHaveBeenCalledWith(10);
-      expect(ranking.getMoodKeywords).toHaveBeenCalledWith(null, 8);
-      expect(ranking.getPopularDestinations).toHaveBeenCalledWith(10);
+      expect(ranking.getLikelySellOut).toHaveBeenCalledWith(12, null, false, true);
+      expect(ranking.getTopRated).toHaveBeenCalledWith(12, null, false, true);
+      expect(ranking.getTrending).toHaveBeenCalledWith(12, false, true);
+      expect(ranking.getRecommended).toHaveBeenCalledWith(null, null, null, 12, false, true);
+      expect(ranking.getNewExperiences).toHaveBeenCalledWith(10, false, true);
+      expect(ranking.getAttractions).toHaveBeenCalledWith(10, null, null, false, true);
+      expect(ranking.getMoodKeywords).toHaveBeenCalledWith(null, 8, false, true);
+      expect(ranking.getPopularDestinations).toHaveBeenCalledWith(10, null, null, null, false, true);
     });
 
     it('writes all 8 keys to Redis with correct TTLs', async () => {

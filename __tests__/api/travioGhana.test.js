@@ -11,6 +11,7 @@ jest.mock('../../utils/prismaClient', () => ({
   review: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
   booking: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   specialOffer: { findMany: jest.fn(), count: jest.fn() },
+  specialOfferTarget: { findMany: jest.fn().mockResolvedValue([]) },
   newsletterSubscriber: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
   tourDateOverride: { findMany: jest.fn() },
   wishlistItem: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
@@ -24,6 +25,20 @@ jest.mock('../../utils/prismaClient', () => ({
   $queryRaw: jest.fn(),
   $queryRawUnsafe: jest.fn(),
 }));
+
+jest.mock('../../utils/homepageRanking', () => {
+  const empty = () => jest.fn().mockResolvedValue([]);
+  return {
+    getLikelySellOut: empty(),
+    getTopRated: empty(),
+    getTrending: empty(),
+    getRecommended: empty(),
+    getNewExperiences: empty(),
+    getAttractions: empty(),
+    getMoodKeywords: empty(),
+    getPopularDestinations: empty(),
+  };
+});
 
 jest.mock('../../utils/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),

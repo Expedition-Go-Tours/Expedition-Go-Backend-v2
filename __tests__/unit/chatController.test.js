@@ -57,8 +57,8 @@ describe('chatController', () => {
       expect(data.data.conversations[0].id).toBe('c-1');
     });
 
-    it('allows super_admin to access all types', async () => {
-      req.user.permissionKeys = ['super_admin'];
+    it('allows dashboard.* admins to access all types', async () => {
+      req.user.permissionKeys = ['dashboard.*'];
       chatService.getConversations.mockResolvedValue([
         { id: 'c-1', type: 'SUPPLIER_ADMIN' },
         { id: 'c-2', type: 'USER_SUPPORT' },
