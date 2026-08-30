@@ -279,7 +279,7 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
       type: 'NEW_MESSAGE',
       title: 'New Message',
       message: content.length > 100 ? content.slice(0, 100) + '...' : content,
-      data: { conversationId, senderId }
+      data: { conversationId, senderId, conversationType: participant.conversation.type }
     }).catch((err) => console.error('[ChatService] Failed to enqueue notification:', err));
   }
 
@@ -309,12 +309,12 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
     }
 
     if (chatType === 'expedition' && !sender.roles.includes('expedition')) {
-      console.log('[ChatService] emitToRoom expedition-room:', { conversationId, conversationType: participant.conversation.type, chatType, senderRoles: sender.roles, senderName: sender.name });
-      emitToRoom('expedition-room', {
+      console.log('[ChatService] notifyAdmin expedition:', { conversationId, conversationType: participant.conversation.type, chatType, senderRoles: sender.roles, senderName: sender.name });
+      notifyAdmin({
         type: 'NEW_MESSAGE',
         title: `New message from ${sender.name}`,
         message: content.length > 100 ? content.slice(0, 100) + '...' : content,
-        data: { conversationId, senderId, senderName: sender.name, messageId: message.id, chatType }
+        data: { conversationId, senderId, senderName: sender.name, messageId: message.id, chatType, conversationType: participant.conversation.type }
       });
     }
   }

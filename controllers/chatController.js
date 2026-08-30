@@ -5,12 +5,19 @@ const chatService = require('../utils/chatService');
 const { isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 
 function canAccessType(user, type) {
-  if (!user.roles?.includes('admin') && !user.roles?.includes('expedition')) return true;
-  if (user.roles?.includes('supplier') && type === 'SUPPLIER_ADMIN') return true;
-  if (user.roles?.includes('supplier') && type === 'SUPPLIER_CUSTOMER') return true;
-  if (user.roles?.includes('customer') && type === 'USER_SUPPORT') return true;
+  // Full dashboard access
   const keys = user.permissionKeys || [];
   if (keys.includes('dashboard.*')) return true;
+
+  // Role-based access — suppliers see their own conversation types
+  if (user.roles?.includes('supplier')) {
+    return type === 'SUPPLIER_ADMIN' || type === 'SUPPLIER_CUSTOMER';
+  }
+  // Customers see support conversations
+  if (user.roles?.includes('customer')) {
+    return type === 'USER_SUPPORT';
+  }
+  // Admin/expedition — check specific permission keys
   if (type === 'SUPPLIER_ADMIN') return keys.includes('chat.suppliers');
   if (type === 'USER_SUPPORT') return keys.includes('chat.customers');
   if (type === 'EXPEDITION_CUSTOMER') {
