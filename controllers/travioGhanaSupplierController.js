@@ -33,30 +33,56 @@ exports.getDashboard = catchAsync(async (req, res) => {
   const ttl = 60;
 
   const result = await cache.getOrSet(cacheKey, async () => {
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const weekStart = new Date(todayStart); weekStart.setDate(weekStart.getDate() - 7);
-    const monthStart = new Date(todayStart); monthStart.setDate(monthStart.getDate() - 30);
+    const supplierProfile = await prisma.supplierProfile.findUnique({
+      where: { userId: supplierId },
+    });
 
     // Scoped to ALL the supplier's tours (not just Ghana-published ones) so the
     // dashboard numbers match the bookings list — every booking on their tours
     // from either storefront counts. No source filter.
-    const [totalBookings, todayBookings, weekBookings, totalRevenue, pendingBookings, activeTours] = await Promise.all([
-      prisma.booking.count({ where: { tour: { supplierId } } }),
-      prisma.booking.count({ where: { tour: { supplierId }, createdAt: { gte: todayStart } } }),
-      prisma.booking.count({ where: { tour: { supplierId }, createdAt: { gte: weekStart } } }),
-      prisma.booking.aggregate({ where: { tour: { supplierId }, paymentStatus: 'SUCCEEDED' }, _sum: { grossAmount: true } }),
-      prisma.booking.count({ where: { tour: { supplierId }, status: 'PENDING' } }),
-      prisma.tour.count({ where: { supplierId, status: 'ACTIVE' } }),
+    const [tourStats, bookingStats, reviewCount] = await Promise.all([
+      prisma.tour.groupBy({
+        by: ['status'],
+        where: { supplierId },
+        _count: true,
+      }),
+      prisma.booking.groupBy({
+        by: ['status'],
+        where: { tour: { supplierId } },
+        _count: true,
+      }),
+      prisma.review.count({ where: { tour: { supplierId }, status: 'APPROVED' } }),
     ]);
 
+    const tourMap = Object.fromEntries(tourStats.map(t => [t.status, t._count]));
+    const bookingMap = Object.fromEntries(bookingStats.map(b => [b.status, b._count]));
+
+    // Response shape mirrors the shared supplierController.getDashboard —
+    // the supplier dashboard frontend reads tours.active, bookings.confirmed,
+    // bookings.pending and earnings.totalEarnings from the nested object.
     return {
-      totalBookings,
-      todayBookings,
-      weekBookings,
-      totalRevenue: parseFloat(totalRevenue._sum.grossAmount || 0),
-      pendingBookings,
-      activeTours,
+      earnings: {
+        totalEarnings: Number(supplierProfile?.totalEarnings || 0),
+        currency: 'USD',
+      },
+      tours: {
+        total: Object.values(tourMap).reduce((a, b) => a + b, 0),
+        active: tourMap.ACTIVE || 0,
+        draft: tourMap.DRAFT || 0,
+        paused: tourMap.PAUSED || 0,
+        archived: tourMap.ARCHIVED || 0,
+      },
+      bookings: {
+        total: Object.values(bookingMap).reduce((a, b) => a + b, 0),
+        pending: bookingMap.PENDING || 0,
+        confirmed: bookingMap.CONFIRMED || 0,
+        completed: bookingMap.COMPLETED || 0,
+        cancelled: bookingMap.CANCELLED || 0,
+      },
+      reviews: {
+        averageRating: Number(supplierProfile?.averageRating) || 0,
+        totalReviews: reviewCount,
+      },
     };
   }, ttl);
 
@@ -94,7 +120,7 @@ exports.getMonthlyRevenue = catchAsync(async (req, res) => {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([month, revenue]) => ({ month, revenue: Math.round(revenue * 100) / 100 }));
 
-  res.json({ status: 'success', data: { monthly: data } });
+  res.json({ status: 'success', data: { months: data } });
 });
 
 // ══════════════════════════════════════════════════════════════════════════
