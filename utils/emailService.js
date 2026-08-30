@@ -278,7 +278,7 @@ function buildBookingBase(booking) {
     leadTravelerPhone: leadPhone || fmt.travelerPhone(booking.travelers) || customer.phone || '',
     supplierName: supplier.name || '',
     supplierContact: supplier.phone || supplier.email || '',
-    brandSubtext: `by ${data.brandName || 'Travio Africa'}`,
+    brandSubtext: 'by Travio Africa',
 
     // booking
     bookingNumber: booking.bookingNumber,
