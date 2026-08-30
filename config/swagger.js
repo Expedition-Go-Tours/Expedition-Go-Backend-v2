@@ -13,10 +13,10 @@ const options = {
   definition: {
     openapi: '3.0.0',
     info: {
-      title: 'Expedition Go Tours API',
+      title: 'TravioAfrica API',
       version: '2.0.0',
       description: `
-# Expedition Go Tours API Documentation
+# TravioAfrica API Documentation
 
 ## Overview
 Production-ready tour booking platform API with comprehensive features including:
@@ -113,11 +113,11 @@ Real-time notifications are sent via WebSocket for:
 
 Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
       `,
-      termsOfService: 'https://expeditiongo.com/terms',
+      termsOfService: 'https://travioafrica.com/terms',
       contact: {
         name: 'API Support Team',
-        email: 'support@expeditiongo.com',
-        url: 'https://expeditiongo.com/support'
+        email: 'support@travioafrica.com',
+        url: 'https://travioafrica.com/support'
       },
       license: {
         name: 'MIT',

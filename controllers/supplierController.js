@@ -636,6 +636,22 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
     }
   }
 
+  // Non-Ghana African suppliers get their tours auto-published to TravioAfrica
+  if (action === 'approve' && supplierProfile.businessInfo?.country && supplierProfile.businessInfo.country !== 'Ghana') {
+    try {
+      const { enqueueTravioAfricaPublish } = require('../utils/queue');
+      const tours = await prisma.tour.findMany({
+        where: { supplierId: supplierProfile.userId, status: 'ACTIVE' },
+        select: { id: true },
+      });
+      for (const t of tours) {
+        enqueueTravioAfricaPublish(t.id, req.user.id).catch((err) => console.warn('[Africa] enqueueTravioAfricaPublish failed:', err.message));
+      }
+    } catch (err) {
+      console.warn('[Africa] supplier-approval publish enqueue failed:', err.message);
+    }
+  }
+
   await logActivity({
     userId: req.user.id,
     action: `supplier.${action}`,

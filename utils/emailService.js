@@ -278,7 +278,7 @@ function buildBookingBase(booking) {
     leadTravelerPhone: leadPhone || fmt.travelerPhone(booking.travelers) || customer.phone || '',
     supplierName: supplier.name || '',
     supplierContact: supplier.phone || supplier.email || '',
-    brandSubtext: 'by Expedition-Go Tours',
+    brandSubtext: `by ${data.brandName || 'Travio Africa'}`,
 
     // booking
     bookingNumber: booking.bookingNumber,
@@ -851,7 +851,7 @@ async function sendSupplierPlatformCancelledEmail(booking, { reason, compensatio
   };
   return sendRendered({
     to: supplier.email,
-    subject: 'Booking cancelled by Expedition-Go Tours',
+    subject: `Booking cancelled by ${data.brandName || 'Travio Africa'}`,
     key: 'supplier-platform-cancelled',
     data,
   });
@@ -1040,7 +1040,7 @@ async function sendSupplierStatusEmail(email, status, data = {}) {
       supplierBusinessName: data.name,
       approvalDate: new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
       dashboardUrl: emailUrls.supplierDashboard(),
-      brandSubtext: 'by Expedition-Go Tours',
+      brandSubtext: `by ${data.brandName || 'Travio Africa'}`,
     },
   });
 }

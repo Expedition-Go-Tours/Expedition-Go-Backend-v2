@@ -136,6 +136,7 @@ enum BookingSource {
   TRAVIO
   EXPEDITION
   GHANA
+  TRAVIO_AFRICA
 }
 
 enum BookingFlow {
@@ -352,6 +353,8 @@ model User {
   travioGhanaTours           TravioGhanaTour[]         @relation("TravioGhanaAddedBy")
   publishedTravioGhanaTours  TravioGhanaTour[]         @relation("TravioGhanaPublishedBy")
   unpublishedTravioGhanaTours TravioGhanaTour[]        @relation("TravioGhanaUnpublishedBy")
+  publishedTravioAfricaTours  TravioAfricaTour[]        @relation("TravioAfricaPublishedBy")
+  unpublishedTravioAfricaTours TravioAfricaTour[]       @relation("TravioAfricaUnpublishedBy")
   articles                   Article[]
   keywordRequests            KeywordRequest[]
   wishlistItems              WishlistItem[]
@@ -650,6 +653,7 @@ model Tour {
   specialOfferTargets SpecialOfferTarget[]
   expeditionTour      ExpeditionTour?
   travioGhanaTour     TravioGhanaTour?
+  travioAfricaTour    TravioAfricaTour?
   articles            ArticleTour[]
   wishlistItems       WishlistItem[]
   checkoutDrafts      CheckoutDraft[]
@@ -1519,6 +1523,43 @@ model TravioGhanaTour {
   // Legacy adder tracker
   addedById String?
   addedBy   User?   @relation("TravioGhanaAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, displayOrder])
+  @@index([isActive, isFeatured, displayOrder])
+}
+
+model TravioAfricaTour {
+  id     String @id @default(cuid())
+  tourId String @unique
+  tour   Tour   @relation(fields: [tourId], references: [id], onDelete: Cascade)
+
+  // Listing state
+  isActive    Boolean     @default(false)
+  bookingFlow BookingFlow @default(DIRECT)
+  externalUrl String?
+
+  // Display
+  displayOrder Int     @default(0)
+  isFeatured   Boolean @default(false)
+
+  // Audit — publish
+  publishedById String?
+  publishedBy   User?     @relation("TravioAfricaPublishedBy", fields: [publishedById], references: [id])
+  publishedAt   DateTime?
+
+  // Audit — unpublish
+  unpublishedById String?
+  unpublishedBy   User?     @relation("TravioAfricaUnpublishedBy", fields: [unpublishedById], references: [id])
+  unpublishedAt   DateTime?
+  unpublishReason String?
+
+  // Sync tracking
+  syncStatus String? // synced | pending | failed
+  lastSyncAt DateTime?
+  syncError  String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -15,7 +15,7 @@ async function rateLimitedRequest(url, params) {
   const { data } = await axios.get(url, {
     params,
     headers: {
-      'User-Agent': 'ExpeditionGoBackend/1.0 (support@expeditiongo.com)',
+      'User-Agent': 'TravioAfricaBackend/1.0 (support@travioafrica.com)',
       'Accept-Language': 'en',
     },
     timeout: 8000,

@@ -33,6 +33,7 @@ const QUEUE_NAMES = {
   HOMEPAGE_PRECOMPUTE: 'homepage-precompute',
   AI_SCORING: 'ai-scoring',
   GHANA_PUBLISH: 'ghana-publish',
+  TRAVIO_AFRICA_PUBLISH: 'travioafrica-publish',
 };
 
 const DEFAULT_JOB_OPTIONS = {
@@ -77,6 +78,7 @@ const contentSyncQueue  = () => getQueue(QUEUE_NAMES.CONTENT_SYNC);
 const homepagePrecomputeQueue = () => getQueue(QUEUE_NAMES.HOMEPAGE_PRECOMPUTE);
 const aiScoringQueue = () => getQueue(QUEUE_NAMES.AI_SCORING);
 const ghanaPublishQueue = () => getQueue(QUEUE_NAMES.GHANA_PUBLISH);
+const travioAfricaPublishQueue = () => getQueue(QUEUE_NAMES.TRAVIO_AFRICA_PUBLISH);
 
 // ---------------------------------------------------------------------------
 // Enqueue helpers (typed so callers don't touch raw queue names)
@@ -465,6 +467,24 @@ async function enqueueGhanaPublish(tourId, actorId) {
 }
 
 /**
+ * Enqueue a TravioAfrica auto-publish job for a tour.
+ * Fire-and-forget — never blocks the tour create/update request.
+ * The worker is idempotent (upsert), so duplicates/retries are harmless.
+ */
+async function enqueueTravioAfricaPublish(tourId, actorId) {
+  try {
+    await travioAfricaPublishQueue().add('publish-tour', { tourId, actorId }, {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 10000 },
+      removeOnComplete: { age: 24 * 3600, count: 200 },
+      removeOnFail: { age: 7 * 24 * 3600 },
+    });
+  } catch {
+    // Redis unavailable — sweep will pick it up when Redis recovers
+  }
+}
+
+/**
  * Enqueue AI scoring for all PENDING/FAILED tours (reconciliation).
  * Called periodically when Redis recovers from an outage.
  */
@@ -839,6 +859,17 @@ function registerWorkers() {
     await publishTourToGhana(tourId, actorId);
   }, 5);
 
+  /* ------------------------------------------------------------------
+   * TRAVIOAFRICA PUBLISH WORKER (concurrency 5)
+   * Auto-publishes non-Ghana African suppliers' tours to TravioAfrica
+   * storefront (TravioAfricaTour upsert) and maintains the 'travioafrica' role.
+   * ------------------------------------------------------------------ */
+  createWorker(QUEUE_NAMES.TRAVIO_AFRICA_PUBLISH, async (job) => {
+    const { publishTourToAfrica } = require('./autoPublishTravioAfrica');
+    const { tourId, actorId } = job.data;
+    await publishTourToAfrica(tourId, actorId);
+  }, 5);
+
   console.log('[Queue] All workers registered');
 }
 
@@ -874,6 +905,9 @@ function startResumeMonitor() {
           // Same for Ghana auto-publish jobs missed during the outage
           const { reconcileGhanaPublish } = require('./autoPublishGhana');
           reconcileGhanaPublish().catch(() => {});
+          // Same for TravioAfrica auto-publish jobs missed during the outage
+          const { reconcileTravioAfricaPublish } = require('./autoPublishTravioAfrica');
+          reconcileTravioAfricaPublish().catch(() => {});
         }
       }
     } catch { /* keep the monitor alive */ }
@@ -918,6 +952,7 @@ module.exports = {
   enqueueHomepagePrecompute,
   enqueueAiScoring,
   enqueueGhanaPublish,
+  enqueueTravioAfricaPublish,
   processEmailJob,
   registerWorkers,
   startResumeMonitor,

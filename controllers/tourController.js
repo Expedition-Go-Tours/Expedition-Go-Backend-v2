@@ -1032,11 +1032,14 @@ exports.createTour = catchAsync(async (req, res, next) => {
       // AI scoring (fire-and-forget via BullMQ)
       // Tour is saved in PostgreSQL; AI enriches asynchronously.
       // If Redis/BullMQ is down, tour stays PENDING and gets reconciled later.
-      const { enqueueAiScoring, enqueueGhanaPublish } = require('../utils/queue');
+      const { enqueueAiScoring, enqueueGhanaPublish, enqueueTravioAfricaPublish } = require('../utils/queue');
       enqueueAiScoring(tour.id).catch((err) => logger.warn('[AI] enqueueAiScoring failed:', err?.message));
 
       // Auto-publish to TravioGhana if supplier is Ghana-based (fire-and-forget)
       enqueueGhanaPublish(tour.id, req.user?.id).catch((err) => logger.warn('[Ghana] enqueueGhanaPublish failed:', err?.message));
+
+      // Auto-publish to TravioAfrica if supplier is non-Ghana African (fire-and-forget)
+      enqueueTravioAfricaPublish(tour.id, req.user?.id).catch((err) => logger.warn('[Africa] enqueueTravioAfricaPublish failed:', err?.message));
 
     } catch (err) {
       // Catch-all: log any unexpected errors but never crash the process
@@ -1430,11 +1433,14 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   }
 
   // AI scoring (fire-and-forget) — re-analyze when tour content changes
-  const { enqueueAiScoring, enqueueGhanaPublish } = require('../utils/queue');
+  const { enqueueAiScoring, enqueueGhanaPublish, enqueueTravioAfricaPublish } = require('../utils/queue');
   enqueueAiScoring(id).catch((err) => logger.warn('[AI] enqueueAiScoring failed:', err?.message));
 
   // Auto-publish to TravioGhana if supplier is Ghana-based (fire-and-forget)
   enqueueGhanaPublish(id, req.user?.id).catch((err) => logger.warn('[Ghana] enqueueGhanaPublish failed:', err?.message));
+
+  // Auto-publish to TravioAfrica if supplier is non-Ghana African (fire-and-forget)
+  enqueueTravioAfricaPublish(id, req.user?.id).catch((err) => logger.warn('[Africa] enqueueTravioAfricaPublish failed:', err?.message));
 
   res.status(200).json({
     status: 'success',

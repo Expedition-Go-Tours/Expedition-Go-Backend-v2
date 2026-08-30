@@ -185,6 +185,12 @@ async function setupQueueWorkers() {
     reconcileGhanaPublish().catch((err) => logger.warn('[scheduler] ghana-publish reconcile failed:', err?.message));
   }, 30 * 60 * 1000));
 
+  // TravioAfrica auto-publish reconcile — same pattern as Ghana
+  const { reconcileTravioAfricaPublish } = require('./utils/autoPublishTravioAfrica');
+  intervals.push(setInterval(() => {
+    reconcileTravioAfricaPublish().catch((err) => logger.warn('[scheduler] travioafrica-publish reconcile failed:', err?.message));
+  }, 30 * 60 * 1000));
+
   // Real-command probe (not PING) so a quota-exhausted boot doesn't register
   // workers that immediately start hammering Upstash.
   const redisOk = await probe();
@@ -198,6 +204,9 @@ async function setupQueueWorkers() {
 
   // Backfill: publish all existing Ghana suppliers' tours on boot
   reconcileGhanaPublish().catch((err) => logger.warn('[scheduler] startup ghana-publish reconcile failed:', err?.message));
+
+  // Backfill: publish all existing non-Ghana African suppliers' tours on boot
+  reconcileTravioAfricaPublish().catch((err) => logger.warn('[scheduler] startup travioafrica-publish reconcile failed:', err?.message));
 
   intervals.push(setInterval(() => {
     enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] cleanup-expired-cart failed:', err?.message));

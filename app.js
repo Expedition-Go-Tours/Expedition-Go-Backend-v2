@@ -210,7 +210,7 @@ app.get('/health', async (req, res) => {
 
 
 app.get('/', (req, res) => {
-  res.send('Expedition Go Tours API is running...');
+  res.send('TravioAfrica API is running...');
 });
 
 const userRoutes = require('./routes/userRoutes');
@@ -241,6 +241,7 @@ const expeditionRoutes = require('./routes/expeditionRoutes');
 const travioGhanaRoutes = require('./routes/travioGhanaRoutes');
 const travioGhanaAdminRoutes = require('./routes/travioGhanaAdminRoutes');
 const travioGhanaSupplierRoutes = require('./routes/travioGhanaSupplierRoutes');
+const travioAfricaRoutes = require('./routes/travioAfricaRoutes');
 const blogRoutes = require('./routes/blogRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');
 const homepageRoutes = require('./routes/homepageRoutes');
@@ -277,6 +278,7 @@ app.use('/api/expedition', expeditionRoutes);
 app.use('/api/travioghana', travioGhanaRoutes);
 app.use('/api/travioghana/admin', travioGhanaAdminRoutes);
 app.use('/api/travioghana/supplier', travioGhanaSupplierRoutes);
+app.use('/api/travioafrica', travioAfricaRoutes);
 app.use('/api/blog', blogRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/homepage', homepageRoutes);
