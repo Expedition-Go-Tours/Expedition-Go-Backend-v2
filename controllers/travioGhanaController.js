@@ -2041,7 +2041,7 @@ exports.createReview = catchAsync(async (req, res, next) => {
 
 exports.getSupplierBookings = catchAsync(async (req, res, next) => {
   const supplierId = req.user.id;
-  const { status, page = 1, limit = 10 } = req.query;
+  const { status, customerId, page = 1, limit = 10 } = req.query;
 
   const supplierProfile = await prisma.supplierProfile.findUnique({ where: { userId: supplierId } });
   if (!supplierProfile) return next(new AppError('Supplier profile not found', 404));
@@ -2053,11 +2053,12 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
     // shows which platform each booking came from via the source field.
   };
   if (status) where.status = status;
+  if (customerId) where.customerId = customerId;
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const take = Math.min(parseInt(limit), 100);
 
-  const [bookings, totalCount] = await Promise.all([
+  const [bookings, totalCount, revenueAgg] = await Promise.all([
     prisma.booking.findMany({
       where,
       include: {
@@ -2067,14 +2068,17 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
             title: true,
             slug: true,
             coverPhoto: true,
+            photos: true,
             category: true,
             city: true,
             country: true,
+            bookingAndTickets: true,
           },
         },
         customer: {
-          select: { id: true, name: true, email: true, photoURL: true },
+          select: { id: true, name: true, email: true, phone: true, photoURL: true },
         },
+        appliedOffer: { select: { id: true, name: true, offerType: true, discountType: true, discountPercentage: true, fixedDiscountValue: true, promoCode: true } },
         review: true,
       },
       orderBy: { createdAt: 'desc' },
@@ -2082,16 +2086,28 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
       take,
     }),
     prisma.booking.count({ where }),
+    prisma.booking.aggregate({
+      where,
+      _sum: { grossAmount: true, supplierPayout: true },
+      _count: true,
+    }),
   ]);
 
   res.status(200).json({
     status: 'success',
-    data: { bookings },
-    pagination: {
-      currentPage: parseInt(page),
-      totalPages: Math.ceil(totalCount / take),
-      totalCount,
-      limit: take,
+    data: {
+      bookings,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(totalCount / take),
+        totalCount,
+        limit: take,
+      },
+      summary: {
+        totalRevenue: parseFloat(revenueAgg._sum.grossAmount || 0),
+        totalEarnings: parseFloat(revenueAgg._sum.supplierPayout || 0),
+        totalBookings: revenueAgg._count,
+      },
     },
   });
 });

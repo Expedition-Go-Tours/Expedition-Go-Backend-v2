@@ -157,9 +157,14 @@ exports.getSupplierTours = catchAsync(async (req, res) => {
       include: {
         tour: {
           select: {
-            id: true, title: true, slug: true, coverPhoto: true, category: true,
-            status: true, averageRating: true, reviewCount: true, totalBookings: true,
-            durationMinutes: true, city: true, country: true,
+            id: true, title: true, slug: true, coverPhoto: true, photos: true,
+            category: true, status: true, draftStatus: true, averageRating: true,
+            reviewCount: true, totalBookings: true, durationMinutes: true,
+            city: true, country: true, description: true, tags: true,
+            schedulesAndPricing: true, productContent: true, categorization: true,
+            bookingAndTickets: true, createdAt: true, updatedAt: true,
+            _count: { select: { bookings: true } },
+            supplier: { select: { id: true, name: true, photoURL: true } },
           },
         },
       },
@@ -169,8 +174,10 @@ exports.getSupplierTours = catchAsync(async (req, res) => {
 
   res.json({
     status: 'success',
-    data: { tours: records.map(r => ({ ...r, ...r.tour })) },
-    pagination: { currentPage: parseInt(page), totalPages: Math.ceil(total / take), totalCount: total, limit: take },
+    data: {
+      tours: records.map(r => ({ ...r, ...r.tour, bookings: r.tour._count?.bookings ?? 0, _count: undefined })),
+      pagination: { currentPage: parseInt(page), totalPages: Math.ceil(total / take), totalCount: total, limit: take },
+    },
   });
 });
 
@@ -202,8 +209,8 @@ exports.getSupplierReviews = catchAsync(async (req, res) => {
       take,
       orderBy: { createdAt: 'desc' },
       include: {
-        customer: { select: { id: true, name: true, photoURL: true } },
-        tour: { select: { id: true, title: true, slug: true } },
+        customer: { select: { id: true, name: true, photoURL: true, email: true, phone: true } },
+        tour: { select: { id: true, title: true, slug: true, coverPhoto: true } },
       },
     }),
     prisma.review.count({ where: { tourId: { in: tourIds } } }),
@@ -364,12 +371,32 @@ exports.getSpecialOffers = catchAsync(async (req, res) => {
     orderBy: { createdAt: 'desc' },
     include: {
       targets: {
-        include: { tour: { select: { id: true, title: true, slug: true } } },
+        include: {
+          tour: {
+            select: {
+              id: true, title: true, slug: true, coverPhoto: true, photos: true,
+              category: true, schedulesAndPricing: true, status: true,
+            },
+          },
+        },
       },
     },
   });
 
-  res.json({ status: 'success', data: { offers } });
+  // Match the shared controller: expose a computed status so the UI's
+  // Active/Scheduled/Expired/Inactive filters and badges work.
+  const now = new Date();
+  const withStatus = offers.map((o) => {
+    let status = 'inactive';
+    if (o.isActive) {
+      if (o.startDate && now < new Date(o.startDate)) status = 'scheduled';
+      else if (o.endDate && now > new Date(o.endDate)) status = 'expired';
+      else status = 'active';
+    }
+    return { ...o, status };
+  });
+
+  res.json({ status: 'success', data: { offers: withStatus } });
 });
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -423,21 +450,40 @@ exports.getPayouts = catchAsync(async (req, res) => {
   const where = { supplierId };
   if (status) where.status = status;
 
-  const [payouts, total] = await Promise.all([
+  const [payouts, total, payoutAgg] = await Promise.all([
     prisma.payout.findMany({
       where,
       skip,
       take,
       orderBy: { createdAt: 'desc' },
-      include: { booking: { select: { id: true, bookingNumber: true, grossAmount: true } } },
+      include: {
+        booking: {
+          select: { id: true, bookingNumber: true, grossAmount: true, tour: { select: { id: true, title: true, coverPhoto: true } } },
+        },
+        payoutMethod: {
+          select: { id: true, type: true, accountNumber: true, mobileNumber: true, paypalEmail: true },
+        },
+      },
     }),
     prisma.payout.count({ where }),
+    prisma.payout.aggregate({
+      where: { supplierId },
+      _sum: { amount: true },
+      _count: true,
+    }),
   ]);
 
   res.json({
     status: 'success',
-    data: { payouts },
-    pagination: { currentPage: parseInt(page), totalPages: Math.ceil(total / take), totalCount: total, limit: take },
+    data: {
+      payouts,
+      summary: {
+        totalEarned: parseFloat(payoutAgg._sum.amount || 0),
+        totalPayouts: payoutAgg._count,
+        currency: 'USD',
+      },
+      pagination: { currentPage: parseInt(page), totalPages: Math.ceil(total / take), totalCount: total, limit: take },
+    },
   });
 });
 
