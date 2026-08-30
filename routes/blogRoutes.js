@@ -165,6 +165,7 @@ router.get('/articles/tag/:slug', validate(getArticlesByTagSchema), blogControll
  *       404:
  *         description: Article not found
  */
+router.get('/articles/:id/related', blogController.getRelatedArticles);
 router.get('/articles/:slug', validate(getArticleSchema), blogController.getArticleBySlug);
 
 /**

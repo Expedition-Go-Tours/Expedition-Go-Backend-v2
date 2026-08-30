@@ -250,6 +250,38 @@ exports.getArticleBySlug = catchAsync(async (req, res, next) => {
   res.status(200).json(result);
 });
 
+exports.getRelatedArticles = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const limit = Math.min(parseInt(req.query.limit) || 3, 10);
+
+  const article = await prisma.article.findUnique({
+    where: { id },
+    select: { id: true, categoryId: true, tags: { select: { tagId: true } } },
+  });
+  if (!article) return next(new AppError('Article not found', 404));
+
+  const tagIds = article.tags.map((t) => t.tagId);
+
+  const related = await prisma.article.findMany({
+    where: {
+      id: { not: article.id },
+      status: 'PUBLISHED',
+      OR: [
+        ...(article.categoryId ? [{ categoryId: article.categoryId }] : []),
+        ...(tagIds.length > 0 ? [{ tags: { some: { tagId: { in: tagIds } } } }] : []),
+      ],
+    },
+    include: articleInclude,
+    orderBy: [{ publishedAt: 'desc' }],
+    take: limit,
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { articles: related.map(transformArticle) },
+  });
+});
+
 exports.getArticlesByCategory = catchAsync(async (req, res, next) => {
   const { slug } = req.params;
   const { page = 1, limit = 12, locale } = req.query;

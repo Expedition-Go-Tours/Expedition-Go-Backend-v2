@@ -392,6 +392,7 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
             coverPhoto: true, totalBookings: true, totalRevenue: true,
             averageRating: true, reviewCount: true, viewCount: true,
             createdAt: true, category: true, city: true, country: true,
+            schedulesAndPricing: true,
             supplier: { select: { id: true, name: true } },
           },
         },
@@ -426,8 +427,10 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
  * Ghana user signups per month (last 24 months).
  */
 exports.getUserGrowth = catchAsync(async (req, res, next) => {
+  // period: 30d | 90d | 1y — default 24 months (backward compat).
+  const periodMonths = { '30d': 1, '90d': 3, '1y': 12 }[req.query.period] || 24;
   const bucket = Math.floor(Date.now() / 300000);
-  const growth = await cache.getOrSet(`ghana:admin:userGrowth:${bucket}`, async () => {
+  const growth = await cache.getOrSet(`ghana:admin:userGrowth:${bucket}:${periodMonths}`, async () => {
     return prisma.$queryRaw`
       SELECT
         DATE_TRUNC('month', "createdAt")::date AS month,
@@ -436,7 +439,7 @@ exports.getUserGrowth = catchAsync(async (req, res, next) => {
         COUNT(*) FILTER (WHERE 'supplier' = ANY("roles"::text[]))::int AS suppliers
       FROM "User"
       WHERE ${GHANA_ROLE} = ANY("roles"::text[])
-        AND "createdAt" >= NOW() - INTERVAL '24 months'
+        AND "createdAt" >= NOW() - (${periodMonths} || ' months')::interval
       GROUP BY DATE_TRUNC('month', "createdAt")
       ORDER BY month ASC
     `;
@@ -1225,6 +1228,13 @@ exports.getBookings = catchAsync(async (req, res, next) => {
             supplier: { select: { id: true, name: true } },
           },
         },
+        payouts: {
+          select: {
+            id: true, amount: true, currency: true, status: true,
+            createdAt: true, paidAt: true, approvedAt: true,
+          },
+          orderBy: { createdAt: 'desc' },
+        },
       },
     }),
     prisma.booking.count({ where }),
@@ -1299,6 +1309,13 @@ exports.getBookingById = catchAsync(async (req, res, next) => {
           id: true, title: true, slug: true, coverPhoto: true,
           supplier: { select: { id: true, name: true, email: true } },
         },
+      },
+      payouts: {
+        select: {
+          id: true, amount: true, currency: true, status: true,
+          createdAt: true, paidAt: true, approvedAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
       },
     },
   });
@@ -1563,14 +1580,24 @@ exports.getActiveUsers = catchAsync(async (req, res, next) => {
  * Today's Ghana signups.
  */
 exports.getRecentSignups = catchAsync(async (req, res, next) => {
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // The UserGrowth drill-down dialog sends ?period=30d|90d|1y&role=...
+  // (plus the Overview "new signups" card which calls without a period —
+  // that defaults to today).
+  const periodMap = { '30d': 30, '90d': 90, '1y': 365 };
+  const days = req.query.period ? periodMap[req.query.period] : null;
+  const { role } = req.query;
+
+  const where = { roles: { has: GHANA_ROLE } };
+  if (days) {
+    where.createdAt = { gte: new Date(Date.now() - days * 24 * 60 * 60 * 1000) };
+  } else {
+    const now = new Date();
+    where.createdAt = { gte: new Date(now.getFullYear(), now.getMonth(), now.getDate()) };
+  }
+  if (role) where.roles = { hasEvery: [GHANA_ROLE, role] };
 
   const users = await prisma.user.findMany({
-    where: {
-      roles: { has: GHANA_ROLE },
-      createdAt: { gte: todayStart },
-    },
+    where,
     select: {
       id: true, name: true, email: true, photoURL: true,
       roles: true, createdAt: true,
