@@ -40,7 +40,7 @@ exports.getDashboard = catchAsync(async (req, res) => {
     // Scoped to ALL the supplier's tours (not just Ghana-published ones) so the
     // dashboard numbers match the bookings list — every booking on their tours
     // from either storefront counts. No source filter.
-    const [tourStats, bookingStats, reviewCount] = await Promise.all([
+    const [tourStats, bookingStats, reviewCount, earningsAgg] = await Promise.all([
       prisma.tour.groupBy({
         by: ['status'],
         where: { supplierId },
@@ -52,6 +52,10 @@ exports.getDashboard = catchAsync(async (req, res) => {
         _count: true,
       }),
       prisma.review.count({ where: { tour: { supplierId }, status: 'APPROVED' } }),
+      prisma.booking.aggregate({
+        where: { tour: { supplierId }, paymentStatus: 'SUCCEEDED' },
+        _sum: { supplierPayout: true, grossAmount: true },
+      }),
     ]);
 
     const tourMap = Object.fromEntries(tourStats.map(t => [t.status, t._count]));
@@ -60,9 +64,12 @@ exports.getDashboard = catchAsync(async (req, res) => {
     // Response shape mirrors the shared supplierController.getDashboard —
     // the supplier dashboard frontend reads tours.active, bookings.confirmed,
     // bookings.pending and earnings.totalEarnings from the nested object.
+    // totalEarnings is computed live from SUCCEEDED bookings (supplier's cut)
+    // so it reflects actual earnings even if the profile column is stale.
     return {
       earnings: {
-        totalEarnings: Number(supplierProfile?.totalEarnings || 0),
+        totalEarnings: Number(earningsAgg._sum.supplierPayout || 0),
+        totalRevenue: Number(earningsAgg._sum.grossAmount || 0),
         currency: 'USD',
       },
       tours: {
