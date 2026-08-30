@@ -36,7 +36,7 @@ jobs:
           mkdir -p .ci-results
           RUN_ID="${{ github.event.workflow_run.id }}"
 
-          gh run view "$RUN_ID" --log-failed 2>/dev/null | tail -500 > .ci-results/failed-logs.txt || true
+          gh run view "$RUN_ID" --log-failed 2>/dev/null | tail -2000 > .ci-results/failed-logs.txt || true
           gh run view "$RUN_ID" --json jobs \
             --jq '.jobs[] | select(.conclusion == "failure") | .name' \
             > .ci-results/failed-jobs.txt 2>/dev/null || true
@@ -86,6 +86,16 @@ jobs:
 
           DEBUG_BRANCH="ai-fix/$(date +%s)"
           git checkout -b "$DEBUG_BRANCH"
+
+          # Rebase onto current main so the fix applies to the latest code and
+          # the PR never targets a stale base (avoids "fix" PRs that no longer apply).
+          git fetch origin main 2>/dev/null || true
+          if git rebase origin/main 2>/dev/null; then
+            echo "Rebased ai-fix branch onto current origin/main" | tee -a .ci-results/debug-log.txt
+          else
+            git rebase --abort 2>/dev/null || true
+            echo "Rebase conflict — keeping original failing base" | tee -a .ci-results/debug-log.txt
+          fi
 
           # Read files
           FAIL_LOG=""
@@ -152,46 +162,74 @@ jobs:
             echo ""
             echo "=== AI Debug Attempt $ATTEMPT / $MAX_ATTEMPTS ===" | tee -a .ci-results/debug-log.txt
 
-            # Read content of files mentioned in error logs (prefer source over test files)
+            # ── Precise file retrieval ─────────────────────────────────
+            # Parse structured failure output instead of grepping random
+            # .js paths from the log (old loader grabbed app.js/config noise
+            # and never gave the AI the files that actually failed).
             FILE_CONTEXT=""
-            if [ -n "$FAIL_JOBS" ]; then
-              RAW_PATHS=$(echo "$FAIL_LOG" | grep -oE '[a-zA-Z0-9_/.-]+\.(js|ts|jsx|tsx|mjs)' | sort -u)
-              SRC_PATHS=$(echo "$RAW_PATHS" | grep -vE '(__tests__|/test/|/tests/|\.test\.|\.spec\.)' | head -5)
-              if [ -z "$SRC_PATHS" ]; then
-                SRC_PATHS=$(echo "$RAW_PATHS" | head -5)
-              fi
-              for FILE_PATH in $SRC_PATHS; do
-                REL_PATH="$FILE_PATH"
-                for PREFIX in "/home/runner/work/Expedition-Go-Backend-v2/Expedition-Go-Backend-v2/" "/home/runner/work/Expedition-Go-Backend-v2/" "/home/runner/work/"; do
-                  if [[ "$REL_PATH" == "$PREFIX"* ]]; then
-                    REL_PATH="${REL_PATH#$PREFIX}"
-                    break
-                  fi
-                done
-                SHORT_PATH=$(echo "$REL_PATH" | grep -oE '[^/]+/[^/]+/[^/]+$' || true)
-                FINAL_PATH=""
-                for CANDIDATE in "$REL_PATH" "$SHORT_PATH"; do
-                  if [ -n "$CANDIDATE" ] && [ -f "$CANDIDATE" ]; then
-                    FINAL_PATH="$CANDIDATE"
-                    break
-                  fi
-                done
-                if [ -n "$FINAL_PATH" ]; then
-                  LINE_COUNT=$(wc -l < "$FINAL_PATH")
-                  FILE_CONTEXT+=$'\n'"=== FILE: $FINAL_PATH ($LINE_COUNT lines) ==="$'\n'
-                  rm -f /tmp/file_ctx_all.txt
-                  nl -ba "$FINAL_PATH" 2>/dev/null > /tmp/file_ctx_all.txt
-                  FILE_CONTEXT+=$(cat /tmp/file_ctx_all.txt)$'\n'
-                  FILE_CONTEXT+=$'\n'"=== END FILE: $FINAL_PATH ==="$'\n'
-                  rm -f /tmp/file_ctx_all.txt
-                  echo "  Loaded: $FINAL_PATH ($LINE_COUNT lines)" | tee -a .ci-results/debug-log.txt
-                else
-                  echo "  Could not find: $FILE_PATH (tried $REL_PATH, $SHORT_PATH)" | tee -a .ci-results/debug-log.txt
-                fi
-              done
-            else
-              echo "  No FAIL_JOBS — skipping file loading" | tee -a .ci-results/debug-log.txt
+            REL_FILES=$(mktemp); > "$REL_FILES"
+
+            # 1) Jest suite failures:  "... [jest] FAIL __tests__/api/homepage.test.js"
+            #    (log lines carry timestamp prefixes, so FAIL is NOT line-anchored)
+            echo "$FAIL_LOG" | grep -oE 'FAIL [a-zA-Z0-9_/.-]+\.(test|spec)\.js' | awk '{print $2}' >> "$REL_FILES" || true
+
+            # 2) Jest stack frames:    "at fn (__tests__/api/homepage.test.js:117:40)"
+            #    and source frames referencing src files (allow trailing :line[:col]).
+            echo "$FAIL_LOG" | grep -oE '\((controllers|utils|routes|middleware|models|services|__tests__)/[a-zA-Z0-9_/.-]+\.(js|ts|mjs|cjs)(:[0-9]+(:[0-9]+)?)?\)' \
+              | sed -E 's/^\((.*)\)$/\1/' | sed -E 's/:[0-9]+(:[0-9]+)?$//' >> "$REL_FILES" || true
+
+            # 3) ESLint errors (already extracted to lint-errors.txt with file paths)
+            if [ -s .ci-results/lint-errors.txt ]; then
+              grep -oE '^[a-zA-Z0-9_/.-]+\.(js|ts|jsx|tsx|mjs)$' .ci-results/lint-errors.txt >> "$REL_FILES" || true
             fi
+
+            # Strip CI runner root prefixes to repo-relative paths
+            sed -i -E 's#^/home/runner/work/[^/]+/[^/]+/##' "$REL_FILES"
+
+            sort -u "$REL_FILES" -o "$REL_FILES"
+
+            # 4) test→source mapping: for each failing test, add the likely
+            #    source files so the model sees both sides of the contract.
+            MAPPED=$(mktemp); > "$MAPPED"
+            while IFS= read -r TEST_PATH; do
+              case "$TEST_PATH" in
+                __tests__/*)
+                  STEM=$(basename "$TEST_PATH" .js)
+                  STEM=${STEM%.test}; STEM=${STEM%.spec}
+                  for C in \
+                    "controllers/${STEM}Controller.js" \
+                    "routes/${STEM}Routes.js" \
+                    "utils/${STEM}.js" \
+                    "utils/${STEM}Service.js" \
+                    "middleware/${STEM}.js" \
+                    "models/${STEM}.js"; do
+                    [ -f "$C" ] && echo "$C" >> "$MAPPED"
+                  done
+                  ;;
+              esac
+            done < "$REL_FILES"
+            cat "$MAPPED" >> "$REL_FILES"
+
+            # Always include config context
+            echo "package.json" >> "$REL_FILES"
+            echo "jest.config.js" >> "$REL_FILES"
+
+            sort -u "$REL_FILES" -o "$REL_FILES"
+            CONTEXT_MAX=14
+            FILES_TO_LOAD=$(head -n "$CONTEXT_MAX" "$REL_FILES")
+
+            for REL_PATH in $FILES_TO_LOAD; do
+              if [ -f "$REL_PATH" ]; then
+                LINE_COUNT=$(wc -l < "$REL_PATH")
+                FILE_CONTEXT+=$'\n'"=== FILE: $REL_PATH ($LINE_COUNT lines) ==="$'\n'
+                FILE_CONTEXT+=$(nl -ba "$REL_PATH" 2>/dev/null)$'\n'
+                FILE_CONTEXT+=$'\n'"=== END FILE: $REL_PATH ==="$'\n'
+                echo "  Loaded: $REL_PATH ($LINE_COUNT lines)" | tee -a .ci-results/debug-log.txt
+              else
+                echo "  Skipped (not found): $REL_PATH" | tee -a .ci-results/debug-log.txt
+              fi
+            done
+            rm -f "$REL_FILES" "$MAPPED"
             echo "FILE_CONTEXT length: ${#FILE_CONTEXT}" | tee -a .ci-results/debug-log.txt
 
             # Build prompt by writing values to files and substituting with jq --rawfile
@@ -358,15 +396,29 @@ jobs:
             fi
 
             if [ "$APPLIED" = "true" ]; then
+              # Diff guard: reject unsafe patches BEFORE verification.
+              echo "Running ai-diff-guard..." | tee -a .ci-results/debug-log.txt
+              node scripts/ai-diff-guard.js > .ci-results/diff-guard-output.txt 2>&1
+              DIFF_GUARD_EXIT=$?
+              cat .ci-results/diff-guard-output.txt | tee -a .ci-results/debug-log.txt
+              if [ "$DIFF_GUARD_EXIT" != "0" ]; then
+                echo "Diff guard rejected the patch. Reverting..." | tee -a .ci-results/debug-log.txt
+                git checkout -- .
+                rm -f .ci-results/fix-backup-*
+                continue
+              fi
+
               VERIFY_CMD="$VERIFY"
               if [ -z "$VERIFY_CMD" ] || [ "$VERIFY_CMD" = "null" ]; then
                 VERIFY_CMD="npm test -- --forceExit && npm run lint"
               fi
               echo "Running verification: $VERIFY_CMD" | tee -a .ci-results/debug-log.txt
-              if bash -c "$VERIFY_CMD" 2>&1 | tee -a .ci-results/debug-log.txt; then
+              if bash -c "$VERIFY_CMD" > .ci-results/verify-output.txt 2>&1; then
+                cat .ci-results/verify-output.txt | tee -a .ci-results/debug-log.txt
                 echo "Fix verified on attempt $ATTEMPT" | tee -a .ci-results/debug-log.txt
                 FIXED=true
               else
+                cat .ci-results/verify-output.txt | tee -a .ci-results/debug-log.txt
                 echo "Verification failed. Reverting..." | tee -a .ci-results/debug-log.txt
                 git checkout -- .
                 rm -f .ci-results/fix-backup-*
@@ -376,10 +428,15 @@ jobs:
             fi
           done
 
+          # Failure signature for dedup — same failing jobs + failing test files
+          # = same underlying bug, regardless of which CI run triggered it.
+          SIG=$( { echo "$FAIL_JOBS"; echo "$FAIL_LOG" | grep -oE '__tests__/[a-zA-Z0-9_/.-]+\.(test|spec)\.js' | sort -u; } | sha1sum | cut -c1-16 )
+
           echo "fixed=$FIXED" >> $GITHUB_OUTPUT
           echo "debug_branch=$DEBUG_BRANCH" >> $GITHUB_OUTPUT
           echo "attempts=$ATTEMPT" >> $GITHUB_OUTPUT
           echo "last_analysis=${ANALYSIS:-}" >> $GITHUB_OUTPUT
+          echo "sig=$SIG" >> $GITHUB_OUTPUT
           echo "last_confidence=${CONFIDENCE:-}" >> $GITHUB_OUTPUT
 
           # Write step summary
@@ -402,11 +459,30 @@ jobs:
           set -o pipefail
           DEBUG_BRANCH="${{ steps.debug.outputs.debug_branch }}"
           ATTEMPTS="${{ steps.debug.outputs.attempts }}"
+          ANALYSIS="${{ steps.debug.outputs.last_analysis }}"
+          SIG="${{ steps.debug.outputs.sig }}"
+          REPO="Expedition-Go-Tours/Expedition-Go-Backend-v2"
+          RUN_URL="${{ github.event.workflow_run.html_url }}"
+          BASE_SHA="${{ github.event.workflow_run.head_sha }}"
+          FAIL_JOBS_RAW=$(cat .ci-results/failed-jobs.txt 2>/dev/null | tr '\n' ', ' | sed 's/,$//')
           OUTPUT=".ci-results/pr-output.log"
           truncate -s 0 "$OUTPUT"
           {
             echo "## Create Draft PR - $DEBUG_BRANCH"
             echo "Running: $(date -u)"
+
+            # ── Dedup: same failure signature already has an open ai-fix PR ──
+            if [ -n "$SIG" ]; then
+              EXISTING=$(gh pr list --repo "$REPO" --state open --json number,headRefName,body --limit 100 2>/dev/null \
+                | jq -r --arg sig "ai-sig:$SIG" '.[] | select(.headRefName | startswith("ai-fix")) | select(.body | contains($sig)) | .number' | head -1)
+              if [ -n "$EXISTING" ]; then
+                echo "Duplicate failure signature ($SIG) — open PR #$EXISTING already covers it. Skipping."
+                gh pr comment "$EXISTING" --repo "$REPO" --body "Another CI failure matched this same signature ($SIG). Attempts: $ATTEMPTS/3. Review #$EXISTING if still failing." 2>/dev/null || true
+                exit 0
+              fi
+              echo "No existing PR with signature $SIG — creating a new one."
+            fi
+
             git config user.name "gideon211"
             git config user.email "gideon211@users.noreply.github.com"
             echo "--- status ---"
@@ -415,17 +491,47 @@ jobs:
             echo "--- commit ---"
             git commit -m "fix: AI-generated patch for CI failure"$'\n\n'"Automated fix by ai-debug workflow."$'\n'"Attempts: $ATTEMPTS / $MAX_ATTEMPTS"
             echo "commit exit code: $?"
-            git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/Expedition-Go-Tours/Expedition-Go-Backend-v2.git"
+            git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/$REPO.git"
+
+            # Final diff-guard gate (belt & suspenders) before push
+            echo "--- final ai-diff-guard gate ---"
+            if ! node scripts/ai-diff-guard.js origin/main 2>&1; then
+              echo "Final diff guard failed — aborting PR creation."
+              exit 0
+            fi
+
             echo "--- push ---"
             git push origin "$DEBUG_BRANCH" 2>&1
             echo "push exit code: $?"
+
+            TITLE=$(printf 'fix: AI patch for CI failure' )
+            [ -n "$ANALYSIS" ] && TITLE=$(echo "$ANALYSIS" | head -1 | cut -c1-90)
+
+            # Build PR body with jq (avoids shell-escaping breakage)
+            jq -n \
+              --arg title "$TITLE" \
+              --arg head "$DEBUG_BRANCH" \
+              --arg base "${{ github.event.workflow_run.head_branch }}" \
+              --arg analysis "$ANALYSIS" \
+              --arg jobs "$FAIL_JOBS_RAW" \
+              --arg run "$RUN_URL" \
+              --arg sha "$BASE_SHA" \
+              --arg attempts "$ATTEMPTS / $MAX_ATTEMPTS" \
+              --arg sig "$SIG" \
+              '{title:$title, head:$head, base:$base, draft:true,
+                body: ("**AI-generated fix** — attempts " + $attempts + ". Review before merging.\n\n"
+                 + "## AI analysis\n" + (if ($analysis=="" or $analysis=="null") then "_No analysis captured._" else $analysis end) + "\n\n"
+                 + "## Failed CI\n- Jobs: " + $jobs + "\n- Run: " + $run + "\n- Base commit: " + $sha + "\n\n"
+                 + "<!-- ai-sig:" + $sig + " -->")}' \
+              > .ci-results/pr-body.json
+
             echo "--- REST create PR ---"
             PR_RESP=$(curl -sS -X POST \
               -H "Authorization: Bearer $GH_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/Expedition-Go-Tours/Expedition-Go-Backend-v2/pulls" \
-              -d "{\"title\":\"fix: AI patch for CI failure\",\"head\":\"$DEBUG_BRANCH\",\"base\":\"${{ github.event.workflow_run.head_branch }}\",\"draft\":true,\"body\":\"AI-generated fix. Attempts: $ATTEMPTS / $MAX_ATTEMPTS. Review before merging.\"}")
+              "https://api.github.com/repos/$REPO/pulls" \
+              --data-binary @.ci-results/pr-body.json)
             echo "$PR_RESP"
             PR_NUM=$(echo "$PR_RESP" | jq -r '.number // empty' 2>/dev/null)
             if [ -z "$PR_NUM" ]; then
@@ -433,10 +539,30 @@ jobs:
               echo "$PR_RESP" > .ci-results/pr-create-error.json
               exit 1
             fi
-            echo "PR #$PR_NUM created: https://github.com/Expedition-Go-Tours/Expedition-Go-Backend-v2/pull/$PR_NUM"
+            echo "PR #$PR_NUM created: https://github.com/$REPO/pull/$PR_NUM"
+
+            # Post the analysis as a PR comment so it's visible in review.
+            COMMENT=$(printf '**AI analysis:**\n\n%s\n\n---\nFailed jobs: %s  \nCI run: %s  \nBase commit: %s  \nAttempts: %s' \
+              "$ANALYSIS" "$FAIL_JOBS_RAW" "$RUN_URL" "$BASE_SHA" "$ATTEMPTS / $MAX_ATTEMPTS")
+            printf '%s' "$COMMENT" | jq -Rs '{body:.}' > .ci-results/pr-comment.json
+            gh api "repos/$REPO/issues/$PR_NUM/comments" \
+              --input .ci-results/pr-comment.json >/dev/null 2>&1 && \
+              echo "Analysis comment posted to PR #$PR_NUM"
           } 2>&1 | tee -a $GITHUB_STEP_SUMMARY "$OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run CI on fix branch
+        if: steps.debug.outputs.fixed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          DEBUG_BRANCH="${{ steps.debug.outputs.debug_branch }}"
+          echo "Dispatching CI on $DEBUG_BRANCH so reviewers get real check results..."
+          gh workflow run ci.yml --repo Expedition-Go-Tours/Expedition-Go-Backend-v2 --ref "$DEBUG_BRANCH" 2>&1 \
+            && echo "CI dispatched for $DEBUG_BRANCH" \
+            || echo "CI dispatch failed (workflow_dispatch may be missing). Local npm test + lint gate already passed."
 
       - name: Cleanup stale AI artifacts
         if: always()
