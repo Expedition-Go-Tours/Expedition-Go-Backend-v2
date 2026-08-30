@@ -19,6 +19,8 @@ const supplierSettingsController = require('../controllers/supplierSettingsContr
 const cancellationController = require('../controllers/cancellationController');
 const teamController = require('../controllers/teamController');
 const bookingController = require('../controllers/bookingController');
+const financeController = require('../controllers/financeController');
+const payoutMethodController = require('../controllers/payoutMethodController');
 
 const router = express.Router();
 
@@ -77,9 +79,20 @@ router.get('/cancellation/records', resolveSupplier, cancellationController.getC
 router.get('/pickup-planner', resolveSupplier, requireTeamPermission('bookings.view'), bookingController.getPickupPlanner);
 router.patch('/pickup-planner/:id', resolveSupplier, requireTeamPermission('bookings.manage'), bookingController.updateBookingPickup);
 
-// Finance
+// Finance (summary is Ghana-scoped; earnings/requests/disputes proxy to shared controller)
 router.get('/finance/summary', ghanaSupplier.getFinanceSummary);
+router.get('/finance/earnings', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getEarnings);
+router.get('/finance/payouts/requests', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getPayoutRequests);
+router.post('/finance/payout/request', resolveSupplier, requireTeamPermission('payouts.request'), financeController.createPayoutRequest);
+router.patch('/finance/payouts/requests/:id/cancel', resolveSupplier, requireTeamPermission('payouts.request'), financeController.cancelPayoutRequest);
+router.get('/finance/disputes', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getDisputes);
 router.get('/payouts', ghanaSupplier.getPayouts);
+
+// Payout methods (proxied to shared controller — frontend rewrites /payout-methods/* here)
+router.get('/payout-methods', resolveSupplier, requireTeamPermission('payout-methods.view'), payoutMethodController.getMyMethods);
+router.post('/payout-methods', resolveSupplier, requireTeamPermission('payout-methods.manage'), payoutMethodController.addMethod);
+router.patch('/payout-methods/:id', resolveSupplier, requireTeamPermission('payout-methods.manage'), payoutMethodController.updateMethod);
+router.delete('/payout-methods/:id', resolveSupplier, requireTeamPermission('payout-methods.manage'), payoutMethodController.deleteMethod);
 
 // Notifications
 router.get('/notifications', ghanaSupplier.getNotifications);
