@@ -79,8 +79,10 @@ router.get('/cancellation/records', resolveSupplier, cancellationController.getC
 router.get('/pickup-planner', resolveSupplier, requireTeamPermission('bookings.view'), bookingController.getPickupPlanner);
 router.patch('/pickup-planner/:id', resolveSupplier, requireTeamPermission('bookings.manage'), bookingController.updateBookingPickup);
 
-// Finance (summary is Ghana-scoped; earnings/requests/disputes proxy to shared controller)
-router.get('/finance/summary', ghanaSupplier.getFinanceSummary);
+// Finance (all proxied to shared controller — matches the finance page's
+// expected response shapes; the old Ghana-specific summary returned a flat
+// shape the frontend couldn't read, so everything showed $0)
+router.get('/finance/summary', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getFinanceSummary);
 router.get('/finance/earnings', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getEarnings);
 router.get('/finance/payouts/requests', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getPayoutRequests);
 router.post('/finance/payout/request', resolveSupplier, requireTeamPermission('payouts.request'), financeController.createPayoutRequest);
