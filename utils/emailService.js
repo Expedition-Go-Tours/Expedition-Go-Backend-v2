@@ -243,7 +243,8 @@ function paymentStatusLabel(status) {
  * Shared booking data used by every booking-scoped template.
  * Callers can override any field afterwards.
  */
-function buildBookingBase(booking) {
+async function buildBookingBase(booking) {
+  const shell = await getShellVars();
   const customer = booking.customer || {};
   const tour = booking.tour || {};
   const supplier = tour.supplier || {};
@@ -278,7 +279,7 @@ function buildBookingBase(booking) {
     leadTravelerPhone: leadPhone || fmt.travelerPhone(booking.travelers) || customer.phone || '',
     supplierName: supplier.name || '',
     supplierContact: supplier.phone || supplier.email || '',
-    brandSubtext: `by ${data.brandName || 'Travio Africa'}`,
+    brandSubtext: `by ${shell.brandName}`,
 
     // booking
     bookingNumber: booking.bookingNumber,
@@ -344,7 +345,7 @@ function buildBookingBase(booking) {
 
 async function sendBookingConfirmedEmail(booking) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const ticket = b.tour?.bookingAndTickets || {};
   const data = {
     ...base,
@@ -364,7 +365,7 @@ async function sendBookingConfirmedEmail(booking) {
 
 async function sendReserveLaterConfirmedEmail(booking) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const data = {
     ...base,
     paymentDateLabel: fmt.formatLongDate(b.travelDate),
@@ -380,7 +381,7 @@ async function sendReserveLaterConfirmedEmail(booking) {
 
 async function sendPaymentReminderEmail(booking, { paymentDate, paymentAmount } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const data = {
     ...base,
     paymentAmountLabel: fmt.formatCurrency(paymentAmount ?? b.grossAmount, b.currency),
@@ -397,7 +398,7 @@ async function sendPaymentReminderEmail(booking, { paymentDate, paymentAmount } 
 
 async function sendPaymentSuccessfulEmail(booking, { paymentReference, amount } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const paid = Number(amount ?? b.grossAmount);
   const outstanding = Math.max(0, Number(b.grossAmount) - paid);
   const data = {
@@ -417,7 +418,7 @@ async function sendPaymentSuccessfulEmail(booking, { paymentReference, amount } 
 
 async function sendPayLaterChargedEmail(booking, { paymentReference, chargedAt } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const data = {
     ...base,
     amountChargedLabel: base.totalLabel,
@@ -439,7 +440,7 @@ async function sendPayLaterChargedEmail(booking, { paymentReference, chargedAt }
 // received and confirmation is pending.
 async function sendAwaitingConfirmationEmail(booking, { paymentReference, paidAt } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const data = {
     ...base,
     amountPaidLabel: base.totalLabel,
@@ -458,7 +459,7 @@ async function sendAwaitingConfirmationEmail(booking, { paymentReference, paidAt
 
 async function sendPaymentUnsuccessfulEmail(booking, { deadline, amount } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const data = {
     ...base,
     paymentAmountLabel: fmt.formatCurrency(amount ?? b.grossAmount, b.currency),
@@ -475,7 +476,7 @@ async function sendPaymentUnsuccessfulEmail(booking, { deadline, amount } = {}) 
 
 async function sendCustomerBookingChangedEmail(booking, { changes = [], previousTotal, adjustment, newTotal } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const currency = b.currency || 'USD';
   const data = {
     ...base,
@@ -496,7 +497,7 @@ async function sendCustomerBookingChangedEmail(booking, { changes = [], previous
 
 async function sendPickupDetailsUpdatedEmail(booking, { previousPickupLocation = '' } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const data = {
     ...base,
     previousPickupLocation,
@@ -512,7 +513,7 @@ async function sendPickupDetailsUpdatedEmail(booking, { previousPickupLocation =
 
 async function sendPickupLocationRequiredEmail(booking, { deadline } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const data = {
     ...base,
     deadlineLabel: fmt.formatLongDate(deadline || b.travelDate),
@@ -528,7 +529,7 @@ async function sendPickupLocationRequiredEmail(booking, { deadline } = {}) {
 
 async function sendBookingReminderEmail(booking, { items = [] } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const ticket = b.tour?.bookingAndTickets || {};
   const product = b.tour?.productContent || {};
   const reminderItems =
@@ -554,7 +555,7 @@ async function sendBookingReminderEmail(booking, { items = [] } = {}) {
 
 async function sendCustomerCancelledFullRefundEmail(booking, { cancelledAt, refundAmount } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const data = {
     ...base,
     cancelledAtLabel: fmt.formatDateTime(cancelledAt || b.cancelledAt || new Date()),
@@ -572,7 +573,7 @@ async function sendCustomerCancelledFullRefundEmail(booking, { cancelledAt, refu
 
 async function sendCustomerCancelledNoRefundEmail(booking, { cancelledAt, cancellationFee, refundAmount = 0 } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const deadline = fmt.getCancelDeadline(b, b.tour || {});
   const data = {
     ...base,
@@ -592,7 +593,7 @@ async function sendCustomerCancelledNoRefundEmail(booking, { cancelledAt, cancel
 
 async function sendRefundProcessingEmail(booking, { refundReference } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const data = {
     ...base,
     refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.grossAmount, b.currency),
@@ -609,7 +610,7 @@ async function sendRefundProcessingEmail(booking, { refundReference } = {}) {
 
 async function sendRefundCompletedEmail(booking, { refundReference, refundedAt } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const data = {
     ...base,
     refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.grossAmount, b.currency),
@@ -627,7 +628,7 @@ async function sendRefundCompletedEmail(booking, { refundReference, refundedAt }
 
 async function sendSupplierChangedBookingEmail(booking, { changes = [], changeReason, needsAcceptance = false } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const data = {
     ...base,
     changes,
@@ -648,7 +649,7 @@ async function sendSupplierChangedBookingEmail(booking, { changes = [], changeRe
 
 async function sendSupplierCancelledBookingEmail(booking, { reason, refundAmount } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const data = {
     ...base,
     cancellationReason: reason || b.cancellationReason || '',
@@ -665,7 +666,7 @@ async function sendSupplierCancelledBookingEmail(booking, { reason, refundAmount
 
 async function sendReviewRequestEmail(booking) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const data = {
     ...base,
     reviewUrl: emailUrls.writeReview(b.id),
@@ -686,7 +687,7 @@ async function sendReviewRequestEmail(booking) {
 
 async function sendSupplierNewBookingEmail(booking) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const supplier = b.tour?.supplier || {};
   const data = {
     ...base,
@@ -708,7 +709,7 @@ async function sendSupplierNewBookingEmail(booking) {
 
 async function sendSupplierPayLaterChargedEmail(booking, { paymentReference, chargedAt } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const supplier = b.tour?.supplier || {};
   const data = {
     ...base,
@@ -732,7 +733,7 @@ async function sendSupplierPayLaterChargedEmail(booking, { paymentReference, cha
 
 async function sendSupplierBookingChangedEmail(booking, { changes = [], previousPayout, newPayout, payoutAdjustment } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const supplier = b.tour?.supplier || {};
   const currency = b.currency || 'USD';
   const data = {
@@ -753,7 +754,7 @@ async function sendSupplierBookingChangedEmail(booking, { changes = [], previous
 
 async function sendSupplierContactUpdatedEmail(booking, { customerPhone, customerEmail, emergencyContact } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const supplier = b.tour?.supplier || {};
   const data = {
     ...base,
@@ -772,7 +773,7 @@ async function sendSupplierContactUpdatedEmail(booking, { customerPhone, custome
 
 async function sendSupplierPickupUpdatedEmail(booking, { previousPickupLocation = '' } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const supplier = b.tour?.supplier || {};
   const data = {
     ...base,
@@ -789,7 +790,7 @@ async function sendSupplierPickupUpdatedEmail(booking, { previousPickupLocation 
 
 async function sendSupplierBookingReminderEmail(booking) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const supplier = b.tour?.supplier || {};
   const data = {
     ...base,
@@ -805,7 +806,7 @@ async function sendSupplierBookingReminderEmail(booking) {
 
 async function sendSupplierCustomerCancelledFreeEmail(booking, { cancelledAt } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const supplier = b.tour?.supplier || {};
   const data = {
     ...base,
@@ -822,7 +823,7 @@ async function sendSupplierCustomerCancelledFreeEmail(booking, { cancelledAt } =
 
 async function sendSupplierCustomerCancelledLateEmail(booking, { cancelledAt } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const supplier = b.tour?.supplier || {};
   const deadline = fmt.getCancelDeadline(b, b.tour || {});
   const data = {
@@ -841,7 +842,7 @@ async function sendSupplierCustomerCancelledLateEmail(booking, { cancelledAt } =
 
 async function sendSupplierPlatformCancelledEmail(booking, { reason, compensation } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const supplier = b.tour?.supplier || {};
   const data = {
     ...base,
@@ -859,7 +860,7 @@ async function sendSupplierPlatformCancelledEmail(booking, { reason, compensatio
 
 async function sendSupplierCancellationRecordedEmail(booking, { reason } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const supplier = b.tour?.supplier || {};
   const data = {
     ...base,
@@ -877,7 +878,7 @@ async function sendSupplierCancellationRecordedEmail(booking, { reason } = {}) {
 
 async function sendSupplierPayoutScheduledEmail({ booking, payout, payoutDate } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const supplier = b.tour?.supplier || {};
   const currency = b.currency || 'USD';
   const data = {
@@ -899,7 +900,7 @@ async function sendSupplierPayoutScheduledEmail({ booking, payout, payoutDate } 
 
 async function sendSupplierPayoutCompletedEmail({ booking, payout, payoutDate } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const supplier = b.tour?.supplier || {};
   const currency = b.currency || 'USD';
   const data = {
@@ -921,7 +922,7 @@ async function sendSupplierPayoutCompletedEmail({ booking, payout, payoutDate } 
 
 async function sendSupplierPayoutFailedEmail({ booking, payout, reason } = {}) {
   const b = await resolveBookingContext(booking);
-  const base = buildBookingBase(b);
+  const base = await buildBookingBase(b);
   const supplier = b.tour?.supplier || {};
   const currency = b.currency || 'USD';
   const data = {
@@ -1040,7 +1041,7 @@ async function sendSupplierStatusEmail(email, status, data = {}) {
       supplierBusinessName: data.name,
       approvalDate: new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
       dashboardUrl: emailUrls.supplierDashboard(),
-      brandSubtext: `by ${data.brandName || 'Travio Africa'}`,
+    brandSubtext: `by ${data.brandName || 'Travio Africa'}`,
     },
   });
 }
