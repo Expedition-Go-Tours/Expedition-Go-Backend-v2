@@ -21,6 +21,8 @@ const teamController = require('../controllers/teamController');
 const bookingController = require('../controllers/bookingController');
 const financeController = require('../controllers/financeController');
 const payoutMethodController = require('../controllers/payoutMethodController');
+const specialOfferController = require('../controllers/specialOfferController');
+const notificationController = require('../controllers/notificationController');
 
 const router = express.Router();
 
@@ -67,8 +69,14 @@ router.post('/settings/team/direct-add', resolveSupplier, requireTeamRole('admin
 router.patch('/settings/team/members/:id/role', resolveSupplier, requireTeamRole('admin'), teamController.updateMemberRole);
 router.delete('/settings/team/members/:id', resolveSupplier, requireTeamRole('admin'), teamController.removeMember);
 
-// Special Offers
+// Special Offers (GET is Ghana-scoped; CRUD proxies to shared controller —
+// the frontend rewrites /suppliers/special-offers/* to this namespace)
 router.get('/special-offers', ghanaSupplier.getSpecialOffers);
+router.get('/special-offers/:id', resolveSupplier, requireTeamPermission('products.update'), specialOfferController.getOffer);
+router.post('/special-offers', resolveSupplier, requireTeamPermission('products.update'), specialOfferController.createOffer);
+router.put('/special-offers/:id', resolveSupplier, requireTeamPermission('products.update'), specialOfferController.updateOffer);
+router.patch('/special-offers/:id/toggle', resolveSupplier, requireTeamPermission('products.update'), specialOfferController.toggleOffer);
+router.delete('/special-offers/:id', resolveSupplier, requireTeamPermission('products.update'), specialOfferController.deleteOffer);
 
 // Cancellation (proxied to shared controller)
 router.get('/cancellation/summary', resolveSupplier, cancellationController.getCancellationSummary);
@@ -96,7 +104,10 @@ router.post('/payout-methods', resolveSupplier, requireTeamPermission('payout-me
 router.patch('/payout-methods/:id', resolveSupplier, requireTeamPermission('payout-methods.manage'), payoutMethodController.updateMethod);
 router.delete('/payout-methods/:id', resolveSupplier, requireTeamPermission('payout-methods.manage'), payoutMethodController.deleteMethod);
 
-// Notifications
+// Notifications (GET is Ghana-scoped; read/delete proxy to shared controller)
 router.get('/notifications', ghanaSupplier.getNotifications);
+router.patch('/notifications/:id/read', notificationController.markAsRead);
+router.patch('/notifications/mark-all-read', notificationController.markAllAsRead);
+router.delete('/notifications/:id', notificationController.deleteNotification);
 
 module.exports = router;
