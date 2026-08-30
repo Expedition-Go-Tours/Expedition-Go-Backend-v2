@@ -227,6 +227,10 @@ router.patch('/suppliers/:id/activate',
   requirePermission('suppliers.approve'),
   supplierController.activateSupplier,
 );
+router.patch('/suppliers/:id/expedition-role',
+  requirePermission('suppliers.approve'),
+  adminController.toggleSupplierExpeditionRole,
+);
 router.patch('/suppliers/documents/:docId',
   requirePermission('suppliers.approve'),
   verificationController.reviewDocument,

@@ -1197,8 +1197,8 @@ exports.getSupplierProfile = catchAsync(async (req, res, next) => {
           completed: bookingMap.COMPLETED || 0,
           cancelled: bookingMap.CANCELLED || 0,
         },
+        tourCommissions,
       },
-      tourCommissions,
     },
   });
 });

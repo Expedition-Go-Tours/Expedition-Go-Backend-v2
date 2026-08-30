@@ -16,6 +16,7 @@ const AppError = require('../utils/appError');
 const catchAsync = require('../utils/catchAsync');
 const cache = require('../utils/cacheHelper');
 const { logActivity } = require('../utils/auditLogger');
+const adminController = require('./adminController');
 
 // ── Ghana-scoped constants ──────────────────────────────────────────────
 const GHANA_SOURCE = 'GHANA';
@@ -59,23 +60,36 @@ exports.getOverview = catchAsync(async (req, res, next) => {
     const [
       bookingAgg,
       userAgg,
-      tourCount,
-      activeTourCount,
-      supplierCount,
-      recentBookings,
+      weeklyBookings,
+      topTours,
+      topSuppliers,
+      bookingStatusDist,
+      recentEvents,
+      recentAuditLogs,
     ] = await Promise.all([
       // Revenue + booking volume (Ghana only)
       prisma.$queryRaw`
         SELECT
-          COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}), 0)::float AS "periodRevenue",
-          COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${previousPeriodStart} AND "paidAt" < ${currentPeriodStart}), 0)::float AS "previousPeriodRevenue",
+          COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}), 0)::float AS "todayRevenue",
+          COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${previousPeriodStart} AND "paidAt" < ${currentPeriodStart}), 0)::float AS "yesterdayRevenue",
           COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${weekStart}), 0)::float AS "weekRevenue",
           COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${monthStart}), 0)::float AS "monthRevenue",
           COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${yearStart}), 0)::float AS "ytdRevenue",
-          COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}), 0)::float AS "periodCommission",
-          COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}), 0)::float AS "periodPayout",
-          COUNT(*) FILTER (WHERE "createdAt" >= ${currentPeriodStart})::int AS "periodBookings",
-          COUNT(*) FILTER (WHERE "createdAt" >= ${previousPeriodStart} AND "createdAt" < ${currentPeriodStart})::int AS "previousPeriodBookings"
+          COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}), 0)::float AS "todayPayout",
+          COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${previousPeriodStart} AND "paidAt" < ${currentPeriodStart}), 0)::float AS "yesterdayPayout",
+          COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${weekStart}), 0)::float AS "weekPayout",
+          COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${monthStart}), 0)::float AS "monthPayout",
+          COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${yearStart}), 0)::float AS "ytdPayout",
+          COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}), 0)::float AS "todayCommission",
+          COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${previousPeriodStart} AND "paidAt" < ${currentPeriodStart}), 0)::float AS "yesterdayCommission",
+          COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${weekStart}), 0)::float AS "weekCommission",
+          COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${monthStart}), 0)::float AS "monthCommission",
+          COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${yearStart}), 0)::float AS "ytdCommission",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${currentPeriodStart})::int AS "todayBookings",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${previousPeriodStart} AND "createdAt" < ${currentPeriodStart})::int AS "yesterdayBookings",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${weekStart})::int AS "weekBookings",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${monthStart})::int AS "monthBookings",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${yearStart})::int AS "ytdBookings"
         FROM "Booking"
         WHERE "source"::text = ${GHANA_SOURCE}
           AND ("createdAt" >= ${scanStart} OR "paidAt" >= ${scanStart})
@@ -84,73 +98,218 @@ exports.getOverview = catchAsync(async (req, res, next) => {
       // Ghana user signups + active users
       prisma.$queryRaw`
         SELECT
-          COUNT(*) FILTER (WHERE "createdAt" >= ${currentPeriodStart})::int AS "signupsPeriod",
-          COUNT(*) FILTER (WHERE "createdAt" >= ${previousPeriodStart} AND "createdAt" < ${currentPeriodStart})::int AS "signupsPrevious",
-          COUNT(*) FILTER (WHERE "lastLoginAt" >= ${currentPeriodStart} AND "active" = true)::int AS "activeNow"
+          COUNT(*) FILTER (WHERE "createdAt" >= ${currentPeriodStart})::int AS "signupsToday",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${previousPeriodStart} AND "createdAt" < ${currentPeriodStart})::int AS "signupsYesterday",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${weekStart})::int AS "signupsWeek",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${monthStart})::int AS "signupsMonth",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${yearStart})::int AS "signupsYtd",
+          COUNT(*) FILTER (WHERE "lastLoginAt" >= ${currentPeriodStart} AND "active" = true)::int AS "activeToday",
+          COUNT(*) FILTER (WHERE "lastLoginAt" >= ${previousPeriodStart} AND "lastLoginAt" < ${currentPeriodStart} AND "active" = true)::int AS "activePrevious",
+          (SELECT COUNT(*) FROM "Event" e JOIN "User" u ON u.id = e."userId" WHERE ${GHANA_ROLE} = ANY(u."roles"::text[]))::int AS "totalEvents"
         FROM "User"
         WHERE ${GHANA_ROLE} = ANY("roles"::text[])
           AND ("createdAt" >= ${scanStart} OR "lastLoginAt" >= ${scanStart})
       `,
 
-      // Total Ghana tours (TravioGhanaTour records)
-      prisma.travioGhanaTour.count({ where: { isActive: true } }),
+      // Weekly booking volume (Ghana only, period-aware)
+      periodDays > 31
+        ? prisma.$queryRaw`
+            SELECT
+              TO_CHAR(date_trunc('week', d.date), 'Mon DD') AS day,
+              COALESCE(SUM(b.count), 0)::int AS count
+            FROM generate_series(
+              date_trunc('week', CURRENT_DATE - (${periodDays - 1} || ' days')::interval),
+              date_trunc('week', CURRENT_DATE),
+              '1 week'
+            ) d(date)
+            LEFT JOIN (
+              SELECT "createdAt"::date AS date, COUNT(*)::int AS count
+              FROM "Booking"
+              WHERE "source"::text = ${GHANA_SOURCE}
+                AND "createdAt" >= CURRENT_DATE - (${periodDays - 1} || ' days')::interval
+              GROUP BY "createdAt"::date
+            ) b ON b.date >= d.date AND b.date < d.date + INTERVAL '7 days'
+            GROUP BY date_trunc('week', d.date), d.date
+            ORDER BY d.date ASC
+          `
+        : prisma.$queryRaw`
+            SELECT
+              TO_CHAR(d.date, ${periodDays > 7 ? 'MM/DD' : 'Dy'}) AS day,
+              COALESCE(b.count, 0)::int AS count
+            FROM generate_series(
+              CURRENT_DATE - (${Math.min(periodDays || 7, 30) - 1} || ' days')::interval,
+              CURRENT_DATE, '1 day'
+            ) d(date)
+            LEFT JOIN (
+              SELECT "createdAt"::date AS date, COUNT(*)::int AS count
+              FROM "Booking"
+              WHERE "source"::text = ${GHANA_SOURCE}
+                AND "createdAt" >= CURRENT_DATE - (${Math.min(periodDays || 7, 30) - 1} || ' days')::interval
+              GROUP BY "createdAt"::date
+            ) b ON d.date = b.date
+            ORDER BY d.date ASC
+          `,
 
-      // Active Ghana tours (parent tour is ACTIVE)
-      prisma.travioGhanaTour.count({
-        where: { isActive: true, tour: { status: 'ACTIVE' } },
-      }),
+      // Top 10 Ghana tours by period revenue (confirmed bookings)
+      prisma.$queryRaw`
+        SELECT
+          t.id,
+          t.title,
+          t."coverPhoto",
+          COALESCE(b.booking_count, 0)::int AS "totalBookings",
+          COALESCE(b.total_revenue, 0)::float AS "totalRevenue",
+          t."averageRating",
+          COALESCE(r.review_count, 0)::int AS "reviewCount",
+          COALESCE((t."schedulesAndPricing"->>'currency'), 'USD') AS "currency"
+        FROM "Tour" t
+        JOIN "TravioGhanaTour" g ON g."tourId" = t.id
+        LEFT JOIN (
+          SELECT "tourId", COUNT(*)::int AS booking_count, SUM(total)::float AS total_revenue
+          FROM "Booking"
+          WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}
+          GROUP BY "tourId"
+        ) b ON b."tourId" = t.id
+        LEFT JOIN (
+          SELECT "tourId", COUNT(*)::int AS review_count
+          FROM "Review" WHERE status = 'APPROVED'
+          GROUP BY "tourId"
+        ) r ON r."tourId" = t.id
+        WHERE t.status = 'ACTIVE'
+        ORDER BY COALESCE(b.total_revenue, 0) DESC
+        LIMIT 10
+      `,
 
-      // Active Ghana suppliers
-      prisma.user.count({
-        where: { roles: { has: GHANA_ROLE }, active: true },
-      }),
+      // Top 10 Ghana suppliers by period earnings
+      prisma.$queryRaw`
+        SELECT
+          u.id,
+          u.name,
+          u.email,
+          u."photoURL",
+          COALESCE(period.total_earnings, 0)::float AS "totalEarnings",
+          COALESCE(period.booking_count, 0)::int AS "totalBookings",
+          COALESCE(period.currency, 'USD') AS "currency",
+          sp."averageRating"
+        FROM "SupplierProfile" sp
+        JOIN "User" u ON u.id = sp."userId"
+        LEFT JOIN (
+          SELECT t."supplierId",
+                 COUNT(*)::int AS booking_count,
+                 SUM(bo."supplierPayout")::float AS total_earnings,
+                 MODE() WITHIN GROUP (ORDER BY bo.currency) AS currency
+          FROM "Booking" bo
+          JOIN "Tour" t ON t.id = bo."tourId"
+          WHERE bo."paymentStatus" = 'SUCCEEDED' AND bo."paidAt" >= ${currentPeriodStart}
+            AND bo."source"::text = ${GHANA_SOURCE}
+          GROUP BY t."supplierId"
+        ) period ON period."supplierId" = u.id
+        WHERE sp.status = 'ACTIVE' AND ${GHANA_ROLE} = ANY(u."roles"::text[])
+        ORDER BY COALESCE(period.total_earnings, 0) DESC
+        LIMIT 10
+      `,
 
-      // Recent bookings
-      prisma.booking.findMany({
-        where: { source: GHANA_SOURCE },
-        take: 5,
+      // Booking status distribution (Ghana only)
+      prisma.$queryRaw`
+        SELECT status, COUNT(*)::int AS count
+        FROM "Booking"
+        WHERE "source"::text = ${GHANA_SOURCE}
+        GROUP BY status
+      `,
+
+      // Ghana-related recent events
+      prisma.event.findMany({
+        where: { userId: { not: null } },
         orderBy: { createdAt: 'desc' },
-        select: {
-          id: true, bookingNumber: true, status: true, paymentStatus: true,
-          grossAmount: true, currency: true, createdAt: true,
-          customer: { select: { id: true, name: true, email: true } },
-          tour: { select: { id: true, title: true, slug: true } },
-        },
+        take: 60,
+        select: { id: true, name: true, userId: true, resource: true, resourceId: true, properties: true, createdAt: true },
+      }),
+
+      // Recent admin audit logs
+      prisma.auditLog.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        select: { id: true, userId: true, userEmail: true, action: true, resource: true, resourceId: true, metadata: true, createdAt: true },
       }),
     ]);
 
-    const b = bookingAgg[0] || {};
-    const u = userAgg[0] || {};
-    const revenueChange = b.previousPeriodRevenue > 0
-      ? ((b.periodRevenue - b.previousPeriodRevenue) / b.previousPeriodRevenue * 100).toFixed(1)
-      : b.periodRevenue > 0 ? 100 : 0;
-    const bookingChange = b.previousPeriodBookings > 0
-      ? ((b.periodBookings - b.previousPeriodBookings) / b.previousPeriodBookings * 100).toFixed(1)
-      : b.periodBookings > 0 ? 100 : 0;
+    // Restrict events to Ghana-role users
+    const eventUserIds = [...new Set([
+      ...recentEvents.map((e) => e.userId).filter(Boolean),
+      ...recentAuditLogs.map((a) => a.userId).filter(Boolean),
+    ])];
+    const allUsers = eventUserIds.length > 0
+      ? await prisma.user.findMany({
+          where: { id: { in: eventUserIds } },
+          select: { id: true, name: true, roles: true },
+        })
+      : [];
+    const ghanaUserIds = new Set(allUsers.filter((u) => u.roles.includes(GHANA_ROLE)).map((u) => u.id));
+    const ghanaEvents = recentEvents.filter((e) => ghanaUserIds.has(e.userId));
+
+    const bAgg = bookingAgg[0] || {};
+    const uAgg = userAgg[0] || {};
+
+    const round2 = (v) => Math.round(parseFloat(v || 0) * 100) / 100;
+    const fmt = (prefix) => ({
+      revenue:        round2(bAgg[`${prefix}Revenue`]),
+      supplierPayout: round2(bAgg[`${prefix}Payout`]),
+      commission:     round2(bAgg[`${prefix}Commission`]),
+    });
+    const num = (v) => parseInt(v, 10) || 0;
 
     return {
       status: 'success',
       data: {
         overview: {
-          periodRevenue: b.periodRevenue || 0,
-          previousPeriodRevenue: b.previousPeriodRevenue || 0,
-          revenueChange: parseFloat(revenueChange),
-          weekRevenue: b.weekRevenue || 0,
-          monthRevenue: b.monthRevenue || 0,
-          ytdRevenue: b.ytdRevenue || 0,
-          periodCommission: b.periodCommission || 0,
-          periodPayout: b.periodPayout || 0,
-          periodBookings: b.periodBookings || 0,
-          previousPeriodBookings: b.previousPeriodBookings || 0,
-          bookingChange: parseFloat(bookingChange),
-          signupsPeriod: u.signupsPeriod || 0,
-          signupsPrevious: u.signupsPrevious || 0,
-          activeUsers: u.activeNow || 0,
-          totalTours: tourCount,
-          activeTours: activeTourCount,
-          activeSuppliers: supplierCount,
+          revenue: {
+            today:     fmt('today'),
+            yesterday: fmt('yesterday'),
+            thisWeek:  fmt('week'),
+            thisMonth: fmt('month'),
+            ytd:       fmt('ytd'),
+          },
+          bookings: {
+            today:     num(bAgg.todayBookings),
+            yesterday: num(bAgg.yesterdayBookings),
+            thisWeek:  num(bAgg.weekBookings),
+            thisMonth: num(bAgg.monthBookings),
+            ytd:       num(bAgg.ytdBookings),
+          },
+          signups: {
+            today:     num(uAgg.signupsToday),
+            yesterday: num(uAgg.signupsYesterday),
+            thisWeek:  num(uAgg.signupsWeek),
+            thisMonth: num(uAgg.signupsMonth),
+            ytd:       num(uAgg.signupsYtd),
+          },
+          activeUsers:         num(uAgg.activeToday),
+          activeUsersPrevious: num(uAgg.activePrevious),
         },
-        recentBookings,
+        weeklyBookingData: weeklyBookings,
+        topTours,
+        topSuppliers,
+        bookingStatusDistribution: bookingStatusDist,
+        eventFeed: [
+          ...ghanaEvents.map((e) => ({ ...e })),
+          ...recentAuditLogs.map((a) => ({
+            id: a.id,
+            name: a.action,
+            userId: a.userId,
+            resource: a.resource,
+            resourceId: a.resourceId,
+            properties: {
+              message: adminController.buildAuditMessage(a.action, a.resource, (a.metadata || {})),
+            },
+            createdAt: a.createdAt,
+          })),
+        ]
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+          .slice(0, 20)
+          .map((e) => {
+            const user = allUsers.find((u) => u.id === e.userId);
+            return { ...e, userName: user?.name || null };
+          }),
+        totalEvents: num(uAgg.totalEvents),
       },
     };
   }, 120);
@@ -719,8 +878,8 @@ exports.getTours = catchAsync(async (req, res, next) => {
 exports.getTourDetail = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
-  const record = await prisma.travioGhanaTour.findUnique({
-    where: { id },
+  const record = await prisma.travioGhanaTour.findFirst({
+    where: { OR: [{ id }, { tourId: id }] },
     include: {
       addedBy: { select: { id: true, name: true, email: true } },
       tour: {
@@ -741,7 +900,14 @@ exports.getTourDetail = catchAsync(async (req, res, next) => {
     return next(new AppError('Ghana tour not found', 404));
   }
 
-  res.status(200).json({ status: 'success', data: { tour: record } });
+  // Flatten the TravioGhanaTour wrapper: the frontend (TourDetail.tsx
+  // normalizeTour) reads flat fields (title, status, schedulesAndPricing,
+  // supplier, _count, ...) — same shape as the shared admin tour detail.
+  const { tour, ...listing } = record;
+  res.status(200).json({
+    status: 'success',
+    data: { tour: { ...listing, ...tour, travioGhanaTour: listing } },
+  });
 });
 
 /**
@@ -752,13 +918,13 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { displayOrder, isFeatured, isActive } = req.body;
 
-  const existing = await prisma.travioGhanaTour.findUnique({ where: { id } });
+  const existing = await prisma.travioGhanaTour.findFirst({ where: { OR: [{ id }, { tourId: id }] } });
   if (!existing) {
     return next(new AppError('Ghana tour not found', 404));
   }
 
   const record = await prisma.travioGhanaTour.update({
-    where: { id },
+    where: { id: existing.id },
     data: {
       ...(displayOrder !== undefined && { displayOrder }),
       ...(isFeatured !== undefined && { isFeatured }),
@@ -784,12 +950,12 @@ exports.updateTour = catchAsync(async (req, res, next) => {
 exports.deleteTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
-  const existing = await prisma.travioGhanaTour.findUnique({ where: { id } });
+  const existing = await prisma.travioGhanaTour.findFirst({ where: { OR: [{ id }, { tourId: id }] } });
   if (!existing) {
     return next(new AppError('Ghana tour not found', 404));
   }
 
-  await prisma.travioGhanaTour.delete({ where: { id } });
+  await prisma.travioGhanaTour.delete({ where: { id: existing.id } });
 
   await logActivity({
     action: 'tour.deleted',
@@ -806,39 +972,76 @@ exports.deleteTour = catchAsync(async (req, res, next) => {
  * Ghana tour moderation queue.
  */
 exports.getTourReviewQueue = catchAsync(async (req, res, next) => {
-  const { page = 1, limit = 20 } = req.query;
+  const { status, page = 1, limit = 20, search } = req.query;
+
+  // Ghana scope: only tours that have a TravioGhanaTour listing.
+  const ghanaScope = { travioGhanaTour: { isNot: null } };
+
+  const requestedStatus = typeof status === 'string' ? status.trim() : '';
+  const validStatuses = ['PENDING_APPROVAL', 'REJECTED', 'ACTIVE', 'PENDING_EDITS'];
+  const searchOR = search && search.trim()
+    ? [
+        { title: { contains: search.trim(), mode: 'insensitive' } },
+        { supplier: { name: { contains: search.trim(), mode: 'insensitive' } } },
+      ]
+    : null;
+
+  // Mirror the shared admin review queue: live-tour edits keep status ACTIVE
+  // while the edit lives in draftStatus, so tabs must look at both columns.
+  let where = { ...ghanaScope };
+  if (requestedStatus === 'PENDING_EDITS') {
+    where.draftStatus = 'PENDING_APPROVAL';
+  } else if (requestedStatus === 'PENDING_APPROVAL') {
+    const statusOR = [{ status: 'PENDING_APPROVAL' }, { draftStatus: 'PENDING_APPROVAL' }];
+    where.AND = searchOR ? [{ OR: statusOR }, { OR: searchOR }] : [{ OR: statusOR }];
+  } else if (requestedStatus === 'REJECTED') {
+    const statusOR = [{ status: 'REJECTED' }, { draftStatus: 'REJECTED' }];
+    where.AND = searchOR ? [{ OR: statusOR }, { OR: searchOR }] : [{ OR: statusOR }];
+  } else if (validStatuses.includes(requestedStatus)) {
+    where.status = requestedStatus;
+    if (searchOR) where.OR = searchOR;
+  } else {
+    // Default "All" tab: pending items only (new submissions + live-tour edits)
+    const pendingOR = [{ status: 'PENDING_APPROVAL' }, { draftStatus: 'PENDING_APPROVAL' }];
+    where.AND = searchOR ? [{ OR: pendingOR }, { OR: searchOR }] : [{ OR: pendingOR }];
+  }
+
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const take = Math.min(parseInt(limit), 100);
 
-  const [records, totalCount] = await Promise.all([
-    prisma.travioGhanaTour.findMany({
-      where: { tour: { status: 'DRAFT' } },
-      orderBy: { createdAt: 'desc' },
+  const [tours, totalCount, pendingCount, rejectedCount, pendingEditsCount] = await Promise.all([
+    prisma.tour.findMany({
+      where,
+      orderBy: [
+        { submittedAt: 'desc' },
+        { draftSubmittedAt: 'desc' },
+        { updatedAt: 'desc' },
+      ],
       skip,
       take,
       include: {
-        tour: {
-          select: {
-            id: true, title: true, slug: true, status: true,
-            coverPhoto: true, category: true, createdAt: true,
-            supplier: { select: { id: true, name: true } },
-          },
+        supplier: {
+          select: { id: true, name: true, email: true, photoURL: true },
+        },
+        travioGhanaTour: {
+          select: { id: true, isActive: true, isFeatured: true, displayOrder: true },
+        },
+        _count: {
+          select: { bookings: true, reviews: true },
         },
       },
     }),
-    prisma.travioGhanaTour.count({ where: { tour: { status: 'DRAFT' } } }),
+    prisma.tour.count({ where }),
+    prisma.tour.count({ where: { ...ghanaScope, OR: [{ status: 'PENDING_APPROVAL' }, { draftStatus: 'PENDING_APPROVAL' }] } }),
+    prisma.tour.count({ where: { ...ghanaScope, OR: [{ status: 'REJECTED' }, { draftStatus: 'REJECTED' }] } }),
+    prisma.tour.count({ where: { ...ghanaScope, draftStatus: 'PENDING_APPROVAL' } }),
   ]);
 
   res.status(200).json({
     status: 'success',
     data: {
-      tours: records.map((r) => ({
-        id: r.id,
-        tourId: r.tourId,
-        isActive: r.isActive,
-        createdAt: r.createdAt,
-        tour: r.tour,
-      })),
+      tours,
+      counts: { pending: pendingCount, rejected: rejectedCount, pendingEdits: pendingEditsCount },
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(totalCount / take),
@@ -855,14 +1058,28 @@ exports.getTourReviewQueue = catchAsync(async (req, res, next) => {
  */
 exports.reviewTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const { status, reason } = req.body;
+  const { action, status, reason } = req.body || {};
 
-  if (!['ACTIVE', 'REJECTED'].includes(status)) {
-    return next(new AppError('Status must be ACTIVE or REJECTED', 400));
+  // Frontend sends { action: 'approve' | 'flag', reason } (same as the shared
+  // admin controller); accept the older { status } form too for compat.
+  let newStatus;
+  if (action) {
+    if (!['approve', 'flag'].includes(action)) {
+      return next(new AppError('Action must be either "approve" or "flag"', 400));
+    }
+    if (action === 'flag' && (!reason || !String(reason).trim())) {
+      return next(new AppError('A reason is required when flagging a tour', 400));
+    }
+    newStatus = action === 'approve' ? 'ACTIVE' : 'REJECTED';
+  } else {
+    if (!['ACTIVE', 'REJECTED'].includes(status)) {
+      return next(new AppError('Status must be ACTIVE or REJECTED', 400));
+    }
+    newStatus = status;
   }
 
-  const record = await prisma.travioGhanaTour.findUnique({
-    where: { id },
+  const record = await prisma.travioGhanaTour.findFirst({
+    where: { OR: [{ id }, { tourId: id }] },
     include: { tour: { select: { id: true, title: true } } },
   });
 
@@ -872,11 +1089,11 @@ exports.reviewTour = catchAsync(async (req, res, next) => {
 
   await prisma.tour.update({
     where: { id: record.tourId },
-    data: { status },
+    data: { status: newStatus },
   });
 
   await logActivity({
-    action: status === 'ACTIVE' ? 'tour.approved' : 'tour.rejected',
+    action: newStatus === 'ACTIVE' ? 'tour.approved' : 'tour.rejected',
     entityType: 'TravioGhanaTour',
     entityId: id,
     userId: req.user.id,
@@ -885,7 +1102,7 @@ exports.reviewTour = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    message: `Tour ${status === 'ACTIVE' ? 'approved' : 'rejected'}`,
+    message: `Tour ${newStatus === 'ACTIVE' ? 'approved' : 'rejected'}`,
   });
 });
 
@@ -994,7 +1211,7 @@ exports.getBookings = catchAsync(async (req, res, next) => {
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const take = Math.min(parseInt(limit), 100);
 
-  const [bookings, totalCount] = await Promise.all([
+  const [bookings, totalCount, counts, ghanaTotal] = await Promise.all([
     prisma.booking.findMany({
       where,
       orderBy: { [sortBy]: sortOrder },
@@ -1011,12 +1228,22 @@ exports.getBookings = catchAsync(async (req, res, next) => {
       },
     }),
     prisma.booking.count({ where }),
+    prisma.booking.groupBy({
+      by: ['status'],
+      where: { source: GHANA_SOURCE },
+      _count: { _all: true },
+    }),
+    prisma.booking.count({ where: { source: GHANA_SOURCE } }),
   ]);
+
+  const countsObj = { total: ghanaTotal, PENDING: 0, CONFIRMED: 0, COMPLETED: 0, CANCELLED: 0 };
+  for (const c of counts) countsObj[c.status] = c._count._all;
 
   res.status(200).json({
     status: 'success',
     data: {
       bookings,
+      counts: countsObj,
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(totalCount / take),
@@ -1080,7 +1307,8 @@ exports.getBookingById = catchAsync(async (req, res, next) => {
     return next(new AppError('Ghana booking not found', 404));
   }
 
-  res.status(200).json({ status: 'success', data: { booking } });
+  // Frontend (BookingDetailPanel) reads data.data as the booking itself.
+  res.status(200).json({ status: 'success', data: booking });
 });
 
 /**
@@ -1390,27 +1618,64 @@ exports.searchUsers = catchAsync(async (req, res, next) => {
  * AI processing status for Ghana tours.
  */
 exports.getAiStatus = catchAsync(async (req, res, next) => {
-  const [total, completed, failed, pending] = await Promise.all([
-    prisma.travioGhanaTour.count(),
-    prisma.travioGhanaTour.count({
-      where: { tour: { aiProcessingStatus: 'COMPLETED' } },
-    }),
-    prisma.travioGhanaTour.count({
-      where: { tour: { aiProcessingStatus: 'FAILED' } },
-    }),
-    prisma.travioGhanaTour.count({
-      where: { tour: { aiProcessingStatus: 'PENDING' } },
-    }),
-  ]);
+  // Ghana-scoped mirror of the shared admin AI status (same response shape).
+  const statusCounts = await prisma.$queryRaw`
+    SELECT t."aiProcessingStatus", COUNT(*)::int AS count
+    FROM "Tour" t
+    JOIN "TravioGhanaTour" g ON g."tourId" = t.id
+    WHERE t.status = 'ACTIVE'
+    GROUP BY t."aiProcessingStatus"
+  `;
 
-  res.status(200).json({
+  const tourStats = { total: 0, pending: 0, processing: 0, completed: 0, failed: 0 };
+  for (const row of statusCounts) {
+    tourStats.total += row.count;
+    const key = row.aiProcessingStatus.toLowerCase();
+    if (key in tourStats) tourStats[key] = row.count;
+  }
+
+  const imageStats = await prisma.tourImageAnalysis.groupBy({
+    by: ['aiStatus'],
+    where: { tour: { travioGhanaTour: { isNot: null } } },
+    _count: { id: true },
+  });
+
+  const imageAnalysis = { total: 0, pending: 0, processing: 0, completed: 0, failed: 0 };
+  for (const row of imageStats) {
+    imageAnalysis.total += row._count.id;
+    const key = row.aiStatus.toLowerCase();
+    if (key in imageAnalysis) imageAnalysis[key] = row._count.id;
+  }
+
+  const attractionStats = await prisma.$queryRaw`
+    SELECT
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE "heroImage" IS NOT NULL)::int AS with_hero_image,
+      COUNT(*) FILTER (WHERE "heroImageSource" = 'ai_selected')::int AS ai_selected,
+      COUNT(*) FILTER (WHERE "heroImageSource" = 'fallback')::int AS fallback_image,
+      COUNT(*) FILTER (WHERE "manualOverride" = true)::int AS manual_override
+    FROM "Attraction"
+  `;
+
+  const { getAiCronStatus } = require('../utils/aiCronFallback');
+  const cronStatus = getAiCronStatus();
+
+  const lastProcessed = await prisma.tour.findFirst({
+    where: { aiProcessingStatus: 'COMPLETED', travioGhanaTour: { isNot: null } },
+    orderBy: { aiScoredAt: 'desc' },
+    select: { aiScoredAt: true, title: true },
+  });
+
+  res.json({
     status: 'success',
     data: {
-      total,
-      completed,
-      failed,
-      pending,
-      completionRate: total > 0 ? ((completed / total) * 100).toFixed(1) : 0,
+      tours: tourStats,
+      imageAnalysis,
+      attractions: attractionStats[0] || {},
+      cron: cronStatus,
+      lastProcessed: lastProcessed
+        ? { title: lastProcessed.title, at: lastProcessed.aiScoredAt }
+        : null,
     },
   });
 });
@@ -1420,23 +1685,47 @@ exports.getAiStatus = catchAsync(async (req, res, next) => {
  * Ghana tours with failed AI processing.
  */
 exports.getFailedTours = catchAsync(async (req, res, next) => {
-  const records = await prisma.travioGhanaTour.findMany({
-    where: { tour: { aiProcessingStatus: 'FAILED' } },
-    include: {
-      tour: {
-        select: {
-          id: true, title: true, slug: true, coverPhoto: true,
-          aiScoredAt: true, createdAt: true,
-          supplier: { select: { name: true } },
-        },
-      },
+  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+
+  const tours = await prisma.tour.findMany({
+    where: {
+      aiProcessingStatus: 'FAILED',
+      status: 'ACTIVE',
+      travioGhanaTour: { isNot: null },
+    },
+    select: {
+      id: true,
+      title: true,
+      category: true,
+      city: true,
+      createdAt: true,
+      aiScoredAt: true,
     },
     orderBy: { createdAt: 'desc' },
+    take: limit,
   });
 
-  res.status(200).json({
+  const failedImages = await prisma.tourImageAnalysis.findMany({
+    where: { aiStatus: 'FAILED', tour: { travioGhanaTour: { isNot: null } } },
+    select: {
+      id: true,
+      tourId: true,
+      imageUrl: true,
+      aiRetryCount: true,
+      aiDescription: true,
+    },
+    orderBy: { aiRetryCount: 'desc' },
+    take: 50,
+  });
+
+  res.json({
     status: 'success',
-    data: { tours: records },
+    data: {
+      tours,
+      failedImages,
+      tourCount: tours.length,
+      imageCount: failedImages.length,
+    },
   });
 });
 
@@ -1464,24 +1753,44 @@ exports.getPendingReviews = catchAsync(async (req, res, next) => {
     status: 'PENDING',
   };
 
-  const [reviews, totalCount] = await Promise.all([
+  const [reviews, totalCount, counts] = await Promise.all([
     prisma.review.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       skip,
       take,
       include: {
-        customer: { select: { id: true, name: true, email: true } },
-        tour: { select: { id: true, title: true } },
+        customer: { select: { id: true, name: true, email: true, photoURL: true } },
+        tour: {
+          select: {
+            id: true, title: true, slug: true, coverPhoto: true,
+            supplier: { select: { id: true, name: true, photoURL: true } },
+          },
+        },
       },
     }),
     prisma.review.count({ where }),
+    Promise.all([
+      prisma.review.count({ where: { tourId: { in: tourIds }, status: 'PENDING' } }),
+      prisma.review.count({ where: { tourId: { in: tourIds }, flaggedAt: { not: null } } }),
+      prisma.review.count({
+        where: {
+          tourId: { in: tourIds },
+          moderatedAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+        },
+      }),
+    ]),
   ]);
 
   res.status(200).json({
     status: 'success',
     data: {
       reviews,
+      counts: {
+        pending: counts[0],
+        flagged: counts[1],
+        moderatedToday: counts[2],
+      },
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(totalCount / take),
@@ -1498,10 +1807,21 @@ exports.getPendingReviews = catchAsync(async (req, res, next) => {
  */
 exports.moderateReview = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const { status } = req.body;
+  const { action, status, reason } = req.body || {};
 
-  if (!['APPROVED', 'REJECTED'].includes(status)) {
-    return next(new AppError('Status must be APPROVED or REJECTED', 400));
+  // Frontend sends { action: 'approve' | 'reject' | 'flag', reason } (same as
+  // the shared admin controller); accept the older { status } form too.
+  let newStatus;
+  if (action) {
+    if (!['approve', 'reject', 'flag'].includes(action)) {
+      return next(new AppError('Action must be "approve", "reject" or "flag"', 400));
+    }
+    newStatus = action === 'approve' ? 'APPROVED' : 'REJECTED';
+  } else {
+    if (!['APPROVED', 'REJECTED'].includes(status)) {
+      return next(new AppError('Status must be APPROVED or REJECTED', 400));
+    }
+    newStatus = status;
   }
 
   const review = await prisma.review.findUnique({ where: { id } });
@@ -1519,12 +1839,12 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
 
   await prisma.review.update({
     where: { id },
-    data: { status },
+    data: { status: newStatus },
   });
 
   res.status(200).json({
     status: 'success',
-    message: `Review ${status.toLowerCase()}`,
+    message: `Review ${newStatus.toLowerCase()}`,
   });
 });
 
@@ -1659,17 +1979,33 @@ exports.getUnreadCount = catchAsync(async (req, res) => {
  * GET /api/travioghana/admin/notifications/stats
  */
 exports.getNotificationStats = catchAsync(async (req, res) => {
-  const [total, unread, today] = await Promise.all([
+  const [total, unacknowledged, byType, recent] = await Promise.all([
     prisma.notification.count({ where: { userId: req.user.id } }),
     prisma.notification.count({ where: { userId: req.user.id, readAt: null } }),
-    prisma.notification.count({
-      where: {
-        userId: req.user.id,
-        createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+    prisma.notification.groupBy({
+      by: ['type'],
+      where: { userId: req.user.id },
+      _count: { _all: true },
+    }),
+    prisma.notification.findMany({
+      where: { userId: req.user.id },
+      orderBy: { createdAt: 'desc' },
+      take: 8,
+      select: {
+        id: true, type: true, title: true, message: true, data: true,
+        acknowledged: true, read: true, createdAt: true,
       },
     }),
   ]);
-  res.json({ status: 'success', data: { total, unread, today } });
+  res.json({
+    status: 'success',
+    data: {
+      total,
+      unacknowledged,
+      byType: byType.map((t) => ({ type: t.type, _count: t._count._all })),
+      recent: recent.map((n) => ({ ...n, acknowledged: n.acknowledged ?? n.read })),
+    },
+  });
 });
 
 /**
