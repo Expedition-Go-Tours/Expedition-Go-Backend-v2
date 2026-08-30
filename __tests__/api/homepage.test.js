@@ -114,13 +114,13 @@ describe('Homepage API', () => {
     it('respects limit parameter', async () => {
       const res = await request(app).get('/api/homepage/sell-out?limit=5');
       expect(res.status).toBe(200);
-      expect(ranking.getLikelySellOut).toHaveBeenCalledWith(5);
+      expect(ranking.getLikelySellOut).toHaveBeenCalledWith(5, null, false, true);
     });
 
     it('caps limit at 20', async () => {
       const res = await request(app).get('/api/homepage/sell-out?limit=50');
       expect(res.status).toBe(200);
-      expect(ranking.getLikelySellOut).toHaveBeenCalledWith(20);
+      expect(ranking.getLikelySellOut).toHaveBeenCalledWith(20, null, false, true);
     });
   });
 
@@ -153,7 +153,7 @@ describe('Homepage API', () => {
     it('computes live when lat/lng provided', async () => {
       const res = await request(app).get('/api/homepage/recommended?lat=1.2&lng=36.8');
       expect(res.status).toBe(200);
-      expect(ranking.getRecommended).toHaveBeenCalledWith(null, 1.2, 36.8, 12);
+      expect(ranking.getRecommended).toHaveBeenCalledWith(null, 1.2, 36.8, 12, false, true);
     });
   });
 
