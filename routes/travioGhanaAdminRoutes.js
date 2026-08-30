@@ -327,6 +327,9 @@ router.get('/chat/conversations/unread-count', chatController.getUnreadCount);
 router.get('/chat/conversations/:conversationId/messages', chatController.getMessages);
 router.post('/chat/conversations/:conversationId/messages', chatController.sendMessage);
 router.patch('/chat/conversations/:conversationId/read', chatController.markAsRead);
+router.put('/chat/conversations/:conversationId/messages/:messageId', chatController.updateMessage);
+router.delete('/chat/conversations/:conversationId/messages/:messageId', chatController.deleteMessage);
+router.delete('/chat/conversations/:conversationId', chatController.deleteConversation);
 router.post('/chat/upload', chatController.uploadImage);
 router.get('/chat/admin-support', chatController.getAdminSupport);
 
