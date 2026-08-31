@@ -31,6 +31,7 @@ const commands = [
       o.setName('range').setDescription('today or week').setRequired(false)
     ),
   new SlashCommandBuilder().setName('digest').setDescription('Run the daily digest now'),
+  new SlashCommandBuilder().setName('status').setDescription('Full ops status snapshot'),
 ].map((c) => c.toJSON());
 
 function sh(cmd) {
@@ -243,6 +244,43 @@ client.on('interactionCreate', async (interaction) => {
             { name: 'Latest backup', value: backupText, inline: true },
             { name: 'Disk /', value: disk, inline: true },
             { name: 'Server', value: sh('hostname'), inline: true }
+          );
+        await interaction.editReply({ embeds: [embed] });
+        break;
+      }
+
+      case 'status': {
+        let healthText = 'unknown';
+        try {
+          const { code } = httpGet(`${API_URL}/health`);
+          healthText = code === '200' ? 'UP (db + redis healthy)' : `DOWN (HTTP ${code})`;
+        } catch {
+          healthText = 'UNREACHABLE';
+        }
+        const b = latestBackup();
+        const backupText = b
+          ? `${(b.size / 1048576).toFixed(1)} MB · ${b.ageH}h old`
+          : 'no backup';
+        const disk = sh('df -h / | tail -1 | awk \'{print $3 " used of " $2 " (" $5 ")"}\'');
+        const load = sh('cut -d\' \' -f1 /proc/loadavg');
+        const uptime = sh('uptime -p').replace('up ', '');
+        let bookings = 'n/a';
+        const r = await pg
+          .query(
+            `SELECT count(*)::int FROM "Booking" WHERE "createdAt" >= date_trunc('day', now()) AND "isSimulated" = false`
+          )
+          .catch(() => null);
+        if (r) bookings = String(r.rows[0].count);
+        const embed = new EmbedBuilder()
+          .setTitle('TravioAfrica Ops Status')
+          .setColor(healthText.startsWith('UP') ? 0x00ff88 : 0xff5555)
+          .addFields(
+            { name: 'API', value: healthText, inline: true },
+            { name: 'Bookings today', value: bookings, inline: true },
+            { name: 'Load (1m)', value: load, inline: true },
+            { name: 'Uptime', value: uptime, inline: true },
+            { name: 'Latest backup', value: backupText, inline: false },
+            { name: 'Disk /', value: disk, inline: false }
           );
         await interaction.editReply({ embeds: [embed] });
         break;

@@ -23,9 +23,10 @@ function sh(cmd) {
 }
 
 async function main() {
+  const weekly = process.env.DIGEST_PERIOD === 'week';
   const start = new Date();
   start.setUTCHours(0, 0, 0, 0);
-  start.setUTCDate(start.getUTCDate() - 1);
+  start.setUTCDate(start.getUTCDate() - (weekly ? 7 : 1));
   const end = new Date();
   end.setUTCHours(0, 0, 0, 0);
 
@@ -57,9 +58,11 @@ async function main() {
   const lastBackup = sh("grep 'Backup complete' /var/log/travio-backup.log | tail -1") || 'no backups recorded';
   const lastDrill = sh("grep 'Restore drill COMPLETE\\|RESTORE DRILL FAIL' /var/log/travio-backup.log | tail -1") || 'no drills recorded';
 
+  const period = weekly ? '7 days' : 'yesterday';
+  const label = weekly ? 'Weekly' : 'Daily';
   const fields = [
-    { name: 'Bookings (yesterday)', value: `${bookings._count}`, inline: true },
-    { name: 'Revenue (yesterday)', value: `${Number(bookings._sum.grossAmount || 0).toFixed(2)}`, inline: true },
+    { name: `Bookings (${period})`, value: `${bookings._count}`, inline: true },
+    { name: `Revenue (${period})`, value: `${Number(bookings._sum.grossAmount || 0).toFixed(2)}`, inline: true },
     { name: 'New signups', value: `${signups}`, inline: true },
     { name: 'New suppliers', value: `${suppliers}`, inline: true },
     { name: 'Top tours', value: topTours.length ? topTours.join('\n') : 'none', inline: false },
@@ -69,11 +72,11 @@ async function main() {
 
   await notifyDiscord(
     'digest',
-    `Bookings: ${bookings._count} · Revenue: ${Number(bookings._sum.grossAmount || 0).toFixed(2)} · Signups: ${signups} · Suppliers: ${suppliers}`,
-    { title: `TravioAfrica Digest — ${start.toISOString().slice(0, 10)}`, fields, color: 0x00bcd4 }
+    `Bookings (${period}): ${bookings._count} · Revenue: ${Number(bookings._sum.grossAmount || 0).toFixed(2)} · Signups: ${signups} · Suppliers: ${suppliers}`,
+    { title: `TravioAfrica ${label} Digest — ${start.toISOString().slice(0, 10)}`, fields, color: 0x00bcd4 }
   );
 
-  console.log(`[digest] done: bookings=${bookings._count} revenue=${Number(bookings._sum.grossAmount || 0).toFixed(2)} signups=${signups} suppliers=${suppliers}`);
+  console.log(`[digest:${label.toLowerCase()}] done: bookings=${bookings._count} revenue=${Number(bookings._sum.grossAmount || 0).toFixed(2)} signups=${signups} suppliers=${suppliers}`);
 }
 
 main()
