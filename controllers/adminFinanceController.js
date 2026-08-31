@@ -355,6 +355,12 @@ exports.completePayoutRequest = catchAsync(async (req, res, next) => {
     console.error('[Finance] Completion email failed:', err.message)
   );
 
+  notifyDiscord(
+    'approvals',
+    `Payout request ${request.requestNumber} completed — ${toNumber(request.amount).toFixed(2)} ${request.currency} sent (ref ${referenceValue})`,
+    { title: 'Payout completed', cooldownKey: request.id }
+  );
+
   const methodWarning = referenceWarning(referenceValue, request.payoutMethod?.type);
   res.status(200).json({
     status: 'success',

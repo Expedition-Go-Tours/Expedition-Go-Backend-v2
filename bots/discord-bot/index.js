@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
 const { execSync } = require('child_process');
 const { Client: Pg } = require('pg');
 require('dotenv').config();
@@ -72,6 +72,37 @@ client.once('ready', async () => {
   }
 });
 
+async function performApproval(interaction, { action, id, reason }) {
+  const secret = process.env.DISCORD_APPROVAL_SECRET;
+  if (!secret) {
+    return interaction.reply({ content: 'Bot approval secret is not configured.', ephemeral: true });
+  }
+  const body = { type: 'payout', action, id, actorDiscordId: interaction.user.id, actorDiscordTag: interaction.user.tag };
+  if (action === 'reject' && reason) body.reason = reason;
+  const resp = await fetch(`${API_URL}/api/webhooks/discord/approvals`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => ({}));
+  const done = resp.ok;
+  let reply;
+  if (done) {
+    reply = `Payout request ${id} ${action}d by <@${interaction.user.id}>.` + (action === 'reject' && reason ? `\nReason: ${reason}` : '');
+  } else {
+    reply = `Action failed: ${data.message || resp.statusText}`;
+  }
+  if (interaction.deferred || interaction.replied) {
+    await interaction.editReply({ content: reply });
+  } else {
+    await interaction.reply({ content: reply, ephemeral: true });
+  }
+  if (done) {
+    // With Manage Messages the bot can disable the buttons so they aren't re-clicked.
+    await interaction.message?.edit({ components: [] }).catch(() => {});
+  }
+}
+
 async function handleButton(interaction) {
   try {
     const [kind, action, id] = String(interaction.customId || '').split(':');
@@ -80,27 +111,40 @@ async function handleButton(interaction) {
     if (!(await isAllowed(member))) {
       return interaction.reply({ content: 'You need the Admin role to approve.', ephemeral: true });
     }
+    if (action === 'reject') {
+      const modal = new ModalBuilder()
+        .setCustomId(`pv:reject:${id}`)
+        .setTitle('Reject payout request');
+      const reasonInput = new TextInputBuilder()
+        .setCustomId('reason')
+        .setLabel('Rejection reason (shown to the supplier)')
+        .setStyle(TextInputStyle.Paragraph)
+        .setMaxLength(500)
+        .setRequired(true);
+      modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
+      return interaction.showModal(modal);
+    }
     await interaction.deferReply({ ephemeral: true });
-    const secret = process.env.DISCORD_APPROVAL_SECRET;
-    if (!secret) {
-      return interaction.editReply({ content: 'Bot approval secret is not configured.' });
-    }
-    const body = { type: 'payout', action, id };
-    if (action === 'reject') body.reason = 'Rejected via Discord';
-    const resp = await fetch(`${API_URL}/api/webhooks/discord/approvals`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
-      body: JSON.stringify(body),
-    });
-    const data = await resp.json().catch(() => ({}));
-    if (resp.ok) {
-      await interaction.editReply({ content: `Payout request ${id} ${action}d by <@${interaction.user.id}>.` });
-      await interaction.message.edit({ components: [] }).catch(() => {});
-    } else {
-      await interaction.editReply({ content: `Action failed: ${data.message || resp.statusText}` });
-    }
+    await performApproval(interaction, { action, id });
   } catch (e) {
     console.error('[bot] button error:', e.message);
+    await interaction.reply({ content: `Error: ${e.message}`, ephemeral: true }).catch(() => {});
+  }
+}
+
+async function handleModal(interaction) {
+  try {
+    const [kind, action, id] = String(interaction.customId || '').split(':');
+    if (kind !== 'pv' || action !== 'reject') return;
+    const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+    if (!(await isAllowed(member))) {
+      return interaction.reply({ content: 'You need the Admin role to approve.', ephemeral: true });
+    }
+    const reason = interaction.fields.getTextInputValue('reason');
+    await interaction.deferReply({ ephemeral: true });
+    await performApproval(interaction, { action, id, reason });
+  } catch (e) {
+    console.error('[bot] modal error:', e.message);
     await interaction.reply({ content: `Error: ${e.message}`, ephemeral: true }).catch(() => {});
   }
 }
@@ -108,6 +152,9 @@ async function handleButton(interaction) {
 client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton()) {
     return handleButton(interaction);
+  }
+  if (interaction.isModalSubmit()) {
+    return handleModal(interaction);
   }
   if (!interaction.isChatInputCommand()) return;
   try {

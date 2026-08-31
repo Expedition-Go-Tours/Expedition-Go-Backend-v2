@@ -132,9 +132,10 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
     data: { supplierId: supplierProfile.id, userId, applicantName: user?.name, applicantEmail: user?.email },
   }).catch((err) => console.error('[Notification] notifyAdmin (new supplier) failed:', err.message));
 
+  const adminDash = process.env.ADMIN_DASHBOARD_URL;
   notifyDiscord(
     'verification',
-    `${user?.name || 'A user'} (${user?.email || userId}) submitted a supplier application (${supplierType})`,
+    `${user?.name || 'A user'} (${user?.email || userId}) submitted a supplier application (${supplierType})${adminDash ? `\nReview: ${adminDash.replace(/\/+$/, '')}/suppliers/${supplierProfile.id}` : ''}`,
     { title: 'New supplier application', cooldownKey: supplierProfile.id }
   );
 
