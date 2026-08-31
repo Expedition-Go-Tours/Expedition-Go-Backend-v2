@@ -200,6 +200,7 @@ jobs:
 
           ATTEMPT=0
           FIXED=false
+          ATTEMPT_FEEDBACK=""
 
           while [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ] && [ "$FIXED" = "false" ]; do
             ATTEMPT=$((ATTEMPT + 1))
@@ -287,13 +288,15 @@ jobs:
             printf '%s' "$FAIL_JOBS" > /tmp/ai-fail-jobs.txt
             printf '%s' "$FILE_CONTEXT" > /tmp/ai-file-context.txt
             printf '%s' "$LINT_ERRORS" > /tmp/ai-lint-errors.txt
+            printf '%s' "$ATTEMPT_FEEDBACK" > /tmp/ai-feedback.txt
 
             PROMPT=$(jq -n --rawfile template /tmp/ai-template.txt \
               --rawfile log /tmp/ai-fail-log.txt \
               --rawfile jobs /tmp/ai-fail-jobs.txt \
               --rawfile files /tmp/ai-file-context.txt \
               --rawfile linterr /tmp/ai-lint-errors.txt \
-              '$template | gsub("\\{\\{FAIL_LOG\\}\\}"; $log) | gsub("\\{\\{FAIL_JOBS\\}\\}"; $jobs) | gsub("\\{\\{FILE_CONTENTS\\}\\}"; $files) | gsub("\\{\\{LINT_ERRORS\\}\\}"; $linterr)' 2>.ci-results/jq-prompt-error.txt)
+              --rawfile feedback /tmp/ai-feedback.txt \
+              '$template | gsub("\\{\\{FAIL_LOG\\}\\}"; $log) | gsub("\\{\\{FAIL_JOBS\\}\\}"; $jobs) | gsub("\\{\\{FILE_CONTENTS\\}\\}"; $files) | gsub("\\{\\{LINT_ERRORS\\}\\}"; $linterr) | gsub("\\{\\{PREV_ATTEMPT_FEEDBACK\\}\\}"; $feedback)' 2>.ci-results/jq-prompt-error.txt)
             if [ -z "$PROMPT" ]; then
               echo "ERROR: Failed to build prompt" | tee -a .ci-results/debug-log.txt
               echo "jq prompt error: $(cat .ci-results/jq-prompt-error.txt)" | tee -a .ci-results/debug-log.txt
@@ -463,6 +466,7 @@ jobs:
               cat .ci-results/diff-guard-output.txt | tee -a .ci-results/debug-log.txt
               if [ "$DIFF_GUARD_EXIT" != "0" ]; then
                 echo "Diff guard rejected the patch. Reverting..." | tee -a .ci-results/debug-log.txt
+                ATTEMPT_FEEDBACK="Attempt $ATTEMPT was REJECTED by the diff guard. Reason: $(cat .ci-results/diff-guard-output.txt 2>/dev/null | tail -8 | tr '\n' ' ')"
                 git checkout -- .
                 rm -f .ci-results/fix-backup-*
                 continue
@@ -480,11 +484,13 @@ jobs:
               else
                 cat .ci-results/verify-output.txt | tee -a .ci-results/debug-log.txt
                 echo "Verification failed. Reverting..." | tee -a .ci-results/debug-log.txt
+                ATTEMPT_FEEDBACK="Attempt $ATTEMPT applied changes but verification FAILED. Last output: $(tail -30 .ci-results/verify-output.txt 2>/dev/null | tr '\n' ' ')"
                 git checkout -- .
                 rm -f .ci-results/fix-backup-*
               fi
             else
               echo "Could not apply fix (attempt $ATTEMPT)" | tee -a .ci-results/debug-log.txt
+              ATTEMPT_FEEDBACK="Attempt $ATTEMPT: the model returned fixes but they could not be applied (file not found or no applicable actions)."
             fi
           done
 

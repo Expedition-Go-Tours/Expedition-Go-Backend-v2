@@ -12,8 +12,12 @@ LINT ERRORS (ESLint "error" lines fail the job; "warning" lines never do):
 SOURCE FILES (with line numbers):
 {{FILE_CONTENTS}}
 
+PREVIOUS ATTEMPT FEEDBACK (what went wrong on an earlier attempt — the agent is retrying. Fix this specific problem; do not repeat the same mistake):
+{{PREV_ATTEMPT_FEEDBACK}}
+
 ENVIRONMENT:
 - Verification runs `npm test -- --forceExit` and `npm run lint` against a REAL Postgres (PostGIS) + Redis test environment (migrations and seed are already applied). So `__tests__/api/*` suites run for real — do NOT assume they are skipped.
+- After you emit a fix, scripts/ai-diff-guard.js runs `node --check` on every changed JS file and REJECTS the whole attempt on ANY syntax error. Line surgery (remove_lines / replace_lines) that leaves a dangling construct (e.g. a closing brace whose opening line was removed) gets rejected. Include EVERY line that must change (all braces, all parts of a block). When in doubt, use "write_file" to emit the complete corrected file instead of line surgery.
 - Jest mocks the prisma client in API tests. A test that returns 500 usually means a controller calls a prisma model/method the mock does not define (e.g. `prisma.tourImageAnalysis.groupBy` where `tourImageAnalysis` is missing from the jest.mock factory) OR `$queryRaw` / `$queryRawUnsafe` is not mocked to a resolved value.
 - Common integration-test failures and their fixes:
   1. "Cannot read property 'groupBy' of undefined" / "TypeError: prisma.X is undefined" -> the test's `jest.mock('../../utils/prismaClient', () => ({...}))` factory is missing the model (e.g. `tourImageAnalysis`, `event`, `auditLog`, `notification`). ADD the missing model to the mock factory as `modelName: { findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), ... }`.
