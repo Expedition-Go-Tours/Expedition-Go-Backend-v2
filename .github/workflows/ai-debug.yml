@@ -19,10 +19,47 @@ jobs:
   ai-debug:
     if: ${{ github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.head_branch == 'main' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 18
+    timeout-minutes: 40
     env:
       MAX_ATTEMPTS: 3
       MAX_FILES: 10
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/test
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-test-jwt-secret
+      JWT_REFRESH_SECRET: ci-test-jwt-refresh-secret
+      STRIPE_SECRET_KEY: sk_test_dummy
+      STRIPE_WEBHOOK_SECRET: whsec_dummy
+      CLOUDINARY_CLOUD_NAME: dummy
+      CLOUDINARY_API_KEY: '000000000000000'
+      CLOUDINARY_API_SECRET: dummy-secret
+      SENDGRID_API_KEY: SG.dummy
+      FIREBASE_PROJECT_ID: dummy-project
+      FIREBASE_CLIENT_EMAIL: dummy@dummy.com
+      ALLOWED_ORIGINS: http://localhost:3000
+    services:
+      postgis:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
     steps:
       - name: Checkout failing branch
         uses: actions/checkout@v4
@@ -75,10 +112,17 @@ jobs:
           echo "--- lint errors (fed to AI) ---"
           cat .ci-results/lint-errors.txt
 
+      - name: Prepare test database
+        run: |
+          npx prisma generate
+          npx prisma migrate deploy
+          node prisma/seed.js
+
       - name: Run AI debug agent
         id: debug
         env:
           MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
+          AI_MODEL: ${{ vars.AI_MODEL }}
         run: |
           set +e
           mkdir -p .ci-results
@@ -198,9 +242,13 @@ jobs:
                   STEM=${STEM%.test}; STEM=${STEM%.spec}
                   for C in \
                     "controllers/${STEM}Controller.js" \
+                    "controllers/${STEM}AdminController.js" \
+                    "controllers/admin${STEM}.js" \
                     "routes/${STEM}Routes.js" \
+                    "routes/${STEM}AdminRoutes.js" \
                     "utils/${STEM}.js" \
                     "utils/${STEM}Service.js" \
+                    "utils/${STEM}Helpers.js" \
                     "middleware/${STEM}.js" \
                     "models/${STEM}.js"; do
                     [ -f "$C" ] && echo "$C" >> "$MAPPED"
@@ -261,8 +309,9 @@ jobs:
 
             # Build request body using --rawfile (prompt carries via file, avoids argv 128KB limit)
             printf '%s' "$PROMPT" > /tmp/ai-prompt.txt
-            jq -n --rawfile prompt /tmp/ai-prompt.txt \
-              '{model:"mimo-v2.5",messages:[{role:"user",content:$prompt}],max_tokens:100000,temperature:0.1}' \
+            MODEL="${AI_MODEL:-mimo-v2.5}"
+            jq -n --rawfile prompt /tmp/ai-prompt.txt --arg model "$MODEL" \
+              '{model:$model,messages:[{role:"user",content:$prompt}],max_tokens:100000,temperature:0.1}' \
               > /tmp/mimo_request.json 2>.ci-results/jq-error.txt
 
             if [ ! -s /tmp/mimo_request.json ]; then
@@ -361,7 +410,13 @@ jobs:
 
                 cp "$FIX_FILE" ".ci-results/fix-backup-$(echo $FIX_FILE | tr '/' '_')"
 
-                if [ "$FIX_ACTION" = "remove_lines" ]; then
+                if [ "$FIX_ACTION" = "write_file" ]; then
+                  NEW_ARRAY=()
+                  while IFS= read -r line; do NEW_ARRAY+=("$line"); done <<< "$(echo "$PARSED" | jq -r ".fixes[$i].new_lines[]? // empty" 2>/dev/null)"
+                  printf '%s\n' "${NEW_ARRAY[@]}" > "$FIX_FILE"
+                  APPLIED=true
+
+                elif [ "$FIX_ACTION" = "remove_lines" ]; then
                   for LN in $(echo "$FIX_LINES" | sort -rn); do
                     sed -i "${LN}d" "$FIX_FILE"
                   done
@@ -611,35 +666,39 @@ jobs:
 
       - name: Create issue on failure
         if: steps.debug.outputs.fixed != 'true' && steps.debug.outputs.skip_reason != 'infra_flake'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ISSUE_BODY="## CI Failure"$'\n\n'
-          ISSUE_BODY+="**Branch:** \`${{ github.event.workflow_run.head_branch }}\`"$'\n'
-          ISSUE_BODY+="**Run:** [${{ github.event.workflow_run.id }}](${{ github.event.workflow_run.html_url }})"$'\n'
-          ISSUE_BODY+="**Attempts:** ${{ steps.debug.outputs.attempts }} / $MAX_ATTEMPTS"$'\n'
-          ISSUE_BODY+="**AI Analysis:** ${{ steps.debug.outputs.last_analysis }}"$'\n'
-          ISSUE_BODY+="**AI Confidence:** ${{ steps.debug.outputs.last_confidence }}"$'\n\n'
-          ISSUE_BODY+="AI debug agent could not resolve this. Manual fix needed."$'\n\n'
-          ISSUE_BODY+="1. Check the [failed CI logs](${{ github.event.workflow_run.html_url }})"$'\n'
-          ISSUE_BODY+="2. Fix manually"$'\n'
-          ISSUE_BODY+="3. Push to trigger CI again"$'\n\n'
-          ISSUE_BODY+="### AI Debug Log"$'\n'
-          ISSUE_BODY+='```'$'\n'
-          ISSUE_BODY+="$(cat .ci-results/debug-log.txt 2>/dev/null | tail -c 6000)"$'\n'
-          ISSUE_BODY+='```'$'\n\n'
-          ISSUE_BODY+="Generated by ai-debug.yml"
-
           gh label create "ci-failure" --description "CI is broken" --color "d73a4a" 2>/dev/null || true
           gh label create "needs-attention" --description "Requires investigation" --color "e99695" 2>/dev/null || true
 
-          gh issue create \
-            --title "CI failure — AI debug unsuccessful" \
-            --body "$ISSUE_BODY" \
-            --label "ci-failure,needs-attention" 2>/dev/null || \
-          gh issue create \
-            --title "CI failure — AI debug unsuccessful" \
-            --body "$ISSUE_BODY"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Build the body with jq (--arg escapes AI-generated text so it can never
+          # break the shell or corrupt the JSON body).
+          jq -n \
+            --arg title "CI failure — AI debug unsuccessful" \
+            --arg branch "${{ github.event.workflow_run.head_branch }}" \
+            --arg runid "${{ github.event.workflow_run.id }}" \
+            --arg runurl "${{ github.event.workflow_run.html_url }}" \
+            --arg attempts "${{ steps.debug.outputs.attempts }} / $MAX_ATTEMPTS" \
+            --arg analysis "${{ steps.debug.outputs.last_analysis }}" \
+            --arg confidence "${{ steps.debug.outputs.last_confidence }}" \
+            --arg log "$(cat .ci-results/debug-log.txt 2>/dev/null | tail -c 6000)" \
+            '{title:$title, labels:["ci-failure","needs-attention"], body:(
+              "## CI Failure\n\n"
+              + "**Branch:** `" + $branch + "`\n"
+              + "**Run:** [" + $runid + "](" + $runurl + ")\n"
+              + "**Attempts:** " + $attempts + "\n"
+              + "**AI Analysis:** " + (if ($analysis=="" or $analysis=="null") then "_none captured_" else $analysis end) + "\n"
+              + "**AI Confidence:** " + $confidence + "\n\n"
+              + "AI debug agent could not resolve this. Manual fix needed.\n\n"
+              + "1. Check the [failed CI logs](" + $runurl + ")\n"
+              + "2. Fix manually\n"
+              + "3. Push to trigger CI again\n\n"
+              + "### AI Debug Log\n```\n" + $log + "\n```\n\n"
+              + "Generated by ai-debug.yml"
+            )}' > /tmp/issue-body.json
+
+          gh issue create --input /tmp/issue-body.json 2>/dev/null || gh issue create --input /tmp/issue-body.json
 
       - name: Save debug artifacts
         if: always()
