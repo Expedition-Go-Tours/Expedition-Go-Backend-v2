@@ -151,7 +151,3 @@ exports.testWebhook = catchAsync(async (req, res, next) => {
 
 module.exports = exports;
 
-// TEMP-LIVE-TEST: dead helper referencing an undefined identifier (lint error only)
-function ciTestHelperForLiveTest() {
-  return ciTestMissingGlobalValue;
-}
