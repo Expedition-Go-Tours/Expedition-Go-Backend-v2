@@ -56,7 +56,7 @@ async function post(url, payload) {
  *
  * @param {'deploys'|'incidents'|'sales'|'verification'|'digest'|'approvals'} channel
  * @param {string} content plain-text message body
- * @param {{cooldownMs?: number, cooldownKey?: string, title?: string, fields?: Array<{name: string; value: string; inline?: boolean}>, color?: number}} [opts]
+ * @param {{cooldownMs?: number, cooldownKey?: string, title?: string, fields?: Array<{name: string; value: string; inline?: boolean}>, color?: number, components?: Array<{type: number; components: Array<{type: number; style?: number; label?: string; custom_id?: string; url?: string}>}>}} [opts]
  * @returns {Promise<void>} always resolves; never rejects
  */
 function notifyDiscord(channel, content, opts = {}) {
@@ -80,6 +80,7 @@ function notifyDiscord(channel, content, opts = {}) {
   } else {
     payload.content = content;
   }
+  if (opts.components && opts.components.length) payload.components = opts.components;
   return post(url, payload);
 }
 

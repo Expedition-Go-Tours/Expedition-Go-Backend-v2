@@ -8,6 +8,7 @@
 
 const express = require('express');
 const webhookController = require('../controllers/webhookController');
+const discordApprovalController = require('../controllers/discordApprovalController');
 
 const router = express.Router();
 
@@ -72,6 +73,14 @@ const router = express.Router();
  *                   example: Webhook signature verification failed
  */
 router.post('/stripe', express.raw({ type: 'application/json' }), webhookController.handleStripeWebhook);
+
+/**
+ * POST /webhooks/discord/approvals
+ * Secure bridge for the Discord approvals bot.
+ * Auth: Authorization: Bearer <DISCORD_APPROVAL_SECRET>
+ * Body: { type: 'payout', action: 'approve'|'reject', id: '<requestId>', reason? }
+ */
+router.post('/discord/approvals', discordApprovalController.handleApproval);
 
 /**
  * @swagger

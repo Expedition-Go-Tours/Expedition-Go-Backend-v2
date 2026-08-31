@@ -298,9 +298,20 @@ exports.createPayoutRequest = catchAsync(async (req, res, next) => {
   }).catch(() => {});
 
   notifyDiscord(
-    'verification',
-    `Payout request submitted — ${requests.reduce((s, r) => s + toNumber(r.amount), 0).toFixed(2)} ${requests[0].currency} (${requests.reduce((s, r) => s + r.bookingCount, 0)} bookings)`,
-    { title: 'Payout request needs approval', cooldownKey: requests[0].id }
+    'approvals',
+    `[PAYOUT REQUEST] ${requests[0].requestNumber} — ${requests.reduce((s, r) => s + toNumber(r.amount), 0).toFixed(2)} ${requests[0].currency} (${requests.reduce((s, r) => s + r.bookingCount, 0)} bookings)`,
+    {
+      cooldownKey: requests[0].id,
+      components: [
+        {
+          type: 1,
+          components: [
+            { type: 2, style: 3, label: 'Approve', custom_id: `pv:approve:${requests[0].id}` },
+            { type: 2, style: 4, label: 'Reject', custom_id: `pv:reject:${requests[0].id}` },
+          ],
+        },
+      ],
+    }
   );
 
   enqueueEmail({ type: 'payout-request-submitted', payoutRequestId: requests[0].id }).catch((err) =>

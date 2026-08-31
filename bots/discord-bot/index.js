@@ -72,7 +72,43 @@ client.once('ready', async () => {
   }
 });
 
+async function handleButton(interaction) {
+  try {
+    const [kind, action, id] = String(interaction.customId || '').split(':');
+    if (kind !== 'pv') return;
+    const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+    if (!(await isAllowed(member))) {
+      return interaction.reply({ content: 'You need the Admin role to approve.', ephemeral: true });
+    }
+    await interaction.deferReply({ ephemeral: true });
+    const secret = process.env.DISCORD_APPROVAL_SECRET;
+    if (!secret) {
+      return interaction.editReply({ content: 'Bot approval secret is not configured.' });
+    }
+    const body = { type: 'payout', action, id };
+    if (action === 'reject') body.reason = 'Rejected via Discord';
+    const resp = await fetch(`${API_URL}/api/webhooks/discord/approvals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (resp.ok) {
+      await interaction.editReply({ content: `Payout request ${id} ${action}d by <@${interaction.user.id}>.` });
+      await interaction.message.edit({ components: [] }).catch(() => {});
+    } else {
+      await interaction.editReply({ content: `Action failed: ${data.message || resp.statusText}` });
+    }
+  } catch (e) {
+    console.error('[bot] button error:', e.message);
+    await interaction.reply({ content: `Error: ${e.message}`, ephemeral: true }).catch(() => {});
+  }
+}
+
 client.on('interactionCreate', async (interaction) => {
+  if (interaction.isButton()) {
+    return handleButton(interaction);
+  }
   if (!interaction.isChatInputCommand()) return;
   try {
     const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
