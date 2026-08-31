@@ -510,6 +510,7 @@ jobs:
           username: deploy
           key: ${{ secrets.HETZNER_SSH_KEY }}
           script: |
+            set -euo pipefail
             cd /home/deploy/Expedition-Go-Backend-v2
 
             echo "=== Pulling latest code ==="
