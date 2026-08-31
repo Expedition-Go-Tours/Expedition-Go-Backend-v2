@@ -385,6 +385,11 @@ jobs:
             echo "Analysis: $ANALYSIS" | tee -a .ci-results/debug-log.txt
             echo "Confidence: $CONFIDENCE" | tee -a .ci-results/debug-log.txt
 
+            # Persist analysis to a file so downstream steps can read it via
+            # jq --rawfile instead of interpolating it into shell strings
+            # (AI text with quotes/dollars would otherwise break the script).
+            printf '%s' "$ANALYSIS" > .ci-results/last-analysis.txt 2>/dev/null || true
+
             IS_LOW=$(echo "$CONFIDENCE" | jq 'if type == "number" and . < 0.5 then true else false end' 2>/dev/null)
             if [ "$IS_LOW" = "true" ]; then
               echo "Confidence too low ($CONFIDENCE). Skipping." | tee -a .ci-results/debug-log.txt
@@ -514,7 +519,7 @@ jobs:
           set -o pipefail
           DEBUG_BRANCH="${{ steps.debug.outputs.debug_branch }}"
           ATTEMPTS="${{ steps.debug.outputs.attempts }}"
-          ANALYSIS="${{ steps.debug.outputs.last_analysis }}"
+          ANALYSIS="$(cat .ci-results/last-analysis.txt 2>/dev/null || true)"
           SIG="${{ steps.debug.outputs.sig }}"
           REPO="Expedition-Go-Tours/Expedition-Go-Backend-v2"
           RUN_URL="${{ github.event.workflow_run.html_url }}"
@@ -672,17 +677,20 @@ jobs:
           gh label create "ci-failure" --description "CI is broken" --color "d73a4a" 2>/dev/null || true
           gh label create "needs-attention" --description "Requires investigation" --color "e99695" 2>/dev/null || true
 
-          # Build the body with jq (--arg escapes AI-generated text so it can never
-          # break the shell or corrupt the JSON body).
+          # Build the body with jq. AI text (analysis + debug log) is read via
+          # --rawfile from files, NEVER interpolated into the shell, so it can
+          # never break the script or corrupt the JSON body.
+          cp .ci-results/last-analysis.txt /tmp/ai-analysis.txt 2>/dev/null || printf '' > /tmp/ai-analysis.txt
+          cp .ci-results/debug-log.txt /tmp/ai-debug-log.txt 2>/dev/null || printf '' > /tmp/ai-debug-log.txt
           jq -n \
-            --arg title "CI failure — AI debug unsuccessful" \
+            --arg title "CI failure - AI debug unsuccessful" \
             --arg branch "${{ github.event.workflow_run.head_branch }}" \
             --arg runid "${{ github.event.workflow_run.id }}" \
             --arg runurl "${{ github.event.workflow_run.html_url }}" \
-            --arg attempts "${{ steps.debug.outputs.attempts }} / $MAX_ATTEMPTS" \
-            --arg analysis "${{ steps.debug.outputs.last_analysis }}" \
+            --arg attempts "${{ steps.debug.outputs.attempts }}" \
             --arg confidence "${{ steps.debug.outputs.last_confidence }}" \
-            --arg log "$(cat .ci-results/debug-log.txt 2>/dev/null | tail -c 6000)" \
+            --rawfile analysis /tmp/ai-analysis.txt \
+            --rawfile log /tmp/ai-debug-log.txt \
             '{title:$title, labels:["ci-failure","needs-attention"], body:(
               "## CI Failure\n\n"
               + "**Branch:** `" + $branch + "`\n"
