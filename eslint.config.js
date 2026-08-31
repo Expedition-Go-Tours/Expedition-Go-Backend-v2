@@ -7,6 +7,7 @@ module.exports = [
       'node_modules/',
       'coverage/',
       'generated/',
+      '.ci-results/',
       '*.md',
       'Expedition-GO-Frontend-main/',
       'Expedition-Go-Dashboard-main/',
