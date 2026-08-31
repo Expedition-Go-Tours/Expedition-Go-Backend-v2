@@ -496,7 +496,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Notify deploy started
-        if: ${{ secrets.DISCORD_DEPLOY_WEBHOOK != '' }}
+        if: env.DISCORD_WEBHOOK != ''
         uses: Ilshidur/action-discord@0.3.2
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
@@ -533,7 +533,7 @@ jobs:
             echo "=== Deploy complete ==="
 
       - name: Notify deploy succeeded
-        if: ${{ success() && secrets.DISCORD_DEPLOY_WEBHOOK != '' }}
+        if: success() && env.DISCORD_WEBHOOK != ''
         uses: Ilshidur/action-discord@0.3.2
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
@@ -541,7 +541,7 @@ jobs:
           args: 'Deploy to Hetzner completed successfully'
 
       - name: Notify deploy failed
-        if: ${{ failure() && secrets.DISCORD_DEPLOY_WEBHOOK != '' }}
+        if: failure() && env.DISCORD_WEBHOOK != ''
         uses: Ilshidur/action-discord@0.3.2
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
