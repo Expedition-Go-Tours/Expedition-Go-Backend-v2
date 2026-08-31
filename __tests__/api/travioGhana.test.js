@@ -21,6 +21,9 @@ jest.mock('../../utils/prismaClient', () => ({
   dispute: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn() },
   chatConversation: { findMany: jest.fn(), count: jest.fn() },
   cancellationRecord: { findMany: jest.fn(), count: jest.fn() },
+  event: { findMany: jest.fn() },
+  auditLog: { findMany: jest.fn() },
+  tourImageAnalysis: { findMany: jest.fn(), groupBy: jest.fn() },
   $transaction: jest.fn(),
   $queryRaw: jest.fn(),
   $queryRawUnsafe: jest.fn(),
@@ -413,6 +416,17 @@ describe('TravioGhana API — admin endpoints', () => {
     prisma.travioGhanaTour.count.mockResolvedValue(1);
     prisma.booking.count.mockResolvedValue(0);
     prisma.booking.aggregate.mockResolvedValue({ _sum: { grossAmount: 0 } });
+    prisma.$queryRaw.mockResolvedValue([{
+      todayRevenue: 0, todayPayout: 0, todayCommission: 0, todayBookings: 0,
+      yesterdayRevenue: 0, yesterdayPayout: 0, yesterdayCommission: 0, yesterdayBookings: 0,
+      weekRevenue: 0, weekPayout: 0, weekCommission: 0, weekBookings: 0,
+      monthRevenue: 0, monthPayout: 0, monthCommission: 0, monthBookings: 0,
+      ytdRevenue: 0, ytdPayout: 0, ytdCommission: 0, ytdBookings: 0,
+      signupsToday: 0, signupsYesterday: 0, signupsWeek: 0, signupsMonth: 0, signupsYtd: 0,
+      activeToday: 0, activePrevious: 0, totalEvents: 0,
+    }]);
+    prisma.event.findMany.mockResolvedValue([]);
+    prisma.auditLog.findMany.mockResolvedValue([]);
     const res = await request(app).get('/api/travioghana/admin/analytics/overview').set(auth(adminToken));
     expect(res.status).toBe(200);
   });
@@ -451,6 +465,9 @@ describe('TravioGhana API — admin endpoints', () => {
 
   it('GET /ai/status returns 200', async () => {
     prisma.travioGhanaTour.count.mockResolvedValue(1);
+    prisma.$queryRaw.mockResolvedValue([]);
+    prisma.tourImageAnalysis.groupBy.mockResolvedValue([]);
+    prisma.tour.findFirst.mockResolvedValue(null);
     const res = await request(app).get('/api/travioghana/admin/ai/status').set(auth(adminToken));
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('success');
@@ -458,6 +475,8 @@ describe('TravioGhana API — admin endpoints', () => {
 
   it('GET /ai/failed returns 200', async () => {
     prisma.travioGhanaTour.findMany.mockResolvedValue([]);
+    prisma.tour.findMany.mockResolvedValue([]);
+    prisma.tourImageAnalysis.findMany.mockResolvedValue([]);
     const res = await request(app).get('/api/travioghana/admin/ai/failed').set(auth(adminToken));
     expect(res.status).toBe(200);
   });
