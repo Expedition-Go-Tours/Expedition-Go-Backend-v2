@@ -14,6 +14,7 @@
 
 const crypto = require('crypto');
 const Stripe = require('stripe');
+const { notifyDiscord } = require('./discordNotifier');
 
 let _stripe = null;
 function getStripe() {
@@ -569,6 +570,13 @@ async function processStripeWebhook(event) {
       enqueueEmail({ type: 'supplier-pickup-updated', bookingId: booking.id })
         .catch((err) => console.error('[Email] supplier-pickup-updated failed:', err.message));
     }
+
+    // Discord: new confirmed booking (fire-and-forget, never affects booking state)
+    notifyDiscord(
+      'sales',
+      `New booking ${booking.bookingNumber} — ${booking.currency || 'USD'} ${parseFloat(booking.grossAmount).toFixed(2)} for "${booking.tour?.title || 'Unknown tour'}" (${booking.source})`,
+      { title: 'New booking', cooldownKey: booking.id }
+    );
 
     if (isExpedition) {
       notifyAdmin({

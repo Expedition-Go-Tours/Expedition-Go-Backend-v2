@@ -24,6 +24,7 @@ const {
 } = require('../utils/supplierVerification');
 const admin = require('../config/firebaseAdmin');
 const logger = require('../utils/logger');
+const { notifyDiscord } = require('../utils/discordNotifier');
 
 // ================================
 // SUPPLIER APPLICATION
@@ -130,6 +131,12 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
     message: `${user?.name || 'A user'} (${user?.email || userId}) has submitted a supplier application.`,
     data: { supplierId: supplierProfile.id, userId, applicantName: user?.name, applicantEmail: user?.email },
   }).catch((err) => console.error('[Notification] notifyAdmin (new supplier) failed:', err.message));
+
+  notifyDiscord(
+    'verification',
+    `${user?.name || 'A user'} (${user?.email || userId}) submitted a supplier application (${supplierType})`,
+    { title: 'New supplier application', cooldownKey: supplierProfile.id }
+  );
 
   await logActivity({
     userId,

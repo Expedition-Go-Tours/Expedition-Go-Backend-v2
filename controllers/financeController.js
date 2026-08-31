@@ -5,6 +5,7 @@ const { getRequestWindow, getCurrentCycle, getClearanceBufferDays } = require('.
 const { logActivity } = require('../utils/auditLogger');
 const { enqueueNotification, enqueueEmail } = require('../utils/queue');
 const { notifyAdmin } = require('../utils/adminNotificationService');
+const { notifyDiscord } = require('../utils/discordNotifier');
 
 // ── Finance v2 — supplier-facing payout cycle endpoints ──
 // Mounted at /finance (see routes/financeRoutes.js). All routes resolve the
@@ -295,6 +296,12 @@ exports.createPayoutRequest = catchAsync(async (req, res, next) => {
     message: `Supplier submitted a payout request for ${requests.reduce((s, r) => s + toNumber(r.amount), 0).toFixed(2)} ${requests[0].currency} (${requests.reduce((s, r) => s + r.bookingCount, 0)} bookings).`,
     data: { payoutRequestId: requests[0].id, supplierId },
   }).catch(() => {});
+
+  notifyDiscord(
+    'verification',
+    `Payout request submitted — ${requests.reduce((s, r) => s + toNumber(r.amount), 0).toFixed(2)} ${requests[0].currency} (${requests.reduce((s, r) => s + r.bookingCount, 0)} bookings)`,
+    { title: 'Payout request needs approval', cooldownKey: requests[0].id }
+  );
 
   enqueueEmail({ type: 'payout-request-submitted', payoutRequestId: requests[0].id }).catch((err) =>
     console.error('[Finance] Payout request email failed:', err.message)

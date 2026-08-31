@@ -4,6 +4,7 @@ const AppError = require('../utils/appError');
 const { logActivity } = require('../utils/auditLogger');
 const { enqueueNotification, enqueueEmail } = require('../utils/queue');
 const { detachBookingFromActiveRequests, unfreezeBookingAfterDispute } = require('../utils/financeHelpers');
+const { notifyDiscord } = require('../utils/discordNotifier');
 
 // ── Finance v2 — admin processing of supplier payout requests + disputes ──
 // Mounted at /admin/finance (see routes/adminFinanceRoutes.js).
@@ -206,6 +207,12 @@ exports.approvePayoutRequest = catchAsync(async (req, res, next) => {
 
   enqueueEmail({ type: 'payout-request-approved', payoutRequestId: request.id }).catch((err) =>
     console.error('[Finance] Approval email failed:', err.message)
+  );
+
+  notifyDiscord(
+    'approvals',
+    `Payout request ${request.requestNumber} approved — ${toNumber(request.amount).toFixed(2)} ${request.currency}`,
+    { title: 'Payout approved', cooldownKey: request.id }
   );
 
   // Optional auto-complete (provider integrations land here later)

@@ -495,6 +495,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Notify deploy started
+        if: ${{ secrets.DISCORD_DEPLOY_WEBHOOK != '' }}
+        uses: Ilshidur/action-discord@0.3.2
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+        with:
+          args: 'Deploy to Hetzner started (commit ${{ github.sha }})'
+
       - name: Deploy to Hetzner via SSH
         uses: appleboy/ssh-action@v1
         with:
@@ -523,6 +531,22 @@ jobs:
             pm2 save
 
             echo "=== Deploy complete ==="
+
+      - name: Notify deploy succeeded
+        if: ${{ success() && secrets.DISCORD_DEPLOY_WEBHOOK != '' }}
+        uses: Ilshidur/action-discord@0.3.2
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+        with:
+          args: 'Deploy to Hetzner completed successfully'
+
+      - name: Notify deploy failed
+        if: ${{ failure() && secrets.DISCORD_DEPLOY_WEBHOOK != '' }}
+        uses: Ilshidur/action-discord@0.3.2
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+        with:
+          args: 'Deploy to Hetzner FAILED — check the GitHub Actions run'
 
   # ── Post-deploy verification (main only) ──────────────────────────
   deploy-verify:

@@ -11,6 +11,7 @@ const AppError = require('../utils/appError');
 const { processStripeWebhook, verifyWebhookSignature } = require('../utils/stripeHelpers');
 const { enqueueWebhookRetry } = require('../utils/queue');
 const { logActivity } = require('../utils/auditLogger');
+const { notifyDiscord } = require('../utils/discordNotifier');
 
 /**
  * Handle Stripe webhooks
@@ -57,6 +58,23 @@ exports.handleStripeWebhook = catchAsync(async (req, res, next) => {
 
     if (result.success) {
       console.log(`✅ Webhook processed successfully: ${result.message}`);
+
+      // Discord: payment events (fire-and-forget, never affects webhook handling)
+      if (event.type === 'payment_intent.payment_failed') {
+        const pi = event.data.object || {};
+        notifyDiscord(
+          'sales',
+          `Payment failed — ${(pi.currency || 'USD').toUpperCase()} ${((pi.amount || 0) / 100).toFixed(2)} (PaymentIntent ${pi.id || 'unknown'})`,
+          { cooldownKey: pi.id || event.id }
+        );
+      } else if (event.type === 'charge.refunded') {
+        const ch = event.data.object || {};
+        notifyDiscord(
+          'sales',
+          `Refund issued — ${(ch.currency || 'USD').toUpperCase()} ${((ch.amount_refunded || 0) / 100).toFixed(2)} (Charge ${ch.id || 'unknown'})`,
+          { cooldownKey: ch.id || event.id }
+        );
+      }
     } else {
       console.error(`❌ Webhook processing failed: ${result.message}`);
     }
