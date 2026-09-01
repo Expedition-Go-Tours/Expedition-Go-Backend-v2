@@ -192,16 +192,22 @@ npm run test:perf:smoke
 
 ---
 
-## Deployment (Render)
+## Deployment (Hetzner)
 
-The repo ships a Render Blueprint (`render.yaml`) for the `Expedition-Go-Backend-v2` web service:
+Production runs on a Hetzner Cloud VPS (Ubuntu 22.04, Node 22, PostgreSQL 18.6, Redis 8.0.5).
 
-```yaml
-buildCommand: npm install && npx prisma generate
-preDeployCommand: npx prisma migrate deploy   # migrations run automatically before start
-startCommand: node server.js
-healthCheckPath: /health
-autoDeployTrigger: checksPass
+**Infrastructure:** Nginx reverse proxy → PM2 → Node.js app on port 5000. Domain: `apiv1.travioafrica.com`.
+
+**CI/CD:** Pushing to `main` triggers `.github/workflows/ci.yml`, which runs all test suites and then auto-deploys via SSH:
+
+```bash
+ssh deploy@<hetzner-host>
+cd /home/deploy/Expedition-Go-Backend-v2
+git pull origin main
+npm install --omit=dev
+npx prisma generate
+npx prisma migrate deploy
+pm2 restart all
 ```
 
 Database migrations are applied automatically on every deploy. For existing suppliers created before the verification feature shipped, run the backfill once after the first deploy:

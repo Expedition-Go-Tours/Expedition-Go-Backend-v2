@@ -1,4 +1,4 @@
-api.travioafrica.com {
+apiv1.travioafrica.com {
 	reverse_proxy app:5000
 }
 

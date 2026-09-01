@@ -134,7 +134,7 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
         description: 'Development server - Local development environment'
       },
       {
-        url: 'https://expedition-go-backend-v2.onrender.com/api',
+        url: 'https://apiv1.travioafrica.com/api',
         description: 'Production server - Live production environment'
       },
       {

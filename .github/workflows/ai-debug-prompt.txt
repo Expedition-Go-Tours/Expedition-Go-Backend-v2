@@ -32,7 +32,7 @@ YOUR TASK:
 
 RULES:
 1. Maximum 10 files can be changed.
-2. NEVER modify: .env, render.yaml, .github/workflows/*, prisma/migrations/*, package.json (unless a genuine missing devDependency forces it), package-lock.json, Dockerfile, docker-compose.*.
+2. NEVER modify: .env, .github/workflows/*, prisma/migrations/*, package.json (unless a genuine missing devDependency forces it), package-lock.json, Dockerfile, docker-compose.*.
 3. Keep changes minimal — fix the exact bug, nothing else.
 4. Fix EVERY lint "error" line (warnings can be ignored).
 5. For test failures where production changed intentionally: update the test to match the NEW behavior EXACTLY. NEVER weaken tests:
