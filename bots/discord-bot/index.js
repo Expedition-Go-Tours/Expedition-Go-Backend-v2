@@ -2,7 +2,7 @@ const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuild
 const { execSync } = require('child_process');
 const { Client: Pg } = require('pg');
 const { callMimo } = require('../../utils/mimoClient');
-const { validateReadOnly } = require('../../utils/sqlGuard');
+const { runQueryAgent } = require('./queryAgent');
 require('dotenv').config();
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -110,87 +110,6 @@ function latestBackup() {
   return { file, size: Number(size), ageH: Math.round(ageH) };
 }
 
-// ── Schema cache (for /ask text-to-SQL) ──────────────────────────────
-let schemaCache = null;
-let schemaCacheTime = 0;
-const SCHEMA_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-
-const JSONB_COLS = [
-  ['SupplierProfile', 'businessInfo'],
-  ['SupplierProfile', 'operatingInfo'],
-  ['SupplierProfile', 'representativeInfo'],
-  ['SupplierProfile', 'payoutInfo'],
-  ['SupplierProfile', 'compliance'],
-  ['Tour', 'productContent'],
-  ['Tour', 'categorization'],
-  ['Tour', 'schedulesAndPricing'],
-  ['Tour', 'theme'],
-  ['Booking', 'pickup'],
-  ['User', 'notificationPreferences'],
-  ['SystemConfig', 'value'],
-];
-
-async function loadSchema() {
-  const now = Date.now();
-  if (schemaCache && now - schemaCacheTime < SCHEMA_CACHE_TTL_MS) return schemaCache;
-  try {
-    // 1) Base columns
-    const r = await pg.query(`
-      SELECT table_name, column_name, data_type
-      FROM information_schema.columns
-      WHERE table_schema = 'public'
-      ORDER BY table_name, ordinal_position
-    `);
-    const tables = {};
-    for (const row of r.rows) {
-      if (!tables[row.table_name]) tables[row.table_name] = [];
-      tables[row.table_name].push(`"${row.column_name}" ${row.data_type}`);
-    }
-    let schema = Object.entries(tables)
-      .map(([t, cols]) => `"${t}"(${cols.join(', ')})`)
-      .join('\n');
-
-    // 2) JSONB key introspection — sample rows to discover actual keys
-    for (const [table, col] of JSONB_COLS) {
-      try {
-        const keyR = await pg.query(
-          `SELECT DISTINCT k FROM (
-             SELECT jsonb_object_keys(t."${col}") AS k
-             FROM "${table}" t
-             WHERE "${col}" IS NOT NULL AND jsonb_typeof("${col}") = 'object'
-             LIMIT 500
-           ) s ORDER BY k`
-        );
-        if (!keyR.rows.length) continue;
-        const keys = keyR.rows.map((r) => r.k).join(', ');
-        schema += `\n${table}.${col}(jsonb): {${keys}}`;
-
-        // 3) Sample values for name-like keys (so AI knows the real format)
-        const nameKeys = ['legalBusinessName', 'displayName', 'businessName'];
-        const present = nameKeys.filter((k) => keyR.rows.some((r) => r.k === k));
-        if (present.length) {
-          const cols = present.map((k) => `"${col}"->>'${k}'`).join(', ');
-          const sampleR = await pg.query(
-            `SELECT ${cols} FROM "${table}" WHERE "${col}" IS NOT NULL AND jsonb_typeof("${col}") = 'object' ORDER BY "createdAt" DESC LIMIT 2`
-          );
-          if (sampleR.rows.length) {
-            const samples = sampleR.rows.map((row) =>
-              present.map((k) => `${k}="${row[k] || ''}"`).join(', ')
-            ).join('; ');
-            schema += `\n  sample values: ${samples}`;
-          }
-        }
-      } catch { /* skip column on error */ }
-    }
-
-    schemaCache = schema;
-    schemaCacheTime = now;
-    return schemaCache;
-  } catch {
-    return schemaCache || '';
-  }
-}
-
 // ── Conversation history (Redis-backed, per-user) ────────────────────
 const HISTORY_TTL_SEC = 3600; // 1 hour
 const HISTORY_MAX_TURNS = 12; // 6 Q&A pairs
@@ -225,96 +144,23 @@ async function answerConversational(prompt, userId) {
   activeJobs.add(userId);
 
   try {
-    const schema = await loadSchema();
     const history = await getHistory(userId);
     const historyText = history.length
-      ? `\n\nPrevious conversation:\n${history.map((t) => `${t.role}: ${t.content}`).join('\n')}`
+      ? history.map((t) => `${t.role}: ${t.content}`).join('\n')
       : '';
 
-    // ── Step 1: Route — answer vs query ────────────────────────────
-    const routeSystem = `You are TravioAfrica's ops assistant. Decide if the user's question needs a database query or can be answered conversationally.
-
-Rules:
-- If the question asks about data in the database (bookings, tours, suppliers, users, revenue, disputes, etc.) → output ONLY a JSON object: {"type":"query","sql":"SELECT ..."}
-- If it's a greeting, follow-up clarification, opinion, or non-data question → output ONLY a JSON object: {"type":"answer","text":"..."}
-- CRITICAL: ALWAYS use double quotes around ALL table and column identifiers (e.g. "Booking"."bookingNumber"). PostgreSQL folds unquoted names to lowercase and many identifiers are camelCase.
-- For query type: use SELECT or WITH only (read-only). Use ->> for JSONB text fields, ILIKE '%term%' for fuzzy matching. Check all name-like keys (e.g. "legalBusinessName", "displayName", "businessName").
-- For follow-ups referencing a previous query, you may reuse the same table/columns from prior context.
-- Do NOT output anything except the JSON object.
-- Schema:\n${schema}${historyText}`;
-
-    const raw = await callMimo({ system: routeSystem, user: prompt, maxTokens: 1024, temperature: 0.1 });
-    const parsed = JSON.parse(raw);
-    await pushTurn(userId, 'user', prompt);
-
-    // ── Step 2a: Conversational answer ─────────────────────────────
-    if (parsed.type === 'answer') {
-      await pushTurn(userId, 'assistant', parsed.text);
-      return { text: parsed.text.slice(0, 2000) };
-    }
-
-    // ── Step 2b: Query path (with self-healing retry) ───────────────
-    const sql = parsed.sql.replace(/```sql\s*/gi, '').replace(/```\s*/gi, '').trim();
-    const guard = validateReadOnly(sql);
-    if (!guard.ok) {
-      const msg = `Sorry, I can't run that query: ${guard.error}`;
-      await pushTurn(userId, 'assistant', msg);
-      return { text: msg };
-    }
-    let result = await pg.query(guard.safeSql).catch((e) => ({ error: e.message }));
-
-    // Self-healing: on error, fetch actual columns for the table and retry
-    if (result.error) {
-      const errLower = result.error.toLowerCase();
-      // Extract table name from error (e.g. relation "foo" does not exist / column "bar" of relation "foo" does not exist)
-      const tblMatch = result.error.match(/relation "(\w+)" does not exist/i)
-        || result.error.match(/column "(\w+)" of relation "(\w+)" does not exist/i);
-      const missingCol = result.error.match(/column "(\w+)" does not exist/i);
-      const tableName = tblMatch ? (tblMatch[2] || tblMatch[1]) : null;
-
-      if (tableName) {
-        try {
-          const colR = await pg.query(
-            `SELECT column_name, data_type FROM information_schema.columns WHERE table_name = $1 AND table_schema = 'public' ORDER BY ordinal_position`,
-            [tableName]
-          );
-          if (colR.rows.length > 0) {
-            const actualCols = colR.rows.map(c => `"${c.column_name}" ${c.data_type}`).join(', ');
-            const retrySystem = `You are a PostgreSQL query generator. The previous query failed with error: "${result.error.slice(0, 300)}"
-The ACTUAL columns for table "${tableName}" are: ${actualCols}
-Fix the query. Output ONLY the corrected SQL, no explanation. Always use double quotes around ALL identifiers.`;
-            const retrySql = await callMimo({ system: retrySystem, user: `Original question: ${prompt}\nFailed SQL: ${guard.safeSql}`, maxTokens: 512, temperature: 0.1 });
-            const cleanRetry = retrySql.replace(/```sql\s*/gi, '').replace(/```\s*/gi, '').trim();
-            const retryGuard = validateReadOnly(cleanRetry);
-            if (retryGuard.ok) {
-              result = await pg.query(retryGuard.safeSql).catch((e) => ({ error: e.message }));
-              if (!result.error) console.log(`[ai] self-heal succeeded for user ${userId}`);
-            }
-          }
-        } catch (healErr) {
-          console.error('[ai] self-heal query failed:', healErr.message);
-        }
-      }
-    }
-
-    if (result.error) {
-      const msg = `Query error: \`${result.error.slice(0, 500)}\``;
-      await pushTurn(userId, 'assistant', msg);
-      return { text: msg };
-    }
-    const rows = result.rows || [];
-
-    // Step 3: Summarize
-    const summary = await callMimo({
-      system: 'You are a data analyst. Summarize the SQL result in plain English for a business user. Be concise (max 6 sentences).',
-      user: `Question: ${prompt}\nSQL: ${guard.safeSql}\nResults:\n${JSON.stringify(rows.slice(0, 30), null, 2)}`,
-      maxTokens: 1024,
-      temperature: 0.2,
+    // ── Agentic exploration: the model inspects the live DB, writes real
+    //    identifiers, retries on errors, and produces a final answer.
+    const { final, sqlLogs, rowCount } = await runQueryAgent({
+      question: prompt,
+      historyText,
+      pg,
+      callMimo,
     });
 
-    console.log(`[ai] user=${userId} question="${prompt}" sql="${guard.safeSql}" rows=${rows.length}`);
-    await pushTurn(userId, 'assistant', summary);
-    return { text: summary.slice(0, 2000) };
+    console.log(`[ai] user=${userId} question="${prompt}" sql=${JSON.stringify(sqlLogs)} rows=${rowCount}`);
+    await pushTurn(userId, 'assistant', final);
+    return { text: final.slice(0, 2000) };
   } catch (e) {
     console.error('[ai] error:', e.message);
     return { text: `AI error: ${e.message.slice(0, 500)}` };
@@ -811,69 +657,18 @@ client.on('interactionCreate', async (interaction) => {
         }
         const question = interaction.options.getString('question');
         try {
-          const schema = await loadSchema();
-          if (!schema) {
-            await interaction.editReply('Failed to load database schema. Check pg connection.');
-            break;
-          }
-          const system = `You are a PostgreSQL read-only query generator for TravioAfrica. Convert the user's natural language question into a single safe SQL SELECT query. Rules:\n- Output ONLY the SQL query, no explanation, no markdown fences.\n- CRITICAL: ALWAYS use double quotes around ALL table and column identifiers (e.g. "Booking"."bookingNumber"). PostgreSQL folds unquoted names to lowercase and many identifiers are camelCase.\n- JSONB columns (marked "jsonb"): use ->> to extract text fields, NOT @> containment.\n- For entity lookups (suppliers, tours, users) use ILIKE '%term%' for fuzzy/partial matches. Check ALL name-like keys (e.g. "legalBusinessName", "displayName", "businessName" for suppliers).\n- Use JOINs, CTEs, GROUP BY, aggregates as needed.\n- Only use exact @> when the exact JSON value is known.\n\nSchema:\n${schema}`;
-          console.log(`[ask] question="${question}" schema_len=${schema.length}`);
-          const sql = await callMimo({ system, user: question, maxTokens: 512, temperature: 0.1 });
-          const cleanSql = sql.replace(/```sql\s*/gi, '').replace(/```\s*/gi, '').trim();
-          const guard = validateReadOnly(cleanSql);
-          if (!guard.ok) {
-            await interaction.editReply(`Sorry, I can't run that query: ${guard.error}`);
-            break;
-          }
-          let result = await pg.query(guard.safeSql).catch((e) => ({ error: e.message }));
-
-          // Self-healing: on error, fetch actual columns and retry
-          if (result.error) {
-            const tblMatch = result.error.match(/relation "(\w+)" does not exist/i)
-              || result.error.match(/column "(\w+)" of relation "(\w+)" does not exist/i);
-            const tableName = tblMatch ? (tblMatch[2] || tblMatch[1]) : null;
-            if (tableName) {
-              try {
-                const colR = await pg.query(
-                  `SELECT column_name, data_type FROM information_schema.columns WHERE table_name = $1 AND table_schema = 'public' ORDER BY ordinal_position`,
-                  [tableName]
-                );
-                if (colR.rows.length > 0) {
-                  const actualCols = colR.rows.map(c => `"${c.column_name}" ${c.data_type}`).join(', ');
-                  const retrySystem = `You are a PostgreSQL query generator. The previous query failed with error: "${result.error.slice(0, 300)}"
-The ACTUAL columns for table "${tableName}" are: ${actualCols}
-Fix the query. Output ONLY the corrected SQL, no explanation. Always use double quotes around ALL identifiers.`;
-                  const retrySql = await callMimo({ system: retrySystem, user: `Original question: ${question}\nFailed SQL: ${guard.safeSql}`, maxTokens: 512, temperature: 0.1 });
-                  const cleanRetry = retrySql.replace(/```sql\s*/gi, '').replace(/```\s*/gi, '').trim();
-                  const retryGuard = validateReadOnly(cleanRetry);
-                  if (retryGuard.ok) {
-                    result = await pg.query(retryGuard.safeSql).catch((e) => ({ error: e.message }));
-                    if (!result.error) console.log(`[ask] self-heal succeeded`);
-                  }
-                }
-              } catch (healErr) {
-                console.error('[ask] self-heal query failed:', healErr.message);
-              }
-            }
-          }
-
-          if (result.error) {
-            await interaction.editReply(`Query error: \`${result.error.slice(0, 500)}\``);
-            break;
-          }
-          const rows = result.rows || [];
-          const summary = await callMimo({
-            system: 'You are a data analyst. Summarize the SQL result in plain English for a business user. Be concise (max 6 sentences).',
-            user: `Question: ${question}\nSQL: ${guard.safeSql}\nResults:\n${JSON.stringify(rows.slice(0, 30), null, 2)}`,
-            maxTokens: 1024,
-            temperature: 0.2,
+          const { final, sqlLogs, rowCount } = await runQueryAgent({
+            question,
+            historyText: '',
+            pg,
+            callMimo,
           });
           const embed = new EmbedBuilder()
             .setTitle('Query Result')
             .setColor(0x00bcd4)
-            .setDescription(summary.slice(0, 4000));
+            .setDescription(final.slice(0, 4000));
           await interaction.editReply({ embeds: [embed] });
-          console.log(`[ask] user=${interaction.user.id} question="${question}" sql="${guard.safeSql}" rows=${rows.length}`);
+          console.log(`[ask] user=${interaction.user.id} question="${question}" sql=${JSON.stringify(sqlLogs)} rows=${rowCount}`);
         } catch (e) {
           console.error('[ask] error:', e.message);
           await interaction.editReply(`AI error: ${e.message.slice(0, 500)}`);

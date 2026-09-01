@@ -23,24 +23,30 @@ const REQUEST_TIMEOUT_MS = 60000;
  * Call MiMo with retry logic and timeout.
  *
  * @param {Object} opts
- * @param {string} opts.system  - System prompt
- * @param {string} opts.user    - User message
+ * @param {string} [opts.system]  - System prompt (ignored if `messages` is provided)
+ * @param {string} [opts.user]    - User message (ignored if `messages` is provided)
+ * @param {Array}  [opts.messages] - Full message array [{role, content}, ...] for multi-turn tool loops
  * @param {number} [opts.maxTokens=4096]  - Max completion tokens
  * @param {number} [opts.temperature=0.2] - Temperature (0–1)
  * @param {string} [opts.model] - Override model name
  * @returns {Promise<string>} Raw completion text
  */
-async function callMimo({ system, user, maxTokens = 4096, temperature = 0.2, model } = {}) {
+async function callMimo({ system, user, messages, maxTokens = 4096, temperature = 0.2, model } = {}) {
   const apiKey = process.env.MIMO_API_KEY;
   if (!apiKey) throw new Error('MIMO_API_KEY not set in environment');
 
-  const messages = [];
-  if (system) messages.push({ role: 'system', content: system });
-  messages.push({ role: 'user', content: user });
+  let msgs;
+  if (Array.isArray(messages) && messages.length) {
+    msgs = messages;
+  } else {
+    msgs = [];
+    if (system) msgs.push({ role: 'system', content: system });
+    msgs.push({ role: 'user', content: user });
+  }
 
   const body = {
     model: model || process.env.MIMO_MODEL || DEFAULT_MODEL,
-    messages,
+    messages: msgs,
     max_completion_tokens: maxTokens,
     temperature,
   };
