@@ -27,7 +27,7 @@ function getRedis() {
       maxRetriesPerRequest: 3,
       connectTimeout: 5000,
       lazyConnect: true,
-      enableOfflineQueue: false,
+      enableOfflineQueue: true,
     });
     redis.connect().catch(() => {});
     return redis;
