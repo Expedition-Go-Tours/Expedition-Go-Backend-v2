@@ -16,12 +16,11 @@
 
 const prisma = require('./prismaClient');
 const logger = require('./logger');
+const { callMimo, parseJson } = require('./mimoClient');
 
-// ─── MiMo API Configuration ─────────────────────────────────────────
-const MIMO_API_URL = 'https://token-plan-sgp.xiaomimimo.com/v1/chat/completions';
+// MiMo version label for DB records (resolution logic lives in mimoClient.js)
 const MIMO_MODEL = 'mimo-v2.5';
 const MIMO_MAX_RETRIES = 3;
-const MIMO_RETRY_DELAY_MS = 2000;
 
 // Category name mapping: KEYWORD_CATEGORIES name → AI category slug
 const CATEGORY_SLUG_MAP = {
@@ -53,71 +52,6 @@ const SLUG_TO_CATEGORY = Object.fromEntries(
 );
 
 const VALID_CATEGORY_SLUGS = Object.values(CATEGORY_SLUG_MAP);
-
-// ─── MiMo API Call ──────────────────────────────────────────────────
-
-/**
- * Call MiMo API with retry logic.
- * Uses the Token Plan (Singapore) endpoint with Bearer auth.
- */
-async function callMiMo(messages, maxTokens = 100000) {
-  const apiKey = process.env.MIMO_API_KEY;
-  if (!apiKey) {
-    throw new Error('MIMO_API_KEY not set in environment');
-  }
-
-  for (let attempt = 1; attempt <= MIMO_MAX_RETRIES; attempt++) {
-    try {
-      const response = await fetch(MIMO_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: MIMO_MODEL,
-          messages,
-          max_completion_tokens: maxTokens,
-        }),
-      });
-
-      if (response.status === 429) {
-        // Rate limited — wait and retry
-        const retryAfter = parseInt(response.headers.get('retry-after') || '5', 10);
-        await new Promise(r => setTimeout(r, retryAfter * 1000));
-        continue;
-      }
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        throw new Error(`MiMo API error ${response.status}: ${body.slice(0, 200)}`);
-      }
-
-      const data = await response.json();
-      const message = data.choices?.[0]?.message;
-      // MiMo v2.5 is a reasoning model — content may be empty while
-      // the actual answer lives in reasoning_content when max_tokens is low.
-      const content = message?.content || message?.reasoning_content;
-      if (!content) {
-        throw new Error('MiMo returned empty content');
-      }
-
-      return content;
-    } catch (err) {
-      if (attempt === MIMO_MAX_RETRIES) throw err;
-      await new Promise(r => setTimeout(r, MIMO_RETRY_DELAY_MS * attempt));
-    }
-  }
-}
-
-/**
- * Parse JSON from MiMo response, handling markdown code fences.
- */
-function parseJsonResponse(text) {
-  // Strip markdown code fences if present
-  const cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-  return JSON.parse(cleaned);
-}
 
 // ─── Image Analysis ─────────────────────────────────────────────────
 
@@ -179,14 +113,8 @@ async function analyzeImage(imageUrl, tourContext) {
  * Analyzes tour metadata instead of the image.
  */
 async function analyzeImageFallback(tourContext) {
-  const messages = [
-    {
-      role: 'system',
-      content: 'You are a travel tour classifier. Based on tour metadata, predict what the tour images likely show. Return structured JSON.',
-    },
-    {
-      role: 'user',
-      content: `Tour title: "${tourContext.title || 'Unknown'}"
+  const system = 'You are a travel tour classifier. Based on tour metadata, predict what the tour images likely show. Return structured JSON.';
+  const user = `Tour title: "${tourContext.title || 'Unknown'}"
 Category: "${tourContext.category || 'Unknown'}"
 Tags: ${JSON.stringify(tourContext.tags || [])}
 
@@ -206,12 +134,10 @@ Return JSON:
 
 Rules:
 - categoryHint must be one of: ${VALID_CATEGORY_SLUGS.join(', ')}
-- Return ONLY the JSON object.`,
-    },
-  ];
+- Return ONLY the JSON object.`;
 
-  const response = await callMiMo(messages, 5000);
-  return parseJsonResponse(response);
+  const response = await callMimo({ system, user, maxTokens: 5000 });
+  return parseJson(response);
 }
 
 // ─── Tour Classification ────────────────────────────────────────────
@@ -230,14 +156,8 @@ async function classifyTour(tour, imageAnalyses) {
     ? imageAnalyses.reduce((sum, a) => sum + (a.aiQualityScore || 0), 0) / imageAnalyses.length
     : null;
 
-  const messages = [
-    {
-      role: 'system',
-      content: 'You are a travel tour classifier for TravioAfrica/Expedition-Go. Return structured JSON.',
-    },
-    {
-      role: 'user',
-      content: `Classify this tour based on its metadata and image analysis.
+  const system = 'You are a travel tour classifier for TravioAfrica/Expedition-Go. Return structured JSON.';
+  const user = `Classify this tour based on its metadata and image analysis.
 
 Title: "${tour.title || 'Unknown'}"
 Description: "${(tour.description || '').slice(0, 500)}"
@@ -265,12 +185,10 @@ Rules:
 - moodTags: 2–5 descriptive mood/vibe words (lowercase)
 - activityLevel: "low", "medium", or "high"
 - confidence: 0.0–1.0, how confident you are in this classification
-- Return ONLY the JSON object, no other text.`,
-    },
-  ];
+- Return ONLY the JSON object, no other text.`;
 
-  const response = await callMiMo(messages, 100000);
-  return parseJsonResponse(response);
+  const response = await callMimo({ system, user, maxTokens: 100000 });
+  return parseJson(response);
 }
 
 // ─── Main Processing Pipeline ───────────────────────────────────────

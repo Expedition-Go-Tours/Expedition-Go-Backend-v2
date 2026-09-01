@@ -161,6 +161,49 @@ exports.createDispute = catchAsync(async (req, res, next) => {
     }
   ).catch(() => {});
 
+  // AI dispute recommendation (fire-and-forget, non-blocking)
+  if (process.env.MIMO_API_KEY) {
+    const { callMimo, parseJson } = require('../utils/mimoClient');
+    const ctx = [
+      `Dispute: ${disputeNumber}`,
+      `Reason: ${reasonLabel}`,
+      `Amount: ${booking.currency || 'USD'} ${amount}`,
+      `Tour: ${booking.tour.title}`,
+      `Booking: ${booking.bookingNumber} (status: ${booking.status}, payment: ${booking.paymentStatus})`,
+      `Description: ${description || '(none)'}`,
+    ].join('\n');
+    callMimo({
+      system: 'You are a travel-platform dispute advisor. Analyze the refund request and recommend: APPROVE (refund the customer), DENY (keep the funds with the supplier), or NEEDS更多信息 (cannot decide from available data). Return ONLY a JSON object: {"recommendation":"APPROVE|DENY|NEEDS更多信息","rationale":"1-3 sentence explanation","riskLevel":"low|medium|high"}',
+      user: ctx,
+      maxTokens: 512,
+      temperature: 0.1,
+    }).then((text) => {
+      let parsed;
+      try {
+        parsed = parseJson(text);
+      } catch (e) {
+        console.warn(`[dispute] AI parse failed for ${disputeNumber}: ${e.message}`);
+        return;
+      }
+      const rec = parsed.recommendation || 'NEEDS更多信息';
+      const color = rec === 'APPROVE' ? 0x00c853 : rec === 'DENY' ? 0xff4444 : 0xffaa00;
+      notifyDiscord(
+        'approvals',
+        `AI recommendation for ${disputeNumber}: **${rec}**`,
+        {
+          title: 'AI Dispute Recommendation',
+          color,
+          fields: [
+            { name: 'Recommendation', value: rec, inline: true },
+            { name: 'Risk level', value: parsed.riskLevel || '—', inline: true },
+            { name: 'Rationale', value: (parsed.rationale || '—').slice(0, 1024), inline: false },
+          ],
+          cooldownKey: `${dispute.id}:ai`,
+        }
+      ).catch((e) => { console.warn(`[dispute] AI Discord notify failed: ${e.message}`); });
+    }).catch((e) => { console.warn(`[dispute] AI call failed for ${disputeNumber}: ${e.message}`); });
+  }
+
   res.status(201).json({ status: 'success', data: { dispute } });
 });
 

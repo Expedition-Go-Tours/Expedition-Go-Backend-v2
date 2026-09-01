@@ -1,6 +1,8 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
 const { execSync } = require('child_process');
 const { Client: Pg } = require('pg');
+const { callMimo } = require('../../utils/mimoClient');
+const { validateReadOnly } = require('../../utils/sqlGuard');
 require('dotenv').config();
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -71,6 +73,15 @@ const commands = [
     ),
   new SlashCommandBuilder().setName('cert').setDescription('SSL certificate expiry'),
   new SlashCommandBuilder().setName('queue').setDescription('BullMQ queue backlog'),
+  new SlashCommandBuilder()
+    .setName('ask')
+    .setDescription('Ask a natural-language question about the database')
+    .addStringOption((o) =>
+      o.setName('question').setDescription('Your question in plain English').setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName('chat')
+    .setDescription('AI ops assistant — ask anything about the server or business'),
 ].map((c) => c.toJSON());
 
 function sh(cmd) {
@@ -92,6 +103,69 @@ function latestBackup() {
   const [size, mtime] = sh(`stat -c '%s %Y' '${file}'`).split(' ');
   const ageH = Math.round(Date.now() / 1000 - Number(mtime)) / 3600;
   return { file, size: Number(size), ageH: Math.round(ageH) };
+}
+
+// ── Schema cache (for /ask text-to-SQL) ──────────────────────────────
+let schemaCache = null;
+let schemaCacheTime = 0;
+const SCHEMA_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+async function loadSchema() {
+  const now = Date.now();
+  if (schemaCache && now - schemaCacheTime < SCHEMA_CACHE_TTL_MS) return schemaCache;
+  try {
+    const r = await pg.query(`
+      SELECT table_name, column_name, data_type
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+      ORDER BY table_name, ordinal_position
+    `);
+    const tables = {};
+    for (const row of r.rows) {
+      if (!tables[row.table_name]) tables[row.table_name] = [];
+      tables[row.table_name].push(`${row.column_name} ${row.data_type}`);
+    }
+    schemaCache = Object.entries(tables)
+      .map(([t, cols]) => `${t}(${cols.join(', ')})`)
+      .join('\n');
+    schemaCacheTime = now;
+    return schemaCache;
+  } catch {
+    return schemaCache || '';
+  }
+}
+
+async function getOpsContext() {
+  const parts = [];
+  // Health
+  try {
+    const { code } = httpGet(`${API_URL}/health`);
+    parts.push(`API: ${code === '200' ? 'UP' : `DOWN (${code})`}`);
+  } catch { parts.push('API: UNREACHABLE'); }
+  // Load + uptime
+  try { parts.push(`Load: ${sh("cut -d' ' -f1 /proc/loadavg")}`); } catch { /* no-op */ }
+  try { parts.push(`Uptime: ${sh('uptime -p').replace('up ', '')}`); } catch { /* no-op */ }
+  // Disk
+  try { parts.push(`Disk: ${sh('df -h / | tail -1 | awk \'{print $3 " used of " $2 " (" $5 ")"}\'')}`); } catch { /* no-op */ }
+  // Revenue today
+  try {
+    const r = await pg.query(`SELECT count(*)::int as c, coalesce(sum("grossAmount"),0)::float as rev FROM "Booking" WHERE "createdAt" >= date_trunc('day', now()) AND "status" = 'CONFIRMED' AND "isSimulated" = false`);
+    parts.push(`Bookings today: ${r.rows[0].c} · Revenue: $${r.rows[0].rev.toFixed(2)}`);
+  } catch { /* no-op */ }
+  // Open payouts
+  try {
+    const r = await pg.query(`SELECT count(*)::int FROM "PayoutRequest" WHERE status IN ('PENDING','UNDER_REVIEW')`);
+    parts.push(`Open payouts: ${r.rows[0].count}`);
+  } catch { /* no-op */ }
+  // Open disputes
+  try {
+    const r = await pg.query(`SELECT count(*)::int FROM "Dispute" WHERE status IN ('OPEN','UNDER_REVIEW')`);
+    parts.push(`Open disputes: ${r.rows[0].count}`);
+  } catch { /* no-op */ }
+  // Backup
+  const b = latestBackup();
+  parts.push(`Latest backup: ${b ? `${(b.size / 1048576).toFixed(1)} MB, ${b.ageH}h old` : 'none'}`);
+  return parts.join('\n');
 }
 
 async function isAllowed(member) {
@@ -544,6 +618,70 @@ client.on('interactionCreate', async (interaction) => {
           .setColor(results.length > 0 ? 0xffaa00 : 0x00ff88)
           .setDescription(results.length > 0 ? results.join('\n') : 'All queues clear');
         await interaction.editReply({ embeds: [embed] });
+        break;
+      }
+
+      case 'ask': {
+        if (!process.env.MIMO_API_KEY) {
+          await interaction.editReply('MIMO_API_KEY is not configured on the bot.');
+          break;
+        }
+        const question = interaction.options.getString('question');
+        try {
+          const schema = await loadSchema();
+          const system = `You are a PostgreSQL read-only query generator for TravioAfrica. Convert the user's natural language question into a single safe SQL SELECT query. Rules: output ONLY the SQL query, no explanation, no markdown fences. Schema:\n${schema}`;
+          let sql = await callMimo({ system, user: question, maxTokens: 512, temperature: 0.1 });
+          sql = sql.replace(/```sql\s*/gi, '').replace(/```\s*/gi, '').trim();
+          const guard = validateReadOnly(sql);
+          if (!guard.ok) {
+            await interaction.editReply(`Sorry, I can't run that query: ${guard.error}`);
+            break;
+          }
+          const result = await pg.query(guard.safeSql).catch((e) => ({ error: e.message }));
+          if (result.error) {
+            await interaction.editReply(`Query error: \`${result.error.slice(0, 500)}\``);
+            break;
+          }
+          const rows = result.rows || [];
+          const summary = await callMimo({
+            system: 'You are a data analyst. Summarize the SQL result in plain English for a business user. Be concise (max 6 sentences).',
+            user: `Question: ${question}\nSQL: ${guard.safeSql}\nResults:\n${JSON.stringify(rows.slice(0, 30), null, 2)}`,
+            maxTokens: 1024,
+            temperature: 0.2,
+          });
+          const embed = new EmbedBuilder()
+            .setTitle('Query Result')
+            .setColor(0x00bcd4)
+            .setDescription(summary.slice(0, 4000))
+            .addFields(
+              { name: 'Rows', value: String(rows.length), inline: true },
+              { name: 'SQL', value: `\`\`\`${guard.safeSql.slice(0, 500)}\`\`\``, inline: false }
+            );
+          await interaction.editReply({ embeds: [embed] });
+        } catch (e) {
+          await interaction.editReply(`AI error: ${e.message.slice(0, 500)}`);
+        }
+        break;
+      }
+
+      case 'chat': {
+        if (!process.env.MIMO_API_KEY) {
+          await interaction.editReply('MIMO_API_KEY is not configured on the bot.');
+          break;
+        }
+        const prompt = interaction.options.getString('question');
+        try {
+          const ctx = await getOpsContext();
+          const summary = await callMimo({
+            system: `You are TravioAfrica's ops assistant. Answer the user's question using the server/business context below. Be concise and helpful.\n\nServer context:\n${ctx}`,
+            user: prompt,
+            maxTokens: 2048,
+            temperature: 0.3,
+          });
+          await interaction.editReply(summary.slice(0, 2000));
+        } catch (e) {
+          await interaction.editReply(`AI error: ${e.message.slice(0, 500)}`);
+        }
         break;
       }
     }
