@@ -1,4 +1,36 @@
 const prisma = require('./prismaClient');
+const { notifyDiscord } = require('./discordNotifier');
+
+/**
+ * Types that get mirrored to Discord. Types with richer explicit embeds
+ * elsewhere (NEW_SUPPLIER_APPLICATION, PAYOUT_NEEDS_APPROVAL, PAYOUT_*)
+ * are excluded to avoid duplicates.
+ */
+const DISCORD_MAP = {
+  PAYMENT_COLLECTED:         { channel: 'incidents', color: 0x00c853 },
+  PAYMENT_COLLECTION_FAILED: { channel: 'incidents', color: 0xff4444 },
+  REVIEW_NEEDS_MODERATION:   { channel: 'sales',    color: 0xffa500 },
+  DOCUMENT_EXPIRING:         { channel: 'verification', color: 0xffaa00 },
+  DOCUMENT_EXPIRED:          { channel: 'verification', color: 0xff4444 },
+  TOUR_SUBMITTED_FOR_REVIEW: { channel: 'verification', color: 0x3498db },
+  SUPPLIER_STATUS_CHANGE:    { channel: 'verification', color: 0x3498db },
+  SYSTEM_ALERT:              { channel: 'incidents', color: 0xff4444 },
+};
+
+function mirrorToDiscord(type, title, message, data) {
+  const cfg = DISCORD_MAP[type];
+  if (!cfg) return;
+  notifyDiscord(cfg.channel, message, {
+    title,
+    color: cfg.color,
+    fields: Object.entries(data).map(([k, v]) => ({
+      name: k.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase()),
+      value: String(v ?? '—').slice(0, 1024),
+      inline: true,
+    })),
+    cooldownKey: data.payoutRequestId || data.disputeId || data.supplierId || title,
+  }).catch(() => {});
+}
 
 async function notifyAdmin({ type, title, message, data = {} }) {
   try {
@@ -19,6 +51,8 @@ async function notifyAdmin({ type, title, message, data = {} }) {
         createdAt: notification.createdAt,
       });
     }
+
+    mirrorToDiscord(type, title, message, data);
 
     return { success: true, id: notification.id };
   } catch (error) {

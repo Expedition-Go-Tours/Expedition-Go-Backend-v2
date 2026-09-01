@@ -22,6 +22,7 @@
 const { getStripe, handlePaymentSucceeded } = require('./stripeHelpers');
 const { enqueueNotification, enqueueEvent, enqueueEmail } = require('./queue');
 const { notifyAdmin } = require('./adminNotificationService');
+const { notifyDiscord } = require('./discordNotifier');
 const { logActivity } = require('./auditLogger');
 
 const SWEEP_LIMIT = 200;
@@ -125,6 +126,22 @@ async function notifyPaymentFailed(booking, reason) {
     message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.grossAmount).toFixed(2)} for "${booking.tour?.title || 'a tour'}". Card charge failed: ${reason}`,
     data: { bookingId: booking.id },
   }).catch(() => {});
+
+  notifyDiscord(
+    'incidents',
+    `Pay-later charge failed for booking ${booking.bookingNumber}`,
+    {
+      title: 'Payment Collection Failed',
+      color: 0xff4444,
+      fields: [
+        { name: 'Booking #', value: booking.bookingNumber, inline: true },
+        { name: 'Amount', value: `$${parseFloat(booking.grossAmount).toFixed(2)}`, inline: true },
+        { name: 'Tour', value: booking.tour?.title || '—', inline: true },
+        { name: 'Reason', value: (reason || 'Unknown').slice(0, 1024), inline: false },
+      ],
+      cooldownKey: `pay-later-fail:${booking.id}`,
+    }
+  ).catch(() => {});
 }
 
 async function cancelBooking(booking, reason) {
@@ -149,6 +166,23 @@ async function cancelBooking(booking, reason) {
       message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.grossAmount).toFixed(2)} charge failed: ${reason}. Next retry at ${nextRetry.toLocaleString()}.`,
       data: { bookingId: booking.id, retryCount, nextRetry: nextRetry.toISOString() },
     }).catch(() => {});
+
+    notifyDiscord(
+      'incidents',
+      `Pay-later charge failed — retry ${retryCount}/${MAX_CHARGE_RETRIES}`,
+      {
+        title: 'Payment Retry Scheduled',
+        color: 0xffaa00,
+        fields: [
+          { name: 'Booking #', value: booking.bookingNumber, inline: true },
+          { name: 'Amount', value: `$${parseFloat(booking.grossAmount).toFixed(2)}`, inline: true },
+          { name: 'Tour', value: booking.tour?.title || '—', inline: true },
+          { name: 'Next Retry', value: nextRetry.toLocaleString(), inline: true },
+          { name: 'Reason', value: (reason || 'Unknown').slice(0, 1024), inline: false },
+        ],
+        cooldownKey: `pay-later-retry:${booking.id}:${retryCount}`,
+      }
+    ).catch(() => {});
 
     return false; // not cancelled yet
   }
@@ -204,6 +238,22 @@ async function cancelBooking(booking, reason) {
     resourceId: booking.id,
     properties: { tourId: booking.tourId, reason, source: 'system' },
   }).catch(() => {});
+
+  notifyDiscord(
+    'incidents',
+    `Pay-later booking ${booking.bookingNumber} cancelled after ${MAX_CHARGE_RETRIES} failed charge attempts`,
+    {
+      title: 'Pay-Later Booking Cancelled',
+      color: 0xff4444,
+      fields: [
+        { name: 'Booking #', value: booking.bookingNumber, inline: true },
+        { name: 'Amount', value: `$${parseFloat(booking.grossAmount).toFixed(2)}`, inline: true },
+        { name: 'Tour', value: booking.tour?.title || '—', inline: true },
+        { name: 'Reason', value: (reason || 'Payment not collected').slice(0, 1024), inline: false },
+      ],
+      cooldownKey: `pay-later-cancel:${booking.id}`,
+    }
+  ).catch(() => {});
 
   logActivity({
     userId: booking.customerId,

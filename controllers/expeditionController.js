@@ -1536,7 +1536,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     // Clean up any cart items for this tour+date+customer
     prisma.cartItem
       .deleteMany({
-        where: { customerId, tourId, travelDate: new Date(travelDate) },
+        where: { customerId, tourId, selectedDate: new Date(travelDate) },
       })
       .catch(() => {});
 

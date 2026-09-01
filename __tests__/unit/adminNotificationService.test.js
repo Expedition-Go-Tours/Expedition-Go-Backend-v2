@@ -4,8 +4,13 @@ jest.mock('../../utils/prismaClient', () => ({
 
 jest.mock('../../app', () => ({ get: jest.fn() }));
 
+jest.mock('../../utils/discordNotifier', () => ({
+  notifyDiscord: jest.fn(() => Promise.resolve()),
+}));
+
 const prisma = require('../../utils/prismaClient');
 const app = require('../../app');
+const { notifyDiscord } = require('../../utils/discordNotifier');
 const service = require('../../utils/adminNotificationService');
 
 describe('adminNotificationService', () => {
@@ -45,6 +50,84 @@ describe('adminNotificationService', () => {
       prisma.adminNotification.create.mockRejectedValue(new Error('DB error'));
       const result = await service.notifyAdmin({ type: 'TEST', title: 'Test', message: 'Error' });
       expect(result).toEqual({ success: false, error: 'DB error' });
+    });
+
+    it('mirrors PAYMENT_COLLECTED to Discord incidents channel (green)', async () => {
+      await service.notifyAdmin({
+        type: 'PAYMENT_COLLECTED',
+        title: 'Payment collected',
+        message: 'Charge succeeded',
+        data: { bookingId: 'b1' },
+      });
+      expect(notifyDiscord).toHaveBeenCalledWith(
+        'incidents',
+        'Charge succeeded',
+        expect.objectContaining({ title: 'Payment collected', color: 0x00c853 })
+      );
+    });
+
+    it('mirrors PAYMENT_COLLECTION_FAILED to Discord incidents channel (red)', async () => {
+      await service.notifyAdmin({
+        type: 'PAYMENT_COLLECTION_FAILED',
+        title: 'Charge failed',
+        message: 'Card declined',
+        data: { bookingId: 'b1' },
+      });
+      expect(notifyDiscord).toHaveBeenCalledWith(
+        'incidents',
+        'Card declined',
+        expect.objectContaining({ title: 'Charge failed', color: 0xff4444 })
+      );
+    });
+
+    it('mirrors DOCUMENT_EXPIRING to Discord verification channel (yellow)', async () => {
+      await service.notifyAdmin({
+        type: 'DOCUMENT_EXPIRING',
+        title: 'Doc expiring',
+        message: 'Expiring in 7 days',
+        data: { supplierId: 's1' },
+      });
+      expect(notifyDiscord).toHaveBeenCalledWith(
+        'verification',
+        'Expiring in 7 days',
+        expect.objectContaining({ title: 'Doc expiring', color: 0xffaa00 })
+      );
+    });
+
+    it('mirrors SYSTEM_ALERT to Discord incidents channel (red)', async () => {
+      await service.notifyAdmin({
+        type: 'SYSTEM_ALERT',
+        title: 'System alert',
+        message: 'Disk full',
+        data: { disk: '98%' },
+      });
+      expect(notifyDiscord).toHaveBeenCalledWith(
+        'incidents',
+        'Disk full',
+        expect.objectContaining({ title: 'System alert', color: 0xff4444 })
+      );
+    });
+
+    it('does NOT mirror unmapped types to Discord', async () => {
+      await service.notifyAdmin({ type: 'TEST_UNKNOWN', title: 'X', message: 'Y' });
+      expect(notifyDiscord).not.toHaveBeenCalled();
+    });
+
+    it('does NOT mirror types already handled by explicit embeds (PAYOUT_NEEDS_APPROVAL)', async () => {
+      await service.notifyAdmin({ type: 'PAYOUT_NEEDS_APPROVAL', title: 'Payout', message: 'Needs approval' });
+      expect(notifyDiscord).not.toHaveBeenCalled();
+    });
+
+    it('does NOT mirror NEW_SUPPLIER_APPLICATION (handled explicitly)', async () => {
+      await service.notifyAdmin({ type: 'NEW_SUPPLIER_APPLICATION', title: 'New supplier', message: 'Applied' });
+      expect(notifyDiscord).not.toHaveBeenCalled();
+    });
+
+    it('handles mirror errors gracefully (does not throw)', async () => {
+      notifyDiscord.mockRejectedValueOnce(new Error('Discord down'));
+      await expect(
+        service.notifyAdmin({ type: 'PAYMENT_COLLECTED', title: 'Test', message: 'Test' })
+      ).resolves.toMatchObject({ success: true });
     });
   });
 

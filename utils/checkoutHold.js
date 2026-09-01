@@ -216,7 +216,7 @@ async function materializeHold(draftId, session, paymentIntentId) {
       where: {
         customerId: draftRecord.customerId,
         tourId: draftRecord.tourId,
-        travelDate: draftRecord.travelDate,
+        selectedDate: draftRecord.travelDate,
       },
     }).catch(() => {});
 

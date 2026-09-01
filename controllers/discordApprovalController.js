@@ -15,7 +15,7 @@ const crypto = require('crypto');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { logActivity } = require('../utils/auditLogger');
-const { approvePayoutRequest, rejectPayoutRequest } = require('./adminFinanceController');
+const { approvePayoutRequest, rejectPayoutRequest, resolveDispute } = require('./adminFinanceController');
 
 function safeEqual(a, b) {
   const ba = Buffer.from(String(a));
@@ -68,7 +68,7 @@ exports.handleApproval = catchAsync(async (req, res, next) => {
     return next(new AppError('Unauthorized', 401));
   }
 
-  const { type, action, id, reason, actorDiscordId, actorDiscordTag } = req.body || {};
+  const { type, action, id, outcome, resolution, reason, actorDiscordId, actorDiscordTag } = req.body || {};
   if (!type || !action || !id) return next(new AppError('type, action and id are required', 400));
 
   const adminId = process.env.DISCORD_APPROVAL_ADMIN_ID;
@@ -90,9 +90,6 @@ exports.handleApproval = catchAsync(async (req, res, next) => {
       return next(new AppError('Unknown action for payout', 400));
     }
 
-    // Traceability: record which Discord user triggered the action. The existing
-    // controller audit attributes the action to the configured admin; this entry
-    // links the same action to the actual Discord actor (fire-and-forget).
     logActivity({
       userId: adminId,
       action: 'discord.approval_actor',
@@ -109,6 +106,35 @@ exports.handleApproval = catchAsync(async (req, res, next) => {
     }).catch(() => {});
 
     return res.status(200).json({ status: 'success', data: { type, action, id } });
+  }
+
+  if (type === 'dispute') {
+    if (!outcome || !resolution) {
+      return next(new AppError('outcome and resolution are required for disputes', 400));
+    }
+    const synthReq = {
+      params: { id },
+      user: { id: adminId },
+      body: { outcome, resolution },
+    };
+    await runController(resolveDispute, synthReq);
+
+    logActivity({
+      userId: adminId,
+      action: 'discord.dispute_actor',
+      resource: 'Dispute',
+      resourceId: id,
+      metadata: {
+        disputeId: id,
+        type,
+        outcome,
+        resolution,
+        discordUserId: actorDiscordId || null,
+        discordUserTag: actorDiscordTag || null,
+      },
+    }).catch(() => {});
+
+    return res.status(200).json({ status: 'success', data: { type, outcome, id } });
   }
 
   return next(new AppError('Unsupported approval type', 400));

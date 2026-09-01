@@ -2020,7 +2020,7 @@ exports.getNotificationStats = catchAsync(async (req, res) => {
       take: 8,
       select: {
         id: true, type: true, title: true, message: true, data: true,
-        acknowledged: true, read: true, createdAt: true,
+        read: true, readAt: true, createdAt: true,
       },
     }),
   ]);
@@ -2030,7 +2030,7 @@ exports.getNotificationStats = catchAsync(async (req, res) => {
       total,
       unacknowledged,
       byType: byType.map((t) => ({ type: t.type, _count: t._count._all })),
-      recent: recent.map((n) => ({ ...n, acknowledged: n.acknowledged ?? n.read })),
+      recent: recent.map((n) => ({ ...n, acknowledged: n.read })),
     },
   });
 });

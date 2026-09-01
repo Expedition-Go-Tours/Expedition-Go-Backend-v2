@@ -1,8 +1,8 @@
 {
   "name": "travio-discord-bot",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "TravioAfrica Discord ops bot (health, backup, bookings, digest)",
+  "description": "TravioAfrica Discord ops bot (health, backup, bookings, digest, revenue, payouts, disputes, queue, cert)",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -10,6 +10,7 @@
   "dependencies": {
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.5",
+    "ioredis": "^5.6.1",
     "pg": "^8.13.1"
   }
 }

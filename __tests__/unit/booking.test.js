@@ -126,7 +126,7 @@ const mockCartItem = {
   id: 'cart-1',
   customerId: 'customer-1',
   tourId: 'tour-1',
-  travelDate: new Date('2026-07-01'),
+  selectedDate: new Date('2026-07-01'),
   selectedTime: '',
   travelers: { adults: 2, children: 0, infants: 0 },
   subtotal: 350,
@@ -356,7 +356,7 @@ describe('Booking Controller', () => {
     });
 
     it('creates bookings from cart items when useCart=true', async () => {
-      const futureCartItem = { ...mockCartItem, travelDate: new Date(Date.now() + 7 * 24 * 3600000) };
+      const futureCartItem = { ...mockCartItem, selectedDate: new Date(Date.now() + 7 * 24 * 3600000) };
       prisma.cartItem.findMany.mockResolvedValue([futureCartItem]);
       const req = mockReq({
         body: {

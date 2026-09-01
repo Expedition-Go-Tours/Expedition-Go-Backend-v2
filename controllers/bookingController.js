@@ -94,7 +94,7 @@ exports.addToCart = catchAsync(async (req, res, next) => {
       customerId_tourId_selectedDate_selectedTime: {
         customerId,
         tourId,
-        travelDate: new Date(travelDate),
+        selectedDate: new Date(travelDate),
         selectedTime: normalizedTime
       }
     },
@@ -109,7 +109,7 @@ exports.addToCart = catchAsync(async (req, res, next) => {
     create: {
       customerId,
       tourId,
-      travelDate: new Date(travelDate),
+      selectedDate: new Date(travelDate),
       selectedTime: normalizedTime,
       travelers,
       subtotal: pricingCalculation.subtotal,
@@ -302,12 +302,12 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     for (const item of cartItems) {
       const availability = await checkTourAvailability(
         item.tourId,
-        item.travelDate.toISOString().split('T')[0],
+        item.selectedDate.toISOString().split('T')[0],
         { selectedTime: item.selectedTime || null, travelers: item.travelers }
       );
       if (!availability.available) {
         return next(new AppError(
-          `"${item.tour.title}" is no longer available on ${item.travelDate.toISOString().split('T')[0]}${item.selectedTime ? ` at ${item.selectedTime}` : ''} (${availability.reason || 'no availability'})`,
+          `"${item.tour.title}" is no longer available on ${item.selectedDate.toISOString().split('T')[0]}${item.selectedTime ? ` at ${item.selectedTime}` : ''} (${availability.reason || 'no availability'})`,
           400
         ));
       }
@@ -323,7 +323,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       const pricing = await calculateTourPrice(
         item.tour,
         item.travelers,
-        item.travelDate.toISOString().split('T')[0],
+        item.selectedDate.toISOString().split('T')[0],
         item.selectedTime || null,
         null,
         customerId,
@@ -340,7 +340,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       recomputedItems.push({
         tourId: item.tourId,
         tour: item.tour,
-        travelDate: item.travelDate,
+        travelDate: item.selectedDate,
         selectedTime: item.selectedTime,
         travelers: item.travelers,
         subtotal: pricing.subtotal,

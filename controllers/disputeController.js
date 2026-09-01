@@ -126,6 +126,41 @@ exports.createDispute = catchAsync(async (req, res, next) => {
     console.error('[Dispute] Opening email failed:', err.message)
   );
 
+  // Discord: rich embed with Approve / Deny buttons
+  const { notifyDiscord } = require('../utils/discordNotifier');
+  const adminDash = process.env.ADMIN_DASHBOARD_URL;
+  const reviewUrl = adminDash ? `${adminDash.replace(/\/+$/, '')}/disputes/${dispute.id}` : null;
+  const amount = toNumber(booking.grossAmount).toFixed(2);
+  const reasonLabel = reason.replace(/_/g, ' ');
+  notifyDiscord(
+    'approvals',
+    `Refund request ${disputeNumber} for "${booking.tour.title}"`,
+    {
+      title: 'Refund Request Opened',
+      color: 0xffaa00,
+      url: reviewUrl || undefined,
+      fields: [
+        { name: 'Request #', value: disputeNumber, inline: true },
+        { name: 'Amount', value: `${booking.currency || 'USD'} ${amount}`, inline: true },
+        { name: 'Reason', value: reasonLabel, inline: true },
+        { name: 'Booking #', value: booking.bookingNumber, inline: true },
+        { name: 'Tour', value: booking.tour.title, inline: true },
+        { name: 'Supplier', value: supplierId, inline: true },
+        ...(description ? [{ name: 'Details', value: description.slice(0, 1024), inline: false }] : []),
+      ],
+      cooldownKey: dispute.id,
+      components: [
+        {
+          type: 1,
+          components: [
+            { type: 2, style: 3, label: 'Approve Refund', custom_id: `dsp:approve:${dispute.id}` },
+            { type: 2, style: 4, label: 'Deny', custom_id: `dsp:deny:${dispute.id}` },
+          ],
+        },
+      ],
+    }
+  ).catch(() => {});
+
   res.status(201).json({ status: 'success', data: { dispute } });
 });
 

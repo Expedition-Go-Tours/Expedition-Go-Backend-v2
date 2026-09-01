@@ -355,7 +355,7 @@ describe('Concurrency — Race Conditions', () => {
   it('prevents concurrent cart clear + createBooking from cart race', async () => {
     const cartItem = {
       id: 'cart-race-1', customerId: 'customer-race-2', tourId: 'tour-1',
-      travelDate: new Date('2026-07-01'), selectedTime: '',
+      selectedDate: new Date('2026-07-01'), selectedTime: '',
       travelers: { adults: 2 }, subtotal: 350, total: 385, currency: 'USD',
       expiresAt: new Date(Date.now() + 3600000),
       tour: tourTemplate,

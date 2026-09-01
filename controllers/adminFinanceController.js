@@ -561,6 +561,22 @@ exports.resolveDispute = catchAsync(async (req, res, next) => {
     metadata: { disputeNumber: dispute.disputeNumber, outcome, refundAmount: refundedAmount, stripeRefundId },
   });
 
+  notifyDiscord(
+    'approvals',
+    `Refund request ${dispute.disputeNumber} ${outcome === 'CUSTOMER' ? 'approved — customer refunded' : outcome === 'SUPPLIER' ? 'denied — funds unfrozen' : 'withdrawn'}.`,
+    {
+      title: `Refund Request ${outcomeLabel.charAt(0).toUpperCase() + outcomeLabel.slice(1)}`,
+      color: outcome === 'CUSTOMER' ? 0x00c853 : 0xff4444,
+      fields: [
+        { name: 'Request #', value: dispute.disputeNumber, inline: true },
+        { name: 'Outcome', value: outcome, inline: true },
+        { name: 'Amount', value: refundedAmount != null ? `${dispute.booking.currency || 'USD'} ${refundedAmount.toFixed(2)}` : '—', inline: true },
+        { name: 'Resolution', value: resolution.slice(0, 1024), inline: false },
+      ],
+      cooldownKey: dispute.id,
+    }
+  ).catch(() => {});
+
   enqueueNotification({
     userId: dispute.supplierId,
     type: 'DISPUTE_RESOLVED',

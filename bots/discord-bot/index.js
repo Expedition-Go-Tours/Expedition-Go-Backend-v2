@@ -11,6 +11,25 @@ const BACKUP_DIR = process.env.BACKUP_DIR || '/var/backups/travio';
 
 const pg = new Pg({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 8000 });
 
+// Lazy Redis — only connects when /queue is used
+let redis = null;
+function getRedis() {
+  if (redis) return redis;
+  try {
+    const IORedis = require('ioredis');
+    redis = new IORedis(process.env.REDIS_URL || 'redis://127.0.0.1:6379', {
+      maxRetriesPerRequest: 3,
+      connectTimeout: 5000,
+      lazyConnect: true,
+      enableOfflineQueue: false,
+    });
+    redis.connect().catch(() => {});
+    return redis;
+  } catch {
+    return null;
+  }
+}
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -32,6 +51,26 @@ const commands = [
     ),
   new SlashCommandBuilder().setName('digest').setDescription('Run the daily digest now'),
   new SlashCommandBuilder().setName('status').setDescription('Full ops status snapshot'),
+  new SlashCommandBuilder()
+    .setName('revenue')
+    .setDescription('Revenue summary')
+    .addStringOption((o) =>
+      o.setName('range').setDescription('today, week, or month').setRequired(false)
+    ),
+  new SlashCommandBuilder()
+    .setName('payouts')
+    .setDescription('Pending payout requests'),
+  new SlashCommandBuilder()
+    .setName('disputes')
+    .setDescription('Open refund requests'),
+  new SlashCommandBuilder()
+    .setName('signups')
+    .setDescription('New user and supplier signups')
+    .addStringOption((o) =>
+      o.setName('range').setDescription('today or week').setRequired(false)
+    ),
+  new SlashCommandBuilder().setName('cert').setDescription('SSL certificate expiry'),
+  new SlashCommandBuilder().setName('queue').setDescription('BullMQ queue backlog'),
 ].map((c) => c.toJSON());
 
 function sh(cmd) {
@@ -73,13 +112,19 @@ client.once('ready', async () => {
   }
 });
 
-async function performApproval(interaction, { action, id, reason }) {
+// ── Approval handler (payouts + disputes) ──────────────────────────
+
+async function performApproval(interaction, { type, action, id, outcome, resolution, reason }) {
   const secret = process.env.DISCORD_APPROVAL_SECRET;
   if (!secret) {
     return interaction.reply({ content: 'Bot approval secret is not configured.', ephemeral: true });
   }
-  const body = { type: 'payout', action, id, actorDiscordId: interaction.user.id, actorDiscordTag: interaction.user.tag };
-  if (action === 'reject' && reason) body.reason = reason;
+  const body = { type, action, id, actorDiscordId: interaction.user.id, actorDiscordTag: interaction.user.tag };
+  if (type === 'payout' && action === 'reject' && reason) body.reason = reason;
+  if (type === 'dispute') {
+    body.outcome = outcome;
+    body.resolution = resolution;
+  }
   const resp = await fetch(`${API_URL}/api/webhooks/discord/approvals`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
@@ -89,7 +134,10 @@ async function performApproval(interaction, { action, id, reason }) {
   const done = resp.ok;
   let reply;
   if (done) {
-    reply = `Payout request ${id} ${action}d by <@${interaction.user.id}>.` + (action === 'reject' && reason ? `\nReason: ${reason}` : '');
+    const label = type === 'dispute'
+      ? `Refund request ${id} ${outcome === 'CUSTOMER' ? 'approved' : 'denied'}`
+      : `Payout request ${id} ${action}d`;
+    reply = `${label} by <@${interaction.user.id}>.` + (reason ? `\nReason: ${reason}` : '') + (resolution ? `\nResolution: ${resolution}` : '');
   } else {
     reply = `Action failed: ${data.message || resp.statusText}`;
   }
@@ -99,7 +147,6 @@ async function performApproval(interaction, { action, id, reason }) {
     await interaction.reply({ content: reply, ephemeral: true });
   }
   if (done) {
-    // With Manage Messages the bot can disable the buttons so they aren't re-clicked.
     await interaction.message?.edit({ components: [] }).catch(() => {});
   }
 }
@@ -107,11 +154,29 @@ async function performApproval(interaction, { action, id, reason }) {
 async function handleButton(interaction) {
   try {
     const [kind, action, id] = String(interaction.customId || '').split(':');
-    if (kind !== 'pv') return;
+    if (kind !== 'pv' && kind !== 'dsp') return;
+
     const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
     if (!(await isAllowed(member))) {
       return interaction.reply({ content: 'You need the Admin role to approve.', ephemeral: true });
     }
+
+    // Dispute buttons: both approve and deny require a resolution modal
+    if (kind === 'dsp') {
+      const modal = new ModalBuilder()
+        .setCustomId(`dsp:${action}:${id}`)
+        .setTitle(action === 'approve' ? 'Approve refund' : 'Deny refund');
+      const reasonInput = new TextInputBuilder()
+        .setCustomId('resolution')
+        .setLabel(action === 'approve' ? 'Refund amount & resolution note' : 'Denial reason (shown to supplier)')
+        .setStyle(TextInputStyle.Paragraph)
+        .setMaxLength(500)
+        .setRequired(true);
+      modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
+      return interaction.showModal(modal);
+    }
+
+    // Payout reject: modal for reason
     if (action === 'reject') {
       const modal = new ModalBuilder()
         .setCustomId(`pv:reject:${id}`)
@@ -125,8 +190,9 @@ async function handleButton(interaction) {
       modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
       return interaction.showModal(modal);
     }
+
     await interaction.deferReply({ ephemeral: true });
-    await performApproval(interaction, { action, id });
+    await performApproval(interaction, { type: 'payout', action, id });
   } catch (e) {
     console.error('[bot] button error:', e.message);
     await interaction.reply({ content: `Error: ${e.message}`, ephemeral: true }).catch(() => {});
@@ -136,14 +202,27 @@ async function handleButton(interaction) {
 async function handleModal(interaction) {
   try {
     const [kind, action, id] = String(interaction.customId || '').split(':');
-    if (kind !== 'pv' || action !== 'reject') return;
+    if (kind !== 'pv' && kind !== 'dsp') return;
+
     const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
     if (!(await isAllowed(member))) {
       return interaction.reply({ content: 'You need the Admin role to approve.', ephemeral: true });
     }
-    const reason = interaction.fields.getTextInputValue('reason');
-    await interaction.deferReply({ ephemeral: true });
-    await performApproval(interaction, { action, id, reason });
+
+    const resolution = interaction.fields.getTextInputValue('resolution');
+
+    if (kind === 'dsp') {
+      const outcome = action === 'approve' ? 'CUSTOMER' : 'SUPPLIER';
+      await interaction.deferReply({ ephemeral: true });
+      await performApproval(interaction, { type: 'dispute', action: 'resolve', id, outcome, resolution });
+      return;
+    }
+
+    if (kind === 'pv' && action === 'reject') {
+      await interaction.deferReply({ ephemeral: true });
+      await performApproval(interaction, { type: 'payout', action: 'reject', id, reason: resolution });
+      return;
+    }
   } catch (e) {
     console.error('[bot] modal error:', e.message);
     await interaction.reply({ content: `Error: ${e.message}`, ephemeral: true }).catch(() => {});
@@ -282,6 +361,188 @@ client.on('interactionCreate', async (interaction) => {
             { name: 'Latest backup', value: backupText, inline: false },
             { name: 'Disk /', value: disk, inline: false }
           );
+        await interaction.editReply({ embeds: [embed] });
+        break;
+      }
+
+      case 'revenue': {
+        const range = interaction.options.getString('range') || 'today';
+        let interval, label;
+        if (range === 'month') {
+          interval = "interval '30 days'";
+          label = 'last 30 days';
+        } else if (range === 'week') {
+          interval = "interval '7 days'";
+          label = 'last 7 days';
+        } else {
+          interval = "interval '1 day'";
+          label = 'today';
+        }
+        const r = await pg
+          .query(
+            `SELECT count(*)::int as bookings,
+                    coalesce(sum("grossAmount"),0)::float as revenue,
+                    coalesce(sum("platformCommission"),0)::float as commission,
+                    coalesce(sum("supplierPayout"),0)::float as supplier_total
+             FROM "Booking"
+             WHERE "createdAt" >= date_trunc('day', now()) - ${interval}
+               AND "status" = 'CONFIRMED' AND "isSimulated" = false`
+          )
+          .catch(() => null);
+        if (!r) return interaction.editReply('Could not query revenue (DB error).');
+        const { bookings, revenue, commission, supplier_total } = r.rows[0];
+        const embed = new EmbedBuilder()
+          .setTitle(`Revenue — ${label}`)
+          .setColor(0x00bcd4)
+          .addFields(
+            { name: 'Bookings', value: String(bookings), inline: true },
+            { name: 'Revenue', value: `$${revenue.toFixed(2)}`, inline: true },
+            { name: 'Commission', value: `$${commission.toFixed(2)}`, inline: true },
+            { name: 'Supplier payouts', value: `$${supplier_total.toFixed(2)}`, inline: true }
+          );
+        await interaction.editReply({ embeds: [embed] });
+        break;
+      }
+
+      case 'payouts': {
+        const r = await pg
+          .query(
+            `SELECT count(*)::int as pending,
+                    coalesce(sum(amount),0)::float as total,
+                    currency
+             FROM "PayoutRequest"
+             WHERE status IN ('PENDING','UNDER_REVIEW')
+             GROUP BY currency`
+          )
+          .catch(() => null);
+        if (!r || r.rows.length === 0) {
+          return interaction.editReply('No pending payout requests.');
+        }
+        const lines = r.rows.map((row) => `${row.currency} **${row.total.toFixed(2)}** (${row.pending} requests)`);
+        await interaction.editReply(`**Pending payouts**\n${lines.join('\n')}`);
+        break;
+      }
+
+      case 'disputes': {
+        const r = await pg
+          .query(
+            `SELECT d."disputeNumber", d.reason, d.status,
+                    b."bookingNumber", b."grossAmount", b.currency,
+                    t.title as "tourTitle"
+             FROM "Dispute" d
+             JOIN "Booking" b ON b.id = d."bookingId"
+             JOIN "Tour" t ON t.id = b."tourId"
+             WHERE d.status IN ('OPEN','UNDER_REVIEW')
+             ORDER BY d."createdAt" DESC
+             LIMIT 10`
+          )
+          .catch(() => null);
+        if (!r || r.rows.length === 0) {
+          return interaction.editReply('No open refund requests.');
+        }
+        const fields = r.rows.map((d) => ({
+          name: d.disputeNumber,
+          value: `${d.tourTitle} · ${d.currency} ${parseFloat(d.grossAmount).toFixed(2)} · ${d.reason.replace(/_/g, ' ')}`,
+          inline: false,
+        }));
+        const count = await pg.query(`SELECT count(*)::int FROM "Dispute" WHERE status IN ('OPEN','UNDER_REVIEW')`).catch(() => null);
+        const total = count?.rows?.[0]?.count || r.rows.length;
+        const embed = new EmbedBuilder()
+          .setTitle(`Open refund requests (${total})`)
+          .setColor(0xffaa00)
+          .addFields(fields);
+        await interaction.editReply({ embeds: [embed] });
+        break;
+      }
+
+      case 'signups': {
+        const range = interaction.options.getString('range') || 'today';
+        let interval, label;
+        if (range === 'week') {
+          interval = "interval '7 days'";
+          label = 'last 7 days';
+        } else {
+          interval = "interval '1 day'";
+          label = 'today';
+        }
+        const [users, suppliers] = await Promise.all([
+          pg.query(
+            `SELECT count(*)::int FROM "User" WHERE "createdAt" >= date_trunc('day', now()) - ${interval}`
+          ).catch(() => null),
+          pg.query(
+            `SELECT count(*)::int FROM "SupplierProfile" WHERE "createdAt" >= date_trunc('day', now()) - ${interval}`
+          ).catch(() => null),
+        ]);
+        const userCount = users?.rows?.[0]?.count ?? 'n/a';
+        const supplierCount = suppliers?.rows?.[0]?.count ?? 'n/a';
+        await interaction.editReply(`Signups ${label}: **${userCount}** users · **${supplierCount}** suppliers`);
+        break;
+      }
+
+      case 'cert': {
+        try {
+          const out = sh(`echo | openssl s_client -servername apiv1.travioafrica.com -connect apiv1.travioafrica.com:443 2>/dev/null | openssl x509 -noout -dates 2>/dev/null`);
+          const notAfter = out.match(/notAfter=(.+)/)?.[1];
+          if (!notAfter) throw new Error('Could not parse cert dates');
+          const expiry = new Date(notAfter);
+          const daysLeft = Math.round((expiry.getTime() - Date.now()) / 86400000);
+          const color = daysLeft > 30 ? 0x00ff88 : daysLeft > 7 ? 0xffaa00 : 0xff4444;
+          const embed = new EmbedBuilder()
+            .setTitle('SSL Certificate')
+            .setColor(color)
+            .addFields(
+              { name: 'Domain', value: 'apiv1.travioafrica.com', inline: true },
+              { name: 'Expires', value: expiry.toLocaleDateString(), inline: true },
+              { name: 'Days left', value: String(daysLeft), inline: true }
+            );
+          await interaction.editReply({ embeds: [embed] });
+        } catch (e) {
+          await interaction.editReply(`Cert check failed: ${e.message}`);
+        }
+        break;
+      }
+
+      case 'queue': {
+        const r = getRedis();
+        if (!r) {
+          await interaction.editReply('Redis not available — /queue requires REDIS_URL in bot .env');
+          break;
+        }
+        const queues = [
+          'communications-emails',
+          'communications-notifications',
+          'webhook-retry',
+          'platform-stripe',
+          'analytics-events',
+          'analytics-aggregations',
+          'system-cleanup',
+          'content-sync',
+          'homepage-precompute',
+          'ai-scoring',
+        ];
+        const results = [];
+        for (const q of queues) {
+          try {
+            const counts = await r.multi()
+              .llen(`bull:${q}:waiting`)
+              .llen(`bull:${q}:active`)
+              .llen(`bull:${q}:delayed`)
+              .exec();
+            const waiting = counts[0][1] || 0;
+            const active = counts[1][1] || 0;
+            const delayed = counts[2][1] || 0;
+            const total = waiting + active + delayed;
+            if (total > 0) {
+              results.push(`${q}: **${total}** (waiting: ${waiting}, active: ${active}, delayed: ${delayed})`);
+            }
+          } catch {
+            // queue doesn't exist or connection issue — skip
+          }
+        }
+        const embed = new EmbedBuilder()
+          .setTitle('BullMQ Queue Backlog')
+          .setColor(results.length > 0 ? 0xffaa00 : 0x00ff88)
+          .setDescription(results.length > 0 ? results.join('\n') : 'All queues clear');
         await interaction.editReply({ embeds: [embed] });
         break;
       }
