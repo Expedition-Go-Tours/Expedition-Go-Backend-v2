@@ -2251,7 +2251,7 @@ exports.updateMyPickup = catchAsync(async (req, res, next) => {
   // Notify the supplier (in-app + email) so they can plan the pickup.
   enqueueNotification({
     userId: booking.tour.supplierId,
-    type: 'BOOKING_STATUS_UPDATED',
+    type: 'PICKUP_UPDATED',
     title: 'Customer updated pickup details',
     message: `Customer updated pickup for booking "${booking.tour.title}"`,
     data: { bookingId: booking.id, pickup: true, source: 'expedition' },

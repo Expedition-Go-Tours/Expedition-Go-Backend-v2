@@ -92,7 +92,7 @@ jest.mock('../../utils/availabilityCalendar', () => ({
 const prisma = require('../../utils/prismaClient');
 const cache = require('../../utils/cacheHelper');
 const { sendEmail } = require('../../utils/emailService');
-const { enqueueEvent, enqueueNotification } = require('../../utils/queue');
+const { enqueueEvent, enqueueNotification, enqueueEmail } = require('../../utils/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy } = require('../../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../../utils/tourHelpers');
 const { createPaymentIntent, createCheckoutSession, calculateCommission, createRefund, getStripe } = require('../../utils/stripeHelpers');
@@ -1196,6 +1196,66 @@ describe('expeditionController', () => {
 
       expect(createRefund).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(200);
+    });
+  });
+
+  describe('updateMyPickup', () => {
+    it('notifies the supplier with PICKUP_UPDATED when the customer updates pickup', async () => {
+      const booking = {
+        id: 'booking-1',
+        customerId: 'customer-1',
+        status: 'CONFIRMED',
+        travelDate: new Date(Date.now() + 3 * 24 * 3600 * 1000),
+        selectedTime: null,
+        tour: {
+          id: 'tour-1',
+          title: 'Test Tour',
+          bookingAndTickets: { pickupType: 'area', pickupAreas: [{ name: 'Osu', lat: 5.6, lng: -0.2 }] },
+          supplierId: 'supplier-1',
+        },
+      };
+      prisma.booking.findFirst.mockResolvedValue(booking);
+      prisma.booking.update.mockResolvedValue({ ...booking, pickup: { status: 'deferred' } });
+
+      const req = { user: { id: 'customer-1' }, params: { id: 'booking-1' }, body: { pickup: { skipValidation: true } } };
+      const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+      const next = jest.fn();
+
+      await controller.updateMyPickup(req, res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(enqueueNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'supplier-1', type: 'PICKUP_UPDATED' })
+      );
+      expect(enqueueEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'supplier-pickup-updated', bookingId: 'booking-1' })
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('rejects invalid pickup selections with 400', async () => {
+      const booking = {
+        id: 'booking-1',
+        customerId: 'customer-1',
+        status: 'CONFIRMED',
+        travelDate: new Date(Date.now() + 3 * 24 * 3600 * 1000),
+        selectedTime: null,
+        tour: {
+          id: 'tour-1',
+          title: 'Test Tour',
+          bookingAndTickets: { pickupType: 'area', pickupAreas: [{ name: 'Osu', lat: 5.6, lng: -0.2 }] },
+          supplierId: 'supplier-1',
+        },
+      };
+      prisma.booking.findFirst.mockResolvedValue(booking);
+
+      const req = { user: { id: 'customer-1' }, params: { id: 'booking-1' }, body: { pickup: null } };
+      const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+      const next = jest.fn();
+
+      await controller.updateMyPickup(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
   });
 });

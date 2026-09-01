@@ -1295,7 +1295,7 @@ exports.updateBookingPickup = catchAsync(async (req, res, next) => {
   // Notify the customer (in-app + email).
   enqueueNotification({
     userId: booking.customerId,
-    type: 'BOOKING_STATUS_UPDATED',
+    type: 'PICKUP_UPDATED',
     title: 'Pickup details updated',
     message: 'Your pickup details have been updated by the supplier. Please check your booking.',
     data: { bookingId: booking.id, pickup: true }
