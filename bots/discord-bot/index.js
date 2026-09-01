@@ -4,6 +4,7 @@ const { Client: Pg } = require('pg');
 const { callMimo } = require('../../utils/mimoClient');
 const { runQueryAgent } = require('./queryAgent');
 const { startIncidentMonitor } = require('./incidentMonitor');
+const { collectDigest } = require('../../scripts/dailyDigest');
 require('dotenv').config();
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -432,32 +433,18 @@ client.on('interactionCreate', async (interaction) => {
       }
 
       case 'digest': {
-        const b = latestBackup();
-        const backupText = b
-          ? `${(b.size / 1048576).toFixed(1)} MB · ${b.ageH}h old`
-          : 'no backup';
-        let count = 'n/a';
-        let total = 'n/a';
-        const r = await pg
-          .query(
-            `SELECT count(*)::int, coalesce(sum("total"),0)::float FROM "Booking" WHERE "createdAt" >= date_trunc('day', now()) AND "isSimulated" = false`
-          )
-          .catch(() => null);
-        if (r) {
-          count = String(r.rows[0].count);
-          total = r.rows[0].sum.toFixed(2);
+        try {
+          const digest = await collectDigest();
+          const embed = new EmbedBuilder()
+            .setTitle(digest.title)
+            .setColor(digest.color || 0x00bcd4)
+            .setDescription(digest.description)
+            .addFields(digest.fields || []);
+          await interaction.editReply({ embeds: [embed] });
+        } catch (e) {
+          console.error('[digest] error:', e.message);
+          await interaction.editReply(`Digest error: ${e.message.slice(0, 500)}`);
         }
-        const disk = sh('df -h / | tail -1 | awk \'{print $3 " used of " $2 " (" $5 ")"}\'');
-        const embed = new EmbedBuilder()
-          .setTitle('TravioAfrica Ops Digest')
-          .setColor(0x00ff88)
-          .addFields(
-            { name: 'Bookings today', value: `${count} · ${total}`, inline: true },
-            { name: 'Latest backup', value: backupText, inline: true },
-            { name: 'Disk /', value: disk, inline: true },
-            { name: 'Server', value: sh('hostname'), inline: true }
-          );
-        await interaction.editReply({ embeds: [embed] });
         break;
       }
 

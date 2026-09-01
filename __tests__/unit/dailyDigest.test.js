@@ -3,15 +3,38 @@ jest.mock('child_process', () => ({ execSync: jest.fn(() => '') }));
 
 const mockPrisma = {
   booking: {
-    aggregate: jest.fn().mockResolvedValue({ _count: 5, _sum: { grossAmount: 1250.75 } }),
+    aggregate: jest.fn().mockResolvedValue({
+      _count: 5,
+      _sum: { grossAmount: 1250.75, platformCommission: 187.61, supplierPayout: 1063.14 },
+    }),
     count: jest.fn().mockResolvedValue(3),
-    groupBy: jest.fn().mockResolvedValue([
-      { tourId: 't1', _sum: { grossAmount: 600 } },
-      { tourId: 't2', _sum: { grossAmount: 400 } },
-    ]),
+    groupBy: jest.fn().mockImplementation(({ by }) => {
+      if (by && by[0] === 'status') {
+        return Promise.resolve([
+          { status: 'CONFIRMED', _count: 4 },
+          { status: 'REFUNDED', _count: 1 },
+        ]);
+      }
+      return Promise.resolve([
+        { tourId: 't1', _sum: { grossAmount: 600 } },
+        { tourId: 't2', _sum: { grossAmount: 400 } },
+      ]);
+    }),
   },
   user: { count: jest.fn().mockResolvedValue(8) },
-  supplierProfile: { count: jest.fn().mockResolvedValue(2) },
+  supplierProfile: {
+    count: jest.fn().mockResolvedValue(2),
+    groupBy: jest.fn().mockResolvedValue([
+      { status: 'APPROVED', _count: 5 },
+      { status: 'ACTIVE', _count: 12 },
+    ]),
+  },
+  review: {
+    aggregate: jest.fn().mockResolvedValue({ _count: 9, _avg: { rating: 4.6 } }),
+  },
+  payout: {
+    aggregate: jest.fn().mockResolvedValue({ _count: 3, _sum: { amount: 900 } }),
+  },
   tour: {
     findUnique: jest.fn().mockImplementation(({ where }) => {
       const tours = { t1: { title: 'Serengeti Safari' }, t2: { title: 'Zanzibar Beach' } };
@@ -51,6 +74,30 @@ describe('dailyDigest', () => {
     mockPrisma.dispute.count
       .mockResolvedValueOnce(1)
       .mockResolvedValueOnce(3);
+    // Reset multi-purpose booking mocks after clearAllMocks wiped implementations
+    mockPrisma.booking.aggregate.mockResolvedValue({
+      _count: 5,
+      _sum: { grossAmount: 1250.75, platformCommission: 187.61, supplierPayout: 1063.14 },
+    });
+    mockPrisma.booking.count.mockResolvedValue(3);
+    mockPrisma.booking.groupBy.mockImplementation(({ by }) => {
+      if (by && by[0] === 'status') {
+        return Promise.resolve([
+          { status: 'CONFIRMED', _count: 4 },
+          { status: 'REFUNDED', _count: 1 },
+        ]);
+      }
+      return Promise.resolve([
+        { tourId: 't1', _sum: { grossAmount: 600 } },
+        { tourId: 't2', _sum: { grossAmount: 400 } },
+      ]);
+    });
+    mockPrisma.review.aggregate.mockResolvedValue({ _count: 9, _avg: { rating: 4.6 } });
+    mockPrisma.payout.aggregate.mockResolvedValue({ _count: 3, _sum: { amount: 900 } });
+    mockPrisma.supplierProfile.groupBy.mockResolvedValue([
+      { status: 'APPROVED', _count: 5 },
+      { status: 'ACTIVE', _count: 12 },
+    ]);
   });
 
   it('posts fallback description when MIMO_API_KEY is not set', async () => {
@@ -63,7 +110,7 @@ describe('dailyDigest', () => {
     expect(desc).toContain('Revenue');
     expect(desc).toContain('Signups');
     expect(opts.title).toContain('Daily Digest');
-    expect(opts.fields).toHaveLength(9);
+    expect(opts.fields.length).toBeGreaterThan(9);
   });
 
   it('uses AI summary when MIMO_API_KEY is set', async () => {
@@ -102,6 +149,33 @@ describe('dailyDigest', () => {
     expect(openDisputes).toBeDefined();
   });
 
+  it('includes enriched revenue fields (commission, supplier payout)', async () => {
+    const { main } = require('../../scripts/dailyDigest');
+    await main();
+
+    const [, , opts] = notifyDiscord.mock.calls[0];
+    const commission = opts.fields.find((f) => f.name === 'Commission');
+    const payout = opts.fields.find((f) => f.name === 'Supplier payout');
+    expect(commission.value).toContain('187.61');
+    expect(payout.value).toContain('1063.14');
+  });
+
+  it('includes status breakdown, reviews, payouts, pay-later', async () => {
+    const { main } = require('../../scripts/dailyDigest');
+    await main();
+
+    const [, , opts] = notifyDiscord.mock.calls[0];
+    const statuses = opts.fields.find((f) => f.name === 'Statuses');
+    const reviews = opts.fields.find((f) => f.name === 'New reviews');
+    const payouts = opts.fields.find((f) => f.name === 'Payouts');
+    const payLater = opts.fields.find((f) => f.name === 'Pay-later');
+    expect(statuses.value).toContain('CONFIRMED=4');
+    expect(statuses.value).toContain('REFUNDED=1');
+    expect(reviews.value).toContain('avg 4.6');
+    expect(payouts.value).toContain('900');
+    expect(payLater.value).toBe('3');
+  });
+
   it('handles backup log failures gracefully', async () => {
     execSync.mockImplementation(() => { throw new Error('no such file'); });
     const { main } = require('../../scripts/dailyDigest');
@@ -122,4 +196,13 @@ describe('dailyDigest', () => {
     const bookingsField = opts.fields.find((f) => f.name.includes('7 days'));
     expect(bookingsField).toBeDefined();
   });
+
+  it('collectDigest returns payload without posting', async () => {
+    const { collectDigest } = require('../../scripts/dailyDigest');
+    const payload = await collectDigest();
+    expect(notifyDiscord).not.toHaveBeenCalled();
+    expect(payload.title).toContain('Digest');
+    expect(payload.fields.length).toBeGreaterThan(9);
+  });
 });
+
