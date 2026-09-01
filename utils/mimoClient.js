@@ -29,9 +29,10 @@ const REQUEST_TIMEOUT_MS = 60000;
  * @param {number} [opts.maxTokens=4096]  - Max completion tokens
  * @param {number} [opts.temperature=0.2] - Temperature (0–1)
  * @param {string} [opts.model] - Override model name
+ * @param {string} [opts.reasoningEffort] - Optional reasoning_effort value (e.g. 'low'). Sent only if truthy.
  * @returns {Promise<string>} Raw completion text
  */
-async function callMimo({ system, user, messages, maxTokens = 4096, temperature = 0.2, model } = {}) {
+async function callMimo({ system, user, messages, maxTokens = 4096, temperature = 0.2, model, reasoningEffort } = {}) {
   const apiKey = process.env.MIMO_API_KEY;
   if (!apiKey) throw new Error('MIMO_API_KEY not set in environment');
 
@@ -50,6 +51,7 @@ async function callMimo({ system, user, messages, maxTokens = 4096, temperature 
     max_completion_tokens: maxTokens,
     temperature,
   };
+  if (reasoningEffort) body.reasoning_effort = reasoningEffort;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const controller = new AbortController();

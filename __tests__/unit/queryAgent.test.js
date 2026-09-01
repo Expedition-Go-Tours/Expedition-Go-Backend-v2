@@ -1,9 +1,19 @@
-const { runQueryAgent, parseAgentResponse, MAX_STEPS } = require('../../bots/discord-bot/queryAgent');
+const { runQueryAgent, parseAgentResponse, MAX_STEPS, resetSchemaCache } = require('../../bots/discord-bot/queryAgent');
 
-function makePg({ tables = ['Booking'], describeRows = [], sqlRows = [], sqlError = null } = {}) {
+beforeEach(() => resetSchemaCache());
+
+function makePg({ tables = ['Booking'], describeRows = [], sqlRows = [], sqlError = null, schemaCols = [], schemaFks = [] } = {}) {
   let errored = false;
   return {
     async query(sql, params) {
+      // buildCompactSchema: columns with enum values, keyed by table (ANY array param)
+      if (/information_schema.columns/.test(sql) && /ANY\(/.test(sql)) {
+        return { rows: schemaCols };
+      }
+      // buildCompactSchema: foreign keys for critical tables (ANY array param)
+      if (/information_schema.table_constraints/.test(sql) && /ANY\(/.test(sql)) {
+        return { rows: schemaFks };
+      }
       if (/information_schema.tables/.test(sql)) {
         if (/table_name=lower/.test(sql) || params) {
           // describe_table case-insensitive lookup
@@ -142,7 +152,7 @@ describe('runQueryAgent', () => {
     const pg = makePg({ tables: ['Booking'] });
     const callMimo = async () => '{"tool":"list_tables"}';
     await expect(runQueryAgent({ question: 'spin', pg, callMimo })).rejects.toThrow(/maximum number of steps/);
-    expect(MAX_STEPS).toBe(15);
+    expect(MAX_STEPS).toBe(10);
   });
 
   it('forces a final answer when the step budget is exhausted', async () => {
@@ -175,5 +185,78 @@ describe('runQueryAgent', () => {
     };
     const r = await runQueryAgent({ question: 'hi', pg, callMimo });
     expect(r.final).toBe('recovered');
+  });
+
+  it('preloads the compact schema into the system prompt', async () => {
+    const pg = makePg({
+      tables: ['Booking'],
+      schemaCols: [
+        { table_name: 'Booking', column_name: 'bookingNumber', enum_values: null },
+        { table_name: 'Booking', column_name: 'status', enum_values: 'PENDING|CONFIRMED' },
+      ],
+      schemaFks: [{ table_name: 'Booking', col: 'customerId', ref_table: 'User' }],
+    });
+    let systemPrompt = '';
+    const callMimo = async ({ messages }) => {
+      systemPrompt = messages[0].content;
+      return '{"final":"done"}';
+    };
+    await runQueryAgent({ question: 'hi', pg, callMimo });
+    expect(systemPrompt).toContain('"Booking"');
+    expect(systemPrompt).toContain('"status" enum(PENDING|CONFIRMED)');
+    expect(systemPrompt).toContain('FK "customerId" -> "User"');
+  });
+
+  it('caches the compact schema across calls', async () => {
+    let schemaQueries = 0;
+    const pg = {
+      async query(sql, params) {
+        if (/information_schema.columns/.test(sql) && /ANY\(/.test(sql)) {
+          schemaQueries++;
+          return { rows: [{ table_name: 'Booking', column_name: 'bookingNumber', enum_values: null }] };
+        }
+        if (/information_schema.table_constraints/.test(sql) && /ANY\(/.test(sql)) {
+          return { rows: [] };
+        }
+        return { rows: [] };
+      },
+    };
+    const callMimo = async () => '{"final":"ok"}';
+    await runQueryAgent({ question: 'a', pg, callMimo });
+    await runQueryAgent({ question: 'b', pg, callMimo });
+    expect(schemaQueries).toBe(1);
+  });
+
+  it('falls back to describe_table when a table is not in the preloaded schema', async () => {
+    const pg = makePg({
+      tables: ['ObscureTable'],
+      describeRows: [
+        { column_name: 'id', data_type: 'text', enum_values: null },
+        { column_name: 'note', data_type: 'text', enum_values: null },
+      ],
+    });
+    const answers = [
+      '{"tool":"describe_table","name":"ObscureTable"}',
+      '{"final":"I found the obscure table."}',
+    ];
+    let i = 0;
+    const callMimo = async ({ messages }) => {
+      const last = messages[messages.length - 1];
+      if (last && last.content.startsWith('Tool result (describe_table)')) return answers[1];
+      return answers[i++];
+    };
+    const r = await runQueryAgent({ question: 'about ObscureTable?', pg, callMimo });
+    expect(r.final).toBe('I found the obscure table.');
+  });
+
+  it('passes reasoningEffort low on tool steps', async () => {
+    const pg = makePg({});
+    let seenEffort = null;
+    const callMimo = async ({ messages, reasoningEffort }) => {
+      seenEffort = reasoningEffort || seenEffort;
+      return '{"final":"done"}';
+    };
+    await runQueryAgent({ question: 'hi', pg, callMimo });
+    expect(seenEffort).toBe('low');
   });
 });

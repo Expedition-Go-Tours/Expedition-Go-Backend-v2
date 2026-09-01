@@ -322,8 +322,16 @@ if (AI_CHANNEL_ID) {
     if (!prompt) return;
 
     try {
+      // Keep the typing indicator alive — Discord hides it after ~10s.
       await message.channel.sendTyping();
-      const reply = await answerConversational(prompt, message.author.id);
+      const typingTimer = setInterval(() => message.channel.sendTyping().catch(() => {}), 9000);
+      const stopTyping = () => clearInterval(typingTimer);
+      let reply;
+      try {
+        reply = await answerConversational(prompt, message.author.id);
+      } finally {
+        stopTyping();
+      }
       if (reply.busy) {
         await message.reply('Still working on the previous question — one moment.');
         return;

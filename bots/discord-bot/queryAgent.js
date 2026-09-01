@@ -16,10 +16,33 @@
 
 const { validateReadOnly } = require('../../utils/sqlGuard');
 
-const MAX_STEPS = 15;
+const MAX_STEPS = 10;
 const MAX_ROWS = 50;
 const MAX_CELL_CHARS = 200;
 const MAX_RESULT_CHARS = 3000;
+const SCHEMA_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const TOOL_MAX_TOKENS = 768;   // tool-proposal steps only need short JSON
+const FINAL_MAX_TOKENS = 1400; // roomier for the final business answer
+
+// Tables whose schema is preloaded into the system prompt for speed.
+// Anything not listed here is discovered on demand via describe_table.
+const CRITICAL_TABLES = [
+  'Booking',
+  'Tour',
+  'User',
+  'SupplierProfile',
+  'Payout',
+  'PayoutRequest',
+  'Dispute',
+  'Review',
+  'SpecialOffer',
+  'Vehicle',
+  'Guide',
+  'SupplierDocument',
+];
+
+let schemaCache = null;
+let schemaCacheTime = 0;
 
 function stripFences(text) {
   return text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
@@ -107,6 +130,71 @@ async function describeTable(pg, name) {
   return `Table "${table}":\n${lines.join('\n')}${fkLines.length ? '\n' + fkLines.join('\n') : ''}`;
 }
 
+/**
+ * Build a compact, cached schema block for the critical tables so the
+ * agent can go straight to run_sql instead of introspecting first.
+ * Falls back to '' on any failure (agent then uses describe_table).
+ */
+async function buildCompactSchema(pg) {
+  const now = Date.now();
+  if (schemaCache && now - schemaCacheTime < SCHEMA_CACHE_TTL_MS) return schemaCache;
+  try {
+    const placeholders = CRITICAL_TABLES.map((_, i) => `$${i + 1}`).join(', ');
+
+    // Columns + enum values for the critical tables
+    const cols = await pg.query(
+      `SELECT c.table_name, c.column_name,
+              (SELECT string_agg(e.enumlabel, '|' ORDER BY e.enumsortorder)
+               FROM pg_type ty JOIN pg_enum e ON e.enumtypid = ty.oid
+               WHERE ty.typname = c.udt_name) AS enum_values
+       FROM information_schema.columns c
+       WHERE c.table_schema = 'public' AND c.table_name = ANY($${CRITICAL_TABLES.length + 1}::text[])
+       ORDER BY c.table_name, c.ordinal_position`,
+      [...CRITICAL_TABLES, CRITICAL_TABLES]
+    );
+
+    const byTable = {};
+    for (const t of CRITICAL_TABLES) byTable[t] = [];
+    for (const c of cols.rows) {
+      if (!byTable[c.table_name]) byTable[c.table_name] = [];
+      byTable[c.table_name].push(
+        c.enum_values ? `"${c.column_name}" enum(${c.enum_values})` : `"${c.column_name}"`
+      );
+    }
+
+    // Foreign keys for the critical tables
+    const fks = await pg.query(
+      `SELECT tc.table_name, kcu.column_name AS col, ccu.table_name AS ref_table
+       FROM information_schema.table_constraints tc
+       JOIN information_schema.key_column_usage kcu
+         ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+       JOIN information_schema.constraint_column_usage ccu
+         ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
+       WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'
+         AND tc.table_name = ANY($1::text[])`,
+      [CRITICAL_TABLES]
+    );
+    const fkByTable = {};
+    for (const f of fks.rows) {
+      if (!fkByTable[f.table_name]) fkByTable[f.table_name] = [];
+      fkByTable[f.table_name].push(`"${f.col}" -> "${f.ref_table}"`);
+    }
+
+    const lines = CRITICAL_TABLES
+      .filter((t) => byTable[t] && byTable[t].length)
+      .map((t) => {
+        const fks = (fkByTable[t] || []).map((f) => `FK ${f}`).join(', ');
+        return `"${t}"(${byTable[t].join(', ')})${fks ? `; ${fks}` : ''}`;
+      });
+
+    schemaCache = lines.join('\n');
+    schemaCacheTime = now;
+    return schemaCache;
+  } catch {
+    return '';
+  }
+}
+
 async function runSql(pg, sql) {
   const guard = validateReadOnly(sql);
   if (!guard.ok) return { error: guard.error };
@@ -126,7 +214,7 @@ async function runSql(pg, sql) {
   }
 }
 
-function buildSystem(tableIndex, historyText) {
+function buildSystem(schemaBlock, historyText) {
   return `You are TravioAfrica's ops assistant. You answer business questions about the TravioAfrica platform by exploring the live PostgreSQL database with tools, or conversationally.
 
 TOOLS — respond with EXACTLY ONE JSON object, no markdown fences, no extra text:
@@ -137,10 +225,11 @@ TOOLS — respond with EXACTLY ONE JSON object, no markdown fences, no extra tex
 
 WORKFLOW:
 1. Greeting / opinion / non-data question? Reply immediately with {"final":"..."}.
-2. For data questions, explore FIRST. Call list_tables or describe_table to learn the REAL column names, enum values, and relationships. NEVER guess identifiers.
-3. Write run_sql using the exact identifiers returned by the tools. Always double-quote identifiers, e.g. "Booking"."bookingNumber".
-4. If run_sql returns an ERROR, read the error, inspect the schema (describe_table), fix the SQL, and retry (a few times).
-5. When you have the data, reply with {"final":"<concise business answer>"} — max ~6 sentences, cite key numbers.
+2. For data questions, use the SCHEMA below directly — it already lists the real columns and enum values for the main tables. Go STRAIGHT to run_sql; do NOT waste steps calling list_tables or describe_table for tables already in the schema.
+3. Only call describe_table (or list_tables) for a table NOT in the schema below. NEVER guess identifiers.
+4. Always double-quote identifiers, e.g. "Booking"."bookingNumber".
+5. If run_sql returns an ERROR, read the error, inspect the schema, fix the SQL, and retry (a few times).
+6. When you have the data, reply with {"final":"<concise business answer>"} — max ~6 sentences, cite key numbers.
 
 SQL RULES:
 - SELECT or WITH only (read-only). ALWAYS double-quote ALL identifiers — PostgreSQL folds unquoted names to lowercase and many identifiers are camelCase.
@@ -148,10 +237,9 @@ SQL RULES:
 - JSONB columns: use ->> for text fields, e.g. "businessInfo"->>'legalBusinessName'.
 - Fuzzy name searches: ILIKE '%term%' across ALL name-like keys (e.g. "legalBusinessName", "displayName", "businessName").
 - Use JOINs, GROUP BY, aggregates as needed. Order by recency ("createdAt" DESC) when relevant.
-- If unsure about a table's shape, describe_table it before writing SQL.
 
-TABLES IN DATABASE:
-${tableIndex}
+SCHEMA:
+${schemaBlock || '(none preloaded — call list_tables / describe_table to discover)'}
 ${historyText ? `\nPREVIOUS CONVERSATION:\n${historyText}` : ''}`;
 }
 
@@ -168,8 +256,8 @@ ${historyText ? `\nPREVIOUS CONVERSATION:\n${historyText}` : ''}`;
  * @returns {Promise<{ final: string, sqlLogs: string[], rowCount: number }>}
  */
 async function runQueryAgent({ question, userId = '?', historyText = '', history = [], pg, callMimo }) {
-  const tableIndex = await listTables(pg);
-  const system = buildSystem(tableIndex, historyText);
+  const schemaBlock = await buildCompactSchema(pg);
+  const system = buildSystem(schemaBlock, historyText);
 
   const messages = [{ role: 'system', content: system }];
   for (const turn of history) {
@@ -184,7 +272,7 @@ async function runQueryAgent({ question, userId = '?', historyText = '', history
   let final = null;
 
   for (let step = 0; step < MAX_STEPS; step++) {
-    const out = await callMimo({ messages, maxTokens: 1024, temperature: 0.1 });
+    const out = await callMimo({ messages, maxTokens: TOOL_MAX_TOKENS, temperature: 0.1, reasoningEffort: 'low' });
     let parsed;
     try {
       parsed = parseAgentResponse(out);
@@ -248,7 +336,7 @@ async function runQueryAgent({ question, userId = '?', historyText = '', history
       content: 'You have reached the step limit. Stop exploring. Using ONLY the information already gathered in this conversation, produce your best final answer now. Output ONLY a JSON object: {"final":"<answer>"}.',
     });
     try {
-      const out = await callMimo({ messages, maxTokens: 1024, temperature: 0.1 });
+      const out = await callMimo({ messages, maxTokens: FINAL_MAX_TOKENS, temperature: 0.1, reasoningEffort: 'low' });
       const parsed = parseAgentResponse(out);
       final = parsed.final !== undefined ? String(parsed.final) : null;
     } catch {
@@ -263,4 +351,9 @@ async function runQueryAgent({ question, userId = '?', historyText = '', history
   return { final, sqlLogs, rowCount };
 }
 
-module.exports = { runQueryAgent, parseAgentResponse, MAX_STEPS };
+module.exports = { runQueryAgent, parseAgentResponse, MAX_STEPS, CRITICAL_TABLES, resetSchemaCache };
+
+function resetSchemaCache() {
+  schemaCache = null;
+  schemaCacheTime = 0;
+}
