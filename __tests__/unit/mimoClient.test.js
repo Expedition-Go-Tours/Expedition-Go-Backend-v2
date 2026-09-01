@@ -61,8 +61,8 @@ describe('callMimo', () => {
       status: 429,
       headers: new Map([['retry-after', '1']]),
     });
-    await expect(callMimo({ system: 's', user: 'q' })).rejects.toThrow('MiMo API 429: rate limited after 3 retries');
-    expect(global.fetch).toHaveBeenCalledTimes(3);
+    await expect(callMimo({ system: 's', user: 'q' })).rejects.toThrow('MiMo API 429: rate limited after 2 retries');
+    expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
   it('throws after max retries on 500 error', async () => {
@@ -72,7 +72,7 @@ describe('callMimo', () => {
       text: () => Promise.resolve('server error'),
     });
     await expect(callMimo({ system: 's', user: 'q' })).rejects.toThrow('MiMo API 500');
-    expect(global.fetch).toHaveBeenCalledTimes(3);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
   it('throws when content is empty and no reasoning_content', async () => {
