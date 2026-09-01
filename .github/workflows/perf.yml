@@ -137,6 +137,63 @@ jobs:
           name: k6-${{ matrix.scenario }}
           path: k6-output/
 
+      - name: Notify perf results
+        if: always()
+        run: |
+          DISCORD_WEBHOOK_URL="${{ secrets.DISCORD_DEPLOY_WEBHOOK }}"
+          [ -z "$DISCORD_WEBHOOK_URL" ] && exit 0
+          [ ! -f k6-output/summary.json ] && exit 0
+
+          SCENARIO="${{ matrix.scenario }}"
+          PASSED=$(jq -r '.state.passed // false' k6-output/summary.json)
+          P95=$(jq -r '.metrics.http_req_duration.values["p(95)"] // "N/A"' k6-output/summary.json)
+          P99=$(jq -r '.metrics.http_req_duration.values["p(99)"] // "N/A"' k6-output/summary.json)
+          FAIL_RATE=$(jq -r '.metrics.http_req_failed.values.rate // "N/A"' k6-output/summary.json)
+          CHECKS_PASSED=$(jq -r '.state.checks.passed // 0' k6-output/summary.json)
+          CHECKS_FAILED=$(jq -r '.state.checks.failed // 0' k6-output/summary.json)
+          AVG=$(jq -r '.metrics.http_req_duration.values.avg // "N/A"' k6-output/summary.json)
+
+          SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "n/a")
+          SUBJECT=$(git log -1 --pretty='%s' 2>/dev/null || echo "n/a")
+          AUTHOR=$(git log -1 --pretty='%an' 2>/dev/null || echo "n/a")
+
+          if [ "$PASSED" = "true" ]; then
+            TITLE="Performance Test Passed — ${SCENARIO}"
+            COLOR=5025616
+            ICON="PASS"
+          else
+            TITLE="Performance Test Failed — ${SCENARIO}"
+            COLOR=15548997
+            ICON="FAIL"
+          fi
+
+          # Format numbers
+          if echo "$P95" | grep -qE '^[0-9]'; then P95="${P95}ms"; fi
+          if echo "$P99" | grep -qE '^[0-9]'; then P99="${P99}ms"; fi
+          if echo "$AVG" | grep -qE '^[0-9]'; then AVG="${AVG}ms"; fi
+          if echo "$FAIL_RATE" | grep -qE '^[0-9]'; then FAIL_RATE="$(echo "$FAIL_RATE * 100" | bc 2>/dev/null || echo "$FAIL_RATE")%"; fi
+
+          cat > /tmp/discord-payload.json << JSONEOF
+          {
+            "embeds": [{
+              "title": "${TITLE}",
+              "description": "Scenario: \`${SCENARIO}\`",
+              "color": ${COLOR},
+              "fields": [
+                { "name": "p95 Latency", "value": "${P95}", "inline": true },
+                { "name": "p99 Latency", "value": "${P99}", "inline": true },
+                { "name": "Avg Latency", "value": "${AVG}", "inline": true },
+                { "name": "HTTP Fail Rate", "value": "${FAIL_RATE}", "inline": true },
+                { "name": "Checks", "value": "${CHECKS_PASSED} passed / ${CHECKS_FAILED} failed", "inline": true },
+                { "name": "Commit", "value": "\`${SHORT_SHA}\` ${SUBJECT}", "inline": false },
+                { "name": "Run", "value": "[#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})", "inline": true }
+              ],
+              "timestamp": "${{ github.event.head_commit.timestamp || '' }}"
+            }]
+          }
+          JSONEOF
+          bash scripts/discordSendEmbed.sh "$DISCORD_WEBHOOK_URL" /tmp/discord-payload.json
+
       - name: Kill application
         if: always()
         run: kill ${{ env.APP_PID }} || true

@@ -133,10 +133,21 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
   }).catch((err) => console.error('[Notification] notifyAdmin (new supplier) failed:', err.message));
 
   const adminDash = process.env.ADMIN_DASHBOARD_URL;
+  const reviewUrl = adminDash ? `${adminDash.replace(/\/+$/, '')}/suppliers/${supplierProfile.id}` : null;
   notifyDiscord(
     'verification',
-    `${user?.name || 'A user'} (${user?.email || userId}) submitted a supplier application (${supplierType})${adminDash ? `\nReview: ${adminDash.replace(/\/+$/, '')}/suppliers/${supplierProfile.id}` : ''}`,
-    { title: 'New supplier application', cooldownKey: supplierProfile.id }
+    `New supplier application submitted.`,
+    {
+      title: 'New Supplier Application',
+      color: 0x3498db,
+      url: reviewUrl || undefined,
+      fields: [
+        { name: 'Applicant', value: `${user?.name || 'Unknown'} (${user?.email || userId})`, inline: true },
+        { name: 'Type', value: supplierType || 'Not specified', inline: true },
+        ...(reviewUrl ? [{ name: 'Review', value: `[Open Dashboard](${reviewUrl})`, inline: false }] : []),
+      ],
+      cooldownKey: supplierProfile.id,
+    }
   );
 
   await logActivity({

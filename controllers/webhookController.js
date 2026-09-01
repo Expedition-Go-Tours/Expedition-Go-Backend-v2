@@ -64,15 +64,31 @@ exports.handleStripeWebhook = catchAsync(async (req, res, next) => {
         const pi = event.data.object || {};
         notifyDiscord(
           'sales',
-          `Payment failed — ${(pi.currency || 'USD').toUpperCase()} ${((pi.amount || 0) / 100).toFixed(2)} (PaymentIntent ${pi.id || 'unknown'})`,
-          { cooldownKey: pi.id || event.id }
+          `Payment failed for PaymentIntent \`${pi.id || 'unknown'}\``,
+          {
+            title: 'Payment Failed',
+            color: 0xff4444,
+            fields: [
+              { name: 'Amount', value: `${(pi.currency || 'USD').toUpperCase()} ${((pi.amount || 0) / 100).toFixed(2)}`, inline: true },
+              { name: 'PaymentIntent', value: `\`${pi.id || 'unknown'}\``, inline: true },
+            ],
+            cooldownKey: pi.id || event.id,
+          }
         );
       } else if (event.type === 'charge.refunded') {
         const ch = event.data.object || {};
         notifyDiscord(
           'sales',
-          `Refund issued — ${(ch.currency || 'USD').toUpperCase()} ${((ch.amount_refunded || 0) / 100).toFixed(2)} (Charge ${ch.id || 'unknown'})`,
-          { cooldownKey: ch.id || event.id }
+          `Refund issued for Charge \`${ch.id || 'unknown'}\``,
+          {
+            title: 'Refund Issued',
+            color: 0xffaa00,
+            fields: [
+              { name: 'Amount Refunded', value: `${(ch.currency || 'USD').toUpperCase()} ${((ch.amount_refunded || 0) / 100).toFixed(2)}`, inline: true },
+              { name: 'Charge', value: `\`${ch.id || 'unknown'}\``, inline: true },
+            ],
+            cooldownKey: ch.id || event.id,
+          }
         );
       }
     } else {

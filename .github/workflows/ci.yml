@@ -495,13 +495,50 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Notify deploy started
-        if: env.DISCORD_WEBHOOK != ''
-        uses: Ilshidur/action-discord@0.3.2
+      - name: Collect commit info
+        id: commit
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          AUTHOR=$(git log -1 --pretty='%an')
+          SUBJECT=$(git log -1 --pretty='%s')
+          BODY=$(git log -1 --pretty='%b' | head -20)
+          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "AUTHOR=$AUTHOR" >> $GITHUB_OUTPUT
+          # Write multiline body safely
+          {
+            echo "SUBJECT<<COMMIT_EOF"
+            echo "$SUBJECT"
+            echo "COMMIT_EOF"
+          } >> $GITHUB_OUTPUT
+          {
+            echo "BODY<<BODY_EOF"
+            echo "$BODY"
+            echo "BODY_EOF"
+          } >> $GITHUB_OUTPUT
         env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
-        with:
-          args: 'Deploy to Hetzner started (commit ${{ github.sha }})'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify deploy started
+        if: success()
+        run: |
+          DISCORD_WEBHOOK_URL="${{ secrets.DISCORD_DEPLOY_WEBHOOK }}"
+          [ -z "$DISCORD_WEBHOOK_URL" ] && exit 0
+          cat > /tmp/discord-payload.json << JSONEOF
+          {
+            "embeds": [{
+              "title": "Deployment Started",
+              "description": "Deploying **main** to Hetzner",
+              "color": 5763719,
+              "fields": [
+                { "name": "Commit", "value": "\`${{ steps.commit.outputs.SHORT_SHA }}\` ${{ steps.commit.outputs.SUBJECT }}", "inline": false },
+                { "name": "Author", "value": "${{ steps.commit.outputs.AUTHOR }}", "inline": true },
+                { "name": "Run", "value": "[#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})", "inline": true }
+              ],
+              "timestamp": "${{ github.event.head_commit.timestamp }}"
+            }]
+          }
+          JSONEOF
+          bash scripts/discordSendEmbed.sh "$DISCORD_WEBHOOK_URL" /tmp/discord-payload.json
 
       - name: Deploy to Hetzner via SSH
         uses: appleboy/ssh-action@v1
@@ -534,20 +571,48 @@ jobs:
             echo "=== Deploy complete ==="
 
       - name: Notify deploy succeeded
-        if: success() && env.DISCORD_WEBHOOK != ''
-        uses: Ilshidur/action-discord@0.3.2
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
-        with:
-          args: 'Deploy to Hetzner completed successfully'
+        if: success()
+        run: |
+          DISCORD_WEBHOOK_URL="${{ secrets.DISCORD_DEPLOY_WEBHOOK }}"
+          [ -z "$DISCORD_WEBHOOK_URL" ] && exit 0
+          cat > /tmp/discord-payload.json << JSONEOF
+          {
+            "embeds": [{
+              "title": "Deployment Successful",
+              "description": "**main** deployed to Hetzner",
+              "color": 5025616,
+              "fields": [
+                { "name": "Commit", "value": "\`${{ steps.commit.outputs.SHORT_SHA }}\` ${{ steps.commit.outputs.SUBJECT }}", "inline": false },
+                { "name": "Author", "value": "${{ steps.commit.outputs.AUTHOR }}", "inline": true },
+                { "name": "Run", "value": "[#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})", "inline": true }
+              ],
+              "timestamp": "${{ github.event.head_commit.timestamp }}"
+            }]
+          }
+          JSONEOF
+          bash scripts/discordSendEmbed.sh "$DISCORD_WEBHOOK_URL" /tmp/discord-payload.json
 
       - name: Notify deploy failed
-        if: failure() && env.DISCORD_WEBHOOK != ''
-        uses: Ilshidur/action-discord@0.3.2
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
-        with:
-          args: 'Deploy to Hetzner FAILED — check the GitHub Actions run'
+        if: failure()
+        run: |
+          DISCORD_WEBHOOK_URL="${{ secrets.DISCORD_DEPLOY_WEBHOOK }}"
+          [ -z "$DISCORD_WEBHOOK_URL" ] && exit 0
+          cat > /tmp/discord-payload.json << JSONEOF
+          {
+            "embeds": [{
+              "title": "Deployment Failed",
+              "description": "Deploy of **main** to Hetzner failed",
+              "color": 15548997,
+              "fields": [
+                { "name": "Commit", "value": "\`${{ steps.commit.outputs.SHORT_SHA }}\` ${{ steps.commit.outputs.SUBJECT }}", "inline": false },
+                { "name": "Author", "value": "${{ steps.commit.outputs.AUTHOR }}", "inline": true },
+                { "name": "Run", "value": "[#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})", "inline": true }
+              ],
+              "timestamp": "${{ github.event.head_commit.timestamp }}"
+            }]
+          }
+          JSONEOF
+          bash scripts/discordSendEmbed.sh "$DISCORD_WEBHOOK_URL" /tmp/discord-payload.json
 
   # ── Post-deploy verification (main only) ──────────────────────────
   deploy-verify:
@@ -593,3 +658,72 @@ jobs:
           echo "::error::Production tours endpoint failed after $attempts attempts"
           cat /tmp/tours.json 2>/dev/null || true
           exit 1
+
+  # ── CI failure notification (runs after all test jobs) ──────────
+  ci-notify:
+    if: always()
+    needs:
+      - lint
+      - unit-tests
+      - integration-tests
+      - startup-check
+      - smoke-test
+      - e2e-tests
+      - coverage
+      - deploy
+      - deploy-verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Determine overall CI status
+        id: status
+        run: |
+          NEEDS_CONTEXT='${{ needs }}'
+          FAILED=false
+          for JOB in lint unit-tests integration-tests startup-check smoke-test e2e-tests coverage deploy deploy-verify; do
+            RESULT=$(echo "$NEEDS_CONTEXT" | jq -r --arg j "$JOB" '.[$j].result // "skipped"')
+            if [ "$RESULT" = "failure" ]; then
+              FAILED=true
+              break
+            fi
+          done
+          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+
+      - name: Notify CI failed
+        if: steps.status.outputs.failed == 'true'
+        run: |
+          DISCORD_WEBHOOK_URL="${{ secrets.DISCORD_DEPLOY_WEBHOOK }}"
+          [ -z "$DISCORD_WEBHOOK_URL" ] && exit 0
+
+          # Collect failed job names
+          NEEDS_CONTEXT='${{ needs }}'
+          FAILED_JOBS=""
+          for JOB in lint unit-tests integration-tests startup-check smoke-test e2e-tests coverage deploy deploy-verify; do
+            RESULT=$(echo "$NEEDS_CONTEXT" | jq -r --arg j "$JOB" '.[$j].result // "skipped"')
+            if [ "$RESULT" = "failure" ]; then
+              FAILED_JOBS="${FAILED_JOBS}\`${JOB}\` "
+            fi
+          done
+
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          SUBJECT=$(git log -1 --pretty='%s')
+          AUTHOR=$(git log -1 --pretty='%an')
+
+          cat > /tmp/discord-payload.json << JSONEOF
+          {
+            "embeds": [{
+              "title": "CI Failed",
+              "description": "CI pipeline failed on **main** — deployment blocked",
+              "color": 15548997,
+              "fields": [
+                { "name": "Failed jobs", "value": "${FAILED_JOBS}", "inline": false },
+                { "name": "Commit", "value": "\`${SHORT_SHA}\` ${SUBJECT}", "inline": false },
+                { "name": "Author", "value": "${AUTHOR}", "inline": true },
+                { "name": "Run", "value": "[#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})", "inline": true }
+              ],
+              "timestamp": "${{ github.event.head_commit.timestamp }}"
+            }]
+          }
+          JSONEOF
+          bash scripts/discordSendEmbed.sh "$DISCORD_WEBHOOK_URL" /tmp/discord-payload.json

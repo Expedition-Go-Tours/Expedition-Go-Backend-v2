@@ -53,4 +53,41 @@ jobs:
         run: npx prisma migrate deploy
 
       - name: Run performance/load tests
+        id: tests
         run: npm run test:load
+
+      - name: Notify performance results
+        if: always()
+        run: |
+          DISCORD_WEBHOOK_URL="${{ secrets.DISCORD_DEPLOY_WEBHOOK }}"
+          [ -z "$DISCORD_WEBHOOK_URL" ] && exit 0
+
+          PASSED="${{ steps.tests.outcome == 'success' }}"
+          SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "n/a")
+          SUBJECT=$(git log -1 --pretty='%s' 2>/dev/null || echo "n/a")
+          AUTHOR=$(git log -1 --pretty='%an' 2>/dev/null || echo "n/a")
+
+          if [ "$PASSED" = "true" ]; then
+            TITLE="Nightly Performance Tests Passed"
+            COLOR=5025616
+          else
+            TITLE="Nightly Performance Tests Failed"
+            COLOR=15548997
+          fi
+
+          cat > /tmp/discord-payload.json << JSONEOF
+          {
+            "embeds": [{
+              "title": "${TITLE}",
+              "color": ${COLOR},
+              "fields": [
+                { "name": "Tests", "value": "Nightly load tests (Jest)", "inline": true },
+                { "name": "Commit", "value": "\`${SHORT_SHA}\` ${SUBJECT}", "inline": false },
+                { "name": "Author", "value": "${AUTHOR}", "inline": true },
+                { "name": "Run", "value": "[#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})", "inline": true }
+              ],
+              "timestamp": "${{ github.event.head_commit.timestamp || '' }}"
+            }]
+          }
+          JSONEOF
+          bash scripts/discordSendEmbed.sh "$DISCORD_WEBHOOK_URL" /tmp/discord-payload.json

@@ -56,7 +56,7 @@ async function post(url, payload) {
  *
  * @param {'deploys'|'incidents'|'sales'|'verification'|'digest'|'approvals'} channel
  * @param {string} content plain-text message body
- * @param {{cooldownMs?: number, cooldownKey?: string, title?: string, fields?: Array<{name: string; value: string; inline?: boolean}>, color?: number, components?: Array<{type: number; components: Array<{type: number; style?: number; label?: string; custom_id?: string; url?: string}>}>}} [opts]
+ * @param {{cooldownMs?: number, cooldownKey?: string, title?: string, fields?: Array<{name: string; value: string; inline?: boolean}>, color?: number, url?: string, timestamp?: string, components?: Array<{type: number; components: Array<{type: number; style?: number; label?: string; custom_id?: string; url?: string}>}>}} [opts]
  * @returns {Promise<void>} always resolves; never rejects
  */
 function notifyDiscord(channel, content, opts = {}) {
@@ -69,14 +69,16 @@ function notifyDiscord(channel, content, opts = {}) {
 
   const payload = {};
   if (opts.title || (opts.fields && opts.fields.length)) {
-    payload.embeds = [
-      {
-        title: opts.title || 'TravioAfrica',
-        description: content,
-        color: opts.color || 0x5865f2,
-        fields: opts.fields || [],
-      },
-    ];
+    const embed = {
+      title: opts.title || 'TravioAfrica',
+      description: content,
+      color: opts.color || 0x5865f2,
+      fields: opts.fields || [],
+    };
+    if (opts.url) embed.url = opts.url;
+    if (opts.timestamp) embed.timestamp = opts.timestamp;
+    else embed.timestamp = new Date().toISOString();
+    payload.embeds = [embed];
   } else {
     payload.content = content;
   }

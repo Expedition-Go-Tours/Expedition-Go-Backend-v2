@@ -211,8 +211,16 @@ exports.approvePayoutRequest = catchAsync(async (req, res, next) => {
 
   notifyDiscord(
     'approvals',
-    `Payout request ${request.requestNumber} approved — ${toNumber(request.amount).toFixed(2)} ${request.currency}`,
-    { title: 'Payout approved', cooldownKey: request.id }
+    `Payout request ${request.requestNumber} approved.`,
+    {
+      title: 'Payout Approved',
+      color: 0x00c853,
+      fields: [
+        { name: 'Request #', value: request.requestNumber, inline: true },
+        { name: 'Amount', value: `${request.currency} ${toNumber(request.amount).toFixed(2)}`, inline: true },
+      ],
+      cooldownKey: request.id,
+    }
   );
 
   // Optional auto-complete (provider integrations land here later)
@@ -357,8 +365,17 @@ exports.completePayoutRequest = catchAsync(async (req, res, next) => {
 
   notifyDiscord(
     'approvals',
-    `Payout request ${request.requestNumber} completed — ${toNumber(request.amount).toFixed(2)} ${request.currency} sent (ref ${referenceValue})`,
-    { title: 'Payout completed', cooldownKey: request.id }
+    `Payout request ${request.requestNumber} completed — funds sent.`,
+    {
+      title: 'Payout Completed',
+      color: 0x00c853,
+      fields: [
+        { name: 'Request #', value: request.requestNumber, inline: true },
+        { name: 'Amount', value: `${request.currency} ${toNumber(request.amount).toFixed(2)}`, inline: true },
+        { name: 'Reference', value: referenceValue || 'N/A', inline: true },
+      ],
+      cooldownKey: request.id,
+    }
   );
 
   const methodWarning = referenceWarning(referenceValue, request.payoutMethod?.type);

@@ -714,6 +714,70 @@ jobs:
           gh issue create -t "CI failure - AI debug unsuccessful" -F /tmp/issue-body.md -l "ci-failure,needs-attention" 2>/dev/null \
             || gh issue create -t "CI failure - AI debug unsuccessful" -F /tmp/issue-body.md
 
+      - name: Notify AI Debug results
+        if: always()
+        run: |
+          DISCORD_WEBHOOK_URL="${{ secrets.DISCORD_DEPLOY_WEBHOOK }}"
+          [ -z "$DISCORD_WEBHOOK_URL" ] && exit 0
+
+          FIXED="${{ steps.debug.outputs.fixed }}"
+          SKIP="${{ steps.debug.outputs.skip_reason }}"
+          BRANCH="${{ steps.debug.outputs.debug_branch }}"
+          ATTEMPTS="${{ steps.debug.outputs.attempts }}"
+          ANALYSIS=$(head -c 500 .ci-results/last-analysis.txt 2>/dev/null || echo "_none_")
+          WORKFLOW_NAME="${{ github.event.workflow_run.name }}"
+          RUN_URL="${{ github.event.workflow_run.html_url }}"
+          SHORT_SHA="${{ github.event.workflow_run.head_sha }}"
+          SHORT_SHA="${SHORT_SHA:0:7}"
+
+          if [ "$FIXED" = "true" ]; then
+            PR_NUM=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
+            PR_URL="https://github.com/Expedition-Go-Tours/Expedition-Go-Backend-v2/pull/${PR_NUM}"
+            jq -n \
+              --arg title "AI Debug — Fix Applied" \
+              --arg desc "CI failure in **${WORKFLOW_NAME}** automatically fixed" \
+              --argjson color 5025616 \
+              --arg pr "PR" \
+              --arg pr_val "[#${PR_NUM}](${PR_URL})" \
+              --arg att "Attempts" \
+              --arg att_val "$ATTEMPTS" \
+              --arg sha "Commit" \
+              --arg sha_val "\`${SHORT_SHA}\`" \
+              --arg ana "Analysis" \
+              --arg ana_val "$ANALYSIS" \
+              --arg ts "${{ github.event.workflow_run.updated_at || '' }}" \
+              '{embeds:[{title:$title,description:$desc,color:$color,fields:[{name:$pr,value:$pr_val,inline:true},{name:$att,value:$att_val,inline:true},{name:$sha,value:$sha_val,inline:true},{name:$ana,value:$ana_val,inline:false}],timestamp:$ts}]}' \
+              > /tmp/discord-payload.json
+          elif [ "$SKIP" = "infra_flake" ]; then
+            jq -n \
+              --arg title "AI Debug — Infra Flake Skipped" \
+              --arg desc "CI failure in **${WORKFLOW_NAME}** was a Docker pull flake — no code fix needed" \
+              --argjson color 16776960 \
+              --arg run "Run" \
+              --arg run_val "[Open](${RUN_URL})" \
+              --arg ts "${{ github.event.workflow_run.updated_at || '' }}" \
+              '{embeds:[{title:$title,description:$desc,color:$color,fields:[{name:$run,value:$run_val,inline:true}],timestamp:$ts}]}' \
+              > /tmp/discord-payload.json
+          else
+            jq -n \
+              --arg title "AI Debug — Unable to Fix" \
+              --arg desc "CI failure in **${WORKFLOW_NAME}** could not be automatically resolved" \
+              --argjson color 15548997 \
+              --arg att "Attempts" \
+              --arg att_val "$ATTEMPTS" \
+              --arg sha "Commit" \
+              --arg sha_val "\`${SHORT_SHA}\`" \
+              --arg run "Run" \
+              --arg run_val "[Open Logs](${RUN_URL})" \
+              --arg ana "Analysis" \
+              --arg ana_val "$ANALYSIS" \
+              --arg ts "${{ github.event.workflow_run.updated_at || '' }}" \
+              '{embeds:[{title:$title,description:$desc,color:$color,fields:[{name:$att,value:$att_val,inline:true},{name:$sha,value:$sha_val,inline:true},{name:$run,value:$run_val,inline:true},{name:$ana,value:$ana_val,inline:false}],timestamp:$ts}]}' \
+              > /tmp/discord-payload.json
+          fi
+
+          bash scripts/discordSendEmbed.sh "$DISCORD_WEBHOOK_URL" /tmp/discord-payload.json
+
       - name: Save debug artifacts
         if: always()
         run: |

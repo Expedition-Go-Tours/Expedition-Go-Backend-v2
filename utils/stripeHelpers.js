@@ -574,8 +574,18 @@ async function processStripeWebhook(event) {
     // Discord: new confirmed booking (fire-and-forget, never affects booking state)
     notifyDiscord(
       'sales',
-      `New booking ${booking.bookingNumber} — ${booking.currency || 'USD'} ${parseFloat(booking.grossAmount).toFixed(2)} for "${booking.tour?.title || 'Unknown tour'}" (${booking.source})`,
-      { title: 'New booking', cooldownKey: booking.id }
+      `Booking \`${booking.bookingNumber}\` confirmed`,
+      {
+        title: 'New Booking Confirmed',
+        color: 0x00c853,
+        fields: [
+          { name: 'Tour', value: booking.tour?.title || 'Unknown tour', inline: true },
+          { name: 'Amount', value: `${booking.currency || 'USD'} ${parseFloat(booking.grossAmount).toFixed(2)}`, inline: true },
+          { name: 'Source', value: booking.source || 'N/A', inline: true },
+          { name: 'Booking #', value: `\`${booking.bookingNumber}\``, inline: true },
+        ],
+        cooldownKey: booking.id,
+      }
     );
 
     if (isExpedition) {
