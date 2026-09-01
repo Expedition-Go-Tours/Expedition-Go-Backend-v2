@@ -149,11 +149,14 @@ async function answerConversational(prompt, userId) {
       ? history.map((t) => `${t.role}: ${t.content}`).join('\n')
       : '';
 
+    await pushTurn(userId, 'user', prompt);
+
     // ── Agentic exploration: the model inspects the live DB, writes real
     //    identifiers, retries on errors, and produces a final answer.
     const { final, sqlLogs, rowCount } = await runQueryAgent({
       question: prompt,
       historyText,
+      history,
       pg,
       callMimo,
     });

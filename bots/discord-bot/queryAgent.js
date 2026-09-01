@@ -16,7 +16,7 @@
 
 const { validateReadOnly } = require('../../utils/sqlGuard');
 
-const MAX_STEPS = 6;
+const MAX_STEPS = 15;
 const MAX_ROWS = 50;
 const MAX_CELL_CHARS = 200;
 const MAX_RESULT_CHARS = 3000;
@@ -160,19 +160,23 @@ ${historyText ? `\nPREVIOUS CONVERSATION:\n${historyText}` : ''}`;
  *
  * @param {Object} opts
  * @param {string} opts.question    - The user's question.
- * @param {string} opts.historyText - Prior conversation as text (or '').
+ * @param {string} [opts.historyText] - Prior conversation as one text block ('' if none).
+ * @param {Array}  [opts.history]   - Prior turns as [{role:'user'|'assistant', content}].
  * @param {Object} opts.pg          - pg client with .query().
  * @param {Function} opts.callMimo  - callMimo({ messages, maxTokens, temperature }).
  * @returns {Promise<{ final: string, sqlLogs: string[], rowCount: number }>}
  */
-async function runQueryAgent({ question, historyText = '', pg, callMimo }) {
+async function runQueryAgent({ question, historyText = '', history = [], pg, callMimo }) {
   const tableIndex = await listTables(pg);
   const system = buildSystem(tableIndex, historyText);
 
-  const messages = [
-    { role: 'system', content: system },
-    { role: 'user', content: question },
-  ];
+  const messages = [{ role: 'system', content: system }];
+  for (const turn of history) {
+    if (turn && turn.role && typeof turn.content === 'string' && turn.content.trim()) {
+      messages.push({ role: turn.role === 'assistant' ? 'assistant' : 'user', content: turn.content.slice(0, 1500) });
+    }
+  }
+  messages.push({ role: 'user', content: question });
 
   const sqlLogs = [];
   let rowCount = 0;
@@ -228,6 +232,21 @@ async function runQueryAgent({ question, historyText = '', pg, callMimo }) {
 
     messages.push({ role: 'assistant', content: out.slice(0, 800) });
     messages.push({ role: 'user', content: `Tool result (${parsed.tool}):\n${resultText}` });
+  }
+
+  if (!final) {
+    // Step budget exhausted: force the model to answer with what it has learned.
+    messages.push({
+      role: 'user',
+      content: 'You have reached the step limit. Stop exploring. Using ONLY the information already gathered in this conversation, produce your best final answer now. Output ONLY a JSON object: {"final":"<answer>"}.',
+    });
+    try {
+      const out = await callMimo({ messages, maxTokens: 1024, temperature: 0.1 });
+      const parsed = parseAgentResponse(out);
+      final = parsed.final !== undefined ? String(parsed.final) : null;
+    } catch {
+      final = null;
+    }
   }
 
   if (!final) {

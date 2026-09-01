@@ -142,7 +142,23 @@ describe('runQueryAgent', () => {
     const pg = makePg({ tables: ['Booking'] });
     const callMimo = async () => '{"tool":"list_tables"}';
     await expect(runQueryAgent({ question: 'spin', pg, callMimo })).rejects.toThrow(/maximum number of steps/);
-    expect(MAX_STEPS).toBe(6);
+    expect(MAX_STEPS).toBe(15);
+  });
+
+  it('forces a final answer when the step budget is exhausted', async () => {
+    const pg = makePg({ tables: ['Booking'] });
+    let toolCalls = 0;
+    const callMimo = async ({ messages }) => {
+      const last = messages[messages.length - 1];
+      if (last && last.content.startsWith('You have reached the step limit')) {
+        return '{"final":"I gathered enough data to answer."}';
+      }
+      toolCalls++;
+      return '{"tool":"list_tables"}';
+    };
+    const r = await runQueryAgent({ question: 'spin', pg, callMimo });
+    expect(r.final).toBe('I gathered enough data to answer.');
+    expect(toolCalls).toBe(MAX_STEPS);
   });
 
   it('recovers from malformed JSON by prompting the model to retry', async () => {
