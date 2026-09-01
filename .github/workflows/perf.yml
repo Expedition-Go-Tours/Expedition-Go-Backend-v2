@@ -27,6 +27,8 @@ env:
   SENTRY_DSN: ''
   ALLOWED_ORIGINS: http://localhost:3000
   REDIS_URL: redis://localhost:6379
+  RATELIMIT_GLOBAL_MAX: '100000'
+  RATELIMIT_CHECKOUT_CALCULATE_MAX: '100000'
 
 jobs:
   k6:
