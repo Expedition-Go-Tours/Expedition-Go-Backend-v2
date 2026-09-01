@@ -598,8 +598,13 @@ jobs:
             set -euo pipefail
             cd /home/deploy/Expedition-Go-Backend-v2
 
-            echo "=== Pulling latest code ==="
-            git pull origin main
+            echo "=== Syncing to latest code (dirty-tree safe) ==="
+            git fetch origin main
+            # Preserve any local changes (manual edits, stray files) in a stash
+            # so they can never block the production deploy, then guarantee the
+            # working tree exactly matches origin/main.
+            git stash push -u -m "ci-deploy-auto-stash $(date -u +%F_%T)" 2>/dev/null || true
+            git reset --hard origin/main
 
             echo "=== Installing dependencies ==="
             npm ci --omit=dev

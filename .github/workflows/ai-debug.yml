@@ -173,6 +173,15 @@ jobs:
               SKIP_REASON="infra_flake"
             fi
           fi
+          # Guard: deploy/ci-notify failures caused by a dirty server working
+          # tree ("Your local changes ... would be overwritten by merge") are
+          # server-state, not a code bug — the CI deploy now auto-stashes, but
+          # if this ever recurs there is no repo patch for the AI to write.
+          if [ -z "$SKIP_REASON" ] && echo "$FAIL_JOBS" | grep -qE 'deploy|ci-notify'; then
+            if grep -qiE 'local changes to the following files would be overwritten|Please commit your changes or stash them|not up to date' .ci-results/failed-logs.txt 2>/dev/null; then
+              SKIP_REASON="server_dirty"
+            fi
+          fi
           if [ "$SKIP_REASON" = "infra_flake" ]; then
             echo "Skipping AI: only startup-check Docker pull flake detected (infra, not code)" | tee -a .ci-results/debug-log.txt
             echo "fixed=false" >> $GITHUB_OUTPUT
@@ -181,6 +190,16 @@ jobs:
             echo "last_analysis=startup-check Docker pull infra flake; no code change attempted" >> $GITHUB_OUTPUT
             echo "last_confidence=0" >> $GITHUB_OUTPUT
             echo "skip_reason=infra_flake" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          if [ "$SKIP_REASON" = "server_dirty" ]; then
+            echo "Skipping AI: deploy failed because the server working tree had uncommitted changes (server-state, not code)" | tee -a .ci-results/debug-log.txt
+            echo "fixed=false" >> $GITHUB_OUTPUT
+            echo "debug_branch=$DEBUG_BRANCH" >> $GITHUB_OUTPUT
+            echo "attempts=0" >> $GITHUB_OUTPUT
+            echo "last_analysis=deploy blocked by uncommitted server changes (git pull rejected merge); CI deploy now auto-stashes before pull. No repo patch needed." >> $GITHUB_OUTPUT
+            echo "last_confidence=0" >> $GITHUB_OUTPUT
+            echo "skip_reason=server_dirty" >> $GITHUB_OUTPUT
             exit 0
           fi
 
@@ -676,7 +695,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create issue on failure
-        if: steps.debug.outputs.fixed != 'true' && steps.debug.outputs.skip_reason != 'infra_flake'
+        if: steps.debug.outputs.fixed != 'true' && steps.debug.outputs.skip_reason != 'infra_flake' && steps.debug.outputs.skip_reason != 'server_dirty'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -752,6 +771,16 @@ jobs:
             jq -n \
               --arg title "AI Debug — Infra Flake Skipped" \
               --arg desc "CI failure in **${WORKFLOW_NAME}** was a Docker pull flake — no code fix needed" \
+              --argjson color 16776960 \
+              --arg run "Run" \
+              --arg run_val "[Open](${RUN_URL})" \
+              --arg ts "${{ github.event.workflow_run.updated_at || '' }}" \
+              '{embeds:[{title:$title,description:$desc,color:$color,fields:[{name:$run,value:$run_val,inline:true}],timestamp:$ts}]}' \
+              > /tmp/discord-payload.json
+          elif [ "$SKIP" = "server_dirty" ]; then
+            jq -n \
+              --arg title "AI Debug — Server State, No Code Fix Needed" \
+              --arg desc "CI deploy in **${WORKFLOW_NAME}** was blocked by uncommitted server changes — server-state, not a code bug" \
               --argjson color 16776960 \
               --arg run "Run" \
               --arg run_val "[Open](${RUN_URL})" \
