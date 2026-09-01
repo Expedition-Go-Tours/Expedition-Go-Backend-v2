@@ -425,11 +425,25 @@ async function deleteConversation(conversationId, userId) {
   await prisma.conversation.delete({ where: { id: conversationId } });
 }
 
-async function getUnreadCount(userId) {
+/**
+ * Total unread messages across the user's conversations.
+ *
+ * `types` (optional array of conversation types, e.g. ['SUPPLIER_ADMIN']) scopes
+ * the count to only those chatrooms — used by the supplier dashboard's floating
+ * "Admin Support" bubble so it never counts unread from channels it doesn't
+ * display (e.g. EXPEDITION_CUSTOMER). When `types` is null/empty all
+ * conversations are counted (backward compatible — the storefront relies on
+ * this).
+ */
+async function getUnreadCount(userId, types = null) {
   userId = await resolveChatUserId(userId);
 
+  const hasTypes = Array.isArray(types) && types.length > 0;
   const participants = await prisma.conversationParticipant.findMany({
-    where: { userId },
+    where: {
+      userId,
+      ...(hasTypes ? { conversation: { type: { in: types } } } : {}),
+    },
     select: {
       conversationId: true,
       lastReadAt: true,

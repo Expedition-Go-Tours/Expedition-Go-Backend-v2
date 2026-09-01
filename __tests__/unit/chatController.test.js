@@ -250,8 +250,26 @@ describe('chatController', () => {
 
       await controller.getUnreadCount(req, res, next);
 
-      expect(chatService.getUnreadCount).toHaveBeenCalledWith('u-1');
+      expect(chatService.getUnreadCount).toHaveBeenCalledWith('u-1', null);
       expect(res.json).toHaveBeenCalledWith({ status: 'success', data: { unreadCount: 3 } });
+    });
+
+    it('passes the type filter through to the service', async () => {
+      req.query = { type: 'SUPPLIER_ADMIN' };
+      chatService.getUnreadCount.mockResolvedValue({ unreadCount: 0 });
+
+      await controller.getUnreadCount(req, res, next);
+
+      expect(chatService.getUnreadCount).toHaveBeenCalledWith('u-1', ['SUPPLIER_ADMIN']);
+    });
+
+    it('parses comma-separated type filters', async () => {
+      req.query = { type: 'SUPPLIER_ADMIN,USER_SUPPORT' };
+      chatService.getUnreadCount.mockResolvedValue({ unreadCount: 0 });
+
+      await controller.getUnreadCount(req, res, next);
+
+      expect(chatService.getUnreadCount).toHaveBeenCalledWith('u-1', ['SUPPLIER_ADMIN', 'USER_SUPPORT']);
     });
   });
 

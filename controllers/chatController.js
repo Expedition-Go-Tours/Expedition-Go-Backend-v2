@@ -140,7 +140,14 @@ exports.markAsRead = catchAsync(async (req, res) => {
 });
 
 exports.getUnreadCount = catchAsync(async (req, res) => {
-  const result = await chatService.getUnreadCount(req.user.id);
+  // Optional ?type= filter (comma-separated, e.g. ?type=SUPPLIER_ADMIN) so the
+  // supplier dashboard bubble only counts the chatrooms it displays. No param =
+  // all conversation types (backward compatible).
+  const raw = req.query.type || req.query.types;
+  const types = typeof raw === 'string' && raw.trim()
+    ? raw.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
+    : null;
+  const result = await chatService.getUnreadCount(req.user.id, types);
   res.json({ status: 'success', data: result });
 });
 

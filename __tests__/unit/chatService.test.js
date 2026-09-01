@@ -364,5 +364,33 @@ describe('chatService', () => {
       const result = await chatService.getUnreadCount('u-1');
       expect(result.unreadCount).toBe(1);
     });
+
+    it('scopes the count to the requested conversation types', async () => {
+      prisma.message.count.mockResolvedValueOnce(3);
+      prisma.conversationParticipant.findMany.mockResolvedValue([
+        { conversationId: 'c-1', lastReadAt: new Date(0) },
+      ]);
+
+      const result = await chatService.getUnreadCount('u-1', ['SUPPLIER_ADMIN']);
+
+      const findManyArg = prisma.conversationParticipant.findMany.mock.calls[0][0];
+      expect(findManyArg.where).toMatchObject({
+        conversation: { type: { in: ['SUPPLIER_ADMIN'] } },
+      });
+      expect(result.unreadCount).toBe(3);
+    });
+
+    it('counts all conversations when no types are provided', async () => {
+      prisma.message.count.mockResolvedValueOnce(5);
+      prisma.conversationParticipant.findMany.mockResolvedValue([
+        { conversationId: 'c-1', lastReadAt: new Date(0) },
+      ]);
+
+      await chatService.getUnreadCount('u-1', null);
+
+      const findManyArg = prisma.conversationParticipant.findMany.mock.calls[0][0];
+      expect(findManyArg.where).toMatchObject({ userId: 'u-1' });
+      expect(findManyArg.where.conversation).toBeUndefined();
+    });
   });
 });
