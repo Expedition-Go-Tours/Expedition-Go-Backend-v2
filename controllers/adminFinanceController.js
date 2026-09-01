@@ -209,19 +209,14 @@ exports.approvePayoutRequest = catchAsync(async (req, res, next) => {
     console.error('[Finance] Approval email failed:', err.message)
   );
 
-  notifyDiscord(
-    'approvals',
-    `Payout request ${request.requestNumber} approved.`,
-    {
-      title: 'Payout Approved',
-      color: 0x00c853,
-      fields: [
-        { name: 'Request #', value: request.requestNumber, inline: true },
-        { name: 'Amount', value: `${request.currency} ${toNumber(request.amount).toFixed(2)}`, inline: true },
-      ],
-      cooldownKey: request.id,
-    }
-  );
+  const { approvalPayoutResult } = require('../utils/channelEmbeds');
+  const approvedEmbed = approvalPayoutResult({
+    requestNumber: request.requestNumber,
+    amount: toNumber(request.amount),
+    currency: request.currency,
+    action: 'approved',
+  });
+  notifyDiscord('approvals', approvedEmbed.content, approvedEmbed.opts);
 
   // Optional auto-complete (provider integrations land here later)
   const getConfig = require('../utils/getConfig');

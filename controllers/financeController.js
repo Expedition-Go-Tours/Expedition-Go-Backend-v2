@@ -297,29 +297,15 @@ exports.createPayoutRequest = catchAsync(async (req, res, next) => {
     data: { payoutRequestId: requests[0].id, supplierId },
   }).catch(() => {});
 
-  notifyDiscord(
-    'approvals',
-    `Payout request ${requests[0].requestNumber} awaiting approval.`,
-    {
-      title: 'Payout Approval Needed',
-      color: 0xffaa00,
-      fields: [
-        { name: 'Request #', value: requests[0].requestNumber, inline: true },
-        { name: 'Amount', value: `${requests[0].currency} ${requests.reduce((s, r) => s + toNumber(r.amount), 0).toFixed(2)}`, inline: true },
-        { name: 'Bookings', value: String(requests.reduce((s, r) => s + r.bookingCount, 0)), inline: true },
-      ],
-      cooldownKey: requests[0].id,
-      components: [
-        {
-          type: 1,
-          components: [
-            { type: 2, style: 3, label: 'Approve', custom_id: `pv:approve:${requests[0].id}` },
-            { type: 2, style: 4, label: 'Reject', custom_id: `pv:reject:${requests[0].id}` },
-          ],
-        },
-      ],
-    }
-  );
+  const { approvalPayoutRequest } = require('../utils/channelEmbeds');
+  const payoutEmbed = approvalPayoutRequest({
+    requestNumber: requests[0].requestNumber,
+    amount: requests.reduce((s, r) => s + toNumber(r.amount), 0),
+    currency: requests[0].currency,
+    bookingCount: requests.reduce((s, r) => s + r.bookingCount, 0),
+    requestId: requests[0].id,
+  });
+  notifyDiscord('approvals', payoutEmbed.content, payoutEmbed.opts);
 
   enqueueEmail({ type: 'payout-request-submitted', payoutRequestId: requests[0].id }).catch((err) =>
     console.error('[Finance] Payout request email failed:', err.message)

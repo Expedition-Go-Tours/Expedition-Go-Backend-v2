@@ -108,7 +108,11 @@ async function expireExpiredDocuments() {
     type: 'DOCUMENT_EXPIRED',
     title: 'Supplier documents expired',
     message: `${expiredDocs.length} document(s) expired; ${expiringSuppliers} supplier(s) placed on hold.`,
-    data: { expiredDocuments: expiredDocs.length, expiringSuppliers },
+    data: {
+      expiredDocuments: expiredDocs.length,
+      expiringSuppliers,
+      documentTypes: [...new Set(expiredDocs.map((d) => d.type))].join(', '),
+    },
   }).catch(() => {});
 
   return { expiredDocuments: expiredDocs.length, expiringSuppliers };

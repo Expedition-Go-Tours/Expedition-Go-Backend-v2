@@ -134,20 +134,16 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
 
   const adminDash = process.env.ADMIN_DASHBOARD_URL;
   const reviewUrl = adminDash ? `${adminDash.replace(/\/+$/, '')}/suppliers/${supplierProfile.id}` : null;
+  const { verificationSupplierApplication } = require('../utils/channelEmbeds');
+  const appEmbed = verificationSupplierApplication({
+    user: { name: user?.name, email: user?.email },
+    supplierId: supplierProfile.id,
+    supplierType,
+  });
   notifyDiscord(
     'verification',
-    `New supplier application submitted.`,
-    {
-      title: 'New Supplier Application',
-      color: 0x3498db,
-      url: reviewUrl || undefined,
-      fields: [
-        { name: 'Applicant', value: `${user?.name || 'Unknown'} (${user?.email || userId})`, inline: true },
-        { name: 'Type', value: supplierType || 'Not specified', inline: true },
-        ...(reviewUrl ? [{ name: 'Review', value: `[Open Dashboard](${reviewUrl})`, inline: false }] : []),
-      ],
-      cooldownKey: supplierProfile.id,
-    }
+    appEmbed.content,
+    { ...appEmbed.opts, url: appEmbed.opts.url || reviewUrl || undefined }
   );
 
   await logActivity({
@@ -787,7 +783,7 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
     type: 'SUPPLIER_STATUS_CHANGE',
     title: 'Supplier Activated',
     message: `${supplierProfile.user.name} has been activated as a supplier.`,
-    data: { supplierId: id, supplierName: supplierProfile.user.name },
+    data: { supplierId: id, supplierName: supplierProfile.user.name, fromStatus: supplierProfile.status, toStatus: 'ACTIVE' },
   }).catch((err) => console.error('[Notification] notifyAdmin (activate) failed:', err.message));
 
   await logActivity({

@@ -17,18 +17,48 @@ const DISCORD_MAP = {
   SYSTEM_ALERT:              { channel: 'incidents', color: 0xff4444 },
 };
 
+// Human-friendly field labels for common keys, in display order.
+const FIELD_LABELS = {
+  supplierName: 'Supplier',
+  supplierId: 'Supplier ID',
+  documentType: 'Document',
+  documentName: 'Document',
+  expiresAt: 'Expires',
+  daysLeft: 'Days left',
+  tourTitle: 'Tour',
+  tourId: 'Tour ID',
+  status: 'Status',
+  fromStatus: 'From',
+  toStatus: 'To',
+  reviewerName: 'Reviewer',
+  message: 'Message',
+};
+
+function formatFields(data) {
+  const entries = Object.entries(data || {}).filter(([, v]) => v !== undefined && v !== null && v !== '');
+  if (!entries.length) return [];
+  // Sort by preferred label order, then alphabetical.
+  const order = Object.keys(FIELD_LABELS);
+  entries.sort((a, b) => {
+    const ai = order.indexOf(a[0]);
+    const bi = order.indexOf(b[0]);
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi) || a[0].localeCompare(b[0]);
+  });
+  return entries.map(([k, v]) => ({
+    name: FIELD_LABELS[k] || k.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase()),
+    value: String(v ?? '—').slice(0, 1024),
+    inline: true,
+  }));
+}
+
 function mirrorToDiscord(type, title, message, data) {
   const cfg = DISCORD_MAP[type];
   if (!cfg) return;
   notifyDiscord(cfg.channel, message, {
     title,
     color: cfg.color,
-    fields: Object.entries(data).map(([k, v]) => ({
-      name: k.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase()),
-      value: String(v ?? '—').slice(0, 1024),
-      inline: true,
-    })),
-    cooldownKey: data.payoutRequestId || data.disputeId || data.supplierId || title,
+    fields: formatFields(data),
+    cooldownKey: data?.supplierId || data?.tourId || data?.payoutRequestId || data?.disputeId || title,
   }).catch(() => {});
 }
 
