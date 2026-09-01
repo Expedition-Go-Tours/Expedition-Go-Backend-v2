@@ -49,6 +49,10 @@ jobs:
     env:
       JEST_JUNIT_OUTPUT_DIR: reports/junit
       JEST_JUNIT_OUTPUT_NAME: unit.xml
+    outputs:
+      passed: ${{ steps.counts.outputs.passed }}
+      failed: ${{ steps.counts.outputs.failed }}
+      skipped: ${{ steps.counts.outputs.skipped }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -57,6 +61,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx jest __tests__/unit/ --no-coverage --forceExit --reporters=default --reporters=jest-junit
+
+      - name: Export test counts
+        id: counts
+        if: success() || failure()
+        continue-on-error: true
+        run: node scripts/extractJunitCounts.js reports/junit/unit.xml
 
       - name: Publish unit test results
         uses: dorny/test-reporter@v3
@@ -85,6 +95,10 @@ jobs:
     env:
       JEST_JUNIT_OUTPUT_DIR: reports/junit
       JEST_JUNIT_OUTPUT_NAME: api.xml
+    outputs:
+      passed: ${{ steps.counts.outputs.passed }}
+      failed: ${{ steps.counts.outputs.failed }}
+      skipped: ${{ steps.counts.outputs.skipped }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -96,6 +110,12 @@ jobs:
       - run: npx prisma migrate deploy
       - run: node prisma/seed.js
       - run: npx jest __tests__/api/ --no-coverage --forceExit --reporters=default --reporters=jest-junit
+
+      - name: Export test counts
+        id: counts
+        if: success() || failure()
+        continue-on-error: true
+        run: node scripts/extractJunitCounts.js reports/junit/api.xml
 
       - name: Publish integration test results
         uses: dorny/test-reporter@v3
@@ -419,6 +439,10 @@ jobs:
     env:
       JEST_JUNIT_OUTPUT_DIR: reports/junit
       JEST_JUNIT_OUTPUT_NAME: e2e.xml
+    outputs:
+      passed: ${{ steps.counts.outputs.passed }}
+      failed: ${{ steps.counts.outputs.failed }}
+      skipped: ${{ steps.counts.outputs.skipped }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -427,6 +451,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx jest __tests__/e2e/ --no-coverage --forceExit --reporters=default --reporters=jest-junit
+
+      - name: Export test counts
+        id: counts
+        if: success() || failure()
+        continue-on-error: true
+        run: node scripts/extractJunitCounts.js reports/junit/e2e.xml
 
       - name: Publish e2e test results
         uses: dorny/test-reporter@v3
@@ -492,8 +522,19 @@ jobs:
       - coverage
     runs-on: ubuntu-latest
     environment: production
+    outputs:
+      sha: ${{ github.sha }}
+      shortSha: ${{ steps.commit.outputs.SHORT_SHA }}
+      startTs: ${{ steps.start.outputs.ts }}
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Record deploy start time
+        id: start
+        run: echo "ts=$(date +%s)" >> $GITHUB_OUTPUT
 
       - name: Collect commit info
         id: commit
@@ -518,29 +559,36 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Count changed files (best-effort)
+        id: files
+        continue-on-error: true
+        run: |
+          COUNT=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}" \
+            | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const j=JSON.parse(d);console.log((j.files||[]).length)}catch{console.log('')}})")
+          if [ -n "$COUNT" ] && [ "$COUNT" -gt 0 ] 2>/dev/null; then
+            echo "count=$COUNT" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Notify deploy started
         if: success()
-        run: |
-          DISCORD_WEBHOOK_URL="${{ secrets.DISCORD_DEPLOY_WEBHOOK }}"
-          [ -z "$DISCORD_WEBHOOK_URL" ] && exit 0
-          cat > /tmp/discord-payload.json << JSONEOF
-          {
-            "embeds": [{
-              "title": "Deployment Started",
-              "description": "Deploying **main** to Hetzner",
-              "color": 5763719,
-              "fields": [
-                { "name": "Commit", "value": "\`${{ steps.commit.outputs.SHORT_SHA }}\` ${{ steps.commit.outputs.SUBJECT }}", "inline": false },
-                { "name": "Author", "value": "${{ steps.commit.outputs.AUTHOR }}", "inline": true },
-                { "name": "Run", "value": "[#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})", "inline": true }
-              ],
-              "timestamp": "${{ github.event.head_commit.timestamp }}"
-            }]
-          }
-          JSONEOF
-          bash scripts/discordSendEmbed.sh "$DISCORD_WEBHOOK_URL" /tmp/discord-payload.json
+        env:
+          STATE: started
+          DEPLOY_SHA: ${{ github.sha }}
+          DEPLOY_SHORT_SHA: ${{ steps.commit.outputs.SHORT_SHA }}
+          DEPLOY_AUTHOR: ${{ steps.commit.outputs.AUTHOR }}
+          DEPLOY_SUBJECT: ${{ steps.commit.outputs.SUBJECT }}
+          DEPLOY_BODY: ${{ steps.commit.outputs.BODY }}
+          DEPLOY_CHANGED_FILES: ${{ steps.files.outputs.count }}
+          DEPLOY_ENV: production
+          DEPLOY_TIMESTAMP: ${{ github.event.head_commit.timestamp }}
+          DISCORD_DEPLOY_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+        run: node scripts/deployNotify.js
 
       - name: Deploy to Hetzner via SSH
+        id: deploy_ssh
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.HETZNER_HOST }}
@@ -570,49 +618,42 @@ jobs:
 
             echo "=== Deploy complete ==="
 
-      - name: Notify deploy succeeded
+      - name: Compute deploy duration
+        id: dur
+        if: always()
+        run: echo "sec=$(( $(date +%s) - ${{ steps.start.outputs.ts }} ))" >> $GITHUB_OUTPUT
+
+      - name: Notify deploy completed
         if: success()
-        run: |
-          DISCORD_WEBHOOK_URL="${{ secrets.DISCORD_DEPLOY_WEBHOOK }}"
-          [ -z "$DISCORD_WEBHOOK_URL" ] && exit 0
-          cat > /tmp/discord-payload.json << JSONEOF
-          {
-            "embeds": [{
-              "title": "Deployment Successful",
-              "description": "**main** deployed to Hetzner",
-              "color": 5025616,
-              "fields": [
-                { "name": "Commit", "value": "\`${{ steps.commit.outputs.SHORT_SHA }}\` ${{ steps.commit.outputs.SUBJECT }}", "inline": false },
-                { "name": "Author", "value": "${{ steps.commit.outputs.AUTHOR }}", "inline": true },
-                { "name": "Run", "value": "[#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})", "inline": true }
-              ],
-              "timestamp": "${{ github.event.head_commit.timestamp }}"
-            }]
-          }
-          JSONEOF
-          bash scripts/discordSendEmbed.sh "$DISCORD_WEBHOOK_URL" /tmp/discord-payload.json
+        env:
+          STATE: completed
+          DEPLOY_SHA: ${{ github.sha }}
+          DEPLOY_SHORT_SHA: ${{ steps.commit.outputs.SHORT_SHA }}
+          DEPLOY_STAGE: Deployed
+          DEPLOY_DURATION: ${{ steps.dur.outputs.sec }}
+          TESTS_UNIT_PASSED: ${{ needs.unit-tests.outputs.passed }}
+          TESTS_UNIT_FAILED: ${{ needs.unit-tests.outputs.failed }}
+          TESTS_UNIT_SKIPPED: ${{ needs.unit-tests.outputs.skipped }}
+          TESTS_INTEGRATION_PASSED: ${{ needs.integration-tests.outputs.passed }}
+          TESTS_INTEGRATION_FAILED: ${{ needs.integration-tests.outputs.failed }}
+          TESTS_INTEGRATION_SKIPPED: ${{ needs.integration-tests.outputs.skipped }}
+          TESTS_E2E_PASSED: ${{ needs.e2e-tests.outputs.passed }}
+          TESTS_E2E_FAILED: ${{ needs.e2e-tests.outputs.failed }}
+          TESTS_E2E_SKIPPED: ${{ needs.e2e-tests.outputs.skipped }}
+          DISCORD_DEPLOY_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+        run: node scripts/deployNotify.js
 
       - name: Notify deploy failed
         if: failure()
-        run: |
-          DISCORD_WEBHOOK_URL="${{ secrets.DISCORD_DEPLOY_WEBHOOK }}"
-          [ -z "$DISCORD_WEBHOOK_URL" ] && exit 0
-          cat > /tmp/discord-payload.json << JSONEOF
-          {
-            "embeds": [{
-              "title": "Deployment Failed",
-              "description": "Deploy of **main** to Hetzner failed",
-              "color": 15548997,
-              "fields": [
-                { "name": "Commit", "value": "\`${{ steps.commit.outputs.SHORT_SHA }}\` ${{ steps.commit.outputs.SUBJECT }}", "inline": false },
-                { "name": "Author", "value": "${{ steps.commit.outputs.AUTHOR }}", "inline": true },
-                { "name": "Run", "value": "[#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})", "inline": true }
-              ],
-              "timestamp": "${{ github.event.head_commit.timestamp }}"
-            }]
-          }
-          JSONEOF
-          bash scripts/discordSendEmbed.sh "$DISCORD_WEBHOOK_URL" /tmp/discord-payload.json
+        env:
+          STATE: failed
+          FAIL_STAGE: deployment
+          FAIL_STEP: SSH deployment
+          DEPLOY_SHA: ${{ github.sha }}
+          DEPLOY_SHORT_SHA: ${{ steps.commit.outputs.SHORT_SHA }}
+          DEPLOY_DURATION: ${{ steps.dur.outputs.sec }}
+          DISCORD_DEPLOY_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+        run: node scripts/deployNotify.js
 
   # ── Post-deploy verification (main only) ──────────────────────────
   deploy-verify:
@@ -620,25 +661,40 @@ jobs:
     needs: deploy
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Record verify start time
+        id: verify_start
+        run: echo "ts=$(date +%s)" >> $GITHUB_OUTPUT
+
       - name: Verify live health endpoint
+        id: health
+        continue-on-error: true
         run: |
           attempts=10
           delay=15
           for i in $(seq 1 "$attempts"); do
-            HTTP_CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" https://apiv1.travioafrica.com/)
-            echo "attempt $i/$attempts: HTTP $HTTP_CODE"
-            if [ "$HTTP_CODE" = "200" ]; then
-              echo "Production health check passed"
-              cat /tmp/health.json
+            RESP=$(curl -s -o /tmp/health.json -w "%{http_code} %{time_total}" https://apiv1.travioafrica.com/health)
+            CODE=$(echo "$RESP" | awk '{print $1}')
+            LATENCY=$(echo "$RESP" | awk '{print $2}')
+            echo "attempt $i/$attempts: HTTP $CODE"
+            if [ "$CODE" = "200" ]; then
+              echo "code=$CODE" >> $GITHUB_OUTPUT
+              echo "latency=$LATENCY" >> $GITHUB_OUTPUT
+              echo "details=$(cat /tmp/health.json)" >> $GITHUB_OUTPUT
               exit 0
             fi
             if [ "$i" -lt "$attempts" ]; then sleep "$delay"; fi
           done
-          echo "::error::Production health check failed after $attempts attempts"
-          cat /tmp/health.json 2>/dev/null || true
+          echo "code=timeout" >> $GITHUB_OUTPUT
           exit 1
 
       - name: Smoke test live tours endpoint
+        id: tours
+        continue-on-error: true
         run: |
           attempts=5
           delay=15
@@ -647,17 +703,53 @@ jobs:
             echo "attempt $i/$attempts: HTTP $HTTP_CODE"
             if [ "$HTTP_CODE" = "200" ]; then
               STATUS=$(node -pe "const j=JSON.parse(require('fs').readFileSync('/tmp/tours.json','utf8'));j.status||''" 2>/dev/null || echo "")
-              echo "status: $STATUS"
               if [ "$STATUS" = "success" ]; then
-                echo "Production tours endpoint OK"
+                echo "code=$HTTP_CODE" >> $GITHUB_OUTPUT
                 exit 0
               fi
             fi
             if [ "$i" -lt "$attempts" ]; then sleep "$delay"; fi
           done
-          echo "::error::Production tours endpoint failed after $attempts attempts"
-          cat /tmp/tours.json 2>/dev/null || true
+          echo "code=timeout" >> $GITHUB_OUTPUT
           exit 1
+
+      - name: Compute verification durations
+        id: dur
+        if: always()
+        run: |
+          NOW=$(date +%s)
+          VERIFY_START=${{ steps.verify_start.outputs.ts }}
+          DEPLOY_START=${{ needs.deploy.outputs.startTs }}
+          echo "verify=$(( NOW - VERIFY_START ))" >> $GITHUB_OUTPUT
+          echo "total=$(( NOW - DEPLOY_START ))" >> $GITHUB_OUTPUT
+
+      - name: Notify production verified
+        if: steps.health.outcome == 'success' && steps.tours.outcome == 'success'
+        env:
+          STATE: verified
+          DEPLOY_SHA: ${{ needs.deploy.outputs.sha }}
+          DEPLOY_SHORT_SHA: ${{ needs.deploy.outputs.shortSha }}
+          PRODUCTION_URL: https://apiv1.travioafrica.com
+          HEALTH_CODE: ${{ steps.health.outputs.code }}
+          HEALTH_LATENCY_MS: ${{ steps.health.outputs.latency }}
+          HEALTH_DETAILS: ${{ steps.health.outputs.details }}
+          TOURS_CODE: ${{ steps.tours.outputs.code }}
+          VERIFY_DURATION: ${{ steps.dur.outputs.verify }}
+          TOTAL_DURATION: ${{ steps.dur.outputs.total }}
+          DISCORD_DEPLOY_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+        run: node scripts/deployNotify.js
+
+      - name: Notify verification failed
+        if: failure()
+        env:
+          STATE: failed
+          FAIL_STAGE: verification
+          FAIL_STEP: Production verification
+          DEPLOY_SHA: ${{ needs.deploy.outputs.sha }}
+          DEPLOY_SHORT_SHA: ${{ needs.deploy.outputs.shortSha }}
+          DEPLOY_DURATION: ${{ steps.dur.outputs.total }}
+          DISCORD_DEPLOY_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+        run: node scripts/deployNotify.js
 
   # ── CI failure notification (runs after all test jobs) ──────────
   ci-notify:
@@ -675,6 +767,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Record CI start time
+        id: start
+        run: echo "ts=$(date +%s)" >> $GITHUB_OUTPUT
 
       - name: Determine overall CI status
         id: status
@@ -697,12 +796,30 @@ jobs:
           done
           echo "failed=$FAILED" >> $GITHUB_OUTPUT
 
+      - name: Compute CI duration
+        id: dur
+        if: always()
+        run: echo "sec=$(( $(date +%s) - ${{ steps.start.outputs.ts }} ))" >> $GITHUB_OUTPUT
+
       - name: Notify CI failed
         if: steps.status.outputs.failed == 'true'
+        env:
+          STATE: ci_failed
+          DEPLOY_SHA: ${{ github.sha }}
+          DEPLOY_SHORT_SHA: ${{ github.sha }}
+          CI_DURATION: ${{ steps.dur.outputs.sec }}
+          TESTS_UNIT_PASSED: ${{ needs.unit-tests.outputs.passed }}
+          TESTS_UNIT_FAILED: ${{ needs.unit-tests.outputs.failed }}
+          TESTS_UNIT_SKIPPED: ${{ needs.unit-tests.outputs.skipped }}
+          TESTS_INTEGRATION_PASSED: ${{ needs.integration-tests.outputs.passed }}
+          TESTS_INTEGRATION_FAILED: ${{ needs.integration-tests.outputs.failed }}
+          TESTS_INTEGRATION_SKIPPED: ${{ needs.integration-tests.outputs.skipped }}
+          TESTS_E2E_PASSED: ${{ needs.e2e-tests.outputs.passed }}
+          TESTS_E2E_FAILED: ${{ needs.e2e-tests.outputs.failed }}
+          TESTS_E2E_SKIPPED: ${{ needs.e2e-tests.outputs.skipped }}
+          FAILED_JOBS: ${{ steps.status.outputs.failed_jobs }}
+          DISCORD_DEPLOY_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
         run: |
-          DISCORD_WEBHOOK_URL="${{ secrets.DISCORD_DEPLOY_WEBHOOK }}"
-          [ -z "$DISCORD_WEBHOOK_URL" ] && exit 0
-
           # Collect failed job names
           NEEDS_CONTEXT='${{ needs }}'
           FAILED_JOBS=""
@@ -712,25 +829,5 @@ jobs:
               FAILED_JOBS="${FAILED_JOBS}\`${JOB}\` "
             fi
           done
-
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          SUBJECT=$(git log -1 --pretty='%s')
-          AUTHOR=$(git log -1 --pretty='%an')
-
-          cat > /tmp/discord-payload.json << JSONEOF
-          {
-            "embeds": [{
-              "title": "CI Failed",
-              "description": "CI pipeline failed on **main** — deployment blocked",
-              "color": 15548997,
-              "fields": [
-                { "name": "Failed jobs", "value": "${FAILED_JOBS}", "inline": false },
-                { "name": "Commit", "value": "\`${SHORT_SHA}\` ${SUBJECT}", "inline": false },
-                { "name": "Author", "value": "${AUTHOR}", "inline": true },
-                { "name": "Run", "value": "[#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})", "inline": true }
-              ],
-              "timestamp": "${{ github.event.head_commit.timestamp }}"
-            }]
-          }
-          JSONEOF
-          bash scripts/discordSendEmbed.sh "$DISCORD_WEBHOOK_URL" /tmp/discord-payload.json
+          echo "failed_jobs=$FAILED_JOBS" >> "$GITHUB_OUTPUT"
+          node scripts/deployNotify.js
