@@ -160,13 +160,14 @@ ${historyText ? `\nPREVIOUS CONVERSATION:\n${historyText}` : ''}`;
  *
  * @param {Object} opts
  * @param {string} opts.question    - The user's question.
+ * @param {string} [opts.userId]    - Discord user id (for audit logging).
  * @param {string} [opts.historyText] - Prior conversation as one text block ('' if none).
  * @param {Array}  [opts.history]   - Prior turns as [{role:'user'|'assistant', content}].
  * @param {Object} opts.pg          - pg client with .query().
  * @param {Function} opts.callMimo  - callMimo({ messages, maxTokens, temperature }).
  * @returns {Promise<{ final: string, sqlLogs: string[], rowCount: number }>}
  */
-async function runQueryAgent({ question, historyText = '', history = [], pg, callMimo }) {
+async function runQueryAgent({ question, userId = '?', historyText = '', history = [], pg, callMimo }) {
   const tableIndex = await listTables(pg);
   const system = buildSystem(tableIndex, historyText);
 
@@ -187,7 +188,9 @@ async function runQueryAgent({ question, historyText = '', history = [], pg, cal
     let parsed;
     try {
       parsed = parseAgentResponse(out);
+      console.log(`[agent:${userId}] step=${step + 1} raw=${out.slice(0, 200)}`);
     } catch (e) {
+      console.log(`[agent:${userId}] step=${step + 1} PARSE_ERR=${e.message} raw=${out.slice(0, 300)}`);
       messages.push({ role: 'assistant', content: out.slice(0, 800) });
       messages.push({
         role: 'user',
@@ -198,10 +201,12 @@ async function runQueryAgent({ question, historyText = '', history = [], pg, cal
 
     if (parsed.final !== undefined) {
       final = String(parsed.final);
+      console.log(`[agent:${userId}] final=${final.slice(0, 300)}`);
       break;
     }
 
     if (!parsed.tool) {
+      console.log(`[agent:${userId}] step=${step + 1} no_tool`);
       messages.push({ role: 'assistant', content: out.slice(0, 800) });
       messages.push({ role: 'user', content: 'ERROR: response must contain "tool" or "final". Retry.' });
       continue;
@@ -222,6 +227,7 @@ async function runQueryAgent({ question, historyText = '', history = [], pg, cal
         rowCount += r.rows;
       }
     } else {
+      console.log(`[agent:${userId}] step=${step + 1} unknown_tool=${parsed.tool}`);
       messages.push({ role: 'assistant', content: out.slice(0, 800) });
       messages.push({
         role: 'user',
@@ -230,6 +236,7 @@ async function runQueryAgent({ question, historyText = '', history = [], pg, cal
       continue;
     }
 
+    console.log(`[agent:${userId}] step=${step + 1} tool=${parsed.tool} result=${resultText.slice(0, 200)}`);
     messages.push({ role: 'assistant', content: out.slice(0, 800) });
     messages.push({ role: 'user', content: `Tool result (${parsed.tool}):\n${resultText}` });
   }

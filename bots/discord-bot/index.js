@@ -155,6 +155,7 @@ async function answerConversational(prompt, userId) {
     //    identifiers, retries on errors, and produces a final answer.
     const { final, sqlLogs, rowCount } = await runQueryAgent({
       question: prompt,
+      userId,
       historyText,
       history,
       pg,
@@ -662,6 +663,7 @@ client.on('interactionCreate', async (interaction) => {
         try {
           const { final, sqlLogs, rowCount } = await runQueryAgent({
             question,
+            userId: interaction.user.id,
             historyText: '',
             pg,
             callMimo,
