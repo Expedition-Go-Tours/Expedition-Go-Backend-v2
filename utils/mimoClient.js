@@ -15,9 +15,9 @@
 
 const MIMO_API_URL = 'https://token-plan-sgp.xiaomimimo.com/v1/chat/completions';
 const DEFAULT_MODEL = 'mimo-v2.5';
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 2000;
-const REQUEST_TIMEOUT_MS = 90000;
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 1000;
+const REQUEST_TIMEOUT_MS = 60000;
 
 /**
  * Call MiMo with retry logic and timeout.

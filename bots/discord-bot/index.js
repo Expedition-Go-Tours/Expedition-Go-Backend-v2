@@ -113,10 +113,26 @@ let schemaCache = null;
 let schemaCacheTime = 0;
 const SCHEMA_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
+const JSONB_COLS = [
+  ['SupplierProfile', 'businessInfo'],
+  ['SupplierProfile', 'operatingInfo'],
+  ['SupplierProfile', 'representativeInfo'],
+  ['SupplierProfile', 'payoutInfo'],
+  ['SupplierProfile', 'compliance'],
+  ['Tour', 'productContent'],
+  ['Tour', 'categorization'],
+  ['Tour', 'schedulesAndPricing'],
+  ['Tour', 'theme'],
+  ['Booking', 'pickup'],
+  ['User', 'notificationPreferences'],
+  ['SystemConfig', 'value'],
+];
+
 async function loadSchema() {
   const now = Date.now();
   if (schemaCache && now - schemaCacheTime < SCHEMA_CACHE_TTL_MS) return schemaCache;
   try {
+    // 1) Base columns
     const r = await pg.query(`
       SELECT table_name, column_name, data_type
       FROM information_schema.columns
@@ -128,9 +144,44 @@ async function loadSchema() {
       if (!tables[row.table_name]) tables[row.table_name] = [];
       tables[row.table_name].push(`${row.column_name} ${row.data_type}`);
     }
-    schemaCache = Object.entries(tables)
+    let schema = Object.entries(tables)
       .map(([t, cols]) => `${t}(${cols.join(', ')})`)
       .join('\n');
+
+    // 2) JSONB key introspection — sample rows to discover actual keys
+    for (const [table, col] of JSONB_COLS) {
+      try {
+        const keyR = await pg.query(
+          `SELECT DISTINCT k FROM (
+             SELECT jsonb_object_keys(t."${col}") AS k
+             FROM "${table}" t
+             WHERE "${col}" IS NOT NULL AND jsonb_typeof("${col}") = 'object'
+             LIMIT 500
+           ) s ORDER BY k`
+        );
+        if (!keyR.rows.length) continue;
+        const keys = keyR.rows.map((r) => r.k).join(', ');
+        schema += `\n${table}.${col}(jsonb): {${keys}}`;
+
+        // 3) Sample values for name-like keys (so AI knows the real format)
+        const nameKeys = ['legalBusinessName', 'displayName', 'businessName'];
+        const present = nameKeys.filter((k) => keyR.rows.some((r) => r.k === k));
+        if (present.length) {
+          const cols = present.map((k) => `"${col}"->>'${k}'`).join(', ');
+          const sampleR = await pg.query(
+            `SELECT ${cols} FROM "${table}" WHERE "${col}" IS NOT NULL AND jsonb_typeof("${col}") = 'object' ORDER BY "createdAt" DESC LIMIT 2`
+          );
+          if (sampleR.rows.length) {
+            const samples = sampleR.rows.map((row) =>
+              present.map((k) => `${k}="${row[k] || ''}"`).join(', ')
+            ).join('; ');
+            schema += `\n  sample values: ${samples}`;
+          }
+        }
+      } catch { /* skip column on error */ }
+    }
+
+    schemaCache = schema;
     schemaCacheTime = now;
     return schemaCache;
   } catch {
@@ -636,7 +687,7 @@ client.on('interactionCreate', async (interaction) => {
             await interaction.editReply('Failed to load database schema. Check pg connection.');
             break;
           }
-          const system = `You are a PostgreSQL read-only query generator for TravioAfrica. Convert the user's natural language question into a single safe SQL SELECT query. Rules: output ONLY the SQL query, no explanation, no markdown fences. Schema:\n${schema}`;
+          const system = `You are a PostgreSQL read-only query generator for TravioAfrica. Convert the user's natural language question into a single safe SQL SELECT query. Rules:\n- Output ONLY the SQL query, no explanation, no markdown fences.\n- JSONB columns (marked "jsonb"): use ->> to extract text fields, NOT @> containment.\n- For entity lookups (suppliers, tours, users) use ILIKE '%term%' for fuzzy/partial matches. Check ALL name-like keys (e.g. legalBusinessName, displayName, businessName for suppliers).\n- Use JOINs, CTEs, GROUP BY, aggregates as needed.\n- Only use exact @> when the exact JSON value is known.\n\nSchema:\n${schema}`;
           console.log(`[ask] question="${question}" schema_len=${schema.length}`);
           const sql = await callMimo({ system, user: question, maxTokens: 512, temperature: 0.1 });
           const cleanSql = sql.replace(/```sql\s*/gi, '').replace(/```\s*/gi, '').trim();
