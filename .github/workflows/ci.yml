@@ -679,10 +679,17 @@ jobs:
       - name: Determine overall CI status
         id: status
         run: |
-          NEEDS_CONTEXT='${{ needs }}'
           FAILED=false
-          for JOB in lint unit-tests integration-tests startup-check smoke-test e2e-tests coverage deploy deploy-verify; do
-            RESULT=$(echo "$NEEDS_CONTEXT" | jq -r --arg j "$JOB" '.[$j].result // "skipped"')
+          for RESULT in \
+            "${{ needs.lint.result }}" \
+            "${{ needs.unit-tests.result }}" \
+            "${{ needs.integration-tests.result }}" \
+            "${{ needs.startup-check.result }}" \
+            "${{ needs.smoke-test.result }}" \
+            "${{ needs.e2e-tests.result }}" \
+            "${{ needs.coverage.result }}" \
+            "${{ needs.deploy.result }}" \
+            "${{ needs.deploy-verify.result }}"; do
             if [ "$RESULT" = "failure" ]; then
               FAILED=true
               break
