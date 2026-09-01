@@ -144,10 +144,10 @@ async function loadSchema() {
     const tables = {};
     for (const row of r.rows) {
       if (!tables[row.table_name]) tables[row.table_name] = [];
-      tables[row.table_name].push(`${row.column_name} ${row.data_type}`);
+      tables[row.table_name].push(`"${row.column_name}" ${row.data_type}`);
     }
     let schema = Object.entries(tables)
-      .map(([t, cols]) => `${t}(${cols.join(', ')})`)
+      .map(([t, cols]) => `"${t}"(${cols.join(', ')})`)
       .join('\n');
 
     // 2) JSONB key introspection — sample rows to discover actual keys
@@ -237,7 +237,8 @@ async function answerConversational(prompt, userId) {
 Rules:
 - If the question asks about data in the database (bookings, tours, suppliers, users, revenue, disputes, etc.) → output ONLY a JSON object: {"type":"query","sql":"SELECT ..."}
 - If it's a greeting, follow-up clarification, opinion, or non-data question → output ONLY a JSON object: {"type":"answer","text":"..."}
-- For query type: use SELECT or WITH only (read-only). Use ->> for JSONB text fields, ILIKE '%term%' for fuzzy matching. Check all name-like keys (e.g. legalBusinessName, displayName, businessName).
+- CRITICAL: ALWAYS use double quotes around ALL table and column identifiers (e.g. "Booking"."bookingNumber"). PostgreSQL folds unquoted names to lowercase and many identifiers are camelCase.
+- For query type: use SELECT or WITH only (read-only). Use ->> for JSONB text fields, ILIKE '%term%' for fuzzy matching. Check all name-like keys (e.g. "legalBusinessName", "displayName", "businessName").
 - For follow-ups referencing a previous query, you may reuse the same table/columns from prior context.
 - Do NOT output anything except the JSON object.
 - Schema:\n${schema}${historyText}`;
@@ -252,7 +253,7 @@ Rules:
       return { text: parsed.text.slice(0, 2000) };
     }
 
-    // ── Step 2b: Query path ────────────────────────────────────────
+    // ── Step 2b: Query path (with self-healing retry) ───────────────
     const sql = parsed.sql.replace(/```sql\s*/gi, '').replace(/```\s*/gi, '').trim();
     const guard = validateReadOnly(sql);
     if (!guard.ok) {
@@ -260,7 +261,42 @@ Rules:
       await pushTurn(userId, 'assistant', msg);
       return { text: msg };
     }
-    const result = await pg.query(guard.safeSql).catch((e) => ({ error: e.message }));
+    let result = await pg.query(guard.safeSql).catch((e) => ({ error: e.message }));
+
+    // Self-healing: on error, fetch actual columns for the table and retry
+    if (result.error) {
+      const errLower = result.error.toLowerCase();
+      // Extract table name from error (e.g. relation "foo" does not exist / column "bar" of relation "foo" does not exist)
+      const tblMatch = result.error.match(/relation "(\w+)" does not exist/i)
+        || result.error.match(/column "(\w+)" of relation "(\w+)" does not exist/i);
+      const missingCol = result.error.match(/column "(\w+)" does not exist/i);
+      const tableName = tblMatch ? (tblMatch[2] || tblMatch[1]) : null;
+
+      if (tableName) {
+        try {
+          const colR = await pg.query(
+            `SELECT column_name, data_type FROM information_schema.columns WHERE table_name = $1 AND table_schema = 'public' ORDER BY ordinal_position`,
+            [tableName]
+          );
+          if (colR.rows.length > 0) {
+            const actualCols = colR.rows.map(c => `"${c.column_name}" ${c.data_type}`).join(', ');
+            const retrySystem = `You are a PostgreSQL query generator. The previous query failed with error: "${result.error.slice(0, 300)}"
+The ACTUAL columns for table "${tableName}" are: ${actualCols}
+Fix the query. Output ONLY the corrected SQL, no explanation. Always use double quotes around ALL identifiers.`;
+            const retrySql = await callMimo({ system: retrySystem, user: `Original question: ${prompt}\nFailed SQL: ${guard.safeSql}`, maxTokens: 512, temperature: 0.1 });
+            const cleanRetry = retrySql.replace(/```sql\s*/gi, '').replace(/```\s*/gi, '').trim();
+            const retryGuard = validateReadOnly(cleanRetry);
+            if (retryGuard.ok) {
+              result = await pg.query(retryGuard.safeSql).catch((e) => ({ error: e.message }));
+              if (!result.error) console.log(`[ai] self-heal succeeded for user ${userId}`);
+            }
+          }
+        } catch (healErr) {
+          console.error('[ai] self-heal query failed:', healErr.message);
+        }
+      }
+    }
+
     if (result.error) {
       const msg = `Query error: \`${result.error.slice(0, 500)}\``;
       await pushTurn(userId, 'assistant', msg);
@@ -780,7 +816,7 @@ client.on('interactionCreate', async (interaction) => {
             await interaction.editReply('Failed to load database schema. Check pg connection.');
             break;
           }
-          const system = `You are a PostgreSQL read-only query generator for TravioAfrica. Convert the user's natural language question into a single safe SQL SELECT query. Rules:\n- Output ONLY the SQL query, no explanation, no markdown fences.\n- JSONB columns (marked "jsonb"): use ->> to extract text fields, NOT @> containment.\n- For entity lookups (suppliers, tours, users) use ILIKE '%term%' for fuzzy/partial matches. Check ALL name-like keys (e.g. legalBusinessName, displayName, businessName for suppliers).\n- Use JOINs, CTEs, GROUP BY, aggregates as needed.\n- Only use exact @> when the exact JSON value is known.\n\nSchema:\n${schema}`;
+          const system = `You are a PostgreSQL read-only query generator for TravioAfrica. Convert the user's natural language question into a single safe SQL SELECT query. Rules:\n- Output ONLY the SQL query, no explanation, no markdown fences.\n- CRITICAL: ALWAYS use double quotes around ALL table and column identifiers (e.g. "Booking"."bookingNumber"). PostgreSQL folds unquoted names to lowercase and many identifiers are camelCase.\n- JSONB columns (marked "jsonb"): use ->> to extract text fields, NOT @> containment.\n- For entity lookups (suppliers, tours, users) use ILIKE '%term%' for fuzzy/partial matches. Check ALL name-like keys (e.g. "legalBusinessName", "displayName", "businessName" for suppliers).\n- Use JOINs, CTEs, GROUP BY, aggregates as needed.\n- Only use exact @> when the exact JSON value is known.\n\nSchema:\n${schema}`;
           console.log(`[ask] question="${question}" schema_len=${schema.length}`);
           const sql = await callMimo({ system, user: question, maxTokens: 512, temperature: 0.1 });
           const cleanSql = sql.replace(/```sql\s*/gi, '').replace(/```\s*/gi, '').trim();
@@ -789,7 +825,38 @@ client.on('interactionCreate', async (interaction) => {
             await interaction.editReply(`Sorry, I can't run that query: ${guard.error}`);
             break;
           }
-          const result = await pg.query(guard.safeSql).catch((e) => ({ error: e.message }));
+          let result = await pg.query(guard.safeSql).catch((e) => ({ error: e.message }));
+
+          // Self-healing: on error, fetch actual columns and retry
+          if (result.error) {
+            const tblMatch = result.error.match(/relation "(\w+)" does not exist/i)
+              || result.error.match(/column "(\w+)" of relation "(\w+)" does not exist/i);
+            const tableName = tblMatch ? (tblMatch[2] || tblMatch[1]) : null;
+            if (tableName) {
+              try {
+                const colR = await pg.query(
+                  `SELECT column_name, data_type FROM information_schema.columns WHERE table_name = $1 AND table_schema = 'public' ORDER BY ordinal_position`,
+                  [tableName]
+                );
+                if (colR.rows.length > 0) {
+                  const actualCols = colR.rows.map(c => `"${c.column_name}" ${c.data_type}`).join(', ');
+                  const retrySystem = `You are a PostgreSQL query generator. The previous query failed with error: "${result.error.slice(0, 300)}"
+The ACTUAL columns for table "${tableName}" are: ${actualCols}
+Fix the query. Output ONLY the corrected SQL, no explanation. Always use double quotes around ALL identifiers.`;
+                  const retrySql = await callMimo({ system: retrySystem, user: `Original question: ${question}\nFailed SQL: ${guard.safeSql}`, maxTokens: 512, temperature: 0.1 });
+                  const cleanRetry = retrySql.replace(/```sql\s*/gi, '').replace(/```\s*/gi, '').trim();
+                  const retryGuard = validateReadOnly(cleanRetry);
+                  if (retryGuard.ok) {
+                    result = await pg.query(retryGuard.safeSql).catch((e) => ({ error: e.message }));
+                    if (!result.error) console.log(`[ask] self-heal succeeded`);
+                  }
+                }
+              } catch (healErr) {
+                console.error('[ask] self-heal query failed:', healErr.message);
+              }
+            }
+          }
+
           if (result.error) {
             await interaction.editReply(`Query error: \`${result.error.slice(0, 500)}\``);
             break;
