@@ -10,6 +10,7 @@ const GUILD_ID = process.env.DISCORD_GUILD_ID;
 const ADMIN_ROLE_ID = process.env.DISCORD_ADMIN_ROLE_ID;
 const API_URL = process.env.API_URL || 'http://127.0.0.1:5000';
 const BACKUP_DIR = process.env.BACKUP_DIR || '/var/backups/travio';
+const AI_CHANNEL_ID = process.env.DISCORD_AI_CHANNEL_ID || null;
 
 const pg = new Pg({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 8000 });
 
@@ -40,6 +41,7 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
   ],
 });
 
@@ -189,37 +191,100 @@ async function loadSchema() {
   }
 }
 
-async function getOpsContext() {
-  const parts = [];
-  // Health
+// ── Conversation history (Redis-backed, per-user) ────────────────────
+const HISTORY_TTL_SEC = 3600; // 1 hour
+const HISTORY_MAX_TURNS = 12; // 6 Q&A pairs
+
+function historyKey(userId) { return `ai:conv:${userId}`; }
+
+async function getHistory(userId) {
+  const r = await getRedis()?.get(historyKey(userId));
+  return r ? JSON.parse(r) : [];
+}
+
+async function pushTurn(userId, role, content) {
+  const redis = getRedis();
+  if (!redis) return;
+  const key = historyKey(userId);
+  const turns = await getHistory(userId);
+  turns.push({ role, content });
+  // Keep only the last HISTORY_MAX_TURNS
+  while (turns.length > HISTORY_MAX_TURNS) turns.shift();
+  await redis.set(key, JSON.stringify(turns), 'EX', HISTORY_TTL_SEC);
+}
+
+// ── Shared conversational engine ─────────────────────────────────────
+// Used by both the dedicated channel and (optionally) /chat.
+// Returns the text to reply with (plain string or embed).
+const activeJobs = new Set(); // per-user concurrency lock
+
+async function answerConversational(prompt, userId) {
+  if (activeJobs.has(userId)) {
+    return { busy: true };
+  }
+  activeJobs.add(userId);
+
   try {
-    const { code } = httpGet(`${API_URL}/health`);
-    parts.push(`API: ${code === '200' ? 'UP' : `DOWN (${code})`}`);
-  } catch { parts.push('API: UNREACHABLE'); }
-  // Load + uptime
-  try { parts.push(`Load: ${sh("cut -d' ' -f1 /proc/loadavg")}`); } catch { /* no-op */ }
-  try { parts.push(`Uptime: ${sh('uptime -p').replace('up ', '')}`); } catch { /* no-op */ }
-  // Disk
-  try { parts.push(`Disk: ${sh('df -h / | tail -1 | awk \'{print $3 " used of " $2 " (" $5 ")"}\'')}`); } catch { /* no-op */ }
-  // Revenue today
-  try {
-    const r = await pg.query(`SELECT count(*)::int as c, coalesce(sum("grossAmount"),0)::float as rev FROM "Booking" WHERE "createdAt" >= date_trunc('day', now()) AND "status" = 'CONFIRMED' AND "isSimulated" = false`);
-    parts.push(`Bookings today: ${r.rows[0].c} · Revenue: $${r.rows[0].rev.toFixed(2)}`);
-  } catch { /* no-op */ }
-  // Open payouts
-  try {
-    const r = await pg.query(`SELECT count(*)::int FROM "PayoutRequest" WHERE status IN ('PENDING','UNDER_REVIEW')`);
-    parts.push(`Open payouts: ${r.rows[0].count}`);
-  } catch { /* no-op */ }
-  // Open disputes
-  try {
-    const r = await pg.query(`SELECT count(*)::int FROM "Dispute" WHERE status IN ('OPEN','UNDER_REVIEW')`);
-    parts.push(`Open disputes: ${r.rows[0].count}`);
-  } catch { /* no-op */ }
-  // Backup
-  const b = latestBackup();
-  parts.push(`Latest backup: ${b ? `${(b.size / 1048576).toFixed(1)} MB, ${b.ageH}h old` : 'none'}`);
-  return parts.join('\n');
+    const schema = await loadSchema();
+    const history = await getHistory(userId);
+    const historyText = history.length
+      ? `\n\nPrevious conversation:\n${history.map((t) => `${t.role}: ${t.content}`).join('\n')}`
+      : '';
+
+    // ── Step 1: Route — answer vs query ────────────────────────────
+    const routeSystem = `You are TravioAfrica's ops assistant. Decide if the user's question needs a database query or can be answered conversationally.
+
+Rules:
+- If the question asks about data in the database (bookings, tours, suppliers, users, revenue, disputes, etc.) → output ONLY a JSON object: {"type":"query","sql":"SELECT ..."}
+- If it's a greeting, follow-up clarification, opinion, or non-data question → output ONLY a JSON object: {"type":"answer","text":"..."}
+- For query type: use SELECT or WITH only (read-only). Use ->> for JSONB text fields, ILIKE '%term%' for fuzzy matching. Check all name-like keys (e.g. legalBusinessName, displayName, businessName).
+- For follow-ups referencing a previous query, you may reuse the same table/columns from prior context.
+- Do NOT output anything except the JSON object.
+- Schema:\n${schema}${historyText}`;
+
+    const raw = await callMimo({ system: routeSystem, user: prompt, maxTokens: 1024, temperature: 0.1 });
+    const parsed = JSON.parse(raw);
+    await pushTurn(userId, 'user', prompt);
+
+    // ── Step 2a: Conversational answer ─────────────────────────────
+    if (parsed.type === 'answer') {
+      await pushTurn(userId, 'assistant', parsed.text);
+      return { text: parsed.text.slice(0, 2000) };
+    }
+
+    // ── Step 2b: Query path ────────────────────────────────────────
+    const sql = parsed.sql.replace(/```sql\s*/gi, '').replace(/```\s*/gi, '').trim();
+    const guard = validateReadOnly(sql);
+    if (!guard.ok) {
+      const msg = `Sorry, I can't run that query: ${guard.error}`;
+      await pushTurn(userId, 'assistant', msg);
+      return { text: msg };
+    }
+    const result = await pg.query(guard.safeSql).catch((e) => ({ error: e.message }));
+    if (result.error) {
+      const msg = `Query error: \`${result.error.slice(0, 500)}\``;
+      await pushTurn(userId, 'assistant', msg);
+      return { text: msg };
+    }
+    const rows = result.rows || [];
+
+    // Step 3: Summarize
+    const summary = await callMimo({
+      system: 'You are a data analyst. Summarize the SQL result in plain English for a business user. Be concise (max 6 sentences).',
+      user: `Question: ${prompt}\nSQL: ${guard.safeSql}\nResults:\n${JSON.stringify(rows.slice(0, 30), null, 2)}`,
+      maxTokens: 1024,
+      temperature: 0.2,
+    });
+
+    console.log(`[ai] user=${userId} question="${prompt}" sql="${guard.safeSql}" rows=${rows.length}`);
+    await pushTurn(userId, 'assistant', summary);
+    return { text: summary.slice(0, 2000) };
+  } catch (e) {
+    console.error('[ai] error:', e.message);
+    return { text: `AI error: ${e.message.slice(0, 500)}` };
+  } finally {
+    activeJobs.delete(userId);
+  }
 }
 
 async function isAllowed(member) {
@@ -355,6 +420,34 @@ async function handleModal(interaction) {
     console.error('[bot] modal error:', e.message);
     await interaction.reply({ content: `Error: ${e.message}`, ephemeral: true }).catch(() => {});
   }
+}
+
+// ── Dedicated AI channel (messageCreate) ─────────────────────────────
+if (AI_CHANNEL_ID) {
+  client.on('messageCreate', async (message) => {
+    // Only respond in the dedicated channel, ignore bots/self
+    if (message.channel.id !== AI_CHANNEL_ID) return;
+    if (message.author.bot) return;
+
+    const member = await message.guild?.members.fetch(message.author.id).catch(() => null);
+    if (!(await isAllowed(member))) return;
+
+    const prompt = message.content.trim();
+    if (!prompt) return;
+
+    try {
+      await message.channel.sendTyping();
+      const reply = await answerConversational(prompt, message.author.id);
+      if (reply.busy) {
+        await message.reply('Still working on the previous question — one moment.');
+        return;
+      }
+      await message.reply(reply.text);
+    } catch (e) {
+      console.error('[ai channel] error:', e.message);
+      await message.reply(`AI error: ${e.message.slice(0, 500)}`).catch(() => {});
+    }
+  });
 }
 
 client.on('interactionCreate', async (interaction) => {
@@ -728,17 +821,12 @@ client.on('interactionCreate', async (interaction) => {
         }
         const prompt = interaction.options.getString('question');
         try {
-          console.log(`[chat] prompt="${prompt}"`);
-          const ctx = await getOpsContext();
-          console.log(`[chat] ops context loaded (${ctx.length} chars)`);
-          const summary = await callMimo({
-            system: `You are TravioAfrica's ops assistant. Answer the user's question using the server/business context below. Be concise and helpful.\n\nServer context:\n${ctx}`,
-            user: prompt,
-            maxTokens: 2048,
-            temperature: 0.3,
-          });
-          console.log(`[chat] mimo responded (${summary.length} chars)`);
-          await interaction.editReply(summary.slice(0, 2000));
+          const reply = await answerConversational(prompt, interaction.user.id);
+          if (reply.busy) {
+            await interaction.editReply('Still working on the previous question — one moment.');
+            break;
+          }
+          await interaction.editReply(reply.text);
         } catch (e) {
           console.error('[chat] error:', e.message);
           await interaction.editReply(`AI error: ${e.message.slice(0, 500)}`);
