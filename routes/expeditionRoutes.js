@@ -25,6 +25,7 @@ const {
   getBookingsSchema,
   bookingIdParamSchema,
   cancelBookingSchema,
+  updateBookingPickupSchema,
   createReviewSchema,
   getSupplierBookingsSchema,
   updateBookingStatusSchema,
@@ -916,6 +917,63 @@ router.get('/bookings/:id', protect, restrictTo('customer'), validate(bookingIdP
  *         description: Booking not found
  */
 router.patch('/bookings/:id/cancel', protect, restrictTo('customer'), validate(cancelBookingSchema), expeditionController.cancelBooking);
+
+/**
+ * @swagger
+ * /api/expedition/bookings/{id}/pickup:
+ *   patch:
+ *     summary: Update pickup on own booking (customer self-service)
+ *     description: |
+ *       Lets the customer pick/set or defer their pickup on their own booking —
+ *       the same selection rules as checkout apply (the server re-validates
+ *       against the tour's current pickup zones/locations). Guards: own
+ *       booking, PENDING/CONFIRMED, future travel date, outside the advance
+ *       cutoff window.
+ *     tags: [Expedition]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *         description: Booking ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [pickup]
+ *             properties:
+ *               pickup:
+ *                 oneOf:
+ *                   - type: object
+ *                     required: [skipValidation]
+ *                     properties:
+ *                       skipValidation: { type: boolean, enum: [true], description: "Pickup later" }
+ *                   - type: object
+ *                     properties:
+ *                       mode: { type: string, enum: [area, address] }
+ *                       areaName: { type: string }
+ *                       address:
+ *                         type: object
+ *                         properties:
+ *                           name: { type: string }
+ *                           address: { type: string }
+ *                           lat: { type: number, nullable: true }
+ *                           lng: { type: number, nullable: true }
+ *     responses:
+ *       200:
+ *         description: Pickup updated
+ *       400:
+ *         description: Invalid selection or past cutoff
+ *       401:
+ *         description: Authentication required
+ *       404:
+ *         description: Booking not found
+ */
+router.patch('/bookings/:id/pickup', protect, restrictTo('customer'), validate(updateBookingPickupSchema), expeditionController.updateMyPickup);
 
 /**
  * @swagger

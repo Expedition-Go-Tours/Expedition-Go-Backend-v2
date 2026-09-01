@@ -788,6 +788,24 @@ async function sendSupplierPickupUpdatedEmail(booking, { previousPickupLocation 
   });
 }
 
+async function sendSupplierPickupRequiredEmail(booking, { deadline } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = await buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const data = {
+    ...base,
+    deadlineLabel: fmt.formatLongDate(deadline || b.travelDate),
+    pickupUrl: emailUrls.addPickupLocation(b.id),
+    supportEmail: (await getShellVars()).supportEmail,
+  };
+  return sendRendered({
+    to: supplier.email,
+    subject: `Action required: Confirm pickup for booking ${base.bookingNumber}`,
+    key: 'supplier-pickup-required',
+    data,
+  });
+}
+
 async function sendSupplierBookingReminderEmail(booking) {
   const b = await resolveBookingContext(booking);
   const base = await buildBookingBase(b);
@@ -1344,6 +1362,7 @@ module.exports = {
   sendSupplierBookingChangedEmail,
   sendSupplierContactUpdatedEmail,
   sendSupplierPickupUpdatedEmail,
+  sendSupplierPickupRequiredEmail,
   sendSupplierBookingReminderEmail,
   sendSupplierCustomerCancelledFreeEmail,
   sendSupplierCustomerCancelledLateEmail,

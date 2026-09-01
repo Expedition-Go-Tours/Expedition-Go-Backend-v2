@@ -22,7 +22,7 @@ const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelp
 const { Prisma } = require('@prisma/client');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../utils/availabilityCore');
 const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../utils/queue');
-const { resolvePickupSelection } = require('../utils/geoUtils');
+const { resolvePickupSelection, pickupStatus, isPickupIncomplete } = require('../utils/geoUtils');
 const getConfig = require('../utils/getConfig');
 const { detachBookingFromActiveRequests } = require('../utils/financeHelpers');
 const { generatePrintableTicketHtml } = require('../utils/emailService');
@@ -1221,13 +1221,17 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
 
   // Flag bookings where the customer deferred pickup selection so the
   // supplier dashboard can display a clear "pending" indicator instead
-  // of blank pickup fields.
+  // of blank pickup fields. Server-computed state (pickupStatus /
+  // pickupDeferred / isIncomplete) is the single source of truth for the
+  // planner — the dashboard no longer re-infers from field presence.
   const enriched = bookings.map((b) => {
     const p = b.pickup && typeof b.pickup === 'object' ? b.pickup : null;
-    if (p && p.pickupLater) {
-      return { ...b, pickupDeferred: true };
-    }
-    return b;
+    return {
+      ...b,
+      pickupStatus: pickupStatus(p),
+      pickupDeferred: !!(p && (p.pickupLater || p.skipValidation || pickupStatus(p) === 'deferred')),
+      isIncomplete: isPickupIncomplete(p),
+    };
   });
 
   res.status(200).json({
@@ -1274,9 +1278,14 @@ exports.updateBookingPickup = catchAsync(async (req, res, next) => {
     ...(areaName !== undefined ? { areaName: String(areaName) } : {}),
     ...(lat !== undefined ? { lat: lat !== null ? Number(lat) : null } : {}),
     ...(lng !== undefined ? { lng: lng !== null ? Number(lng) : null } : {}),
+    // Supplier confirmation: normalizes the snapshot to a clean 'confirmed'
+    // state (drops any leftover pickupLater/skipValidation markers).
+    pickupLater: false,
+    status: 'confirmed',
     updatedBy: req.user.id,
     updatedAt: new Date().toISOString(),
   };
+  delete updatedPickup.skipValidation;
 
   const updatedBooking = await prisma.booking.update({
     where: { id },

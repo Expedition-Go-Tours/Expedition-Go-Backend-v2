@@ -232,6 +232,84 @@ function isPickupBookable(pickup, pickupConfig = {}) {
   ).ok;
 }
 
+/**
+ * Canonical pickup state for a stored booking snapshot. One source of truth
+ * so every consumer (planner, reminders, storefront, dashboard) agrees.
+ *  - 'deferred'  — customer chose "pickup later" (no pickup location yet)
+ *  - 'selected'  — customer picked a zone/address; supplier hasn't confirmed
+ *  - 'confirmed' — supplier has set pickup time and/or place
+ */
+function pickupStatus(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return 'deferred';
+  if (snapshot.pickupLater || snapshot.skipValidation) return 'deferred';
+
+  const hasPlace = !!(snapshot.place && String(snapshot.place).trim());
+  const hasAddress = !!(
+    snapshot.address &&
+    typeof snapshot.address === 'object' &&
+    (snapshot.address.name || snapshot.address.address)
+  );
+  const hasLocation = !!(
+    snapshot.areaName ||
+    snapshot.locationName ||
+    hasAddress ||
+    (Number.isFinite(snapshot.lat) && Number.isFinite(snapshot.lng))
+  );
+
+  if ((hasPlace || snapshot.updatedBy) && (snapshot.time || hasLocation)) return 'confirmed';
+  if (hasLocation && snapshot.time) return 'confirmed';
+  if (hasLocation) return 'selected';
+  return 'deferred';
+}
+
+/**
+ * True when a booking's pickup still needs operator attention: no pickup
+ * location, or no confirmed time, or no instructions. Mirrors the supplier
+ * dashboard's client-side completeness rule so the API and UI agree.
+ */
+function isPickupIncomplete(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return true;
+  const hasLocation = !!(
+    snapshot.areaName ||
+    snapshot.locationName ||
+    snapshot.place ||
+    (snapshot.address &&
+      typeof snapshot.address === 'object' &&
+      (snapshot.address.name || snapshot.address.address)) ||
+    (Number.isFinite(snapshot.lat) && Number.isFinite(snapshot.lng))
+  );
+  return !hasLocation || !snapshot.time || !snapshot.instructions;
+}
+
+/**
+ * Normalize a raw checkout pickup selection into the canonical snapshot with a
+ * `status`. Re-resolves against the tour's current config so the stored
+ * snapshot is always validated + normalized (the same code path as
+ * confirmBooking and the materialize webhook). If re-resolution fails (e.g.
+ * the supplier changed the pickup config after booking) it degrades gracefully
+ * to `deferred` so a booking is never blocked.
+ *
+ * @param {object|null} selection - raw checkout selection ({ mode, areaName, locationName, address, skipValidation })
+ * @param {object} pickupConfig - tour pickup config ({ pickupType, pickupAreas, pickupLocations })
+ * @param {{ forceConfirmed?: boolean }} [options]
+ * @returns {object|null} canonical snapshot, or null when no pickup selection
+ */
+function normalizePickupSnapshot(selection, pickupConfig = {}, options = {}) {
+  if (!selection || typeof selection !== 'object') return null;
+
+  const result = resolvePickupSelection(selection, pickupConfig);
+  if (!result.ok) {
+    const mode = (pickupConfig && (pickupConfig.pickupType || 'area')) || 'area';
+    return { mode, pickupLater: true, status: 'deferred', areaName: '', address: null, time: '', instructions: '' };
+  }
+
+  const p = result.pickup;
+  if (!p) return null;
+
+  const snapshot = { ...p, pickupLater: !!p.pickupLater };
+  return { ...snapshot, status: options.forceConfirmed ? 'confirmed' : pickupStatus(snapshot) };
+}
+
 module.exports = {
   LOCATION_AREA_RADIUS_M,
   pointInPolygon,
@@ -239,4 +317,7 @@ module.exports = {
   findPickupAreaForAddress,
   resolvePickupSelection,
   isPickupBookable,
+  pickupStatus,
+  isPickupIncomplete,
+  normalizePickupSnapshot,
 };

@@ -311,6 +311,32 @@ const cancelBookingSchema = z.object({
   }),
 });
 
+// Customer self-service pickup update — same selection shapes as checkout
+// ({ skipValidation: true } for "pickup later", or { mode, areaName, address }).
+const updateBookingPickupSchema = z.object({
+  body: z.object({
+    pickup: z.union([
+      z.object({ skipValidation: z.literal(true) }),
+      z.object({
+        mode: z.enum(['area', 'address']).optional(),
+        areaName: z.string().max(200).optional(),
+        locationName: z.string().max(200).optional(),
+        address: z.object({
+          name: z.string().max(500).optional(),
+          address: z.string().max(500).optional(),
+          lat: z.number().nullable().optional(),
+          lng: z.number().nullable().optional(),
+        }).optional(),
+        skipValidation: z.boolean().optional(),
+      }),
+    ]).refine((v) => v && typeof v === 'object', { message: 'pickup is required' }),
+  }),
+  query: z.any().optional(),
+  params: z.object({
+    id: z.string().min(1).max(100),
+  }),
+});
+
 const createReviewSchema = z.object({
   body: z.object({
     bookingId: z.string().min(1).max(100),
@@ -391,6 +417,7 @@ module.exports = {
   getBookingsSchema,
   bookingIdParamSchema,
   cancelBookingSchema,
+  updateBookingPickupSchema,
   createReviewSchema,
   getSupplierBookingsSchema,
   updateBookingStatusSchema,

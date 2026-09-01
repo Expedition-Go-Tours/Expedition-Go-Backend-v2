@@ -8,7 +8,7 @@ const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/qu
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, isValidEmail } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../utils/tourHelpers');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../utils/availabilityCore');
-const { resolvePickupSelection } = require('../utils/geoUtils');
+const { resolvePickupSelection, normalizePickupSnapshot } = require('../utils/geoUtils');
 const { validatePassengerMix } = require('../utils/passengerMix');
 const { createPaymentIntent, createCheckoutSession, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
 const { acquireHold, releaseHold, HOLD_MINUTES } = require('../utils/checkoutHold');
@@ -1291,7 +1291,8 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError('Supplier is not active', 400));
   }
 
-  // Validate pickup selection against the tour's current pickup config.
+  // Validate pickup selection against the tour's current pickup config and
+  // normalize it into the canonical snapshot (status: deferred/selected).
   let pickupSnapshot = null;
   if (pickup) {
     const pickupConfig = parseBlob(tour.bookingAndTickets) || {};
@@ -1299,7 +1300,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     if (!pickupResult.ok) {
       return next(new AppError(pickupResult.error, 400));
     }
-    pickupSnapshot = pickupResult.pickup;
+    pickupSnapshot = normalizePickupSnapshot(pickup, pickupConfig);
   }
 
   // Enforce supplier passenger-mix rules (min/max, disallowed categories,
@@ -2180,4 +2181,92 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
     status: 'success',
     data: { booking: updated },
   });
+});
+
+/**
+ * PATCH /expedition/bookings/:id/pickup
+ *
+ * Customer self-service pickup management (the "Choose pickup location later"
+ * completion flow). Lets the customer pick/set or defer their pickup on their
+ * own booking — the same selection rules as checkout apply (resolvePickupSelection
+ * re-validates against the tour's current zones/locations).
+ *
+ * Guards: own booking, EXPEDITION source, PENDING/CONFIRMED, future travel
+ * date, and not inside the tour's advance-booking cutoff window (mirrors the
+ * checkout rule so a pickup can't be changed at the last minute).
+ *
+ * Body: { pickup: { skipValidation: true } | { mode, areaName?, address? } }
+ */
+exports.updateMyPickup = catchAsync(async (req, res, next) => {
+  const customerId = req.user.id;
+  const { id } = req.params;
+  const { pickup } = req.body;
+
+  const booking = await prisma.booking.findFirst({
+    where: { id, customerId, source: 'EXPEDITION' },
+    include: {
+      tour: { select: { id: true, title: true, bookingAndTickets: true, supplierId: true } },
+    },
+  });
+
+  if (!booking) return next(new AppError('Booking not found', 404));
+  if (!['PENDING', 'CONFIRMED'].includes(booking.status)) {
+    return next(new AppError('Pickup can no longer be updated for this booking', 400));
+  }
+
+  const dateAt = new Date(booking.travelDate);
+  if (Number.isNaN(dateAt.getTime()) || dateAt.getTime() <= Date.now()) {
+    return next(new AppError('Pickup can only be updated before the activity date', 400));
+  }
+
+  // Cutoff lock — mirror the checkout rule (per-tour advance cutoff wins;
+  // slot-aware when the tour uses per-slot cutoffs).
+  const parsedBt = parseBlob(booking.tour.bookingAndTickets) || {};
+  const perSlotCutoff = !!parsedBt.perSlotCutoff;
+  const minAdvanceHours = parseInt(await getConfig('booking.min_advance_hours', '24'), 10);
+  const effectiveCutoff = resolveSlotCutoffHours(parsedBt, booking.selectedTime || null, minAdvanceHours);
+  const tourTz = getTourTimezone(parsedBt);
+
+  let startAt;
+  if (booking.selectedTime && perSlotCutoff) {
+    const localDate = zonedDateKey(toDateKey(dateAt), tourTz);
+    startAt = zonedTimeToUtc(`${localDate} ${booking.selectedTime}`, tourTz);
+  } else {
+    startAt = new Date(Date.UTC(dateAt.getUTCFullYear(), dateAt.getUTCMonth(), dateAt.getUTCDate()));
+  }
+  const hoursUntilTour = (startAt - new Date()) / (1000 * 60 * 60);
+  if (hoursUntilTour < effectiveCutoff) {
+    return next(new AppError(`Pickup can be updated until ${cutoffLabel(effectiveCutoff)} before the activity`, 400));
+  }
+
+  const pickupConfig = parsedBt;
+  const snapshot = normalizePickupSnapshot(pickup, pickupConfig);
+  if (!snapshot) return next(new AppError('Invalid pickup selection', 400));
+
+  await prisma.booking.update({
+    where: { id },
+    data: { pickup: snapshot },
+  });
+
+  // Notify the supplier (in-app + email) so they can plan the pickup.
+  enqueueNotification({
+    userId: booking.tour.supplierId,
+    type: 'BOOKING_STATUS_UPDATED',
+    title: 'Customer updated pickup details',
+    message: `Customer updated pickup for booking "${booking.tour.title}"`,
+    data: { bookingId: booking.id, pickup: true, source: 'expedition' },
+  }).catch((err) => console.error('[Expedition] enqueueNotification (customer pickup update) failed:', err.message));
+
+  enqueueEmail({ type: 'supplier-pickup-updated', bookingId: booking.id })
+    .catch((err) => console.error('[Expedition] supplier-pickup-updated email failed:', err.message));
+
+  logActivity({
+    userId: customerId,
+    action: 'booking.pickup_updated',
+    resource: 'Booking',
+    resourceId: id,
+    metadata: { by: 'customer', source: 'expedition' },
+  }).catch((err) => console.warn('[Expedition] logActivity (customer pickup update) failed:', err?.message));
+
+  res.status(200).json({ status: 'success', data: { pickup: snapshot } });
 });

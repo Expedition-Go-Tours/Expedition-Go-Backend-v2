@@ -148,6 +148,7 @@ const EMAIL_JOB_DISPATCH = {
   'supplier-booking-changed': ['sendSupplierBookingChangedEmail', true],
   'supplier-customer-contact-updated': ['sendSupplierContactUpdatedEmail', true],
   'supplier-pickup-updated': ['sendSupplierPickupUpdatedEmail', true],
+  'supplier-pickup-required': ['sendSupplierPickupRequiredEmail', true],
   'supplier-booking-reminder': ['sendSupplierBookingReminderEmail', true],
   'supplier-customer-cancelled-free': ['sendSupplierCustomerCancelledFreeEmail', true],
   'supplier-customer-cancelled-late': ['sendSupplierCustomerCancelledLateEmail', true],

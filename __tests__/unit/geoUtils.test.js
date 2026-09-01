@@ -7,6 +7,9 @@ const {
   findPickupAreaForAddress,
   resolvePickupSelection,
   isPickupBookable,
+  pickupStatus,
+  isPickupIncomplete,
+  normalizePickupSnapshot,
 } = require('../../utils/geoUtils');
 
 // A simple square around (lat 5.60, lng -0.20): [lat, lng] vertices.
@@ -223,5 +226,74 @@ describe('isPickupBookable', () => {
   test('true for a valid stored snapshot', () => {
     const pickup = { mode: 'area', areaName: 'Osu', address: { name: 'x', lat: 5.625, lng: -0.2 } };
     expect(isPickupBookable(pickup, { pickupType: 'area', pickupAreas: [{ name: 'Osu', polygon: SQUARE }] })).toBe(true);
+  });
+});
+
+describe('pickupStatus', () => {
+  test('deferred for empty / pickup-later / skipValidation snapshots', () => {
+    expect(pickupStatus(null)).toBe('deferred');
+    expect(pickupStatus({})).toBe('deferred');
+    expect(pickupStatus({ pickupLater: true })).toBe('deferred');
+    expect(pickupStatus({ skipValidation: true })).toBe('deferred');
+  });
+
+  test('selected when a location exists but no supplier-confirmed time', () => {
+    expect(pickupStatus({ mode: 'area', areaName: 'Osu' })).toBe('selected');
+    expect(pickupStatus({ mode: 'address', address: { name: 'x', address: 'y', lat: 5.6, lng: -0.2 } })).toBe('selected');
+    expect(pickupStatus({ lat: 5.6, lng: -0.2 })).toBe('selected');
+  });
+
+  test('confirmed when supplier set a place or time', () => {
+    expect(pickupStatus({ areaName: 'Osu', time: '09:00 AM' })).toBe('confirmed');
+    expect(pickupStatus({ place: 'Marriott entrance', lat: 5.6, lng: -0.2 })).toBe('confirmed');
+    expect(pickupStatus({ areaName: 'Osu', updatedBy: 'supplier-1' })).toBe('confirmed');
+  });
+});
+
+describe('isPickupIncomplete', () => {
+  test('true for empty / location-less snapshots', () => {
+    expect(isPickupIncomplete(null)).toBe(true);
+    expect(isPickupIncomplete({})).toBe(true);
+    expect(isPickupIncomplete({ pickupLater: true })).toBe(true);
+  });
+
+  test('true when a location exists but time or instructions are missing', () => {
+    expect(isPickupIncomplete({ areaName: 'Osu' })).toBe(true);
+    expect(isPickupIncomplete({ areaName: 'Osu', time: '09:00 AM' })).toBe(true);
+  });
+
+  test('false when location + time + instructions are all present', () => {
+    expect(isPickupIncomplete({ areaName: 'Osu', time: '09:00 AM', instructions: 'Blue van' })).toBe(false);
+  });
+});
+
+describe('normalizePickupSnapshot', () => {
+  const CONFIG = { pickupType: 'area', pickupAreas: [{ name: 'Osu', polygon: SQUARE }] };
+
+  test('null when no selection is provided', () => {
+    expect(normalizePickupSnapshot(null, CONFIG)).toBe(null);
+  });
+
+  test('defers gracefully when re-resolution fails (config changed)', () => {
+    const snap = normalizePickupSnapshot({ mode: 'area', areaName: 'Gone' }, { pickupType: 'area', pickupAreas: [] });
+    expect(snap.status).toBe('deferred');
+    expect(snap.pickupLater).toBe(true);
+  });
+
+  test('normalizes a skipValidation selection to deferred', () => {
+    const snap = normalizePickupSnapshot({ skipValidation: true }, CONFIG);
+    expect(snap.status).toBe('deferred');
+    expect(snap.pickupLater).toBe(true);
+  });
+
+  test('normalizes a named zone to selected', () => {
+    const snap = normalizePickupSnapshot({ mode: 'area', areaName: 'Osu' }, CONFIG);
+    expect(snap.status).toBe('selected');
+    expect(snap.areaName).toBe('Osu');
+  });
+
+  test('forceConfirmed forces the confirmed state (supplier edit path)', () => {
+    const snap = normalizePickupSnapshot({ mode: 'area', areaName: 'Osu' }, CONFIG, { forceConfirmed: true });
+    expect(snap.status).toBe('confirmed');
   });
 });

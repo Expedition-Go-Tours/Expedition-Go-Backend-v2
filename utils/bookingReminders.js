@@ -47,6 +47,7 @@ async function planBookingReminders() {
     },
     select: {
       id: true,
+      status: true,
       paymentTiming: true,
       paymentStatus: true,
       travelDate: true,
@@ -87,15 +88,29 @@ async function planBookingReminders() {
       });
     }
 
-    // Pickup location still required (tour offers pickup but none chosen)
+    // Pickup location still required (tour offers pickup but none chosen).
+    // Detects the canonical deferred state AND back-compat for pay-now
+    // bookings stored as `{ skipValidation: true }` (pre-normalization rows).
     const ticket = booking.tour?.bookingAndTickets || {};
-    const offersPickup = !!ticket.pickupProvided;
+    const offersPickup = !!ticket.pickupProvided || !!ticket.pickupAvailable;
     const pickupObj = booking.pickup && typeof booking.pickup === 'object' ? booking.pickup : null;
-    const pickupDeferred = !!(pickupObj && pickupObj.pickupLater);
-    if (offersPickup && (!booking.pickup || pickupDeferred)) {
+    const pickupDeferred = !!(pickupObj && (pickupObj.pickupLater || pickupObj.skipValidation || pickupObj.status === 'deferred'));
+    const pickupMissing = offersPickup && (!booking.pickup || pickupDeferred);
+    if (pickupMissing) {
       reminders.push({
         bookingId: booking.id,
         type: 'PICKUP_LOCATION_REQUIRED',
+        scheduledFor: new Date(date.getTime() - PICKUP_REQUIRED_HOURS * 60 * 60 * 1000),
+      });
+    }
+
+    // Supplier-side nudge: a CONFIRMED booking whose pickup is still missing is
+    // surfaced to the operator in the same window so they can coordinate the
+    // exact pickup time/location (GetYourGuide/Viator style).
+    if (booking.status === 'CONFIRMED' && pickupMissing) {
+      reminders.push({
+        bookingId: booking.id,
+        type: 'SUPPLIER_PICKUP_REQUIRED',
         scheduledFor: new Date(date.getTime() - PICKUP_REQUIRED_HOURS * 60 * 60 * 1000),
       });
     }
@@ -217,6 +232,8 @@ function emailForReminder(type, bookingId) {
       return { type: 'payment-reminder', bookingId };
     case 'PICKUP_LOCATION_REQUIRED':
       return { type: 'pickup-location-required', bookingId };
+    case 'SUPPLIER_PICKUP_REQUIRED':
+      return { type: 'supplier-pickup-required', bookingId };
     case 'REVIEW_REQUEST':
       return { type: 'review-request', bookingId };
     default:

@@ -1,6 +1,7 @@
 const prisma = require('./prismaClient');
-const { evaluateBookingAvailability, travelerCount } = require('./availabilityCore');
+const { evaluateBookingAvailability, travelerCount, parseBlob } = require('./availabilityCore');
 const { generateBookingNumber } = require('./bookingHelpers');
+const { resolvePickupSelection, normalizePickupSnapshot } = require('./geoUtils');
 
 const HOLD_MINUTES = parseInt(process.env.CHECKOUT_HOLD_MINUTES, 10) || 30;
 
@@ -45,6 +46,16 @@ async function acquireHold({
       tx, tour, travelDate, selectedTime, travelers
     );
     if (!evalResult.ok) throw new Error(evalResult.reason);
+
+    // ── Pickup fail-fast: reject an invalid non-deferred selection before a
+    //    hold is created, so a bad pickup never gets to the webhook. ──────
+    if (payload && payload.pickup && typeof payload.pickup === 'object') {
+      const pickupResult = resolvePickupSelection(
+        payload.pickup,
+        parseBlob(tour.bookingAndTickets) || {}
+      );
+      if (!pickupResult.ok) throw new Error(pickupResult.error);
+    }
 
     // ── Dedup: one active hold per customer per slot ─────────────
     const existing = await tx.checkoutDraft.findFirst({
@@ -165,6 +176,14 @@ async function materializeHold(draftId, session, paymentIntentId) {
 
     // ── Create the Booking ─────────────────────────────────────
     const bookingNumber = await generateBookingNumber(bookingPrefix);
+    // Resolve + normalize the pickup snapshot through the SAME canonical path
+    // as pay-later (resolvePickupSelection) — not the raw client payload — so
+    // "pickup later" always carries pickupLater/status and invalid selections
+    // can never be stored. Degrades to `deferred` if the config changed.
+    const pickupSnapshot = normalizePickupSnapshot(
+      draftRecord.payload.pickup || null,
+      parseBlob(tourRecord.bookingAndTickets) || {}
+    );
     const booking = await tx.booking.create({
       data: {
         bookingNumber,
@@ -181,7 +200,7 @@ async function materializeHold(draftId, session, paymentIntentId) {
         leadTravelerEmail: draftRecord.payload.leadTraveler?.email || null,
         leadTravelerPhone: draftRecord.payload.leadTraveler?.phone || null,
         specialRequests: draftRecord.payload.specialRequests || '',
-        pickup: draftRecord.payload.pickup || null,
+        pickup: pickupSnapshot || null,
         subtotal: draftRecord.pricing.subtotal,
         grossAmount: draftRecord.pricing.total,
         discounts: draftRecord.pricing.discount || 0,

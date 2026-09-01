@@ -626,6 +626,25 @@ const supplierPickupUpdated = {
   },
 };
 
+const supplierPickupRequired = {
+  key: 'supplier-pickup-required',
+  name: 'Supplier · Pickup details required',
+  build() {
+    return B.shell('Action required: Confirm pickup details', `
+      ${B.hero({ heading: 'Pickup details still needed', badgeText: 'Action required', badgeColor: 'danger' })}
+      ${B.paragraph('Booking <strong>#{{bookingNumber}}</strong> for <strong>{{tourTitle}}</strong> includes pickup, but the pickup location has not been confirmed yet.')}
+      ${B.detailRows([
+        { label: 'Booking reference', value: '{{bookingNumber}}' },
+        { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Activity date', value: '{{deadlineLabel}}' },
+        { label: 'Travellers', value: '{{travelersLabel}}' },
+      ])}
+      ${B.callout('Please confirm the pickup time and location for this booking before the activity date.', 'info')}
+      ${B.buttonPrimary('Coordinate pickup', '{{supplierBookingUrl}}')}
+    `);
+  },
+};
+
 const supplierBookingReminder = {
   key: 'supplier-booking-reminder',
   name: 'Supplier · Upcoming booking reminder',
@@ -800,6 +819,7 @@ const TEMPLATE_DEFS = [
   supplierBookingChanged,
   supplierContactUpdated,
   supplierPickupUpdated,
+  supplierPickupRequired,
   supplierBookingReminder,
   supplierCustomerCancelledFree,
   supplierCustomerCancelledLate,
