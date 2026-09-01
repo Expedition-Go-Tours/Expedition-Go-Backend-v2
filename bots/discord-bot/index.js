@@ -13,6 +13,9 @@ const BACKUP_DIR = process.env.BACKUP_DIR || '/var/backups/travio';
 
 const pg = new Pg({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 8000 });
 
+// Connect pg eagerly so /ask and /chat don't hang on first query
+pg.connect().catch((e) => console.warn('[bot] pg connect failed (will retry on first query):', e.message));
+
 // Lazy Redis — only connects when /queue is used
 let redis = null;
 function getRedis() {
@@ -629,10 +632,15 @@ client.on('interactionCreate', async (interaction) => {
         const question = interaction.options.getString('question');
         try {
           const schema = await loadSchema();
+          if (!schema) {
+            await interaction.editReply('Failed to load database schema. Check pg connection.');
+            break;
+          }
           const system = `You are a PostgreSQL read-only query generator for TravioAfrica. Convert the user's natural language question into a single safe SQL SELECT query. Rules: output ONLY the SQL query, no explanation, no markdown fences. Schema:\n${schema}`;
-          let sql = await callMimo({ system, user: question, maxTokens: 512, temperature: 0.1 });
-          sql = sql.replace(/```sql\s*/gi, '').replace(/```\s*/gi, '').trim();
-          const guard = validateReadOnly(sql);
+          console.log(`[ask] question="${question}" schema_len=${schema.length}`);
+          const sql = await callMimo({ system, user: question, maxTokens: 512, temperature: 0.1 });
+          const cleanSql = sql.replace(/```sql\s*/gi, '').replace(/```\s*/gi, '').trim();
+          const guard = validateReadOnly(cleanSql);
           if (!guard.ok) {
             await interaction.editReply(`Sorry, I can't run that query: ${guard.error}`);
             break;
@@ -652,13 +660,11 @@ client.on('interactionCreate', async (interaction) => {
           const embed = new EmbedBuilder()
             .setTitle('Query Result')
             .setColor(0x00bcd4)
-            .setDescription(summary.slice(0, 4000))
-            .addFields(
-              { name: 'Rows', value: String(rows.length), inline: true },
-              { name: 'SQL', value: `\`\`\`${guard.safeSql.slice(0, 500)}\`\`\``, inline: false }
-            );
+            .setDescription(summary.slice(0, 4000));
           await interaction.editReply({ embeds: [embed] });
+          console.log(`[ask] user=${interaction.user.id} question="${question}" sql="${guard.safeSql}" rows=${rows.length}`);
         } catch (e) {
+          console.error('[ask] error:', e.message);
           await interaction.editReply(`AI error: ${e.message.slice(0, 500)}`);
         }
         break;
@@ -671,15 +677,19 @@ client.on('interactionCreate', async (interaction) => {
         }
         const prompt = interaction.options.getString('question');
         try {
+          console.log(`[chat] prompt="${prompt}"`);
           const ctx = await getOpsContext();
+          console.log(`[chat] ops context loaded (${ctx.length} chars)`);
           const summary = await callMimo({
             system: `You are TravioAfrica's ops assistant. Answer the user's question using the server/business context below. Be concise and helpful.\n\nServer context:\n${ctx}`,
             user: prompt,
             maxTokens: 2048,
             temperature: 0.3,
           });
+          console.log(`[chat] mimo responded (${summary.length} chars)`);
           await interaction.editReply(summary.slice(0, 2000));
         } catch (e) {
+          console.error('[chat] error:', e.message);
           await interaction.editReply(`AI error: ${e.message.slice(0, 500)}`);
         }
         break;
