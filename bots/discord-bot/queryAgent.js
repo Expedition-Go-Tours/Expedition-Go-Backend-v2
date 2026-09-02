@@ -180,19 +180,50 @@ function suggestEnumValues(sql, errorMsg) {
 
 function stripFences(text) {
   return text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-}/**
- * Extract the first JSON object from a model response.
- * Handles markdown fences and surrounding prose.
- * @throws {Error} if no valid JSON object can be found.
+}
+
+/**
+ * Extract the first complete JSON object from a model response.
+ *
+ * Robust to reasoning prose BEFORE the JSON, markdown fences, and content
+ * AFTER the object (another tool call, a trailing thought, stray braces).
+ * Scans character-by-character, tracking brace depth and skipping JSON
+ * strings (so a '}' inside a string value is not mistaken for a close).
+ * @returns {string} the raw JSON substring.
+ * @throws {Error} if no balanced object is found.
+ */
+function extractFirstJsonObject(text) {
+  const s = String(text || '');
+  const start = s.indexOf('{');
+  if (start === -1) throw new Error('No JSON object found in response');
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  throw new Error('No JSON object found in response');
+}
+
+/**
+ * Parse the first JSON object from a model response.
+ * @throws {Error} on malformed JSON or when none exists.
  */
 function parseAgentResponse(text) {
-  const cleaned = stripFences(String(text || ''));
-  const start = cleaned.indexOf('{');
-  const end = cleaned.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error('No JSON object found in response');
-  }
-  return JSON.parse(cleaned.slice(start, end + 1));
+  const raw = extractFirstJsonObject(text);
+  return JSON.parse(raw);
 }
 
 function truncate(text, max) {

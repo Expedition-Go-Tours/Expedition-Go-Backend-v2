@@ -62,6 +62,20 @@ describe('parseAgentResponse', () => {
     expect(out).toEqual({ final: 'There are 5 bookings.' });
   });
 
+  it('extracts the FIRST balanced object when prose or another object follows it', () => {
+    // Reasoning prose BEFORE + a stray second object/trailing text AFTER the
+    // valid one must not break extraction (real MiMo output shape).
+    const out = parseAgentResponse(
+      'First, the user is asking about tours. {"tool":"run_sql","sql":"SELECT COUNT(*) FROM \\"Tour\\""} Another thought here.'
+    );
+    expect(out).toEqual({ tool: 'run_sql', sql: 'SELECT COUNT(*) FROM "Tour"' });
+  });
+
+  it('ignores braces inside JSON string values', () => {
+    const out = parseAgentResponse('{"final":"The rule is {never} inside quotes"}');
+    expect(out).toEqual({ final: 'The rule is {never} inside quotes' });
+  });
+
   it('rejects when no JSON object exists', () => {
     expect(() => parseAgentResponse('no json here')).toThrow(/No JSON object/);
   });
