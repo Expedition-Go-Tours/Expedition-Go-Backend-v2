@@ -1,4 +1,13 @@
-const { runQueryAgent, parseAgentResponse, MAX_STEPS, resetSchemaCache } = require('../../bots/discord-bot/queryAgent');
+const {
+  runQueryAgent,
+  runQueryFast,
+  answerQuestion,
+  parseAgentResponse,
+  stripEmojis,
+  normalizeQuestion,
+  MAX_STEPS,
+  resetSchemaCache,
+} = require('../../bots/discord-bot/queryAgent');
 
 beforeEach(() => resetSchemaCache());
 
@@ -258,5 +267,172 @@ describe('runQueryAgent', () => {
     };
     await runQueryAgent({ question: 'hi', pg, callMimo });
     expect(seenEffort).toBe('low');
+  });
+});
+
+describe('stripEmojis (deterministic no-emoji rule)', () => {
+  it('removes emoji pictographs and emoticons but keeps allowed symbols', () => {
+    const out = stripEmojis('Great! 😊 ✅ done :), keep ✓ ⚠ and — yes ▲');
+    expect(out).toContain('Great!');
+    expect(out).not.toContain('😊');
+    expect(out).not.toContain('✅');
+    expect(out).not.toContain(':)');
+    expect(out).toContain('✓');
+    expect(out).toContain('⚠');
+    expect(out).toContain('—');
+    expect(out).toContain('▲');
+  });
+
+  it('does not corrupt numbers, times, or ratios (protects "1:30" and "x:1")', () => {
+    const out = stripEmojis('book at 1:30, ratio 2:1, ok.');
+    expect(out).toContain('1:30');
+    expect(out).toContain('2:1');
+  });
+
+  it('keeps markdown bold intact', () => {
+    expect(stripEmojis('**bold** and *emph*')).toBe('**bold** and *emph*');
+  });
+
+  it('handles null/empty input', () => {
+    expect(stripEmojis('')).toBe('');
+    expect(stripEmojis(null)).toBe('');
+    expect(stripEmojis(undefined)).toBe('');
+  });
+});
+
+describe('normalizeQuestion', () => {
+  it('lowercases, strips punctuation, and collapses whitespace', () => {
+    expect(normalizeQuestion('  How   Many BOOKINGS?? ')).toBe('how many bookings');
+  });
+});
+
+describe('runQueryFast (fast path)', () => {
+  it('answers conversationally with a single model call when final is returned', async () => {
+    const pg = makePg({});
+    let calls = 0;
+    const callMimo = async () => {
+      calls++;
+      return '{"final":"Direct greeting."}';
+    };
+    const r = await runQueryFast({ question: 'hello', pg, callMimo });
+    expect(r.escalated).toBe(false);
+    expect(r.final).toBe('Direct greeting.');
+    expect(calls).toBe(1);
+  });
+
+  it('runs a generated SQL query then summarizes rows (2 calls)', async () => {
+    const pg = makePg({
+      sqlRows: [{ bookingNumber: 'BK-9', status: 'CONFIRMED' }],
+    });
+    const answers = [
+      '{"sql":"SELECT \\"bookingNumber\\", \\"status\\" FROM \\"Booking\\" LIMIT 5"}',
+      '{"final":"Latest booking is BK-9 (CONFIRMED)."}',
+    ];
+    let i = 0;
+    const callMimo = async () => answers[i++];
+    const r = await runQueryFast({ question: 'latest booking?', pg, callMimo });
+    expect(r.escalated).toBe(false);
+    expect(r.final).toBe('Latest booking is BK-9 (CONFIRMED).');
+    expect(r.sqlLogs.length).toBe(1);
+    expect(r.rowCount).toBe(1);
+  });
+
+  it('escalates when the model asks for a table that is not in the schema', async () => {
+    const pg = makePg({ tables: ['Booking'] });
+    const callMimo = async () => '{"describe":"ObscureTable"}';
+    const r = await runQueryFast({ question: 'about obscure?', pg, callMimo });
+    expect(r.escalated).toBe(true);
+    expect(r.final).toBe('');
+  });
+
+  it('escalates when the generated SQL is not read-only', async () => {
+    const pg = makePg({});
+    const callMimo = async () => '{"sql":"DELETE FROM \\"Booking\\""}';
+    const r = await runQueryFast({ question: 'delete x', pg, callMimo });
+    expect(r.escalated).toBe(true);
+  });
+
+  it('strips emojis from fast-path answers', async () => {
+    const pg = makePg({});
+    const callMimo = async () => '{"final":"All good 😊 ✅"}';
+    const r = await runQueryFast({ question: 'hi', pg, callMimo });
+    expect(r.final).not.toContain('😊');
+    expect(r.final).not.toContain('✅');
+  });
+});
+
+describe('answerQuestion (production orchestrator)', () => {
+  it('returns the fast-path answer without a DB round trip for conversational asks', async () => {
+    const pg = makePg({});
+    const callMimo = async () => '{"final":"Hello!"}';
+    const r = await answerQuestion({ question: 'hi', pg, callMimo });
+    expect(r.final).toBe('Hello!');
+    expect(r.sqlLogs).toEqual([]);
+  });
+
+  it('caches an identical repeat question (no second model call)', async () => {
+    const pg = makePg({});
+    const store = {};
+    const cache = {
+      async get(k) { return store[k] || null; },
+      async set(k, v) { store[k] = v; },
+    };
+    let calls = 0;
+    const callMimo = async () => {
+      calls++;
+      return '{"final":"cached answer"}';
+    };
+    const first = await answerQuestion({ question: 'status please', userId: 'u1', pg, callMimo, cache });
+    expect(first.final).toBe('cached answer');
+    expect(first.cached).toBeUndefined();
+    expect(calls).toBe(1);
+
+    const second = await answerQuestion({ question: 'status please', userId: 'u1', pg, callMimo, cache });
+    expect(second.final).toBe('cached answer');
+    expect(second.cached).toBe(true);
+    expect(calls).toBe(1); // served from cache — no extra model call
+  });
+
+  it('escalates to the agent loop when the fast path needs describe', async () => {
+    const pg = makePg({
+      tables: ['Booking'],
+      schemaCols: [{ table_name: 'Booking', column_name: 'id', enum_values: null }],
+      describeRows: [{ column_name: 'secret', data_type: 'text', enum_values: null }],
+      sqlRows: [],
+    });
+    const answers = [
+      '{"describe":"BookingExtra"}', // fast path wants a non-preloaded table
+      '{"tool":"describe_table","name":"BookingExtra"}',
+      '{"final":"Escalated and answered."}',
+    ];
+    let i = 0;
+    const callMimo = async ({ messages }) => {
+      const last = messages[messages.length - 1];
+      if (last && last.content.startsWith('Tool result (describe_table)')) return answers[2];
+      return answers[i++];
+    };
+    const r = await answerQuestion({ question: 'explore extra table', pg, callMimo });
+    expect(r.final).toBe('Escalated and answered.');
+  });
+
+  it('strips emojis from the final orchestrator output', async () => {
+    const pg = makePg({});
+    const callMimo = async () => '{"final":"done ✅ with emoji 😊"}';
+    const r = await answerQuestion({ question: 'go', pg, callMimo });
+    expect(r.final).toBe('done with emoji');
+  });
+
+  it('never writes AI errors into the cache', async () => {
+    const pg = makePg({});
+    const store = {};
+    const cache = {
+      async get() { return null; },
+      async set(k, v) { store[k] = v; },
+    };
+    const callMimo = async () => {
+      throw new Error('boom');
+    };
+    await expect(answerQuestion({ question: 'x', userId: 'u', pg, callMimo, cache })).rejects.toThrow('boom');
+    expect(Object.keys(store)).toHaveLength(0);
   });
 });

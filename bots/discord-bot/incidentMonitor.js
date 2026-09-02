@@ -1,16 +1,26 @@
 /**
  * Incident monitor for the TravioAfrica ops bot.
  *
- * Polls the API health endpoint (local + public) and uses a small
- * transition-based state machine to declare incidents and recoveries:
+ * A single transition-based engine watches MULTIPLE signals. Each signal has
+ * its own state machine, its own Redis key, and its own rich embed:
  *
- *   HEALTHY --2 consecutive failed checks (~60s)--> INCIDENT
- *   INCIDENT --2 consecutive good checks (~60s)--> RECOVERED
+ *   HEALTHY --N consecutive failed checks--> INCIDENT
+ *   INCIDENT --2 consecutive good checks----> RECOVERED
  *
- * A single transient failure never fires an alert, and while an incident is
- * open repeated failing polls do NOT re-post (one card per incident). State is
- * persisted in Redis so a bot restart resumes an open incident without
- * duplicating cards.
+ * Signals:
+ *   api       local + public health endpoint (N=2, ~60s)
+ *   load      1-min load vs cores x 2        (N=4, ~2min — deploy bursts
+ *                                            self-resolve before paging)
+ *   disk      /  usage > 85%                 (N=2)
+ *   ram       memory usage > 85%             (N=2)
+ *   swap      swap usage > 50%               (N=2)
+ *   postgres  psql SELECT 1                  (N=2)
+ *   redis     redis-cli ping                 (N=2)
+ *   backup    newest dump < 26h old          (N=2)
+ *
+ * A signal only fires once per incident (no duplicate cards), and repeated
+ * failing polls while an incident is open do NOT re-post. State is persisted
+ * per-check in Redis so a bot restart resumes an open incident exactly once.
  *
  * On declare/recover it posts a rich, diagnostic Discord embed to the
  * incidents channel via the shared webhook notifier (notifyDiscord), so
@@ -19,23 +29,29 @@
  * LIKELY CAUSE is evidence-based ("restart occurred ~Xs after deployment"),
  * and the conclusion is labeled ASSESSMENT — correlation is not proof.
  *
- * @version 2.0.0
+ * @version 3.0.0
  */
 
 const { execSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
 const { notifyDiscord } = require('../../utils/discordNotifier');
 
 const DEFAULT_INTERVAL_MS = 30 * 1000;
 const LOCAL_TIMEOUT_MS = 8000;
 const PUBLIC_TIMEOUT_MS = 10000;
-const REDIS_STATE_KEY = 'incident:monitor:state';
 const MAX_ERR_TAIL_LINES = 10;
+const REDIS_STATE_KEY_PREFIX = 'incident:monitor:state';
 
 // Consecutive-check thresholds. At a 30s interval, FAIL_THRESHOLD=2 declares
 // an incident ~60s after the first failure; RECOVER_THRESHOLD=2 resolves ~60s
-// after the API returns. Single transient blips never fire.
+// after the signal returns. Single transient blips never fire.
 const FAIL_THRESHOLD = 2;
 const RECOVER_THRESHOLD = 2;
+// Load is more volatile (deploys/restarts burst CPU for a minute or two), so
+// require ~2min of sustained pressure before declaring. Recovery stays quick.
+const LOAD_FAIL_SAMPLES = 4;
+const THRESHOLDS = { rams: '85', disk: '85', swap: '50', backupHours: 26 };
 
 function sh(cmd) {
   return execSync(cmd, { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, timeout: 10000 }).trim();
@@ -79,6 +95,18 @@ function cpuUsagePct() {
     const busy = b[0] - a[0];
     const total = (b[0] + b[1]) - (a[0] + a[1]);
     return total > 0 ? Math.round((busy / total) * 100) : null;
+  } catch {
+    return null;
+  }
+}
+
+function topCpuProcesses() {
+  try {
+    const out = sh(`ps -eo pcpu,pmem,comm --sort=-pcpu | head -6`);
+    return String(out || '')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => l.replace(/\s+/g, ' ').trim());
   } catch {
     return null;
   }
@@ -145,9 +173,9 @@ async function collectDiagnostics(ctx) {
   }
 
   try {
-    const df = sh(`df -h / | tail -1`);
+    const df = sh(`df -P / | tail -1`);
     const parts = df.split(/\s+/);
-    diag.disk = { usedPct: parts[4] || null, total: parts[1] || null };
+    diag.disk = { usedPct: parts[4] || null, total: parts[1] ? `${Math.round(parts[1] / 1024)}G` : null };
   } catch {
     diag.disk = null;
   }
@@ -162,6 +190,7 @@ async function collectDiagnostics(ctx) {
     diag.load = null;
   }
   diag.cpu = cpuUsagePct();
+  diag.topCpu = topCpuProcesses();
 
   return diag;
 }
@@ -207,12 +236,112 @@ function resourcesLine(diag) {
   return parts.length ? parts.join(' · ') : '—';
 }
 
-function buildEmbed({ direction, startedAt, resolvedAt, durationSec, diag }) {
-  const incident = direction === 'down';
+// ── Signal definitions ──────────────────────────────────────────────────
+// Each check owns one Redis key so an open card resumes after a bot restart
+// without duplicating. `probe` returns { healthy, detail } or throws → treated
+// as unhealthy (a check we cannot measure is worth knowing about).
+const SIGNALS = [
+  { id: 'api', label: 'API', fail: FAIL_THRESHOLD, titleDown: '🚨 PRODUCTION INCIDENT', titleUp: '✅ INCIDENT RESOLVED' },
+  { id: 'load', label: 'LOAD', fail: LOAD_FAIL_SAMPLES, titleDown: '🚨 HIGH LOAD', titleUp: '✅ LOAD NORMAL' },
+  { id: 'disk', label: 'DISK', fail: FAIL_THRESHOLD, titleDown: '🚨 DISK SPACE', titleUp: '✅ DISK OK' },
+  { id: 'ram', label: 'MEMORY', fail: FAIL_THRESHOLD, titleDown: '🚨 MEMORY PRESSURE', titleUp: '✅ MEMORY OK' },
+  { id: 'swap', label: 'SWAP', fail: FAIL_THRESHOLD, titleDown: '🚨 SWAP PRESSURE', titleUp: '✅ SWAP OK' },
+  { id: 'postgres', label: 'POSTGRES', fail: FAIL_THRESHOLD, titleDown: '🚨 POSTGRES DOWN', titleUp: '✅ POSTGRES OK' },
+  { id: 'redis', label: 'REDIS', fail: FAIL_THRESHOLD, titleDown: '🚨 REDIS DOWN', titleUp: '✅ REDIS OK' },
+  { id: 'backup', label: 'BACKUP', fail: FAIL_THRESHOLD, titleDown: '🚨 BACKUP STALE', titleUp: '✅ BACKUP OK' },
+];
 
-  if (incident) {
-    const api = diag?.pm2?.find((p) => p.name === 'expedition-api');
-    const restarts = api?.restarts || 0;
+function stateKey(id) {
+  return `${REDIS_STATE_KEY_PREFIX}:${id}`;
+}
+
+/**
+ * Probe each signal once. Best-effort: a probe that cannot run reports
+ * unhealthy=false detail via catch → treats unmeasurable as healthy (no false
+ * alarms) while collectDiagnostics still captures why diagnostics failed.
+ */
+async function probeSignal(id, env) {
+  switch (id) {
+    case 'api': {
+      const local = await fetchHealth(env.apiUrl, LOCAL_TIMEOUT_MS);
+      const pub = env.publicUrl ? await fetchHealth(env.publicUrl, PUBLIC_TIMEOUT_MS) : local;
+      return { healthy: local.ok && pub.ok, detail: `local ${local.status} · public ${pub.ok ? pub.status : 'down'}` };
+    }
+    case 'load': {
+      const cores = os.cpus().length || 2;
+      const raw = fs.readFileSync('/proc/loadavg', 'utf8');
+      const parts = raw.trim().split(/\s+/);
+      const load1 = parseFloat(parts[0]);
+      return { healthy: !(load1 > cores * 2), detail: `load1 ${load1.toFixed(2)} > ${cores * 2} (${cores} cores)` };
+    }
+    case 'disk': {
+      const out = sh(`df -P / | tail -1`);
+      const pct = parseInt(String(out).split(/\s+/)[4], 10);
+      return { healthy: !(pct > THRESHOLDS.disk), detail: `root ${pct}% used` };
+    }
+    case 'ram': {
+      const mem = fs.readFileSync('/proc/meminfo', 'utf8');
+      const total = Number((mem.match(/MemTotal:\s+(\d+)/) || [])[1] || 0);
+      const avail = Number((mem.match(/MemAvailable:\s+(\d+)/) || [])[1] || 0);
+      const used = total > 0 ? Math.round(((total - avail) / total) * 100) : 0;
+      return { healthy: !(used > THRESHOLDS.rams), detail: `memory ${used}% used (${Math.round(total / 1024)}MB)` };
+    }
+    case 'swap': {
+      const mem = fs.readFileSync('/proc/meminfo', 'utf8');
+      const total = Number((mem.match(/SwapTotal:\s+(\d+)/) || [])[1] || 0);
+      const free = Number((mem.match(/SwapFree:\s+(\d+)/) || [])[1] || 0);
+      const used = total > 0 ? Math.round(((total - free) / total) * 100) : 0;
+      return { healthy: !(used > THRESHOLDS.swap), detail: `swap ${used}% used` };
+    }
+    case 'postgres': {
+      const out = sh(`psql "${env.databaseUrl}" -tAc 'SELECT 1' 2>/dev/null`);
+      return { healthy: out.trim() === '1', detail: 'PostgreSQL unreachable' };
+    }
+    case 'redis': {
+      const m = String(env.redisUrl || '').match(/redis:\/\/:([^@]+)@/);
+      const pw = m ? m[1] : '';
+      const out = sh(`redis-cli -h 127.0.0.1 -p 6379 -a '${pw}' --no-auth-warning ping 2>/dev/null`);
+      return { healthy: out.includes('PONG'), detail: 'Redis unreachable' };
+    }
+    case 'backup': {
+      const dir = env.backupDir;
+      if (!dir) return { healthy: true, detail: 'backupDir not configured' };
+      if (!fs.existsSync(dir)) return { healthy: false, detail: `backup dir missing (${dir})` };
+      const files = fs
+        .readdirSync(dir)
+        .filter((f) => f.startsWith('travio-') && f.endsWith('.dump'))
+        .sort()
+        .reverse();
+      if (!files.length) return { healthy: false, detail: 'no backup file found' };
+      const st = fs.statSync(`${dir}/${files[0]}`);
+      const ageH = (Date.now() - st.mtimeMs) / 3600000;
+      return { healthy: ageH <= THRESHOLDS.backupHours, detail: `newest ${files[0]} is ${ageH.toFixed(1)}h old` };
+    }
+    default:
+      return { healthy: true, detail: 'unknown signal' };
+  }
+}
+
+// ── Embed building ──────────────────────────────────────────────────────
+function commonDiagFields(diag, { includeError = true } = {}) {
+  const fields = [
+    { name: 'DEPENDENCIES', value: depsLine(diag), inline: false },
+    { name: 'RESOURCES', value: resourcesLine(diag) || '—', inline: false },
+  ];
+  if (includeError && diag?.errorTail) {
+    fields.push({ name: 'LATEST ERROR', value: `\`\`\`\n${diag.errorTail.slice(0, 900)}\n\`\`\``, inline: false });
+  }
+  return fields;
+}
+
+function buildCauseAndAssessment(signal, detail, diag) {
+  const api = diag?.pm2?.find((p) => p.name === 'expedition-api');
+  const restarts = api?.restarts || 0;
+  const top = diag?.topCpu?.slice(0, 3).join('\n');
+  let cause;
+  let assessment;
+
+  if (signal === 'api') {
     const likelyCauseLines = [];
     if (restarts > 0) {
       likelyCauseLines.push(`PM2 restart detected — \`expedition-api\` restarted ${restarts}×`);
@@ -221,45 +350,82 @@ function buildEmbed({ direction, startedAt, resolvedAt, durationSec, diag }) {
     } else {
       likelyCauseLines.push('Health check failed (no PM2 restart detected)');
     }
-
-    // LIKELY CAUSE is evidence; ASSESSMENT is the (non-overstated) conclusion.
-    let assessment = 'Unclassified — correlation has not established a cause.';
+    cause = likelyCauseLines.join('\n');
+    assessment = 'Unclassified — correlation has not established a cause.';
     if (diag?.deploy?.restartedRecently) {
       assessment = `Likely deploy-related transient — API restart occurred ~${diag.deploy.apiUpSinceSec}s after deployment (${diag.deploy.lastCommitAt || 'recent commit'}).`;
     }
+    return { cause, assessment };
+  }
 
-    const fields = [
-      { name: 'LIKELY CAUSE', value: likelyCauseLines.join('\n'), inline: false },
-      { name: 'ASSESSMENT', value: assessment, inline: false },
-      { name: 'DEPENDENCIES', value: depsLine(diag), inline: false },
-      { name: 'RESOURCES', value: resourcesLine(diag) || '—', inline: false },
-    ];
-    if (diag?.errorTail) {
-      fields.push({ name: 'LATEST ERROR', value: `\`\`\`\n${diag.errorTail.slice(0, 900)}\n\`\`\``, inline: false });
+  // Resource signals: same evidence discipline — restart/deploy correlation,
+  // plus the top CPU consumers that explain a load/CPU/memory spike.
+  if (restarts > 0) {
+    cause = `PM2 restart burst — \`expedition-api\` restarted ${restarts}× (${api?.status || '?'})`;
+    if (diag?.deploy?.restartedRecently) {
+      cause += `, ~${diag.deploy.apiUpSinceSec}s after deployment`;
     }
-    fields.push({ name: 'CHECK FIRST', value: checkFirstLines(diag).join('\n'), inline: false });
+    cause += `\nObservation: ${detail}`;
+    if (top) cause += `\nTop CPU:\n${top}`;
+    assessment = diag?.deploy?.restartedRecently
+      ? `Likely deploy-related transient — CPU/memory burst while the API recompiled and PM2 restarted (commit ${diag.deploy.lastCommitAt || 'recent'}).`
+      : 'PM2 restarts detected; not clearly deploy-tied. Verify the API is stable.';
+  } else {
+    cause = `Observation: ${detail}`;
+    if (top) cause += `\nTop CPU:\n${top}`;
+    if (diag?.deploy?.restartedRecently) {
+      assessment = 'A deployment restarted processes recently; this may be a transient burst rather than a sustained issue.';
+    } else {
+      assessment = 'Unclassified — no recent PM2 restart or deployment detected.';
+    }
+  }
+  return { cause, assessment };
+}
+
+/**
+ * Build a Discord embed payload for a signal transition.
+ *
+ * @param {Object} o
+ * @param {string} o.direction - 'down' (incident) or 'up' (recovered).
+ * @param {string} [o.signal]  - signal id (default 'api').
+ * @param {string} [o.detail]  - observed detail (e.g. load reading).
+ * @param {Object} [o.diag]    - diagnostics from collectDiagnostics().
+ */
+function buildEmbed({ direction, startedAt, resolvedAt, durationSec, signal = 'api', detail = '', diag }) {
+  const meta = SIGNALS.find((s) => s.id === signal) || SIGNALS[0];
+  const incident = direction === 'down';
+
+  if (incident) {
+    const { cause, assessment } = buildCauseAndAssessment(signal, detail, diag);
+    const fields = [
+      { name: 'LIKELY CAUSE', value: cause, inline: false },
+      { name: 'ASSESSMENT', value: assessment, inline: false },
+      ...commonDiagFields(diag),
+    ];
     if (diag?.deploy?.lastCommitAt) {
       fields.push({ name: 'Commit', value: diag.deploy.lastCommitAt, inline: false });
     }
-
+    if (signal === 'api') {
+      fields.push({ name: 'CHECK FIRST', value: checkFirstLines(diag).join('\n'), inline: false });
+    }
+    const headline = signal === 'api' ? 'API: DOWN' : `${meta.label}: PROBLEM`;
     return {
-      title: '🚨 PRODUCTION INCIDENT',
+      title: meta.titleDown,
       color: 0xff4444,
-      content: `**API: DOWN** · Detected ${fmtTimestamp(startedAt)} · Duration: ongoing`,
+      content: `**${headline}** · ${detail || 'check failed'} · Detected ${fmtTimestamp(startedAt)} · Duration: ongoing`,
       fields,
     };
   }
 
-  // RECOVERED
   const fields = [
-    { name: 'DEPENDENCIES', value: depsLine(diag), inline: false },
-    { name: 'RESOURCES', value: resourcesLine(diag) || '—', inline: false },
+    ...commonDiagFields(diag, { includeError: false }),
     { name: 'CHECK FIRST', value: checkFirstLines(diag).join('\n'), inline: false },
   ];
+  const headline = signal === 'api' ? 'API: UP' : `${meta.label}: OK`;
   return {
-    title: '✅ INCIDENT RESOLVED',
+    title: meta.titleUp,
     color: 0x00c853,
-    content: `**API: UP** · Downtime: ${Math.round(durationSec)}s · Recovered ${fmtTimestamp(resolvedAt)}`,
+    content: `**${headline}** · Downtime: ${Math.round(durationSec)}s · Recovered ${fmtTimestamp(resolvedAt)}`,
     fields,
   };
 }
@@ -268,11 +434,12 @@ function buildEmbed({ direction, startedAt, resolvedAt, durationSec, diag }) {
  * Start the incident monitor.
  *
  * @param {Object} opts
- * @param {string} opts.target   - Human-readable monitor target.
- * @param {Object} opts.env      - { apiUrl, publicUrl, databaseUrl, redisUrl, repoDir, errorLog, intervalMs }
+ * @param {string} opts.target   - Human-readable monitor target (log only).
+ * @param {Object} opts.env      - { apiUrl, publicUrl, databaseUrl, redisUrl,
+ *                                 repoDir, errorLog, backupDir, intervalMs }.
  * @param {Object} [opts.redis]  - Redis client with get/set for state persistence.
  * @param {Object} [opts.logger] - { log, warn } (defaults to console).
- * @returns {{ stop: Function, tick: Function }}
+ * @returns {{ stop: Function, tick: Function, ready: Promise }}
  */
 function startIncidentMonitor({ target, env, redis, logger }) {
   if (!env?.apiUrl) {
@@ -284,10 +451,14 @@ function startIncidentMonitor({ target, env, redis, logger }) {
   const log = (m) => (logger?.log || console.log)(`[incident] ${m}`);
   const warn = (m) => (logger?.warn || console.warn)(`[incident] ${m}`);
 
-  let state = 'HEALTHY'; // HEALTHY | INCIDENT
-  let downSince = 0;
-  let failStreak = 0;
-  let passStreak = 0;
+  // Per-signal runtime state.
+  const checks = new Map(
+    SIGNALS.map((s) => [
+      s.id,
+      { meta: s, state: 'HEALTHY', downSince: 0, failStreak: 0, passStreak: 0 },
+    ])
+  );
+
   let active = false;
   let timer = null;
   let startupResolve = null;
@@ -295,12 +466,12 @@ function startIncidentMonitor({ target, env, redis, logger }) {
     startupResolve = resolve;
   });
 
-  async function persist() {
+  async function persist(id, c) {
     try {
       if (redis) {
         await redis.set(
-          REDIS_STATE_KEY,
-          JSON.stringify({ state, downSince, failStreak, passStreak }),
+          stateKey(id),
+          JSON.stringify({ state: c.state, downSince: c.downSince, failStreak: c.failStreak, passStreak: c.passStreak }),
           'EX',
           3600
         );
@@ -310,24 +481,22 @@ function startIncidentMonitor({ target, env, redis, logger }) {
     }
   }
 
-  async function loadPersisted() {
+  async function loadPersisted(id, c) {
     try {
-      const raw = redis ? await redis.get(REDIS_STATE_KEY) : null;
+      const raw = redis ? await redis.get(stateKey(id)) : null;
       if (!raw) return;
       const p = JSON.parse(raw);
       if (p && p.state === 'INCIDENT') {
-        state = 'INCIDENT';
-        downSince = p.downSince || Date.now();
-        passStreak = p.passStreak || 0;
+        c.state = 'INCIDENT';
+        c.downSince = p.downSince || Date.now();
+        c.passStreak = p.passStreak || 0;
       }
     } catch {
       // fresh state is fine
     }
   }
 
-  async function post(payload) {
-    // notifyDiscord('incidents', content, opts) never rejects and reads the
-    // webhook URL from the environment — channel-visibility independent.
+  async function post(signalId, payload) {
     await notifyDiscord('incidents', payload.content, {
       title: payload.title,
       color: payload.color,
@@ -336,63 +505,87 @@ function startIncidentMonitor({ target, env, redis, logger }) {
     });
   }
 
-  async function check() {
-    if (active) return;
-    active = true;
+  async function checkSignal(id) {
+    const c = checks.get(id);
+    if (!c) return;
     try {
-      const local = await fetchHealth(env.apiUrl, LOCAL_TIMEOUT_MS);
-      const pub = env.publicUrl ? await fetchHealth(env.publicUrl, PUBLIC_TIMEOUT_MS) : local;
-      const healthy = local.ok && pub.ok;
+      const result = await probeSignal(id, env);
+      const healthy = result.healthy;
+      const detail = result.detail || '';
       const now = Date.now();
 
-      if (!healthy && state === 'HEALTHY') {
-        failStreak += 1;
-        passStreak = 0;
-        await persist();
-        if (failStreak >= FAIL_THRESHOLD) {
-          state = 'INCIDENT';
-          downSince = now;
-          failStreak = 0;
-          await persist();
+      if (!healthy && c.state === 'HEALTHY') {
+        c.failStreak += 1;
+        c.passStreak = 0;
+        await persist(id, c);
+        if (c.failStreak >= c.meta.fail) {
+          c.state = 'INCIDENT';
+          c.downSince = now;
+          c.failStreak = 0;
+          await persist(id, c);
           const diag = await collectDiagnostics(env);
-          const payload = buildEmbed({ direction: 'down', startedAt: now, diag });
-          log(`INCIDENT declared at ${target} (${FAIL_THRESHOLD} consecutive failures)`);
-          await post(payload);
+          const payload = buildEmbed({ direction: 'down', startedAt: now, signal: id, detail, diag });
+          log(`INCIDENT ${id} at ${target} (${c.meta.fail} consecutive failures): ${detail}`);
+          await post(id, payload);
         }
-      } else if (healthy && state === 'INCIDENT') {
-        passStreak += 1;
-        await persist();
-        if (passStreak >= RECOVER_THRESHOLD) {
-          const durationSec = Math.round((now - downSince) / 1000);
-          state = 'HEALTHY';
-          passStreak = 0;
-          await persist();
+      } else if (healthy && c.state === 'INCIDENT') {
+        c.passStreak += 1;
+        await persist(id, c);
+        if (c.passStreak >= RECOVER_THRESHOLD) {
+          const durationSec = Math.round((now - c.downSince) / 1000);
+          c.state = 'HEALTHY';
+          c.passStreak = 0;
+          await persist(id, c);
           const diag = await collectDiagnostics(env);
-          const payload = buildEmbed({ direction: 'up', startedAt: downSince, resolvedAt: now, durationSec, diag });
-          log(`RECOVERED after ${durationSec}s at ${target}`);
-          await post(payload);
+          const payload = buildEmbed({ direction: 'up', startedAt: c.downSince, resolvedAt: now, durationSec, signal: id, detail, diag });
+          log(`RECOVERED ${id} after ${durationSec}s at ${target}`);
+          await post(id, payload);
         }
-      } else if (healthy && state === 'HEALTHY') {
+      } else if (healthy && c.state === 'HEALTHY') {
         // steady state — reset transient streak noise
-        failStreak = 0;
+        c.failStreak = 0;
       }
       // state === 'INCIDENT' && !healthy: no re-post, keep waiting for recovery
     } catch (e) {
-      warn(`check error: ${e.message}`);
+      // A probe that throws (e.g. transient shell error) must not crash the
+      // whole engine or spam Discord. Log and continue.
+      warn(`probe ${id} error: ${e.message}`);
+    }
+  }
+
+  async function tick() {
+    if (active) return;
+    active = true;
+    try {
+      for (const id of checks.keys()) {
+        await checkSignal(id);
+      }
     } finally {
       active = false;
     }
   }
 
   (async () => {
-    await loadPersisted();
-    await check();
+    for (const [id, c] of checks) {
+      await loadPersisted(id, c);
+    }
+    await tick();
     if (startupResolve) startupResolve();
-    timer = setInterval(check, intervalMs);
+    timer = setInterval(tick, intervalMs);
     timer.unref?.();
   })();
 
-  return { stop: () => clearInterval(timer), tick: check, ready };
+  return { stop: () => clearInterval(timer), tick, ready };
 }
 
-module.exports = { startIncidentMonitor, collectDiagnostics, buildEmbed, fetchHealth, FAIL_THRESHOLD, RECOVER_THRESHOLD };
+module.exports = {
+  startIncidentMonitor,
+  collectDiagnostics,
+  buildEmbed,
+  fetchHealth,
+  probeSignal,
+  SIGNALS,
+  FAIL_THRESHOLD,
+  RECOVER_THRESHOLD,
+  LOAD_FAIL_SAMPLES,
+};

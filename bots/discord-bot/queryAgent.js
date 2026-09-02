@@ -11,10 +11,26 @@
  *
  * Used by both the dedicated AI channel and the /ask / /chat slash commands.
  *
- * @version 1.0.0
+ * Production answering is two-tier:
+ *   1. FAST PATH  — one MiMo call turns the question into SQL (or a direct
+ *      conversational answer), the SQL runs read-only, then one MiMo call
+ *      turns the rows into a final answer. Typical: 2 model calls.
+ *   2. ESCALATION — if the fast path can't produce a valid query (parse
+ *      failure, SQL error, ambiguous question), fall back to the full
+ *      ReAct loop below, which can introspect any table and self-heal.
+ *   Callers should use answerQuestion(); runQueryAgent remains exported for
+ *   direct/legacy use and is the escalation engine.
+ *
+ * @version 1.1.0
  */
 
 const { validateReadOnly } = require('../../utils/sqlGuard');
+
+// Symbols the ops assistant is allowed to use. Emoji and pictographs that
+// ARE NOT in this list are stripped deterministically from every answer, so
+// the bot's text stays clean even if the model ignores the style rule.
+const ALLOWED_SYMBOLS = '✓⚠▲▼▶◀•·—–✦✧★☆$%+#=';
+const TEXT_EMOTICONS = [':)', ':-)', ':D', ':P', ':p', ':(', ':-(', ":'(", ';)', ';-)', ';D', ':O', ':o', ':/', ':\\', ':|', 'xD', 'XD', '^_^', '-_-', '>:(', '=(', '=)'];
 
 const MAX_STEPS = 10;
 const MAX_ROWS = 50;
@@ -66,6 +82,64 @@ function parseAgentResponse(text) {
 function truncate(text, max) {
   if (text.length <= max) return text;
   return text.slice(0, max) + `\n...[truncated ${text.length - max} chars]`;
+}
+
+/**
+ * Deterministically remove emoji and emoticons from bot text while keeping
+ * allowed business symbols (✓ ⚠ ▲ ▼ • · — $ % etc.) intact.
+ *
+ * Strategy: temporarily hide allowed symbols behind private-use placeholders
+ * (so an emoji-strip regex can't remove them), strip real emoji pictographs
+ * + variation/skin-tone/ZWJ sequences + text emoticons, then restore the
+ * hidden symbols.
+ */
+function stripEmojis(text) {
+  if (!text) return String(text || '');
+  const s = String(text);
+  const unique = [...new Set(ALLOWED_SYMBOLS)].join('');
+  const map = {};
+  let i = 0;
+  for (const ch of unique) map[ch] = String.fromCodePoint(0xE000 + i++);
+
+  // 1) Hide allowed symbols.
+  let hidden = s;
+  for (const [ch, code] of Object.entries(map)) hidden = hidden.split(ch).join(code);
+
+  // 2) Remove emoji + emoji modifiers/joiners/variation selectors + keycaps.
+  hidden = hidden.replace(/\p{Extended_Pictographic}/gu, '');
+  // Skin-tone modifiers (U+1F3FB..1F3FF), VS16, ZWJ and keycap marks.
+  hidden = hidden.replace(/\u{1F3FB}|\u{1F3FC}|\u{1F3FD}|\u{1F3FE}|\u{1F3FF}/gu, '');
+  hidden = hidden.replace(/\uFE0F/g, '').replace(/\u200D/g, '').replace(/\u20E3/g, '');
+
+  // 3) Remove ASCII/kaomoji emoticons (word-boundary guarded).
+  for (const emo of TEXT_EMOTICONS) {
+    hidden = hidden.replace(
+      new RegExp(`(^|[\\s])(${emo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})(?=$|[\\s.,!?;:])`, 'gu'),
+      '$1'
+    );
+  }
+  hidden = hidden.replace(/(?<![A-Za-z0-9])(?:o_O|O_o|>_<|>\.<|;D|:-\||:-&)(?![A-Za-z0-9])/g, '');
+
+  // 4) Restore allowed symbols.
+  let restored = hidden;
+  for (const [ch, code] of Object.entries(map)) {
+    restored = restored.split(code).join(ch);
+  }
+
+  // 5) Collapse doubled spaces left by removals (keep newlines).
+  return restored.replace(/ {2,}/g, ' ').trim();
+}
+
+/**
+ * Make a question collision-resistant for caching / history: lowercase,
+ * strip punctuation (keep letters/digits/spaces), collapse whitespace.
+ */
+function normalizeQuestion(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function cellStr(v) {
@@ -139,8 +213,6 @@ async function buildCompactSchema(pg) {
   const now = Date.now();
   if (schemaCache && now - schemaCacheTime < SCHEMA_CACHE_TTL_MS) return schemaCache;
   try {
-    const placeholders = CRITICAL_TABLES.map((_, i) => `$${i + 1}`).join(', ');
-
     // Columns + enum values for the critical tables
     const cols = await pg.query(
       `SELECT c.table_name, c.column_name,
@@ -225,11 +297,16 @@ TOOLS — respond with EXACTLY ONE JSON object, no markdown fences, no extra tex
 
 WORKFLOW:
 1. Greeting / opinion / non-data question? Reply immediately with {"final":"..."}.
-2. For data questions, use the SCHEMA below directly — it already lists the real columns and enum values for the main tables. Go STRAIGHT to run_sql; do NOT waste steps calling list_tables or describe_table for tables already in the schema.
-3. Only call describe_table (or list_tables) for a table NOT in the schema below. NEVER guess identifiers.
+2. For data questions, use the SCHEMA below directly — it already lists the real columns and enum values for the main tables. Go STRAIGHT to run_sql; do NOT call list_tables or describe_table for tables already listed in SCHEMA (their columns are complete). Only describe a table that is NOT in the SCHEMA.
+3. NEVER guess identifiers. Use exactly the names in SCHEMA.
 4. Always double-quote identifiers, e.g. "Booking"."bookingNumber".
-5. If run_sql returns an ERROR, read the error, inspect the schema, fix the SQL, and retry (a few times).
-6. When you have the data, reply with {"final":"<concise business answer>"} — max ~6 sentences, cite key numbers.
+5. If run_sql returns an ERROR, read the error, fix the SQL, and retry (a few times). Do not call describe_table for a table already in SCHEMA just to retry — the columns are already available.
+6. When you have the data, reply with {"final":"<concise answer>"}.
+
+STYLE:
+- No emojis, emoji characters, or emoticons anywhere (e.g. 😊, 😄, ✅, :), :-), ^_^). Symbols such as ✓ ⚠ ▲ ▼ • · — $ % are allowed. Use plain text and **bold** only.
+- Be concise and professional. Do not use cheery filler like "Great question!" or "That said". Answer the substance directly.
+- If the user asks why you are slow: explain it honestly — each answer is produced by several sequential model calls that inspect the live schema, run queries, and verify results, so complex questions take longer than a quick count; it is the model round-trips, not the database, that add time. Keep it short.
 
 SQL RULES:
 - SELECT or WITH only (read-only). ALWAYS double-quote ALL identifiers — PostgreSQL folds unquoted names to lowercase and many identifiers are camelCase.
@@ -238,8 +315,42 @@ SQL RULES:
 - Fuzzy name searches: ILIKE '%term%' across ALL name-like keys (e.g. "legalBusinessName", "displayName", "businessName").
 - Use JOINs, GROUP BY, aggregates as needed. Order by recency ("createdAt" DESC) when relevant.
 
-SCHEMA:
+  SCHEMA:
 ${schemaBlock || '(none preloaded — call list_tables / describe_table to discover)'}
+${historyText ? `\nPREVIOUS CONVERSATION:\n${historyText}` : ''}`;
+}
+
+/**
+ * Fast-path system prompt. The model must produce ONE JSON object with
+ * exactly one key: "sql", "final", or "describe".
+ *  - {"sql":"..."}      → a read-only query to run (preferred for data Qs)
+ *  - {"final":"..."}    → direct answer when the DB isn't needed
+ *  - {"describe":"T"}   → escalation signal: table not in SCHEMA
+ */
+function buildFastSystem(schemaBlock, historyText) {
+  return `You are TravioAfrica's ops assistant. Decide in ONE step what a user question needs.
+
+Output EXACTLY ONE JSON object, no markdown fences, no extra text:
+- {"sql":"SELECT ..."} — if the question needs live data. Write ONE valid read-only query using the SCHEMA below.
+- {"final":"<answer>"} — if the question does NOT need the database (greeting, opinion, general knowledge, small talk, "who are you", thanks). Answer directly.
+- {"describe":"<TableName>"} — ONLY if you need a table that is NOT listed in SCHEMA below. Never for tables in SCHEMA.
+
+You are not allowed to write any other tool calls — this is a single-step responder.
+
+SQL RULES (when you output "sql"):
+- SELECT or WITH only (read-only). ALWAYS double-quote ALL identifiers — PostgreSQL folds unquoted names to lowercase and many identifiers are camelCase.
+- Enum columns show enum(value1|value2|...) — match values EXACTLY, case-sensitive (e.g. 'admin' not 'ADMIN').
+- JSONB columns: use ->> for text fields, e.g. "businessInfo"->>'legalBusinessName'.
+- Fuzzy name searches: ILIKE '%term%' across ALL name-like keys (e.g. "legalBusinessName", "displayName", "businessName").
+- Use JOINs, GROUP BY, aggregates as needed. Order by recency ("createdAt" DESC) when relevant.
+- Never guess identifiers — use exactly the names in SCHEMA. Do NOT call describe_table for tables already in SCHEMA.
+
+STYLE (for "final"):
+- No emojis, emoji characters, or emoticons (😊, ✅, :), :-), ^_^). Symbols such as ✓ ⚠ ▲ ▼ • · — $ % are allowed. Use plain text and **bold** only.
+- Be concise and professional. No cheery filler ("Great question!", "Absolutely!"). If asked why you are slow, explain it honestly: answers come from several sequential model calls that inspect the live database, run and verify queries, so complex questions take longer than a quick count — the model round-trips, not the database, are what add time.
+
+SCHEMA:
+${schemaBlock || '(none preloaded)'}
 ${historyText ? `\nPREVIOUS CONVERSATION:\n${historyText}` : ''}`;
 }
 
@@ -351,7 +462,154 @@ async function runQueryAgent({ question, userId = '?', historyText = '', history
   return { final, sqlLogs, rowCount };
 }
 
-module.exports = { runQueryAgent, parseAgentResponse, MAX_STEPS, CRITICAL_TABLES, resetSchemaCache };
+/**
+ * Fast path: answer a question in as few model calls as possible.
+ *
+ * Round 1 — one MiMo call via buildFastSystem returns {"sql":...},
+ * {"final":...}, or {"describe":...}.
+ *   * "final"  → done (conversational: 1 model call).
+ *   * "sql"    → run it read-only. On SQL error, retry ONCE with the error
+ *                fed back (2 model calls worst case). On success, run
+ *                Round 2 to turn the rows into an answer.
+ *   * "describe" or anything else → escalate (caller runs the ReAct loop).
+ * Round 2 — one MiMo call summarizes the result rows into the final answer.
+ *
+ * @returns {Promise<{ final: string, sqlLogs: string[], rowCount: number, escalated: boolean }>}
+ *          `final` is '' when escalation is required.
+ */
+async function runQueryFast({ question, userId = '?', historyText = '', pg, callMimo }) {
+  const schemaBlock = await buildCompactSchema(pg);
+  const system = buildFastSystem(schemaBlock, historyText);
+  const messages = [{ role: 'system', content: system }, { role: 'user', content: question }];
+
+  const escalate = () => ({ final: '', sqlLogs: [], rowCount: 0, escalated: true });
+
+  // Round 1: decide sql / final / describe.
+  const out1 = await callMimo({ messages, maxTokens: TOOL_MAX_TOKENS, temperature: 0.1, reasoningEffort: 'low' });
+  let parsed1;
+  try {
+    parsed1 = parseAgentResponse(out1);
+  } catch (e) {
+    console.log(`[fast:${userId}] round1 parse_err=${e.message}`);
+    return escalate();
+  }
+  console.log(`[fast:${userId}] round1=${JSON.stringify(parsed1).slice(0, 200)}`);
+
+  if (parsed1.final !== undefined) {
+    const final = stripEmojis(String(parsed1.final));
+    return { final, sqlLogs: [], rowCount: 0, escalated: false };
+  }
+  if (parsed1.describe !== undefined || parsed1.sql === undefined) {
+    return escalate();
+  }
+
+  // Execute the generated SQL.
+  let sql = parsed1.sql;
+  let run = await runSql(pg, sql);
+  if (run.error) {
+    // One self-heal retry feeding the error back.
+    messages.push({ role: 'assistant', content: out1.slice(0, 800) });
+    messages.push({ role: 'user', content: `Your SQL failed: ${run.error.slice(0, 500)}. Fix it and answer again with the same format.` });
+    try {
+      const out2 = await callMimo({ messages, maxTokens: TOOL_MAX_TOKENS, temperature: 0.1, reasoningEffort: 'low' });
+      const parsed2 = parseAgentResponse(out2);
+      console.log(`[fast:${userId}] round1.retry=${JSON.stringify(parsed2).slice(0, 200)}`);
+      if (parsed2.final !== undefined) {
+        return { final: stripEmojis(String(parsed2.final)), sqlLogs: [], rowCount: 0, escalated: false };
+      }
+      if (parsed2.sql !== undefined) {
+        sql = parsed2.sql;
+        run = await runSql(pg, sql);
+      }
+    } catch {
+      // ignore retry parse failure; escalate below if still broken
+    }
+    if (run.error) {
+      console.log(`[fast:${userId}] round1 sql still failing: ${run.error.slice(0, 200)}`);
+      return escalate();
+    }
+  }
+
+  // Round 2: summarize the rows into an answer.
+  const summaryMessages = [
+    {
+      role: 'system',
+      content:
+        'You convert a database query result into a concise, accurate business answer. No emojis or emoticons (symbols like ✓ ⚠ ▲ ▼ • · — $ % are fine). Use **bold** for key numbers. If rows are empty, say so plainly. Output ONLY the answer text.',
+    },
+    { role: 'user', content: `Question: ${question}\n\nSQL:\n${sql}\n\nResult:\n${run.text}` },
+  ];
+  const out3 = await callMimo({ messages: summaryMessages, maxTokens: FINAL_MAX_TOKENS, temperature: 0.1, reasoningEffort: 'low' });
+  let final;
+  try {
+    const p3 = parseAgentResponse(out3);
+    final = String(p3.final !== undefined ? p3.final : out3);
+  } catch {
+    final = stripFences(out3);
+  }
+  final = stripEmojis(final);
+  return { final, sqlLogs: [run.sql], rowCount: run.rows, escalated: false };
+}
+
+/**
+ * Production entry point: fast path first, ReAct escalation as a fallback,
+ * deterministic no-emoji cleanup on whatever text comes back.
+ *
+ * Accepts the same options as runQueryAgent. Optionally `cache = { get, set }`
+ * (Redis-backed) keyed by userId + normalized question; `cacheTtlSec` applies
+ * when the orchestrator writes new entries.
+ */
+async function answerQuestion({ question, userId = '?', historyText = '', history = [], pg, callMimo, cache, cacheTtlSec = 60 }) {
+  const key = cache ? `ai:ans:${userId}:${normalizeQuestion(question).slice(0, 120)}` : null;
+
+  if (cache && key) {
+    try {
+      const hit = await cache.get(key);
+      if (hit) {
+        console.log(`[answer:${userId}] cache_hit question="${question.slice(0, 80)}"`);
+        return { final: hit, sqlLogs: [], rowCount: 0, cached: true };
+      }
+    } catch {
+      // cache errors must never break answering
+    }
+  }
+
+  let result;
+  try {
+    result = await runQueryFast({ question, userId, historyText, pg, callMimo });
+  } catch (e) {
+    console.log(`[answer:${userId}] fast_path error → escalate: ${e.message}`);
+    result = { escalated: true };
+  }
+
+  if (result.escalated) {
+    console.log(`[answer:${userId}] escalating to agent loop`);
+    const agent = await runQueryAgent({ question, userId, historyText, history, pg, callMimo });
+    result = { final: agent.final, sqlLogs: agent.sqlLogs, rowCount: agent.rowCount };
+  }
+
+  result.final = stripEmojis(result.final);
+  if (key && result.final && !/^AI error/.test(result.final)) {
+    try {
+      await cache.set(key, result.final, cacheTtlSec);
+    } catch {
+      // ignore cache write failures
+    }
+  }
+  return result;
+}
+
+module.exports = {
+  runQueryAgent,
+  runQueryFast,
+  answerQuestion,
+  parseAgentResponse,
+  stripEmojis,
+  normalizeQuestion,
+  MAX_STEPS,
+  CRITICAL_TABLES,
+  resetSchemaCache,
+};
 
 function resetSchemaCache() {
   schemaCache = null;

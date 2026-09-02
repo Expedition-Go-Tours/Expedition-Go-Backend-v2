@@ -6,7 +6,7 @@ const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuild
 const { execSync } = require('child_process');
 const { Client: Pg } = require('pg');
 const { callMimo } = require('../../utils/mimoClient');
-const { runQueryAgent } = require('./queryAgent');
+const { answerQuestion } = require('./queryAgent');
 const { startIncidentMonitor } = require('./incidentMonitor');
 const { buildDigestMessage } = require('../../scripts/dailyDigest');
 
@@ -143,6 +143,22 @@ async function pushTurn(userId, role, content) {
 // Used by both the dedicated channel and (optionally) /chat.
 // Returns the text to reply with (plain string or embed).
 const activeJobs = new Set(); // per-user concurrency lock
+const ANSWER_CACHE_TTL_SEC = 60; // identical repeat questions answered from cache
+
+// Redis-backed cache adapter for answerQuestion; null when Redis is down.
+function buildAnswerCache() {
+  const r = getRedis();
+  if (!r) return null;
+  return {
+    async get(k) {
+      const v = await r.get(k);
+      return v || null;
+    },
+    async set(k, val) {
+      await r.set(k, val, 'EX', ANSWER_CACHE_TTL_SEC);
+    },
+  };
+}
 
 async function answerConversational(prompt, userId) {
   if (activeJobs.has(userId)) {
@@ -158,18 +174,19 @@ async function answerConversational(prompt, userId) {
 
     await pushTurn(userId, 'user', prompt);
 
-    // ── Agentic exploration: the model inspects the live DB, writes real
-    //    identifiers, retries on errors, and produces a final answer.
-    const { final, sqlLogs, rowCount } = await runQueryAgent({
+    // ── Two-tier answering: fast single-SQL path first, ReAct loop as the
+    //    escalation fallback, deterministic no-emoji cleanup on the result.
+    const { final, sqlLogs, rowCount, cached } = await answerQuestion({
       question: prompt,
       userId,
       historyText,
       history,
       pg,
       callMimo,
+      cache: buildAnswerCache(),
     });
 
-    console.log(`[ai] user=${userId} question="${prompt}" sql=${JSON.stringify(sqlLogs)} rows=${rowCount}`);
+    console.log(`[ai] user=${userId} question="${prompt}" sql=${JSON.stringify(sqlLogs)} rows=${rowCount} cached=${!!cached}`);
     await pushTurn(userId, 'assistant', final);
     return { text: final.slice(0, 2000) };
   } catch (e) {
@@ -207,6 +224,7 @@ client.once('ready', async () => {
         redisUrl: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
         repoDir: process.env.REPO_DIR || '/home/deploy/Expedition-Go-Backend-v2',
         errorLog: process.env.API_ERROR_LOG || '/home/deploy/.pm2/logs/expedition-api-error.log',
+        backupDir: BACKUP_DIR,
       },
       redis: getRedis(),
     });
@@ -686,20 +704,21 @@ client.on('interactionCreate', async (interaction) => {
 
           await pushTurn(interaction.user.id, 'user', question);
 
-          const { final, sqlLogs, rowCount } = await runQueryAgent({
+          const { final, sqlLogs, rowCount, cached } = await answerQuestion({
             question,
             userId: interaction.user.id,
             historyText,
             history,
             pg,
             callMimo,
+            cache: buildAnswerCache(),
           });
           const embed = new EmbedBuilder()
             .setTitle('Query Result')
             .setColor(0x00bcd4)
             .setDescription(final.slice(0, 4000));
           await interaction.editReply({ embeds: [embed] });
-          console.log(`[ask] user=${interaction.user.id} question="${question}" sql=${JSON.stringify(sqlLogs)} rows=${rowCount}`);
+          console.log(`[ask] user=${interaction.user.id} question="${question}" sql=${JSON.stringify(sqlLogs)} rows=${rowCount} cached=${!!cached}`);
           await pushTurn(interaction.user.id, 'assistant', final);
         } catch (e) {
           console.error('[ask] error:', e.message);
