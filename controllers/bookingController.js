@@ -1208,7 +1208,10 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
           select: {
             id: true,
             title: true,
-            photos: true
+            photos: true,
+            // Pickup zones / points so the supplier dashboard's edit modal can
+            // show and re-confirm the exact zone/location the customer chose.
+            bookingAndTickets: true
           }
         }
       },
