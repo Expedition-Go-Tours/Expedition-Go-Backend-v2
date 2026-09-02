@@ -121,6 +121,7 @@ jobs:
           k6 version
 
       - name: Run k6 — ${{ matrix.scenario }}
+        id: k6run
         run: |
           k6 run __tests__/performance/k6/scenarios/${{ matrix.scenario }}.js \
             --summary-export k6-output/summary.json \
@@ -145,17 +146,29 @@ jobs:
           [ ! -f k6-output/summary.json ] && exit 0
 
           SCENARIO="${{ matrix.scenario }}"
-          PASSED=$(jq -r '.state.passed // false' k6-output/summary.json)
-          P95=$(jq -r '.metrics.http_req_duration.values["p(95)"] // "N/A"' k6-output/summary.json)
-          P99=$(jq -r '.metrics.http_req_duration.values["p(99)"] // "N/A"' k6-output/summary.json)
-          FAIL_RATE=$(jq -r '.metrics.http_req_failed.values.rate // "N/A"' k6-output/summary.json)
-          CHECKS_PASSED=$(jq -r '.state.checks.passed // 0' k6-output/summary.json)
-          CHECKS_FAILED=$(jq -r '.state.checks.failed // 0' k6-output/summary.json)
-          AVG=$(jq -r '.metrics.http_req_duration.values.avg // "N/A"' k6-output/summary.json)
+
+          # Pass/fail is decided by the k6 exit code (a threshold breach makes
+          # k6 exit non-zero), NOT by any field in summary.json — k6's
+          # --summary-export has no top-level "state" object.
+          PASSED="${{ steps.k6run.outcome == 'success' }}"
+
+          # k6 summary-export layout (flat metric objects, no ".values" wrapper):
+          #   .metrics.http_req_duration["p(95)"] / ["p(99)"] / .avg   (ms)
+          #   .metrics.http_req_failed.value                          (0-1 rate)
+          #   .metrics.checks.passes / .fails
+          #   .metrics.http_reqs.count
+          P95=$(jq -r '.metrics.http_req_duration["p(95)"] // "N/A"' k6-output/summary.json)
+          # k6 omits p(99) from summary-export; fall back to max so we never
+          # report a fabricated percentile.
+          P99=$(jq -r '.metrics.http_req_duration["p(99)"] // .metrics.http_req_duration.max // "N/A"' k6-output/summary.json)
+          AVG=$(jq -r '.metrics.http_req_duration.avg // "N/A"' k6-output/summary.json)
+          FAIL_RATE=$(jq -r '.metrics.http_req_failed.value // "N/A"' k6-output/summary.json)
+          CHECKS_PASSED=$(jq -r '.metrics.checks.passes // 0' k6-output/summary.json)
+          CHECKS_FAILED=$(jq -r '.metrics.checks.fails // 0' k6-output/summary.json)
+          REQS=$(jq -r '.metrics.http_reqs.count // 0' k6-output/summary.json)
 
           SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "n/a")
           SUBJECT=$(git log -1 --pretty='%s' 2>/dev/null || echo "n/a")
-          AUTHOR=$(git log -1 --pretty='%an' 2>/dev/null || echo "n/a")
 
           if [ "$PASSED" = "true" ]; then
             TITLE="Performance Test Passed — ${SCENARIO}"
@@ -167,11 +180,14 @@ jobs:
             ICON="FAIL"
           fi
 
-          # Format numbers
-          if echo "$P95" | grep -qE '^[0-9]'; then P95="${P95}ms"; fi
-          if echo "$P99" | grep -qE '^[0-9]'; then P99="${P99}ms"; fi
-          if echo "$AVG" | grep -qE '^[0-9]'; then AVG="${AVG}ms"; fi
-          if echo "$FAIL_RATE" | grep -qE '^[0-9]'; then FAIL_RATE="$(echo "$FAIL_RATE * 100" | bc 2>/dev/null || echo "$FAIL_RATE")%"; fi
+          # Format numbers (k6 reports ms already)
+          fmt_ms() { if echo "$1" | grep -qE '^[0-9]+([.][0-9]+)?$'; then printf '%.1fms' "$1"; else echo "$1"; fi; }
+          P95=$(fmt_ms "$P95")
+          P99=$(fmt_ms "$P99")
+          AVG=$(fmt_ms "$AVG")
+          if echo "$FAIL_RATE" | grep -qE '^[0-9]+([.][0-9]+)?$'; then
+            FAIL_RATE=$(printf '%.2f%%' "$(echo "$FAIL_RATE * 100" | bc -l 2>/dev/null || echo "$FAIL_RATE")")
+          fi
 
           cat > /tmp/discord-payload.json << JSONEOF
           {
@@ -181,9 +197,10 @@ jobs:
               "color": ${COLOR},
               "fields": [
                 { "name": "p95 Latency", "value": "${P95}", "inline": true },
-                { "name": "p99 Latency", "value": "${P99}", "inline": true },
+                { "name": "p99/max Latency", "value": "${P99}", "inline": true },
                 { "name": "Avg Latency", "value": "${AVG}", "inline": true },
                 { "name": "HTTP Fail Rate", "value": "${FAIL_RATE}", "inline": true },
+                { "name": "HTTP Requests", "value": "${REQS}", "inline": true },
                 { "name": "Checks", "value": "${CHECKS_PASSED} passed / ${CHECKS_FAILED} failed", "inline": true },
                 { "name": "Commit", "value": "\`${SHORT_SHA}\` ${SUBJECT}", "inline": false },
                 { "name": "Run", "value": "[#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})", "inline": true }
