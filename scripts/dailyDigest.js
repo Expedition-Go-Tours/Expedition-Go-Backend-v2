@@ -96,6 +96,27 @@ function formatPeriodTitle(p, timezone) {
   return `${d(start)} 00:00–23:59 ${tz}`;
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function fmtHumanDate(d) {
+  const dt = new Date(d);
+  return `${dt.getUTCDate()} ${MONTHS[dt.getUTCMonth()]} ${dt.getUTCFullYear()}`;
+}
+
+function fmtHumanTime(d) {
+  const dt = new Date(d);
+  return `${String(dt.getUTCHours()).padStart(2, '0')}:${String(dt.getUTCMinutes()).padStart(2, '0')} UTC`;
+}
+
+function fmtHumanPeriod(reportingStart, weekly) {
+  const s = fmtHumanDate(reportingStart);
+  if (weekly) {
+    const e = new Date(reportingStart.getTime() + 6 * DAY_MS);
+    return `${s} – ${fmtHumanDate(e)}`;
+  }
+  return s;
+}
+
 // ── Backup / drill parsers ─────────────────────────────────────────
 /**
  * Parse backup log text -> structured result.
@@ -225,24 +246,25 @@ async function probeHealth(apiUrl) {
   return health;
 }
 
-// ── AI note (disciplined FACT / INFERENCE) ─────────────────────────
+// ── AI note (short, insightful, disciplined) ───────────────────────
 async function aiNote(factLines, healthSummary) {
   if (!process.env.MIMO_API_KEY) return null;
   const system = [
-    'You write the closing note for a business/ops digest.',
-    'Separate FACT from INFERENCE. Output ONLY:',
-    'FACT: <statements strictly supported by the supplied numbers>',
-    'INFERENCE: <a cautious interpretation, explicitly framed as a hypothesis, never asserting cause>',
+    'You are a sharp business-operations analyst reading a daily digest for a travel marketplace.',
+    'Write a 2-4 sentence closing note for a manager/engineer audience. The sections above the note already list the numbers — do NOT restate them as a list.',
+    'Instead: identify the ONE or TWO things that actually matter today and why, and what to watch or consider next.',
+    'Ground every claim in the supplied facts. Separate observed facts from cautious interpretation (e.g. "volume is still early, so treat the trend as provisional").',
     'RULES:',
-    '- Never claim the platform was stable/operational from backup success.',
-    '- Never assert a cause (e.g. "marketing caused low bookings"). Only suggest reviewing sources.',
-    '- If the platform health below shows ANY failure, you MUST NOT say the platform was fully operational.',
-    '- Keep it under 4 lines. No markdown, no emojis beyond a single \u26a0 if warranted.',
+    '- Never claim the platform was stable/operational purely from backup success.',
+    '- Never assert a cause you cannot support (e.g. "marketing caused low bookings"). Suggest reviewing a source, not assigning blame.',
+    '- If platform health below shows ANY failure, you must mention it and must NOT say everything was operational.',
+    '- If volume is too small to draw a trend (e.g. baseline 0, one-off bookings), say so honestly rather than inventing momentum.',
+    '- Relevant, professional tone. Use at most one or two light markers (\u2713 / \u26a0) only if it genuinely helps. No markdown.',
   ].join('\n');
   const user = `PLATFORM HEALTH:\n${healthSummary}\n\nDIGEST DATA:\n${factLines}`;
   try {
-    const text = await callMimo({ system, user, maxTokens: 400, temperature: 0.2 });
-    return text.trim().slice(0, 600);
+    const text = await callMimo({ system, user, maxTokens: 400, temperature: 0.3 });
+    return text.trim().slice(0, 700);
   } catch {
     return null;
   }
@@ -426,6 +448,8 @@ async function collectDigest() {
     periodLabel,
     timezone,
     periodTitle: formatPeriodTitle(p, timezone),
+    reportingLabel: fmtHumanPeriod(p.reportingStart, p.weekly),
+    generatedLabel: fmtHumanDate(new Date()),
     generatedAt: new Date().toISOString(),
     dataStatus: allOk ? 'live database' : 'partial (see below)',
     sections: {
@@ -467,18 +491,30 @@ async function collectDigest() {
   };
 }
 
-function buildFactLines({ biz, signups, refunds, reviews, payouts, disputes, topTours, incidents, deploys, periodLabel }) {
+function buildFactLines({ biz, signups, refunds, reviews, payouts, disputes, topTours, incidents, deploys, weekly, periodLabel }) {
   const L = [];
   if (biz) {
-    L.push(`Bookings (${periodLabel}): ${biz.count}`);
-    L.push(`Revenue (${periodLabel}): ${money(biz.revenue)}`);
+    L.push(`Period: ${periodLabel}`);
+    L.push(`Bookings: ${biz.count} (prior period: ${biz.priorCount})`);
+    L.push(`Revenue: ${money(biz.revenue)} (prior period: ${money(biz.priorRevenue)})`);
     L.push(`Commission: ${money(biz.commission)} · Supplier payout: ${money(biz.supplierPayout)}`);
-    L.push(`Prior-period bookings: ${biz.priorCount} · revenue: ${money(biz.priorRevenue)}`);
-    L.push(`7-day baseline daily avg bookings: ${biz.baselineDailyCount.toFixed(2)} · revenue: ${money(biz.baselineDaily)}`);
+    // Direction vs 7-day baseline (honest about zero baseline)
+    if (biz.baselineDailyCount > 0) {
+      const pct = ((biz.count - biz.baselineDailyCount) / biz.baselineDailyCount) * 100;
+      L.push(`Bookings vs 7-day daily avg (${biz.baselineDailyCount.toFixed(2)}): ${pct >= 0 ? 'up' : 'down'} ${Math.abs(pct).toFixed(1)}%`);
+    } else {
+      L.push(`7-day baseline: 0 bookings/day (early/low-volume stage — no trend basis yet)`);
+    }
+    if (biz.priorCount > 0) {
+      const pct = ((biz.count - biz.priorCount) / biz.priorCount) * 100;
+      L.push(`Bookings vs prior period: ${pct >= 0 ? 'up' : 'down'} ${Math.abs(pct).toFixed(1)}%`);
+    } else if (biz.count > 0) {
+      L.push(`Bookings vs prior period: new (prior was 0)`);
+    }
   }
-  if (signups) L.push(`New users: ${signups.newUsers} · new suppliers: ${signups.newSuppliers} · active suppliers: ${signups.activeSuppliers}`);
-  if (refunds) L.push(`Refunds: ${refunds.count} · ${money(refunds.amount)}`);
+  if (signups) L.push(`New users: ${signups.newUsers} · New suppliers: ${signups.newSuppliers} · Active suppliers: ${signups.activeSuppliers}`);
   if (reviews) L.push(`New reviews: ${reviews.count}${reviews.avg ? ` (avg ${reviews.avg.toFixed(1)})` : ''}`);
+  if (refunds) L.push(`Refunds: ${refunds.count} · ${money(refunds.amount)}`);
   if (payouts) L.push(`Payouts processed: ${payouts.count} · ${money(payouts.amount)}`);
   if (disputes) L.push(`Disputes opened: ${disputes.opened} · open: ${disputes.open}`);
   if (topTours.length) L.push(`Top tour: ${topTours[0].title} · ${money(topTours[0].revenue)}`);
@@ -486,10 +522,13 @@ function buildFactLines({ biz, signups, refunds, reviews, payouts, disputes, top
   else L.push('Incidents: unavailable');
   if (deploys && deploys.ok) L.push(`Deployments: ${deploys.value.count}`);
   else L.push('Deployments: unavailable');
+  if (weekly) L.push('Context: weekly digest (7-day window)');
   return L.join('\n');
 }
 
-// ── Renderer (data model -> Discord embed) ─────────────────────────
+
+// -- Renderer (data model -> Discord embed fields) ------------------
+// ── Renderer (data model -> Discord embed fields) ──────────────────
 function deltaPct(cur, prev) {
   if (!prev || prev <= 0) return '—';
   const pct = ((cur - prev) / prev) * 100;
@@ -497,106 +536,124 @@ function deltaPct(cur, prev) {
   return `${arrow} ${Math.abs(pct).toFixed(0)}% vs previous`;
 }
 
+function healthStatus(health) {
+  const svcOk = (x) => (x?.ok && (x.value === 'healthy' || x.value === 'active' || /^healthy$|^200$/.test(String(x.value).trim()))) ? 'ok' : x?.ok ? 'bad' : 'na';
+  // Server resource probe is informational — any returned value counts as ok.
+  const serverOk = (x) => (x?.ok ? 'ok' : 'na');
+  return { api: svcOk(health.api), postgres: svcOk(health.postgres), redis: svcOk(health.redis), nginx: svcOk(health.nginx), server: serverOk(health.server) };
+}
+
+function healthVerdict(st) {
+  const vals = Object.values(st);
+  if (vals.includes('na')) return { text: 'Health data incomplete — no claim', color: 0xf1c40f };
+  if (vals.includes('bad')) return { text: '⚠ A health check is failing — see above', color: 0xe74c3c };
+  return { text: 'All services operational', color: 0x2ecc71 };
+}
+
+function businessValue(biz) {
+  const lines = [];
+  if (!biz) return '⚠ unavailable';
+  lines.push(`**Bookings**  ${biz.count}${biz.priorCount > 0 ? `  ${deltaPct(biz.count, biz.priorCount)}` : ''}`);
+  lines.push(`**Revenue**  ${money(biz.revenue)}${biz.priorRevenue > 0 ? `  ${deltaPct(biz.revenue, biz.priorRevenue)}` : ''}`);
+  lines.push(`Commission ${money(biz.commission)}`);
+  lines.push(`Supplier payout ${money(biz.supplierPayout)}`);
+  if (biz.baselineDailyCount > 0) {
+    const v = ((biz.count - biz.baselineDailyCount) / biz.baselineDailyCount) * 100;
+    lines.push(`7-day avg ${biz.baselineDailyCount.toFixed(1)}/day  ${v >= 0 ? '▲' : '▼'} ${Math.abs(v).toFixed(0)}%`);
+  } else {
+    lines.push('7-day avg: none yet (early volume)');
+  }
+  return lines.join('\n');
+}
+
+function customersValue(S) {
+  const lines = [];
+  if (!S.signups) lines.push('New users/suppliers ⚠ unavailable');
+  else {
+    lines.push(`New users ${S.signups.newUsers}`);
+    lines.push(`New suppliers ${S.signups.newSuppliers}`);
+    lines.push(`Active suppliers ${S.signups.activeSuppliers}`);
+  }
+  if (S.reviews) lines.push(`Reviews ${S.reviews.count}${S.reviews.avg ? ` (avg ${S.reviews.avg.toFixed(1)})` : ''}`);
+  else lines.push('Reviews ⚠ unavailable');
+  if (S.refunds) lines.push(`Refunds ${S.refunds.count} · ${money(S.refunds.amount)}`);
+  else lines.push('Refunds ⚠ unavailable');
+  if (S.disputes) lines.push(`Disputes ${S.disputes.opened} opened · ${S.disputes.open} open`);
+  else lines.push('Disputes ⚠ unavailable');
+  if (S.payouts) lines.push(`Payouts ${S.payouts.count} · ${money(S.payouts.amount)}`);
+  else lines.push('Payouts ⚠ unavailable');
+  return lines.join('\n');
+}
+
+function healthValue(health, st) {
+  const mark = (x) => (x === 'ok' ? '✓' : x === 'bad' ? '⚠' : '·');
+  const lines = [
+    `API ${mark(st.api)} · PostgreSQL ${mark(st.postgres)} · Redis ${mark(st.redis)} · Nginx ${mark(st.nginx)}`,
+    `Server ${mark(st.server)}${health.server?.ok ? ` — ${health.server.value}` : ''}`,
+  ];
+  return lines.join('\n');
+}
+
+function opsValue(S) {
+  const lines = [];
+  if (S.incidents && S.incidents.ok) {
+    const ok = S.incidents.count === 0;
+    lines.push(`${ok ? '✓' : '⚠'} Incidents ${S.incidents.count} · downtime ${(S.incidents.downtimeMs / 60000).toFixed(1)}m`);
+  } else lines.push('Incidents ⚠ unavailable');
+  if (S.deploys && S.deploys.ok) lines.push(`Deployments ${S.deploys.value.count}`);
+  else lines.push('Deployments ⚠ unavailable');
+  if (S.deploys && S.deploys.ok && S.deploys.value.latest) lines.push(`Latest ${S.deploys.value.latest}`);
+  return lines.join('\n');
+}
+
+function backupsValue(S) {
+  const lines = [];
+  if (S.backup && S.backup.ok) {
+    if (S.backup.value.ok) lines.push(`✓ Backup ${S.backup.value.date ? S.backup.value.date.slice(11, 16) : '?'} UTC · ${S.backup.value.size} · ${S.backup.value.dest}`);
+    else lines.push(`⚠ Backup ${S.backup.value.note || 'failed'}`);
+  } else lines.push('Backup ⚠ unavailable');
+  if (S.drill && S.drill.ok) {
+    lines.push(S.drill.value.passed ? `✓ Restore drill passed${S.drill.value.summary ? ` — ${S.drill.value.summary}` : ''}` : `⚠ Restore drill failed${S.drill.value.summary ? ` — ${S.drill.value.summary}` : ''}`);
+  } else lines.push('Restore drill ⚠ unavailable');
+  return lines.join('\n');
+}
+
+function dataQualityValue(model, S) {
+  const missing = [];
+  if (!S.biz) missing.push('business');
+  if (!S.signups) missing.push('customers');
+  if (S.incidents && !S.incidents.ok) missing.push('incidents');
+  if (S.deploys && !S.deploys.ok) missing.push('deployments');
+  return missing.length ? `⚠ unavailable: ${missing.join(', ')}` : '✓ All queries succeeded';
+}
+
+/**
+ * Build Discord embed fields from the data model.
+ * Returns { title, color, description, fields, verdict }.
+ */
 function renderer(data, model) {
   const S = model.sections;
   const biz = S.biz;
-  const health = S.health;
-  const allProbed =
-    health.api.ok && health.postgres.ok && health.redis.ok && health.nginx.ok && health.server.ok;
-  const allHealthy =
-    allProbed &&
-    health.api.ok && /healthy|200/.test(String(health.api.value)) &&
-    health.postgres.value === 'healthy' &&
-    health.redis.value === 'healthy' &&
-    health.nginx.value === 'active';
+  const st = healthStatus(S.health);
+  const verdict = healthVerdict(st);
 
-  const lines = [];
+  const fields = [
+    { name: 'Business', value: businessValue(biz), inline: true },
+    { name: 'Customers', value: customersValue(S), inline: true },
+    { name: 'Platform health', value: healthValue(S.health, st), inline: true },
+    { name: 'Operations', value: opsValue(S), inline: true },
+    { name: 'Backups', value: backupsValue(S), inline: true },
+    { name: 'Top tour', value: S.topTours.length ? `${S.topTours[0].title} — ${money(S.topTours[0].revenue)}` : 'None this period', inline: true },
+    { name: 'Data quality', value: dataQualityValue(model, S), inline: false },
+  ];
 
-  // Header
-  lines.push(`**Reporting:** ${model.periodTitle}`);
-  lines.push(`**Generated:** ${model.generatedAt.slice(0, 19)} ${model.timezone}`);
-  lines.push(`**Data:** ${model.dataStatus}`);
+  const description =
+    `**Reporting:** ${model.reportingLabel} (${model.timezone}) · Generated ${fmtHumanDate(new Date(model.generatedAt))} ${fmtHumanTime(new Date(model.generatedAt))}\n` +
+    `**Status:** ${verdict.text}`;
 
-  // BUSINESS
-  if (biz) {
-    lines.push(`\n**BUSINESS**`);
-    lines.push(`Bookings: ${biz.count}`);
-    if (biz.priorCount > 0) lines.push(`  ${deltaPct(biz.count, biz.priorCount)}`);
-    lines.push(`Revenue: ${money(biz.revenue)}`);
-    if (biz.priorRevenue > 0) lines.push(`  ${deltaPct(biz.revenue, biz.priorRevenue)}`);
-    lines.push(`Commission: ${money(biz.commission)} · Supplier payout: ${money(biz.supplierPayout)}`);
-    lines.push(`7-day avg bookings: ${biz.baselineDailyCount.toFixed(1)}`);
-    if (biz.baselineDailyCount > 0 && biz.count !== null) {
-      const v = ((biz.count - biz.baselineDailyCount) / biz.baselineDailyCount) * 100;
-      lines.push(`  vs 7-day avg: ${v >= 0 ? '↑' : '↓'} ${Math.abs(v).toFixed(0)}%`);
-    }
-  } else {
-    lines.push(`\n**BUSINESS**\nBookings: ⚠️ unavailable`);
-  }
-  if (S.topTours.length) {
-    lines.push(`Top tour: **${S.topTours[0].title}** — ${money(S.topTours[0].revenue)}`);
-  }
+  const title = `TravioAfrica ${model.label} Digest`;
 
-  // CUSTOMERS
-  lines.push(`\n**CUSTOMERS**`);
-  if (S.signups) {
-    lines.push(`New users: ${S.signups.newUsers} · New suppliers: ${S.signups.newSuppliers}`);
-    lines.push(`Active suppliers: ${S.signups.activeSuppliers}`);
-  } else lines.push('New users/suppliers: ⚠️ unavailable');
-  if (S.reviews) lines.push(`New reviews: ${S.reviews.count}${S.reviews.avg ? ` (avg ${S.reviews.avg.toFixed(1)})` : ''}`);
-  else lines.push('New reviews: ⚠️ unavailable');
-  if (S.refunds) lines.push(`Refunds: ${S.refunds.count} · ${money(S.refunds.amount)}`);
-  else lines.push('Refunds: ⚠️ unavailable');
-  if (S.disputes) lines.push(`Disputes opened: ${S.disputes.opened} · open: ${S.disputes.open}`);
-  else lines.push('Disputes: ⚠️ unavailable');
-  if (S.payouts) lines.push(`Payouts: ${S.payouts.count} · ${money(S.payouts.amount)}`);
-  else lines.push('Payouts: ⚠️ unavailable');
-
-  // PLATFORM HEALTH (claims only when fully probed + healthy)
-  lines.push(`\n**PLATFORM HEALTH**`);
-  const hf = (r, okText) => (r?.ok ? (r.value === okText || r.value === 'healthy' || r.value === 'active' ? okText : r.value) : 'UNAVAILABLE');
-  lines.push(`API: ${health.api.ok ? (String(health.api.value).includes('healthy') || String(health.api.value).includes('200') ? 'healthy' : health.api.value) : 'UNAVAILABLE'}`);
-  lines.push(`PostgreSQL: ${hf(health.postgres, 'healthy')}`);
-  lines.push(`Redis: ${hf(health.redis, 'healthy')}`);
-  lines.push(`Nginx: ${hf(health.nginx, 'active')}`);
-  lines.push(`Server: ${health.server.ok ? health.server.value : 'UNAVAILABLE'}`);
-  if (allHealthy) lines.push(`Platform remained operational in the reporting period.`);
-  else if (!allProbed) lines.push(`Health data partially unavailable — operational status not claimed.`);
-  else lines.push(`Health issue detected — see probes above.`);
-
-  // OPERATIONS
-  lines.push(`\n**OPERATIONS**`);
-  if (S.incidents && S.incidents.ok) {
-    lines.push(`Incidents: ${S.incidents.count} · Downtime: ${(S.incidents.downtimeMs / 60000).toFixed(1)} min`);
-  } else lines.push('Incidents: ⚠️ unavailable');
-  if (S.deploys && S.deploys.ok) {
-    lines.push(`Deployments: ${S.deploys.value.count}`);
-    if (S.deploys.value.latest) lines.push(`Latest: ${S.deploys.value.latest}`);
-  } else lines.push('Deployments: ⚠️ unavailable');
-
-  // BACKUPS
-  lines.push(`\n**BACKUPS**`);
-  if (S.backup && S.backup.ok) {
-    if (S.backup.value.ok) {
-      lines.push(`PostgreSQL backup: completed${S.backup.value.date ? ` ${S.backup.value.date.slice(11, 16)} UTC` : ''} · ${S.backup.value.size} · ${S.backup.value.dest} · retention ${S.backup.value.retention}`);
-    } else {
-      lines.push(`PostgreSQL backup: ${S.backup.value.note}`);
-    }
-  } else lines.push('Backup status: ⚠️ unavailable');
-  if (S.drill && S.drill.ok) {
-    lines.push(`Restore drill: ${S.drill.value.passed ? 'PASSED' : 'FAILED'}${S.drill.value.summary ? ` — ${S.drill.value.summary}` : ''}`);
-  } else lines.push('Restore drill: ⚠️ unavailable');
-
-  // DATA QUALITY
-  const unavailableSections = [];
-  if (!biz) unavailableSections.push('business');
-  if (!S.signups) unavailableSections.push('customers');
-  if (S.incidents && !S.incidents.ok) unavailableSections.push('incidents');
-  if (S.deploys && !S.deploys.ok) unavailableSections.push('deployments');
-  lines.push(`\n**DATA QUALITY**`);
-  lines.push(unavailableSections.length ? `⚠️ ${unavailableSections.join(', ')} data unavailable` : 'All queries successful.');
-
-  return lines.join('\n').slice(0, 5900);
+  return { title, color: verdict.color, description, fields, verdict: verdict.text };
 }
 
 function buildHealthSummaryForAi(health) {
@@ -610,32 +667,38 @@ function buildHealthSummaryForAi(health) {
   return parts.join(' | ');
 }
 
-// ── Main ───────────────────────────────────────────────────────────
+// ── Message assembly ────────────────────────────────────────────────
 async function buildReport() {
   const model = await collectDigest();
-  const description = renderer(model, model);
+  const rendered = renderer(model, model);
   const payload = {
-    title: `TRAVIOAFRICA ${model.label.toUpperCase()} DIGEST`,
-    description,
-    color: 0x00bcd4,
+    title: rendered.title,
+    description: rendered.description,
+    color: rendered.color,
+    fields: rendered.fields,
   };
-  return { model, payload };
+  return { model, payload, verdict: rendered.verdict };
 }
 
 /**
- * Produce the final Discord-ready message (title/description/color) including
- * the disciplined AI note. Shared by the cron job and the bot's /digest.
+ * Produce the final Discord-ready message including the AI insight note as a
+ * footer field. Shared by the cron job and the bot /digest command.
  */
 async function buildDigestMessage() {
   const { model, payload } = await buildReport();
   const healthSummary = buildHealthSummaryForAi(model.sections.health);
   const note = await aiNote(model.aiFactLines, healthSummary);
-  const description = note ? `${payload.description}\n\n${note}` : payload.description;
+  const fields = payload.fields.slice();
+  if (note) {
+    fields.push({ name: 'Key insight', value: note, inline: false });
+  }
   return {
     title: payload.title,
-    description: description.slice(0, 5900),
+    description: payload.description,
     color: payload.color,
+    fields,
     dataStatus: model.dataStatus,
+    note: note || '',
   };
 }
 
@@ -645,6 +708,7 @@ async function main() {
   await notifyDiscord('digest', message.description, {
     title: message.title,
     color: message.color,
+    fields: message.fields,
   });
 
   console.log(`[digest] done: title=${message.title}`);

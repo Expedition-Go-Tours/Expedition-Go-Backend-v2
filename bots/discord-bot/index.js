@@ -443,7 +443,8 @@ client.on('interactionCreate', async (interaction) => {
           const embed = new EmbedBuilder()
             .setTitle(digest.title)
             .setColor(digest.color || 0x00bcd4)
-            .setDescription(digest.description);
+            .setDescription(digest.description)
+            .addFields(digest.fields || []);
           await interaction.editReply({ embeds: [embed] });
         } catch (e) {
           console.error('[digest] error:', e.message);

@@ -257,15 +257,18 @@ describe('collectDigest (end-to-end, mocked)', () => {
     expect(m.dataStatus).toBe('live database');
   });
 
-  it('renders a scannable report', async () => {
+  it('renders a scannable report with Discord-native fields', async () => {
     const m = await collectDigest();
     const out = renderer(m, m);
-    expect(out).toContain('BUSINESS');
-    expect(out).toContain('PLATFORM HEALTH');
-    expect(out).toContain('OPERATIONS');
-    expect(out).toContain('BACKUPS');
-    expect(out).toContain('DATA QUALITY');
-    expect(out).toContain('All queries successful.');
+    // renderer returns { title, color, description, fields, verdict }
+    expect(out.fields.map((f) => f.name)).toEqual(
+      expect.arrayContaining(['Business', 'Customers', 'Platform health', 'Operations', 'Backups', 'Data quality'])
+    );
+    expect(out.title).toContain('TravioAfrica');
+    expect(out.description).toContain('Reporting:');
+    expect(out.verdict).toContain('operational');
+    const dataQuality = out.fields.find((f) => f.name === 'Data quality');
+    expect(dataQuality.value).toContain('All queries succeeded');
   });
 
   it('AI note disabled without MIMO_API_KEY', async () => {
@@ -285,8 +288,9 @@ describe('failure handling', () => {
     expect(m.sections.biz).toBeNull();
     expect(m.dataStatus).not.toBe('live database');
     const out = renderer(m, m);
-    expect(out).toContain('unavailable');
-    expect(out).not.toMatch(/Bookings: 0/);
+    const business = out.fields.find((f) => f.name === 'Business');
+    expect(business.value).toContain('unavailable');
+    expect(business.value).not.toMatch(/Bookings 0/);
   });
 
   it('renders unavailable for incidents when API fails', async () => {
@@ -295,13 +299,14 @@ describe('failure handling', () => {
     const m = await collectDigest();
     expect(m.sections.incidents.ok).toBe(false);
     const out = renderer(m, m);
-    expect(out).toContain('Incidents: ⚠️ unavailable');
+    const ops = out.fields.find((f) => f.name === 'Operations');
+    expect(ops.value).toContain('unavailable');
   });
 
   it('claims operational only when all health probes healthy', async () => {
     const m = await collectDigest();
     const out = renderer(m, m);
-    expect(out).toContain('Platform remained operational');
+    expect(out.verdict).toContain('operational');
 
     // make redis unhealthy
     mockPrisma.systemConfig.findUnique.mockResolvedValue({ value: 'UTC' });
@@ -313,7 +318,8 @@ describe('failure handling', () => {
     });
     const m2 = await collectDigest();
     const out2 = renderer(m2, m2);
-    expect(out2).not.toContain('Platform remained operational');
-    expect(out2).toContain('Redis: unhealthy');
+    expect(out2.verdict).not.toContain('operational');
+    const health = out2.fields.find((f) => f.name === 'Platform health');
+    expect(health.value).toContain('Redis ⚠');
   });
 });
