@@ -490,6 +490,11 @@ SQL RULES:
 - JSONB columns: use ->> for text fields, e.g. "businessInfo"->>'legalBusinessName'.
 - Fuzzy name searches: ILIKE '%term%' across ALL name-like keys (e.g. "legalBusinessName", "displayName", "businessName").
 - Use JOINs, GROUP BY, aggregates as needed. Order by recency ("createdAt" DESC) when relevant.
+- PLACE SEMANTICS: A bare place name ("Accra", "Kumasi", "Cape Coast") means the CITY — match "Tour"."city" (case-insensitive) or the tour title. Do NOT use "Tour"."region" as the primary match unless the user explicitly says a region word ("region", "Greater Accra", "Eastern Region") or names a district outside the city (e.g. "Ada Foah", "Dedenya"). For a bare-city COUNT, produce ONE query that returns BOTH scopes so the answer is honest, e.g.:
+  SELECT COUNT(*) FILTER (WHERE lower("city") ILIKE '%accra%' OR lower("title") ILIKE '%accra%') AS city_count,
+         COUNT(*) FILTER (WHERE lower("region") ILIKE '%accra%') AS region_count
+  FROM "Tour" WHERE "status" = 'ACTIVE';
+  Then answer city-first with the region note when they differ, e.g. "7 in Accra (13 including the Greater Accra Region)". For a bare-city LIST, filter by city/title (not region).
 
   SCHEMA:
 ${schemaBlock || '(none preloaded — call list_tables / describe_table to discover)'}
@@ -520,6 +525,11 @@ SQL RULES (when you output "sql"):
 - Fuzzy name searches: ILIKE '%term%' across ALL name-like keys (e.g. "legalBusinessName", "displayName", "businessName").
 - Use JOINs, GROUP BY, aggregates as needed. Order by recency ("createdAt" DESC) when relevant.
 - Never guess identifiers — use exactly the names in SCHEMA. Do NOT call describe_table for tables already in SCHEMA.
+- PLACE SEMANTICS: A bare place name ("Accra", "Kumasi", "Cape Coast") means the CITY — match "Tour"."city" (case-insensitive) or the tour title. Do NOT use "Tour"."region" as the primary match unless the user explicitly says a region word ("region", "Greater Accra", "Eastern Region") or names a district outside the city (e.g. "Ada Foah", "Dedenya"). For a bare-city COUNT, produce ONE query that returns BOTH scopes so the answer is honest, e.g.:
+  SELECT COUNT(*) FILTER (WHERE lower("city") ILIKE '%accra%' OR lower("title") ILIKE '%accra%') AS city_count,
+         COUNT(*) FILTER (WHERE lower("region") ILIKE '%accra%') AS region_count
+  FROM "Tour" WHERE "status" = 'ACTIVE';
+  Then answer city-first with the region note when they differ, e.g. "7 in Accra (13 including the Greater Accra Region)". For a bare-city LIST, filter by city/title (not region).
 
 STYLE (for "final"):
 - No emojis, emoji characters, or emoticons (😊, ✅, :), :-), ^_^). Symbols such as ✓ ⚠ ▲ ▼ • · — $ % are allowed. Use plain text and **bold** only.
@@ -541,9 +551,13 @@ ${historyText ? `\nPREVIOUS CONVERSATION:\n${historyText}` : ''}`;
  * @param {Array}  [opts.history]   - Prior turns as [{role:'user'|'assistant', content}].
  * @param {Object} opts.pg          - pg client with .query().
  * @param {Function} opts.callMimo  - callMimo({ messages, maxTokens, temperature }).
+ * @param {Object} [opts.seed]      - Warm-escalation context from the fast path:
+ *   { sql, error } — a SQL attempt that already failed plus its (hint-rich)
+ *   error. When present the agent starts from that knowledge instead of cold
+ *   list_tables/describe exploration.
  * @returns {Promise<{ final: string, sqlLogs: string[], rowCount: number }>}
  */
-async function runQueryAgent({ question, userId = '?', historyText = '', history = [], pg, callMimo }) {
+async function runQueryAgent({ question, userId = '?', historyText = '', history = [], pg, callMimo, seed }) {
   const schemaBlock = await buildCompactSchema(pg);
   const system = buildSystem(schemaBlock, historyText);
 
@@ -552,6 +566,18 @@ async function runQueryAgent({ question, userId = '?', historyText = '', history
     if (turn && turn.role && typeof turn.content === 'string' && turn.content.trim()) {
       messages.push({ role: turn.role === 'assistant' ? 'assistant' : 'user', content: turn.content.slice(0, 1500) });
     }
+  }
+  if (seed && (seed.sql || seed.error)) {
+    // Warm escalation: the fast path already tried SQL and learned the schema.
+    // Give the agent that attempt so it fixes the query instead of re-deriving.
+    messages.push({
+      role: 'user',
+      content:
+        `[Warm context from an earlier attempt] A first query was tried and failed. ` +
+        `Failed SQL:\n${String(seed.sql || '(none)').slice(0, 1000)}\n\n` +
+        `Error:\n${String(seed.error || '').slice(0, 1200)}\n\n` +
+        `The SCHEMA above lists the real identifiers. Write a corrected read-only query and run it, then answer.`,
+    });
   }
   messages.push({ role: 'user', content: question });
 
@@ -663,7 +689,7 @@ async function runQueryFast({ question, userId = '?', historyText = '', pg, call
   const system = buildFastSystem(schemaBlock, historyText);
   const messages = [{ role: 'system', content: system }, { role: 'user', content: question }];
 
-  const escalate = () => ({ final: '', sqlLogs: [], rowCount: 0, escalated: true });
+  const escalate = (ctx = {}) => ({ final: '', sqlLogs: [], rowCount: 0, escalated: true, ...ctx });
   const t0 = Date.now();
   const ms = () => `+${Date.now() - t0}ms`;
 
@@ -732,7 +758,8 @@ async function runQueryFast({ question, userId = '?', historyText = '', pg, call
     }
     if (run.error) {
       console.log(`[fast:${userId}] round1 sql still failing total=${ms()}: ${run.error.slice(0, 200)}`);
-      return escalate();
+      // Warm-escalate: hand the failed SQL + hint-rich error to the agent loop.
+      return escalate({ seed: { sql: sql.slice(0, 1500), error: run.error.slice(0, 1500) } });
     }
   }
 
@@ -792,8 +819,16 @@ async function answerQuestion({ question, userId = '?', historyText = '', histor
   }
 
   if (result.escalated) {
-    console.log(`[answer:${userId}] escalating to agent loop`);
-    const agent = await runQueryAgent({ question, userId, historyText, history, pg, callMimo });
+    console.log(`[answer:${userId}] escalating to agent loop${result.seed ? ' (warm: seeded with failed SQL + hint)' : ''}`);
+    const agent = await runQueryAgent({
+      question,
+      userId,
+      historyText,
+      history,
+      pg,
+      callMimo,
+      seed: result.seed, // warm escalation context (may be undefined → cold start)
+    });
     result = { final: agent.final, sqlLogs: agent.sqlLogs, rowCount: agent.rowCount };
   }
 

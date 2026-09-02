@@ -540,3 +540,91 @@ describe('fast-path JSON parse retry', () => {
     expect(r.escalated).toBe(true);
   });
 });
+
+describe('warm escalation (seed)', () => {
+  it('seeds the agent messages with the failed SQL + hint instead of a cold start', async () => {
+    const pg = makePg({});
+    let sawSeed = false;
+    const callMimo = async ({ messages }) => {
+      sawSeed ||= messages.some(
+        (m) => m.role === 'user' && String(m.content).startsWith('[Warm context from an earlier attempt]')
+      );
+      // Agent loop: it should go straight to run_sql given the hint.
+      return sawSeed && messages[messages.length - 1].content.startsWith('Tool result')
+        ? '{"final":"Fixed it."}'
+        : '{"tool":"run_sql","sql":"SELECT COUNT(*) FROM \\"Tour\\""}';
+    };
+    const r = await runQueryAgent({
+      question: 'count accra tours',
+      pg,
+      callMimo,
+      seed: { sql: 'SELECT 1 FROM "Tours"', error: 'relation "Tours" does not exist Valid columns for table "Tour"...' },
+    });
+    expect(sawSeed).toBe(true);
+    expect(r.final).toBe('Fixed it.');
+  });
+
+  it('answerQuestion forwards the warm seed from a failed fast-path SQL attempt', async () => {
+    // Real DB has no "Tours" table (it is "Tour"); every query against it fails
+    // like production so the fast path escalates with a seed.
+    const pg = {
+      async query(sql, params) {
+        if (/information_schema\.columns/.test(sql) && /ANY\(/.test(sql)) {
+          return { rows: [{ table_name: 'Tour', column_name: 'id', enum_values: null }] };
+        }
+        if (/information_schema\.table_constraints/.test(sql) && /ANY\(/.test(sql)) {
+          return { rows: [] };
+        }
+        if (/information_schema\.tables/.test(sql)) {
+          return { rows: [{ table_name: 'Tour' }] };
+        }
+        if (/information_schema\.columns/.test(sql) || /information_schema\.table_constraints/.test(sql)) {
+          return { rows: [] };
+        }
+        if (/"Tours"/.test(sql)) throw new Error('relation "Tours" does not exist');
+        return { rows: [{ n: '7' }] };
+      },
+    };
+    const outputs = [
+      '{"sql":"SELECT COUNT(*) FROM \\"Tours\\" WHERE \\"status\\" = \'ACTIVE\'"}', // fast round1 → relation error
+      '{"sql":"SELECT COUNT(*) FROM \\"Tours\\" WHERE 1=1"}', // fast retry → still relation error
+    ];
+    let i = 0;
+    const callMimo = async ({ messages }) => {
+      const hasSeed = messages.some((m) => String(m.content).startsWith('[Warm context from an earlier attempt]'));
+      if (hasSeed) return '{"final":"Warm fixed"}';
+      return outputs[Math.min(i++, outputs.length - 1)];
+    };
+    const r = await answerQuestion({ question: 'how many accra tours', pg, callMimo });
+    expect(r.final).toBe('Warm fixed');
+  });
+});
+
+describe('location place semantics (city-first)', () => {
+  async function captureSystems({ schemaCols }) {
+    const pg = makePg({ schemaCols });
+    const systems = [];
+    const callMimo = async ({ messages }) => {
+      if (messages[0]?.role === 'system') systems.push(messages[0].content);
+      return '{"final":"done"}';
+    };
+    await runQueryFast({ question: 'how many accra tours do we have', pg, callMimo });
+    await runQueryAgent({ question: 'how many accra tours do we have', pg, callMimo });
+    return systems;
+  }
+
+  it('instructs city-first (not region) for a bare place name in BOTH system prompts', async () => {
+    const systems = await captureSystems({
+      schemaCols: [{ table_name: 'Tour', column_name: 'city', enum_values: null }],
+    });
+    expect(systems.length).toBe(2);
+    for (const sys of systems) {
+      expect(sys).toMatch(/PLACE SEMANTICS/);
+      expect(sys).toMatch(/A bare place name \("Accra"/);
+      expect(sys).toMatch(/"Tour"\."city"/);
+    }
+    // The example teaches the honest city-first + region-note answer.
+    expect(systems[0]).toContain('7 in Accra (13 including the Greater Accra Region)');
+    expect(systems[1]).toContain('7 in Accra (13 including the Greater Accra Region)');
+  });
+});
