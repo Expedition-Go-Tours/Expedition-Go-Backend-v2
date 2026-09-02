@@ -11,7 +11,6 @@ const redisClient = require('./utils/redisClient');
 const logger = require('./utils/logger');
  
 
-let server;
 let io;
 
 const shutdown = async (reason, err) => {
@@ -25,7 +24,9 @@ const shutdown = async (reason, err) => {
   try {
     const { stopAiCronFallback } = require('./utils/aiCronFallback');
     stopAiCronFallback();
-  } catch {}
+  } catch (err) {
+    logger.warn('[shutdown] stopAiCronFallback failed:', err?.message);
+  }
 
   try {
     if (io) {
@@ -102,7 +103,7 @@ process.on('SIGINT', () => {
   shutdown('SIGINT received');
 });
 
-server = http.createServer(app);
+const server = http.createServer(app);
 
 // Listen immediately so Render health checks pass while async init completes
 server.listen(port, '0.0.0.0', () => {
@@ -170,6 +171,53 @@ function setupRedisAdapter() {
   })();
 }
 
+/**
+ * Booking-lifecycle sweeps run on DIRECT in-app timers, independent of Redis/
+ * BullMQ. Redis has been flaky at boot — when it's down, setupQueueWorkers
+ * returns before registering the queue-driven intervals, so bookings were never
+ * auto-completed / stale ones never cancelled. All of these jobs are idempotent
+ * DB/Stripe/email sweeps, so running them in-process on a simple timer is safe
+ * and guarantees they fire regardless of Redis. Registered unconditionally
+ * (before the Redis probe) and each runs once shortly after boot to catch up on
+ * anything missed while the process was down.
+ */
+function scheduleBookingLifecycle(intervals) {
+  const jobs = [
+    // Auto-complete CONFIRMED bookings once their activity date has passed.
+    { label: 'auto-complete-bookings', ms: 15 * 60 * 1000, run: () => require('./utils/bookingCleanup').autoCompleteBookings() },
+    // Auto-cancel PENDING bookings past their activity date (48h grace).
+    { label: 'cancel-stale-pending-bookings', ms: 15 * 60 * 1000, run: () => require('./utils/bookingCleanup').cancelStalePendingAfterTravelDate() },
+    // Auto-cancel long-stale PENDING bookings.
+    { label: 'cleanup-stale-bookings', ms: 5 * 60 * 1000, run: () => require('./utils/bookingCleanup').cancelStalePendingBookings() },
+    // Release expired pay-now seat holds (CheckoutDraft).
+    { label: 'expire-checkout-holds', ms: 5 * 60 * 1000, run: () => require('./utils/bookingCleanup').expireCheckoutHolds() },
+    // Charge reserve-now-pay-later bookings near the activity date.
+    { label: 'charge-pay-later-bookings', ms: 30 * 60 * 1000, run: () => require('./utils/payLaterSweep').chargePayLaterBookings() },
+    // Finance: flip past PENDING bookings to ELIGIBLE for payout requests.
+    { label: 'earnings-eligibility-sweep', ms: 30 * 60 * 1000, run: () => require('./utils/payoutCycles').sweepEarningsEligibility() },
+    // Plan + dispatch time-based booking reminders (payment due, 24h-before,
+    // pickup required, review request).
+    { label: 'plan-booking-reminders', ms: 60 * 60 * 1000, run: () => require('./utils/bookingReminders').planBookingReminders() },
+    { label: 'dispatch-booking-reminders', ms: 15 * 60 * 1000, run: () => require('./utils/bookingReminders').dispatchDueReminders() },
+  ];
+
+  for (const job of jobs) {
+    let running = false;
+    const tick = () => {
+      if (running) return;
+      running = true;
+      Promise.resolve()
+        .then(job.run)
+        .catch((err) => logger.warn(`[scheduler] ${job.label} failed:`, err?.message))
+        .finally(() => { running = false; });
+    };
+    intervals.push(setInterval(tick, job.ms));
+    // Catch up once shortly after boot (covers a restart that happened after
+    // an activity date passed while the process was down).
+    setTimeout(tick, 15000);
+  }
+}
+
 async function setupQueueWorkers() {
   console.log('[Startup] Checking Redis for queue workers...');
   startResumeMonitor();
@@ -191,6 +239,10 @@ async function setupQueueWorkers() {
     reconcileTravioAfricaPublish().catch((err) => logger.warn('[scheduler] travioafrica-publish reconcile failed:', err?.message));
   }, 30 * 60 * 1000));
 
+  // Booking-lifecycle sweeps run on direct timers (see scheduleBookingLifecycle)
+  // so they fire even on degraded boots where Redis is down.
+  scheduleBookingLifecycle(intervals);
+
   // Real-command probe (not PING) so a quota-exhausted boot doesn't register
   // workers that immediately start hammering Upstash.
   const redisOk = await probe();
@@ -211,50 +263,6 @@ async function setupQueueWorkers() {
   intervals.push(setInterval(() => {
     enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] cleanup-expired-cart failed:', err?.message));
   }, 5 * 60 * 1000));
-
-  intervals.push(setInterval(() => {
-    enqueueCleanup('cleanup-stale-bookings').catch((err) => logger.warn('[scheduler] cleanup-stale-bookings failed:', err?.message));
-  }, 5 * 60 * 1000));
-
-  // Expire stale CheckoutDraft holds (pay-now seat reservations).
-  // Same cadence as stale bookings — idempotent.
-  intervals.push(setInterval(() => {
-    enqueueCleanup('expire-checkout-holds').catch((err) => logger.warn('[scheduler] expire-checkout-holds failed:', err?.message));
-  }, 5 * 60 * 1000));
-
-  // Auto-complete CONFIRMED bookings once their activity date has passed.
-  intervals.push(setInterval(() => {
-    enqueueCleanup('auto-complete-bookings').catch((err) => logger.warn('[scheduler] auto-complete-bookings failed:', err?.message));
-  }, 30 * 60 * 1000));
-
-  // Auto-cancel PENDING bookings whose activity date has passed (48h grace).
-  intervals.push(setInterval(() => {
-    enqueueCleanup('cancel-stale-pending-bookings').catch((err) => logger.warn('[scheduler] cancel-stale-pending-bookings failed:', err?.message));
-  }, 30 * 60 * 1000));
-
-  // Collect deferred payments for reserve-now-pay-later bookings as their
-  // activity dates approach. Every 30 minutes is plenty — the charge window
-  // is measured in hours, and re-runs are idempotent.
-  intervals.push(setInterval(() => {
-    enqueueCleanup('charge-pay-later-bookings').catch((err) => logger.warn('[scheduler] charge-pay-later-bookings failed:', err?.message));
-  }, 30 * 60 * 1000));
-
-  // Finance v2: flip past-travel-date bookings from PENDING to ELIGIBLE so
-  // suppliers can include them in payout requests. Idempotent.
-  intervals.push(setInterval(() => {
-    enqueueCleanup('earnings-eligibility-sweep').catch((err) => logger.warn('[scheduler] earnings-eligibility-sweep failed:', err?.message));
-  }, 30 * 60 * 1000));
-
-  // Plan + dispatch time-based booking reminder emails (payment due, 24h-before,
-  // pickup required, review request). Planning runs hourly; dispatch every 15
-  // minutes so due reminders go out on time. Both are idempotent.
-  intervals.push(setInterval(() => {
-    enqueueCleanup('plan-booking-reminders').catch((err) => logger.warn('[scheduler] plan-booking-reminders failed:', err?.message));
-  }, 60 * 60 * 1000));
-
-  intervals.push(setInterval(() => {
-    enqueueCleanup('dispatch-booking-reminders').catch((err) => logger.warn('[scheduler] dispatch-booking-reminders failed:', err?.message));
-  }, 15 * 60 * 1000));
 
   intervals.push(setInterval(() => {
     enqueueAggregation('refresh-popularity').catch((err) => logger.warn('[scheduler] refresh-popularity failed:', err?.message));
@@ -295,14 +303,6 @@ async function setupQueueWorkers() {
   }, 24 * 60 * 60 * 1000));
 
   enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] startup cleanup-expired-cart failed:', err?.message));
-  enqueueCleanup('cleanup-stale-bookings').catch((err) => logger.warn('[scheduler] startup cleanup-stale-bookings failed:', err?.message));
-  enqueueCleanup('expire-checkout-holds').catch((err) => logger.warn('[scheduler] startup expire-checkout-holds failed:', err?.message));
-  enqueueCleanup('auto-complete-bookings').catch((err) => logger.warn('[scheduler] startup auto-complete-bookings failed:', err?.message));
-  enqueueCleanup('cancel-stale-pending-bookings').catch((err) => logger.warn('[scheduler] startup cancel-stale-pending-bookings failed:', err?.message));
-  enqueueCleanup('charge-pay-later-bookings').catch((err) => logger.warn('[scheduler] startup charge-pay-later-bookings failed:', err?.message));
-  enqueueCleanup('earnings-eligibility-sweep').catch((err) => logger.warn('[scheduler] startup earnings-eligibility-sweep failed:', err?.message));
-  enqueueCleanup('plan-booking-reminders').catch((err) => logger.warn('[scheduler] startup plan-booking-reminders failed:', err?.message));
-  enqueueCleanup('dispatch-booking-reminders').catch((err) => logger.warn('[scheduler] startup dispatch-booking-reminders failed:', err?.message));
   enqueueAggregation('refresh-popularity').catch((err) => logger.warn('[scheduler] startup refresh-popularity failed:', err?.message));
   enqueueAggregation('cleanup-events').catch((err) => logger.warn('[scheduler] startup cleanup-events failed:', err?.message));
   enqueueCleanup('cleanup-notifications').catch((err) => logger.warn('[scheduler] startup cleanup-notifications failed:', err?.message));
