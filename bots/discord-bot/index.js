@@ -1,3 +1,7 @@
+// Load env FIRST — modules required below (e.g. discordNotifier via
+// incidentMonitor) read process.env at require-time.
+require('dotenv').config();
+
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
 const { execSync } = require('child_process');
 const { Client: Pg } = require('pg');
@@ -5,7 +9,6 @@ const { callMimo } = require('../../utils/mimoClient');
 const { runQueryAgent } = require('./queryAgent');
 const { startIncidentMonitor } = require('./incidentMonitor');
 const { collectDigest } = require('../../scripts/dailyDigest');
-require('dotenv').config();
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.DISCORD_GUILD_ID;
@@ -13,8 +16,8 @@ const ADMIN_ROLE_ID = process.env.DISCORD_ADMIN_ROLE_ID;
 const API_URL = process.env.API_URL || 'http://127.0.0.1:5000';
 const BACKUP_DIR = process.env.BACKUP_DIR || '/var/backups/travio';
 const AI_CHANNEL_ID = process.env.DISCORD_AI_CHANNEL_ID || null;
-const INCIDENTS_CHANNEL_ID = process.env.DISCORD_INCIDENTS_CHANNEL_ID || null;
 const PUBLIC_API_URL = process.env.PUBLIC_API_URL || 'https://apiv1.travioafrica.com/health';
+const INCIDENTS_WEBHOOK = process.env.DISCORD_WEBHOOK_INCIDENTS || null;
 
 const pg = new Pg({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 8000 });
 
@@ -194,20 +197,22 @@ client.once('ready', async () => {
     console.error('[bot] command registration failed:', e.message);
   }
 
-  startIncidentMonitor({
-    client,
-    channelId: INCIDENTS_CHANNEL_ID,
-    target: 'apiv1.travioafrica.com/health',
-    env: {
-      apiUrl: `${API_URL}/health`,
-      publicUrl: PUBLIC_API_URL,
-      databaseUrl: process.env.DATABASE_URL,
-      redisUrl: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
-      repoDir: process.env.REPO_DIR || '/home/deploy/Expedition-Go-Backend-v2',
-      errorLog: process.env.API_ERROR_LOG || '/home/deploy/.pm2/logs/expedition-api-error.log',
-    },
-    redis: getRedis(),
-  });
+  if (INCIDENTS_WEBHOOK) {
+    startIncidentMonitor({
+      target: 'apiv1.travioafrica.com/health',
+      env: {
+        apiUrl: `${API_URL}/health`,
+        publicUrl: PUBLIC_API_URL,
+        databaseUrl: process.env.DATABASE_URL,
+        redisUrl: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
+        repoDir: process.env.REPO_DIR || '/home/deploy/Expedition-Go-Backend-v2',
+        errorLog: process.env.API_ERROR_LOG || '/home/deploy/.pm2/logs/expedition-api-error.log',
+      },
+      redis: getRedis(),
+    });
+  } else {
+    console.warn('[bot] incident monitor disabled — DISCORD_WEBHOOK_INCIDENTS not set');
+  }
 });
 
 // ── Approval handler (payouts + disputes) ──────────────────────────

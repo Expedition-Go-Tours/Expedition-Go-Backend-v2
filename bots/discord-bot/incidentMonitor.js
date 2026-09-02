@@ -1,25 +1,41 @@
 /**
  * Incident monitor for the TravioAfrica ops bot.
  *
- * Polls the API health endpoint (local + public) and, on UP→DOWN /
- * DOWN→UP transitions, posts a rich diagnostic embed to the incidents
- * channel. Because the bot runs as a separate PM2 process, it can
- * diagnose the API even when the API itself is down: PM2 status,
- * deploy correlation, error-log tails, DB/Redis/nginx, disk, memory,
- * and load.
+ * Polls the API health endpoint (local + public) and uses a small
+ * transition-based state machine to declare incidents and recoveries:
  *
- * Deliberately fire-and-forget: never throws, all failures logged.
+ *   HEALTHY --2 consecutive failed checks (~60s)--> INCIDENT
+ *   INCIDENT --2 consecutive good checks (~60s)--> RECOVERED
  *
- * @version 1.0.0
+ * A single transient failure never fires an alert, and while an incident is
+ * open repeated failing polls do NOT re-post (one card per incident). State is
+ * persisted in Redis so a bot restart resumes an open incident without
+ * duplicating cards.
+ *
+ * On declare/recover it posts a rich, diagnostic Discord embed to the
+ * incidents channel via the shared webhook notifier (notifyDiscord), so
+ * delivery never depends on channel visibility / permissions.
+ *
+ * LIKELY CAUSE is evidence-based ("restart occurred ~Xs after deployment"),
+ * and the conclusion is labeled ASSESSMENT — correlation is not proof.
+ *
+ * @version 2.0.0
  */
 
 const { execSync } = require('child_process');
+const { notifyDiscord } = require('../../utils/discordNotifier');
 
 const DEFAULT_INTERVAL_MS = 30 * 1000;
 const LOCAL_TIMEOUT_MS = 8000;
 const PUBLIC_TIMEOUT_MS = 10000;
 const REDIS_STATE_KEY = 'incident:monitor:state';
-const MAX_ERR_TAIL_LINES = 12;
+const MAX_ERR_TAIL_LINES = 10;
+
+// Consecutive-check thresholds. At a 30s interval, FAIL_THRESHOLD=2 declares
+// an incident ~60s after the first failure; RECOVER_THRESHOLD=2 resolves ~60s
+// after the API returns. Single transient blips never fire.
+const FAIL_THRESHOLD = 2;
+const RECOVER_THRESHOLD = 2;
 
 function sh(cmd) {
   return execSync(cmd, { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, timeout: 10000 }).trim();
@@ -37,9 +53,9 @@ async function fetchHealth(url, timeoutMs) {
 function readTail(file, lines = MAX_ERR_TAIL_LINES) {
   try {
     const out = sh(`tail -n ${lines} '${file}' 2>/dev/null`);
-    return out || '(empty)';
+    return out || '';
   } catch {
-    return '(unreadable)';
+    return '';
   }
 }
 
@@ -51,14 +67,30 @@ function safeJson(value) {
   }
 }
 
+function cpuUsagePct() {
+  // Two /proc/stat samples ~150ms apart to derive a near-real-time CPU%.
+  try {
+    const read = () =>
+      sh(`awk '/^cpu / {print $2+$3+$4, $5+$6+$7+$8}' /proc/stat`);
+    const a = read().split(/\s+/).map(Number);
+    // synchronous delay via a short shell sleep
+    sh('sleep 0.15');
+    const b = read().split(/\s+/).map(Number);
+    const busy = b[0] - a[0];
+    const total = (b[0] + b[1]) - (a[0] + a[1]);
+    return total > 0 ? Math.round((busy / total) * 100) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Collect server-side diagnostics to determine the exact cause.
- * Every check is best-effort; failures become "(unavailable)".
+ * Every check is best-effort; failures become null/''.
  */
 async function collectDiagnostics(ctx) {
   const diag = {};
 
-  // ── PM2 process states + restart counts ─────────────────────────
   try {
     const procs = safeJson(sh('pm2 jlist'));
     diag.pm2 = procs.map((p) => ({
@@ -73,57 +105,54 @@ async function collectDiagnostics(ctx) {
     diag.pm2 = null;
   }
 
-  // ── Deploy correlation ──────────────────────────────────────────
   try {
     const api = diag.pm2?.find((p) => p.name === 'expedition-api');
     const commitTime = sh(`cd ${ctx.repoDir} && git log -1 --format=%ci 2>/dev/null`);
-    const deployAgeSec = api?.uptimeSec ?? null;
+    const apiUpSinceSec = api?.uptimeSec ?? null;
     diag.deploy = {
       lastCommitAt: commitTime || null,
-      apiUpSinceSec: deployAgeSec,
-      likelyDeployRestart: deployAgeSec !== null && deployAgeSec < 300, // restarted <5m ago
+      apiUpSinceSec,
+      restartedRecently: apiUpSinceSec !== null && apiUpSinceSec < 600, // restarted <10m ago
     };
   } catch {
     diag.deploy = null;
   }
 
-  // ── API error log tail ──────────────────────────────────────────
   diag.errorTail = readTail(ctx.errorLog);
 
-  // ── PostgreSQL ───────────────────────────────────────────────────
   try {
     const out = sh(`psql "${ctx.databaseUrl}" -tAc 'SELECT 1' 2>/dev/null`);
-    diag.database = out.trim() === '1' ? 'healthy' : 'down';
+    diag.database = out.trim() === '1' ? 'ok' : 'down';
   } catch {
     diag.database = 'down';
   }
 
-  // ── Redis ───────────────────────────────────────────────────────
   try {
-    const out = sh(`redis-cli -u "${ctx.redisUrl}" ping 2>/dev/null`);
-    diag.redis = out.includes('PONG') ? 'healthy' : 'down';
+    // Parse password from the redis:// URL and use -a (redis-cli -u with an
+    // empty username is rejected by Redis 6+ ACL as WRONGPASS).
+    const m = String(ctx.redisUrl || '').match(/redis:\/\/:([^@]+)@/);
+    const pw = m ? m[1] : '';
+    const out = sh(`redis-cli -h 127.0.0.1 -p 6379 -a '${pw}' --no-auth-warning ping 2>/dev/null`);
+    diag.redis = out.includes('PONG') ? 'ok' : 'down';
   } catch {
     diag.redis = 'down';
   }
 
-  // ── nginx ───────────────────────────────────────────────────────
   try {
-    diag.nginx = sh('systemctl is-active nginx 2>/dev/null') === 'active' ? 'active' : 'down';
+    diag.nginx = sh('systemctl is-active nginx 2>/dev/null') === 'active' ? 'ok' : 'down';
   } catch {
     diag.nginx = 'unknown';
   }
 
-  // ── Disk / memory / load ────────────────────────────────────────
   try {
     const df = sh(`df -h / | tail -1`);
     const parts = df.split(/\s+/);
-    diag.disk = { total: parts[1] || '?', usedPct: parts[4] || '?' };
+    diag.disk = { usedPct: parts[4] || null, total: parts[1] || null };
   } catch {
     diag.disk = null;
   }
   try {
-    const free = sh(`free -m | awk 'NR==2{printf "%d/%d MB used, %d MB avail", $3, $2, $7}'`);
-    diag.memory = free;
+    diag.memory = sh(`free -m | awk 'NR==2{printf "%.0f%% used (%d/%d MB)", ($2-$7)/$2*100, $3, $2}'`);
   } catch {
     diag.memory = null;
   }
@@ -132,103 +161,179 @@ async function collectDiagnostics(ctx) {
   } catch {
     diag.load = null;
   }
+  diag.cpu = cpuUsagePct();
 
   return diag;
 }
 
-function buildEmbed({ direction, target, startedAt, resolvedAt, durationSec, diag }) {
-  const isDown = direction === 'down';
+function fmtTimestamp(ms) {
+  return new Date(ms).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+}
+
+/**
+ * Deterministic "what the monitor actually observed" lines, derived from diag.
+ */
+function checkFirstLines(diag) {
   const lines = [];
-
-  if (diag?.pm2?.length) {
-    const api = diag.pm2.find((p) => p.name === 'expedition-api');
-    if (api) {
-      const upTxt = api.status === 'online' ? `${api.uptimeSec}s` : 'DOWN';
-      const restarts = api.restarts > 0 ? ` (restarted ${api.restarts}×)` : '';
-      lines.push(`**expedition-api:** \`${api.status}\`${restarts}, up ${upTxt}, ${api.memMB}MB`);
-    }
-    for (const p of diag.pm2.filter((p) => p.name !== 'expedition-api')) {
-      if (p.status !== 'online') {
-        lines.push(`**${p.name}:** \`${p.status}\`` + (p.restarts > 0 ? ` (restarted ${p.restarts}×)` : ''));
-      }
-    }
+  const api = diag?.pm2?.find((p) => p.name === 'expedition-api');
+  if (api) {
+    const restarts = api.restarts || 0;
+    if (api.status !== 'online') lines.push(`❌ expedition-api: \`${api.status}\``);
+    else if (restarts > 0) lines.push(`⚠️ expedition-api: online but restarted ${restarts}×`);
+    else lines.push(`✅ expedition-api: online`);
   } else {
-    lines.push(`**PM2:** (unavailable)`);
+    lines.push(`❓ expedition-api: no PM2 process found`);
+  }
+  lines.push(diag?.database === 'ok' ? `✅ PostgreSQL: reachable` : `❌ PostgreSQL: unreachable`);
+  lines.push(diag?.redis === 'ok' ? `✅ Redis: reachable` : `❌ Redis: unreachable`);
+  lines.push(diag?.nginx === 'ok' ? `✅ Nginx: active` : `❌ Nginx: not active`);
+  if (diag?.deploy?.restartedRecently) {
+    lines.push(`⚠️ API restarted ~${diag.deploy.apiUpSinceSec}s ago`);
+  }
+  return lines;
+}
+
+function depsLine(diag) {
+  const sym = (s) => (s === 'ok' ? '✅' : s === 'down' ? '❌' : '❓');
+  return `${sym(diag?.database)} PostgreSQL   ${sym(diag?.redis)} Redis   ${sym(diag?.nginx)} Nginx`;
+}
+
+function resourcesLine(diag) {
+  const parts = [];
+  if (diag?.cpu != null) parts.push(`CPU ${diag.cpu}%`);
+  if (diag?.memory) parts.push(diag.memory);
+  if (diag?.disk?.usedPct) parts.push(`Disk ${diag.disk.usedPct}`);
+  if (diag?.load) parts.push(`Load ${diag.load}`);
+  return parts.length ? parts.join(' · ') : '—';
+}
+
+function buildEmbed({ direction, startedAt, resolvedAt, durationSec, diag }) {
+  const incident = direction === 'down';
+
+  if (incident) {
+    const api = diag?.pm2?.find((p) => p.name === 'expedition-api');
+    const restarts = api?.restarts || 0;
+    const likelyCauseLines = [];
+    if (restarts > 0) {
+      likelyCauseLines.push(`PM2 restart detected — \`expedition-api\` restarted ${restarts}×`);
+    } else if (api && api.status !== 'online') {
+      likelyCauseLines.push(`\`expedition-api\` is not online (\`${api.status}\`)`);
+    } else {
+      likelyCauseLines.push('Health check failed (no PM2 restart detected)');
+    }
+
+    // LIKELY CAUSE is evidence; ASSESSMENT is the (non-overstated) conclusion.
+    let assessment = 'Unclassified — correlation has not established a cause.';
+    if (diag?.deploy?.restartedRecently) {
+      assessment = `Likely deploy-related transient — API restart occurred ~${diag.deploy.apiUpSinceSec}s after deployment (${diag.deploy.lastCommitAt || 'recent commit'}).`;
+    }
+
+    const fields = [
+      { name: 'LIKELY CAUSE', value: likelyCauseLines.join('\n'), inline: false },
+      { name: 'ASSESSMENT', value: assessment, inline: false },
+      { name: 'DEPENDENCIES', value: depsLine(diag), inline: false },
+      { name: 'RESOURCES', value: resourcesLine(diag) || '—', inline: false },
+    ];
+    if (diag?.errorTail) {
+      fields.push({ name: 'LATEST ERROR', value: `\`\`\`\n${diag.errorTail.slice(0, 900)}\n\`\`\``, inline: false });
+    }
+    fields.push({ name: 'CHECK FIRST', value: checkFirstLines(diag).join('\n'), inline: false });
+    if (diag?.deploy?.lastCommitAt) {
+      fields.push({ name: 'Commit', value: diag.deploy.lastCommitAt, inline: false });
+    }
+
+    return {
+      title: '🚨 PRODUCTION INCIDENT',
+      color: 0xff4444,
+      content: `**API: DOWN** · Detected ${fmtTimestamp(startedAt)} · Duration: ongoing`,
+      fields,
+    };
   }
 
-  if (diag?.deploy?.likelyDeployRestart) {
-    lines.push(`**Deploy correlation:** API restarted ~${diag.deploy.apiUpSinceSec}s ago, last commit at ${diag.deploy.lastCommitAt || '?'} → **likely a deploy restart (transient)**`);
-  }
-
-  lines.push(`**Database:** ${diag?.database || '?'}  |  **Redis:** ${diag?.redis || '?'}  |  **nginx:** ${diag?.nginx || '?'}`);
-
-  if (isDown && diag?.errorTail && diag.errorTail !== '(empty)' && diag.errorTail !== '(unreadable)') {
-    lines.push(`\n**Last API errors:**\n\`\`\`\n${diag.errorTail.slice(0, 1200)}\n\`\`\``);
-  }
-
-  if (diag?.disk) lines.push(`**Disk /:** ${diag.disk.usedPct} used of ${diag.disk.total}`);
-  if (diag?.memory) lines.push(`**Memory:** ${diag.memory}`);
-  if (diag?.load) lines.push(`**Load (1/5/15):** ${diag.load}`);
-
-  const embed = {
-    title: isDown ? '⚠️ Uptime incident — API health check failed' : '✅ Uptime resolved',
-    color: isDown ? 0xff4444 : 0x00c853,
-    description: lines.join('\n'),
-    fields: [
-      { name: 'Monitor', value: target, inline: true },
-      { name: 'Started', value: `<t:${Math.floor(startedAt / 1000)}:R>`, inline: true },
-    ],
-    timestamp: new Date().toISOString(),
+  // RECOVERED
+  const fields = [
+    { name: 'DEPENDENCIES', value: depsLine(diag), inline: false },
+    { name: 'RESOURCES', value: resourcesLine(diag) || '—', inline: false },
+    { name: 'CHECK FIRST', value: checkFirstLines(diag).join('\n'), inline: false },
+  ];
+  return {
+    title: '✅ INCIDENT RESOLVED',
+    color: 0x00c853,
+    content: `**API: UP** · Downtime: ${Math.round(durationSec)}s · Recovered ${fmtTimestamp(resolvedAt)}`,
+    fields,
   };
-  if (!isDown && resolvedAt) {
-    embed.fields.push({ name: 'Duration', value: `${Math.round(durationSec)}s`, inline: true });
-  }
-  return embed;
 }
 
 /**
  * Start the incident monitor.
  *
  * @param {Object} opts
- * @param {Object} opts.client    - Discord client (ready first).
- * @param {string} opts.channelId - Incidents channel id.
- * @param {string} opts.target    - Human-readable monitor target (e.g. apiv1.travioafrica.com/health).
- * @param {Object} opts.env       - { apiUrl, publicUrl, databaseUrl, redisUrl, repoDir, errorLog, intervalMs }
- * @param {Object} [opts.redis]   - Optional redis client with get/set (for state persistence).
+ * @param {string} opts.target   - Human-readable monitor target.
+ * @param {Object} opts.env      - { apiUrl, publicUrl, databaseUrl, redisUrl, repoDir, errorLog, intervalMs }
+ * @param {Object} [opts.redis]  - Redis client with get/set for state persistence.
+ * @param {Object} [opts.logger] - { log, warn } (defaults to console).
+ * @returns {{ stop: Function, tick: Function }}
  */
-function startIncidentMonitor({ client, channelId, target, env, redis }) {
-  if (!channelId || !env?.apiUrl) {
-    console.warn('[incident] monitor not started (missing channelId or apiUrl)');
+function startIncidentMonitor({ target, env, redis, logger }) {
+  if (!env?.apiUrl) {
+    (logger?.warn || console.warn)('[incident] monitor not started (missing apiUrl)');
     return;
   }
 
   const intervalMs = env.intervalMs || DEFAULT_INTERVAL_MS;
-  let state = 'UP'; // current known state of the target
+  const log = (m) => (logger?.log || console.log)(`[incident] ${m}`);
+  const warn = (m) => (logger?.warn || console.warn)(`[incident] ${m}`);
+
+  let state = 'HEALTHY'; // HEALTHY | INCIDENT
   let downSince = 0;
+  let failStreak = 0;
+  let passStreak = 0;
   let active = false;
   let timer = null;
+  let startupResolve = null;
+  const ready = new Promise((resolve) => {
+    startupResolve = resolve;
+  });
 
-  async function getPersistedState() {
+  async function persist() {
     try {
-      const raw = redis ? await redis.get(REDIS_STATE_KEY) : null;
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed.state === 'DOWN') {
-          state = 'DOWN';
-          downSince = parsed.since || Date.now();
-        }
+      if (redis) {
+        await redis.set(
+          REDIS_STATE_KEY,
+          JSON.stringify({ state, downSince, failStreak, passStreak }),
+          'EX',
+          3600
+        );
       }
     } catch {
-      // ignore — fresh state is fine
+      // non-fatal
     }
   }
 
-  async function persist(stateNow, since) {
+  async function loadPersisted() {
     try {
-      if (redis) await redis.set(REDIS_STATE_KEY, JSON.stringify({ state: stateNow, since }), 'EX', 3600);
+      const raw = redis ? await redis.get(REDIS_STATE_KEY) : null;
+      if (!raw) return;
+      const p = JSON.parse(raw);
+      if (p && p.state === 'INCIDENT') {
+        state = 'INCIDENT';
+        downSince = p.downSince || Date.now();
+        passStreak = p.passStreak || 0;
+      }
     } catch {
-      // ignore
+      // fresh state is fine
     }
+  }
+
+  async function post(payload) {
+    // notifyDiscord('incidents', content, opts) never rejects and reads the
+    // webhook URL from the environment — channel-visibility independent.
+    await notifyDiscord('incidents', payload.content, {
+      title: payload.title,
+      color: payload.color,
+      fields: payload.fields,
+      timestamp: new Date().toISOString(),
+    });
   }
 
   async function check() {
@@ -237,53 +342,57 @@ function startIncidentMonitor({ client, channelId, target, env, redis }) {
     try {
       const local = await fetchHealth(env.apiUrl, LOCAL_TIMEOUT_MS);
       const pub = env.publicUrl ? await fetchHealth(env.publicUrl, PUBLIC_TIMEOUT_MS) : local;
-      const down = !(local.ok && pub.ok);
-
+      const healthy = local.ok && pub.ok;
       const now = Date.now();
-      if (down && state === 'UP') {
-        // UP → DOWN
-        state = 'DOWN';
-        downSince = now;
-        await persist('DOWN', now);
-        const diag = await collectDiagnostics(env);
-        const embed = buildEmbed({ direction: 'down', target, startedAt: now, diag });
-        try {
-          const ch = await client.channels.fetch(channelId);
-          await ch.send({ embeds: [embed] });
-          console.log(`[incident] DOWN detected at ${target}`);
-        } catch (e) {
-          console.error('[incident] failed to post DOWN embed:', e.message);
+
+      if (!healthy && state === 'HEALTHY') {
+        failStreak += 1;
+        passStreak = 0;
+        await persist();
+        if (failStreak >= FAIL_THRESHOLD) {
+          state = 'INCIDENT';
+          downSince = now;
+          failStreak = 0;
+          await persist();
+          const diag = await collectDiagnostics(env);
+          const payload = buildEmbed({ direction: 'down', startedAt: now, diag });
+          log(`INCIDENT declared at ${target} (${FAIL_THRESHOLD} consecutive failures)`);
+          await post(payload);
         }
-      } else if (!down && state === 'DOWN') {
-        // DOWN → UP
-        const durationSec = Math.round((now - downSince) / 1000);
-        state = 'UP';
-        await persist('UP', 0);
-        const diag = await collectDiagnostics(env);
-        const embed = buildEmbed({ direction: 'up', target, startedAt: downSince, resolvedAt: now, durationSec, diag });
-        try {
-          const ch = await client.channels.fetch(channelId);
-          await ch.send({ embeds: [embed] });
-          console.log(`[incident] RESOLVED after ${durationSec}s at ${target}`);
-        } catch (e) {
-          console.error('[incident] failed to post UP embed:', e.message);
+      } else if (healthy && state === 'INCIDENT') {
+        passStreak += 1;
+        await persist();
+        if (passStreak >= RECOVER_THRESHOLD) {
+          const durationSec = Math.round((now - downSince) / 1000);
+          state = 'HEALTHY';
+          passStreak = 0;
+          await persist();
+          const diag = await collectDiagnostics(env);
+          const payload = buildEmbed({ direction: 'up', startedAt: downSince, resolvedAt: now, durationSec, diag });
+          log(`RECOVERED after ${durationSec}s at ${target}`);
+          await post(payload);
         }
+      } else if (healthy && state === 'HEALTHY') {
+        // steady state — reset transient streak noise
+        failStreak = 0;
       }
+      // state === 'INCIDENT' && !healthy: no re-post, keep waiting for recovery
     } catch (e) {
-      console.error('[incident] check error:', e.message);
+      warn(`check error: ${e.message}`);
     } finally {
       active = false;
     }
   }
 
   (async () => {
-    await getPersistedState();
+    await loadPersisted();
     await check();
+    if (startupResolve) startupResolve();
     timer = setInterval(check, intervalMs);
     timer.unref?.();
   })();
 
-  return { stop: () => clearInterval(timer), tick: check };
+  return { stop: () => clearInterval(timer), tick: check, ready };
 }
 
-module.exports = { startIncidentMonitor, collectDiagnostics, buildEmbed, fetchHealth };
+module.exports = { startIncidentMonitor, collectDiagnostics, buildEmbed, fetchHealth, FAIL_THRESHOLD, RECOVER_THRESHOLD };
