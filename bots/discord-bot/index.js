@@ -165,6 +165,7 @@ async function answerConversational(prompt, userId) {
     return { busy: true };
   }
   activeJobs.add(userId);
+  const turnStart = Date.now();
 
   try {
     const history = await getHistory(userId);
@@ -186,7 +187,7 @@ async function answerConversational(prompt, userId) {
       cache: buildAnswerCache(),
     });
 
-    console.log(`[ai] user=${userId} question="${prompt}" sql=${JSON.stringify(sqlLogs)} rows=${rowCount} cached=${!!cached}`);
+    console.log(`[ai] ts=${new Date().toISOString()} user=${userId} question="${prompt}" sql=${JSON.stringify(sqlLogs)} rows=${rowCount} cached=${!!cached} totalMs=${Date.now() - turnStart}`);
     await pushTurn(userId, 'assistant', final);
     return { text: final.slice(0, 2000) };
   } catch (e) {
@@ -696,6 +697,7 @@ client.on('interactionCreate', async (interaction) => {
           break;
         }
         const question = interaction.options.getString('question');
+        const askStart = Date.now();
         try {
           const history = await getHistory(interaction.user.id);
           const historyText = history.length
@@ -718,7 +720,7 @@ client.on('interactionCreate', async (interaction) => {
             .setColor(0x00bcd4)
             .setDescription(final.slice(0, 4000));
           await interaction.editReply({ embeds: [embed] });
-          console.log(`[ask] user=${interaction.user.id} question="${question}" sql=${JSON.stringify(sqlLogs)} rows=${rowCount} cached=${!!cached}`);
+          console.log(`[ask] ts=${new Date().toISOString()} user=${interaction.user.id} question="${question}" sql=${JSON.stringify(sqlLogs)} rows=${rowCount} cached=${!!cached} totalMs=${Date.now() - askStart}`);
           await pushTurn(interaction.user.id, 'assistant', final);
         } catch (e) {
           console.error('[ask] error:', e.message);

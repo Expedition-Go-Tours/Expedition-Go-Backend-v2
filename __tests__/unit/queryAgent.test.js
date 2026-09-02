@@ -5,6 +5,7 @@ const {
   parseAgentResponse,
   stripEmojis,
   normalizeQuestion,
+  suggestColumns,
   MAX_STEPS,
   resetSchemaCache,
 } = require('../../bots/discord-bot/queryAgent');
@@ -434,5 +435,65 @@ describe('answerQuestion (production orchestrator)', () => {
     };
     await expect(answerQuestion({ question: 'x', userId: 'u', pg, callMimo, cache })).rejects.toThrow('boom');
     expect(Object.keys(store)).toHaveLength(0);
+  });
+});
+
+describe('suggestColumns (deterministic column suggestions)', () => {
+  it('hands over the referenced table real columns for a hallucinated column', () => {
+    resetSchemaCache();
+    const pg = makePg({
+      schemaCols: [
+        { table_name: 'Tour', column_name: 'id', enum_values: null },
+        { table_name: 'Tour', column_name: 'city', enum_values: null },
+        { table_name: 'Tour', column_name: 'region', enum_values: null },
+        { table_name: 'Tour', column_name: 'status', enum_values: null },
+      ],
+    });
+    // buildCompactSchema fills the column index from schemaCols.
+    return runQueryFast({ question: 'x', pg, callMimo: async () => '{"sql":"SELECT 1"}' }).then(() => {
+      const sql = 'SELECT "location" FROM "Tour" WHERE 1=1';
+      const out = suggestColumns(sql, 'column "location" does not exist');
+      expect(out).toContain('table "Tour" columns:');
+      expect(out).toContain('"city"');
+      expect(out).toContain('"region"');
+      expect(out).not.toContain('"location"');
+    });
+  });
+
+  it('returns empty when the message is not a missing column', () => {
+    expect(suggestColumns('SELECT 1', 'relation "Tour" does not exist')).toBe('');
+    expect(suggestColumns('SELECT 1', 'syntax error at or near "SELECT"')).toBe('');
+  });
+});
+
+describe('fast-path JSON parse retry', () => {
+  it('retries once with a corrective prompt instead of escalating on prose', async () => {
+    const pg = makePg({});
+    const outputs = [
+      'Here is your answer in prose, not JSON!', // round1: parse fail
+      '{"final":"Recovered from prose."}', // corrective retry → valid
+    ];
+    let i = 0;
+    const callMimo = async ({ messages }) => {
+      const idx = i++;
+      if (idx === 1) {
+        // ensure the corrective prompt was injected
+        const last = messages[messages.length - 1];
+        expect(last.role).toBe('user');
+        expect(last.content).toMatch(/EXACTLY ONE JSON object/);
+      }
+      return outputs[idx];
+    };
+    const r = await runQueryFast({ question: 'hi', pg, callMimo });
+    expect(r.escalated).toBe(false);
+    expect(r.final).toBe('Recovered from prose.');
+    expect(i).toBe(2); // two model calls, not an immediate escalation
+  });
+
+  it('still escalates if both the first and corrective attempts are unparseable', async () => {
+    const pg = makePg({});
+    const callMimo = async () => 'just prose, no json';
+    const r = await runQueryFast({ question: 'hi', pg, callMimo });
+    expect(r.escalated).toBe(true);
   });
 });

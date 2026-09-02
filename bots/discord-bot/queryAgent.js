@@ -59,6 +59,89 @@ const CRITICAL_TABLES = [
 
 let schemaCache = null;
 let schemaCacheTime = 0;
+// Real columns per table (from the compact-schema build + describe_table),
+// used to suggest valid identifiers when the model hallucinates a column.
+const schemaColumns = new Map(); // tableName -> Set(columnName)
+
+function levenshtein(a, b) {
+  const m = a.length;
+  const n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  const dp = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+  }
+  return dp[m][n];
+}
+
+/** Extract table identifiers referenced by a SQL statement. */
+function referencedTables(sql) {
+  const tables = [];
+  const re = /(?:from|join|update|into)\s+"?([A-Za-z_][A-Za-z0-9_]*)"?/gi;
+  let m;
+  while ((m = re.exec(String(sql || '')))) tables.push(m[1]);
+  return tables;
+}
+
+/**
+ * Given a failed SQL and its PostgreSQL error, produce a deterministic
+ * corrective hint so the model fixes it in one retry instead of guessing:
+ *   - if the query references a known table, list that table's real columns
+ *   - else fuzzy-match the hallucinated name against all indexed columns
+ * @returns {string} '' when there is nothing useful to say.
+ */
+function suggestColumns(sql, errorMsg) {
+  const m = String(errorMsg || '').match(/column\s+"?([A-Za-z_][A-Za-z0-9_]*)"?\s+does not exist/i);
+  if (!m) return '';
+  const wanted = m[1].split('.').pop().toLowerCase();
+  if (!wanted) return '';
+
+  const tables = referencedTables(sql);
+  // Prefer tables actually referenced by the query; fall back to every index.
+  const order = tables.length ? tables : [...schemaColumns.keys()];
+
+  const byTable = new Map();
+  for (const tbl of order) {
+    const set = schemaColumns.get(tbl);
+    if (!set) continue;
+    const cols = [...set].sort();
+    if (cols.length) byTable.set(tbl, cols);
+  }
+
+  // Known table with real columns → hand them over verbatim.
+  if (byTable.size) {
+    const listed = [];
+    for (const [tbl, cols] of byTable) {
+      const names = cols.filter((c) => c.toLowerCase() !== wanted).slice(0, 12);
+      listed.push(`table "${tbl}" columns: ${names.map((c) => `"${c}"`).join(', ')}`);
+    }
+    return ` Valid columns for ${listed.join('; ')}.`;
+  }
+
+  // Unknown table → fuzzy match the hallucinated name against all columns.
+  const scored = [];
+  for (const colSet of schemaColumns.values()) {
+    for (const col of colSet) {
+      const cl = col.toLowerCase();
+      if (cl === wanted) continue;
+      let d = levenshtein(cl, wanted);
+      if (cl.includes(wanted) || wanted.includes(cl)) d = Math.min(d, 2);
+      scored.push({ col, d });
+    }
+  }
+  scored.sort((x, y) => x.d - y.d || x.col.localeCompare(y.col));
+  const top = scored.slice(0, 5).filter((x) => x.d <= 3).map((x) => `"${x.col}"`);
+  if (!top.length) return '';
+  return ` Did you mean ${top.slice(0, -1).join(', ')}${top.length > 1 ? ' or ' : ' '}${top[top.length - 1]}?`;
+}
 
 function stripFences(text) {
   return text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
@@ -187,6 +270,9 @@ async function describeTable(pg, name) {
     } else {
       lines.push(`  "${c.column_name}" ${c.data_type}`);
     }
+    // Index real columns for deterministic identifier suggestions.
+    if (!schemaColumns.has(table)) schemaColumns.set(table, new Set());
+    schemaColumns.get(table).add(c.column_name);
   }
 
   const fks = await pg.query(
@@ -232,6 +318,9 @@ async function buildCompactSchema(pg) {
       byTable[c.table_name].push(
         c.enum_values ? `"${c.column_name}" enum(${c.enum_values})` : `"${c.column_name}"`
       );
+      // Index real column names for deterministic suggestions.
+      if (!schemaColumns.has(c.table_name)) schemaColumns.set(c.table_name, new Set());
+      schemaColumns.get(c.table_name).add(c.column_name);
     }
 
     // Foreign keys for the critical tables
@@ -282,7 +371,10 @@ async function runSql(pg, sql) {
       rows: rows.length,
     };
   } catch (e) {
-    return { error: e.message };
+    const msg = String(e.message || '');
+    // On a hallucinated column, append deterministic real-column suggestions
+    // so the model fixes it in one retry instead of guessing repeatedly.
+    return { error: /does not exist/i.test(msg) ? `${msg}${suggestColumns(guard.safeSql, msg)}` : msg };
   }
 }
 
@@ -305,6 +397,7 @@ WORKFLOW:
 
 STYLE:
 - No emojis, emoji characters, or emoticons anywhere (e.g. 😊, 😄, ✅, :), :-), ^_^). Symbols such as ✓ ⚠ ▲ ▼ • · — $ % are allowed. Use plain text and **bold** only.
+- FORMAT: ANY final answer — however long, lists included — is EXACTLY ONE JSON object {"final":"..."}. Put newlines and numbered lists INSIDE the JSON string value (as \n). Never emit the answer as plain prose outside JSON; if you start writing prose, stop and wrap it.
 - Be concise and professional. Do not use cheery filler like "Great question!" or "That said". Answer the substance directly.
 - If the user asks why you are slow: explain it honestly — each answer is produced by several sequential model calls that inspect the live schema, run queries, and verify results, so complex questions take longer than a quick count; it is the model round-trips, not the database, that add time. Keep it short.
 
@@ -347,6 +440,7 @@ SQL RULES (when you output "sql"):
 
 STYLE (for "final"):
 - No emojis, emoji characters, or emoticons (😊, ✅, :), :-), ^_^). Symbols such as ✓ ⚠ ▲ ▼ • · — $ % are allowed. Use plain text and **bold** only.
+- FORMAT: ANY final answer — however long, lists included — is EXACTLY ONE JSON object {"final":"..."}. Put newlines and numbered lists INSIDE the JSON string value (as \n). Never emit the answer as plain prose outside JSON; if you start writing prose, stop and wrap it.
 - Be concise and professional. No cheery filler ("Great question!", "Absolutely!"). If asked why you are slow, explain it honestly: answers come from several sequential model calls that inspect the live database, run and verify queries, so complex questions take longer than a quick count — the model round-trips, not the database, are what add time.
 
 SCHEMA:
@@ -381,15 +475,19 @@ async function runQueryAgent({ question, userId = '?', historyText = '', history
   const sqlLogs = [];
   let rowCount = 0;
   let final = null;
+  const t0 = Date.now();
+  const ms = () => `+${Date.now() - t0}ms`;
 
   for (let step = 0; step < MAX_STEPS; step++) {
+    const tStep = Date.now();
     const out = await callMimo({ messages, maxTokens: TOOL_MAX_TOKENS, temperature: 0.1, reasoningEffort: 'low' });
+    const stepMs = Date.now() - tStep;
     let parsed;
     try {
       parsed = parseAgentResponse(out);
-      console.log(`[agent:${userId}] step=${step + 1} raw=${out.slice(0, 200)}`);
+      console.log(`[agent:${userId}] step=${step + 1} call=${stepMs}ms total=${ms()} raw=${out.slice(0, 200)}`);
     } catch (e) {
-      console.log(`[agent:${userId}] step=${step + 1} PARSE_ERR=${e.message} raw=${out.slice(0, 300)}`);
+      console.log(`[agent:${userId}] step=${step + 1} call=${stepMs}ms total=${ms()} PARSE_ERR=${e.message} raw=${out.slice(0, 300)}`);
       messages.push({ role: 'assistant', content: out.slice(0, 800) });
       messages.push({
         role: 'user',
@@ -400,12 +498,12 @@ async function runQueryAgent({ question, userId = '?', historyText = '', history
 
     if (parsed.final !== undefined) {
       final = String(parsed.final);
-      console.log(`[agent:${userId}] final=${final.slice(0, 300)}`);
+      console.log(`[agent:${userId}] final total=${ms()} final=${final.slice(0, 300)}`);
       break;
     }
 
     if (!parsed.tool) {
-      console.log(`[agent:${userId}] step=${step + 1} no_tool`);
+      console.log(`[agent:${userId}] step=${step + 1} total=${ms()} no_tool`);
       messages.push({ role: 'assistant', content: out.slice(0, 800) });
       messages.push({ role: 'user', content: 'ERROR: response must contain "tool" or "final". Retry.' });
       continue;
@@ -426,7 +524,7 @@ async function runQueryAgent({ question, userId = '?', historyText = '', history
         rowCount += r.rows;
       }
     } else {
-      console.log(`[agent:${userId}] step=${step + 1} unknown_tool=${parsed.tool}`);
+      console.log(`[agent:${userId}] step=${step + 1} total=${ms()} unknown_tool=${parsed.tool}`);
       messages.push({ role: 'assistant', content: out.slice(0, 800) });
       messages.push({
         role: 'user',
@@ -435,7 +533,7 @@ async function runQueryAgent({ question, userId = '?', historyText = '', history
       continue;
     }
 
-    console.log(`[agent:${userId}] step=${step + 1} tool=${parsed.tool} result=${resultText.slice(0, 200)}`);
+    console.log(`[agent:${userId}] step=${step + 1} total=${ms()} tool=${parsed.tool} result=${resultText.slice(0, 200)}`);
     messages.push({ role: 'assistant', content: out.slice(0, 800) });
     messages.push({ role: 'user', content: `Tool result (${parsed.tool}):\n${resultText}` });
   }
@@ -483,20 +581,42 @@ async function runQueryFast({ question, userId = '?', historyText = '', pg, call
   const messages = [{ role: 'system', content: system }, { role: 'user', content: question }];
 
   const escalate = () => ({ final: '', sqlLogs: [], rowCount: 0, escalated: true });
+  const t0 = Date.now();
+  const ms = () => `+${Date.now() - t0}ms`;
 
   // Round 1: decide sql / final / describe.
-  const out1 = await callMimo({ messages, maxTokens: TOOL_MAX_TOKENS, temperature: 0.1, reasoningEffort: 'low' });
+  let out1;
   let parsed1;
-  try {
-    parsed1 = parseAgentResponse(out1);
-  } catch (e) {
-    console.log(`[fast:${userId}] round1 parse_err=${e.message}`);
-    return escalate();
+  const parseRound1 = async () => {
+    const tStep = Date.now();
+    out1 = await callMimo({ messages, maxTokens: TOOL_MAX_TOKENS, temperature: 0.1, reasoningEffort: 'low' });
+    const callMs = Date.now() - tStep;
+    try {
+      parsed1 = parseAgentResponse(out1);
+      console.log(`[fast:${userId}] round1 call=${callMs}ms total=${ms()} parsed=${JSON.stringify(parsed1).slice(0, 200)}`);
+    } catch (e) {
+      console.log(`[fast:${userId}] round1 call=${callMs}ms total=${ms()} PARSE_ERR=${e.message} raw=${out1.slice(0, 200)}`);
+      parsed1 = null;
+    }
+  };
+  await parseRound1();
+
+  if (!parsed1) {
+    // A prose/garbled answer must not immediately drop into the slow loop.
+    // One corrective retry — same strict format — before escalation.
+    messages.push({ role: 'assistant', content: out1.slice(0, 800) });
+    messages.push({
+      role: 'user',
+      content:
+        'Your previous response was not valid. Output EXACTLY ONE JSON object, no markdown, no prose: {"sql":"SELECT ..."} or {"final":"<answer>"} or {"describe":"<Table>"}.',
+    });
+    await parseRound1();
+    if (!parsed1) return escalate();
   }
-  console.log(`[fast:${userId}] round1=${JSON.stringify(parsed1).slice(0, 200)}`);
 
   if (parsed1.final !== undefined) {
     const final = stripEmojis(String(parsed1.final));
+    console.log(`[fast:${userId}] final total=${ms()}`);
     return { final, sqlLogs: [], rowCount: 0, escalated: false };
   }
   if (parsed1.describe !== undefined || parsed1.sql === undefined) {
@@ -507,15 +627,18 @@ async function runQueryFast({ question, userId = '?', historyText = '', pg, call
   let sql = parsed1.sql;
   let run = await runSql(pg, sql);
   if (run.error) {
-    // One self-heal retry feeding the error back.
+    // One self-heal retry feeding the (now suggestion-rich) error back.
     messages.push({ role: 'assistant', content: out1.slice(0, 800) });
     messages.push({ role: 'user', content: `Your SQL failed: ${run.error.slice(0, 500)}. Fix it and answer again with the same format.` });
     try {
+      const tRetry = Date.now();
       const out2 = await callMimo({ messages, maxTokens: TOOL_MAX_TOKENS, temperature: 0.1, reasoningEffort: 'low' });
+      console.log(`[fast:${userId}] round1.retry call=${Date.now() - tRetry}ms total=${ms()}`);
       const parsed2 = parseAgentResponse(out2);
-      console.log(`[fast:${userId}] round1.retry=${JSON.stringify(parsed2).slice(0, 200)}`);
       if (parsed2.final !== undefined) {
-        return { final: stripEmojis(String(parsed2.final)), sqlLogs: [], rowCount: 0, escalated: false };
+        const final = stripEmojis(String(parsed2.final));
+        console.log(`[fast:${userId}] final total=${ms()}`);
+        return { final, sqlLogs: [], rowCount: 0, escalated: false };
       }
       if (parsed2.sql !== undefined) {
         sql = parsed2.sql;
@@ -525,7 +648,7 @@ async function runQueryFast({ question, userId = '?', historyText = '', pg, call
       // ignore retry parse failure; escalate below if still broken
     }
     if (run.error) {
-      console.log(`[fast:${userId}] round1 sql still failing: ${run.error.slice(0, 200)}`);
+      console.log(`[fast:${userId}] round1 sql still failing total=${ms()}: ${run.error.slice(0, 200)}`);
       return escalate();
     }
   }
@@ -539,7 +662,9 @@ async function runQueryFast({ question, userId = '?', historyText = '', pg, call
     },
     { role: 'user', content: `Question: ${question}\n\nSQL:\n${sql}\n\nResult:\n${run.text}` },
   ];
+  const tSum = Date.now();
   const out3 = await callMimo({ messages: summaryMessages, maxTokens: FINAL_MAX_TOKENS, temperature: 0.1, reasoningEffort: 'low' });
+  console.log(`[fast:${userId}] summarize call=${Date.now() - tSum}ms total=${ms()}`);
   let final;
   try {
     const p3 = parseAgentResponse(out3);
@@ -548,6 +673,7 @@ async function runQueryFast({ question, userId = '?', historyText = '', pg, call
     final = stripFences(out3);
   }
   final = stripEmojis(final);
+  console.log(`[fast:${userId}] done total=${ms()}`);
   return { final, sqlLogs: [run.sql], rowCount: run.rows, escalated: false };
 }
 
@@ -599,6 +725,12 @@ async function answerQuestion({ question, userId = '?', historyText = '', histor
   return result;
 }
 
+function resetSchemaCache() {
+  schemaCache = null;
+  schemaCacheTime = 0;
+  schemaColumns.clear();
+}
+
 module.exports = {
   runQueryAgent,
   runQueryFast,
@@ -606,12 +738,8 @@ module.exports = {
   parseAgentResponse,
   stripEmojis,
   normalizeQuestion,
+  suggestColumns,
   MAX_STEPS,
   CRITICAL_TABLES,
   resetSchemaCache,
 };
-
-function resetSchemaCache() {
-  schemaCache = null;
-  schemaCacheTime = 0;
-}
