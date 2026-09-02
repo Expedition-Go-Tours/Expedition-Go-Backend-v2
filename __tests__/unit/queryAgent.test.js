@@ -613,15 +613,18 @@ describe('location place semantics (city-first)', () => {
     return systems;
   }
 
-  it('instructs city-first (not region) for a bare place name in BOTH system prompts', async () => {
+  it('instructs city-first (not region/title) for a bare place name in BOTH system prompts', async () => {
     const systems = await captureSystems({
       schemaCols: [{ table_name: 'Tour', column_name: 'city', enum_values: null }],
     });
     expect(systems.length).toBe(2);
     for (const sys of systems) {
       expect(sys).toMatch(/PLACE SEMANTICS/);
-      expect(sys).toMatch(/A bare place name \("Accra"/);
+      expect(sys).toMatch(/means the CITY/);
       expect(sys).toMatch(/"Tour"\."city"/);
+      // The city filter must NEVER widen to title — that pulled in "From Accra..."
+      // departure tours (over-counted to 16) and is the bug we are pinning.
+      expect(sys).not.toMatch(/city"\) ILIKE '%accra%' OR lower\("title"\)/);
     }
     // The example teaches the honest city-first + region-note answer.
     expect(systems[0]).toContain('7 in Accra (13 including the Greater Accra Region)');

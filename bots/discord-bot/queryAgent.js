@@ -490,11 +490,16 @@ SQL RULES:
 - JSONB columns: use ->> for text fields, e.g. "businessInfo"->>'legalBusinessName'.
 - Fuzzy name searches: ILIKE '%term%' across ALL name-like keys (e.g. "legalBusinessName", "displayName", "businessName").
 - Use JOINs, GROUP BY, aggregates as needed. Order by recency ("createdAt" DESC) when relevant.
-- PLACE SEMANTICS: A bare place name ("Accra", "Kumasi", "Cape Coast") means the CITY — match "Tour"."city" (case-insensitive) or the tour title. Do NOT use "Tour"."region" as the primary match unless the user explicitly says a region word ("region", "Greater Accra", "Eastern Region") or names a district outside the city (e.g. "Ada Foah", "Dedenya"). For a bare-city COUNT, produce ONE query that returns BOTH scopes so the answer is honest, e.g.:
-  SELECT COUNT(*) FILTER (WHERE lower("city") ILIKE '%accra%' OR lower("title") ILIKE '%accra%') AS city_count,
-         COUNT(*) FILTER (WHERE lower("region") ILIKE '%accra%') AS region_count
-  FROM "Tour" WHERE "status" = 'ACTIVE';
-  Then answer city-first with the region note when they differ, e.g. "7 in Accra (13 including the Greater Accra Region)". For a bare-city LIST, filter by city/title (not region).
+- PLACE SEMANTICS (IMPORTANT — read fully):
+  * A bare place name in a question ("Accra", "Kumasi", "Cape Coast") means the CITY of that name. Filter ONLY on lower("Tour"."city") ILIKE '%<place>%'. The headline answer is the CITY count.
+  * NEVER match "Tour"."region" or "Tour"."title" for a bare place. Titles that merely mention a city are NOT city tours — e.g. "From Accra: Waterfalls, Aburi..." (located Boti) and "Transport from Accra to Cape Coast" are not Accra-city tours. Place questions match "city" ONLY.
+  * Use "region" ONLY when the user explicitly says a region word ("region", "Greater Accra", "Eastern Region") or names a district outside the target city (Ada Foah, Dedenya, La-Dade-Kotopon, Bonwire, etc.).
+  * Bare-city COUNT example (compute both scopes in ONE query, answer city-first, add region note only when it differs):
+    SELECT COUNT(*) FILTER (WHERE lower("city") ILIKE '%accra%')  AS accra_city,
+           COUNT(*) FILTER (WHERE lower("region") ILIKE '%accra%') AS accra_region
+    FROM "Tour" WHERE "status"='ACTIVE';
+    → "7 in Accra (13 including the Greater Accra Region)".
+  * Numbers seen in PREVIOUS CONVERSATION are NOT ground truth — always re-query live and report the fresh count.
 
   SCHEMA:
 ${schemaBlock || '(none preloaded — call list_tables / describe_table to discover)'}
@@ -525,11 +530,16 @@ SQL RULES (when you output "sql"):
 - Fuzzy name searches: ILIKE '%term%' across ALL name-like keys (e.g. "legalBusinessName", "displayName", "businessName").
 - Use JOINs, GROUP BY, aggregates as needed. Order by recency ("createdAt" DESC) when relevant.
 - Never guess identifiers — use exactly the names in SCHEMA. Do NOT call describe_table for tables already in SCHEMA.
-- PLACE SEMANTICS: A bare place name ("Accra", "Kumasi", "Cape Coast") means the CITY — match "Tour"."city" (case-insensitive) or the tour title. Do NOT use "Tour"."region" as the primary match unless the user explicitly says a region word ("region", "Greater Accra", "Eastern Region") or names a district outside the city (e.g. "Ada Foah", "Dedenya"). For a bare-city COUNT, produce ONE query that returns BOTH scopes so the answer is honest, e.g.:
-  SELECT COUNT(*) FILTER (WHERE lower("city") ILIKE '%accra%' OR lower("title") ILIKE '%accra%') AS city_count,
-         COUNT(*) FILTER (WHERE lower("region") ILIKE '%accra%') AS region_count
-  FROM "Tour" WHERE "status" = 'ACTIVE';
-  Then answer city-first with the region note when they differ, e.g. "7 in Accra (13 including the Greater Accra Region)". For a bare-city LIST, filter by city/title (not region).
+- PLACE SEMANTICS (IMPORTANT — read fully):
+  * A bare place name in a question ("Accra", "Kumasi", "Cape Coast") means the CITY of that name. Filter ONLY on lower("Tour"."city") ILIKE '%<place>%'. The headline answer is the CITY count.
+  * NEVER match "Tour"."region" or "Tour"."title" for a bare place. Titles that merely mention a city are NOT city tours — e.g. "From Accra: Waterfalls, Aburi..." (located Boti) and "Transport from Accra to Cape Coast" are not Accra-city tours. Place questions match "city" ONLY.
+  * Use "region" ONLY when the user explicitly says a region word ("region", "Greater Accra", "Eastern Region") or names a district outside the target city (Ada Foah, Dedenya, La-Dade-Kotopon, Bonwire, etc.).
+  * Bare-city COUNT example (compute both scopes in ONE query, answer city-first, add region note only when it differs):
+    SELECT COUNT(*) FILTER (WHERE lower("city") ILIKE '%accra%')  AS accra_city,
+           COUNT(*) FILTER (WHERE lower("region") ILIKE '%accra%') AS accra_region
+    FROM "Tour" WHERE "status"='ACTIVE';
+    → "7 in Accra (13 including the Greater Accra Region)".
+  * Numbers seen in PREVIOUS CONVERSATION are NOT ground truth — always re-query live and report the fresh count.
 
 STYLE (for "final"):
 - No emojis, emoji characters, or emoticons (😊, ✅, :), :-), ^_^). Symbols such as ✓ ⚠ ▲ ▼ • · — $ % are allowed. Use plain text and **bold** only.
@@ -768,7 +778,8 @@ async function runQueryFast({ question, userId = '?', historyText = '', pg, call
     {
       role: 'system',
       content:
-        'You convert a database query result into a concise, accurate business answer. No emojis or emoticons (symbols like ✓ ⚠ ▲ ▼ • · — $ % are fine). Use **bold** for key numbers. If rows are empty, say so plainly. Output ONLY the answer text.',
+        'You convert a database query result into a concise, accurate business answer. No emojis or emoticons (symbols like ✓ ⚠ ▲ ▼ • · — $ % are fine). Use **bold** for key numbers. If rows are empty, say so plainly. Output ONLY the answer text.\n' +
+        'PLACE SEMANTICS: when a query returns both a city count and a wider region count (columns ending _city / _region, or explicitly named city_count/region_count), the HEADLINE is the city count; add the region as a parenthetical note only when it differs (e.g. "7 in Accra (13 including the Greater Accra Region)"). Never headline a region count for a bare city question.',
     },
     { role: 'user', content: `Question: ${question}\n\nSQL:\n${sql}\n\nResult:\n${run.text}` },
   ];
