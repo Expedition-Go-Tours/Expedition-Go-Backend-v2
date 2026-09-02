@@ -37,12 +37,12 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
 
   const [eligible, pendingClearance, activeRequests, paidOut, window, cycle, bufferDays] = await Promise.all([
     prisma.booking.aggregate({
-      where: { tour: { supplierId }, payoutStatus: 'ELIGIBLE', paymentStatus: 'SUCCEEDED', status: { in: ['CONFIRMED', 'COMPLETED'] } },
+      where: { tour: { supplierId }, isSimulated: false, payoutStatus: 'ELIGIBLE', paymentStatus: 'SUCCEEDED', status: { in: ['CONFIRMED', 'COMPLETED'] } },
       _sum: { supplierPayout: true },
       _count: true,
     }),
     prisma.booking.aggregate({
-      where: { tour: { supplierId }, payoutStatus: 'PENDING', paymentStatus: 'SUCCEEDED', status: { in: ['CONFIRMED', 'COMPLETED'] } },
+      where: { tour: { supplierId }, isSimulated: false, payoutStatus: 'PENDING', paymentStatus: 'SUCCEEDED', status: { in: ['CONFIRMED', 'COMPLETED'] } },
       _sum: { supplierPayout: true },
       _count: true,
     }),
@@ -108,7 +108,7 @@ exports.getEarnings = catchAsync(async (req, res) => {
   const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const skip = (page - 1) * limit;
 
-  const where = { tour: { supplierId } };
+  const where = { tour: { supplierId }, isSimulated: false };
   if (req.query.payoutStatus) {
     const statuses = String(req.query.payoutStatus).split(',').map((s) => s.trim()).filter(Boolean);
     where.payoutStatus = { in: statuses };

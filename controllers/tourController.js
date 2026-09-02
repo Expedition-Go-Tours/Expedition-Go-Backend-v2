@@ -340,6 +340,55 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
   }
 });
 
+/**
+ * GET /api/tours/badges
+ *
+ * Public, lightweight badge payload for all active tours on ACTIVE suppliers —
+ * used by storefronts to enrich tour cards (pickup, cancellation policy,
+ * languages, meeting mode, accommodation) without fetching full tour data.
+ * Mirrors expedition/ghana badge handlers so any storefront base can call it.
+ */
+exports.getTourBadges = catchAsync(async (req, res) => {
+  const result = await cache.getOrSet('public:tour-badges', async () => {
+    const tours = await prisma.tour.findMany({
+      where: {
+        status: 'ACTIVE',
+        supplier: { supplierProfile: { status: 'ACTIVE' } },
+      },
+      select: {
+        id: true,
+        slug: true,
+        difficulty: true,
+        bookingAndTickets: true,
+        productContent: true,
+        categorization: true,
+      },
+    });
+
+    const badges = tours.map((t) => {
+      const bt = typeof t.bookingAndTickets === 'object' && t.bookingAndTickets !== null ? t.bookingAndTickets : {};
+      const pc = typeof t.productContent === 'object' && t.productContent !== null ? t.productContent : {};
+      const cat = typeof t.categorization === 'object' && t.categorization !== null ? t.categorization : {};
+      return {
+        id: t.id,
+        slug: t.slug,
+        difficulty: t.difficulty || null,
+        pickupIncluded: bt.pickupProvided || bt.pickupAvailable || false,
+        cancellationPolicy: typeof bt.cancellationPolicy === 'string'
+          ? bt.cancellationPolicy
+          : bt.cancellationPolicy?.label || null,
+        languages: pc.writingLanguage ? [pc.writingLanguage] : (cat.languages || []),
+        meetingMode: bt.meetingMode || null,
+        accommodationIncluded: !!cat.accommodationIncluded,
+      };
+    });
+
+    return { status: 'success', data: { tours: badges } };
+  }, 300);
+
+  res.status(200).json(result);
+});
+
 
 /**
  * Get available filter options
@@ -2042,7 +2091,7 @@ exports.getTourAnalytics = catchAsync(async (req, res, next) => {
     // Booking statistics
     prisma.booking.groupBy({
       by: ['status'],
-      where: { tourId: id },
+      where: { tourId: id, isSimulated: false },
       _count: true
     }),
     
@@ -2050,6 +2099,7 @@ exports.getTourAnalytics = catchAsync(async (req, res, next) => {
     prisma.booking.aggregate({
       where: {
         tourId: id,
+        isSimulated: false,
         status: 'CONFIRMED'
       },
       _sum: {
@@ -2078,6 +2128,7 @@ exports.getTourAnalytics = catchAsync(async (req, res, next) => {
         SUM("total") as revenue
       FROM "Booking" 
       WHERE "tourId" = ${id} 
+        AND "isSimulated" = false
         AND "selectedDate" >= NOW() - INTERVAL '12 months'
         AND "status" = 'CONFIRMED'
       GROUP BY DATE_TRUNC('month', "selectedDate")

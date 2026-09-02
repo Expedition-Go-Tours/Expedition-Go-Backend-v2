@@ -331,10 +331,11 @@ describe('supplierController', () => {
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
     });
 
-    it('returns dashboard with aggregated stats', async () => {
+    it('returns dashboard with aggregated stats (excludes simulated bookings)', async () => {
       prisma.supplierProfile.findUnique.mockResolvedValue(mockProfile);
       prisma.review.findMany.mockResolvedValue(mockReviews());
       prisma.review.count.mockResolvedValue(mockReviews().length);
+      prisma.booking.aggregate.mockResolvedValue({ _sum: { supplierPayout: 4000 } });
 
       await controller.getDashboard(req, res, next);
 
@@ -346,15 +347,23 @@ describe('supplierController', () => {
           by: ['status'],
           where: {
             tour: { supplierId: 'u-1' },
+            isSimulated: false,
             createdAt: { gte: expect.any(Date) },
           },
+        })
+      );
+      // earnings must come from a LIVE sum over real bookings, not the cached profile column
+      expect(prisma.booking.aggregate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { tour: { supplierId: 'u-1' }, isSimulated: false },
+          _sum: { supplierPayout: true },
         })
       );
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            earnings: expect.any(Object),
+            earnings: expect.objectContaining({ totalEarnings: 4000 }),
             tours: expect.objectContaining({ total: 8, active: 5, draft: 3 }),
             bookings: expect.objectContaining({ total: 22, confirmed: 10 }),
             reviews: expect.objectContaining({ averageRating: 4.5, totalReviews: mockReviews().length, recentReviews: expect.any(Array) }),
@@ -381,19 +390,25 @@ describe('supplierController', () => {
   // getEarnings
   // ============================
   describe('getEarnings', () => {
-    it('returns earnings with pagination', async () => {
-      prisma.supplierProfile.findUnique.mockResolvedValue(mockProfile);
+    it('returns earnings with pagination (excludes simulated, live supplier payout)', async () => {
       prisma.booking.findMany.mockResolvedValue(mockBookings());
       prisma.booking.count.mockResolvedValue(1);
+      prisma.booking.aggregate.mockResolvedValue({
+        _sum: { grossAmount: 5000, supplierPayout: 4000, platformCommission: 800 },
+      });
 
       await controller.getEarnings(req, res, next);
 
+      // list/count/aggregate must be scoped to real bookings
+      expect(prisma.booking.aggregate).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { tour: { supplierId: 'u-1' }, isSimulated: false } })
+      );
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             summary: expect.objectContaining({
-              totalEarnings: 5000,
+              totalEarnings: 4000,
               totalRevenue: 5000,
               totalCommission: 800,
               totalBookings: 1,
@@ -963,19 +978,29 @@ describe('supplierController', () => {
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
     });
 
-    it('returns supplier overview with aggregated data', async () => {
+    it('returns supplier overview with aggregated data (excludes simulated)', async () => {
       req.params = { id: 'sp-1' };
       prisma.supplierProfile.findUnique.mockResolvedValue(mockProfile);
       prisma.booking.count.mockResolvedValue(22);
       prisma.tour.findMany.mockResolvedValue([]);
+      prisma.booking.aggregate.mockResolvedValue({
+        _sum: { platformCommission: 800, supplierPayout: 4000 },
+      });
 
       await controller.getSupplierOverview(req, res, next);
 
+      // earnings reflects the LIVE sum over real bookings, not the cached column
+      expect(prisma.booking.aggregate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { tour: { supplierId: 'u-1' }, isSimulated: false },
+          _sum: { platformCommission: true, supplierPayout: true },
+        })
+      );
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            earnings: 5000,
+            earnings: 4000,
             totalBookings: 22,
             tours: expect.any(Object),
             bookings: expect.any(Object),
@@ -990,6 +1015,9 @@ describe('supplierController', () => {
       const profile = { ...mockProfile, userId: 'u-1' };
       prisma.supplierProfile.findUnique.mockResolvedValue(profile);
       prisma.booking.count.mockResolvedValue(2);
+      prisma.booking.aggregate.mockResolvedValue({
+        _sum: { platformCommission: 50, supplierPayout: 300 },
+      });
       prisma.tour.findMany.mockResolvedValue([
         {
           id: 't1',
@@ -1015,6 +1043,7 @@ describe('supplierController', () => {
       prisma.supplierProfile.findUnique.mockResolvedValue(mockProfile);
       prisma.tour.groupBy.mockResolvedValue([]);
       prisma.booking.groupBy.mockResolvedValue([]);
+      prisma.booking.aggregate.mockResolvedValue({ _sum: { platformCommission: 0, supplierPayout: 0 } });
 
       await controller.getSupplierOverview(req, res, next);
 

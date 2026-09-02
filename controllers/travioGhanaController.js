@@ -1758,7 +1758,7 @@ exports.getMyBookings = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
   const { status, page = 1, limit = 10 } = req.query;
 
-  const where = { customerId, source: 'GHANA' };
+  const where = { customerId, source: 'GHANA', isSimulated: false };
   // Accept a single status or a comma-separated list (e.g. status=CONFIRMED,PENDING)
   // so the navbar counter can include reserve-now-pay-later bookings, which are
   // PENDING until the deferred charge settles.
@@ -2048,6 +2048,7 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
 
   const where = {
     tour: { supplierId },
+    isSimulated: false,
     // No source filter: a supplier owns their tours, so every booking on them
     // (Travio Ghana or Expedition storefront) is visible here. The frontend
     // shows which platform each booking came from via the source field.

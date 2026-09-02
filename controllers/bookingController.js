@@ -711,7 +711,7 @@ exports.getMyBookings = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
   const { status, page = 1, limit = 10 } = req.query;
 
-  const where = { customerId };
+  const where = { customerId, isSimulated: false };
   if (status) {
     where.status = status;
   }
@@ -1079,7 +1079,8 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
   const where = {
     tour: {
       supplierId
-    }
+    },
+    isSimulated: false
   };
 
   if (status) where.status = status;
@@ -1182,6 +1183,7 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
 
   const where = {
     tour: { supplierId },
+    isSimulated: false,
     // Only bookings with a stored pickup snapshot (JSON column is DB NULL otherwise).
     pickup: { not: Prisma.DbNull },
     travelDate: { gte: fromDate, lte: toDate },

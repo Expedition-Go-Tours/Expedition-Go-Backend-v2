@@ -1776,7 +1776,7 @@ exports.getMyBookings = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
   const { status, page = 1, limit = 10 } = req.query;
 
-  const where = { customerId, source: 'EXPEDITION' };
+  const where = { customerId, source: 'EXPEDITION', isSimulated: false };
   // Accept a single status or a comma-separated list (e.g. status=CONFIRMED,PENDING)
   // so the navbar counter can include reserve-now-pay-later bookings, which are
   // PENDING until the deferred charge settles.
@@ -2067,6 +2067,7 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
   const where = {
     tour: { supplierId },
     source: 'EXPEDITION',
+    isSimulated: false,
   };
   if (status) where.status = status;
 

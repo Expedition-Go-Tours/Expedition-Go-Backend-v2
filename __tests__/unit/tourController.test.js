@@ -391,6 +391,55 @@ describe('tourController', () => {
   });
 
   // ============================
+  // getTourBadges
+  // ============================
+  describe('getTourBadges', () => {
+    it('returns badge payload for active tours on active suppliers', async () => {
+      prisma.tour.findMany.mockResolvedValue([
+        {
+          id: 't1',
+          slug: 'cape-coast',
+          difficulty: 'MODERATE',
+          bookingAndTickets: { pickupProvided: true, cancellationPolicy: { label: 'Free cancellation' }, meetingMode: 'hotel' },
+          productContent: { writingLanguage: 'English' },
+          categorization: { accommodationIncluded: true },
+        },
+      ]);
+
+      await controller.getTourBadges(req, res, next);
+
+      expect(prisma.tour.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            status: 'ACTIVE',
+            supplier: { supplierProfile: { status: 'ACTIVE' } },
+          },
+        })
+      );
+      const body = res.json.mock.calls[0][0];
+      expect(body.data.tours).toEqual([
+        expect.objectContaining({
+          id: 't1',
+          slug: 'cape-coast',
+          pickupIncluded: true,
+          cancellationPolicy: 'Free cancellation',
+          languages: ['English'],
+          meetingMode: 'hotel',
+          accommodationIncluded: true,
+        }),
+      ]);
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('returns empty tours when none active', async () => {
+      prisma.tour.findMany.mockResolvedValue([]);
+      await controller.getTourBadges(req, res, next);
+      const body = res.json.mock.calls[0][0];
+      expect(body.data.tours).toEqual([]);
+    });
+  });
+
+  // ============================
   // getTour
   // ============================
   describe('getTour', () => {

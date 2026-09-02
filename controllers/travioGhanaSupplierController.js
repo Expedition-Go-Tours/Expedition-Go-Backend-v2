@@ -48,12 +48,12 @@ exports.getDashboard = catchAsync(async (req, res) => {
       }),
       prisma.booking.groupBy({
         by: ['status'],
-        where: { tour: { supplierId } },
+        where: { tour: { supplierId }, isSimulated: false },
         _count: true,
       }),
       prisma.review.count({ where: { tour: { supplierId }, status: 'APPROVED' } }),
       prisma.booking.aggregate({
-        where: { tour: { supplierId }, paymentStatus: 'SUCCEEDED' },
+        where: { tour: { supplierId }, isSimulated: false, paymentStatus: 'SUCCEEDED' },
         _sum: { supplierPayout: true, grossAmount: true },
       }),
     ]);
@@ -411,16 +411,16 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
 
   const [totalEarnings, pendingPayouts, completedPayouts] = await Promise.all([
     prisma.booking.aggregate({
-      where: { tour: { supplierId }, paymentStatus: 'SUCCEEDED' },
+      where: { tour: { supplierId }, isSimulated: false, paymentStatus: 'SUCCEEDED' },
       _sum: { grossAmount: true, platformCommission: true, supplierPayout: true },
     }),
     prisma.payout.aggregate({
-      where: { booking: { tour: { supplierId } }, status: 'PENDING' },
+      where: { booking: { tour: { supplierId }, isSimulated: false }, status: 'PENDING' },
       _sum: { amount: true },
       _count: true,
     }),
     prisma.payout.aggregate({
-      where: { booking: { tour: { supplierId } }, status: 'PAID' },
+      where: { booking: { tour: { supplierId }, isSimulated: false }, status: 'PAID' },
       _sum: { amount: true },
       _count: true,
     }),

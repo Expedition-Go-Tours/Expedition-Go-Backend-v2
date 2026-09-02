@@ -537,11 +537,13 @@ router.post('/:id/beacon', tourController.viewBeacon);
  */
 router.get('/offers', tourController.getOfferListings);
 
+router.get('/badges', tourController.getTourBadges);
+
 /**
  * @swagger
  * /tours/{id}:
  *   get:
- *     summary: Get single tour by ID or slug
+ *     summary: Get a single tour by ID
  *     tags: [Tours]
  *     parameters:
  *       - name: id

@@ -322,6 +322,7 @@ exports.getOverview = catchAsync(async (req, res, next) => {
     /* Booking status distribution (platform-wide snapshot) */
     prisma.booking.groupBy({
       by: ['status'],
+      where: { isSimulated: false },
       _count: true,
     }),
 
@@ -1425,7 +1426,7 @@ exports.getBookings = catchAsync(async (req, res) => {
   const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
   const skip = (pageNum - 1) * limitNum;
 
-  const where = {};
+  const where = { isSimulated: false };
 
   if (status) {
     where.status = status;
@@ -1520,6 +1521,7 @@ exports.getBookings = catchAsync(async (req, res) => {
     prisma.booking.count({ where }),
     prisma.booking.groupBy({
       by: ['status'],
+      where: { isSimulated: false },
       _count: { id: true },
     }),
   ]);
