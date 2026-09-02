@@ -62,6 +62,8 @@ let schemaCacheTime = 0;
 // Real columns per table (from the compact-schema build + describe_table),
 // used to suggest valid identifiers when the model hallucinates a column.
 const schemaColumns = new Map(); // tableName -> Set(columnName)
+// Enum values per column "Table"."column" -> ['A','B',...], for the same reason.
+const schemaEnums = new Map(); // "Table.column" -> string[]
 
 function levenshtein(a, b) {
   const m = a.length;
@@ -143,11 +145,42 @@ function suggestColumns(sql, errorMsg) {
   return ` Did you mean ${top.slice(0, -1).join(', ')}${top.length > 1 ? ' or ' : ' '}${top[top.length - 1]}?`;
 }
 
-function stripFences(text) {
-  return text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+/**
+ * Given an enum mismatch error ("invalid input value for enum \"X\": \"bad\""),
+ * hand back the valid values for the enum column(s) the query touched.
+ * Deterministic — no extra model call. @returns {string} '' if nothing useful.
+ */
+function suggestEnumValues(sql, errorMsg) {
+  const m = String(errorMsg || '').match(/invalid input value for enum\s+"([^"]+)":\s+"([^"]+)"/i);
+  if (!m) return '';
+  const badValue = m[2];
+  const tables = referencedTables(sql);
+  const order = tables.length ? tables : [...schemaEnums.keys()].map((k) => k.split('.')[0]);
+
+  const hints = [];
+  for (const tbl of order) {
+    const cols = [];
+    for (const [key, values] of schemaEnums) {
+      const [t, c] = key.split('.');
+      if (t !== tbl) continue;
+      const quoted = values.map((v) => `'${v}'`).join(', ');
+      cols.push({ column: c, values, quoted });
+    }
+    if (!cols.length) continue;
+    for (const col of cols) {
+      const validUpper = col.values.some((v) => v === String(badValue).toUpperCase());
+      hints.push(
+        `"${tbl}"."${col.column}" accepts: ${col.quoted}${validUpper ? ` (note: uppercase, e.g. '${String(badValue).toUpperCase()}', not '${badValue}')` : ''}`
+      );
+    }
+  }
+  if (!hints.length) return '';
+  return ` Valid enum values — ${hints.join('; ')}.`;
 }
 
-/**
+function stripFences(text) {
+  return text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+}/**
  * Extract the first JSON object from a model response.
  * Handles markdown fences and surrounding prose.
  * @throws {Error} if no valid JSON object can be found.
@@ -273,6 +306,12 @@ async function describeTable(pg, name) {
     // Index real columns for deterministic identifier suggestions.
     if (!schemaColumns.has(table)) schemaColumns.set(table, new Set());
     schemaColumns.get(table).add(c.column_name);
+    if (c.enum_values) {
+      schemaEnums.set(
+        `${table}.${c.column_name}`,
+        String(c.enum_values).split('|').map((v) => v.trim()).filter(Boolean)
+      );
+    }
   }
 
   const fks = await pg.query(
@@ -321,6 +360,13 @@ async function buildCompactSchema(pg) {
       // Index real column names for deterministic suggestions.
       if (!schemaColumns.has(c.table_name)) schemaColumns.set(c.table_name, new Set());
       schemaColumns.get(c.table_name).add(c.column_name);
+      // Index enum values for deterministic enum-hint suggestions.
+      if (c.enum_values) {
+        schemaEnums.set(
+          `${c.table_name}.${c.column_name}`,
+          String(c.enum_values).split('|').map((v) => v.trim()).filter(Boolean)
+        );
+      }
     }
 
     // Foreign keys for the critical tables
@@ -372,9 +418,15 @@ async function runSql(pg, sql) {
     };
   } catch (e) {
     const msg = String(e.message || '');
-    // On a hallucinated column, append deterministic real-column suggestions
-    // so the model fixes it in one retry instead of guessing repeatedly.
-    return { error: /does not exist/i.test(msg) ? `${msg}${suggestColumns(guard.safeSql, msg)}` : msg };
+    if (/does not exist/i.test(msg)) {
+      // Hallucinated column → hand over the real columns.
+      return { error: `${msg}${suggestColumns(guard.safeSql, msg)}` };
+    }
+    if (/invalid input value for enum/i.test(msg)) {
+      // Wrong enum casing/value → hand over the valid values.
+      return { error: `${msg}${suggestEnumValues(guard.safeSql, msg)}` };
+    }
+    return { error: msg };
   }
 }
 
@@ -729,6 +781,7 @@ function resetSchemaCache() {
   schemaCache = null;
   schemaCacheTime = 0;
   schemaColumns.clear();
+  schemaEnums.clear();
 }
 
 module.exports = {
@@ -739,6 +792,7 @@ module.exports = {
   stripEmojis,
   normalizeQuestion,
   suggestColumns,
+  suggestEnumValues,
   MAX_STEPS,
   CRITICAL_TABLES,
   resetSchemaCache,

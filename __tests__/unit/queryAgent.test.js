@@ -6,6 +6,7 @@ const {
   stripEmojis,
   normalizeQuestion,
   suggestColumns,
+  suggestEnumValues,
   MAX_STEPS,
   resetSchemaCache,
 } = require('../../bots/discord-bot/queryAgent');
@@ -463,6 +464,34 @@ describe('suggestColumns (deterministic column suggestions)', () => {
   it('returns empty when the message is not a missing column', () => {
     expect(suggestColumns('SELECT 1', 'relation "Tour" does not exist')).toBe('');
     expect(suggestColumns('SELECT 1', 'syntax error at or near "SELECT"')).toBe('');
+  });
+});
+
+describe('suggestEnumValues (deterministic enum hints)', () => {
+  it('lists the valid uppercase enum values for the referenced table', () => {
+    resetSchemaCache();
+    const pg = makePg({
+      schemaCols: [
+        { table_name: 'Tour', column_name: 'status', enum_values: 'DRAFT|ACTIVE|PAUSED|ARCHIVED|PENDING_APPROVAL|REJECTED' },
+        { table_name: 'Booking', column_name: 'paymentStatus', enum_values: 'PENDING|SUCCEEDED|FAILED' },
+      ],
+    });
+    return runQueryFast({ question: 'x', pg, callMimo: async () => '{"sql":"SELECT 1"}' }).then(() => {
+      const out = suggestEnumValues(
+        'SELECT COUNT(*) FROM "Tour" WHERE "status" = \'active\'',
+        'invalid input value for enum "TourStatus": "active"'
+      );
+      expect(out).toContain('"Tour"."status" accepts:');
+      expect(out).toContain("'ACTIVE'");
+      expect(out).toContain("'DRAFT'");
+      expect(out).toContain("uppercase, e.g. 'ACTIVE', not 'active'");
+    });
+  });
+
+  it('returns empty when no enum columns are indexed for the touched table', () => {
+    resetSchemaCache();
+    expect(suggestEnumValues('SELECT * FROM "UnknownTable"', 'invalid input value for enum "X": "a"')).toBe('');
+    expect(suggestEnumValues('SELECT 1', 'syntax error at or near "x"')).toBe('');
   });
 });
 
