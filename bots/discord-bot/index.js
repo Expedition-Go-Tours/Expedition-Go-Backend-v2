@@ -8,7 +8,7 @@ const { Client: Pg } = require('pg');
 const { callMimo } = require('../../utils/mimoClient');
 const { runQueryAgent } = require('./queryAgent');
 const { startIncidentMonitor } = require('./incidentMonitor');
-const { collectDigest } = require('../../scripts/dailyDigest');
+const { buildDigestMessage } = require('../../scripts/dailyDigest');
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.DISCORD_GUILD_ID;
@@ -439,12 +439,11 @@ client.on('interactionCreate', async (interaction) => {
 
       case 'digest': {
         try {
-          const digest = await collectDigest();
+          const digest = await buildDigestMessage();
           const embed = new EmbedBuilder()
             .setTitle(digest.title)
             .setColor(digest.color || 0x00bcd4)
-            .setDescription(digest.description)
-            .addFields(digest.fields || []);
+            .setDescription(digest.description);
           await interaction.editReply({ embeds: [embed] });
         } catch (e) {
           console.error('[digest] error:', e.message);
