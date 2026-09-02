@@ -118,8 +118,8 @@ function latestBackup() {
 }
 
 // ── Conversation history (Redis-backed, per-user) ────────────────────
-const HISTORY_TTL_SEC = 3600; // 1 hour
-const HISTORY_MAX_TURNS = 12; // 6 Q&A pairs
+const HISTORY_TTL_SEC = 7 * 24 * 60 * 60; // 7 days
+const HISTORY_MAX_TURNS = 40; // ~20 Q&A pairs
 
 function historyKey(userId) { return `ai:conv:${userId}`; }
 
@@ -678,10 +678,18 @@ client.on('interactionCreate', async (interaction) => {
         }
         const question = interaction.options.getString('question');
         try {
+          const history = await getHistory(interaction.user.id);
+          const historyText = history.length
+            ? history.map((t) => `${t.role}: ${t.content}`).join('\n')
+            : '';
+
+          await pushTurn(interaction.user.id, 'user', question);
+
           const { final, sqlLogs, rowCount } = await runQueryAgent({
             question,
             userId: interaction.user.id,
-            historyText: '',
+            historyText,
+            history,
             pg,
             callMimo,
           });
@@ -691,6 +699,7 @@ client.on('interactionCreate', async (interaction) => {
             .setDescription(final.slice(0, 4000));
           await interaction.editReply({ embeds: [embed] });
           console.log(`[ask] user=${interaction.user.id} question="${question}" sql=${JSON.stringify(sqlLogs)} rows=${rowCount}`);
+          await pushTurn(interaction.user.id, 'assistant', final);
         } catch (e) {
           console.error('[ask] error:', e.message);
           await interaction.editReply(`AI error: ${e.message.slice(0, 500)}`);
