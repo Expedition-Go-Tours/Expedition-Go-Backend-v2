@@ -9,21 +9,35 @@ function canAccessType(user, type) {
   const keys = user.permissionKeys || [];
   if (keys.includes('dashboard.*')) return true;
 
-  // Role-based access — suppliers see their own conversation types
-  if (user.roles?.includes('supplier')) {
-    return type === 'SUPPLIER_ADMIN' || type === 'SUPPLIER_CUSTOMER';
-  }
-  // Customers see support conversations
+  // Additive role → type mapping. A user may hold several chat-relevant roles
+  // (e.g. a supplier + expedition operator, or a customer who also runs a
+  // supplier profile), so we allow the UNION of every role's conversation
+  // types instead of returning on the first matching role. Access to message
+  // bodies is still strictly scoped by participation (chatService queries by
+  // the caller's userId), so widening type visibility cannot leak other
+  // users' conversations.
+  const allowed = new Set();
   if (user.roles?.includes('customer')) {
-    return type === 'USER_SUPPORT';
+    // Travio + Expedition travelers converse with suppliers/operators and
+    // with platform support.
+    allowed.add('SUPPLIER_CUSTOMER');
+    allowed.add('EXPEDITION_CUSTOMER');
+    allowed.add('USER_SUPPORT');
   }
-  // Admin/expedition — check specific permission keys
+  if (user.roles?.includes('supplier')) {
+    allowed.add('SUPPLIER_ADMIN');
+    allowed.add('SUPPLIER_CUSTOMER');
+  }
+  if (user.roles?.includes('expedition')) {
+    allowed.add('EXPEDITION_CUSTOMER');
+  }
+
+  if (allowed.has(type)) return true;
+
+  // Admin / explicitly-granted permission keys.
   if (type === 'SUPPLIER_ADMIN') return keys.includes('chat.suppliers');
   if (type === 'USER_SUPPORT') return keys.includes('chat.customers');
-  if (type === 'EXPEDITION_CUSTOMER') {
-    if (user.roles?.includes('expedition')) return true;
-    return keys.includes('chat.expedition');
-  }
+  if (type === 'EXPEDITION_CUSTOMER') return keys.includes('chat.expedition');
   return false;
 }
 

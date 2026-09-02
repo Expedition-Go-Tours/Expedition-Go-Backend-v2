@@ -69,6 +69,38 @@ describe('chatController', () => {
       const data = res.json.mock.calls[0][0];
       expect(data.data.conversations).toHaveLength(2);
     });
+
+    it('lets a customer see their operator (SUPPLIER_CUSTOMER), support and expedition threads', async () => {
+      req.user = { id: 'cust-1', roles: ['customer'] };
+      chatService.getConversations.mockResolvedValue([
+        { id: 'c-1', type: 'SUPPLIER_ADMIN', title: 'A' },
+        { id: 'c-2', type: 'SUPPLIER_CUSTOMER', title: 'Operator' },
+        { id: 'c-3', type: 'EXPEDITION_CUSTOMER', title: 'Support' },
+        { id: 'c-4', type: 'USER_SUPPORT', title: 'Help' },
+      ]);
+
+      await controller.getConversations(req, res, next);
+
+      const data = res.json.mock.calls[0][0];
+      const ids = data.data.conversations.map((c) => c.id);
+      expect(ids).toEqual(['c-2', 'c-3', 'c-4']);
+    });
+
+    it('lets a supplier+expedition operator see supplier and expedition conversations', async () => {
+      req.user = { id: 'op-1', roles: ['supplier', 'expedition'] };
+      chatService.getConversations.mockResolvedValue([
+        { id: 'c-1', type: 'SUPPLIER_ADMIN', title: 'A' },
+        { id: 'c-2', type: 'SUPPLIER_CUSTOMER', title: 'Customer' },
+        { id: 'c-3', type: 'EXPEDITION_CUSTOMER', title: 'Support' },
+        { id: 'c-4', type: 'USER_SUPPORT', title: 'B' },
+      ]);
+
+      await controller.getConversations(req, res, next);
+
+      const data = res.json.mock.calls[0][0];
+      const ids = data.data.conversations.map((c) => c.id);
+      expect(ids).toEqual(['c-1', 'c-2', 'c-3']);
+    });
   });
 
   describe('getOrCreateConversation', () => {
