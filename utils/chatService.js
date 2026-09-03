@@ -186,37 +186,42 @@ async function getConversations(userId) {
 }
 
 async function getMessages(conversationId, userId, cursor, limit = 50) {
-  userId = await resolveChatUserId(userId);
-
-  const participant = await prisma.conversationParticipant.findUnique({
-    where: { conversationId_userId: { conversationId, userId } }
-  });
-
-  if (!participant) throw Object.assign(new Error('Conversation not found'), { statusCode: 404 });
-
-  const where = { conversationId };
-  if (cursor) {
-    where.createdAt = { lt: new Date(cursor) };
-  }
-
-  const messages = await prisma.message.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    take: limit + 1,
-    include: {
-      sender: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, firebaseUid: true, roles: true } }
+    userId = await resolveChatUserId(userId);
+  
+    const participant = await prisma.conversationParticipant.findUnique({
+      where: { conversationId_userId: { conversationId, userId } }
+    });
+  
+    if (!participant) throw Object.assign(new Error('Conversation not found'), { statusCode: 404 });
+  
+    const where = { conversationId };
+    if (cursor) {
+      where.createdAt = { lt: new Date(cursor) };
     }
-  });
-
-  const hasMore = messages.length > limit;
-  if (hasMore) messages.pop();
-
-  return {
-    messages: messages.reverse(),
-    nextCursor: hasMore ? messages[0]?.createdAt.toISOString() : null,
-    hasMore,
-  };
-}
+  
+    const messages = await prisma.message.findMany({
+      where: {
+        ...where,
+        // "Delete for me": hide messages this user has hidden from their own
+        // view only (the row is kept for the other participant).
+        hiddenFor: { none: { userId } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+      include: {
+        sender: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, firebaseUid: true, roles: true } }
+      }
+    });
+  
+    const hasMore = messages.length > limit;
+    if (hasMore) messages.pop();
+  
+    return {
+      messages: messages.reverse(),
+      nextCursor: hasMore ? messages[0]?.createdAt.toISOString() : null,
+      hasMore,
+    };
+  }
 
 async function sendMessage(conversationId, senderId, content, attachment = null) {
   const originalSenderId = senderId;
@@ -404,6 +409,32 @@ async function deleteMessage(conversationId, messageId, userId) {
   await prisma.message.delete({ where: { id: messageId } });
 }
 
+/**
+ * "Delete for me": the sender hides a message from their OWN view only.
+ * The row and any attachment are kept — the other participant still sees the
+ * message. Only the sender may hide their own message (recipients cannot hide
+ * anyone's messages). Re-hiding is idempotent via the composite PK.
+ */
+async function hideMessageForMe(conversationId, messageId, userId) {
+  const resolvedUserId = await resolveChatUserId(userId);
+
+  const message = await prisma.message.findFirst({
+    where: { id: messageId, conversationId },
+    select: { id: true, senderId: true },
+  });
+
+  if (!message) throw Object.assign(new Error('Message not found'), { statusCode: 404 });
+  if (message.senderId !== resolvedUserId) throw Object.assign(new Error('You can only delete your own messages'), { statusCode: 403 });
+
+  await prisma.chatMessageHide.upsert({
+    where: { messageId_userId: { messageId, userId: resolvedUserId } },
+    create: { messageId, userId: resolvedUserId },
+    update: {},
+  });
+
+  return resolvedUserId;
+}
+
 async function deleteConversation(conversationId, userId) {
   const resolvedUserId = await resolveChatUserId(userId);
 
@@ -478,5 +509,6 @@ module.exports = {
   getSharedExpeditionId,
   updateMessage,
   deleteMessage,
+  hideMessageForMe,
   deleteConversation,
 };

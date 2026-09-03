@@ -333,34 +333,34 @@ model User {
   supplierProfile SupplierProfile?
 
   // Relationships
-  tours                      Tour[]
-  bookings                   Booking[]
-  payouts                    Payout[]
-  payoutMethods              PayoutMethod[]
-  payoutRequests             PayoutRequest[]
-  disputesOpened             Dispute[]           @relation("DisputeOpener")
-  disputesAgainst            Dispute[]           @relation("DisputeSupplier")
-  disputesResolved           Dispute[]           @relation("DisputeResolver")
-  reviews                    Review[]
-  notifications              Notification[]
-  cartItems                  CartItem[]
-  teamMembers                TeamMember[]              @relation("SupplierTeam")
-  teamInvitations            TeamMember[]              @relation("TeamInviter")
-  chatParticipants           ConversationParticipant[]
-  messages                   Message[]
-  specialOffers              SpecialOffer[]
-  expeditionTours            ExpeditionTour[]
-  publishedExpeditionTours   ExpeditionTour[]          @relation("ExpeditionPublishedBy")
-  unpublishedExpeditionTours ExpeditionTour[]          @relation("ExpeditionUnpublishedBy")
-  travioGhanaTours           TravioGhanaTour[]         @relation("TravioGhanaAddedBy")
-  publishedTravioGhanaTours  TravioGhanaTour[]         @relation("TravioGhanaPublishedBy")
-  unpublishedTravioGhanaTours TravioGhanaTour[]        @relation("TravioGhanaUnpublishedBy")
-  publishedTravioAfricaTours  TravioAfricaTour[]        @relation("TravioAfricaPublishedBy")
-  unpublishedTravioAfricaTours TravioAfricaTour[]       @relation("TravioAfricaUnpublishedBy")
-  articles                   Article[]
-  keywordRequests            KeywordRequest[]
-  wishlistItems              WishlistItem[]
-  checkoutDrafts             CheckoutDraft[]
+  tours                        Tour[]
+  bookings                     Booking[]
+  payouts                      Payout[]
+  payoutMethods                PayoutMethod[]
+  payoutRequests               PayoutRequest[]
+  disputesOpened               Dispute[]                 @relation("DisputeOpener")
+  disputesAgainst              Dispute[]                 @relation("DisputeSupplier")
+  disputesResolved             Dispute[]                 @relation("DisputeResolver")
+  reviews                      Review[]
+  notifications                Notification[]
+  cartItems                    CartItem[]
+  teamMembers                  TeamMember[]              @relation("SupplierTeam")
+  teamInvitations              TeamMember[]              @relation("TeamInviter")
+  chatParticipants             ConversationParticipant[]
+  messages                     Message[]
+  specialOffers                SpecialOffer[]
+  expeditionTours              ExpeditionTour[]
+  publishedExpeditionTours     ExpeditionTour[]          @relation("ExpeditionPublishedBy")
+  unpublishedExpeditionTours   ExpeditionTour[]          @relation("ExpeditionUnpublishedBy")
+  travioGhanaTours             TravioGhanaTour[]         @relation("TravioGhanaAddedBy")
+  publishedTravioGhanaTours    TravioGhanaTour[]         @relation("TravioGhanaPublishedBy")
+  unpublishedTravioGhanaTours  TravioGhanaTour[]         @relation("TravioGhanaUnpublishedBy")
+  publishedTravioAfricaTours   TravioAfricaTour[]        @relation("TravioAfricaPublishedBy")
+  unpublishedTravioAfricaTours TravioAfricaTour[]        @relation("TravioAfricaUnpublishedBy")
+  articles                     Article[]
+  keywordRequests              KeywordRequest[]
+  wishlistItems                WishlistItem[]
+  checkoutDrafts               CheckoutDraft[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -550,7 +550,7 @@ model PayoutMethod {
   // Status
   verified Boolean @default(false)
 
-  payouts Payout[] // Payouts that used this method
+  payouts        Payout[] // Payouts that used this method
   payoutRequests PayoutRequest[] // Payout requests paid to this method
 
   createdAt DateTime @default(now())
@@ -605,11 +605,11 @@ model Tour {
   tags            String[]
 
   // Location (PostGIS coordinates)
-  latitude   Float? // Used with PostGIS ST_DWithin for geo-search
-  longitude  Float? // Used with PostGIS ST_DWithin for geo-search
-  city       String? // Extracted from productContent.location.city for indexed filtering
-  country    String? // Extracted from productContent.location.country for indexed filtering
-  region     String? // Extracted from productContent.location.region for indexed filtering
+  latitude    Float? // Used with PostGIS ST_DWithin for geo-search
+  longitude   Float? // Used with PostGIS ST_DWithin for geo-search
+  city        String? // Extracted from productContent.location.city for indexed filtering
+  country     String? // Extracted from productContent.location.country for indexed filtering
+  region      String? // Extracted from productContent.location.region for indexed filtering
   attractions String[] @default([]) // Extracted from productContent.locations[].name — specific attraction/stop names
 
   // Normalized categorization (extracted from categorization JSON for indexed filtering)
@@ -627,17 +627,17 @@ model Tour {
   location_geom Unsupported("geography(Point, 4326)")?
 
   // AI enrichment (Populated asynchronously by MiMo via BullMQ)
-  aiPrimaryCategory     String?   // MiMo's primary classification (e.g. "sports_adventure")
+  aiPrimaryCategory     String? // MiMo's primary classification (e.g. "sports_adventure")
   aiSecondaryCategories String[]  @default([]) // MiMo's secondary classifications
   aiMoodTags            String[]  @default([]) // AI-derived mood/vibe tags
-  aiActivityLevel       String?   // "low" | "medium" | "high"
-  aiConfidence          Float?    // 0.0–1.0, how confident MiMo is
+  aiActivityLevel       String? // "low" | "medium" | "high"
+  aiConfidence          Float? // 0.0–1.0, how confident MiMo is
   aiScoredAt            DateTime? // When AI last processed this tour
   aiProcessingStatus    String    @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED
 
   // CLIP embeddings (self-hosted, zero-cost image/text vectors)
-  clipEmbedding     Json?       // Average CLIP image embedding (512 floats)
-  clipTextEmbedding Json?       // CLIP text embedding of title+description (512 floats)
+  clipEmbedding     Json? // Average CLIP image embedding (512 floats)
+  clipTextEmbedding Json? // CLIP text embedding of title+description (512 floats)
 
   // Statistics
   totalBookings Int      @default(0)
@@ -699,15 +699,15 @@ model TourDateOverride {
 }
 
 model DailyTourStats {
-  id              String   @id @default(cuid())
-  tourId          String
-  tour            Tour     @relation(fields: [tourId], references: [id], onDelete: Cascade)
-  date            DateTime @db.Date
-  totalViews      Int      @default(0)
-  uniqueVisitors  Int      @default(0)
-  topCountry      String?  @db.VarChar(2)
-  topReferrer     String?
-  createdAt       DateTime @default(now())
+  id             String   @id @default(cuid())
+  tourId         String
+  tour           Tour     @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  date           DateTime @db.Date
+  totalViews     Int      @default(0)
+  uniqueVisitors Int      @default(0)
+  topCountry     String?  @db.VarChar(2)
+  topReferrer    String?
+  createdAt      DateTime @default(now())
 
   @@unique([tourId, date])
   @@index([tourId, date])
@@ -796,7 +796,7 @@ model Booking {
   source       BookingSource @default(TRAVIO)
   status       BookingStatus @default(PENDING)
   travelers    Json // Traveler information
-  travelDate   DateTime @map("selectedDate")
+  travelDate   DateTime      @map("selectedDate")
   selectedTime String?
   isSimulated  Boolean       @default(false)
 
@@ -808,17 +808,17 @@ model Booking {
   leadTravelerPhone String?
 
   // Pricing
-  subtotal  Decimal @db.Decimal(10, 2)
-  taxes     Decimal @default(0) @db.Decimal(10, 2)
-  fees      Decimal @default(0) @db.Decimal(10, 2)
-  discounts Decimal @default(0) @db.Decimal(10, 2)
+  subtotal    Decimal @db.Decimal(10, 2)
+  taxes       Decimal @default(0) @db.Decimal(10, 2)
+  fees        Decimal @default(0) @db.Decimal(10, 2)
+  discounts   Decimal @default(0) @db.Decimal(10, 2)
   grossAmount Decimal @map("total") @db.Decimal(10, 2)
-  currency  String  @default("USD")
+  currency    String  @default("USD")
 
   // Commission & Payouts
-  commissionRate   Decimal @db.Decimal(5, 4) // e.g., 0.1500 for 15%
+  commissionRate     Decimal @db.Decimal(5, 4) // e.g., 0.1500 for 15%
   platformCommission Decimal @map("commissionAmount") @db.Decimal(10, 2)
-  supplierPayout   Decimal @db.Decimal(10, 2)
+  supplierPayout     Decimal @db.Decimal(10, 2)
 
   // Finance v2 — fund lifecycle (see BookingPayoutStatus enum)
   payoutStatus BookingPayoutStatus @default(PENDING)
@@ -829,10 +829,10 @@ model Booking {
   paymentStatus           PaymentStatus @default(PENDING)
   paidAt                  DateTime?
   // 'now' = charged at booking (Pay now), 'later' = Reserve now, pay later
-  paymentTiming         String        @default("now")
+  paymentTiming           String        @default("now")
   // Pay-later retry tracking (max 3 retries before cancellation)
-  chargeRetries         Int           @default(0)
-  nextRetryAt           DateTime?
+  chargeRetries           Int           @default(0)
+  nextRetryAt             DateTime?
 
   // Cancellation
   cancellationReason String?
@@ -855,17 +855,17 @@ model Booking {
   // Offer snapshot fields (denormalized for historical accuracy — preserved even if the offer is edited/deleted)
   offerName         String?
   offerPromoCode    String?
-  offerDiscountType String?  // PERCENTAGE or FIXED
+  offerDiscountType String? // PERCENTAGE or FIXED
   offerDiscountPct  Int?
   offerDiscountFix  Float?
 
   // Relationships
-  review    Review?
-  payouts   Payout[]
+  review             Review?
+  payouts            Payout[]
   payoutRequestItems PayoutRequestItem[]
-  disputes  Dispute[]
-  reminders BookingReminder[]
-  changes   BookingChange[]
+  disputes           Dispute[]
+  reminders          BookingReminder[]
+  changes            BookingChange[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -920,11 +920,11 @@ model BookingChange {
 // capacity (availabilityCore counts status='HOLDING', unexpired) and are
 // released by the expired-session webhook or the expire-checkout-holds sweep.
 model CheckoutDraft {
-  id             String   @id @default(cuid())
-  customerId     String
-  customer       User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  tourId         String
-  tour           Tour     @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  id         String @id @default(cuid())
+  customerId String
+  customer   User   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tourId     String
+  tour       Tour   @relation(fields: [tourId], references: [id], onDelete: Cascade)
 
   // Slot being held
   travelDate   DateTime @map("selectedDate")
@@ -942,14 +942,14 @@ model CheckoutDraft {
   supplierPayout     Decimal @db.Decimal(10, 2)
   currency           String  @default("USD")
 
-  stripeSessionId String? @unique
+  stripeSessionId String?  @unique
   // HOLDING  — seats reserved, awaiting payment
   // PAID     — converted to a Booking by the completed webhook
   // EXPIRED  — released (expired session / sweep / abandoned)
   // REFUNDED — payment landed but capacity vanished mid-hold; money returned
-  status    String   @default("HOLDING")
-  expiresAt DateTime
-  bookingId String? // Set when materialized (PAID/REFUNDED bookkeeping)
+  status          String   @default("HOLDING")
+  expiresAt       DateTime
+  bookingId       String? // Set when materialized (PAID/REFUNDED bookkeeping)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1063,7 +1063,7 @@ model PayoutRequestItem {
   payoutRequest   PayoutRequest @relation(fields: [payoutRequestId], references: [id], onDelete: Cascade)
 
   // A booking can only ever be part of one payout request
-  bookingId String @unique
+  bookingId String  @unique
   booking   Booking @relation(fields: [bookingId], references: [id])
 
   // Immutable money snapshots at request time
@@ -1092,9 +1092,9 @@ model Dispute {
   booking   Booking @relation(fields: [bookingId], references: [id])
 
   openedById String
-  opener     User    @relation("DisputeOpener", fields: [openedById], references: [id])
+  opener     User   @relation("DisputeOpener", fields: [openedById], references: [id])
   supplierId String
-  supplier   User    @relation("DisputeSupplier", fields: [supplierId], references: [id])
+  supplier   User   @relation("DisputeSupplier", fields: [supplierId], references: [id])
 
   reason      String // OPERATIONAL, FORCE_MAJEURE, CUSTOMER_REQUESTED, OTHER
   description String?
@@ -1104,9 +1104,9 @@ model Dispute {
   // Resolution
   resolution   String?
   resolvedById String?
-  resolvedBy   User?   @relation("DisputeResolver", fields: [resolvedById], references: [id])
+  resolvedBy   User?     @relation("DisputeResolver", fields: [resolvedById], references: [id])
   resolvedAt   DateTime?
-  refundAmount Decimal? @db.Decimal(10, 2)
+  refundAmount Decimal?  @db.Decimal(10, 2)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1261,7 +1261,23 @@ model Message {
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sender       User         @relation(fields: [senderId], references: [id])
 
+  hiddenFor ChatMessageHide[]
+
   @@index([conversationId, createdAt])
+}
+
+// "Delete for me": a message the requesting user chose to hide from their own
+// view only. The row and attachments are untouched, and the other participant
+// still sees the message. Composite PK keeps re-hides idempotent.
+model ChatMessageHide {
+  messageId String
+  userId    String
+  hiddenAt  DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, userId])
+  @@index([userId])
 }
 
 model Notification {
@@ -1765,30 +1781,30 @@ model KeywordRequest {
 // Stores per-image AI analysis from MiMo. Lives in PostgreSQL (source of truth),
 // not Redis. Survives cache invalidation and Redis outages.
 model TourImageAnalysis {
-  id              String   @id @default(cuid())
-  tourId          String
-  tour            Tour     @relation(fields: [tourId], references: [id], onDelete: Cascade)
-  imageUrl        String   @unique
+  id       String @id @default(cuid())
+  tourId   String
+  tour     Tour   @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  imageUrl String @unique
 
   // MiMo output (stored durably)
-  aiLabels        String[] @default([]) // ["adventure", "outdoor", "kayaking"]
-  aiQualityScore  Float?               // 0.0–1.0
-  aiSubjects      String[] @default([]) // ["river", "forest", "person"]
-  aiDescription   String?              // "Person kayaking on a tropical river"
-  aiCategoryHint  String?              // MiMo's category guess
-  attractionRelevance Json?            // { "Cape Coast Castle": 0.95, "Kakum": 0.05 }
-  primaryAttraction   String?          // Which attraction this image best represents
+  aiLabels            String[] @default([]) // ["adventure", "outdoor", "kayaking"]
+  aiQualityScore      Float? // 0.0–1.0
+  aiSubjects          String[] @default([]) // ["river", "forest", "person"]
+  aiDescription       String? // "Person kayaking on a tropical river"
+  aiCategoryHint      String? // MiMo's category guess
+  attractionRelevance Json? // { "Cape Coast Castle": 0.95, "Kakum": 0.05 }
+  primaryAttraction   String? // Which attraction this image best represents
 
   // CLIP output (self-hosted image embeddings)
-  clipEmbedding    Json?       // CLIP image embedding vector (512 floats)
-  clipModelVersion String?     // e.g. "ViT-B/32"
+  clipEmbedding    Json? // CLIP image embedding vector (512 floats)
+  clipModelVersion String? // e.g. "ViT-B/32"
   clipProcessedAt  DateTime?
 
   // Metadata
-  aiModelVersion String?  // e.g. "mimo-v2.5"
+  aiModelVersion String? // e.g. "mimo-v2.5"
   aiProcessedAt  DateTime?
-  aiRetryCount   Int      @default(0)
-  aiStatus       String   @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED
+  aiRetryCount   Int       @default(0)
+  aiStatus       String    @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1802,9 +1818,9 @@ model TourImageAnalysis {
 // this is the durable fallback when Redis is down.
 model HomepageSectionCache {
   id         String   @id @default(cuid())
-  sectionKey String   // "mood_keywords", "top_rated", "sell_out", etc.
+  sectionKey String // "mood_keywords", "top_rated", "sell_out", etc.
   region     String   @default("GH") // geographic variant
-  data       Json     // the computed array of section items
+  data       Json // the computed array of section items
   computedAt DateTime @default(now())
   expiresAt  DateTime
 
@@ -1817,36 +1833,36 @@ model HomepageSectionCache {
 // Enables accurate image selection and admin overrides for the
 // "Top Attractions Nearby" homepage section.
 model Attraction {
-  id              String   @id @default(cuid())
-  name            String   @unique
-  slug            String   @unique
+  id   String @id @default(cuid())
+  name String @unique
+  slug String @unique
 
   // Location
-  latitude        Float?
-  longitude       Float?
+  latitude  Float?
+  longitude Float?
 
   // AI-curated image selection
-  heroImage       String?           // best matching image URL
-  heroImageSource String?           // "ai_selected" | "manual" | "fallback"
-  heroImageTourId String?           // which tour the image comes from
-  imageRelevance  Float?            // AI confidence 0.0–1.0
+  heroImage       String? // best matching image URL
+  heroImageSource String? // "ai_selected" | "manual" | "fallback"
+  heroImageTourId String? // which tour the image comes from
+  imageRelevance  Float? // AI confidence 0.0–1.0
 
   // Cached metadata (refreshed periodically)
-  tourCount       Int      @default(0)
-  avgRating       Float?
-  totalBookings   Int      @default(0)
-  startingPrice   Float?
+  tourCount     Int    @default(0)
+  avgRating     Float?
+  totalBookings Int    @default(0)
+  startingPrice Float?
 
   // Manual overrides (admin)
-  isFeatured      Boolean  @default(false)
-  manualOverride  Boolean  @default(false) // locks heroImage from AI updates
+  isFeatured     Boolean @default(false)
+  manualOverride Boolean @default(false) // locks heroImage from AI updates
 
   // Status
-  status          String   @default("ACTIVE")
-  lastComputedAt  DateTime?
+  status         String    @default("ACTIVE")
+  lastComputedAt DateTime?
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status])
   @@index([isFeatured])

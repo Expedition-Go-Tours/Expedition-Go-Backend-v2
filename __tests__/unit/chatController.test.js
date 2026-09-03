@@ -355,6 +355,29 @@ describe('chatController', () => {
     });
   });
 
+  describe('hideMessageForMe', () => {
+    it('hides own message and emits to the USER room only (not conversation)', async () => {
+      req.params = { id: 'c-1', messageId: 'm-1' };
+      chatService.hideMessageForMe.mockResolvedValue('u-1');
+
+      await controller.hideMessageForMe(req, res, next);
+
+      expect(chatService.hideMessageForMe).toHaveBeenCalledWith('c-1', 'm-1', 'u-1');
+      expect(mockIo.to).toHaveBeenCalledWith('user:u-1');
+      expect(mockIo.to).not.toHaveBeenCalledWith('conversation:c-1');
+      expect(res.json).toHaveBeenCalledWith({ status: 'success', data: null });
+    });
+
+    it('handles no io gracefully', async () => {
+      req.params = { id: 'c-1', messageId: 'm-1' };
+      req.app.get.mockReturnValue(null);
+      chatService.hideMessageForMe.mockResolvedValue('u-1');
+
+      await controller.hideMessageForMe(req, res, next);
+      expect(res.json).toHaveBeenCalled();
+    });
+  });
+
   describe('deleteConversation', () => {
     it('deletes conversation and notifies participants', async () => {
       req.params = { id: 'c-1' };

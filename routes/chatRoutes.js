@@ -738,6 +738,37 @@ router.put('/conversations/:id/messages/:messageId', chatController.updateMessag
 router.delete('/conversations/:id/messages/:messageId', chatController.deleteMessage);
 /**
  * @swagger
+ * /api/chat/conversations/{id}/messages/{messageId}/hide-for-me:
+ *   post:
+ *     summary: Delete a message for me only
+ *     description: Hides the message from the sender's own view only. The other
+ *       participant still sees it and attachments are kept. Emits a
+ *       chat:message-deleted-for-me event to the sender's own sessions only.
+ *     tags: [Chat]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *       - in: path
+ *         name: messageId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Message hidden for the current user
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: You can only delete your own messages
+ *       404:
+ *         description: Message or conversation not found
+ */
+router.post('/conversations/:id/messages/:messageId/hide-for-me', chatController.hideMessageForMe);
+/**
+ * @swagger
  * /api/chat/conversations/{id}:
  *   delete:
  *     summary: Delete a conversation

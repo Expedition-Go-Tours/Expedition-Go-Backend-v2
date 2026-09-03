@@ -204,6 +204,25 @@ exports.deleteMessage = catchAsync(async (req, res) => {
   res.json({ status: 'success', data: null });
 });
 
+// "Delete for me": hide a message from the SENDER's own view only. The other
+// participant keeps it, so we broadcast only to the deleter's own sessions
+// (user room), never to the conversation room.
+exports.hideMessageForMe = catchAsync(async (req, res) => {
+  const { id, messageId } = req.params;
+
+  const resolvedUserId = await chatService.hideMessageForMe(id, messageId, req.user.id);
+
+  const io = req.app.get('io');
+  if (io) {
+    io.to(`user:${resolvedUserId}`).emit('chat:message-deleted-for-me', {
+      conversationId: id,
+      messageId,
+    });
+  }
+
+  res.json({ status: 'success', data: null });
+});
+
 exports.deleteConversation = catchAsync(async (req, res) => {
   const { id } = req.params;
 

@@ -3,6 +3,7 @@ jest.mock('../../utils/prismaClient', () => ({
   conversation: { findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   conversationParticipant: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
   message: { findMany: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), count: jest.fn() },
+  chatMessageHide: { upsert: jest.fn(), findMany: jest.fn() },
   notification: { updateMany: jest.fn() },
   adminNotification: { updateMany: jest.fn() },
   systemConfig: { findUnique: jest.fn() },
@@ -49,6 +50,7 @@ describe('chatService', () => {
     prisma.message.update.mockResolvedValue(mockMessage);
     prisma.message.delete.mockResolvedValue();
     prisma.message.count.mockResolvedValue(0);
+    prisma.chatMessageHide.upsert.mockResolvedValue({});
     prisma.notification.updateMany.mockResolvedValue({ count: 1 });
     prisma.adminNotification.updateMany.mockResolvedValue({ count: 1 });
     prisma.systemConfig.findUnique.mockResolvedValue(null);
@@ -164,6 +166,13 @@ describe('chatService', () => {
       expect(result.messages).toHaveLength(1);
       expect(result.hasMore).toBe(false);
       expect(result.nextCursor).toBeNull();
+    });
+
+    it('filters out messages the requesting user has hidden (delete for me)', async () => {
+      await chatService.getMessages('c-1', 'u-1');
+      expect(prisma.message.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ hiddenFor: { none: { userId: 'u-1' } } }) })
+      );
     });
 
     it('throws when participant not found', async () => {
@@ -335,6 +344,34 @@ describe('chatService', () => {
     it('throws when sender does not match', async () => {
       prisma.message.findFirst.mockResolvedValue({ ...mockMessage, senderId: 'other-user' });
       await expect(chatService.deleteMessage('c-1', 'm-1', 'u-1')).rejects.toThrow('You can only delete your own messages');
+    });
+  });
+
+  describe('hideMessageForMe', () => {
+    it('hides own message via idempotent upsert and returns resolved userId', async () => {
+      const result = await chatService.hideMessageForMe('c-1', 'm-1', 'u-1');
+      expect(result).toBe('u-1');
+      expect(prisma.chatMessageHide.upsert).toHaveBeenCalledWith({
+        where: { messageId_userId: { messageId: 'm-1', userId: 'u-1' } },
+        create: { messageId: 'm-1', userId: 'u-1' },
+        update: {},
+      });
+    });
+
+    it('throws when message not found', async () => {
+      prisma.message.findFirst.mockResolvedValue(null);
+      await expect(chatService.hideMessageForMe('c-1', 'nonexistent', 'u-1')).rejects.toThrow('Message not found');
+    });
+
+    it('throws when a recipient tries to hide someone else message', async () => {
+      prisma.message.findFirst.mockResolvedValue({ ...mockMessage, senderId: 'other-user' });
+      await expect(chatService.hideMessageForMe('c-1', 'm-1', 'u-1')).rejects.toThrow('You can only delete your own messages');
+      expect(prisma.chatMessageHide.upsert).not.toHaveBeenCalled();
+    });
+
+    it('does not delete the message row or attachment', async () => {
+      await chatService.hideMessageForMe('c-1', 'm-1', 'u-1');
+      expect(prisma.message.delete).not.toHaveBeenCalled();
     });
   });
 
