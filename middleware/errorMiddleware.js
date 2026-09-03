@@ -10,6 +10,39 @@ const SKIP_ERROR_LOG = [
   '/socket.io',
 ];
 
+// Scanner / probe paths that hit the server but are never real application
+// traffic (DNS-over-HTTPS probes, vulnerability scanners, favicon bots, etc.).
+// Requests to these are not audit-logged as api.error at all.
+const NOISE_PATH_RE =
+  /^\/?(?:dns-query|query|resolve|owa(?:\/.*)?|Dr0v|ui(?:\/.*)?|favicon\.ico|\.well-known(?:\/.*)?|sitemap.*|robots\.txt|phpinfo\.php|wp-admin(?:\/.*)?|\.env)$/i;
+
+// The catch-all 404 middleware ("Can't find <path> on this server!") fires for
+// routes that do not exist. Whether under /api or not, that is not an
+// application error — it is a route miss (typo, stale frontend, or probing).
+const CATCHALL_404_RE = /^Can't find .* on this server!/;
+
+/**
+ * Classify an audited API error so activity summaries can separate signal
+ * from noise deterministically.
+ *   real     — 5xx: the application actually failed.
+ *   auth     — 401: authentication/authorization rejections (worth watching).
+ *   business — intentional operational 4xx from controllers (e.g. a 404
+ *              meaning "no supplier application found"): expected outcomes.
+ * Returns null when the error is pure noise that should not be recorded.
+ */
+function classifyApiError(req, err, statusCode) {
+  const path = String((req && (req.originalUrl || req.url)) || '').split('?')[0];
+  const code = statusCode || err?.statusCode || 500;
+  const message = String(err?.message || '');
+
+  if (NOISE_PATH_RE.test(path) || path === '/') return null; // probe → don't log
+  if (CATCHALL_404_RE.test(message)) return null; // route never existed → don't log
+
+  if (code >= 500) return 'real';
+  if (code === 401) return 'auth';
+  return 'business';
+}
+
 function shouldSkipErrorLog(req) {
   const url = (req && (req.originalUrl || req.url)) || '';
   return SKIP_ERROR_LOG.some((prefix) => url.startsWith(prefix));
@@ -20,6 +53,8 @@ function shouldSkipErrorLog(req) {
 function logApiError(err, req) {
   try {
     if (!req || shouldSkipErrorLog(req)) return;
+    const classification = classifyApiError(req, err);
+    if (!classification) return; // probe/route-miss noise — do not record
     const url = (req.originalUrl || req.url || '').split('?')[0];
     logActivity({
       userId: req.user?.id || null,
@@ -32,6 +67,7 @@ function logApiError(err, req) {
         errorName: err.name || 'Error',
         message: err.message || 'Unknown error',
         errorCode: err.code || null,
+        classification,
         query: Object.keys(req.query || {}).length ? req.query : undefined,
       },
     }).catch(() => {});
@@ -92,3 +128,5 @@ module.exports = (err, req, res, next) => {
     logApiError(err, req);
   }
 };
+
+module.exports.classifyApiError = classifyApiError;

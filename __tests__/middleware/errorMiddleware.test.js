@@ -4,6 +4,8 @@ const errorHandler = require('../../middleware/errorMiddleware');
 const AppError = require('../../utils/appError');
 const { logActivity } = require('../../utils/auditLogger');
 
+const { classifyApiError } = errorHandler;
+
 const mockRes = () => {
   const res = {};
   res.status = jest.fn().mockReturnValue(res);
@@ -260,6 +262,34 @@ describe('Error Middleware', () => {
       errorHandler(err, req, res, jest.fn());
 
       expect(res.status).toHaveBeenCalledWith(401);
+    });
+  });
+
+  describe('classifyApiError (signal vs noise)', () => {
+    const mkReq = (url) => ({ originalUrl: url, method: 'GET', query: {} });
+
+    it('real: 5xx application failures', () => {
+      expect(classifyApiError(mkReq('/api/bookings'), { message: 'DB exploded', statusCode: 500 }, 500)).toBe('real');
+    });
+
+    it('auth: 401 rejections', () => {
+      expect(classifyApiError(mkReq('/api/auth/refresh'), { message: 'Token expired', statusCode: 401 }, 401)).toBe('auth');
+    });
+
+    it('business: intentional controller 4xx (e.g. supplier app 404)', () => {
+      const err = new AppError('No supplier application found', 404);
+      expect(classifyApiError(mkReq('/api/suppliers/application/status'), err, 404)).toBe('business');
+    });
+
+    it('null: probe/noise paths are not recorded', () => {
+      for (const path of ['/dns-query', '/query', '/resolve', '/owa/auth/logon.aspx', '/Dr0v', '/ui/login/', '/favicon.ico', '/.env']) {
+        expect(classifyApiError(mkReq(path), { message: 'boom', statusCode: 404 }, 404)).toBeNull();
+      }
+    });
+
+    it('null: catch-all route-miss 404 is not recorded', () => {
+      const err = new AppError("Can't find /nope on this server!", 404);
+      expect(classifyApiError(mkReq('/nope'), err, 404)).toBeNull();
     });
   });
 });

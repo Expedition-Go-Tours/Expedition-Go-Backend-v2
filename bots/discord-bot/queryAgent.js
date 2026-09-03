@@ -25,6 +25,7 @@
  */
 
 const { validateReadOnly } = require('../../utils/sqlGuard');
+const { buildActivityReport } = require('./activityEngine');
 
 // Symbols the ops assistant is allowed to use. Emoji and pictographs that
 // ARE NOT in this list are stripped deterministically from every answer, so
@@ -798,6 +799,84 @@ async function runQueryFast({ question, userId = '?', historyText = '', pg, call
   return { final, sqlLogs: [run.sql], rowCount: run.rows, escalated: false };
 }
 
+// ── Deterministic activity/audit intent ─────────────────────────────────
+// Audit questions ("check activity logs", "who logged in", "any errors?")
+// must NOT go through free-form SQL + LLM summarization — that class produced
+// hallucinated counts/emails. These are answered by the deterministic engine;
+// the LLM only narrates the structured facts it is handed.
+
+const ACTIVITY_KEYWORDS = [
+  'activity',
+  'activity logs',
+  'audit',
+  'audit log',
+  'what happened',
+  'who logged in',
+  'logins',
+  'signups',
+  'new signup',
+  'api errors',
+  'errors',
+  'error log',
+  'recent errors',
+  'what changed',
+];
+
+// Any simple duration ("2 hours", "1h", "past day", "today") -> hours.
+function detectHours(question) {
+  const q = String(question || '').toLowerCase();
+  const m = q.match(/(\d+)\s*(hours?|hrs?|h)\b/);
+  if (m) return Math.min(Math.max(Number(m[1]), 1), 72);
+  if (/(past|last)\s+(day|24\s*hours?)/.test(q)) return 24;
+  if (/\b(today)\b/.test(q)) return 24;
+  return 2;
+}
+
+/**
+ * Rule-based (no LLM) detection of activity/audit questions.
+ * @returns {{hours: number}|null}
+ */
+function detectActivityIntent(question) {
+  const q = String(question || '').toLowerCase().trim();
+  if (!q) return null;
+  const hit = ACTIVITY_KEYWORDS.some((kw) => q.includes(kw));
+  if (!hit) return null;
+  return { hours: detectHours(q) };
+}
+
+const ACTIVITY_NARRATE_SYSTEM =
+  'You convert a pre-computed app-activity report into a concise business answer. ' +
+  'STRICT RULES: state ONLY facts present in the report JSON — do not invent counts, ' +
+  'emails, endpoints, or timestamps; do not guess causes; if the user asked a follow-up ' +
+  'you cannot answer from the report, say so. ' +
+  'Distinguish REAL errors (application failures) from AUTH (401 rejections) and BUSINESS ' +
+  '(intentional 4xx like "no supplier application found") and PROBES (scanner noise — say ' +
+  'they were ignored, never count them as errors). ' +
+  'Mention the exact window. No emojis or emoticons (symbols like ✓ ⚠ • are fine). ' +
+  'Output ONLY the answer text.';
+
+async function answerActivity({ question, userId = '?', pg, callMimo }) {
+  const intent = detectActivityIntent(question);
+  const hours = intent ? intent.hours : detectHours(question);
+  const t0 = Date.now();
+  const report = await buildActivityReport({ pg, hours });
+  const out = await callMimo({
+    messages: [
+      { role: 'system', content: ACTIVITY_NARRATE_SYSTEM },
+      {
+        role: 'user',
+        content: `Question: ${question}\n\nActivity report (${hours}h window):\n${JSON.stringify(report, null, 1)}`,
+      },
+    ],
+    maxTokens: FINAL_MAX_TOKENS,
+    temperature: 0.1,
+    reasoningEffort: 'low',
+  });
+  const final = stripEmojis(stripFences(out));
+  console.log(`[activity:${userId}] hours=${hours} total=${Date.now() - t0}ms real=${report.errors.real.length} auth=${report.errors.auth.length} logins=${report.logins.length}`);
+  return { final, sqlLogs: [], rowCount: 0 };
+}
+
 /**
  * Production entry point: fast path first, ReAct escalation as a fallback,
  * deterministic no-emoji cleanup on whatever text comes back.
@@ -818,6 +897,26 @@ async function answerQuestion({ question, userId = '?', historyText = '', histor
       }
     } catch {
       // cache errors must never break answering
+    }
+  }
+
+  // ── Deterministic activity/audit routing (no free-form SQL) ──────────
+  // Audit questions are answered by the SQL-fact engine + constrained
+  // narration, so the model can never invent counts/emails/timestamps.
+  if (detectActivityIntent(question)) {
+    try {
+      const result = await answerActivity({ question, userId, pg, callMimo });
+      result.final = stripEmojis(result.final);
+      if (key && result.final) {
+        try {
+          await cache.set(key, result.final, cacheTtlSec);
+        } catch {
+          // ignore cache write failures
+        }
+      }
+      return result;
+    } catch (e) {
+      console.log(`[answer:${userId}] activity engine failed → fall through: ${e.message}`);
     }
   }
 
@@ -870,6 +969,8 @@ module.exports = {
   normalizeQuestion,
   suggestColumns,
   suggestEnumValues,
+  detectActivityIntent,
+  answerActivity,
   MAX_STEPS,
   CRITICAL_TABLES,
   resetSchemaCache,
