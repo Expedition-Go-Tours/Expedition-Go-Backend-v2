@@ -8,14 +8,15 @@ const { setIO, setupPrismaMiddleware } = require('./utils/dataChangeEmitter');
 const { registerWorkers, closeAll, enqueueNotification, enqueueCleanup, enqueueAggregation, enqueueEvent, startResumeMonitor } = require('./utils/queue');
 const { startAiCronFallback } = require('./utils/aiCronFallback');
 const redisClient = require('./utils/redisClient');
+const { acquireRunLock, releaseRunLock } = require('./utils/runLock');
 const logger = require('./utils/logger');
 
-// PM2 cluster worker index. Schedulers / cron / one-shot index builds run on the
-// PRIMARY worker only (NODE_APP_INSTANCE '0'); the other worker(s) just serve.
-// NOTE: this is a PM2 process identity, NOT distributed leader election â€” if the
-// app is ever run on multiple machines, worker 0 exists on EACH machine and
-// scheduler duplication returns. Move scheduled work to BullMQ repeatable jobs
-// before scaling to multiple hosts.
+// PM2 cluster worker index. Scheduling correctness comes from per-run Redis
+// locks (runScheduledJob): when Redis is healthy only ONE worker/machine wins
+// each sweep; isPrimaryWorker is used ONLY as the Redis-down fallback so a
+// temporary Redis outage keeps today's single-box behaviour (worker 0 runs).
+// NOTE: NODE_APP_INSTANCE is a per-machine PM2 identity, NOT distributed
+// leader election — worker 0 exists on EVERY machine.
 const isPrimaryWorker = Number(process.env.NODE_APP_INSTANCE || 0) === 0;
 
 let io;
@@ -23,6 +24,26 @@ let io;
 // Track active scheduler intervals so graceful shutdown can clear them.
 const schedulerIntervals = new Set();
 const schedulerTimeouts = new Set();
+
+/**
+ * Run a scheduled sweep exactly once across all workers/machines:
+ *   - Redis healthy  → acquire a per-job lock; only the winner runs.
+ *   - Redis down     → run only on the primary worker (single-box behaviour).
+ * Locks are released with a compare-and-delete token so a stale owner can't
+ * clear a newer owner's lock. Sweeps must remain idempotent — a lock expiry
+ * during a crash can let another worker retry (acceptable by design).
+ */
+async function runScheduledJob(label, runFn, lockTtlMs) {
+  const lock = await acquireRunLock(`sweep:${label}`, lockTtlMs);
+  if (lock === false) return; // another owner holds it → skip
+  const runLocally = lock === null ? isPrimaryWorker : true;
+  if (!runLocally) return;
+  try {
+    await runFn();
+  } finally {
+    if (lock) await releaseRunLock(`sweep:${label}`, lock);
+  }
+}
 
 let shuttingDown = false;
 
@@ -152,11 +173,13 @@ server.listen(port, '0.0.0.0', () => {
 
 setupSocketIO();
 
-// Async initialization (Prisma, Redis, queue workers) â€” non-blocking.
-// Only the PRIMARY cluster worker runs schedulers / cron / one-shot index
-// builds so duplicate timers never fire across workers. Non-primary workers
-// still serve HTTP + Socket.IO (Redis adapter keeps rooms consistent) and
-// participate in the shared BullMQ queue via registerWorkers().
+// Async initialization (Prisma, Redis, queue workers) — non-blocking.
+// EVERY worker registers scheduler tickers + BullMQ consumers:
+//   - Scheduler ticks arbitrate via per-job Redis locks (runScheduledJob), so
+//     only one worker/machine runs each sweep; worker 0 is the Redis-down
+//     fallback. Correct across machines.
+//   - BullMQ workers are shared through Redis (each job runs once).
+// AI cron + the BM25 index build are kept on the primary worker only.
 (async () => {
   try {
     await prisma.$connect();
@@ -178,28 +201,14 @@ setupSocketIO();
   // known-good so the adapter actually connects.
   setupRedisAdapter();
 
-  if (isPrimaryWorker) {
-    console.log('[Startup] Primary worker — enabling schedulers, AI cron, index build');
-    await setupQueueWorkers(redisOk);
+  await setupQueueWorkers(redisOk);
 
+  if (isPrimaryWorker) {
     // AI cron fallback — processes PENDING/FAILED tours directly.
     startAiCronFallback();
 
     // Build BM25 search index in background (non-blocking)
     buildBm25Index().catch(err => console.warn('[BM25] Index build failed:', err.message));
-  } else {
-    console.log('[Startup] Non-primary worker — serving HTTP/Socket.IO only');
-    // Non-primary workers still consume the shared BullMQ queue (each job runs
-    // once thanks to Redis), but never register in-process schedulers/cron.
-    if (redisOk) {
-      try {
-        registerWorkers(app);
-      } catch (err) {
-        logger.warn('[Startup] registerWorkers failed:', err?.message);
-      }
-    } else {
-      console.warn('[Queue] Redis unavailable — non-primary worker skipping queue registration (inline fallback)');
-    }
   }
 })();
 
@@ -242,32 +251,35 @@ function setupRedisAdapter() {
 
 /**
  * Booking-lifecycle sweeps run on DIRECT in-app timers, independent of Redis/
- * BullMQ. Redis has been flaky at boot â€” when it's down, setupQueueWorkers
- * returns before registering the queue-driven intervals, so bookings were never
- * auto-completed / stale ones never cancelled. All of these jobs are idempotent
- * DB/Stripe/email sweeps, so running them in-process on a simple timer is safe
- * and guarantees they fire regardless of Redis. Registered unconditionally
- * (before the Redis probe) and each runs once shortly after boot to catch up on
- * anything missed while the process was down.
+ * BullMQ, so they fire even on degraded boots where Redis is down. Every worker
+ * keeps a timer, but runScheduledJob arbitrates via a per-job Redis lock — only
+ * ONE worker runs each sweep when Redis is healthy; worker 0 runs it when Redis
+ * is unreachable. All of these jobs are idempotent DB/Stripe/email sweeps, so a
+ * lock-expiry race (crash + retry) is safe. Each runs once shortly after boot
+ * to catch up on anything missed while the process was down.
+ *
+ * lockTtlMs protects the EXECUTION window, not the scheduling interval: keep it
+ * comfortably above the sweep's observed runtime (record timings in logs), NOT
+ * derived from the cadence. Raise it only if a run approaches the TTL.
  */
 function scheduleBookingLifecycle() {
   const jobs = [
     // Auto-complete CONFIRMED bookings once their activity date has passed.
-    { label: 'auto-complete-bookings', ms: 15 * 60 * 1000, run: () => require('./utils/bookingCleanup').autoCompleteBookings() },
+    { label: 'auto-complete-bookings', ms: 15 * 60 * 1000, lockTtlMs: 15 * 60 * 1000, run: () => require('./utils/bookingCleanup').autoCompleteBookings() },
     // Auto-cancel PENDING bookings past their activity date (48h grace).
-    { label: 'cancel-stale-pending-bookings', ms: 15 * 60 * 1000, run: () => require('./utils/bookingCleanup').cancelStalePendingAfterTravelDate() },
+    { label: 'cancel-stale-pending-bookings', ms: 15 * 60 * 1000, lockTtlMs: 15 * 60 * 1000, run: () => require('./utils/bookingCleanup').cancelStalePendingAfterTravelDate() },
     // Auto-cancel long-stale PENDING bookings.
-    { label: 'cleanup-stale-bookings', ms: 5 * 60 * 1000, run: () => require('./utils/bookingCleanup').cancelStalePendingBookings() },
+    { label: 'cleanup-stale-bookings', ms: 5 * 60 * 1000, lockTtlMs: 15 * 60 * 1000, run: () => require('./utils/bookingCleanup').cancelStalePendingBookings() },
     // Release expired pay-now seat holds (CheckoutDraft).
-    { label: 'expire-checkout-holds', ms: 5 * 60 * 1000, run: () => require('./utils/bookingCleanup').expireCheckoutHolds() },
+    { label: 'expire-checkout-holds', ms: 5 * 60 * 1000, lockTtlMs: 15 * 60 * 1000, run: () => require('./utils/bookingCleanup').expireCheckoutHolds() },
     // Charge reserve-now-pay-later bookings near the activity date.
-    { label: 'charge-pay-later-bookings', ms: 30 * 60 * 1000, run: () => require('./utils/payLaterSweep').chargePayLaterBookings() },
+    { label: 'charge-pay-later-bookings', ms: 30 * 60 * 1000, lockTtlMs: 30 * 60 * 1000, run: () => require('./utils/payLaterSweep').chargePayLaterBookings() },
     // Finance: flip past PENDING bookings to ELIGIBLE for payout requests.
-    { label: 'earnings-eligibility-sweep', ms: 30 * 60 * 1000, run: () => require('./utils/payoutCycles').sweepEarningsEligibility() },
+    { label: 'earnings-eligibility-sweep', ms: 30 * 60 * 1000, lockTtlMs: 30 * 60 * 1000, run: () => require('./utils/payoutCycles').sweepEarningsEligibility() },
     // Plan + dispatch time-based booking reminders (payment due, 24h-before,
     // pickup required, review request).
-    { label: 'plan-booking-reminders', ms: 60 * 60 * 1000, run: () => require('./utils/bookingReminders').planBookingReminders() },
-    { label: 'dispatch-booking-reminders', ms: 15 * 60 * 1000, run: () => require('./utils/bookingReminders').dispatchDueReminders() },
+    { label: 'plan-booking-reminders', ms: 60 * 60 * 1000, lockTtlMs: 60 * 60 * 1000, run: () => require('./utils/bookingReminders').planBookingReminders() },
+    { label: 'dispatch-booking-reminders', ms: 15 * 60 * 1000, lockTtlMs: 30 * 60 * 1000, run: () => require('./utils/bookingReminders').dispatchDueReminders() },
   ];
 
   for (const job of jobs) {
@@ -275,8 +287,7 @@ function scheduleBookingLifecycle() {
     const tick = () => {
       if (running) return;
       running = true;
-      Promise.resolve()
-        .then(job.run)
+      runScheduledJob(job.label, job.run, job.lockTtlMs)
         .catch((err) => logger.warn(`[scheduler] ${job.label} failed:`, err?.message))
         .finally(() => { running = false; });
     };
@@ -288,86 +299,96 @@ function scheduleBookingLifecycle() {
 }
 
 async function setupQueueWorkers(redisOk = true) {
-  console.log('[Startup] Checking Redis for queue workers...');
+  console.log(`[Startup] worker ${process.env.NODE_APP_INSTANCE || 0} — checking Redis for queue workers...`);
   startResumeMonitor();
 
-  // Ghana auto-publish reconcile â€” DB-driven and self-healing. The interval is
-  // registered unconditionally (before the Redis probe) so it survives degraded
-  // boots; the startup call below runs once Redis is confirmed available, and
-  // the resume monitor also triggers it after an outage. All idempotent.
+  // ── Periodic interval tickers (EVERY worker registers these) ──────────────
+  // Each tick goes through runScheduledJob: when Redis is healthy only ONE
+  // worker/machine wins the per-job lock; when Redis is unreachable worker 0
+  // runs (today's single-box behaviour). All operations are idempotent.
   const { reconcileGhanaPublish } = require('./utils/autoPublishGhana');
   schedulerIntervals.add(setInterval(() => {
-    reconcileGhanaPublish().catch((err) => logger.warn('[scheduler] ghana-publish reconcile failed:', err?.message));
+    runScheduledJob('reconcile-ghana', reconcileGhanaPublish, 30 * 60 * 1000)
+      .catch((err) => logger.warn('[scheduler] ghana-publish reconcile failed:', err?.message));
   }, 30 * 60 * 1000));
 
-  // TravioAfrica auto-publish reconcile â€” same pattern as Ghana
   const { reconcileTravioAfricaPublish } = require('./utils/autoPublishTravioAfrica');
   schedulerIntervals.add(setInterval(() => {
-    reconcileTravioAfricaPublish().catch((err) => logger.warn('[scheduler] travioafrica-publish reconcile failed:', err?.message));
+    runScheduledJob('reconcile-travioafrica', reconcileTravioAfricaPublish, 30 * 60 * 1000)
+      .catch((err) => logger.warn('[scheduler] travioafrica-publish reconcile failed:', err?.message));
   }, 30 * 60 * 1000));
 
-  // Booking-lifecycle sweeps run on direct timers (see scheduleBookingLifecycle)
-  // so they fire even on degraded boots where Redis is down.
+  // Booking-lifecycle sweeps (see scheduleBookingLifecycle).
   scheduleBookingLifecycle();
 
-  // Redis availability was already established before this ran (server.js
-  // awaits isRedisAvailable() first). Only register queue workers when Redis
-  // is actually reachable so a quota-exhausted boot never hammers Upstash.
+  schedulerIntervals.add(setInterval(() => {
+    runScheduledJob('cleanup-expired-cart', () => enqueueCleanup('cleanup-expired-cart'), 10 * 60 * 1000)
+      .catch((err) => logger.warn('[scheduler] cleanup-expired-cart failed:', err?.message));
+  }, 5 * 60 * 1000));
+
+  schedulerIntervals.add(setInterval(() => {
+    runScheduledJob('refresh-popularity', () => enqueueAggregation('refresh-popularity'), 60 * 60 * 1000)
+      .catch((err) => logger.warn('[scheduler] refresh-popularity failed:', err?.message));
+  }, 60 * 60 * 1000));
+
+  schedulerIntervals.add(setInterval(() => {
+    runScheduledJob('cleanup-events', () => enqueueAggregation('cleanup-events'), 24 * 60 * 60 * 1000)
+      .catch((err) => logger.warn('[scheduler] cleanup-events failed:', err?.message));
+  }, 24 * 60 * 60 * 1000));
+
+  schedulerIntervals.add(setInterval(() => {
+    runScheduledJob('cleanup-notifications', () => enqueueCleanup('cleanup-notifications'), 24 * 60 * 60 * 1000)
+      .catch((err) => logger.warn('[scheduler] cleanup-notifications failed:', err?.message));
+  }, 24 * 60 * 60 * 1000));
+
+  schedulerIntervals.add(setInterval(() => {
+    runScheduledJob('cleanup-audit-logs', () => enqueueCleanup('cleanup-audit-logs'), 24 * 60 * 60 * 1000)
+      .catch((err) => logger.warn('[scheduler] cleanup-audit-logs failed:', err?.message));
+  }, 24 * 60 * 60 * 1000));
+
+  schedulerIntervals.add(setInterval(() => {
+    runScheduledJob('purge-archived-tours', () => enqueueCleanup('purge-archived-tours'), 24 * 60 * 60 * 1000)
+      .catch((err) => logger.warn('[scheduler] purge-archived-tours failed:', err?.message));
+  }, 24 * 60 * 60 * 1000));
+
+  schedulerIntervals.add(setInterval(() => {
+    runScheduledJob('expire-special-offers', () => enqueueCleanup('expire-special-offers'), 24 * 60 * 60 * 1000)
+      .catch((err) => logger.warn('[scheduler] expire-special-offers failed:', err?.message));
+  }, 24 * 60 * 60 * 1000));
+
+  // Document expiration + 60/30/7-day licence/certificate reminders.
+  schedulerIntervals.add(setInterval(() => {
+    runScheduledJob('expire-supplier-documents', () => enqueueCleanup('expire-supplier-documents'), 24 * 60 * 60 * 1000)
+      .catch((err) => logger.warn('[scheduler] expire-supplier-documents failed:', err?.message));
+  }, 24 * 60 * 60 * 1000));
+
+  schedulerIntervals.add(setInterval(() => {
+    runScheduledJob('plan-doc-expiry-reminders', () => enqueueCleanup('plan-doc-expiry-reminders'), 24 * 60 * 60 * 1000)
+      .catch((err) => logger.warn('[scheduler] plan-doc-expiry-reminders failed:', err?.message));
+  }, 24 * 60 * 60 * 1000));
+
+  // Aggregate yesterday's tour views into DailyTourStats (runs daily at 00:05 UTC)
+  schedulerIntervals.add(setInterval(() => {
+    runScheduledJob('aggregate-daily-views', () => enqueueAggregation('aggregate-daily-views'), 24 * 60 * 60 * 1000)
+      .catch((err) => logger.warn('[scheduler] aggregate-daily-views failed:', err?.message));
+  }, 24 * 60 * 60 * 1000));
+
+  // ── Queue consumers (EVERY worker registers BullMQ workers; shared via Redis) ──
   if (!redisOk) {
-    console.warn('[Queue] Redis unavailable — using inline fallback');
+    console.warn('[Queue] Redis unavailable — using inline fallback (workers will register on recovery)');
     return;
   }
-
   registerWorkers(app);
   console.log('[Queue] Workers registered');
+
+  // ── One-shot boot work (PRIMARY only — global actions must not duplicate) ──
+  if (!isPrimaryWorker) return;
 
   // Backfill: publish all existing Ghana suppliers' tours on boot
   reconcileGhanaPublish().catch((err) => logger.warn('[scheduler] startup ghana-publish reconcile failed:', err?.message));
 
   // Backfill: publish all existing non-Ghana African suppliers' tours on boot
   reconcileTravioAfricaPublish().catch((err) => logger.warn('[scheduler] startup travioafrica-publish reconcile failed:', err?.message));
-
-  schedulerIntervals.add(setInterval(() => {
-    enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] cleanup-expired-cart failed:', err?.message));
-  }, 5 * 60 * 1000));
-
-  schedulerIntervals.add(setInterval(() => {
-    enqueueAggregation('refresh-popularity').catch((err) => logger.warn('[scheduler] refresh-popularity failed:', err?.message));
-  }, 60 * 60 * 1000));
-
-  schedulerIntervals.add(setInterval(() => {
-    enqueueAggregation('cleanup-events').catch((err) => logger.warn('[scheduler] cleanup-events failed:', err?.message));
-  }, 24 * 60 * 60 * 1000));
-
-  schedulerIntervals.add(setInterval(() => {
-    enqueueCleanup('cleanup-notifications').catch((err) => logger.warn('[scheduler] cleanup-notifications failed:', err?.message));
-  }, 24 * 60 * 60 * 1000));
-
-  schedulerIntervals.add(setInterval(() => {
-    enqueueCleanup('cleanup-audit-logs').catch((err) => logger.warn('[scheduler] cleanup-audit-logs failed:', err?.message));
-  }, 24 * 60 * 60 * 1000));
-
-  schedulerIntervals.add(setInterval(() => {
-    enqueueCleanup('purge-archived-tours').catch((err) => logger.warn('[scheduler] purge-archived-tours failed:', err?.message));
-  }, 24 * 60 * 60 * 1000));
-
-  schedulerIntervals.add(setInterval(() => {
-    enqueueCleanup('expire-special-offers').catch((err) => logger.warn('[scheduler] expire-special-offers failed:', err?.message));
-  }, 24 * 60 * 60 * 1000));
-
-  // Document expiration + 60/30/7-day licence/certificate reminders.
-  schedulerIntervals.add(setInterval(() => {
-    enqueueCleanup('expire-supplier-documents').catch((err) => logger.warn('[scheduler] expire-supplier-documents failed:', err?.message));
-  }, 24 * 60 * 60 * 1000));
-
-  schedulerIntervals.add(setInterval(() => {
-    enqueueCleanup('plan-doc-expiry-reminders').catch((err) => logger.warn('[scheduler] plan-doc-expiry-reminders failed:', err?.message));
-  }, 24 * 60 * 60 * 1000));
-
-  // Aggregate yesterday's tour views into DailyTourStats (runs daily at 00:05 UTC)
-  schedulerIntervals.add(setInterval(() => {
-    enqueueAggregation('aggregate-daily-views').catch((err) => logger.warn('[scheduler] aggregate-daily-views failed:', err?.message));
-  }, 24 * 60 * 60 * 1000));
 
   enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] startup cleanup-expired-cart failed:', err?.message));
   enqueueAggregation('refresh-popularity').catch((err) => logger.warn('[scheduler] startup refresh-popularity failed:', err?.message));
