@@ -1,4 +1,4 @@
-console.log('[BOOT] server.js started');
+﻿console.log('[BOOT] server.js started');
 
 const dotenv = require('dotenv');
 const http = require('http');
@@ -9,11 +9,26 @@ const { registerWorkers, closeAll, enqueueNotification, enqueueCleanup, enqueueA
 const { startAiCronFallback } = require('./utils/aiCronFallback');
 const redisClient = require('./utils/redisClient');
 const logger = require('./utils/logger');
- 
+
+// PM2 cluster worker index. Schedulers / cron / one-shot index builds run on the
+// PRIMARY worker only (NODE_APP_INSTANCE '0'); the other worker(s) just serve.
+// NOTE: this is a PM2 process identity, NOT distributed leader election â€” if the
+// app is ever run on multiple machines, worker 0 exists on EACH machine and
+// scheduler duplication returns. Move scheduled work to BullMQ repeatable jobs
+// before scaling to multiple hosts.
+const isPrimaryWorker = Number(process.env.NODE_APP_INSTANCE || 0) === 0;
 
 let io;
 
+// Track active scheduler intervals so graceful shutdown can clear them.
+const schedulerIntervals = new Set();
+const schedulerTimeouts = new Set();
+
+let shuttingDown = false;
+
 const shutdown = async (reason, err) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log(`${reason}! Shutting down...`);
 
   if (err) {
@@ -21,6 +36,13 @@ const shutdown = async (reason, err) => {
     console.error(err.stack);
   }
 
+  // 1) Stop scheduling NEW work (in-process timers) so nothing fires mid-drain.
+  for (const t of schedulerIntervals) clearInterval(t);
+  schedulerIntervals.clear();
+  for (const t of schedulerTimeouts) clearTimeout(t);
+  schedulerTimeouts.clear();
+
+  // 2) Stop the AI cron fallback worker.
   try {
     const { stopAiCronFallback } = require('./utils/aiCronFallback');
     stopAiCronFallback();
@@ -28,14 +50,29 @@ const shutdown = async (reason, err) => {
     logger.warn('[shutdown] stopAiCronFallback failed:', err?.message);
   }
 
+  // 3) Stop accepting NEW connections; drain in-flight requests. pm2 reload
+  //    sends SIGINT then waits kill_timeout before SIGKILL, so finish fast.
+  const drain = () =>
+    new Promise((resolve) => {
+      if (!server) return resolve();
+      // Stop the listener; keep-alive idle sockets no longer hold the drain open.
+      server.close(() => resolve());
+      if (typeof server.closeIdleConnections === 'function') server.closeIdleConnections();
+      // Force-resolve after a short grace so a hung request can't block SIGKILL.
+      setTimeout(resolve, 5000).unref?.();
+    });
+
   try {
     if (io) {
-      io.close(() => console.log('Socket.IO closed'));
+      io.close(() => {});
     }
   } catch (e) {
     console.error('Error closing Socket.IO:', e?.message || e);
   }
 
+  await drain();
+
+  // 4) Tear down infra (Prisma, queue, Redis) then exit.
   try {
     await prisma.$disconnect();
     console.log('Prisma disconnected');
@@ -44,16 +81,18 @@ const shutdown = async (reason, err) => {
   }
 
   try {
-    if (server) {
-      server.close(() => {
-        closeAll().finally(() => redisClient.quit().finally(() => process.exit(1)));
-      });
-    } else {
-      closeAll().finally(() => redisClient.quit().finally(() => process.exit(1)));
-    }
-  } catch {
-    process.exit(1);
+    await closeAll();
+  } catch (e) {
+    console.error('Error closing queue:', e?.message || e);
   }
+
+  try {
+    await redisClient.quit();
+  } catch (e) {
+    console.error('Error quitting Redis:', e?.message || e);
+  }
+
+  process.exit(err ? 1 : 0);
 };
 
 // Known non-fatal error classes that must never take down the process. These
@@ -67,7 +106,7 @@ function isNonFatalError(err) {
 
 process.on('uncaughtException', (err) => {
   if (isNonFatalError(err)) {
-    console.warn('[uncaughtException] Non-fatal error — continuing:', err.message);
+    console.warn('[uncaughtException] Non-fatal error â€” continuing:', err.message);
     return;
   }
   shutdown('UNCAUGHT EXCEPTION', err);
@@ -85,11 +124,11 @@ const port = process.env.PORT || 5000;
 process.on('unhandledRejection', (err) => {
   // ioredis rejects in-flight commands with "Connection is closed" when the
   // Upstash TLS socket drops (e.g. request-limit throttling). That's an
-  // infrastructure blip, not an app bug — log it and keep serving; the
+  // infrastructure blip, not an app bug â€” log it and keep serving; the
   // degraded-mode fallbacks handle the actual work. Anything else still shuts
   // down so real bugs stay loud.
   if (isNonFatalError(err)) {
-    console.warn('[unhandledRejection] Non-fatal error — continuing:', err?.message);
+    console.warn('[unhandledRejection] Non-fatal error â€” continuing:', err?.message);
     return;
   }
   shutdown('UNHANDLED REJECTION', err);
@@ -113,7 +152,11 @@ server.listen(port, '0.0.0.0', () => {
 
 setupSocketIO();
 
-// Async initialization (Prisma, Redis, queue workers) — non-blocking
+// Async initialization (Prisma, Redis, queue workers) â€” non-blocking.
+// Only the PRIMARY cluster worker runs schedulers / cron / one-shot index
+// builds so duplicate timers never fire across workers. Non-primary workers
+// still serve HTTP + Socket.IO (Redis adapter keeps rooms consistent) and
+// participate in the shared BullMQ queue via registerWorkers().
 (async () => {
   try {
     await prisma.$connect();
@@ -124,14 +167,26 @@ setupSocketIO();
 
   setupPrismaMiddleware(prisma);
   setupRedisAdapter();
-  await setupQueueWorkers();
 
-  // Start AI cron fallback — runs regardless of Redis availability
-  // Processes PENDING/FAILED tours directly via processTourAI()
-  startAiCronFallback();
+  if (isPrimaryWorker) {
+    console.log('[Startup] Primary worker â€” enabling schedulers, AI cron, index build');
+    await setupQueueWorkers();
 
-  // Build BM25 search index in background (non-blocking)
-  buildBm25Index().catch(err => console.warn('[BM25] Index build failed:', err.message));
+    // AI cron fallback â€” processes PENDING/FAILED tours directly.
+    startAiCronFallback();
+
+    // Build BM25 search index in background (non-blocking)
+    buildBm25Index().catch(err => console.warn('[BM25] Index build failed:', err.message));
+  } else {
+    console.log('[Startup] Non-primary worker — serving HTTP/Socket.IO only');
+    // Non-primary workers still consume the shared BullMQ queue (each job runs
+    // once thanks to Redis), but never register in-process schedulers/cron.
+    try {
+      registerWorkers(app);
+    } catch (err) {
+      logger.warn('[Startup] registerWorkers failed:', err?.message);
+    }
+  }
 })();
 
 async function buildBm25Index() {
@@ -151,10 +206,10 @@ function setupRedisAdapter() {
   if (!process.env.REDIS_URL) return;
   (async () => {
     // Gate on the shared degraded-mode state first: if Redis is already
-    // quota-limited/unavailable, don't even create the pub/sub clients — an
+    // quota-limited/unavailable, don't even create the pub/sub clients â€” an
     // orphaned, unguarded client is exactly what used to crash the process.
     if (!(await redisClient.isRedisAvailable())) {
-      console.warn('[Socket.IO] Redis unavailable — using in-process adapter (single instance fallback)');
+      console.warn('[Socket.IO] Redis unavailable â€” using in-process adapter (single instance fallback)');
       return;
     }
     try {
@@ -173,7 +228,7 @@ function setupRedisAdapter() {
 
 /**
  * Booking-lifecycle sweeps run on DIRECT in-app timers, independent of Redis/
- * BullMQ. Redis has been flaky at boot — when it's down, setupQueueWorkers
+ * BullMQ. Redis has been flaky at boot â€” when it's down, setupQueueWorkers
  * returns before registering the queue-driven intervals, so bookings were never
  * auto-completed / stale ones never cancelled. All of these jobs are idempotent
  * DB/Stripe/email sweeps, so running them in-process on a simple timer is safe
@@ -181,7 +236,7 @@ function setupRedisAdapter() {
  * (before the Redis probe) and each runs once shortly after boot to catch up on
  * anything missed while the process was down.
  */
-function scheduleBookingLifecycle(intervals) {
+function scheduleBookingLifecycle() {
   const jobs = [
     // Auto-complete CONFIRMED bookings once their activity date has passed.
     { label: 'auto-complete-bookings', ms: 15 * 60 * 1000, run: () => require('./utils/bookingCleanup').autoCompleteBookings() },
@@ -211,10 +266,10 @@ function scheduleBookingLifecycle(intervals) {
         .catch((err) => logger.warn(`[scheduler] ${job.label} failed:`, err?.message))
         .finally(() => { running = false; });
     };
-    intervals.push(setInterval(tick, job.ms));
+    schedulerIntervals.add(setInterval(tick, job.ms));
     // Catch up once shortly after boot (covers a restart that happened after
     // an activity date passed while the process was down).
-    setTimeout(tick, 15000);
+    schedulerTimeouts.add(setTimeout(tick, 15000));
   }
 }
 
@@ -222,32 +277,30 @@ async function setupQueueWorkers() {
   console.log('[Startup] Checking Redis for queue workers...');
   startResumeMonitor();
 
-  const intervals = [];
-
-  // Ghana auto-publish reconcile — DB-driven and self-healing. The interval is
+  // Ghana auto-publish reconcile â€” DB-driven and self-healing. The interval is
   // registered unconditionally (before the Redis probe) so it survives degraded
   // boots; the startup call below runs once Redis is confirmed available, and
   // the resume monitor also triggers it after an outage. All idempotent.
   const { reconcileGhanaPublish } = require('./utils/autoPublishGhana');
-  intervals.push(setInterval(() => {
+  schedulerIntervals.add(setInterval(() => {
     reconcileGhanaPublish().catch((err) => logger.warn('[scheduler] ghana-publish reconcile failed:', err?.message));
   }, 30 * 60 * 1000));
 
-  // TravioAfrica auto-publish reconcile — same pattern as Ghana
+  // TravioAfrica auto-publish reconcile â€” same pattern as Ghana
   const { reconcileTravioAfricaPublish } = require('./utils/autoPublishTravioAfrica');
-  intervals.push(setInterval(() => {
+  schedulerIntervals.add(setInterval(() => {
     reconcileTravioAfricaPublish().catch((err) => logger.warn('[scheduler] travioafrica-publish reconcile failed:', err?.message));
   }, 30 * 60 * 1000));
 
   // Booking-lifecycle sweeps run on direct timers (see scheduleBookingLifecycle)
   // so they fire even on degraded boots where Redis is down.
-  scheduleBookingLifecycle(intervals);
+  scheduleBookingLifecycle();
 
   // Real-command probe (not PING) so a quota-exhausted boot doesn't register
   // workers that immediately start hammering Upstash.
   const redisOk = await probe();
   if (!redisOk) {
-    console.warn('[Queue] Redis unavailable — using inline fallback');
+    console.warn('[Queue] Redis unavailable â€” using inline fallback');
     return;
   }
 
@@ -260,45 +313,45 @@ async function setupQueueWorkers() {
   // Backfill: publish all existing non-Ghana African suppliers' tours on boot
   reconcileTravioAfricaPublish().catch((err) => logger.warn('[scheduler] startup travioafrica-publish reconcile failed:', err?.message));
 
-  intervals.push(setInterval(() => {
+  schedulerIntervals.add(setInterval(() => {
     enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] cleanup-expired-cart failed:', err?.message));
   }, 5 * 60 * 1000));
 
-  intervals.push(setInterval(() => {
+  schedulerIntervals.add(setInterval(() => {
     enqueueAggregation('refresh-popularity').catch((err) => logger.warn('[scheduler] refresh-popularity failed:', err?.message));
   }, 60 * 60 * 1000));
 
-  intervals.push(setInterval(() => {
+  schedulerIntervals.add(setInterval(() => {
     enqueueAggregation('cleanup-events').catch((err) => logger.warn('[scheduler] cleanup-events failed:', err?.message));
   }, 24 * 60 * 60 * 1000));
 
-  intervals.push(setInterval(() => {
+  schedulerIntervals.add(setInterval(() => {
     enqueueCleanup('cleanup-notifications').catch((err) => logger.warn('[scheduler] cleanup-notifications failed:', err?.message));
   }, 24 * 60 * 60 * 1000));
 
-  intervals.push(setInterval(() => {
+  schedulerIntervals.add(setInterval(() => {
     enqueueCleanup('cleanup-audit-logs').catch((err) => logger.warn('[scheduler] cleanup-audit-logs failed:', err?.message));
   }, 24 * 60 * 60 * 1000));
 
-  intervals.push(setInterval(() => {
+  schedulerIntervals.add(setInterval(() => {
     enqueueCleanup('purge-archived-tours').catch((err) => logger.warn('[scheduler] purge-archived-tours failed:', err?.message));
   }, 24 * 60 * 60 * 1000));
 
-  intervals.push(setInterval(() => {
+  schedulerIntervals.add(setInterval(() => {
     enqueueCleanup('expire-special-offers').catch((err) => logger.warn('[scheduler] expire-special-offers failed:', err?.message));
   }, 24 * 60 * 60 * 1000));
 
   // Document expiration + 60/30/7-day licence/certificate reminders.
-  intervals.push(setInterval(() => {
+  schedulerIntervals.add(setInterval(() => {
     enqueueCleanup('expire-supplier-documents').catch((err) => logger.warn('[scheduler] expire-supplier-documents failed:', err?.message));
   }, 24 * 60 * 60 * 1000));
 
-  intervals.push(setInterval(() => {
+  schedulerIntervals.add(setInterval(() => {
     enqueueCleanup('plan-doc-expiry-reminders').catch((err) => logger.warn('[scheduler] plan-doc-expiry-reminders failed:', err?.message));
   }, 24 * 60 * 60 * 1000));
 
   // Aggregate yesterday's tour views into DailyTourStats (runs daily at 00:05 UTC)
-  intervals.push(setInterval(() => {
+  schedulerIntervals.add(setInterval(() => {
     enqueueAggregation('aggregate-daily-views').catch((err) => logger.warn('[scheduler] aggregate-daily-views failed:', err?.message));
   }, 24 * 60 * 60 * 1000));
 
@@ -341,7 +394,7 @@ function setupSocketIO() {
       },
       credentials: true,
     },
-    transports: ['polling', 'websocket'],
+    transports: ['websocket'],
     allowEIO3: true,
   });
 
