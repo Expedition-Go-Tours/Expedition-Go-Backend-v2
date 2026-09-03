@@ -5,7 +5,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const prisma = require('./utils/prismaClient');
 const { setIO, setupPrismaMiddleware } = require('./utils/dataChangeEmitter');
-const { registerWorkers, closeAll, enqueueNotification, enqueueCleanup, enqueueAggregation, enqueueEvent, startResumeMonitor } = require('./utils/queue');
+const { registerWorkers, closeAll, registerSchedules, verifySchedules, enqueueNotification, enqueueCleanup, enqueueAggregation, enqueueEvent, startResumeMonitor } = require('./utils/queue');
 const { startAiCronFallback } = require('./utils/aiCronFallback');
 const redisClient = require('./utils/redisClient');
 const { acquireRunLock, releaseRunLock } = require('./utils/runLock');
@@ -380,6 +380,21 @@ async function setupQueueWorkers(redisOk = true) {
   }
   registerWorkers(app);
   console.log('[Queue] Workers registered');
+
+  // ── Job Schedulers (BullMQ = single scheduling authority) ─────────────
+  // Register + verify every schedule. Idempotent — safe to run on all workers.
+  // Missing schedulers log LOUDLY but never block boot (resume monitor retries).
+  await registerSchedules();
+  try {
+    const schedVerify = await verifySchedules();
+    if (schedVerify.missing.length > 0) {
+      console.error(`[SCHEDULER_HEALTH] CRITICAL Missing schedulers at boot: ${schedVerify.missing.join(', ')}`);
+    } else {
+      console.log(`[Queue] Schedulers verified (${schedVerify.registered}/${schedVerify.expected})`);
+    }
+  } catch (err) {
+    console.error('[SCHEDULER_HEALTH] CRITICAL Could not verify schedulers at boot:', err?.message);
+  }
 
   // ── One-shot boot work (PRIMARY only — global actions must not duplicate) ──
   if (!isPrimaryWorker) return;

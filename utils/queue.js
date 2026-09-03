@@ -81,6 +81,155 @@ const ghanaPublishQueue = () => getQueue(QUEUE_NAMES.GHANA_PUBLISH);
 const travioAfricaPublishQueue = () => getQueue(QUEUE_NAMES.TRAVIO_AFRICA_PUBLISH);
 
 // ---------------------------------------------------------------------------
+// Job Schedulers (single scheduling authority — BullMQ repeatable jobs)
+// ---------------------------------------------------------------------------
+// Cadences mirror the pre-BullMQ in-process timers exactly. Every entry is
+// scheduled via queue.upsertJobScheduler with a STABLE id (sched:<jobName>), so
+// re-registration on any worker/boot is idempotent — never a duplicate.
+// Jobs are delivered at-least-once; business correctness lives in the
+// idempotent handlers (DB status transitions + Stripe PaymentIntent semantics).
+const SCHEDULES = [
+  // CLEANUP — low-risk maintenance
+  { jobName: 'cleanup-expired-cart',       queue: 'cleanup',      everyMs: 5 * 60 * 1000 },
+  { jobName: 'cleanup-notifications',      queue: 'cleanup',      everyMs: 24 * 3600 * 1000 },
+  { jobName: 'cleanup-audit-logs',         queue: 'cleanup',      everyMs: 24 * 3600 * 1000 },
+  { jobName: 'purge-archived-tours',       queue: 'cleanup',      everyMs: 24 * 3600 * 1000 },
+  { jobName: 'expire-special-offers',      queue: 'cleanup',      everyMs: 24 * 3600 * 1000 },
+  { jobName: 'expire-supplier-documents',  queue: 'cleanup',      everyMs: 24 * 3600 * 1000 },
+  { jobName: 'plan-doc-expiry-reminders',  queue: 'cleanup',      everyMs: 24 * 3600 * 1000 },
+  // CLEANUP — lifecycle / money / reminders
+  { jobName: 'auto-complete-bookings',      queue: 'cleanup',      everyMs: 15 * 60 * 1000 },
+  { jobName: 'cancel-stale-pending-bookings', queue: 'cleanup',    everyMs: 15 * 60 * 1000 },
+  { jobName: 'cleanup-stale-bookings',      queue: 'cleanup',      everyMs: 5 * 60 * 1000 },
+  { jobName: 'expire-checkout-holds',       queue: 'cleanup',      everyMs: 5 * 60 * 1000 },
+  { jobName: 'charge-pay-later-bookings',   queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
+  { jobName: 'earnings-eligibility-sweep',  queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
+  { jobName: 'plan-booking-reminders',      queue: 'cleanup',      everyMs: 3600 * 1000 },
+  { jobName: 'dispatch-booking-reminders',  queue: 'cleanup',      everyMs: 15 * 60 * 1000 },
+  // CLEANUP — reconciles
+  { jobName: 'reconcile-ghana',             queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
+  { jobName: 'reconcile-travioafrica',      queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
+  // AGGREGATIONS
+  { jobName: 'refresh-popularity',          queue: 'aggregation', everyMs: 3600 * 1000 },
+  { jobName: 'cleanup-events',              queue: 'aggregation', everyMs: 24 * 3600 * 1000 },
+  { jobName: 'aggregate-daily-views',       queue: 'aggregation', everyMs: 24 * 3600 * 1000 },
+];
+
+// Per-schedule execution health, tracked in-process as jobs complete/fail.
+// { jobName: { lastRunAt, lastDurationMs, lastFailureAt, consecutiveFailures } }
+const schedulerExecution = new Map();
+
+const QUEUE_BY_LABEL = { cleanup: QUEUE_NAMES.CLEANUP, aggregation: QUEUE_NAMES.AGGREGATIONS };
+
+function schedulerId(jobName) { return `sched:${jobName}`; }
+
+function recordSweepStart(jobName) {
+  const prev = schedulerExecution.get(jobName) || {};
+  schedulerExecution.set(jobName, { ...prev, startedAt: Date.now() });
+  console.log(`[Sweep] ${jobName} started`);
+}
+
+function recordSweepSuccess(jobName) {
+  const prev = schedulerExecution.get(jobName) || {};
+  const startedAt = prev.startedAt || Date.now();
+  const durationMs = Date.now() - startedAt;
+  schedulerExecution.set(jobName, {
+    lastRunAt: Date.now(),
+    lastDurationMs: durationMs,
+    lastFailureAt: prev.lastFailureAt || null,
+    consecutiveFailures: 0,
+  });
+  console.log(`[Sweep] ${jobName} done in ${durationMs}ms`);
+}
+
+function recordSweepFailure(jobName) {
+  const prev = schedulerExecution.get(jobName) || {};
+  schedulerExecution.set(jobName, {
+    lastRunAt: prev.lastRunAt || null,
+    lastDurationMs: prev.lastDurationMs || null,
+    lastFailureAt: Date.now(),
+    consecutiveFailures: (prev.consecutiveFailures || 0) + 1,
+  });
+}
+
+/**
+ * Register every schedule in Redis via idempotent upsertJobScheduler.
+ * Returns per-job results (ok:/fail:) so the caller can verify.
+ */
+async function registerSchedules() {
+  const results = [];
+  for (const s of SCHEDULES) {
+    const q = getQueue(QUEUE_BY_LABEL[s.queue]);
+    try {
+      await q.upsertJobScheduler(schedulerId(s.jobName), { every: s.everyMs }, {
+        name: s.jobName,
+        data: {},
+        opts: {},
+      });
+      results.push(`ok:${s.jobName}`);
+    } catch (e) {
+      results.push(`fail:${s.jobName}:${e?.message || e}`);
+    }
+  }
+  return results;
+}
+
+/**
+ * Verify every expected scheduler exists in Redis.
+ * @returns {{ registered: number, expected: number, missing: string[] }}
+ */
+async function verifySchedules() {
+  const expected = new Set(SCHEDULES.map((s) => schedulerId(s.jobName)));
+  const present = new Set();
+  for (const label of Object.keys(QUEUE_BY_LABEL)) {
+    const q = getQueue(QUEUE_BY_LABEL[label]);
+    let schedulers = [];
+    try {
+      schedulers = await q.getJobSchedulers();
+    } catch { /* Redis down — treat as missing */ }
+    for (const j of schedulers) if (j && j.key) present.add(j.key);
+  }
+  const missing = [...expected].filter((k) => !present.has(k));
+  return { registered: present.size, expected: expected.size, missing };
+}
+
+/**
+ * Health used by /health + ops digest. Combines registration health with
+ * EXECUTION health (a registered scheduler that silently stopped is the real
+ * risk). Schedules whose last run is older than 2x cadence are flagged stale.
+ */
+async function getSchedulerHealth() {
+  const out = { status: 'unknown', expected: SCHEDULES.length, registered: 0, missing: [], stale: [], lastVerifiedAt: null };
+  try {
+    const v = await verifySchedules();
+    out.registered = v.registered;
+    out.missing = v.missing;
+    out.lastVerifiedAt = new Date().toISOString();
+    out.status = v.missing.length === 0 ? 'healthy' : 'unhealthy';
+    const now = Date.now();
+    for (const s of SCHEDULES) {
+      const ex = schedulerExecution.get(s.jobName);
+      const lastRunAt = ex?.lastRunAt;
+      if (!lastRunAt) continue; // never ran since process start — not yet stale
+      const ageMs = now - lastRunAt;
+      if (ageMs > s.everyMs * 2) {
+        out.stale.push({
+          jobName: s.jobName,
+          cadence: s.everyMs,
+          lastRunAt: new Date(lastRunAt).toISOString(),
+          lastFailureAt: ex?.lastFailureAt ? new Date(ex.lastFailureAt).toISOString() : null,
+          consecutiveFailures: ex?.consecutiveFailures || 0,
+        });
+      }
+    }
+    if (out.status === 'healthy' && out.stale.length > 0) out.status = 'degraded';
+    return out;
+  } catch {
+    return out; // Redis unavailable → unknown
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Enqueue helpers (typed so callers don't touch raw queue names)
 // ---------------------------------------------------------------------------
 
@@ -630,6 +779,9 @@ function registerWorkers() {
    * AGGREGATION WORKER
    * ------------------------------------------------------------------ */
   createWorker(QUEUE_NAMES.AGGREGATIONS, async (job) => {
+    const isScheduled = SCHEDULES.some((s) => s.jobName === job.name);
+    if (isScheduled) recordSweepStart(job.name);
+    try {
     switch (job.name) {
       case 'refresh-popularity':
         const cache = require('./cacheHelper');
@@ -694,58 +846,76 @@ function registerWorkers() {
       default:
         console.log('[Queue] Unknown aggregation job:', job.name);
     }
+      if (isScheduled) recordSweepSuccess(job.name);
+    } catch (err) {
+      if (isScheduled) recordSweepFailure(job.name);
+      throw err; // let BullMQ retry
+    }
   });
 
   /* ------------------------------------------------------------------
    * CLEANUP WORKER
    * ------------------------------------------------------------------ */
   createWorker(QUEUE_NAMES.CLEANUP, async (job) => {
-    switch (job.name) {
-      case 'cleanup-audit-logs': {
-        const { cleanupOldLogs } = require('./auditLogger');
-        await cleanupOldLogs(365);
-        break;
-      }
-      case 'cleanup-stale-bookings': {
-        const { cancelStalePendingBookings } = require('./bookingCleanup');
-        await cancelStalePendingBookings();
-        break;
-      }
-      case 'auto-complete-bookings': {
-        const { autoCompleteBookings } = require('./bookingCleanup');
-        await autoCompleteBookings();
-        break;
-      }
-      case 'cancel-stale-pending-bookings': {
-        const { cancelStalePendingAfterTravelDate } = require('./bookingCleanup');
-        await cancelStalePendingAfterTravelDate();
-        break;
-      }
-      case 'expire-checkout-holds': {
-        const { expireCheckoutHolds } = require('./bookingCleanup');
-        await expireCheckoutHolds();
-        break;
-      }
-      case 'earnings-eligibility-sweep': {
-        const { sweepEarningsEligibility } = require('./payoutCycles');
-        await sweepEarningsEligibility();
-        break;
-      }
-      case 'charge-pay-later-bookings': {
-        const { chargePayLaterBookings } = require('./payLaterSweep');
-        await chargePayLaterBookings();
-        break;
-      }
-      case 'plan-booking-reminders': {
-        const { planBookingReminders } = require('./bookingReminders');
-        await planBookingReminders();
-        break;
-      }
-      case 'dispatch-booking-reminders': {
-        const { dispatchDueReminders } = require('./bookingReminders');
-        await dispatchDueReminders();
-        break;
-      }
+    const isScheduled = SCHEDULES.some((s) => s.jobName === job.name);
+    if (isScheduled) recordSweepStart(job.name);
+    try {
+      switch (job.name) {
+        case 'cleanup-audit-logs': {
+          const { cleanupOldLogs } = require('./auditLogger');
+          await cleanupOldLogs(365);
+          break;
+        }
+        case 'cleanup-stale-bookings': {
+          const { cancelStalePendingBookings } = require('./bookingCleanup');
+          await cancelStalePendingBookings();
+          break;
+        }
+        case 'auto-complete-bookings': {
+          const { autoCompleteBookings } = require('./bookingCleanup');
+          await autoCompleteBookings();
+          break;
+        }
+        case 'cancel-stale-pending-bookings': {
+          const { cancelStalePendingAfterTravelDate } = require('./bookingCleanup');
+          await cancelStalePendingAfterTravelDate();
+          break;
+        }
+        case 'expire-checkout-holds': {
+          const { expireCheckoutHolds } = require('./bookingCleanup');
+          await expireCheckoutHolds();
+          break;
+        }
+        case 'earnings-eligibility-sweep': {
+          const { sweepEarningsEligibility } = require('./payoutCycles');
+          await sweepEarningsEligibility();
+          break;
+        }
+        case 'charge-pay-later-bookings': {
+          const { chargePayLaterBookings } = require('./payLaterSweep');
+          await chargePayLaterBookings();
+          break;
+        }
+        case 'plan-booking-reminders': {
+          const { planBookingReminders } = require('./bookingReminders');
+          await planBookingReminders();
+          break;
+        }
+        case 'dispatch-booking-reminders': {
+          const { dispatchDueReminders } = require('./bookingReminders');
+          await dispatchDueReminders();
+          break;
+        }
+        case 'reconcile-ghana': {
+          const { reconcileGhanaPublish } = require('./autoPublishGhana');
+          await reconcileGhanaPublish();
+          break;
+        }
+        case 'reconcile-travioafrica': {
+          const { reconcileTravioAfricaPublish } = require('./autoPublishTravioAfrica');
+          await reconcileTravioAfricaPublish();
+          break;
+        }
       case 'cleanup-notifications': {
         const { cleanupOldNotifications } = require('./notificationService');
         await cleanupOldNotifications(90);
@@ -826,6 +996,11 @@ function registerWorkers() {
       default:
         console.log('[Queue] Unknown cleanup job:', job.name);
     }
+      if (isScheduled) recordSweepSuccess(job.name);
+    } catch (err) {
+      if (isScheduled) recordSweepFailure(job.name);
+      throw err; // let BullMQ retry
+    }
   });
 
   /* ------------------------------------------------------------------
@@ -901,6 +1076,14 @@ function startResumeMonitor() {
           } else if (toResume.length > 0) {
             console.log('[Queue] Redis recovered — workers resumed');
           }
+          // Ensure every expected Job Scheduler exists after recovery (idempotent).
+          await registerSchedules();
+          const verify = await verifySchedules();
+          if (verify.missing.length > 0) {
+            console.error(`[SCHEDULER_HEALTH] CRITICAL Missing schedulers after recovery: ${verify.missing.join(', ')}`);
+          } else {
+            console.log(`[Queue] Schedulers verified (${verify.registered}/${verify.expected})`);
+          }
           // Reconcile any AI scoring jobs that were pending during Redis outage
           reconcilePendingAiJobs().catch(() => {});
           // Same for Ghana auto-publish jobs missed during the outage
@@ -942,6 +1125,7 @@ async function closeAll() {
 
 module.exports = {
   QUEUE_NAMES,
+  SCHEDULES,
   enqueueEmail,
   enqueueNotification,
   enqueueEvent,
@@ -956,6 +1140,9 @@ module.exports = {
   enqueueTravioAfricaPublish,
   processEmailJob,
   registerWorkers,
+  registerSchedules,
+  verifySchedules,
+  getSchedulerHealth,
   startResumeMonitor,
   closeAll,
   getConnection,

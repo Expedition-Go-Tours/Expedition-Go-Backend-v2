@@ -198,14 +198,31 @@ app.get('/health', async (req, res) => {
     checks.database = 'down';
   }
 
+  let redisOk = false;
   try {
-    const redisOk = await isRedisAvailable();
+    redisOk = await isRedisAvailable();
     checks.redis = redisOk ? 'healthy' : 'unhealthy';
   } catch {
     checks.redis = 'down';
   }
 
-  res.status(200).json({ status: dbOk ? 'success' : 'degraded', checks });
+  const body = { status: dbOk ? 'success' : 'degraded', checks };
+
+  // Job-scheduler health (BullMQ): registration + execution. Only meaningful
+  // when Redis is up; reported as 'unknown' otherwise so uptime checks don't
+  // go red during a transient Redis blip.
+  if (redisOk) {
+    try {
+      const { getSchedulerHealth } = require('./utils/queue');
+      body.scheduler = await getSchedulerHealth();
+    } catch {
+      body.scheduler = { status: 'unknown' };
+    }
+  } else {
+    body.scheduler = { status: 'unknown', reason: 'redis_down' };
+  }
+
+  res.status(200).json(body);
 });
 
 
