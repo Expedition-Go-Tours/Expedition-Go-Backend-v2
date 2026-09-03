@@ -5,7 +5,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const prisma = require('./utils/prismaClient');
 const { setIO, setupPrismaMiddleware } = require('./utils/dataChangeEmitter');
-const { registerWorkers, closeAll, registerSchedules, verifySchedules, enqueueNotification, enqueueCleanup, enqueueAggregation, enqueueEvent, startResumeMonitor } = require('./utils/queue');
+const { registerWorkers, closeAll, registerSchedules, verifySchedules, enqueueNotification, enqueueEvent, startResumeMonitor } = require('./utils/queue');
 const { startAiCronFallback } = require('./utils/aiCronFallback');
 const redisClient = require('./utils/redisClient');
 const { acquireRunLock, releaseRunLock } = require('./utils/runLock');
@@ -319,59 +319,10 @@ async function setupQueueWorkers(redisOk = true) {
   }, 30 * 60 * 1000));
 
   // Booking-lifecycle sweeps (see scheduleBookingLifecycle).
+  // NOTE: low-risk cleanup + aggregation sweeps no longer have in-process
+  // timers — they are BullMQ Job Schedulers (see SCHEDULES in utils/queue.js).
+  // Lifecycle/money/reminder + reconcile sweeps keep their timers until Deploy C.
   scheduleBookingLifecycle();
-
-  schedulerIntervals.add(setInterval(() => {
-    runScheduledJob('cleanup-expired-cart', () => enqueueCleanup('cleanup-expired-cart'), 10 * 60 * 1000)
-      .catch((err) => logger.warn('[scheduler] cleanup-expired-cart failed:', err?.message));
-  }, 5 * 60 * 1000));
-
-  schedulerIntervals.add(setInterval(() => {
-    runScheduledJob('refresh-popularity', () => enqueueAggregation('refresh-popularity'), 60 * 60 * 1000)
-      .catch((err) => logger.warn('[scheduler] refresh-popularity failed:', err?.message));
-  }, 60 * 60 * 1000));
-
-  schedulerIntervals.add(setInterval(() => {
-    runScheduledJob('cleanup-events', () => enqueueAggregation('cleanup-events'), 24 * 60 * 60 * 1000)
-      .catch((err) => logger.warn('[scheduler] cleanup-events failed:', err?.message));
-  }, 24 * 60 * 60 * 1000));
-
-  schedulerIntervals.add(setInterval(() => {
-    runScheduledJob('cleanup-notifications', () => enqueueCleanup('cleanup-notifications'), 24 * 60 * 60 * 1000)
-      .catch((err) => logger.warn('[scheduler] cleanup-notifications failed:', err?.message));
-  }, 24 * 60 * 60 * 1000));
-
-  schedulerIntervals.add(setInterval(() => {
-    runScheduledJob('cleanup-audit-logs', () => enqueueCleanup('cleanup-audit-logs'), 24 * 60 * 60 * 1000)
-      .catch((err) => logger.warn('[scheduler] cleanup-audit-logs failed:', err?.message));
-  }, 24 * 60 * 60 * 1000));
-
-  schedulerIntervals.add(setInterval(() => {
-    runScheduledJob('purge-archived-tours', () => enqueueCleanup('purge-archived-tours'), 24 * 60 * 60 * 1000)
-      .catch((err) => logger.warn('[scheduler] purge-archived-tours failed:', err?.message));
-  }, 24 * 60 * 60 * 1000));
-
-  schedulerIntervals.add(setInterval(() => {
-    runScheduledJob('expire-special-offers', () => enqueueCleanup('expire-special-offers'), 24 * 60 * 60 * 1000)
-      .catch((err) => logger.warn('[scheduler] expire-special-offers failed:', err?.message));
-  }, 24 * 60 * 60 * 1000));
-
-  // Document expiration + 60/30/7-day licence/certificate reminders.
-  schedulerIntervals.add(setInterval(() => {
-    runScheduledJob('expire-supplier-documents', () => enqueueCleanup('expire-supplier-documents'), 24 * 60 * 60 * 1000)
-      .catch((err) => logger.warn('[scheduler] expire-supplier-documents failed:', err?.message));
-  }, 24 * 60 * 60 * 1000));
-
-  schedulerIntervals.add(setInterval(() => {
-    runScheduledJob('plan-doc-expiry-reminders', () => enqueueCleanup('plan-doc-expiry-reminders'), 24 * 60 * 60 * 1000)
-      .catch((err) => logger.warn('[scheduler] plan-doc-expiry-reminders failed:', err?.message));
-  }, 24 * 60 * 60 * 1000));
-
-  // Aggregate yesterday's tour views into DailyTourStats (runs daily at 00:05 UTC)
-  schedulerIntervals.add(setInterval(() => {
-    runScheduledJob('aggregate-daily-views', () => enqueueAggregation('aggregate-daily-views'), 24 * 60 * 60 * 1000)
-      .catch((err) => logger.warn('[scheduler] aggregate-daily-views failed:', err?.message));
-  }, 24 * 60 * 60 * 1000));
 
   // ── Queue consumers (EVERY worker registers BullMQ workers; shared via Redis) ──
   if (!redisOk) {
@@ -405,15 +356,9 @@ async function setupQueueWorkers(redisOk = true) {
   // Backfill: publish all existing non-Ghana African suppliers' tours on boot
   reconcileTravioAfricaPublish().catch((err) => logger.warn('[scheduler] startup travioafrica-publish reconcile failed:', err?.message));
 
-  enqueueCleanup('cleanup-expired-cart').catch((err) => logger.warn('[scheduler] startup cleanup-expired-cart failed:', err?.message));
-  enqueueAggregation('refresh-popularity').catch((err) => logger.warn('[scheduler] startup refresh-popularity failed:', err?.message));
-  enqueueAggregation('cleanup-events').catch((err) => logger.warn('[scheduler] startup cleanup-events failed:', err?.message));
-  enqueueCleanup('cleanup-notifications').catch((err) => logger.warn('[scheduler] startup cleanup-notifications failed:', err?.message));
-  enqueueCleanup('cleanup-audit-logs').catch((err) => logger.warn('[scheduler] startup cleanup-audit-logs failed:', err?.message));
-  enqueueCleanup('purge-archived-tours').catch((err) => logger.warn('[scheduler] startup purge-archived-tours failed:', err?.message));
-  enqueueCleanup('expire-special-offers').catch((err) => logger.warn('[scheduler] startup expire-special-offers failed:', err?.message));
-  enqueueCleanup('expire-supplier-documents').catch((err) => logger.warn('[scheduler] startup expire-supplier-documents failed:', err?.message));
-  enqueueCleanup('plan-doc-expiry-reminders').catch((err) => logger.warn('[scheduler] startup plan-doc-expiry-reminders failed:', err?.message));
+  // NOTE: low-risk cleanup/aggregation jobs no longer get a boot catch-up —
+  // their BullMQ Job Schedulers fire them on cadence (state-based recovery,
+  // no interval replay). Homepage precompute stays (first-request latency).
 
   // Pre-compute homepage sections so the first user request is served instantly
   const { enqueueHomepagePrecompute } = require('./utils/queue');
