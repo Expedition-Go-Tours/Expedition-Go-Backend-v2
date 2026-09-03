@@ -1193,6 +1193,12 @@ exports.getBookings = catchAsync(async (req, res, next) => {
     startDate, endDate, search, sortBy = 'createdAt', sortOrder = 'desc',
   } = req.query;
 
+  // Whitelist sortable Booking columns — never interpolate a client-supplied
+  // value into orderBy (invalid Prisma order keys would otherwise surface).
+  const ALLOWED_BOOKING_SORTS = ['createdAt', 'updatedAt', 'total', 'status', 'paymentStatus', 'bookingNumber'];
+  const orderField = ALLOWED_BOOKING_SORTS.includes(sortBy) ? sortBy : 'createdAt';
+  const orderDir = sortOrder === 'asc' ? 'asc' : 'desc';
+
   const where = { source: GHANA_SOURCE };
   if (status) where.status = status.toUpperCase();
   if (paymentStatus) where.paymentStatus = paymentStatus.toUpperCase();
@@ -1217,7 +1223,7 @@ exports.getBookings = catchAsync(async (req, res, next) => {
   const [bookings, totalCount, counts, ghanaTotal] = await Promise.all([
     prisma.booking.findMany({
       where,
-      orderBy: { [sortBy]: sortOrder },
+      orderBy: { [orderField]: orderDir },
       skip,
       take,
       include: {

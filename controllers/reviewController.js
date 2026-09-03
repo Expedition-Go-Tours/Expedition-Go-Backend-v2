@@ -388,6 +388,13 @@ exports.getTourReviews = catchAsync(async (req, res, next) => {
     sortOrder = 'desc'
   } = req.query;
 
+  // Whitelist sortable Review columns — never interpolate a client-supplied
+  // value into orderBy (that previously produced `Unknown argument 'newest'` /
+  // invalid Prisma order keys when clients sent sort=newest).
+  const ALLOWED_REVIEW_SORTS = ['createdAt', 'rating', 'helpfulCount'];
+  const orderField = ALLOWED_REVIEW_SORTS.includes(sortBy) ? sortBy : 'createdAt';
+  const orderDir = sortOrder === 'asc' ? 'asc' : 'desc';
+
   const cacheKey = 'reviews:tour:' + tourId + ':' + crypto.createHash('md5').update(JSON.stringify(req.query)).digest('hex');
 
   const result = await cache.getOrSet(cacheKey, async () => {
@@ -415,7 +422,7 @@ exports.getTourReviews = catchAsync(async (req, res, next) => {
           }
         },
         orderBy: {
-          [sortBy]: sortOrder
+          [orderField]: orderDir
         },
         skip,
         take: parseInt(limit)
