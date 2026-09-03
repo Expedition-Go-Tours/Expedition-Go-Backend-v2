@@ -143,9 +143,13 @@ async function isRedisAvailable() {
 /**
  * Real-command health probe (GET, not PING). Used at boot and for recovery.
  * Only a successful real command clears quota degradation.
+ *
+ * Lazily creates the connection if none exists yet (boot race: probe may run
+ * before the caller connects). Never trusts PING — Upstash can answer PING
+ * while real commands hit the request limit.
  */
 async function probe() {
-  if (!connection) return false;
+  if (!connection) getConnection(); // ensure a client exists before probing
   try {
     if (connection.status !== 'ready') {
       await withTimeout(connection.connect(), COMMAND_TIMEOUT_MS);

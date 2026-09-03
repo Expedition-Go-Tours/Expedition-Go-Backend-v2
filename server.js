@@ -5,7 +5,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const prisma = require('./utils/prismaClient');
 const { setIO, setupPrismaMiddleware } = require('./utils/dataChangeEmitter');
-const { registerWorkers, closeAll, enqueueNotification, enqueueCleanup, enqueueAggregation, enqueueEvent, probe, startResumeMonitor } = require('./utils/queue');
+const { registerWorkers, closeAll, enqueueNotification, enqueueCleanup, enqueueAggregation, enqueueEvent, startResumeMonitor } = require('./utils/queue');
 const { startAiCronFallback } = require('./utils/aiCronFallback');
 const redisClient = require('./utils/redisClient');
 const logger = require('./utils/logger');
@@ -166,13 +166,23 @@ setupSocketIO();
   }
 
   setupPrismaMiddleware(prisma);
+
+  // Ensure the Redis client exists & a connect was attempted BEFORE queue/
+  // scheduler setup — probe() (used inside setupQueueWorkers) used to run
+  // before any connection existed and wrongly reported Redis "unavailable",
+  // which skipped registerWorkers() at boot.
+  const redisOk = await redisClient.isRedisAvailable();
+
+  // Wire the Socket.IO Redis adapter (rooms/broadcasts across cluster workers).
+  // Must run after io exists (setupSocketIO() ran above) and after Redis is
+  // known-good so the adapter actually connects.
   setupRedisAdapter();
 
   if (isPrimaryWorker) {
-    console.log('[Startup] Primary worker â€” enabling schedulers, AI cron, index build');
-    await setupQueueWorkers();
+    console.log('[Startup] Primary worker — enabling schedulers, AI cron, index build');
+    await setupQueueWorkers(redisOk);
 
-    // AI cron fallback â€” processes PENDING/FAILED tours directly.
+    // AI cron fallback — processes PENDING/FAILED tours directly.
     startAiCronFallback();
 
     // Build BM25 search index in background (non-blocking)
@@ -181,10 +191,14 @@ setupSocketIO();
     console.log('[Startup] Non-primary worker — serving HTTP/Socket.IO only');
     // Non-primary workers still consume the shared BullMQ queue (each job runs
     // once thanks to Redis), but never register in-process schedulers/cron.
-    try {
-      registerWorkers(app);
-    } catch (err) {
-      logger.warn('[Startup] registerWorkers failed:', err?.message);
+    if (redisOk) {
+      try {
+        registerWorkers(app);
+      } catch (err) {
+        logger.warn('[Startup] registerWorkers failed:', err?.message);
+      }
+    } else {
+      console.warn('[Queue] Redis unavailable — non-primary worker skipping queue registration (inline fallback)');
     }
   }
 })();
@@ -273,7 +287,7 @@ function scheduleBookingLifecycle() {
   }
 }
 
-async function setupQueueWorkers() {
+async function setupQueueWorkers(redisOk = true) {
   console.log('[Startup] Checking Redis for queue workers...');
   startResumeMonitor();
 
@@ -296,11 +310,11 @@ async function setupQueueWorkers() {
   // so they fire even on degraded boots where Redis is down.
   scheduleBookingLifecycle();
 
-  // Real-command probe (not PING) so a quota-exhausted boot doesn't register
-  // workers that immediately start hammering Upstash.
-  const redisOk = await probe();
+  // Redis availability was already established before this ran (server.js
+  // awaits isRedisAvailable() first). Only register queue workers when Redis
+  // is actually reachable so a quota-exhausted boot never hammers Upstash.
   if (!redisOk) {
-    console.warn('[Queue] Redis unavailable â€” using inline fallback');
+    console.warn('[Queue] Redis unavailable — using inline fallback');
     return;
   }
 
