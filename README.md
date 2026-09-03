@@ -243,6 +243,43 @@ Backendv2/
 
 ---
 
+## Deployment
+
+**Server:** Hetzner 2.28.45.181 · PM2 cluster (2 workers) · Nginx reverse proxy · Redis · PostgreSQL
+
+### Quick deploy (from local machine)
+
+```bash
+bash scripts/deploy.sh
+```
+
+### Manual deploy
+
+```bash
+ssh root@2.28.45.181
+su - deploy
+cd /home/deploy/Expedition-Go-Backend-v2
+git pull origin main
+npm install --production --silent
+pm2 reload expedition-api --update-env
+```
+
+### Critical: PM2 user
+
+**All PM2 commands must run as the `deploy` user**, never as root.
+
+Running PM2 as root creates a second daemon (`/root/.pm2`) that competes with the `deploy` user's daemon (`/home/deploy/.pm2`) for port 5000, causing `EADDRINUSE` restart loops and high CPU/load.
+
+If you accidentally start PM2 as root:
+```bash
+# Kill the root PM2 daemon immediately
+pm2 kill
+```
+
+Root PM2 auto-start has been disabled (`pm2 unstartup` run as root). Do not re-enable it.
+
+---
+
 ## Security
 
 - JWT access tokens with rotating refresh tokens; per-route RBAC via admin roles/permissions.
