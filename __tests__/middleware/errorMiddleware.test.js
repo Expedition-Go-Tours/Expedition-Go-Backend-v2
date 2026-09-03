@@ -276,9 +276,9 @@ describe('Error Middleware', () => {
       expect(classifyApiError(mkReq('/api/auth/refresh'), { message: 'Token expired', statusCode: 401 }, 401)).toBe('auth');
     });
 
-    it('business: intentional controller 4xx (e.g. supplier app 404)', () => {
-      const err = new AppError('No supplier application found', 404);
-      expect(classifyApiError(mkReq('/api/suppliers/application/status'), err, 404)).toBe('business');
+    it('business: intentional controller 4xx (e.g. booking not found)', () => {
+      const err = new AppError('No booking found', 404);
+      expect(classifyApiError(mkReq('/api/bookings/xyz'), err, 404)).toBe('business');
     });
 
     it('null: probe/noise paths are not recorded', () => {

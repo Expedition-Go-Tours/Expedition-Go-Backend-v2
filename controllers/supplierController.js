@@ -162,7 +162,12 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
 
 /**
  * GET /suppliers/application/status
- * Get the authenticated user's application status
+ * Get the authenticated user's application status.
+ * "No application yet" is a valid state for ANY signed-in user, so we return
+ * 200 with supplierProfile:null rather than a 404 (which made every
+ * non-supplier customer hitting this endpoint look like an error). Callers
+ * distinguish "not applied" (null) from "applied" (profile) without error
+ * handling.
  */
 exports.getApplicationStatus = catchAsync(async (req, res, next) => {
   const supplierProfile = await prisma.supplierProfile.findUnique({
@@ -174,13 +179,9 @@ exports.getApplicationStatus = catchAsync(async (req, res, next) => {
     },
   });
 
-  if (!supplierProfile) {
-    return next(new AppError('No supplier application found', 404));
-  }
-
   res.status(200).json({
     status: 'success',
-    data: { supplierProfile },
+    data: { supplierProfile: supplierProfile || null },
   });
 });
 

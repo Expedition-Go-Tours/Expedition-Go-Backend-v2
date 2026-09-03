@@ -50,7 +50,7 @@ describe('buildActivityReport (structured facts)', () => {
       {
         re: /classification' = 'business'/,
         rows: () => [
-          { endpoint: '/api/suppliers/application/status', status: '404', message: 'No supplier application found', count: 17, users: ['richiebgitcall94@gmail.com'] },
+          { endpoint: '/api/bookings/xyz', status: '404', message: 'No booking found', count: 17, users: ['richiebgitcall94@gmail.com'] },
         ],
       },
       {

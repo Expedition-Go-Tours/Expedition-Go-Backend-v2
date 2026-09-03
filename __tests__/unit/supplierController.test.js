@@ -250,10 +250,16 @@ describe('supplierController', () => {
   // getApplicationStatus
   // ============================
   describe('getApplicationStatus', () => {
-    it('returns 404 when no application exists', async () => {
+    it('returns 200 with supplierProfile null when no application exists', async () => {
+      prisma.supplierProfile.findUnique.mockResolvedValue(null);
+
       await controller.getApplicationStatus(req, res, next);
 
-      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
+      expect(next).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'success', data: expect.objectContaining({ supplierProfile: null }) })
+      );
     });
 
     it('returns the supplier profile', async () => {
