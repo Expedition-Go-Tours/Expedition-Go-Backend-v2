@@ -8,42 +8,17 @@ const { setIO, setupPrismaMiddleware } = require('./utils/dataChangeEmitter');
 const { registerWorkers, closeAll, registerSchedules, verifySchedules, enqueueNotification, enqueueEvent, startResumeMonitor } = require('./utils/queue');
 const { startAiCronFallback } = require('./utils/aiCronFallback');
 const redisClient = require('./utils/redisClient');
-const { acquireRunLock, releaseRunLock } = require('./utils/runLock');
 const logger = require('./utils/logger');
 
-// PM2 cluster worker index. Scheduling correctness comes from per-run Redis
-// locks (runScheduledJob): when Redis is healthy only ONE worker/machine wins
-// each sweep; isPrimaryWorker is used ONLY as the Redis-down fallback so a
-// temporary Redis outage keeps today's single-box behaviour (worker 0 runs).
+// PM2 cluster worker index. Scheduling is owned entirely by BullMQ Job
+// Schedulers (utils/queue.js registerSchedules) — no in-process timers or
+// per-run locks remain. isPrimaryWorker is still used for one-shot boot work
+// (AI cron, BM25 index) that must run exactly once per machine.
 // NOTE: NODE_APP_INSTANCE is a per-machine PM2 identity, NOT distributed
 // leader election — worker 0 exists on EVERY machine.
 const isPrimaryWorker = Number(process.env.NODE_APP_INSTANCE || 0) === 0;
 
 let io;
-
-// Track active scheduler intervals so graceful shutdown can clear them.
-const schedulerIntervals = new Set();
-const schedulerTimeouts = new Set();
-
-/**
- * Run a scheduled sweep exactly once across all workers/machines:
- *   - Redis healthy  → acquire a per-job lock; only the winner runs.
- *   - Redis down     → run only on the primary worker (single-box behaviour).
- * Locks are released with a compare-and-delete token so a stale owner can't
- * clear a newer owner's lock. Sweeps must remain idempotent — a lock expiry
- * during a crash can let another worker retry (acceptable by design).
- */
-async function runScheduledJob(label, runFn, lockTtlMs) {
-  const lock = await acquireRunLock(`sweep:${label}`, lockTtlMs);
-  if (lock === false) return; // another owner holds it → skip
-  const runLocally = lock === null ? isPrimaryWorker : true;
-  if (!runLocally) return;
-  try {
-    await runFn();
-  } finally {
-    if (lock) await releaseRunLock(`sweep:${label}`, lock);
-  }
-}
 
 let shuttingDown = false;
 
@@ -57,13 +32,7 @@ const shutdown = async (reason, err) => {
     console.error(err.stack);
   }
 
-  // 1) Stop scheduling NEW work (in-process timers) so nothing fires mid-drain.
-  for (const t of schedulerIntervals) clearInterval(t);
-  schedulerIntervals.clear();
-  for (const t of schedulerTimeouts) clearTimeout(t);
-  schedulerTimeouts.clear();
-
-  // 2) Stop the AI cron fallback worker.
+  // 1) Stop the AI cron fallback worker.
   try {
     const { stopAiCronFallback } = require('./utils/aiCronFallback');
     stopAiCronFallback();
@@ -71,7 +40,7 @@ const shutdown = async (reason, err) => {
     logger.warn('[shutdown] stopAiCronFallback failed:', err?.message);
   }
 
-  // 3) Stop accepting NEW connections; drain in-flight requests. pm2 reload
+  // 2) Stop accepting NEW connections; drain in-flight requests. pm2 reload
   //    sends SIGINT then waits kill_timeout before SIGKILL, so finish fast.
   const drain = () =>
     new Promise((resolve) => {
@@ -93,7 +62,7 @@ const shutdown = async (reason, err) => {
 
   await drain();
 
-  // 4) Tear down infra (Prisma, queue, Redis) then exit.
+  // 3) Tear down infra (Prisma, queue, Redis) then exit.
   try {
     await prisma.$disconnect();
     console.log('Prisma disconnected');
@@ -174,12 +143,9 @@ server.listen(port, '0.0.0.0', () => {
 setupSocketIO();
 
 // Async initialization (Prisma, Redis, queue workers) — non-blocking.
-// EVERY worker registers scheduler tickers + BullMQ consumers:
-//   - Scheduler ticks arbitrate via per-job Redis locks (runScheduledJob), so
-//     only one worker/machine runs each sweep; worker 0 is the Redis-down
-//     fallback. Correct across machines.
-//   - BullMQ workers are shared through Redis (each job runs once).
-// AI cron + the BM25 index build are kept on the primary worker only.
+// Scheduling is fully owned by BullMQ Job Schedulers (registerSchedules in
+// utils/queue.js); EVERY worker registers BullMQ consumers (each job runs once
+// via Redis). AI cron + the BM25 index build are kept on the primary worker.
 (async () => {
   try {
     await prisma.$connect();
@@ -249,80 +215,12 @@ function setupRedisAdapter() {
   })();
 }
 
-/**
- * Booking-lifecycle sweeps run on DIRECT in-app timers, independent of Redis/
- * BullMQ, so they fire even on degraded boots where Redis is down. Every worker
- * keeps a timer, but runScheduledJob arbitrates via a per-job Redis lock — only
- * ONE worker runs each sweep when Redis is healthy; worker 0 runs it when Redis
- * is unreachable. All of these jobs are idempotent DB/Stripe/email sweeps, so a
- * lock-expiry race (crash + retry) is safe. Each runs once shortly after boot
- * to catch up on anything missed while the process was down.
- *
- * lockTtlMs protects the EXECUTION window, not the scheduling interval: keep it
- * comfortably above the sweep's observed runtime (record timings in logs), NOT
- * derived from the cadence. Raise it only if a run approaches the TTL.
- */
-function scheduleBookingLifecycle() {
-  const jobs = [
-    // Auto-complete CONFIRMED bookings once their activity date has passed.
-    { label: 'auto-complete-bookings', ms: 15 * 60 * 1000, lockTtlMs: 15 * 60 * 1000, run: () => require('./utils/bookingCleanup').autoCompleteBookings() },
-    // Auto-cancel PENDING bookings past their activity date (48h grace).
-    { label: 'cancel-stale-pending-bookings', ms: 15 * 60 * 1000, lockTtlMs: 15 * 60 * 1000, run: () => require('./utils/bookingCleanup').cancelStalePendingAfterTravelDate() },
-    // Auto-cancel long-stale PENDING bookings.
-    { label: 'cleanup-stale-bookings', ms: 5 * 60 * 1000, lockTtlMs: 15 * 60 * 1000, run: () => require('./utils/bookingCleanup').cancelStalePendingBookings() },
-    // Release expired pay-now seat holds (CheckoutDraft).
-    { label: 'expire-checkout-holds', ms: 5 * 60 * 1000, lockTtlMs: 15 * 60 * 1000, run: () => require('./utils/bookingCleanup').expireCheckoutHolds() },
-    // Charge reserve-now-pay-later bookings near the activity date.
-    { label: 'charge-pay-later-bookings', ms: 30 * 60 * 1000, lockTtlMs: 30 * 60 * 1000, run: () => require('./utils/payLaterSweep').chargePayLaterBookings() },
-    // Finance: flip past PENDING bookings to ELIGIBLE for payout requests.
-    { label: 'earnings-eligibility-sweep', ms: 30 * 60 * 1000, lockTtlMs: 30 * 60 * 1000, run: () => require('./utils/payoutCycles').sweepEarningsEligibility() },
-    // Plan + dispatch time-based booking reminders (payment due, 24h-before,
-    // pickup required, review request).
-    { label: 'plan-booking-reminders', ms: 60 * 60 * 1000, lockTtlMs: 60 * 60 * 1000, run: () => require('./utils/bookingReminders').planBookingReminders() },
-    { label: 'dispatch-booking-reminders', ms: 15 * 60 * 1000, lockTtlMs: 30 * 60 * 1000, run: () => require('./utils/bookingReminders').dispatchDueReminders() },
-  ];
-
-  for (const job of jobs) {
-    let running = false;
-    const tick = () => {
-      if (running) return;
-      running = true;
-      runScheduledJob(job.label, job.run, job.lockTtlMs)
-        .catch((err) => logger.warn(`[scheduler] ${job.label} failed:`, err?.message))
-        .finally(() => { running = false; });
-    };
-    schedulerIntervals.add(setInterval(tick, job.ms));
-    // Catch up once shortly after boot (covers a restart that happened after
-    // an activity date passed while the process was down).
-    schedulerTimeouts.add(setTimeout(tick, 15000));
-  }
-}
-
 async function setupQueueWorkers(redisOk = true) {
   console.log(`[Startup] worker ${process.env.NODE_APP_INSTANCE || 0} — checking Redis for queue workers...`);
   startResumeMonitor();
 
-  // ── Periodic interval tickers (EVERY worker registers these) ──────────────
-  // Each tick goes through runScheduledJob: when Redis is healthy only ONE
-  // worker/machine wins the per-job lock; when Redis is unreachable worker 0
-  // runs (today's single-box behaviour). All operations are idempotent.
-  const { reconcileGhanaPublish } = require('./utils/autoPublishGhana');
-  schedulerIntervals.add(setInterval(() => {
-    runScheduledJob('reconcile-ghana', reconcileGhanaPublish, 30 * 60 * 1000)
-      .catch((err) => logger.warn('[scheduler] ghana-publish reconcile failed:', err?.message));
-  }, 30 * 60 * 1000));
-
-  const { reconcileTravioAfricaPublish } = require('./utils/autoPublishTravioAfrica');
-  schedulerIntervals.add(setInterval(() => {
-    runScheduledJob('reconcile-travioafrica', reconcileTravioAfricaPublish, 30 * 60 * 1000)
-      .catch((err) => logger.warn('[scheduler] travioafrica-publish reconcile failed:', err?.message));
-  }, 30 * 60 * 1000));
-
-  // Booking-lifecycle sweeps (see scheduleBookingLifecycle).
-  // NOTE: low-risk cleanup + aggregation sweeps no longer have in-process
-  // timers — they are BullMQ Job Schedulers (see SCHEDULES in utils/queue.js).
-  // Lifecycle/money/reminder + reconcile sweeps keep their timers until Deploy C.
-  scheduleBookingLifecycle();
+  // Scheduling is fully owned by BullMQ Job Schedulers (see SCHEDULES in
+  // utils/queue.js + registerSchedules below) — no in-process timers remain.
 
   // ── Queue consumers (EVERY worker registers BullMQ workers; shared via Redis) ──
   if (!redisOk) {
@@ -350,10 +248,13 @@ async function setupQueueWorkers(redisOk = true) {
   // ── One-shot boot work (PRIMARY only — global actions must not duplicate) ──
   if (!isPrimaryWorker) return;
 
-  // Backfill: publish all existing Ghana suppliers' tours on boot
+  // Backfill: publish all existing Ghana suppliers' tours on boot (one-shot;
+  // the 30-min reconcile is owned by the scheduled reconcile-ghana job).
+  const { reconcileGhanaPublish } = require('./utils/autoPublishGhana');
   reconcileGhanaPublish().catch((err) => logger.warn('[scheduler] startup ghana-publish reconcile failed:', err?.message));
 
   // Backfill: publish all existing non-Ghana African suppliers' tours on boot
+  const { reconcileTravioAfricaPublish } = require('./utils/autoPublishTravioAfrica');
   reconcileTravioAfricaPublish().catch((err) => logger.warn('[scheduler] startup travioafrica-publish reconcile failed:', err?.message));
 
   // NOTE: low-risk cleanup/aggregation jobs no longer get a boot catch-up —

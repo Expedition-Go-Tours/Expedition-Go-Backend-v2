@@ -1086,12 +1086,9 @@ function startResumeMonitor() {
           }
           // Reconcile any AI scoring jobs that were pending during Redis outage
           reconcilePendingAiJobs().catch(() => {});
-          // Same for Ghana auto-publish jobs missed during the outage
-          const { reconcileGhanaPublish } = require('./autoPublishGhana');
-          reconcileGhanaPublish().catch(() => {});
-          // Same for TravioAfrica auto-publish jobs missed during the outage
-          const { reconcileTravioAfricaPublish } = require('./autoPublishTravioAfrica');
-          reconcileTravioAfricaPublish().catch(() => {});
+          // NOTE: Ghana/TravioAfrica publish reconciles are now BullMQ
+          // scheduled jobs (reconcile-ghana / reconcile-travioafrica) and are
+          // re-registered above — no inline duplicate execution here.
         }
       }
     } catch { /* keep the monitor alive */ }
