@@ -115,13 +115,62 @@ const SCHEDULES = [
   { jobName: 'aggregate-daily-views',       queue: 'aggregation', everyMs: 24 * 3600 * 1000 },
 ];
 
-// Per-schedule execution health, tracked in-process as jobs complete/fail.
+// Per-schedule execution health, tracked as jobs complete/fail.
 // { jobName: { lastRunAt, lastDurationMs, lastFailureAt, consecutiveFailures } }
+//
+// IMPORTANT: cluster-safe. The API runs as multiple PM2 workers and BullMQ
+// distributes each repeatable sweep to ONE of them. If this state lived only
+// in a per-process Map, /health served by a worker that had not run a given
+// sweep would report it stale even though another worker ran it on time —
+// flapping degraded/healthy per request. The authoritative copy therefore
+// lives in Redis (`sched:exec:<jobName>`), written by whichever worker
+// executed the job. The in-process Map is only a synchronous mirror so reads
+// still work during a transient Redis blip.
 const schedulerExecution = new Map();
+const EXEC_REDIS_PREFIX = 'sched:exec:';
+// TTL covers the longest cadence (24h) plus a full 2x-stale window with margin.
+const EXEC_REDIS_TTL_SECONDS = 3 * 24 * 3600;
 
 const QUEUE_BY_LABEL = { cleanup: QUEUE_NAMES.CLEANUP, aggregation: QUEUE_NAMES.AGGREGATIONS };
 
 function schedulerId(jobName) { return `sched:${jobName}`; }
+function execRedisKey(jobName) { return `${EXEC_REDIS_PREFIX}${jobName}`; }
+
+// Best-effort merge into the shared Redis state. Any error is swallowed so a
+// Redis blip during a sweep never breaks the sweep itself — the local mirror
+// still holds the fresh record for this process.
+//
+// Uses getConnection() directly instead of the guarded set() from redisClient,
+// because set() checks isReady() which may be false when the BullMQ worker's
+// Redis connection hasn't fired the 'connect' event yet (lazyConnect). The
+// connection object still works — ioredis buffers commands until connected.
+async function persistExecution(jobName, record) {
+  try {
+    const conn = getConnection();
+    if (!conn) return;
+    const val = JSON.stringify(record);
+    if (conn.status === 'ready') {
+      await conn.setex(execRedisKey(jobName), EXEC_REDIS_TTL_SECONDS, val);
+    } else if (conn.status === 'connecting' || conn.status === 'wait') {
+      // Connection is lazy — ioredis will buffer this command until connected.
+      await conn.setex(execRedisKey(jobName), EXEC_REDIS_TTL_SECONDS, val);
+    }
+    // If status is 'close' or 'end', silently skip — will recover on next cycle.
+  } catch { /* non-fatal — local mirror covers the current process */ }
+}
+
+async function readExecution(jobName) {
+  // Shared Redis state first (authoritative across workers); fall back to the
+  // local mirror only when Redis is unavailable.
+  try {
+    const conn = getConnection();
+    if (conn && (conn.status === 'ready' || conn.status === 'connecting' || conn.status === 'wait')) {
+      const raw = await conn.get(execRedisKey(jobName));
+      if (raw) return JSON.parse(raw);
+    }
+  } catch { /* fall through to local mirror */ }
+  return schedulerExecution.get(jobName) || null;
+}
 
 function recordSweepStart(jobName) {
   const prev = schedulerExecution.get(jobName) || {};
@@ -129,27 +178,49 @@ function recordSweepStart(jobName) {
   console.log(`[Sweep] ${jobName} started`);
 }
 
-function recordSweepSuccess(jobName) {
-  const prev = schedulerExecution.get(jobName) || {};
+// Merge rule: remote (shared Redis) is authoritative for the persisted health
+// fields (lastRunAt / lastFailureAt / consecutiveFailures) so one worker never
+// clobbers another worker's record; the local copy only supplies transient
+// fields that were never persisted (startedAt for duration). Spread order is
+// { local, remote } so remote wins wherever both exist.
+async function readLocalAndRemote(jobName) {
+  const local = schedulerExecution.get(jobName) || {};
+  let remote = {};
+  try {
+    const conn = getConnection();
+    if (conn && (conn.status === 'ready' || conn.status === 'connecting' || conn.status === 'wait')) {
+      const raw = await conn.get(execRedisKey(jobName));
+      if (raw) remote = JSON.parse(raw);
+    }
+  } catch { /* fall through to local-only */ }
+  return { ...local, ...remote };
+}
+
+async function recordSweepSuccess(jobName) {
+  const prev = await readLocalAndRemote(jobName);
   const startedAt = prev.startedAt || Date.now();
   const durationMs = Date.now() - startedAt;
-  schedulerExecution.set(jobName, {
+  const record = {
     lastRunAt: Date.now(),
     lastDurationMs: durationMs,
     lastFailureAt: prev.lastFailureAt || null,
     consecutiveFailures: 0,
-  });
+  };
+  schedulerExecution.set(jobName, record);
+  await persistExecution(jobName, record);
   console.log(`[Sweep] ${jobName} done in ${durationMs}ms`);
 }
 
-function recordSweepFailure(jobName) {
-  const prev = schedulerExecution.get(jobName) || {};
-  schedulerExecution.set(jobName, {
+async function recordSweepFailure(jobName) {
+  const prev = await readLocalAndRemote(jobName);
+  const record = {
     lastRunAt: prev.lastRunAt || null,
     lastDurationMs: prev.lastDurationMs || null,
     lastFailureAt: Date.now(),
     consecutiveFailures: (prev.consecutiveFailures || 0) + 1,
-  });
+  };
+  schedulerExecution.set(jobName, record);
+  await persistExecution(jobName, record);
 }
 
 /**
@@ -197,6 +268,8 @@ async function verifySchedules() {
  * Health used by /health + ops digest. Combines registration health with
  * EXECUTION health (a registered scheduler that silently stopped is the real
  * risk). Schedules whose last run is older than 2x cadence are flagged stale.
+ * Execution state is read from the SHARED Redis store so every cluster worker
+ * reports the same picture.
  */
 async function getSchedulerHealth() {
   const out = { status: 'unknown', expected: SCHEDULES.length, registered: 0, missing: [], stale: [], lastVerifiedAt: null };
@@ -207,10 +280,14 @@ async function getSchedulerHealth() {
     out.lastVerifiedAt = new Date().toISOString();
     out.status = v.missing.length === 0 ? 'healthy' : 'unhealthy';
     const now = Date.now();
-    for (const s of SCHEDULES) {
-      const ex = schedulerExecution.get(s.jobName);
+    // Resolve all execution records concurrently (still bounded by ~20 keys).
+    const exRecords = await Promise.all(
+      SCHEDULES.map((s) => readExecution(s.jobName).catch(() => schedulerExecution.get(s.jobName) || null))
+    );
+    SCHEDULES.forEach((s, i) => {
+      const ex = exRecords[i];
       const lastRunAt = ex?.lastRunAt;
-      if (!lastRunAt) continue; // never ran since process start — not yet stale
+      if (!lastRunAt) return; // never ran since state was tracked — not yet stale
       const ageMs = now - lastRunAt;
       if (ageMs > s.everyMs * 2) {
         out.stale.push({
@@ -221,7 +298,7 @@ async function getSchedulerHealth() {
           consecutiveFailures: ex?.consecutiveFailures || 0,
         });
       }
-    }
+    });
     if (out.status === 'healthy' && out.stale.length > 0) out.status = 'degraded';
     return out;
   } catch {
@@ -846,9 +923,9 @@ function registerWorkers() {
       default:
         console.log('[Queue] Unknown aggregation job:', job.name);
     }
-      if (isScheduled) recordSweepSuccess(job.name);
+      if (isScheduled) await recordSweepSuccess(job.name);
     } catch (err) {
-      if (isScheduled) recordSweepFailure(job.name);
+      if (isScheduled) await recordSweepFailure(job.name);
       throw err; // let BullMQ retry
     }
   });
@@ -996,9 +1073,9 @@ function registerWorkers() {
       default:
         console.log('[Queue] Unknown cleanup job:', job.name);
     }
-      if (isScheduled) recordSweepSuccess(job.name);
+      if (isScheduled) await recordSweepSuccess(job.name);
     } catch (err) {
-      if (isScheduled) recordSweepFailure(job.name);
+      if (isScheduled) await recordSweepFailure(job.name);
       throw err; // let BullMQ retry
     }
   });
