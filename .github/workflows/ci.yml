@@ -621,16 +621,16 @@ jobs:
             # (cluster, 2 workers) first. Afterwards, pm2 reload rolls workers
             # one at a time so the API never drops.
             CUR_MODE=$(pm2 jlist 2>/dev/null | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    for p in d:
-        if p.get('name') == 'expedition-api':
-            print((p.get('pm2_env') or {}).get('exec_mode', 'fork'))
-            break
-except Exception:
-    print('fork')
-" 2>/dev/null || echo fork)
+            import sys, json
+            try:
+                d = json.load(sys.stdin)
+                for p in d:
+                    if p.get('name') == 'expedition-api':
+                        print((p.get('pm2_env') or {}).get('exec_mode', 'fork'))
+                        break
+            except Exception:
+                print('fork')
+            " 2>/dev/null || echo fork)
             if [ "$CUR_MODE" != "cluster_mode" ]; then
               echo "API not in cluster mode yet — migrating via ecosystem config"
               pm2 delete expedition-api >/dev/null 2>&1 || true
