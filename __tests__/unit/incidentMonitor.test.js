@@ -287,6 +287,40 @@ describe('probeSignal', () => {
     const r = await probeSignal('backup', { backupDir: '/definitely/not/here' });
     expect(r.healthy).toBe(false);
   });
+
+  it('scheduler reports healthy when all registered sweeps are running', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      status: 200,
+      json: async () => ({ scheduler: { status: 'healthy', expected: 20, registered: 20, missing: [], stale: [] } }),
+    });
+    const r = await probeSignal('scheduler', { apiUrl: 'http://x' });
+    expect(r.healthy).toBe(true);
+    expect(r.detail).toContain('20/20');
+  });
+
+  it('scheduler pages when a registered sweep is stale/missing', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      status: 200,
+      json: async () => ({ scheduler: { status: 'degraded', expected: 20, registered: 20, missing: [], stale: [{ jobName: 'cleanup-stale-bookings', consecutiveFailures: 5 }] } }),
+    });
+    const r = await probeSignal('scheduler', { apiUrl: 'http://x' });
+    expect(r.healthy).toBe(false);
+    expect(r.detail).toContain('cleanup-stale-bookings');
+  });
+
+  it('scheduler treats unknown (redis down / no block) as non-pageable', async () => {
+    // redis down → scheduler status unknown: the api + redis signals cover it
+    global.fetch = jest.fn().mockResolvedValue({
+      status: 200,
+      json: async () => ({ scheduler: { status: 'unknown', expected: 20, registered: 0, missing: [], stale: [] } }),
+    });
+    const u = await probeSignal('scheduler', { apiUrl: 'http://x' });
+    expect(u.healthy).toBe(true);
+    // /health not reachable → api signal covers it; scheduler stays quiet
+    global.fetch = jest.fn().mockResolvedValue({ status: 503 });
+    const n = await probeSignal('scheduler', { apiUrl: 'http://x' });
+    expect(n.healthy).toBe(true);
+  });
 });
 
 describe('resource embeds (parity with API cards)', () => {
@@ -337,6 +371,27 @@ describe('resource embeds (parity with API cards)', () => {
     expect(e.title).toBe('✅ LOAD NORMAL');
     expect(e.color).toBe(0x00c853);
     expect(e.content).toContain('LOAD: OK');
+  });
+
+  it('scheduler incident embed explains the stalled sweep', () => {
+    // No recent restart/deploy: the classic "registered but silent" stall.
+    const quietDiag = {
+      ...diag,
+      deploy: null,
+      pm2: [{ name: 'expedition-api', status: 'online', restarts: 0, uptimeSec: 900, memMB: 300 }],
+    };
+    const e = buildEmbed({ direction: 'down', signal: 'scheduler', detail: 'degraded — cleanup-stale-bookings stale (5 failures)', startedAt: 1700000000000, diag: quietDiag });
+    expect(e.title).toBe('🚨 SCHEDULER STALLED');
+    expect(e.color).toBe(0xff4444);
+    const byName = Object.fromEntries(e.fields.map((f) => [f.name, f.value]));
+    expect(byName['LIKELY CAUSE']).toContain('cleanup-stale-bookings');
+    expect(byName['ASSESSMENT']).toContain('BullMQ');
+  });
+
+  it('scheduler recovery embed resolves to green', () => {
+    const e = buildEmbed({ direction: 'up', signal: 'scheduler', resolvedAt: 1700000030000, durationSec: 60, diag });
+    expect(e.title).toBe('✅ SCHEDULER OK');
+    expect(e.content).toContain('SCHEDULER: OK');
   });
 
   it('resource embeds never leak secrets', () => {

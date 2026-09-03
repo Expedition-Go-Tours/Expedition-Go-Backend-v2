@@ -98,7 +98,7 @@ function resetMocks() {
   process.env.BETTERSTACK_API_TOKEN = 'test-bs';
   global.fetch = jest.fn(async (url) => {
     if (String(url).includes('/health')) {
-      return { status: 200, ok: true, json: async () => ({ status: 'success', checks: { database: 'healthy', redis: 'healthy' } }) };
+      return { status: 200, ok: true, json: async () => ({ status: 'success', checks: { database: 'healthy', redis: 'healthy' }, scheduler: { status: 'healthy', expected: 20, registered: 20, missing: [], stale: [] } }) };
     }
     if (String(url).includes('/incidents')) {
       return { status: 200, ok: true, json: async () => ({ data: [] }) };
@@ -321,5 +321,28 @@ describe('failure handling', () => {
     expect(out2.verdict).not.toContain('operational');
     const health = out2.fields.find((f) => f.name === 'Platform health');
     expect(health.value).toContain('Redis ⚠');
+  });
+
+  it('flags a stalled scheduler even when the API is otherwise healthy', async () => {
+    const m = await collectDigest();
+    expect(m.sections.health.scheduler.ok).toBe(true);
+    expect(m.sections.health.scheduler.value).toContain('healthy');
+    const out = renderer(m, m);
+    expect(out.verdict).toContain('operational');
+
+    // scheduler registered but a sweep has stopped running
+    global.fetch = jest.fn(async (url) => {
+      if (String(url).includes('/health')) {
+        return { status: 200, ok: true, json: async () => ({ status: 'success', checks: { database: 'healthy', redis: 'healthy' }, scheduler: { status: 'degraded', expected: 20, registered: 20, missing: [], stale: [{ jobName: 'cleanup-stale-bookings', consecutiveFailures: 5 }] } }) };
+      }
+      return { ok: false, status: 500 };
+    });
+    const m2 = await collectDigest();
+    expect(m2.sections.health.scheduler.ok).toBe(true);
+    expect(m2.sections.health.scheduler.value).toContain('cleanup-stale-bookings');
+    const out2 = renderer(m2, m2);
+    expect(out2.verdict).not.toContain('operational');
+    const health = out2.fields.find((f) => f.name === 'Platform health');
+    expect(health.value).toContain('Schedulers ⚠');
   });
 });

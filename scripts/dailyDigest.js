@@ -219,13 +219,30 @@ async function fetchIncidents() {
 
 // ── Live health probes ─────────────────────────────────────────────
 async function probeHealth(apiUrl) {
-  const health = { api: unavailable(), postgres: unavailable(), redis: unavailable(), nginx: unavailable(), server: unavailable() };
+  const health = { api: unavailable(), postgres: unavailable(), redis: unavailable(), scheduler: unavailable(), nginx: unavailable(), server: unavailable() };
   try {
     const res = await fetch(`${apiUrl}/health`, { signal: AbortSignal.timeout(8000) });
     const body = await res.json().catch(() => null);
     health.api = ok(res.status === 200 ? 'healthy' : `HTTP ${res.status}`);
     health.postgres = ok(body?.checks?.database === 'healthy' ? 'healthy' : body?.checks?.database || 'down');
     health.redis = ok(body?.checks?.redis === 'healthy' ? 'healthy' : body?.checks?.redis || 'down');
+    // BullMQ scheduler health — a REGISTERED sweep that stops running is the
+    // silent failure to catch. unknown (redis down) is flagged alongside the
+    // redis probe; missing block is reported rather than assumed.
+    const sched = body?.scheduler;
+    if (sched && typeof sched.registered === 'number') {
+      const stale = sched.stale || [];
+      const missing = sched.missing || [];
+      if (sched.status === 'healthy' && stale.length === 0 && missing.length === 0) {
+        health.scheduler = ok(`healthy — ${sched.registered}/${sched.expected} registered`);
+      } else {
+        const who = [...stale.map((x) => x.jobName), ...missing].slice(0, 3).join(', ');
+        const why = sched.status === 'unknown' ? 'unknown (redis down)' : `degraded — ${who || 'no run in 2x cadence'}`;
+        health.scheduler = ok(why);
+      }
+    } else if (sched) {
+      health.scheduler = unavailable();
+    }
   } catch {
     health.api = unavailable();
   }
@@ -466,6 +483,7 @@ async function collectDigest() {
         api: health.api,
         postgres: health.postgres,
         redis: health.redis,
+        scheduler: health.scheduler,
         nginx: health.nginx,
         server: health.server,
       },
@@ -540,7 +558,9 @@ function healthStatus(health) {
   const svcOk = (x) => (x?.ok && (x.value === 'healthy' || x.value === 'active' || /^healthy$|^200$/.test(String(x.value).trim()))) ? 'ok' : x?.ok ? 'bad' : 'na';
   // Server resource probe is informational — any returned value counts as ok.
   const serverOk = (x) => (x?.ok ? 'ok' : 'na');
-  return { api: svcOk(health.api), postgres: svcOk(health.postgres), redis: svcOk(health.redis), nginx: svcOk(health.nginx), server: serverOk(health.server) };
+  // Scheduler value embeds its own verdict ('healthy — ...' vs 'degraded — ...').
+  const schedOk = (x) => (x?.ok && /^healthy/.test(String(x.value || ''))) ? 'ok' : x?.ok ? 'bad' : 'na';
+  return { api: svcOk(health.api), postgres: svcOk(health.postgres), redis: svcOk(health.redis), scheduler: schedOk(health.scheduler), nginx: svcOk(health.nginx), server: serverOk(health.server) };
 }
 
 function healthVerdict(st) {
@@ -589,6 +609,7 @@ function healthValue(health, st) {
   const mark = (x) => (x === 'ok' ? '✓' : x === 'bad' ? '⚠' : '·');
   const lines = [
     `API ${mark(st.api)} · PostgreSQL ${mark(st.postgres)} · Redis ${mark(st.redis)} · Nginx ${mark(st.nginx)}`,
+    `Schedulers ${mark(st.scheduler)}${health.scheduler?.ok && /^healthy/.test(String(health.scheduler.value)) ? '' : health.scheduler?.ok ? ` — ${health.scheduler.value}` : ''}`,
     `Server ${mark(st.server)}${health.server?.ok ? ` — ${health.server.value}` : ''}`,
   ];
   return lines.join('\n');
@@ -662,6 +683,7 @@ function buildHealthSummaryForAi(health) {
   parts.push(fmt('API', health.api));
   parts.push(fmt('PostgreSQL', health.postgres));
   parts.push(fmt('Redis', health.redis));
+  parts.push(fmt('Schedulers', health.scheduler));
   parts.push(fmt('Nginx', health.nginx));
   parts.push(fmt('Server', health.server));
   return parts.join(' | ');

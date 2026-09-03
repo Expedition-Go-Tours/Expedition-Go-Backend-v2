@@ -7,7 +7,7 @@
  *   HEALTHY --N consecutive failed checks--> INCIDENT
  *   INCIDENT --2 consecutive good checks----> RECOVERED
  *
- * Signals:
+ *  Signals:
  *   api       local + public health endpoint (N=2, ~60s)
  *   load      1-min load vs cores x 2        (N=4, ~2min — deploy bursts
  *                                            self-resolve before paging)
@@ -17,6 +17,7 @@
  *   postgres  psql SELECT 1                  (N=2)
  *   redis     redis-cli ping                 (N=2)
  *   backup    newest dump < 26h old          (N=2)
+ *   scheduler registered BullMQ sweep not running within 2x cadence (N=2)
  *
  * A signal only fires once per incident (no duplicate cards), and repeated
  * failing polls while an incident is open do NOT re-post. State is persisted
@@ -63,6 +64,17 @@ async function fetchHealth(url, timeoutMs) {
     return { ok: res.status === 200, status: res.status };
   } catch {
     return { ok: false, status: 0 };
+  }
+}
+
+async function fetchHealthJson(url, timeoutMs) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    if (res.status !== 200) return { ok: false, status: res.status, json: null };
+    const json = await res.json().catch(() => null);
+    return { ok: true, status: res.status, json };
+  } catch {
+    return { ok: false, status: 0, json: null };
   }
 }
 
@@ -249,6 +261,7 @@ const SIGNALS = [
   { id: 'postgres', label: 'POSTGRES', fail: FAIL_THRESHOLD, titleDown: '🚨 POSTGRES DOWN', titleUp: '✅ POSTGRES OK' },
   { id: 'redis', label: 'REDIS', fail: FAIL_THRESHOLD, titleDown: '🚨 REDIS DOWN', titleUp: '✅ REDIS OK' },
   { id: 'backup', label: 'BACKUP', fail: FAIL_THRESHOLD, titleDown: '🚨 BACKUP STALE', titleUp: '✅ BACKUP OK' },
+  { id: 'scheduler', label: 'SCHEDULER', fail: FAIL_THRESHOLD, titleDown: '🚨 SCHEDULER STALLED', titleUp: '✅ SCHEDULER OK' },
 ];
 
 function stateKey(id) {
@@ -317,6 +330,27 @@ async function probeSignal(id, env) {
       const ageH = (Date.now() - st.mtimeMs) / 3600000;
       return { healthy: ageH <= THRESHOLDS.backupHours, detail: `newest ${files[0]} is ${ageH.toFixed(1)}h old` };
     }
+    case 'scheduler': {
+      // Parse the scheduler health block exposed on the app's /health. A job
+      // scheduler that is REGISTERED but silently NOT executing is the real
+      // risk — stale[] captures that (last run > 2x cadence).
+      const r = await fetchHealthJson(env.apiUrl, LOCAL_TIMEOUT_MS);
+      if (!r.ok) return { healthy: true, detail: 'api /health unreachable (covered by api signal)' };
+      const s = r.json?.scheduler;
+      // No scheduler block / redis down / unknown → not a scheduler problem.
+      if (!s || s.status === 'unknown') return { healthy: true, detail: 'scheduler status unknown (redis?)' };
+      const stale = s.stale || [];
+      const missing = s.missing || [];
+      if (s.status === 'healthy' && stale.length === 0 && missing.length === 0) {
+        return { healthy: true, detail: `${s.registered ?? '?'}/${s.expected ?? '?'} registered` };
+      }
+      const bits = [];
+      if (missing.length) bits.push(`missing: ${missing.join(', ')}`);
+      for (const st of stale) {
+        bits.push(`${st.jobName} stale ${st.consecutiveFailures ? `(${st.consecutiveFailures} failures)` : '(no recent run)'}`);
+      }
+      return { healthy: false, detail: `${s.status} — ${bits.join('; ') || 'no detail'}` };
+    }
     default:
       return { healthy: true, detail: 'unknown signal' };
   }
@@ -355,6 +389,17 @@ function buildCauseAndAssessment(signal, detail, diag) {
     if (diag?.deploy?.restartedRecently) {
       assessment = `Likely deploy-related transient — API restart occurred ~${diag.deploy.apiUpSinceSec}s after deployment (${diag.deploy.lastCommitAt || 'recent commit'}).`;
     }
+    return { cause, assessment };
+  }
+
+  if (signal === 'scheduler') {
+    cause = `A scheduled BullMQ sweep is not executing on time.\nObservation: ${detail}`;
+    if (restarts > 0) {
+      cause += `\nNote: \`expedition-api\` restarted ${restarts}×${diag?.deploy?.restartedRecently ? ` ~${diag.deploy.apiUpSinceSec}s ago` : ''} — workers/schedulers re-register on boot, so this may have self-healed.`;
+    }
+    assessment = diag?.deploy?.restartedRecently
+      ? 'Scheduler stall detected right after a deployment/restart — confirm schedulers re-verified (registerSchedules/verifySchedules) and the missed run was caught up.'
+      : 'A scheduler exists in Redis but has not executed within 2× its cadence. Check the BullMQ worker is consuming (queue logs) and the handler is not throwing/retry-looping.';
     return { cause, assessment };
   }
 
