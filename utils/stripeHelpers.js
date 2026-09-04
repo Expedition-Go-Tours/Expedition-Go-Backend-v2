@@ -491,17 +491,21 @@ async function processStripeWebhook(event) {
         // this also settles those faster; the later session event is a no-op.)
         const draftCandidates = ((intent.metadata?.bookingIds) || '').split(',').filter(Boolean);
         let settledDraft = null;
-        for (const id of draftCandidates) {
-          const row = id
-            ? await tx.checkoutDraft.findUnique({ where: { id } }).catch(() => null)
-            : null;
-          if (row && row.status === 'HOLDING') { settledDraft = row; break; }
-        }
-        if (!settledDraft && intent.id) {
-          const byPi = await tx.checkoutDraft
-            .findUnique({ where: { stripeSessionId: intent.id } })
-            .catch(() => null);
-          if (byPi && byPi.status === 'HOLDING') settledDraft = byPi;
+        // Legacy test mocks (booking settlement without the draft model) pass a
+        // transaction client without checkoutDraft — skip draft reconciliation.
+        if (tx.checkoutDraft) {
+          for (const id of draftCandidates) {
+            const row = id
+              ? await tx.checkoutDraft.findUnique({ where: { id } }).catch(() => null)
+              : null;
+            if (row && row.status === 'HOLDING') { settledDraft = row; break; }
+          }
+          if (!settledDraft && intent.id) {
+            const byPi = await tx.checkoutDraft
+              .findUnique({ where: { stripeSessionId: intent.id } })
+              .catch(() => null);
+            if (byPi && byPi.status === 'HOLDING') settledDraft = byPi;
+          }
         }
         if (settledDraft) {
           const { materializeHold } = require('./checkoutHold');
