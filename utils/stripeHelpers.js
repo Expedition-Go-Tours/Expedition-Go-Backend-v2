@@ -72,13 +72,15 @@ async function createPaymentIntent({
   paymentMethodId,
   metadata = {},
   idempotencyKey,
-  confirm = true
+  confirm = true,
+  clientUrl
 }) {
   try {
     // Only attach a customer when we have a real Stripe Customer ID. Stripe
     // rejects an empty string for 'customer' and a PaymentIntent is valid
     // without one, so a user whose async customer creation never completed
     // can still check out.
+    const baseUrl = String(clientUrl || process.env.CLIENT_URL || '').replace(/\/$/, '');
     const paymentIntentData = {
       amount,
       currency: currency.toLowerCase(),
@@ -88,7 +90,7 @@ async function createPaymentIntent({
       // Stripe only allows return_url when confirm=true — omit it otherwise
       // (expedition creates with confirm:false and charges via a later
       // confirm() call, where redirects are handled through client_secret).
-      ...(confirm ? { return_url: `${process.env.CLIENT_URL}/booking/complete` } : {}),
+      ...(confirm && baseUrl ? { return_url: `${baseUrl}/booking/complete` } : {}),
       metadata
     };
     if (isValidStripeCustomerId(customerId)) {
@@ -131,6 +133,8 @@ async function createPaymentIntent({
  * @param {string} [opts.customerId] - Stripe Customer id (optional)
  * @param {string} [opts.customerEmail] - fallback email when no customer
  * @param {Date} [opts.expiresAt] - session expiry (pay-later payment links)
+ * @param {string} [opts.clientUrl] - the caller's frontend origin (allow-listed);
+ *   Stripe success/cancel redirects are built from this instead of CLIENT_URL
  * @returns {Promise<object>} the Stripe Checkout Session
  */
 async function createCheckoutSession({
@@ -144,6 +148,7 @@ async function createCheckoutSession({
   customerEmail,
   expiresAt,
   successPath,
+  clientUrl,
   source = 'expedition',
 }) {
   if (!bookingId) throw new Error('bookingId is required to create a Checkout Session');
@@ -152,10 +157,11 @@ async function createCheckoutSession({
   // `successPath` lets callers customize where Stripe redirects after payment.
   // When omitted, falls back to the legacy /booking/confirmation/:bookingId.
   // Use {CHECKOUT_SESSION_ID} for the Stripe-generated session id template.
+  const baseUrl = String(clientUrl || process.env.CLIENT_URL || '').replace(/\/$/, '');
   const successUrl = successPath
-    ? `${process.env.CLIENT_URL}${successPath}`
-    : `${process.env.CLIENT_URL}/booking/confirmation/${bookingId}`;
-  const cancelUrl = `${process.env.CLIENT_URL}/booking`;
+    ? `${baseUrl}${successPath}`
+    : `${baseUrl}/booking/confirmation/${bookingId}`;
+  const cancelUrl = `${baseUrl}/booking`;
 
   return getStripe().checkout.sessions.create({
     mode: 'payment',

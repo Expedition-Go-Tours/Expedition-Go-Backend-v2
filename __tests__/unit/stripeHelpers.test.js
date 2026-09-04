@@ -36,6 +36,7 @@ jest.mock('stripe', () => {
     accountLinks: { create: jest.fn() },
     customers: { create: jest.fn(), list: jest.fn() },
     paymentIntents: { create: jest.fn(), retrieve: jest.fn(), cancel: jest.fn() },
+    checkout: { sessions: { create: jest.fn() } },
   };
   return jest.fn(() => mockStripeInstance);
 });
@@ -49,6 +50,7 @@ const {
   verifyWebhookSignature,
   cancelPaymentIntent,
   createPaymentIntent,
+  createCheckoutSession,
   createStripeCustomer,
   ensureStripeCustomer,
   handlePaymentSucceeded,
@@ -624,6 +626,53 @@ describe('createPaymentIntent customer guard', () => {
     await createPaymentIntent({ amount: 1000, confirm: true });
     const [data] = mockStripeInstance.paymentIntents.create.mock.calls[0];
     expect(data.return_url).toBe('https://example.com/booking/complete');
+  });
+
+  it('uses the caller clientUrl for return_url when provided', async () => {
+    process.env.CLIENT_URL = 'https://travioafrica.com';
+    await createPaymentIntent({ amount: 1000, confirm: true, clientUrl: 'https://expeditiongotours.vercel.app/' });
+    const [data] = mockStripeInstance.paymentIntents.create.mock.calls[0];
+    expect(data.return_url).toBe('https://expeditiongotours.vercel.app/booking/complete');
+  });
+});
+
+describe('createCheckoutSession redirect URLs', () => {
+  beforeEach(() => {
+    mockStripeInstance.checkout.sessions.create.mockClear();
+    mockStripeInstance.checkout.sessions.create.mockResolvedValue({
+      id: 'cs_123',
+      url: 'https://checkout.stripe.com/c/pay/cs_123',
+    });
+    process.env.CLIENT_URL = 'https://travioafrica.com';
+  });
+
+  it('builds success_url/cancel_url from CLIENT_URL when no clientUrl', async () => {
+    await createCheckoutSession({
+      amount: 10000,
+      bookingId: 'booking-1',
+      successPath: '/booking/confirmation?session_id={CHECKOUT_SESSION_ID}',
+    });
+    const [data] = mockStripeInstance.checkout.sessions.create.mock.calls[0];
+    expect(data.success_url).toBe('https://travioafrica.com/booking/confirmation?session_id={CHECKOUT_SESSION_ID}');
+    expect(data.cancel_url).toBe('https://travioafrica.com/booking');
+  });
+
+  it('builds success_url/cancel_url from the caller clientUrl', async () => {
+    await createCheckoutSession({
+      amount: 10000,
+      bookingId: 'booking-1',
+      successPath: '/booking/confirmation?session_id={CHECKOUT_SESSION_ID}',
+      clientUrl: 'https://expeditiongotours.vercel.app/',
+    });
+    const [data] = mockStripeInstance.checkout.sessions.create.mock.calls[0];
+    expect(data.success_url).toBe('https://expeditiongotours.vercel.app/booking/confirmation?session_id={CHECKOUT_SESSION_ID}');
+    expect(data.cancel_url).toBe('https://expeditiongotours.vercel.app/booking');
+  });
+
+  it('falls back to /booking/confirmation/:bookingId when successPath omitted', async () => {
+    await createCheckoutSession({ amount: 10000, bookingId: 'booking-1', clientUrl: 'https://expeditiongotours.vercel.app' });
+    const [data] = mockStripeInstance.checkout.sessions.create.mock.calls[0];
+    expect(data.success_url).toBe('https://expeditiongotours.vercel.app/booking/confirmation/booking-1');
   });
 });
 

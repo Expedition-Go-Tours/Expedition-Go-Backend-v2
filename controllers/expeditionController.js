@@ -11,6 +11,7 @@ const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTou
 const { resolvePickupSelection, normalizePickupSnapshot } = require('../utils/geoUtils');
 const { validatePassengerMix } = require('../utils/passengerMix');
 const { createPaymentIntent, createCheckoutSession, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
+const { resolveAllowedClientUrl } = require('../utils/clientOrigin');
 const { acquireHold, releaseHold, HOLD_MINUTES } = require('../utils/checkoutHold');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const getConfig = require('../utils/getConfig');
@@ -1854,6 +1855,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       tourCoverPhoto: tour.coverPhoto || (Array.isArray(tour.photos) ? tour.photos[0] : null),
       customerEmail: req.user?.email,
       expiresAt: holdResult.expiresAt,
+      clientUrl: resolveAllowedClientUrl(req),
       // Stripe replaces {CHECKOUT_SESSION_ID} with the real session id after creation.
       successPath: '/booking/confirmation?session_id={CHECKOUT_SESSION_ID}',
     });

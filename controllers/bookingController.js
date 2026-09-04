@@ -17,6 +17,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { createPaymentIntent, createRefund, calculateCommission, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
+const { resolveAllowedClientUrl } = require('../utils/clientOrigin');
 const { generateBookingNumber, validateTravelerInfo, evaluateCancellationPolicy } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../utils/tourHelpers');
 const { Prisma } = require('@prisma/client');
@@ -518,6 +519,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       customerId: stripeCustomerId,
       paymentMethodId,
       idempotencyKey,
+      clientUrl: resolveAllowedClientUrl(req),
       metadata: {
         customerId,
         bookingIds: 'placeholder'
