@@ -1971,6 +1971,8 @@ exports.getCheckoutDraft = catchAsync(async (req, res, next) => {
           city: true,
           country: true,
           durationMinutes: true,
+          description: true,
+          productContent: true,
         },
       },
     },
@@ -1998,6 +2000,15 @@ exports.getCheckoutDraft = catchAsync(async (req, res, next) => {
     } catch { clientSecret = null; }
   }
 
+  // Short tour copy for the order summary: prefer the supplier's concise
+  // shortDescription, fall back to the main description (trimmed).
+  let tourDescription = null;
+  if (draft.tour) {
+    const productContent = parseBlob(draft.tour.productContent) || {};
+    const short = typeof productContent.shortDescription === 'string' ? productContent.shortDescription.trim() : '';
+    tourDescription = short || (draft.tour.description || '').trim().slice(0, 400) || null;
+  }
+
   res.status(200).json({
     status: 'success',
     data: {
@@ -2011,6 +2022,7 @@ exports.getCheckoutDraft = catchAsync(async (req, res, next) => {
           coverPhoto: draft.tour?.coverPhoto || draft.tour?.photos?.[0] || null,
           location: [draft.tour?.city, draft.tour?.country].filter(Boolean).join(', '),
           durationMinutes: draft.tour?.durationMinutes ?? null,
+          description: tourDescription,
         },
         travelDate: draft.travelDate,
         selectedTime: draft.selectedTime || null,
