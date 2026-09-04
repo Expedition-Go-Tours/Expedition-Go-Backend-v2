@@ -600,6 +600,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
               title: true,
               supplier: {
                 select: {
+                  id: true,
                   name: true
                 }
               }

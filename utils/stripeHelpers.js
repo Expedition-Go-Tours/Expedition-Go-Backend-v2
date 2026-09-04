@@ -810,6 +810,17 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
         }
       });
 
+      // Real-time push to the supplier's open tabs/devices (socket room
+      // `user:{id}`) so their notification bell updates instantly instead of
+      // waiting for the next client poll (mirror of the customer push above).
+      sendWebSocketNotification(booking.tour.supplierId, {
+        type: 'BOOKING_CONFIRMED',
+        userId: booking.tour.supplierId,
+        title: 'New Booking Received',
+        message: `You have a new booking for "${booking.tour.title}"`,
+        data: { bookingId: booking.id }
+      }).catch((err) => console.warn('[stripe] booking supplier socket notify failed:', err.message));
+
       await client.supplierProfile.update({
         where: { userId: booking.tour.supplierId },
         data: {

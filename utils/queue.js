@@ -551,13 +551,18 @@ async function enqueueCleanup(jobName, payload = {}) {
 
 /**
  * Enqueue a notification (DB + WebSocket).
+ * Optional delivery extras (sendEmail / emailTemplate) are forwarded to the
+ * worker so callers can opt into an email without the flag being dropped.
  */
-async function enqueueNotification({ userId, type, title, message, data }) {
+async function enqueueNotification({ userId, type, title, message, data, sendEmail, emailTemplate }) {
+  const job = { userId, type, title, message, data };
+  if (sendEmail) job.sendEmail = sendEmail;
+  if (emailTemplate) job.emailTemplate = emailTemplate;
   try {
-    return await notificationQueue().add('notify', { userId, type, title, message, data });
+    return await notificationQueue().add('notify', job);
   } catch {
     const { sendNotification } = require('./notificationService');
-    sendNotification({ userId, type, title, message, data }).catch((err) => {
+    sendNotification(job).catch((err) => {
       console.error('[Queue] Fallback notification failed:', err.message);
     });
   }
