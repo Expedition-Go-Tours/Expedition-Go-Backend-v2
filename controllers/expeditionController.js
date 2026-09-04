@@ -616,7 +616,7 @@ exports.getRecommendedTours = catchAsync(async (req, res, next) => {
             city: true, country: true, schedulesAndPricing: true,
             supplier: { select: { name: true, photoURL: true } },
             specialOfferTargets: {
-              where: { specialOffer: { status: 'ACTIVE' } },
+              where: { specialOffer: { isActive: true } },
               include: { specialOffer: { select: { id: true, name: true, offerType: true, discountType: true, discountPercentage: true, fixedDiscountValue: true, startDate: true, endDate: true, promoCode: true } } },
             },
           },
@@ -648,7 +648,7 @@ exports.getRecommendedTours = catchAsync(async (req, res, next) => {
               city: true, country: true, schedulesAndPricing: true,
               supplier: { select: { name: true, photoURL: true } },
               specialOfferTargets: {
-                where: { specialOffer: { status: 'ACTIVE' } },
+                where: { specialOffer: { isActive: true } },
                 include: { specialOffer: { select: { id: true, name: true, offerType: true, discountType: true, discountPercentage: true, fixedDiscountValue: true, startDate: true, endDate: true, promoCode: true } } },
               },
             },
@@ -680,7 +680,7 @@ exports.getRecommendedTours = catchAsync(async (req, res, next) => {
               city: true, country: true, schedulesAndPricing: true,
               supplier: { select: { name: true, photoURL: true } },
               specialOfferTargets: {
-                where: { specialOffer: { status: 'ACTIVE' } },
+                where: { specialOffer: { isActive: true } },
                 include: { specialOffer: { select: { id: true, name: true, offerType: true, discountType: true, discountPercentage: true, fixedDiscountValue: true, startDate: true, endDate: true, promoCode: true } } },
               },
             },
