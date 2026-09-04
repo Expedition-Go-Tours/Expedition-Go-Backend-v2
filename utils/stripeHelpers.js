@@ -140,22 +140,48 @@ async function createCustomCheckoutPaymentIntent({
   customerId = null,
   draftId,
   source = 'expedition',
+  user = null,
 }) {
   if (!draftId) throw new Error('draftId is required to create the checkout PaymentIntent');
   if (!amount || amount <= 0) throw new Error('amount must be a positive value in minor units');
 
-  const paymentIntent = await getStripe().paymentIntents.create({
+  const create = (cust) => getStripe().paymentIntents.create({
     amount: Math.round(amount),
     currency: currency.toLowerCase(),
     // Payment Element + confirmPayment requires automatic payment methods
     // enabled; Stripe keeps card data inside its iframe — never our server.
     automatic_payment_methods: { enabled: true },
-    ...(isValidStripeCustomerId(customerId) ? { customer: customerId } : {}),
+    ...(isValidStripeCustomerId(cust) ? { customer: cust } : {}),
     metadata: { bookingIds: draftId, source, paymentTiming: 'now' },
   });
 
-  console.log(` Custom checkout PaymentIntent created: ${paymentIntent.id} (draft ${draftId})`);
-  return paymentIntent;
+  const customerMissing = (err) =>
+    err && (err.raw?.code === 'resource_missing' || /No such customer/i.test(String(err.message || '')));
+
+  try {
+    return await create(customerId);
+  } catch (err) {
+    // A stored customer id can outlive its Stripe account (test ↔ live keys or
+    // a deleted customer). A PaymentIntent doesn't strictly require a customer —
+    // retry without it, then repair the mapping by attaching a freshly created
+    // customer so the next checkout works first try.
+    if (customerId && customerMissing(err)) {
+      console.warn(`[Stripe] Stored customer ${customerId} not found on this account; repairing for user ${user?.id || 'unknown'}.`);
+      const intent = await create(null);
+
+      if (user && user.id) {
+        try {
+          const fresh = await createStripeCustomer({ userId: user.id, email: user.email, name: user.name });
+          await getStripe().paymentIntents.update(intent.id, { customer: fresh });
+          console.log(`[Stripe] Re-linked PaymentIntent ${intent.id} to fresh customer ${fresh}`);
+        } catch (linkErr) {
+          console.warn('[Stripe] Could not attach fresh customer to repaired PaymentIntent:', linkErr.message);
+        }
+      }
+      return intent;
+    }
+    throw err;
+  }
 }
 
 /**

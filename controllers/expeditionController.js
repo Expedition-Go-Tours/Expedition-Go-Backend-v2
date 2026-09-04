@@ -1866,6 +1866,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         customerId,
         draftId: holdResult.draftId,
         source: 'expedition',
+        user: req.user,
       });
     } catch (err) {
       console.error('[Expedition] Failed to create checkout PaymentIntent:', err.message);
