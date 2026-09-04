@@ -1,12 +1,18 @@
 module.exports = async () => {
+  // Hermetic runs (unit / e2e) never touch a real database and set
+  // TEST_DB_GATED=0 — skip the probe entirely so they don't load the Prisma
+  // client or attempt a connection. Local runs and DB-gated jobs (api /
+  // integration / coverage) probe below.
+  if (process.env.TEST_DB_GATED === '0') {
+    process.env.TEST_DB_AVAILABLE = 'false';
+    return;
+  }
+
   let available = false;
   let prisma = null;
   try {
-    // Lazy require inside the probe so a Jest run never hard-aborts at
-    // bootstrap when the generated Prisma client is unavailable (CI installs
-    // with --ignore-scripts and regenerates the client explicitly per job).
-    // Unit suites mock the client; DB-gated suites read TEST_DB_AVAILABLE and
-    // only run in jobs that generate the client and provision a database.
+    // Lazy require inside the probe: if the generated client or DB is ever
+    // unavailable, degrade to "no DB" instead of crashing the bootstrap.
     prisma = require('./utils/prismaClient');
     await prisma.$connect();
     available = true;

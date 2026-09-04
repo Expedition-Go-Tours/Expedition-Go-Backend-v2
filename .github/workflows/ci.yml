@@ -59,6 +59,7 @@ jobs:
     env:
       JEST_JUNIT_OUTPUT_DIR: reports/junit
       JEST_JUNIT_OUTPUT_NAME: unit.xml
+      TEST_DB_GATED: '0'
     outputs:
       passed: ${{ steps.counts.outputs.passed }}
       failed: ${{ steps.counts.outputs.failed }}
@@ -75,6 +76,9 @@ jobs:
           key: nm-${{ runner.os }}-node22-${{ hashFiles('package-lock.json') }}
       - run: npm ci --ignore-scripts
         if: steps.nm-cache.outputs.cache-hit != 'true'
+      - name: Ensure Prisma client generated
+        run: |
+          if [ ! -d node_modules/.prisma/client ]; then npx prisma generate; fi
       - run: npx jest __tests__/unit/ --no-coverage --forceExit --reporters=default --reporters=jest-junit
 
       - name: Export test counts
@@ -477,6 +481,7 @@ jobs:
     env:
       JEST_JUNIT_OUTPUT_DIR: reports/junit
       JEST_JUNIT_OUTPUT_NAME: e2e.xml
+      TEST_DB_GATED: '0'
     outputs:
       passed: ${{ steps.counts.outputs.passed }}
       failed: ${{ steps.counts.outputs.failed }}
@@ -493,6 +498,9 @@ jobs:
           key: nm-${{ runner.os }}-node22-${{ hashFiles('package-lock.json') }}
       - run: npm ci --ignore-scripts
         if: steps.nm-cache.outputs.cache-hit != 'true'
+      - name: Ensure Prisma client generated
+        run: |
+          if [ ! -d node_modules/.prisma/client ]; then npx prisma generate; fi
       - run: npx jest __tests__/e2e/ --no-coverage --forceExit --reporters=default --reporters=jest-junit
 
       - name: Export test counts
