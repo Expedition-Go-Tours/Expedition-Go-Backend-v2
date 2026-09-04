@@ -21,7 +21,6 @@ const catchAsync = require('../utils/catchAsync');
 const cache = require('../utils/cacheHelper');
 const { logActivity } = require('../utils/auditLogger');
 const { enqueueNotification } = require('../utils/queue');
-const adminNotifService = require('../utils/adminNotificationService');
 const { buildTourDiff, computeChangesSummary, mergeDraftContent, buildLiveUpdateData } = require('../utils/tourDraft');
 const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
 
@@ -2773,14 +2772,6 @@ exports.reviewTour = catchAsync(async (req, res, next) => {
     data: { tourId: tour.id, status: isApprove ? 'ACTIVE' : 'REJECTED', reason: isApprove ? null : reason },
   }).catch((err) => console.warn('[Admin] Supplier notification failed:', err?.message));
 
-  // Push a refresh event to any other open admin consoles
-  adminNotifService.emitToRoom('admin-room', {
-    type: 'TOUR_REVIEW_RESOLVED',
-    title: isApprove ? 'Tour Approved' : 'Tour Flagged',
-    message: `"${tour.title}" was ${isApprove ? 'approved' : 'flagged'}`,
-    data: { tourId: tour.id, action, status: isApprove ? 'ACTIVE' : 'REJECTED' },
-  }).catch(() => {});
-
   res.status(200).json({
     status: 'success',
     message: isApprove ? 'Tour approved and is now live' : 'Tour flagged and returned to the supplier',
@@ -2917,13 +2908,6 @@ exports.reviewTourDraft = catchAsync(async (req, res, next) => {
       data: { tourId: tour.id, status: 'ACTIVE' },
     }).catch((err) => console.warn('[Admin] Supplier notification failed:', err?.message));
 
-    adminNotifService.emitToRoom('admin-room', {
-      type: 'TOUR_REVIEW_RESOLVED',
-      title: 'Tour Update Approved',
-      message: `"${tour.title}" update approved`,
-      data: { tourId: tour.id, action, status: 'ACTIVE' },
-    }).catch(() => {});
-
     return res.status(200).json({
       status: 'success',
       message: 'Tour update approved and applied to the live listing',
@@ -2976,13 +2960,6 @@ exports.reviewTourDraft = catchAsync(async (req, res, next) => {
     message: `Your update to "${tour.title}" was flagged: ${String(reason).trim()}. The live tour is unchanged.`,
     data: { tourId: tour.id, status: 'REJECTED', reason: String(reason).trim() },
   }).catch((err) => console.warn('[Admin] Supplier notification failed:', err?.message));
-
-  adminNotifService.emitToRoom('admin-room', {
-    type: 'TOUR_REVIEW_RESOLVED',
-    title: 'Tour Update Flagged',
-    message: `"${tour.title}" update flagged`,
-    data: { tourId: tour.id, action, status: 'REJECTED' },
-  }).catch(() => {});
 
   res.status(200).json({
     status: 'success',

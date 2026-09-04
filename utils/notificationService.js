@@ -120,14 +120,6 @@ async function sendWebSocketNotification(userId, notificationData) {
     // Send to user's room
     io.to(`user:${userId}`).emit('notification', notificationData);
 
-    // Also send to admin room if it's a system alert
-    if (['SUPPLIER_APPROVED', 'BOOKING_CONFIRMED', 'REVIEW_RECEIVED'].includes(notificationData.type)) {
-      io.to('admin-room').emit('admin-notification', {
-        ...notificationData,
-        userId
-      });
-    }
-
     console.log(`📡 WebSocket notification sent to user:${userId}`);
   } catch (error) {
     console.error('❌ WebSocket notification failed:', error);

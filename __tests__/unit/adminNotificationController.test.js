@@ -71,9 +71,9 @@ describe('adminNotificationController', () => {
   });
 
   describe('acknowledgeAll', () => {
-    it('acknowledges all notifications', async () => {
+    it('acknowledges all notifications within the admin\'s permission scope', async () => {
       await controller.acknowledgeAll(req, res, next);
-      expect(adminNotifService.acknowledgeAll).toHaveBeenCalledWith('admin-1');
+      expect(adminNotifService.acknowledgeAll).toHaveBeenCalledWith('admin-1', expect.any(Object));
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ message: '2 notifications acknowledged' }));
     });

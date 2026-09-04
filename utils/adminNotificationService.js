@@ -91,21 +91,23 @@ async function notifyAdmin({ type, title, message, data = {} }) {
   }
 }
 
-async function getNotifications({ page = 1, limit = 20, unacknowledgedOnly = false }) {
-  const where = {};
-  if (unacknowledgedOnly) where.acknowledged = false;
+async function getNotifications({ page = 1, limit = 20, unacknowledgedOnly = false, where = {} }) {
+  const whereClause = {
+    ...where,
+    ...(unacknowledgedOnly ? { acknowledged: false } : {}),
+  };
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
   const [notifications, totalCount, unacknowledgedCount] = await Promise.all([
     prisma.adminNotification.findMany({
-      where,
+      where: whereClause,
       orderBy: { createdAt: 'desc' },
       skip,
       take: parseInt(limit),
     }),
-    prisma.adminNotification.count({ where }),
-    prisma.adminNotification.count({ where: { acknowledged: false } }),
+    prisma.adminNotification.count({ where: whereClause }),
+    prisma.adminNotification.count({ where: { ...whereClause, acknowledged: false } }),
   ]);
 
   return {
@@ -133,10 +135,10 @@ async function acknowledgeNotification(id, adminId) {
   }
 }
 
-async function acknowledgeAll(adminId) {
+async function acknowledgeAll(adminId, where = {}) {
   try {
     const result = await prisma.adminNotification.updateMany({
-      where: { acknowledged: false },
+      where: { acknowledged: false, ...where },
       data: { acknowledged: true, acknowledgedAt: new Date(), acknowledgedBy: adminId },
     });
     return { success: true, count: result.count };
@@ -166,16 +168,18 @@ async function emitToRoom(room, { type, title, message, data = {} }) {
   }
 }
 
-async function getStats() {
+async function getStats(where = {}) {
   const [total, unacknowledged, byType, recent] = await Promise.all([
-    prisma.adminNotification.count(),
-    prisma.adminNotification.count({ where: { acknowledged: false } }),
+    prisma.adminNotification.count({ where }),
+    prisma.adminNotification.count({ where: { ...where, acknowledged: false } }),
     prisma.adminNotification.groupBy({
       by: ['type'],
+      where,
       _count: true,
       orderBy: { _count: { type: 'desc' } },
     }),
     prisma.adminNotification.findMany({
+      where,
       take: 10,
       orderBy: { createdAt: 'desc' },
     }),

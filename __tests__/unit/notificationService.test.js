@@ -105,11 +105,16 @@ describe('sendWebSocketNotification', () => {
     expect(mockIo.emit).toHaveBeenCalledWith('notification', { type: 'TEST', title: 'Test' });
   });
 
-  it('sends to admin room for important types', async () => {
+  it('does not mirror per-user important types to the admin room', async () => {
+    // Admins receive their own durable AdminNotification rows for these events;
+    // mirroring the per-user event to admin-room produced invisible socket-only
+    // notifications (no row), so the mirror was removed.
     for (const type of ['SUPPLIER_APPROVED', 'BOOKING_CONFIRMED', 'REVIEW_RECEIVED']) {
+      jest.clearAllMocks();
       await sendWebSocketNotification('u-1', { type });
-      expect(mockIo.to).toHaveBeenCalledWith('admin-room');
-      expect(mockIo.emit).toHaveBeenCalledWith('admin-notification', expect.objectContaining({ type }));
+      expect(mockIo.to).toHaveBeenCalledWith('user:u-1');
+      expect(mockIo.to).not.toHaveBeenCalledWith('admin-room');
+      expect(mockIo.emit).not.toHaveBeenCalledWith('admin-notification', expect.objectContaining({ type }));
     }
   });
 

@@ -951,7 +951,9 @@ describe('adminController', () => {
       expect(enqueueNotification).toHaveBeenCalledWith(
         expect.objectContaining({ userId: 's1', type: 'TOUR_APPROVED' })
       );
-      expect(adminNotifService.emitToRoom).toHaveBeenCalledWith('admin-room', expect.any(Object));
+      // Refresh events to other consoles come from the dataChangeEmitter, so no
+      // socket-only admin-room emission is made by the controller anymore.
+      expect(adminNotifService.emitToRoom).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(200);
     });
 

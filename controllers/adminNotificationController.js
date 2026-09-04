@@ -13,42 +13,85 @@ const TYPE_PERMISSION = {
   BOOKING_CONFIRMED: ['bookings.view', 'dashboard.*'],
 };
 
-function filterAdminNotifications(notifications, permissionKeys) {
-  return notifications.filter((n) => {
-    if (n.type === 'NEW_MESSAGE') {
-      const canSupplier = permissionKeys.includes('chat.suppliers');
-      const canCustomer = permissionKeys.includes('chat.customers');
-      const canExpedition = permissionKeys.includes('chat.expedition');
-      const chatType = n.data?.chatType;
-      if (chatType === 'suppliers') return canSupplier;
-      if (chatType === 'customers') return canCustomer;
-      if (chatType === 'expedition') return canExpedition;
-      return canSupplier || canCustomer || canExpedition;
+// Every value in the AdminNotificationType enum. Types without a TYPE_PERMISSION
+// entry (or with an empty list) are visible to every admin.
+const ADMIN_NOTIFICATION_TYPES = [
+  'NEW_SUPPLIER_APPLICATION',
+  'SUPPLIER_STATUS_CHANGE',
+  'REVIEW_NEEDS_MODERATION',
+  'PAYOUT_NEEDS_APPROVAL',
+  'SYSTEM_ALERT',
+  'NEW_MESSAGE',
+  'TOUR_SUBMITTED_FOR_REVIEW',
+  'BOOKING_CREATED',
+  'BOOKING_CONFIRMED',
+  'DOCUMENT_EXPIRING',
+  'DOCUMENT_EXPIRED',
+  'REFUND_REQUEST',
+  'PAYMENT_UPCOMING',
+  'PAYMENT_COLLECTED',
+  'PAYMENT_COLLECTION_FAILED',
+  'STRIPE_CUSTOMER_CREATE_FAILED',
+  'REFUND_NEEDS_ATTENTION',
+];
+
+/**
+ * Build a Prisma where clause that keeps only the notifications this admin
+ * role is allowed to see, so list/count/stats all agree with the feed instead
+ * of filtering after pagination.
+ */
+function buildPermissionWhere(permissionKeys = []) {
+  const keys = new Set(permissionKeys);
+  const canChat = (t) => keys.has(`chat.${t}`);
+  const canSuppliers = canChat('suppliers');
+  const canCustomers = canChat('customers');
+  const canExpedition = canChat('expedition');
+  const allChat = canSuppliers && canCustomers && canExpedition;
+
+  const or = [];
+  const typeIn = [];
+
+  for (const type of ADMIN_NOTIFICATION_TYPES) {
+    if (type === 'NEW_MESSAGE') {
+      if (allChat) {
+        typeIn.push(type);
+      } else {
+        if (canSuppliers) or.push({ type: 'NEW_MESSAGE', data: { path: ['chatType'], equals: 'suppliers' } });
+        if (canCustomers) or.push({ type: 'NEW_MESSAGE', data: { path: ['chatType'], equals: 'customers' } });
+        if (canExpedition) or.push({ type: 'NEW_MESSAGE', data: { path: ['chatType'], equals: 'expedition' } });
+      }
+      continue;
     }
 
-    const required = TYPE_PERMISSION[n.type];
-    if (!required || required.length === 0) return true;
-    return required.some((key) => permissionKeys.includes(key));
-  });
+    const required = TYPE_PERMISSION[type];
+    if (!required || required.length === 0 || required.some((p) => keys.has(p))) {
+      typeIn.push(type);
+    }
+  }
+
+  if (typeIn.length > 0) or.push({ type: { in: typeIn } });
+  if (or.length === 0) return { id: '__no_permission__' };
+  return { OR: or };
 }
 
 exports.getNotifications = catchAsync(async (req, res) => {
   const { page = 1, limit = 20, unacknowledgedOnly = false } = req.query;
+  const where = buildPermissionWhere(req.user.permissionKeys || []);
   const result = await adminNotifService.getNotifications({
     page: parseInt(page),
     limit: parseInt(limit),
     unacknowledgedOnly: unacknowledgedOnly === 'true',
+    where,
   });
-  result.notifications = filterAdminNotifications(result.notifications, req.user.permissionKeys || []);
   res.status(200).json({ status: 'success', data: result });
 });
 
 exports.getUnreadCount = catchAsync(async (req, res) => {
-  const result = await adminNotifService.getNotifications({ limit: 100, unacknowledgedOnly: true });
-  const filtered = filterAdminNotifications(result.notifications, req.user.permissionKeys || []);
+  const where = buildPermissionWhere(req.user.permissionKeys || []);
+  const result = await adminNotifService.getNotifications({ limit: 1, unacknowledgedOnly: true, where });
   res.status(200).json({
     status: 'success',
-    data: { unacknowledgedCount: filtered.length },
+    data: { unacknowledgedCount: result.pagination.unacknowledgedCount },
   });
 });
 
@@ -60,7 +103,8 @@ exports.acknowledge = catchAsync(async (req, res, next) => {
 });
 
 exports.acknowledgeAll = catchAsync(async (req, res) => {
-  const result = await adminNotifService.acknowledgeAll(req.user.id);
+  const where = buildPermissionWhere(req.user.permissionKeys || []);
+  const result = await adminNotifService.acknowledgeAll(req.user.id, where);
   res.status(200).json({
     status: 'success',
     message: `${result.count} notifications acknowledged`,
@@ -68,6 +112,7 @@ exports.acknowledgeAll = catchAsync(async (req, res) => {
 });
 
 exports.getStats = catchAsync(async (req, res) => {
-  const stats = await adminNotifService.getStats();
+  const where = buildPermissionWhere(req.user.permissionKeys || []);
+  const stats = await adminNotifService.getStats(where);
   res.status(200).json({ status: 'success', data: stats });
 });
