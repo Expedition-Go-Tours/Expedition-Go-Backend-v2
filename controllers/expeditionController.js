@@ -1691,6 +1691,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         customerId,
         tourId,
         source: 'EXPEDITION',
+        clientOrigin: resolveAllowedClientUrl(req),
         travelDate: new Date(travelDate),
         selectedTime: selectedTime || null,
         travelers,
@@ -1835,6 +1836,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         currency: pricing.currency,
       },
       commission,
+      clientOrigin: resolveAllowedClientUrl(req),
     });
   } catch (err) {
     console.error('[Expedition] Failed to acquire hold:', err.message);

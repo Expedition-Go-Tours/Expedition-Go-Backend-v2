@@ -267,6 +267,9 @@ async function buildBookingBase(booking) {
         ? Number(booking.grossAmount)
         : 0;
 
+  // Customer links point at the storefront the booking was made on.
+  const clientOrigin = emailUrls.bookingClientOrigin(booking);
+
   const base = {
     // identity — account holder (the recipient / addressee of emails)
     customerName: customer.name || 'Guest',
@@ -318,17 +321,17 @@ async function buildBookingBase(booking) {
     commissionLabel: fmt.formatCurrency(booking.platformCommission, currency),
     payoutAmountLabel: fmt.formatCurrency(booking.supplierPayout, currency),
 
-    // customer URLs
-    bookingUrl: emailUrls.viewBooking(booking.id),
-    voucherUrl: emailUrls.downloadVoucher(booking.id),
-    manageUrl: emailUrls.manageBooking(booking.id),
-    managePaymentUrl: emailUrls.managePaymentMethod(booking.id),
-    pickupUrl: emailUrls.addPickupLocation(booking.id),
-    reviewUrl: emailUrls.writeReview(booking.id),
-    refundUrl: emailUrls.viewRefund(booking.id),
-    cancellationUrl: emailUrls.viewCancellation(booking.id),
-    browseUrl: emailUrls.browseExperiences(),
-    supportUrl: emailUrls.contactSupport(),
+    // customer URLs — point at the storefront the booking was made on
+    bookingUrl: emailUrls.viewBooking(booking.id, clientOrigin),
+    voucherUrl: emailUrls.downloadVoucher(booking.id, clientOrigin),
+    manageUrl: emailUrls.manageBooking(booking.id, clientOrigin),
+    managePaymentUrl: emailUrls.managePaymentMethod(booking.id, clientOrigin),
+    pickupUrl: emailUrls.addPickupLocation(booking.id, clientOrigin),
+    reviewUrl: emailUrls.writeReview(booking.id, clientOrigin, tour.slug),
+    refundUrl: emailUrls.viewRefund(booking.id, clientOrigin),
+    cancellationUrl: emailUrls.viewCancellation(booking.id, clientOrigin),
+    browseUrl: emailUrls.browseExperiences(clientOrigin),
+    supportUrl: emailUrls.contactSupport(clientOrigin),
 
     // supplier URLs
     supplierBookingUrl: emailUrls.supplierViewBooking(booking.id),
@@ -629,14 +632,15 @@ async function sendRefundCompletedEmail(booking, { refundReference, refundedAt }
 async function sendSupplierChangedBookingEmail(booking, { changes = [], changeReason, needsAcceptance = false } = {}) {
   const b = await resolveBookingContext(booking);
   const base = await buildBookingBase(b);
+  const origin = emailUrls.bookingClientOrigin(b);
   const data = {
     ...base,
     changes,
     changeReason: changeReason || '',
     needsAcceptance,
-    acceptUrl: emailUrls.manageBooking(b.id),
-    rescheduleUrl: emailUrls.manageBooking(b.id),
-    cancelUrl: emailUrls.viewCancellation(b.id),
+    acceptUrl: emailUrls.manageBooking(b.id, origin),
+    rescheduleUrl: emailUrls.manageBooking(b.id, origin),
+    cancelUrl: emailUrls.viewCancellation(b.id, origin),
     supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
@@ -667,10 +671,11 @@ async function sendSupplierCancelledBookingEmail(booking, { reason, refundAmount
 async function sendReviewRequestEmail(booking) {
   const b = await resolveBookingContext(booking);
   const base = await buildBookingBase(b);
+  const origin = emailUrls.bookingClientOrigin(b);
   const data = {
     ...base,
-    reviewUrl: emailUrls.writeReview(b.id),
-    browseUrl: emailUrls.browseExperiences(),
+    reviewUrl: emailUrls.writeReview(b.id, origin, b.tour?.slug),
+    browseUrl: emailUrls.browseExperiences(origin),
     supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
@@ -791,11 +796,12 @@ async function sendSupplierPickupUpdatedEmail(booking, { previousPickupLocation 
 async function sendSupplierPickupRequiredEmail(booking, { deadline } = {}) {
   const b = await resolveBookingContext(booking);
   const base = await buildBookingBase(b);
+  const origin = emailUrls.bookingClientOrigin(b);
   const supplier = b.tour?.supplier || {};
   const data = {
     ...base,
     deadlineLabel: fmt.formatLongDate(deadline || b.travelDate),
-    pickupUrl: emailUrls.addPickupLocation(b.id),
+    pickupUrl: emailUrls.addPickupLocation(b.id, origin),
     supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({

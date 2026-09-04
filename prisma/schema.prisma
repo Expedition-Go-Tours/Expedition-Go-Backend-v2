@@ -844,6 +844,11 @@ model Booking {
   specialRequests String?
   supplierNotes   String?
 
+  // Frontend origin the customer booked on (e.g. https://expeditiongotours.com).
+  // Transactional emails and Stripe redirect URLs use this so links return to
+  // the platform the booking was actually made on — not one global brand domain.
+  clientOrigin String?
+
   // Customer-selected pickup snapshot (mode, area/location, address, time).
   // Null when the tour has no pickup service.
   pickup Json?

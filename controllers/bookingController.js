@@ -569,6 +569,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
         data: {
           bookingNumber,
           customerId,
+          clientOrigin: resolveAllowedClientUrl(req),
           tourId: item.tourId,
           travelDate: item.travelDate,
           selectedTime: item.selectedTime,

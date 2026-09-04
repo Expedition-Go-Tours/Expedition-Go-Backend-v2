@@ -29,6 +29,7 @@ async function acquireHold({
   commission,
   source,
   bookingPrefix,
+  clientOrigin,
 }) {
   const seats = travelerCount(travelers);
 
@@ -84,7 +85,7 @@ async function acquireHold({
         travelDate: new Date(travelDate),
         selectedTime: selectedTime || null,
         seats,
-        payload: { ...(payload ?? {}), _source: source || 'EXPEDITION', _bookingPrefix: bookingPrefix || 'EXP' },
+        payload: { ...(payload ?? {}), _source: source || 'EXPEDITION', _bookingPrefix: bookingPrefix || 'EXP', _clientOrigin: clientOrigin || null },
         pricing: pricing ?? {},
         commissionRate,
         platformCommission,
@@ -190,6 +191,7 @@ async function materializeHold(draftId, session, paymentIntentId) {
         customerId: draftRecord.customerId,
         tourId: draftRecord.tourId,
         source,
+        clientOrigin: draftRecord.payload?._clientOrigin || null,
         status: 'CONFIRMED',
         paymentStatus: 'SUCCEEDED',
         paidAt: new Date(),
