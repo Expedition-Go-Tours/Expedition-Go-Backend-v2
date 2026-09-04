@@ -223,8 +223,67 @@ function zonedTimeToUtc(localDateTime, timeZone) {
 
 function isOperatingDay(parsed, dateObj) {
   const days = getTemplateDaysOfWeek(parsed);
-  if (days.length === 0) return true;
-  return days.includes(weekdayInZone(dateObj, getTourTimezone(parsed)).toLowerCase());
+  if (days.length > 0 && !days.includes(weekdayInZone(dateObj, getTourTimezone(parsed)).toLowerCase())) return false;
+  return hasPricingScheduleForDate(parsed, dateObj);
+}
+
+/**
+ * Single source of truth for "which pricing schedules cover a given date/time".
+ *
+ * Pricing (calculateTourPrice) and availability (isOperatingDay / checkout
+ * guards) both call through here so a calendar can never advertise a date a
+ * price engine will reject — GetYourGuide-style: what you can pick, you can
+ * pay for.
+ *
+ * Mirrors the historical pricing rules exactly:
+ *   - window  [startDate .. endDate] inclusive (open-ended when missing)
+ *   - when a schedule lists `prices[0].days`, the weekday must be included
+ *   - when a specific time is selected and a schedule lists `prices[0].times`,
+ *     the time must be included (times are ignored when no time is picked)
+ *
+ * @returns {number[]|null} indices of matching schedules, or null when the
+ *   tour has no pricing schedule data at all (nothing to gate on).
+ */
+function pricingScheduleIndexesFor(parsed, dateKey, weekdayLower, selectedTime = null) {
+  const ps = parsed && parsed.pricingSchedules ? parsed.pricingSchedules : null;
+  if (!ps) return null;
+  const schedules = ps.schedules;
+  if (!Array.isArray(schedules)) return null;
+
+  const indexes = [];
+  for (let i = 0; i < schedules.length; i++) {
+    const s = schedules[i];
+    if (!s || typeof s !== 'object') continue;
+
+    const startKey = s.startDate ? toDateKey(s.startDate) : null;
+    const endKey = s.endDate ? toDateKey(s.endDate) : null;
+    if (startKey && dateKey < startKey) continue;
+    if (endKey && dateKey > endKey) continue;
+
+    const p0 = Array.isArray(s.prices) && s.prices[0] ? s.prices[0] : {};
+    const days = Array.isArray(p0.days) && p0.days.length
+      ? p0.days.map((d) => String(d).toLowerCase())
+      : null;
+    if (days && !days.includes(weekdayLower)) continue;
+
+    const times = Array.isArray(p0.times) && p0.times.length ? p0.times : null;
+    if (selectedTime && times && !times.some((t) => String(t) === selectedTime)) continue;
+
+    indexes.push(i);
+  }
+  return indexes;
+}
+
+/**
+ * True when at least one pricing schedule can price `dateObj`, or when the
+ * tour has no pricing schedule data to gate on (preserves legacy behaviour).
+ */
+function hasPricingScheduleForDate(parsed, dateObj) {
+  const dateKey = toDateKey(dateObj);
+  if (!dateKey) return false;
+  const weekday = weekdayInZone(dateObj, getTourTimezone(parsed)).toLowerCase();
+  const indexes = pricingScheduleIndexesFor(parsed, dateKey, weekday, null);
+  return indexes === null || indexes.length > 0;
 }
 
 /** Collect dateExceptions from the availability block and every pricing schedule. */
@@ -411,6 +470,25 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
     if (!daySlots.some((s) => s.time === selectedTime)) {
       return { ok: false, reason: 'Selected time is not available for this date' };
     }
+  }
+
+  // A date can only be sold at times a pricing schedule actually prices — if a
+  // schedule's `times` are narrower than the template's offered slots, the
+  // unavailable ones must fail here (availability check) rather than later at
+  // checkout. Same single rule set the price engine uses.
+  const priceIndexes = pricingScheduleIndexesFor(
+    parsed,
+    dateKey,
+    weekdayInZone(dateObj, getTourTimezone(parsed)).toLowerCase(),
+    selectedTime
+  );
+  if (priceIndexes !== null && priceIndexes.length === 0) {
+    return {
+      ok: false,
+      reason: selectedTime
+        ? 'Selected time is not available for this date'
+        : 'Tour is not available on this date',
+    };
   }
 
   // Per-slot ceiling when no day-wide cap is active; otherwise the day-wide cap
@@ -623,6 +701,8 @@ module.exports = {
   getMaxGroupsPerTimeSlot,
   getTemplateDaysOfWeek,
   isOperatingDay,
+  pricingScheduleIndexesFor,
+  hasPricingScheduleForDate,
   getDateExceptions,
   isClosedDate,
   getOverrideTimeSlotList,

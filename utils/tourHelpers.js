@@ -25,6 +25,9 @@ const {
   buildTimeSlots,
   toDateKey,
   toUtcDate,
+  getTourTimezone,
+  weekdayInZone,
+  pricingScheduleIndexesFor,
 } = require('./availabilityCore');
 
 // SQL-safe literal (constants only) used in raw capacity queries.
@@ -879,29 +882,21 @@ async function calculateTourPrice(tour, travelers, travelDate, selectedTime = nu
 
     const { schedules } = pricing.pricingSchedules;
     const currency = normalizeCurrency(pricing.pricingSchedules.currency);
-    
-    // Find applicable schedule
-    const applicableSchedule = schedules.find(schedule => {
-      const startDate = new Date(schedule.startDate);
-      const endDate = schedule.endDate ? new Date(schedule.endDate) : null;
-      const bookingDate = new Date(travelDate);
 
-      if (bookingDate < startDate) return false;
-      if (endDate && bookingDate > endDate) return false;
-
-      // Check day of week if specified
-      if (schedule.prices[0]?.days && schedule.prices[0].days.length > 0) {
-        const dayName = bookingDate.toLocaleDateString('en-US', { weekday: 'long' });
-        if (!schedule.prices[0].days.includes(dayName)) return false;
-      }
-
-      // Check time if specified
-      if (selectedTime && schedule.prices[0]?.times && schedule.prices[0].times.length > 0) {
-        if (!schedule.prices[0].times.includes(selectedTime)) return false;
-      }
-
-      return true;
-    });
+    // Choose the applicable schedule via the SAME single rule set the
+    // availability core uses (window + weekday + time), so a date/time the
+    // calendar advertises can always be priced — and vice versa.
+    const parsed = parseBlob(pricing);
+    const dateKey = toDateKey(travelDate);
+    const dateObj = toUtcDate(dateKey);
+    if (!dateKey || !dateObj) {
+      throw new Error('No pricing available for selected date/time');
+    }
+    const weekday = weekdayInZone(dateObj, getTourTimezone(parsed)).toLowerCase();
+    const indexes = Array.isArray(schedules)
+      ? pricingScheduleIndexesFor(parsed, dateKey, weekday, selectedTime)
+      : [];
+    const applicableSchedule = indexes.length > 0 ? schedules[indexes[0]] : null;
 
     if (!applicableSchedule) {
       throw new Error('No pricing available for selected date/time');
