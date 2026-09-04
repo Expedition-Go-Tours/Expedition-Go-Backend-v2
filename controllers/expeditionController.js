@@ -17,6 +17,7 @@ const getConfig = require('../utils/getConfig');
 const { detachBookingFromActiveRequests } = require('../utils/financeHelpers');
 const { logActivity } = require('../utils/auditLogger');
 const { shouldCountTourView } = require('../utils/viewTracking');
+const ranking = require('../utils/homepageRanking');
 const eventEmitter = require('../utils/eventEmitter');
 
 const CACHE_PREFIX = 'expedition:';
@@ -613,7 +614,7 @@ exports.getRecommendedTours = catchAsync(async (req, res, next) => {
             id: true, title: true, slug: true, description: true,
             coverPhoto: true, photos: true, category: true,
             durationMinutes: true, averageRating: true, reviewCount: true, viewCount: true,
-            city: true, country: true, schedulesAndPricing: true,
+            city: true, country: true, schedulesAndPricing: true, createdAt: true,
             supplier: { select: { name: true, photoURL: true } },
             specialOfferTargets: {
               where: { specialOffer: { isActive: true } },
@@ -689,14 +690,33 @@ exports.getRecommendedTours = catchAsync(async (req, res, next) => {
       });
     }
 
+    // Tag results with the site-wide signals the cards render: "New" for
+    // tours created in the last 30 days (same window as the homepage New
+    // Experiences section) and "Likely to sell out" when the tour is already
+    // on the homepage sell-out list — matching how the rest of the site tags
+    // cards so the BookingWorkspace recommended carousel stays consistent.
+    const NEW_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+    const sellOutIds = new Set();
+    try {
+      const sellOutTours = await ranking.getLikelySellOut(50, null, false, true);
+      for (const t of (sellOutTours || [])) {
+        if (t && t.id) sellOutIds.add(t.id);
+      }
+    } catch (err) {
+      console.warn('[expedition] recommended sell-out lookup failed:', err.message);
+    }
+
     return {
       status: 'success',
       data: {
         location: sourceCity || sourceCountry || '',
-        tours: tours.map((r) => ({
-          id: r.id,
-          tour: transformForListing(r.tour, r),
-        })),
+        tours: tours.map((r) => {
+          const listing = transformForListing(r.tour, r);
+          const createdAt = r.tour.createdAt ? new Date(r.tour.createdAt) : null;
+          listing.isNew = !!(createdAt && !Number.isNaN(createdAt.getTime()) && (Date.now() - createdAt.getTime()) <= NEW_WINDOW_MS);
+          listing.likelyToSellOut = sellOutIds.has(r.tour.id);
+          return { id: r.id, tour: listing };
+        }),
       },
     };
   }, 300);
