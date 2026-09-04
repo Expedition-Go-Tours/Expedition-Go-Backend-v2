@@ -2,7 +2,6 @@ module.exports = {
   testEnvironment: 'node',
   testMatch: ['**/__tests__/**/*.test.js'],
   verbose: true,
-  collectCoverage: true,
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'json-summary'],
   coveragePathIgnorePatterns: ['/node_modules/', '/generated/', 'bm25Index.js', 'xgboostService.js', 'clipClient.js', 'clipService.py', 'homepageRanking.js', 'aiContentAnalyzer.js', 'aiCronFallback.js'],

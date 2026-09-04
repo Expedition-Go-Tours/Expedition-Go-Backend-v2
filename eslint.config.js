@@ -8,6 +8,7 @@ module.exports = [
       'coverage/',
       'generated/',
       '.ci-results/',
+      '.eslintcache',
       '*.md',
       'Expedition-GO-Frontend-main/',
       'Expedition-Go-Dashboard-main/',

@@ -13,6 +13,9 @@ node_modules/
 coverage/
 coverage-badge.svg
 
+# ESLint cache
+.eslintcache
+
 # Test reports (JUnit XML, k6 output)
 reports/
 junit.xml

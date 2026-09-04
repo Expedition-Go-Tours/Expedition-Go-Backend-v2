@@ -39,9 +39,19 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run lint
+      - uses: actions/cache@v4
+        id: nm-cache
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node22-${{ hashFiles('package-lock.json') }}
+      - run: npm ci --ignore-scripts
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+      - uses: actions/cache@v4
+        with:
+          path: .eslintcache
+          key: eslint-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: eslint-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
+      - run: npx eslint . --cache --cache-location .eslintcache
 
   # ── Unit tests (every push) ────────────────────────────────────────
   unit-tests:
@@ -58,8 +68,13 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
+      - uses: actions/cache@v4
+        id: nm-cache
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node22-${{ hashFiles('package-lock.json') }}
+      - run: npm ci --ignore-scripts
+        if: steps.nm-cache.outputs.cache-hit != 'true'
       - run: npx jest __tests__/unit/ --no-coverage --forceExit --reporters=default --reporters=jest-junit
 
       - name: Export test counts
@@ -104,8 +119,13 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
+      - uses: actions/cache@v4
+        id: nm-cache
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node22-${{ hashFiles('package-lock.json') }}
+      - run: npm ci --ignore-scripts
+        if: steps.nm-cache.outputs.cache-hit != 'true'
       - run: npx prisma generate
       - run: npx prisma migrate deploy
       - run: node prisma/seed.js
@@ -159,10 +179,16 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: npm
+
+      - uses: actions/cache@v4
+        id: nm-cache
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node22-${{ hashFiles('package-lock.json') }}
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+        if: steps.nm-cache.outputs.cache-hit != 'true'
 
       - name: Generate Prisma client
         run: npx prisma generate
@@ -261,10 +287,16 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: npm
+
+      - uses: actions/cache@v4
+        id: nm-cache
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node22-${{ hashFiles('package-lock.json') }}
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+        if: steps.nm-cache.outputs.cache-hit != 'true'
 
       - name: Generate Prisma client
         run: npx prisma generate
@@ -360,10 +392,16 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: npm
+
+      - uses: actions/cache@v4
+        id: nm-cache
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node22-${{ hashFiles('package-lock.json') }}
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+        if: steps.nm-cache.outputs.cache-hit != 'true'
 
       - name: Generate Prisma client
         run: npx prisma generate
@@ -448,8 +486,13 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
+      - uses: actions/cache@v4
+        id: nm-cache
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node22-${{ hashFiles('package-lock.json') }}
+      - run: npm ci --ignore-scripts
+        if: steps.nm-cache.outputs.cache-hit != 'true'
       - run: npx jest __tests__/e2e/ --no-coverage --forceExit --reporters=default --reporters=jest-junit
 
       - name: Export test counts
@@ -488,12 +531,17 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
+      - uses: actions/cache@v4
+        id: nm-cache
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node22-${{ hashFiles('package-lock.json') }}
+      - run: npm ci --ignore-scripts
+        if: steps.nm-cache.outputs.cache-hit != 'true'
       - run: npx prisma generate
       - run: npx prisma migrate deploy
       - run: node prisma/seed.js
-      - run: npm run test:ci
+      - run: npx jest --testPathIgnorePatterns __tests__/performance/ --testPathIgnorePatterns __tests__/concurrency/ --testPathIgnorePatterns __tests__/e2e/ --coverage --forceExit
       - uses: actions/upload-artifact@v7
         if: always()
         with:
