@@ -175,6 +175,7 @@ const EXPEDITION_DETAIL_PREFIX = (slug) => `expedition:detail:${slug}`;
 const EXPEDITION_SIMILAR_PREFIX = (slug) => `expedition:similar:${slug}`;
 const EXPEDITION_REVIEWS_PREFIX = (slug) => `expedition:reviews:${slug}`;
 const EXPEDITION_SITEMAP_KEY = 'expedition:sitemap';
+const EXPEDITION_SUPPLIER_TOURS_PREFIX = 'expedition:supplier-tours:*';
 const HOMEPAGE_SECTIONS_PREFIX = 'hp:sections:*';
 
 async function invalidateHomepageSections() {
@@ -201,6 +202,7 @@ async function invalidateTourCaches(tourId, slug) {
       ? [EXPEDITION_SIMILAR_PREFIX(slug), `${EXPEDITION_REVIEWS_PREFIX(slug)}:*`]
       : ['expedition:similar:*', 'expedition:reviews:*']),
     EXPEDITION_SITEMAP_KEY,
+    EXPEDITION_SUPPLIER_TOURS_PREFIX,
     'reviews:tour:*',
     HOMEPAGE_SECTIONS_PREFIX,
   ]);
@@ -242,6 +244,7 @@ module.exports = {
   EXPEDITION_SIMILAR_PREFIX,
   EXPEDITION_REVIEWS_PREFIX,
   EXPEDITION_SITEMAP_KEY,
+  EXPEDITION_SUPPLIER_TOURS_PREFIX,
   HOMEPAGE_SECTIONS_PREFIX,
   invalidateHomepageCaches,
   _clearMemory

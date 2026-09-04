@@ -559,6 +559,196 @@ exports.getSimilarTours = catchAsync(async (req, res, next) => {
   res.status(200).json(result);
 });
 
+/**
+ * GET /expedition/tours/recommended?tourId=xxx
+ *
+ * Returns 6 recommended tours near the given tour's location. Used by the
+ * booking workspace to show "More popular experiences near {city}".
+ *
+ * The source tour is looked up by ID. We then find other active Expedition
+ * tours in the same city, falling back to the same country if fewer than 3
+ * city matches exist. The source tour is excluded from results.
+ *
+ * Optional query params:
+ *   - limit (1-12, default 6)
+ *   - exclude (tourId to exclude, defaults to the source tour)
+ */
+exports.getRecommendedTours = catchAsync(async (req, res, next) => {
+  const { tourId } = req.query;
+  if (!tourId) return next(new AppError('tourId is required', 400));
+
+  const limit = Math.min(parseInt(req.query.limit) || 6, 12);
+  const cacheKey = `expedition:recommended:${tourId}:${limit}`;
+
+  const result = await cache.getOrSet(cacheKey, async () => {
+    // 1. Look up the source tour to get its location
+    const source = await prisma.tour.findUnique({
+      where: { id: tourId },
+      select: { id: true, city: true, country: true, category: true, productContent: true },
+    });
+
+    if (!source) return null;
+
+    // Resolve city/country from indexed fields or fall back to productContent.location
+    const pc = source.productContent && typeof source.productContent === 'object' ? source.productContent : {};
+    const sourceCity = source.city || pc.location?.city || null;
+    const sourceCountry = source.country || pc.location?.country || null;
+
+    // 2. Same-city tours first (highest relevance)
+    let tours = await prisma.expeditionTour.findMany({
+      where: {
+        isActive: true,
+        tour: {
+          status: 'ACTIVE',
+          supplier: { supplierProfile: { status: 'ACTIVE' } },
+          id: { not: source.id },
+          ...(sourceCity ? { city: sourceCity } : {}),
+        },
+      },
+      take: limit,
+      orderBy: [{ tour: { averageRating: 'desc' } }, { tour: { reviewCount: 'desc' } }],
+      include: {
+        tour: {
+          select: {
+            id: true, title: true, slug: true, description: true,
+            coverPhoto: true, photos: true, category: true,
+            durationMinutes: true, averageRating: true, reviewCount: true, viewCount: true,
+            city: true, country: true, schedulesAndPricing: true,
+            supplier: { select: { name: true, photoURL: true } },
+            specialOfferTargets: {
+              where: { specialOffer: { status: 'ACTIVE' } },
+              include: { specialOffer: { select: { id: true, name: true, offerType: true, discountType: true, discountPercentage: true, fixedDiscountValue: true, startDate: true, endDate: true, promoCode: true } } },
+            },
+          },
+        },
+      },
+    });
+
+    // 3. If fewer than 3 city matches, backfill with same-country tours
+    if (sourceCountry && tours.length < 3) {
+      const existingIds = new Set([source.id, ...tours.map((r) => r.tour.id)]);
+      const countryTours = await prisma.expeditionTour.findMany({
+        where: {
+          isActive: true,
+          tour: {
+            status: 'ACTIVE',
+            supplier: { supplierProfile: { status: 'ACTIVE' } },
+            id: { notIn: [...existingIds] },
+            country: sourceCountry,
+          },
+        },
+        take: limit - tours.length,
+        orderBy: [{ tour: { averageRating: 'desc' } }, { tour: { reviewCount: 'desc' } }],
+        include: {
+          tour: {
+            select: {
+              id: true, title: true, slug: true, description: true,
+              coverPhoto: true, photos: true, category: true,
+              durationMinutes: true, averageRating: true, reviewCount: true, viewCount: true,
+              city: true, country: true, schedulesAndPricing: true,
+              supplier: { select: { name: true, photoURL: true } },
+              specialOfferTargets: {
+                where: { specialOffer: { status: 'ACTIVE' } },
+                include: { specialOffer: { select: { id: true, name: true, offerType: true, discountType: true, discountPercentage: true, fixedDiscountValue: true, startDate: true, endDate: true, promoCode: true } } },
+              },
+            },
+          },
+        },
+      });
+      tours = [...tours, ...countryTours];
+    }
+
+    // 4. 404 fallback: if still no tours, try broad fetch
+    if (tours.length === 0) {
+      tours = await prisma.expeditionTour.findMany({
+        where: {
+          isActive: true,
+          tour: {
+            status: 'ACTIVE',
+            supplier: { supplierProfile: { status: 'ACTIVE' } },
+            id: { not: source.id },
+          },
+        },
+        take: limit,
+        orderBy: [{ tour: { reviewCount: 'desc' } }],
+        include: {
+          tour: {
+            select: {
+              id: true, title: true, slug: true, description: true,
+              coverPhoto: true, photos: true, category: true,
+              durationMinutes: true, averageRating: true, reviewCount: true, viewCount: true,
+              city: true, country: true, schedulesAndPricing: true,
+              supplier: { select: { name: true, photoURL: true } },
+              specialOfferTargets: {
+                where: { specialOffer: { status: 'ACTIVE' } },
+                include: { specialOffer: { select: { id: true, name: true, offerType: true, discountType: true, discountPercentage: true, fixedDiscountValue: true, startDate: true, endDate: true, promoCode: true } } },
+              },
+            },
+          },
+        },
+      });
+    }
+
+    return {
+      status: 'success',
+      data: {
+        location: sourceCity || sourceCountry || '',
+        tours: tours.map((r) => ({
+          id: r.id,
+          tour: transformForListing(r.tour, r),
+        })),
+      },
+    };
+  }, 300);
+
+  if (!result) return next(new AppError('Source tour not found', 404));
+  res.status(200).json(result);
+});
+
+exports.getSupplierTours = catchAsync(async (req, res, next) => {
+  const { supplierId } = req.params;
+  const excludeTourId = req.query.exclude || null;
+  const limit = Math.min(parseInt(req.query.limit) || 8, 20);
+
+  const cacheKey = `expedition:supplier-tours:${supplierId}:${excludeTourId || 'none'}:${limit}`;
+
+  const result = await cache.getOrSet(cacheKey, async () => {
+    const tours = await prisma.expeditionTour.findMany({
+      where: {
+        isActive: true,
+        tour: {
+          status: 'ACTIVE',
+          supplierId,
+          supplier: { supplierProfile: { status: 'ACTIVE' } },
+          ...(excludeTourId ? { id: { not: excludeTourId } } : {}),
+        },
+      },
+      take: limit,
+      orderBy: { tour: { averageRating: 'desc' } },
+      include: {
+        tour: {
+          select: {
+            id: true, title: true, slug: true, description: true,
+            coverPhoto: true, photos: true, category: true,
+            durationMinutes: true, averageRating: true, reviewCount: true,
+            city: true, country: true, tags: true, startingPrice: true,
+            currency: true, totalBookings: true,
+            supplier: { select: { id: true, name: true, photoURL: true } },
+          },
+        },
+      },
+    });
+
+    return tours.map(r => ({
+      id: r.id,
+      tour: transformForListing(r.tour),
+    }));
+  }, 600);
+
+  if (!result) return res.json({ status: 'success', data: { tours: [] } });
+  res.status(200).json(result);
+});
+
 exports.getTourBySlug = catchAsync(async (req, res, next) => {
   const { slug } = req.params;
 

@@ -397,6 +397,17 @@ const analyticsFunnelSchema = z.object({
   params: z.object({}).optional(),
 });
 
+const supplierToursSchema = z.object({
+  body: z.any().optional(),
+  query: z.object({
+    exclude: z.string().uuid().optional(),
+    limit: z.coerce.number().int().min(1).max(20).default(8).optional(),
+  }).passthrough(),
+  params: z.object({
+    supplierId: z.string().uuid(),
+  }),
+});
+
 module.exports = {
   getToursSchema,
   contactSchema,
@@ -424,4 +435,5 @@ module.exports = {
   analyticsOverviewSchema,
   analyticsRevenueTrendSchema,
   analyticsFunnelSchema,
+  supplierToursSchema,
 };

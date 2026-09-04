@@ -32,6 +32,7 @@ const {
   analyticsOverviewSchema,
   analyticsRevenueTrendSchema,
   analyticsFunnelSchema,
+  supplierToursSchema,
 } = require('../utils/expeditionValidation');
 
 const router = express.Router();
@@ -288,6 +289,33 @@ router.get('/tours/:slug/reviews', validate(getTourReviewsSchema), expeditionCon
  *         description: Tour not found
  */
 router.get('/tours/:slug/similar', validate(slugParamSchema), expeditionController.getSimilarTours);
+
+/**
+ * @swagger
+ * /api/expedition/tours/recommended:
+ *   get:
+ *     summary: Get recommended tours near a booking
+ *     description: |
+ *       Returns up to 12 recommended tours near the given tour's location.
+ *       Falls back from city → country → global if fewer matches found.
+ *       Used by the booking workspace to show "More popular experiences near {city}".
+ *     tags: [Expedition]
+ *     parameters:
+ *       - in: query
+ *         name: tourId
+ *         required: true
+ *         schema: { type: string }
+ *         description: The source tour ID
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 6, maximum: 12 }
+ *     responses:
+ *       200:
+ *         description: Recommended tours
+ */
+router.get('/tours/recommended', expeditionController.getRecommendedTours);
+
+router.get('/suppliers/:supplierId/tours', validate(supplierToursSchema), expeditionController.getSupplierTours);
 
 /**
  * @swagger
