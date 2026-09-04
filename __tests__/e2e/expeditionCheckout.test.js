@@ -299,6 +299,7 @@ describe('E2E: Expedition Checkout Flow', () => {
       payoutMethod: { findFirst: jest.fn().mockResolvedValue(null) },
       supplierProfile: { update: jest.fn().mockResolvedValue({}) },
       tour: { update: jest.fn().mockResolvedValue({}) },
+      checkoutDraft: { findUnique: jest.fn().mockResolvedValue(null) },
     };
     prisma.$transaction.mockImplementation((cb) => cb(webhookTx));
 
@@ -423,6 +424,7 @@ describe('E2E: Stripe Webhook Idempotency', () => {
       supplierProfile: { update: jest.fn().mockResolvedValue({}) },
       tour: { update: jest.fn().mockResolvedValue({}) },
       specialOffer: { update: jest.fn().mockResolvedValue({}) },
+      checkoutDraft: { findUnique: jest.fn().mockResolvedValue(null) },
     };
 
     webhookTx.stripeEvent.findUnique
@@ -492,6 +494,7 @@ describe('E2E: Stripe Webhook Idempotency', () => {
       payoutMethod: { findFirst: jest.fn().mockResolvedValue(null) },
       supplierProfile: { update: jest.fn().mockResolvedValue({}) },
       tour: { update: jest.fn().mockResolvedValue({}) },
+      checkoutDraft: { findUnique: jest.fn().mockResolvedValue(null) },
     };
 
     prisma.stripeEvent.findUnique.mockImplementation(() => {
