@@ -33,6 +33,7 @@ function getStripe() {
 const prisma = require('./prismaClient');
 const { enqueueEmail, enqueueEvent, enqueueNotification } = require('./queue');
 const { notifyAdmin } = require('./adminNotificationService');
+const { sendWebSocketNotification } = require('./notificationService');
 const getConfig = require('./getConfig');
 const { normalizeCommissionRate } = require('./commission');
 const redis = require('./redisClient');
@@ -785,6 +786,19 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
           data: { bookingId: booking.id }
         }
       });
+
+      // Real-time push to the customer's open tabs/devices (socket room
+      // `user:{id}`) so the bookings badge + notification bell update
+      // instantly instead of waiting for the next client poll.
+      sendWebSocketNotification(booking.customerId, {
+        type: manualHold ? 'BOOKING_AWAITING_CONFIRMATION' : 'BOOKING_CONFIRMED',
+        userId: booking.customerId,
+        title: manualHold ? 'Payment received — awaiting confirmation' : 'Booking Confirmed',
+        message: manualHold
+          ? `Your payment for "${booking.tour.title}" was received. The tour provider will confirm your booking shortly.`
+          : `Your booking for "${booking.tour.title}" has been confirmed!`,
+        data: { bookingId: booking.id }
+      }).catch((err) => console.warn('[stripe] booking socket notify failed:', err.message));
 
       await client.notification.create({
         data: {
