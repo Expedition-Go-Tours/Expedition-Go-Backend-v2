@@ -18,6 +18,7 @@ jest.mock('../../utils/prismaClient', () => ({
   tourEvent: { create: jest.fn(), findMany: jest.fn(), update: jest.fn(), delete: jest.fn(), count: jest.fn() },
   auditLog: { create: jest.fn(), findMany: jest.fn(), deleteMany: jest.fn(), count: jest.fn() },
   adminNotification: { create: jest.fn() },
+  checkoutDraft: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn(), findUnique: jest.fn().mockResolvedValue(null), updateMany: jest.fn() },
   $transaction: jest.fn(),
   $queryRawUnsafe: jest.fn().mockResolvedValue([{ currentBookings: '0', groupCount: '0' }]),
   $disconnect: jest.fn(),
@@ -160,8 +161,7 @@ const activeTour = {
     pricingSchedules: {
       currency: 'USD',
       schedules: [{
-        startDate: '2026-01-01',
-        endDate: '2027-12-31',
+        startDate: '2026-01-01', endDate: '2027-12-31',
         prices: [{ ageGroup: 'Adult', retailPrice: 175 }],
       }],
     },
@@ -356,6 +356,7 @@ describe('E2E: Full User Journey', () => {
       payoutMethod: { findFirst: jest.fn().mockResolvedValue({ id: 'pm-e2e-1', type: 'bank' }) },
       supplierProfile: { update: jest.fn().mockResolvedValue({}) },
       tour: { update: jest.fn().mockResolvedValue({}) },
+      checkoutDraft: { findUnique: jest.fn().mockResolvedValue(null) },
     };
     prisma.$transaction.mockImplementation((cb) => cb(webhookTx));
 
@@ -439,6 +440,7 @@ describe('E2E: Full User Journey', () => {
       payoutMethod: { findFirst: jest.fn().mockResolvedValue({ id: 'pm-e2e-1', type: 'bank' }) },
       supplierProfile: { update: jest.fn().mockResolvedValue({}) },
       tour: { update: jest.fn().mockResolvedValue({}) },
+      checkoutDraft: { findUnique: jest.fn().mockResolvedValue(null) },
     };
     prisma.$transaction.mockImplementation((cb) => cb(webhookTx));
     const webhookResult = await processStripeWebhook({
