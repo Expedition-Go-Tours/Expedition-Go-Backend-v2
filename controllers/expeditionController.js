@@ -10,7 +10,7 @@ const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = requi
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../utils/availabilityCore');
 const { resolvePickupSelection, normalizePickupSnapshot } = require('../utils/geoUtils');
 const { validatePassengerMix } = require('../utils/passengerMix');
-const { createPaymentIntent, createCheckoutSession, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
+const { createPaymentIntent, createCheckoutSession, createCustomCheckoutPaymentIntent, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
 const { resolveAllowedClientUrl } = require('../utils/clientOrigin');
 const { acquireHold, releaseHold, HOLD_MINUTES } = require('../utils/checkoutHold');
 const { notifyAdmin } = require('../utils/adminNotificationService');
@@ -1806,11 +1806,11 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     });
   }
 
-  // Pay now: acquire an atomic seat hold, then redirect the customer to
-  // Stripe's hosted Checkout page. NO Booking row exists until the
-  // checkout.session.completed webhook materializes one from the hold.
-  // Abandoned sessions are released by the expired-session webhook or
-  // the expire-checkout-holds sweep.
+  // Pay now: acquire an atomic seat hold, then take the customer to OUR branded
+  // checkout. NO Booking row exists until a webhook materializes it from the
+  // hold (payment_intent.succeeded for the Payment-Element flow, or
+  // checkout.session.completed for legacy hosted sessions). Abandoned holds are
+  // released by the expire-checkout-holds sweep.
   const commission = await calculateCommission(pricing.total, tour.supplier.supplierProfile);
   let holdResult;
   try {
@@ -1846,6 +1846,65 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError(holdResult.reason || 'No longer available', 409));
   }
 
+  // ── Branded Payment Element checkout (new storefronts) ─────────────
+  // The server mints an unconfirmed PaymentIntent from the frozen draft price;
+  // the browser mounts the Stripe Payment Element + our own Pay button, then
+  // confirmPayment() finishes it. Success is settled ONLY by the
+  // payment_intent.succeeded webhook → materializeHold (same idempotent path as
+  // checkout.session.completed). Stripe keys never reach the browser.
+  if ((req.body.checkoutFlow || 'hosted') === 'payment-element') {
+    let customerId;
+    try {
+      customerId = await ensureStripeCustomer(req.user).catch(() => null);
+    } catch { customerId = null; }
+
+    let paymentIntent;
+    try {
+      paymentIntent = await createCustomCheckoutPaymentIntent({
+        amount: Math.round(pricing.total * 100),
+        currency: pricing.currency,
+        customerId,
+        draftId: holdResult.draftId,
+        source: 'expedition',
+      });
+    } catch (err) {
+      console.error('[Expedition] Failed to create checkout PaymentIntent:', err.message);
+      // Release the hold so the customer can retry.
+      await releaseHold(holdResult.draftId, 'expired').catch(() => {});
+      return next(new AppError('Payment could not be started. Please try again.', 500));
+    }
+
+    // Store the PI id as the draft's Stripe id so by-session polling on the
+    // confirmation page and the expire sweep reconcile this flow unchanged.
+    try {
+      await prisma.checkoutDraft.updateMany({
+        where: { id: holdResult.draftId, status: 'HOLDING' },
+        data: { stripeSessionId: paymentIntent.id },
+      });
+    } catch (err) {
+      console.error('[Expedition] Failed to store PaymentIntent id on draft:', err.message);
+    }
+
+    cache.invalidateKeys([`${CACHE_PREFIX}checkout:*`]).catch(() => {});
+
+    return res.status(201).json({
+      status: 'success',
+      data: {
+        checkout: null,
+        payment: {
+          draftId: holdResult.draftId,
+          paymentIntentId: paymentIntent.id,
+          clientSecret: paymentIntent.client_secret,
+          expiresAt: holdResult.expiresAt,
+          amount: pricing.total,
+          currency: pricing.currency,
+        },
+        message: 'Redirecting to secure payment…',
+      },
+    });
+  }
+
+  // ── Legacy hosted Stripe Checkout (other storefronts, until migrated) ──
   let checkout;
   try {
     checkout = await createCheckoutSession({
@@ -1887,6 +1946,124 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       message: 'Redirecting to secure payment…',
     },
   });
+});
+
+/**
+ * GET /expedition/checkout/draft/:id
+ * Returns the customer's HOLDING checkout draft as a server-authoritative order
+ * summary for the branded Payment Element page, plus a fresh PaymentIntent
+ * client secret (retrieved from Stripe) so a hard refresh mid-checkout can
+ * still mount Elements. Amounts always come from the frozen draft pricing.
+ */
+exports.getCheckoutDraft = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const draft = await prisma.checkoutDraft.findFirst({
+    where: { id, customerId: req.user.id, status: 'HOLDING' },
+    include: {
+      tour: {
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          coverPhoto: true,
+          photos: true,
+          city: true,
+          country: true,
+          durationMinutes: true,
+        },
+      },
+    },
+  });
+
+  if (!draft) {
+    return next(new AppError('Checkout session not found or already completed', 404));
+  }
+
+  const travelers = draft.payload?.travelers || {};
+  const count = (v) => (typeof v === 'number' && v > 0 ? v : 0);
+  const adults = count(travelers.adults);
+  const children = count(travelers.children);
+  const infants = count(travelers.infants);
+  const details = Array.isArray(travelers.details) ? travelers.details : null;
+  const partyTotal = details && details.length > 0 ? details.length : adults + children + infants;
+
+  let paymentIntentId = null;
+  let clientSecret = null;
+  if (draft.stripeSessionId && draft.stripeSessionId.startsWith('pi_')) {
+    paymentIntentId = draft.stripeSessionId;
+    try {
+      const pi = await getStripe().paymentIntents.retrieve(draft.stripeSessionId);
+      clientSecret = pi?.client_secret || null;
+    } catch { clientSecret = null; }
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      draft: {
+        id: draft.id,
+        expiresAt: draft.expiresAt,
+        tour: {
+          id: draft.tour?.id,
+          title: draft.tour?.title,
+          slug: draft.tour?.slug,
+          coverPhoto: draft.tour?.coverPhoto || draft.tour?.photos?.[0] || null,
+          location: [draft.tour?.city, draft.tour?.country].filter(Boolean).join(', '),
+          durationMinutes: draft.tour?.durationMinutes ?? null,
+        },
+        travelDate: draft.travelDate,
+        selectedTime: draft.selectedTime || null,
+        party: { adults, children, infants, total: partyTotal },
+        leadTraveler: {
+          name: draft.payload?.leadTraveler?.name || null,
+          email: draft.payload?.leadTraveler?.email || null,
+        },
+        promoCode: draft.payload?.promoCode || null,
+        currency: draft.pricing?.currency || 'USD',
+        pricing: {
+          subtotal: draft.pricing?.subtotal || 0,
+          total: draft.pricing?.total || 0,
+          discount: draft.pricing?.discount || 0,
+          fees: draft.pricing?.fees || 0,
+          taxes: draft.pricing?.taxes || 0,
+        },
+        paymentIntentId,
+        clientSecret,
+      },
+    },
+  });
+});
+
+/**
+ * POST /expedition/checkout/draft/:id/release
+ * Customer abandons the branded checkout — free the seat hold immediately and
+ * best-effort cancel the unconfirmed PaymentIntent (the sweep would otherwise
+ * reconcile it on expiry anyway).
+ */
+exports.releaseCheckoutDraft = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const draft = await prisma.checkoutDraft.findFirst({
+    where: { id, customerId: req.user.id, status: 'HOLDING' },
+  });
+
+  if (!draft) {
+    return res.status(200).json({ status: 'success', data: { released: false } });
+  }
+
+  if (draft.stripeSessionId && draft.stripeSessionId.startsWith('pi_')) {
+    try {
+      await getStripe().paymentIntents.cancel(draft.stripeSessionId);
+    } catch { /* unconfirmable/canceled already — fine */ }
+  }
+
+  await prisma.checkoutDraft.update({
+    where: { id: draft.id },
+    data: { status: 'EXPIRED' },
+  });
+
+  cache.invalidateKeys([`${CACHE_PREFIX}checkout:*`]).catch(() => {});
+
+  res.status(200).json({ status: 'success', data: { released: true } });
 });
 
 // ================================

@@ -702,6 +702,21 @@ router.post('/checkout/calculate', calculateLimiter, validate(calculateCheckoutS
 router.post('/checkout/confirm', confirmLimiter, protect, restrictTo('customer'), validate(confirmBookingSchema), expeditionController.confirmBooking);
 
 /**
+ * GET /api/expedition/checkout/draft/:id
+ * Returns the current customer's HOLDING checkout draft (order summary + a
+ * fresh PaymentIntent client secret when the draft was started via the branded
+ * Payment Element flow) so a checkout page survives a refresh mid-payment.
+ */
+router.get('/checkout/draft/:id', protect, restrictTo('customer'), expeditionController.getCheckoutDraft);
+
+/**
+ * POST /api/expedition/checkout/draft/:id/release
+ * Explicitly releases the seat hold + cancels the unconfirmed PaymentIntent
+ * when the customer abandons the branded checkout.
+ */
+router.post('/checkout/draft/:id/release', protect, restrictTo('customer'), expeditionController.releaseCheckoutDraft);
+
+/**
  * @swagger
  * /api/expedition/wishlist:
  *   get:

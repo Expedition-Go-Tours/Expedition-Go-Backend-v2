@@ -117,6 +117,48 @@ async function createPaymentIntent({
 }
 
 /**
+ * Create an unconfirmed PaymentIntent for the custom Payment Element checkout
+ * (branded page with our own Pay button). The amount is ALWAYS computed
+ * server-side from the frozen CheckoutDraft pricing — never from the browser.
+ *
+ * The customer confirms it client-side via stripe.confirmPayment(); success is
+ * still reconciled exclusively by the payment_intent.succeeded webhook, which
+ * materializes the HOLDING CheckoutDraft into a Booking (same idempotent path
+ * as checkout.session.completed).
+ *
+ * @param {object} opts
+ * @param {number} opts.amount - total in minor units
+ * @param {string} [opts.currency] - ISO code (default USD)
+ * @param {string} [opts.customerId] - Stripe Customer id (optional)
+ * @param {string} [opts.draftId] - CheckoutDraft id → metadata.bookingIds
+ * @param {string} [opts.source] - 'expedition' | 'ghana' (metadata)
+ * @returns {Promise<object>} the unconfirmed PaymentIntent
+ */
+async function createCustomCheckoutPaymentIntent({
+  amount,
+  currency = 'USD',
+  customerId = null,
+  draftId,
+  source = 'expedition',
+}) {
+  if (!draftId) throw new Error('draftId is required to create the checkout PaymentIntent');
+  if (!amount || amount <= 0) throw new Error('amount must be a positive value in minor units');
+
+  const paymentIntent = await getStripe().paymentIntents.create({
+    amount: Math.round(amount),
+    currency: currency.toLowerCase(),
+    // Payment Element + confirmPayment requires automatic payment methods
+    // enabled; Stripe keeps card data inside its iframe — never our server.
+    automatic_payment_methods: { enabled: true },
+    ...(isValidStripeCustomerId(customerId) ? { customer: customerId } : {}),
+    metadata: { bookingIds: draftId, source, paymentTiming: 'now' },
+  });
+
+  console.log(` Custom checkout PaymentIntent created: ${paymentIntent.id} (draft ${draftId})`);
+  return paymentIntent;
+}
+
+/**
  * Create a hosted Stripe Checkout Session for an expedition booking.
  *
  * Pay-now bookings redirect the customer to Stripe's hosted payment page; the
@@ -439,10 +481,53 @@ async function processStripeWebhook(event) {
 
     switch (event.type) {
       case 'payment_intent.succeeded': {
-        const result = await handlePaymentSucceeded(event.data.object, tx);
+        const intent = event.data.object;
+        // ── Custom Payment Element flow (pay-now) ───────────────────
+        // The frontend confirms a server-created PaymentIntent whose
+        // metadata.bookingIds points at a HOLDING CheckoutDraft. Materialize it
+        // exactly like checkout.session.completed does — same amount guard and
+        // idempotent no-op if the draft is already settled. (Hosted sessions
+        // fire payment_intent.succeeded before checkout.session.completed, so
+        // this also settles those faster; the later session event is a no-op.)
+        const draftCandidates = ((intent.metadata?.bookingIds) || '').split(',').filter(Boolean);
+        let settledDraft = null;
+        for (const id of draftCandidates) {
+          const row = id
+            ? await tx.checkoutDraft.findUnique({ where: { id } }).catch(() => null)
+            : null;
+          if (row && row.status === 'HOLDING') { settledDraft = row; break; }
+        }
+        if (!settledDraft && intent.id) {
+          const byPi = await tx.checkoutDraft
+            .findUnique({ where: { stripeSessionId: intent.id } })
+            .catch(() => null);
+          if (byPi && byPi.status === 'HOLDING') settledDraft = byPi;
+        }
+        if (settledDraft) {
+          const { materializeHold } = require('./checkoutHold');
+          const materialized = await materializeHold(
+            settledDraft.id,
+            { id: null, amount_total: intent.amount },
+            intent.id
+          );
+          if (materialized.ok) {
+            bookings = [materialized.booking];
+          } else if (materialized.oversold) {
+            // Capacity vanished mid-hold — collect the PI for auto-refund.
+            oversoldBookings = [{
+              stripePaymentIntentId: intent.id,
+              id: settledDraft.id,
+              bookingNumber: `DRAFT-${settledDraft.id}`,
+            }];
+          }
+          reconciledPaymentIntentId = intent.id;
+          break;
+        }
+        // ── Legacy / pay-later bookings: settle existing booking rows ──
+        const result = await handlePaymentSucceeded(intent, tx);
         bookings = result.bookings;
         oversoldBookings = result.oversold;
-        reconciledPaymentIntentId = event.data.object?.id;
+        reconciledPaymentIntentId = intent.id;
         break;
       }
 
@@ -964,6 +1049,7 @@ function verifyWebhookSignature(payload, signature, endpointSecret) {
 module.exports = {
   getStripe,
   createPaymentIntent,
+  createCustomCheckoutPaymentIntent,
   createStripeCustomer,
   ensureStripeCustomer,
   createCheckoutSession,

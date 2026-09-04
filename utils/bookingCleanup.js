@@ -402,6 +402,55 @@ async function expireCheckoutHolds() {
       continue;
     }
 
+    // Custom Payment Element flow: the draft's id is an unconfirmed PaymentIntent.
+    if (draft.stripeSessionId.startsWith('pi_')) {
+      let pi;
+      try {
+        pi = await getStripe().paymentIntents.retrieve(draft.stripeSessionId);
+      } catch (err) {
+        console.error('[BookingCleanup] Could not retrieve PaymentIntent', draft.stripeSessionId, err.message);
+        continue; // retry next sweep
+      }
+
+      if (pi.status === 'succeeded') {
+        // Webhook never landed — materialize now (same settlement path).
+        try {
+          const result = await materializeHold(draft.id, { id: null, amount_total: pi.amount }, pi.id);
+          if (result.ok) {
+            materialized += 1;
+            const booking = result.booking;
+            if (booking) {
+              enqueueEmail({ type: 'booking-confirmed', bookingId: booking.id })
+                .catch((err) => console.error('[BookingCleanup] Customer email failed:', err.message));
+              enqueueEmail({ type: 'supplier-new-booking', bookingId: booking.id })
+                .catch((err) => console.error('[BookingCleanup] Supplier email failed:', err.message));
+              notifyAdmin({
+                type: 'BOOKING_CONFIRMED',
+                title: 'Expedition Booking Confirmed',
+                message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.grossAmount).toFixed(2)} for "${booking.tour?.title}" has been confirmed`,
+                data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.grossAmount, source: 'expedition' },
+              }).catch(() => {});
+            }
+          } else if (result.oversold) {
+            const { createRefund: refund } = require('./stripeHelpers');
+            await refund(pi.id).catch((err) => {
+              console.error('[BookingCleanup] Refund failed for oversold hold', draft.id, err.message);
+            });
+            released += 1;
+          }
+        } catch (err) {
+          console.error('[BookingCleanup] Materialize (PI) failed for', draft.id, err.message);
+        }
+        continue;
+      }
+
+      // Abandoned — cancel the unconfirmed intent and free the seats.
+      try { await getStripe().paymentIntents.cancel(draft.stripeSessionId); } catch { /* already canceled */ }
+      await releaseHold(draft.id, 'expired').catch(() => {});
+      released += 1;
+      continue;
+    }
+
     let session;
     try {
       session = await getStripe().checkout.sessions.retrieve(draft.stripeSessionId);
