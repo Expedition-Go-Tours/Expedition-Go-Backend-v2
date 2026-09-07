@@ -39,6 +39,7 @@ const {
   ensureStripeCustomer,
 } = require('./stripeHelpers');
 const { enqueueEmail, enqueueNotification } = require('./queue');
+const { notifyAdmin } = require('./adminNotificationService');
 
 // Non-numeric metadata keys carried inside the travelers JSON blob.
 const TRAVELER_META_KEYS = ['phoneNumber', 'location', 'details'];
@@ -477,18 +478,46 @@ async function parkTopUpChange({ booking, snapshot, customerId, user }) {
   };
 }
 
-/** Send the "booking has been updated" emails + supplier notification. */
+/** "Travellers: 1 → 2 · Activity date: Sep 9 → Sep 12" — which fields changed. */
+function changeSummaryText(changes) {
+  const list = Array.isArray(changes) ? changes : [];
+  if (list.length === 0) return 'booking details';
+  return list
+    .map((c) => {
+      if (c && typeof c === 'object' && c.label) {
+        return c.detail ? `${c.label}: ${c.detail}` : c.label;
+      }
+      return String(c || '');
+    })
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** Send the "booking has been updated" emails + supplier/admin notifications. */
 async function notifyModificationApplied(bookingId, payload) {
   const data = payload || {};
   const booking = await prisma.booking
-    .findUnique({ where: { id: bookingId }, include: { tour: { select: { supplierId: true } } } })
+    .findUnique({ where: { id: bookingId }, include: { tour: { select: { supplierId: true, title: true } } } })
     .catch(() => null);
   if (!booking) return;
+
+  const changes = Array.isArray(data.changes) ? data.changes : [];
+  const summary = changeSummaryText(changes);
+  const sharedData = {
+    bookingId: booking.id,
+    source: String(booking.source || '').toLowerCase(),
+    changes,
+    changeSummary: summary,
+    previousTotal: data.previousTotal,
+    newTotal: data.newTotal,
+    adjustment: data.adjustment,
+  };
+
   enqueueEmail({
     type: 'customer-booking-changed',
     bookingId,
     data: {
-      changes: data.changes || [],
+      changes,
       previousTotal: data.previousTotal,
       adjustment: data.adjustment,
       newTotal: data.newTotal,
@@ -499,7 +528,7 @@ async function notifyModificationApplied(bookingId, payload) {
     type: 'supplier-booking-changed',
     bookingId,
     data: {
-      changes: data.changes || [],
+      changes,
       previousPayout: data.previousPayout,
       newPayout: data.newPayout,
       payoutAdjustment: data.payoutAdjustment,
@@ -509,12 +538,23 @@ async function notifyModificationApplied(bookingId, payload) {
   if (booking.tour?.supplierId) {
     enqueueNotification({
       userId: booking.tour.supplierId,
-      type: 'BOOKING_UPDATED',
+      type: 'BOOKING_MODIFIED',
       title: 'Booking Updated',
-      message: `Booking #${booking.bookingNumber} was changed by the customer`,
-      data: { bookingId: booking.id, source: String(booking.source || '').toLowerCase() },
-    }).catch(() => {});
+      message: `Booking #${booking.bookingNumber} was updated — ${summary}`,
+      data: sharedData,
+    }).catch((err) =>
+      console.error('[BookingModify] supplier BOOKING_MODIFIED notification failed:', err.message)
+    );
   }
+
+  // Ops visibility: a confirmed booking's party/date/total changed post-payment,
+  // so finance + support can spot it on the booking without digging through logs.
+  notifyAdmin({
+    type: 'BOOKING_MODIFIED',
+    title: 'Booking Modified by Customer',
+    message: `Booking #${booking.bookingNumber}${booking.tour?.title ? ` for "${booking.tour.title}"` : ''} was updated — ${summary}`,
+    data: sharedData,
+  }).catch((err) => console.error('[BookingModify] admin BOOKING_MODIFIED notification failed:', err.message));
 }
 
 /**
