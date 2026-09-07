@@ -29,6 +29,7 @@ const { detachBookingFromActiveRequests } = require('../utils/financeHelpers');
 const { generatePrintableTicketHtml } = require('../utils/emailService');
 const { logActivity } = require('../utils/auditLogger');
 const logger = require('../utils/logger');
+const { sanitizeBookingPaymentInternals } = require('../utils/sanitizeBookings');
 
 // ================================
 // CART MANAGEMENT
@@ -502,6 +503,30 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     return next(new AppError('Booking total must be greater than 0', 400));
   }
 
+  // Dedup: prevent duplicate charges/bookings when a client retries the same
+  // tour + date (+ slot) that already has an active booking for this customer.
+  // Mirrors the expedition flow. Runs BEFORE the PaymentIntent is created so a
+  // double-tap can never charge the card twice.
+  for (const item of bookingItems) {
+    const existing = await prisma.booking.findFirst({
+      where: {
+        customerId,
+        tourId: item.tourId,
+        travelDate: item.travelDate,
+        ...(item.selectedTime ? { selectedTime: item.selectedTime } : {}),
+        status: { in: ['PENDING', 'CONFIRMED'] },
+      },
+      select: { id: true, status: true, bookingNumber: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (existing) {
+      return next(new AppError(
+        `You already have a ${existing.status.toLowerCase()} booking (${existing.bookingNumber}) for this tour on this date`,
+        409
+      ));
+    }
+  }
+
   // Create Stripe PaymentIntent FIRST (outside DB transaction — avoids holding connection open during network I/O)
   // A client-supplied idempotency key wins; otherwise createPaymentIntent
   // derives one from the final request body (unique per distinct charge, so a
@@ -752,7 +777,7 @@ exports.getMyBookings = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: {
-      bookings,
+      bookings: sanitizeBookingPaymentInternals(bookings),
       pagination: {
         currentPage: parseInt(page),
         totalPages,
@@ -799,7 +824,7 @@ exports.getBooking = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: { booking }
+    data: { booking: sanitizeBookingPaymentInternals(booking) }
   });
 });
 
@@ -1142,7 +1167,7 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: {
-      bookings,
+      bookings: sanitizeBookingPaymentInternals(bookings),
       summary: {
         totalRevenue: Number(aggregates._sum.grossAmount || 0),
         totalSupplierPayout: Number(aggregates._sum.supplierPayout || 0),
@@ -1236,7 +1261,7 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
   const enriched = bookings.map((b) => {
     const p = b.pickup && typeof b.pickup === 'object' ? b.pickup : null;
     return {
-      ...b,
+      ...sanitizeBookingPaymentInternals(b),
       pickupStatus: pickupStatus(p),
       pickupDeferred: !!(p && (p.pickupLater || p.skipValidation || pickupStatus(p) === 'deferred')),
       isIncomplete: isPickupIncomplete(p),

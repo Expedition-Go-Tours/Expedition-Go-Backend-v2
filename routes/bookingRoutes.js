@@ -9,12 +9,23 @@
 const express = require('express');
 const { protect } = require('../middleware/authMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
+const { createUserLimiter } = require('../middleware/dynamicRateLimiter');
 const bookingController = require('../controllers/bookingController');
 
 const router = express.Router();
 
 // All routes require authentication
 router.use(protect);
+
+// Per-user bound on creating bookings (real charge / reserve flows) so a
+// single abused account can't create unbounded booking attempts. Runs after
+// `protect` above so req.user.id is available to the key generator.
+const bookingCreateLimiter = createUserLimiter({
+  name: 'booking-create',
+  defaultMax: 20,
+  defaultWindowMs: 60 * 60 * 1000,
+  message: { status: 'fail', message: 'Too many booking attempts from this account, please try again later.' },
+});
 
 // ================================
 // CART MANAGEMENT
@@ -296,7 +307,7 @@ router.delete('/cart/clear', bookingController.clearCart);
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post('/', bookingController.createBooking);
+router.post('/', bookingCreateLimiter, bookingController.createBooking);
 
 /**
  * @swagger

@@ -491,7 +491,12 @@ exports.resolveDispute = catchAsync(async (req, res, next) => {
   let stripeRefundId = null;
   let refundedAmount = null;
   if (outcome === 'CUSTOMER') {
-    const amount = refundAmount != null ? refundAmount : dispute.booking.refundAmount != null ? toNumber(dispute.booking.refundAmount) : toNumber(dispute.booking.grossAmount);
+    const grossAmount = toNumber(dispute.booking.grossAmount);
+    const amount = refundAmount != null ? refundAmount : dispute.booking.refundAmount != null ? toNumber(dispute.booking.refundAmount) : grossAmount;
+    // Hard upper bound: never refund more than was actually charged.
+    if (!Number.isFinite(amount) || amount < 0 || amount > grossAmount) {
+      return next(new AppError(`refundAmount must be between 0 and ${grossAmount.toFixed(2)} (the booking gross amount)`, 400));
+    }
     refundedAmount = amount;
     if (dispute.booking.stripePaymentIntentId && dispute.booking.paymentStatus === 'SUCCEEDED') {
       try {

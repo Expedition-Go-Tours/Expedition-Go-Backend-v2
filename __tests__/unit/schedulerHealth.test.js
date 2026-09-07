@@ -2,11 +2,11 @@ jest.mock('bullmq', () => ({
   Queue: jest.fn(() => ({
     getJobSchedulers: jest.fn().mockResolvedValue(
       // Return all expected schedulers so verifySchedules() sees 0 missing.
-      // These are the 20 schedulers from SCHEDULES in queue.js.
+      // These are the schedulers from SCHEDULES in queue.js.
       [
         'cleanup-expired-cart', 'cleanup-notifications', 'cleanup-audit-logs',
         'purge-archived-tours', 'expire-special-offers', 'expire-supplier-documents',
-        'plan-doc-expiry-reminders', 'auto-complete-bookings',
+        'plan-doc-expiry-reminders', 'purge-stale-stripe-events', 'auto-complete-bookings',
         'cancel-stale-pending-bookings', 'cleanup-stale-bookings',
         'expire-checkout-holds', 'charge-pay-later-bookings',
         'earnings-eligibility-sweep', 'plan-booking-reminders',

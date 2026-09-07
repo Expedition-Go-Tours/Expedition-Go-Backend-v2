@@ -406,7 +406,7 @@ async function sendPaymentSuccessfulEmail(booking, { paymentReference, amount } 
   const outstanding = Math.max(0, Number(b.grossAmount) - paid);
   const data = {
     ...base,
-    paymentReference: paymentReference || b.stripePaymentIntentId || '',
+    paymentReference: paymentReference || b.bookingNumber || '',
     paymentAmountLabel: fmt.formatCurrency(paid, b.currency),
     outstandingBalanceLabel: fmt.formatCurrency(outstanding, b.currency),
     supportEmail: (await getShellVars()).supportEmail,
@@ -425,7 +425,7 @@ async function sendPayLaterChargedEmail(booking, { paymentReference, chargedAt }
   const data = {
     ...base,
     amountChargedLabel: base.totalLabel,
-    paymentReference: paymentReference || b.stripePaymentIntentId || '',
+    paymentReference: paymentReference || b.bookingNumber || '',
     chargedAtLabel: fmt.formatLongDate(chargedAt || b.paidAt || new Date()),
     paymentStatusLabel: 'Paid',
     supportEmail: (await getShellVars()).supportEmail,
@@ -447,7 +447,7 @@ async function sendAwaitingConfirmationEmail(booking, { paymentReference, paidAt
   const data = {
     ...base,
     amountPaidLabel: base.totalLabel,
-    paymentReference: paymentReference || b.stripePaymentIntentId || '',
+    paymentReference: paymentReference || b.bookingNumber || '',
     paidAtLabel: fmt.formatLongDate(paidAt || b.paidAt || new Date()),
     paymentStatusLabel: 'Paid',
     supportEmail: (await getShellVars()).supportEmail,
@@ -724,7 +724,7 @@ async function sendSupplierPayLaterChargedEmail(booking, { paymentReference, cha
     totalLabel: base.totalLabel,
     commissionLabel: base.commissionLabel,
     payoutAmountLabel: base.payoutAmountLabel,
-    paymentReference: paymentReference || b.stripePaymentIntentId || '',
+    paymentReference: paymentReference || b.bookingNumber || '',
     chargedAtLabel: fmt.formatLongDate(chargedAt || b.paidAt || new Date()),
     supportEmail: (await getShellVars()).supportEmail,
   };

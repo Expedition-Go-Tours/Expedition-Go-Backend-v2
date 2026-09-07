@@ -97,6 +97,7 @@ const SCHEDULES = [
   { jobName: 'expire-special-offers',      queue: 'cleanup',      everyMs: 24 * 3600 * 1000 },
   { jobName: 'expire-supplier-documents',  queue: 'cleanup',      everyMs: 24 * 3600 * 1000 },
   { jobName: 'plan-doc-expiry-reminders',  queue: 'cleanup',      everyMs: 24 * 3600 * 1000 },
+  { jobName: 'purge-stale-stripe-events',  queue: 'cleanup',      everyMs: 24 * 3600 * 1000 },
   // CLEANUP — lifecycle / money / reminders
   { jobName: 'auto-complete-bookings',      queue: 'cleanup',      everyMs: 15 * 60 * 1000 },
   { jobName: 'cancel-stale-pending-bookings', queue: 'cleanup',    everyMs: 15 * 60 * 1000 },
@@ -1073,6 +1074,19 @@ function registerWorkers() {
       case 'plan-doc-expiry-reminders': {
         const { planDocumentExpiryReminders } = require('./documentExpiry');
         await planDocumentExpiryReminders();
+        break;
+      }
+      case 'purge-stale-stripe-events': {
+        const prisma = require('./prismaClient');
+        // Strip processed Stripe event payloads (which embed PII + payment
+        // details) after a retention window. Keeps the table bounded.
+        const cutoff = new Date(Date.now() - 90 * 24 * 3600 * 1000);
+        const result = await prisma.stripeEvent.deleteMany({
+          where: { processed: true, createdAt: { lt: cutoff } },
+        });
+        if (result.count > 0) {
+          console.log(`[Queue] Purged ${result.count} processed Stripe events older than 90 days`);
+        }
         break;
       }
       default:

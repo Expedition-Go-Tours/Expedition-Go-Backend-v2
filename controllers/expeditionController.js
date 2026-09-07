@@ -20,6 +20,7 @@ const { logActivity } = require('../utils/auditLogger');
 const { shouldCountTourView } = require('../utils/viewTracking');
 const ranking = require('../utils/homepageRanking');
 const eventEmitter = require('../utils/eventEmitter');
+const { sanitizeBookingPaymentInternals } = require('../utils/sanitizeBookings');
 
 const CACHE_PREFIX = 'expedition:';
 const LIST_CACHE_KEY = `${CACHE_PREFIX}tours:list`;
@@ -2222,7 +2223,7 @@ exports.getMyBookings = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: { bookings },
+    data: { bookings: sanitizeBookingPaymentInternals(bookings) },
     pagination: {
       currentPage: parseInt(page),
       totalPages,
@@ -2250,7 +2251,8 @@ exports.getBooking = catchAsync(async (req, res, next) => {
 
   if (!booking) return next(new AppError('Booking not found', 404));
 
-  res.status(200).json({ status: 'success', data: { booking } });
+  const { sanitizeBookingPaymentInternals } = require('../utils/sanitizeBookings');
+  res.status(200).json({ status: 'success', data: { booking: sanitizeBookingPaymentInternals(booking) } });
 });
 
 /**
@@ -2305,7 +2307,7 @@ exports.getBookingBySession = catchAsync(async (req, res, next) => {
       status: draft.status,
       expiresAt: draft.expiresAt,
       createdAt: draft.createdAt,
-      booking,
+      booking: booking ? sanitizeBookingPaymentInternals(booking) : null,
     },
   });
 });
@@ -2507,7 +2509,7 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: { bookings },
+    data: { bookings: sanitizeBookingPaymentInternals(bookings) },
     pagination: {
       currentPage: parseInt(page),
       totalPages: Math.ceil(totalCount / take),

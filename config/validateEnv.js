@@ -37,7 +37,10 @@ function validateEnv() {
   for (const key of REQUIRED_IN_PROD) {
     if (!process.env[key]) {
       if (isProduction) {
-        console.warn(`[ENV] Missing required env var (server may not function fully): ${key}`);
+        // Fatal in production: starting without a required key (e.g. a Stripe
+        // secret) would silently ship broken payments / email. Fail fast.
+        console.error(`[ENV] FATAL: Missing required env var in production: ${key}`);
+        process.exit(1);
       } else {
         warnings.push(key);
       }

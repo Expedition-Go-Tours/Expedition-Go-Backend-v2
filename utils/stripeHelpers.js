@@ -271,6 +271,42 @@ function resolveSessionBookingIds(session) {
 }
 
 /**
+ * Resolve the PaymentIntent id a Charge or Dispute belongs to.
+ *
+ * `charge.refunded` events carry a Charge whose `payment_intent` field is a
+ * plain id. Dispute objects only carry an expandable `charge` id, so we fetch
+ * the Charge to learn its PaymentIntent (best-effort — the app resolves
+ * bookings by `stripePaymentIntentId`).
+ *
+ * @param {string|object} chargeOrId - Charge object or `ch_...` id
+ * @returns {Promise<string|null>}
+ */
+async function resolvePaymentIntentForCharge(chargeOrId) {
+  if (!chargeOrId) return null;
+  try {
+    if (typeof chargeOrId === 'string') {
+      const charge = await getStripe().charges.retrieve(chargeOrId);
+      return charge?.payment_intent || null;
+    }
+    if (chargeOrId.payment_intent) return chargeOrId.payment_intent;
+    if (chargeOrId.charge && typeof chargeOrId.charge === 'string') {
+      const charge = await getStripe().charges.retrieve(chargeOrId.charge);
+      return charge?.payment_intent || null;
+    }
+    return null;
+  } catch (err) {
+    console.error(`[Stripe] Could not resolve PaymentIntent for ${typeof chargeOrId === 'string' ? chargeOrId : chargeOrId?.charge}:`, err.message);
+    return null;
+  }
+}
+
+/** Shared include so refund/dispute side effects can notify + email. */
+const WEBHOOK_BOOKING_INCLUDE = {
+  customer: { select: { id: true, name: true, email: true, phone: true } },
+  tour: { select: { id: true, title: true, supplierId: true } },
+};
+
+/**
  * Create a Stripe Customer for a user and persist the ID on the User row.
  *
  * Idempotent per user for 24h via the idempotency key — concurrent checkouts
@@ -480,6 +516,9 @@ async function processStripeWebhook(event) {
   let bookings = [];
   let oversoldBookings = [];
   let cancelledBookings = [];
+  let failedPaymentBookings = [];
+  let refundedBookings = [];
+  let disputedBookings = [];
   let reconciledPaymentIntentId = null;
 
   await prisma.$transaction(async (tx) => {
@@ -561,9 +600,108 @@ async function processStripeWebhook(event) {
         break;
       }
 
-      case 'payment_intent.payment_failed':
-        await handlePaymentFailed(event.data.object, tx);
+      case 'payment_intent.payment_failed': {
+        const intent = event.data.object;
+        await handlePaymentFailed(intent, tx);
+        // Capture the bookings we just cancelled so the post-commit side
+        // effects (in-app + email + socket notification) run exactly once.
+        const failedIds = ((intent.metadata?.bookingIds) || '').split(',').filter(Boolean);
+        failedPaymentBookings = await tx.booking.findMany({
+          where: failedIds.length > 0
+            ? { id: { in: failedIds }, paymentStatus: 'FAILED' }
+            : { stripePaymentIntentId: intent.id, paymentStatus: 'FAILED' },
+          include: WEBHOOK_BOOKING_INCLUDE,
+        });
         break;
+      }
+
+      case 'charge.refunded': {
+        const charge = event.data.object;
+        const paymentIntentId = await resolvePaymentIntentForCharge(charge);
+        if (!paymentIntentId) {
+          console.log(' charge.refunded — no resolvable PaymentIntent, skipping');
+          break;
+        }
+        // A full reversal makes the booking terminal; a partial dashboard
+        // refund still invalidates the supplier payout for that intent.
+        const amountRefunded = charge.amount_refunded ?? 0;
+        const amountCaptured = charge.amount_captured ?? amountRefunded;
+        const isFull = amountRefunded > 0 && amountRefunded >= amountCaptured;
+        const result = await tx.booking.updateMany({
+          where: { stripePaymentIntentId: paymentIntentId, paymentStatus: 'SUCCEEDED' },
+          data: {
+            ...(isFull
+              ? { status: 'REFUNDED', paymentStatus: 'REFUNDED' }
+              : { paymentStatus: 'REFUNDED' }),
+            refundAmount: amountRefunded > 0 ? Number((amountRefunded / 100).toFixed(2)) : undefined,
+            refundedAt: new Date(),
+            payoutStatus: 'CANCELLED',
+          },
+        });
+        if (result.count > 0) {
+          console.log(` charge.refunded → ${result.count} booking(s) reconciled to REFUNDED${isFull ? ' (full)' : ''}`);
+          refundedBookings = await tx.booking.findMany({
+            where: { stripePaymentIntentId: paymentIntentId },
+            include: WEBHOOK_BOOKING_INCLUDE,
+          });
+        }
+        break;
+      }
+
+      case 'charge.dispute.created': {
+        const dispute = event.data.object;
+        const paymentIntentId = await resolvePaymentIntentForCharge(dispute.charge || dispute);
+        if (!paymentIntentId) {
+          console.log(' charge.dispute.created — no resolvable PaymentIntent, skipping');
+          break;
+        }
+        // Freeze the funds so the supplier cannot withdraw while the
+        // chargeback is being adjudicated.
+        const result = await tx.booking.updateMany({
+          where: { stripePaymentIntentId: paymentIntentId, paymentStatus: 'SUCCEEDED' },
+          data: { payoutStatus: 'DISPUTED' },
+        });
+        if (result.count > 0) {
+          console.log(` charge.dispute.created → froze payout for ${result.count} booking(s)`);
+          disputedBookings = await tx.booking.findMany({
+            where: { stripePaymentIntentId: paymentIntentId },
+            include: WEBHOOK_BOOKING_INCLUDE,
+          });
+        }
+        break;
+      }
+
+      case 'charge.dispute.closed': {
+        const dispute = event.data.object;
+        const paymentIntentId = await resolvePaymentIntentForCharge(dispute.charge || dispute);
+        if (!paymentIntentId) {
+          console.log(' charge.dispute.closed — no resolvable PaymentIntent, skipping');
+          break;
+        }
+        // `won` → funds released, let the earnings sweep re-evaluate.
+        // `lost`/`charge_refunded` → money returned to the customer.
+        const won = dispute.status === 'won';
+        const result = await tx.booking.updateMany({
+          where: { stripePaymentIntentId: paymentIntentId, payoutStatus: 'DISPUTED' },
+          data: won
+            ? { payoutStatus: 'PENDING' }
+            : {
+                status: 'REFUNDED',
+                paymentStatus: 'REFUNDED',
+                refundAmount: dispute.amount ? Number((dispute.amount / 100).toFixed(2)) : undefined,
+                refundedAt: new Date(),
+                payoutStatus: 'CANCELLED',
+              },
+        });
+        if (result.count > 0) {
+          console.log(` charge.dispute.closed (${won ? 'won' : 'lost'}) → reconciled ${result.count} booking(s)`);
+          disputedBookings = await tx.booking.findMany({
+            where: { stripePaymentIntentId: paymentIntentId },
+            include: WEBHOOK_BOOKING_INCLUDE,
+          });
+        }
+        break;
+      }
 
       case 'checkout.session.completed': {
         const session = event.data.object;
@@ -775,6 +913,56 @@ async function processStripeWebhook(event) {
       resource: 'Booking',
       resourceId: booking.id,
       properties: { tourId: booking.tourId, reason: 'checkout session expired', source: 'stripe' },
+    }).catch(() => {});
+  }
+
+  // ── Failed payments: notify the customer once, after commit ───────────
+  for (const booking of failedPaymentBookings) {
+    enqueueNotification({
+      userId: booking.customerId,
+      type: 'BOOKING_CANCELLED',
+      title: 'Payment Failed',
+      message: `We couldn't process your payment for "${booking.tour?.title || 'the tour'}". No charge was made — you can rebook anytime.`,
+      data: { bookingId: booking.id },
+    }).catch((err) => console.error('[Webhook] Payment-failed notification error:', err.message));
+
+    sendWebSocketNotification(booking.customerId, {
+      type: 'BOOKING_CANCELLED',
+      userId: booking.customerId,
+      title: 'Payment Failed',
+      message: `We couldn't process your payment for "${booking.tour?.title || 'the tour'}". No charge was made — you can rebook anytime.`,
+      data: { bookingId: booking.id },
+    }).catch((err) => console.warn('[stripe] payment-failed socket notify error:', err.message));
+
+    enqueueEmail({ type: 'payment-unsuccessful', bookingId: booking.id })
+      .catch((err) => console.error('[Email] payment-unsuccessful failed:', err.message));
+  }
+
+  // ── External refunds reconciled via webhook ───────────────────────────
+  // Money was returned outside the app (Stripe dashboard, dispute outcome).
+  // Fire-and-forget notifications; the DB state is already committed above.
+  for (const booking of refundedBookings) {
+    enqueueEmail({
+      type: 'refund-completed',
+      bookingId: booking.id,
+      data: { refundedAt: new Date().toISOString() },
+    }).catch((err) => console.error('[Email] refund-completed (external) failed:', err.message));
+
+    notifyAdmin({
+      type: 'REFUND_NEEDS_ATTENTION',
+      title: 'External Refund Recorded',
+      message: `Booking #${booking.bookingNumber} was refunded via Stripe and marked REFUNDED. Supplier payout was cancelled.`,
+      data: { bookingId: booking.id, supplierId: booking.tour?.supplierId },
+    }).catch(() => {});
+  }
+
+  // ── Chargeback disputes: alert so an operator can respond ─────────────
+  for (const booking of disputedBookings) {
+    notifyAdmin({
+      type: 'REFUND_NEEDS_ATTENTION',
+      title: 'Stripe Chargeback — Action Required',
+      message: `A chargeback was filed for booking #${booking.bookingNumber} (${booking.tour?.title || 'tour'}). Funds are frozen pending the dispute outcome.`,
+      data: { bookingId: booking.id, supplierId: booking.tour?.supplierId },
     }).catch(() => {});
   }
 
