@@ -8,7 +8,7 @@ jest.mock('bullmq', () => ({
         'purge-archived-tours', 'expire-special-offers', 'expire-supplier-documents',
         'plan-doc-expiry-reminders', 'purge-stale-stripe-events', 'auto-complete-bookings',
         'cancel-stale-pending-bookings', 'cleanup-stale-bookings',
-        'expire-checkout-holds', 'charge-pay-later-bookings',
+        'expire-checkout-holds', 'expire-modify-topups', 'charge-pay-later-bookings',
         'earnings-eligibility-sweep', 'plan-booking-reminders',
         'dispatch-booking-reminders', 'reconcile-ghana', 'reconcile-travioafrica',
         'refresh-popularity', 'cleanup-events', 'aggregate-daily-views',

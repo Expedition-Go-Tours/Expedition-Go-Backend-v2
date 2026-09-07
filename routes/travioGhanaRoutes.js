@@ -3,6 +3,7 @@ const { createLimiter } = require('../middleware/dynamicRateLimiter');
 const { protect } = require('../middleware/authMiddleware');
 const { restrictTo } = require('../middleware/authMiddleware');
 const travioGhanaController = require('../controllers/travioGhanaController');
+const payLaterPaymentController = require('../controllers/payLaterPaymentController');
 const reviewController = require('../controllers/reviewController');
 const { uploadReviewPhotos } = require('../middleware/uploadMiddleware');
 const travioGhanaHomepageController = require('../controllers/travioGhanaHomepageController');
@@ -919,6 +920,9 @@ router.get('/bookings/:id', protect, restrictTo('customer'), validate(bookingIdP
  *         description: Booking not found
  */
 router.patch('/bookings/:id/cancel', protect, restrictTo('customer'), validate(cancelBookingSchema), travioGhanaController.cancelBooking);
+
+router.get('/bookings/:id/payment-state', protect, restrictTo('customer'), payLaterPaymentController.getPaymentState);
+router.post('/bookings/:id/pay-now', protect, restrictTo('customer'), payLaterPaymentController.startPayNow);
 
 /**
  * @swagger

@@ -44,6 +44,7 @@ jest.mock('../../utils/bookingHelpers', () => ({
   validateTravelerInfo: jest.fn(),
   generateBookingNumber: jest.fn(),
   evaluateCancellationPolicy: jest.fn(() => ({ allowed: true, refundAmount: 105, refundPercentage: 100, reason: 'Full refund available', windowHours: 24 })),
+  evaluateModifyPolicy: jest.fn(() => ({ allowed: true, reason: null, cutoffHours: 24, deadline: null })),
 }));
 
 jest.mock('../../utils/tourHelpers', () => ({
@@ -1062,7 +1063,12 @@ describe('expeditionController', () => {
       );
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({ status: 'success', data: { booking: mockBookingDetail } })
+        expect.objectContaining({
+          status: 'success',
+          data: expect.objectContaining({
+            booking: expect.objectContaining(mockBookingDetail),
+          }),
+        })
       );
     });
 

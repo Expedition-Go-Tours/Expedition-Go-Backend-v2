@@ -57,8 +57,13 @@ const dueBooking = (overrides = {}) => ({
   paidAt: null,
   paymentTiming: 'later',
   travelDate: new Date(Date.now() + 12 * 60 * 60 * 1000),
+  chargeRetries: 0,
+  nextRetryAt: null,
+  requiresPaymentActionAt: null,
   ...overrides,
 });
+
+const ZERO_SUMMARY = { checked: 0, charged: 0, settled: 0, manual: 0, processing: 0, failed: 0, cancelled: 0, retried: 0, waiting: 0 };
 
 describe('chargePayLaterBookings', () => {
   beforeEach(() => {
@@ -70,12 +75,12 @@ describe('chargePayLaterBookings', () => {
 
   it('returns zeros when no bookings are due', async () => {
     const result = await chargePayLaterBookings();
-    expect(result).toEqual({ checked: 0, charged: 0, settled: 0, needsAction: 0, failed: 0, cancelled: 0, retried: 0 });
+    expect(result).toEqual(ZERO_SUMMARY);
     expect(getStripe().paymentIntents.retrieve).not.toHaveBeenCalled();
   });
 
   it('charges a due booking via PaymentIntent confirm and settles it', async () => {
-    prisma.booking.findMany.mockResolvedValue([dueBooking()]);
+    prisma.booking.findMany.mockResolvedValueOnce([dueBooking()]).mockResolvedValueOnce([]);
     getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'requires_confirmation' });
 
     const result = await chargePayLaterBookings();
@@ -83,11 +88,11 @@ describe('chargePayLaterBookings', () => {
     expect(getStripe().paymentIntents.confirm).toHaveBeenCalledWith('pi_later', expect.objectContaining({ return_url: expect.any(String) }));
     expect(handlePaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ id: 'pi_later', status: 'succeeded' }));
     expect(enqueueNotification).toHaveBeenCalled();
-    expect(result).toEqual({ checked: 1, charged: 1, settled: 0, needsAction: 0, failed: 0, cancelled: 0, retried: 0 });
+    expect(result).toEqual({ ...ZERO_SUMMARY, checked: 1, charged: 1 });
   });
 
   it('charges a PENDING pay-later booking (the current creation state)', async () => {
-    prisma.booking.findMany.mockResolvedValue([dueBooking({ status: 'PENDING' })]);
+    prisma.booking.findMany.mockResolvedValueOnce([dueBooking({ status: 'PENDING' })]).mockResolvedValueOnce([]);
     getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'requires_confirmation' });
 
     const result = await chargePayLaterBookings();
@@ -98,7 +103,7 @@ describe('chargePayLaterBookings', () => {
   });
 
   it('settles a booking whose intent already succeeded (webhook was lost)', async () => {
-    prisma.booking.findMany.mockResolvedValue([dueBooking()]);
+    prisma.booking.findMany.mockResolvedValueOnce([dueBooking()]).mockResolvedValueOnce([]);
     getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'succeeded' });
 
     const result = await chargePayLaterBookings();
@@ -108,66 +113,154 @@ describe('chargePayLaterBookings', () => {
     expect(result.settled).toBe(1);
   });
 
-  it('notifies the customer when 3DS action is required (cannot auto-charge)', async () => {
-    prisma.booking.findMany.mockResolvedValue([dueBooking()]);
+  it('escalates 3DS action-required bookings to manual payment (no auto-charge)', async () => {
+    prisma.booking.findMany.mockResolvedValueOnce([dueBooking()]).mockResolvedValueOnce([]);
     getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'requires_action' });
 
     const result = await chargePayLaterBookings();
 
     expect(getStripe().paymentIntents.confirm).not.toHaveBeenCalled();
+    expect(prisma.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ requiresPaymentActionAt: null }),
+        data: expect.objectContaining({ requiresPaymentActionAt: expect.any(Date) }),
+      })
+    );
     expect(enqueueNotification).toHaveBeenCalled();
-    expect(result.needsAction).toBe(1);
+    expect(enqueueEmail).toHaveBeenCalled();
+    expect(result.manual).toBe(1);
   });
 
-  it('cancels the reservation when the intent was canceled (after max retries)', async () => {
-    prisma.booking.findMany.mockResolvedValue([dueBooking({ chargeRetries: 3 })]);
-    getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'canceled' });
+  it('does not escalate a booking that is already flagged for manual action', async () => {
+    prisma.booking.findMany.mockResolvedValueOnce([dueBooking({ requiresPaymentActionAt: new Date() })]).mockResolvedValueOnce([]);
+    getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'requires_action' });
+
+    const result = await chargePayLaterBookings();
+
+    expect(getStripe().paymentIntents.confirm).not.toHaveBeenCalled();
+    expect(prisma.booking.updateMany).not.toHaveBeenCalled();
+    expect(result.waiting).toBe(1);
+  });
+
+  it('escalates an invalid-card booking (requires_payment_method) to manual after retries are exhausted', async () => {
+    prisma.booking.findMany.mockResolvedValueOnce([dueBooking({ chargeRetries: 3 })]).mockResolvedValueOnce([]);
+    getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'requires_payment_method' });
 
     const result = await chargePayLaterBookings();
 
     expect(prisma.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ status: 'CANCELLED', paymentStatus: 'FAILED' }),
-      }),
+        data: expect.objectContaining({ requiresPaymentActionAt: expect.any(Date) }),
+      })
     );
-    expect(result.cancelled).toBe(1);
+    expect(result.manual).toBe(1);
   });
 
   it('retries later when the charge is declined (under max retries)', async () => {
-    prisma.booking.findMany.mockResolvedValue([dueBooking()]);
-    getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'requires_payment_method' });
+    prisma.booking.findMany.mockResolvedValueOnce([dueBooking()]).mockResolvedValueOnce([]);
+    getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'requires_confirmation' });
     getStripe().paymentIntents.confirm.mockRejectedValue(new Error('card declined'));
 
     const result = await chargePayLaterBookings();
 
     expect(notifyAdmin).toHaveBeenCalled();
-    expect(prisma.booking.updateMany).not.toHaveBeenCalled();
+    expect(prisma.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'b-later-1' },
+        data: expect.objectContaining({ chargeRetries: 1, nextRetryAt: expect.any(Date) }),
+      })
+    );
     expect(result.retried).toBe(1);
   });
 
-  it('cancels bookings with no payment intent on file (after max retries)', async () => {
-    prisma.booking.findMany.mockResolvedValue([dueBooking({ stripePaymentIntentId: null, chargeRetries: 3 })]);
+  it('escalates to manual (never silently cancels) after max decline retries', async () => {
+    prisma.booking.findMany.mockResolvedValueOnce([dueBooking({ chargeRetries: 3 })]).mockResolvedValueOnce([]);
+    getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'requires_confirmation' });
+    getStripe().paymentIntents.confirm.mockRejectedValue(new Error('card declined'));
 
     const result = await chargePayLaterBookings();
 
-    expect(prisma.booking.updateMany).toHaveBeenCalled();
-    expect(result.cancelled).toBe(1);
+    expect(prisma.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ requiresPaymentActionAt: expect.any(Date) }),
+      })
+    );
+    expect(result.manual).toBe(1);
+  });
+
+  it('escalates to manual when no payment intent is on file', async () => {
+    prisma.booking.findMany.mockResolvedValueOnce([dueBooking({ stripePaymentIntentId: null })]).mockResolvedValueOnce([]);
+
+    const result = await chargePayLaterBookings();
+
+    expect(prisma.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ requiresPaymentActionAt: expect.any(Date) }),
+      })
+    );
+    expect(result.manual).toBe(1);
   });
 
   it('leaves in-flight (processing) bookings for the next sweep', async () => {
-    prisma.booking.findMany.mockResolvedValue([dueBooking()]);
+    prisma.booking.findMany.mockResolvedValueOnce([dueBooking()]).mockResolvedValueOnce([]);
     getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'processing' });
 
     const result = await chargePayLaterBookings();
 
     expect(getStripe().paymentIntents.confirm).not.toHaveBeenCalled();
     expect(handlePaymentSucceeded).not.toHaveBeenCalled();
-    expect(result).toEqual({ checked: 1, charged: 0, settled: 0, needsAction: 0, failed: 0, cancelled: 0, retried: 0 });
+    expect(result.processing).toBe(1);
+  });
+
+  it('only selects bookings whose activity date is strictly in the future (charge-after-event guard)', async () => {
+    prisma.booking.findMany.mockResolvedValue([]);
+
+    await chargePayLaterBookings();
+
+    const dueWhere = prisma.booking.findMany.mock.calls[0][0].where;
+    expect(dueWhere.travelDate.gt).toBeInstanceOf(Date);
+    // Activity started / past bookings are handled by the finalize pass, never
+    // auto-charged.
+    expect(dueWhere.travelDate.lte).toBeInstanceOf(Date);
+    expect(prisma.booking.findMany).toHaveBeenCalledTimes(2); // due + finalize
+  });
+
+  it('defense-in-depth: never confirms a booking once its activity day has ended', async () => {
+    const pastDay = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    prisma.booking.findMany.mockResolvedValueOnce([dueBooking({ travelDate: pastDay })]).mockResolvedValueOnce([]);
+    getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'requires_confirmation' });
+
+    const result = await chargePayLaterBookings();
+
+    expect(getStripe().paymentIntents.confirm).not.toHaveBeenCalled();
+    expect(getStripe().paymentIntents.retrieve).not.toHaveBeenCalled();
+    expect(prisma.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'CANCELLED', paymentStatus: 'FAILED' }),
+      })
+    );
+    expect(result.cancelled).toBe(1);
+  });
+
+  it('finalizes unpaid bookings once the activity day has fully passed', async () => {
+    const past = new Date(Date.now() - (24 + 12) * 60 * 60 * 1000);
+    prisma.booking.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([dueBooking({ travelDate: past })]);
+    prisma.booking.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await chargePayLaterBookings();
+
+    expect(prisma.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ paymentStatus: 'PENDING', paidAt: null }),
+        data: expect.objectContaining({ status: 'CANCELLED', paymentStatus: 'FAILED' }),
+      })
+    );
+    expect(result.cancelled).toBe(1);
   });
 
   describe('Discord notifications', () => {
     it('sends red embed on initial confirm failure', async () => {
-      prisma.booking.findMany.mockResolvedValue([dueBooking()]);
+      prisma.booking.findMany.mockResolvedValueOnce([dueBooking()]).mockResolvedValueOnce([]);
       getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'requires_confirmation' });
       getStripe().paymentIntents.confirm.mockRejectedValue(new Error('card declined'));
 
@@ -188,7 +281,8 @@ describe('chargePayLaterBookings', () => {
     });
 
     it('sends yellow retry embed with retry count', async () => {
-      prisma.booking.findMany.mockResolvedValue([dueBooking({ chargeRetries: 0 })]);
+      prisma.booking.findMany.mockResolvedValueOnce([dueBooking({ chargeRetries: 0 })]).mockResolvedValueOnce([]);
+      getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'requires_confirmation' });
       getStripe().paymentIntents.confirm.mockRejectedValue(new Error('insufficient funds'));
 
       await chargePayLaterBookings();
@@ -207,58 +301,28 @@ describe('chargePayLaterBookings', () => {
       );
     });
 
-    it('sends red embed when max retries exceeded (cancel)', async () => {
-      prisma.booking.findMany.mockResolvedValue([dueBooking({ chargeRetries: 3 })]);
+    it('does NOT send the auto-cancel embed when max retries exceeded (escalates instead)', async () => {
+      prisma.booking.findMany.mockResolvedValueOnce([dueBooking({ chargeRetries: 3 })]).mockResolvedValueOnce([]);
+      getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'requires_confirmation' });
       getStripe().paymentIntents.confirm.mockRejectedValue(new Error('card declined'));
 
       await chargePayLaterBookings();
 
-      expect(notifyDiscord).toHaveBeenCalledWith(
+      expect(notifyDiscord).not.toHaveBeenCalledWith(
         'incidents',
-        expect.stringContaining('cancelled after 3'),
-        expect.objectContaining({
-          title: 'Pay-Later Booking Cancelled',
-          color: 0xff4444,
-          fields: expect.arrayContaining([
-            expect.objectContaining({ name: 'Booking #', value: 'LAT-001' }),
-          ]),
-        })
+        expect.stringContaining('cancelled'),
+        expect.any(Object)
       );
-    });
-
-    it('sends red embed when intent is canceled (exhausted retries)', async () => {
-      prisma.booking.findMany.mockResolvedValue([dueBooking({ chargeRetries: 3 })]);
-      getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'canceled' });
-
-      await chargePayLaterBookings();
-
+      // Instead a "manual payment required" embed is sent once.
       expect(notifyDiscord).toHaveBeenCalledWith(
         'incidents',
-        expect.stringContaining('cancelled after 3'),
-        expect.objectContaining({
-          title: 'Pay-Later Booking Cancelled',
-          color: 0xff4444,
-        })
-      );
-    });
-
-    it('sends red embed when no PI and no retries left', async () => {
-      prisma.booking.findMany.mockResolvedValue([dueBooking({ stripePaymentIntentId: null, chargeRetries: 3 })]);
-
-      await chargePayLaterBookings();
-
-      expect(notifyDiscord).toHaveBeenCalledWith(
-        'incidents',
-        expect.stringContaining('cancelled after 3'),
-        expect.objectContaining({
-          title: 'Pay-Later Booking Cancelled',
-          color: 0xff4444,
-        })
+        'Pay-later booking LAT-001 needs manual payment',
+        expect.objectContaining({ title: 'Manual Payment Required' })
       );
     });
 
     it('does NOT send Discord embed on successful charge', async () => {
-      prisma.booking.findMany.mockResolvedValue([dueBooking()]);
+      prisma.booking.findMany.mockResolvedValueOnce([dueBooking()]).mockResolvedValueOnce([]);
       getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'requires_confirmation' });
 
       await chargePayLaterBookings();
@@ -267,7 +331,7 @@ describe('chargePayLaterBookings', () => {
     });
 
     it('does NOT send Discord embed on successful settle', async () => {
-      prisma.booking.findMany.mockResolvedValue([dueBooking()]);
+      prisma.booking.findMany.mockResolvedValueOnce([dueBooking()]).mockResolvedValueOnce([]);
       getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'succeeded' });
 
       await chargePayLaterBookings();

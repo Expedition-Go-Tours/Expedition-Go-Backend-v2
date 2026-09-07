@@ -398,12 +398,15 @@ function computeStatus(bookedCount, totalCapacity, overrideStatus, operating, li
  *   excludeDraftId — when set, the active hold for this draft is excluded from
  *   the hold count. Used during materialization so converting hold→booking
  *   doesn't double-count the same seats.
+ *   excludeBookingId — when set, that booking's row is excluded from the
+ *   occupancy count. Used by the modify-booking re-check so a booking
+ *   re-validating its own date/party is never double-counted.
  *
  * Returns { ok, reason?, availableSpots, groupsRemaining, maxCapacity,
  * currentBookings, isPerGroup, maxGroups, daySlots }.
  */
 async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, travelers, options = {}) {
-  const { excludeDraftId = null } = options;
+  const { excludeDraftId = null, excludeBookingId = null } = options;
   const parsed = parseBlob(tour.schedulesAndPricing);
   const dateObj = toUtcDate(dateKey);
   if (!dateObj) return { ok: false, reason: 'Invalid date' };
@@ -421,6 +424,10 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
   // A day-limit override is a day-wide ceiling, so occupancy is counted across
   // every time slot that day. Without one, behavior is unchanged (per-slot).
   const dayWide = capOverride != null;
+  const hasBookingExclusion = !!excludeBookingId;
+  const timeParam = !!(selectedTime && !dayWide);
+  const bookingExclParamIdx = 3 + (timeParam ? 1 : 0);
+  const bookingWhereExtra = hasBookingExclusion ? ` AND "id" <> $${bookingExclParamIdx}` : '';
   const [counts] = await db.$queryRawUnsafe(
     `SELECT
        COALESCE(SUM(CASE WHEN status IN (${statusLiteral})
@@ -428,10 +435,12 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
        COALESCE(COUNT(*) FILTER (WHERE status IN (${statusLiteral})), 0)::int AS "groupCount"
      FROM "Booking"
      WHERE "tourId" = $1 AND "selectedDate" = $2::date
-       ${selectedTime && !dayWide ? 'AND "selectedTime" = $3' : ''}`,
+       ${timeParam ? 'AND "selectedTime" = $3' : ''}
+       ${bookingWhereExtra}`,
     tour.id,
     dateKey,
-    ...(selectedTime && !dayWide ? [selectedTime] : [])
+    ...(timeParam ? [selectedTime] : []),
+    ...(hasBookingExclusion ? [excludeBookingId] : [])
   );
 
   // Active holds (CheckoutDraft status='HOLDING', unexpired) also occupy
@@ -445,13 +454,12 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
      FROM "CheckoutDraft"
      WHERE "tourId" = $1 AND "selectedDate" = $2::date
        AND "status" = 'HOLDING' AND "expiresAt" > NOW()
-       ${selectedTime && !dayWide ? `AND "selectedTime" = $3` : ''}
+       ${timeParam ? `AND "selectedTime" = $3` : ''}
        ${holdWhereExtra}`,
     tour.id,
     dateKey,
-    ...(selectedTime && !dayWide ? [selectedTime] : [])
+    ...(timeParam ? [selectedTime] : [])
   );
-
   const currentBookings = (parseInt(counts?.currentBookings, 10) || 0)
                         + (parseInt(holds?.holdSeats, 10) || 0);
   const groupCount = (parseInt(counts?.groupCount, 10) || 0)

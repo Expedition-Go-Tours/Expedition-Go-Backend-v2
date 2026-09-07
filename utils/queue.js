@@ -103,6 +103,7 @@ const SCHEDULES = [
   { jobName: 'cancel-stale-pending-bookings', queue: 'cleanup',    everyMs: 15 * 60 * 1000 },
   { jobName: 'cleanup-stale-bookings',      queue: 'cleanup',      everyMs: 5 * 60 * 1000 },
   { jobName: 'expire-checkout-holds',       queue: 'cleanup',      everyMs: 5 * 60 * 1000 },
+  { jobName: 'expire-modify-topups',        queue: 'cleanup',      everyMs: 5 * 60 * 1000 },
   { jobName: 'charge-pay-later-bookings',   queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
   { jobName: 'earnings-eligibility-sweep',  queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
   { jobName: 'plan-booking-reminders',      queue: 'cleanup',      everyMs: 3600 * 1000 },
@@ -972,6 +973,11 @@ function registerWorkers() {
         case 'expire-checkout-holds': {
           const { expireCheckoutHolds } = require('./bookingCleanup');
           await expireCheckoutHolds();
+          break;
+        }
+        case 'expire-modify-topups': {
+          const { expireModifyTopUps } = require('./bookingModify');
+          await expireModifyTopUps();
           break;
         }
         case 'earnings-eligibility-sweep': {

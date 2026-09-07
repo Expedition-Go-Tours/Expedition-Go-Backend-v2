@@ -1836,8 +1836,6 @@ exports.getBooking = catchAsync(async (req, res, next) => {
   if (!booking) return next(new AppError('Booking not found', 404));
 
   res.status(200).json({ status: 'success', data: { booking: sanitizeBookingPaymentInternals(booking) } });
-
-  res.status(200).json({ status: 'success', data: { booking } });
 });
 
 /**

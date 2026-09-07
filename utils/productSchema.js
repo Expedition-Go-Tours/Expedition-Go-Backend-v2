@@ -405,6 +405,11 @@ const productObjectSchema = z.object({
   cancellationType: z.enum(['standard', 'all_sales_final']).optional(),
   supplierCanCancelBadWeather: z.boolean().optional(),
   supplierCanCancelNotEnoughTravelers: z.boolean().optional(),
+  // Customer self-service changes (modify booking). When changesAllowed is
+  // false (or the tour is all-sales-final) no party/date edits are permitted.
+  // modificationCutoffHours mirrors the cancellation window by default (24h).
+  changesAllowed: z.boolean().optional(),
+  modificationCutoffHours: z.number().min(0).max(24 * 30).optional(),
   // Prisma-level fields
   status: z.enum(['DRAFT', 'ACTIVE', 'PAUSED', 'ARCHIVED']).optional(),
   coverPhoto: z.string().optional(),

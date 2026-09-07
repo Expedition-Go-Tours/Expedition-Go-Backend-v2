@@ -843,6 +843,11 @@ model Booking {
   // Pay-later retry tracking (max 3 retries before cancellation)
   chargeRetries           Int           @default(0)
   nextRetryAt             DateTime?
+  // Pay-later: set when the deferred charge cannot be collected automatically
+  // (3DS action required, expired/invalid card, or repeated declines) and the
+  // customer must complete payment manually (update card / pay now). While set,
+  // the pay-later sweep stops auto-confirming this booking. Cleared on settle.
+  requiresPaymentActionAt DateTime?
 
   // Cancellation
   cancellationReason String?
@@ -919,12 +924,23 @@ model BookingChange {
   bookingId String
   booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   changedBy String // customer | supplier | platform
+  kind      String? // MODIFY_DATE | MODIFY_PARTY | MODIFY_BOTH
   reason    String?
   previous  Json // Snapshot of the changed fields before (e.g. { selectedDate, travelers })
   updated   Json // Snapshot of the changed fields after
+  // Signed money delta in booking currency: >0 = extra charged (top-up),
+  // <0 = amount refunded to the customer, 0 = no money movement.
+  delta             Decimal? @db.Decimal(10, 2)
+  paymentIntentId   String?  @unique
+  expiresAt         DateTime? // Set while awaiting a top-up payment (PENDING_PAYMENT)
+  appliedAt         DateTime? // When the modification was applied to the Booking
+  // APPLIED | PENDING_PAYMENT | DISCARDED | EXPIRED | FAILED
+  status    String   @default("APPLIED")
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([bookingId])
+  @@index([bookingId, status])
   @@index([changedBy])
 }
 

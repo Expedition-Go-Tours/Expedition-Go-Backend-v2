@@ -3,20 +3,33 @@
  *
  * A reserve-now-pay-later booking is created PENDING with paymentStatus PENDING
  * and an unattached (unconfirmed) Stripe PaymentIntent: the card is validated at
- * checkout but never charged. This sweep runs on a schedule (see server.js) and,
- * as the activity date approaches, confirms the PaymentIntent to charge the card.
+ * checkout but never charged. This sweep runs on a schedule (every 30 min, see
+ * server.js/queue.js) and, as the activity date approaches, confirms the
+ * PaymentIntent to charge the card.
+ *
+ * Guarantees (edge-case hardening):
+ *  - NEVER auto-charges after the activity date has begun — once `travelDate`
+ *    (start of the activity day) has passed we stop attempting and the seat is
+ *    released by the finalize pass instead of silently charging after the event.
+ *  - 3DS (`requires_action`) and card problems (`requires_payment_method`,
+ *    expired / declined cards) are escalated to the CUSTOMER as a manual
+ *    "complete payment / update card" action (`requiresPaymentActionAt` is set
+ *    and the booking leaves the auto-charge set). No silent auto-cancel while
+ *    the activity is still ahead — the customer is emailed a deep link and the
+ *    booking only finalizes if it is still unpaid after the activity day.
+ *  - Transient declines are retried with exponential backoff (60/120/240 min),
+ *    then escalated to manual payment rather than silently cancelled.
+ *  - Settlement and cancellation are idempotent (guarded on paymentStatus/status),
+ *    so re-runs and racing webhooks never double-settle or double-charge.
  *
  * Outcomes per booking:
  *  - charge succeeds      → settle the booking (idempotent handlePaymentSucceeded);
  *                           paymentStatus becomes SUCCEEDED, paidAt is set
  *  - already succeeded    → settle the booking (webhook was lost/raced)
- *  - requires_action (3DS) → cannot auto-charge; notify the customer to complete
- *  - declined / canceled  → cancel the reservation, release capacity
- *  - no PI on file        → cancel with a clear reason (should never happen)
- *
- * Idempotency: settle + cancellation updates are guarded by the booking's
- * paymentStatus/status, so re-runs and racing webhooks never double-settle or
- * double-charge (Stripe PaymentIntents cannot be confirmed twice).
+ *  - requires_action (3DS) → flag for manual customer action (no auto-charge)
+ *  - requires_payment_method / declined → retry w/ backoff, then flag for manual action
+ *  - no PI on file        → flag for manual action (customer completes payment)
+ *  - still unpaid after the activity day → cancel reservation, release capacity
  */
 
 const { getStripe, handlePaymentSucceeded } = require('./stripeHelpers');
@@ -28,6 +41,9 @@ const { logActivity } = require('./auditLogger');
 const SWEEP_LIMIT = 200;
 const DEFAULT_CHARGE_BEFORE_HOURS = 24;
 const MAX_CHARGE_RETRIES = 3;
+// After the activity day ends (travelDate + 24h) we allow a short grace for an
+// in-flight webhook to settle before finalizing an unpaid reservation.
+const FINALIZE_AFTER_GRACE_HOURS = 6;
 
 async function settleBooking(booking, intent) {
   try {
@@ -37,11 +53,11 @@ async function settleBooking(booking, intent) {
     return false;
   }
 
-  // Reset retry counter on successful charge
+  // Reset retry counter + manual-action flag on successful charge
   const prisma = require('./prismaClient');
   await prisma.booking.update({
     where: { id: booking.id },
-    data: { chargeRetries: 0, nextRetryAt: null },
+    data: { chargeRetries: 0, nextRetryAt: null, requiresPaymentActionAt: null },
   }).catch(() => {});
 
   // handlePaymentSucceeded already enqueues the pay-later-charged emails
@@ -74,23 +90,63 @@ async function settleBooking(booking, intent) {
   return true;
 }
 
-async function notifyCustomerToCompletePayment(booking) {
+/**
+ * Escalate a pay-later booking to manual customer payment (3DS required, card
+ * invalid/expired, or retries exhausted). Marks the row and emails the customer
+ * once so the sweep never loops auto-confirm attempts on an un-actionable card.
+ */
+async function escalateToManual(booking, reason) {
+  const prisma = require('./prismaClient');
+  // updateMany guards: only escalates when still unpaid + not already flagged,
+  // so re-runs never double-email.
+  const updated = await prisma.booking.updateMany({
+    where: { id: booking.id, paymentTiming: 'later', paymentStatus: 'PENDING', paidAt: null, requiresPaymentActionAt: null },
+    data: { requiresPaymentActionAt: new Date() },
+  });
+  if (updated.count === 0) return false;
+
+  console.log(`[PayLater] Booking ${booking.bookingNumber} needs manual payment action: ${reason}`);
+
+  // Deep link points at the booking management page, which surfaces the
+  // "Complete payment / update card" action on the storefront.
   enqueueEmail({
     type: 'payment-unsuccessful',
     bookingId: booking.id,
-    data: {
-      amount: booking.grossAmount,
-      deadline: booking.travelDate,
-    },
+    data: { amount: booking.grossAmount, deadline: booking.travelDate, failureReason: reason },
   }).catch((err) => console.error('[PayLater] Payment action email failed:', err.message));
 
   enqueueNotification({
     userId: booking.customerId,
     type: 'PAYMENT_ACTION_REQUIRED',
-    title: 'Payment Action Required',
-    message: `Complete your payment for "${booking.tour?.title || 'your tour'}" to keep your spot.`,
+    title: 'Complete your payment',
+    message: `We could not automatically charge your card for "${booking.tour?.title || 'your tour'}" (${reason}). Complete your payment to keep your spot.`,
     data: { bookingId: booking.id },
   }).catch(() => {});
+
+  notifyAdmin({
+    type: 'PAYMENT_COLLECTION_FAILED',
+    title: 'Pay-later needs manual payment',
+    message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.grossAmount).toFixed(2)} for "${booking.tour?.title || 'a tour'}". Auto-charge not possible: ${reason}.`,
+    data: { bookingId: booking.id, source: 'pay-later-sweep' },
+  }).catch(() => {});
+
+  notifyDiscord(
+    'incidents',
+    `Pay-later booking ${booking.bookingNumber} needs manual payment`,
+    {
+      title: 'Manual Payment Required',
+      color: 0xffaa00,
+      fields: [
+        { name: 'Booking #', value: booking.bookingNumber, inline: true },
+        { name: 'Amount', value: `$${parseFloat(booking.grossAmount).toFixed(2)}`, inline: true },
+        { name: 'Tour', value: booking.tour?.title || '—', inline: true },
+        { name: 'Reason', value: (reason || 'Unknown').slice(0, 1024), inline: false },
+      ],
+      cooldownKey: `pay-later-manual:${booking.id}`,
+    }
+  ).catch(() => {});
+
+  return true;
 }
 
 async function notifyPaymentFailed(booking, reason) {
@@ -108,7 +164,7 @@ async function notifyPaymentFailed(booking, reason) {
     userId: booking.customerId,
     type: 'PAYMENT_FAILED',
     title: 'Payment Declined',
-    message: `We could not charge your card for "${booking.tour?.title || 'your tour'}" (${reason}). Update your payment details or your booking may be cancelled.`,
+    message: `We could not charge your card for "${booking.tour?.title || 'your tour'}" (${reason}). Update your payment details to keep your booking.`,
     data: { bookingId: booking.id },
   }).catch(() => {});
 
@@ -144,50 +200,60 @@ async function notifyPaymentFailed(booking, reason) {
   ).catch(() => {});
 }
 
-async function cancelBooking(booking, reason) {
+/**
+ * Schedule an automatic retry with exponential backoff. Returns true when a
+ * retry was scheduled, false when retries are exhausted (caller escalates).
+ */
+async function scheduleRetry(booking, reason) {
   const prisma = require('./prismaClient');
+  if ((booking.chargeRetries || 0) >= MAX_CHARGE_RETRIES) return false;
 
-  // Check retry count before cancelling — only cancel after MAX_CHARGE_RETRIES
-  if ((booking.chargeRetries || 0) < MAX_CHARGE_RETRIES) {
-    const retryCount = (booking.chargeRetries || 0) + 1;
-    const backoffMinutes = Math.pow(2, retryCount) * 30; // 60min, 120min, 240min
-    const nextRetry = new Date(Date.now() + backoffMinutes * 60 * 1000);
+  const retryCount = (booking.chargeRetries || 0) + 1;
+  const backoffMinutes = Math.pow(2, retryCount) * 30; // 60min, 120min, 240min
+  const nextRetry = new Date(Date.now() + backoffMinutes * 60 * 1000);
 
-    await prisma.booking.update({
-      where: { id: booking.id },
-      data: { chargeRetries: retryCount, nextRetryAt: nextRetry },
-    });
+  await prisma.booking.update({
+    where: { id: booking.id },
+    data: { chargeRetries: retryCount, nextRetryAt: nextRetry },
+  });
 
-    console.log(`[PayLater] Booking ${booking.bookingNumber} charge failed — retry ${retryCount}/${MAX_CHARGE_RETRIES} scheduled at ${nextRetry.toISOString()}`);
+  console.log(`[PayLater] Booking ${booking.bookingNumber} charge failed — retry ${retryCount}/${MAX_CHARGE_RETRIES} scheduled at ${nextRetry.toISOString()}`);
 
-    notifyAdmin({
-      type: 'PAYMENT_COLLECTION_FAILED',
-      title: `Pay-later charge failed (retry ${retryCount}/${MAX_CHARGE_RETRIES})`,
-      message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.grossAmount).toFixed(2)} charge failed: ${reason}. Next retry at ${nextRetry.toLocaleString()}.`,
-      data: { bookingId: booking.id, retryCount, nextRetry: nextRetry.toISOString() },
-    }).catch(() => {});
+  notifyAdmin({
+    type: 'PAYMENT_COLLECTION_FAILED',
+    title: `Pay-later charge failed (retry ${retryCount}/${MAX_CHARGE_RETRIES})`,
+    message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.grossAmount).toFixed(2)} charge failed: ${reason}. Next retry at ${nextRetry.toLocaleString()}.`,
+    data: { bookingId: booking.id, retryCount, nextRetry: nextRetry.toISOString() },
+  }).catch(() => {});
 
-    notifyDiscord(
-      'incidents',
-      `Pay-later charge failed — retry ${retryCount}/${MAX_CHARGE_RETRIES}`,
-      {
-        title: 'Payment Retry Scheduled',
-        color: 0xffaa00,
-        fields: [
-          { name: 'Booking #', value: booking.bookingNumber, inline: true },
-          { name: 'Amount', value: `$${parseFloat(booking.grossAmount).toFixed(2)}`, inline: true },
-          { name: 'Tour', value: booking.tour?.title || '—', inline: true },
-          { name: 'Next Retry', value: nextRetry.toLocaleString(), inline: true },
-          { name: 'Reason', value: (reason || 'Unknown').slice(0, 1024), inline: false },
-        ],
-        cooldownKey: `pay-later-retry:${booking.id}:${retryCount}`,
-      }
-    ).catch(() => {});
+  notifyDiscord(
+    'incidents',
+    `Pay-later charge failed — retry ${retryCount}/${MAX_CHARGE_RETRIES}`,
+    {
+      title: 'Payment Retry Scheduled',
+      color: 0xffaa00,
+      fields: [
+        { name: 'Booking #', value: booking.bookingNumber, inline: true },
+        { name: 'Amount', value: `$${parseFloat(booking.grossAmount).toFixed(2)}`, inline: true },
+        { name: 'Tour', value: booking.tour?.title || '—', inline: true },
+        { name: 'Next Retry', value: nextRetry.toLocaleString(), inline: true },
+        { name: 'Reason', value: (reason || 'Unknown').slice(0, 1024), inline: false },
+      ],
+      cooldownKey: `pay-later-retry:${booking.id}:${retryCount}`,
+    }
+  ).catch(() => {});
 
-    return false; // not cancelled yet
-  }
+  return true;
+}
 
-  // Max retries exceeded — cancel the booking
+/**
+ * Finalize an unpaid pay-later booking whose activity day has fully passed
+ * (travelDate + grace). The reservation is cancelled and capacity released —
+ * this is the ONLY path that auto-cancels a pay-later booking, and it never
+ * runs before the activity day is over.
+ */
+async function finalizeBooking(booking, reason) {
+  const prisma = require('./prismaClient');
   const updated = await prisma.booking.updateMany({
     where: { id: booking.id, paymentTiming: 'later', paymentStatus: 'PENDING', paidAt: null },
     data: {
@@ -241,7 +307,7 @@ async function cancelBooking(booking, reason) {
 
   notifyDiscord(
     'incidents',
-    `Pay-later booking ${booking.bookingNumber} cancelled after ${MAX_CHARGE_RETRIES} failed charge attempts`,
+    `Pay-later booking ${booking.bookingNumber} cancelled — payment not collected`,
     {
       title: 'Pay-Later Booking Cancelled',
       color: 0xff4444,
@@ -264,6 +330,116 @@ async function cancelBooking(booking, reason) {
   }).catch(() => {});
 }
 
+/**
+ * Charge a single due booking. Assumes it has a stripePaymentIntentId.
+ * Returns a bucket label for the sweep summary.
+ */
+async function chargeBooking(booking) {
+  const prisma = require('./prismaClient');
+  const now = new Date();
+
+  // Charge-after-event guard (defense-in-depth; the sweep query already only
+  // selects travelDate > now). If we somehow end up here past the activity day
+  // end, never confirm — finalize instead.
+  const activityDayEnd = new Date(
+    new Date(booking.travelDate).getTime() + 24 * 60 * 60 * 1000
+  );
+  if (now >= activityDayEnd) {
+    await finalizeBooking(booking, 'Payment not collected before the activity date');
+    return 'cancelled';
+  }
+
+  // Never auto-charge a booking we have already asked the customer to settle.
+  if (booking.requiresPaymentActionAt) return 'waiting';
+
+  let intent;
+  try {
+    intent = await getStripe().paymentIntents.retrieve(booking.stripePaymentIntentId);
+  } catch (err) {
+    console.error('[PayLater] Could not retrieve PI', booking.stripePaymentIntentId, err.message);
+    return 'failed';
+  }
+
+  switch (intent.status) {
+    case 'succeeded':
+      if (await settleBooking(booking, intent)) return 'settled';
+      return 'failed';
+
+    case 'requires_action':
+      // 3DS — cannot complete server-side. Escalate to the customer once.
+      await escalateToManual(booking, 'Your bank requires extra verification (3D Secure) to complete the charge');
+      return 'manual';
+
+    case 'requires_payment_method': {
+      // Card invalid / expired / declined. Retry transient declines with
+      // backoff; after MAX retries escalate to manual payment.
+      const retried = await scheduleRetry(booking, 'Card could not be charged (invalid, expired or declined)');
+      if (retried) {
+        await notifyPaymentFailed(booking, 'Card could not be charged — we will retry automatically');
+        return 'retried';
+      }
+      await escalateToManual(booking, 'We could not charge your card after several attempts');
+      return 'manual';
+    }
+
+    case 'processing':
+      // In flight — the webhook will settle it; retry next sweep if it never lands.
+      return 'processing';
+
+    case 'canceled': {
+      const retried = await scheduleRetry(booking, 'Payment could not be collected (intent canceled)');
+      if (retried) return 'retried';
+      await escalateToManual(booking, 'Payment could not be collected');
+      return 'manual';
+    }
+
+    case 'requires_confirmation':
+    default: {
+      let confirmed;
+      try {
+        // Accounts with dashboard-enabled payment methods require a
+        // return_url on confirm. The captured card never redirects, so this
+        // URL is only consumed by Stripe's validation.
+        confirmed = await getStripe().paymentIntents.confirm(booking.stripePaymentIntentId, {
+          return_url: `${process.env.CLIENT_URL}/booking/complete`,
+        });
+      } catch (err) {
+        console.error('[PayLater] Confirm failed', booking.stripePaymentIntentId, err.message);
+        await notifyPaymentFailed(booking, err.message);
+        const retried = await scheduleRetry(booking, err.message);
+        if (retried) return 'retried';
+        await escalateToManual(booking, err.message);
+        return 'manual';
+      }
+
+      if (confirmed.status === 'succeeded') {
+        if (await settleBooking(booking, confirmed)) return 'charged';
+        return 'failed';
+      }
+      if (confirmed.status === 'requires_action') {
+        await escalateToManual(booking, 'Your bank requires extra verification (3D Secure) to complete the charge');
+        return 'manual';
+      }
+      if (confirmed.status === 'requires_payment_method') {
+        // Confirm returned control to the payment method (declined).
+        await notifyPaymentFailed(booking, 'Your card was declined');
+        const retried = await scheduleRetry(booking, 'Card declined');
+        if (retried) return 'retried';
+        await escalateToManual(booking, 'Your card was declined after several attempts');
+        return 'manual';
+      }
+      if (confirmed.status === 'canceled') {
+        const retried = await scheduleRetry(booking, 'Payment could not be collected');
+        if (retried) return 'retried';
+        await escalateToManual(booking, 'Payment could not be collected');
+        return 'manual';
+      }
+      // processing / requires_payment_method — retry on the next sweep.
+      return 'processing';
+    }
+  }
+}
+
 async function chargePayLaterBookings() {
   const prisma = require('./prismaClient');
   const chargeBeforeHours =
@@ -274,16 +450,17 @@ async function chargePayLaterBookings() {
   const windowEnd = new Date(now.getTime() + chargeBeforeHours * 60 * 60 * 1000);
 
   // Due: pay-later, unpaid, still reserved (PENDING or CONFIRMED), activity
-  // date within the charge window (includes overdue bookings so they are
-  // collected rather than lost). CONFIRMED is kept for legacy rows created
-  // before pay-later bookings became PENDING. Skip bookings waiting for retry.
+  // date ahead and within the charge window. CONFIRMED is kept for legacy rows
+  // created before pay-later bookings became PENDING. Skip bookings waiting for
+  // retry and bookings already escalated to manual customer payment.
   const due = await prisma.booking.findMany({
     where: {
       paymentTiming: 'later',
       paymentStatus: 'PENDING',
       status: { in: ['CONFIRMED', 'PENDING'] },
       paidAt: null,
-      travelDate: { lte: windowEnd },
+      travelDate: { lte: windowEnd, gt: now },
+      requiresPaymentActionAt: null,
       OR: [
         { nextRetryAt: null },
         { nextRetryAt: { lte: now } },
@@ -297,95 +474,61 @@ async function chargePayLaterBookings() {
     take: SWEEP_LIMIT,
   });
 
-  if (due.length === 0) return { checked: 0, charged: 0, settled: 0, needsAction: 0, failed: 0, cancelled: 0, retried: 0 };
+  // Finalize: unpaid pay-later reservations whose activity day has fully ended
+  // (plus a grace for a settling webhook). This releases held capacity and is
+  // the ONLY auto-cancel path for pay-later bookings.
+  const finalizeCutoff = new Date(now.getTime() - (24 + FINALIZE_AFTER_GRACE_HOURS) * 60 * 60 * 1000);
+  const finalize = await prisma.booking.findMany({
+    where: {
+      paymentTiming: 'later',
+      paymentStatus: 'PENDING',
+      status: { in: ['CONFIRMED', 'PENDING'] },
+      paidAt: null,
+      travelDate: { lt: finalizeCutoff },
+    },
+    include: {
+      tour: { select: { id: true, title: true, supplierId: true } },
+      customer: { select: { id: true, email: true } },
+    },
+    orderBy: { travelDate: 'asc' },
+    take: SWEEP_LIMIT,
+  });
 
   let charged = 0;
   let settled = 0;
-  let needsAction = 0;
+  let manual = 0;
+  let processing = 0;
   let failed = 0;
   let cancelled = 0;
   let retried = 0;
+  let waiting = 0;
+
+  for (const booking of finalize) {
+    await finalizeBooking(booking, 'Payment not collected before the activity date');
+    cancelled += 1;
+  }
 
   for (const booking of due) {
     if (!booking.stripePaymentIntentId) {
-      const result = await cancelBooking(booking, 'No payment method available to charge');
-      if (result === false) retried += 1;
-      else cancelled += 1;
+      await escalateToManual(booking, 'No payment method available to charge — please complete payment');
+      manual += 1;
       continue;
     }
 
-    let intent;
-    try {
-      intent = await getStripe().paymentIntents.retrieve(booking.stripePaymentIntentId);
-    } catch (err) {
-      console.error('[PayLater] Could not retrieve PI', booking.stripePaymentIntentId, err.message);
-      failed += 1;
-      continue;
-    }
-
-    switch (intent.status) {
-      case 'succeeded':
-        if (await settleBooking(booking, intent)) settled += 1;
-        else failed += 1;
-        break;
-
-      case 'canceled': {
-        const result = await cancelBooking(booking, 'Payment could not be collected');
-        if (result === false) retried += 1;
-        else cancelled += 1;
-        break;
-      }
-
-      case 'requires_action':
-        await notifyCustomerToCompletePayment(booking);
-        needsAction += 1;
-        break;
-
-      case 'processing':
-        // In flight — the webhook will settle it; retry next sweep if it never lands.
-        break;
-
-      case 'requires_payment_method':
-      case 'requires_confirmation':
-      default: {
-        let confirmed;
-        try {
-          // Accounts with dashboard-enabled payment methods require a
-          // return_url on confirm. The captured card never redirects, so this
-          // URL is only consumed by Stripe's validation.
-          confirmed = await getStripe().paymentIntents.confirm(booking.stripePaymentIntentId, {
-            return_url: `${process.env.CLIENT_URL}/booking/complete`,
-          });
-        } catch (err) {
-          console.error('[PayLater] Confirm failed', booking.stripePaymentIntentId, err.message);
-          await notifyPaymentFailed(booking, err.message);
-          const result = await cancelBooking(booking, err.message);
-          if (result === false) retried += 1;
-          else cancelled += 1;
-          break;
-        }
-
-        if (confirmed.status === 'succeeded') {
-          if (await settleBooking(booking, confirmed)) charged += 1;
-          else failed += 1;
-        } else if (confirmed.status === 'requires_action') {
-          await notifyCustomerToCompletePayment(booking);
-          needsAction += 1;
-        } else if (confirmed.status === 'canceled') {
-          const result = await cancelBooking(booking, 'Payment could not be collected');
-          if (result === false) retried += 1;
-          else cancelled += 1;
-        } else {
-          // processing / requires_payment_method — retry on the next sweep.
-        }
-        break;
-      }
-    }
+    const bucket = await chargeBooking(booking);
+    if (bucket === 'charged') charged += 1;
+    else if (bucket === 'settled') settled += 1;
+    else if (bucket === 'manual') manual += 1;
+    else if (bucket === 'processing') processing += 1;
+    else if (bucket === 'failed') failed += 1;
+    else if (bucket === 'cancelled') cancelled += 1;
+    else if (bucket === 'retried') retried += 1;
+    else waiting += 1; // 'waiting'
   }
 
-  const summary = { checked: due.length, charged, settled, needsAction, failed, cancelled, retried };
+  const summary = { checked: due.length, charged, settled, manual, processing, failed, cancelled, retried, waiting };
   console.log(
-    `[PayLater] Sweep: ${due.length} due → ${charged} charged, ${settled} already settled, ${needsAction} need action, ${failed} failed, ${cancelled} cancelled, ${retried} retried`
+    `[PayLater] Sweep: ${due.length} due (${finalize.length} to finalize) → ${charged} charged, ${settled} settled, ${manual} manual action, ${processing} processing, ${failed} failed, ${cancelled} cancelled, ${retried} retried, ${waiting} waiting`
   );
   return summary;
 }

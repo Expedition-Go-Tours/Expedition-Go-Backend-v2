@@ -451,16 +451,33 @@ async function ensureStripeCustomer(user) {
 }
 
 /**
- * Create a Stripe refund for a PaymentIntent
+ * Create a Stripe refund for a PaymentIntent.
+ *
+ * @param {string} paymentIntentId
+ * @param {number|null} amount - minor units; null = full refund
+ * @param {object} [opts]
+ * @param {object} [opts.metadata] - attached to the refund. The
+ *   `charge.refunded` webhook reads `metadata.reason === 'booking_modify'` to
+ *   skip reconciling the booking to REFUNDED (modify-triggered partial refunds
+ *   are accounted for by the modify service, not by a status flip).
  */
-async function createRefund(paymentIntentId, amount = null) {
+async function createRefund(paymentIntentId, amount = null, opts = {}) {
   try {
     const refundData = { payment_intent: paymentIntentId };
     if (amount !== null) {
       refundData.amount = amount;
     }
-    // Idempotency key prevents duplicate refunds on network retries.
-    const idempotencyKey = `refund_${paymentIntentId}_${amount ?? 'full'}`;
+    if (opts && opts.metadata && typeof opts.metadata === 'object') {
+      refundData.metadata = opts.metadata;
+    }
+    // Idempotency key prevents duplicate refunds on network retries. A caller
+    // can force a unique key (used by modify refunds so two separate partial
+    // refunds of the same amount can never collide).
+    const idempotencyKey =
+      (opts && opts.idempotencyKey) ||
+      (opts && opts.metadata
+        ? `refund_${paymentIntentId}_${amount ?? 'full'}_${opts.metadata.reason || 'custom'}_${crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`}`
+        : `refund_${paymentIntentId}_${amount ?? 'full'}`);
     const refund = await getStripe().refunds.create(refundData, { idempotencyKey });
     console.log(` Refund created: ${refund.id} for PaymentIntent: ${paymentIntentId}`);
     return refund;
@@ -541,6 +558,23 @@ async function calculateCommission(bookingAmount, supplierProfile) {
 }
 
 /**
+ * Detect whether the most recent refund on a PaymentIntent was issued by the
+ * booking-modify service (partial price-drop refund). Refunds list newest
+ * first, so a later full cancellation refund on the same intent is never
+ * mistaken for ours.
+ */
+async function isLatestRefundBookingModify(paymentIntentId) {
+  try {
+    const list = await getStripe().refunds.list({ payment_intent: paymentIntentId, limit: 3 });
+    const newest = (list && list.data && list.data[0]) || null;
+    return !!(newest && newest.metadata && newest.metadata.reason === 'booking_modify');
+  } catch (err) {
+    console.warn('[Stripe] Could not inspect refund metadata for', paymentIntentId, err.message);
+    return false;
+  }
+}
+
+/**
  * Process Stripe webhook events
  *
  * Idempotency is guaranteed by wrapping the entire flow in a single
@@ -562,6 +596,9 @@ async function processStripeWebhook(event) {
   let refundedBookings = [];
   let disputedBookings = [];
   let reconciledPaymentIntentId = null;
+  // Set when a booking-topup PaymentIntent is settled (parked change applied);
+  // its side-effect emails run after the transaction like every other branch.
+  let modifyApplied = null;
 
   await prisma.$transaction(async (tx) => {
     // Re-check inside the transaction — serialized by Postgres, no race
@@ -589,6 +626,49 @@ async function processStripeWebhook(event) {
     switch (event.type) {
       case 'payment_intent.succeeded': {
         const intent = event.data.object;
+        // ── Booking-modification top-up (pay the price delta on an existing,
+        // paid booking) ───────────────────────────────────────────────────
+        // The customer pays the delta with the Payment Element; once it lands
+        // we apply the previously parked BookingChange atomically (capacity is
+        // re-checked here; if it vanished the change is failed and the delta
+        // auto-refunded). Idempotent: only a PENDING_PAYMENT change row whose
+        // paymentIntentId matches is actionable.
+        if (intent.metadata?.action === 'booking-topup' && tx.bookingChange) {
+          const changeId = intent.metadata?.changeId;
+          const bookingId = intent.metadata?.bookingId;
+          let outcome = { applied: false, refundRequired: false };
+          if (changeId) {
+            const change = await tx.bookingChange
+              .findUnique({ where: { id: changeId } })
+              .catch(() => null);
+            if (
+              change &&
+              change.bookingId === bookingId &&
+              change.paymentIntentId === intent.id &&
+              change.status === 'PENDING_PAYMENT'
+            ) {
+              const { finalizeTopUpChangeInTx } = require('./bookingModify');
+              outcome = await finalizeTopUpChangeInTx(tx, change, intent);
+            }
+          }
+          modifyApplied = {
+            changeId,
+            bookingId,
+            applied: !!(outcome && outcome.applied),
+            refundRequired: !!(outcome && outcome.refundRequired),
+            paymentIntentId: intent.id,
+            payload: (outcome && outcome.payload) || null,
+          };
+          reconciledPaymentIntentId = intent.id;
+          console.log(
+            outcome && outcome.applied
+              ? ` booking-topup ${intent.id} → modification applied`
+              : outcome && outcome.refundRequired
+                ? ` booking-topup ${intent.id} → capacity/state lost; change failed, delta will be refunded`
+                : ` booking-topup ${intent.id} → no actionable parked change (ignored/duplicate)`
+          );
+          break;
+        }
         // ── Custom Payment Element flow (pay-now) ───────────────────
         // The frontend confirms a server-created PaymentIntent whose
         // metadata.bookingIds points at a HOLDING CheckoutDraft. Materialize it
@@ -662,6 +742,14 @@ async function processStripeWebhook(event) {
         const paymentIntentId = await resolvePaymentIntentForCharge(charge);
         if (!paymentIntentId) {
           console.log(' charge.refunded — no resolvable PaymentIntent, skipping');
+          break;
+        }
+        // A modification price-drop refund is accounted for by the modify
+        // service (audit + totals already updated when it was issued); flipping
+        // the booking to REFUNDED / cancelling the payout here would corrupt a
+        // still-active booking. Only skip when the NEWEST refund is ours.
+        if (await isLatestRefundBookingModify(paymentIntentId)) {
+          console.log(' charge.refunded — booking_modify refund; reconcile handled by modify service, skipping');
           break;
         }
         // A full reversal makes the booking terminal; a partial dashboard
@@ -805,23 +893,64 @@ async function processStripeWebhook(event) {
         // ── Legacy flow (booking created before session) ────────────
         const bookingIds = resolveSessionBookingIds(session);
         if (bookingIds.length > 0) {
-          const cancelled = await tx.booking.updateMany({
-            where: { id: { in: bookingIds }, status: 'PENDING', paymentStatus: 'PENDING', paidAt: null },
-            data: {
-              status: 'CANCELLED',
-              paymentStatus: 'FAILED',
-              cancellationReason: 'Payment session expired before completion',
-              cancelledAt: new Date(),
-            },
+          // Identify which of the bookings are reserve-now-pay-later: an expired
+          // SUPPLEMENTARY payment session (pay-now / card-update attempt) must
+          // NOT cancel a still-valid reservation — the pay-later sweep can keep
+          // auto-charging the reserved card, or the customer can retry. We only
+          // clear the manual-payment hold so the sweep resumes. Ordinary pay-now
+          // bookings whose session expired are cancelled as before.
+          const affected = await tx.booking.findMany({
+            where: { id: { in: bookingIds } },
+            select: { id: true, paymentTiming: true, status: true, paymentStatus: true, paidAt: true },
           });
-          if (cancelled.count > 0) {
-            cancelledBookings = await tx.booking.findMany({
-              where: { id: { in: bookingIds } },
-              include: {
-                customer: true,
-                tour: { select: { id: true, title: true, supplierId: true } },
+          const cancels = affected.filter((b) => b.paymentTiming !== 'later');
+          const payLater = affected.filter((b) => b.paymentTiming === 'later');
+
+          if (cancels.length > 0) {
+            const cancelled = await tx.booking.updateMany({
+              where: {
+                id: { in: cancels.map((b) => b.id) },
+                status: 'PENDING',
+                paymentStatus: 'PENDING',
+                paidAt: null,
+              },
+              data: {
+                status: 'CANCELLED',
+                paymentStatus: 'FAILED',
+                cancellationReason: 'Payment session expired before completion',
+                cancelledAt: new Date(),
               },
             });
+            if (cancelled.count > 0) {
+              cancelledBookings = await tx.booking.findMany({
+                where: { id: { in: cancels.map((b) => b.id) } },
+                include: {
+                  customer: true,
+                  tour: { select: { id: true, title: true, supplierId: true } },
+                },
+              });
+            }
+          }
+
+          // Pay-later reservation survives session expiry — release the manual
+          // hold so the sweep can auto-charge again (it will re-escalate if the
+          // reserved card still fails, and finalize after the activity date).
+          if (payLater.length > 0) {
+            await tx.booking.updateMany({
+              where: {
+                id: { in: payLater.map((b) => b.id) },
+                paymentTiming: 'later',
+                paymentStatus: 'PENDING',
+                paidAt: null,
+              },
+              data: {
+                requiresPaymentActionAt: null,
+                chargeRetries: 0,
+                nextRetryAt: null,
+                stripeCheckoutSessionId: null,
+              },
+            });
+            console.log(`[Stripe] checkout.session.expired — kept ${payLater.length} pay-later reservation(s), cleared manual-payment hold`);
           }
         }
         break;
@@ -1008,6 +1137,29 @@ async function processStripeWebhook(event) {
     }).catch(() => {});
   }
 
+  // ── Booking modification top-up settled: notify both parties ──────────
+  if (modifyApplied) {
+    const { notifyModificationApplied } = require('./bookingModify');
+    if (modifyApplied.applied && modifyApplied.payload) {
+      notifyModificationApplied(modifyApplied.bookingId, modifyApplied.payload).catch((err) =>
+        console.error('[Webhook] booking-modify notifications failed:', err.message)
+      );
+    } else if (modifyApplied.refundRequired && modifyApplied.paymentIntentId) {
+      createRefund(modifyApplied.paymentIntentId)
+        .then((refund) => {
+          console.log(`[Webhook] Auto-refunded failed top-up ${modifyApplied.paymentIntentId}: ${refund.id}`);
+          enqueueEmail({
+            type: 'refund-completed',
+            bookingId: modifyApplied.bookingId,
+            data: { refundReference: refund.id, refundedAt: new Date().toISOString() },
+          }).catch(() => {});
+        })
+        .catch((err) =>
+          console.error('[Webhook] Failed top-up auto-refund errored:', err.message)
+        );
+    }
+  }
+
   return { success: true, message: 'Event processed' };
 }
 
@@ -1026,7 +1178,7 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
   let bookings;
   const oversoldBookings = [];
 
-  const dbWork = async (client) => {
+      const dbWork = async (client) => {
     // Try to find bookings by metadata.bookingIds (main flow: bookings exist before PI)
     if (bookingIds.length > 0) {
       const updatedBookings = await client.booking.updateMany({
@@ -1045,7 +1197,11 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
         data: {
           status: 'CONFIRMED',
           paymentStatus: 'SUCCEEDED',
-          paidAt: new Date()
+          paidAt: new Date(),
+          // Customer completed the deferred payment manually (3DS / card
+          // update) or the sweep auto-charged — either way the manual-action
+          // hold is no longer needed.
+          requiresPaymentActionAt: null,
         }
       });
 
@@ -1079,7 +1235,8 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
         data: {
           status: 'CONFIRMED',
           paymentStatus: 'SUCCEEDED',
-          paidAt: new Date()
+          paidAt: new Date(),
+          requiresPaymentActionAt: null,
         }
       });
 

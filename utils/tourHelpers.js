@@ -732,8 +732,9 @@ function validateStoredPricing(blob) {
  * @param {object|string|null} selectedTimeOrOptions
  *   - string: the requested time slot (legacy positional arg)
  *   - object: { selectedTime, travelers } — travelers enables capacity pre-check
+ * @param {object} [options] - { excludeBookingId } to drop a booking from occupancy
  */
-async function checkTourAvailability(tourId, travelDate, selectedTimeOrOptions = null) {
+async function checkTourAvailability(tourId, travelDate, selectedTimeOrOptions = null, options = {}) {
   try {
     const tour = await prisma.tour.findUnique({
       where: { id: tourId },
@@ -778,10 +779,12 @@ async function checkTourAvailability(tourId, travelDate, selectedTimeOrOptions =
          COALESCE(COUNT(*) FILTER (WHERE status IN (${statusLiteral})), 0)::int AS "groupCount"
        FROM "Booking"
        WHERE "tourId" = $1 AND "selectedDate" = $2::date
-         ${selectedTime && !dayWide ? 'AND "selectedTime" = $3' : ''}`,
+         ${selectedTime && !dayWide ? 'AND "selectedTime" = $3' : ''}
+         ${options && options.excludeBookingId ? ` AND "id" <> $${3 + ((selectedTime && !dayWide) ? 1 : 0)}` : ''}`,
       tourId,
       dateKey,
-      ...(selectedTime && !dayWide ? [selectedTime] : [])
+      ...(selectedTime && !dayWide ? [selectedTime] : []),
+      ...(options && options.excludeBookingId ? [options.excludeBookingId] : [])
     );
 
     const row = counts && counts[0] ? counts[0] : { currentBookings: 0, groupCount: 0 };

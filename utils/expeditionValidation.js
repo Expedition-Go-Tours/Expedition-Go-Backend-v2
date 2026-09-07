@@ -337,6 +337,39 @@ const updateBookingPickupSchema = z.object({
   }),
 });
 
+// Customer self-service "modify booking" — change party size / date / time.
+// Travelers carries the desired traveller-count categories (merged over the
+// existing mix server-side); travelDate is a YYYY-MM-DD string.
+const modifyChangeFields = z.object({
+  travelDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  selectedTime: z.string().max(10).nullable().optional(),
+  travelers: z.record(z.number().int().min(0).max(50)).optional(),
+});
+
+const modifyBookingQuoteSchema = z.object({
+  body: modifyChangeFields,
+  query: z.any().optional(),
+  params: z.object({ id: z.string().min(1).max(100) }),
+});
+
+const modifyBookingSchema = z.object({
+  body: modifyChangeFields.refine(
+    (v) => v.travelDate !== undefined || v.selectedTime !== undefined || v.travelers !== undefined,
+    { message: 'Provide at least one change: travelDate, selectedTime or travelers' }
+  ),
+  query: z.any().optional(),
+  params: z.object({ id: z.string().min(1).max(100) }),
+});
+
+const discardModifySchema = z.object({
+  body: z.any().optional(),
+  query: z.any().optional(),
+  params: z.object({
+    id: z.string().min(1).max(100),
+    changeId: z.string().min(1).max(100),
+  }),
+});
+
 const createReviewSchema = z.object({
   body: z.object({
     bookingId: z.string().min(1).max(100),
@@ -429,6 +462,9 @@ module.exports = {
   bookingIdParamSchema,
   cancelBookingSchema,
   updateBookingPickupSchema,
+  modifyBookingQuoteSchema,
+  modifyBookingSchema,
+  discardModifySchema,
   createReviewSchema,
   getSupplierBookingsSchema,
   updateBookingStatusSchema,

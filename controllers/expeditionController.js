@@ -5,7 +5,7 @@ const AppError = require('../utils/appError');
 const cache = require('../utils/cacheHelper');
 const { sendEmail } = require('../utils/emailService');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/queue');
-const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, isValidEmail } = require('../utils/bookingHelpers');
+const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, evaluateModifyPolicy, isValidEmail } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../utils/tourHelpers');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../utils/availabilityCore');
 const { resolvePickupSelection, normalizePickupSnapshot } = require('../utils/geoUtils');
@@ -17,6 +17,12 @@ const { notifyAdmin } = require('../utils/adminNotificationService');
 const getConfig = require('../utils/getConfig');
 const { detachBookingFromActiveRequests } = require('../utils/financeHelpers');
 const { logActivity } = require('../utils/auditLogger');
+const {
+  quoteBookingModification,
+  applyBookingModification,
+  discardParkedChange,
+  refundAcrossSources,
+} = require('../utils/bookingModify');
 const { shouldCountTourView } = require('../utils/viewTracking');
 const ranking = require('../utils/homepageRanking');
 const eventEmitter = require('../utils/eventEmitter');
@@ -2253,8 +2259,41 @@ exports.getBooking = catchAsync(async (req, res, next) => {
 
   if (!booking) return next(new AppError('Booking not found', 404));
 
+  const modifyPolicy = evaluateModifyPolicy(booking, booking.tour);
+  let pendingPayment = null;
+  try {
+    if (prisma.bookingChange) {
+      pendingPayment = await prisma.bookingChange.findFirst({
+        where: { bookingId: booking.id, status: 'PENDING_PAYMENT' },
+        select: {
+          id: true,
+          delta: true,
+          expiresAt: true,
+          createdAt: true,
+          paymentIntentId: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+  } catch { pendingPayment = null; }
+
   const { sanitizeBookingPaymentInternals } = require('../utils/sanitizeBookings');
-  res.status(200).json({ status: 'success', data: { booking: sanitizeBookingPaymentInternals(booking) } });
+  const cleanBooking = sanitizeBookingPaymentInternals(booking);
+  cleanBooking.modify = {
+    allowed: modifyPolicy.allowed,
+    reason: modifyPolicy.reason,
+    cutoffHours: modifyPolicy.cutoffHours != null ? modifyPolicy.cutoffHours : null,
+    deadline: modifyPolicy.deadline ? modifyPolicy.deadline.toISOString() : null,
+    pendingPayment: pendingPayment
+      ? {
+          changeId: pendingPayment.id,
+          amount: pendingPayment.delta != null ? Number(pendingPayment.delta) : null,
+          expiresAt: pendingPayment.expiresAt ? pendingPayment.expiresAt.toISOString() : null,
+          createdAt: pendingPayment.createdAt.toISOString(),
+        }
+      : null,
+  };
+  res.status(200).json({ status: 'success', data: { booking: cleanBooking } });
 });
 
 /**
@@ -2373,7 +2412,26 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
   if (needsRefund) {
     try {
       const refundCents = Math.round(refundAmount * 100);
-      await createRefund(booking.stripePaymentIntentId, refundCents);
+      // A booking upgraded with a top-up holds captured funds across multiple
+      // PaymentIntents — spread the refund so the primary intent is never
+      // over-refunded. Without any top-ups this behaves like the old single
+      // full refund on the original intent.
+      let hasTopUpIntents = false;
+      try {
+        if (prisma.bookingChange) {
+          const topUp = await prisma.bookingChange.findFirst({
+            where: { bookingId: id, status: 'APPLIED', paymentIntentId: { not: null } },
+            select: { id: true },
+          });
+          hasTopUpIntents = !!topUp;
+        }
+      } catch { hasTopUpIntents = false; }
+
+      if (hasTopUpIntents) {
+        await refundAcrossSources(booking, refundCents);
+      } else {
+        await createRefund(booking.stripePaymentIntentId, refundCents);
+      }
       refundSucceeded = true;
       await prisma.booking.update({
         where: { id },
@@ -2402,6 +2460,56 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
   }).catch(() => {});
 
   res.status(200).json({ status: 'success', data: { booking: result } });
+});
+
+// ================================
+// CUSTOMER BOOKING MODIFICATION (party size / date / time)
+// ================================
+
+/**
+ * POST /expedition/bookings/:id/modify/quote
+ * Read-only re-quote for the modify page — never mutates the booking.
+ */
+exports.quoteModifyBooking = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const data = await quoteBookingModification({
+    bookingId: id,
+    customerId: req.user.id,
+    source: 'EXPEDITION',
+    body: req.body || {},
+  });
+  res.status(200).json({ status: 'success', data });
+});
+
+/**
+ * PATCH /expedition/bookings/:id/modify
+ * Apply a party/date/time change.
+ *  - No extra payment needed → applied immediately (refunds the difference
+ *    when the new total is lower / re-prices the reserved charge for pay-later).
+ *  - Paid booking with a HIGHER new total → returns a parked PENDING_PAYMENT
+ *    change + a server-minted PaymentIntent for the delta; the webhook applies
+ *    the change after the payment succeeds.
+ */
+exports.modifyBooking = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const data = await applyBookingModification({
+    bookingId: id,
+    customerId: req.user.id,
+    source: 'EXPEDITION',
+    body: req.body || {},
+    user: req.user,
+  });
+  res.status(200).json({ status: 'success', data });
+});
+
+/**
+ * POST /expedition/bookings/:id/modify/:changeId/discard
+ * Cancel a parked top-up the customer no longer wants to pay.
+ */
+exports.discardModifyChange = catchAsync(async (req, res, next) => {
+  const { changeId } = req.params;
+  const data = await discardParkedChange({ changeId, customerId: req.user.id });
+  res.status(200).json({ status: 'success', data });
 });
 
 // ================================

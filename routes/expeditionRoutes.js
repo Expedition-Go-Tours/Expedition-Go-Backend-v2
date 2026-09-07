@@ -6,6 +6,7 @@ const expeditionController = require('../controllers/expeditionController');
 const reviewController = require('../controllers/reviewController');
 const { uploadReviewPhotos } = require('../middleware/uploadMiddleware');
 const expeditionAnalyticsController = require('../controllers/expeditionAnalyticsController');
+const payLaterPaymentController = require('../controllers/payLaterPaymentController');
 const validate = require('../middleware/validate');
 const {
   getToursSchema,
@@ -28,6 +29,9 @@ const {
   bookingIdParamSchema,
   cancelBookingSchema,
   updateBookingPickupSchema,
+  modifyBookingQuoteSchema,
+  modifyBookingSchema,
+  discardModifySchema,
   getSupplierBookingsSchema,
   updateBookingStatusSchema,
   analyticsOverviewSchema,
@@ -961,6 +965,146 @@ router.get('/bookings/:id', protect, restrictTo('customer'), validate(bookingIdP
  *         description: Booking not found
  */
 router.patch('/bookings/:id/cancel', protect, restrictTo('customer'), validate(cancelBookingSchema), expeditionController.cancelBooking);
+
+/**
+ * @swagger
+ * /api/expedition/bookings/{id}/modify/quote:
+ *   post:
+ *     summary: Quote a booking modification (party size / date / time)
+ *     description: |
+ *       Read-only re-quote for the self-service "modify my booking" page. Re-prices
+ *       against the tour's CURRENT live price, re-checks capacity excluding this
+ *       booking's own travellers, and reports whether the difference would be
+ *       refunded, charged as a top-up, or is free (pay-later reservations update
+ *       their reserved charge instead). Never mutates the booking.
+ *     tags: [Expedition]
+ *     security: [bearerAuth: []]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Quote returned }
+ *       400: { description: Ineligible or invalid request }
+ *       401: { description: Authentication required }
+ *       404: { description: Booking not found }
+ */
+router.post(
+  '/bookings/:id/modify/quote',
+  protect,
+  restrictTo('customer'),
+  validate(modifyBookingQuoteSchema),
+  expeditionController.quoteModifyBooking
+);
+
+/**
+ * @swagger
+ * /api/expedition/bookings/{id}/modify:
+ *   patch:
+ *     summary: Apply a booking modification (party size / date / time)
+ *     description: |
+ *       Changes with no extra payment are applied immediately (a lower total
+ *       refunds the difference to the original payment method; reserve-now-pay-
+ *       later re-prices the reserved charge). A higher total on an already-paid
+ *       booking parks the change and returns a PaymentIntent for the delta,
+ *       applied by the payment webhook.
+ *     tags: [Expedition]
+ *     security: [bearerAuth: []]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Applied or parked for payment }
+ *       400: { description: Ineligible, invalid or stale quote }
+ *       401: { description: Authentication required }
+ *       404: { description: Booking not found }
+ */
+router.patch(
+  '/bookings/:id/modify',
+  protect,
+  restrictTo('customer'),
+  validate(modifyBookingSchema),
+  expeditionController.modifyBooking
+);
+
+/**
+ * @swagger
+ * /api/expedition/bookings/{id}/modify/{changeId}/discard:
+ *   post:
+ *     summary: Discard a parked modification top-up
+ *     description: Cancels the pending top-up PaymentIntent and discards the change.
+ *     tags: [Expedition]
+ *     security: [bearerAuth: []]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *       - in: path
+ *         name: changeId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Change discarded }
+ *       401: { description: Authentication required }
+ *       404: { description: Change not found }
+ */
+router.post(
+  '/bookings/:id/modify/:changeId/discard',
+  protect,
+  restrictTo('customer'),
+  validate(discardModifySchema),
+  expeditionController.discardModifyChange
+);
+
+/**
+ * @swagger
+ * /api/expedition/bookings/{id}/payment-state:
+ *   get:
+ *     summary: Get the payment state of an own booking (pay-later actionability)
+ *     description: |
+ *       Lets a customer with a reserve-now-pay-later booking see whether they can
+ *       pay now / update their card (3DS or card failure flag, or simply paying
+ *       early), or whether the automatic deferred charge is still scheduled.
+ *     tags: [Expedition]
+ *     security: [bearerAuth: []]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Payment state returned }
+ *       401: { description: Authentication required }
+ *       404: { description: Booking not found }
+ */
+router.get('/bookings/:id/payment-state', protect, restrictTo('customer'), payLaterPaymentController.getPaymentState);
+
+/**
+ * @swagger
+ * /api/expedition/bookings/{id}/pay-now:
+ *   post:
+ *     summary: Start a hosted checkout to complete a pay-later booking now
+ *     description: |
+ *       Creates a hosted Stripe Checkout session for the outstanding amount so the
+ *       customer can complete payment, resolve a 3DS challenge, or update their
+ *       card. Completion settles the booking via the normal webhook path.
+ *     tags: [Expedition]
+ *     security: [bearerAuth: []]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       201: { description: Checkout session started (url returned) }
+ *       400: { description: Booking not payable online }
+ *       404: { description: Booking not found }
+ */
+router.post('/bookings/:id/pay-now', protect, restrictTo('customer'), payLaterPaymentController.startPayNow);
 
 /**
  * @swagger

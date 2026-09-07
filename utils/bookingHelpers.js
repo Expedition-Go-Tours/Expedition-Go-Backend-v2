@@ -280,35 +280,108 @@ function generateBookingConfirmation(booking, tour, customer) {
 }
 
 /**
- * Check if booking can be modified
+ * Normalize a JSON blob (Prisma Json can arrive as object or string).
+ */
+function normalizeBlob(value) {
+  if (value == null) return null;
+  if (typeof value === 'string') {
+    try { return JSON.parse(value); } catch { return null; }
+  }
+  return value;
+}
+
+/**
+ * Resolve the concrete activity start time for a booking. When a time slot is
+ * stored we anchor the clock to that wall-clock time (UTC by default, matching
+ * how the booking advance-cutoff compares today).
+ */
+function activityStart(booking) {
+  const date = new Date(booking && booking.travelDate);
+  if (!Number.isFinite(date.getTime())) return null;
+  let startMs = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  const time = booking && booking.selectedTime;
+  if (typeof time === 'string' && /^\d{1,2}:\d{2}/.test(time)) {
+    const [h, m] = time.split(':').map((n) => parseInt(n, 10) || 0);
+    startMs += (h * 60 + m) * 60 * 1000;
+  }
+  return new Date(startMs);
+}
+
+/**
+ * Modification cutoff (hours before the activity start) for a booking.
+ * Defaults to the tour's cancellation window, then 24h.
+ */
+function modificationCutoffHours(booking, tour) {
+  const bt = normalizeBlob(tour && tour.bookingAndTickets) || {};
+  if (Number.isFinite(bt.modificationCutoffHours)) return Math.max(0, Number(bt.modificationCutoffHours));
+  const cancel = bt.cancellationPolicy && typeof bt.cancellationPolicy === 'object' ? bt.cancellationPolicy : null;
+  if (cancel && Number.isFinite(cancel.cancellationWindowHours)) return Math.max(0, Number(cancel.cancellationWindowHours));
+  return 24;
+}
+
+/**
+ * Legacy shape kept for backward compatibility / older callers. Prefer
+ * evaluateModifyPolicy (richer result) in new code.
  */
 function canModifyBooking(booking, tour) {
-  // Can't modify if already completed, cancelled, or refunded
-  if (['COMPLETED', 'CANCELLED', 'REFUNDED'].includes(booking.status)) {
-    return {
-      canModify: false,
-      reason: 'Booking cannot be modified in current status'
-    };
+  const evalResult = evaluateModifyPolicy(booking, tour);
+  if (!evalResult.allowed && ['COMPLETED', 'CANCELLED', 'REFUNDED', 'NO_SHOW'].includes(booking && booking.status)) {
+    return { canModify: false, reason: 'Booking cannot be modified in current status' };
   }
-  
-  // Check modification cutoff time
-  const now = new Date();
-  const bookingDate = new Date(booking.travelDate);
-  const hoursUntilBooking = (bookingDate - now) / (1000 * 60 * 60);
-  
-  const cutoffHours = tour.bookingAndTickets?.modificationCutoffHours || 24;
-  
-  if (hoursUntilBooking < cutoffHours) {
-    return {
-      canModify: false,
-      reason: `Modifications not allowed within ${cutoffHours} hours of tour`
-    };
-  }
-  
   return {
-    canModify: true,
-    reason: null
+    canModify: evalResult.allowed,
+    reason: evalResult.allowed ? null : evalResult.reason,
   };
+}
+
+/**
+ * Evaluate whether a customer booking can be modified (party size / date /
+ * time). Mirrors the cancellation window by default (24h), is time-slot aware,
+ * and locks out terminal states plus all-sales-final / changes-disabled tours.
+ *
+ * Returns { allowed, reason?, cutoffHours, deadline?, allSalesFinal? }.
+ */
+function evaluateModifyPolicy(booking, tour, now = new Date()) {
+  const status = booking && booking.status;
+  if (!['PENDING', 'CONFIRMED'].includes(status) || ['COMPLETED', 'CANCELLED', 'REFUNDED', 'NO_SHOW'].includes(status)) {
+    return { allowed: false, reason: 'Booking cannot be modified in current status', cutoffHours: 0, deadline: null };
+  }
+  // PENDING is only editable when it is an uncharged reserve-now-pay-later
+  // reservation; pay-now bookings are materialized straight to CONFIRMED.
+  if (status === 'PENDING' && booking.paymentTiming !== 'later') {
+    return { allowed: false, reason: 'Booking is awaiting payment and cannot be modified yet', cutoffHours: 0, deadline: null };
+  }
+
+  const bt = normalizeBlob(tour && tour.bookingAndTickets) || {};
+  const cancel = bt.cancellationPolicy && typeof bt.cancellationPolicy === 'object' ? bt.cancellationPolicy : null;
+  const type = (cancel && cancel.type) || bt.cancellationType || 'standard';
+
+  if (type === 'all_sales_final') {
+    return { allowed: false, reason: 'Changes are not available for this booking', cutoffHours: 0, deadline: null, allSalesFinal: true };
+  }
+  if (bt.changesAllowed === false) {
+    return { allowed: false, reason: 'Changes are not available for this tour', cutoffHours: 0, deadline: null };
+  }
+
+  const start = activityStart(booking);
+  if (!start) {
+    return { allowed: false, reason: 'Unable to determine the activity start time', cutoffHours: 0, deadline: null };
+  }
+
+  const cutoffHours = modificationCutoffHours(booking, tour);
+  const hoursUntil = (start - new Date(now)) / (60 * 60 * 1000);
+  const deadline = new Date(start.getTime() - cutoffHours * 60 * 60 * 1000);
+
+  if (!Number.isFinite(hoursUntil) || hoursUntil < cutoffHours) {
+    return {
+      allowed: false,
+      reason: `Modifications are not allowed within ${cutoffHours} hour${cutoffHours === 1 ? '' : 's'} of the activity start`,
+      cutoffHours,
+      deadline,
+    };
+  }
+
+  return { allowed: true, reason: null, cutoffHours, deadline };
 }
 
 /**
@@ -435,6 +508,9 @@ module.exports = {
   getBookingStats,
   generateBookingConfirmation,
   canModifyBooking,
+  evaluateModifyPolicy,
+  modificationCutoffHours,
+  activityStart,
   evaluateCancellationPolicy,
   calculateRefundAmount,
   getUpcomingBookings
