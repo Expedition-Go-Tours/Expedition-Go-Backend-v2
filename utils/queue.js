@@ -333,6 +333,7 @@ const EMAIL_BOOKING_INCLUDE = {
     select: {
       id: true,
       title: true,
+      slug: true,
       description: true,
       photos: true,
       productContent: true,
@@ -341,6 +342,9 @@ const EMAIL_BOOKING_INCLUDE = {
       durationMinutes: true,
       supplier: { select: { id: true, name: true, email: true, phone: true } },
     },
+  },
+  review: {
+    select: { id: true, supplierResponse: true, supplierResponseAt: true },
   },
 };
 
@@ -369,6 +373,7 @@ const EMAIL_JOB_DISPATCH = {
   'supplier-changed-booking': ['sendSupplierChangedBookingEmail', true],
   'supplier-cancelled-booking': ['sendSupplierCancelledBookingEmail', true],
   'review-request': ['sendReviewRequestEmail', true],
+  'supplier-review-response': ['sendSupplierResponseEmail', true],
   // supplier
   'supplier-new-booking': ['sendSupplierNewBookingEmail', true],
   'supplier-pay-later-charged': ['sendSupplierPayLaterChargedEmail', true],

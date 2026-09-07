@@ -1529,6 +1529,18 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
     }).catch((err) => console.error('[Notification] enqueueNotification (booking update) failed:', err.message));
   }
 
+  // Completed + paid → nudge the customer to write a review (legacy/Travio flow).
+  if (status === 'COMPLETED') {
+    const { enqueueReviewRequest } = require('../utils/reviewRequestNotify');
+    const tour = booking.tourId
+      ? await prisma.tour.findUnique({
+          where: { id: booking.tourId },
+          select: { id: true, slug: true, title: true },
+        })
+      : null;
+    enqueueReviewRequest({ ...booking, tour }, tour);
+  }
+
   // Manual-confirmation flow: when a supplier accepts a previously-awaiting
   // (paid PENDING) booking, the customer receives the confirmation email.
   if (status === 'CONFIRMED' && booking.status === 'PENDING' && booking.paymentStatus === 'SUCCEEDED') {

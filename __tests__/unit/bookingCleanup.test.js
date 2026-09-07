@@ -2,6 +2,10 @@ jest.mock('../../utils/prismaClient', () => ({
   booking: { findMany: jest.fn(), updateMany: jest.fn() },
 }));
 
+jest.mock('../../utils/reviewRequestNotify', () => ({
+  enqueueReviewRequest: jest.fn(),
+}));
+
 jest.mock('../../utils/stripeHelpers', () => {
   let stripeInstance = null;
   return {
@@ -202,6 +206,11 @@ describe('cancelStalePendingBookings', () => {
 describe('autoCompleteBookings', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    prisma.booking.findMany.mockResolvedValue([
+      { id: 'b1', customerId: 'u1', tourId: 't1', source: 'EXPEDITION', paymentStatus: 'SUCCEEDED', clientOrigin: null, tour: { id: 't1', slug: 'slug', title: 'Title' } },
+      { id: 'b2', customerId: 'u2', tourId: 't1', source: 'EXPEDITION', paymentStatus: 'SUCCEEDED', clientOrigin: null, tour: { id: 't1', slug: 'slug', title: 'Title' } },
+      { id: 'b3', customerId: 'u3', tourId: 't2', source: 'GHANA', paymentStatus: 'SUCCEEDED', clientOrigin: null, tour: { id: 't2', slug: 'gh', title: 'Ghana' } },
+    ]);
     prisma.booking.updateMany.mockResolvedValue({ count: 3 });
   });
 
@@ -209,15 +218,15 @@ describe('autoCompleteBookings', () => {
     const result = await autoCompleteBookings();
 
     const call = prisma.booking.updateMany.mock.calls[0];
-    expect(call[0].where).toEqual(expect.objectContaining({ status: 'CONFIRMED' }));
-    expect(call[0].where.travelDate).toEqual(expect.objectContaining({ lt: expect.any(Date) }));
+    expect(call[0].where).toEqual(expect.objectContaining({ id: { in: ['b1', 'b2', 'b3'] }, status: 'CONFIRMED' }));
     expect(call[0].data).toEqual(expect.objectContaining({ status: 'COMPLETED' }));
     expect(result).toEqual({ completed: 3 });
   });
 
   it('returns zero when nothing is due', async () => {
-    prisma.booking.updateMany.mockResolvedValue({ count: 0 });
+    prisma.booking.findMany.mockResolvedValue([]);
     const result = await autoCompleteBookings();
+    expect(prisma.booking.updateMany).not.toHaveBeenCalled();
     expect(result).toEqual({ completed: 0 });
   });
 });

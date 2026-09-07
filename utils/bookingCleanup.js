@@ -202,27 +202,48 @@ async function cancelStalePendingBookings() {
  */
 async function autoCompleteBookings() {
   const prisma = require('./prismaClient');
+  const { enqueueReviewRequest } = require('./reviewRequestNotify');
   const now = new Date();
   // The activity date is stored at midnight UTC in the tour's timezone context;
   // once `travelDate` is strictly before today (start of day), the activity is
   // in the past.
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-  const updated = await prisma.booking.updateMany({
+  // Fetch the rows first so we can notify each customer that their trip is
+  // complete (the old updateMany-only path had no side effects).
+  const rows = await prisma.booking.findMany({
     where: {
       status: 'CONFIRMED',
       travelDate: { lt: startOfToday },
     },
-    data: {
-      status: 'COMPLETED',
-      updatedAt: new Date(),
+    select: {
+      id: true,
+      customerId: true,
+      tourId: true,
+      source: true,
+      paymentStatus: true,
+      clientOrigin: true,
+      tour: { select: { id: true, slug: true, title: true } },
     },
   });
 
-  if (updated.count > 0) {
-    console.log(`[BookingCleanup] Auto-completed ${updated.count} past booking(s) → COMPLETED`);
+  if (rows.length > 0) {
+    const updated = await prisma.booking.updateMany({
+      where: { id: { in: rows.map((r) => r.id) }, status: 'CONFIRMED' },
+      data: { status: 'COMPLETED', updatedAt: new Date() },
+    });
+
+    for (const booking of rows) {
+      enqueueReviewRequest(booking, booking.tour);
+    }
+
+    if (updated.count > 0) {
+      console.log(`[BookingCleanup] Auto-completed ${updated.count} past booking(s) → COMPLETED`);
+    }
+    return { completed: updated.count };
   }
-  return { completed: updated.count };
+
+  return { completed: 0 };
 }
 
 /**

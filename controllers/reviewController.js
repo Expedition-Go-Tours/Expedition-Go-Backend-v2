@@ -213,7 +213,7 @@ exports.updateReview = catchAsync(async (req, res, next) => {
     companions
   } = req.body;
 
-  const photos = (req.files || []).length > 0
+  const newPhotoUploads = (req.files || []).length > 0
     ? (req.files || []).map((f) => f.path || f.secure_url || f.url).filter(isValidCloudinaryUrl)
     : undefined;
 
@@ -226,6 +226,13 @@ exports.updateReview = catchAsync(async (req, res, next) => {
     return next(new AppError('Review not found or access denied', 404));
   }
 
+  // Merged photo set = previously stored photos + any freshly uploaded ones.
+  // The customer edit UI only ever submits *new* files, so a plain replace
+  // would silently wipe existing photos (and delete them from Cloudinary).
+  const photos = newPhotoUploads
+    ? [...(Array.isArray(existingReview.photos) ? existingReview.photos : []), ...newPhotoUploads]
+    : undefined;
+
   const parsedUpdateRating = rating !== undefined ? parseInt(rating) : undefined;
   if (parsedUpdateRating !== undefined && (parsedUpdateRating < 1 || parsedUpdateRating > 5)) {
     return next(new AppError('Rating must be between 1 and 5', 400));
@@ -233,12 +240,6 @@ exports.updateReview = catchAsync(async (req, res, next) => {
 
   if (comment !== undefined && comment !== null && comment.trim().length < 20) {
     return next(new AppError('Review comment must be at least 20 characters', 400));
-  }
-
-  if (photos !== undefined) {
-    const oldPhotos = existingReview.photos || [];
-    const removedPhotos = oldPhotos.filter(url => !photos.includes(url));
-    await Promise.all(removedPhotos.map(url => deleteCloudinaryImage(url, 3, { reviewId: id })));
   }
 
   const updateData = {};
@@ -591,6 +592,14 @@ exports.addSupplierResponse = catchAsync(async (req, res, next) => {
       tourId: review.tourId
     }
   }).catch((err) => console.error('[Notification] enqueueNotification (review response) failed:', err.message));
+
+  // Email the customer the response (only when the review is tied to a booking
+  // so we can resolve the correct storefront origin + tour deep link).
+  if (review.bookingId) {
+    const { enqueueEmail } = require('../utils/queue');
+    enqueueEmail({ type: 'supplier-review-response', bookingId: review.bookingId })
+      .catch((err) => console.error('[Email] supplier-review-response failed:', err.message));
+  }
 
   // Log activity
   await logActivity({
@@ -957,7 +966,7 @@ exports.getPendingReviews = catchAsync(async (req, res, next) => {
           }
         }
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
       skip,
       take: parseInt(limit)
     }),

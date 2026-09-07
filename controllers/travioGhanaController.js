@@ -2164,7 +2164,7 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
     where: { id },
     data: updateData,
     include: {
-      tour: { select: { id: true, title: true } },
+      tour: { select: { id: true, title: true, slug: true } },
       customer: { select: { id: true, name: true, email: true } },
     },
   });
@@ -2174,8 +2174,14 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
     type: 'BOOKING_STATUS_UPDATED',
     title: 'Booking Status Updated',
     message: `Your booking "${booking.tour.title}" is now ${status}.`,
-    data: { bookingId: id, status, source: 'expedition' },
+    data: { bookingId: id, status, source: 'ghana' },
   });
+
+  // Completed + paid → nudge the customer to write a review.
+  if (status === 'COMPLETED') {
+    const { enqueueReviewRequest } = require('../utils/reviewRequestNotify');
+    enqueueReviewRequest(updated, updated.tour);
+  }
 
   enqueueEvent({
     name: 'ghana.booking_status_updated',

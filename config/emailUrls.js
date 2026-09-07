@@ -98,13 +98,16 @@ module.exports = {
   manageBooking: (bookingId, origin) => brandPath(origin, 'manage', bookingId),
   managePaymentMethod: (bookingId, origin) => brandPath(origin, 'payment', bookingId),
   addPickupLocation: (bookingId, origin) => brandPath(origin, 'pickup', bookingId),
-  // Review goes through the guided /review/:tourSlug flow on Expedition (there
-  // is no /booking/:id/review page there); legacy keeps its deep link.
-  writeReview: (bookingId, origin, tourSlug) => {
+  // Review goes through the guided /review/:tourSlug flow on every storefront.
+  // The link carries bookingId (+tourId) as query params so a cold open can
+  // still enable submission and, on legacy, self-resolve the booking.
+  writeReview: (bookingId, origin, tourSlug, tourId) => {
     const base = baseUrl(origin);
-    if (isLegacy(origin)) return `${base}/booking/${bookingId}/review`;
-    const slug = tourSlug ? encodeURIComponent(tourSlug) : bookingId;
-    return `${base}/review/${slug}`;
+    const params = new URLSearchParams();
+    params.set('bookingId', bookingId);
+    if (tourId) params.set('tourId', tourId);
+    const slug = tourSlug || tourId || bookingId;
+    return `${base}/review/${encodeURIComponent(slug)}?${params.toString()}`;
   },
   viewRefund: (bookingId, origin) => brandPath(origin, 'refund', bookingId),
   viewCancellation: (bookingId, origin) => brandPath(origin, 'cancel', bookingId),

@@ -183,6 +183,19 @@ async function dispatchDueReminders() {
       failed += 1;
       continue;
     }
+
+    // A review-request scheduled earlier must not send after the customer has
+    // already submitted a review.
+    if (reminder.type === 'REVIEW_REQUEST') {
+      const still = await prisma.booking.findUnique({
+        where: { id: reminder.bookingId },
+        select: { id: true, review: { select: { id: true } } },
+      });
+      if (!still || still.review) {
+        await markReminder(reminder.id, 'SKIPPED', 'Already reviewed');
+        continue;
+      }
+    }
     try {
       await enqueueEmail(email);
       await markReminder(reminder.id, 'SENT');

@@ -327,7 +327,7 @@ async function buildBookingBase(booking) {
     manageUrl: emailUrls.manageBooking(booking.id, clientOrigin),
     managePaymentUrl: emailUrls.managePaymentMethod(booking.id, clientOrigin),
     pickupUrl: emailUrls.addPickupLocation(booking.id, clientOrigin),
-    reviewUrl: emailUrls.writeReview(booking.id, clientOrigin, tour.slug),
+    reviewUrl: emailUrls.writeReview(booking.id, clientOrigin, tour.slug, tour.id),
     refundUrl: emailUrls.viewRefund(booking.id, clientOrigin),
     cancellationUrl: emailUrls.viewCancellation(booking.id, clientOrigin),
     browseUrl: emailUrls.browseExperiences(clientOrigin),
@@ -674,7 +674,7 @@ async function sendReviewRequestEmail(booking) {
   const origin = emailUrls.bookingClientOrigin(b);
   const data = {
     ...base,
-    reviewUrl: emailUrls.writeReview(b.id, origin, b.tour?.slug),
+    reviewUrl: emailUrls.writeReview(b.id, origin, b.tour?.slug, b.tour?.id),
     browseUrl: emailUrls.browseExperiences(origin),
     supportEmail: (await getShellVars()).supportEmail,
   };
@@ -683,6 +683,36 @@ async function sendReviewRequestEmail(booking) {
     subject: 'How was your experience?',
     key: 'review-request',
     data,
+  });
+}
+
+/**
+ * Notifies the customer (by email) that an operator replied to their review.
+ * Booking worker include carries `review` (id/supplierResponse/…); the CTA goes
+ * to the tour page's reviews anchor so the customer sees the public reply.
+ */
+async function sendSupplierResponseEmail(booking) {
+  const b = await resolveBookingContext(booking);
+  const review = b.review || {};
+  const tourTitle = b.tour?.title || 'your trip';
+  const origin = emailUrls.bookingClientOrigin(b);
+  const slug = b.tour?.slug || b.tour?.id || '';
+  const tourUrl = `${origin}/tour/${encodeURIComponent(slug)}#reviews`;
+  const reply = (review.supplierResponse || '').trim();
+
+  return sendEmail({
+    to: b.customer?.email,
+    subject: `An operator responded to your review of "${tourTitle}"`,
+    template: 'generic-notification',
+    data: {
+      header: `The operator responded to your review of "${tourTitle}"`,
+      message: reply
+        ? `"${reply}"`
+        : 'An operator responded to your review. See their response on the tour page.',
+      buttonUrl: tourUrl,
+      buttonText: 'See the response',
+      userName: b.customer?.name,
+    },
   });
 }
 
@@ -1361,6 +1391,7 @@ module.exports = {
   sendSupplierChangedBookingEmail,
   sendSupplierCancelledBookingEmail,
   sendReviewRequestEmail,
+  sendSupplierResponseEmail,
 
   // supplier
   sendSupplierNewBookingEmail,
