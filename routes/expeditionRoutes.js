@@ -3,6 +3,8 @@ const { createLimiter } = require('../middleware/dynamicRateLimiter');
 const { protect } = require('../middleware/authMiddleware');
 const { restrictTo } = require('../middleware/authMiddleware');
 const expeditionController = require('../controllers/expeditionController');
+const reviewController = require('../controllers/reviewController');
+const { uploadReviewPhotos } = require('../middleware/uploadMiddleware');
 const expeditionAnalyticsController = require('../controllers/expeditionAnalyticsController');
 const validate = require('../middleware/validate');
 const {
@@ -26,7 +28,6 @@ const {
   bookingIdParamSchema,
   cancelBookingSchema,
   updateBookingPickupSchema,
-  createReviewSchema,
   getSupplierBookingsSchema,
   updateBookingStatusSchema,
   analyticsOverviewSchema,
@@ -1062,7 +1063,7 @@ router.patch('/bookings/:id/pickup', protect, restrictTo('customer'), validate(u
  *       404:
  *         description: Booking not found
  */
-router.post('/reviews', protect, restrictTo('customer'), validate(createReviewSchema), expeditionController.createReview);
+router.post('/reviews', protect, restrictTo('customer'), uploadReviewPhotos, reviewController.createReview);
 
 // ================================
 // SUPPLIER ROUTES (protected)

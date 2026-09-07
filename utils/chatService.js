@@ -322,6 +322,21 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
         data: { conversationId, senderId, senderName: sender.name, messageId: message.id, chatType, conversationType: participant.conversation.type }
       });
     }
+
+    // Storefront visitors messaging the admin "Customer Support" inbox
+    // (USER_SUPPORT) must ring the admin bell. Previously only supplier senders
+    // and expedition-chat travellers were notified.
+    const isInternalSender =
+      sender.roles.includes('admin') || sender.roles.includes('expedition');
+    if (participant.conversation.type === 'USER_SUPPORT' && !sender.roles.includes('supplier') && !isInternalSender) {
+      console.log('[ChatService] notifyAdmin user-support:', { conversationId, chatType, senderName: sender.name });
+      notifyAdmin({
+        type: 'NEW_MESSAGE',
+        title: `New message from ${sender.name}`,
+        message: content.length > 100 ? content.slice(0, 100) + '...' : content,
+        data: { conversationId, senderId, senderName: sender.name, messageId: message.id, chatType: 'customers', conversationType: participant.conversation.type }
+      });
+    }
   }
 
   return message;
