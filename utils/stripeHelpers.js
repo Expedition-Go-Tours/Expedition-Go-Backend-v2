@@ -1212,7 +1212,7 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
           where: { id: { in: bookingIds } },
           include: {
             customer: true,
-            tour: { include: { supplier: true, bookingAndTickets: true } }
+            tour: { include: { supplier: true } }
           }
         });
       }
@@ -1246,7 +1246,7 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
           where: { stripePaymentIntentId: paymentIntent.id },
           include: {
             customer: true,
-            tour: { include: { supplier: true, bookingAndTickets: true } }
+            tour: { include: { supplier: true } }
           }
         });
       }
