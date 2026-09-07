@@ -986,7 +986,7 @@ describe('expeditionController', () => {
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
           status: 'success',
-          data: { bookings: [mockBooking] },
+          data: { bookings: [{ ...mockBooking, refundState: null }] },
           pagination: expect.objectContaining({ currentPage: 1, totalPages: 1, totalCount: 1, limit: 10 }),
         })
       );
