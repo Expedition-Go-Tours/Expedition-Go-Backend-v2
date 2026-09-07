@@ -1,4 +1,5 @@
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit');
 
 function envKey(name, suffix) {
   return `RATELIMIT_${name.toUpperCase().replace(/-/g, '_')}_${suffix}`;
@@ -7,17 +8,19 @@ function envKey(name, suffix) {
 function createLimiter(options) {
   const maxKey = envKey(options.name, 'MAX');
   const windowKey = envKey(options.name, 'WINDOW_MS');
+  const { name, defaultMax, defaultWindowMs, message, skip, ...rest } = options;
 
-  const max = parseInt(process.env[maxKey], 10) || options.defaultMax;
-  const windowMs = parseInt(process.env[windowKey], 10) || options.defaultWindowMs;
+  const max = parseInt(process.env[maxKey], 10) || defaultMax;
+  const windowMs = parseInt(process.env[windowKey], 10) || defaultWindowMs;
 
   return rateLimit({
     windowMs,
     max,
-    message: options.message,
+    message,
     standardHeaders: true,
     legacyHeaders: false,
-    skip: options.skip || ((req) => req.method === 'OPTIONS'),
+    skip: skip || ((req) => req.method === 'OPTIONS'),
+    ...rest,
   });
 }
 
@@ -30,18 +33,26 @@ function createLimiter(options) {
 function createUserLimiter(options) {
   const maxKey = envKey(options.name, 'MAX');
   const windowKey = envKey(options.name, 'WINDOW_MS');
+  const { name, defaultMax, defaultWindowMs, message, skip, ...rest } = options;
 
-  const max = parseInt(process.env[maxKey], 10) || options.defaultMax;
-  const windowMs = parseInt(process.env[windowKey], 10) || options.defaultWindowMs;
+  const max = parseInt(process.env[maxKey], 10) || defaultMax;
+  const windowMs = parseInt(process.env[windowKey], 10) || defaultWindowMs;
 
   return rateLimit({
     windowMs,
     max,
-    message: options.message,
+    message,
     standardHeaders: true,
     legacyHeaders: false,
-    keyGenerator: (req) => (req.user?.id ? `user:${req.user.id}` : req.ip || 'anon'),
-    skip: options.skip || ((req) => req.method === 'OPTIONS'),
+    keyGenerator: (req) => {
+      // Authenticated users are keyed on their verified id. Unauthenticated
+      // fallback normalizes IPv6 via ipKeyGenerator so address-rotation can't
+      // silently bypass the per-user bound.
+      if (req.user?.id) return `user:${req.user.id}`;
+      return req.ip ? ipKeyGenerator(req.ip) : 'anon';
+    },
+    skip: skip || ((req) => req.method === 'OPTIONS'),
+    ...rest,
   });
 }
 
