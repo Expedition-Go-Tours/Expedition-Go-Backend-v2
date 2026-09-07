@@ -1629,6 +1629,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         paymentMethodId: req.body.paymentMethodId,
         confirm: false,
         metadata: piMetadata,
+        user: req.user,
       });
       // Stripe idempotency replays return the ORIGINAL creation response (status
       // "requires_confirmation") even when the live PaymentIntent was since
@@ -1648,6 +1649,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
           confirm: false,
           metadata: piMetadata,
           idempotencyKey: `paylater:${crypto.randomUUID()}`,
+          user: req.user,
         });
       }
     } catch (err) {

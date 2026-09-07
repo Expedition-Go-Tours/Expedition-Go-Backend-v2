@@ -545,6 +545,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       paymentMethodId,
       idempotencyKey,
       clientUrl: resolveAllowedClientUrl(req),
+      user: req.user,
       metadata: {
         customerId,
         bookingIds: 'placeholder'

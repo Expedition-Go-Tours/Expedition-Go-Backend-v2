@@ -35,7 +35,7 @@ jest.mock('stripe', () => {
     accounts: { create: jest.fn(), createLoginLink: jest.fn() },
     accountLinks: { create: jest.fn() },
     customers: { create: jest.fn(), list: jest.fn() },
-    paymentIntents: { create: jest.fn(), retrieve: jest.fn(), cancel: jest.fn() },
+    paymentIntents: { create: jest.fn(), retrieve: jest.fn(), update: jest.fn(), cancel: jest.fn() },
     checkout: { sessions: { create: jest.fn() } },
   };
   return jest.fn(() => mockStripeInstance);
@@ -633,6 +633,94 @@ describe('createPaymentIntent customer guard', () => {
     await createPaymentIntent({ amount: 1000, confirm: true, clientUrl: 'https://expeditiongotours.vercel.app/' });
     const [data] = mockStripeInstance.paymentIntents.create.mock.calls[0];
     expect(data.return_url).toBe('https://expeditiongotours.vercel.app/booking/complete');
+  });
+});
+
+describe('createPaymentIntent stale-customer repair', () => {
+  beforeEach(() => {
+    mockStripeInstance.paymentIntents.create.mockClear();
+    mockStripeInstance.paymentIntents.update.mockClear();
+    mockStripeInstance.customers.create.mockReset();
+    prisma.user.update.mockReset();
+  });
+
+  const missingErr = () => {
+    const e = new Error("No such customer: 'cus_stale'");
+    e.raw = { code: 'resource_missing' };
+    return e;
+  };
+
+  it('retries without a customer when the stored customer is missing', async () => {
+    mockStripeInstance.paymentIntents.create
+      .mockRejectedValueOnce(missingErr())
+      .mockResolvedValueOnce({ id: 'pi_repaired', status: 'requires_confirmation' });
+
+    const intent = await createPaymentIntent({
+      amount: 1000,
+      customerId: 'cus_stale',
+      paymentMethodId: 'pm_1',
+      confirm: false,
+    });
+
+    expect(intent.id).toBe('pi_repaired');
+    const [firstData] = mockStripeInstance.paymentIntents.create.mock.calls[0];
+    const [retryData] = mockStripeInstance.paymentIntents.create.mock.calls[1];
+    expect(firstData.customer).toBe('cus_stale');
+    expect(retryData).not.toHaveProperty('customer');
+  });
+
+  it('creates + attaches a fresh customer and persists it when user is provided', async () => {
+    mockStripeInstance.paymentIntents.create
+      .mockRejectedValueOnce(missingErr())
+      .mockResolvedValueOnce({ id: 'pi_repaired', status: 'requires_confirmation' });
+    mockStripeInstance.customers.create.mockResolvedValue({ id: 'cus_fresh' });
+    mockStripeInstance.paymentIntents.update.mockResolvedValue({ id: 'pi_repaired', customer: 'cus_fresh' });
+    prisma.user.update.mockResolvedValue({});
+
+    const intent = await createPaymentIntent({
+      amount: 1000,
+      customerId: 'cus_stale',
+      paymentMethodId: 'pm_1',
+      confirm: false,
+      user: { id: 'u1', email: 'a@b.com', name: 'A B' },
+    });
+
+    expect(intent.id).toBe('pi_repaired');
+    expect(mockStripeInstance.customers.create).toHaveBeenCalled();
+    expect(mockStripeInstance.paymentIntents.update).toHaveBeenCalledWith('pi_repaired', { customer: 'cus_fresh' });
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'u1' },
+      data: { stripeCustomerId: 'cus_fresh' },
+    });
+  });
+
+  it('returns the no-customer intent even when fresh-customer attach fails', async () => {
+    mockStripeInstance.paymentIntents.create
+      .mockRejectedValueOnce(missingErr())
+      .mockResolvedValueOnce({ id: 'pi_repaired', status: 'requires_confirmation' });
+    mockStripeInstance.customers.create.mockResolvedValue({ id: 'cus_fresh' });
+    mockStripeInstance.paymentIntents.update.mockRejectedValue(new Error('update failed'));
+    prisma.user.update.mockResolvedValue({});
+
+    const intent = await createPaymentIntent({
+      amount: 1000,
+      customerId: 'cus_stale',
+      paymentMethodId: 'pm_1',
+      confirm: false,
+      user: { id: 'u1', email: 'a@b.com', name: 'A B' },
+    });
+
+    expect(intent.id).toBe('pi_repaired');
+    expect(prisma.user.update).toHaveBeenCalled(); // mapping still repaired on the user row
+  });
+
+  it('still throws for non-customer Stripe errors', async () => {
+    mockStripeInstance.paymentIntents.create.mockRejectedValue(new Error('card declined'));
+
+    await expect(
+      createPaymentIntent({ amount: 1000, customerId: 'cus_stale', paymentMethodId: 'pm_1' })
+    ).rejects.toThrow('card declined');
+    expect(mockStripeInstance.paymentIntents.create).toHaveBeenCalledTimes(1);
   });
 });
 

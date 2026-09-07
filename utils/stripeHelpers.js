@@ -64,7 +64,16 @@ function canonicalStringify(value) {
 }
 
 /**
- * Create a Payment Intent with commission split
+ * Create a Payment Intent with commission split.
+ *
+ * If a stored Stripe Customer id no longer exists on the current account (a
+ * test↔live key switch, an account migration, or a customer deleted from the
+ * dashboard), Stripe rejects the create with "No such customer". A
+ * PaymentIntent does NOT require a customer, so on that specific error we
+ * retry without one and then repair the user's mapping by attaching a freshly
+ * created customer to the intent — exactly what the custom Payment Element
+ * checkout path already does, so reserve-now/pay-later no longer 400s for
+ * users whose customer predates the key switch.
  */
 async function createPaymentIntent({
   amount,
@@ -74,9 +83,17 @@ async function createPaymentIntent({
   metadata = {},
   idempotencyKey,
   confirm = true,
-  clientUrl
+  clientUrl,
+  user = null
 }) {
-  try {
+  const customerMissing = (err) =>
+    err && (err.raw?.code === 'resource_missing' || /No such customer/i.test(String(err.message || '')));
+
+  // Build the create call so both the original attempt and the no-customer
+  // repair retry share one code path. A forced unique idempotency key keeps the
+  // repair retry from colliding with the failed original (Stripe rejects a
+  // reused key with different parameters).
+  const create = async (cust, retry = false) => {
     // Only attach a customer when we have a real Stripe Customer ID. Stripe
     // rejects an empty string for 'customer' and a PaymentIntent is valid
     // without one, so a user whose async customer creation never completed
@@ -94,8 +111,8 @@ async function createPaymentIntent({
       ...(confirm && baseUrl ? { return_url: `${baseUrl}/booking/complete` } : {}),
       metadata
     };
-    if (isValidStripeCustomerId(customerId)) {
-      paymentIntentData.customer = customerId;
+    if (isValidStripeCustomerId(cust)) {
+      paymentIntentData.customer = cust;
     }
 
     // Idempotency: an explicit key wins, otherwise derive one from the FINAL
@@ -103,14 +120,39 @@ async function createPaymentIntent({
     // field list would silently break whenever a body field is added or
     // removed between retries (e.g. a customer attached once async creation
     // completes) — Stripe rejects a reused key with different parameters.
-    const options = idempotencyKey
-      ? { idempotencyKey }
+    const key = retry && idempotencyKey
+      ? `${idempotencyKey}:no-customer`
+      : idempotencyKey;
+    const options = key
+      ? { idempotencyKey: key }
       : { idempotencyKey: `pi-create:${crypto.createHash('sha256').update(canonicalStringify(paymentIntentData)).digest('hex')}` };
-    const paymentIntent = await getStripe().paymentIntents.create(paymentIntentData, options);
 
+    const paymentIntent = await getStripe().paymentIntents.create(paymentIntentData, options);
     console.log(` Payment Intent created: ${paymentIntent.id} for amount: ${amount}`);
     return paymentIntent;
+  };
+
+  try {
+    return await create(customerId);
   } catch (error) {
+    // A stored customer id can outlive its Stripe account (test ↔ live keys or
+    // a deleted customer). Retry without a customer, then repair the mapping by
+    // attaching a freshly created customer so the next checkout works first try.
+    if (customerId && customerMissing(error)) {
+      console.warn(`[Stripe] Stored customer ${customerId} not found on this account; repairing for user ${user?.id || 'unknown'}.`);
+      const paymentIntent = await create(null, true);
+
+      if (user && user.id) {
+        try {
+          const fresh = await createStripeCustomer({ userId: user.id, email: user.email, name: user.name });
+          await getStripe().paymentIntents.update(paymentIntent.id, { customer: fresh });
+          console.log(`[Stripe] Re-linked PaymentIntent ${paymentIntent.id} to fresh customer ${fresh}`);
+        } catch (linkErr) {
+          console.warn('[Stripe] Could not attach fresh customer to repaired PaymentIntent:', linkErr.message);
+        }
+      }
+      return paymentIntent;
+    }
     console.error(' Payment Intent creation failed:', error);
     throw new Error(`Failed to create payment: ${error.message}`);
   }
