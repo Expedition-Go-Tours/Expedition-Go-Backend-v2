@@ -19,7 +19,7 @@ describe('emailUrls brand-aware deep links', () => {
     expect(emailUrls.manageBooking('b1', legacy)).toBe('https://travioafrica.com/booking/b1/manage');
     expect(emailUrls.downloadVoucher('b1', legacy)).toBe('https://travioafrica.com/booking/b1/ticket');
     expect(emailUrls.addPickupLocation('b1', legacy)).toBe('https://travioafrica.com/booking/b1/pickup');
-    expect(emailUrls.writeReview('b1', legacy, 'tour-slug')).toBe('https://travioafrica.com/booking/b1/review');
+    expect(emailUrls.writeReview('b1', legacy, 'tour-slug')).toBe('https://travioafrica.com/review/tour-slug?bookingId=b1');
     expect(emailUrls.viewCancellation('b1', legacy)).toBe('https://travioafrica.com/booking/b1/cancellation');
   });
 
@@ -30,7 +30,14 @@ describe('emailUrls brand-aware deep links', () => {
     expect(emailUrls.managePaymentMethod('b1', expedition)).toBe(`${expedition}/dashboard/bookings?booking=b1`);
     expect(emailUrls.viewCancellation('b1', expedition)).toBe(`${expedition}/dashboard/bookings?booking=b1`);
     expect(emailUrls.addPickupLocation('b1', expedition)).toBe(`${expedition}/booking/b1/pickup`);
-    expect(emailUrls.writeReview('b1', expedition, 'tour-slug')).toBe(`${expedition}/review/tour-slug`);
+    expect(emailUrls.writeReview('b1', expedition, 'tour-slug')).toBe(`${expedition}/review/tour-slug?bookingId=b1`);
+  });
+
+  it('carries bookingId and tourId into the guided /review deep link', () => {
+    const legacy = 'https://travioafrica.com';
+    expect(emailUrls.writeReview('b1', legacy, 'tour-slug', 'tour-9')).toBe(
+      'https://travioafrica.com/review/tour-slug?bookingId=b1&tourId=tour-9'
+    );
   });
 
   it('strips a trailing slash from the origin', () => {
