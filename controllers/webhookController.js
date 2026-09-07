@@ -29,6 +29,19 @@ exports.handleStripeWebhook = catchAsync(async (req, res, next) => {
     return next(new AppError('Webhook configuration error', 500));
   }
 
+  // Stripe SDK's constructEvent requires the raw request body (Buffer or
+  // string).  If express.json() ran before express.raw() on this request the
+  // body would already be a parsed object and the signature would never match.
+  // Guard against that so we get an actionable log instead of the opaque
+  // "No signatures found matching the expected signature" error.
+  if (!Buffer.isBuffer(req.body) && typeof req.body !== 'string') {
+    console.error(
+      `[Webhook] ⚠ req.body is type=${typeof req.body}, constructor=${req.body?.constructor?.name} — expected Buffer. ` +
+      `Signature verification will fail. Check that express.raw() runs before express.json() for /api/webhooks/stripe.`
+    );
+    return next(new AppError('Webhook body was parsed before signature verification — raw body required', 500));
+  }
+
   let event;
   
   try {

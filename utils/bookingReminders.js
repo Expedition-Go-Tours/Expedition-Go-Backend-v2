@@ -140,7 +140,7 @@ async function planBookingReminders() {
     where: {
       status: 'COMPLETED',
       travelDate: { lte: new Date(now.getTime() - REVIEW_REQUEST_HOURS_AFTER * 60 * 60 * 1000) },
-      review: { none: {} },
+      review: { is: null },
     },
     select: { id: true, travelDate: true },
   });
