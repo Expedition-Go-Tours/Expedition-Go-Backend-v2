@@ -27,6 +27,7 @@ const { shouldCountTourView } = require('../utils/viewTracking');
 const ranking = require('../utils/homepageRanking');
 const eventEmitter = require('../utils/eventEmitter');
 const { sanitizeBookingPaymentInternals } = require('../utils/sanitizeBookings');
+const { bookingRefundState } = require('../utils/bookingRefundState');
 
 const CACHE_PREFIX = 'expedition:';
 const LIST_CACHE_KEY = `${CACHE_PREFIX}tours:list`;
@@ -2219,6 +2220,7 @@ exports.getMyBookings = catchAsync(async (req, res, next) => {
             supplier: { select: { id: true, name: true, photoURL: true } },
           },
         },
+        disputes: { select: { id: true, status: true } },
       },
       orderBy: { createdAt: 'desc' },
       skip,
@@ -2229,9 +2231,11 @@ exports.getMyBookings = catchAsync(async (req, res, next) => {
 
   const totalPages = Math.ceil(totalCount / take);
 
+  const decorated = bookings.map((b) => ({ ...b, refundState: bookingRefundState(b) }));
+
   res.status(200).json({
     status: 'success',
-    data: { bookings: sanitizeBookingPaymentInternals(bookings) },
+    data: { bookings: sanitizeBookingPaymentInternals(decorated) },
     pagination: {
       currentPage: parseInt(page),
       totalPages,
@@ -2254,6 +2258,7 @@ exports.getBooking = catchAsync(async (req, res, next) => {
         },
       },
       review: true,
+      disputes: { select: { id: true, status: true } },
     },
   });
 
@@ -2277,8 +2282,8 @@ exports.getBooking = catchAsync(async (req, res, next) => {
     }
   } catch { pendingPayment = null; }
 
-  const { sanitizeBookingPaymentInternals } = require('../utils/sanitizeBookings');
   const cleanBooking = sanitizeBookingPaymentInternals(booking);
+  cleanBooking.refundState = bookingRefundState(booking);
   cleanBooking.modify = {
     allowed: modifyPolicy.allowed,
     reason: modifyPolicy.reason,

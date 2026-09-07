@@ -20,6 +20,7 @@ const { logActivity } = require('../utils/auditLogger');
 const { shouldCountTourView } = require('../utils/viewTracking');
 const eventEmitter = require('../utils/eventEmitter');
 const { sanitizeBookingPaymentInternals } = require('../utils/sanitizeBookings');
+const { bookingRefundState } = require('../utils/bookingRefundState');
 
 const CACHE_PREFIX = 'ghana:';
 const LIST_CACHE_KEY = `${CACHE_PREFIX}tours:list`;
@@ -1795,6 +1796,7 @@ exports.getMyBookings = catchAsync(async (req, res, next) => {
             supplier: { select: { id: true, name: true, photoURL: true } },
           },
         },
+        disputes: { select: { id: true, status: true } },
       },
       orderBy: { createdAt: 'desc' },
       skip,
@@ -1805,9 +1807,11 @@ exports.getMyBookings = catchAsync(async (req, res, next) => {
 
   const totalPages = Math.ceil(totalCount / take);
 
+  const decorated = bookings.map((b) => ({ ...b, refundState: bookingRefundState(b) }));
+
   res.status(200).json({
     status: 'success',
-    data: { bookings: sanitizeBookingPaymentInternals(bookings) },
+    data: { bookings: sanitizeBookingPaymentInternals(decorated) },
     pagination: {
       currentPage: parseInt(page),
       totalPages,
@@ -1830,12 +1834,14 @@ exports.getBooking = catchAsync(async (req, res, next) => {
         },
       },
       review: true,
+      disputes: { select: { id: true, status: true } },
     },
   });
 
   if (!booking) return next(new AppError('Booking not found', 404));
 
-  res.status(200).json({ status: 'success', data: { booking: sanitizeBookingPaymentInternals(booking) } });
+  const decorated = { ...booking, refundState: bookingRefundState(booking) };
+  res.status(200).json({ status: 'success', data: { booking: sanitizeBookingPaymentInternals(decorated) } });
 });
 
 /**
