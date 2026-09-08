@@ -1365,9 +1365,10 @@ exports.getTourAvailability = catchAsync(async (req, res, next) => {
   // NULL bookings). No option = today's whole-tour behavior.
   const applied = option ? require('../utils/tourOptions').applyOption(tour, String(option)) : null;
   const sp = applied ? applied.tour.schedulesAndPricing : tour.schedulesAndPricing;
-  const cacheKeyExtra = applied
-    ? `:${applied.optionId}:${applied.optionScope.includeNull ? 'default' : 'opt'}`
-    : ':default';
+  // Always include the option id in the key — even for the default option the
+  // response shape differs from the no-option payload, so it must never reuse
+  // that cache entry.
+  const cacheKeyExtra = applied ? `:opt:${applied.optionId}` : ':default';
 
   const calendar = await cache.getOrSet(
     `availability:cal:${tour.id}${cacheKeyExtra}:${toDateKey(start)}:${toDateKey(end)}`,
