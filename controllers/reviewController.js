@@ -860,7 +860,8 @@ exports.getSupplierReviews = catchAsync(async (req, res, next) => {
     status,
     page = 1,
     limit = 10,
-    rating
+    rating,
+    reviewId
   } = req.query;
 
   const where = {
@@ -868,6 +869,11 @@ exports.getSupplierReviews = catchAsync(async (req, res, next) => {
       supplierId
     }
   };
+
+  // Optional deep-link resolution: return the exact review (if it belongs to
+  // one of this supplier's tours) so email CTAs always land, even for reviews
+  // older than the default first page.
+  if (reviewId) where.id = reviewId;
 
   if (status) {
     where.status = status;

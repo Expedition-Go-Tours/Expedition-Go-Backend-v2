@@ -19,7 +19,7 @@ const {
  * transactions or the search re-check. The LIMITED/FULL status thresholds are
  * configurable via availability.limited_ratio / availability.full_ratio.
  */
-async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end, todayRef) {
+async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end, todayRef, cutoffConfig, optionScope) {
   const parsed = parseBlob(schedulesAndPricing) || {};
   const [maxTravelersFallback, limitedRatio, fullRatio] = await Promise.all([
     getConfig('booking.max_travelers', '50'),
@@ -30,6 +30,18 @@ async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end
   const startDate = toUtcDate(start);
   const endDate = toUtcDate(end);
 
+  // Cut-off awareness needs the tour's bookingAndTickets blob. Callers that
+  // already have it (e.g. an option projection) can pass it; otherwise fetch
+  // the single row so every calendar consumer gets closed/closesAt for free.
+  let bt = cutoffConfig;
+  if (!bt && tourId) {
+    const tourRow = await prisma.tour.findUnique({
+      where: { id: tourId },
+      select: { bookingAndTickets: true },
+    });
+    bt = tourRow ? parseBlob(tourRow.bookingAndTickets) : null;
+  }
+
   const [overrides, bookings] = await Promise.all([
     prisma.tourDateOverride.findMany({
       where: { tourId, date: { gte: startDate, lte: endDate } },
@@ -39,6 +51,9 @@ async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end
         tourId,
         travelDate: { gte: startDate, lte: endDate },
         status: { in: BOOKABLE_STATUSES },
+        ...(optionScope && optionScope.id
+          ? { OR: optionScope.includeNull ? [{ optionId: optionScope.id }, { optionId: null }] : [{ optionId: optionScope.id }] }
+          : {}),
       },
       select: { travelDate: true, selectedTime: true, travelers: true },
     }),
@@ -87,6 +102,7 @@ async function buildAvailabilityCalendar(tourId, schedulesAndPricing, start, end
         fallbackCapacity: parseInt(maxTravelersFallback, 10),
         limitedRatio: parseFloat(limitedRatio),
         fullRatio: parseFloat(fullRatio),
+        ...(bt ? { cutoffConfig: bt, now: new Date() } : {}),
       }
     ));
     current = addDays(current, 1);

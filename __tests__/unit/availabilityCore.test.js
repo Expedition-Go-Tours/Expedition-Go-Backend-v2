@@ -706,3 +706,112 @@ describe('timezone helpers', () => {
     expect(core.isOperatingDay(parsed, core.toUtcDate('2026-06-15'))).toBe(false);
   });
 });
+
+describe('cut-off awareness', () => {
+  const MON = core.toUtcDate('2026-06-15');
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('closes a per-slot slot once its booking window has passed and reports closesAt', () => {
+    const bt = { cutoffMinutes: 60, perSlotCutoff: true, perSlotCutoffs: { '10:00': 60 } };
+    const open = core.slotCutoffVerdict(bt, MON, '10:00', new Date('2026-06-15T08:30:00.000Z'), false);
+    expect(open.closed).toBe(false);
+    expect(open.minutes).toBe(60);
+    expect(open.closesAt.toISOString()).toBe('2026-06-15T09:00:00.000Z');
+
+    const closed = core.slotCutoffVerdict(bt, MON, '10:00', new Date('2026-06-15T09:30:00.000Z'), false);
+    expect(closed.closed).toBe(true);
+  });
+
+  it('anchors non-per-slot cut-offs to the start of the activity day (confirm parity)', () => {
+    const bt = { cutoffMinutes: 60 };
+    const verdict = core.slotCutoffVerdict(bt, MON, '10:00', new Date('2026-06-15T08:30:00.000Z'), false);
+    // Without perSlotCutoff the engine counts down from midnight UTC, matching
+    // confirmBooking's clock, so a future-day slot is open.
+    expect(verdict.closesAt.toISOString()).toBe('2026-06-14T23:00:00.000Z');
+  });
+
+  it('relaxes the cut-off once a slot has its first booking (last-minute)', () => {
+    const bt = { cutoffMinutes: 60, perSlotCutoff: true, perSlotCutoffs: { '10:00': 60 }, lastMinuteBookings: true };
+    // 09:30 is inside the normal 1h window but the slot already has a booking.
+    const verdict = core.slotCutoffVerdict(bt, MON, '10:00', new Date('2026-06-15T09:30:00.000Z'), true);
+    expect(verdict.minutes).toBe(0);
+    expect(verdict.closed).toBe(false);
+    // Without a booking it stays closed.
+    const noBooking = core.slotCutoffVerdict(bt, MON, '10:00', new Date('2026-06-15T09:30:00.000Z'), false);
+    expect(noBooking.minutes).toBe(60);
+    expect(noBooking.closed).toBe(true);
+  });
+
+  it('lets a per-slot override win over the global cut-off', () => {
+    const bt = { cutoffMinutes: 60, perSlotCutoff: true, perSlotCutoffs: { '10:00': 15 } };
+    const verdict = core.slotCutoffVerdict(bt, MON, '10:00', new Date('2026-06-15T09:30:00.000Z'), false);
+    expect(verdict.minutes).toBe(15);
+    expect(verdict.closed).toBe(false);
+  });
+
+  it('returns no cut-off when none is configured', () => {
+    const verdict = core.slotCutoffVerdict({}, MON, '10:00', new Date('2026-06-15T10:30:00.000Z'), false);
+    expect(verdict.minutes).toBeNull();
+    expect(verdict.closed).toBe(false);
+  });
+
+  it('annotates calendar slots as closed/closesAt when their cut-off has passed', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-15T09:30:00.000Z'));
+    prisma.tour.findUnique.mockResolvedValue({
+      bookingAndTickets: { cutoffMinutes: 60, perSlotCutoff: true, perSlotCutoffs: { '10:00': 60, '14:00': 60 } },
+    });
+    prisma.booking.findMany.mockResolvedValue([]);
+    prisma.tourDateOverride.findMany.mockResolvedValue([]);
+
+    const calendar = await buildAvailabilityCalendar('t1', perPersonTour.schedulesAndPricing, MONDAY, MONDAY, FIXED_TODAY);
+    const slots = calendar[0].timeSlots;
+    const ten = slots.find((s) => s.time === '10:00');
+    expect(ten.closed).toBe(true);
+    expect(ten.remaining).toBe(0);
+    expect(ten.closesAt).toBe('2026-06-15T09:00:00.000Z');
+    const fourteen = slots.find((s) => s.time === '14:00');
+    expect(fourteen.closed).toBe(false);
+    expect(fourteen.remaining).toBeGreaterThan(0);
+  });
+
+  it('keeps a slot open after its first booking when last-minute is enabled', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-15T09:30:00.000Z'));
+    prisma.tour.findUnique.mockResolvedValue({
+      bookingAndTickets: { cutoffMinutes: 60, perSlotCutoff: true, perSlotCutoffs: { '10:00': 60 }, lastMinuteBookings: true },
+    });
+    prisma.booking.findMany.mockResolvedValue([
+      { travelDate: new Date('2026-06-15'), selectedTime: '10:00', travelers: { adults: 1 } },
+    ]);
+    prisma.tourDateOverride.findMany.mockResolvedValue([]);
+
+    const calendar = await buildAvailabilityCalendar('t1', perPersonTour.schedulesAndPricing, MONDAY, MONDAY, FIXED_TODAY);
+    const ten = calendar[0].timeSlots.find((s) => s.time === '10:00');
+    expect(ten.closed).toBe(false);
+    expect(ten.closesAt).toBeNull();
+  });
+});
+
+describe('per-option capacity scope', () => {
+  it('scopes seat counts to a non-default option', async () => {
+    const db = makeDb();
+    await core.evaluateBookingAvailability(db, perPersonTour, MONDAY, '10:00', { adults: 1 }, {
+      optionScope: { id: 'opt-b', includeNull: false },
+    });
+    const [bookingSql, holdSql] = db.$queryRawUnsafe.mock.calls.map((c) => c[0]);
+    expect(bookingSql).toMatch(/"optionId" = \$4/);
+    expect(holdSql).toMatch(/"optionId" = \$4/);
+    expect(db.$queryRawUnsafe.mock.calls[0]).toContain('opt-b');
+  });
+
+  it('default option includes legacy NULL rows', async () => {
+    const db = makeDb();
+    await core.evaluateBookingAvailability(db, perPersonTour, MONDAY, '10:00', { adults: 1 }, {
+      optionScope: { id: 'opt-a', includeNull: true },
+    });
+    const bookingSql = db.$queryRawUnsafe.mock.calls[0][0];
+    expect(bookingSql).toMatch(/"optionId" IS NULL OR "optionId" = \$4/);
+  });
+});

@@ -181,9 +181,7 @@ function getPickupInfo(booking, tour = {}) {
 
   const meetingAddress =
     meeting.address || meeting.name || meeting.place || '';
-  const pickupAddress = pickup
-    ? pickup.address?.address || pickup.address?.name || pickup.place || pickup.areaName || pickup.locationName || ''
-    : '';
+  const pickupAddress = pickup ? pickupAddressLabel(pickup) : '';
 
   const pickupInstructions = pickup?.instructions || '';
   const pickupTime = pickup?.time ? formatTime(pickup.time) : '';
@@ -285,6 +283,19 @@ function formatCardLast4(paymentMethod) {
   return '';
 }
 
+/**
+ * Normalize a stored pickup snapshot (object or JSON string) and return the
+ * human-readable location label. Used to show the PREVIOUS pickup in update
+ * emails — must mirror the label `getPickupInfo` produces for the new pickup.
+ */
+function pickupAddressLabel(pickupLike) {
+  const pickup = typeof pickupLike === 'string'
+    ? (() => { try { return JSON.parse(pickupLike); } catch { return null; } })()
+    : pickupLike;
+  if (!pickup) return '';
+  return pickup.address?.address || pickup.address?.name || pickup.place || pickup.areaName || pickup.locationName || '';
+}
+
 module.exports = {
   formatCurrency,
   formatLongDate,
@@ -295,6 +306,7 @@ module.exports = {
   travelerPhone,
   travelerLocation,
   getPickupInfo,
+  pickupAddressLabel,
   getCancelDeadline,
   getDurationLabel,
   getLanguageLabel,

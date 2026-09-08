@@ -925,6 +925,19 @@ exports.createTour = catchAsync(async (req, res, next) => {
     return next(new AppError(`Validation failed: ${validationResult.errors.join(', ')}`, 400));
   }
 
+  // Gate per-option engine blobs (one price list per option, sane cut-offs) so
+  // invalid option data can never reach the booking engines once options go live.
+  const { validateTourOptions } = require('../utils/tourOptions');
+  const bodyOptions = Array.isArray(req.body.options)
+    ? req.body.options
+    : (req.body.productContent && Array.isArray(req.body.productContent.options) ? req.body.productContent.options : null);
+  if (bodyOptions && bodyOptions.length > 0) {
+    const optionCheck = validateTourOptions({ productContent: { options: bodyOptions } });
+    if (!optionCheck.ok) {
+      return next(new AppError(`Invalid product options: ${optionCheck.errors.slice(0, 3).join('; ')}`, 400));
+    }
+  }
+
   // Ensure required scalar fields always have a value for Prisma
   if (!req.body.title) req.body.title = 'Untitled Tour';
   if (!req.body.description) req.body.description = '';
@@ -1214,6 +1227,18 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   const validationResult = validateTourData(req.body, true);
   if (!validationResult.isValid) {
     return next(new AppError(`Validation failed: ${validationResult.errors.join(', ')}`, 400));
+  }
+
+  // Gate per-option engine blobs so invalid option data never reaches booking.
+  const { validateTourOptions } = require('../utils/tourOptions');
+  const bodyOptionsUpdate = Array.isArray(req.body.options)
+    ? req.body.options
+    : (req.body.productContent && Array.isArray(req.body.productContent.options) ? req.body.productContent.options : null);
+  if (bodyOptionsUpdate && bodyOptionsUpdate.length > 0) {
+    const optionCheck = validateTourOptions({ productContent: { options: bodyOptionsUpdate } });
+    if (!optionCheck.ok) {
+      return next(new AppError(`Invalid product options: ${optionCheck.errors.slice(0, 3).join('; ')}`, 400));
+    }
   }
 
   // â”€â”€ Draft path: editing a live tour â”€â”€

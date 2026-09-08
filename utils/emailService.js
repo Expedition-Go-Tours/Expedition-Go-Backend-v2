@@ -1120,6 +1120,8 @@ async function sendReviewNotificationEmail(review) {
       message: `${customer?.name || 'A traveller'} reviewed "${tour.title}": "${review.comment || review.title || ''}".`,
       buttonText: 'View review',
       buttonUrl: emailUrls.supplierReview(review.id),
+      secondaryButtonText: 'Reply to this review',
+      secondaryButtonUrl: emailUrls.supplierReplyReview(review.id),
       userName: supplier.name,
       supplierName: supplier.name,
       tourTitle: tour.title,
@@ -1214,6 +1216,10 @@ function generateGenericNotificationEmail(data) {
     ? `<tr><td align="center" style="padding:24px 40px 8px 40px;"><a href="${data.buttonUrl}" style="display:inline-block;background-color:#0E9F6E;color:#ffffff;font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;border-radius:10px;padding:14px 34px;">${data.buttonText || 'Open'}</a></td></tr>`
     : '';
 
+  const secondaryLinkHtml = data.secondaryButtonUrl
+    ? `<tr><td align="center" style="padding:4px 40px 12px 40px;"><a href="${data.secondaryButtonUrl}" style="font-size:13px;color:#0E9F6E;text-decoration:none;font-weight:600;font-family:'Plus Jakarta Sans',Arial,sans-serif;">${data.secondaryButtonText || 'Learn more'}</a></td></tr>`
+    : '';
+
   const metaRows = ['supplierBusinessName', 'approvalDate', 'reviewDate']
     .filter((k) => data[k])
     .map((k) => `<p style="margin:2px 0;font-size:13px;color:#64748B;">${data[k]}</p>`)
@@ -1227,11 +1233,12 @@ function generateGenericNotificationEmail(data) {
         <tr><td align="center" style="padding:0 40px 4px 40px;">${metaRows}</td></tr>
         <tr><td style="padding:16px 40px 0 40px;"><p style="margin:0;font-size:15px;color:#334155;line-height:1.7;text-align:center;">${body}</p></td></tr>
         ${buttonHtml}
+        ${secondaryLinkHtml}
         <tr><td align="center" style="padding:16px 40px 0 40px;"><span style="font-size:13px;color:#64748B;">Need help? <a href="mailto:{{supportEmail}}" style="color:#0E9F6E;">Contact support</a></span></td></tr>
       </table>
       <p style="margin:24px 0 0;text-align:center;font-size:11px;color:#94A3B8;">&copy; {{year}} {{brandName}}. All rights reserved.</p>
       </td></tr></table></div>`,
-    text: `${heading}\n\n${body}\n${data.buttonUrl ? `Open: ${data.buttonUrl}` : ''}`,
+    text: `${heading}\n\n${body}\n${data.buttonUrl ? `Open: ${data.buttonUrl}` : ''}\n${data.secondaryButtonUrl ? `${data.secondaryButtonText || 'More'}: ${data.secondaryButtonUrl}` : ''}`,
   };
 }
 

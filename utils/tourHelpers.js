@@ -28,6 +28,7 @@ const {
   getTourTimezone,
   weekdayInZone,
   pricingScheduleIndexesFor,
+  slotCutoffVerdict,
 } = require('./availabilityCore');
 
 // SQL-safe literal (constants only) used in raw capacity queries.
@@ -738,7 +739,7 @@ async function checkTourAvailability(tourId, travelDate, selectedTimeOrOptions =
   try {
     const tour = await prisma.tour.findUnique({
       where: { id: tourId },
-      select: { id: true, status: true, schedulesAndPricing: true },
+      select: { id: true, status: true, schedulesAndPricing: true, bookingAndTickets: true },
     });
 
     if (!tour) return { available: false, reason: 'Tour not found' };
@@ -772,6 +773,16 @@ async function checkTourAvailability(tourId, travelDate, selectedTimeOrOptions =
     const capOverride = getOverrideCapacity(override);
     const dayWide = capOverride != null;
 
+    const hasExcl = !!(options && options.excludeBookingId);
+    const hasTimeOpt = !!(selectedTime && !dayWide);
+    const scope = (options && options.optionScope) || null;
+    const hasScope = !!(scope && scope.id);
+    const optionParamIdx = 3 + (hasTimeOpt ? 1 : 0) + (hasExcl ? 1 : 0);
+    const optionWhere = hasScope
+      ? scope.includeNull
+        ? ` AND ("optionId" IS NULL OR "optionId" = $${optionParamIdx})`
+        : ` AND "optionId" = $${optionParamIdx}`
+      : '';
     const counts = await prisma.$queryRawUnsafe(
       `SELECT
          COALESCE(SUM(CASE WHEN status IN (${statusLiteral})
@@ -779,12 +790,14 @@ async function checkTourAvailability(tourId, travelDate, selectedTimeOrOptions =
          COALESCE(COUNT(*) FILTER (WHERE status IN (${statusLiteral})), 0)::int AS "groupCount"
        FROM "Booking"
        WHERE "tourId" = $1 AND "selectedDate" = $2::date
-         ${selectedTime && !dayWide ? 'AND "selectedTime" = $3' : ''}
-         ${options && options.excludeBookingId ? ` AND "id" <> $${3 + ((selectedTime && !dayWide) ? 1 : 0)}` : ''}`,
+         ${hasTimeOpt ? 'AND "selectedTime" = $3' : ''}
+         ${hasExcl ? ` AND "id" <> $${3 + (hasTimeOpt ? 1 : 0)}` : ''}
+         ${optionWhere}`,
       tourId,
       dateKey,
-      ...(selectedTime && !dayWide ? [selectedTime] : []),
-      ...(options && options.excludeBookingId ? [options.excludeBookingId] : [])
+      ...(hasTimeOpt ? [selectedTime] : []),
+      ...(hasExcl ? [options.excludeBookingId] : []),
+      ...(hasScope ? [scope.id] : [])
     );
 
     const row = counts && counts[0] ? counts[0] : { currentBookings: 0, groupCount: 0 };
@@ -850,6 +863,30 @@ async function checkTourAvailability(tourId, travelDate, selectedTimeOrOptions =
         reason = 'No group slots remaining for this time';
       } else {
         reason = 'Date is fully booked';
+      }
+    }
+
+    // Cut-off closure parity: never advertise a slot (or operating-hours day)
+    // whose booking window has already closed, and relax it when the tour
+    // enables last-minute bookings and this slot already has a booking.
+    if (dateKey >= new Date().toISOString().slice(0, 10)) {
+      const bt = parseBlob(tour.bookingAndTickets);
+      if (bt && typeof bt === 'object') {
+        const hasSlotBooking = currentBookings > 0 || groupCount > 0;
+        const nowRef = new Date();
+        if (selectedTime) {
+          const verdict = slotCutoffVerdict(bt, dateObj, selectedTime, nowRef, hasSlotBooking);
+          if (verdict.closed) {
+            available = false;
+            reason = 'Bookings for this time are closed';
+          }
+        } else if (daySlots.length === 0) {
+          const verdict = slotCutoffVerdict(bt, dateObj, null, nowRef, hasSlotBooking);
+          if (verdict.closed) {
+            available = false;
+            reason = 'This date is no longer accepting bookings';
+          }
+        }
       }
     }
 

@@ -406,7 +406,7 @@ function computeStatus(bookedCount, totalCapacity, overrideStatus, operating, li
  * currentBookings, isPerGroup, maxGroups, daySlots }.
  */
 async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, travelers, options = {}) {
-  const { excludeDraftId = null, excludeBookingId = null } = options;
+  const { excludeDraftId = null, excludeBookingId = null, optionScope = null } = options;
   const parsed = parseBlob(tour.schedulesAndPricing);
   const dateObj = toUtcDate(dateKey);
   if (!dateObj) return { ok: false, reason: 'Invalid date' };
@@ -425,7 +425,16 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
   // every time slot that day. Without one, behavior is unchanged (per-slot).
   const dayWide = capOverride != null;
   const hasBookingExclusion = !!excludeBookingId;
+  const hasOptionScope = !!(optionScope && optionScope.id);
   const timeParam = !!(selectedTime && !dayWide);
+  // Optional per-option inventory: non-default options count only their own
+  // bookings/holds; the default option also includes legacy NULL rows.
+  const bookingOptionParamIdx = 3 + (timeParam ? 1 : 0) + (hasBookingExclusion ? 1 : 0);
+  const bookingOptionWhere = hasOptionScope
+    ? optionScope.includeNull
+      ? ` AND ("optionId" IS NULL OR "optionId" = $${bookingOptionParamIdx})`
+      : ` AND "optionId" = $${bookingOptionParamIdx}`
+    : '';
   const bookingExclParamIdx = 3 + (timeParam ? 1 : 0);
   const bookingWhereExtra = hasBookingExclusion ? ` AND "id" <> $${bookingExclParamIdx}` : '';
   const [counts] = await db.$queryRawUnsafe(
@@ -436,17 +445,25 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
      FROM "Booking"
      WHERE "tourId" = $1 AND "selectedDate" = $2::date
        ${timeParam ? 'AND "selectedTime" = $3' : ''}
-       ${bookingWhereExtra}`,
+       ${bookingWhereExtra}
+       ${bookingOptionWhere}`,
     tour.id,
     dateKey,
     ...(timeParam ? [selectedTime] : []),
-    ...(hasBookingExclusion ? [excludeBookingId] : [])
+    ...(hasBookingExclusion ? [excludeBookingId] : []),
+    ...(hasOptionScope ? [optionScope.id] : [])
   );
 
   // Active holds (CheckoutDraft status='HOLDING', unexpired) also occupy
   // capacity. A materialization webhook may exclude its own hold via
   // `excludeDraftId` so conversion from hold→booking doesn't double-count.
   const holdWhereExtra = excludeDraftId ? `AND "id" != '${excludeDraftId}'` : '';
+  const holdOptionParamIdx = 3 + (timeParam ? 1 : 0);
+  const holdOptionWhere = hasOptionScope
+    ? optionScope.includeNull
+      ? ` AND ("optionId" IS NULL OR "optionId" = $${holdOptionParamIdx})`
+      : ` AND "optionId" = $${holdOptionParamIdx}`
+    : '';
   const [holds] = await db.$queryRawUnsafe(
     `SELECT
        COALESCE(SUM("seats"), 0)::int AS "holdSeats",
@@ -455,10 +472,12 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
      WHERE "tourId" = $1 AND "selectedDate" = $2::date
        AND "status" = 'HOLDING' AND "expiresAt" > NOW()
        ${timeParam ? `AND "selectedTime" = $3` : ''}
-       ${holdWhereExtra}`,
+       ${holdWhereExtra}
+       ${holdOptionWhere}`,
     tour.id,
     dateKey,
-    ...(timeParam ? [selectedTime] : [])
+    ...(timeParam ? [selectedTime] : []),
+    ...(hasOptionScope ? [optionScope.id] : [])
   );
   const currentBookings = (parseInt(counts?.currentBookings, 10) || 0)
                         + (parseInt(holds?.holdSeats, 10) || 0);
@@ -588,16 +607,33 @@ function computeDayEntry(parsed, override, slotData, dateObj, options = {}) {
   const bookedCount = slotData?.bookedCount || 0;
 
   const daySlots = buildTimeSlots(parsed, override, maxCapacity);
+  const hasCutoffConfig = !!(options.cutoffConfig && typeof options.cutoffConfig === 'object');
+  const now = options.now instanceof Date ? options.now : (options.now != null ? new Date(options.now) : todayUtc());
   const effectiveTimeSlots = daySlots.map((slot) => {
     const slotBooked = bookingsBySlot.get(slot.time) || 0;
     const groupsBooked = groupsBySlot.get(slot.time) || 0;
-    return {
+    const entry = {
       time: slot.time,
       capacity: slot.capacity,
       booked: slotBooked,
       remaining: Math.max(0, slot.capacity - slotBooked),
       ...(isPerGroup ? { groupsBooked, groupsRemaining: Math.max(0, maxGroups - groupsBooked) } : {}),
     };
+    // Cut-off awareness (only when the caller provides bookingAndTickets): a
+    // slot whose booking window has closed is marked closed + closesAt and
+    // reports 0 remaining so generic consumers never offer it. lastMinuteBookings
+    // relaxes the cut-off once that slot already has a booking.
+    if (hasCutoffConfig && !isPast && slot.time) {
+      const verdict = slotCutoffVerdict(options.cutoffConfig, dateObj, slot.time, now,
+        (bookingsBySlot.get(slot.time) || 0) > 0 || (groupsBySlot.get(slot.time) || 0) > 0);
+      entry.closed = verdict.closed;
+      entry.closesAt = verdict.closesAt && verdict.minutes > 0 ? verdict.closesAt.toISOString() : null;
+      if (verdict.closed) {
+        entry.remaining = 0;
+        if (isPerGroup) entry.groupsRemaining = 0;
+      }
+    }
+    return entry;
   });
 
   // Day-level occupancy for the aggregate status:
@@ -617,6 +653,18 @@ function computeDayEntry(parsed, override, slotData, dateObj, options = {}) {
 
   const computedStatus = isPast ? 'PAST' : computeStatus(dayBooked, dayCapacity, override?.status || null, operating, options.limitedRatio, options.fullRatio);
 
+  // Whole-day cut-off closure for operating-hours / flexible tours (no fixed
+  // slots): bookings anchor to the start of the activity day, so the "last
+  // booking" moment is (day start − cutoff). Only surfaced when the caller
+  // passes bookingAndTickets.
+  let dayClosedCutoff = false;
+  let dayClosesAt = null;
+  if (hasCutoffConfig && !isPast && operating && effectiveTimeSlots.length === 0) {
+    const verdict = slotCutoffVerdict(options.cutoffConfig, dateObj, null, now, bookedCount > 0);
+    dayClosedCutoff = verdict.closed;
+    dayClosesAt = verdict.closesAt && verdict.minutes > 0 ? verdict.closesAt.toISOString() : null;
+  }
+
   return {
     date: dateStr,
     dayOfWeek,
@@ -632,6 +680,7 @@ function computeDayEntry(parsed, override, slotData, dateObj, options = {}) {
     overrideCapacity: capOverride,
     baseCapacity,
     isPast,
+    ...(hasCutoffConfig ? { closedCutoff: dayClosedCutoff, closesAt: dayClosesAt } : {}),
     ...(isPerGroup
       ? { capacityUnit: 'groups', groupsPerSlot: maxGroups, maxGroupSize, maxCapacityTravelers: maxCapacity }
       : { capacityUnit: 'people' }),
@@ -695,6 +744,71 @@ function cutoffLabel(hours) {
   return `${hours} hours`;
 }
 
+/**
+ * Raw cut-off minutes for a bookingAndTickets blob + optional slot start time.
+ * Per-slot override (keyed "HH:MM", ≤600 min) wins when perSlotCutoff is on,
+ * else the global cutoffMinutes. Returns null when no cut-off is configured.
+ */
+function resolveCutoffMinutes(bookingAndTickets, slotTime) {
+  if (!bookingAndTickets || typeof bookingAndTickets !== 'object') return null;
+  const perSlot = bookingAndTickets.perSlotCutoffs;
+  if (
+    bookingAndTickets.perSlotCutoff &&
+    typeof perSlot === 'object' &&
+    perSlot !== null &&
+    !Array.isArray(perSlot) &&
+    typeof slotTime === 'string'
+  ) {
+    const m = parseConfigNumber(perSlot[slotTime]);
+    if (m !== null && m <= MAX_PER_SLOT_CUTOFF_MINUTES) return m;
+  }
+  return parseConfigNumber(bookingAndTickets.cutoffMinutes);
+}
+
+/** Whether the tour relaxes cut-offs once a booking exists ("last minute"). */
+function isLastMinuteEnabled(bookingAndTickets) {
+  return !!(bookingAndTickets && bookingAndTickets.lastMinuteBookings === true);
+}
+
+/**
+ * The exact start moment a booking cut-off counts down from. Mirrors the
+ * checkout clock: per-slot cut-off tours anchor to the slot's wall-clock time
+ * in the tour timezone; everything else anchors to the start of the activity
+ * day (UTC midnight of the date).
+ */
+function activityStartUtc(bookingAndTickets, dateObj, selectedTime) {
+  const d = dateObj instanceof Date ? dateObj : new Date(dateObj);
+  const fallback = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  if (!bookingAndTickets || typeof bookingAndTickets !== 'object') return fallback;
+  if (typeof selectedTime === 'string' && selectedTime && bookingAndTickets.perSlotCutoff) {
+    const tz = getTourTimezone(bookingAndTickets);
+    const s = zonedTimeToUtc(`${zonedDateKey(toDateKey(d), tz)} ${selectedTime}`, tz);
+    if (Number.isFinite(s.getTime())) return s;
+  }
+  return fallback;
+}
+
+/**
+ * Cut-off verdict for one bookable moment (slot time or whole day when
+ * slotTime is null). `hasBooking` relaxes the window to zero when the tour
+ * enables lastMinuteBookings.
+ * Returns { minutes, closed, closesAt, anchor }.
+ */
+function slotCutoffVerdict(bookingAndTickets, dateObj, selectedTime, now, hasBooking) {
+  const nowDate = now instanceof Date ? now : new Date(now || Date.now());
+  const minutes = resolveCutoffMinutes(bookingAndTickets, selectedTime);
+  if (minutes === null) return { minutes: null, closed: false, closesAt: null, anchor: null };
+  const effective = isLastMinuteEnabled(bookingAndTickets) && hasBooking ? 0 : minutes;
+  const anchor = activityStartUtc(bookingAndTickets, dateObj, selectedTime);
+  const closesAt = new Date(anchor.getTime() - effective * 60 * 1000);
+  return {
+    minutes: effective,
+    closed: nowDate.getTime() >= closesAt.getTime(),
+    closesAt,
+    anchor,
+  };
+}
+
 module.exports = {
   DAY_NAMES,
   BOOKABLE_STATUSES,
@@ -729,4 +843,8 @@ module.exports = {
   zonedDateKey,
   weekdayInZone,
   zonedTimeToUtc,
+  resolveCutoffMinutes,
+  isLastMinuteEnabled,
+  activityStartUtc,
+  slotCutoffVerdict,
 };

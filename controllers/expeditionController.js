@@ -9,6 +9,7 @@ const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy,
 const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../utils/tourHelpers');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../utils/availabilityCore');
 const { resolvePickupSelection, normalizePickupSnapshot } = require('../utils/geoUtils');
+const { pickupAddressLabel } = require('../utils/emailFormatting');
 const { validatePassengerMix } = require('../utils/passengerMix');
 const { createPaymentIntent, createCheckoutSession, createCustomCheckoutPaymentIntent, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
 const { resolveAllowedClientUrl } = require('../utils/clientOrigin');
@@ -851,6 +852,12 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
       // Manual-confirmation tours (instantConfirmation === false) hold bookings
       // PENDING (paid) until the supplier accepts them.
       instantConfirmation: bookingAndTickets.instantConfirmation !== false,
+      // Sellable options (multi-option tours). >1 ⇒ the storefront shows an
+      // option picker; defaultOptionId is what option-agnostic requests use.
+      options: require('../utils/tourOptions').optionSummaries(t),
+      defaultOptionId: (Array.isArray(productContent.options) && productContent.options.length > 0
+        ? (productContent.options[0] && productContent.options[0].id) || null
+        : null) || null,
       supplierName: t.supplier?.name || null,
       supplierPhoto: t.supplier?.photoURL
         ? t.supplier.photoURL
@@ -1322,7 +1329,7 @@ exports.subscribe = catchAsync(async (req, res, next) => {
 
 exports.getTourAvailability = catchAsync(async (req, res, next) => {
   const { slug } = req.params;
-  const { startDate, endDate } = req.query;
+  const { startDate, endDate, option } = req.query;
 
   const expeditionTour = await prisma.expeditionTour.findFirst({
     where: { tour: { slug }, isActive: true },
@@ -1333,7 +1340,7 @@ exports.getTourAvailability = catchAsync(async (req, res, next) => {
 
   const tour = await prisma.tour.findUnique({
     where: { id: expeditionTour.tourId },
-    select: { id: true, title: true, schedulesAndPricing: true },
+    select: { id: true, title: true, schedulesAndPricing: true, bookingAndTickets: true, productContent: true },
   });
 
   if (!tour) return next(new AppError('Tour not found', 404));
@@ -1353,9 +1360,26 @@ exports.getTourAvailability = catchAsync(async (req, res, next) => {
     return next(new AppError(`Date range cannot exceed ${maxPublicDays} days`, 400));
   }
 
+  // Optional per-option availability: project the requested option onto the
+  // engine blob and scope seat counts to it (default option also counts legacy
+  // NULL bookings). No option = today's whole-tour behavior.
+  const applied = option ? require('../utils/tourOptions').applyOption(tour, String(option)) : null;
+  const sp = applied ? applied.tour.schedulesAndPricing : tour.schedulesAndPricing;
+  const cacheKeyExtra = applied
+    ? `:${applied.optionId}:${applied.optionScope.includeNull ? 'default' : 'opt'}`
+    : ':default';
+
   const calendar = await cache.getOrSet(
-    `availability:cal:${tour.id}:${toDateKey(start)}:${toDateKey(end)}`,
-    () => buildAvailabilityCalendar(tour.id, tour.schedulesAndPricing, start, end),
+    `availability:cal:${tour.id}${cacheKeyExtra}:${toDateKey(start)}:${toDateKey(end)}`,
+    () => buildAvailabilityCalendar(
+      tour.id,
+      sp,
+      start,
+      end,
+      undefined,
+      applied ? applied.tour.bookingAndTickets : undefined,
+      applied ? applied.optionScope : null
+    ),
     30
   );
 
@@ -1363,6 +1387,7 @@ exports.getTourAvailability = catchAsync(async (req, res, next) => {
     status: 'success',
     data: {
       tour: { id: tour.id, title: tour.title },
+      ...(applied ? { option: { id: applied.optionId, title: applied.optionTitle } } : {}),
       startDate: startDate,
       endDate: endDate,
       calendar,
@@ -1375,13 +1400,13 @@ exports.getTourAvailability = catchAsync(async (req, res, next) => {
 // ================================
 
 exports.calculateCheckout = catchAsync(async (req, res, next) => {
-  const { tourId, travelDate, travelers, promoCode } = req.body;
+  const { tourId, travelDate, travelers, promoCode, optionId } = req.body;
 
   if (!tourId || !travelDate || !travelers) {
     return next(new AppError('tourId, travelDate, and travelers are required', 400));
   }
 
-  const cacheKey = `${CACHE_PREFIX}checkout:${crypto.createHash('md5').update(JSON.stringify({ tourId, travelDate, travelers, promoCode: promoCode || null })).digest('hex')}`;
+  const cacheKey = `${CACHE_PREFIX}checkout:${crypto.createHash('md5').update(JSON.stringify({ tourId, travelDate, travelers, promoCode: promoCode || null, optionId: optionId || null })).digest('hex')}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
     const tour = await prisma.tour.findFirst({
@@ -1401,6 +1426,18 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
       throw new AppError('Tour is not available on Expedition', 400);
     }
 
+    // Multi-option: quote against the chosen option's projection + scope.
+    let optionScopeCalc = null;
+    let optionKeyCalc = null;
+    if (optionId) {
+      const appliedCalc = require('../utils/tourOptions').applyOption(tour, String(optionId));
+      if (appliedCalc.optionScope) {
+        tour = { ...appliedCalc.tour, supplier: tour.supplier };
+        optionScopeCalc = appliedCalc.optionScope;
+        optionKeyCalc = appliedCalc.optionId;
+      }
+    }
+
     // Enforce supplier passenger-mix rules (min/max, disallowed categories,
     // requires-adult supervision) before pricing.
     const mixResult = validatePassengerMix(parseBlob(tour.schedulesAndPricing), travelers);
@@ -1408,7 +1445,7 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
       throw new AppError(mixResult.errors[0], 400);
     }
 
-    const availability = await checkTourAvailability(tourId, travelDate, null);
+    const availability = await checkTourAvailability(tourId, travelDate, null, optionScopeCalc ? { optionScope: optionScopeCalc } : {});
     if (!availability.available) {
       throw new AppError(availability.reason || 'Tour is not available on the selected date', 400);
     }
@@ -1418,7 +1455,7 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
       throw new AppError(`Only ${availability.availableSpots} spots available, but ${totalTravelers} travelers requested`, 400);
     }
 
-    const pricing = await calculateTourPrice(tour, travelers, travelDate, null, null, req.user?.id, promoCode || null)
+    const pricing = await calculateTourPrice(tour, travelers, travelDate, null, optionKeyCalc, req.user?.id, promoCode || null)
       .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
 
     if (!pricing.success) {
@@ -1510,6 +1547,23 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError('Supplier is not active', 400));
   }
 
+  // Multi-option tours: resolve the requested option onto the engine blobs so
+  // pricing/availability/capacity/cut-off all run against the selected option.
+  // optionRef stays null on single-option tours (byte-for-byte legacy behavior).
+  let optionRef = null;
+  if (req.body.optionId) {
+    const tourOptions = require('../utils/tourOptions');
+    const applied = tourOptions.applyOption(tour, String(req.body.optionId));
+    if (applied.optionScope) {
+      optionRef = {
+        optionId: applied.optionId,
+        optionTitle: applied.optionTitle,
+        optionScope: applied.optionScope,
+      };
+      tour = { ...applied.tour, supplier: tour.supplier };
+    }
+  }
+
   // Validate pickup selection against the tour's current pickup config and
   // normalize it into the canonical snapshot (status: deferred/selected).
   let pickupSnapshot = null;
@@ -1539,7 +1593,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError('Booking total must be greater than 0', 400));
   }
 
-  const availability = await checkTourAvailability(tourId, travelDate, { selectedTime, travelers });
+  const availability = await checkTourAvailability(tourId, travelDate, { selectedTime, travelers }, optionRef ? { optionScope: optionRef.optionScope } : {});
   if (!availability.available) {
     return next(new AppError(availability.reason || 'Tour is not available on the selected date', 400));
   }
@@ -1558,7 +1612,20 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
   // Builder writes cutoffMinutes (minutes); resolveSlotCutoffHours handles
   // per-slot overrides (keyed by slot start time), legacy
   // minAdvanceBookingHours rows and the system default.
-  const effectiveCutoff = resolveSlotCutoffHours(parsedBt, selectedTime, minAdvanceHours);
+  let effectiveCutoff = resolveSlotCutoffHours(parsedBt, selectedTime, minAdvanceHours);
+  // Last-minute mode: once this slot/date already has a booking, the cut-off is
+  // removed so additional bookings keep flowing right up to the start time.
+  if (parsedBt?.lastMinuteBookings === true) {
+    const priorBookings = await prisma.booking.count({
+      where: {
+        tourId,
+        travelDate: new Date(travelDate),
+        ...(selectedTime ? { selectedTime } : {}),
+        status: { in: ['PENDING', 'CONFIRMED'] },
+      },
+    });
+    if (priorBookings > 0) effectiveCutoff = 0;
+  }
   const tourTz = getTourTimezone(parsedBt);
 
   const dateAt = new Date(travelDate);
@@ -1686,7 +1753,8 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       tour,
       String(travelDate).slice(0, 10),
       selectedTime || null,
-      travelers
+      travelers,
+      optionRef ? { optionScope: optionRef.optionScope } : {}
     );
     if (!evalResult.ok) {
       throw new Error(evalResult.reason);
@@ -1701,6 +1769,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         customerId,
         tourId,
         source: 'EXPEDITION',
+        ...(optionRef ? { optionId: optionRef.optionId, optionTitle: optionRef.optionTitle } : {}),
         clientOrigin: resolveAllowedClientUrl(req),
         travelDate: new Date(travelDate),
         selectedTime: selectedTime || null,
@@ -1847,6 +1916,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       },
       commission,
       clientOrigin: resolveAllowedClientUrl(req),
+      ...(optionRef ? { optionId: optionRef.optionId, optionScope: optionRef.optionScope } : {}),
     });
   } catch (err) {
     console.error('[Expedition] Failed to acquire hold:', err.message);
@@ -2771,6 +2841,10 @@ exports.updateMyPickup = catchAsync(async (req, res, next) => {
   const snapshot = normalizePickupSnapshot(pickup, pickupConfig);
   if (!snapshot) return next(new AppError('Invalid pickup selection', 400));
 
+  // Capture the pre-update location so the supplier email can show the old
+  // pickup (struck through) next to the new one.
+  const previousPickupLocation = pickupAddressLabel(booking.pickup);
+
   await prisma.booking.update({
     where: { id },
     data: { pickup: snapshot },
@@ -2785,8 +2859,12 @@ exports.updateMyPickup = catchAsync(async (req, res, next) => {
     data: { bookingId: booking.id, pickup: true, source: 'expedition' },
   }).catch((err) => console.error('[Expedition] enqueueNotification (customer pickup update) failed:', err.message));
 
-  enqueueEmail({ type: 'supplier-pickup-updated', bookingId: booking.id })
-    .catch((err) => console.error('[Expedition] supplier-pickup-updated email failed:', err.message));
+  enqueueEmail({
+    type: 'supplier-pickup-updated',
+    bookingId: booking.id,
+    data: { previousPickupLocation },
+  })
+  .catch((err) => console.error('[Expedition] supplier-pickup-updated email failed:', err.message));
 
   logActivity({
     userId: customerId,

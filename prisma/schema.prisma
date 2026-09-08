@@ -22,6 +22,7 @@ enum UserRole {
   admin
   expedition
   ghana
+  travioafrica
 }
 
 enum SupplierStatus {
@@ -812,6 +813,11 @@ model Booking {
   selectedTime String?
   isSimulated  Boolean       @default(false)
 
+  // Sellable option chosen for this booking (multi-option tours). Null = the
+  // tour's default/first option (keeps every legacy booking option-agnostic).
+  optionId    String?
+  optionTitle String?
+
   // Lead traveler captured on the storefront (the person going on the trip).
   // Distinct from the customer account that placed the booking. Nullable so
   // legacy/guest bookings fall back to the account holder.
@@ -963,6 +969,8 @@ model CheckoutDraft {
   travelDate   DateTime @map("selectedDate")
   selectedTime String?
   seats        Int // Numeric traveler headcount occupying capacity
+  // Sellable option the hold is for (multi-option tours); null = default option.
+  optionId String?
 
   // Frozen at acquisition: exact validated request body + server-computed
   // pricing/commission, so the webhook can materialize the Booking without

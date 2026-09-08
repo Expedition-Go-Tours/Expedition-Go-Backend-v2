@@ -24,6 +24,7 @@ const { Prisma } = require('@prisma/client');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../utils/availabilityCore');
 const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../utils/queue');
 const { resolvePickupSelection, pickupStatus, isPickupIncomplete } = require('../utils/geoUtils');
+const { pickupAddressLabel } = require('../utils/emailFormatting');
 const getConfig = require('../utils/getConfig');
 const { detachBookingFromActiveRequests } = require('../utils/financeHelpers');
 const { generatePrintableTicketHtml } = require('../utils/emailService');
@@ -1300,9 +1301,13 @@ exports.updateBookingPickup = catchAsync(async (req, res, next) => {
     return next(new AppError('Booking not found or access denied', 404));
   }
 
-  const current = typeof booking.pickup === 'string'
-    ? (() => { try { return JSON.parse(booking.pickup); } catch { return null; } })()
-    : booking.pickup || {};
+const current = typeof booking.pickup === 'string'
+  ? (() => { try { return JSON.parse(booking.pickup); } catch { return null; } })()
+  : booking.pickup || {};
+
+// Capture the pre-update location so the customer email can show the old
+// pickup (struck through) next to the new one.
+const previousPickupLocation = pickupAddressLabel(current);
 
   const updatedPickup = {
     ...current,
@@ -1336,8 +1341,12 @@ exports.updateBookingPickup = catchAsync(async (req, res, next) => {
     data: { bookingId: booking.id, pickup: true }
   }).catch((err) => console.error('[Notification] enqueueNotification (pickup update) failed:', err.message));
 
-  enqueueEmail({ type: 'pickup-details-updated', bookingId: booking.id })
-    .catch((err) => console.error('[Email] pickup-details-updated failed:', err.message));
+  enqueueEmail({
+    type: 'pickup-details-updated',
+    bookingId: booking.id,
+    data: { previousPickupLocation },
+  })
+  .catch((err) => console.error('[Email] pickup-details-updated failed:', err.message));
 
   logActivity({
     userId: supplierId,

@@ -177,9 +177,13 @@ function detailRows(rows, options = {}) {
     const ifMatch = typeof cond === 'string' && cond.match(/^\{\{\s*([a-zA-Z0-9_]+)\s*\}\}$/);
     const rowConditional = row.conditional || (ifMatch ? ifMatch[1] : null);
 
+    const valueStyle = row.strike
+      ? `color:${COLORS.faint};text-decoration:line-through;`
+      : `color:${COLORS.navy};`;
+
     const valueHtml = row.raw !== undefined
       ? row.raw
-      : `<span style="color:${COLORS.navy};font-weight:600;">${row.value || '&mdash;'}</span>`;
+      : `<span style="${valueStyle}font-weight:600;">${row.value || '&mdash;'}</span>`;
 
     // When the whole row is already gated by {{#if}}, the value renders plain.
     const value = rowConditional ? valueHtml : valueHtml;
@@ -208,6 +212,7 @@ function detailRows(rows, options = {}) {
  */
 function diffTable() {
   return `
+  {{#if changes}}
   <tr><td class="pad" style="padding:12px 40px 4px 40px;">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid ${COLORS.border};border-radius:10px;overflow:hidden;">
       <tr>
@@ -223,7 +228,8 @@ function diffTable() {
       </tr>
       {{/each}}
     </table>
-  </td></tr>`;
+  </td></tr>
+  {{/if}}`;
 }
 
 /**

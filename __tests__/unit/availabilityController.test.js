@@ -1,7 +1,7 @@
 const { parseISO, addDays, format } = require('date-fns');
 
 jest.mock('../../utils/prismaClient', () => ({
-  tour: { findFirst: jest.fn() },
+  tour: { findFirst: jest.fn(), findUnique: jest.fn() },
   tourDateOverride: { findMany: jest.fn(), upsert: jest.fn(), deleteMany: jest.fn() },
   booking: { findMany: jest.fn(), count: jest.fn() },
   $transaction: jest.fn(),

@@ -130,18 +130,47 @@ function asDate(value) {
 }
 
 /** Build the change-summary list for emails. */
-function buildChangeLabels(prev, next) {
+function buildChangeLabels(prev, next, currency = 'USD') {
+  const money = (value) =>
+    Number.isFinite(Number(value))
+      ? new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(value))
+      : '—';
   const labels = [];
   const prevDate = asDate(prev.travelDate);
   const nextDate = asDate(next.travelDate);
   if (Number.isFinite(prevDate.getTime()) && Number.isFinite(nextDate.getTime()) && travelDateKey(prevDate) !== travelDateKey(nextDate)) {
-    labels.push({ label: 'Activity date', detail: `${humanDate(prevDate)} → ${humanDate(nextDate)}` });
+    labels.push({
+      label: 'Activity date',
+      detail: `${humanDate(prevDate)} → ${humanDate(nextDate)}`,
+      previous: humanDate(prevDate),
+      updated: humanDate(nextDate),
+    });
   }
   if ((prev.selectedTime || null) !== (next.selectedTime || null)) {
-    labels.push({ label: 'Start time', detail: `${prev.selectedTime || 'Not set'} → ${next.selectedTime || 'Not set'}` });
+    labels.push({
+      label: 'Start time',
+      detail: `${prev.selectedTime || 'Not set'} → ${next.selectedTime || 'Not set'}`,
+      previous: prev.selectedTime || 'Not set',
+      updated: next.selectedTime || 'Not set',
+    });
   }
   if (prev.travelerTotal !== next.travelerTotal) {
-    labels.push({ label: 'Travellers', detail: `${prev.travelerTotal} → ${next.travelerTotal}` });
+    labels.push({
+      label: 'Travellers',
+      detail: `${prev.travelerTotal} → ${next.travelerTotal}`,
+      previous: String(prev.travelerTotal),
+      updated: String(next.travelerTotal),
+    });
+  }
+  const prevTotal = Number(prev.grossAmount);
+  const nextTotal = Number(next.newTotal ?? next.grossAmount);
+  if (Number.isFinite(prevTotal) && Number.isFinite(nextTotal) && Math.abs(prevTotal - nextTotal) > 0.005) {
+    labels.push({
+      label: 'Total price',
+      detail: `${money(prevTotal)} → ${money(nextTotal)}`,
+      previous: money(prevTotal),
+      updated: money(nextTotal),
+    });
   }
   return labels;
 }
@@ -217,7 +246,15 @@ function settlementMode(booking, delta) {
  * @returns {object} { previous, next, delta, kind, moneyMode, target, changes, policy }
  */
 async function computeSnapshot(ctx) {
-  const { booking, tour, target, customerId } = ctx;
+  const { booking, target, customerId } = ctx;
+  // Option-aware: a booking made on a multi-option tour must be re-quoted
+  // against ITS option's pricing/availability/cut-off (null optionId = the
+  // default option). Option-less tours pass through untouched.
+  const tourOpt = require('./tourOptions');
+  const hasOptions = booking && tourOpt.getTourOptions(ctx.tour).length > 0;
+  const resolvedOpt = hasOptions ? tourOpt.applyOption(ctx.tour, booking.optionId || 'default') : null;
+  const tour = resolvedOpt && resolvedOpt.optionScope ? resolvedOpt.tour : ctx.tour;
+  const optionScope = resolvedOpt && resolvedOpt.optionScope ? resolvedOpt.optionScope : null;
   const policy = evaluateModifyPolicy(booking, tour);
   if (!policy.allowed) throw new AppError(policy.reason, 400);
 
@@ -291,7 +328,7 @@ async function computeSnapshot(ctx) {
       ? 'MODIFY_DATE'
       : 'MODIFY_PARTY';
 
-  const changes = buildChangeLabels(previous, { ...next, travelDate: next.travelDate });
+  const changes = buildChangeLabels(previous, { ...next, travelDate: next.travelDate }, booking.currency || 'USD');
 
   return {
     previous,
@@ -302,18 +339,23 @@ async function computeSnapshot(ctx) {
     changes,
     target,
     policy,
+    tour,
+    optionScope,
   };
 }
 
 /** Authoritative capacity re-check excluding this booking's own travellers. */
-async function validateTargetCapacity(tx, tour, target, bookingId) {
+async function validateTargetCapacity(tx, tour, target, bookingId, extra = {}) {
   const result = await evaluateBookingAvailability(
     tx,
     tour,
     travelDateKey(target.date),
     target.time || null,
     target.travelers,
-    { excludeBookingId: bookingId }
+    {
+      excludeBookingId: bookingId,
+      ...(extra.optionScope ? { optionScope: extra.optionScope } : {}),
+    }
   );
   if (!result.ok) throw new AppError(result.reason, 409);
   return result;
@@ -336,7 +378,9 @@ async function quoteBookingModification({ bookingId, customerId, source, body })
 
   const target = buildTarget(booking, body || {});
   const snapshot = await computeSnapshot({ booking, tour: booking.tour, target, customerId });
-  const capacity = await validateTargetCapacity(prisma, booking.tour, target, booking.id);
+  const capacity = await validateTargetCapacity(prisma, snapshot.tour, target, booking.id, {
+    optionScope: snapshot.optionScope,
+  });
 
   return {
     bookingId: booking.id,
@@ -615,12 +659,8 @@ async function applyBookingModification({ bookingId, customerId, source, body, u
       if (lockedBooking.payoutStatus && lockedBooking.payoutStatus !== 'PENDING') {
         throw new AppError('This booking can no longer be changed once payout has begun', 409);
       }
-      const verifyPolicy = evaluateModifyPolicy(
-        { ...lockedBooking, tour: tourRecord },
-        tourRecord
-      );
-      if (!verifyPolicy.allowed) throw new AppError(verifyPolicy.reason, 409);
-      // Fresh snapshot against the locked tour + locked booking row.
+      // Fresh snapshot against the locked tour + locked booking row (re-runs the
+      // policy check against the booking's OWN option when it is option-scoped).
       const lockedSnapshot = await computeSnapshot({
         booking: lockedBooking,
         tour: tourRecord,
@@ -635,7 +675,9 @@ async function applyBookingModification({ bookingId, customerId, source, body, u
         throw new AppError('The tour price changed — please review the updated quote', 409);
       }
 
-      await validateTargetCapacity(tx, tourRecord, target, booking.id);
+      await validateTargetCapacity(tx, lockedSnapshot.tour, target, booking.id, {
+        optionScope: lockedSnapshot.optionScope,
+      });
 
       const travelerDelta =
         lockedSnapshot.next.travelerTotal - lockedSnapshot.previous.travelerTotal;
@@ -772,6 +814,16 @@ async function finalizeTopUpChangeInTx(tx, change, intent) {
     return failWithRefund('payout_started');
   }
 
+  // Option-aware finalize: validate mix + capacity against the booking's OWN
+  // option projection (default option when optionId is null on a multi-option
+  // tour); option-less tours use the stored blobs unchanged.
+  const tourOpt = require('./tourOptions');
+  const effApplied = tourOpt.getTourOptions(tourRecord).length > 0
+    ? tourOpt.applyOption(tourRecord, booking.optionId || 'default')
+    : null;
+  const effTour = effApplied && effApplied.optionScope ? effApplied.tour : tourRecord;
+  const effScope = effApplied && effApplied.optionScope ? effApplied.optionScope : null;
+
   const prev = change.previous || {};
   const next = change.updated || {};
   if (round2(prev.grossAmount) !== round2(booking.grossAmount)) {
@@ -792,17 +844,20 @@ async function finalizeTopUpChangeInTx(tx, change, intent) {
     return failWithRefund('amount_mismatch');
   }
 
-  const parsed = parseBlob(tourRecord.schedulesAndPricing) || {};
+  const parsed = parseBlob(effTour.schedulesAndPricing) || {};
   const mix = validatePassengerMix(parsed, target.travelers);
   if (!mix.ok) return failWithRefund(mix.errors[0]);
 
   const capacity = await evaluateBookingAvailability(
     tx,
-    tourRecord,
+    effTour,
     travelDateKey(target.date),
     target.time || null,
     target.travelers,
-    { excludeBookingId: change.bookingId }
+    {
+      excludeBookingId: change.bookingId,
+      ...(effScope ? { optionScope: effScope } : {}),
+    }
   );
   if (!capacity.ok) return failWithRefund('capacity_lost');
 
@@ -1002,6 +1057,7 @@ module.exports = {
   expireModifyTopUps,
   notifyModificationApplied,
   refundAcrossSources,
+  buildChangeLabels,
   paymentSourceIntents,
   assertModifyEligible,
   buildTarget,

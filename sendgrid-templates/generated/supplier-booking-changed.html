@@ -58,6 +58,7 @@
     <p style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#334155;line-height:1.7;text-align:left;">The customer has updated this booking. Availability and payment have been updated automatically.</p>
   </td></tr>
       
+  {{#if changes}}
   <tr><td class="pad" style="padding:12px 40px 4px 40px;">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;">
       <tr>
@@ -74,6 +75,7 @@
       {{/each}}
     </table>
   </td></tr>
+  {{/if}}
       <tr><td style="padding:24px 40px 0 40px;" class="pad"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="border-top:1px solid #E2E8F0;font-size:0;line-height:0;">&nbsp;</td></tr></table></td></tr>
       
   <tr><td class="pad" style="padding:28px 40px 4px 40px;">

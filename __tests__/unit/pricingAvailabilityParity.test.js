@@ -35,9 +35,9 @@ const parsedOpen = {
   },
 };
 
-const mondayBefore = new Date('2026-09-07T00:00:00.000Z'); // before window
+const mondayBefore = new Date('2026-09-14T00:00:00.000Z'); // before window (future when the suite runs)
 const mondayInside = new Date('2026-09-28T00:00:00.000Z'); // inside window
-const tuesday = new Date('2026-09-08T00:00:00.000Z'); // not an operating day
+const tuesday = new Date('2026-09-15T00:00:00.000Z'); // not an operating day
 
 describe('pricing/availability parity', () => {
   it('blocks operating weekdays that fall before the pricing window', () => {

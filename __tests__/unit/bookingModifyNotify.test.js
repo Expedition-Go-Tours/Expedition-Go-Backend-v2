@@ -16,7 +16,7 @@ jest.mock('../../utils/prismaClient', () => ({
   booking: { findUnique: jest.fn() },
 }));
 
-const { notifyModificationApplied } = require('../../utils/bookingModify');
+const { notifyModificationApplied, buildChangeLabels } = require('../../utils/bookingModify');
 const { enqueueEmail, enqueueNotification } = require('../../utils/queue');
 const { notifyAdmin } = require('../../utils/adminNotificationService');
 const prisma = require('../../utils/prismaClient');
@@ -99,6 +99,44 @@ describe('bookingModify supplier notification on apply', () => {
     expect(enqueueEmail).toHaveBeenCalledTimes(2);
     expect(enqueueNotification).not.toHaveBeenCalled();
     expect(notifyAdmin).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('buildChangeLabels', () => {
+  it('emits previous/updated values for every row and a Total price row when money changes', () => {
+    const rows = buildChangeLabels(
+      {
+        travelDate: new Date(Date.UTC(2026, 0, 1)),
+        selectedTime: '09:00',
+        travelerTotal: 1,
+        grossAmount: 100,
+      },
+      {
+        travelDate: new Date(Date.UTC(2026, 0, 2)),
+        selectedTime: '10:00',
+        travelerTotal: 2,
+        newTotal: 185,
+      },
+      'USD'
+    );
+
+    expect(rows).toEqual([
+      expect.objectContaining({ label: 'Activity date', previous: '2026-01-01', updated: '2026-01-02' }),
+      expect.objectContaining({ label: 'Start time', previous: '09:00', updated: '10:00' }),
+      expect.objectContaining({ label: 'Travellers', previous: '1', updated: '2' }),
+      expect.objectContaining({ label: 'Total price', previous: '$100.00', updated: '$185.00' }),
+    ]);
+  });
+
+  it('omits the Total price row when the amount is unchanged', () => {
+    const rows = buildChangeLabels(
+      { travelDate: new Date(Date.UTC(2026, 0, 1)), selectedTime: '09:00', travelerTotal: 2, grossAmount: 100 },
+      { travelDate: new Date(Date.UTC(2026, 0, 2)), selectedTime: '09:00', travelerTotal: 2, newTotal: 100 },
+      'USD'
+    );
+
+    expect(rows.some((r) => r.label === 'Total price')).toBe(false);
+    expect(rows.some((r) => r.label === 'Activity date')).toBe(true);
   });
 });
 

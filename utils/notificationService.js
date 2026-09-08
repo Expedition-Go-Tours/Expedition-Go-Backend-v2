@@ -14,6 +14,7 @@
 
 const prisma = require('./prismaClient');
 const { sendEmail } = require('./emailService');
+const emailUrls = require('../config/emailUrls');
 
 /**
  * Send notification to user
@@ -144,6 +145,44 @@ async function sendNotificationEmail(user, { type, title, message, data, templat
   const emailConfig = emailTemplates[type] || {
     subject: title,
   };
+
+  // New-review emails to suppliers carry two actions that deep-link into the
+  // supplier dashboard: a primary "View review" button and a quiet secondary
+  // "Reply to this review" link that opens the reply box on the same review.
+  if (type === 'REVIEW_RECEIVED' && data?.reviewId) {
+    const review = await prisma.review.findUnique({
+      where: { id: data.reviewId },
+      include: {
+        customer: { select: { id: true, name: true } },
+        tour: { select: { id: true, title: true } },
+      },
+    });
+    if (review) {
+      const rating = review.rating ?? data.rating;
+      const customerName = review.customer?.name || 'A traveller';
+      const tourTitle = review.tour?.title || '';
+      const excerpt = (review.comment || review.title || '').trim();
+      const snippet = excerpt.length > 180 ? `${excerpt.slice(0, 177).trimEnd()}…` : excerpt;
+      const message = `${customerName} left a ${rating}-star review${tourTitle ? ` of "${tourTitle}"` : ''}${snippet ? `: "${snippet}"` : ''}.`;
+
+      return sendEmail({
+        to: user.email,
+        subject: `New ${rating}-Star Review Received`,
+        template: 'generic-notification',
+        data: {
+          userName: user.name,
+          header: `New ${rating}-Star Review`,
+          message,
+          reviewDate: new Date(review.createdAt).toLocaleDateString(),
+          buttonText: 'View review',
+          buttonUrl: emailUrls.supplierReview(review.id),
+          secondaryButtonText: 'Reply to this review',
+          secondaryButtonUrl: emailUrls.supplierReplyReview(review.id),
+          ...data,
+        },
+      });
+    }
+  }
 
   // Rich booking emails are sent by their dedicated typed functions (see
   // emailService). This generic path renders the inline "generic-notification"

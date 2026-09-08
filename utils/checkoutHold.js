@@ -30,8 +30,23 @@ async function acquireHold({
   source,
   bookingPrefix,
   clientOrigin,
+  optionId,
+  optionScope,
 }) {
   const seats = travelerCount(travelers);
+
+  // Multi-option: resolve the option's id/title + capacity scope. When no
+  // option is passed, optId/scope stay null (legacy whole-tour behavior).
+  const tourOpts = require('./tourOptions');
+  let optId = null;
+  let optTitle = null;
+  let scope = optionScope || null;
+  if (optionId && tour) {
+    const resolved = tourOpts.resolveTourOption(tour, optionId);
+    optId = resolved.option && resolved.option.id ? resolved.option.id : optionId;
+    optTitle = resolved.option ? resolved.option.title || null : null;
+    scope = tourOpts.optionScopeFor(tour, optionId) || scope;
+  }
 
   const draft = await prisma.$transaction(async (tx) => {
     // ── Serialize on the tour row (same lock used by confirmBooking,
@@ -42,9 +57,10 @@ async function acquireHold({
     );
     if (!locked) throw new Error('Tour not found');
 
-    // ── Capacity check: bookings + other active holds ────────────
+    // ── Capacity check: bookings + other active holds (option-scoped) ──
     const evalResult = await evaluateBookingAvailability(
-      tx, tour, travelDate, selectedTime, travelers
+      tx, tour, travelDate, selectedTime, travelers,
+      scope ? { optionScope: scope } : {}
     );
     if (!evalResult.ok) throw new Error(evalResult.reason);
 
@@ -85,7 +101,14 @@ async function acquireHold({
         travelDate: new Date(travelDate),
         selectedTime: selectedTime || null,
         seats,
-        payload: { ...(payload ?? {}), _source: source || 'EXPEDITION', _bookingPrefix: bookingPrefix || 'EXP', _clientOrigin: clientOrigin || null },
+        optionId: optId,
+        payload: {
+          ...(payload ?? {}),
+          _source: source || 'EXPEDITION',
+          _bookingPrefix: bookingPrefix || 'EXP',
+          _clientOrigin: clientOrigin || null,
+          ...(optId ? { _optionId: optId, _optionTitle: optTitle } : {}),
+        },
         pricing: pricing ?? {},
         commissionRate,
         platformCommission,
@@ -160,10 +183,29 @@ async function materializeHold(draftId, session, paymentIntentId) {
       where: { id: draftRecord.tourId },
       include: { supplier: { include: { supplierProfile: true } } },
     });
+
+    // Multi-option hold: resolve the option title + capacity scope so the
+    // materialization capacity re-check and the created booking both know it.
+    let materializedOptionId = draftRecord.optionId || null;
+    let materializedOptionTitle = null;
+    let materializedScope = null;
+    if (draftRecord.optionId) {
+      const tourOpts = require('./tourOptions');
+      const resolved = tourOpts.resolveTourOption(tourRecord, draftRecord.optionId);
+      materializedOptionId = resolved.option && resolved.option.id ? resolved.option.id : draftRecord.optionId;
+      materializedOptionTitle = resolved.option ? resolved.option.title || null : (draftRecord.payload?._optionTitle || null);
+      materializedScope = tourOpts.optionScopeFor(tourRecord, draftRecord.optionId) || null;
+    } else if (draftRecord.payload?._optionId) {
+      materializedOptionId = draftRecord.payload._optionId;
+      materializedOptionTitle = draftRecord.payload._optionTitle || null;
+    }
     const evalResult = await evaluateBookingAvailability(
       tx, tourRecord, draftRecord.travelDate, draftRecord.selectedTime,
       draftRecord.payload.travelers,
-      { excludeDraftId: draftId }
+      {
+        excludeDraftId: draftId,
+        ...(materializedScope ? { optionScope: materializedScope } : {}),
+      }
     );
     if (!evalResult.ok) {
       // Capacity gone — release hold, return false so caller refunds.
@@ -191,6 +233,7 @@ async function materializeHold(draftId, session, paymentIntentId) {
         customerId: draftRecord.customerId,
         tourId: draftRecord.tourId,
         source,
+        ...(materializedOptionId ? { optionId: materializedOptionId, optionTitle: materializedOptionTitle } : {}),
         clientOrigin: draftRecord.payload?._clientOrigin || null,
         status: 'CONFIRMED',
         paymentStatus: 'SUCCEEDED',

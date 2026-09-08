@@ -285,13 +285,13 @@ const pickupDetailsUpdated = {
   build() {
     return B.shell('Your pickup information has been updated', `
       ${B.hero({ heading: 'Pickup information updated', badgeText: 'Updated', badgeColor: 'info' })}
-      ${B.detailRows([
-        { label: 'Previous pickup location', value: '{{previousPickupLocation}}', if: '{{previousPickupLocation}}' },
-        { label: 'New pickup location', value: '{{pickupLocation}}' },
-        { label: 'Pickup date', value: '{{dateLabel}}' },
-        { label: 'Pickup time / window', value: '{{pickupTime}}', if: '{{pickupTime}}' },
-      ])}
-      {{#if pickupInstructions}}
+    ${B.detailRows([
+      { label: 'Previous pickup location', value: '{{previousPickupLocation}}', if: '{{previousPickupLocation}}', strike: true },
+      { label: 'New pickup location', value: '{{pickupLocation}}' },
+      { label: 'Pickup date', value: '{{dateLabel}}' },
+      { label: 'Pickup time / window', value: '{{pickupTime}}', if: '{{pickupTime}}' },
+    ])}
+    {{#if pickupInstructions}}
       ${B.paragraph('Instructions: <strong>{{pickupInstructions}}</strong>')}
       {{/if}}
       ${B.paragraph('All other booking details remain unchanged.', { muted: true })}
@@ -611,13 +611,13 @@ const supplierPickupUpdated = {
   build() {
     return B.shell('Customer pickup location updated', `
       ${B.hero({ heading: 'Pickup information has changed', badgeText: 'Updated', badgeColor: 'info' })}
-      ${B.detailRows([
-        { label: 'Previous location', value: '{{previousPickupLocation}}', if: '{{previousPickupLocation}}' },
-        { label: 'New location', value: '{{pickupLocation}}' },
-        { label: 'Pickup date', value: '{{dateLabel}}' },
-        { label: 'Pickup time', value: '{{pickupTime}}', if: '{{pickupTime}}' },
-      ])}
-      {{#if pickupInstructions}}
+    ${B.detailRows([
+      { label: 'Previous location', value: '{{previousPickupLocation}}', if: '{{previousPickupLocation}}', strike: true },
+      { label: 'New location', value: '{{pickupLocation}}' },
+      { label: 'Pickup date', value: '{{dateLabel}}' },
+      { label: 'Pickup time', value: '{{pickupTime}}', if: '{{pickupTime}}' },
+    ])}
+    {{#if pickupInstructions}}
       ${B.paragraph('Instructions: <strong>{{pickupInstructions}}</strong>')}
       {{/if}}
       ${B.callout('Please update your guide, driver and vehicle schedule.', 'info')}
