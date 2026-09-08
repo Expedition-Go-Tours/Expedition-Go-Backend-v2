@@ -614,6 +614,12 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
       // Manual-confirmation tours (instantConfirmation === false) hold bookings
       // PENDING (paid) until the supplier accepts them.
       instantConfirmation: bookingAndTickets.instantConfirmation !== false,
+      // Sellable options (multi-option tours). >1 ⇒ the storefront shows an
+      // option picker; defaultOptionId is what option-agnostic requests use.
+      options: require('../utils/tourOptions').optionSummaries(t),
+      defaultOptionId: (Array.isArray(productContent.options) && productContent.options.length > 0
+        ? (productContent.options[0] && productContent.options[0].id) || null
+        : null) || null,
       supplierName: t.supplier?.name || null,
       supplierPhoto: t.supplier?.photoURL
         ? t.supplier.photoURL
@@ -1086,7 +1092,7 @@ exports.subscribe = catchAsync(async (req, res, next) => {
 
 exports.getTourAvailability = catchAsync(async (req, res, next) => {
   const { slug } = req.params;
-  const { startDate, endDate } = req.query;
+  const { startDate, endDate, option } = req.query;
 
   const expeditionTour = await prisma.travioGhanaTour.findFirst({
     where: { tour: { slug }, isActive: true },
@@ -1097,7 +1103,7 @@ exports.getTourAvailability = catchAsync(async (req, res, next) => {
 
   const tour = await prisma.tour.findUnique({
     where: { id: expeditionTour.tourId },
-    select: { id: true, title: true, schedulesAndPricing: true },
+    select: { id: true, title: true, schedulesAndPricing: true, bookingAndTickets: true, productContent: true },
   });
 
   if (!tour) return next(new AppError('Tour not found', 404));
@@ -1117,9 +1123,24 @@ exports.getTourAvailability = catchAsync(async (req, res, next) => {
     return next(new AppError(`Date range cannot exceed ${maxPublicDays} days`, 400));
   }
 
+  // Optional per-option availability (mirror of the Expedition endpoint).
+  const applied = option ? require('../utils/tourOptions').applyOption(tour, String(option)) : null;
+  const sp = applied ? applied.tour.schedulesAndPricing : tour.schedulesAndPricing;
+  const cacheKeyExtra = applied
+    ? `:${applied.optionId}:${applied.optionScope.includeNull ? 'default' : 'opt'}`
+    : ':default';
+
   const calendar = await cache.getOrSet(
-    `availability:cal:${tour.id}:${toDateKey(start)}:${toDateKey(end)}`,
-    () => buildAvailabilityCalendar(tour.id, tour.schedulesAndPricing, start, end),
+    `availability:cal:${tour.id}${cacheKeyExtra}:${toDateKey(start)}:${toDateKey(end)}`,
+    () => buildAvailabilityCalendar(
+      tour.id,
+      sp,
+      start,
+      end,
+      undefined,
+      applied ? applied.tour.bookingAndTickets : undefined,
+      applied ? applied.optionScope : null
+    ),
     30
   );
 
@@ -1127,6 +1148,7 @@ exports.getTourAvailability = catchAsync(async (req, res, next) => {
     status: 'success',
     data: {
       tour: { id: tour.id, title: tour.title },
+      ...(applied ? { option: { id: applied.optionId, title: applied.optionTitle } } : {}),
       startDate: startDate,
       endDate: endDate,
       calendar,
