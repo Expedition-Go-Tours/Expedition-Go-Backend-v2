@@ -160,14 +160,14 @@ exports.submitRefundClaim = catchAsync(async (req, res, next) => {
     title: 'Refund request received',
     message: `A customer requested a ${claimType.toLowerCase()} refund for "${tourTitle}".`,
     data: { bookingId: booking.id, claimId: claim.id, source: 'expedition' },
-  }).catch(() => {});
+  }).catch((err) => console.error("[RefundClaim] notify/email failed:", err && err.message));
 
   notifyAdmin({
     type: 'REFUND_CLAIM',
     title: 'Customer refund request',
     message: `${customerUser?.name || 'A customer'} requested a refund (claim ${claim.claimNumber})`,
     data: { bookingId: booking.id, claimId: claim.id },
-  }).catch(() => {});
+  }).catch((err) => console.error("[RefundClaim] notify/email failed:", err && err.message));
 
   // Supplier email so the request is seen outside the app.
   if (supplierUser?.email) {
@@ -178,7 +178,7 @@ exports.submitRefundClaim = catchAsync(async (req, res, next) => {
       message: `A customer has requested a ${claimType.toLowerCase()} refund for "${tourTitle}" (${claim.claimNumber}). Review it and approve so our team can release the money, or decline with a note.`,
       buttonText: 'Review request',
       buttonUrl: `${emailUrls.supplierDashboard()}/finance?tab=claims&claimId=${claim.id}`,
-    }).catch(() => {});
+    }).catch((err) => console.error("[RefundClaim] notify/email failed:", err && err.message));
   }
 
   // Confirmation to the customer.
@@ -190,7 +190,7 @@ exports.submitRefundClaim = catchAsync(async (req, res, next) => {
       message: `Your ${claimType.toLowerCase()} refund request for "${tourTitle}" has been submitted. The provider will review it, and if approved our team will release the refund to your original payment method.`,
       buttonText: 'View booking',
       buttonUrl: `${emailUrls.CLIENT_URL || 'https://travioafrica.com'}/dashboard/bookings?booking=${booking.id}`,
-    }).catch(() => {});
+    }).catch((err) => console.error("[RefundClaim] notify/email failed:", err && err.message));
   }
 
   res.status(201).json({ status: 'success', data: { claim } });
@@ -260,7 +260,7 @@ exports.supplierApprove = catchAsync(async (req, res, next) => {
     title: 'Refund request approved by provider',
     message: `Claim ${claim.claimNumber} was approved and is ready to release`,
     data: { bookingId: claim.bookingId, claimId: claim.id },
-  }).catch(() => {});
+  }).catch((err) => console.error("[RefundClaim] notify/email failed:", err && err.message));
 
   // Tell the customer their provider approved it (release is pending admin).
   const tourTitle = claim.booking?.tour?.title || '';
@@ -273,7 +273,7 @@ exports.supplierApprove = catchAsync(async (req, res, next) => {
       message: 'The provider approved your refund request. Our team will now release the refund to your original payment method — this usually takes a few business days.',
       buttonText: 'View booking',
       buttonUrl: `${emailUrls.CLIENT_URL || 'https://travioafrica.com'}/dashboard/bookings?booking=${claim.bookingId}`,
-    }).catch(() => {});
+    }).catch((err) => console.error("[RefundClaim] notify/email failed:", err && err.message));
   }
 
   res.status(200).json({ status: 'success', data: { claim: { ...claim, status: 'SUPPLIER_APPROVED' } } });
@@ -301,7 +301,7 @@ exports.supplierDecline = catchAsync(async (req, res, next) => {
       subject: `Update on your refund request (${tourTitle})`,
       heading: 'Your refund request was not approved',
       message: `The provider declined your refund request with this note: "${note}"`,
-    }).catch(() => {});
+    }).catch((err) => console.error("[RefundClaim] notify/email failed:", err && err.message));
   }
 
   res.status(200).json({ status: 'success', data: { claim: { ...claim, status: 'SUPPLIER_DECLINED' } } });
@@ -397,7 +397,7 @@ exports.adminRelease = catchAsync(async (req, res, next) => {
       subject: `Refund released — ${booking.currency || 'USD'} ${releasedAmount.toFixed(2)}`,
       heading: 'Your refund has been released',
       message: `The refund of ${booking.currency || 'USD'} ${releasedAmount.toFixed(2)} for your trip "${booking.tour?.title || ''}" is on its way to your original payment method.`,
-    }).catch(() => {});
+    }).catch((err) => console.error("[RefundClaim] notify/email failed:", err && err.message));
   }
 
   res.status(200).json({ status: 'success', data: { claim: { ...claim, status: 'RELEASED', releasedAmount } } });
@@ -425,7 +425,7 @@ exports.adminDecline = catchAsync(async (req, res, next) => {
       subject: `Update on your refund request (${tourTitle})`,
       heading: 'Your refund request was not approved',
       message: `We could not release your refund: "${note}". If you have questions, contact support.`,
-    }).catch(() => {});
+    }).catch((err) => console.error("[RefundClaim] notify/email failed:", err && err.message));
   }
 
   res.status(200).json({ status: 'success', data: { claim: { ...claim, status: 'ADMIN_DECLINED' } } });

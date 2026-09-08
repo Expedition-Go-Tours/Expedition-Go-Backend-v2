@@ -1,0 +1,5 @@
+-- AlterEnum
+ALTER TYPE "NotificationType" ADD VALUE IF NOT EXISTS 'REFUND_CLAIM';
+
+-- AlterEnum
+ALTER TYPE "AdminNotificationType" ADD VALUE IF NOT EXISTS 'REFUND_CLAIM';
