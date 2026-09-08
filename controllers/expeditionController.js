@@ -2291,6 +2291,7 @@ exports.getMyBookings = catchAsync(async (req, res, next) => {
           },
         },
         disputes: { select: { id: true, status: true } },
+        review: { select: { id: true } },
       },
       orderBy: { createdAt: 'desc' },
       skip,
@@ -2301,7 +2302,10 @@ exports.getMyBookings = catchAsync(async (req, res, next) => {
 
   const totalPages = Math.ceil(totalCount / take);
 
-  const decorated = bookings.map((b) => ({ ...b, refundState: bookingRefundState(b) }));
+  const decorated = bookings.map((b) => {
+    const { review, ...rest } = b;
+    return { ...rest, refundState: bookingRefundState(b), reviewed: !!review };
+  });
 
   res.status(200).json({
     status: 'success',
