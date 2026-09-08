@@ -257,6 +257,8 @@ const availabilityCalendarSchema = z.object({
   query: z.object({
     startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format'),
     endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD format'),
+    // Optional sellable option — a multi-option tour's calendar is scoped to it.
+    option: z.string().min(1).max(300).optional(),
   }),
   params: z.object({
     slug: z.string().min(1).max(300),
