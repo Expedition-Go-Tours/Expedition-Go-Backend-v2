@@ -892,6 +892,7 @@ model Booking {
   payouts            Payout[]
   payoutRequestItems PayoutRequestItem[]
   disputes           Dispute[]
+  refundClaims       RefundClaim[]
   reminders          BookingReminder[]
   changes            BookingChange[]
 
@@ -1908,4 +1909,56 @@ model Attraction {
   @@index([status])
   @@index([isFeatured])
   @@index([tourCount])
+}
+
+// �?Request refund�? on completed trips — customer-initiated claim that goes
+// customer -> supplier approval -> admin release (Stripe refund executed).
+model RefundClaim {
+  id          String @id @default(cuid())
+  claimNumber String @unique // e.g. RC-20260908-XXXX
+
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  customerId String // customer who took the trip
+  supplierId String // tour operator who will approve
+
+  reason          String // allow-listed preset code (see controller)
+  details         String?
+  type            RefundClaimType @default(FULL)
+  requestedAmount Decimal?        @db.Decimal(10, 2) // required when PARTIAL
+
+  status RefundClaimStatus @default(SUBMITTED)
+
+  // Supplier decision
+  reviewedById String?
+  reviewedAt   DateTime?
+  reviewNote   String? // decline reason (supplier or admin)
+
+  // Admin release (money actually moves here)
+  releasedById  String?
+  releasedAt    DateTime?
+  releasedAmount Decimal? @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([bookingId])
+  @@index([customerId])
+  @@index([supplierId])
+  @@index([status])
+}
+
+enum RefundClaimType {
+  FULL
+  PARTIAL
+}
+
+enum RefundClaimStatus {
+  SUBMITTED // customer submitted, awaiting supplier review
+  SUPPLIER_APPROVED // supplier OK'd it — forwarded to admin to release
+  SUPPLIER_DECLINED // supplier declined
+  RELEASED // admin executed the refund
+  ADMIN_DECLINED // admin declined to release
+  WITHDRAWN // customer withdrew (reserved for future)
 }

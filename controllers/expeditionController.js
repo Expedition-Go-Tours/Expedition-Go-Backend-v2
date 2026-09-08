@@ -2292,6 +2292,7 @@ exports.getMyBookings = catchAsync(async (req, res, next) => {
           },
         },
         disputes: { select: { id: true, status: true } },
+        refundClaims: { select: { id: true, status: true, type: true } },
         review: { select: { id: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -2334,6 +2335,7 @@ exports.getBooking = catchAsync(async (req, res, next) => {
       },
       review: true,
       disputes: { select: { id: true, status: true } },
+      refundClaims: { select: { id: true, status: true, type: true, createdAt: true } },
     },
   });
 

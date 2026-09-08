@@ -28,11 +28,18 @@ function bookingRefundState(booking) {
   const hasOpenDispute = disputes.some((d) => d?.status && OPEN_DISPUTE_STATUSES.includes(d.status));
   if (hasOpenDispute) return 'open';
 
+  // Customer-initiated refund claims follow the same lifecycle surface:
+  // SUBMITTED / SUPPLIER_APPROVED → refund in flight; RELEASED → money back.
+  const claims = Array.isArray(booking?.refundClaims) ? booking.refundClaims : [];
+  const hasPendingClaim = claims.some((c) => c?.status && ['SUBMITTED', 'SUPPLIER_APPROVED'].includes(c.status));
+  if (hasPendingClaim) return 'open';
+
   // Money is back.
   const refunded = booking.refundedAt
     || booking.status === 'REFUNDED'
     || booking.paymentStatus === 'REFUNDED'
-    || disputes.some((d) => d?.status === 'RESOLVED_CUSTOMER');
+    || disputes.some((d) => d?.status === 'RESOLVED_CUSTOMER')
+    || claims.some((c) => c?.status === 'RELEASED');
   if (refunded) return 'closed';
 
   // Customer-cancelled while payment still shows SUCCEEDED and no refund landed:
