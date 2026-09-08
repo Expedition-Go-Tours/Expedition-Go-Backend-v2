@@ -269,6 +269,14 @@ exports.createBooking = catchAsync(async (req, res, next) => {
     return next(new AppError("paymentTiming must be 'now' or 'later'", 400));
   }
 
+  // The legacy cart storefront predates sellable options and has no per-cart
+  // option storage. Reject an optionId explicitly instead of silently pricing
+  // the wrong (default) option — these tours should be booked through the
+  // Expedition / Ghana storefronts until the legacy flow is migrated.
+  if (req.body.optionId) {
+    return next(new AppError('Selecting a tour option is not supported on this storefront yet', 400));
+  }
+
   // Validate traveler contact info
   const travelerValidation = validateTravelerInfo(travelers);
   if (!travelerValidation.isValid) {

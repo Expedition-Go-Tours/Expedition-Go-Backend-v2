@@ -1161,16 +1161,16 @@ exports.getTourAvailability = catchAsync(async (req, res, next) => {
 // ================================
 
 exports.calculateCheckout = catchAsync(async (req, res, next) => {
-  const { tourId, travelDate, travelers, promoCode } = req.body;
+  const { tourId, travelDate, travelers, promoCode, optionId } = req.body;
 
   if (!tourId || !travelDate || !travelers) {
     return next(new AppError('tourId, travelDate, and travelers are required', 400));
   }
 
-  const cacheKey = `${CACHE_PREFIX}checkout:${crypto.createHash('md5').update(JSON.stringify({ tourId, travelDate, travelers, promoCode: promoCode || null })).digest('hex')}`;
+  const cacheKey = `${CACHE_PREFIX}checkout:${crypto.createHash('md5').update(JSON.stringify({ tourId, travelDate, travelers, promoCode: promoCode || null, optionId: optionId || null })).digest('hex')}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
-    const tour = await prisma.tour.findFirst({
+    let tour = await prisma.tour.findFirst({
       where: { id: tourId, status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } },
       include: { supplier: { include: { supplierProfile: true } } },
     });
@@ -1187,6 +1187,18 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
       throw new AppError('Tour is not available on Travio Ghana', 400);
     }
 
+    // Multi-option: quote against the chosen option's projection + scope.
+    let optionScopeCalc = null;
+    let optionKeyCalc = null;
+    if (optionId) {
+      const appliedCalc = require('../utils/tourOptions').applyOption(tour, String(optionId));
+      if (appliedCalc.optionScope) {
+        tour = { ...appliedCalc.tour, supplier: tour.supplier };
+        optionScopeCalc = appliedCalc.optionScope;
+        optionKeyCalc = appliedCalc.optionId;
+      }
+    }
+
     // Enforce supplier passenger-mix rules (min/max, disallowed categories,
     // requires-adult supervision) before pricing.
     const mixResult = validatePassengerMix(parseBlob(tour.schedulesAndPricing), travelers);
@@ -1194,7 +1206,7 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
       throw new AppError(mixResult.errors[0], 400);
     }
 
-    const availability = await checkTourAvailability(tourId, travelDate, null);
+    const availability = await checkTourAvailability(tourId, travelDate, null, optionScopeCalc ? { optionScope: optionScopeCalc } : {});
     if (!availability.available) {
       throw new AppError(availability.reason || 'Tour is not available on the selected date', 400);
     }
@@ -1204,7 +1216,7 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
       throw new AppError(`Only ${availability.availableSpots} spots available, but ${totalTravelers} travelers requested`, 400);
     }
 
-    const pricing = await calculateTourPrice(tour, travelers, travelDate, null, null, req.user?.id, promoCode || null)
+    const pricing = await calculateTourPrice(tour, travelers, travelDate, null, optionKeyCalc, req.user?.id, promoCode || null)
       .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
 
     if (!pricing.success) {
@@ -1275,7 +1287,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError(`Traveler information: ${travelerValidation.errors.join(', ')}`, 400));
   }
 
-  const tour = await prisma.tour.findFirst({
+  let tour = await prisma.tour.findFirst({
     where: { id: tourId, status: 'ACTIVE' },
     include: { supplier: { include: { supplierProfile: true } } },
   });
@@ -1294,6 +1306,21 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
 
   if (tour.supplier.supplierProfile.status !== 'ACTIVE') {
     return next(new AppError('Supplier is not active', 400));
+  }
+
+  // Multi-option tours: resolve the requested option onto the engine blobs so
+  // pricing/availability/capacity/cut-off all run against the selected option.
+  let optionRef = null;
+  if (req.body.optionId) {
+    const appliedG = require('../utils/tourOptions').applyOption(tour, String(req.body.optionId));
+    if (appliedG.optionScope) {
+      optionRef = {
+        optionId: appliedG.optionId,
+        optionTitle: appliedG.optionTitle,
+        optionScope: appliedG.optionScope,
+      };
+      tour = { ...appliedG.tour, supplier: tour.supplier };
+    }
   }
 
   // Validate pickup selection against the tour's current pickup config.
@@ -1324,7 +1351,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError('Booking total must be greater than 0', 400));
   }
 
-  const availability = await checkTourAvailability(tourId, travelDate, { selectedTime, travelers });
+  const availability = await checkTourAvailability(tourId, travelDate, { selectedTime, travelers }, optionRef ? { optionScope: optionRef.optionScope } : {});
   if (!availability.available) {
     return next(new AppError(availability.reason || 'Tour is not available on the selected date', 400));
   }
@@ -1471,7 +1498,8 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       tour,
       String(travelDate).slice(0, 10),
       selectedTime || null,
-      travelers
+      travelers,
+      optionRef ? { optionScope: optionRef.optionScope } : {}
     );
     if (!evalResult.ok) {
       throw new Error(evalResult.reason);
@@ -1486,6 +1514,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         customerId,
         tourId,
         source: 'GHANA',
+        ...(optionRef ? { optionId: optionRef.optionId, optionTitle: optionRef.optionTitle } : {}),
         clientOrigin: resolveAllowedClientUrl(req),
         travelDate: new Date(travelDate),
         selectedTime: selectedTime || null,
@@ -1634,6 +1663,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       source: 'GHANA',
       bookingPrefix: 'GHA',
       clientOrigin: resolveAllowedClientUrl(req),
+      ...(optionRef ? { optionId: optionRef.optionId, optionScope: optionRef.optionScope } : {}),
     });
   } catch (err) {
     console.error('[Travio Ghana] Failed to acquire hold:', err.message);
