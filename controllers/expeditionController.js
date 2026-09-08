@@ -1409,7 +1409,7 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
   const cacheKey = `${CACHE_PREFIX}checkout:${crypto.createHash('md5').update(JSON.stringify({ tourId, travelDate, travelers, promoCode: promoCode || null, optionId: optionId || null })).digest('hex')}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
-    const tour = await prisma.tour.findFirst({
+    let tour = await prisma.tour.findFirst({
       where: { id: tourId, status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } },
       include: { supplier: { include: { supplierProfile: true } } },
     });
@@ -1526,7 +1526,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError(`Traveler information: ${travelerValidation.errors.join(', ')}`, 400));
   }
 
-  const tour = await prisma.tour.findFirst({
+  let tour = await prisma.tour.findFirst({
     where: { id: tourId, status: 'ACTIVE' },
     include: { supplier: { include: { supplierProfile: true } } },
   });
