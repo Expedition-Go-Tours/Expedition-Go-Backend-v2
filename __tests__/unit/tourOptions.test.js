@@ -206,5 +206,9 @@ describe('optionSummaries', () => {
     expect(summaries.map((s) => s.title)).toEqual(['Morning Tour', 'Sunset Tour']);
     expect(summaries[0].id).toBe('opt-1');
     expect(summaries[0].isPrivate).toBe(false);
+    // Display-only from-price derived from the option's own price list.
+    expect(summaries[0].fromPrice).toBe(50);
+    expect(summaries[0].currency).toBe('USD');
+    expect(summaries[1].fromPrice).toBe(80);
   });
 });

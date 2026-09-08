@@ -343,20 +343,45 @@ function validateTourOptions(tour) {
 
 /** Light storefront summary of an option (no pricing math — computed elsewhere). */
 function optionSummaries(tour) {
-  return getTourOptions(tour).map((o) => ({
-    id: o.id,
-    title: o.title || '',
-    refCode: o.refCode || '',
-    isPrivate: !!o.isPrivate,
-    skipTheLine: o.skipTheLine || 'none',
-    description: o.description || null,
-    audioGuide: !!o.audioGuide,
-    infoBooklet: !!o.infoBooklet,
-    maxGroupSize: o.maxGroupSize ?? null,
-    validityType: o.validityType || null,
-    validity: o.validity ?? null,
-    validityUnit: o.validityUnit || null,
-  }));
+  return getTourOptions(tour).map((o) => {
+    const pricing = parseJsonish(o.pricing) || {};
+    const model = pricing.pricingModel || 'perPerson';
+    let fromPrice = null;
+    let currency = pricing.currency || 'USD';
+
+    if (model === 'perGroup') {
+      const gs = Array.isArray(pricing.groupSizes) ? pricing.groupSizes : [];
+      const min = gs.reduce((acc, g) => (g && g.price != null && (acc === null || Number(g.price) < acc) ? Number(g.price) : acc), null);
+      fromPrice = min;
+    } else if (pricing.uniformPrice != null) {
+      fromPrice = Number(pricing.uniformPrice);
+    } else {
+      const cats = (Array.isArray(pricing.pricingCategories) ? pricing.pricingCategories : [])
+        .map(normalizeCategory)
+        .filter((c) => c && c.price != null && !c.notAllowed);
+      const adultish = cats.filter((c) => /adult|senior/i.test(c.name));
+      const pool = adultish.length > 0 ? adultish : cats;
+      const min = pool.reduce((acc, c) => (acc === null || c.price < acc ? c.price : acc), null);
+      fromPrice = min != null ? min : null;
+    }
+
+    return {
+      id: o.id,
+      title: o.title || '',
+      refCode: o.refCode || '',
+      isPrivate: !!o.isPrivate,
+      skipTheLine: o.skipTheLine || 'none',
+      description: o.description || null,
+      audioGuide: !!o.audioGuide,
+      infoBooklet: !!o.infoBooklet,
+      maxGroupSize: o.maxGroupSize ?? null,
+      validityType: o.validityType || null,
+      validity: o.validity ?? null,
+      validityUnit: o.validityUnit || null,
+      fromPrice,
+      currency,
+    };
+  });
 }
 
 /**
