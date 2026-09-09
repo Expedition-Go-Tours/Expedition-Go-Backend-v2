@@ -1,7 +1,9 @@
 const prisma = require('./prismaClient');
-const { enqueueNotification } = require('./queue');
-const { notifyAdmin, emitToRoom } = require('./adminNotificationService');
+const { enqueueNotification, enqueueEmail } = require('./queue');
+const { notifyAdmin } = require('./adminNotificationService');
 const { deleteCloudinaryImage } = require('./cloudinaryHelper');
+const chatInbound = require('./chatInbound');
+const emailUrls = require('../config/emailUrls');
 const logger = require('./logger');
 
 let _sharedAdminId = null;
@@ -288,6 +290,16 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
     }).catch((err) => console.error('[ChatService] Failed to enqueue notification:', err));
   }
 
+  // Email every other participant with a reply-to address so they can respond
+  // from their inbox (best-effort — never blocks the chat write).
+  notifyConversationByEmail({
+    conversationId,
+    type: participant.conversation.type,
+    senderId,
+    senderName: message.sender?.name || 'Someone',
+    content,
+  }).catch((err) => console.error('[ChatService] chat email notification failed:', err));
+
   const sender = await prisma.user.findUnique({
     where: { id: originalSenderId },
     select: { roles: true, name: true }
@@ -512,6 +524,58 @@ async function getUnreadCount(userId, types = null) {
   return { unreadCount: total };
 }
 
+const EMAIL_ENABLED_TYPES = ['SUPPLIER_CUSTOMER', 'EXPEDITION_CUSTOMER', 'USER_SUPPORT', 'SUPPLIER_ADMIN'];
+
+function chatLinkFor(recipientRoles, conversationId) {
+  const q = `?conversation=${encodeURIComponent(conversationId)}`;
+  const roles = Array.isArray(recipientRoles) ? recipientRoles : [];
+  if (roles.includes('supplier')) return `${emailUrls.supplierDashboard()}/chat${q}`;
+  const adminBase = process.env.ADMIN_DASHBOARD_URL || emailUrls.DASHBOARD_URL;
+  if (roles.includes('admin') || roles.includes('expedition')) return `${adminBase}/chat${q}`;
+  return `${emailUrls.CLIENT_URL}/dashboard/chat${q}`;
+}
+
+/**
+ * Fire-and-forget: email every participant except the sender about a new
+ * message, with a unique reply-to address. Used by both in-app sends and
+ * inbound email replies (so the thread loops correctly).
+ */
+async function notifyConversationByEmail({ conversationId, type, senderId, senderName, content }) {
+  if (!EMAIL_ENABLED_TYPES.includes(type)) return;
+
+  const preview = String(content || '').trim().slice(0, 300);
+  const participants = await prisma.conversationParticipant.findMany({
+    where: { conversationId, userId: { not: senderId } },
+    select: { userId: true },
+  });
+  if (participants.length === 0) return;
+
+  const users = await prisma.user.findMany({
+    where: { id: { in: participants.map((p) => p.userId) }, email: { not: null } },
+    select: { id: true, name: true, email: true, roles: true },
+  });
+  if (users.length === 0) return;
+
+  const token = await chatInbound.ensureConversationToken(prisma, conversationId).catch(() => null);
+  const replyTo = token ? chatInbound.replyAddressFor(conversationId) : null;
+
+  for (const user of users) {
+    enqueueEmail({
+      type: 'chat-new-message',
+      data: {
+        to: user.email,
+        recipientName: user.name || '',
+        senderName: senderName || 'Someone',
+        preview,
+        content: preview,
+        conversationId,
+        replyTo,
+        link: chatLinkFor(user.roles, conversationId),
+      },
+    }).catch((err) => console.error('[ChatService] chat email enqueue failed:', err.message));
+  }
+}
+
 module.exports = {
   findOrCreateConversation,
   getConversations,
@@ -526,4 +590,6 @@ module.exports = {
   deleteMessage,
   hideMessageForMe,
   deleteConversation,
+  notifyConversationByEmail,
+  EMAIL_ENABLED_TYPES,
 };

@@ -65,7 +65,7 @@ async function getShellVars() {
         logoUrl: logoUrl || process.env.LOGO_URL || 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1778862668/TRAVOI_AFRICA_NEW_kd1tnr.png',
         year: new Date().getFullYear(),
       };
-    } catch (err) {
+    } catch {
       shellCache = {
         brandName: 'Travio Africa',
         supportEmail: process.env.SUPPORT_EMAIL || 'support@travioafrica.com',
@@ -131,7 +131,7 @@ function normalizeAttachments(attachments = []) {
 /**
  * Core delivery — render a compiled template and send via Resend.
  */
-async function sendHtml({ to, subject, html, text = '', attachments = [] }) {
+async function sendHtml({ to, subject, html, text = '', attachments = [], replyTo, inReplyTo }) {
   const client = getResend();
 
   if (!client) {
@@ -141,13 +141,15 @@ async function sendHtml({ to, subject, html, text = '', attachments = [] }) {
 
   try {
     const fromInfo = parseFrom();
+    const replyToValue = replyTo || process.env.EMAIL_REPLY_TO;
     const { data: result, error } = await client.emails.send({
       from: fromInfo.from,
       to,
       subject,
       html,
       ...(text ? { text } : {}),
-      ...(process.env.EMAIL_REPLY_TO ? { reply_to: process.env.EMAIL_REPLY_TO } : {}),
+      ...(replyToValue ? { reply_to: replyToValue } : {}),
+      ...(inReplyTo ? { headers: { 'In-Reply-To': inReplyTo } } : {}),
       ...(attachments.length ? { attachments: normalizeAttachments(attachments) } : {}),
     });
 
@@ -163,7 +165,7 @@ async function sendHtml({ to, subject, html, text = '', attachments = [] }) {
 
 async function sendRendered({ to, subject, key, data = {}, attachments = [], opts = {} }) {
   const html = await renderTemplate(key, data, opts);
-  return sendHtml({ to, subject, html, text: opts.text || '', attachments });
+    return sendHtml({ to, subject, html, text: opts.text || '', attachments, replyTo: opts.replyTo, inReplyTo: opts.inReplyTo });
 }
 
 /**
@@ -185,7 +187,7 @@ async function sendEmail({ to, subject, template, data = {}, attachments = [], o
     for (const [k, v] of Object.entries(merged)) {
       html = html.split(`{{${k}}}`).join(v == null ? '' : String(v));
     }
-    return sendHtml({ to, subject, html, text: content.text || '', attachments });
+    return sendHtml({ to, subject, html, text: content.text || '', attachments, replyTo: opts?.replyTo, inReplyTo: opts?.inReplyTo });
   }
   throw new Error(`[Email] No template or inline generator for: ${template}`);
 }
@@ -1131,6 +1133,36 @@ async function sendReviewNotificationEmail(review) {
   });
 }
 
+/**
+ * New-message notification email (chat → email). Dispatched by the queue as
+ * `chat-new-message`; `data` carries everything needed (no booking context).
+ * The email's Reply-To is the conversation's unique inbound address so the
+ * recipient can simply reply to post back into the chat.
+ */
+async function sendChatMessageEmail(booking, data = {}) {
+  if (!data.to || !data.conversationId) throw new Error('chat-new-message requires to + conversationId');
+  const preview = data.preview || data.content || 'New message';
+  const senderName = data.senderName || 'Someone';
+  const subject = `New message from ${senderName}`;
+  const body = `${senderName} wrote:\n\n“${preview}”\n\nReply to this email to send a reply back in the conversation.`;
+  return sendEmail({
+    to: data.to,
+    subject,
+    template: 'generic-notification',
+    data: {
+      header: 'New message',
+      message: body,
+      buttonText: 'View conversation',
+      buttonUrl: data.link || emailUrls.supplierDashboard(),
+      userName: data.recipientName || '',
+    },
+    opts: {
+      replyTo: data.replyTo,
+      ...(data.inReplyTo ? { inReplyTo: data.inReplyTo } : {}),
+    },
+  });
+}
+
 async function sendPayoutNotificationEmail(supplierId, payoutData) {
   const supplier = await prisma.user.findUnique({ where: { id: supplierId } });
   if (!supplier?.email) throw new Error(`Supplier ${supplierId} has no email`);
@@ -1209,8 +1241,6 @@ function generateEmailContent(template, data) {
 function generateGenericNotificationEmail(data) {
   const heading = data.header || data.title || 'Notification';
   const body = data.message || data.messageBody || '';
-  const btnUrl = data.buttonUrl || data.buttonText && data.buttonUrl;
-  const btnText = data.buttonText || 'Open';
 
   const buttonHtml = data.buttonUrl
     ? `<tr><td align="center" style="padding:24px 40px 8px 40px;"><a href="${data.buttonUrl}" style="display:inline-block;background-color:#0E9F6E;color:#ffffff;font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;border-radius:10px;padding:14px 34px;">${data.buttonText || 'Open'}</a></td></tr>`
@@ -1425,6 +1455,7 @@ module.exports = {
   sendBookingCancellationEmail,
   sendSupplierStatusEmail,
   sendReviewNotificationEmail,
+  sendChatMessageEmail,
   sendPayoutNotificationEmail,
   sendSupplierBookingNotification,
   sendTeamInviteEmail,

@@ -375,6 +375,7 @@ const EMAIL_JOB_DISPATCH = {
   'supplier-cancelled-booking': ['sendSupplierCancelledBookingEmail', true],
   'review-request': ['sendReviewRequestEmail', true],
   'supplier-review-response': ['sendSupplierResponseEmail', true],
+  'chat-new-message': ['sendChatMessageEmail', false],
   // supplier
   'supplier-new-booking': ['sendSupplierNewBookingEmail', true],
   'supplier-pay-later-charged': ['sendSupplierPayLaterChargedEmail', true],

@@ -1272,6 +1272,10 @@ model Conversation {
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
 
+  // Reply-by-email token (c-<hmac>@<receiving-domain>) so inbound mail can be
+  // routed back to this conversation. Backfilled lazily on first send.
+  replyToken String? @unique
+
   participants ConversationParticipant[]
   messages     Message[]
 
@@ -1299,6 +1303,9 @@ model Message {
   content        String
   attachmentUrl  String? // Cloudinary URL
   attachmentType String? // "image" | "document"
+  via            String    @default("app") // "app" | "email"
+  senderEmail    String? // sender address when via=email
+  inboundMessageId String? @unique // email Message-ID used to dedupe inbound replies
   editedAt       DateTime?
   createdAt      DateTime  @default(now())
 
