@@ -43,6 +43,28 @@ describe('assertClaimable (completed-trip refund claim)', () => {
       .toThrow(AppError);
   });
 
+  it('rejects when an earlier claim was already released (prevents double refunds)', () => {
+    expect(() => assertClaimable(booking({ refundClaims: [{ status: 'RELEASED' }] }), {}))
+      .toThrow(AppError);
+  });
+
+  it('rejects when money was already returned via a supplier dispute (RESOLVED_CUSTOMER)', () => {
+    expect(() => assertClaimable(booking({ disputes: [{ status: 'RESOLVED_CUSTOMER' }] }), {}))
+      .toThrow(AppError);
+  });
+
+  it('rejects when a claim is in flight (open/PROCESSING)', () => {
+    for (const status of ['SUBMITTED', 'SUPPLIER_APPROVED', 'PROCESSING']) {
+      expect(() => assertClaimable(booking({ refundClaims: [{ status }] }), {}))
+        .toThrow(AppError);
+    }
+  });
+
+  it('allows a fresh claim after a supplier decline (no money moved)', () => {
+    expect(assertClaimable(booking({ disputes: [{ status: 'RESOLVED_SUPPLIER' }] }), {})).toBeTruthy();
+    expect(assertClaimable(booking({ refundClaims: [{ status: 'SUPPLIER_DECLINED' }] }), {})).toBeTruthy();
+  });
+
   it('rejects bookings older than the claim window', () => {
     const oldTravel = new Date(Date.now() - CLAIM_WINDOW_MS - 1000).toISOString();
     expect(() => assertClaimable(booking({ travelDate: oldTravel }), {}))

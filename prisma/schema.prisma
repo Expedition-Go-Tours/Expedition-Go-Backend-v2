@@ -1960,6 +1960,7 @@ enum RefundClaimStatus {
   SUBMITTED // customer submitted, awaiting supplier review
   SUPPLIER_APPROVED // supplier OK'd it — forwarded to admin to release
   SUPPLIER_DECLINED // supplier declined
+  PROCESSING // admin release in flight (crash-safe checkpoint)
   RELEASED // admin executed the refund
   ADMIN_DECLINED // admin declined to release
   WITHDRAWN // customer withdrew (reserved for future)

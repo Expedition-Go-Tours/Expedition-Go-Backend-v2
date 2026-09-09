@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "RefundClaimStatus" ADD VALUE IF NOT EXISTS 'PROCESSING';
