@@ -140,6 +140,15 @@ server.listen(port, '0.0.0.0', () => {
   console.log(`[Startup] Environment: ${process.env.NODE_ENV}`);
 });
 
+// Inbound chat email poller — independent of Resend webhooks so replies are
+// ingested even if a webhook is delayed/dropped. Deduped by Message-ID.
+if (process.env.RESEND_API_KEY) {
+  const { pollReceivedEmails } = require('./utils/chatEmailIngest');
+  const runPoll = () => pollReceivedEmails().catch((err) => console.error(`[ChatEmailIngest] poll error: ${err.message}`));
+  runPoll();
+  setInterval(runPoll, 60_000);
+}
+
 setupSocketIO();
 
 // Async initialization (Prisma, Redis, queue workers) — non-blocking.
