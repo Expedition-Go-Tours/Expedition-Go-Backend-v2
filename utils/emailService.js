@@ -145,6 +145,36 @@ async function sendHtml({ to, subject, html, text = '', attachments = [], replyT
     const extraHeaders = {};
     if (replyToValue) extraHeaders['Reply-To'] = replyToValue;
     if (inReplyTo) extraHeaders['In-Reply-To'] = inReplyTo;
+
+    // Use Resend's REST API directly for plain sends. The SDK version of this
+    // request silently drops Reply-To/headers (verified against delivered raw
+    // MIME) — and reply-by-email depends on that header. The SDK path is kept
+    // only for attachment sends and under test.
+    const useREST = attachments.length === 0 && !process.env.JEST_WORKER_ID && process.env.NODE_ENV !== 'test';
+    if (useREST) {
+      const payload = {
+        from: fromInfo.from,
+        to,
+        subject,
+        html,
+        ...(text ? { text } : {}),
+        ...(replyToValue ? { reply_to: replyToValue } : {}),
+        ...(Object.keys(extraHeaders).length ? { headers: extraHeaders } : {}),
+      };
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.message || `Resend send failed (${response.status})`);
+      console.log(`[Email] Sent to ${to}: ${subject}`);
+      return { success: true, messageId: body?.id, html };
+    }
+
     const { data: result, error } = await client.emails.send({
       from: fromInfo.from,
       to,
