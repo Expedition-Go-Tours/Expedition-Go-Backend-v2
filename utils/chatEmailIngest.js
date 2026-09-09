@@ -17,6 +17,7 @@ const chatService = require('./chatService');
 const chatInbound = require('./chatInbound');
 const chatAttachments = require('./chatAttachments');
 const { sendNotification } = require('./notificationService');
+const { notifyAdmin } = require('./adminNotificationService');
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const RESEND_RECEIVING_API = 'https://api.resend.com/emails/receiving';
@@ -194,7 +195,7 @@ async function ingestReceivedEmail(emailId) {
   const io = require('../app').get('io');
   const others = await prisma.conversationParticipant.findMany({
     where: { conversationId: conversation.id, userId: { not: author.user.id } },
-    select: { userId: true },
+    select: { userId: true, user: { select: { id: true, roles: true } } },
   });
   if (io) {
     for (const message of created) {
@@ -216,6 +217,17 @@ async function ingestReceivedEmail(emailId) {
       data: { conversationId: conversation.id, senderId: author.user.id, conversationType: conversation.type },
     });
     if (!result?.success) console.error(`[ChatEmailIngest] notification failed for ${o.userId}`);
+
+    // Admin/expedition recipients also ring the platform admin bell.
+    const roles = Array.isArray(o.user?.roles) ? o.user.roles : [];
+    if (roles.includes('admin') || roles.includes('expedition')) {
+      notifyAdmin({
+        type: 'NEW_MESSAGE',
+        title: `New message from ${author.user.name || 'Email reply'}`,
+        message: preview.length > 100 ? `${preview.slice(0, 100)}…` : preview,
+        data: { conversationId: conversation.id, senderId: author.user.id, senderName: author.user.name, messageId: created[0]?.id, conversationType: conversation.type },
+      }).catch((err) => console.error(`[ChatEmailIngest] admin notify failed: ${err.message}`));
+    }
   }
 
   // Email the other participants so the thread continues.
