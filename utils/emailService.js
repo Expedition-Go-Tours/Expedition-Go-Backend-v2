@@ -1133,6 +1133,15 @@ async function sendReviewNotificationEmail(review) {
   });
 }
 
+function htmlEscape(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /**
  * New-message notification email (chat → email). Dispatched by the queue as
  * `chat-new-message`; `data` carries everything needed (no booking context).
@@ -1141,10 +1150,10 @@ async function sendReviewNotificationEmail(review) {
  */
 async function sendChatMessageEmail(booking, data = {}) {
   if (!data.to || !data.conversationId) throw new Error('chat-new-message requires to + conversationId');
-  const preview = data.preview || data.content || 'New message';
-  const senderName = data.senderName || 'Someone';
+  const preview = htmlEscape((data.preview || data.content || 'New message').slice(0, 300));
+  const senderName = htmlEscape(data.senderName || 'Someone');
   const subject = `New message from ${senderName}`;
-  const body = `${senderName} wrote:\n\n“${preview}”\n\nReply to this email to send a reply back in the conversation.`;
+  const body = `${senderName} wrote:<br/><br/>“${preview}”<br/><br/>Reply to this email to send a reply back in the conversation.`;
   return sendEmail({
     to: data.to,
     subject,

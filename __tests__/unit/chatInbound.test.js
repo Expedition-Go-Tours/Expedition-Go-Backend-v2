@@ -10,13 +10,15 @@ const crypto = require('crypto');
 const chatInbound = require('../../utils/chatInbound');
 
 describe('chatInbound tokens', () => {
-  it('generates stable c-<hex> tokens per conversation', () => {
+  it('generates stable tokens per conversation and canonical c-<hex> form', () => {
     const a = chatInbound.tokenFor('conv-1');
     const b = chatInbound.tokenFor('conv-1');
     const c = chatInbound.tokenFor('conv-2');
     expect(a).toBe(b);
     expect(a).not.toBe(c);
     expect(a).toMatch(/^c[0-9a-f]{16}$/);
+    expect(chatInbound.canonicalToken('conv-1')).toBe(`c-${a.slice(1)}`);
+    expect(chatInbound.canonicalToken('conv-1')).toMatch(/^c-[0-9a-f]{16}$/);
   });
 
   it('builds a valid reply address and resolves it back', () => {

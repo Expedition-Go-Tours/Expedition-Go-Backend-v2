@@ -28,14 +28,21 @@ async function ensureConversationToken(prisma, conversationId) {
     select: { id: true, replyToken: true },
   });
   if (!row) throw new Error(`Conversation ${conversationId} not found`);
-  if (row.replyToken) return row.replyToken;
-  const token = tokenFor(row.id);
+  // Canonical stored token must match the inbound local-part exactly:
+  // c-<16-hex> (see replyAddressFor + tokensFromRecipients).
+  const token = canonicalToken(row.id);
+  if (row.replyToken === token) return token;
   await prisma.conversation.update({ where: { id: row.id }, data: { replyToken: token } });
   return token;
 }
 
 function replyAddressFor(conversationId) {
   return `c-${tokenFor(conversationId).slice(1)}@${RECEIVING_DOMAIN}`;
+}
+
+/** Canonical stored/local token (matches inbound `c-<hex>` addresses). */
+function canonicalToken(conversationId) {
+  return `c-${tokenFor(conversationId).slice(1)}`;
 }
 
 /** Parse local/domain from an email header value that may include a display name. */
@@ -141,6 +148,7 @@ function htmlToText(html) {
 module.exports = {
   RECEIVING_DOMAIN,
   tokenFor,
+  canonicalToken,
   ensureConversationToken,
   replyAddressFor,
   parseEmail,
