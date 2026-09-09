@@ -1648,6 +1648,12 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError(`Bookings can only be made up to ${maxAdvanceDays} days in advance`, 400));
   }
 
+  // Reserve-now-pay-later depends on the pay-later sweep charging the card before
+  // the activity (default 24h) — a reservation closer than the pay-later minimum
+  // lead time could never be auto-charged in time, so it is refused up front.
+  // Pay-now bookings are unaffected.
+  require('../utils/payLaterLeadTime').assertPayLaterLeadTime({ paymentTiming, startAt });
+
   const appliedOffer = pricing.appliedOffer || null;
   const totalTravelers = travelerCount(travelers);
 

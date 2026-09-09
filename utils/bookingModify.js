@@ -276,6 +276,12 @@ async function computeSnapshot(ctx) {
     throw new AppError(`Changes can only be made up to ${maxAdvanceDays} days before the activity`, 400);
   }
 
+  // A reserve-now-pay-later booking relies on the pay-later sweep to auto-charge
+  // before the activity (default 24h). It can never be moved to a date inside the
+  // pay-later minimum lead time — the charge window wouldn't fit. Settled/paid
+  // bookings are only bound by the normal cutoff above.
+  require('./payLaterLeadTime').assertPayLaterLeadTime({ paymentTiming: booking.paymentTiming, startAt: start });
+
   const pricing = await calculateTourPrice(
     tour,
     target.travelers,

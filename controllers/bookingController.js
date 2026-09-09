@@ -496,6 +496,12 @@ exports.createBooking = catchAsync(async (req, res, next) => {
       ));
     }
 
+    // Reserve-now-pay-later depends on the pay-later sweep charging the card
+    // before the activity (default 24h) — a reservation closer than the pay-later
+    // minimum lead time could never be auto-charged in time. Pay-now bookings
+    // are unaffected.
+    require('../utils/payLaterLeadTime').assertPayLaterLeadTime({ paymentTiming, startAt });
+
     const totalTravelers = travelerCount(item.travelers);
     if (totalTravelers > systemMaxTravelers) {
       return next(new AppError(
