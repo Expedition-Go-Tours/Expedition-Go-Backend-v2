@@ -551,15 +551,16 @@ async function notifyConversationByEmail({ conversationId, type, senderId, sende
   if (participants.length === 0) return;
 
   const users = await prisma.user.findMany({
-    where: { id: { in: participants.map((p) => p.userId) }, email: { not: null } },
+    where: { id: { in: participants.map((p) => p.userId) } },
     select: { id: true, name: true, email: true, roles: true },
   });
-  if (users.length === 0) return;
+  const withEmail = users.filter((u) => typeof u.email === 'string' && u.email.trim());
+  if (withEmail.length === 0) return;
 
   const token = await chatInbound.ensureConversationToken(prisma, conversationId).catch(() => null);
   const replyTo = token ? chatInbound.replyAddressFor(conversationId) : null;
 
-  for (const user of users) {
+  for (const user of withEmail) {
     enqueueEmail({
       type: 'chat-new-message',
       data: {
