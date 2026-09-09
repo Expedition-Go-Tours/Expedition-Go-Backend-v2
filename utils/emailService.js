@@ -1153,6 +1153,7 @@ function htmlEscape(value) {
  */
 async function sendChatMessageEmail(booking, data = {}) {
   if (!data.to || !data.conversationId) throw new Error('chat-new-message requires to + conversationId');
+  console.log(`[ChatEmail] to=${data.to} replyTo=${data.replyTo || '(none)'} conv=${data.conversationId}`);
   const preview = htmlEscape((data.preview || data.content || 'New message').slice(0, 300));
   const senderName = htmlEscape(data.senderName || 'Someone');
   const subject = `New message from ${senderName}`;
