@@ -728,10 +728,15 @@ async function processStripeWebhook(event) {
         // Capture the bookings we just cancelled so the post-commit side
         // effects (in-app + email + socket notification) run exactly once.
         const failedIds = ((intent.metadata?.bookingIds) || '').split(',').filter(Boolean);
+        // Resolve the affected booking(s) even when they have not been flipped to
+        // FAILED yet (e.g. a transient decline the customer retries moments later)
+        // so "Payment failed" alerts always carry the booking reference. Only
+        // skip bookings that are already settled as SUCCEEDED/REFUNDED.
+        const unsettled = { notIn: ['SUCCEEDED', 'REFUNDED'] };
         failedPaymentBookings = await tx.booking.findMany({
           where: failedIds.length > 0
-            ? { id: { in: failedIds }, paymentStatus: 'FAILED' }
-            : { stripePaymentIntentId: intent.id, paymentStatus: 'FAILED' },
+            ? { id: { in: failedIds }, paymentStatus: unsettled }
+            : { stripePaymentIntentId: intent.id, paymentStatus: unsettled },
           include: WEBHOOK_BOOKING_INCLUDE,
         });
         break;
