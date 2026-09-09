@@ -73,9 +73,7 @@ async function ingestReceivedEmail(emailId) {
     return 'ignored';
   }
 
-  const textPart = typeof email?.text === 'string' ? email.text : '';
-  const htmlPart = typeof email?.html === 'string' ? email.html : '';
-  const content = chatInbound.stripReplyText(textPart || chatInbound.htmlToText(htmlPart));
+  const content = chatInbound.extractReplyContent(email);
   if (!content) return 'ignored';
 
   const messageId = email?.message_id || null;

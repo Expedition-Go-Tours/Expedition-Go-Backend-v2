@@ -146,7 +146,7 @@ if (process.env.RESEND_API_KEY) {
   const { pollReceivedEmails } = require('./utils/chatEmailIngest');
   const runPoll = () => pollReceivedEmails().catch((err) => console.error(`[ChatEmailIngest] poll error: ${err.message}`));
   runPoll();
-  setInterval(runPoll, 60_000);
+  setInterval(runPoll, 15_000);
 }
 
 setupSocketIO();

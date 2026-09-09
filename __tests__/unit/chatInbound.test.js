@@ -87,4 +87,19 @@ describe('chatInbound reply text stripping', () => {
     expect(text).toContain('Hi there');
     expect(text).toContain('Happy to help');
   });
+
+  it('drops a Gmail gmail_quote block and keeps only the reply', () => {
+    const html =
+      '<div dir="ltr">got it, thanks!</div><br><div class="gmail_quote"><div dir="ltr">On Wed, 9 Sept 2026 at 14:48, Travio Africa &lt;notifications@travioafrica.com&gt; wrote:<br>old message body</div></div>';
+    const content = chatInbound.extractReplyContent({ html });
+    expect(content).toContain('got it, thanks!');
+    expect(content).not.toContain('old message body');
+  });
+
+  it('handles On ... wrote: lines that include an email in <brackets>', () => {
+    const text = 'Sounds good\n\nOn Wed, 9 Sept 2026 at 14:48, Travio Africa <notifications@travioafrica.com> wrote:\n> quoted text';
+    const content = chatInbound.extractReplyContent({ text });
+    expect(content).toContain('Sounds good');
+    expect(content).not.toContain('quoted text');
+  });
 });

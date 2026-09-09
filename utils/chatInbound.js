@@ -108,21 +108,46 @@ function stripReplyText(text) {
   if (!text) return '';
   const lines = String(text).replace(/\r/g, '').split('\n');
   const out = [];
-  let quoted = false;
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
     const trimmed = line.trim();
-    if (/^>/.test(line) || /^On .+wrote:$/i.test(line) || /^--\s*$/.test(trimmed)) {
-      quoted = true;
-      continue;
+
+    // Boundary markers that start the quoted previous conversation. Tolerant to
+    // trailing spaces/wrapping and covers Gmail/Outlook/Apple wording.
+    if (
+      /^>/.test(line) ||
+      /^On .{0,320}wrote:\s*$/i.test(trimmed) ||
+      /^[>]\s*On /i.test(line) ||
+      /^-{3,}\s*Original Message\s*-{3,}/i.test(trimmed) ||
+      /^_{3,}/.test(trimmed) ||
+      /^--\s*$/.test(trimmed)
+    ) {
+      // Everything from the first quote boundary onward is prior conversation.
+      return out.join('\n').trim().slice(0, 4000);
     }
-    if (!quoted) out.push(line);
-    // Quoted block ends when a non-empty, non-quoted line appears after one.
-    if (quoted && trimmed !== '') {
-      // Resend/email clients put the reply first; keep new content already seen.
-    }
+    out.push(line);
   }
-  const joined = out.join('\n').trim().slice(0, 4000);
-  return joined;
+  return out.join('\n').trim().slice(0, 4000);
+}
+
+/**
+ * Best-effort reply body extraction. Prefers HTML (Gmail quotes live in HTML
+ * blockquotes, which are easy to drop) and falls back to plain text parsing.
+ */
+function extractReplyContent(email) {
+  const html = typeof email?.html === 'string' ? email.html : '';
+  const text = typeof email?.text === 'string' ? email.text : '';
+
+  if (html) {
+    // Drop quoted history blocks entirely.
+    let clean = html.replace(/<blockquote[\s\S]*?<\/blockquote>/gi, ' ');
+    // Gmail wraps quotes in <div class="gmail_quote"> — the reply is above it.
+    const quoteIdx = clean.search(/class=["'][^"']*gmail_quote[^"']*["']/i);
+    if (quoteIdx !== -1) clean = clean.slice(0, quoteIdx);
+    const body = stripReplyText(htmlToText(clean));
+    if (body) return body;
+  }
+  return stripReplyText(text);
 }
 
 /** Very small HTML -> text fallback so replies without a plain part still land. */
@@ -156,4 +181,5 @@ module.exports = {
   verifyWebhookSignature,
   stripReplyText,
   htmlToText,
+  extractReplyContent,
 };
