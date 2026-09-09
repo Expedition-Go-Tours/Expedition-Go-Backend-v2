@@ -378,6 +378,87 @@ function stackedRows(rows) {
   return rowHtml;
 }
 
+/**
+ * Compact centered header for messaging-style emails.
+ */
+function chatHeader(subtitle) {
+  return `
+  <tr><td class="pad" style="padding:34px 40px 0 40px;">
+    <p style="margin:0 0 6px 0;font-family:${FONT};font-size:11px;font-weight:800;color:${COLORS.accent};letter-spacing:1.6px;text-transform:uppercase;text-align:center;">Messaging</p>
+    <h1 style="margin:0;font-family:${FONT};font-size:24px;font-weight:800;color:${COLORS.navy};line-height:1.25;text-align:center;">New message</h1>
+    ${subtitle ? `<p class="body-lg font-main" style="margin:6px auto 0 auto;max-width:460px;font-size:13px;color:${COLORS.muted};line-height:1.6;text-align:center;">${subtitle}</p>` : ''}
+  </td></tr>`;
+}
+
+/**
+ * Sender attribution row: avatar (image when available, initials circle
+ * otherwise) + name + role. Used by messaging emails.
+ */
+function senderRow(nameVar, roleVar, avatarVar, initialsVar) {
+  return `
+  <tr><td class="pad" style="padding:24px 40px 4px 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+      <tr>
+        <td width="58" valign="middle" style="padding:0 14px 0 0;">
+          {{#if ${avatarVar.replace(/[{}]/g, '')}}}
+          <img src="${avatarVar}" width="44" height="44" alt="" style="display:block;width:44px;height:44px;border-radius:50%;border:1px solid ${COLORS.border};">
+          {{else}}
+          <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+            <td width="44" height="44" align="center" style="background-color:${COLORS.navy};border-radius:50%;font-family:${FONT};font-size:15px;font-weight:800;color:#ffffff;">${initialsVar}</td>
+          </tr></table>
+          {{/if}}
+        </td>
+        <td valign="middle" style="font-family:${FONT};">
+          <div style="font-size:15px;font-weight:800;color:${COLORS.navy};line-height:1.3;">${nameVar}</div>
+          <div style="font-size:13px;color:${COLORS.muted};line-height:1.4;padding-top:2px;">${roleVar}</div>
+        </td>
+      </tr>
+    </table>
+  </td></tr>`;
+}
+
+/**
+ * Message card (bubble): optional image thumbnail, then the message text,
+ * then an optional attachment label. Renders inline so it inherits the body
+ * text color of the outer card.
+ */
+function messageCard(textVar, thumbVar, docVar) {
+  return `
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F4F6F9;border:1px solid ${COLORS.border};border-radius:14px;">
+      {{#if ${thumbVar.replace(/[{}]/g, '')}}}
+      <tr><td style="padding:14px 14px 0 14px;">
+        <img src="${thumbVar}" alt="Attached image" style="display:block;width:auto;max-width:100%;max-height:240px;border-radius:10px;border:1px solid ${COLORS.border};">
+      </td></tr>
+      {{/if}}
+      <tr><td style="padding:14px 18px;font-family:${FONT};font-size:15px;color:${COLORS.body};line-height:1.7;">${textVar}</td></tr>
+      {{#if ${docVar.replace(/[{}]/g, '')}}}
+      <tr><td style="padding:0 18px 14px 18px;font-family:${FONT};font-size:13px;color:${COLORS.muted};">&#128206;&nbsp; ${docVar}</td></tr>
+      {{/if}}
+    </table>
+  </td></tr>`;
+}
+
+/**
+ * Viator-style "About this conversation" strip. The whole row is hidden when
+ * there is no tour context.
+ */
+function contextRow(titleVar, bookingVar) {
+  return `
+  {{#if ${titleVar.replace(/[{}]/g, '')}}}
+  <tr><td class="pad" style="padding:16px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+      <tr>
+        <td style="padding:10px 14px;background-color:${COLORS.navySoft};border-left:3px solid ${COLORS.accent};border-radius:8px;font-family:${FONT};font-size:13px;color:${COLORS.body};line-height:1.5;">
+          <span style="font-weight:800;color:${COLORS.navy};">${titleVar}</span>
+          {{#if ${bookingVar.replace(/[{}]/g, '')}}}&nbsp;&nbsp;&middot;&nbsp;&nbsp;<span style="color:${COLORS.muted};">Ref ${bookingVar}</span>{{/if}}
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+  {{/if}}`;
+}
+
 module.exports = {
   COLORS,
   FONT,
@@ -394,6 +475,10 @@ module.exports = {
   buttonPrimary,
   summaryRows,
   stackedRows,
+  chatHeader,
+  senderRow,
+  messageCard,
+  contextRow,
   spacer,
   msoSpacer,
 };

@@ -776,7 +776,7 @@ const supplierPayoutCompleted = {
 
 const supplierPayoutFailed = {
   key: 'supplier-payout-failed',
-  name: 'Supplier · Payout failed',
+  name: 'Supplier A� Payout failed',
   build() {
     return B.shell('Action required: Supplier payout unsuccessful', `
       ${B.hero({ heading: 'We couldn\u2019t complete your payout', badgeText: 'Action required', badgeColor: 'danger' })}
@@ -790,6 +790,25 @@ const supplierPayoutFailed = {
     `);
   },
 };
+
+// ---------------------------------------------------------------------------
+// Chat & messaging notifications (GetYourGuide / Viator-style)
+// ---------------------------------------------------------------------------
+const chatNewMessage = {
+  key: 'chat-new-message',
+  name: 'Chat New message',
+  build() {
+    return B.shell('You have a new message', `
+      ${B.chatHeader()}
+      ${B.senderRow('{{senderName}}', '{{senderRoleLabel}}', '{{senderAvatarUrl}}', '{{senderInitials}}')}
+      ${B.messageCard('{{senderMessageHtml}}', '{{attachmentThumbUrl}}', '{{attachmentDocLabel}}')}
+      ${B.contextRow('{{tourTitle}}', '{{bookingNumber}}')}
+      ${B.buttonPrimary('View conversation', '{{chatUrl}}')}
+      ${B.paragraph('Reply to this email to send a reply back in this conversation.', { center: true, muted: true, small: true })}
+    `);
+  },
+};
+
 
 // ────────────────────────────────────────────────────────────────────────────
 // Registry + build
@@ -828,6 +847,7 @@ const TEMPLATE_DEFS = [
   supplierPayoutScheduled,
   supplierPayoutCompleted,
   supplierPayoutFailed,
+  chatNewMessage,
 ];
 
 function buildAll() {

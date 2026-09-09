@@ -232,6 +232,8 @@ async function ingestReceivedEmail(emailId) {
 
   // Email the other participants so the thread continues.
   if (text || uploaded.length) {
+    const firstImage = uploaded.find((a) => a.type === 'image');
+    const firstDoc = uploaded.find((a) => a.type === 'document');
     chatService
       .notifyConversationByEmail({
         conversationId: conversation.id,
@@ -239,6 +241,8 @@ async function ingestReceivedEmail(emailId) {
         senderId: author.user.id,
         senderName: author.user.name || 'Email reply',
         content: text || (uploaded[0]?.type === 'image' ? '📷 Photo attachment' : '📎 File attachment'),
+        attachmentThumbUrl: firstImage?.url || null,
+        attachmentDocLabel: firstDoc ? 'Document attachment' : null,
       })
       .catch((err) => console.error(`[ChatEmailIngest] email notify failed: ${err.message}`));
   }

@@ -116,12 +116,12 @@ describe('renderTemplate', () => {
     await expect(renderTemplate('does-not-exist', {})).rejects.toThrow('Template not found');
   });
 
-  it('renders all 32 compiled templates with no leftover braces', async () => {
+  it('renders all 33 compiled templates with no leftover braces', async () => {
     const fs = require('fs');
     const path = require('path');
     const dir = path.join(__dirname, '..', '..', 'sendgrid-templates', 'generated');
     const files = fs.readdirSync(dir).filter((f) => f.endsWith('.html'));
-    expect(files.length).toBe(32);
+    expect(files.length).toBe(33);
 
     for (const file of files) {
       const key = file.replace(/\.html$/, '');
@@ -143,11 +143,55 @@ describe('renderTemplate', () => {
         refundAmountLabel: '$110.00',
         changes: [{ label: 'Date', previous: 'Aug 1', updated: 'Aug 2' }],
         items: ['Bring sunscreen'],
+        preheader: 'A new message',
+        senderName: 'Kofi',
+        senderRoleLabel: 'Tour operator',
+        senderInitials: 'KO',
+        senderMessageHtml: 'Hello Jane',
+        chatUrl: 'https://example.com/chat',
       });
       expect(html).toContain('Travio Africa');
       const leftover = html.match(/\{\{[^}]+\}\}/g) || [];
       expect(leftover).toEqual([]);
     }
+  });
+
+  it('chat-new-message renders sender card + CTA and omits booking context when absent', async () => {
+    const html = await renderTemplate('chat-new-message', {
+      preheader: 'Ama wrote',
+      senderName: 'Ama',
+      senderRoleLabel: 'Traveller',
+      senderInitials: 'AM',
+      senderMessageHtml: 'Hello, is the boat still on?',
+      chatUrl: 'https://example.com/chat?conversation=c1',
+    });
+    expect(html).toContain('New message');
+    expect(html).toContain('Ama');
+    expect(html).toContain('AM');
+    expect(html).toContain('Hello, is the boat still on?');
+    expect(html).toContain('https://example.com/chat?conversation=c1');
+    expect(html).toContain('Reply to this email');
+    expect(html).not.toContain('Ref ');
+    expect(html.match(/\{\{[^}]+\}\}/g) || []).toEqual([]);
+  });
+
+  it('chat-new-message shows attachment thumbnail + About context when provided', async () => {
+    const html = await renderTemplate('chat-new-message', {
+      senderName: 'Kojo',
+      senderRoleLabel: 'Tour operator',
+      senderInitials: 'KO',
+      senderMessageHtml: 'See attached photo',
+      attachmentThumbUrl: 'https://img.example.test/photo.png',
+      attachmentDocLabel: '',
+      tourTitle: 'Cape Coast Castle & Elmina',
+      bookingNumber: 'EXP-123456-2026',
+      chatUrl: 'https://example.com/chat?conversation=c1',
+    });
+    expect(html).toContain('https://img.example.test/photo.png');
+    expect(html).toContain('Cape Coast Castle & Elmina');
+    expect(html).toContain('EXP-123456-2026');
+    expect(html).toContain('KO');
+    expect(html.match(/\{\{[^}]+\}\}/g) || []).toEqual([]);
   });
 });
 

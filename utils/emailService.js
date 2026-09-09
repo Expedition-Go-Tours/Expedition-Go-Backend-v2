@@ -1184,24 +1184,36 @@ function htmlEscape(value) {
 async function sendChatMessageEmail(booking, data = {}) {
   if (!data.to || !data.conversationId) throw new Error('chat-new-message requires to + conversationId');
   console.log(`[ChatEmail] to=${data.to} replyTo=${data.replyTo || '(none)'} conv=${data.conversationId}`);
-  const preview = htmlEscape((data.preview || data.content || 'New message').slice(0, 300));
-  const senderName = htmlEscape(data.senderName || 'Someone');
+
+  const rawSender = String(data.senderName || 'Someone');
+  const senderName = htmlEscape(rawSender);
+  const messagePlain = String(data.senderMessageHtml || data.content || 'New message').trim().slice(0, 2000);
+  const senderMessageHtml = htmlEscape(messagePlain).replace(/\n/g, '<br/>');
+  const preheader = htmlEscape((String(data.preheader || messagePlain) || 'New message').slice(0, 140));
   const subject = `New message from ${senderName}`;
-  const body = `${senderName} wrote:<br/><br/>“${preview}”<br/><br/>Reply to this email to send a reply back in the conversation.`;
+  const chatUrl = data.link || emailUrls.supplierDashboard();
+
   return sendEmail({
     to: data.to,
     subject,
-    template: 'generic-notification',
+    template: 'chat-new-message',
     data: {
-      header: 'New message',
-      message: body,
-      buttonText: 'View conversation',
-      buttonUrl: data.link || emailUrls.supplierDashboard(),
-      userName: data.recipientName || '',
+      preheader,
+      senderName,
+      senderRoleLabel: htmlEscape(String(data.senderRoleLabel || '')),
+      senderInitials: htmlEscape(String(data.senderInitials || '?')),
+      ...(data.senderAvatarUrl ? { senderAvatarUrl: String(data.senderAvatarUrl) } : {}),
+      senderMessageHtml,
+      ...(data.attachmentThumbUrl ? { attachmentThumbUrl: String(data.attachmentThumbUrl) } : {}),
+      ...(data.attachmentDocLabel ? { attachmentDocLabel: htmlEscape(String(data.attachmentDocLabel)) } : {}),
+      ...(data.tourTitle ? { tourTitle: htmlEscape(String(data.tourTitle)) } : {}),
+      ...(data.bookingNumber ? { bookingNumber: htmlEscape(String(data.bookingNumber)) } : {}),
+      chatUrl,
     },
     opts: {
       replyTo: data.replyTo,
       ...(data.inReplyTo ? { inReplyTo: data.inReplyTo } : {}),
+      text: `New message from ${rawSender}\n\n${messagePlain}\n\nReply to this email to send a reply back in the conversation.\n\n${chatUrl}`,
     },
   });
 }

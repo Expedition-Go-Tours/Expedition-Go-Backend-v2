@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>You have a new message</title>
+<style>
+  body { margin:0; padding:0; width:100% !important; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; background-color:#F8FAFC; }
+  table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; border-collapse:collapse; }
+  img { border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; }
+  .font-main { font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  @media only screen and (max-width:640px) {
+    .container { width:100% !important; }
+    .pad { padding-left:20px !important; padding-right:20px !important; }
+    .pad-top { padding-top:28px !important; }
+    .stack { display:block !important; width:100% !important; box-sizing:border-box !important; }
+    .stack-td { display:block !important; width:100% !important; box-sizing:border-box !important; text-align:left !important; }
+    .btn { width:100% !important; display:block !important; text-align:center !important; box-sizing:border-box !important; }
+    .btn-wrap { width:100% !important; display:block !important; text-align:center !important; }
+    .h1 { font-size:24px !important; }
+    .h2 { font-size:18px !important; }
+    .body-lg { font-size:16px !important; }
+    .hide-mobile { display:none !important; }
+  }
+</style>
+</head>
+<body style="margin:0;padding:0;background-color:#F8FAFC;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+    <tr>
+      <td align="center" style="padding:32px 16px;" class="pad">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="container" style="max-width:640px;">
+          <!-- Preheader (hidden) -->
+          <tr><td style="display:none;max-height:0;overflow:hidden;mso-hide:all;">{{preheader}}</td></tr>
+          <!-- Header -->
+          <tr>
+            <td align="center" style="padding:0 0 24px 0;">
+              <img src="{{logoUrl}}" alt="{{brandName}}" width="170" style="display:block;width:170px;max-width:170px;height:auto;border:0;outline:none;">
+            </td>
+          </tr>
+          <!-- Card -->
+          <tr>
+            <td style="background-color:#FFFFFF;border:1px solid #E2E8F0;border-radius:16px;padding:0;">
+              
+      
+  <tr><td class="pad" style="padding:34px 40px 0 40px;">
+    <p style="margin:0 0 6px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:11px;font-weight:800;color:#00A669;letter-spacing:1.6px;text-transform:uppercase;text-align:center;">Messaging</p>
+    <h1 style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:24px;font-weight:800;color:#001F3F;line-height:1.25;text-align:center;">New message</h1>
+    
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:24px 40px 4px 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+      <tr>
+        <td width="58" valign="middle" style="padding:0 14px 0 0;">
+          {{#if senderAvatarUrl}}
+          <img src="{{senderAvatarUrl}}" width="44" height="44" alt="" style="display:block;width:44px;height:44px;border-radius:50%;border:1px solid #E2E8F0;">
+          {{else}}
+          <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+            <td width="44" height="44" align="center" style="background-color:#001F3F;border-radius:50%;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;font-weight:800;color:#ffffff;">{{senderInitials}}</td>
+          </tr></table>
+          {{/if}}
+        </td>
+        <td valign="middle" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+          <div style="font-size:15px;font-weight:800;color:#001F3F;line-height:1.3;">{{senderName}}</div>
+          <div style="font-size:13px;color:#64748B;line-height:1.4;padding-top:2px;">{{senderRoleLabel}}</div>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F4F6F9;border:1px solid #E2E8F0;border-radius:14px;">
+      {{#if attachmentThumbUrl}}
+      <tr><td style="padding:14px 14px 0 14px;">
+        <img src="{{attachmentThumbUrl}}" alt="Attached image" style="display:block;width:auto;max-width:100%;max-height:240px;border-radius:10px;border:1px solid #E2E8F0;">
+      </td></tr>
+      {{/if}}
+      <tr><td style="padding:14px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#334155;line-height:1.7;">{{senderMessageHtml}}</td></tr>
+      {{#if attachmentDocLabel}}
+      <tr><td style="padding:0 18px 14px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#64748B;">&#128206;&nbsp; {{attachmentDocLabel}}</td></tr>
+      {{/if}}
+    </table>
+  </td></tr>
+      
+  {{#if tourTitle}}
+  <tr><td class="pad" style="padding:16px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+      <tr>
+        <td style="padding:10px 14px;background-color:#EEF2F7;border-left:3px solid #00A669;border-radius:8px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#334155;line-height:1.5;">
+          <span style="font-weight:800;color:#001F3F;">{{tourTitle}}</span>
+          {{#if bookingNumber}}&nbsp;&nbsp;&middot;&nbsp;&nbsp;<span style="color:#64748B;">Ref {{bookingNumber}}</span>{{/if}}
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+  {{/if}}
+      
+  <tr><td class="pad" style="padding:28px 40px 8px 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+      <tr>
+        <td align="center">
+          <a href="{{chatUrl}}" class="btn" style="display:inline-block;background-color:#00A669;color:#ffffff;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;font-weight:700;text-decoration:none;border-radius:10px;padding:14px 34px;line-height:1.2;">View conversation</a>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:16px 40px 0 40px;">
+    <p style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#64748B;line-height:1.7;text-align:center;">Reply to this email to send a reply back in this conversation.</p>
+  </td></tr>
+    
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td align="center" style="padding:28px 20px 0 20px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="center" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#64748B;line-height:1.6;padding:0 0 6px 0;">
+                    Need help? <a href="mailto:{{supportEmail}}" style="color:#00A669;text-decoration:none;font-weight:600;">Contact support</a>
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;color:#94A3B8;line-height:1.6;">
+                    &copy; {{year}} {{brandName}}. All rights reserved.
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -65,7 +65,6 @@ exports.getConversations = catchAsync(async (req, res) => {
 
 exports.getOrCreateConversation = catchAsync(async (req, res) => {
   const { recipientId, type: requestedType } = req.body;
-
   if (!recipientId) {
     throw new AppError('recipientId is required', 400);
   }
@@ -103,11 +102,13 @@ exports.getOrCreateConversation = catchAsync(async (req, res) => {
     throw new AppError('You do not have permission for this conversation type', 403);
   }
 
-  const conversation = await chatService.findOrCreateConversation(
-    req.user.id,
-    recipientId,
-    type
-  );
+  const ctx = {};
+  if (typeof req.body.bookingId === 'string' && req.body.bookingId) ctx.bookingId = req.body.bookingId;
+  if (typeof req.body.bookingNumber === 'string' && req.body.bookingNumber) ctx.bookingNumber = req.body.bookingNumber;
+  if (typeof req.body.tourTitle === 'string' && req.body.tourTitle) ctx.tourTitle = req.body.tourTitle;
+  const args = [req.user.id, recipientId, type];
+  if (Object.keys(ctx).length > 0) args.push(ctx);
+  const conversation = await chatService.findOrCreateConversation(...args);
 
   res.status(201).json({ status: 'success', data: { conversation } });
 });

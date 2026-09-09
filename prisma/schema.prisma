@@ -1272,6 +1272,13 @@ model Conversation {
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
 
+  // Optional booking context (Viator-style "About" line in chat emails).
+  // Snapshot of the booking/tour the conversation relates to, captured when
+  // the chat is started from a booking.
+  bookingId     String?
+  bookingNumber String?
+  tourTitle     String?
+
   // Reply-by-email token (c-<hmac>@<receiving-domain>) so inbound mail can be
   // routed back to this conversation. Backfilled lazily on first send.
   replyToken String? @unique
@@ -1280,6 +1287,7 @@ model Conversation {
   messages     Message[]
 
   @@index([updatedAt])
+  @@index([bookingId])
 }
 
 model ConversationParticipant {

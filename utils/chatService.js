@@ -69,12 +69,12 @@ async function resolveChatUserId(userId) {
   return userId;
 }
 
-async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_ADMIN') {
+async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_ADMIN', context = {}) {
   const originalSenderId = senderId;
   const originalRecipientId = recipientId;
   senderId = await resolveChatUserId(senderId);
   recipientId = await resolveChatUserId(recipientId);
-  console.log('[ChatService] findOrCreateConversation:', { originalSenderId, senderId, originalRecipientId, recipientId, type });
+  console.log('[ChatService] findOrCreateConversation:', { originalSenderId, senderId, originalRecipientId, recipientId, type, context });
 
   const existing = await prisma.conversation.findFirst({
     where: {
@@ -97,6 +97,21 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
   });
 
   if (existing) {
+    // Re-used conversation started from a booking: backfill any missing
+    // booking context so messaging emails can show "About: <tour>" etc.
+    if (context?.bookingNumber && !existing.bookingNumber) {
+      await prisma.conversation.update({
+        where: { id: existing.id },
+        data: {
+          bookingId: context.bookingId ?? null,
+          bookingNumber: context.bookingNumber,
+          tourTitle: context.tourTitle ?? null,
+        },
+      });
+      existing.bookingId = context.bookingId ?? null;
+      existing.bookingNumber = context.bookingNumber;
+      existing.tourTitle = context.tourTitle ?? null;
+    }
     console.log('[ChatService] findOrCreateConversation: FOUND EXISTING', { conversationId: existing.id, existingParticipantIds: existing.participants.map(p => p.userId) });
     return existing;
   }
@@ -124,6 +139,9 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
     data: {
       type,
       title,
+      bookingId: context?.bookingId ?? null,
+      bookingNumber: context?.bookingNumber ?? null,
+      tourTitle: context?.tourTitle ?? null,
       participants: {
         create: [
           { userId: senderId },
@@ -298,6 +316,8 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
     senderId,
     senderName: message.sender?.name || 'Someone',
     content,
+    attachmentThumbUrl: message.attachmentType === 'image' && message.attachmentUrl ? message.attachmentUrl : null,
+    attachmentDocLabel: message.attachmentType === 'document' ? 'Document attachment' : null,
   }).catch((err) => console.error('[ChatService] chat email notification failed:', err));
 
   const sender = await prisma.user.findUnique({
@@ -540,15 +560,36 @@ function chatLinkFor(recipientRoles, conversationId) {
   return `${customerStorefrontBase()}/dashboard/chat${q}`;
 }
 
+function senderRoleLabel(type, roles) {
+  const r = Array.isArray(roles) ? roles : [];
+  if (r.includes('supplier')) return 'Tour operator';
+  if (r.includes('admin') || r.includes('expedition')) {
+    return type === 'EXPEDITION_CUSTOMER' ? 'Travio Africa' : 'Travio Africa support';
+  }
+  return 'Traveller';
+}
+
 /**
  * Fire-and-forget: email every participant except the sender about a new
  * message, with a unique reply-to address. Used by both in-app sends and
  * inbound email replies (so the thread loops correctly).
  */
-async function notifyConversationByEmail({ conversationId, type, senderId, senderName, content }) {
+async function notifyConversationByEmail({ conversationId, type, senderId, senderName, content, attachmentThumbUrl = null, attachmentDocLabel = null }) {
   if (!EMAIL_ENABLED_TYPES.includes(type)) return;
 
   const preview = String(content || '').trim().slice(0, 300);
+  const [conversation, sender] = await Promise.all([
+    prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { id: true, type: true, bookingId: true, bookingNumber: true, tourTitle: true },
+    }),
+    prisma.user.findUnique({
+      where: { id: senderId },
+      select: { id: true, name: true, photoURL: true, roles: true },
+    }),
+  ]);
+  const effectiveType = conversation?.type || type;
+
   const participants = await prisma.conversationParticipant.findMany({
     where: { conversationId, userId: { not: senderId } },
     select: { userId: true },
@@ -565,14 +606,23 @@ async function notifyConversationByEmail({ conversationId, type, senderId, sende
   const token = await chatInbound.ensureConversationToken(prisma, conversationId).catch(() => null);
   const replyTo = token ? chatInbound.replyAddressFor(conversationId) : null;
 
+  const displayName = sender?.name || senderName || 'Someone';
   for (const user of withEmail) {
     enqueueEmail({
       type: 'chat-new-message',
       data: {
         to: user.email,
         recipientName: user.name || '',
-        senderName: senderName || 'Someone',
-        preview,
+        senderName: displayName,
+        senderAvatarUrl: sender?.photoURL || null,
+        senderInitials: displayName.split(/\s+/).map((w) => w[0] || '').filter(Boolean).slice(0, 2).join('').toUpperCase() || '?',
+        senderRoleLabel: senderRoleLabel(effectiveType, sender?.roles),
+        senderMessageHtml: (String(content || '').trim() || 'Sent an attachment'),
+        attachmentThumbUrl,
+        attachmentDocLabel,
+        tourTitle: conversation?.tourTitle || null,
+        bookingNumber: conversation?.bookingNumber || null,
+        preheader: preview,
         content: preview,
         conversationId,
         replyTo,
