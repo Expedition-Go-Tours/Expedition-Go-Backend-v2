@@ -526,13 +526,18 @@ async function getUnreadCount(userId, types = null) {
 
 const EMAIL_ENABLED_TYPES = ['SUPPLIER_CUSTOMER', 'EXPEDITION_CUSTOMER', 'USER_SUPPORT', 'SUPPLIER_ADMIN'];
 
+/** Expedition (customer storefront) origin used for customer chat deep links. */
+function customerStorefrontBase() {
+  return (process.env.EXPEDITION_STOREFRONT_URL || 'https://expeditiongotours.vercel.app').replace(/\/+$/, '');
+}
+
 function chatLinkFor(recipientRoles, conversationId) {
   const q = `?conversation=${encodeURIComponent(conversationId)}`;
   const roles = Array.isArray(recipientRoles) ? recipientRoles : [];
   if (roles.includes('supplier')) return `${emailUrls.supplierDashboard()}/chat${q}`;
   const adminBase = process.env.ADMIN_DASHBOARD_URL || emailUrls.DASHBOARD_URL;
   if (roles.includes('admin') || roles.includes('expedition')) return `${adminBase}/chat${q}`;
-  return `${emailUrls.CLIENT_URL}/dashboard/chat${q}`;
+  return `${customerStorefrontBase()}/dashboard/chat${q}`;
 }
 
 /**

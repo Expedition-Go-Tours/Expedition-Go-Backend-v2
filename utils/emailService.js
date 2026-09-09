@@ -142,6 +142,9 @@ async function sendHtml({ to, subject, html, text = '', attachments = [], replyT
   try {
     const fromInfo = parseFrom();
     const replyToValue = replyTo || process.env.EMAIL_REPLY_TO;
+    const extraHeaders = {};
+    if (replyToValue) extraHeaders['Reply-To'] = replyToValue;
+    if (inReplyTo) extraHeaders['In-Reply-To'] = inReplyTo;
     const { data: result, error } = await client.emails.send({
       from: fromInfo.from,
       to,
@@ -149,7 +152,7 @@ async function sendHtml({ to, subject, html, text = '', attachments = [], replyT
       html,
       ...(text ? { text } : {}),
       ...(replyToValue ? { reply_to: replyToValue } : {}),
-      ...(inReplyTo ? { headers: { 'In-Reply-To': inReplyTo } } : {}),
+      ...(Object.keys(extraHeaders).length ? { headers: extraHeaders } : {}),
       ...(attachments.length ? { attachments: normalizeAttachments(attachments) } : {}),
     });
 
