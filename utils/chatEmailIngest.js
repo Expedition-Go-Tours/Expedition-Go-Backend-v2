@@ -5,12 +5,18 @@
  * not yet processed (deduped by inbound Message-ID). The `email.received`
  * webhook calls the same ingestion path, so delivery is reliable even if the
  * webhook is delayed or dropped.
+ *
+ * Ingested content: the stripped reply text plus any attachment(s) the sender
+ * included — each kept attachment is uploaded to Cloudinary and posted as its
+ * own chat message. Other participants get an in-app notification (bell +
+ * unread) and a realtime socket event.
  */
 
 const prisma = require('./prismaClient');
 const chatService = require('./chatService');
 const chatInbound = require('./chatInbound');
-const { enqueueNotification } = require('./queue');
+const chatAttachments = require('./chatAttachments');
+const { sendNotification } = require('./notificationService');
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const RESEND_RECEIVING_API = 'https://api.resend.com/emails/receiving';
@@ -31,9 +37,48 @@ async function fetchReceivedEmail(emailId) {
   return res.json();
 }
 
+/** Resolve a signed download URL for one attachment of a received email. */
+async function attachmentDownloadUrl(emailId, attachmentId) {
+  const res = await fetch(`${RESEND_RECEIVING_API}/${encodeURIComponent(emailId)}/attachments/${encodeURIComponent(attachmentId)}`, {
+    headers: { Authorization: `Bearer ${RESEND_API_KEY}` },
+  });
+  if (!res.ok) throw new Error(`Attachment meta failed (${res.status})`);
+  const body = await res.json().catch(() => null);
+  if (!body || typeof body?.download_url !== 'string') throw new Error('No download_url for attachment');
+  return body.download_url;
+}
+
+async function fetchBytes(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Attachment download failed (${res.status})`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  return buf;
+}
+
+/** Which of the email's attachments should be forwarded into chat. */
+function keepAttachments(email) {
+  const html = typeof email?.html === 'string' ? email.html : '';
+  const inlineCids = new Set();
+  if (html) {
+    for (const m of html.matchAll(/cid:([^"'\s>]+)/gi)) inlineCids.add(String(m[1]).toLowerCase());
+  }
+  const list = Array.isArray(email?.attachments) ? email.attachments : [];
+  const kept = [];
+  for (const a of list) {
+    const contentId = String(a?.content_id || '');
+    if (contentId && inlineCids.has(contentId.toLowerCase())) continue; // already embedded in HTML
+    const size = Number(a?.size) || 0;
+    const contentType = a?.content_type || '';
+    if (!chatAttachments.isAllowed(contentType, size)) continue;
+    kept.push(a);
+    if (kept.length >= chatAttachments.MAX_PER_EMAIL) break;
+  }
+  return kept;
+}
+
 /**
- * Ingest one received email into its conversation. Returns a status string so
- * callers/webhooks can respond appropriately. Idempotent per Message-ID.
+ * Ingest one received email into its conversation. Returns a status string.
+ * Idempotent per Message-ID.
  */
 async function ingestReceivedEmail(emailId) {
   if (!emailId) return 'ignored';
@@ -73,25 +118,70 @@ async function ingestReceivedEmail(emailId) {
     return 'ignored';
   }
 
-  const content = chatInbound.extractReplyContent(email);
-  if (!content) return 'ignored';
+  const text = chatInbound.extractReplyContent(email);
+  const attachments = keepAttachments(email);
+
+  if (!text && attachments.length === 0) return 'ignored';
 
   const messageId = email?.message_id || null;
 
-  let message;
+  // Dedupe by Message-ID before inserting the batch.
+  if (messageId) {
+    const existing = await prisma.message.findUnique({ where: { inboundMessageId: messageId } }).catch(() => null);
+    if (existing) return 'duplicate';
+  }
+
+  // Upload attachments (best effort per file — skip failures, keep the rest).
+  const uploaded = [];
+  for (const att of attachments) {
+    try {
+      const url = await attachmentDownloadUrl(emailId, att.id);
+      const buf = await fetchBytes(url);
+      const secureUrl = await chatAttachments.uploadBuffer(buf, {
+        public_id: undefined,
+        overwrite: false,
+        folder: 'chat/inbound',
+      });
+      if (secureUrl) uploaded.push({ url: secureUrl, type: chatAttachments.classify(att.content_type) });
+    } catch (err) {
+      console.error(`[ChatEmailIngest] attachment upload failed (${att.filename}): ${err.message}`);
+    }
+  }
+
+  // Insert the reply text + each attachment as its own message, atomically.
+  let created = [];
   try {
-    message = await prisma.message.create({
-      data: {
-        conversationId: conversation.id,
-        senderId: author.user.id,
-        content,
-        via: 'email',
-        senderEmail,
-        inboundMessageId: messageId || undefined,
-      },
-      include: {
-        sender: { select: { id: true, name: true, photoURL: true, roles: true } },
-      },
+    created = await prisma.$transaction(async (tx) => {
+      const out = [];
+      let first = true;
+      const push = (data) =>
+        tx.message.create({
+          data: {
+            conversationId: conversation.id,
+            senderId: author.user.id,
+            content: data.content,
+            attachmentUrl: data.attachmentUrl || null,
+            attachmentType: data.attachmentType || null,
+            via: 'email',
+            senderEmail,
+            inboundMessageId: first ? messageId || undefined : undefined,
+          },
+          include: {
+            sender: { select: { id: true, name: true, photoURL: true, roles: true } },
+          },
+        }).then((m) => {
+          out.push(m);
+          first = false;
+          return m;
+        });
+
+      if (text) await push({ content: text });
+      for (const att of uploaded) await push({ content: '', attachmentUrl: att.url, attachmentType: att.type });
+      if (out.length === 0) {
+        // Nothing to store (shouldn't happen — text/attachments guarded above)
+        throw new Error('empty ingest payload');
+      }
+      return out;
     });
   } catch (err) {
     if (err?.code === 'P2002') return 'duplicate';
@@ -100,36 +190,48 @@ async function ingestReceivedEmail(emailId) {
 
   await prisma.conversation.update({ where: { id: conversation.id }, data: { updatedAt: new Date() } });
 
+  // Realtime: push every inserted message to the room + other participants.
   const io = require('../app').get('io');
-  const payload = { conversationId: conversation.id, message };
-  if (io) io.to(`conversation:${conversation.id}`).emit('chat:message', payload);
   const others = await prisma.conversationParticipant.findMany({
     where: { conversationId: conversation.id, userId: { not: author.user.id } },
     select: { userId: true },
   });
-  if (io) for (const o of others) io.to(`user:${o.userId}`).emit('chat:message', payload);
+  if (io) {
+    for (const message of created) {
+      io.to(`conversation:${conversation.id}`).emit('chat:message', { conversationId: conversation.id, message });
+    }
+    for (const o of others) {
+      for (const message of created) io.to(`user:${o.userId}`).emit('chat:message', { conversationId: conversation.id, message });
+    }
+  }
 
+  // In-app notifications (bell + unread) for each other participant.
+  const preview = text || (uploaded[0] ? (uploaded[0].type === 'image' ? '📷 Photo' : '📎 File') : '');
   for (const o of others) {
-    enqueueNotification({
+    const result = await sendNotification({
       userId: o.userId,
       type: 'NEW_MESSAGE',
       title: 'New Message',
-      message: content.length > 100 ? `${content.slice(0, 100)}…` : content,
+      message: preview.length > 100 ? `${preview.slice(0, 100)}…` : preview,
       data: { conversationId: conversation.id, senderId: author.user.id, conversationType: conversation.type },
-    }).catch(() => {});
+    });
+    if (!result?.success) console.error(`[ChatEmailIngest] notification failed for ${o.userId}`);
   }
 
-  chatService
-    .notifyConversationByEmail({
-      conversationId: conversation.id,
-      type: conversation.type,
-      senderId: author.user.id,
-      senderName: author.user.name || 'Email reply',
-      content,
-    })
-    .catch(() => {});
+  // Email the other participants so the thread continues.
+  if (text || uploaded.length) {
+    chatService
+      .notifyConversationByEmail({
+        conversationId: conversation.id,
+        type: conversation.type,
+        senderId: author.user.id,
+        senderName: author.user.name || 'Email reply',
+        content: text || (uploaded[0]?.type === 'image' ? '📷 Photo attachment' : '📎 File attachment'),
+      })
+      .catch((err) => console.error(`[ChatEmailIngest] email notify failed: ${err.message}`));
+  }
 
-  console.log(`[ChatEmailIngest] inserted ${message.id} (via email) into ${conversation.id}`);
+  console.log(`[ChatEmailIngest] inserted ${created.length} message(s) into ${conversation.id}`);
   return 'success';
 }
 
