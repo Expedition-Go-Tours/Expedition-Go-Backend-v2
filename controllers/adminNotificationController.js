@@ -11,10 +11,14 @@ const TYPE_PERMISSION = {
   TOUR_SUBMITTED_FOR_REVIEW: ['tours.view', 'tours.approve'],
   BOOKING_CREATED: ['bookings.view', 'dashboard.*'],
   BOOKING_CONFIRMED: ['bookings.view', 'dashboard.*'],
+  BOOKING_MODIFIED: ['bookings.view', 'dashboard.*'],
+  REFUND_CLAIM: ['payouts.view', 'payouts.approve'],
 };
 
 // Every value in the AdminNotificationType enum. Types without a TYPE_PERMISSION
 // entry (or with an empty list) are visible to every admin.
+// ⚠️ Keep in sync with the AdminNotificationType enum in prisma/schema.prisma —
+// a type missing here is silently hidden from the bell feed/unread badge/stats.
 const ADMIN_NOTIFICATION_TYPES = [
   'NEW_SUPPLIER_APPLICATION',
   'SUPPLIER_STATUS_CHANGE',
@@ -25,9 +29,11 @@ const ADMIN_NOTIFICATION_TYPES = [
   'TOUR_SUBMITTED_FOR_REVIEW',
   'BOOKING_CREATED',
   'BOOKING_CONFIRMED',
+  'BOOKING_MODIFIED',
   'DOCUMENT_EXPIRING',
   'DOCUMENT_EXPIRED',
   'REFUND_REQUEST',
+  'REFUND_CLAIM',
   'PAYMENT_UPCOMING',
   'PAYMENT_COLLECTED',
   'PAYMENT_COLLECTION_FAILED',
@@ -116,3 +122,5 @@ exports.getStats = catchAsync(async (req, res) => {
   const stats = await adminNotifService.getStats(where);
   res.status(200).json({ status: 'success', data: stats });
 });
+
+exports.buildPermissionWhere = buildPermissionWhere;
