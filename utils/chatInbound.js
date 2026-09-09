@@ -144,7 +144,7 @@ function extractReplyContent(email) {
     // Gmail wraps quotes in <div class="gmail_quote"> — the reply is above it.
     const quoteIdx = clean.search(/class=["'][^"']*gmail_quote[^"']*["']/i);
     if (quoteIdx !== -1) clean = clean.slice(0, quoteIdx);
-    const body = stripReplyText(htmlToText(clean));
+    const body = stripReplyText(htmlToText(clean)).replace(/\s*<[^>]*$/g, '');
     if (body) return body;
   }
   return stripReplyText(text);
