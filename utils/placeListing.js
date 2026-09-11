@@ -19,14 +19,16 @@ const { getLocationTourIds } = require('./homepageRanking');
 const { findNearbyTourIds } = require('./tourFilterBuilder');
 
 /**
- * Per-type "near" radius. A city/neighbourhood legitimately includes its whole
- * metro area, but an attraction (a market, a park) should only pull tours that
- * are actually at/around it — otherwise "Makola Market" would return every
- * Accra tour. Regions/countries are name-matched only (no radius).
+ * Per-type "near" radius. A city legitimately includes its whole metro area,
+ * but a neighbourhood/town should only pull tours around it, and an attraction
+ * (a market, a park) only tours at/around it — otherwise "Makola Market" or
+ * "Nima" would return every Accra tour. Regions/countries are name-matched
+ * only (no radius).
  */
 function radiusForType(type) {
   if (type === 'attraction') return 10;
-  if (type === 'city' || type === 'locality') return 50;
+  if (type === 'locality') return 15;
+  if (type === 'city') return 50;
   return 0; // region / country / unknown
 }
 
