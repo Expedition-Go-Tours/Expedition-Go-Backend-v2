@@ -54,4 +54,52 @@ async function resolveCityCentroid(city) {
   }, 3600);
 }
 
-module.exports = { haversineKm, resolveCityCentroid };
+/**
+ * Cities that have ACTIVE, geolocated tours within `radiusKm` of a point,
+ * nearest first. Powers the "no experiences here yet" fallback, where we
+ * suggest close-by destinations instead of a dead end.
+ *
+ * @param {number} lat
+ * @param {number} lng
+ * @param {number} radiusKm
+ * @param {number} limit
+ * @param {string} [excludeCity] - skip the searched city itself
+ * @returns {Promise<Array<{ city: string, country: string|null, tourCount: number, coverPhoto: string|null, distanceKm: number }>>}
+ */
+async function findNearbyCities(lat, lng, radiusKm = 150, limit = 8, excludeCity = '') {
+  if (lat == null || lng == null) return [];
+  const meters = radiusKm * 1000;
+  try {
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT t.city,
+              t.country,
+              COUNT(*)::int AS "tourCount",
+              MIN(ST_DistanceSphere(t.location_geom::geometry, ST_SetSRID(ST_MakePoint($1, $2), 4326))) / 1000.0 AS "distanceKm",
+              (SELECT t2."coverPhoto" FROM "Tour" t2
+                 WHERE t2.city = t.city AND t2.status = 'ACTIVE' AND t2."coverPhoto" IS NOT NULL
+                 ORDER BY t2."averageRating" DESC NULLS LAST, t2."reviewCount" DESC
+                 LIMIT 1) AS "coverPhoto"
+         FROM "Tour" t
+        WHERE t.status = 'ACTIVE'
+          AND t.city IS NOT NULL
+          AND t.location_geom IS NOT NULL
+          AND ST_DWithin(t.location_geom, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $3)
+          AND ($4 = '' OR LOWER(t.city) <> LOWER($4))
+        GROUP BY t.city, t.country
+        ORDER BY "distanceKm" ASC
+        LIMIT $5`,
+      lng, lat, meters, excludeCity || '', limit
+    );
+    return rows.map((r) => ({
+      city: r.city,
+      country: r.country,
+      tourCount: r.tourCount,
+      coverPhoto: r.coverPhoto || null,
+      distanceKm: Math.round(parseFloat(r.distanceKm) * 10) / 10,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+module.exports = { haversineKm, resolveCityCentroid, findNearbyCities };

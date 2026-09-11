@@ -30,7 +30,8 @@ const {
   getTourDistances
 } = require('../utils/tourFilterBuilder');
 const { shouldCountTourView } = require('../utils/viewTracking');
-const { haversineKm, resolveCityCentroid } = require('../utils/locationGeo');
+const { haversineKm, resolveCityCentroid, findNearbyCities } = require('../utils/locationGeo');
+const locationService = require('../utils/locationService');
 const eventEmitter = require('../utils/eventEmitter');
 
 const { rankTourIdsBySearch } = require('../utils/fullTextSearch');
@@ -376,6 +377,139 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
       },
     });
   }
+});
+
+const SEARCH_FALLBACK_SELECT = {
+  id: true, title: true, slug: true, coverPhoto: true, photos: true,
+  category: true, city: true, country: true, averageRating: true,
+  reviewCount: true, totalBookings: true, schedulesAndPricing: true,
+  durationMinutes: true, difficulty: true, tags: true, attractions: true,
+  latitude: true, longitude: true, createdAt: true,
+  supplier: {
+    select: {
+      id: true, name: true, photoURL: true,
+      supplierProfile: { select: { averageRating: true } },
+    },
+  },
+};
+
+/**
+ * Resolve a free-text query to a canonical city + a usable centroid.
+ * Prefers a catalog city match (for the proper display name and country),
+ * then a sibling-tour centroid, then the geocoder.
+ */
+async function resolveSearchLocation(q) {
+  const query = (q || '').trim();
+  if (query.length < 2) return null;
+
+  const match = await prisma.tour.findFirst({
+    where: { status: 'ACTIVE', city: { contains: query, mode: 'insensitive' } },
+    select: { city: true, country: true },
+    orderBy: { totalBookings: 'desc' },
+  });
+
+  const city = match?.city || query;
+  const country = match?.country || null;
+
+  const centroid = await resolveCityCentroid(city);
+  if (centroid) return { city, country, lat: centroid.lat, lng: centroid.lng };
+
+  const geo = await locationService.search(query, 1).catch(() => []);
+  const hit = geo?.[0];
+  if (hit?.latitude != null && hit?.longitude != null) {
+    return { city, country, lat: hit.latitude, lng: hit.longitude };
+  }
+  return null;
+}
+
+/**
+ * Pick up to `limit` strong tours for the empty-search fallback. Widens the
+ * net in stages: nearby cities -> same country -> anywhere, so the rail is
+ * always full but stays as relevant as possible.
+ */
+async function fetchFallbackTours({ cities = [], country = null, excludeIds = [], limit = 8 }) {
+  const base = {
+    status: 'ACTIVE',
+    supplier: { supplierProfile: { status: 'ACTIVE' } },
+  };
+  const orderBy = [{ averageRating: 'desc' }, { reviewCount: 'desc' }, { totalBookings: 'desc' }];
+  let tours = [];
+
+  if (cities.length) {
+    tours = await prisma.tour.findMany({
+      where: { ...base, city: { in: cities }, ...(excludeIds.length ? { id: { notIn: excludeIds } } : {}) },
+      select: SEARCH_FALLBACK_SELECT,
+      orderBy,
+      take: limit,
+    });
+  }
+
+  if (tours.length < limit && country) {
+    const have = [...new Set([...excludeIds, ...tours.map((t) => t.id)])];
+    const more = await prisma.tour.findMany({
+      where: { ...base, country, id: { notIn: have } },
+      select: SEARCH_FALLBACK_SELECT,
+      orderBy,
+      take: limit - tours.length,
+    });
+    tours = [...tours, ...more];
+  }
+
+  if (tours.length < limit) {
+    const have = [...new Set([...excludeIds, ...tours.map((t) => t.id)])];
+    const more = await prisma.tour.findMany({
+      where: { ...base, id: { notIn: have } },
+      select: SEARCH_FALLBACK_SELECT,
+      orderBy,
+      take: limit - tours.length,
+    });
+    tours = [...tours, ...more];
+  }
+
+  return tours;
+}
+
+/**
+ * GET /api/tours/search-fallback?q=<query>
+ *
+ * When a search returns nothing, this powers a helpful empty state instead of
+ * a dead end: the closest destinations that DO have experiences, plus two
+ * curated rails ("Recommended for you" / "You may also like").
+ */
+exports.getSearchFallback = catchAsync(async (req, res) => {
+  const q = (req.query.q || '').trim();
+  const limit = Math.min(parseInt(req.query.limit) || 8, 12);
+
+  const cacheKey = `hp:fallback:${crypto.createHash('md5').update(`${q.toLowerCase()}:${limit}`).digest('hex')}`;
+
+  const data = await cache.getOrSet(cacheKey, async () => {
+    const resolved = await resolveSearchLocation(q);
+
+    const nearbyLocations = resolved?.lat != null
+      ? await findNearbyCities(resolved.lat, resolved.lng, 150, 8, resolved.city)
+      : [];
+
+    const recommended = await fetchFallbackTours({
+      cities: nearbyLocations.map((l) => l.city),
+      country: resolved?.country,
+      limit,
+    });
+
+    const youMayAlsoLike = await fetchFallbackTours({
+      excludeIds: recommended.map((t) => t.id),
+      limit,
+    });
+
+    return {
+      query: q,
+      resolvedLocation: resolved ? { city: resolved.city, country: resolved.country } : null,
+      nearbyLocations,
+      recommended,
+      youMayAlsoLike,
+    };
+  }, 600);
+
+  res.json({ status: 'success', data });
 });
 
 /**

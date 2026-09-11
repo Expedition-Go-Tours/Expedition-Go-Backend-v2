@@ -539,6 +539,9 @@ router.get('/offers', tourController.getOfferListings);
 
 router.get('/badges', tourController.getTourBadges);
 
+// Empty-search fallback: close-by destinations + curated rails.
+router.get('/search-fallback', tourController.getSearchFallback);
+
 /**
  * @swagger
  * /tours/{id}:
