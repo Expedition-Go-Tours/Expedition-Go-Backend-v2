@@ -190,9 +190,11 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
           },
         });
         const ranked = rankByPlace(scoped, {
+          place: resolved.name,
           lat: nearPoint?.lat ?? null,
           lng: nearPoint?.lng ?? null,
           localIds: ids,
+          radiusKm: 0,
         });
         proximityIds = ranked.map((t) => t.id);
       } else {

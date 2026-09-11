@@ -8,7 +8,6 @@ const {
   displayName,
   popularityScore,
   rankByPlace,
-  NEARBY_RADIUS_KM,
 } = require('../../utils/placeResolver');
 const { normalizeQuery } = require('../../utils/placeResolver');
 
@@ -55,37 +54,40 @@ describe('displayName', () => {
   });
 });
 
-describe('rankByPlace bands', () => {
+describe('rankByPlace relevance bands', () => {
   const tours = [
-    { id: 'in', latitude: 5.5, longitude: -0.2, averageRating: 3, reviewCount: 1, totalBookings: 0 },
-    { id: 'near', latitude: 5.6, longitude: -0.25, averageRating: 5, reviewCount: 100, totalBookings: 50 },
-    { id: 'far', latitude: 9.0, longitude: -1.0, averageRating: 5, reviewCount: 1000, totalBookings: 500 },
+    { id: 'title', title: 'Makola Market Walking Tour', city: null, region: null, attractions: [], tags: [], description: '', averageRating: 3, reviewCount: 1, totalBookings: 0 },
+    { id: 'attr', title: 'Accra City Tour', city: null, region: null, attractions: ['Makola Market'], tags: [], description: '', averageRating: 5, reviewCount: 100, totalBookings: 50 },
+    { id: 'city', title: 'Some Tour', city: 'Accra', region: 'Greater Accra Region', attractions: [], tags: [], description: '', averageRating: 5, reviewCount: 1000, totalBookings: 500 },
+    { id: 'desc', title: 'Unrelated', city: null, region: null, attractions: [], tags: [], description: 'We stop at Makola Market for shopping', averageRating: 5, reviewCount: 10, totalBookings: 1 },
+    { id: 'none', title: 'Cape Coast Castle', city: 'Cape Coast', region: 'Central Region', attractions: [], tags: [], description: '', averageRating: 5, reviewCount: 999, totalBookings: 999 },
   ];
 
-  it('keeps in-place before near before far, regardless of popularity', () => {
-    const ranked = rankByPlace(tours, {
-      lat: 5.5, lng: -0.2,
-      localIds: new Set(['in']),
-      radiusKm: NEARBY_RADIUS_KM,
-    });
-    expect(ranked.map((t) => t.id)).toEqual(['in', 'near', 'far']);
-    expect(ranked[0].distanceKm).toBe(0);
-    expect(ranked[1].distanceKm).toBeLessThanOrEqual(NEARBY_RADIUS_KM);
+  it('orders by relevance tier, then popularity; drops non-matches', () => {
+    const ranked = rankByPlace(tours, { place: 'Makola Market' });
+    expect(ranked.map((t) => t.id)).toEqual(['title', 'attr', 'desc']);
+    expect(ranked.find((t) => t.id === 'none')).toBeUndefined();
   });
 
-  it('orders by popularity inside a band', () => {
-    const a = { id: 'a', latitude: 5.5, longitude: -0.2, averageRating: 4, reviewCount: 10, totalBookings: 5 };
-    const b = { id: 'b', latitude: 5.5, longitude: -0.2, averageRating: 5, reviewCount: 200, totalBookings: 90 };
-    const ranked = rankByPlace([a, b], { lat: 5.5, lng: -0.2, localIds: new Set(['a', 'b']) });
+  it('city/region equality is a mid tier', () => {
+    const ranked = rankByPlace(
+      [{ id: 'a', title: 'X', city: 'Accra', region: null, attractions: [], tags: [], description: '', averageRating: 5, reviewCount: 10, totalBookings: 5 }],
+      { place: 'Accra' },
+    );
+    expect(ranked[0]._band).toBe(3);
+  });
+
+  it('popularity decides inside a tier', () => {
+    const a = { id: 'a', title: 'Kakum Tour A', city: null, region: null, attractions: [], tags: [], description: '', averageRating: 4, reviewCount: 10, totalBookings: 5 };
+    const b = { id: 'b', title: 'Kakum Tour B', city: null, region: null, attractions: [], tags: [], description: '', averageRating: 5, reviewCount: 200, totalBookings: 90 };
+    const ranked = rankByPlace([a, b], { place: 'Kakum' });
     expect(ranked.map((t) => t.id)).toEqual(['b', 'a']);
     expect(popularityScore(b)).toBeGreaterThan(popularityScore(a));
   });
 
-  it('does not crash on missing coordinates', () => {
-    const ranked = rankByPlace([{ id: 'x', latitude: null, longitude: null, averageRating: null, reviewCount: null, totalBookings: null }], {
-      lat: 5.5, lng: -0.2, localIds: new Set(),
-    });
-    expect(ranked[0].distanceKm).toBeNull();
-    expect(ranked[0]._band).toBe(3);
+  it('does not crash on missing fields', () => {
+    const ranked = rankByPlace([{ id: 'x', title: 'Kakum' }], { place: 'Kakum' });
+    expect(ranked.length).toBe(1);
+    expect(ranked[0]._band).toBe(1);
   });
 });

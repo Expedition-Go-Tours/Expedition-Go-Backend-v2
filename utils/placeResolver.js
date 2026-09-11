@@ -385,27 +385,54 @@ function popularityScore(tour) {
 }
 
 /**
- * Rank tours around a resolved place into GetYourGuide-style bands:
- *   1 = in the place (based there / visits it / tagged with it)
- *   2 = near the place (within `radiusKm`)
- *   3 = everywhere else (callers scoping to a place DROP this band)
- * Popularity decides the order inside each band, so a far-away popular tour
- * can never overtake a tour that belongs to the searched place.
+ * Relevance of a tour to a place, GetYourGuide-style — content matching, not
+ * distance. Lower = stronger:
+ *   1 = title contains the place
+ *   2 = attractions / tags contain it
+ *   3 = the tour's city / region equals it
+ *   4 = description contains it
+ *   0 = no match
  */
-function rankByPlace(tours, { lat = null, lng = null, localIds = new Set(), radiusKm = NEARBY_RADIUS_KM } = {}) {
-  const hasPoint = lat != null && lng != null;
-  const scored = tours.map((t) => {
-    const hasCoords = t.latitude != null && t.longitude != null;
-    const distanceKm = hasPoint && hasCoords
-      ? Math.round(haversineKm(lat, lng, t.latitude, t.longitude) * 10) / 10
-      : null;
+function placeRelevance(tour, place) {
+  const target = foldAccents(String(place || '').toLowerCase()).trim();
+  if (!target || !tour) return 0;
+  const text = (s) => (s ? wordBoundaryMatch(foldAccents(String(s).toLowerCase()), target) : false);
+  const list = (arr) => Array.isArray(arr) && arr.some((v) => text(v));
 
-    let band = 3;
-    if (localIds.has(t.id)) band = 1;
-    else if (distanceKm != null && distanceKm <= radiusKm) band = 2;
+  if (text(tour.title)) return 1;
+  if (list(tour.attractions) || list(tour.tags)) return 2;
+  if (tour.city && foldAccents(tour.city.toLowerCase()) === target) return 3;
+  if (tour.region && foldAccents(tour.region.toLowerCase()) === target) return 3;
+  if (text(tour.description)) return 4;
+  return 0;
+}
 
-    return { ...t, distanceKm, _band: band, _pop: popularityScore(t) };
-  });
+/**
+ * Rank tours for a place: relevance tier first (title > attractions/tags >
+ * city/region > description), then popularity. Tours that don't match at all
+ * (tier 0) are dropped — a place with no relevant tours returns nothing, never
+ * the whole catalogue. `radiusKm` (optional) adds a weak proximity fallback
+ * band for tours with no textual match.
+ */
+function rankByPlace(tours, { place = '', lat = null, lng = null, localIds = null, radiusKm = 0 } = {}) {
+  const hasPoint = lat != null && lng != null && radiusKm > 0;
+  const scored = [];
+
+  for (const t of tours) {
+    let tier = placeRelevance(t, place);
+    let distanceKm = null;
+
+    if (hasPoint && t.latitude != null && t.longitude != null) {
+      distanceKm = Math.round(haversineKm(lat, lng, t.latitude, t.longitude) * 10) / 10;
+    }
+    if (tier === 0) {
+      if (localIds && localIds.has(t.id)) tier = 3;
+      else if (distanceKm != null && distanceKm <= radiusKm) tier = 5;
+    }
+    if (tier === 0) continue;
+
+    scored.push({ ...t, distanceKm, _band: tier, _pop: popularityScore(t) });
+  }
 
   scored.sort((a, b) => {
     if (a._band !== b._band) return a._band - b._band;
@@ -421,6 +448,7 @@ module.exports = {
   resolvePlace,
   getCatalogCountries,
   rankByPlace,
+  placeRelevance,
   popularityScore,
   displayName,
   normalizeQuery,
