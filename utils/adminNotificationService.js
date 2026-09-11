@@ -1,5 +1,5 @@
 const prisma = require('./prismaClient');
-const { notifyDiscord } = require('./discordNotifier');
+const { notifyDiscord, sendViaBot } = require('./discordNotifier');
 const channelEmbeds = require('./channelEmbeds');
 
 /**
@@ -77,10 +77,20 @@ function mirrorToDiscord(type, title, message, data) {
       changesSummary: data?.changesSummary,
       isResubmission: data?.isResubmission,
     });
-    return notifyDiscord(cfg.channel, content, {
-      ...opts,
-      cooldownKey: data?.supplierId || data?.tourId || title,
-    }).catch(() => {});
+    const payload = {};
+    if (opts.title || (opts.fields && opts.fields.length)) {
+      payload.embeds = [{
+        title: opts.title || 'TravioAfrica',
+        description: content,
+        color: opts.color || 0x5865f2,
+        fields: opts.fields || [],
+        timestamp: new Date().toISOString(),
+      }];
+    } else {
+      payload.content = content;
+    }
+    if (opts.components && opts.components.length) payload.components = opts.components;
+    return sendViaBot(cfg.channel, payload).catch(() => {});
   }
 
   notifyDiscord(cfg.channel, message, {

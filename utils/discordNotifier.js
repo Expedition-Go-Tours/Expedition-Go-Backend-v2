@@ -8,6 +8,9 @@
  *
  * Channel -> webhook mapping is driven by env vars (see .env.example):
  *   deploys, incidents, sales, verification, digest, approvals
+ *
+ * For interactive notifications (buttons), use sendViaBot() which sends via
+ * the bot token so Discord associates interactive components with the app.
  */
 
 const WEBHOOKS = {
@@ -17,6 +20,11 @@ const WEBHOOKS = {
   verification: process.env.DISCORD_WEBHOOK_VERIFICATION,
   digest: process.env.DISCORD_WEBHOOK_DIGEST,
   approvals: process.env.DISCORD_WEBHOOK_APPROVALS,
+};
+
+const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
+const CHANNEL_IDS = {
+  verification: process.env.DISCORD_VERIFICATION_CHANNEL_ID || null,
 };
 
 // No cooldown by default so every meaningful event notifies. Callers that
@@ -37,11 +45,15 @@ function inCooldown(key, ms) {
 
 async function post(url, payload) {
   try {
-    await fetch(url, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.error(`[discordNotifier] HTTP ${res.status} to ${String(url).slice(0, 48)}...: ${body.slice(0, 300)}`);
+    }
   } catch (err) {
     try {
       console.error(`[discordNotifier] send failed to ${String(url).slice(0, 48)}...: ${err.message}`);
@@ -86,4 +98,48 @@ function notifyDiscord(channel, content, opts = {}) {
   return post(url, payload);
 }
 
-module.exports = { notifyDiscord, WEBHOOKS };
+/**
+ * Send a notification via the bot token directly to a channel.
+ * Interactive components (buttons) work because Discord associates them
+ * with the bot application. Use this for notifications that need buttons.
+ *
+ * @param {'verification'|string} channel channel key from CHANNEL_IDS
+ * @param {object} payload Discord message payload (embeds, components, etc.)
+ * @returns {Promise<boolean>} true if sent successfully
+ */
+async function sendViaBot(channel, payload) {
+  const channelId = CHANNEL_IDS[channel];
+  if (!channelId || !BOT_TOKEN) {
+    console.error(`[discordNotifier] sendViaBot: missing channel ID or bot token for "${channel}"`);
+    return false;
+  }
+  try {
+    const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bot ${BOT_TOKEN}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.error(`[discordNotifier] sendViaBot HTTP ${res.status} to #${channel}: ${body.slice(0, 300)}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(`[discordNotifier] sendViaBot failed for #${channel}: ${err.message}`);
+    return false;
+  }
+}
+
+/**
+ * Update a webhook URL at runtime (called by the bot after creating a new
+ * webhook owned by the application, so interactive buttons work).
+ */
+function updateWebhookUrl(channel, url) {
+  if (channel && url) WEBHOOKS[channel] = url;
+}
+
+module.exports = { notifyDiscord, sendViaBot, updateWebhookUrl, WEBHOOKS };
