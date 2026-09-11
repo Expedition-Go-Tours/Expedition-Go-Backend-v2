@@ -71,6 +71,21 @@ function keyOf(q) {
 }
 
 /**
+ * Word-boundary contains — "kumasi" matches "Kumasi" but NOT "Nyankumasi
+ * Ahenkro". Prisma's `contains` is a raw substring, so candidate rows are
+ * fetched and filtered here.
+ */
+function wordBoundaryMatch(haystack, needle) {
+  if (!haystack || !needle) return false;
+  const idx = haystack.indexOf(needle);
+  if (idx === -1) return false;
+  const before = idx === 0 || !/[a-z0-9]/.test(haystack[idx - 1]);
+  const afterIdx = idx + needle.length;
+  const after = afterIdx === haystack.length || !/[a-z0-9]/.test(haystack[afterIdx]);
+  return before && after;
+}
+
+/**
  * Distinct countries present in the catalog for a scope, most common first.
  * Drives the geocoder bias + validation so "kakum" can never resolve to a
  * random village in Sudan when the platform only sells Ghana.
@@ -104,7 +119,7 @@ async function getCatalogCountries(scope = {}) {
   }, COUNTRIES_TTL);
 }
 
-/** Catalog city lookup — exact, then accent-folded contains. */
+/** Catalog city lookup — exact, then word-boundary contains. */
 async function findCity(query, scope) {
   const base = { status: 'ACTIVE', ...scopeWhere(scope) };
   const select = { city: true, country: true };
@@ -114,11 +129,20 @@ async function findCity(query, scope) {
     select,
     orderBy: { totalBookings: 'desc' },
   });
-  const match = exact || await prisma.tour.findFirst({
-    where: { ...base, city: { contains: query, mode: 'insensitive' } },
-    select,
-    orderBy: { totalBookings: 'desc' },
-  });
+  let match = exact;
+  let matchedBy = 'city:exact';
+
+  if (!match) {
+    const target = foldAccents(query.toLowerCase());
+    const candidates = await prisma.tour.findMany({
+      where: { ...base, city: { contains: query, mode: 'insensitive' } },
+      select,
+      orderBy: { totalBookings: 'desc' },
+      take: 50,
+    });
+    match = candidates.find((c) => c.city && wordBoundaryMatch(foldAccents(c.city.toLowerCase()), target));
+    matchedBy = 'city:contains';
+  }
   if (!match || !match.city) return null;
 
   const centroid = await resolveCityCentroid(match.city);
@@ -130,11 +154,11 @@ async function findCity(query, scope) {
     country: match.country || null,
     lat: centroid ? centroid.lat : null,
     lng: centroid ? centroid.lng : null,
-    matchedBy: exact ? 'city:exact' : 'city:contains',
+    matchedBy,
   };
 }
 
-/** Catalog region lookup — exact, then contains (e.g. "Volta Region"). */
+/** Catalog region lookup — exact, then word-boundary contains (e.g. "Volta Region"). */
 async function findRegion(query, scope) {
   const base = { status: 'ACTIVE', ...scopeWhere(scope) };
   const select = { region: true, country: true };
@@ -144,11 +168,20 @@ async function findRegion(query, scope) {
     select,
     orderBy: { totalBookings: 'desc' },
   });
-  const match = exact || await prisma.tour.findFirst({
-    where: { ...base, region: { contains: query, mode: 'insensitive' } },
-    select,
-    orderBy: { totalBookings: 'desc' },
-  });
+  let match = exact;
+  let matchedBy = 'region:exact';
+
+  if (!match) {
+    const target = foldAccents(query.toLowerCase());
+    const candidates = await prisma.tour.findMany({
+      where: { ...base, region: { contains: query, mode: 'insensitive' } },
+      select,
+      orderBy: { totalBookings: 'desc' },
+      take: 50,
+    });
+    match = candidates.find((c) => c.region && wordBoundaryMatch(foldAccents(c.region.toLowerCase()), target));
+    matchedBy = 'region:contains';
+  }
   if (!match || !match.region) return null;
 
   const centroid = await resolveRegionCentroid(match.region);
@@ -160,7 +193,7 @@ async function findRegion(query, scope) {
     country: match.country || null,
     lat: centroid ? centroid.lat : null,
     lng: centroid ? centroid.lng : null,
-    matchedBy: exact ? 'region:exact' : 'region:contains',
+    matchedBy,
   };
 }
 
@@ -184,7 +217,7 @@ async function findAttraction(query) {
     };
   }
 
-  const fuzzy = await prisma.attraction.findFirst({
+  const candidates = await prisma.attraction.findMany({
     where: {
       status: 'ACTIVE',
       name: { contains: query, mode: 'insensitive' },
@@ -193,7 +226,10 @@ async function findAttraction(query) {
     },
     select,
     orderBy: [{ tourCount: 'desc' }],
+    take: 50,
   });
+  const target = foldAccents(query.toLowerCase());
+  const fuzzy = candidates.find((a) => a.name && wordBoundaryMatch(foldAccents(a.name.toLowerCase()), target));
   if (fuzzy) {
     return {
       name: fuzzy.name, type: 'attraction', city: null, region: null, country: null,
