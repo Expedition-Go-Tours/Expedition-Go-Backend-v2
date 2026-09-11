@@ -11,6 +11,11 @@
  *
  * Per-section endpoints + a unified GET /homepage that returns all 9 keys
  * in one response (same key names as the shared endpoint).
+ *
+ * Location-aware: every endpoint accepts an optional `city` query param.
+ * When present, ranking functions rank location-relevant tours first (tours
+ * based in the city AND tours that visit it) then backfill globally so a
+ * section is never empty.
  */
 
 const catchAsync = require('../utils/catchAsync');
@@ -28,12 +33,22 @@ const sectionCache = (name, ttl = 300) => ({
   },
 });
 
+/** Cache-key suffix for a city scope (lowercased, empty when no city). */
+const cityKey = (city) => (city ? `:${city.toLowerCase()}` : '');
+
 /**
  * Tours with active special offers targeting Ghana-published tours.
  * Mirrors the shared controller's computeOffersData() with a Ghana filter.
+ * When a city is provided, location-relevant offers are ordered first.
  */
-async function computeGhanaOffersData() {
+async function computeGhanaOffersData(city = null) {
   const now = new Date();
+
+  // Resolve the searched city to its location-relevant tour IDs (tours based
+  // in the city AND tours that visit it) so those offers can be ordered first.
+  const locIdSet = city
+    ? new Set(await ranking.getLocationTourIds(city, GHANA))
+    : null;
 
   const targets = await prisma.specialOfferTarget.findMany({
     where: {
@@ -161,6 +176,12 @@ async function computeGhanaOffersData() {
   newCutoff.setDate(newCutoff.getDate() - NEW_TOUR_WINDOW_DAYS);
   const isRecentTour = (card) => card.createdAt && new Date(card.createdAt) >= newCutoff;
   offerCards.sort((a, b) => {
+    // Location-relevant offers first when a city is active.
+    if (locIdSet) {
+      const aLocal = locIdSet.has(a.id) ? 1 : 0;
+      const bLocal = locIdSet.has(b.id) ? 1 : 0;
+      if (aLocal !== bLocal) return bLocal - aLocal;
+    }
     const aScore = (a.totalBookings || 0) + (isRecentTour(a) ? NEW_TOUR_BOOST : 0);
     const bScore = (b.totalBookings || 0) + (isRecentTour(b) ? NEW_TOUR_BOOST : 0);
     return bScore - aScore;
@@ -172,19 +193,25 @@ async function computeGhanaOffersData() {
 
 exports.getSellOut = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
-  const tours = await sectionCache('sell-out').getOrSet(limit, () => ranking.getLikelySellOut(limit, null, GHANA));
+  const city = req.query.city || null;
+  const tours = await sectionCache('sell-out')
+    .getOrSet(`${limit}${cityKey(city)}`, () => ranking.getLikelySellOut(limit, null, GHANA, false, city));
   res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
 });
 
 exports.getTopRated = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
-  const tours = await sectionCache('top-rated').getOrSet(limit, () => ranking.getTopRated(limit, null, GHANA));
+  const city = req.query.city || null;
+  const tours = await sectionCache('top-rated')
+    .getOrSet(`${limit}${cityKey(city)}`, () => ranking.getTopRated(limit, null, GHANA, false, city));
   res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
 });
 
 exports.getTrending = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
-  const tours = await sectionCache('trending').getOrSet(limit, () => ranking.getTrending(limit, GHANA));
+  const city = req.query.city || null;
+  const tours = await sectionCache('trending')
+    .getOrSet(`${limit}${cityKey(city)}`, () => ranking.getTrending(limit, GHANA, false, city));
   res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
 });
 
@@ -193,15 +220,18 @@ exports.getRecommended = catchAsync(async (req, res) => {
   const userId = req.user?.id || null;
   const lat = req.query.lat ? parseFloat(req.query.lat) : null;
   const lng = req.query.lng ? parseFloat(req.query.lng) : null;
+  const city = req.query.city || null;
 
-  const tours = await sectionCache(`recommended:${userId || 'anon'}:${lat || 0}:${lng || 0}`)
-    .getOrSet(limit, () => ranking.getRecommended(userId, lat, lng, limit, GHANA));
+  const tours = await sectionCache(`recommended:${userId || 'anon'}:${lat || 0}:${lng || 0}${cityKey(city)}`)
+    .getOrSet(limit, () => ranking.getRecommended(userId, lat, lng, limit, GHANA, false, city));
   res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
 });
 
 exports.getNew = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
-  const tours = await sectionCache('new').getOrSet(limit, () => ranking.getNewExperiences(limit, GHANA));
+  const city = req.query.city || null;
+  const tours = await sectionCache('new')
+    .getOrSet(`${limit}${cityKey(city)}`, () => ranking.getNewExperiences(limit, GHANA, false, city));
   res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
 });
 
@@ -209,9 +239,10 @@ exports.getAttractions = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
   const lat = req.query.lat ? parseFloat(req.query.lat) : null;
   const lng = req.query.lng ? parseFloat(req.query.lng) : null;
+  const city = req.query.city || null;
 
-  const attractions = await sectionCache(`attractions:${lat || 0}:${lng || 0}`)
-    .getOrSet(limit, () => ranking.getAttractions(limit, lat, lng, GHANA));
+  const attractions = await sectionCache(`attractions:${lat || 0}:${lng || 0}${cityKey(city)}`)
+    .getOrSet(limit, () => ranking.getAttractions(limit, lat, lng, GHANA, false, city));
   res.json({ status: 'success', data: { attractions: attractions.slice(0, limit) } });
 });
 
@@ -229,7 +260,9 @@ exports.getAttractionTours = catchAsync(async (req, res) => {
 exports.getMood = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 8, 12);
   const userId = req.user?.id || null;
-  const keywords = await sectionCache(`mood:${userId || 'anon'}`).getOrSet(limit, () => ranking.getMoodKeywords(userId, limit, GHANA));
+  const city = req.query.city || null;
+  const keywords = await sectionCache(`mood:${userId || 'anon'}${cityKey(city)}`)
+    .getOrSet(limit, () => ranking.getMoodKeywords(userId, limit, GHANA, false, city));
   res.json({ status: 'success', data: { keywords: keywords.slice(0, limit) } });
 });
 
@@ -238,15 +271,18 @@ exports.getDestinations = catchAsync(async (req, res) => {
   const userId = req.user?.id || null;
   const lat = req.query.lat ? parseFloat(req.query.lat) : null;
   const lng = req.query.lng ? parseFloat(req.query.lng) : null;
+  const city = req.query.city || null;
 
-  const destinations = await sectionCache(`destinations:${userId || 'anon'}:${lat || 0}:${lng || 0}`, 3600)
-    .getOrSet(limit, () => ranking.getPopularDestinations(limit, userId, lat, lng, GHANA));
+  const destinations = await sectionCache(`destinations:${userId || 'anon'}:${lat || 0}:${lng || 0}${cityKey(city)}`, 3600)
+    .getOrSet(limit, () => ranking.getPopularDestinations(limit, userId, lat, lng, GHANA, false, city));
   res.json({ status: 'success', data: { destinations: destinations.slice(0, limit) } });
 });
 
 exports.getOffers = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
-  const offers = await sectionCache('offers', 300).getOrSet('all', () => computeGhanaOffersData());
+  const city = req.query.city || null;
+  const offers = await sectionCache('offers', 300)
+    .getOrSet(`all${cityKey(city)}`, () => computeGhanaOffersData(city));
   res.json({ status: 'success', data: { tours: offers.slice(0, limit) } });
 });
 
@@ -256,23 +292,25 @@ exports.getOffers = catchAsync(async (req, res) => {
  * GET /api/travioghana/homepage
  * All Ghana-scoped sections in one response — same 9 keys as the shared
  * /api/homepage endpoint so the storefront renders identically.
+ * Accepts an optional `city` query param for location-aware ranking.
  */
 exports.getGhanaHomepage = catchAsync(async (req, res) => {
   const userId = req.user?.id || null;
   const lat = req.query.lat ? parseFloat(req.query.lat) : null;
   const lng = req.query.lng ? parseFloat(req.query.lng) : null;
+  const city = req.query.city || null;
 
   const [sellOut, topRated, trending, recommended, newExp, attractions, mood, destinations, offers] =
     await Promise.all([
-      ranking.getLikelySellOut(12, null, GHANA),
-      ranking.getTopRated(12, null, GHANA),
-      ranking.getTrending(12, GHANA),
-      ranking.getRecommended(userId, lat, lng, 12, GHANA),
-      ranking.getNewExperiences(10, GHANA),
-      ranking.getAttractions(10, lat, lng, GHANA),
-      ranking.getMoodKeywords(userId, 8, GHANA),
-      ranking.getPopularDestinations(10, userId, lat, lng, GHANA),
-      computeGhanaOffersData(),
+      ranking.getLikelySellOut(12, null, GHANA, false, city),
+      ranking.getTopRated(12, null, GHANA, false, city),
+      ranking.getTrending(12, GHANA, false, city),
+      ranking.getRecommended(userId, lat, lng, 12, GHANA, false, city),
+      ranking.getNewExperiences(10, GHANA, false, city),
+      ranking.getAttractions(10, lat, lng, GHANA, false, city),
+      ranking.getMoodKeywords(userId, 8, GHANA, false, city),
+      ranking.getPopularDestinations(10, userId, lat, lng, GHANA, false, city),
+      sectionCache('offers', 300).getOrSet(`all${cityKey(city)}`, () => computeGhanaOffersData(city)),
     ]);
 
   res.json({
@@ -287,6 +325,7 @@ exports.getGhanaHomepage = catchAsync(async (req, res) => {
       mood,
       destinations,
       offers,
+      city,
     },
   });
 });
