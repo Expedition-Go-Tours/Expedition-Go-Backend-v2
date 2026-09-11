@@ -243,33 +243,20 @@ async function findAttraction(query) {
   return null;
 }
 
-/**
- * Geocode a query and keep only results inside the catalog countries.
- *
- * The query is geocoded AS-IS — we deliberately do NOT append the catalog
- * country, because that makes foreign names resolve to arbitrary streets in
- * Ghana ("Dubai, Ghana" → "Kumasi - Techiman"). A hit is accepted only when
- * its country is in the catalog; otherwise the query is not a place here.
- *
- * The display name comes from the matched locality (street / first formatted
- * segment), never the containing city, and POIs collapse to their locality.
- */
-async function geocode(query, countries) {
-  const allowed = new Set(countries.map((c) => foldAccents(c.name.toLowerCase())));
+/** Is a geocoder hit a settlement (not a street/POI/building)? */
+function isSettlement(hit) {
+  const cat = String(hit.category || '').toLowerCase();
+  if (/administrative|populated_place|locality|city|town|village|suburb|neighbourhood|neighborhood|district|municipal|region/.test(cat)) {
+    return true;
+  }
+  // No street / house number → the name is the place itself, not an address.
+  return !hit.street && !hit.housenumber;
+}
 
-  const results = await locationService.search(query, 8).catch(() => []);
-  const hit = (results || []).find((r) => {
-    if (r.latitude == null || r.longitude == null) return false;
-    if (allowed.size === 0) return true;
-    return allowed.has(foldAccents(String(r.country || '').toLowerCase()));
-  });
-  if (!hit) return null;
-
+function toPlace(hit, query) {
   const formattedHead = String(hit.formatted || '').split(',')[0].trim();
-  const name = hit.street || formattedHead || hit.city || query;
-
   return {
-    name,
+    name: hit.street || formattedHead || hit.city || query,
     type: 'locality',
     city: hit.city || null,
     region: hit.region || null,
@@ -278,6 +265,41 @@ async function geocode(query, countries) {
     lng: hit.longitude,
     matchedBy: 'geocoder',
   };
+}
+
+/**
+ * Geocode a query and keep only results inside the catalog countries.
+ *
+ * Pass 1 geocodes the query AS-IS — we do not append the catalog country,
+ * because that makes foreign names resolve to arbitrary streets in Ghana
+ * ("Dubai, Ghana" → "Kumasi - Techiman").
+ *
+ * Pass 2 is a guarded retry with the country appended, accepting **settlements
+ * only** (administrative / populated place / no street address). This recovers
+ * real localities whose raw top hit is abroad (e.g. "Madina" → "Madina, Accra")
+ * without letting a foreign name match a random Ghanaian street.
+ */
+async function geocode(query, countries) {
+  const allowed = new Set(countries.map((c) => foldAccents(c.name.toLowerCase())));
+  const inCountry = (r) => {
+    if (r.latitude == null || r.longitude == null) return false;
+    if (allowed.size === 0) return true;
+    return allowed.has(foldAccents(String(r.country || '').toLowerCase()));
+  };
+
+  // Pass 1 — raw query.
+  const raw = await locationService.search(query, 8).catch(() => []);
+  const rawHit = (raw || []).find(inCountry);
+  if (rawHit) return toPlace(rawHit, query);
+
+  // Pass 2 — country-suffixed retry, settlements only.
+  for (const c of countries.slice(0, 1)) {
+    const retry = await locationService.search(`${query}, ${c.name}`, 8).catch(() => []);
+    const hit = (retry || []).find((r) => inCountry(r) && isSettlement(r));
+    if (hit) return toPlace(hit, query);
+  }
+
+  return null;
 }
 
 /**
