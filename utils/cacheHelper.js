@@ -179,7 +179,10 @@ const EXPEDITION_SUPPLIER_TOURS_PREFIX = 'expedition:supplier-tours:*';
 const HOMEPAGE_SECTIONS_PREFIX = 'hp:sections:*';
 
 async function invalidateHomepageSections() {
-  await invalidateKeys([HOMEPAGE_SECTIONS_PREFIX]);
+  // `hp:loctier:*` holds the per-city location-match ID sets used by the
+  // location-aware homepage ranking — clear it alongside the sections so a
+  // newly approved/edited tour is reflected immediately (TTL also bounds it).
+  await invalidateKeys([HOMEPAGE_SECTIONS_PREFIX, 'hp:loctier:*']);
 }
 
 // Alias used by AI analyzer and other modules

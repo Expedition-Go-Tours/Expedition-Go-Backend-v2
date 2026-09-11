@@ -297,11 +297,16 @@ exports.getOffers = catchAsync(async (req, res) => {
 async function computeOffersData(city = null) {
   const now = new Date();
 
-  const cityFilter = city ? { tour: { city } } : {};
+  // Resolve the searched city to its location-relevant tour IDs (tours based
+  // in the city AND tours that visit it) so those offers can be ordered first.
+  const locIdSet = city
+    ? new Set(await ranking.getLocationTourIds(city, false, true))
+    : null;
+
   const targets = await prisma.specialOfferTarget.findMany({
     where: {
       // Only tours published to the Expedition storefront appear in the section
-      tour: { expeditionTour: { isActive: true }, ...(city ? { city } : {}) },
+      tour: { expeditionTour: { isActive: true } },
       specialOffer: {
         isActive: true,
         AND: [
@@ -427,6 +432,12 @@ async function computeOffersData(city = null) {
   newCutoff.setDate(newCutoff.getDate() - NEW_TOUR_WINDOW_DAYS);
   const isRecentTour = (card) => card.createdAt && new Date(card.createdAt) >= newCutoff;
   offerCards.sort((a, b) => {
+    // Location-relevant offers first when a city is active.
+    if (locIdSet) {
+      const aLocal = locIdSet.has(a.id) ? 1 : 0;
+      const bLocal = locIdSet.has(b.id) ? 1 : 0;
+      if (aLocal !== bLocal) return bLocal - aLocal;
+    }
     const aScore = (a.totalBookings || 0) + (isRecentTour(a) ? NEW_TOUR_BOOST : 0);
     const bScore = (b.totalBookings || 0) + (isRecentTour(b) ? NEW_TOUR_BOOST : 0);
     return bScore - aScore;
@@ -486,7 +497,7 @@ exports.getHomepage = catchAsync(async (req, res) => {
 
   // City-scoped: compute live with city filter (no pre-computed city keys)
   if (city) {
-    const [sellOut, topRated, trending, recommended, newExp, attractions, mood, destinations, offers] =
+    const [sellOut, topRated, trending, recommended, newExp, attractions, mood, destinations] =
       await Promise.all([
         ranking.getLikelySellOut(12, null, false, true, city),
         ranking.getTopRated(12, null, false, true, city),

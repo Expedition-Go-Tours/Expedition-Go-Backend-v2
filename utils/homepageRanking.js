@@ -188,6 +188,143 @@ function normalize(value, max) {
   return max > 0 ? value / max : 0;
 }
 
+// ─── Location Matching (city + visiting tours) ────────────────────────
+
+/**
+ * Escape LIKE metacharacters so a user-supplied city can never act as a
+ * wildcard (e.g. "100%_off"). Used together with `ESCAPE '\'` in the query.
+ */
+function escapeLike(str) {
+  return String(str).replace(/[\\%_]/g, (ch) => '\\' + ch);
+}
+
+/**
+ * Resolve a searched city to the set of tour IDs whose location is relevant.
+ *
+ * A tour is relevant when:
+ *   - its `city` matches (case-insensitive), OR
+ *   - one of its `attractions` word-matches the city, OR
+ *   - one of its `tags` word-matches the city.
+ *
+ * "Word-matches" means equal, or the city appears as a whole word inside the
+ * value — so searching "Cape Coast" matches the attraction "Cape Coast Castle"
+ * while "Ho" does NOT match "Hotel".
+ *
+ * Returns tour IDs only; tiers are re-derived in-memory by locationTier().
+ * Cached per city (5 min) and coalesced by cacheHelper's singleflight, so the
+ * unified homepage endpoint runs this scan once even across all sections.
+ *
+ * @param {string} city
+ * @param {boolean} ghanaOnly
+ * @param {boolean} expeditionOnly
+ * @returns {Promise<string[]>}
+ */
+async function getLocationTourIds(city, ghanaOnly = false, expeditionOnly = false) {
+  const normalized = (city || '').trim();
+  if (normalized.length < 2) return [];
+
+  const lower = normalized.toLowerCase();
+  const cacheKey = `hp:loctier:${lower}${ghanaOnly ? ':ghana' : ''}${expeditionOnly ? ':exp' : ''}`;
+  const ttl = 300;
+
+  return cache.getOrSet(cacheKey, async () => {
+    const platformJoin = ghanaOnly
+      ? Prisma.sql`JOIN "TravioGhanaTour" tgt ON tgt."tourId" = t.id AND tgt."isActive" = true`
+      : expeditionOnly
+        ? Prisma.sql`JOIN "ExpeditionTour" et ON et."tourId" = t.id AND et."isActive" = true`
+        : Prisma.empty;
+
+    const escaped = escapeLike(lower);
+    const likeStarts = `${escaped} %`;
+    const likeEnds = `% ${escaped}`;
+    const likeWord = `% ${escaped} %`;
+
+    const rows = await prisma.$queryRaw`
+      SELECT t.id
+      FROM "Tour" t
+      JOIN "SupplierProfile" sp ON sp."userId" = t."supplierId"
+      ${platformJoin}
+      WHERE t.status = 'ACTIVE'
+        AND sp.status = 'ACTIVE'
+        AND (
+          LOWER(t.city) = ${lower}
+          OR EXISTS (
+            SELECT 1 FROM unnest(t.attractions) AS a(val)
+            WHERE LOWER(val) = ${lower}
+               OR LOWER(val) LIKE ${likeStarts} ESCAPE '\\'
+               OR LOWER(val) LIKE ${likeEnds} ESCAPE '\\'
+               OR LOWER(val) LIKE ${likeWord} ESCAPE '\\'
+          )
+          OR EXISTS (
+            SELECT 1 FROM unnest(t.tags) AS a(val)
+            WHERE LOWER(val) = ${lower}
+               OR LOWER(val) LIKE ${likeStarts} ESCAPE '\\'
+               OR LOWER(val) LIKE ${likeEnds} ESCAPE '\\'
+               OR LOWER(val) LIKE ${likeWord} ESCAPE '\\'
+          )
+        )
+    `;
+
+    return rows.map((r) => r.id);
+  }, ttl);
+}
+
+/**
+ * In-memory tier for a tour relative to the searched city.
+ *   1 = the tour is based in the city (tour.city)
+ *   2 = the tour visits the city (attractions)
+ *   3 = the tour is tagged with the city (tags)
+ *   null = not a location match (backfill candidate)
+ *
+ * Single source of truth for tiering; the SQL query is a superset prefilter.
+ * Tiers are only a deterministic tie-breaker — location tours are ranked
+ * together by each section's own score.
+ */
+function locationTier(tour, city) {
+  if (!tour || !city) return null;
+  const target = city.trim().toLowerCase();
+  if (!target) return null;
+
+  if (tour.city && tour.city.toLowerCase() === target) return 1;
+
+  const matchesArray = (arr) => {
+    if (!Array.isArray(arr)) return false;
+    for (const raw of arr) {
+      if (!raw || typeof raw !== 'string') continue;
+      const value = raw.toLowerCase();
+      if (value === target) return true;
+      if (
+        value.startsWith(`${target} `) ||
+        value.endsWith(` ${target}`) ||
+        value.includes(` ${target} `)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  if (matchesArray(tour.attractions)) return 2;
+  if (matchesArray(tour.tags)) return 3;
+  return null;
+}
+
+/**
+ * Rank location-relevant tours first (by the section's own score), then the
+ * global backfill — so a section is never empty when a city has few tours.
+ * `local` and `backfill` are scored arrays carrying `_score` and
+ * `_locationTier`. Ties break toward the stronger location tier.
+ */
+function mergeLocationFirst(local, backfill, limit) {
+  const byScore = (a, b) => {
+    if (b._score !== a._score) return b._score - a._score;
+    return (a._locationTier ?? 99) - (b._locationTier ?? 99);
+  };
+  local.sort(byScore);
+  backfill.sort(byScore);
+  return [...local, ...backfill].slice(0, limit);
+}
+
 /**
  * Map a raw tour row to the card shape the frontend expects.
  */
@@ -323,52 +460,16 @@ async function getLikelySellOut(limit = DEFAULT_LIMIT, userId = null, ghanaOnly 
     });
 
     const velocityMap = new Map(velocity.map(v => [v.tourId, v._count.id]));
-    const tourIds = velocity.map(v => v.tourId);
 
-    const cityFilter = city ? { city } : {};
-
-    // Fetch tour details for velocity leaders
-    let tours = [];
-    if (tourIds.length > 0) {
-      tours = await prisma.tour.findMany({
-        where: {
-          id: { in: tourIds },
-          status: 'ACTIVE',
-          ...cityFilter,
-          supplier: { supplierProfile: { status: 'ACTIVE' } },
-          ...ghanaScope(ghanaOnly),
-          ...expeditionScope(expeditionOnly),
-        },
-        select: TOUR_SELECT,
-      });
-    }
-
-    // If not enough tours with velocity, fill with most-booked tours
-    if (tours.length < limit) {
-      const existingIds = new Set(tours.map(t => t.id));
-      const fillTours = await prisma.tour.findMany({
-        where: {
-          status: 'ACTIVE',
-          totalBookings: { gte: MIN_BOOKINGS_SELL_OUT },
-          id: { notIn: [...existingIds] },
-          ...cityFilter,
-          supplier: { supplierProfile: { status: 'ACTIVE' } },
-          ...ghanaScope(ghanaOnly),
-          ...expeditionScope(expeditionOnly),
-        },
-        select: TOUR_SELECT,
-        orderBy: { totalBookings: 'desc' },
-        take: limit - tours.length,
-      });
-      tours = [...tours, ...fillTours];
-    }
-
-    // Score: normalized velocity (primary), lifetime bookings (secondary)
-    const maxVelocity = Math.max(...tours.map(t => velocityMap.get(t.id) || 0), 1);
-    const maxBookings = Math.max(...tours.map(t => t.totalBookings || 0), 1);
+    const scope = {
+      status: 'ACTIVE',
+      supplier: { supplierProfile: { status: 'ACTIVE' } },
+      ...ghanaScope(ghanaOnly),
+      ...expeditionScope(expeditionOnly),
+    };
 
     // XGBoost personalization boost (light — 10% weight)
-    let categoryAffinity = {};
+    const categoryAffinity = {};
     if (userId) {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -383,27 +484,76 @@ async function getLikelySellOut(limit = DEFAULT_LIMIT, userId = null, ghanaOnly 
       }
     }
 
-    const scored = tours.map(t => {
-      const vel = velocityMap.get(t.id) || 0;
-      const nVel = normalize(vel, maxVelocity);
-      const nBook = normalize(t.totalBookings || 0, maxBookings);
+    // Score: normalized velocity (primary), lifetime bookings (secondary)
+    const scoreTours = (tours) => {
+      if (tours.length === 0) return [];
+      const maxVelocity = Math.max(...tours.map(t => velocityMap.get(t.id) || 0), 1);
+      const maxBookings = Math.max(...tours.map(t => t.totalBookings || 0), 1);
+      return tours.map(t => {
+        const vel = velocityMap.get(t.id) || 0;
+        const nVel = normalize(vel, maxVelocity);
+        const nBook = normalize(t.totalBookings || 0, maxBookings);
 
-      let score = (nVel * 0.7) + (nBook * 0.3);
+        let score = (nVel * 0.7) + (nBook * 0.3);
 
-      // Light personalization boost (10%)
-      if (t.category && categoryAffinity[t.category]) {
-        score *= 1.0 + Math.min(categoryAffinity[t.category], 3) * 0.03;
+        // Light personalization boost (10%)
+        if (t.category && categoryAffinity[t.category]) {
+          score *= 1.0 + Math.min(categoryAffinity[t.category], 3) * 0.03;
+        }
+
+        return {
+          ...mapTourCard(t),
+          _score: Math.round(score * 10000) / 10000,
+          _velocity14d: vel,
+          _locationTier: locationTier(t, city),
+        };
+      });
+    };
+
+    // City-scoped: location-relevant tours first, then global backfill.
+    if (city) {
+      const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
+      const localTours = locIds.length
+        ? await prisma.tour.findMany({ where: { ...scope, id: { in: locIds } }, select: TOUR_SELECT })
+        : [];
+      let backfillTours = [];
+      if (localTours.length < limit) {
+        backfillTours = await prisma.tour.findMany({
+          where: { ...scope, totalBookings: { gte: MIN_BOOKINGS_SELL_OUT }, id: { notIn: locIds } },
+          select: TOUR_SELECT,
+          orderBy: { totalBookings: 'desc' },
+          take: limit - localTours.length,
+        });
       }
+      return mergeLocationFirst(scoreTours(localTours), scoreTours(backfillTours), limit);
+    }
 
-      return {
-        ...mapTourCard(t),
-        _score: Math.round(score * 10000) / 10000,
-        _velocity14d: vel,
-      };
-    });
+    // Global: velocity leaders, then most-booked fill.
+    const tourIds = velocity.map(v => v.tourId);
+    let tours = [];
+    if (tourIds.length > 0) {
+      tours = await prisma.tour.findMany({
+        where: { ...scope, id: { in: tourIds } },
+        select: TOUR_SELECT,
+      });
+    }
 
-    scored.sort((a, b) => b._score - a._score);
-    return scored.slice(0, limit);
+    if (tours.length < limit) {
+      const existingIds = new Set(tours.map(t => t.id));
+      const fillTours = await prisma.tour.findMany({
+        where: {
+          ...scope,
+          totalBookings: { gte: MIN_BOOKINGS_SELL_OUT },
+          id: { notIn: [...existingIds] },
+        },
+        select: TOUR_SELECT,
+        orderBy: { totalBookings: 'desc' },
+        take: limit - tours.length,
+      });
+      tours = [...tours, ...fillTours];
+    }
+
+    return mergeLocationFirst(scoreTours(tours), [], limit);
   }, ttl);
 }
 
@@ -422,36 +572,21 @@ async function getTopRated(limit = DEFAULT_LIMIT, userId = null, ghanaOnly = fal
   const ttl = 300;
 
   return cache.getOrSet(cacheKey, async () => {
-    const cityFilter = city ? { city } : {};
-    const tours = await prisma.tour.findMany({
-      where: {
-        status: 'ACTIVE',
-        reviewCount: { gte: MIN_REVIEWS_TOP_RATED },
-        averageRating: { not: null },
-        ...cityFilter,
-        supplier: { supplierProfile: { status: 'ACTIVE' } },
-        ...ghanaScope(ghanaOnly),
-        ...expeditionScope(expeditionOnly),
-      },
-      select: TOUR_SELECT,
-      orderBy: [
-        { averageRating: 'desc' },
-        { reviewCount: 'desc' },
-      ],
-      take: limit * 3, // Over-fetch for re-ranking
-    });
-
-    if (tours.length === 0) return [];
-
-    // Compute Bayesian ratings and normalize
-    const bayesianScores = tours.map(t => bayesianRating(t.averageRating, t.reviewCount));
-    const maxBayesian = Math.max(...bayesianScores, 1);
-    const maxReviews = Math.max(...tours.map(t => t.reviewCount || 0), 1);
-    const maxBookings = Math.max(...tours.map(t => t.totalBookings || 0), 1);
+    const scope = {
+      status: 'ACTIVE',
+      reviewCount: { gte: MIN_REVIEWS_TOP_RATED },
+      averageRating: { not: null },
+      supplier: { supplierProfile: { status: 'ACTIVE' } },
+      ...ghanaScope(ghanaOnly),
+      ...expeditionScope(expeditionOnly),
+    };
+    const orderBy = [
+      { averageRating: 'desc' },
+      { reviewCount: 'desc' },
+    ];
 
     // XGBoost personalization boost (light — 10% weight)
-    const xgboost = require('./xgboostService');
-    let categoryAffinity = {};
+    const categoryAffinity = {};
     if (userId) {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -466,28 +601,68 @@ async function getTopRated(limit = DEFAULT_LIMIT, userId = null, ghanaOnly = fal
       }
     }
 
-    const scored = tours.map((t, i) => {
-      const bay = bayesianScores[i];
-      const nBay = normalize(bay, maxBayesian);
-      const nRev = normalize(t.reviewCount || 0, maxReviews);
-      const nBook = normalize(t.totalBookings || 0, maxBookings);
+    // Compute Bayesian ratings and normalize
+    const scoreTours = (tours) => {
+      if (tours.length === 0) return [];
+      const bayesianScores = tours.map(t => bayesianRating(t.averageRating, t.reviewCount));
+      const maxBayesian = Math.max(...bayesianScores, 1);
+      const maxReviews = Math.max(...tours.map(t => t.reviewCount || 0), 1);
+      const maxBookings = Math.max(...tours.map(t => t.totalBookings || 0), 1);
 
-      let score = (nBay * 0.50) + (nRev * 0.30) + (nBook * 0.20);
+      return tours.map((t, i) => {
+        const bay = bayesianScores[i];
+        const nBay = normalize(bay, maxBayesian);
+        const nRev = normalize(t.reviewCount || 0, maxReviews);
+        const nBook = normalize(t.totalBookings || 0, maxBookings);
 
-      // Light personalization boost (10%)
-      if (t.category && categoryAffinity[t.category]) {
-        score *= 1.0 + Math.min(categoryAffinity[t.category], 3) * 0.03;
+        let score = (nBay * 0.50) + (nRev * 0.30) + (nBook * 0.20);
+
+        // Light personalization boost (10%)
+        if (t.category && categoryAffinity[t.category]) {
+          score *= 1.0 + Math.min(categoryAffinity[t.category], 3) * 0.03;
+        }
+
+        return {
+          ...mapTourCard(t),
+          _score: Math.round(score * 10000) / 10000,
+          _bayesianRating: Math.round(bay * 100) / 100,
+          _locationTier: locationTier(t, city),
+        };
+      });
+    };
+
+    // City-scoped: location-relevant tours first, then global backfill.
+    if (city) {
+      const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
+      const localTours = locIds.length
+        ? await prisma.tour.findMany({
+            where: { ...scope, id: { in: locIds } },
+            select: TOUR_SELECT,
+            orderBy,
+            take: Math.max(limit, locIds.length),
+          })
+        : [];
+      let backfillTours = [];
+      if (localTours.length < limit) {
+        backfillTours = await prisma.tour.findMany({
+          where: { ...scope, id: { notIn: locIds } },
+          select: TOUR_SELECT,
+          orderBy,
+          take: limit - localTours.length,
+        });
       }
+      return mergeLocationFirst(scoreTours(localTours), scoreTours(backfillTours), limit);
+    }
 
-      return {
-        ...mapTourCard(t),
-        _score: Math.round(score * 10000) / 10000,
-        _bayesianRating: Math.round(bay * 100) / 100,
-      };
+    const tours = await prisma.tour.findMany({
+      where: scope,
+      select: TOUR_SELECT,
+      orderBy,
+      take: limit * 3, // Over-fetch for re-ranking
     });
 
-    scored.sort((a, b) => b._score - a._score);
-    return scored.slice(0, limit);
+    if (tours.length === 0) return [];
+    return mergeLocationFirst(scoreTours(tours), [], limit);
   }, ttl);
 }
 
@@ -575,20 +750,14 @@ async function getTrending(limit = DEFAULT_LIMIT, ghanaOnly = false, expeditionO
       return getNewExperiences(limit, ghanaOnly, expeditionOnly, city);
     }
 
-    const cityFilter = city ? { city } : {};
-    const tours = await prisma.tour.findMany({
-      where: {
-        id: { in: qualifiedIds },
-        status: 'ACTIVE',
-        ...cityFilter,
-        supplier: { supplierProfile: { status: 'ACTIVE' } },
-        ...ghanaScope(ghanaOnly),
-        ...expeditionScope(expeditionOnly),
-      },
-      select: TOUR_SELECT,
-    });
+    const scope = {
+      status: 'ACTIVE',
+      supplier: { supplierProfile: { status: 'ACTIVE' } },
+      ...ghanaScope(ghanaOnly),
+      ...expeditionScope(expeditionOnly),
+    };
 
-    const scored = tours.map(t => {
+    const scoreTours = (tours) => tours.map(t => {
       const rv = rvMap.get(t.id) || 0;
       const pv = pvMap.get(t.id) || 1;
       const rb = rbMap.get(t.id) || 0;
@@ -607,11 +776,42 @@ async function getTrending(limit = DEFAULT_LIMIT, ghanaOnly = false, expeditionO
         _views7d: rv,
         _bookings7d: rb,
         _wishlists7d: rw,
+        _locationTier: locationTier(t, city),
       };
     });
 
-    scored.sort((a, b) => b._score - a._score);
-    return scored.slice(0, limit);
+    // City-scoped: location-relevant trending tours first, then backfill.
+    if (city) {
+      const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
+      const locIdSet = new Set(locIds);
+      const localIds = qualifiedIds.filter(id => locIdSet.has(id));
+      const backfillIds = qualifiedIds.filter(id => !locIdSet.has(id));
+
+      const localTours = localIds.length
+        ? await prisma.tour.findMany({ where: { ...scope, id: { in: localIds } }, select: TOUR_SELECT })
+        : [];
+      let result = scoreTours(localTours).sort((a, b) => b._score - a._score);
+
+      if (result.length < limit && backfillIds.length) {
+        const backfillTours = await prisma.tour.findMany({ where: { ...scope, id: { in: backfillIds } }, select: TOUR_SELECT });
+        result = [...result, ...scoreTours(backfillTours).sort((a, b) => b._score - a._score)];
+      }
+
+      // Still short? Fall back to new experiences (already location-aware).
+      if (result.length < limit) {
+        const seen = new Set(result.map(t => t.id));
+        const fallback = await getNewExperiences(limit - result.length, ghanaOnly, expeditionOnly, city);
+        result = [...result, ...fallback.filter(t => !seen.has(t.id))];
+      }
+      return result.slice(0, limit);
+    }
+
+    const tours = await prisma.tour.findMany({
+      where: { ...scope, id: { in: qualifiedIds } },
+      select: TOUR_SELECT,
+    });
+
+    return mergeLocationFirst(scoreTours(tours), [], limit);
   }, ttl);
 }
 
@@ -707,57 +907,28 @@ async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT, ghanaOnly
       .slice(0, 3)
       .map(([cat]) => cat);
 
-    // Build query conditions
-    const cityFilter = city ? { city } : {};
-    const where = {
+    // Build query conditions (nested AND — a bare top-level OR would collide
+    // with the location OR and silently drop one of them).
+    const scope = {
       status: 'ACTIVE',
-      ...cityFilter,
       supplier: { supplierProfile: { status: 'ACTIVE' } },
       ...ghanaScope(ghanaOnly),
       ...expeditionScope(expeditionOnly),
     };
-
-    // Exclude already-viewed tours
-    if (viewedTourIds.size > 0) {
-      where.id = { notIn: [...viewedTourIds] };
-    }
-
-    // If we have category affinity, prioritize those categories
-    if (topCategories.length > 0) {
-      where.OR = [
-        { category: { in: topCategories } },
-        { tags: { hasSome: topCategories } },
-      ];
-    }
-
-    let tours = await prisma.tour.findMany({
-      where,
-      select: TOUR_SELECT,
-      orderBy: [
-        { averageRating: 'desc' },
-        { reviewCount: 'desc' },
-        { totalBookings: 'desc' },
-      ],
-      take: limit * 3,
-    });
-
-    // If not enough results with category filter, broaden
-    if (tours.length < limit) {
-      const existingIds = new Set(tours.map(t => t.id));
-      const broadTours = await prisma.tour.findMany({
-        where: {
-          status: 'ACTIVE',
-          id: { notIn: [...existingIds, ...viewedTourIds] },
-          supplier: { supplierProfile: { status: 'ACTIVE' } },
-          ...ghanaScope(ghanaOnly),
-          ...expeditionScope(expeditionOnly),
-        },
-        select: TOUR_SELECT,
-        orderBy: { totalBookings: 'desc' },
-        take: limit - tours.length,
-      });
-      tours = [...tours, ...broadTours];
-    }
+    const viewedArr = [...viewedTourIds];
+    const categoryFilter = topCategories.length > 0
+      ? {
+          OR: [
+            { category: { in: topCategories } },
+            { tags: { hasSome: topCategories } },
+          ],
+        }
+      : {};
+    const orderBy = [
+      { averageRating: 'desc' },
+      { reviewCount: 'desc' },
+      { totalBookings: 'desc' },
+    ];
 
     // Score each tour using XGBoost ranking service
     const xgboost = require('./xgboostService');
@@ -768,28 +939,117 @@ async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT, ghanaOnly
       userTagAffinity[key] = val;
     }
 
-    const ranked = xgboost.rankTours(tours, {
-      userCategoryAffinity: categoryAffinity,
-      userTagAffinity,
-      userLat: lat,
-      userLng: lng,
-    });
-
-    const scored = ranked.map(t => ({
-      ...mapTourCard(t),
-      _score: Math.round((t._xgboostScore || 0) * 10000) / 10000,
-    }));
+    const buildScored = (tours) => {
+      if (tours.length === 0) return [];
+      const ranked = xgboost.rankTours(tours, {
+        userCategoryAffinity: categoryAffinity,
+        userTagAffinity,
+        userLat: lat,
+        userLng: lng,
+      });
+      return ranked.map(t => ({
+        ...mapTourCard(t),
+        _score: Math.round((t._xgboostScore || 0) * 10000) / 10000,
+        _locationTier: locationTier(t, city),
+      }));
+    };
 
     // Apply category diversity: max 2 per category in top results
-    const diversified = [];
-    const categoryCount = {};
-    for (const tour of scored) {
-      const cat = tour.category || 'Uncategorized';
-      if ((categoryCount[cat] || 0) >= 2 && diversified.length >= 6) continue;
-      categoryCount[cat] = (categoryCount[cat] || 0) + 1;
-      diversified.push(tour);
-      if (diversified.length >= limit) break;
+    const applyDiversity = (scored, cap) => {
+      const diversified = [];
+      const categoryCount = {};
+      for (const tour of scored) {
+        const cat = tour.category || 'Uncategorized';
+        if ((categoryCount[cat] || 0) >= 2 && diversified.length >= 6) continue;
+        categoryCount[cat] = (categoryCount[cat] || 0) + 1;
+        diversified.push(tour);
+        if (diversified.length >= cap) break;
+      }
+      return diversified;
+    };
+
+    // City-scoped: location-relevant tours first, then global backfill.
+    if (city) {
+      const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
+
+      // 1) Every location-relevant tour (category affinity still boosts via xgboost)
+      const localTours = locIds.length
+        ? await prisma.tour.findMany({
+            where: {
+              ...scope,
+              id: { in: locIds, ...(viewedArr.length ? { notIn: viewedArr } : {}) },
+            },
+            select: TOUR_SELECT,
+            orderBy,
+            take: Math.max(limit * 3, locIds.length),
+          })
+        : [];
+      const localScored = applyDiversity(buildScored(localTours), limit);
+
+      // 2) Backfill from other locations (personalized by category first)
+      let backfillScored = [];
+      if (localScored.length < limit) {
+        const backfillTours = await prisma.tour.findMany({
+          where: {
+            ...scope,
+            id: { notIn: [...locIds, ...viewedArr] },
+            ...categoryFilter,
+          },
+          select: TOUR_SELECT,
+          orderBy,
+          take: limit * 3,
+        });
+        backfillScored = applyDiversity(buildScored(backfillTours), limit - localScored.length);
+      }
+
+      // 3) Last resort: broaden backfill so the section is never empty
+      if (localScored.length + backfillScored.length < limit) {
+        const haveIds = new Set([...localScored, ...backfillScored].map(t => t.id));
+        const broadTours = await prisma.tour.findMany({
+          where: {
+            ...scope,
+            id: { notIn: [...haveIds, ...viewedArr] },
+          },
+          select: TOUR_SELECT,
+          orderBy: { totalBookings: 'desc' },
+          take: limit - localScored.length - backfillScored.length,
+        });
+        backfillScored = [
+          ...backfillScored,
+          ...applyDiversity(buildScored(broadTours), limit - localScored.length - backfillScored.length),
+        ];
+      }
+
+      return [...localScored, ...backfillScored].slice(0, limit);
     }
+
+    let tours = await prisma.tour.findMany({
+      where: {
+        ...scope,
+        ...(viewedArr.length ? { id: { notIn: viewedArr } } : {}),
+        ...categoryFilter,
+      },
+      select: TOUR_SELECT,
+      orderBy,
+      take: limit * 3,
+    });
+
+    // If not enough results with category filter, broaden
+    if (tours.length < limit) {
+      const existingIds = new Set(tours.map(t => t.id));
+      const broadTours = await prisma.tour.findMany({
+        where: {
+          ...scope,
+          id: { notIn: [...existingIds, ...viewedArr] },
+        },
+        select: TOUR_SELECT,
+        orderBy: { totalBookings: 'desc' },
+        take: limit - tours.length,
+      });
+      tours = [...tours, ...broadTours];
+    }
+
+    const diversified = applyDiversity(buildScored(tours), limit);
 
     // Re-rank by distance: nearest first
     if (lat && lng) {
@@ -822,48 +1082,93 @@ async function getNewExperiences(limit = DEFAULT_LIMIT, ghanaOnly = false, exped
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 30);
 
-    const cityFilter = city ? { city } : {};
-    const tours = await prisma.tour.findMany({
-      where: {
-        status: 'ACTIVE',
-        createdAt: { gte: cutoff },
-        ...cityFilter,
-        supplier: { supplierProfile: { status: 'ACTIVE' } },
-        ...ghanaScope(ghanaOnly),
-        ...expeditionScope(expeditionOnly),
-      },
-      select: {
-        ...TOUR_SELECT,
-        // New tours with active special offers appear here alongside the
-        // Special Offers section; project the offers so the cards can render
-        // the offer tag/countdown/promo price without extra lookups. Tours relate to
-        // offers through specialOfferTargets (the join table) — the targets
-        // are flattened to `specialOffers` in mapTourCard.
-        specialOfferTargets: {
-          where: {
-            specialOffer: {
-              isActive: true,
-              AND: [
-                { OR: [{ startDate: null }, { startDate: { lte: new Date() } }] },
-                { OR: [{ endDate: null }, { endDate: { gte: new Date() } }] },
-              ],
-            },
+    const scope = {
+      status: 'ACTIVE',
+      createdAt: { gte: cutoff },
+      supplier: { supplierProfile: { status: 'ACTIVE' } },
+      ...ghanaScope(ghanaOnly),
+      ...expeditionScope(expeditionOnly),
+    };
+    const select = {
+      ...TOUR_SELECT,
+      // New tours with active special offers appear here alongside the
+      // Special Offers section; project the offers so the cards can render
+      // the offer tag/countdown/promo price without extra lookups. Tours relate to
+      // offers through specialOfferTargets (the join table) — the targets
+      // are flattened to `specialOffers` in mapTourCard.
+      specialOfferTargets: {
+        where: {
+          specialOffer: {
+            isActive: true,
+            AND: [
+              { OR: [{ startDate: null }, { startDate: { lte: new Date() } }] },
+              { OR: [{ endDate: null }, { endDate: { gte: new Date() } }] },
+            ],
           },
-          include: { specialOffer: true },
         },
+        include: { specialOffer: true },
       },
+    };
+
+    // Deduplicate by coverPhoto — prefer tours with unique images. Location
+    // tours are deduped first so a backfill tour can never push one out.
+    const dedupe = (tours, seenPhotos) => {
+      const unique = [];
+      for (const tour of tours) {
+        if (tour.coverPhoto && seenPhotos.has(tour.coverPhoto)) continue;
+        if (tour.coverPhoto) seenPhotos.add(tour.coverPhoto);
+        unique.push(tour);
+      }
+      return unique;
+    };
+
+    // Feed the target rows to mapTourCard as `specialOffers` — it expects the
+    // join rows (with a nested .specialOffer) and flattens them.
+    const toCards = (tours) => tours.map((t) =>
+      mapTourCard(t.specialOfferTargets ? { ...t, specialOffers: t.specialOfferTargets } : t)
+    );
+
+    // City-scoped: location-relevant tours first, then global backfill.
+    if (city) {
+      const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
+      const localTours = locIds.length
+        ? await prisma.tour.findMany({
+            where: { ...scope, id: { in: locIds } },
+            select,
+            orderBy: { createdAt: 'desc' },
+            take: limit * 2,
+          })
+        : [];
+      let backfillTours = [];
+      if (localTours.length < limit) {
+        backfillTours = await prisma.tour.findMany({
+          where: { ...scope, id: { notIn: locIds } },
+          select,
+          orderBy: { createdAt: 'desc' },
+          take: limit * 2,
+        });
+      }
+
+      const seenPhotos = new Set();
+      const uniqueTours = [...dedupe(localTours, seenPhotos), ...dedupe(backfillTours, seenPhotos)];
+      if (uniqueTours.length < limit) {
+        for (const tour of [...localTours, ...backfillTours]) {
+          if (!uniqueTours.includes(tour)) uniqueTours.push(tour);
+          if (uniqueTours.length >= limit) break;
+        }
+      }
+      return toCards(uniqueTours.slice(0, limit));
+    }
+
+    const tours = await prisma.tour.findMany({
+      where: scope,
+      select,
       orderBy: { createdAt: 'desc' },
       take: limit * 2, // Over-fetch to allow dedup
     });
 
-    // Deduplicate by coverPhoto — prefer tours with unique images
     const seenPhotos = new Set();
-    const uniqueTours = [];
-    for (const tour of tours) {
-      if (tour.coverPhoto && seenPhotos.has(tour.coverPhoto)) continue;
-      if (tour.coverPhoto) seenPhotos.add(tour.coverPhoto);
-      uniqueTours.push(tour);
-    }
+    const uniqueTours = dedupe(tours, seenPhotos);
     // Fill with remaining tours if dedup removed too many
     if (uniqueTours.length < limit) {
       for (const tour of tours) {
@@ -872,11 +1177,7 @@ async function getNewExperiences(limit = DEFAULT_LIMIT, ghanaOnly = false, exped
       }
     }
 
-    // Feed the target rows to mapTourCard as `specialOffers` — it expects the
-    // join rows (with a nested .specialOffer) and flattens them.
-    return uniqueTours.slice(0, limit).map((t) =>
-      mapTourCard(t.specialOfferTargets ? { ...t, specialOffers: t.specialOfferTargets } : t)
-    );
+    return toCards(uniqueTours.slice(0, limit));
   }, ttl);
 }
 
@@ -922,37 +1223,60 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, gha
     // ── Fast path: Attraction table (AI-curated) ──
     const attractionCount = await prisma.attraction.count({ where: { status: 'ACTIVE' } });
 
-    // When city is provided, derive attraction names through Tour.attractions
+    // When a city is provided, derive attraction names from the location-
+    // relevant tours (tours based in the city AND tours that visit it).
     let cityAttractionNames = null;
     if (city) {
-      const cityTours = await prisma.tour.findMany({
-        where: {
-          city,
-          status: 'ACTIVE',
-          attractions: { isEmpty: false },
-          ...(ghanaOnly ? { travioGhanaTour: { isActive: true } } : {}),
-          ...(expeditionOnly ? { expeditionTour: { isActive: true } } : {}),
-        },
-        select: { attractions: true },
-      });
-      cityAttractionNames = new Set(cityTours.flatMap(t => t.attractions).filter(n => n && typeof n === 'string').map(n => n.trim().toLowerCase()));
-      if (cityAttractionNames.size === 0) return [];
+      const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
+      cityAttractionNames = new Set();
+      if (locIds.length) {
+        const cityTours = await prisma.tour.findMany({
+          where: { id: { in: locIds }, status: 'ACTIVE', attractions: { isEmpty: false } },
+          select: { attractions: true },
+        });
+        for (const t of cityTours) {
+          for (const n of (t.attractions || [])) {
+            if (n && typeof n === 'string' && n.trim()) cityAttractionNames.add(n.trim().toLowerCase());
+          }
+        }
+      }
+      // No early return — fall through so the section can backfill globally.
     }
 
     if (attractionCount > 0) {
-      const attractions = await prisma.attraction.findMany({
-        where: {
-          status: 'ACTIVE',
-          tourCount: { gte: 1 },  // exclude zero-tour junk
-          ...(cityAttractionNames ? { name: { in: [...cityAttractionNames] } } : {}),
-        },
-        orderBy: [
-          { isFeatured: 'desc' },
-          { tourCount: 'desc' },
-          { avgRating: 'desc' },
-        ],
-        take: hasLocation ? Math.max(limit * 5, 50) : limit * 3, // over-fetch for filtering
-      });
+      const baseWhere = {
+        status: 'ACTIVE',
+        tourCount: { gte: 1 },  // exclude zero-tour junk
+      };
+      const attractionOrder = [
+        { isFeatured: 'desc' },
+        { tourCount: 'desc' },
+        { avgRating: 'desc' },
+      ];
+
+      // City-matched attractions first, then a global pool for backfill.
+      let attractions = [];
+      if (cityAttractionNames && cityAttractionNames.size) {
+        attractions = await prisma.attraction.findMany({
+          where: { ...baseWhere, name: { in: [...cityAttractionNames] } },
+          orderBy: attractionOrder,
+          take: limit * 3,
+        });
+      }
+      if (!cityAttractionNames || attractions.length < limit) {
+        const global = await prisma.attraction.findMany({
+          where: baseWhere,
+          orderBy: attractionOrder,
+          take: hasLocation ? Math.max(limit * 5, 50) : limit * 3, // over-fetch for filtering
+        });
+        const seenNames = new Set(attractions.map(a => a.name));
+        for (const a of global) {
+          if (!seenNames.has(a.name)) {
+            seenNames.add(a.name);
+            attractions.push(a);
+          }
+        }
+      }
 
       // Filter out logistics/transport/junk attractions
       const JUNK_PATTERNS = /airport|dropoff|arrival|return back|nightlife|night life|pub |bar |transport/i;
@@ -969,8 +1293,7 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, gha
 
       // XGBoost rank attractions
       const xgboost = require('./xgboostService');
-      const maxBookings = Math.max(...filtered.map(a => a.totalBookings || 0), 1);
-      const maxTours = Math.max(...filtered.map(a => a.tourCount || 0), 1);
+      const localNameSet = cityAttractionNames || new Set();
 
       const ranked = filtered.map(a => {
         const tourCountScore = Math.log10((a.tourCount || 0) + 1) / 2;
@@ -985,8 +1308,11 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, gha
           distanceScore = Math.max(0, 1 - dist / NEARBY_RADIUS_KM);
         }
 
+        // Attractions tied to the searched city rank ahead of the global backfill.
+        const localBoost = localNameSet.has((a.name || '').trim().toLowerCase()) ? 10 : 0;
+
         const score = (tourCountScore * 0.20) + (bookingsScore * 0.25) + (ratingScore * 0.25) +
-                      (featuredScore) + (hasImageScore) + (distanceScore * 0.15);
+                      (featuredScore) + (hasImageScore) + (distanceScore * 0.15) + localBoost;
         return { ...a, _score: score };
       });
 
@@ -1676,8 +2002,6 @@ async function getPopularDestinations(limit = 10, userId = null, lat = null, lng
 
     // XGBoost rank destinations by user relevance
     const xgboost = require('./xgboostService');
-    const maxBookings = Math.max(...cities.map(c => c.totalBookings || 0), 1);
-    const maxTours = Math.max(...cities.map(c => c.tourCount || 0), 1);
 
     const ranked = cities.map(c => {
       const tourCountScore = Math.log10((c.tourCount || 0) + 1) / 2;
@@ -1770,6 +2094,10 @@ module.exports = {
   getAttractionTours,
   getMoodKeywords,
   getPopularDestinations,
+  getLocationTourIds,
+  locationTier,
+  mergeLocationFirst,
+  escapeLike,
   extractStartingPrice,
   KEYWORD_CATEGORIES,
   CATEGORY_NAME_TO_SLUG,
