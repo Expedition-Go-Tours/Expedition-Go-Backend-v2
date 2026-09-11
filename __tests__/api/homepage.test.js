@@ -153,7 +153,7 @@ describe('Homepage API', () => {
     it('computes live when lat/lng provided', async () => {
       const res = await request(app).get('/api/homepage/recommended?lat=1.2&lng=36.8');
       expect(res.status).toBe(200);
-      expect(ranking.getRecommended).toHaveBeenCalledWith(null, 1.2, 36.8, 12, false, true);
+      expect(ranking.getRecommended).toHaveBeenCalledWith(null, 1.2, 36.8, 12, false, true, null);
     });
   });
 
