@@ -316,6 +316,19 @@ function setupSocketIO() {
   const RATE_LIMIT = 10;
   const RATE_WINDOW = 60 * 1000;
 
+  // Prevent unbounded growth of the connectionAttempts Map.
+  // Every unique IP (bots, scanners, users) adds an entry that is never
+  // removed. This 60s cleanup evicts entries with no recent attempts.
+  const cleanupConnectionAttempts = () => {
+    const now = Date.now();
+    for (const [ip, attempts] of connectionAttempts) {
+      const recent = attempts.filter(t => now - t < RATE_WINDOW);
+      if (recent.length === 0) connectionAttempts.delete(ip);
+      else connectionAttempts.set(ip, recent);
+    }
+  };
+  setInterval(cleanupConnectionAttempts, 60_000).unref?.();
+
   io.use(async (socket, next) => {
     try {
       const ip = socket.handshake.address;

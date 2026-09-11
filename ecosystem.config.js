@@ -3,13 +3,14 @@ module.exports = {
     name: 'expedition-api',
     script: 'server.js',
     cwd: '/home/deploy/Expedition-Go-Backend-v2',
-    instances: 2,
+    instances: 1,
     exec_mode: 'cluster',
     env: {
       NODE_ENV: 'production',
       PORT: 5000
     },
-    max_memory_restart: '350M',
+    max_memory_restart: '500M',
+    node_args: '--max-old-space-size=400',
     // Keep the same log paths PM2 has used for this app so incident-monitor
     // tails (/home/deploy/.pm2/logs/expedition-api-error.log) keep working
     // after the cluster migration.
