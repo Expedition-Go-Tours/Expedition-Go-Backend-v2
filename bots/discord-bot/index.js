@@ -256,10 +256,14 @@ async function performApproval(interaction, { type, action, id, outcome, resolut
   const done = resp.ok;
   let reply;
   if (done) {
-    const label = type === 'dispute'
-      ? `Refund request ${id} ${outcome === 'CUSTOMER' ? 'approved' : 'denied'}`
-      : `Payout request ${id} ${action}d`;
-    reply = `${label} by <@${interaction.user.id}>.` + (reason ? `\nReason: ${reason}` : '') + (resolution ? `\nResolution: ${resolution}` : '');
+    if (type === 'tour') {
+      reply = `Tour update ${action === 'approve' ? 'approved' : 'rejected'} by <@${interaction.user.id}>.`;
+    } else if (type === 'dispute') {
+      reply = `Refund request ${id} ${outcome === 'CUSTOMER' ? 'approved' : 'denied'} by <@${interaction.user.id}>.`;
+    } else {
+      reply = `Payout request ${id} ${action}d by <@${interaction.user.id}>.`;
+    }
+    reply += (reason ? `\nReason: ${reason}` : '') + (resolution ? `\nResolution: ${resolution}` : '');
   } else {
     reply = `Action failed: ${data.message || resp.statusText}`;
   }
@@ -276,11 +280,31 @@ async function performApproval(interaction, { type, action, id, outcome, resolut
 async function handleButton(interaction) {
   try {
     const [kind, action, id] = String(interaction.customId || '').split(':');
-    if (kind !== 'pv' && kind !== 'dsp') return;
+    if (kind !== 'pv' && kind !== 'dsp' && kind !== 'tour') return;
 
     const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
     if (!(await isAllowed(member))) {
       return interaction.reply({ content: 'You need the Admin role to approve.', ephemeral: true });
+    }
+
+    // Tour update buttons: approve goes direct, reject needs reason modal
+    if (kind === 'tour') {
+      if (action === 'reject') {
+        const modal = new ModalBuilder()
+          .setCustomId(`tour:reject:${id}`)
+          .setTitle('Reject tour update');
+        const reasonInput = new TextInputBuilder()
+          .setCustomId('reason')
+          .setLabel('Rejection reason (shown to the supplier)')
+          .setStyle(TextInputStyle.Paragraph)
+          .setMaxLength(500)
+          .setRequired(true);
+        modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
+        return interaction.showModal(modal);
+      }
+      await interaction.deferReply({ ephemeral: true });
+      await performApproval(interaction, { type: 'tour', action, id });
+      return;
     }
 
     // Dispute buttons: both approve and deny require a resolution modal
@@ -324,7 +348,7 @@ async function handleButton(interaction) {
 async function handleModal(interaction) {
   try {
     const [kind, action, id] = String(interaction.customId || '').split(':');
-    if (kind !== 'pv' && kind !== 'dsp') return;
+    if (kind !== 'pv' && kind !== 'dsp' && kind !== 'tour') return;
 
     const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
     if (!(await isAllowed(member))) {
@@ -332,6 +356,12 @@ async function handleModal(interaction) {
     }
 
     const resolution = interaction.fields.getTextInputValue('resolution');
+
+    if (kind === 'tour' && action === 'reject') {
+      await interaction.deferReply({ ephemeral: true });
+      await performApproval(interaction, { type: 'tour', action: 'reject', id, reason: resolution });
+      return;
+    }
 
     if (kind === 'dsp') {
       const outcome = action === 'approve' ? 'CUSTOMER' : 'SUPPLIER';

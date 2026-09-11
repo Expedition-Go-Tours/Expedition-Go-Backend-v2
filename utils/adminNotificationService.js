@@ -1,5 +1,6 @@
 const prisma = require('./prismaClient');
 const { notifyDiscord } = require('./discordNotifier');
+const channelEmbeds = require('./channelEmbeds');
 
 /**
  * Types that get mirrored to Discord. Types with richer explicit embeds
@@ -44,16 +45,44 @@ function formatFields(data) {
     const bi = order.indexOf(b[0]);
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi) || a[0].localeCompare(b[0]);
   });
-  return entries.map(([k, v]) => ({
-    name: FIELD_LABELS[k] || k.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase()),
-    value: String(v ?? '—').slice(0, 1024),
-    inline: true,
-  }));
+  return entries.map(([k, v]) => {
+    let display;
+    if (v != null && typeof v === 'object' && !Array.isArray(v) && v.count != null && Array.isArray(v.sections)) {
+      // Changes summary: { count, sections: [{ section, changes, paths }] }
+      const sectionNames = v.sections.map(s => s.section).join(', ');
+      display = `${v.count} change${v.count === 1 ? '' : 's'} across ${sectionNames}`;
+    } else if (Array.isArray(v)) {
+      display = v.length ? v.join(', ') : '—';
+    } else {
+      display = String(v ?? '—');
+    }
+    return {
+      name: FIELD_LABELS[k] || k.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase()),
+      value: display.slice(0, 1024),
+      inline: true,
+    };
+  });
 }
 
 function mirrorToDiscord(type, title, message, data) {
   const cfg = DISCORD_MAP[type];
   if (!cfg) return;
+
+  // Dedicated rich embeds with buttons for actionable notifications
+  if (type === 'TOUR_SUBMITTED_FOR_REVIEW') {
+    const { content, opts } = channelEmbeds.verificationTourUpdateSubmitted({
+      tourTitle: data?.tourTitle,
+      tourId: data?.tourId,
+      supplierName: data?.supplierName,
+      changesSummary: data?.changesSummary,
+      isResubmission: data?.isResubmission,
+    });
+    return notifyDiscord(cfg.channel, content, {
+      ...opts,
+      cooldownKey: data?.supplierId || data?.tourId || title,
+    }).catch(() => {});
+  }
+
   notifyDiscord(cfg.channel, message, {
     title,
     color: cfg.color,

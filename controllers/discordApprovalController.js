@@ -16,6 +16,7 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const { logActivity } = require('../utils/auditLogger');
 const { approvePayoutRequest, rejectPayoutRequest, resolveDispute } = require('./adminFinanceController');
+const { reviewTourDraft } = require('./adminController');
 
 function safeEqual(a, b) {
   const ba = Buffer.from(String(a));
@@ -135,6 +136,41 @@ exports.handleApproval = catchAsync(async (req, res, next) => {
     }).catch(() => {});
 
     return res.status(200).json({ status: 'success', data: { type, outcome, id } });
+  }
+
+  if (type === 'tour') {
+    if (!['approve', 'reject'].includes(action)) {
+      return next(new AppError('Action must be "approve" or "reject" for tours', 400));
+    }
+    if (action === 'reject' && (!reason || !String(reason).trim())) {
+      return next(new AppError('A reason is required when rejecting a tour update', 400));
+    }
+    const synthReq = {
+      params: { id },
+      user: { id: adminId },
+      body: {
+        action: action === 'approve' ? 'approve' : 'flag',
+        reason: reason || undefined,
+      },
+    };
+    await runController(reviewTourDraft, synthReq);
+
+    logActivity({
+      userId: adminId,
+      action: 'discord.tour_review_actor',
+      resource: 'Tour',
+      resourceId: id,
+      metadata: {
+        tourId: id,
+        type,
+        action,
+        reason: reason || null,
+        discordUserId: actorDiscordId || null,
+        discordUserTag: actorDiscordTag || null,
+      },
+    }).catch(() => {});
+
+    return res.status(200).json({ status: 'success', data: { type, action, id } });
   }
 
   return next(new AppError('Unsupported approval type', 400));

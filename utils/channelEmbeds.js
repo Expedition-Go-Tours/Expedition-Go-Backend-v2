@@ -162,6 +162,55 @@ function verificationTourSubmitted({ tourTitle, tourId, supplierName }) {
   };
 }
 
+function verificationTourUpdateSubmitted({ tourTitle, tourId, supplierName, changesSummary, isResubmission }) {
+  const url = dashboardUrl(`tours/${tourId}`);
+  const resubmit = isResubmission ? ' (resubmission)' : '';
+  let changesText = '—';
+  if (changesSummary && typeof changesSummary === 'object' && changesSummary.count != null) {
+    const sectionNames = (changesSummary.sections || []).map(s => s.section).join(', ');
+    changesText = `${changesSummary.count} change${changesSummary.count === 1 ? '' : 's'} across ${sectionNames || 'multiple fields'}`;
+  }
+  return {
+    content: `${tourTitle || 'A tour'} has a pending update submitted for review${resubmit}.`,
+    opts: {
+      title: isResubmission ? 'Tour Update (Resubmission)' : 'Tour Update Pending Approval',
+      color: COLORS.blue,
+      url: url || undefined,
+      fields: [
+        { name: 'Tour', value: tourTitle || '—', inline: true },
+        { name: 'Supplier', value: supplierName || '—', inline: true },
+        { name: 'Changes', value: changesText, inline: false },
+        ...(url ? [{ name: 'Review', value: `[Open Dashboard](${url})`, inline: false }] : []),
+      ],
+      cooldownKey: tourId,
+      components: [
+        {
+          type: 1,
+          components: [
+            { type: 2, style: 3, label: 'Approve', custom_id: `tour:approve:${tourId}` },
+            { type: 2, style: 4, label: 'Reject', custom_id: `tour:reject:${tourId}` },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function verificationTourResult({ tourTitle, tourId, action }) {
+  const approved = action === 'approve';
+  return {
+    content: `Tour update for "${tourTitle || 'unknown'}" ${approved ? 'approved' : 'rejected'}.`,
+    opts: {
+      title: approved ? 'Tour Update Approved' : 'Tour Update Rejected',
+      color: approved ? COLORS.green : COLORS.red,
+      fields: [
+        { name: 'Tour', value: tourTitle || '—', inline: true },
+      ],
+      cooldownKey: tourId,
+    },
+  };
+}
+
 // ── Approvals channel ──────────────────────────────────────────────
 
 function approvalPayoutRequest({ requestNumber, amount, currency, bookingCount, requestId }) {
@@ -274,6 +323,8 @@ module.exports = {
   verificationSupplierApplication,
   verificationStatusChange,
   verificationTourSubmitted,
+  verificationTourUpdateSubmitted,
+  verificationTourResult,
   // approvals
   approvalPayoutRequest,
   approvalPayoutResult,

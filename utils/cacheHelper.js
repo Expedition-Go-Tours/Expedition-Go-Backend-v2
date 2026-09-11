@@ -193,6 +193,7 @@ async function invalidateTourCaches(tourId, slug) {
     TOUR_LIST_PREFIX,
     TOUR_FILTERS_KEY,
     TOUR_POPULAR_KEY,
+    `${TOUR_POPULAR_KEY}:*`,
     EXPEDITION_LIST_PREFIX,
     EXPEDITION_FEATURED_PREFIX,
     // The public site also serves "similar tours", reviews and the sitemap

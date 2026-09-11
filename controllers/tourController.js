@@ -422,8 +422,19 @@ exports.getFilterOptions = catchAsync(async (req, res, next) => {
 exports.getPopularByCategory = catchAsync(async (req, res, next) => {
   const { perCategory = 6, category: filterCategory, theme } = req.query;
   const limit = Math.min(Math.max(parseInt(perCategory) || 6, 1), 20);
+  const city = (req.query.city || '').trim() || null;
 
-  const result = await cache.getOrSet(cache.TOUR_POPULAR_KEY, async () => {
+  // Location-aware: resolve the searched city to the tours based in it AND the
+  // tours that visit it. Empty → no filter (global backfill, never empty).
+  let cityTourIds = null;
+  if (city) {
+    const ranking = require('../utils/homepageRanking');
+    cityTourIds = await ranking.getLocationTourIds(city, false, true);
+  }
+
+  const cacheKey = city ? `${cache.TOUR_POPULAR_KEY}:${city.toLowerCase()}` : cache.TOUR_POPULAR_KEY;
+
+  const result = await cache.getOrSet(cacheKey, async () => {
     // Build optional WHERE conditions for category/theme filtering
     const conditions = ["t.status = 'ACTIVE'", "sp.status = 'ACTIVE'"];
     const params = [];
@@ -440,6 +451,12 @@ exports.getPopularByCategory = catchAsync(async (req, res, next) => {
       ))`);
       params.push(theme);
       paramIdx++;
+    }
+
+    if (cityTourIds && cityTourIds.length > 0) {
+      const placeholders = cityTourIds.map(() => `$${paramIdx++}`).join(', ');
+      conditions.push(`t.id IN (${placeholders})`);
+      params.push(...cityTourIds);
     }
 
     params.push(limit * 20);
@@ -1788,6 +1805,7 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
     data: {
       tourId: updated.id,
       supplierId,
+      supplierName: updated.supplier.name,
       tourTitle: updated.title,
       submittedAt: hasDraft ? updated.draftSubmittedAt : updated.submittedAt,
       isResubmission: hasDraft,
