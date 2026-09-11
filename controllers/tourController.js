@@ -1748,7 +1748,7 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
     const contentDiff = buildTourDiff(tour, submitted);
     const noChanges = hasLiveOrDraftSubmission && contentDiff.length === 0;
     if (noChanges) {
-      return { noChanges, tour, updated: null };
+      return { noChanges, tour, updated: null, submitted: null };
     }
 
     const updated = await tx.tour.update({
@@ -1761,10 +1761,10 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
       }
     });
 
-    return { tour, updated, contentDiff };
+    return { tour, updated, contentDiff, submitted };
   });
 
-  const { tour, updated, noChanges, contentDiff } = result;
+  const { tour, updated, noChanges, contentDiff, submitted } = result;
 
   // Idempotent duplicate submission: content identical to what is already
   // applied. Respond success (200) without touching the queue, logging
@@ -1812,6 +1812,17 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
       changesSummary: hasDraft ? computeChangesSummary(contentDiff) : undefined,
     },
   });
+
+  // Mark newly uploaded photos as ATTACHED so the frontend cleanup and the
+  // orphaned-media script never delete them from Cloudinary. Fire-and-forget
+  // so it never blocks the response.
+  const submittedPhotos = submitted?.photos;
+  if (submittedPhotos?.length > 0) {
+    prisma.media.updateMany({
+      where: { url: { in: submittedPhotos } },
+      data: { status: 'ATTACHED', entity: 'tour', entityId: updated.id },
+    }).catch(err => logger.warn('[Media] Failed to mark submitted photos as ATTACHED:', err?.message));
+  }
 
   res.status(200).json({
     status: 'success',
