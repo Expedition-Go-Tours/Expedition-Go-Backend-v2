@@ -19,12 +19,24 @@ const { getLocationTourIds } = require('./homepageRanking');
 const { findNearbyTourIds } = require('./tourFilterBuilder');
 
 /**
+ * Per-type "near" radius. A city/neighbourhood legitimately includes its whole
+ * metro area, but an attraction (a market, a park) should only pull tours that
+ * are actually at/around it — otherwise "Makola Market" would return every
+ * Accra tour. Regions/countries are name-matched only (no radius).
+ */
+function radiusForType(type) {
+  if (type === 'attraction') return 10;
+  if (type === 'city' || type === 'locality') return 50;
+  return 0; // region / country / unknown
+}
+
+/**
  * @param {string} placeQuery
  * @param {{ ghanaOnly?: boolean, expeditionOnly?: boolean }} [scope]
  * @param {{ radiusKm?: number }} [opts]
  * @returns {Promise<{ resolved: object|null, ids: Set<string>|null }>}
  */
-async function placeTourIds(placeQuery, scope = {}, { radiusKm = 50 } = {}) {
+async function placeTourIds(placeQuery, scope = {}, { radiusKm } = {}) {
   const resolved = await resolvePlace(placeQuery, scope);
   if (!resolved) return { resolved: null, ids: null };
 
@@ -40,15 +52,14 @@ async function placeTourIds(placeQuery, scope = {}, { radiusKm = 50 } = {}) {
     for (const id of await getLocationTourIds(placeQuery, ghanaOnly, expeditionOnly)) ids.add(id);
   }
 
-  // Band 1 — near the place. Region/country places are matched by name only
-  // (their centroid is not a meaningful "near" point).
-  const useRadius = resolved.type !== 'region' && resolved.type !== 'country';
-  if (useRadius && resolved.lat != null && resolved.lng != null) {
-    const near = await findNearbyTourIds(prisma, resolved.lat, resolved.lng, radiusKm);
+  // Band 1 — near the place, with a radius that depends on what the place is.
+  const radius = radiusKm != null ? radiusKm : radiusForType(resolved.type);
+  if (radius > 0 && resolved.lat != null && resolved.lng != null) {
+    const near = await findNearbyTourIds(prisma, resolved.lat, resolved.lng, radius);
     for (const id of near) ids.add(id);
   }
 
   return { resolved, ids };
 }
 
-module.exports = { placeTourIds };
+module.exports = { placeTourIds, radiusForType };
