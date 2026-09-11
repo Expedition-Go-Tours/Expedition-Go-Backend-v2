@@ -39,6 +39,19 @@ async function computeWithWarmup(limit, computeFn, _precomputeKey) {
 }
 
 /**
+ * Anonymous homepage responses are identical for every visitor — the URL
+ * (including city/lat/lng) fully determines the body — so let the browser
+ * reuse them for a few minutes. `stale-while-revalidate` serves the cached
+ * copy instantly while the app refreshes in the background. Personalized
+ * (logged-in) responses are never cached.
+ */
+function setAnonymousCache(req, res) {
+  if (!req.user) {
+    res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=86400');
+  }
+}
+
+/**
  * GET /api/homepage/sell-out
  * Tours with booking momentum in the last 14 days.
  */
@@ -525,6 +538,7 @@ exports.getHomepage = catchAsync(async (req, res) => {
       } catch { /* cache write best-effort */ }
     }
 
+    setAnonymousCache(req, res);
     return res.json({
       status: 'success',
       data: {
@@ -582,6 +596,7 @@ exports.getHomepage = catchAsync(async (req, res) => {
     enqueueHomepagePrecompute().catch(() => {});
   }
 
+  setAnonymousCache(req, res);
   res.json({
     status: 'success',
     data: {
