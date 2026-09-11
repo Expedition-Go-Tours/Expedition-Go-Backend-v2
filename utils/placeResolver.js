@@ -217,6 +217,10 @@ async function findAttraction(query) {
     };
   }
 
+  // Prefix match: "kakum" → "Kakum National Park", but "kumasi" does NOT match
+  // "The Kumasi NightLife Experience" (so a major city falls through to the
+  // geocoder and resolves as the city, not a tour-like attraction).
+  const target = foldAccents(query.toLowerCase());
   const candidates = await prisma.attraction.findMany({
     where: {
       status: 'ACTIVE',
@@ -228,12 +232,11 @@ async function findAttraction(query) {
     orderBy: [{ tourCount: 'desc' }],
     take: 50,
   });
-  const target = foldAccents(query.toLowerCase());
-  const fuzzy = candidates.find((a) => a.name && wordBoundaryMatch(foldAccents(a.name.toLowerCase()), target));
+  const fuzzy = candidates.find((a) => a.name && foldAccents(a.name.toLowerCase()).startsWith(target));
   if (fuzzy) {
     return {
       name: fuzzy.name, type: 'attraction', city: null, region: null, country: null,
-      lat: fuzzy.latitude, lng: fuzzy.longitude, matchedBy: 'attraction:contains',
+      lat: fuzzy.latitude, lng: fuzzy.longitude, matchedBy: 'attraction:prefix',
     };
   }
   return null;
@@ -318,6 +321,7 @@ async function resolvePlace(query, scope = {}) {
 
   const key = `hp:place:${scopeKey(scope)}:${keyOf(head)}`;
   return cache.getOrSet(key, async () => {
+    // 1. Catalog exacts — city, region, attraction.
     const city = await findCity(head, scope);
     if (city && city.lat != null && city.lng != null) return finalize(city);
 
@@ -327,11 +331,13 @@ async function resolvePlace(query, scope = {}) {
     const attraction = await findAttraction(head);
     if (attraction) return finalize(attraction);
 
+    // 2. Geocoder — resolves cities/regions/towns the catalog has no tours for
+    //    (e.g. "Kumasi"), biased to the catalog country.
     const countries = await getCatalogCountries(scope);
     const geo = await geocode(head, countries);
     if (geo) return finalize(geo);
 
-    // Name-only fallbacks (no coords) — still usable for in-place matching.
+    // 3. Name-only fallbacks (no coords) — still usable for in-place matching.
     if (city) return finalize(city);
     if (region) return finalize(region);
     return null;
