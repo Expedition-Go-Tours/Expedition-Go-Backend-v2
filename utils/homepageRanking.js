@@ -248,6 +248,7 @@ async function getLocationTourIds(city, ghanaOnly = false, expeditionOnly = fals
         AND sp.status = 'ACTIVE'
         AND (
           LOWER(t.city) = ${lower}
+          OR LOWER(t.region) = ${lower}
           OR EXISTS (
             SELECT 1 FROM unnest(t.attractions) AS a(val)
             WHERE LOWER(val) = ${lower}

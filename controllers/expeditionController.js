@@ -17,7 +17,7 @@ const { acquireHold, releaseHold, HOLD_MINUTES } = require('../utils/checkoutHol
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const getConfig = require('../utils/getConfig');
 const { haversineKm, resolveCityCentroid } = require('../utils/locationGeo');
-const { resolvePlace } = require('../utils/placeResolver');
+const { placeTourIds } = require('../utils/placeListing');
 const { detachBookingFromActiveRequests } = require('../utils/financeHelpers');
 const { logActivity } = require('../utils/auditLogger');
 const {
@@ -174,22 +174,27 @@ exports.getTours = catchAsync(async (req, res) => {
     // `near` = order results by proximity to this city (keep all). Resolve the
     // city centroid once; every returned tour then carries a `distanceKm`.
     const centroid = near ? await resolveCityCentroid(near) : null;
-    // `place=<name>` = GYG-style place scope. Resolve it, mark the tours that
-    // belong to it (`placeMatch`) and measure distance from it, so the
-    // storefront can rank in-place -> near -> rest.
+    // `place=<name>` = GYG-style place scope. Resolve it and keep ONLY the
+    // tours that belong to it (in-place -> near <=50km), intersecting any
+    // existing id filter. A place with no tours returns nothing (the storefront
+    // shows its no-tours state), never the whole catalogue.
     let placeCentroid = null;
     let placeMatchIds = null;
     if (place) {
-      const resolved = await resolvePlace(place, { expeditionOnly: true });
-      if (resolved) {
+      const { resolved, ids } = await placeTourIds(place, { expeditionOnly: true });
+      if (resolved && ids) {
         if (resolved.lat != null && resolved.lng != null) {
           placeCentroid = { lat: resolved.lat, lng: resolved.lng };
         }
-        const ids = await ranking.getLocationTourIds(place, false, true);
-        if (resolved.name && resolved.name.toLowerCase() !== place.trim().toLowerCase()) {
-          ids.push(...await ranking.getLocationTourIds(resolved.name, false, true));
+        placeMatchIds = ids;
+        if (tourWhere.id?.in) {
+          tourWhere.id = { in: tourWhere.id.in.filter((id) => ids.has(id)) };
+        } else {
+          tourWhere.id = { in: [...ids] };
         }
-        placeMatchIds = new Set(ids);
+      } else {
+        // Not a place — return nothing so the client text-searches.
+        tourWhere.id = { in: [] };
       }
     }
     const distanceOrigin = placeCentroid || centroid;

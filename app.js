@@ -120,6 +120,20 @@ app.use(
   }),
 );
 
+// Place lookups can hit the geocoder on a cache miss — cap them per IP.
+app.use(
+  '/api/places',
+  createLimiter({
+    name: 'places',
+    defaultMax: 120,
+    defaultWindowMs: 60 * 1000,
+    message: {
+      status: 'fail',
+      message: 'Too many place lookups, please slow down.',
+    },
+  }),
+);
+
 // Stricter rate limit on file upload endpoints (20 uploads per hour per user)
 const uploadLimiter = createLimiter({
   name: 'upload',

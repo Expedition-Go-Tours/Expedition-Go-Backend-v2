@@ -102,4 +102,34 @@ async function findNearbyCities(lat, lng, radiusKm = 150, limit = 8, excludeCity
   }
 }
 
-module.exports = { haversineKm, resolveCityCentroid, findNearbyCities };
+/**
+ * Region centroid — average lat/lng of ACTIVE, geolocated tours in a region.
+ * Used when a search resolves to an administrative region (e.g. "Volta Region").
+ *
+ * @param {string} region
+ * @returns {Promise<{ lat: number, lng: number, region: string } | null>}
+ */
+async function resolveRegionCentroid(region) {
+  const name = (region || '').trim();
+  if (name.length < 2) return null;
+
+  const key = `hp:loctier:regioncentroid:${name.toLowerCase()}`;
+  return cache.getOrSet(key, async () => {
+    const rows = await prisma.tour.findMany({
+      where: {
+        status: 'ACTIVE',
+        region: { equals: name, mode: 'insensitive' },
+        latitude: { not: null },
+        longitude: { not: null },
+      },
+      select: { latitude: true, longitude: true },
+      take: 200,
+    });
+    if (rows.length === 0) return null;
+    const lat = rows.reduce((s, r) => s + r.latitude, 0) / rows.length;
+    const lng = rows.reduce((s, r) => s + r.longitude, 0) / rows.length;
+    return { lat, lng, region: name };
+  }, 3600);
+}
+
+module.exports = { haversineKm, resolveCityCentroid, resolveRegionCentroid, findNearbyCities };

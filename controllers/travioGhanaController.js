@@ -4,8 +4,7 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const cache = require('../utils/cacheHelper');
 const { haversineKm, resolveCityCentroid } = require('../utils/locationGeo');
-const { resolvePlace } = require('../utils/placeResolver');
-const { getLocationTourIds } = require('../utils/homepageRanking');
+const { placeTourIds } = require('../utils/placeListing');
 const { sendEmail } = require('../utils/emailService');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, isValidEmail } = require('../utils/bookingHelpers');
@@ -146,21 +145,25 @@ exports.getTours = catchAsync(async (req, res) => {
     if (country) tourWhere.country = country;
     // `near` = order results by proximity to this city (keep all).
     const centroid = near ? await resolveCityCentroid(near) : null;
-    // `place=<name>` = GYG-style place scope. Resolve it, mark the tours that
-    // belong to it (`placeMatch`) and measure distance from it.
+    // `place=<name>` = GYG-style place scope. Resolve it and keep ONLY the
+    // tours that belong to it (in-place -> near <=50km), intersecting any
+    // existing id filter. A place with no tours returns nothing.
     let placeCentroid = null;
     let placeMatchIds = null;
     if (place) {
-      const resolved = await resolvePlace(place, { ghanaOnly: true });
-      if (resolved) {
+      const { resolved, ids } = await placeTourIds(place, { ghanaOnly: true });
+      if (resolved && ids) {
         if (resolved.lat != null && resolved.lng != null) {
           placeCentroid = { lat: resolved.lat, lng: resolved.lng };
         }
-        const ids = await getLocationTourIds(place, true, false);
-        if (resolved.name && resolved.name.toLowerCase() !== place.trim().toLowerCase()) {
-          ids.push(...await getLocationTourIds(resolved.name, true, false));
+        placeMatchIds = ids;
+        if (tourWhere.id?.in) {
+          tourWhere.id = { in: tourWhere.id.in.filter((id) => ids.has(id)) };
+        } else {
+          tourWhere.id = { in: [...ids] };
         }
-        placeMatchIds = new Set(ids);
+      } else {
+        tourWhere.id = { in: [] };
       }
     }
     const distanceOrigin = placeCentroid || centroid;

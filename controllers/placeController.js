@@ -1,9 +1,10 @@
 /**
- * Place suggestions for the search bar — grouped the way GetYourGuide does:
+ * Place endpoints for the search bar — resolve a query to a canonical place
+ * (or null), and suggest grouped results the way GetYourGuide does:
  * "Places to see" (destinations + attractions) and "Things to do" (tours).
  *
- * Read-only, cheap, cached. Falls back to text matching so it degrades
- * gracefully when the geocoder is unavailable.
+ * Read-only, cheap, cached. `scope` selects the catalog (lite/expedition =
+ * expedition catalog, ghana = TravioGhana catalog, default = all).
  */
 
 const crypto = require('crypto');
@@ -12,34 +13,49 @@ const cache = require('../utils/cacheHelper');
 const catchAsync = require('../utils/catchAsync');
 const { resolvePlace } = require('../utils/placeResolver');
 
+/** Map the `scope` query param to a resolver scope. */
+function parseScope(req) {
+  const s = String(req.query.scope || '').toLowerCase();
+  if (s === 'ghana' || s === 'travioghana') return { ghanaOnly: true };
+  if (s === 'lite' || s === 'expedition') return { expeditionOnly: true };
+  return {};
+}
+
+/** Catalog scope filter for Prisma queries. */
+function scopeWhere(scope) {
+  if (scope.ghanaOnly) return { travioGhanaTour: { isActive: true } };
+  if (scope.expeditionOnly) return { expeditionTour: { isActive: true } };
+  return {};
+}
+
 /**
- * GET /api/places/resolve?q=
+ * GET /api/places/resolve?q=&scope=
  * Resolve a query to a canonical place with coordinates, or null. Used by the
- * storefront search to decide whether to scope a listing to a place or fall
- * back to a plain text search.
+ * storefront to decide whether to scope a listing to a place or text-search.
  */
 exports.resolve = catchAsync(async (req, res) => {
   const q = (req.query.q || '').trim();
-  const place = q.length >= 2 ? await resolvePlace(q) : null;
+  const place = q.length >= 2 ? await resolvePlace(q, parseScope(req)) : null;
   res.json({ status: 'success', data: { query: q, place } });
 });
-
 
 exports.suggest = catchAsync(async (req, res) => {
   const q = (req.query.q || '').trim();
   const limit = Math.min(parseInt(req.query.limit) || 6, 10);
+  const scope = parseScope(req);
 
   if (q.length < 2) {
     return res.json({ status: 'success', data: { query: q, placesToSee: [], thingsToDo: [] } });
   }
 
-  const cacheKey = `hp:place:suggest:${crypto.createHash('md5').update(`${q.toLowerCase()}:${limit}`).digest('hex')}`;
+  const cacheKey = `hp:place:suggest:${scope.ghanaOnly ? 'ghana' : scope.expeditionOnly ? 'exp' : 'all'}:${crypto.createHash('md5').update(`${q.toLowerCase()}:${limit}`).digest('hex')}`;
+  const scopeFilter = scopeWhere(scope);
 
   const data = await cache.getOrSet(cacheKey, async () => {
     // Destinations — catalog cities matching the query, most tours first.
     const cities = await prisma.tour.groupBy({
       by: ['city', 'country'],
-      where: { status: 'ACTIVE', city: { contains: q, mode: 'insensitive' } },
+      where: { status: 'ACTIVE', city: { contains: q, mode: 'insensitive' }, ...scopeFilter },
       _count: { _all: true },
       orderBy: { _count: { city: 'desc' } },
       take: limit,
@@ -55,7 +71,7 @@ exports.suggest = catchAsync(async (req, res) => {
 
     // Tours — title matches, most reviewed first.
     const tours = await prisma.tour.findMany({
-      where: { status: 'ACTIVE', title: { contains: q, mode: 'insensitive' } },
+      where: { status: 'ACTIVE', title: { contains: q, mode: 'insensitive' }, ...scopeFilter },
       select: { id: true, title: true, slug: true, coverPhoto: true, city: true, country: true, averageRating: true },
       orderBy: [{ reviewCount: 'desc' }, { totalBookings: 'desc' }],
       take: limit,

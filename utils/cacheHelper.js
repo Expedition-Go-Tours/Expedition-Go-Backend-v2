@@ -76,7 +76,7 @@ function ensureConnected() {
   return initPromise;
 }
 
-async function getOrSet(key, fetchFn, ttlSeconds = 300, { cacheEmpty = true } = {}) {
+async function getOrSet(key, fetchFn, ttlSeconds = 300, { cacheEmpty = true, cacheNull = true } = {}) {
   // L1: memory cache
   const fromMem = memGet(key);
   if (fromMem !== undefined) {
@@ -121,6 +121,14 @@ async function getOrSet(key, fetchFn, ttlSeconds = 300, { cacheEmpty = true } = 
       // and are NOT persisted — so a transient provider outage can't be baked
       // into the cache for the full TTL (the next call retries the fetch).
       if (!cacheEmpty && Array.isArray(data) && data.length === 0) {
+        return data;
+      }
+
+      // Negative caching: by default a null result is persisted (as a sentinel)
+      // so repeated misses don't hammer the source. Callers backed by a flaky
+      // upstream (the geocoder) pass cacheNull:false so a transient miss is
+      // retried on the next request instead of being baked in for the TTL.
+      if ((data === null || data === undefined) && !cacheNull) {
         return data;
       }
 

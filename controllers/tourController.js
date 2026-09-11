@@ -31,9 +31,8 @@ const {
 } = require('../utils/tourFilterBuilder');
 const { shouldCountTourView } = require('../utils/viewTracking');
 const { haversineKm, resolveCityCentroid, findNearbyCities } = require('../utils/locationGeo');
-const { resolvePlace, rankByPlace } = require('../utils/placeResolver');
-const { getLocationTourIds } = require('../utils/homepageRanking');
-const locationService = require('../utils/locationService');
+const { rankByPlace, resolvePlace } = require('../utils/placeResolver');
+const { placeTourIds } = require('../utils/placeListing');
 const eventEmitter = require('../utils/eventEmitter');
 
 const { rankTourIdsBySearch } = require('../utils/fullTextSearch');
@@ -171,34 +170,34 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
       }
     }
 
-    // `place=<name>`: GYG-style place-scoped ranking. Resolve the place, then
-    // order every matching tour by band — in the place (based there / visits
-    // it / tagged with it) -> near the place (<=50km) -> everywhere else —
-    // with popularity deciding the order inside each band. Never filters, so a
-    // location search can never dead-end.
+    // `place=<name>`: GYG-style place-scoped listing. Resolve the place, keep
+    // ONLY the tours that belong to it — in-place (city/region/attractions/
+    // tags) or near it (<=50km) — and rank by band then popularity. No global
+    // filler: a place with no tours returns nothing (the storefront then shows
+    // its no-tours state), never the whole catalogue.
     if (place && !hasGeo && !proximityIds) {
-      const resolved = await resolvePlace(place);
-      if (resolved) {
-        if (resolved.lat != null && resolved.lng != null) {
-          nearPoint = { lat: resolved.lat, lng: resolved.lng };
-        }
-        const localIds = await getLocationTourIds(place, false, true);
-        if (resolved.name && resolved.name.toLowerCase() !== place.trim().toLowerCase()) {
-          localIds.push(...await getLocationTourIds(resolved.name, false, true));
-        }
-        const all = await prisma.tour.findMany({
+      const { resolved, ids } = await placeTourIds(place, {});
+      if (resolved && ids) {
+        nearPoint = resolved.lat != null && resolved.lng != null
+          ? { lat: resolved.lat, lng: resolved.lng }
+          : null;
+        where.AND = [...(where.AND || []), { id: { in: [...ids] } }];
+        const scoped = await prisma.tour.findMany({
           where,
           select: {
             id: true, latitude: true, longitude: true,
             averageRating: true, reviewCount: true, totalBookings: true,
           },
         });
-        const ranked = rankByPlace(all, {
+        const ranked = rankByPlace(scoped, {
           lat: nearPoint?.lat ?? null,
           lng: nearPoint?.lng ?? null,
-          localIds: new Set(localIds),
+          localIds: ids,
         });
         proximityIds = ranked.map((t) => t.id);
+      } else {
+        // Query is not a place — return nothing so the client text-searches.
+        proximityIds = [];
       }
     }
 
@@ -431,28 +430,22 @@ const SEARCH_FALLBACK_SELECT = {
  * Prefers a catalog city match (for the proper display name and country),
  * then a sibling-tour centroid, then the geocoder.
  */
+/**
+ * Resolve a free-text query to a canonical place via the shared resolver, in
+ * the shape the empty-search fallback needs.
+ */
 async function resolveSearchLocation(q) {
-  const query = (q || '').trim();
-  if (query.length < 2) return null;
-
-  const match = await prisma.tour.findFirst({
-    where: { status: 'ACTIVE', city: { contains: query, mode: 'insensitive' } },
-    select: { city: true, country: true },
-    orderBy: { totalBookings: 'desc' },
-  });
-
-  const city = match?.city || query;
-  const country = match?.country || null;
-
-  const centroid = await resolveCityCentroid(city);
-  if (centroid) return { city, country, lat: centroid.lat, lng: centroid.lng };
-
-  const geo = await locationService.search(query, 1).catch(() => []);
-  const hit = geo?.[0];
-  if (hit?.latitude != null && hit?.longitude != null) {
-    return { city, country, lat: hit.latitude, lng: hit.longitude };
-  }
-  return null;
+  const place = await resolvePlace(q, {});
+  if (!place) return null;
+  return {
+    city: place.city || place.name,
+    country: place.country || null,
+    lat: place.lat,
+    lng: place.lng,
+    name: place.name,
+    displayName: place.displayName,
+    type: place.type,
+  };
 }
 
 /**
