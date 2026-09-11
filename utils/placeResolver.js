@@ -178,11 +178,13 @@ async function resolvePlace(query, scope = {}) {
 
   const key = `hp:place:${scopeKey(scope)}:${q.toLowerCase()}`;
   return cache.getOrSet(key, async () => {
-    const attraction = await findAttraction(q);
-    if (attraction) return attraction;
-
+    // City first: "accra" is a destination, not an attraction, even when an
+    // attraction row happens to share the name.
     const city = await findCity(q, scope);
     if (city && city.lat != null && city.lng != null) return city;
+
+    const attraction = await findAttraction(q);
+    if (attraction) return attraction;
 
     const countries = await getCatalogCountries(scope);
     const geo = await geocode(q, countries);
