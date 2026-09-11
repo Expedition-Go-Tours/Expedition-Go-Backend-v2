@@ -37,6 +37,7 @@ const STOPWORDS = new Set([
   'tour', 'tours', 'trip', 'trips', 'experience', 'experiences',
   'activity', 'activities', 'thing', 'things', 'place', 'places',
   'day', 'days', 'night', 'nights', 'package', 'packages',
+  'the', 'an', 'of', 'in', 'on', 'at', 'to', 'for', 'and', 'or', 'by', 'with', 'near', 'around',
   'ghana', 'africa', 'west africa',
 ]);
 
@@ -243,41 +244,40 @@ async function findAttraction(query) {
 }
 
 /**
- * Geocode a query, biased to (and validated against) the catalog countries.
- * Tries "<query>, <primary country>" first, then the raw query. The display
- * name comes from the matched locality (street / first formatted segment),
- * never the containing city, and POIs collapse to their locality so we never
- * scope a listing to a single building.
+ * Geocode a query and keep only results inside the catalog countries.
+ *
+ * The query is geocoded AS-IS — we deliberately do NOT append the catalog
+ * country, because that makes foreign names resolve to arbitrary streets in
+ * Ghana ("Dubai, Ghana" → "Kumasi - Techiman"). A hit is accepted only when
+ * its country is in the catalog; otherwise the query is not a place here.
+ *
+ * The display name comes from the matched locality (street / first formatted
+ * segment), never the containing city, and POIs collapse to their locality.
  */
 async function geocode(query, countries) {
-  const names = countries.map((c) => c.name);
-  const allowed = new Set(names.map((n) => foldAccents(n.toLowerCase())));
-  const attempts = names.length ? [`${query}, ${names[0]}`, query] : [query];
+  const allowed = new Set(countries.map((c) => foldAccents(c.name.toLowerCase())));
 
-  for (const attempt of attempts) {
-    const results = await locationService.search(attempt, 5).catch(() => []);
-    const hit = (results || []).find((r) => {
-      if (r.latitude == null || r.longitude == null) return false;
-      if (allowed.size === 0) return true;
-      return allowed.has(foldAccents(String(r.country || '').toLowerCase()));
-    });
-    if (!hit) continue;
+  const results = await locationService.search(query, 8).catch(() => []);
+  const hit = (results || []).find((r) => {
+    if (r.latitude == null || r.longitude == null) return false;
+    if (allowed.size === 0) return true;
+    return allowed.has(foldAccents(String(r.country || '').toLowerCase()));
+  });
+  if (!hit) return null;
 
-    const formattedHead = String(hit.formatted || '').split(',')[0].trim();
-    const name = hit.street || formattedHead || hit.city || query;
+  const formattedHead = String(hit.formatted || '').split(',')[0].trim();
+  const name = hit.street || formattedHead || hit.city || query;
 
-    return {
-      name,
-      type: 'locality',
-      city: hit.city || null,
-      region: hit.region || null,
-      country: hit.country || null,
-      lat: hit.latitude,
-      lng: hit.longitude,
-      matchedBy: 'geocoder',
-    };
-  }
-  return null;
+  return {
+    name,
+    type: 'locality',
+    city: hit.city || null,
+    region: hit.region || null,
+    country: hit.country || null,
+    lat: hit.latitude,
+    lng: hit.longitude,
+    matchedBy: 'geocoder',
+  };
 }
 
 /**
@@ -299,6 +299,16 @@ function finalize(place) {
   return { ...place, displayName: displayName(place) };
 }
 
+/** Is `name` a catalog city or region in this scope? (for comma-tail checks) */
+async function isCatalogPlaceName(name, scope) {
+  const base = { status: 'ACTIVE', ...scopeWhere(scope) };
+  const [city, region] = await Promise.all([
+    prisma.tour.findFirst({ where: { ...base, city: { equals: name, mode: 'insensitive' } }, select: { id: true } }),
+    prisma.tour.findFirst({ where: { ...base, region: { equals: name, mode: 'insensitive' } }, select: { id: true } }),
+  ]);
+  return !!(city || region);
+}
+
 /**
  * Resolve a query to a place. Returns null when nothing sensible is found, so
  * callers can fall back to plain text search.
@@ -315,12 +325,15 @@ async function resolvePlace(query, scope = {}) {
   const lower = q0.toLowerCase();
   if (STOPWORDS.has(lower)) return null;
 
-  // "Accra, Ghana" / "Kakum, Ghana" — resolve the head term.
-  const head = (q0.split(',')[0] || q0).trim();
+  // "Accra, Ghana" / "Kakum, Sudan" — resolve the head term, then validate any
+  // qualifier tail so a foreign country can't ride along on a matching head.
+  const parts = q0.split(',').map((s) => s.trim()).filter(Boolean);
+  const head = parts[0] || q0;
+  const tail = parts.slice(1).join(' ').trim();
   if (head.length < 2) return null;
 
   const key = `hp:place:${scopeKey(scope)}:${keyOf(head)}`;
-  return cache.getOrSet(key, async () => {
+  const resolved = await cache.getOrSet(key, async () => {
     // 1. Catalog exacts — city, region, attraction.
     const city = await findCity(head, scope);
     if (city && city.lat != null && city.lng != null) return finalize(city);
@@ -332,7 +345,7 @@ async function resolvePlace(query, scope = {}) {
     if (attraction) return finalize(attraction);
 
     // 2. Geocoder — resolves cities/regions/towns the catalog has no tours for
-    //    (e.g. "Kumasi"), biased to the catalog country.
+    //    (e.g. "Kumasi"), keeping only results inside the catalog countries.
     const countries = await getCatalogCountries(scope);
     const geo = await geocode(head, countries);
     if (geo) return finalize(geo);
@@ -342,6 +355,22 @@ async function resolvePlace(query, scope = {}) {
     if (region) return finalize(region);
     return null;
   }, PLACE_TTL, { cacheEmpty: false, cacheNull: false });
+
+  if (resolved && tail) {
+    const tailFold = foldAccents(tail.toLowerCase());
+    const countries = await getCatalogCountries(scope);
+    const isCatalogCountry = countries.some((c) => foldAccents(c.name.toLowerCase()) === tailFold);
+    const placeCountry = resolved.country ? foldAccents(resolved.country.toLowerCase()) : null;
+
+    if (isCatalogCountry) {
+      if (placeCountry && placeCountry !== tailFold) return null;
+    } else if (!(await isCatalogPlaceName(tail, scope))) {
+      // Unknown qualifier (e.g. "Kakum, Sudan" / "Accra, Togo") — reject.
+      return null;
+    }
+  }
+
+  return resolved;
 }
 
 /**
