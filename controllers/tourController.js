@@ -1516,8 +1516,10 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     newValues: tour
   });
 
+  // Mark uploaded photos as ATTACHED synchronously before responding so the
+  // frontend unmount cleanup cannot race and delete them from Cloudinary.
   if (tour.photos?.length > 0) {
-    prisma.media.updateMany({
+    await prisma.media.updateMany({
       where: { url: { in: tour.photos } },
       data: { status: 'ATTACHED', entity: 'tour', entityId: id },
     }).catch(err => logger.warn('[Media] Failed to mark photos as ATTACHED:', err?.message));
@@ -1813,12 +1815,11 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
     },
   });
 
-  // Mark newly uploaded photos as ATTACHED so the frontend cleanup and the
-  // orphaned-media script never delete them from Cloudinary. Fire-and-forget
-  // so it never blocks the response.
+  // Mark newly uploaded photos as ATTACHED synchronously before responding so
+  // the frontend unmount cleanup cannot race and delete them from Cloudinary.
   const submittedPhotos = submitted?.photos;
   if (submittedPhotos?.length > 0) {
-    prisma.media.updateMany({
+    await prisma.media.updateMany({
       where: { url: { in: submittedPhotos } },
       data: { status: 'ATTACHED', entity: 'tour', entityId: updated.id },
     }).catch(err => logger.warn('[Media] Failed to mark submitted photos as ATTACHED:', err?.message));
