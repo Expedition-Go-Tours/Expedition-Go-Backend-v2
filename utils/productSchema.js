@@ -91,7 +91,10 @@ const dateExceptionSchema = z.object({
   id: z.string(),
   date: z.string(),
   type: z.enum(['closed', 'override']),
-  overrideTimes: z.array(z.string()).optional(),
+  overrideTimes: z.array(z.object({
+    startTime: z.string().optional(),
+    endTime: z.string().optional()
+  })).optional(),
 });
 
 const pricingTierSchema = z.object({
@@ -193,7 +196,10 @@ const storedDateExceptionSchema = z.object({
   id: z.string().optional(),
   date: z.string().optional(),
   type: z.string().optional(),
-  overrideTimes: z.array(z.string()).optional(),
+  overrideTimes: z.array(z.object({
+    startTime: z.string().optional(),
+    endTime: z.string().optional()
+  })).optional(),
 });
 
 const weeklyHoursSchema = z.record(z.array(z.object({
