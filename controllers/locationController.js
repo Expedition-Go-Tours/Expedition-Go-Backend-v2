@@ -27,6 +27,62 @@ exports.nearby = catchAsync(async (req, res) => {
 });
 
 /**
+ * GET /api/locations/resolve?q=Accra
+ *
+ * Resolve a city name to canonical form by looking up the Tour table.
+ * Used by the frontend to normalize user-typed location names.
+ * Falls back to geocoding if no tours match.
+ */
+const prisma = require('../utils/prismaClient');
+
+exports.resolveLocation = catchAsync(async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (q.length < 2) {
+    return res.status(200).json({ status: 'success', data: { location: null } });
+  }
+
+  // 1. Try exact city match (case-insensitive)
+  const exact = await prisma.tour.findFirst({
+    where: { city: { equals: q, mode: 'insensitive' }, status: 'ACTIVE' },
+    select: { city: true, country: true },
+  });
+
+  if (exact) {
+    return res.status(200).json({ status: 'success', data: { location: { city: exact.city, country: exact.country } } });
+  }
+
+  // 2. Try starts-with match
+  const startsWith = await prisma.tour.findFirst({
+    where: { city: { startsWith: q, mode: 'insensitive' }, status: 'ACTIVE' },
+    select: { city: true, country: true },
+  });
+
+  if (startsWith) {
+    return res.status(200).json({ status: 'success', data: { location: { city: startsWith.city, country: startsWith.country } } });
+  }
+
+  // 3. Try contains match
+  const contains = await prisma.tour.findFirst({
+    where: { city: { contains: q, mode: 'insensitive' }, status: 'ACTIVE' },
+    select: { city: true, country: true },
+  });
+
+  if (contains) {
+    return res.status(200).json({ status: 'success', data: { location: { city: contains.city, country: contains.country } } });
+  }
+
+  // 4. Fallback: geocode
+  try {
+    const geoResults = await locationService.search(q, 1);
+    if (geoResults && geoResults.length > 0) {
+      return res.status(200).json({ status: 'success', data: { location: geoResults[0] } });
+    }
+  } catch { /* geocoding failure */ }
+
+  return res.status(200).json({ status: 'success', data: { location: null } });
+});
+
+/**
  * GET /api/locations/my-location
  *
  * Resolve the caller's approximate location from their IP address.

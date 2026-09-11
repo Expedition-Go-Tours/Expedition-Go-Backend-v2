@@ -44,6 +44,15 @@ async function computeWithWarmup(limit, computeFn, _precomputeKey) {
  */
 exports.getSellOut = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
+  const city = req.query.city || null;
+
+  // City-scoped: compute live
+  if (city) {
+    const tours = await ranking.getLikelySellOut(limit, null, false, true, city);
+    return res.json({ status: 'success', data: { tours } });
+  }
+
+  // Global: try pre-computed cache
   let tours = await readPrecomputed(SECTION_KEYS.sellOut);
   if (tours) {
     return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
@@ -58,6 +67,13 @@ exports.getSellOut = catchAsync(async (req, res) => {
  */
 exports.getTopRated = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
+  const city = req.query.city || null;
+
+  if (city) {
+    const tours = await ranking.getTopRated(limit, null, false, true, city);
+    return res.json({ status: 'success', data: { tours } });
+  }
+
   let tours = await readPrecomputed(SECTION_KEYS.topRated);
   if (tours) {
     return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
@@ -72,6 +88,13 @@ exports.getTopRated = catchAsync(async (req, res) => {
  */
 exports.getTrending = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
+  const city = req.query.city || null;
+
+  if (city) {
+    const tours = await ranking.getTrending(limit, false, true, city);
+    return res.json({ status: 'success', data: { tours } });
+  }
+
   let tours = await readPrecomputed(SECTION_KEYS.trending);
   if (tours) {
     return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
@@ -93,14 +116,15 @@ exports.getRecommended = catchAsync(async (req, res) => {
   const userId = req.user?.id || null;
   const lat = req.query.lat ? parseFloat(req.query.lat) : null;
   const lng = req.query.lng ? parseFloat(req.query.lng) : null;
+  const city = req.query.city || null;
 
-  // Personalized: always compute live
-  if (userId || lat) {
-    const tours = await ranking.getRecommended(userId, lat, lng, limit, false, true);
+  // City-scoped or personalized: compute live
+  if (city || userId || lat) {
+    const tours = await ranking.getRecommended(userId, lat, lng, limit, false, true, city);
     return res.json({ status: 'success', data: { tours } });
   }
 
-  // Anonymous: try pre-computed cache
+  // Anonymous global: try pre-computed cache
   let tours = await readPrecomputed(SECTION_KEYS.recommended);
   if (tours) {
     return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
@@ -115,6 +139,13 @@ exports.getRecommended = catchAsync(async (req, res) => {
  */
 exports.getNew = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
+  const city = req.query.city || null;
+
+  if (city) {
+    const tours = await ranking.getNewExperiences(limit, false, true, city);
+    return res.json({ status: 'success', data: { tours } });
+  }
+
   let tours = await readPrecomputed(SECTION_KEYS.new);
   if (tours) {
     return res.json({ status: 'success', data: { tours: tours.slice(0, limit) } });
@@ -132,10 +163,11 @@ exports.getAttractions = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
   const lat = req.query.lat ? parseFloat(req.query.lat) : null;
   const lng = req.query.lng ? parseFloat(req.query.lng) : null;
+  const city = req.query.city || null;
 
-  // When location provided, compute live (cache is location-specific)
-  if (lat && lng) {
-    const attractions = await ranking.getAttractions(limit, lat, lng, false, true);
+  // City-scoped or location-based: compute live
+  if (city || (lat && lng)) {
+    const attractions = await ranking.getAttractions(limit, lat, lng, false, true, city);
     return res.json({ status: 'success', data: { attractions } });
   }
 
@@ -173,10 +205,11 @@ exports.getAttractionTours = catchAsync(async (req, res) => {
 exports.getMood = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 8, 12);
   const userId = req.user?.id || null;
+  const city = req.query.city || null;
 
-  // Personalized: always compute live
-  if (userId) {
-    const keywords = await ranking.getMoodKeywords(userId, limit, false, true);
+  // City-scoped or personalized: compute live
+  if (city || userId) {
+    const keywords = await ranking.getMoodKeywords(userId, limit, false, true, city);
     return res.json({ status: 'success', data: { keywords } });
   }
 
@@ -198,10 +231,11 @@ exports.getDestinations = catchAsync(async (req, res) => {
   const userId = req.user?.id || null;
   const lat = parseFloat(req.query.lat) || null;
   const lng = parseFloat(req.query.lng) || null;
+  const city = req.query.city || null;
 
-  // Personalized: compute live if user context available
-  if (userId || (lat && lng)) {
-    const destinations = await ranking.getPopularDestinations(limit, userId, lat, lng, false, true);
+  // City-scoped or personalized: compute live
+  if (city || userId || (lat && lng)) {
+    const destinations = await ranking.getPopularDestinations(limit, userId, lat, lng, false, true, city);
     return res.json({ status: 'success', data: { destinations } });
   }
 
@@ -223,8 +257,18 @@ exports.getDestinations = catchAsync(async (req, res) => {
  */
 exports.getOffers = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
+  const city = req.query.city || null;
 
-  // Try pre-computed cache first (same pattern as other sections)
+  // City-scoped: compute live
+  if (city) {
+    const offerCards = await computeOffersData(city);
+    return res.json({
+      status: 'success',
+      data: { tours: offerCards.slice(0, limit) },
+    });
+  }
+
+  // Global: try pre-computed cache first (same pattern as other sections)
   const cacheKey = 'hp:sections:offers';
   let offerCards = await readPrecomputed(cacheKey);
   if (!offerCards) {
@@ -250,13 +294,14 @@ exports.getOffers = catchAsync(async (req, res) => {
 /**
  * Compute offers data (shared by getOffers cache miss and getSectionTourIds fallback).
  */
-async function computeOffersData() {
+async function computeOffersData(city = null) {
   const now = new Date();
 
+  const cityFilter = city ? { tour: { city } } : {};
   const targets = await prisma.specialOfferTarget.findMany({
     where: {
       // Only tours published to the Expedition storefront appear in the section
-      tour: { expeditionTour: { isActive: true } },
+      tour: { expeditionTour: { isActive: true }, ...(city ? { city } : {}) },
       specialOffer: {
         isActive: true,
         AND: [
@@ -437,8 +482,56 @@ exports.getHomepage = catchAsync(async (req, res) => {
   const userId = req.user?.id || null;
   const lat = req.query.lat ? parseFloat(req.query.lat) : null;
   const lng = req.query.lng ? parseFloat(req.query.lng) : null;
+  const city = req.query.city || null;
 
-  // Read all sections from pre-computed cache in parallel (including offers)
+  // City-scoped: compute live with city filter (no pre-computed city keys)
+  if (city) {
+    const [sellOut, topRated, trending, recommended, newExp, attractions, mood, destinations, offers] =
+      await Promise.all([
+        ranking.getLikelySellOut(12, null, false, true, city),
+        ranking.getTopRated(12, null, false, true, city),
+        ranking.getTrending(12, false, true, city),
+        ranking.getRecommended(userId, lat, lng, 12, false, true, city),
+        ranking.getNewExperiences(10, false, true, city),
+        ranking.getAttractions(10, lat, lng, false, true, city),
+        ranking.getMoodKeywords(userId, 8, false, true, city),
+        ranking.getPopularDestinations(10, userId, lat, lng, false, true, city),
+      ]);
+
+    // Compute offers with city filter
+    const offerCacheKey = `hp:sections:offers:${city.toLowerCase()}`;
+    let offerCards = await readPrecomputed(offerCacheKey);
+    if (!offerCards) {
+      offerCards = await computeOffersData(city);
+      // Cache for 5 minutes
+      try {
+        const redisAvailable = await redis.isRedisAvailable().catch(() => false);
+        if (redisAvailable) {
+          await redis.set(offerCacheKey, offerCards, 300);
+          const cache = require('../utils/cacheHelper');
+          cache.memSet(offerCacheKey, offerCards);
+        }
+      } catch { /* cache write best-effort */ }
+    }
+
+    return res.json({
+      status: 'success',
+      data: {
+        sellOut,
+        topRated,
+        trending,
+        recommended,
+        newExperiences: newExp,
+        attractions,
+        mood,
+        destinations,
+        offers: offerCards,
+        city,
+      },
+    });
+  }
+
+  // Default: no city — use pre-computed global cache
   const [sellOut, topRated, trending, recommended, newExp, attractions, mood, destinations, offers] =
     await Promise.all([
       readPrecomputed(SECTION_KEYS.sellOut),
