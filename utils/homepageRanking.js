@@ -1702,21 +1702,88 @@ async function getMoodKeywords(userId, limit = 8, ghanaOnly = false, expeditionO
     }
 
     // ── Source 4: Keyword categories from supplier tags ─────────────
-    // Single query: fetch active tours with tags, ordered by popularity.
-    // Limit to 5000 to prevent OOM on large datasets while keeping good keyword coverage.
-    const cityFilter = city ? { city } : {};
-    const allTours = await prisma.tour.findMany({
-      where: { status: 'ACTIVE', ...cityFilter, ...ghanaScope(ghanaOnly), ...expeditionScope(expeditionOnly) },
-      select: {
-        id: true, tags: true, coverPhoto: true, photos: true,
-        category: true, totalBookings: true, city: true,
-        // AI enrichment (null for unprocessed tours — fallback to tag-based scoring)
-        aiPrimaryCategory: true, aiSecondaryCategories: true,
-        aiMoodTags: true, aiActivityLevel: true, aiConfidence: true,
-      },
-      orderBy: { totalBookings: 'desc' },
-      take: 5000,
-    });
+    // Fetch active tours with tags, ordered by popularity. When a city is
+    // searched, start from that city's tours and backfill with tours from
+    // nearby locations (by distance) and, if still short, globally — so the
+    // category rail never collapses to a single card when the location has
+    // only one tour. Limit to 5000 to prevent OOM on large datasets.
+    const scope = { status: 'ACTIVE', ...ghanaScope(ghanaOnly), ...expeditionScope(expeditionOnly) };
+    const MOOD_TOUR_SELECT = {
+      id: true, tags: true, coverPhoto: true, photos: true,
+      category: true, totalBookings: true, city: true,
+      latitude: true, longitude: true,
+      // AI enrichment (null for unprocessed tours — fallback to tag-based scoring)
+      aiPrimaryCategory: true, aiSecondaryCategories: true,
+      aiMoodTags: true, aiActivityLevel: true, aiConfidence: true,
+    };
+
+    // A location needs at least this many tours before we stop backfilling.
+    const MIN_LOCATION_TOURS = 8;
+    let allTours;
+    if (city) {
+      const cityTours = await prisma.tour.findMany({
+        where: { ...scope, city },
+        select: MOOD_TOUR_SELECT,
+        orderBy: { totalBookings: 'desc' },
+        take: 200,
+      });
+
+      if (cityTours.length >= MIN_LOCATION_TOURS) {
+        allTours = cityTours;
+      } else {
+        // Nearby: tours within NEARBY_RADIUS_KM of the city's centroid.
+        const withCoords = cityTours.filter((t) => t.latitude != null && t.longitude != null);
+        let nearby = [];
+        if (withCoords.length > 0) {
+          const cLat = withCoords.reduce((s, t) => s + t.latitude, 0) / withCoords.length;
+          const cLng = withCoords.reduce((s, t) => s + t.longitude, 0) / withCoords.length;
+          const deltaLat = NEARBY_RADIUS_KM / 111;
+          const deltaLng = NEARBY_RADIUS_KM / ((111 * Math.cos((cLat * Math.PI) / 180)) || 1);
+          const candidates = await prisma.tour.findMany({
+            where: {
+              ...scope,
+              city: { not: city },
+              latitude: { gte: cLat - deltaLat, lte: cLat + deltaLat },
+              longitude: { gte: cLng - deltaLng, lte: cLng + deltaLng },
+            },
+            select: MOOD_TOUR_SELECT,
+            orderBy: { totalBookings: 'desc' },
+            take: 400,
+          });
+          nearby = candidates
+            .map((t) => ({
+              tour: t,
+              distance: (t.latitude != null && t.longitude != null)
+                ? haversineKm(cLat, cLng, t.latitude, t.longitude)
+                : Infinity,
+            }))
+            .filter((x) => x.distance <= NEARBY_RADIUS_KM)
+            .sort((a, b) => a.distance - b.distance)
+            .map((x) => x.tour);
+        }
+
+        let merged = [...cityTours, ...nearby];
+        // Global fallback if the location + nearby still isn't enough.
+        if (merged.length < MIN_LOCATION_TOURS) {
+          const haveIds = new Set(merged.map((t) => t.id));
+          const global = await prisma.tour.findMany({
+            where: { ...scope, id: { notIn: [...haveIds] } },
+            select: MOOD_TOUR_SELECT,
+            orderBy: { totalBookings: 'desc' },
+            take: MIN_LOCATION_TOURS * 2,
+          });
+          merged = [...merged, ...global];
+        }
+        allTours = merged;
+      }
+    } else {
+      allTours = await prisma.tour.findMany({
+        where: scope,
+        select: MOOD_TOUR_SELECT,
+        orderBy: { totalBookings: 'desc' },
+        take: 5000,
+      });
+    }
 
     // Build inverted index: keyword → Set<tourId>
     const keywordTourMap = new Map();
