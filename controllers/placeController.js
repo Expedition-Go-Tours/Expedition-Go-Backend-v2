@@ -10,6 +10,20 @@ const crypto = require('crypto');
 const prisma = require('../utils/prismaClient');
 const cache = require('../utils/cacheHelper');
 const catchAsync = require('../utils/catchAsync');
+const { resolvePlace } = require('../utils/placeResolver');
+
+/**
+ * GET /api/places/resolve?q=
+ * Resolve a query to a canonical place with coordinates, or null. Used by the
+ * storefront search to decide whether to scope a listing to a place or fall
+ * back to a plain text search.
+ */
+exports.resolve = catchAsync(async (req, res) => {
+  const q = (req.query.q || '').trim();
+  const place = q.length >= 2 ? await resolvePlace(q) : null;
+  res.json({ status: 'success', data: { query: q, place } });
+});
+
 
 exports.suggest = catchAsync(async (req, res) => {
   const q = (req.query.q || '').trim();

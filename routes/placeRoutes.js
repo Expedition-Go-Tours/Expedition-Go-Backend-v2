@@ -25,4 +25,22 @@ const router = express.Router();
  */
 router.get('/suggest', placeController.suggest);
 
+/**
+ * @swagger
+ * /places/resolve:
+ *   get:
+ *     summary: Resolve a query to a canonical place (or null)
+ *     tags: [Places]
+ *     parameters:
+ *       - name: q
+ *         in: query
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Place resolved successfully
+ */
+router.get('/resolve', placeController.resolve);
+
 module.exports = router;
