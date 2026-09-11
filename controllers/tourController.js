@@ -30,6 +30,7 @@ const {
   getTourDistances
 } = require('../utils/tourFilterBuilder');
 const { shouldCountTourView } = require('../utils/viewTracking');
+const { haversineKm, resolveCityCentroid } = require('../utils/locationGeo');
 const eventEmitter = require('../utils/eventEmitter');
 
 const { rankTourIdsBySearch } = require('../utils/fullTextSearch');
@@ -61,7 +62,7 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
     limit = 12,
     sortBy: rawSortBy,
     sortOrder = 'desc',
-    lat, lng, radius, search
+    lat, lng, radius, search, near
   } = req.query;
 
   const sortBy = search && !rawSortBy ? 'relevance' : (rawSortBy || 'createdAt');
@@ -141,11 +142,38 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
       where.AND = [...(where.AND || []), ...idFilters];
     }
 
+    // `near=<city>`: order every matching tour by distance from the city
+    // centroid. Unlike lat/lng it never filters by radius — it only re-ranks,
+    // globally (before pagination) so page 1 really holds the closest tours.
+    let proximityIds = null;
+    let nearPoint = null;
+    if (near && !hasGeo && (sortBy === 'nearest' || !rawSortBy)) {
+      const centroid = await resolveCityCentroid(near);
+      if (centroid) {
+        nearPoint = { lat: centroid.lat, lng: centroid.lng };
+        const all = await prisma.tour.findMany({
+          where,
+          select: { id: true, latitude: true, longitude: true },
+        });
+        all.sort((a, b) => {
+          const da = a.latitude != null && a.longitude != null
+            ? haversineKm(nearPoint.lat, nearPoint.lng, a.latitude, a.longitude)
+            : Infinity;
+          const db = b.latitude != null && b.longitude != null
+            ? haversineKm(nearPoint.lat, nearPoint.lng, b.latitude, b.longitude)
+            : Infinity;
+          return da - db;
+        });
+        proximityIds = all.map((t) => t.id);
+      }
+    }
+
     const orderBy = sortBy === 'nearest' && hasGeo ? { createdAt: 'desc' } : buildSortOptions(sortBy, sortOrder);
+    const pagedIds = proximityIds ? proximityIds.slice(skip, skip + queryLimit) : null;
 
     const [tours, totalCount] = await Promise.all([
       prisma.tour.findMany({
-        where,
+        where: pagedIds ? { ...where, id: { in: pagedIds } } : where,
         include: {
           supplier: {
             select: {
@@ -169,14 +197,20 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
             }
           }
         },
-        orderBy,
-        skip,
+        orderBy: pagedIds ? undefined : orderBy,
+        skip: pagedIds ? 0 : skip,
         take: queryLimit
       }),
-      prisma.tour.count({ where })
+      proximityIds ? Promise.resolve(proximityIds.length) : prisma.tour.count({ where })
     ]);
 
-    // Compute distances for geo queries
+    // `near` results were ordered globally above; restore that order on the page.
+    if (pagedIds) {
+      const pos = new Map(pagedIds.map((id, i) => [id, i]));
+      tours.sort((a, b) => (pos.get(a.id) ?? 0) - (pos.get(b.id) ?? 0));
+    }
+
+    // Compute distances for geo/near queries
     let distMap = new Map();
     if (hasGeo) {
       distMap = await getTourDistances(prisma, parseFloat(lat), parseFloat(lng), tours.map(t => t.id));
@@ -197,6 +231,10 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
       };
       if (hasGeo) {
         t.distanceKm = distMap.get(tour.id) || null;
+      } else if (nearPoint) {
+        t.distanceKm = tour.latitude != null && tour.longitude != null
+          ? Math.round(haversineKm(nearPoint.lat, nearPoint.lng, tour.latitude, tour.longitude) * 10) / 10
+          : null;
       }
       return t;
     });
