@@ -701,6 +701,19 @@ jobs:
             echo "=== Saving PM2 process list ==="
             pm2 save
 
+            echo "=== Flushing homepage cache (code changes live immediately) ==="
+            # TTL is the safety net, not the invalidation mechanism — clear the
+            # whole homepage cache family so a ranking/code change is served on
+            # the very next request instead of waiting out the Redis TTL.
+            REDIS_URL_VALUE="$(grep -m1 '^REDIS_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d '\"' || true)"
+            if [ -n "${REDIS_URL_VALUE:-}" ]; then
+              redis-cli -u "$REDIS_URL_VALUE" --scan --pattern 'hp:*' 2>/dev/null \
+                | xargs -r redis-cli -u "$REDIS_URL_VALUE" del >/dev/null 2>&1 || true
+              echo "homepage cache flushed"
+            else
+              echo "REDIS_URL not found — skipping homepage cache flush"
+            fi
+
             echo "=== Deploy complete ==="
 
       - name: Compute deploy duration

@@ -177,12 +177,17 @@ const EXPEDITION_REVIEWS_PREFIX = (slug) => `expedition:reviews:${slug}`;
 const EXPEDITION_SITEMAP_KEY = 'expedition:sitemap';
 const EXPEDITION_SUPPLIER_TOURS_PREFIX = 'expedition:supplier-tours:*';
 const HOMEPAGE_SECTIONS_PREFIX = 'hp:sections:*';
+/** Every homepage cache key (sections, per-section caches, location tiers). */
+const HOMEPAGE_ALL_PREFIX = 'hp:*';
 
 async function invalidateHomepageSections() {
-  // `hp:loctier:*` holds the per-city location-match ID sets used by the
-  // location-aware homepage ranking — clear it alongside the sections so a
-  // newly approved/edited tour is reflected immediately (TTL also bounds it).
-  await invalidateKeys([HOMEPAGE_SECTIONS_PREFIX, 'hp:loctier:*']);
+  // Clear the ENTIRE homepage cache family — precomputed sections
+  // (`hp:sections:*`), the per-section function caches (`hp:mood:*`,
+  // `hp:toprated:*`, `hp:sellout:*`, `hp:trending:*`, `hp:rec:*`, `hp:new:*`,
+  // `hp:attractions:*`, `hp:destinations:*`) and the per-city location-match
+  // ID sets (`hp:loctier:*`) — so a tour approval/edit is reflected
+  // immediately. TTL is the safety net, not the invalidation mechanism.
+  await invalidateKeys([HOMEPAGE_ALL_PREFIX]);
 }
 
 // Alias used by AI analyzer and other modules
@@ -250,6 +255,7 @@ module.exports = {
   EXPEDITION_SITEMAP_KEY,
   EXPEDITION_SUPPLIER_TOURS_PREFIX,
   HOMEPAGE_SECTIONS_PREFIX,
+  HOMEPAGE_ALL_PREFIX,
   invalidateHomepageCaches,
   _clearMemory
 };

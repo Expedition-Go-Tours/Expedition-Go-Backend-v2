@@ -39,15 +39,21 @@ async function computeWithWarmup(limit, computeFn, _precomputeKey) {
 }
 
 /**
- * Anonymous homepage responses are identical for every visitor — the URL
- * (including city/lat/lng) fully determines the body — so let the browser
- * reuse them for a few minutes. `stale-while-revalidate` serves the cached
- * copy instantly while the app refreshes in the background. Personalized
- * (logged-in) responses are never cached.
+ * Cache policy for homepage responses.
+ *
+ * Anonymous responses are identical for every visitor — the URL (including
+ * city/lat/lng) fully determines the body — so let browsers reuse them
+ * briefly (60s fresh, then revalidate; up to 5 min of stale-while-revalidate).
+ * `Vary: Authorization` keeps shared caches (if a CDN is added) from mixing
+ * anonymous and logged-in bodies. Personalized responses are never cached.
  */
 function setAnonymousCache(req, res) {
-  if (!req.user) {
-    res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=86400');
+  // Append (don't overwrite) — CORS/compression already set Vary: Origin/Encoding.
+  res.vary('Authorization');
+  if (req.user) {
+    res.set('Cache-Control', 'private, no-store');
+  } else {
+    res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
   }
 }
 
