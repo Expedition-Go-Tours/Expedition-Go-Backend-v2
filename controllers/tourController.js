@@ -31,6 +31,8 @@ const {
 } = require('../utils/tourFilterBuilder');
 const { shouldCountTourView } = require('../utils/viewTracking');
 const { haversineKm, resolveCityCentroid, findNearbyCities } = require('../utils/locationGeo');
+const { resolvePlace, rankByPlace } = require('../utils/placeResolver');
+const { getLocationTourIds } = require('../utils/homepageRanking');
 const locationService = require('../utils/locationService');
 const eventEmitter = require('../utils/eventEmitter');
 
@@ -63,7 +65,7 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
     limit = 12,
     sortBy: rawSortBy,
     sortOrder = 'desc',
-    lat, lng, radius, search, near
+    lat, lng, radius, search, near, place
   } = req.query;
 
   const sortBy = search && !rawSortBy ? 'relevance' : (rawSortBy || 'createdAt');
@@ -166,6 +168,37 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
           return da - db;
         });
         proximityIds = all.map((t) => t.id);
+      }
+    }
+
+    // `place=<name>`: GYG-style place-scoped ranking. Resolve the place, then
+    // order every matching tour by band — in the place (based there / visits
+    // it / tagged with it) -> near the place (<=50km) -> everywhere else —
+    // with popularity deciding the order inside each band. Never filters, so a
+    // location search can never dead-end.
+    if (place && !hasGeo && !proximityIds) {
+      const resolved = await resolvePlace(place);
+      if (resolved) {
+        if (resolved.lat != null && resolved.lng != null) {
+          nearPoint = { lat: resolved.lat, lng: resolved.lng };
+        }
+        const localIds = await getLocationTourIds(place, false, true);
+        if (resolved.name && resolved.name.toLowerCase() !== place.trim().toLowerCase()) {
+          localIds.push(...await getLocationTourIds(resolved.name, false, true));
+        }
+        const all = await prisma.tour.findMany({
+          where,
+          select: {
+            id: true, latitude: true, longitude: true,
+            averageRating: true, reviewCount: true, totalBookings: true,
+          },
+        });
+        const ranked = rankByPlace(all, {
+          lat: nearPoint?.lat ?? null,
+          lng: nearPoint?.lng ?? null,
+          localIds: new Set(localIds),
+        });
+        proximityIds = ranked.map((t) => t.id);
       }
     }
 

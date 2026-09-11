@@ -4,6 +4,8 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const cache = require('../utils/cacheHelper');
 const { haversineKm, resolveCityCentroid } = require('../utils/locationGeo');
+const { resolvePlace } = require('../utils/placeResolver');
+const { getLocationTourIds } = require('../utils/homepageRanking');
 const { sendEmail } = require('../utils/emailService');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, isValidEmail } = require('../utils/bookingHelpers');
@@ -53,7 +55,7 @@ function extractCurrency(schedulesAndPricing) {
   }
 }
 
-function transformForListing(tour, expeditionRecord, centroid = null) {
+function transformForListing(tour, expeditionRecord, centroid = null, placeMatch = false) {
   const distanceKm =
     centroid && tour.latitude != null && tour.longitude != null
       ? Math.round(haversineKm(centroid.lat, centroid.lng, tour.latitude, tour.longitude) * 10) / 10
@@ -82,6 +84,7 @@ function transformForListing(tour, expeditionRecord, centroid = null) {
     latitude: tour.latitude ?? null,
     longitude: tour.longitude ?? null,
     distanceKm,
+    placeMatch,
     supplierName: tour.supplier?.name || null,
     supplierPhoto: tour.supplier?.photoURL
       ? tour.supplier.photoURL
@@ -129,7 +132,7 @@ async function invalidateCaches(slug) {
 // ================================
 
 exports.getTours = catchAsync(async (req, res) => {
-  const { page = 1, limit = 12, search, category, city, country, minPrice, maxPrice, sortBy, mood, near } = req.query;
+  const { page = 1, limit = 12, search, category, city, country, minPrice, maxPrice, sortBy, mood, near, place } = req.query;
 
   const cacheKey = `${LIST_CACHE_KEY}:${crypto.createHash('md5').update(JSON.stringify(req.query)).digest('hex')}`;
 
@@ -143,6 +146,24 @@ exports.getTours = catchAsync(async (req, res) => {
     if (country) tourWhere.country = country;
     // `near` = order results by proximity to this city (keep all).
     const centroid = near ? await resolveCityCentroid(near) : null;
+    // `place=<name>` = GYG-style place scope. Resolve it, mark the tours that
+    // belong to it (`placeMatch`) and measure distance from it.
+    let placeCentroid = null;
+    let placeMatchIds = null;
+    if (place) {
+      const resolved = await resolvePlace(place, { ghanaOnly: true });
+      if (resolved) {
+        if (resolved.lat != null && resolved.lng != null) {
+          placeCentroid = { lat: resolved.lat, lng: resolved.lng };
+        }
+        const ids = await getLocationTourIds(place, true, false);
+        if (resolved.name && resolved.name.toLowerCase() !== place.trim().toLowerCase()) {
+          ids.push(...await getLocationTourIds(resolved.name, true, false));
+        }
+        placeMatchIds = new Set(ids);
+      }
+    }
+    const distanceOrigin = placeCentroid || centroid;
     // Mood keyword filtering: case-insensitive tag matching
     let moodTourIds = null;
     if (mood) {
@@ -263,7 +284,7 @@ exports.getTours = catchAsync(async (req, res) => {
           isFeatured: r.isFeatured,
           bookingFlow: r.bookingFlow,
           externalUrl: r.externalUrl,
-          tour: transformForListing(r.tour, r, centroid),
+          tour: transformForListing(r.tour, r, distanceOrigin, placeMatchIds ? placeMatchIds.has(r.tour.id) : false),
         })),
       },
       pagination: {

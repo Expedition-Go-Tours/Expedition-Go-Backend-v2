@@ -17,6 +17,7 @@ const { acquireHold, releaseHold, HOLD_MINUTES } = require('../utils/checkoutHol
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const getConfig = require('../utils/getConfig');
 const { haversineKm, resolveCityCentroid } = require('../utils/locationGeo');
+const { resolvePlace } = require('../utils/placeResolver');
 const { detachBookingFromActiveRequests } = require('../utils/financeHelpers');
 const { logActivity } = require('../utils/auditLogger');
 const {
@@ -61,7 +62,7 @@ function extractCurrency(schedulesAndPricing) {
   }
 }
 
-function transformForListing(tour, expeditionRecord, centroid = null) {
+function transformForListing(tour, expeditionRecord, centroid = null, placeMatch = false) {
   // Map specialOfferTargets to the shape the frontend expects
   const specialOffers = Array.isArray(tour.specialOfferTargets)
     ? tour.specialOfferTargets
@@ -109,6 +110,7 @@ function transformForListing(tour, expeditionRecord, centroid = null) {
     latitude: tour.latitude ?? null,
     longitude: tour.longitude ?? null,
     distanceKm,
+    placeMatch,
     supplierName: tour.supplier?.name || null,
     supplierPhoto: tour.supplier?.photoURL
       ? tour.supplier.photoURL
@@ -157,7 +159,7 @@ async function invalidateCaches(slug) {
 // ================================
 
 exports.getTours = catchAsync(async (req, res) => {
-  const { page = 1, limit = 12, search, category, city, country, minPrice, maxPrice, sortBy, mood, near } = req.query;
+  const { page = 1, limit = 12, search, category, city, country, minPrice, maxPrice, sortBy, mood, near, place } = req.query;
 
   const cacheKey = `${LIST_CACHE_KEY}:${crypto.createHash('md5').update(JSON.stringify(req.query)).digest('hex')}`;
 
@@ -172,6 +174,25 @@ exports.getTours = catchAsync(async (req, res) => {
     // `near` = order results by proximity to this city (keep all). Resolve the
     // city centroid once; every returned tour then carries a `distanceKm`.
     const centroid = near ? await resolveCityCentroid(near) : null;
+    // `place=<name>` = GYG-style place scope. Resolve it, mark the tours that
+    // belong to it (`placeMatch`) and measure distance from it, so the
+    // storefront can rank in-place -> near -> rest.
+    let placeCentroid = null;
+    let placeMatchIds = null;
+    if (place) {
+      const resolved = await resolvePlace(place, { expeditionOnly: true });
+      if (resolved) {
+        if (resolved.lat != null && resolved.lng != null) {
+          placeCentroid = { lat: resolved.lat, lng: resolved.lng };
+        }
+        const ids = await ranking.getLocationTourIds(place, false, true);
+        if (resolved.name && resolved.name.toLowerCase() !== place.trim().toLowerCase()) {
+          ids.push(...await ranking.getLocationTourIds(resolved.name, false, true));
+        }
+        placeMatchIds = new Set(ids);
+      }
+    }
+    const distanceOrigin = placeCentroid || centroid;
     // Mood keyword filtering: case-insensitive tag matching
     let moodTourIds = null;
     if (mood) {
@@ -304,7 +325,7 @@ exports.getTours = catchAsync(async (req, res) => {
           isFeatured: r.isFeatured,
           bookingFlow: r.bookingFlow,
           externalUrl: r.externalUrl,
-          tour: transformForListing(r.tour, r, centroid),
+          tour: transformForListing(r.tour, r, distanceOrigin, placeMatchIds ? placeMatchIds.has(r.tour.id) : false),
         })),
       },
       pagination: {
