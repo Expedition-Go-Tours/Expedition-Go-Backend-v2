@@ -3,6 +3,7 @@ const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const cache = require('../utils/cacheHelper');
+const { haversineKm, resolveCityCentroid } = require('../utils/locationGeo');
 const { sendEmail } = require('../utils/emailService');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, isValidEmail } = require('../utils/bookingHelpers');
@@ -52,7 +53,12 @@ function extractCurrency(schedulesAndPricing) {
   }
 }
 
-function transformForListing(tour, expeditionRecord) {
+function transformForListing(tour, expeditionRecord, centroid = null) {
+  const distanceKm =
+    centroid && tour.latitude != null && tour.longitude != null
+      ? Math.round(haversineKm(centroid.lat, centroid.lng, tour.latitude, tour.longitude) * 10) / 10
+      : null;
+
   return {
     id: tour.id,
     title: tour.title,
@@ -73,6 +79,9 @@ function transformForListing(tour, expeditionRecord) {
     viewCount: tour.viewCount,
     city: tour.city,
     country: tour.country,
+    latitude: tour.latitude ?? null,
+    longitude: tour.longitude ?? null,
+    distanceKm,
     supplierName: tour.supplier?.name || null,
     supplierPhoto: tour.supplier?.photoURL
       ? tour.supplier.photoURL
@@ -120,7 +129,7 @@ async function invalidateCaches(slug) {
 // ================================
 
 exports.getTours = catchAsync(async (req, res) => {
-  const { page = 1, limit = 12, search, category, city, country, minPrice, maxPrice, sortBy, mood } = req.query;
+  const { page = 1, limit = 12, search, category, city, country, minPrice, maxPrice, sortBy, mood, near } = req.query;
 
   const cacheKey = `${LIST_CACHE_KEY}:${crypto.createHash('md5').update(JSON.stringify(req.query)).digest('hex')}`;
 
@@ -132,6 +141,8 @@ exports.getTours = catchAsync(async (req, res) => {
     if (category) tourWhere.category = category;
     if (city) tourWhere.city = city;
     if (country) tourWhere.country = country;
+    // `near` = order results by proximity to this city (keep all).
+    const centroid = near ? await resolveCityCentroid(near) : null;
     // Mood keyword filtering: case-insensitive tag matching
     let moodTourIds = null;
     if (mood) {
@@ -214,7 +225,7 @@ exports.getTours = catchAsync(async (req, res) => {
             id: true, title: true, slug: true, description: true,
             coverPhoto: true, photos: true, category: true,
             durationMinutes: true, averageRating: true, reviewCount: true, viewCount: true,
-            city: true, country: true, schedulesAndPricing: true,
+            city: true, country: true, latitude: true, longitude: true, schedulesAndPricing: true,
             supplier: { select: { name: true, photoURL: true } },
           },
         },
@@ -252,7 +263,7 @@ exports.getTours = catchAsync(async (req, res) => {
           isFeatured: r.isFeatured,
           bookingFlow: r.bookingFlow,
           externalUrl: r.externalUrl,
-          tour: transformForListing(r.tour, r),
+          tour: transformForListing(r.tour, r, centroid),
         })),
       },
       pagination: {
