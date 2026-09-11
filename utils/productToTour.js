@@ -9,6 +9,20 @@
 const { normalizeToE164 } = require('./phoneValidation');
 const { durationToMinutes } = require('./tourHelpers');
 
+/**
+ * The builder stores the meeting point in `meetingPoints[]` (plural); legacy
+ * payloads use the singular `meetingPoint`. Resolve a single canonical point so
+ * every consumer (validation, tickets, emails) gets it regardless of shape.
+ */
+function firstMeetingPoint(src) {
+  if (!src || typeof src !== 'object') return null;
+  if (src.meetingPoint && (src.meetingPoint.name || src.meetingPoint.address)) {
+    return src.meetingPoint;
+  }
+  const list = Array.isArray(src.meetingPoints) ? src.meetingPoints : [];
+  return list.find((m) => m && (m.name || m.address)) || null;
+}
+
 function productToTour(flat) {
   if (!flat || typeof flat !== 'object') return {};
 
@@ -117,7 +131,7 @@ function buildProductContent(flat) {
     options: Array.isArray(src.options) ? src.options.map((o) => ({ ...o, wheelchairAccessible: !!o.wheelchairAccessible })) : [],
     meetingInstructions: src.meetingPointDescription || '',
     meetingMode: src.meetingMode || 'meeting_point',
-    meetingPoint: src.meetingPoint || null,
+    meetingPoint: firstMeetingPoint(src),
     meetingPoints: Array.isArray(src.meetingPoints) ? src.meetingPoints : [],
     meetingPointPicture: src.meetingPointPicture || '',
     arrivalTime: src.arrivalTime || src.arrivalTimeCustom || '',
@@ -268,7 +282,7 @@ function buildBookingAndTickets(flat) {
   if (src.supplierCanCancelNotEnoughTravelers) cancellationPolicy.supplierCanCancelNotEnoughTravelers = true;
 
   return {
-    meetingPoint: flat.meetingPoint || null,
+    meetingPoint: firstMeetingPoint(flat),
     meetingPoints: Array.isArray(flat.meetingPoints) ? flat.meetingPoints : [],
     arrivalTime: flat.arrivalTime || '',
     pickupProvided: flat.meetingMode === 'pickup' || !!flat.pickupProvided,
@@ -323,4 +337,4 @@ function computeDurationMinutes(flat) {
   return durationToMinutes({ value: flat.duration, unit: flat.durationUnit || 'hours' });
 }
 
-module.exports = { productToTour };
+module.exports = { productToTour, firstMeetingPoint };

@@ -1787,8 +1787,17 @@ function validateTourForReview(tour) {
       }
     }
     if (pc.meetingMode === 'meeting_point') {
-      const mp = tour.bookingAndTickets?.meetingPoint || pc.meetingPoint;
-      if (!mp || !mp.name || !mp.address) {
+      // The builder stores the meeting point in `meetingPoints[]` (plural);
+      // legacy/admin payloads use the singular `meetingPoint`. Accept either.
+      const bt = tour.bookingAndTickets || {};
+      const candidates = [
+        bt.meetingPoint,
+        pc.meetingPoint,
+        ...(Array.isArray(bt.meetingPoints) ? bt.meetingPoints : []),
+        ...(Array.isArray(pc.meetingPoints) ? pc.meetingPoints : []),
+      ];
+      const mp = candidates.find((m) => m && m.name && m.address);
+      if (!mp) {
         errors.push('A meeting point (name and address) is required');
       }
     }
@@ -3001,5 +3010,8 @@ exports.uploadPhotos = catchAsync(async (req, res, next) => {
     },
   });
 });
+
+// Exposed for unit tests (the submit path itself runs inside a transaction).
+exports.validateTourForReview = validateTourForReview;
 
 module.exports = exports;
