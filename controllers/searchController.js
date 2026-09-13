@@ -138,7 +138,10 @@ function scoreRecord(kind, item, nq, cq) {
     for (const qt of qTokens) {
       if (qt.length < 3) continue;
       if (nameTokens.some(nt => nt.startsWith(qt))) fuzzyHits++;
-      else if (nameTokens.some(nt => Math.abs(nt.length - qt.length) <= 1 && limitedEditDistance(qt, nt, 1) <= 1)) fuzzyHits++;
+      else {
+        const maxTokenDist = qt.length >= 5 ? 2 : 1;
+        if (nameTokens.some(nt => Math.abs(nt.length - qt.length) <= maxTokenDist && limitedEditDistance(qt, nt, maxTokenDist) <= maxTokenDist)) fuzzyHits++;
+      }
     }
     if (fuzzyHits && fuzzyHits >= Math.ceil(qTokens.length * 0.7)) score = 535 + fuzzyHits * 14;
   }
