@@ -525,22 +525,14 @@ async function getLikelySellOut(limit = DEFAULT_LIMIT, userId = null, ghanaOnly 
       });
     };
 
-    // City-scoped: location-relevant tours first, then global backfill.
+    // City-scoped: location-relevant tours only (no backfill — section title
+    // promises "in {Region}", so every card must match).
     if (city) {
       const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
       const localTours = locIds.length
         ? await prisma.tour.findMany({ where: { ...scope, id: { in: locIds } }, select: TOUR_SELECT })
         : [];
-      let backfillTours = [];
-      if (localTours.length < limit) {
-        backfillTours = await prisma.tour.findMany({
-          where: { ...scope, totalBookings: { gte: MIN_BOOKINGS_SELL_OUT }, id: { notIn: locIds } },
-          select: TOUR_SELECT,
-          orderBy: { totalBookings: 'desc' },
-          take: limit - localTours.length,
-        });
-      }
-      return mergeLocationFirst(scoreTours(localTours), scoreTours(backfillTours), limit);
+      return scoreTours(localTours).slice(0, limit);
     }
 
     // Global: velocity leaders, then most-booked fill.
@@ -646,7 +638,7 @@ async function getTopRated(limit = DEFAULT_LIMIT, userId = null, ghanaOnly = fal
       });
     };
 
-    // City-scoped: location-relevant tours first, then global backfill.
+    // City-scoped: location-relevant tours only (no backfill).
     if (city) {
       const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
       const localTours = locIds.length
@@ -657,16 +649,7 @@ async function getTopRated(limit = DEFAULT_LIMIT, userId = null, ghanaOnly = fal
             take: Math.max(limit, locIds.length),
           })
         : [];
-      let backfillTours = [];
-      if (localTours.length < limit) {
-        backfillTours = await prisma.tour.findMany({
-          where: { ...scope, id: { notIn: locIds } },
-          select: TOUR_SELECT,
-          orderBy,
-          take: limit - localTours.length,
-        });
-      }
-      return mergeLocationFirst(scoreTours(localTours), scoreTours(backfillTours), limit);
+      return scoreTours(localTours).slice(0, limit);
     }
 
     const tours = await prisma.tour.findMany({
@@ -795,30 +778,16 @@ async function getTrending(limit = DEFAULT_LIMIT, ghanaOnly = false, expeditionO
       };
     });
 
-    // City-scoped: location-relevant trending tours first, then backfill.
+    // City-scoped: location-relevant trending tours only (no backfill).
     if (city) {
       const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
       const locIdSet = new Set(locIds);
       const localIds = qualifiedIds.filter(id => locIdSet.has(id));
-      const backfillIds = qualifiedIds.filter(id => !locIdSet.has(id));
 
       const localTours = localIds.length
         ? await prisma.tour.findMany({ where: { ...scope, id: { in: localIds } }, select: TOUR_SELECT })
         : [];
-      let result = scoreTours(localTours).sort((a, b) => b._score - a._score);
-
-      if (result.length < limit && backfillIds.length) {
-        const backfillTours = await prisma.tour.findMany({ where: { ...scope, id: { in: backfillIds } }, select: TOUR_SELECT });
-        result = [...result, ...scoreTours(backfillTours).sort((a, b) => b._score - a._score)];
-      }
-
-      // Still short? Fall back to new experiences (already location-aware).
-      if (result.length < limit) {
-        const seen = new Set(result.map(t => t.id));
-        const fallback = await getNewExperiences(limit - result.length, ghanaOnly, expeditionOnly, city);
-        result = [...result, ...fallback.filter(t => !seen.has(t.id))];
-      }
-      return result.slice(0, limit);
+      return scoreTours(localTours).sort((a, b) => b._score - a._score).slice(0, limit);
     }
 
     const tours = await prisma.tour.findMany({
@@ -983,11 +952,10 @@ async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT, ghanaOnly
       return diversified;
     };
 
-    // City-scoped: location-relevant tours first, then global backfill.
+    // City-scoped: location-relevant tours only (no backfill).
     if (city) {
       const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
 
-      // 1) Every location-relevant tour (category affinity still boosts via xgboost)
       const localTours = locIds.length
         ? await prisma.tour.findMany({
             where: {
@@ -999,43 +967,7 @@ async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT, ghanaOnly
             take: Math.max(limit * 3, locIds.length),
           })
         : [];
-      const localScored = applyDiversity(buildScored(localTours), limit);
-
-      // 2) Backfill from other locations (personalized by category first)
-      let backfillScored = [];
-      if (localScored.length < limit) {
-        const backfillTours = await prisma.tour.findMany({
-          where: {
-            ...scope,
-            id: { notIn: [...locIds, ...viewedArr] },
-            ...categoryFilter,
-          },
-          select: TOUR_SELECT,
-          orderBy,
-          take: limit * 3,
-        });
-        backfillScored = applyDiversity(buildScored(backfillTours), limit - localScored.length);
-      }
-
-      // 3) Last resort: broaden backfill so the section is never empty
-      if (localScored.length + backfillScored.length < limit) {
-        const haveIds = new Set([...localScored, ...backfillScored].map(t => t.id));
-        const broadTours = await prisma.tour.findMany({
-          where: {
-            ...scope,
-            id: { notIn: [...haveIds, ...viewedArr] },
-          },
-          select: TOUR_SELECT,
-          orderBy: { totalBookings: 'desc' },
-          take: limit - localScored.length - backfillScored.length,
-        });
-        backfillScored = [
-          ...backfillScored,
-          ...applyDiversity(buildScored(broadTours), limit - localScored.length - backfillScored.length),
-        ];
-      }
-
-      return [...localScored, ...backfillScored].slice(0, limit);
+      return applyDiversity(buildScored(localTours), limit).slice(0, limit);
     }
 
     let tours = await prisma.tour.findMany({
@@ -1143,7 +1075,7 @@ async function getNewExperiences(limit = DEFAULT_LIMIT, ghanaOnly = false, exped
       mapTourCard(t.specialOfferTargets ? { ...t, specialOffers: t.specialOfferTargets } : t)
     );
 
-    // City-scoped: location-relevant tours first, then global backfill.
+    // City-scoped: location-relevant tours only (no backfill).
     if (city) {
       const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
       const localTours = locIds.length
@@ -1154,20 +1086,11 @@ async function getNewExperiences(limit = DEFAULT_LIMIT, ghanaOnly = false, exped
             take: limit * 2,
           })
         : [];
-      let backfillTours = [];
-      if (localTours.length < limit) {
-        backfillTours = await prisma.tour.findMany({
-          where: { ...scope, id: { notIn: locIds } },
-          select,
-          orderBy: { createdAt: 'desc' },
-          take: limit * 2,
-        });
-      }
 
       const seenPhotos = new Set();
-      const uniqueTours = [...dedupe(localTours, seenPhotos), ...dedupe(backfillTours, seenPhotos)];
+      const uniqueTours = dedupe(localTours, seenPhotos);
       if (uniqueTours.length < limit) {
-        for (const tour of [...localTours, ...backfillTours]) {
+        for (const tour of localTours) {
           if (!uniqueTours.includes(tour)) uniqueTours.push(tour);
           if (uniqueTours.length >= limit) break;
         }
