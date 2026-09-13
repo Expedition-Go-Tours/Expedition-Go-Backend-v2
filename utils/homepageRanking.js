@@ -1513,15 +1513,18 @@ async function getAttractionTours(attractionName, limit = DEFAULT_LIMIT, ghanaOn
     // 2. Find sibling attractions — duplicates under variant spellings
     //    (e.g. "Komfo" vs "Okomfo").  Match by the longest non-trivial word
     //    from the attraction name appearing in the slug.
+    const GENERIC_WORDS = new Set(['museum', 'center', 'centre', 'market', 'garden', 'gardens', 'park', 'village', 'castle', 'river', 'beach', 'island', 'hill', 'waterfall', 'shrine', 'palace', 'tower', 'bridge', 'square', 'monument', 'lighthouse']);
     const nameTokens = attractionName
       .toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/)
-      .filter(t => t.length >= 5)          // skip short words like "the", "of"
+      .filter(t => t.length >= 5 && !GENERIC_WORDS.has(t))          // skip short words and generic nouns
       .sort((a, b) => b.length - a.length); // longest first
 
-    const siblings = nameTokens.length > 0
+    // Only use the top 1-2 most specific tokens to avoid over-matching
+    const siblingTokens = nameTokens.slice(0, 2);
+    const siblings = siblingTokens.length > 0
       ? await prisma.attraction.findMany({
           where: {
-            OR: nameTokens.map(t => ({ slug: { contains: t, mode: 'insensitive' } })),
+            OR: siblingTokens.map(t => ({ slug: { contains: t, mode: 'insensitive' } })),
           },
           select: { name: true, aliases: true },
         })
