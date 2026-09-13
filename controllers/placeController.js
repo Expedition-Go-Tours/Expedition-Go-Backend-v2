@@ -64,10 +64,31 @@ exports.suggest = catchAsync(async (req, res) => {
     // Attractions — curated names matching the query.
     const attractions = await prisma.attraction.findMany({
       where: { status: 'ACTIVE', name: { contains: q, mode: 'insensitive' } },
-      select: { name: true, heroImage: true, tourCount: true },
+      select: { name: true, heroImage: true, tourCount: true, region: true },
       orderBy: [{ tourCount: 'desc' }, { avgRating: 'desc' }],
       take: limit,
     }).catch(() => []);
+
+    // Regions — match Ghana region names.
+    const GHANA_REGIONS = [
+      'Ahafo','Ashanti','Bono','Bono East','Central','Eastern',
+      'Greater Accra','North East','Northern','Oti','Savannah',
+      'Upper East','Upper West','Volta','Western','Western North',
+    ];
+    const nq = String(q || '').toLowerCase().trim();
+    const regionMatches = GHANA_REGIONS
+      .filter(r => r.toLowerCase().includes(nq) || `${r} Region`.toLowerCase().includes(nq))
+      .slice(0, 3)
+      .map(r => ({
+        id: `region-${r}`,
+        type: 'region',
+        name: `${r} Region`,
+        region: r,
+        city: null,
+        country: null,
+        tourCount: 0,
+        image: null,
+      }));
 
     // Tours — title matches, most reviewed first.
     const tours = await prisma.tour.findMany({
@@ -98,6 +119,7 @@ exports.suggest = catchAsync(async (req, res) => {
         tourCount: a.tourCount ?? 0,
         image: a.heroImage || null,
       })),
+      ...regionMatches,
     ].slice(0, limit * 2);
 
     const thingsToDo = tours.map((t) => ({

@@ -455,7 +455,7 @@ async function resolveSearchLocation(q) {
  * net in stages: nearby cities -> same country -> anywhere, so the rail is
  * always full but stays as relevant as possible.
  */
-async function fetchFallbackTours({ cities = [], country = null, excludeIds = [], limit = 8 }) {
+async function fetchFallbackTours({ cities = [], country = null, region = null, excludeIds = [], limit = 8 }) {
   const base = {
     status: 'ACTIVE',
     supplier: { supplierProfile: { status: 'ACTIVE' } },
@@ -470,6 +470,19 @@ async function fetchFallbackTours({ cities = [], country = null, excludeIds = []
       orderBy,
       take: limit,
     });
+  }
+
+  // Region fallback: match tours whose city is in the region
+  if (tours.length < limit && region) {
+    const have = [...new Set([...excludeIds, ...tours.map((t) => t.id)])];
+    const regionName = region.replace(' Region', '');
+    const more = await prisma.tour.findMany({
+      where: { ...base, id: { notIn: have }, city: { contains: regionName, mode: 'insensitive' } },
+      select: SEARCH_FALLBACK_SELECT,
+      orderBy,
+      take: limit - tours.length,
+    });
+    tours = [...tours, ...more];
   }
 
   if (tours.length < limit && country) {
@@ -506,11 +519,113 @@ async function fetchFallbackTours({ cities = [], country = null, excludeIds = []
  */
 exports.getSearchFallback = catchAsync(async (req, res) => {
   const q = (req.query.q || '').trim();
+  const attraction = (req.query.attraction || '').trim();
+  const region = (req.query.region || '').trim();
   const limit = Math.min(parseInt(req.query.limit) || 8, 12);
 
-  const cacheKey = `hp:fallback:${crypto.createHash('md5').update(`${q.toLowerCase()}:${limit}`).digest('hex')}`;
+  const lookup = attraction || region || q;
+  const cacheKey = `hp:fallback:${crypto.createHash('md5').update(`${lookup.toLowerCase()}:${attraction ? 'att' : region ? 'reg' : 'q'}:${limit}`).digest('hex')}`;
 
   const data = await cache.getOrSet(cacheKey, async () => {
+    // Attraction fallback: find tours whose attractions[] contain the name
+    if (attraction) {
+      const matchingTours = await prisma.tour.findMany({
+        where: {
+          status: 'ACTIVE',
+          attractions: { has: attraction },
+        },
+        select: {
+          id: true, title: true, slug: true, coverPhoto: true, city: true,
+          country: true, averageRating: true, reviewCount: true,
+        },
+        orderBy: [{ reviewCount: 'desc' }, { totalBookings: 'desc' }],
+        take: limit,
+      }).catch(() => []);
+
+      // Also search by title/description containing the attraction name
+      const titleMatches = await prisma.tour.findMany({
+        where: {
+          status: 'ACTIVE',
+          id: { notIn: matchingTours.map(t => t.id) },
+          OR: [
+            { title: { contains: attraction, mode: 'insensitive' } },
+            { description: { contains: attraction, mode: 'insensitive' } },
+          ],
+        },
+        select: {
+          id: true, title: true, slug: true, coverPhoto: true, city: true,
+          country: true, averageRating: true, reviewCount: true,
+        },
+        orderBy: [{ reviewCount: 'desc' }, { totalBookings: 'desc' }],
+        take: limit,
+      }).catch(() => []);
+
+      const recommended = [...matchingTours, ...titleMatches].slice(0, limit);
+
+      // Regional fallback if no direct matches
+      const attractionRecord = await prisma.attraction.findFirst({
+        where: { status: 'ACTIVE', name: { equals: attraction, mode: 'insensitive' } },
+        select: { region: true },
+      }).catch(() => null);
+
+      const regionFallback = attractionRecord?.region
+        ? await fetchFallbackTours({ region: attractionRecord.region, excludeIds: recommended.map(t => t.id), limit })
+        : [];
+
+      const youMayAlsoLike = regionFallback.length > 0
+        ? regionFallback
+        : await fetchFallbackTours({ excludeIds: recommended.map(t => t.id), limit });
+
+      return {
+        query: q,
+        attraction,
+        region: attractionRecord?.region || null,
+        resolvedLocation: null,
+        nearbyLocations: [],
+        recommended,
+        youMayAlsoLike,
+      };
+    }
+
+    // Region fallback: find tours in that region
+    if (region) {
+      const regionCities = await prisma.tour.groupBy({
+        by: ['city'],
+        where: { status: 'ACTIVE', city: { not: null } },
+        _count: { _all: true },
+      }).catch(() => []);
+
+      // Match cities to region (simple: city name contains region-related terms)
+      const recommended = await prisma.tour.findMany({
+        where: {
+          status: 'ACTIVE',
+          city: { contains: region.replace(' Region', ''), mode: 'insensitive' },
+        },
+        select: {
+          id: true, title: true, slug: true, coverPhoto: true, city: true,
+          country: true, averageRating: true, reviewCount: true,
+        },
+        orderBy: [{ reviewCount: 'desc' }, { totalBookings: 'desc' }],
+        take: limit,
+      }).catch(() => []);
+
+      const youMayAlsoLike = await fetchFallbackTours({
+        excludeIds: recommended.map(t => t.id),
+        limit,
+      });
+
+      return {
+        query: q,
+        attraction: null,
+        region,
+        resolvedLocation: null,
+        nearbyLocations: [],
+        recommended,
+        youMayAlsoLike,
+      };
+    }
+
+    // Default: city-based fallback (existing behaviour)
     const resolved = await resolveSearchLocation(q);
 
     const nearbyLocations = resolved?.lat != null
@@ -530,6 +645,8 @@ exports.getSearchFallback = catchAsync(async (req, res) => {
 
     return {
       query: q,
+      attraction: null,
+      region: null,
       resolvedLocation: resolved ? { city: resolved.city, country: resolved.country } : null,
       nearbyLocations,
       recommended,

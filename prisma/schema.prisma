@@ -1906,6 +1906,14 @@ model Attraction {
   heroImageTourId String? // which tour the image comes from
   imageRelevance  Float? // AI confidence 0.0–1.0
 
+  // Search fields (imported from curated attraction data)
+  town      String?   // Town / area name (e.g. "Accra", "Kumasi")
+  region    String?   // Region name (e.g. "Greater Accra", "Ashanti")
+  category  String?   // Category (e.g. "Heritage & History", "Nature & Wildlife")
+  aliases   String?   // Semicolon-separated search aliases
+  priority  String? @default("Standard") // "Very High" / "High" / "Medium" / "Standard"
+  placeType String?   // "Major City" / "Tourism Town / Area" / "Town" / etc.
+
   // Cached metadata (refreshed periodically)
   tourCount     Int    @default(0)
   avgRating     Float?
@@ -1926,6 +1934,9 @@ model Attraction {
   @@index([status])
   @@index([isFeatured])
   @@index([tourCount])
+  @@index([region])
+  @@index([category])
+  @@index([town])
 }
 
 // �?Request refund�? on completed trips — customer-initiated claim that goes
