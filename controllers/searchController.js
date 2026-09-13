@@ -146,9 +146,11 @@ function scoreRecord(kind, item, nq, cq) {
     if (fuzzyHits && fuzzyHits >= Math.ceil(qTokens.length * 0.7)) score = 535 + fuzzyHits * 14;
   }
 
-  // Apply kind bonuses
+  // Apply kind bonuses — places must rank above attractions for the same base
+  // score so that destination searches (e.g. "Accra") land on a place that
+  // carries a region, enabling homepage personalization.
   if (score) {
-    if (kind === 'place') score += (PRIORITY_WEIGHT[item.priority] || 0) + Math.min(item.attractionCount || 0, 20);
+    if (kind === 'place') score += 25 + Math.min(item.attractionCount || 0, 20);
     if (kind === 'attraction') score += 18;
     if (kind === 'region') score += 8;
   }
