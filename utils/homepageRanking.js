@@ -337,7 +337,103 @@ function mergeLocationFirst(local, backfill, limit) {
   };
   local.sort(byScore);
   backfill.sort(byScore);
+
   return [...local, ...backfill].slice(0, limit);
+}
+
+/**
+ * Backfill helper: when a city-scoped section has fewer tours than `limit`,
+ * fill the gap with tours from nearby regions (50km radius) then global tours.
+ *
+ * Returns `{ tours, backfill }` where `backfill` is null when no backfill was
+ * needed (the section title should not show a divider in that case).
+ *
+ * @param {Object} scope - Prisma where clause (status, platform scope)
+ * @param {string[]} excludeIds - Tour IDs already in local results
+ * @param {number} needed - How many more tours are needed
+ * @param {string} city - The searched city name
+ * @param {Function} scoreToursFn - Scoring function for the section
+ * @param {Object} [extraSelect] - Additional fields to select (e.g. specialOfferTargets)
+ * @returns {Promise<{tours: Array, backfill: {label: string, tours: Array} | null}>}
+ */
+async function getBackfillTours(scope, excludeIds, needed, city, scoreToursFn, extraSelect = null) {
+  if (needed <= 0) return { tours: [], backfill: null };
+
+  const excludeSet = new Set(excludeIds);
+  const select = extraSelect || TOUR_SELECT;
+
+  // Step 1: nearby tours (within 50km of city centroid from local tours)
+  const localCoords = excludeIds.length > 0
+    ? await prisma.tour.findMany({
+        where: { ...scope, id: { in: excludeIds }, latitude: { not: null }, longitude: { not: null } },
+        select: { latitude: true, longitude: true },
+        take: 20,
+      })
+    : [];
+
+  let nearbyTours = [];
+  if (localCoords.length > 0) {
+    const cLat = localCoords.reduce((s, t) => s + t.latitude, 0) / localCoords.length;
+    const cLng = localCoords.reduce((s, t) => s + t.longitude, 0) / localCoords.length;
+    const deltaLat = NEARBY_RADIUS_KM / 111;
+    const deltaLng = NEARBY_RADIUS_KM / ((111 * Math.cos((cLat * Math.PI) / 180)) || 1);
+
+    const nearbyCandidates = await prisma.tour.findMany({
+      where: {
+        ...scope,
+        id: { notIn: [...excludeSet] },
+        latitude: { gte: cLat - deltaLat, lte: cLat + deltaLat },
+        longitude: { gte: cLng - deltaLng, lte: cLng + deltaLng },
+      },
+      select,
+      orderBy: { totalBookings: 'desc' },
+      take: needed * 3,
+    });
+
+    nearbyTours = nearbyCandidates
+      .map((t) => ({
+        tour: t,
+        distance: (t.latitude != null && t.longitude != null)
+          ? haversineKm(cLat, cLng, t.latitude, t.longitude)
+          : Infinity,
+      }))
+      .filter((x) => x.distance <= NEARBY_RADIUS_KM)
+      .sort((a, b) => a.distance - b.distance)
+      .map((x) => x.tour)
+      .slice(0, needed);
+  }
+
+  let allBackfill = nearbyTours;
+  const backfillIds = new Set([...excludeSet, ...nearbyTours.map(t => t.id)]);
+
+  // Step 2: global fallback if still short
+  if (allBackfill.length < needed) {
+    const globalTours = await prisma.tour.findMany({
+      where: {
+        ...scope,
+        id: { notIn: [...backfillIds] },
+      },
+      select,
+      orderBy: { totalBookings: 'desc' },
+      take: needed - allBackfill.length,
+    });
+    allBackfill = [...allBackfill, ...globalTours];
+  }
+
+  // Score and tag backfill tours
+  const scored = scoreToursFn(allBackfill);
+  for (const t of scored) {
+    t._isBackfill = true;
+  }
+
+  // Determine label
+  const regionName = city || 'this area';
+  const label = `More experiences near ${regionName}`;
+
+  return {
+    tours: scored.slice(0, needed),
+    backfill: { label, tours: scored.slice(0, needed) },
+  };
 }
 
 /**
@@ -525,14 +621,25 @@ async function getLikelySellOut(limit = DEFAULT_LIMIT, userId = null, ghanaOnly 
       });
     };
 
-    // City-scoped: location-relevant tours only (no backfill — section title
-    // promises "in {Region}", so every card must match).
+    // City-scoped: location-relevant tours, backfill from nearby if short.
     if (city) {
       const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
       const localTours = locIds.length
         ? await prisma.tour.findMany({ where: { ...scope, id: { in: locIds } }, select: TOUR_SELECT })
         : [];
-      return scoreTours(localTours).slice(0, limit);
+      const scoredLocal = scoreTours(localTours).slice(0, limit);
+
+      if (scoredLocal.length >= limit) {
+        return { tours: scoredLocal, backfill: null };
+      }
+
+      // Backfill: nearby → global
+      const localIds = scoredLocal.map(t => t.id);
+      const { backfill } = await getBackfillTours(scope, localIds, limit - scoredLocal.length, city, scoreTours);
+      return {
+        tours: [...scoredLocal, ...(backfill ? backfill.tours : [])],
+        backfill,
+      };
     }
 
     // Global: velocity leaders, then most-booked fill.
@@ -638,7 +745,7 @@ async function getTopRated(limit = DEFAULT_LIMIT, userId = null, ghanaOnly = fal
       });
     };
 
-    // City-scoped: location-relevant tours only (no backfill).
+    // City-scoped: location-relevant tours, backfill from nearby if short.
     if (city) {
       const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
       const localTours = locIds.length
@@ -649,7 +756,19 @@ async function getTopRated(limit = DEFAULT_LIMIT, userId = null, ghanaOnly = fal
             take: Math.max(limit, locIds.length),
           })
         : [];
-      return scoreTours(localTours).slice(0, limit);
+      const scoredLocal = scoreTours(localTours).slice(0, limit);
+
+      if (scoredLocal.length >= limit) {
+        return { tours: scoredLocal, backfill: null };
+      }
+
+      // Backfill: nearby → global
+      const localIds = scoredLocal.map(t => t.id);
+      const { backfill } = await getBackfillTours(scope, localIds, limit - scoredLocal.length, city, scoreTours);
+      return {
+        tours: [...scoredLocal, ...(backfill ? backfill.tours : [])],
+        backfill,
+      };
     }
 
     const tours = await prisma.tour.findMany({
@@ -778,7 +897,7 @@ async function getTrending(limit = DEFAULT_LIMIT, ghanaOnly = false, expeditionO
       };
     });
 
-    // City-scoped: location-relevant trending tours only (no backfill).
+    // City-scoped: location-relevant trending tours, backfill from nearby if short.
     if (city) {
       const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
       const locIdSet = new Set(locIds);
@@ -787,7 +906,44 @@ async function getTrending(limit = DEFAULT_LIMIT, ghanaOnly = false, expeditionO
       const localTours = localIds.length
         ? await prisma.tour.findMany({ where: { ...scope, id: { in: localIds } }, select: TOUR_SELECT })
         : [];
-      return scoreTours(localTours).sort((a, b) => b._score - a._score).slice(0, limit);
+      const scoredLocal = scoreTours(localTours).sort((a, b) => b._score - a._score).slice(0, limit);
+
+      if (scoredLocal.length >= limit) {
+        return { tours: scoredLocal, backfill: null };
+      }
+
+      // Backfill: nearby → global (use scored tours from qualifiedIds, not raw DB)
+      const localIdSet = new Set(scoredLocal.map(t => t.id));
+      const nearbyQualified = qualifiedIds.filter(id => !localIdSet.has(id));
+      const nearbyTours = nearbyQualified.length > 0
+        ? await prisma.tour.findMany({ where: { ...scope, id: { in: nearbyQualified } }, select: TOUR_SELECT })
+        : [];
+      const scoredNearby = scoreTours(nearbyTours).sort((a, b) => b._score - a._score);
+
+      const allBackfill = scoredLocal.length + scoredNearby.length >= limit
+        ? scoredNearby.slice(0, limit - scoredLocal.length)
+        : scoredNearby;
+
+      if (allBackfill.length >= limit - scoredLocal.length) {
+        // Enough from nearby qualified tours
+        const backfillTours = allBackfill.slice(0, limit - scoredLocal.length);
+        return {
+          tours: [...scoredLocal, ...backfillTours],
+          backfill: backfillTours.length > 0 ? { label: `More experiences near ${city}`, tours: backfillTours } : null,
+        };
+      }
+
+      // Still short — fill with global tours from the global pool
+      const globalPool = await prisma.tour.findMany({ where: scope, select: TOUR_SELECT, orderBy: { totalBookings: 'desc' }, take: limit * 2 });
+      const usedIds = new Set([...localIdSet, ...scoredLocal.map(t => t.id), ...scoredNearby.map(t => t.id)]);
+      const globalRemaining = globalPool.filter(t => !usedIds.has(t.id));
+      const scoredGlobal = scoreTours(globalRemaining);
+
+      const backfillTours = [...scoredNearby, ...scoredGlobal].slice(0, limit - scoredLocal.length);
+      return {
+        tours: [...scoredLocal, ...backfillTours],
+        backfill: backfillTours.length > 0 ? { label: `More experiences near ${city}`, tours: backfillTours } : null,
+      };
     }
 
     const tours = await prisma.tour.findMany({
@@ -952,7 +1108,7 @@ async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT, ghanaOnly
       return diversified;
     };
 
-    // City-scoped: location-relevant tours only (no backfill).
+    // City-scoped: location-relevant tours, backfill from nearby if short.
     if (city) {
       const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
 
@@ -967,7 +1123,23 @@ async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT, ghanaOnly
             take: Math.max(limit * 3, locIds.length),
           })
         : [];
-      return applyDiversity(buildScored(localTours), limit).slice(0, limit);
+      const scoredLocal = applyDiversity(buildScored(localTours), limit).slice(0, limit);
+
+      if (scoredLocal.length >= limit) {
+        return { tours: scoredLocal, backfill: null };
+      }
+
+      // Backfill: nearby → global
+      const localIds = scoredLocal.map(t => t.id);
+      const backfillScope = {
+        ...scope,
+        ...(viewedArr.length ? { id: { notIn: viewedArr } } : {}),
+      };
+      const { backfill } = await getBackfillTours(backfillScope, localIds, limit - scoredLocal.length, city, buildScored);
+      return {
+        tours: [...scoredLocal, ...(backfill ? backfill.tours : [])],
+        backfill,
+      };
     }
 
     let tours = await prisma.tour.findMany({
@@ -1075,7 +1247,7 @@ async function getNewExperiences(limit = DEFAULT_LIMIT, ghanaOnly = false, exped
       mapTourCard(t.specialOfferTargets ? { ...t, specialOffers: t.specialOfferTargets } : t)
     );
 
-    // City-scoped: location-relevant tours only (no backfill).
+    // City-scoped: location-relevant tours, backfill from nearby if short.
     if (city) {
       const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
       const localTours = locIds.length
@@ -1095,7 +1267,27 @@ async function getNewExperiences(limit = DEFAULT_LIMIT, ghanaOnly = false, exped
           if (uniqueTours.length >= limit) break;
         }
       }
-      return toCards(uniqueTours.slice(0, limit));
+      const scoredLocal = toCards(uniqueTours.slice(0, limit));
+
+      if (scoredLocal.length >= limit) {
+        return { tours: scoredLocal, backfill: null };
+      }
+
+      // Backfill: recent tours from nearby → global
+      const localIdSet = new Set(uniqueTours.map(t => t.id));
+      const backfillTours = await prisma.tour.findMany({
+        where: { ...scope, id: { notIn: [...localIdSet] } },
+        select,
+        orderBy: { createdAt: 'desc' },
+        take: limit - scoredLocal.length,
+      });
+      const backfillDeduped = dedupe(backfillTours, seenPhotos);
+      const scoredBackfill = toCards(backfillDeduped.slice(0, limit - scoredLocal.length));
+
+      return {
+        tours: [...scoredLocal, ...scoredBackfill],
+        backfill: scoredBackfill.length > 0 ? { label: `More experiences near ${city}`, tours: scoredBackfill } : null,
+      };
     }
 
     const tours = await prisma.tour.findMany({
@@ -2159,6 +2351,7 @@ module.exports = {
   getLocationTourIds,
   locationTier,
   mergeLocationFirst,
+  getBackfillTours,
   escapeLike,
   extractStartingPrice,
   KEYWORD_CATEGORIES,

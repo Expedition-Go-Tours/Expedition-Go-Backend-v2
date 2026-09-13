@@ -65,10 +65,12 @@ exports.getSellOut = catchAsync(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 20);
   const city = req.query.city || null;
 
-  // City-scoped: compute live
+  // City-scoped: compute live (returns { tours, backfill })
   if (city) {
-    const tours = await ranking.getLikelySellOut(limit, null, false, true, city);
-    return res.json({ status: 'success', data: { tours } });
+    const result = await ranking.getLikelySellOut(limit, null, false, true, city);
+    const tours = result.tours || result;
+    const backfill = result.backfill || null;
+    return res.json({ status: 'success', data: { tours, backfill } });
   }
 
   // Global: try pre-computed cache
@@ -89,8 +91,10 @@ exports.getTopRated = catchAsync(async (req, res) => {
   const city = req.query.city || null;
 
   if (city) {
-    const tours = await ranking.getTopRated(limit, null, false, true, city);
-    return res.json({ status: 'success', data: { tours } });
+    const result = await ranking.getTopRated(limit, null, false, true, city);
+    const tours = result.tours || result;
+    const backfill = result.backfill || null;
+    return res.json({ status: 'success', data: { tours, backfill } });
   }
 
   let tours = await readPrecomputed(SECTION_KEYS.topRated);
@@ -110,8 +114,10 @@ exports.getTrending = catchAsync(async (req, res) => {
   const city = req.query.city || null;
 
   if (city) {
-    const tours = await ranking.getTrending(limit, false, true, city);
-    return res.json({ status: 'success', data: { tours } });
+    const result = await ranking.getTrending(limit, false, true, city);
+    const tours = result.tours || result;
+    const backfill = result.backfill || null;
+    return res.json({ status: 'success', data: { tours, backfill } });
   }
 
   let tours = await readPrecomputed(SECTION_KEYS.trending);
@@ -139,8 +145,10 @@ exports.getRecommended = catchAsync(async (req, res) => {
 
   // City-scoped or personalized: compute live
   if (city || userId || lat) {
-    const tours = await ranking.getRecommended(userId, lat, lng, limit, false, true, city);
-    return res.json({ status: 'success', data: { tours } });
+    const result = await ranking.getRecommended(userId, lat, lng, limit, false, true, city);
+    const tours = result.tours || result;
+    const backfill = result.backfill || null;
+    return res.json({ status: 'success', data: { tours, backfill } });
   }
 
   // Anonymous global: try pre-computed cache
@@ -161,8 +169,10 @@ exports.getNew = catchAsync(async (req, res) => {
   const city = req.query.city || null;
 
   if (city) {
-    const tours = await ranking.getNewExperiences(limit, false, true, city);
-    return res.json({ status: 'success', data: { tours } });
+    const result = await ranking.getNewExperiences(limit, false, true, city);
+    const tours = result.tours || result;
+    const backfill = result.backfill || null;
+    return res.json({ status: 'success', data: { tours, backfill } });
   }
 
   let tours = await readPrecomputed(SECTION_KEYS.new);
@@ -515,8 +525,9 @@ exports.getHomepage = catchAsync(async (req, res) => {
   const city = req.query.city || null;
 
   // City-scoped: compute live with city filter (no pre-computed city keys)
+  // Ranking functions return { tours, backfill } when city-scoped.
   if (city) {
-    const [sellOut, topRated, trending, recommended, newExp, attractions, mood, destinations] =
+    const [sellOutResult, topRatedResult, trendingResult, recommendedResult, newExpResult, attractions, mood, destinations] =
       await Promise.all([
         ranking.getLikelySellOut(12, null, false, true, city),
         ranking.getTopRated(12, null, false, true, city),
@@ -527,6 +538,14 @@ exports.getHomepage = catchAsync(async (req, res) => {
         ranking.getMoodKeywords(userId, 8, false, true, city),
         ranking.getPopularDestinations(10, userId, lat, lng, false, true, city),
       ]);
+
+    // Normalize: functions return { tours, backfill } or plain array
+    const norm = (r) => ({ tours: r.tours || r, backfill: r.backfill || null });
+    const sellOut = norm(sellOutResult);
+    const topRated = norm(topRatedResult);
+    const trending = norm(trendingResult);
+    const recommended = norm(recommendedResult);
+    const newExp = norm(newExpResult);
 
     // Compute offers with city filter
     const offerCacheKey = `hp:sections:offers:${city.toLowerCase()}`;
@@ -548,11 +567,16 @@ exports.getHomepage = catchAsync(async (req, res) => {
     return res.json({
       status: 'success',
       data: {
-        sellOut,
-        topRated,
-        trending,
-        recommended,
-        newExperiences: newExp,
+        sellOut: sellOut.tours,
+        sellOutBackfill: sellOut.backfill,
+        topRated: topRated.tours,
+        topRatedBackfill: topRated.backfill,
+        trending: trending.tours,
+        trendingBackfill: trending.backfill,
+        recommended: recommended.tours,
+        recommendedBackfill: recommended.backfill,
+        newExperiences: newExp.tours,
+        newExperiencesBackfill: newExp.backfill,
         attractions,
         mood,
         destinations,
