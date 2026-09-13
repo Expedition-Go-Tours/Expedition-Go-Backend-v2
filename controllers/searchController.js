@@ -125,7 +125,7 @@ function scoreRecord(kind, item, nq, cq) {
 
   // Tier 10: edit distance
   if (!score && cq.length >= 3 && cq.length <= 32 && cname.length <= 46) {
-    const maxDist = Math.max(1, Math.min(3, Math.floor(cq.length * 0.24)));
+    const maxDist = Math.max(cq.length >= 5 ? 2 : 1, Math.min(3, Math.floor(cq.length * 0.30)));
     const d = limitedEditDistance(cq, cname, maxDist);
     if (d <= maxDist) score = 610 - d * 42;
   }
