@@ -1545,10 +1545,17 @@ async function getAttractionTours(attractionName, limit = DEFAULT_LIMIT, ghanaOn
     if (attraction) addVariants(variants, attraction);
     for (const sib of siblings) addVariants(variants, sib);
 
+    // Also add trimmed versions to handle trailing/leading spaces in tour attractions arrays
+    const trimmedVariants = new Set();
+    for (const v of variants) {
+      const trimmed = v.trim();
+      if (trimmed) trimmedVariants.add(trimmed);
+    }
+
     const tours = await prisma.tour.findMany({
       where: {
         status: 'ACTIVE',
-        attractions: { hasSome: [...variants] },
+        attractions: { hasSome: [...trimmedVariants] },
         supplier: { supplierProfile: { status: 'ACTIVE' } },
         ...ghanaScope(ghanaOnly),
         ...expeditionScope(expeditionOnly),
