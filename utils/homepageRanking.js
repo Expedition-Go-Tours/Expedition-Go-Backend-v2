@@ -1499,11 +1499,7 @@ async function getAttractionTours(attractionName, limit = DEFAULT_LIMIT, ghanaOn
   const ttl = 300;
 
   return cache.getOrSet(cacheKey, async () => {
-    // Look up the attraction record to get all name variants (aliases).
-    // Tours may reference the attraction under a slightly different spelling
-    // (e.g. "Okomfo Anokye Sword Site" in the tour vs "Komfo Anokye Sword
-    // Site" in the attraction DB).  Matching only the canonical name misses
-    // tours that use a variant.
+    // 1. Find the canonical attraction + its aliases.
     const attraction = await prisma.attraction.findFirst({
       where: {
         OR: [
@@ -1514,15 +1510,37 @@ async function getAttractionTours(attractionName, limit = DEFAULT_LIMIT, ghanaOn
       select: { name: true, aliases: true },
     });
 
-    // Build the full set of name variants: canonical name + each alias token.
-    const variants = new Set([attractionName]);
-    if (attraction?.name) variants.add(attraction.name);
-    if (attraction?.aliases) {
-      for (const a of attraction.aliases.split(/[,;|]/)) {
-        const trimmed = a.trim();
-        if (trimmed) variants.add(trimmed);
+    // 2. Find sibling attractions — duplicates under variant spellings
+    //    (e.g. "Komfo" vs "Okomfo").  Match by the longest non-trivial word
+    //    from the attraction name appearing in the slug.
+    const nameTokens = attractionName
+      .toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/)
+      .filter(t => t.length >= 5)          // skip short words like "the", "of"
+      .sort((a, b) => b.length - a.length); // longest first
+
+    const siblings = nameTokens.length > 0
+      ? await prisma.attraction.findMany({
+          where: {
+            OR: nameTokens.map(t => ({ slug: { contains: t, mode: 'insensitive' } })),
+          },
+          select: { name: true, aliases: true },
+        })
+      : [];
+
+    // 3. Build the full variant set: canonical name + all alias tokens + all sibling names/aliases.
+    const addVariants = (set, att) => {
+      if (att.name) set.add(att.name);
+      if (att.aliases) {
+        for (const a of att.aliases.split(/[,;|]/)) {
+          const trimmed = a.trim();
+          if (trimmed) set.add(trimmed);
+        }
       }
-    }
+    };
+
+    const variants = new Set([attractionName]);
+    if (attraction) addVariants(variants, attraction);
+    for (const sib of siblings) addVariants(variants, sib);
 
     const tours = await prisma.tour.findMany({
       where: {
