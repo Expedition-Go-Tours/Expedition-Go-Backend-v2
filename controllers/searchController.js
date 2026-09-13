@@ -307,14 +307,23 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
       const tourOrConditions = [
         { title: { contains: q, mode: 'insensitive' } },
         { description: { contains: q, mode: 'insensitive' } },
-        { attractions: { has: q } },
         { tags: { has: q } },
       ];
-      // Also match individual tokens against attractions/tags for multi-word queries
       for (const token of tokens) {
         tourOrConditions.push({ title: { contains: token, mode: 'insensitive' } });
-        tourOrConditions.push({ attractions: { has: token } });
         tourOrConditions.push({ tags: { has: token } });
+      }
+
+      // Collect all attraction names/aliases found in section 1 to match against tour attractions array
+      const attractionNames = scored
+        .filter(r => r.kind === 'attraction')
+        .flatMap(r => {
+          const names = [r.entity.name];
+          if (r.entity.aliases) names.push(...r.entity.aliases.split(/[;,]/).map(s => s.trim()).filter(Boolean));
+          return names;
+        });
+      if (attractionNames.length > 0) {
+        tourOrConditions.push({ attractions: { hasSome: attractionNames } });
       }
 
       const tours = await prisma.tour.findMany({
