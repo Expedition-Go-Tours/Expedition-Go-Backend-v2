@@ -322,7 +322,8 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
           if (r.entity.aliases) names.push(...r.entity.aliases.split(/[;,]/).map(s => s.trim()).filter(Boolean));
           return names;
         });
-      if (attractionNames.length > 0) {
+      const tourFromAttractions = attractionNames.length > 0;
+      if (tourFromAttractions) {
         tourOrConditions.push({ attractions: { hasSome: attractionNames } });
       }
 
@@ -345,7 +346,11 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
           aliases: '',
         };
         const score = scoreRecord('tour', item, nq, cq);
-        if (score > 0) scored.push(buildSuggestion('tour', { ...item, slug: t.slug, coverPhoto: t.coverPhoto }, score + 12));
+        // Tours matched via attractions array get an attraction-visit boost
+        const attractionBoost = (score === 0 && tourFromAttractions) ? 15 : 0;
+        if (score > 0 || attractionBoost > 0) {
+          scored.push(buildSuggestion('tour', { ...item, slug: t.slug, coverPhoto: t.coverPhoto }, score + 12 + attractionBoost));
+        }
       }
     } catch {}
 
