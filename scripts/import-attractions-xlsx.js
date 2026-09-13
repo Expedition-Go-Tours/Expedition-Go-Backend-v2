@@ -69,11 +69,13 @@ function slugify(name) {
     .replace(/^-|-$/g, '');
 }
 
-/** Extract sheet1.xml content from the xlsx zip using PowerShell */
+/** Extract sheet1.xml content from the xlsx zip (cross-platform: unzip on Linux, PowerShell on Windows) */
 function extractSheetFromXlsx(xlsxPath) {
-  // Write a small PowerShell script that extracts the XML and writes it to a temp file
   const tmpXml = path.resolve(__dirname, '_tmp_sheet1.xml');
-  const ps = `
+  const isWin = process.platform === 'win32';
+
+  if (isWin) {
+    const ps = `
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [System.IO.Compression.ZipFile]::OpenRead("${xlsxPath.replace(/\\/g, '\\\\')}")
 $sh = $zip.GetEntry("xl/worksheets/sheet1.xml")
@@ -83,13 +85,17 @@ $sr.Close()
 $zip.Dispose()
 [System.IO.File]::WriteAllText("${tmpXml.replace(/\\/g, '\\\\')}", $raw)
 `;
-  const psTmp = path.resolve(__dirname, '_tmp_extract.ps1');
-  fs.writeFileSync(psTmp, ps, 'utf8');
-  try {
-    execSync(`powershell -ExecutionPolicy Bypass -File "${psTmp}"`, { stdio: 'pipe' });
-  } finally {
-    try { fs.unlinkSync(psTmp); } catch {}
+    const psTmp = path.resolve(__dirname, '_tmp_extract.ps1');
+    fs.writeFileSync(psTmp, ps, 'utf8');
+    try {
+      execSync(`powershell -ExecutionPolicy Bypass -File "${psTmp}"`, { stdio: 'pipe' });
+    } finally {
+      try { fs.unlinkSync(psTmp); } catch {}
+    }
+  } else {
+    execSync(`unzip -p "${xlsxPath}" xl/worksheets/sheet1.xml > "${tmpXml}"`, { stdio: 'pipe' });
   }
+
   const xml = fs.readFileSync(tmpXml, 'utf8');
   try { fs.unlinkSync(tmpXml); } catch {}
   return xml;
