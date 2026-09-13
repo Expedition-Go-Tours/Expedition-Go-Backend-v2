@@ -231,14 +231,21 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
     const scopeFilter = scopeWhere(scope);
     const scored = [];
 
-    // 1. Attractions — match name + aliases
+    // 1. Attractions — match name + aliases (full query + individual tokens for typo tolerance)
     try {
+      const tokens = nq.split(' ').filter(t => t.length >= 3);
+      const nameOrConditions = [
+        { name: { contains: q, mode: 'insensitive' } },
+        { aliases: { contains: q, mode: 'insensitive' } },
+        { town: { contains: q, mode: 'insensitive' } },
+      ];
+      for (const token of tokens) {
+        nameOrConditions.push({ name: { contains: token, mode: 'insensitive' } });
+        nameOrConditions.push({ aliases: { contains: token, mode: 'insensitive' } });
+      }
+
       const attractions = await prisma.attraction.findMany({
-        where: { status: 'ACTIVE', OR: [
-          { name: { contains: q, mode: 'insensitive' } },
-          { aliases: { contains: q, mode: 'insensitive' } },
-          { town: { contains: q, mode: 'insensitive' } },
-        ] },
+        where: { status: 'ACTIVE', OR: nameOrConditions },
         select: {
           name: true, slug: true, town: true, region: true, category: true,
           aliases: true, priority: true, placeType: true, tourCount: true,
