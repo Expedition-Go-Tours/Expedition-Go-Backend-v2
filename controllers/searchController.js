@@ -302,13 +302,23 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
       }
     }
 
-    // 4. Tours — title + description match
+    // 4. Tours — title + description + attractions array + tags match
     try {
+      const tourOrConditions = [
+        { title: { contains: q, mode: 'insensitive' } },
+        { description: { contains: q, mode: 'insensitive' } },
+        { attractions: { has: q } },
+        { tags: { has: q } },
+      ];
+      // Also match individual tokens against attractions/tags for multi-word queries
+      for (const token of tokens) {
+        tourOrConditions.push({ title: { contains: token, mode: 'insensitive' } });
+        tourOrConditions.push({ attractions: { has: token } });
+        tourOrConditions.push({ tags: { has: token } });
+      }
+
       const tours = await prisma.tour.findMany({
-        where: { status: 'ACTIVE', ...scopeFilter, OR: [
-          { title: { contains: q, mode: 'insensitive' } },
-          { description: { contains: q, mode: 'insensitive' } },
-        ] },
+        where: { status: 'ACTIVE', ...scopeFilter, OR: tourOrConditions },
         select: {
           id: true, title: true, slug: true, city: true, country: true, region: true,
           coverPhoto: true, averageRating: true, reviewCount: true,
