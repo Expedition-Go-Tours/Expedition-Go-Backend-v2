@@ -203,6 +203,12 @@ function attractionSubtitle(a) {
   return `Attraction site in ${a.region || 'Ghana'} Region`;
 }
 
+/* ── Normalise region names: strip trailing " Region" for consistency ─── */
+function normaliseRegion(r) {
+  if (!r) return '';
+  return r.replace(/\s+region$/i, '').trim();
+}
+
 /* ── Main handler ───────────────────────────────────────────────────────── */
 exports.unifiedSearch = catchAsync(async (req, res) => {
   const q = (req.query.q || '').trim();
@@ -247,7 +253,7 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
     // 2. Places — groupBy city on tours (existing pattern from placeController)
     try {
       const cities = await prisma.tour.groupBy({
-        by: ['city', 'country'],
+        by: ['city', 'country', 'region'],
         where: { status: 'ACTIVE', city: { contains: q, mode: 'insensitive' }, ...scopeFilter },
         _count: { _all: true },
         orderBy: { _count: { city: 'desc' } },
@@ -258,7 +264,7 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
         if (!c.city) continue;
         const item = {
           name: c.city,
-          region: '',
+          region: normaliseRegion(c.region),
           priority: 'Standard',
           attractionCount: c._count?._all ?? 0,
           placeType: 'City / Town',
@@ -292,7 +298,7 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
           { description: { contains: q, mode: 'insensitive' } },
         ] },
         select: {
-          id: true, title: true, slug: true, city: true, country: true,
+          id: true, title: true, slug: true, city: true, country: true, region: true,
           coverPhoto: true, averageRating: true, reviewCount: true,
           totalBookings: true, description: true,
         },
@@ -303,7 +309,7 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
       for (const t of tours) {
         const item = {
           name: t.title,
-          region: '',
+          region: normaliseRegion(t.region),
           city: t.city || '',
           aliases: '',
         };
