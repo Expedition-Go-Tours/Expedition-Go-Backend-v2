@@ -235,6 +235,7 @@ async function getLocationTourIds(city, ghanaOnly = false, expeditionOnly = fals
         : Prisma.empty;
 
     const escaped = escapeLike(lower);
+    const regionWithSuffix = escaped + ' region';
     const likeStarts = `${escaped} %`;
     const likeEnds = `% ${escaped}`;
     const likeWord = `% ${escaped} %`;
@@ -249,6 +250,7 @@ async function getLocationTourIds(city, ghanaOnly = false, expeditionOnly = fals
         AND (
           LOWER(t.city) = ${lower}
           OR LOWER(t.region) = ${lower}
+          OR LOWER(t.region) LIKE ${regionWithSuffix} ESCAPE '\\'
           OR LOWER(t.title) LIKE ${likeStarts} ESCAPE '\\'
           OR LOWER(t.title) LIKE ${likeEnds} ESCAPE '\\'
           OR LOWER(t.title) LIKE ${likeWord} ESCAPE '\\'
@@ -293,6 +295,12 @@ function locationTier(tour, city) {
   if (!target) return null;
 
   if (tour.city && tour.city.toLowerCase() === target) return 1;
+
+  // Region match — DB stores "Ashanti Region", input is "ashanti"
+  if (tour.region) {
+    const r = tour.region.toLowerCase();
+    if (r === target || r.replace(/\s+region$/, '') === target) return 1;
+  }
 
   const matchesArray = (arr) => {
     if (!Array.isArray(arr)) return false;
@@ -1728,12 +1736,16 @@ async function getMoodKeywords(userId, limit = 8, ghanaOnly = false, expeditionO
     const MIN_LOCATION_TOURS = 8;
     let allTours;
     if (city) {
-      const cityTours = await prisma.tour.findMany({
-        where: { ...scope, city },
-        select: MOOD_TOUR_SELECT,
-        orderBy: { totalBookings: 'desc' },
-        take: 200,
-      });
+      // Use getLocationTourIds to match by region name (handles "Ashanti" → "Ashanti Region")
+      const locationTourIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
+      const cityTours = locationTourIds.length > 0
+        ? await prisma.tour.findMany({
+            where: { ...scope, id: { in: locationTourIds } },
+            select: MOOD_TOUR_SELECT,
+            orderBy: { totalBookings: 'desc' },
+            take: 200,
+          })
+        : [];
 
       if (cityTours.length >= MIN_LOCATION_TOURS) {
         allTours = cityTours;

@@ -374,18 +374,18 @@ exports.loosePlaceResolve = catchAsync(async (req, res) => {
   // Try places (cities)
   try {
     const cities = await prisma.tour.groupBy({
-      by: ['city'],
-      where: { status: 'ACTIVE', city: { contains: q, mode: 'insensitive' } },
-      _count: { _all: true },
-      take: 5,
-    }).catch(() => []);
+        by: ['city', 'region'],
+        where: { status: 'ACTIVE', city: { contains: q, mode: 'insensitive' } },
+        _count: { _all: true },
+        take: 5,
+      }).catch(() => []);
 
     for (const c of cities) {
       if (!c.city) continue;
-      const item = { name: c.city, region: '' };
+      const item = { name: c.city, region: normaliseRegion(c.region) };
       const score = scoreRecord('place', item, nq, cq);
       if (score >= 500) {
-        return res.json({ status: 'success', data: { query: q, guess: c.city, region: null, kind: 'place', score } });
+        return res.json({ status: 'success', data: { query: q, guess: c.city, region: item.region, kind: 'place', score } });
       }
     }
   } catch {}
