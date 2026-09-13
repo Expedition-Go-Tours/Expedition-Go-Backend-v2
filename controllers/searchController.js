@@ -232,10 +232,10 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
   const data = await cache.getOrSet(cacheKey, async () => {
     const scopeFilter = scopeWhere(scope);
     const scored = [];
+    const tokens = nq.split(' ').filter(t => t.length >= 3);
 
     // 1. Attractions — match name + aliases (full query + individual tokens for typo tolerance)
     try {
-      const tokens = nq.split(' ').filter(t => t.length >= 3);
       const nameOrConditions = [
         { name: { contains: q, mode: 'insensitive' } },
         { aliases: { contains: q, mode: 'insensitive' } },
