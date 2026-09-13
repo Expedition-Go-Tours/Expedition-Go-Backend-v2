@@ -336,9 +336,8 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
         },
         orderBy: [{ reviewCount: 'desc' }, { totalBookings: 'desc' }],
         take: 20,
-      }).catch(e => { console.error('[search] tour query error:', e.message); return []; });
+      }).catch(() => []);
 
-      console.log('[search] q=' + q, 'tourOrConditions=' + tourOrConditions.length, 'tours=' + tours.length, 'attractionNames=' + JSON.stringify(attractionNames.slice(0, 5)));
       for (const t of tours) {
         const item = {
           name: t.title,
