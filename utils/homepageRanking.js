@@ -1499,10 +1499,35 @@ async function getAttractionTours(attractionName, limit = DEFAULT_LIMIT, ghanaOn
   const ttl = 300;
 
   return cache.getOrSet(cacheKey, async () => {
+    // Look up the attraction record to get all name variants (aliases).
+    // Tours may reference the attraction under a slightly different spelling
+    // (e.g. "Okomfo Anokye Sword Site" in the tour vs "Komfo Anokye Sword
+    // Site" in the attraction DB).  Matching only the canonical name misses
+    // tours that use a variant.
+    const attraction = await prisma.attraction.findFirst({
+      where: {
+        OR: [
+          { name: { equals: attractionName, mode: 'insensitive' } },
+          { aliases: { contains: attractionName, mode: 'insensitive' } },
+        ],
+      },
+      select: { name: true, aliases: true },
+    });
+
+    // Build the full set of name variants: canonical name + each alias token.
+    const variants = new Set([attractionName]);
+    if (attraction?.name) variants.add(attraction.name);
+    if (attraction?.aliases) {
+      for (const a of attraction.aliases.split(/[,;|]/)) {
+        const trimmed = a.trim();
+        if (trimmed) variants.add(trimmed);
+      }
+    }
+
     const tours = await prisma.tour.findMany({
       where: {
         status: 'ACTIVE',
-        attractions: { has: attractionName },
+        attractions: { hasSome: [...variants] },
         supplier: { supplierProfile: { status: 'ACTIVE' } },
         ...ghanaScope(ghanaOnly),
         ...expeditionScope(expeditionOnly),
