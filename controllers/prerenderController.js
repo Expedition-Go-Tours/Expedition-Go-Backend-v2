@@ -297,6 +297,11 @@ function handleStaticPage(path) {
       description: 'Join the Expedition-Go Tours team. Explore career opportunities in Ghana\'s growing tourism industry.',
       keywords: 'Expedition-Go Tours careers, Ghana tourism jobs',
     },
+    '/blog': {
+      title: 'Travel Stories & Blog',
+      description: 'Read inspiring travel stories from Ghana. Discover hidden gems, local culture, food experiences, wildlife adventures, and travel tips for your Ghana vacation.',
+      keywords: 'Ghana travel blog, Ghana travel stories, Ghana travel guide, things to do in Ghana',
+    },
   };
 
   const page = pages[path];
@@ -337,6 +342,20 @@ exports.prerender = async (req, res) => {
       html = await handleTourPage(slug);
     } else if (path === '/tours') {
       html = await handleListingsPage(place);
+    } else if (path.startsWith('/supplier/')) {
+      const name = decodeURIComponent(path.replace('/supplier/', ''));
+      html = buildHtml({
+        title: `${name} - Ghana Tour Operator`,
+        description: `Book tours with ${name} on Expedition-Go Tours. Authentic Ghana tours and experiences.`,
+        keywords: `${name}, Ghana tour operator, Ghana tours`,
+        image: DEFAULT_IMAGE,
+        url: `${SITE_URL}${path}`,
+        canonical: `${SITE_URL}${path}`,
+        jsonLd: [buildBreadcrumbSchema([
+          { name: 'Home', url: `${SITE_URL}/` },
+          { name: name, url: `${SITE_URL}${path}` },
+        ])],
+      });
     } else {
       html = handleStaticPage(path);
     }
