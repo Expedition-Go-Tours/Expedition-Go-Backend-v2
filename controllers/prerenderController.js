@@ -16,10 +16,12 @@ const DEFAULT_IMAGE = 'https://res.cloudinary.com/dfpagrtoy/image/upload/v175923
 const DEFAULT_DESCRIPTION = 'Discover authentic Ghana tours and experiences. Book cultural tours, wildlife safaris, food tours, and adventure activities across Accra, Cape Coast, Volta Region, and more. Free cancellation, best prices guaranteed.';
 
 const https = require('https');
+const http = require('http');
 
 function fetchJson(url) {
   return new Promise((resolve, reject) => {
-    const req = https.get(url, { timeout: 8000 }, (res) => {
+    const mod = url.startsWith('https') ? https : http;
+    const req = mod.get(url, { timeout: 8000 }, (res) => {
       let data = '';
       res.on('data', (c) => (data += c));
       res.on('end', () => {
