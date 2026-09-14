@@ -7,8 +7,11 @@
  *   1. Changes to protected/infra paths
  *   2. Test-assertion weakening (e.g. toHaveBeenCalledWith -> toHaveBeenCalled,
  *      deleting expect() lines, dropping `.not` assertions)
- *   3. JS files that fail `node --check`
- *   4. Oversized diffs (> MAX_FILES changed files or > MAX_DIFF_LINES lines)
+ *   3. Any edit to a test file at all — a CI-fix agent must fix PRODUCTION code,
+ *      never make the suite pass by skipping, deleting or loosening tests. If a
+ *      test is genuinely wrong, a human fixes it.
+ *   4. JS files that fail `node --check`
+ *   5. Oversized diffs (> MAX_FILES changed files or > MAX_DIFF_LINES lines)
  *
  * Usage:
  *   node scripts/ai-diff-guard.js            # uncommitted working-tree changes
@@ -32,6 +35,10 @@ const PROTECTED = [
   /^Dockerfile/,
   /^docker-compose.*\.ya?ml$/,
   /^ecosystem\.config\.js$/,
+  // The agent must never edit tests: a "fix" that skips/removes/loosens a test
+  // turns CI green without fixing anything. Test changes are a human decision.
+  /^__tests__\//,
+  /\.(test|spec)\.(js|ts|jsx|tsx|mjs|cjs)$/,
 ];
 
 // Assertion matchers whose removal is suspect (weakening) unless re-added stronger.
@@ -74,7 +81,10 @@ function main() {
   if (totalLines > MAX_DIFF_LINES) errors.push(`Diff too large (${totalLines} lines > ${MAX_DIFF_LINES})`);
   for (const f of files) {
     for (const re of PROTECTED) {
-      if (re.test(f)) errors.push(`Protected path changed: ${f}`);
+      if (re.test(f)) {
+        errors.push(`Protected path changed: ${f}`);
+        break;
+      }
     }
   }
 

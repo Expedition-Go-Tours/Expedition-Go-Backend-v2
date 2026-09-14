@@ -50,6 +50,12 @@ ssh -i "$SSH_KEY" "$SERVER" bash -s <<REMOTE
   # competes for port 5000, causing EADDRINUSE restart loops.
   su - deploy -c "cd $APP_DIR && pm2 reload expedition-api --update-env"
 
+  echo "--- flush derived caches (hp:*) ---"
+  # Homepage / place caches are derived and can mask a code change. Flush them
+  # right after the reload so a deploy is never served a stale body. Scoped to
+  # 'hp:*' — never FLUSHDB (Redis also holds queues/sessions/rate limits).
+  bash scripts/flush-cache.sh "$APP_DIR/.env" || true
+
   echo "--- health check ---"
   sleep 5
   curl -s http://localhost:5000/health | python3 -m json.tool 2>/dev/null || curl -s http://localhost:5000/health
