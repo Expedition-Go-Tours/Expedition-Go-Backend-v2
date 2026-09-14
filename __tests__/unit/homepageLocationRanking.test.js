@@ -54,6 +54,14 @@ describe('locationTier', () => {
     expect(locationTier({ ...base, tags: ['things to do in accra'] }, 'Accra')).toBe(3);
   });
 
+  it('returns 2 when the itinerary visits the city', () => {
+    expect(locationTier({ ...base, itineraryCities: ['Amedzofe'] }, 'Amedzofe')).toBe(2);
+  });
+
+  it('returns 2 when the itinerary is in the region', () => {
+    expect(locationTier({ ...base, itineraryRegions: ['Volta Region'] }, 'Volta Region')).toBe(2);
+  });
+
   it('does not match a city as a substring of another word', () => {
     expect(locationTier({ ...base, attractions: ['Hotel'] }, 'Ho')).toBeNull();
   });

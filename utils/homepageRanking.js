@@ -335,6 +335,9 @@ function locationTier(tour, city) {
   };
 
   if (matchesArray(tour.attractions)) return 2;
+  // The tour's itinerary visits the city / region (not just its base).
+  if (matchesArray(tour.itineraryCities)) return 2;
+  if (matchesArray(tour.itineraryRegions)) return 2;
   if (matchesArray(tour.tags)) return 3;
   return null;
 }
@@ -394,7 +397,12 @@ async function getBackfillTours(scope, excludeIds, needed, city, scoreToursFn, e
         where: {
           ...scope,
           id: { notIn: [...excludeSet] },
-          region: { in: [normalized, bare], mode: 'insensitive' },
+          // Based in the region OR merely VISITS it — an itinerary stop is in
+          // the region (e.g. an Accra-based tour whose itinerary hits Volta).
+          OR: [
+            { region: { in: [normalized, bare], mode: 'insensitive' } },
+            { itineraryRegions: { hasSome: [normalized, bare] } },
+          ],
         },
         select,
         orderBy: { totalBookings: 'desc' },
@@ -575,9 +583,10 @@ function extractStartingPrice(schedulesAndPricing) {
 
 const TOUR_SELECT = {
   id: true, title: true, slug: true, coverPhoto: true, photos: true,
-  category: true, city: true, country: true, averageRating: true,
+  category: true, city: true, country: true, region: true, averageRating: true,
   reviewCount: true, totalBookings: true, schedulesAndPricing: true,
   durationMinutes: true, difficulty: true, tags: true, attractions: true,
+  itineraryCities: true, itineraryRegions: true,
   latitude: true, longitude: true, createdAt: true,
   supplier: {
     select: {
