@@ -5,6 +5,7 @@ const AppError = require('../utils/appError');
 const cache = require('../utils/cacheHelper');
 const { haversineKm, resolveCityCentroid } = require('../utils/locationGeo');
 const { placeTourIds } = require('../utils/placeListing');
+const { placeRankFor } = require('../utils/placeResolver');
 const { sendEmail } = require('../utils/emailService');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, isValidEmail } = require('../utils/bookingHelpers');
@@ -54,7 +55,24 @@ function extractCurrency(schedulesAndPricing) {
   }
 }
 
-function transformForListing(tour, expeditionRecord, centroid = null, placeMatch = false) {
+/**
+ * Place-sort relevance tier for a listing row:
+ *   0-3 = in-place (based there / title / attractions-tags / description)
+ *   4   = nearby (within the place radius)
+ *   null = no place scope
+ * Drives the storefront's "place" sort so a tour based in the searched place
+ * always leads, ahead of nearby tours that merely pass through it.
+ */
+function computePlaceRank(tour, placeName, localIds, nearIds) {
+  if (localIds && localIds.has(tour.id)) {
+    const rank = placeRankFor(tour, placeName);
+    return rank != null ? rank : 3;
+  }
+  if (nearIds && nearIds.has(tour.id)) return 4;
+  return null;
+}
+
+function transformForListing(tour, expeditionRecord, centroid = null, placeMatch = false, placeRank = null) {
   const distanceKm =
     centroid && tour.latitude != null && tour.longitude != null
       ? Math.round(haversineKm(centroid.lat, centroid.lng, tour.latitude, tour.longitude) * 10) / 10
@@ -84,6 +102,7 @@ function transformForListing(tour, expeditionRecord, centroid = null, placeMatch
     longitude: tour.longitude ?? null,
     distanceKm,
     placeMatch,
+    placeRank,
     supplierName: tour.supplier?.name || null,
     supplierPhoto: tour.supplier?.photoURL
       ? tour.supplier.photoURL
@@ -150,13 +169,19 @@ exports.getTours = catchAsync(async (req, res) => {
     // existing id filter. A place with no tours returns nothing.
     let placeCentroid = null;
     let placeMatchIds = null;
+    let placeLocalIds = null;
+    let placeNearIds = null;
+    let placeName = null;
     if (place) {
-      const { resolved, ids } = await placeTourIds(place, { ghanaOnly: true });
+      const { resolved, ids, localIds, nearIds } = await placeTourIds(place, { ghanaOnly: true });
       if (resolved && ids) {
         if (resolved.lat != null && resolved.lng != null) {
           placeCentroid = { lat: resolved.lat, lng: resolved.lng };
         }
         placeMatchIds = ids;
+        placeLocalIds = localIds;
+        placeNearIds = nearIds;
+        placeName = resolved.name;
         if (tourWhere.id?.in) {
           tourWhere.id = { in: tourWhere.id.in.filter((id) => ids.has(id)) };
         } else {
@@ -249,7 +274,8 @@ exports.getTours = catchAsync(async (req, res) => {
             id: true, title: true, slug: true, description: true,
             coverPhoto: true, photos: true, category: true,
             durationMinutes: true, averageRating: true, reviewCount: true, viewCount: true,
-            city: true, country: true, latitude: true, longitude: true, schedulesAndPricing: true,
+            city: true, region: true, country: true, attractions: true, tags: true,
+            latitude: true, longitude: true, schedulesAndPricing: true,
             supplier: { select: { name: true, photoURL: true } },
           },
         },
@@ -287,7 +313,13 @@ exports.getTours = catchAsync(async (req, res) => {
           isFeatured: r.isFeatured,
           bookingFlow: r.bookingFlow,
           externalUrl: r.externalUrl,
-          tour: transformForListing(r.tour, r, distanceOrigin, placeMatchIds ? placeMatchIds.has(r.tour.id) : false),
+          tour: transformForListing(
+            r.tour,
+            r,
+            distanceOrigin,
+            placeLocalIds ? placeLocalIds.has(r.tour.id) : false,
+            placeName ? computePlaceRank(r.tour, placeName, placeLocalIds, placeNearIds) : null,
+          ),
         })),
       },
       pagination: {

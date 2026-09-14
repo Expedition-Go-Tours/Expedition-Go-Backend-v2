@@ -36,32 +36,36 @@ function radiusForType(type) {
  * @param {string} placeQuery
  * @param {{ ghanaOnly?: boolean, expeditionOnly?: boolean }} [scope]
  * @param {{ radiusKm?: number }} [opts]
- * @returns {Promise<{ resolved: object|null, ids: Set<string>|null }>}
+ * @returns {Promise<{ resolved: object|null, ids: Set<string>|null, localIds: Set<string>|null, nearIds: Set<string>|null }>}
  */
 async function placeTourIds(placeQuery, scope = {}, { radiusKm } = {}) {
   const resolved = await resolvePlace(placeQuery, scope);
-  if (!resolved) return { resolved: null, ids: null };
+  if (!resolved) return { resolved: null, ids: null, localIds: null, nearIds: null };
 
   const ghanaOnly = !!scope.ghanaOnly;
   const expeditionOnly = !!scope.expeditionOnly;
 
   // Band 0 — in-place, matched on the canonical name and the raw query (so
   // "kakum" still matches tours tagged "Kakum National Park").
-  const ids = new Set(await getLocationTourIds(resolved.name, ghanaOnly, expeditionOnly));
+  const localIds = new Set(await getLocationTourIds(resolved.name, ghanaOnly, expeditionOnly));
   const canonical = String(resolved.name || '').trim().toLowerCase();
   const raw = String(placeQuery || '').trim().toLowerCase();
   if (raw && raw !== canonical) {
-    for (const id of await getLocationTourIds(placeQuery, ghanaOnly, expeditionOnly)) ids.add(id);
+    for (const id of await getLocationTourIds(placeQuery, ghanaOnly, expeditionOnly)) localIds.add(id);
   }
 
   // Band 1 — near the place, with a radius that depends on what the place is.
+  // Kept separate from `localIds` so callers can rank "based there" above
+  // "nearby" — merging them made every result look like an exact place match.
+  const nearIds = new Set();
   const radius = radiusKm != null ? radiusKm : radiusForType(resolved.type);
   if (radius > 0 && resolved.lat != null && resolved.lng != null) {
     const near = await findNearbyTourIds(prisma, resolved.lat, resolved.lng, radius);
-    for (const id of near) ids.add(id);
+    for (const id of near) if (!localIds.has(id)) nearIds.add(id);
   }
 
-  return { resolved, ids };
+  const ids = new Set([...localIds, ...nearIds]);
+  return { resolved, ids, localIds, nearIds };
 }
 
 module.exports = { placeTourIds, radiusForType };

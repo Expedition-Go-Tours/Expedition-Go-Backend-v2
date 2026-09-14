@@ -18,6 +18,7 @@ const { notifyAdmin } = require('../utils/adminNotificationService');
 const getConfig = require('../utils/getConfig');
 const { haversineKm, resolveCityCentroid } = require('../utils/locationGeo');
 const { placeTourIds } = require('../utils/placeListing');
+const { placeRankFor } = require('../utils/placeResolver');
 const { detachBookingFromActiveRequests } = require('../utils/financeHelpers');
 const { logActivity } = require('../utils/auditLogger');
 const {
@@ -62,7 +63,24 @@ function extractCurrency(schedulesAndPricing) {
   }
 }
 
-function transformForListing(tour, expeditionRecord, centroid = null, placeMatch = false) {
+/**
+ * Place-sort relevance tier for a listing row:
+ *   0-3 = in-place (based there / title / attractions-tags / description)
+ *   4   = nearby (within the place radius)
+ *   null = no place scope
+ * Drives the storefront's "place" sort so a tour based in the searched place
+ * always leads, ahead of nearby tours that merely pass through it.
+ */
+function computePlaceRank(tour, placeName, localIds, nearIds) {
+  if (localIds && localIds.has(tour.id)) {
+    const rank = placeRankFor(tour, placeName);
+    return rank != null ? rank : 3;
+  }
+  if (nearIds && nearIds.has(tour.id)) return 4;
+  return null;
+}
+
+function transformForListing(tour, expeditionRecord, centroid = null, placeMatch = false, placeRank = null) {
   // Map specialOfferTargets to the shape the frontend expects
   const specialOffers = Array.isArray(tour.specialOfferTargets)
     ? tour.specialOfferTargets
@@ -111,6 +129,7 @@ function transformForListing(tour, expeditionRecord, centroid = null, placeMatch
     longitude: tour.longitude ?? null,
     distanceKm,
     placeMatch,
+    placeRank,
     supplierName: tour.supplier?.name || null,
     supplierPhoto: tour.supplier?.photoURL
       ? tour.supplier.photoURL
@@ -180,13 +199,19 @@ exports.getTours = catchAsync(async (req, res) => {
     // shows its no-tours state), never the whole catalogue.
     let placeCentroid = null;
     let placeMatchIds = null;
+    let placeLocalIds = null;
+    let placeNearIds = null;
+    let placeName = null;
     if (place) {
-      const { resolved, ids } = await placeTourIds(place, { expeditionOnly: true });
+      const { resolved, ids, localIds, nearIds } = await placeTourIds(place, { expeditionOnly: true });
       if (resolved && ids) {
         if (resolved.lat != null && resolved.lng != null) {
           placeCentroid = { lat: resolved.lat, lng: resolved.lng };
         }
         placeMatchIds = ids;
+        placeLocalIds = localIds;
+        placeNearIds = nearIds;
+        placeName = resolved.name;
         if (tourWhere.id?.in) {
           tourWhere.id = { in: tourWhere.id.in.filter((id) => ids.has(id)) };
         } else {
@@ -280,7 +305,8 @@ exports.getTours = catchAsync(async (req, res) => {
             id: true, title: true, slug: true, description: true,
             coverPhoto: true, photos: true, category: true,
             durationMinutes: true, averageRating: true, reviewCount: true, viewCount: true,
-            city: true, country: true, latitude: true, longitude: true, schedulesAndPricing: true,
+            city: true, region: true, country: true, attractions: true, tags: true,
+            latitude: true, longitude: true, schedulesAndPricing: true,
             supplier: { select: { name: true, photoURL: true } },
             specialOfferTargets: {
               where: {
@@ -330,7 +356,13 @@ exports.getTours = catchAsync(async (req, res) => {
           isFeatured: r.isFeatured,
           bookingFlow: r.bookingFlow,
           externalUrl: r.externalUrl,
-          tour: transformForListing(r.tour, r, distanceOrigin, placeMatchIds ? placeMatchIds.has(r.tour.id) : false),
+          tour: transformForListing(
+            r.tour,
+            r,
+            distanceOrigin,
+            placeLocalIds ? placeLocalIds.has(r.tour.id) : false,
+            placeName ? computePlaceRank(r.tour, placeName, placeLocalIds, placeNearIds) : null,
+          ),
         })),
       },
       pagination: {

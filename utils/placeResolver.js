@@ -430,6 +430,33 @@ function placeRelevance(tour, place) {
 }
 
 /**
+ * Fine-grained place relevance for the storefront place-sort, ordered so a
+ * tour actually BASED in the place outranks one that merely mentions it:
+ *   0 = tour.city / tour.region equals the place (based there)
+ *   1 = title contains the place
+ *   2 = attractions / tags contain the place
+ *   3 = description contains the place
+ *   null = no textual match (nearby band / unrelated)
+ *
+ * This is deliberately a different order from `placeRelevance` (which is
+ * title-first, GYG-style relevance): "tours in Aburi" should lead with tours
+ * that call Aburi their city, then Aburi-titled day trips, then nearby.
+ */
+function placeRankFor(tour, place) {
+  const target = foldAccents(String(place || '').toLowerCase()).trim();
+  if (!target || !tour) return null;
+  const text = (s) => (s ? wordBoundaryMatch(foldAccents(String(s).toLowerCase()), target) : false);
+  const list = (arr) => Array.isArray(arr) && arr.some((v) => text(v));
+
+  if (tour.city && foldAccents(String(tour.city).toLowerCase()) === target) return 0;
+  if (tour.region && foldAccents(String(tour.region).toLowerCase()) === target) return 0;
+  if (text(tour.title)) return 1;
+  if (list(tour.attractions) || list(tour.tags)) return 2;
+  if (text(tour.description)) return 3;
+  return null;
+}
+
+/**
  * Rank tours for a place: relevance tier first (title > attractions/tags >
  * city/region > description), then popularity. Tours that don't match at all
  * (tier 0) are dropped — a place with no relevant tours returns nothing, never
@@ -471,6 +498,7 @@ module.exports = {
   getCatalogCountries,
   rankByPlace,
   placeRelevance,
+  placeRankFor,
   popularityScore,
   displayName,
   normalizeQuery,
