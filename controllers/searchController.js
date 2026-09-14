@@ -214,6 +214,33 @@ function normaliseRegion(r) {
   return r.replace(/\s+region$/i, '').trim();
 }
 
+/**
+ * Extract a clean town/locality name from the curated Attraction table's
+ * free-text `town` column, which mixes forms like:
+ *   "Aburi", "Abelemkpe, Accra", "Abossey Okai / Accra",
+ *   "Kakum / near Cape Coast", "near Tamale", "Boti / Yilo Krobo area",
+ *   "Eastern / southern Ghana", "Northern Region"
+ * Returns null for region-only values (the Region kind already covers those)
+ * or when nothing usable remains.
+ */
+function normalizeTown(raw) {
+  let s = String(raw || '').trim();
+  if (!s) return null;
+  // First segment of "A, B" / "A / B".
+  s = s.split(/[,/]/)[0].trim();
+  // Leading "near ", trailing qualifiers.
+  s = s.replace(/^near\s+/i, '')
+       .replace(/\s+near\s+.*$/i, '')
+       .replace(/\s+(area|district)$/i, '')
+       .trim();
+  s = s.replace(/\s+/g, ' ').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '').trim();
+  if (s.length < 3) return null;
+  const flat = normaliseSearch(s);
+  if (/\bregion$/i.test(s)) return null; // "Northern Region"
+  if (GHANA_REGIONS.some((r) => normaliseSearch(r) === flat)) return null; // "Greater Accra", "Eastern"
+  return s;
+}
+
 /* ── Main handler ───────────────────────────────────────────────────────── */
 exports.unifiedSearch = catchAsync(async (req, res) => {
   const q = (req.query.q || '').trim();
@@ -247,7 +274,9 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
       }
 
       const attractions = await prisma.attraction.findMany({
-        where: { status: 'ACTIVE', OR: nameOrConditions },
+        // Exclude the seeded "City / Town" place rows so a town added for
+        // autocomplete doesn't also surface as an Attraction suggestion.
+        where: { status: 'ACTIVE', OR: nameOrConditions, NOT: { category: 'City / Town' } },
         select: {
           name: true, slug: true, town: true, region: true, category: true,
           aliases: true, priority: true, placeType: true, tourCount: true,
@@ -262,7 +291,26 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
       }
     } catch {}
 
-    // 2. Places — groupBy city on tours (existing pattern from placeController)
+    // 2. Places — tours first (cities with bookable tours), then the curated
+    // Attraction table's towns (XLSX) so a place that has attractions but no
+    // tours still autocompletes and its region fallback can kick in.
+    const placeByName = new Map();
+    const addPlace = (item, score) => {
+      const key = item.name.toLowerCase();
+      const prev = placeByName.get(key);
+      if (prev) {
+        if (score > prev._score) {
+          prev._score = score;
+          if (item.placeType && item.placeType !== 'City / Town') prev.placeType = prev.placeType || item.placeType;
+        }
+        prev.attractionCount = Math.max(prev.attractionCount || 0, item.attractionCount || 0);
+        if (!prev.region && item.region) prev.region = item.region;
+        return;
+      }
+      item._score = score;
+      placeByName.set(key, item);
+    };
+
     try {
       const cities = await prisma.tour.groupBy({
         by: ['city', 'country', 'region'],
@@ -282,9 +330,55 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
           placeType: 'City / Town',
         };
         const score = scoreRecord('place', item, nq, cq);
-        if (score > 0) scored.push(buildSuggestion('place', item, score));
+        if (score > 0) addPlace(item, score);
       }
     } catch {}
+
+    // 2b. Attraction-table towns — places we have attractions for (from the
+    // XLSX import) but maybe no tours. Cap at the top 5 matches.
+    try {
+      const attrs = await prisma.attraction.findMany({
+        where: { status: 'ACTIVE', region: { not: null }, town: { contains: q, mode: 'insensitive' } },
+        select: { town: true, region: true, placeType: true },
+        take: 300,
+      }).catch(() => []);
+
+      const townAgg = new Map();
+      for (const a of attrs) {
+        const name = normalizeTown(a.town);
+        if (!name) continue;
+        const key = name.toLowerCase();
+        const prev = townAgg.get(key) || {
+          name,
+          region: normaliseRegion(a.region),
+          placeType: a.placeType || 'Town',
+          count: 0,
+        };
+        prev.count += 1;
+        if (!prev.region && a.region) prev.region = normaliseRegion(a.region);
+        townAgg.set(key, prev);
+      }
+
+      const scoredTowns = [];
+      for (const t of townAgg.values()) {
+        const item = {
+          name: t.name,
+          region: t.region,
+          placeType: t.placeType,
+          attractionCount: t.count,
+        };
+        const score = scoreRecord('place', item, nq, cq);
+        if (score > 0) scoredTowns.push({ item, score });
+      }
+      scoredTowns.sort((a, b) => b.score - a.score);
+      for (const { item, score } of scoredTowns.slice(0, 5)) addPlace(item, score);
+    } catch {}
+
+    for (const item of placeByName.values()) {
+      const score = item._score;
+      delete item._score;
+      scored.push(buildSuggestion('place', item, score));
+    }
 
     // 3. Regions — exact/prefix match on region names
     for (const r of GHANA_REGIONS) {
