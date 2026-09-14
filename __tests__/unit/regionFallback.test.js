@@ -11,7 +11,7 @@
  */
 
 const { normalizeRegion, regionForQuery, resolvePlace } = require('../../utils/placeResolver');
-const { placeTourIds } = require('../../utils/placeListing');
+const { placeTourIds, regionTourIds } = require('../../utils/placeListing');
 const prisma = require('../../utils/prismaClient');
 
 const dbAvailable = process.env.TEST_DB_AVAILABLE === 'true';
@@ -54,14 +54,18 @@ describeDb('regionForQuery (Attraction -> region)', () => {
 
 describeDb('placeTourIds region fallback (needs catalog + geocoder)', () => {
   // Guard: only assert when this environment can resolve the place to a region
-  // (i.e. the catalog + geocoder are present, as in production/staging).
-  const canResolve = async (q) => {
+  // AND that region actually has published tours. True in production; a CI DB
+  // seeded only with seed.js resolves the place (public geocoder) but has no
+  // Western-Region tours, so the fallback is legitimately empty there.
+  const regionHasTours = async (q) => {
     const r = await resolvePlace(q, { expeditionOnly: true }).catch(() => null);
-    return !!(r && r.region);
+    if (!r || !r.region) return false;
+    const ids = await regionTourIds(r.region, { expeditionOnly: true });
+    return ids.length > 0;
   };
 
   it('widens to the region when the place has no tours', async () => {
-    if (!(await canResolve('Sekondi-Takoradi'))) return;
+    if (!(await regionHasTours('Sekondi-Takoradi'))) return;
     const { ids, regionFallback } = await placeTourIds('Sekondi-Takoradi', { expeditionOnly: true });
     if (ids.size > 0) return; // catalog differs from production
     expect(regionFallback).not.toBeNull();
@@ -69,7 +73,8 @@ describeDb('placeTourIds region fallback (needs catalog + geocoder)', () => {
   });
 
   it('does NOT widen when the place already has tours', async () => {
-    if (!(await canResolve('Aburi'))) return;
+    const r = await resolvePlace('Aburi', { expeditionOnly: true }).catch(() => null);
+    if (!r || !r.region) return;
     const { ids, regionFallback } = await placeTourIds('Aburi', { expeditionOnly: true });
     if (ids.size === 0) return; // catalog differs from production
     expect(regionFallback).toBeNull();
