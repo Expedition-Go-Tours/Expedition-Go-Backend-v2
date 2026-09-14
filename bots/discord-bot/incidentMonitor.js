@@ -18,6 +18,7 @@
  *   redis     redis-cli ping                 (N=2)
  *   backup    newest dump < 26h old          (N=2)
  *   scheduler registered BullMQ sweep not running within 2x cadence (N=2)
+ *   ssl       TLS cert expiry > sslDays      (N=2)
  *
  * A signal only fires once per incident (no duplicate cards), and repeated
  * failing polls while an incident is open do NOT re-post. State is persisted
@@ -36,6 +37,7 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
+const tls = require('tls');
 const { notifyDiscord } = require('../../utils/discordNotifier');
 
 const DEFAULT_INTERVAL_MS = 30 * 1000;
@@ -52,7 +54,10 @@ const RECOVER_THRESHOLD = 2;
 // Load is more volatile (deploys/restarts burst CPU for a minute or two), so
 // require ~2min of sustained pressure before declaring. Recovery stays quick.
 const LOAD_FAIL_SAMPLES = 4;
-const THRESHOLDS = { rams: '85', disk: '85', swap: '50', backupHours: 26 };
+// sslDays is deliberately BELOW Let's Encrypt's 30-day renewal window so a
+// normal renewal (which fires the moment <30 days remain) never trips the
+// alert, while a genuinely failed renewal still warns with weeks to spare.
+const THRESHOLDS = { rams: '85', disk: '85', swap: '50', backupHours: 26, sslDays: 21 };
 
 function sh(cmd) {
   return execSync(cmd, { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, timeout: 10000 }).trim();
@@ -93,6 +98,50 @@ function safeJson(value) {
   } catch {
     return [];
   }
+}
+
+/**
+ * Days until the TLS certificate for `host` expires, measured with a raw
+ * handshake. rejectUnauthorized:false so an already-expired or otherwise
+ * invalid cert is still readable — we want to measure it, not fail the
+ * connection. Resolves null on any connect/timeout error; the `api` signal
+ * already owns "host unreachable", so a null here must never raise a second,
+ * misleading incident.
+ */
+function certExpiryDays(host, port = 443, timeoutMs = LOCAL_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      resolve(v);
+    };
+    let socket;
+    try {
+      const opts = { host, port, rejectUnauthorized: false, timeout: timeoutMs };
+      // SNI must be a hostname, never a bare IP.
+      if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) opts.servername = host;
+      socket = tls.connect(opts, () => {
+        try {
+          const cert = socket.getPeerCertificate();
+          const validTo = cert && cert.valid_to ? new Date(cert.valid_to) : null;
+          if (!validTo || Number.isNaN(validTo.getTime())) return done(null);
+          done({ days: (validTo.getTime() - Date.now()) / 86400000, validTo: validTo.toISOString() });
+        } catch {
+          done(null);
+        } finally {
+          socket.end();
+        }
+      });
+    } catch {
+      return done(null);
+    }
+    socket.on('error', () => done(null));
+    socket.on('timeout', () => {
+      socket.destroy();
+      done(null);
+    });
+  });
 }
 
 function cpuUsagePct() {
@@ -162,6 +211,17 @@ async function collectDiagnostics(ctx) {
       });
   } catch {
     diag.pm2daemons = null;
+  }
+
+  try {
+    if (ctx.sslHost) {
+      const info = await certExpiryDays(ctx.sslHost);
+      diag.ssl = info
+        ? { host: ctx.sslHost, days: Math.floor(info.days), validTo: info.validTo }
+        : { host: ctx.sslHost, days: null };
+    }
+  } catch {
+    diag.ssl = null;
   }
 
   try {
@@ -250,6 +310,13 @@ function checkFirstLines(diag) {
   if (Array.isArray(diag?.pm2daemons) && diag.pm2daemons.length > 1) {
     lines.push(`🚨 ${diag.pm2daemons.length} PM2 daemons: ${diag.pm2daemons.map((d) => `${d.user}→${d.home}`).join(', ')}`);
   }
+  if (diag?.ssl) {
+    lines.push(
+      diag.ssl.days == null
+        ? `❓ SSL: cert expiry unknown (${diag.ssl.host})`
+        : `${diag.ssl.days > THRESHOLDS.sslDays ? '✅' : '⚠️'} SSL: ${diag.ssl.host} cert expires in ${diag.ssl.days}d`,
+    );
+  }
   if (diag?.deploy?.restartedRecently) {
     lines.push(`⚠️ API restarted ~${diag.deploy.apiUpSinceSec}s ago`);
   }
@@ -285,6 +352,7 @@ const SIGNALS = [
   { id: 'backup', label: 'BACKUP', fail: FAIL_THRESHOLD, titleDown: '🚨 BACKUP STALE', titleUp: '✅ BACKUP OK' },
   { id: 'scheduler', label: 'SCHEDULER', fail: FAIL_THRESHOLD, titleDown: '🚨 SCHEDULER STALLED', titleUp: '✅ SCHEDULER OK' },
   { id: 'pm2daemons', label: 'PM2 DAEMON', fail: FAIL_THRESHOLD, titleDown: '🚨 DUPLICATE PM2 DAEMON', titleUp: '✅ PM2 SINGLE DAEMON' },
+  { id: 'ssl', label: 'SSL', fail: FAIL_THRESHOLD, titleDown: '🚨 SSL CERT EXPIRING', titleUp: '✅ SSL CERT OK' },
 ];
 
 function stateKey(id) {
@@ -388,6 +456,20 @@ async function probeSignal(id, env) {
           : `${rows.length} daemons (${homes.join(', ')}) — duplicate fights for port 5000`,
       };
     }
+    case 'ssl': {
+      const host = env.sslHost;
+      if (!host) return { healthy: true, detail: 'sslHost not configured' };
+      const info = await certExpiryDays(host);
+      if (!info) {
+        return { healthy: true, detail: `cert expiry unknown for ${host} (host unreachable — covered by api signal)` };
+      }
+      const days = Math.floor(info.days);
+      const limit = Number(env.sslAlertDays || THRESHOLDS.sslDays);
+      return {
+        healthy: days > limit,
+        detail: `cert for ${host} expires in ${days}d (${info.validTo.slice(0, 10)}) — alert threshold ${limit}d`,
+      };
+    }
     default:
       return { healthy: true, detail: 'unknown signal' };
   }
@@ -448,6 +530,13 @@ function buildCauseAndAssessment(signal, detail, diag) {
     }
     assessment =
       'A second PM2 daemon (usually one started as root) binds port 5000, so the deploy-owned expedition-api crash-loops on EADDRINUSE. Fix: PM2_HOME=/root/.pm2 pm2 delete all && PM2_HOME=/root/.pm2 pm2 kill, then reload as deploy. Never run pm2 as root.';
+    return { cause, assessment };
+  }
+
+  if (signal === 'ssl') {
+    cause = `The TLS certificate is approaching expiry.\nObservation: ${detail}`;
+    assessment =
+      "Let's Encrypt renews automatically ~30 days before expiry (certbot cron + nginx reload post-hook). A cert this close to expiry means renewal is failing — check `certbot renew --dry-run`, that the deploy post-hook reloads nginx, and that ports 80/443 are reachable for the ACME challenge.";
     return { cause, assessment };
   }
 
@@ -677,6 +766,7 @@ module.exports = {
   buildEmbed,
   fetchHealth,
   probeSignal,
+  certExpiryDays,
   SIGNALS,
   FAIL_THRESHOLD,
   RECOVER_THRESHOLD,

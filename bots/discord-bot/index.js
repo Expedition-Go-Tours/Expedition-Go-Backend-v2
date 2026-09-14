@@ -226,6 +226,8 @@ client.once('ready', async () => {
         repoDir: process.env.REPO_DIR || '/home/deploy/Expedition-Go-Backend-v2',
         errorLog: process.env.API_ERROR_LOG || '/home/deploy/.pm2/logs/expedition-api-error.log',
         backupDir: BACKUP_DIR,
+        sslHost: process.env.SSL_HOST || 'apiv1.travioafrica.com',
+        sslAlertDays: process.env.SSL_ALERT_DAYS,
       },
       redis: getRedis(),
     });
