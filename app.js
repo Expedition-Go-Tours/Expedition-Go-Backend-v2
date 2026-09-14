@@ -240,6 +240,37 @@ app.get('/health', async (req, res) => {
   res.status(200).json(body);
 });
 
+// Readiness probe — distinct from the liveness probe at /health:
+//   200 = the app can serve traffic right now (Postgres + Redis reachable)
+//   503 = a required dependency is down; do not route traffic
+// External uptime monitors target THIS endpoint and treat any non-200 as an
+// incident. /health stays 200 while the process is alive (liveness), so it
+// cannot signal a DB/Redis outage on its own — /ready exists to make that
+// signal a plain status code any monitor understands, with no keyword matching.
+app.get('/ready', async (req, res) => {
+  const checks = { database: 'unknown', redis: 'unknown' };
+  let dbOk = false;
+  let redisOk = false;
+
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    checks.database = 'healthy';
+    dbOk = true;
+  } catch {
+    checks.database = 'down';
+  }
+
+  try {
+    redisOk = await isRedisAvailable();
+    checks.redis = redisOk ? 'healthy' : 'unhealthy';
+  } catch {
+    checks.redis = 'down';
+  }
+
+  const ready = dbOk && redisOk;
+  res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', checks });
+});
+
 
 app.get('/', (req, res) => {
   res.send('TravioAfrica API is running...');

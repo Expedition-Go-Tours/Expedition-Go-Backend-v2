@@ -7,7 +7,7 @@
  *  - Optional per-(channel,key) cooldown so a flood of events cannot spam a channel.
  *
  * Channel -> webhook mapping is driven by env vars (see .env.example):
- *   deploys, incidents, sales, verification, digest, approvals
+ *   deploys, incidents, sales, verification, digest, approvals, uptimeExternal
  *
  * For interactive notifications (buttons), use sendViaBot() which sends via
  * the bot token so Discord associates interactive components with the app.
@@ -20,6 +20,10 @@ const WEBHOOKS = {
   verification: process.env.DISCORD_WEBHOOK_VERIFICATION,
   digest: process.env.DISCORD_WEBHOOK_DIGEST,
   approvals: process.env.DISCORD_WEBHOOK_APPROVALS,
+  // Outside-in availability alerts. Primary writer is the EXTERNAL uptime
+  // monitor (it must not depend on this process — the box may be down). Kept
+  // so the app can post a recovery/context note after a total outage.
+  uptimeExternal: process.env.DISCORD_WEBHOOK_UPTIME_EXTERNAL,
 };
 
 const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
