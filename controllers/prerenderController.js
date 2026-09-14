@@ -142,22 +142,22 @@ function buildProductSchema(tour) {
     '@type': 'Product',
     name: tour.title,
     description: (tour.description || tour.title || '').slice(0, 500),
-    image: tour.coverPhoto || tour.image || DEFAULT_IMAGE,
+    image: tour.coverPhoto || tour.photos?.[0] || DEFAULT_IMAGE,
     url: `${SITE_URL}/tour/${tour.slug}`,
     brand: { '@type': 'Organization', name: SITE_NAME },
     offers: {
       '@type': 'Offer',
-      price: tour.startingPrice || tour.price || 0,
+      price: tour.startingPrice || 0,
       priceCurrency: tour.currency || 'USD',
       availability: 'https://schema.org/InStock',
       seller: { '@type': 'Organization', name: SITE_NAME },
     },
   };
-  if (tour.ratingValue && tour.reviews) {
+  if (tour.averageRating && tour.reviewCount) {
     schema.aggregateRating = {
       '@type': 'AggregateRating',
-      ratingValue: tour.ratingValue,
-      reviewCount: tour.reviews,
+      ratingValue: tour.averageRating,
+      reviewCount: tour.reviewCount,
       bestRating: 5,
       worstRating: 1,
     };
@@ -170,23 +170,25 @@ function buildProductSchema(tour) {
 async function handleTourPage(slug) {
   const API = process.env.API_URL || 'http://localhost:5000';
   const data = await fetchJson(`${API}/api/expedition/tours/${encodeURIComponent(slug)}`);
-  const tour = data?.data;
-  if (!tour) return null;
+  // API response is nested: data.tour.tour (expedition listing -> tour)
+  const listing = data?.data?.tour || data?.data;
+  const tour = listing?.tour || listing;
+  if (!tour || !tour.title) return null;
 
-  const city = tour.location?.split(',')[0]?.trim() || 'Ghana';
+  const city = tour.city || tour.location?.split(',')[0]?.trim() || 'Ghana';
   const region = tour.location?.split(',')[1]?.trim() || '';
-  const image = tour.coverPhoto || tour.images?.[0] || DEFAULT_IMAGE;
+  const image = tour.coverPhoto || tour.photos?.[0] || DEFAULT_IMAGE;
 
   return buildHtml({
     title: `${tour.title} in ${city}`,
-    description: `${tour.title} - ${tour.duration || 'Experience'} in ${tour.location || 'Ghana'}. Book from $${tour.startingPrice || tour.price || 0}. ${tour.ratingValue ? `Rated ${tour.ratingValue}/5` : ''} Free cancellation, instant confirmation.`,
+    description: `${tour.title} - ${tour.durationMinutes ? Math.round(tour.durationMinutes / 60) + 'h' : 'Experience'} in ${city}${region ? ', ' + region : ''}, Ghana. Book from $${tour.startingPrice || 0}. ${tour.averageRating ? `Rated ${tour.averageRating}/5` : ''} Free cancellation, instant confirmation.`,
     keywords: `${tour.title}, ${city} tours, ${tour.category || 'tours'} in ${city}, Ghana tours, book ${tour.title}, things to do in ${city}`,
     image,
     url: `${SITE_URL}/tour/${slug}`,
     canonical: `${SITE_URL}/tour/${slug}`,
     type: 'product',
-    price: { amount: String(tour.startingPrice || tour.price || 0), currency: tour.currency || 'USD' },
-    rating: tour.ratingValue && tour.reviews ? { value: tour.ratingValue, count: tour.reviews } : undefined,
+    price: { amount: String(tour.startingPrice || 0), currency: tour.currency || 'USD' },
+    rating: tour.averageRating && tour.reviewCount ? { value: tour.averageRating, count: tour.reviewCount } : undefined,
     jsonLd: [
       buildProductSchema(tour),
       buildBreadcrumbSchema([
@@ -205,7 +207,8 @@ async function handleListingsPage(place) {
     ? `${API}/api/expedition/tours?limit=50&place=${encodeURIComponent(place)}`
     : `${API}/api/expedition/tours?limit=50`;
   const data = await fetchJson(url);
-  const tours = data?.data?.tours || [];
+  const listings = data?.data?.tours || [];
+  const tours = listings.map((l) => l.tour || l).filter(Boolean);
   const count = tours.length;
 
   const title = place ? `Tours in ${place} | ${count} experiences` : 'Ghana Tours & Experiences';
