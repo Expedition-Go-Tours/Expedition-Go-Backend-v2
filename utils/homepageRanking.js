@@ -29,7 +29,7 @@ const prisma = require('./prismaClient');
 const { Prisma } = require('@prisma/client');
 const cache = require('./cacheHelper');
 const { cheapestRetailPrice } = require('./tourHelpers');
-const { regionForQuery, normalizeRegion } = require('./placeResolver');
+const { resolvePlace, normalizeRegion } = require('./placeResolver');
 
 /**
  * Ghana platform scope — filters tour queries to tours published on
@@ -369,7 +369,10 @@ async function getBackfillTours(scope, excludeIds, needed, city, scoreToursFn, e
   let allBackfill = [];
   let regionLabel = null;
   if (city) {
-    const rawRegion = await regionForQuery(city).catch(() => null);
+    // Resolve through the full place resolver (Attraction table + geocoder) so
+    // a town absent from the XLSX still gets its region from the geocoder.
+    const resolvedCity = await resolvePlace(city).catch(() => null);
+    const rawRegion = resolvedCity?.region || null;
     if (rawRegion) {
       const normalized = normalizeRegion(rawRegion);
       const bare = normalized.replace(/\s+region$/i, '');
