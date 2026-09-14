@@ -34,6 +34,16 @@ ssh -i "$SSH_KEY" "$SERVER" bash -s <<REMOTE
     npm install --production --silent
   fi
 
+  echo "--- preflight: guard against a stray second PM2 daemon ---"
+  # A PM2 daemon started as root (e.g. an ad-hoc 'sudo pm2 restart') binds
+  # port 5000 and makes the deploy-owned expedition-api crash-loop on
+  # EADDRINUSE. Detect and remove it before reloading.
+  if [[ -f /root/.pm2/pm2.pid ]] && kill -0 "\$(cat /root/.pm2/pm2.pid)" 2>/dev/null; then
+    echo "WARN: stray root PM2 daemon detected — deleting its apps and killing it"
+    PM2_HOME=/root/.pm2 pm2 delete all >/dev/null 2>&1 || true
+    PM2_HOME=/root/.pm2 pm2 kill >/dev/null 2>&1 || true
+  fi
+
   echo "--- pm2 reload (as deploy user) ---"
   # CRITICAL: Use 'su - deploy' to ensure PM2 commands run under the
   # correct user. Running as root creates a second PM2 daemon that

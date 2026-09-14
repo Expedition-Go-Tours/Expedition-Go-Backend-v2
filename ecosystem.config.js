@@ -3,6 +3,12 @@ module.exports = {
     name: 'expedition-api',
     script: 'server.js',
     cwd: '/home/deploy/Expedition-Go-Backend-v2',
+    // Single instance on a memory-tight box. Keep `cluster` (not `fork`):
+    // PM2's God daemon owns the listening socket and hands it to the worker,
+    // so worker restarts never rebind the port and `pm2 reload` is
+    // zero-downtime. Fork mode would make the app bind directly and reintroduce
+    // EADDRINUSE races on restart. (The real fix for the historical incidents
+    // was removing a duplicate root-owned PM2 daemon — see scripts/deploy.sh.)
     instances: 1,
     exec_mode: 'cluster',
     env: {

@@ -146,6 +146,25 @@ async function collectDiagnostics(ctx) {
   }
 
   try {
+    // Count PM2 God daemons. More than one means a stray daemon (usually one
+    // started as root) is competing for port 5000 — the exact cause of the
+    // EADDRINUSE restart-loop incidents the monitor used to only see as
+    // "HIGH LOAD".
+    const out = sh(`ps -eo pid,user,args | grep -F 'God Daemon' | grep -v grep || true`);
+    diag.pm2daemons = String(out)
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.includes('God Daemon'))
+      .map((l) => {
+        const user = l.split(/\s+/)[1] || '?';
+        const home = (l.match(/\(([^)]+)\)/) || [])[1] || '?';
+        return { user, home };
+      });
+  } catch {
+    diag.pm2daemons = null;
+  }
+
+  try {
     const api = diag.pm2?.find((p) => p.name === 'expedition-api');
     const commitTime = sh(`cd ${ctx.repoDir} && git log -1 --format=%ci 2>/dev/null`);
     const apiUpSinceSec = api?.uptimeSec ?? null;
@@ -228,6 +247,9 @@ function checkFirstLines(diag) {
   lines.push(diag?.database === 'ok' ? `✅ PostgreSQL: reachable` : `❌ PostgreSQL: unreachable`);
   lines.push(diag?.redis === 'ok' ? `✅ Redis: reachable` : `❌ Redis: unreachable`);
   lines.push(diag?.nginx === 'ok' ? `✅ Nginx: active` : `❌ Nginx: not active`);
+  if (Array.isArray(diag?.pm2daemons) && diag.pm2daemons.length > 1) {
+    lines.push(`🚨 ${diag.pm2daemons.length} PM2 daemons: ${diag.pm2daemons.map((d) => `${d.user}→${d.home}`).join(', ')}`);
+  }
   if (diag?.deploy?.restartedRecently) {
     lines.push(`⚠️ API restarted ~${diag.deploy.apiUpSinceSec}s ago`);
   }
@@ -262,6 +284,7 @@ const SIGNALS = [
   { id: 'redis', label: 'REDIS', fail: FAIL_THRESHOLD, titleDown: '🚨 REDIS DOWN', titleUp: '✅ REDIS OK' },
   { id: 'backup', label: 'BACKUP', fail: FAIL_THRESHOLD, titleDown: '🚨 BACKUP STALE', titleUp: '✅ BACKUP OK' },
   { id: 'scheduler', label: 'SCHEDULER', fail: FAIL_THRESHOLD, titleDown: '🚨 SCHEDULER STALLED', titleUp: '✅ SCHEDULER OK' },
+  { id: 'pm2daemons', label: 'PM2 DAEMON', fail: FAIL_THRESHOLD, titleDown: '🚨 DUPLICATE PM2 DAEMON', titleUp: '✅ PM2 SINGLE DAEMON' },
 ];
 
 function stateKey(id) {
@@ -351,6 +374,20 @@ async function probeSignal(id, env) {
       }
       return { healthy: false, detail: `${s.status} — ${bits.join('; ') || 'no detail'}` };
     }
+    case 'pm2daemons': {
+      const out = sh(`ps -eo pid,user,args | grep -F 'God Daemon' | grep -v grep || true`);
+      const rows = String(out)
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.includes('God Daemon'));
+      const homes = rows.map((l) => (l.match(/\(([^)]+)\)/) || [])[1]).filter(Boolean);
+      return {
+        healthy: rows.length <= 1,
+        detail: rows.length <= 1
+          ? `1 daemon (${homes[0] || 'unknown'})`
+          : `${rows.length} daemons (${homes.join(', ')}) — duplicate fights for port 5000`,
+      };
+    }
     default:
       return { healthy: true, detail: 'unknown signal' };
   }
@@ -400,6 +437,17 @@ function buildCauseAndAssessment(signal, detail, diag) {
     assessment = diag?.deploy?.restartedRecently
       ? 'Scheduler stall detected right after a deployment/restart — confirm schedulers re-verified (registerSchedules/verifySchedules) and the missed run was caught up.'
       : 'A scheduler exists in Redis but has not executed within 2× its cadence. Check the BullMQ worker is consuming (queue logs) and the handler is not throwing/retry-looping.';
+    return { cause, assessment };
+  }
+
+  if (signal === 'pm2daemons') {
+    const daemons = diag?.pm2daemons || [];
+    cause = `More than one PM2 daemon is running.\nObservation: ${detail}`;
+    if (daemons.length) {
+      cause += `\nDaemons:\n${daemons.map((d) => `  ${d.user} → ${d.home}`).join('\n')}`;
+    }
+    assessment =
+      'A second PM2 daemon (usually one started as root) binds port 5000, so the deploy-owned expedition-api crash-loops on EADDRINUSE. Fix: PM2_HOME=/root/.pm2 pm2 delete all && PM2_HOME=/root/.pm2 pm2 kill, then reload as deploy. Never run pm2 as root.';
     return { cause, assessment };
   }
 
