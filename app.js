@@ -355,6 +355,10 @@ app.use('/api/media', mediaRoutes);
 app.use('/api/homepage', homepageRoutes);
 app.use('/api/analytics', analyticsRoutes);
 
+// SEO prerender — serves pre-rendered HTML with meta tags + JSON-LD to bots.
+// The Vercel Edge Middleware proxies bot requests to /api/prerender?url=...
+const { prerender } = require('./controllers/prerenderController');
+app.get('/api/prerender', prerender);
 
 if (swaggerSpec && process.env.NODE_ENV !== 'production') {
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
