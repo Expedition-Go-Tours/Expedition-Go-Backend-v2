@@ -354,9 +354,16 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
       }
     } catch {}
 
-    // Sort by score descending, then by kind priority
-    const kindOrder = { place: 0, attraction: 1, region: 2, tour: 3 };
-    scored.sort((a, b) => b.score - a.score || (kindOrder[a.kind] ?? 9) - (kindOrder[b.kind] ?? 9));
+    // Ordering: matching TOURS lead, then destinations, attractions, regions
+    // (each group by score). Tours-first is intentional — a keyword search
+    // should surface the bookable experience before the place it happens in.
+    const kindOrder = { place: 0, attraction: 1, region: 2 };
+    scored.sort((a, b) => {
+      const tourFirst = (a.kind === 'tour' ? 0 : 1) - (b.kind === 'tour' ? 0 : 1);
+      if (tourFirst !== 0) return tourFirst;
+      if (b.score !== a.score) return b.score - a.score;
+      return (kindOrder[a.kind] ?? 9) - (kindOrder[b.kind] ?? 9);
+    });
 
     const results = scored.slice(0, limit);
     const stats = {
