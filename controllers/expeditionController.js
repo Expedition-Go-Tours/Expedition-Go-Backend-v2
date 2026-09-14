@@ -198,24 +198,40 @@ exports.getTours = catchAsync(async (req, res) => {
     // existing id filter. A place with no tours returns nothing (the storefront
     // shows its no-tours state), never the whole catalogue.
     let placeCentroid = null;
-    let placeMatchIds = null;
     let placeLocalIds = null;
     let placeNearIds = null;
     let placeName = null;
+    // Scope metadata returned to the client so it can label a widened result
+    // ("we don't have tours in X yet — here are experiences across Y").
+    let placeScope = null;
     if (place) {
-      const { resolved, ids, localIds, nearIds } = await placeTourIds(place, { expeditionOnly: true });
+      const { resolved, ids, localIds, nearIds, regionFallback } = await placeTourIds(place, { expeditionOnly: true });
       if (resolved && ids) {
-        if (resolved.lat != null && resolved.lng != null) {
-          placeCentroid = { lat: resolved.lat, lng: resolved.lng };
-        }
-        placeMatchIds = ids;
-        placeLocalIds = localIds;
-        placeNearIds = nearIds;
+        // Region fallback: the place itself has no tours, so widen to its
+        // region (never the whole catalogue). These tours are not "in" the
+        // place, so skip place proximity/ranking — they sort by popularity.
+        const useRegionFallback = ids.size === 0 && !!regionFallback && regionFallback.ids.size > 0;
+        const effectiveIds = useRegionFallback ? regionFallback.ids : ids;
+
         placeName = resolved.name;
+        placeScope = {
+          requested: resolved.name,
+          fallbackRegion: useRegionFallback ? regionFallback.region : null,
+        };
+
+        // Region tours are not "in" the place — skip place proximity/ranking.
+        if (!useRegionFallback) {
+          placeLocalIds = localIds;
+          placeNearIds = nearIds;
+          if (resolved.lat != null && resolved.lng != null) {
+            placeCentroid = { lat: resolved.lat, lng: resolved.lng };
+          }
+        }
+
         if (tourWhere.id?.in) {
-          tourWhere.id = { in: tourWhere.id.in.filter((id) => ids.has(id)) };
+          tourWhere.id = { in: tourWhere.id.in.filter((id) => effectiveIds.has(id)) };
         } else {
-          tourWhere.id = { in: [...ids] };
+          tourWhere.id = { in: [...effectiveIds] };
         }
       } else {
         // Not a place — return nothing so the client text-searches.
@@ -244,7 +260,14 @@ exports.getTours = catchAsync(async (req, res) => {
       }
     }
     if (moodTourIds) {
-      tourWhere.id = { in: moodTourIds };
+      // Preserve any place scope: intersect place ∩ mood rather than letting
+      // the mood filter replace the place filter outright.
+      if (tourWhere.id?.in) {
+        const moodSet = new Set(moodTourIds);
+        tourWhere.id = { in: tourWhere.id.in.filter((id) => moodSet.has(id)) };
+      } else {
+        tourWhere.id = { in: moodTourIds };
+      }
     }
     if (search) {
       // Use BM25 for relevance-ranked search when available
@@ -350,6 +373,7 @@ exports.getTours = catchAsync(async (req, res) => {
     return {
       status: 'success',
       data: {
+        placeScope,
         tours: records.map((r) => ({
           id: r.id,
           displayOrder: r.displayOrder,

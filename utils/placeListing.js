@@ -14,9 +14,14 @@
  */
 
 const prisma = require('./prismaClient');
-const { resolvePlace } = require('./placeResolver');
+const cache = require('./cacheHelper');
+const { resolvePlace, regionForQuery, normalizeRegion } = require('./placeResolver');
 const { getLocationTourIds } = require('./homepageRanking');
 const { findNearbyTourIds } = require('./tourFilterBuilder');
+
+// Place types we trust enough to widen to their region when they have no tours.
+// Guards against a spurious text match triggering a region fallback.
+const CONFIDENT_PLACE_TYPES = new Set(['city', 'region', 'attraction', 'locality']);
 
 /**
  * Per-type "near" radius. A city legitimately includes its whole metro area,
@@ -33,14 +38,42 @@ function radiusForType(type) {
 }
 
 /**
+ * Tours whose REGION equals the given region — a dedicated, region-only match
+ * (not the broader text matcher) so the fallback stays precise. Cached 5 min.
+ *
+ * @param {string} region  e.g. "Eastern" or "Eastern Region"
+ * @param {{ ghanaOnly?: boolean, expeditionOnly?: boolean }} [scope]
+ * @returns {Promise<string[]>}
+ */
+async function regionTourIds(region, scope = {}) {
+  const normalized = normalizeRegion(region);
+  if (!normalized) return [];
+  const bare = normalized.replace(/\s+region$/i, '');
+  const key = `hp:regiontours:${normalized.toLowerCase()}${scope.ghanaOnly ? ':ghana' : ''}${scope.expeditionOnly ? ':exp' : ''}`;
+
+  return cache.getOrSet(key, async () => {
+    const where = {
+      status: 'ACTIVE',
+      supplier: { supplierProfile: { status: 'ACTIVE' } },
+      region: { in: [normalized, bare], mode: 'insensitive' },
+    };
+    if (scope.ghanaOnly) where.travioGhanaTour = { isActive: true };
+    else if (scope.expeditionOnly) where.expeditionTour = { isActive: true };
+
+    const rows = await prisma.tour.findMany({ where, select: { id: true } });
+    return rows.map((r) => r.id);
+  }, 300);
+}
+
+/**
  * @param {string} placeQuery
  * @param {{ ghanaOnly?: boolean, expeditionOnly?: boolean }} [scope]
  * @param {{ radiusKm?: number }} [opts]
- * @returns {Promise<{ resolved: object|null, ids: Set<string>|null, localIds: Set<string>|null, nearIds: Set<string>|null }>}
+ * @returns {Promise<{ resolved: object|null, ids: Set<string>|null, localIds: Set<string>|null, nearIds: Set<string>|null, regionFallback: { region: string, ids: Set<string> }|null }>}
  */
 async function placeTourIds(placeQuery, scope = {}, { radiusKm } = {}) {
   const resolved = await resolvePlace(placeQuery, scope);
-  if (!resolved) return { resolved: null, ids: null, localIds: null, nearIds: null };
+  if (!resolved) return { resolved: null, ids: null, localIds: null, nearIds: null, regionFallback: null };
 
   const ghanaOnly = !!scope.ghanaOnly;
   const expeditionOnly = !!scope.expeditionOnly;
@@ -65,7 +98,23 @@ async function placeTourIds(placeQuery, scope = {}, { radiusKm } = {}) {
   }
 
   const ids = new Set([...localIds, ...nearIds]);
-  return { resolved, ids, localIds, nearIds };
+
+  // Band 2 — region fallback. ONLY when the place itself has no tours, widen
+  // to the place's region (resolved from the curated Attraction table / the
+  // geocoder) so a searched town still surfaces its region's experiences
+  // instead of a dead end. Confident place types only; if the region can't be
+  // resolved or has no tours, `ids` stays empty and the storefront shows its
+  // no-tours state.
+  let regionFallback = null;
+  if (ids.size === 0 && CONFIDENT_PLACE_TYPES.has(resolved.type)) {
+    const region = resolved.region || (await regionForQuery(placeQuery).catch(() => null));
+    if (region) {
+      const regionIds = new Set(await regionTourIds(region, scope));
+      if (regionIds.size > 0) regionFallback = { region: normalizeRegion(region), ids: regionIds };
+    }
+  }
+
+  return { resolved, ids, localIds, nearIds, regionFallback };
 }
 
-module.exports = { placeTourIds, radiusForType };
+module.exports = { placeTourIds, radiusForType, regionTourIds };

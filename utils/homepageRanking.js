@@ -29,6 +29,7 @@ const prisma = require('./prismaClient');
 const { Prisma } = require('@prisma/client');
 const cache = require('./cacheHelper');
 const { cheapestRetailPrice } = require('./tourHelpers');
+const { regionForQuery, normalizeRegion } = require('./placeResolver');
 
 /**
  * Ghana platform scope — filters tour queries to tours published on
@@ -362,56 +363,85 @@ async function getBackfillTours(scope, excludeIds, needed, city, scoreToursFn, e
   const excludeSet = new Set(excludeIds);
   const select = extraSelect || TOUR_SELECT;
 
-  // Step 1: nearby tours (within 50km of city centroid from local tours)
-  const localCoords = excludeIds.length > 0
-    ? await prisma.tour.findMany({
-        where: { ...scope, id: { in: excludeIds }, latitude: { not: null }, longitude: { not: null } },
-        select: { latitude: true, longitude: true },
-        take: 20,
-      })
-    : [];
-
-  let nearbyTours = [];
-  if (localCoords.length > 0) {
-    const cLat = localCoords.reduce((s, t) => s + t.latitude, 0) / localCoords.length;
-    const cLng = localCoords.reduce((s, t) => s + t.longitude, 0) / localCoords.length;
-    const deltaLat = NEARBY_RADIUS_KM / 111;
-    const deltaLng = NEARBY_RADIUS_KM / ((111 * Math.cos((cLat * Math.PI) / 180)) || 1);
-
-    const nearbyCandidates = await prisma.tour.findMany({
-      where: {
-        ...scope,
-        id: { notIn: [...excludeSet] },
-        latitude: { gte: cLat - deltaLat, lte: cLat + deltaLat },
-        longitude: { gte: cLng - deltaLng, lte: cLng + deltaLng },
-      },
-      select,
-      orderBy: { totalBookings: 'desc' },
-      take: needed * 3,
-    });
-
-    nearbyTours = nearbyCandidates
-      .map((t) => ({
-        tour: t,
-        distance: (t.latitude != null && t.longitude != null)
-          ? haversineKm(cLat, cLng, t.latitude, t.longitude)
-          : Infinity,
-      }))
-      .filter((x) => x.distance <= NEARBY_RADIUS_KM)
-      .sort((a, b) => a.distance - b.distance)
-      .map((x) => x.tour)
-      .slice(0, needed);
+  // Step 0: REGION — top up from the city's region (resolved via the curated
+  // Attraction table) BEFORE widening. A small town then leads with its own
+  // region's experiences rather than jumping straight to nearby/global.
+  let allBackfill = [];
+  let regionLabel = null;
+  if (city) {
+    const rawRegion = await regionForQuery(city).catch(() => null);
+    if (rawRegion) {
+      const normalized = normalizeRegion(rawRegion);
+      const bare = normalized.replace(/\s+region$/i, '');
+      const regionTours = await prisma.tour.findMany({
+        where: {
+          ...scope,
+          id: { notIn: [...excludeSet] },
+          region: { in: [normalized, bare], mode: 'insensitive' },
+        },
+        select,
+        orderBy: { totalBookings: 'desc' },
+        take: needed * 3,
+      });
+      if (regionTours.length > 0) {
+        allBackfill = regionTours.slice(0, needed);
+        regionLabel = normalized;
+      }
+    }
   }
 
-  let allBackfill = nearbyTours;
-  const backfillIds = new Set([...excludeSet, ...nearbyTours.map(t => t.id)]);
-
-  // Step 2: global fallback if still short
+  // Step 1: NEARBY (within 50km of the city centroid from the local tours).
   if (allBackfill.length < needed) {
+    const have = new Set([...excludeSet, ...allBackfill.map((t) => t.id)]);
+    const localCoords = excludeIds.length > 0
+      ? await prisma.tour.findMany({
+          where: { ...scope, id: { in: excludeIds }, latitude: { not: null }, longitude: { not: null } },
+          select: { latitude: true, longitude: true },
+          take: 20,
+        })
+      : [];
+
+    if (localCoords.length > 0) {
+      const cLat = localCoords.reduce((s, t) => s + t.latitude, 0) / localCoords.length;
+      const cLng = localCoords.reduce((s, t) => s + t.longitude, 0) / localCoords.length;
+      const deltaLat = NEARBY_RADIUS_KM / 111;
+      const deltaLng = NEARBY_RADIUS_KM / ((111 * Math.cos((cLat * Math.PI) / 180)) || 1);
+
+      const nearbyCandidates = await prisma.tour.findMany({
+        where: {
+          ...scope,
+          id: { notIn: [...have] },
+          latitude: { gte: cLat - deltaLat, lte: cLat + deltaLat },
+          longitude: { gte: cLng - deltaLng, lte: cLng + deltaLng },
+        },
+        select,
+        orderBy: { totalBookings: 'desc' },
+        take: needed * 3,
+      });
+
+      const nearbyTours = nearbyCandidates
+        .map((t) => ({
+          tour: t,
+          distance: (t.latitude != null && t.longitude != null)
+            ? haversineKm(cLat, cLng, t.latitude, t.longitude)
+            : Infinity,
+        }))
+        .filter((x) => x.distance <= NEARBY_RADIUS_KM)
+        .sort((a, b) => a.distance - b.distance)
+        .map((x) => x.tour)
+        .slice(0, needed - allBackfill.length);
+
+      allBackfill = [...allBackfill, ...nearbyTours];
+    }
+  }
+
+  // Step 2: GLOBAL fallback if still short.
+  if (allBackfill.length < needed) {
+    const have = new Set([...excludeSet, ...allBackfill.map((t) => t.id)]);
     const globalTours = await prisma.tour.findMany({
       where: {
         ...scope,
-        id: { notIn: [...backfillIds] },
+        id: { notIn: [...have] },
       },
       select,
       orderBy: { totalBookings: 'desc' },
@@ -426,9 +456,10 @@ async function getBackfillTours(scope, excludeIds, needed, city, scoreToursFn, e
     t._isBackfill = true;
   }
 
-  // Determine label
-  const regionName = city || 'this area';
-  const label = `More experiences near ${regionName}`;
+  // Determine label — region-aware when the region tier contributed.
+  const label = regionLabel
+    ? `More experiences in ${regionLabel}`
+    : `More experiences near ${city || 'this area'}`;
 
   return {
     tours: scored.slice(0, needed),

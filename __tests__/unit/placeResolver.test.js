@@ -8,8 +8,28 @@ const {
   displayName,
   popularityScore,
   rankByPlace,
+  normalizeRegion,
 } = require('../../utils/placeResolver');
 const { normalizeQuery } = require('../../utils/placeResolver');
+
+describe('normalizeRegion', () => {
+  it('appends " Region" to bare region names (Attraction table format)', () => {
+    expect(normalizeRegion('Eastern')).toBe('Eastern Region');
+    expect(normalizeRegion('Greater Accra')).toBe('Greater Accra Region');
+    expect(normalizeRegion('Western North')).toBe('Western North Region');
+  });
+
+  it('does not double-suffix names that already carry it (Tour format)', () => {
+    expect(normalizeRegion('Eastern Region')).toBe('Eastern Region');
+    expect(normalizeRegion('eastern region')).toBe('eastern region');
+  });
+
+  it('trims and handles empty input', () => {
+    expect(normalizeRegion('  Ashanti  ')).toBe('Ashanti Region');
+    expect(normalizeRegion('')).toBe('');
+    expect(normalizeRegion(null)).toBe('');
+  });
+});
 
 describe('normalizeQuery', () => {
   it('trims, collapses whitespace and strips surrounding punctuation', () => {

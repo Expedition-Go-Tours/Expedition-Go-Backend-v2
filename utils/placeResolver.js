@@ -87,6 +87,80 @@ function wordBoundaryMatch(haystack, needle) {
 }
 
 /**
+ * Canonical tour-region name. The curated Attraction table (XLSX import) stores
+ * bare regions ("Eastern"), while Tour.region stores suffixed ones
+ * ("Eastern Region"). Normalise to the suffixed form for querying + display.
+ */
+function normalizeRegion(name) {
+  const s = String(name || '').trim();
+  if (!s) return '';
+  return /\s+region$/i.test(s) ? s : `${s} Region`;
+}
+
+/**
+ * Resolve a free-text query to a Ghana region via the curated Attraction table
+ * (name / town / aliases). This is the region source for the "no tours in this
+ * place -> show its region" fallback and the region-first homepage backfill.
+ *
+ * Match order (most specific first): town -> name (exact) -> name (prefix) ->
+ * aliases (word-boundary). Returns the raw region string ("Eastern") or null.
+ */
+async function regionForQuery(query) {
+  const q0 = normalizeQuery(query);
+  if (q0.length < 2) return null;
+
+  const key = `hp:region:${keyOf(q0)}`;
+  return cache.getOrSet(key, async () => {
+    const base = { status: 'ACTIVE', region: { not: null } };
+
+    const town = await prisma.attraction.findFirst({
+      where: { ...base, town: { equals: q0, mode: 'insensitive' } },
+      select: { region: true },
+      orderBy: [{ tourCount: 'desc' }],
+    });
+    if (town?.region) return town.region;
+
+    const nameExact = await prisma.attraction.findFirst({
+      where: { ...base, name: { equals: q0, mode: 'insensitive' } },
+      select: { region: true },
+      orderBy: [{ tourCount: 'desc' }],
+    });
+    if (nameExact?.region) return nameExact.region;
+
+    const target = foldAccents(q0.toLowerCase());
+    const prefixes = await prisma.attraction.findMany({
+      where: { ...base, name: { startsWith: q0, mode: 'insensitive' } },
+      select: { name: true, region: true },
+      orderBy: [{ tourCount: 'desc' }],
+      take: 20,
+    });
+    const prefix = prefixes.find(
+      (a) => a.name && a.region && foldAccents(a.name.toLowerCase()).startsWith(target),
+    );
+    if (prefix?.region) return prefix.region;
+
+    // Aliases are semicolon-separated; match any alias by word boundary so a
+    // short alias can't false-positive inside a longer word.
+    const aliasCandidates = await prisma.attraction.findMany({
+      where: { ...base, aliases: { contains: q0, mode: 'insensitive' } },
+      select: { aliases: true, region: true },
+      orderBy: [{ tourCount: 'desc' }],
+      take: 20,
+    });
+    const aliasHit = aliasCandidates.find(
+      (a) =>
+        a.region &&
+        String(a.aliases || '')
+          .split(';')
+          .some((t) => t.trim() && wordBoundaryMatch(foldAccents(t.trim().toLowerCase()), target)),
+    );
+    if (aliasHit?.region) return aliasHit.region;
+
+    return null;
+  }, PLACE_TTL, { cacheEmpty: false, cacheNull: false });
+}
+
+/**
  * Distinct countries present in the catalog for a scope, most common first.
  * Drives the geocoder bias + validation so "kakum" can never resolve to a
  * random village in Sudan when the platform only sells Ghana.
@@ -147,11 +221,14 @@ async function findCity(query, scope) {
   if (!match || !match.city) return null;
 
   const centroid = await resolveCityCentroid(match.city);
+  // Region from the curated Attraction table (town -> region) so a city match
+  // still carries its region for the fallback + homepage region-first backfill.
+  const region = await regionForQuery(match.city).catch(() => null);
   return {
     name: match.city,
     type: 'city',
     city: match.city,
-    region: null,
+    region: region || null,
     country: match.country || null,
     lat: centroid ? centroid.lat : null,
     lng: centroid ? centroid.lng : null,
@@ -200,7 +277,7 @@ async function findRegion(query, scope) {
 
 /** Curated attraction lookup — exact, then word-boundary contains. */
 async function findAttraction(query) {
-  const select = { name: true, latitude: true, longitude: true, tourCount: true };
+  const select = { name: true, latitude: true, longitude: true, tourCount: true, region: true };
 
   const exact = await prisma.attraction.findFirst({
     where: {
@@ -213,7 +290,7 @@ async function findAttraction(query) {
   });
   if (exact) {
     return {
-      name: exact.name, type: 'attraction', city: null, region: null, country: null,
+      name: exact.name, type: 'attraction', city: null, region: exact.region || null, country: null,
       lat: exact.latitude, lng: exact.longitude, matchedBy: 'attraction:exact',
     };
   }
@@ -236,7 +313,7 @@ async function findAttraction(query) {
   const fuzzy = candidates.find((a) => a.name && foldAccents(a.name.toLowerCase()).startsWith(target));
   if (fuzzy) {
     return {
-      name: fuzzy.name, type: 'attraction', city: null, region: null, country: null,
+      name: fuzzy.name, type: 'attraction', city: null, region: fuzzy.region || null, country: null,
       lat: fuzzy.latitude, lng: fuzzy.longitude, matchedBy: 'attraction:prefix',
     };
   }
@@ -378,11 +455,21 @@ async function resolvePlace(query, scope = {}) {
     return null;
   }, PLACE_TTL, { cacheEmpty: false, cacheNull: false });
 
-  if (resolved && tail) {
+  // Region enrichment: ensure the resolved place carries its region (from the
+  // curated Attraction table) so the "no tours here -> show the region"
+  // fallback and the homepage region-first backfill have a key to work with.
+  // The cached object is shared — spread to a copy rather than mutating it.
+  let result = resolved;
+  if (result && !result.region) {
+    const region = await regionForQuery(head).catch(() => null);
+    if (region) result = { ...result, region, displayName: displayName({ ...result, region }) };
+  }
+
+  if (result && tail) {
     const tailFold = foldAccents(tail.toLowerCase());
     const countries = await getCatalogCountries(scope);
     const isCatalogCountry = countries.some((c) => foldAccents(c.name.toLowerCase()) === tailFold);
-    const placeCountry = resolved.country ? foldAccents(resolved.country.toLowerCase()) : null;
+    const placeCountry = result.country ? foldAccents(result.country.toLowerCase()) : null;
 
     if (isCatalogCountry) {
       if (placeCountry && placeCountry !== tailFold) return null;
@@ -392,7 +479,7 @@ async function resolvePlace(query, scope = {}) {
     }
   }
 
-  return resolved;
+  return result;
 }
 
 /**
@@ -495,6 +582,8 @@ function rankByPlace(tours, { place = '', lat = null, lng = null, localIds = nul
 
 module.exports = {
   resolvePlace,
+  regionForQuery,
+  normalizeRegion,
   getCatalogCountries,
   rankByPlace,
   placeRelevance,
