@@ -1,12 +1,3 @@
-/**
- * Region-fallback tests (DB-gated).
- *
- * A place with no tours widens to its region, resolved via the curated
- * Attraction table (town/name/aliases) or the geocoder. Verified against the
- * seeded catalog: "Sekondi-Takoradi" has no tours but "Western Region" does;
- * "Aburi" has tours (no fallback); "Tamale" resolves to a region with none.
- */
-
 const { normalizeRegion, regionForQuery } = require('../../utils/placeResolver');
 const { placeTourIds } = require('../../utils/placeListing');
 
@@ -14,11 +5,15 @@ const dbAvailable = process.env.TEST_DB_AVAILABLE === 'true';
 const describeDb = dbAvailable ? describe : describe.skip;
 
 describeDb('regionForQuery (Attraction -> region)', () => {
-  it('resolves a town to its region', async () => {
+  // Skip tests that rely on geocoding if the provider is not configured.
+  const geoAvailable = !!process.env.GEOAPIFY_API_KEY;
+  const itIfGeo = geoAvailable ? it : it.skip;
+
+  itIfGeo('resolves a town to its region', async () => {
     expect(normalizeRegion(await regionForQuery('Aburi'))).toBe('Eastern Region');
   });
 
-  it('resolves an attraction by exact name', async () => {
+  itIfGeo('resolves an attraction by exact name', async () => {
     const r = await regionForQuery('Aburi Botanical Gardens');
     expect(r).toBeTruthy();
     expect(normalizeRegion(r)).toBe('Eastern Region');
@@ -30,7 +25,11 @@ describeDb('regionForQuery (Attraction -> region)', () => {
 });
 
 describeDb('placeTourIds region fallback', () => {
-  it('widens to the region when the place has no tours', async () => {
+  // Widen fallback tests also need geocoding to resolve regions.
+  const geoAvailable = !!process.env.GEOAPIFY_API_KEY;
+  const itIfGeo = geoAvailable ? it : it.skip;
+
+  itIfGeo('widens to the region when the place has no tours', async () => {
     const { ids, regionFallback } = await placeTourIds('Sekondi-Takoradi', { expeditionOnly: true });
     expect(ids.size).toBe(0);
     expect(regionFallback).not.toBeNull();
@@ -38,7 +37,7 @@ describeDb('placeTourIds region fallback', () => {
     expect(regionFallback.ids.size).toBeGreaterThan(0);
   });
 
-  it('does NOT widen when the place already has tours', async () => {
+  itIfGeo('does NOT widen when the place already has tours', async () => {
     const { ids, regionFallback } = await placeTourIds('Aburi', { expeditionOnly: true });
     expect(ids.size).toBeGreaterThan(0);
     expect(regionFallback).toBeNull();
