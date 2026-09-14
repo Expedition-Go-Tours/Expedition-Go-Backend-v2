@@ -768,7 +768,7 @@ jobs:
         id: verify_start
         run: echo "ts=$(date +%s)" >> $GITHUB_OUTPUT
 
-      - name: Verify live health endpoint
+      - name: Verify live health + readiness
         id: health
         continue-on-error: true
         run: |
@@ -778,8 +778,9 @@ jobs:
             RESP=$(curl -s -o /tmp/health.json -w "%{http_code} %{time_total}" https://apiv1.travioafrica.com/health)
             CODE=$(echo "$RESP" | awk '{print $1}')
             LATENCY=$(echo "$RESP" | awk '{print $2}')
-            echo "attempt $i/$attempts: HTTP $CODE"
-            if [ "$CODE" = "200" ]; then
+            READY=$(curl -s -o /tmp/ready.json -w "%{http_code}" https://apiv1.travioafrica.com/ready)
+            echo "attempt $i/$attempts: health=$CODE ready=$READY"
+            if [ "$CODE" = "200" ] && [ "$READY" = "200" ]; then
               echo "code=$CODE" >> $GITHUB_OUTPUT
               echo "latency=$LATENCY" >> $GITHUB_OUTPUT
               echo "details=$(cat /tmp/health.json)" >> $GITHUB_OUTPUT

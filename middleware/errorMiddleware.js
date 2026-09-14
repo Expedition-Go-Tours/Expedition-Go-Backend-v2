@@ -5,6 +5,7 @@ const SKIP_ERROR_LOG = [
   '/api/admin/audit-log',
   '/api/admin/system/health',
   '/health',
+  '/ready',
   '/api/webhooks',
   '/api/chat',
   '/socket.io',
