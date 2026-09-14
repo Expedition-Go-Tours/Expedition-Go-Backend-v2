@@ -11,6 +11,11 @@ module.exports = {
     },
     max_memory_restart: '500M',
     node_args: '--max-old-space-size=400',
+    // Crash-loop guard: without this, a bind failure (e.g. EADDRINUSE when a
+    // stray PM2 daemon or leftover process holds the port) restarts the app
+    // every ~1s, pinning CPU and load. Exponential backoff spaces retries
+    // out to ~15s so a transient conflict self-heals instead of hammering.
+    exp_backoff_restart_delay: 200,
     // Keep the same log paths PM2 has used for this app so incident-monitor
     // tails (/home/deploy/.pm2/logs/expedition-api-error.log) keep working
     // after the cluster migration.

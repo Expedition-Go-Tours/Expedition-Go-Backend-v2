@@ -134,6 +134,18 @@ process.on('SIGINT', () => {
 
 const server = http.createServer(app);
 
+// A bind failure (EADDRINUSE) means another process/daemon already owns the
+// port. Fail loudly but exit cleanly so PM2's exp_backoff_restart_delay spaces
+// retries out instead of tight-looping the whole process tree.
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(`[Startup] Port ${port} already in use — another process or PM2 daemon is bound to it. Exiting for PM2 backoff.`);
+  } else {
+    console.error('[Startup] HTTP server error:', err?.message || err);
+  }
+  process.exit(1);
+});
+
 // Listen immediately so Render health checks pass while async init completes
 server.listen(port, '0.0.0.0', () => {
   console.log(`[Startup] HTTP server listening on ${port}`);
