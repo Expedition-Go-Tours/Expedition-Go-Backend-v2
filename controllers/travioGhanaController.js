@@ -178,8 +178,8 @@ exports.getTours = catchAsync(async (req, res) => {
       if (resolved && ids) {
         // Region fallback: the place itself has no tours, so widen to its
         // region. These tours are not "in" the place — skip place ranking.
-        const useRegionFallback = ids.size === 0 && !!regionFallback && regionFallback.ids.size > 0;
-        const effectiveIds = useRegionFallback ? regionFallback.ids : ids;
+        const useRegionFallback = localIds.size === 0 && !!regionFallback && regionFallback.ids.size > 0;
+        const effectiveIds = useRegionFallback ? new Set([...regionFallback.ids, ...nearIds]) : ids;
 
         placeName = resolved.name;
         placeScope = {

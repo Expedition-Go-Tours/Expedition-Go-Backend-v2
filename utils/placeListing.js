@@ -111,7 +111,7 @@ async function placeTourIds(placeQuery, scope = {}, { radiusKm } = {}) {
   // resolved or has no tours, `ids` stays empty and the storefront shows its
   // no-tours state.
   let regionFallback = null;
-  if (ids.size === 0 && CONFIDENT_PLACE_TYPES.has(resolved.type)) {
+  if (localIds.size === 0 && CONFIDENT_PLACE_TYPES.has(resolved.type)) {
     const region = resolved.region || (await regionForQuery(placeQuery).catch(() => null));
     if (region) {
       const regionIds = new Set(await regionTourIds(region, scope));
