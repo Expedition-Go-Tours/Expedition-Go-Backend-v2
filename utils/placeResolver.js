@@ -387,7 +387,10 @@ async function geocode(query, countries) {
 function displayName(place) {
   if (!place) return '';
   if (place.type === 'city' || place.type === 'region' || place.type === 'country') return place.name;
-  const qualifier = place.city || place.region;
+  // Normalise a bare region ("Central", from the curated Attraction table) to
+  // the tour form ("Central Region") so the composed name round-trips back
+  // through resolvePlace — its comma-tail check validates against Tour.region.
+  const qualifier = place.city || (place.region ? normalizeRegion(place.region) : null);
   if (qualifier && !foldAccents(place.name.toLowerCase()).includes(foldAccents(qualifier.toLowerCase()))) {
     return `${place.name}, ${qualifier}`;
   }
@@ -398,14 +401,19 @@ function finalize(place) {
   return { ...place, displayName: displayName(place) };
 }
 
-/** Is `name` a catalog city or region in this scope? (for comma-tail checks) */
+/** Is `name` a catalog city, region, or itinerary region in this scope? (comma-tail checks) */
 async function isCatalogPlaceName(name, scope) {
   const base = { status: 'ACTIVE', ...scopeWhere(scope) };
-  const [city, region] = await Promise.all([
+  const normalized = normalizeRegion(name);
+  const [city, region, regionNorm, itinerary] = await Promise.all([
     prisma.tour.findFirst({ where: { ...base, city: { equals: name, mode: 'insensitive' } }, select: { id: true } }),
     prisma.tour.findFirst({ where: { ...base, region: { equals: name, mode: 'insensitive' } }, select: { id: true } }),
+    // Accept a bare region tail ("Central") for the tour form ("Central Region").
+    prisma.tour.findFirst({ where: { ...base, region: { equals: normalized, mode: 'insensitive' } }, select: { id: true } }),
+    // ...or a region the tour merely visits.
+    prisma.tour.findFirst({ where: { ...base, itineraryRegions: { hasSome: [name, normalized] } }, select: { id: true } }),
   ]);
-  return !!(city || region);
+  return !!(city || region || regionNorm || itinerary);
 }
 
 /**

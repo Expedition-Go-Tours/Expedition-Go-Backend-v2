@@ -272,6 +272,20 @@ async function getLocationTourIds(city, ghanaOnly = false, expeditionOnly = fals
                OR LOWER(val) LIKE ${likeEnds} ESCAPE '\\'
                OR LOWER(val) LIKE ${likeWord} ESCAPE '\\'
           )
+          OR EXISTS (
+            SELECT 1 FROM unnest(t."itineraryCities") AS a(val)
+            WHERE LOWER(val) = ${lower}
+               OR LOWER(val) LIKE ${likeStarts} ESCAPE '\\'
+               OR LOWER(val) LIKE ${likeEnds} ESCAPE '\\'
+               OR LOWER(val) LIKE ${likeWord} ESCAPE '\\'
+          )
+          OR EXISTS (
+            SELECT 1 FROM unnest(t."itineraryRegions") AS a(val)
+            WHERE LOWER(val) = ${lower}
+               OR LOWER(val) LIKE ${likeStarts} ESCAPE '\\'
+               OR LOWER(val) LIKE ${likeEnds} ESCAPE '\\'
+               OR LOWER(val) LIKE ${likeWord} ESCAPE '\\'
+          )
         )
     `;
 

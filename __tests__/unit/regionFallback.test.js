@@ -75,3 +75,24 @@ describeDb('placeTourIds region fallback (needs catalog + geocoder)', () => {
     expect(regionFallback).toBeNull();
   });
 });
+
+describeDb('itinerary place matching (needs catalog)', () => {
+  it('a region search matches a tour that only VISITS it', async () => {
+    // Guard: only meaningful when the catalog has a tour whose itinerary
+    // includes Volta (based elsewhere).
+    const seeded = await prisma.tour.count({
+      where: { status: 'ACTIVE', itineraryRegions: { has: 'Volta Region' } },
+    });
+    if (seeded === 0) return;
+
+    const { getLocationTourIds } = require('../../utils/homepageRanking');
+    const ids = await getLocationTourIds('Volta Region', false, true);
+    expect(ids.length).toBeGreaterThan(0);
+
+    const tours = await prisma.tour.findMany({
+      where: { id: { in: ids } },
+      select: { itineraryRegions: true },
+    });
+    expect(tours.some((t) => t.itineraryRegions.includes('Volta Region'))).toBe(true);
+  });
+});

@@ -69,6 +69,14 @@ describe('displayName', () => {
       .toBe('Accra Mall');
   });
 
+  it('normalises a bare region qualifier so the composed name round-trips', () => {
+    // The Attraction table stores "Central"; resolvePlace's comma-tail check
+    // validates against Tour.region ("Central Region"), so displayName must
+    // emit the suffixed form or the name won't resolve back.
+    expect(displayName({ name: 'Elmina Castle', type: 'attraction', city: null, region: 'Central' }))
+      .toBe('Elmina Castle, Central Region');
+  });
+
   it('handles missing qualifier', () => {
     expect(displayName({ name: 'Nowhere', type: 'locality', city: null, region: null })).toBe('Nowhere');
   });

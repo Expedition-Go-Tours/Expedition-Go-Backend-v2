@@ -626,6 +626,12 @@ model Tour {
   country     String? // Extracted from productContent.location.country for indexed filtering
   region      String? // Extracted from productContent.location.region for indexed filtering
   attractions String[] @default([]) // Extracted from productContent.locations[].name — specific attraction/stop names
+  // Every itinerary stop's city/region (not just the first, which is what
+  // `city`/`region` hold). Lets a search for a town or region surface a tour
+  // that merely VISITS it (e.g. "Volta Region" → a tour based in Accra whose
+  // itinerary stops in Amedzofe/Tafi/Wli).
+  itineraryCities  String[] @default([]) // Extracted from productContent.locations[].city
+  itineraryRegions String[] @default([]) // Extracted from productContent.locations[].region
 
   // Normalized categorization (extracted from categorization JSON for indexed filtering)
   category        String? // e.g. "Adventure", "Cultural", "Nature"
@@ -690,6 +696,8 @@ model Tour {
   @@index([city])
   @@index([country])
   @@index([region])
+  @@index([itineraryCities], type: Gin) // itinerary city search
+  @@index([itineraryRegions], type: Gin) // itinerary region search
   @@index([country, city])
   @@index([category])
   @@index([subcategory])

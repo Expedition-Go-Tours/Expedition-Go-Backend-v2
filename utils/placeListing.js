@@ -55,7 +55,12 @@ async function regionTourIds(region, scope = {}) {
     const where = {
       status: 'ACTIVE',
       supplier: { supplierProfile: { status: 'ACTIVE' } },
-      region: { in: [normalized, bare], mode: 'insensitive' },
+      OR: [
+        // Based in the region (the tour's first stop).
+        { region: { in: [normalized, bare], mode: 'insensitive' } },
+        // ...or merely VISITS it — a stop in the itinerary is in the region.
+        { itineraryRegions: { hasSome: [normalized, bare] } },
+      ],
     };
     if (scope.ghanaOnly) where.travioGhanaTour = { isActive: true };
     else if (scope.expeditionOnly) where.expeditionTour = { isActive: true };

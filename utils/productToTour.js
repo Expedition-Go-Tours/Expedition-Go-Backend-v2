@@ -38,6 +38,15 @@ function productToTour(flat) {
     ? [...new Set(flat.locations.map(l => l?.name).filter(n => n && n.trim()))]
     : [];
 
+  // Every stop's city/region (not just the first, which is what city/region
+  // hold) so a search for a town or region can surface a tour that visits it.
+  const itineraryCities = Array.isArray(flat.locations)
+    ? [...new Set(flat.locations.map(l => l?.city).filter(c => c && String(c).trim()))]
+    : [];
+  const itineraryRegions = Array.isArray(flat.locations)
+    ? [...new Set(flat.locations.map(l => l?.region).filter(r => r && String(r).trim()))]
+    : [];
+
   const result = {
     title: flat.title || '',
     description: flat.fullDescription || '',
@@ -60,6 +69,8 @@ function productToTour(flat) {
     difficulty: categorization?.difficulty || null,
     durationMinutes: computeDurationMinutes(flat),
     attractions,
+    itineraryCities,
+    itineraryRegions,
   };
 
   // Remove undefined fields so they don't overwrite existing values on update
