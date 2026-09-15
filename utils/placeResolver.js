@@ -98,6 +98,26 @@ function normalizeRegion(name) {
 }
 
 /**
+ * Ghana's 16 administrative regions (post-2019 split). The geocoder still
+ * answers with retired names — Nominatim/Geoapify return "Brong-Ahafo" for the
+ * Bono/Bono East/Ahafo area — and its `region` field is sometimes a district, so
+ * a geocoded region is only usable when it matches one of these.
+ */
+const GHANA_REGIONS = [
+  'Ahafo', 'Ashanti', 'Bono', 'Bono East', 'Central', 'Eastern', 'Greater Accra',
+  'North East', 'Northern', 'Oti', 'Savannah', 'Upper East', 'Upper West',
+  'Volta', 'Western', 'Western North',
+];
+const GHANA_REGION_KEYS = new Set(GHANA_REGIONS.map((r) => keyOf(r)));
+
+/** The canonical region for `name`, or null when it is not one of the 16. */
+function canonicalRegion(name) {
+  const s = String(name || '').trim().replace(/\s+region$/i, '').trim();
+  if (!s || !GHANA_REGION_KEYS.has(keyOf(s))) return null;
+  return GHANA_REGIONS.find((r) => keyOf(r) === keyOf(s)) || null;
+}
+
+/**
  * Resolve a free-text query to a Ghana region via the curated Attraction table
  * (name / town / aliases). This is the region source for the "no tours in this
  * place -> show its region" fallback and the region-first homepage backfill.
@@ -356,13 +376,20 @@ async function findAttraction(query) {
   return null;
 }
 
-/** Is a geocoder hit a settlement (not a street/POI/building)? */
+/**
+ * Is a geocoder hit a settlement (not a street/POI/building)?
+ *
+ * When the provider tells us what the hit is, believe it: Nominatim/Geoapify
+ * label administrative areas and populated places, so an "amenity"/"residential"
+ * hit is a POI or a street even though it has no house number. Hits with no
+ * category at all fall back to "no street / house number means the name is the
+ * place itself rather than an address".
+ */
 function isSettlement(hit) {
   const cat = String(hit.category || '').toLowerCase();
-  if (/administrative|populated_place|locality|city|town|village|suburb|neighbourhood|neighborhood|district|municipal|region/.test(cat)) {
-    return true;
+  if (cat) {
+    return /administrative|populated_place|locality|city|town|village|suburb|neighbourhood|neighborhood|district|municipal|region/.test(cat);
   }
-  // No street / house number → the name is the place itself, not an address.
   return !hit.street && !hit.housenumber;
 }
 
@@ -421,9 +448,14 @@ async function geocode(query, countries) {
     return allowed.has(foldAccents(String(r.country || '').toLowerCase()));
   };
 
-  // Pass 1 — raw query.
+  // Pass 1 — raw query. Prefer a settlement: providers rank same-named villages
+  // in unrelated regions (and POIs) above the one being asked for — Nominatim
+  // answers "Akropong" with an Ashanti village before the Eastern one — so the
+  // first in-country hit makes the region a coin flip. The first hit is still
+  // used when nothing settlement-like comes back.
   const raw = await locationService.search(query, 8).catch(() => []);
-  const rawHit = (raw || []).find(inCountry);
+  const inC = (raw || []).filter(inCountry);
+  const rawHit = inC.find(isSettlement) || inC[0];
   if (rawHit) return toPlace(rawHit, query);
 
   // Pass 2 — country-suffixed retry. Settlements, plus POIs whose address
@@ -487,7 +519,11 @@ async function geocodedRegionFor(query, scope = {}) {
   return cache.getOrSet(key, async () => {
     const countries = await getCatalogCountries(scope);
     const hit = await geocode(q0, countries);
-    return hit && hit.region ? hit.region : null;
+    // Only a settlement in one of Ghana's 16 regions is usable here. A POI hit
+    // names a street, and a retired region ("Brong-Ahafo") or a district name
+    // would send the user somewhere the place is not.
+    if (!hit || hit.matchedBy !== 'geocoder') return null;
+    return canonicalRegion(hit.region);
   }, PLACE_TTL, { cacheEmpty: false, cacheNull: false });
 }
 
@@ -676,6 +712,7 @@ module.exports = {
   geocodedRegionFor,
   regionForQuery,
   normalizeRegion,
+  canonicalRegion,
   getCatalogCountries,
   rankByPlace,
   placeRelevance,
