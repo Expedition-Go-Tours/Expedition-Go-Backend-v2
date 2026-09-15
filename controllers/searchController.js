@@ -537,13 +537,15 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
       if (tourFromAttractions) {
         tourOrConditions.push({ attractions: { hasSome: attractionNames } });
       }
+      // Normalised lookup for the per-tour visit check below.
+      const attractionNameSet = new Set(attractionNames.map(n => normaliseSearch(n)));
 
       const tours = await prisma.tour.findMany({
         where: { status: 'ACTIVE', ...scopeFilter, OR: tourOrConditions },
         select: {
           id: true, title: true, slug: true, city: true, country: true, region: true,
           coverPhoto: true, averageRating: true, reviewCount: true,
-          totalBookings: true, description: true,
+          totalBookings: true, description: true, attractions: true,
         },
         orderBy: [{ reviewCount: 'desc' }, { totalBookings: 'desc' }],
         take: 20,
@@ -557,8 +559,15 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
           aliases: '',
         };
         const score = scoreRecord('tour', item, nq, cq);
-        // Tours matched via attractions array get an attraction-visit boost
-        const attractionBoost = (score === 0 && tourFromAttractions) ? 15 : 0;
+        // Attraction-visit boost, but ONLY for a tour that actually lists one of
+        // the matched attractions. Keying off "any attraction matched" boosted
+        // every tour the query happened to fetch (the OR also matches on
+        // description), so a short query like "ho" surfaced 20 unrelated tours
+        // ahead of the exact-match place "Ho".
+        const visitsMatchedAttraction = tourFromAttractions
+          && Array.isArray(t.attractions)
+          && t.attractions.some(a => attractionNameSet.has(normaliseSearch(a)));
+        const attractionBoost = (score === 0 && visitsMatchedAttraction) ? 15 : 0;
         if (score > 0 || attractionBoost > 0) {
           scored.push(buildSuggestion('tour', { ...item, slug: t.slug, coverPhoto: t.coverPhoto }, score + 12 + attractionBoost));
         }
