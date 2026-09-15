@@ -24,6 +24,7 @@
 const crypto = require('crypto');
 const prisma = require('../utils/prismaClient');
 const cache = require('../utils/cacheHelper');
+const { placeTourCount } = require('../utils/placeListing');
 const catchAsync = require('../utils/catchAsync');
 
 /* ── Ghana regions ──────────────────────────────────────────────────────── */
@@ -213,11 +214,39 @@ function placeSubtitle(place) {
  * like Amasaman must not report its own autocomplete row as an attraction.
  */
 function placeMeta(place) {
-  const tours = place.tourCount || 0;
+  // `listingCount` is the place-scoped figure the listing page itself reports
+  // (set for the few suggestions that actually render); `tourCount` is the cheap
+  // exact-city fallback. Take the larger so the number can never undersell.
+  const tours = Math.max(place.listingCount || 0, place.tourCount || 0);
   const attractions = place.attractionCount || 0;
   if (tours > 0) return `${tours} tour${tours === 1 ? '' : 's'} available`;
   if (attractions > 0) return `${attractions} attraction${attractions === 1 ? '' : 's'}`;
   return 'Destination in Ghana';
+}
+
+/** How many place suggestions get the (more expensive) listing-consistent count. */
+const LISTING_COUNT_MAX = 3;
+
+/**
+ * Upgrade the cheap exact-city tour count to the place-scoped count the
+ * `/expedition/tours?place=` listing reports, so "N tours available" in the
+ * dropdown matches the page it opens. Only the place suggestions that actually
+ * made the response are counted, in parallel, and best-effort — a failure keeps
+ * the cheap count rather than breaking search. Place resolution is cached 6h,
+ * and the whole search response is cached, so this stays cheap.
+ */
+async function applyListingCounts(results, placeScope) {
+  const places = results.filter((r) => r.kind === 'place').slice(0, LISTING_COUNT_MAX);
+  if (places.length === 0) return;
+
+  await Promise.all(places.map(async (r) => {
+    try {
+      const count = await placeTourCount(r.entity.name, placeScope);
+      if (count == null) return;
+      r.entity.listingCount = count;
+      r.meta = placeMeta(r.entity);
+    } catch { /* keep the cheap exact-city count */ }
+  }));
 }
 
 function attractionSubtitle(a) {
@@ -489,6 +518,13 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
     });
 
     const results = scored.slice(0, limit);
+
+    // Make the destination "N tours available" match the listing page.
+    const placeScope = scope === 'ghana'
+      ? { ghanaOnly: true }
+      : scope === 'expedition' ? { expeditionOnly: true } : {};
+    await applyListingCounts(results, placeScope);
+
     const stats = {
       places: scored.filter(r => r.kind === 'place').length,
       attractions: scored.filter(r => r.kind === 'attraction').length,

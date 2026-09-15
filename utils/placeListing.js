@@ -122,4 +122,40 @@ async function placeTourIds(placeQuery, scope = {}, { radiusKm } = {}) {
   return { resolved, ids, localIds, nearIds, regionFallback };
 }
 
-module.exports = { placeTourIds, radiusForType, regionTourIds };
+/**
+ * Number of tours the place-scoped LISTING would return for `place` — the same
+ * figure `/expedition/tours?place=` reports, so a search suggestion's
+ * "N tours available" agrees with the page it links to.
+ *
+ * Mirrors the controller exactly: localIds + nearIds normally, widened to the
+ * region (∪ nearIds) when the place itself has no tours, then counted through
+ * the same active/scope joins the listing counts.
+ *
+ * @param {string} placeQuery
+ * @param {{ ghanaOnly?: boolean, expeditionOnly?: boolean }} [scope]
+ * @returns {Promise<number|null>} null when the query isn't a place at all.
+ */
+async function placeTourCount(placeQuery, scope = {}) {
+  const { resolved, ids, localIds, nearIds, regionFallback } = await placeTourIds(placeQuery, scope);
+  if (!resolved) return null;
+
+  const useRegionFallback = localIds.size === 0 && !!regionFallback && regionFallback.ids.size > 0;
+  const effective = useRegionFallback ? new Set([...regionFallback.ids, ...nearIds]) : ids;
+  if (effective.size === 0) return 0;
+
+  const tourWhere = {
+    status: 'ACTIVE',
+    supplier: { supplierProfile: { status: 'ACTIVE' } },
+    id: { in: [...effective] },
+  };
+
+  if (scope.ghanaOnly) {
+    return prisma.travioGhanaTour.count({ where: { isActive: true, tour: tourWhere } });
+  }
+  if (scope.expeditionOnly) {
+    return prisma.expeditionTour.count({ where: { isActive: true, tour: tourWhere } });
+  }
+  return prisma.tour.count({ where: tourWhere });
+}
+
+module.exports = { placeTourIds, radiusForType, regionTourIds, placeTourCount };
