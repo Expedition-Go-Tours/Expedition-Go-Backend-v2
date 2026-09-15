@@ -177,7 +177,7 @@ function buildSuggestion(kind, item, score) {
     icon = '⌖';
     badge = 'Destination';
     subtitle = placeSubtitle(item);
-    meta = item.attractionCount ? `${item.attractionCount} attraction site${item.attractionCount === 1 ? '' : 's'} linked nearby` : 'Destination in Ghana';
+    meta = placeMeta(item);
   } else if (kind === 'attraction') {
     icon = '✦';
     badge = 'Attraction';
@@ -202,6 +202,22 @@ function placeSubtitle(place) {
   if (place.placeType && /tourism/i.test(place.placeType)) return `Tourism area in ${place.region} Region, Ghana`;
   if (place.placeType && /urban area/i.test(place.placeType)) return `City / town in ${place.region} Region, Ghana`;
   return `Place in ${place.region || 'Ghana'} Region`;
+}
+
+/**
+ * Honest, real-count meta for a destination suggestion.
+ *
+ * Never claims "attraction sites" when we only counted tours (or vice versa),
+ * and says nothing numeric when the place has neither. Counts exclude the seeded
+ * "City / Town" rows, which exist only to make a town autocomplete — a place
+ * like Amasaman must not report its own autocomplete row as an attraction.
+ */
+function placeMeta(place) {
+  const tours = place.tourCount || 0;
+  const attractions = place.attractionCount || 0;
+  if (tours > 0) return `${tours} tour${tours === 1 ? '' : 's'} available`;
+  if (attractions > 0) return `${attractions} attraction${attractions === 1 ? '' : 's'}`;
+  return 'Destination in Ghana';
 }
 
 function attractionSubtitle(a) {
@@ -303,6 +319,7 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
           prev._score = score;
           if (item.placeType && item.placeType !== 'City / Town') prev.placeType = prev.placeType || item.placeType;
         }
+        prev.tourCount = Math.max(prev.tourCount || 0, item.tourCount || 0);
         prev.attractionCount = Math.max(prev.attractionCount || 0, item.attractionCount || 0);
         if (!prev.region && item.region) prev.region = item.region;
         return;
@@ -326,7 +343,9 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
           name: c.city,
           region: normaliseRegion(c.region),
           priority: 'Standard',
-          attractionCount: c._count?._all ?? 0,
+          // Real number of bookable tours in this city (was previously surfaced
+          // as "N attraction sites", which was simply wrong).
+          tourCount: c._count?._all ?? 0,
           placeType: 'City / Town',
         };
         const score = scoreRecord('place', item, nq, cq);
@@ -339,7 +358,7 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
     try {
       const attrs = await prisma.attraction.findMany({
         where: { status: 'ACTIVE', region: { not: null }, town: { contains: q, mode: 'insensitive' } },
-        select: { town: true, region: true, placeType: true },
+        select: { town: true, region: true, placeType: true, category: true },
         take: 300,
       }).catch(() => []);
 
@@ -348,13 +367,21 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
         const name = normalizeTown(a.town);
         if (!name) continue;
         const key = name.toLowerCase();
+        // The seeded "City / Town" rows exist purely so the town autocompletes.
+        // They must still produce a suggestion, but must NOT be counted as
+        // attractions (otherwise every seeded town claims "1 attraction site").
+        const isPlaceRow = a.category === 'City / Town';
         const prev = townAgg.get(key) || {
           name,
           region: normaliseRegion(a.region),
           placeType: a.placeType || 'Town',
           count: 0,
         };
-        prev.count += 1;
+        if (isPlaceRow) {
+          prev.placeType = a.placeType || prev.placeType;
+        } else {
+          prev.count += 1;
+        }
         if (!prev.region && a.region) prev.region = normaliseRegion(a.region);
         townAgg.set(key, prev);
       }
@@ -388,7 +415,9 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
         // Count attractions in this region
         try {
           const count = await prisma.attraction.count({
-            where: { status: 'ACTIVE', region: r },
+            // Exclude the seeded "City / Town" autocomplete rows so the region
+            // total reflects real attraction sites only.
+            where: { status: 'ACTIVE', region: r, NOT: { category: 'City / Town' } },
           }).catch(() => 0);
           item.attractionCount = count;
         } catch {}
