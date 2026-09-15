@@ -294,12 +294,16 @@ function toAttractionPlace(row, matchedBy) {
 async function findAttraction(query) {
   const select = { name: true, latitude: true, longitude: true, tourCount: true, region: true };
   const withCoords = { latitude: { not: null }, longitude: { not: null } };
+  // The seeded `City / Town` rows live in the Attraction table too — they are
+  // places, not attractions, so they must not shadow the city/region lookups
+  // (otherwise "Kumasi" resolves as an attraction).
+  const base = { status: 'ACTIVE', NOT: { category: 'City / Town' } };
   const target = foldAccents(query.toLowerCase());
 
   // Exact
   for (const [suffix, extra] of [['', withCoords], [':name', {}]]) {
     const exact = await prisma.attraction.findFirst({
-      where: { status: 'ACTIVE', name: { equals: query, mode: 'insensitive' }, ...extra },
+      where: { ...base, name: { equals: query, mode: 'insensitive' }, ...extra },
       select,
       orderBy: [{ tourCount: 'desc' }],
     });
@@ -310,7 +314,7 @@ async function findAttraction(query) {
   // "The Kumasi NightLife Experience" (so a major city resolves as the city).
   for (const [suffix, extra] of [['', withCoords], [':name', {}]]) {
     const candidates = await prisma.attraction.findMany({
-      where: { status: 'ACTIVE', name: { contains: query, mode: 'insensitive' }, ...extra },
+      where: { ...base, name: { contains: query, mode: 'insensitive' }, ...extra },
       select,
       orderBy: [{ tourCount: 'desc' }],
       take: 50,
