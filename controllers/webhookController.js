@@ -73,15 +73,50 @@ exports.handleStripeWebhook = catchAsync(async (req, res, next) => {
       console.log(`✅ Webhook processed successfully: ${result.message}`);
 
       // Discord: payment events (fire-and-forget, never affects webhook handling)
-      const { salesPaymentFailed, salesRefundIssued } = require('../utils/channelEmbeds');
+      const { salesPaymentFailed, salesPaymentRecovered, salesRefundIssued } = require('../utils/channelEmbeds');
       if (event.type === 'payment_intent.payment_failed') {
         const pi = event.data.object || {};
+        const err = pi.last_payment_error || {};
+        const email = pi.receipt_email || (err.payment_method && err.payment_method.billing_details ? err.payment_method.billing_details.email : null);
+        // Issuer declines / 3-D Secure challenges are retryable — the customer
+        // often pays on the next attempt, so remember the failure (30 min) and
+        // word the alert as a decline rather than a final failure.
+        const recoverable = ['card_declined', 'authentication_required', 'payment_intent_authentication_failure'].includes(err.code)
+          || err.type === 'card_error';
+        try {
+          const redis = require('../utils/redisClient');
+          const client = await redis.getClient();
+          await client.setEx(`hp:payfail:${pi.id}`, 1800, JSON.stringify({ amount: pi.amount, currency: pi.currency, email, at: Date.now() }));
+        } catch { /* best effort */ }
         const failed = salesPaymentFailed({
           amount: (pi.amount || 0) / 100,
           currency: pi.currency || 'USD',
           paymentIntentId: pi.id,
+          email,
+          reason: err.decline_code || err.code || err.message || null,
+          recoverable,
         });
         notifyDiscord('sales', failed.content, failed.opts);
+      } else if (event.type === 'payment_intent.succeeded') {
+        // If this PaymentIntent failed recently, post the recovery so the
+        // channel reflects the final state (e.g. a 3-D Secure retry).
+        const pi = event.data.object || {};
+        try {
+          const redis = require('../utils/redisClient');
+          const client = await redis.getClient();
+          const prior = await client.get(`hp:payfail:${pi.id}`);
+          if (prior) {
+            await client.del(`hp:payfail:${pi.id}`);
+            const info = JSON.parse(prior);
+            const recovered = salesPaymentRecovered({
+              amount: (pi.amount || 0) / 100,
+              currency: pi.currency || 'USD',
+              paymentIntentId: pi.id,
+              email: info.email || pi.receipt_email || null,
+            });
+            notifyDiscord('sales', recovered.content, recovered.opts);
+          }
+        } catch { /* best effort */ }
       } else if (event.type === 'charge.refunded') {
         const ch = event.data.object || {};
         const refunded = salesRefundIssued({

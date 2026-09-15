@@ -75,18 +75,52 @@ function salesBookingCancelled({ bookingNumber, tour, amount, currency, reason }
   };
 }
 
-function salesPaymentFailed({ amount, currency, paymentIntentId, bookingNumber }) {
+function salesPaymentFailed({ amount, currency, paymentIntentId, bookingNumber, email, reason, recoverable }) {
+  const fields = [
+    { name: 'Amount', value: money(amount, currency), inline: true },
+    { name: 'Booking #', value: bookingNumber ? bookingLink(bookingNumber) : '—', inline: true },
+    { name: 'PaymentIntent', value: `\`${paymentIntentId || 'unknown'}\``, inline: true },
+  ];
+  if (email) fields.push({ name: 'Customer', value: email, inline: true });
+  fields.push({ name: 'Reason', value: reason || '—', inline: false });
+  // A decline the customer can retry (issuer decline, 3-D Secure) is NOT final —
+  // say so, otherwise a retry that succeeds minutes later makes this look wrong.
+  if (recoverable) {
+    fields.push({
+      name: 'Status',
+      value: 'Declined on this attempt — the customer can retry. A recovery notice is posted if the retry succeeds.',
+      inline: false,
+    });
+  }
   return {
     content: `Payment failed for PaymentIntent \`${paymentIntentId || 'unknown'}\``,
     opts: {
-      title: 'Payment Failed',
+      title: recoverable ? 'Payment Declined (retryable)' : 'Payment Failed',
       color: COLORS.red,
+      fields,
+      cooldownKey: paymentIntentId,
+    },
+  };
+}
+
+/**
+ * Posted when a PaymentIntent that previously failed is later paid — e.g. the
+ * customer completed a 3-D Secure challenge and retried. Balances the earlier
+ * "declined" alert so the channel reflects the final state.
+ */
+function salesPaymentRecovered({ amount, currency, paymentIntentId, email }) {
+  return {
+    content: `✅ Payment recovered for PaymentIntent \`${paymentIntentId || 'unknown'}\``,
+    opts: {
+      title: 'Payment Recovered',
+      color: COLORS.green,
       fields: [
         { name: 'Amount', value: money(amount, currency), inline: true },
-        { name: 'Booking #', value: bookingNumber ? bookingLink(bookingNumber) : '—', inline: true },
         { name: 'PaymentIntent', value: `\`${paymentIntentId || 'unknown'}\``, inline: true },
+        ...(email ? [{ name: 'Customer', value: email, inline: true }] : []),
+        { name: 'Note', value: 'Earlier decline was followed by a successful retry.', inline: false },
       ],
-      cooldownKey: paymentIntentId,
+      cooldownKey: `recovered:${paymentIntentId}`,
     },
   };
 }
@@ -318,6 +352,7 @@ module.exports = {
   salesBookingConfirmed,
   salesBookingCancelled,
   salesPaymentFailed,
+  salesPaymentRecovered,
   salesRefundIssued,
   // verification
   verificationSupplierApplication,
