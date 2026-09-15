@@ -11,14 +11,38 @@ const {
   hasPricingScheduleForDate,
 } = require('../../utils/availabilityCore');
 
-// 2026-09-07 is a Monday; 2026-09-27 is the Sunday the schedule starts on.
+// Dates are anchored to "now" rather than hardcoded: a fixed Monday that is in
+// the future when the suite is written becomes a PAST date later, and
+// computeDayEntry then correctly reports PAST instead of BLOCKED — failing the
+// suite for the wrong reason.
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function utcMidnight(offsetDays = 0) {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  return new Date(d.getTime() + offsetDays * DAY_MS);
+}
+
+/** Next occurrence of `weekday` (0=Sun..6=Sat) strictly after `from`. */
+function nextWeekday(from, weekday) {
+  const delta = ((weekday - from.getUTCDay() + 7) % 7) || 7;
+  return new Date(from.getTime() + delta * DAY_MS);
+}
+
+const isoDay = (d) => d.toISOString().slice(0, 10);
+
+const mondayBefore = nextWeekday(utcMidnight(), 1); // next Monday — before the pricing window
+const mondayInside = new Date(mondayBefore.getTime() + 7 * DAY_MS); // Monday inside the window
+const windowStartSunday = new Date(mondayInside.getTime() - DAY_MS); // the Sunday the schedule starts on
+const tuesday = new Date(mondayBefore.getTime() + DAY_MS); // not an operating day
+
 const parsedWindowed = {
   availability: { daysOfWeek: ['Monday'], timezone: 'UTC' },
   pricingSchedules: {
     currency: 'USD',
     schedules: [
       {
-        startDate: '2026-09-27',
+        startDate: isoDay(windowStartSunday),
         endDate: null,
         prices: [{ days: [], times: [], price: 100 }],
       },
@@ -35,20 +59,16 @@ const parsedOpen = {
   },
 };
 
-const mondayBefore = new Date('2026-09-14T00:00:00.000Z'); // before window (future when the suite runs)
-const mondayInside = new Date('2026-09-28T00:00:00.000Z'); // inside window
-const tuesday = new Date('2026-09-15T00:00:00.000Z'); // not an operating day
-
 describe('pricing/availability parity', () => {
   it('blocks operating weekdays that fall before the pricing window', () => {
     expect(isOperatingDay(parsedWindowed, mondayBefore)).toBe(false);
     expect(hasPricingScheduleForDate(parsedWindowed, mondayBefore)).toBe(false);
-    expect(pricingScheduleIndexesFor(parsedWindowed, '2026-09-07', 'monday', null)).toEqual([]);
+    expect(pricingScheduleIndexesFor(parsedWindowed, isoDay(mondayBefore), 'monday', null)).toEqual([]);
   });
 
   it('allows operating weekdays inside the pricing window', () => {
     expect(isOperatingDay(parsedWindowed, mondayInside)).toBe(true);
-    expect(pricingScheduleIndexesFor(parsedWindowed, '2026-09-28', 'monday', null)).toEqual([0]);
+    expect(pricingScheduleIndexesFor(parsedWindowed, isoDay(mondayInside), 'monday', null)).toEqual([0]);
   });
 
   it('leaves tours with open schedules untouched', () => {
@@ -76,9 +96,9 @@ describe('pricing/availability parity', () => {
         schedules: [{ prices: [{ days: ['Monday', 'Wednesday'], times: [], price: 90 }] }],
       },
     };
-    expect(pricingScheduleIndexesFor(scheduleDaysMonWed, '2026-09-07', 'monday', null)).toEqual([0]);
-    expect(pricingScheduleIndexesFor(scheduleDaysMonWed, '2026-09-08', 'tuesday', null)).toEqual([]);
-    expect(isOperatingDay(scheduleDaysMonWed, new Date('2026-09-08T00:00:00.000Z'))).toBe(false);
+    expect(pricingScheduleIndexesFor(scheduleDaysMonWed, isoDay(mondayBefore), 'monday', null)).toEqual([0]);
+    expect(pricingScheduleIndexesFor(scheduleDaysMonWed, isoDay(tuesday), 'tuesday', null)).toEqual([]);
+    expect(isOperatingDay(scheduleDaysMonWed, tuesday)).toBe(false);
   });
 
   it('does not gate when there is no pricing schedule data', () => {
