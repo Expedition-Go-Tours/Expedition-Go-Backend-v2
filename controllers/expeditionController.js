@@ -178,7 +178,7 @@ async function invalidateCaches(slug) {
 // ================================
 
 exports.getTours = catchAsync(async (req, res) => {
-  const { page = 1, limit = 12, search, category, city, country, minPrice, maxPrice, sortBy, mood, near, place } = req.query;
+  const { page = 1, limit = 12, search, category, city, country, minPrice, maxPrice, sortBy, mood, near, place, q } = req.query;
 
   const cacheKey = `${LIST_CACHE_KEY}:${crypto.createHash('md5').update(JSON.stringify(req.query)).digest('hex')}`;
 
@@ -193,19 +193,22 @@ exports.getTours = catchAsync(async (req, res) => {
     // `near` = order results by proximity to this city (keep all). Resolve the
     // city centroid once; every returned tour then carries a `distanceKm`.
     const centroid = near ? await resolveCityCentroid(near) : null;
-    // `place=<name>` = GYG-style place scope. Resolve it and keep ONLY the
-    // tours that belong to it (in-place -> near <=50km), intersecting any
-    // existing id filter. A place with no tours returns nothing (the storefront
-    // shows its no-tours state), never the whole catalogue.
+    // `place=<name>` = GYG-style place scope. `q=<raw>` = the unified form where
+    // the SERVER decides: resolve the query, scope to the place when it is one
+    // (with region fallback), otherwise fall back to a plain text search.
+    // Resolving once here is what removes the client's second round-trip.
     let placeCentroid = null;
     let placeLocalIds = null;
     let placeNearIds = null;
     let placeName = null;
-    // Scope metadata returned to the client so it can label a widened result
-    // ("we don't have tours in X yet — here are experiences across Y").
+    // Scope metadata returned to the client so it can label the result set
+    // ("we don't have tours in X yet — here are experiences across Y") and know
+    // which mode the server picked.
     let placeScope = null;
-    if (place) {
-      const { resolved, ids, localIds, nearIds, regionFallback } = await placeTourIds(place, { expeditionOnly: true });
+    let effectiveSearch = search;
+    const placeQuery = place || q;
+    if (placeQuery) {
+      const { resolved, ids, localIds, nearIds, regionFallback } = await placeTourIds(placeQuery, { expeditionOnly: true });
       if (resolved && ids) {
         // Region fallback: the place itself has no tours, so widen to its
         // region (never the whole catalogue). These tours are not "in" the
@@ -216,6 +219,8 @@ exports.getTours = catchAsync(async (req, res) => {
         placeName = resolved.name;
         placeScope = {
           requested: resolved.name,
+          displayName: resolved.displayName || resolved.name,
+          mode: useRegionFallback ? 'region-fallback' : 'place',
           fallbackRegion: useRegionFallback ? regionFallback.region : null,
         };
 
@@ -233,8 +238,14 @@ exports.getTours = catchAsync(async (req, res) => {
         } else {
           tourWhere.id = { in: [...effectiveIds] };
         }
+      } else if (q && !place) {
+        // Unified query that isn't a place → plain text search, decided here
+        // rather than by a second client request.
+        effectiveSearch = q;
+        placeScope = { requested: q, displayName: q, mode: 'text', fallbackRegion: null };
       } else {
-        // Not a place — return nothing so the client text-searches.
+        // `place` explicitly set but unresolvable — return nothing so the
+        // client can fall back to its own text search.
         tourWhere.id = { in: [] };
       }
     }
@@ -269,11 +280,11 @@ exports.getTours = catchAsync(async (req, res) => {
         tourWhere.id = { in: moodTourIds };
       }
     }
-    if (search) {
+    if (effectiveSearch) {
       // Use BM25 for relevance-ranked search when available
       const bm25 = require('../utils/bm25Index');
       if (bm25.isReady()) {
-        const results = bm25.search(search, 100);
+        const results = bm25.search(effectiveSearch, 100);
         if (results.length > 0) {
           const bm25Ids = results.map(r => r.tourId);
           // Intersect with existing ID filter if present
@@ -289,11 +300,11 @@ exports.getTours = catchAsync(async (req, res) => {
       } else {
         // Fallback to substring matching when BM25 index isn't ready
         tourWhere.OR = [
-          { title: { contains: search, mode: 'insensitive' } },
-          { description: { contains: search, mode: 'insensitive' } },
-          { city: { contains: search, mode: 'insensitive' } },
-          { country: { contains: search, mode: 'insensitive' } },
-          { category: { contains: search, mode: 'insensitive' } },
+          { title: { contains: effectiveSearch, mode: 'insensitive' } },
+          { description: { contains: effectiveSearch, mode: 'insensitive' } },
+          { city: { contains: effectiveSearch, mode: 'insensitive' } },
+          { country: { contains: effectiveSearch, mode: 'insensitive' } },
+          { category: { contains: effectiveSearch, mode: 'insensitive' } },
         ];
       }
     }
