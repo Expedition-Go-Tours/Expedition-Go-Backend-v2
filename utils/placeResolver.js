@@ -330,17 +330,38 @@ function isSettlement(hit) {
   return !hit.street && !hit.housenumber;
 }
 
+/**
+ * A POI hit (police station, school, hotel…) whose address STARTS WITH the query
+ * and which sits inside a settlement.
+ *
+ * Suburb/estate names often only geocode to such a POI: "Lakeside Estate"
+ * resolves to "Lakeside Estate Police station, Elmina Street, Ghana" and nothing
+ * else. Accepting it gives us the city/region (so the region fallback works)
+ * while the place is named after the query rather than the street.
+ */
+function isQueryAnchoredPoi(hit, query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return false;
+  const head = String(hit.formatted || '').split(',')[0].trim().toLowerCase();
+  if (!head.startsWith(q)) return false;
+  return !!(hit.city || hit.region);
+}
+
 function toPlace(hit, query) {
   const formattedHead = String(hit.formatted || '').split(',')[0].trim();
+  const settlement = isSettlement(hit);
   return {
-    name: hit.street || formattedHead || hit.city || query,
+    // A non-settlement hit is only ever used because its address starts with the
+    // query, so name the place after the query — hit.street would otherwise
+    // resolve "Lakeside Estate" to "Elmina Street".
+    name: settlement ? (hit.street || formattedHead || hit.city || query) : String(query || '').trim(),
     type: 'locality',
     city: hit.city || null,
     region: hit.region || null,
     country: hit.country || null,
     lat: hit.latitude,
     lng: hit.longitude,
-    matchedBy: 'geocoder',
+    matchedBy: settlement ? 'geocoder' : 'geocoder:poi',
   };
 }
 
@@ -369,10 +390,11 @@ async function geocode(query, countries) {
   const rawHit = (raw || []).find(inCountry);
   if (rawHit) return toPlace(rawHit, query);
 
-  // Pass 2 — country-suffixed retry, settlements only.
+  // Pass 2 — country-suffixed retry. Settlements, plus POIs whose address
+  // starts with the query (see isQueryAnchoredPoi).
   for (const c of countries.slice(0, 1)) {
     const retry = await locationService.search(`${query}, ${c.name}`, 8).catch(() => []);
-    const hit = (retry || []).find((r) => inCountry(r) && isSettlement(r));
+    const hit = (retry || []).find((r) => inCountry(r) && (isSettlement(r) || isQueryAnchoredPoi(r, query)));
     if (hit) return toPlace(hit, query);
   }
 
