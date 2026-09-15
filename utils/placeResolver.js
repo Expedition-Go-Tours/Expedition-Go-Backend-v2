@@ -468,25 +468,31 @@ async function resolvePlace(query, scope = {}) {
 
   const key = `hp:place:${scopeKey(scope)}:${keyOf(head)}`;
   const resolved = await cache.getOrSet(key, async () => {
-    // 1. Catalog exacts — city, region, attraction.
+    // 1. Catalog exacts — city, then region (preferring a geolocated match so
+    //    the caller can do radius matching).
     const city = await findCity(head, scope);
     if (city && city.lat != null && city.lng != null) return finalize(city);
 
     const region = await findRegion(head, scope);
     if (region && region.lat != null && region.lng != null) return finalize(region);
 
+    // 2. Name-only catalog matches (no centroid) — BEFORE the attraction lookup.
+    //    A town we know but can't geolocate ("Kumasi" — its tours have no
+    //    coordinates) would otherwise resolve to an attraction that merely
+    //    starts with its name ("Kumasi Fort"), scoping the listing to the wrong
+    //    tours. Still perfectly usable for in-place matching + region fallback.
+    if (city) return finalize(city);
+    if (region) return finalize(region);
+
+    // 3. Curated attraction by name (exact, then prefix).
     const attraction = await findAttraction(head);
     if (attraction) return finalize(attraction);
 
-    // 2. Geocoder — resolves cities/regions/towns the catalog has no tours for
-    //    (e.g. "Kumasi"), keeping only results inside the catalog countries.
+    // 4. Geocoder — resolves cities/regions/towns the catalog has no tours for.
     const countries = await getCatalogCountries(scope);
     const geo = await geocode(head, countries);
     if (geo) return finalize(geo);
 
-    // 3. Name-only fallbacks (no coords) — still usable for in-place matching.
-    if (city) return finalize(city);
-    if (region) return finalize(region);
     return null;
   }, PLACE_TTL, { cacheEmpty: false, cacheNull: false });
 
