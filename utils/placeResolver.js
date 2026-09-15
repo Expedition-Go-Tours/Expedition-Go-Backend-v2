@@ -275,9 +275,40 @@ async function findRegion(query, scope) {
   };
 }
 
-/** Map an Attraction row to a place object. */
-function toAttractionPlace(row, matchedBy) {
+/**
+ * Curated town/city lookup from the seeded `City / Town` rows (the XLSX import).
+ *
+ * These are PLACES, not attractions. Matching one lets a town the tour catalog
+ * has no `city` for ("Kumasi" has no tours based there) resolve as a place with
+ * its region — instead of prefix-matching an unrelated attraction name
+ * ("Kumasi Ghana Temple") and scoping the listing to the wrong tours.
+ *
+ * No coordinates (the import carries none), so radius matching is skipped and
+ * the result is scoped by name plus its region fallback.
+ */
+async function findTown(query) {
+  const hit = await prisma.attraction.findFirst({
+    where: { status: 'ACTIVE', category: 'City / Town', name: { equals: query, mode: 'insensitive' } },
+    select: { name: true, region: true, placeType: true },
+    orderBy: [{ priority: 'desc' }],
+  });
+  if (!hit) return null;
   return {
+    name: hit.name,
+    // A regional capital legitimately covers its metro area; a smaller town
+    // should only pull tours around it.
+    type: /major city|regional capital/i.test(hit.placeType || '') ? 'city' : 'locality',
+    city: hit.name,
+    region: hit.region || null,
+    country: null,
+    lat: null,
+    lng: null,
+    matchedBy: 'town:exact',
+  };
+}
+
+/** Map an Attraction row to a place object. */
+function toAttractionPlace(row, matchedBy) {  return {
     name: row.name, type: 'attraction', city: null, region: row.region || null, country: null,
     lat: row.latitude, lng: row.longitude, matchedBy,
   };
@@ -476,11 +507,13 @@ async function resolvePlace(query, scope = {}) {
     const region = await findRegion(head, scope);
     if (region && region.lat != null && region.lng != null) return finalize(region);
 
-    // 2. Name-only catalog matches (no centroid) — BEFORE the attraction lookup.
-    //    A town we know but can't geolocate ("Kumasi" — its tours have no
-    //    coordinates) would otherwise resolve to an attraction that merely
-    //    starts with its name ("Kumasi Fort"), scoping the listing to the wrong
-    //    tours. Still perfectly usable for in-place matching + region fallback.
+    // 2. Curated town/city row (the seeded `City / Town` places), then any other
+    //    name-only catalog match (no centroid) — both BEFORE the attraction
+    //    lookup. A town we know but can't geolocate would otherwise resolve to an
+    //    attraction that merely starts with its name ("Kumasi" → "Kumasi Ghana
+    //    Temple"), scoping the listing to the wrong tours.
+    const town = await findTown(head);
+    if (town) return finalize(town);
     if (city) return finalize(city);
     if (region) return finalize(region);
 
