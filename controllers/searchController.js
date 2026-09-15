@@ -299,19 +299,20 @@ function normaliseRegion(r) {
 }
 
 /**
- * Extract a clean town/locality name from the curated Attraction table's
- * free-text `town` column, which mixes forms like:
- *   "Aburi", "Abelemkpe, Accra", "Abossey Okai / Accra",
- *   "Kakum / near Cape Coast", "near Tamale", "Boti / Yilo Krobo area",
- *   "Eastern / southern Ghana", "Northern Region"
- * Returns null for region-only values (the Region kind already covers those)
- * or when nothing usable remains.
+ * Values in the `town` column that name a feature, not a settlement. Kept
+ * deliberately narrow — a generic word like "beach" or "falls" is often just a
+ * suffix on a real town ("Busua Beach" → Busua), so only unambiguous features
+ * are rejected.
  */
-function normalizeTown(raw) {
-  let s = String(raw || '').trim();
+const NON_SETTLEMENT = [
+  /^(lake|river|mount|mountains?|volta lake)\b/i,
+  /\b(national park|national reserve|resource reserve|ramsar site|sanctuary|waterfalls?)\b/i,
+];
+
+/** Clean one "town" segment; null when it isn't usable as a settlement name. */
+function cleanTownSegment(segment) {
+  let s = String(segment || '').trim();
   if (!s) return null;
-  // First segment of "A, B" / "A / B".
-  s = s.split(/[,/]/)[0].trim();
   // Leading "near ", trailing qualifiers.
   s = s.replace(/^near\s+/i, '')
        .replace(/\s+near\s+.*$/i, '')
@@ -322,7 +323,28 @@ function normalizeTown(raw) {
   const flat = normaliseSearch(s);
   if (/\bregion$/i.test(s)) return null; // "Northern Region"
   if (GHANA_REGIONS.some((r) => normaliseSearch(r) === flat)) return null; // "Greater Accra", "Eastern"
+  if (NON_SETTLEMENT.some((re) => re.test(s))) return null; // "Lake Volta", "Kakum National Park"
   return s;
+}
+
+/**
+ * Extract a clean town/locality name from the curated Attraction table's
+ * free-text `town` column, which mixes forms like:
+ *   "Aburi", "Abelemkpe, Accra", "Abossey Okai / Accra",
+ *   "Kakum / near Cape Coast", "near Tamale", "Boti / Yilo Krobo area",
+ *   "Eastern / southern Ghana", "Northern Region", "Lake Volta / Akosombo"
+ *
+ * Segments are tried in order and the first usable settlement wins, so
+ * "Lake Volta / Akosombo" resolves to Akosombo rather than to a lake. Returns
+ * null when no segment names a settlement (region-only values, features).
+ */
+function normalizeTown(raw) {
+  const segments = String(raw || '').split(/[,/]/);
+  for (const segment of segments) {
+    const town = cleanTownSegment(segment);
+    if (town) return town;
+  }
+  return null;
 }
 
 /* ── Main handler ───────────────────────────────────────────────────────── */
@@ -344,6 +366,13 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
     const scopeFilter = scopeWhere(scope);
     const scored = [];
     const tokens = nq.split(' ').filter(t => t.length >= 3);
+    // SQL `contains` can't match an unspaced query to a spaced value ("capecoast"
+    // vs "Cape Coast"), so for those we drop the `contains` prefilter and score
+    // the whole (small) candidate set in memory — scoreRecord's compact tier then
+    // matches it. Only longer unspaced queries trigger it, so ordinary one-word
+    // searches keep the cheap indexed path. Cities are always scored in full
+    // (there are ~15 of them).
+    const compactQuery = !q.includes(' ') && q.length >= 6;
 
     // 1. Attractions — match name + aliases (full query + individual tokens for typo tolerance)
     try {
@@ -360,13 +389,17 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
       const attractions = await prisma.attraction.findMany({
         // Exclude the seeded "City / Town" place rows so a town added for
         // autocomplete doesn't also surface as an Attraction suggestion.
-        where: { status: 'ACTIVE', OR: nameOrConditions, NOT: { category: 'City / Town' } },
+        where: {
+          status: 'ACTIVE',
+          ...(compactQuery ? {} : { OR: nameOrConditions }),
+          NOT: { category: 'City / Town' },
+        },
         select: {
           name: true, slug: true, town: true, region: true, category: true,
           aliases: true, priority: true, placeType: true, tourCount: true,
           heroImage: true,
         },
-        take: 30,
+        take: compactQuery ? 600 : 30,
       }).catch(() => []);
 
       for (const a of attractions) {
@@ -399,10 +432,12 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
     try {
       const cities = await prisma.tour.groupBy({
         by: ['city', 'country', 'region'],
-        where: { status: 'ACTIVE', city: { contains: q, mode: 'insensitive' }, ...scopeFilter },
+        // No `contains` filter: the city list is tiny, and scoring it in full is
+        // what lets an unspaced query ("capecoast") still find "Cape Coast".
+        where: { status: 'ACTIVE', ...scopeFilter },
         _count: { _all: true },
         orderBy: { _count: { city: 'desc' } },
-        take: 15,
+        take: 50,
       }).catch(() => []);
 
       for (const c of cities) {
@@ -425,9 +460,13 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
     // XLSX import) but maybe no tours. Cap at the top 5 matches.
     try {
       const attrs = await prisma.attraction.findMany({
-        where: { status: 'ACTIVE', region: { not: null }, town: { contains: q, mode: 'insensitive' } },
+        where: {
+          status: 'ACTIVE',
+          region: { not: null },
+          ...(compactQuery ? {} : { town: { contains: q, mode: 'insensitive' } }),
+        },
         select: { town: true, region: true, placeType: true, category: true },
-        take: 300,
+        take: compactQuery ? 600 : 300,
       }).catch(() => []);
 
       const townAgg = new Map();
