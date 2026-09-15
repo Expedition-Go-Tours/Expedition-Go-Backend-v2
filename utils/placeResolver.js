@@ -275,47 +275,48 @@ async function findRegion(query, scope) {
   };
 }
 
-/** Curated attraction lookup — exact, then word-boundary contains. */
+/** Map an Attraction row to a place object. */
+function toAttractionPlace(row, matchedBy) {
+  return {
+    name: row.name, type: 'attraction', city: null, region: row.region || null, country: null,
+    lat: row.latitude, lng: row.longitude, matchedBy,
+  };
+}
+
+/**
+ * Curated attraction lookup — exact, then prefix.
+ *
+ * Each pass tries a geocoded row first (coordinates let the caller do radius
+ * matching) and then a NAME-ONLY match: the imported catalog has no lat/lng for
+ * most rows, and a name match is still enough to scope the search and widen to
+ * the attraction's region instead of returning a dead end.
+ */
 async function findAttraction(query) {
   const select = { name: true, latitude: true, longitude: true, tourCount: true, region: true };
+  const withCoords = { latitude: { not: null }, longitude: { not: null } };
+  const target = foldAccents(query.toLowerCase());
 
-  const exact = await prisma.attraction.findFirst({
-    where: {
-      status: 'ACTIVE',
-      name: { equals: query, mode: 'insensitive' },
-      latitude: { not: null },
-      longitude: { not: null },
-    },
-    select,
-  });
-  if (exact) {
-    return {
-      name: exact.name, type: 'attraction', city: null, region: exact.region || null, country: null,
-      lat: exact.latitude, lng: exact.longitude, matchedBy: 'attraction:exact',
-    };
+  // Exact
+  for (const [suffix, extra] of [['', withCoords], [':name', {}]]) {
+    const exact = await prisma.attraction.findFirst({
+      where: { status: 'ACTIVE', name: { equals: query, mode: 'insensitive' }, ...extra },
+      select,
+      orderBy: [{ tourCount: 'desc' }],
+    });
+    if (exact) return toAttractionPlace(exact, `attraction:exact${suffix}`);
   }
 
-  // Prefix match: "kakum" → "Kakum National Park", but "kumasi" does NOT match
-  // "The Kumasi NightLife Experience" (so a major city falls through to the
-  // geocoder and resolves as the city, not a tour-like attraction).
-  const target = foldAccents(query.toLowerCase());
-  const candidates = await prisma.attraction.findMany({
-    where: {
-      status: 'ACTIVE',
-      name: { contains: query, mode: 'insensitive' },
-      latitude: { not: null },
-      longitude: { not: null },
-    },
-    select,
-    orderBy: [{ tourCount: 'desc' }],
-    take: 50,
-  });
-  const fuzzy = candidates.find((a) => a.name && foldAccents(a.name.toLowerCase()).startsWith(target));
-  if (fuzzy) {
-    return {
-      name: fuzzy.name, type: 'attraction', city: null, region: fuzzy.region || null, country: null,
-      lat: fuzzy.latitude, lng: fuzzy.longitude, matchedBy: 'attraction:prefix',
-    };
+  // Prefix: "kakum" → "Kakum National Park", but "kumasi" does NOT match
+  // "The Kumasi NightLife Experience" (so a major city resolves as the city).
+  for (const [suffix, extra] of [['', withCoords], [':name', {}]]) {
+    const candidates = await prisma.attraction.findMany({
+      where: { status: 'ACTIVE', name: { contains: query, mode: 'insensitive' }, ...extra },
+      select,
+      orderBy: [{ tourCount: 'desc' }],
+      take: 50,
+    });
+    const fuzzy = candidates.find((a) => a.name && foldAccents(a.name.toLowerCase()).startsWith(target));
+    if (fuzzy) return toAttractionPlace(fuzzy, `attraction:prefix${suffix}`);
   }
   return null;
 }
