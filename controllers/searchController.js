@@ -133,26 +133,32 @@ function scoreRecord(kind, item, nq, cq) {
   const all = [name, aliases, town, region, category].join(' ');
   let score = 0;
 
+  // Prefix/partial tiers require 3+ characters. A 2-char query like "ho" would
+  // otherwise prefix-match "house", "holy", "hoop", "hohoe" and flood the
+  // results with unrelated tours. Exact matches (tier 1) still work for real
+  // 2-letter places ("Ho", "Wa").
+  const partial = nq.length >= 3;
+
   // Tier 1: exact
   if (name === nq) score = 1000;
   // Tier 2: compact match
   else if (cname === cq && cq.length > 2) score = 985;
   // Tier 3: prefix
-  else if (name.startsWith(nq)) score = 910;
+  else if (partial && name.startsWith(nq)) score = 910;
   // Tier 4: word-prefix
-  else if (name.split(' ').some(w => w.startsWith(nq))) score = 855;
+  else if (partial && name.split(' ').some(w => w.startsWith(nq))) score = 855;
   // Tier 5: alias exact
   else if (aliases.split(';').map(x => x.trim()).includes(nq)) score = 835;
   // Tier 6: alias prefix
-  else if (aliases.startsWith(nq)) score = 800;
+  else if (partial && aliases.startsWith(nq)) score = 800;
   // Tier 7: contains (word-anchored — no mid-word matches)
-  else if (wordStartIncludes(name, nq)) score = 745;
+  else if (partial && wordStartIncludes(name, nq)) score = 745;
   // Tier 8: compact-contains (word-anchored, tolerates differing spacing)
   else if (cq.length > 2 && compactWordStartMatch(name, cq)) score = 725;
   // Tier 9: all-tokens (each token word-anchored)
   else {
     const tokens = nq.split(' ').filter(Boolean);
-    const allTokens = tokens.length && tokens.every(t => wordStartIncludes(all, t));
+    const allTokens = partial && tokens.length && tokens.every(t => wordStartIncludes(all, t));
     if (allTokens) score = 675 + Math.min(tokens.length * 12, 60);
   }
 
