@@ -19,10 +19,6 @@ const { resolvePlace, regionForQuery, normalizeRegion } = require('./placeResolv
 const { getLocationTourIds } = require('./homepageRanking');
 const { findNearbyTourIds } = require('./tourFilterBuilder');
 
-// Place types we trust enough to widen to their region when they have no tours.
-// Guards against a spurious text match triggering a region fallback.
-const CONFIDENT_PLACE_TYPES = new Set(['city', 'region', 'attraction', 'locality']);
-
 /**
  * Per-type "near" radius. A city legitimately includes its whole metro area,
  * but a neighbourhood/town should only pull tours around it, and an attraction
@@ -104,15 +100,24 @@ async function placeTourIds(placeQuery, scope = {}, { radiusKm } = {}) {
 
   const ids = new Set([...localIds, ...nearIds]);
 
-  // Band 2 — region fallback. ONLY when the place itself has no tours, widen
-  // to the place's region (resolved from the curated Attraction table / the
-  // geocoder) so a searched town still surfaces its region's experiences
-  // instead of a dead end. Confident place types only; if the region can't be
-  // resolved or has no tours, `ids` stays empty and the storefront shows its
-  // no-tours state.
+  // Band 2 — region fallback. Whenever the place itself has no tours, widen to
+  // its region so a searched town / attraction / city still surfaces its
+  // region's experiences instead of a dead end.
+  //
+  // Unconditional on purpose: the in-place check above already reads the tour's
+  // city, region, attractions, tags AND its itinerary, title and description, so
+  // reaching here means nothing genuinely relates to the place — falling back to
+  // the region is then always the right answer. Region is taken from the
+  // resolved place, else looked up from the query, its city, or its canonical
+  // name.
   let regionFallback = null;
-  if (localIds.size === 0 && CONFIDENT_PLACE_TYPES.has(resolved.type)) {
-    const region = resolved.region || (await regionForQuery(placeQuery).catch(() => null));
+  if (localIds.size === 0) {
+    const region = resolved.region
+      || (await regionForQuery(placeQuery).catch(() => null))
+      || (resolved.city ? await regionForQuery(resolved.city).catch(() => null) : null)
+      || (resolved.name && resolved.name !== placeQuery
+        ? await regionForQuery(resolved.name).catch(() => null)
+        : null);
     if (region) {
       const regionIds = new Set(await regionTourIds(region, scope));
       if (regionIds.size > 0) regionFallback = { region: normalizeRegion(region), ids: regionIds };
