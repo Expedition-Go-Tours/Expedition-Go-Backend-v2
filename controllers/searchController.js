@@ -390,7 +390,10 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
           aliases: true, priority: true, placeType: true, tourCount: true,
           heroImage: true,
         },
-        take: 600,
+        // Score every attraction. The catalog is ~1.4k rows; an unordered
+        // `take` that is too small silently drops matches (that is how "Ho" went
+        // missing), so keep this comfortably above the row count.
+        take: 3000,
       }).catch(() => []);
 
       for (const a of attractions) {
@@ -453,7 +456,9 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
       const attrs = await prisma.attraction.findMany({
         where: { status: 'ACTIVE', region: { not: null } },
         select: { town: true, region: true, placeType: true, category: true },
-        take: 800,
+        // Must cover EVERY town row — this feeds the place aggregation, so a
+        // truncating `take` would silently drop whole towns.
+        take: 3000,
       }).catch(() => []);
 
       const townAgg = new Map();
