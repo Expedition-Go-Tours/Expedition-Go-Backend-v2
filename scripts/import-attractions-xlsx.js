@@ -171,11 +171,12 @@ async function main() {
 
     const slug = slugify(name);
     const priority = REGION_PRIORITY[region] || 'Standard';
-    const placeType = region && REGION_CAPITALS[region]
-      ? (town && town.toLowerCase().includes(REGION_CAPITALS[region].toLowerCase())
-        ? 'Major City'
-        : 'Town')
-      : 'Town';
+    // Compare the town's HEAD segment, not the whole string: the town column
+    // mixes qualifiers ("Lakeside Estate, Accra", "Kakum / near Cape Coast"), so
+    // a plain `includes(capital)` labelled anything in Accra a "Major City".
+    const townHead = String(town || '').split(/[,/]/)[0].replace(/^near\s+/i, '').trim().toLowerCase();
+    const capital = REGION_CAPITALS[region] ? REGION_CAPITALS[region].toLowerCase() : null;
+    const placeType = capital && townHead === capital ? 'Major City' : 'Town';
 
     try {
       const existing = await prisma.attraction.findUnique({ where: { name }, select: { id: true, town: true } });
