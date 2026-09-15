@@ -319,7 +319,8 @@ function cleanTownSegment(segment) {
        .replace(/\s+(area|district)$/i, '')
        .trim();
   s = s.replace(/\s+/g, ' ').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '').trim();
-  if (s.length < 3) return null;
+  // 2, not 3 — "Ho" and "Wa" are real Ghanaian cities (both regional capitals).
+  if (s.length < 2) return null;
   const flat = normaliseSearch(s);
   if (/\bregion$/i.test(s)) return null; // "Northern Region"
   if (GHANA_REGIONS.some((r) => normaliseSearch(r) === flat)) return null; // "Greater Accra", "Eastern"
@@ -366,40 +367,24 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
     const scopeFilter = scopeWhere(scope);
     const scored = [];
     const tokens = nq.split(' ').filter(t => t.length >= 3);
-    // SQL `contains` can't match an unspaced query to a spaced value ("capecoast"
-    // vs "Cape Coast"), so for those we drop the `contains` prefilter and score
-    // the whole (small) candidate set in memory — scoreRecord's compact tier then
-    // matches it. Only longer unspaced queries trigger it, so ordinary one-word
-    // searches keep the cheap indexed path. Cities are always scored in full
-    // (there are ~15 of them).
-    const compactQuery = !q.includes(' ') && q.length >= 6;
+    // Candidates are scored in full rather than prefiltered with SQL `contains`.
+    // Two reasons: `contains` can't match an unspaced query to a spaced value
+    // ("capecoast" vs "Cape Coast"), and an unordered `take` silently drops
+    // matches (it hid "Ho"). The tables are small (~15 cities, ~350 attractions,
+    // ~700 towns) and the whole response is cached, so this is cheap.
 
-    // 1. Attractions — match name + aliases (full query + individual tokens for typo tolerance)
+    // 1. Attractions — scored on name + aliases + town
     try {
-      const nameOrConditions = [
-        { name: { contains: q, mode: 'insensitive' } },
-        { aliases: { contains: q, mode: 'insensitive' } },
-        { town: { contains: q, mode: 'insensitive' } },
-      ];
-      for (const token of tokens) {
-        nameOrConditions.push({ name: { contains: token, mode: 'insensitive' } });
-        nameOrConditions.push({ aliases: { contains: token, mode: 'insensitive' } });
-      }
-
       const attractions = await prisma.attraction.findMany({
         // Exclude the seeded "City / Town" place rows so a town added for
         // autocomplete doesn't also surface as an Attraction suggestion.
-        where: {
-          status: 'ACTIVE',
-          ...(compactQuery ? {} : { OR: nameOrConditions }),
-          NOT: { category: 'City / Town' },
-        },
+        where: { status: 'ACTIVE', NOT: { category: 'City / Town' } },
         select: {
           name: true, slug: true, town: true, region: true, category: true,
           aliases: true, priority: true, placeType: true, tourCount: true,
           heroImage: true,
         },
-        take: compactQuery ? 600 : 30,
+        take: 600,
       }).catch(() => []);
 
       for (const a of attractions) {
@@ -460,13 +445,9 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
     // XLSX import) but maybe no tours. Cap at the top 5 matches.
     try {
       const attrs = await prisma.attraction.findMany({
-        where: {
-          status: 'ACTIVE',
-          region: { not: null },
-          ...(compactQuery ? {} : { town: { contains: q, mode: 'insensitive' } }),
-        },
+        where: { status: 'ACTIVE', region: { not: null } },
         select: { town: true, region: true, placeType: true, category: true },
-        take: compactQuery ? 600 : 300,
+        take: 800,
       }).catch(() => []);
 
       const townAgg = new Map();
