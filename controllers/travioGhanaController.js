@@ -5,7 +5,7 @@ const AppError = require('../utils/appError');
 const cache = require('../utils/cacheHelper');
 const { haversineKm, resolveCityCentroid } = require('../utils/locationGeo');
 const { placeTourIds } = require('../utils/placeListing');
-const { placeRankFor } = require('../utils/placeResolver');
+const { placeRankFor, normalizeRegion } = require('../utils/placeResolver');
 const { sendEmail } = require('../utils/emailService');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, isValidEmail } = require('../utils/bookingHelpers');
@@ -189,6 +189,10 @@ exports.getTours = catchAsync(async (req, res) => {
           displayName: resolved.displayName || resolved.name,
           mode: useRegionFallback ? 'region-fallback' : 'place',
           fallbackRegion: useRegionFallback ? regionFallback.region : null,
+          // The region the place actually sits in — the client uses it to
+          // personalize the homepage, so it is sent for BOTH modes (fallback
+          // above only exists when the place itself has no tours).
+          region: normalizeRegion(regionFallback?.region || resolved.region || '') || null,
         };
 
         if (!useRegionFallback) {
@@ -208,7 +212,7 @@ exports.getTours = catchAsync(async (req, res) => {
         // Unified query that isn't a place → plain text search, decided here
         // rather than by a second client request.
         effectiveSearch = q;
-        placeScope = { requested: q, displayName: q, mode: 'text', fallbackRegion: null };
+        placeScope = { requested: q, displayName: q, mode: 'text', fallbackRegion: null, region: null };
       } else {
         tourWhere.id = { in: [] };
       }

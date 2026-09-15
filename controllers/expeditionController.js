@@ -18,7 +18,7 @@ const { notifyAdmin } = require('../utils/adminNotificationService');
 const getConfig = require('../utils/getConfig');
 const { haversineKm, resolveCityCentroid } = require('../utils/locationGeo');
 const { placeTourIds } = require('../utils/placeListing');
-const { placeRankFor } = require('../utils/placeResolver');
+const { placeRankFor, normalizeRegion } = require('../utils/placeResolver');
 const { detachBookingFromActiveRequests } = require('../utils/financeHelpers');
 const { logActivity } = require('../utils/auditLogger');
 const {
@@ -222,6 +222,10 @@ exports.getTours = catchAsync(async (req, res) => {
           displayName: resolved.displayName || resolved.name,
           mode: useRegionFallback ? 'region-fallback' : 'place',
           fallbackRegion: useRegionFallback ? regionFallback.region : null,
+          // The region the place actually sits in — the client uses it to
+          // personalize the homepage, so it is sent for BOTH modes (fallback
+          // above only exists when the place itself has no tours).
+          region: normalizeRegion(regionFallback?.region || resolved.region || '') || null,
         };
 
         // Region tours are not "in" the place — skip place proximity/ranking.
@@ -242,7 +246,7 @@ exports.getTours = catchAsync(async (req, res) => {
         // Unified query that isn't a place → plain text search, decided here
         // rather than by a second client request.
         effectiveSearch = q;
-        placeScope = { requested: q, displayName: q, mode: 'text', fallbackRegion: null };
+        placeScope = { requested: q, displayName: q, mode: 'text', fallbackRegion: null, region: null };
       } else {
         // `place` explicitly set but unresolvable — return nothing so the
         // client can fall back to its own text search.
