@@ -475,6 +475,23 @@ async function isCatalogPlaceName(name, scope) {
 }
 
 /**
+ * The geocoder's region for a query — a second opinion used when the catalog's
+ * region has no tours. Rescues a mis-assigned town (Bantama is stored as Bono
+ * but is a Kumasi suburb in Ashanti) so it still lands on its real region's
+ * experiences instead of a dead end. Cached with the place TTL.
+ */
+async function geocodedRegionFor(query, scope = {}) {
+  const q0 = normalizeQuery(query);
+  if (q0.length < 2) return null;
+  const key = `hp:place:georegion:${scopeKey(scope)}:${keyOf(q0)}`;
+  return cache.getOrSet(key, async () => {
+    const countries = await getCatalogCountries(scope);
+    const hit = await geocode(q0, countries);
+    return hit && hit.region ? hit.region : null;
+  }, PLACE_TTL, { cacheEmpty: false, cacheNull: false });
+}
+
+/**
  * Resolve a query to a place. Returns null when nothing sensible is found, so
  * callers can fall back to plain text search.
  *
@@ -656,6 +673,7 @@ function rankByPlace(tours, { place = '', lat = null, lng = null, localIds = nul
 
 module.exports = {
   resolvePlace,
+  geocodedRegionFor,
   regionForQuery,
   normalizeRegion,
   getCatalogCountries,

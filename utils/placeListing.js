@@ -15,7 +15,7 @@
 
 const prisma = require('./prismaClient');
 const cache = require('./cacheHelper');
-const { resolvePlace, regionForQuery, normalizeRegion } = require('./placeResolver');
+const { resolvePlace, regionForQuery, normalizeRegion, geocodedRegionFor } = require('./placeResolver');
 const { getLocationTourIds } = require('./homepageRanking');
 const { findNearbyTourIds } = require('./tourFilterBuilder');
 
@@ -107,20 +107,28 @@ async function placeTourIds(placeQuery, scope = {}, { radiusKm } = {}) {
   // Unconditional on purpose: the in-place check above already reads the tour's
   // city, region, attractions, tags AND its itinerary, title and description, so
   // reaching here means nothing genuinely relates to the place — falling back to
-  // the region is then always the right answer. Region is taken from the
-  // resolved place, else looked up from the query, its city, or its canonical
-  // name.
+  // the region is then always the right answer.
+  //
+  // Several candidate regions are tried in order and the first that actually has
+  // tours wins: the resolved place's own region, the query's, its city's, and
+  // finally the geocoder's. That last one rescues a mis-assigned town (Bantama
+  // is stored as Bono but is a Kumasi suburb in Ashanti) instead of dead-ending.
   let regionFallback = null;
   if (localIds.size === 0) {
-    const region = resolved.region
-      || (await regionForQuery(placeQuery).catch(() => null))
-      || (resolved.city ? await regionForQuery(resolved.city).catch(() => null) : null)
-      || (resolved.name && resolved.name !== placeQuery
-        ? await regionForQuery(resolved.name).catch(() => null)
-        : null);
-    if (region) {
+    const candidates = [];
+    const push = (r) => { if (r && !candidates.includes(r)) candidates.push(r); };
+    push(resolved.region);
+    push(await regionForQuery(placeQuery).catch(() => null));
+    if (resolved.city) push(await regionForQuery(resolved.city).catch(() => null));
+    if (resolved.name && resolved.name !== placeQuery) push(await regionForQuery(resolved.name).catch(() => null));
+    push(await geocodedRegionFor(placeQuery, scope).catch(() => null));
+
+    for (const region of candidates) {
       const regionIds = new Set(await regionTourIds(region, scope));
-      if (regionIds.size > 0) regionFallback = { region: normalizeRegion(region), ids: regionIds };
+      if (regionIds.size > 0) {
+        regionFallback = { region: normalizeRegion(region), ids: regionIds };
+        break;
+      }
     }
   }
 
