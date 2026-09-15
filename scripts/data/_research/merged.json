@@ -1,0 +1,3912 @@
+{
+ "regions": {
+  "Greater Accra": {
+   "towns": [
+    {
+     "name": "Lartebiokorshie",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Darkuman",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Dansoman",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Sege",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Kokomlemle",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Nima",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Accra New Town",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Dzorwulu",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Sowutuom",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Amomole",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Ngleshie Amanfro",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Osu",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Labadi",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Achimota",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Tema Community 18",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Weija",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Tema Newtown",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Ningo",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Afienya",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Danfa",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Bortianor",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Mallam",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Legon",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Kaneshie",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Adabraka",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Labone",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Cantonments",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Sakumono",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Odorkor",
+     "region": "Greater Accra"
+    },
+    {
+     "name": "Pokuase",
+     "region": "Greater Accra"
+    }
+   ],
+   "attractions": [
+    {
+     "name": "Kwame Nkrumah Mausoleum",
+     "town": "Accra",
+     "region": "Greater Accra",
+     "category": "Heritage & History",
+     "aliases": "Kwame Nkrumah Memorial Park; Nkrumah Mausoleum; Kwame Nkrumah Mausoleum and Memorial Park",
+     "description": "Memorial and final resting place of Ghana's first president, Kwame Nkrumah, located in downtown Accra. It features a marble mausoleum, a museum and landscaped grounds."
+    },
+    {
+     "name": "W. E. B. Du Bois Memorial Centre for Pan African Culture",
+     "town": "Accra",
+     "region": "Greater Accra",
+     "category": "Museum & Art",
+     "aliases": "Du Bois Centre; W.E.B. Du Bois Centre; Du Bois Memorial Centre",
+     "description": "Research centre, museum and mausoleum in Accra dedicated to the Pan-Africanist W. E. B. Du Bois, who spent his final years in Ghana."
+    },
+    {
+     "name": "Labadi Beach",
+     "town": "Accra",
+     "region": "Greater Accra",
+     "category": "Beach & Coast",
+     "aliases": "La Pleasure Beach; Labadi Pleasure Beach",
+     "description": "Accra's best-known public beach, located at La in the city's east and popular for its weekend entertainment."
+    },
+    {
+     "name": "Fort James",
+     "town": "Accra",
+     "region": "Greater Accra",
+     "category": "Heritage & History",
+     "aliases": "James Fort; Fort James, Accra",
+     "description": "A British fort built in 1673 on the Accra coast, used historically in the transatlantic slave trade."
+    },
+    {
+     "name": "Osu Castle",
+     "town": "Osu",
+     "region": "Greater Accra",
+     "category": "Heritage & History",
+     "aliases": "Christiansborg Castle; Fort Christiansborg",
+     "description": "A castle at Osu in Accra, built by the Danish in the 17th century and long used as Ghana's seat of government."
+    },
+    {
+     "name": "Efua Sutherland Children's Park",
+     "town": "Accra",
+     "region": "Greater Accra",
+     "category": "Water & Amusement",
+     "aliases": "Children's Park Accra; Efua Sutherland Park",
+     "description": "A public children's park in central Accra named after the playwright Efua Sutherland."
+    },
+    {
+     "name": "Accra Mall",
+     "town": "Accra",
+     "region": "Greater Accra",
+     "category": "Market & Craft",
+     "aliases": "Accra Mall, Spintex; Accra Shopping Mall",
+     "description": "A large shopping mall in Accra, opened in 2008 on the Spintex Road."
+    },
+    {
+     "name": "Tema Harbour",
+     "town": "Tema",
+     "region": "Greater Accra",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Port of Tema; Tema Port",
+     "description": "Ghana's principal seaport, located at Tema east of Accra."
+    },
+    {
+     "name": "Achimota Forest",
+     "town": "Accra",
+     "region": "Greater Accra",
+     "category": "Nature & Wildlife",
+     "aliases": "Achimota Forest Reserve",
+     "description": "A forest reserve in the Achimota area of Accra, an important urban green space."
+    }
+   ]
+  },
+  "Ashanti": {
+   "towns": [
+    {
+     "name": "Adansi Asokwa",
+     "region": "Ashanti"
+    },
+    {
+     "name": "New Edubiase",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Boamang",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Kodie",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Tepa",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Adugyama",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Mankranso",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Akrofuom",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Manso Nkwanta",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Manso Adubia",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Juaso",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Asokore Mampong",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Twedie",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Nyinahin",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Barekese",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Asiwa",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Kuntanse",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Mamponteng",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Tutuka",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Akomadan",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Oforikrom",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Old Tafo",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Drobonso",
+     "region": "Ashanti"
+    },
+    {
+     "name": "Nsuta",
+     "region": "Ashanti"
+    }
+   ],
+   "attractions": [
+    {
+     "name": "Lake Bosumtwi",
+     "town": "Kuntanse",
+     "region": "Ashanti",
+     "category": "Nature & Wildlife",
+     "aliases": "Lake Bosomtwe; Bosumtwi Crater Lake",
+     "description": "A meteorite crater lake in the Ashanti Region, the only natural lake in Ghana."
+    },
+    {
+     "name": "Armed Forces Museum",
+     "town": "Kumasi",
+     "region": "Ashanti",
+     "category": "Museum & Art",
+     "aliases": "Ghana Armed Forces Museum; Kumasi Military Museum",
+     "description": "A military museum in Kumasi housed in a former British fort, tracing Ghana's military history."
+    },
+    {
+     "name": "Centre for National Culture",
+     "town": "Kumasi",
+     "region": "Ashanti",
+     "category": "Market & Craft",
+     "aliases": "Kumasi Cultural Centre; National Cultural Centre, Kumasi",
+     "description": "A cultural centre in Kumasi with craft shops, a museum and performance spaces."
+    },
+    {
+     "name": "Bonwire",
+     "town": "Kumasi",
+     "region": "Ashanti",
+     "category": "Market & Craft",
+     "aliases": "Bonwire Kente Village; Kente weaving village",
+     "description": "A town in the Ashanti Region renowned as the home of Asante kente cloth weaving."
+    },
+    {
+     "name": "Ntonso",
+     "town": "Kumasi",
+     "region": "Ashanti",
+     "category": "Market & Craft",
+     "aliases": "Ntonso Adinkra Village; Adinkra cloth village",
+     "description": "A town near Kumasi known for traditional adinkra cloth printing."
+    },
+    {
+     "name": "Bobiri Butterfly Sanctuary",
+     "town": "Kumasi",
+     "region": "Ashanti",
+     "category": "Nature & Wildlife",
+     "aliases": "Bobiri Forest and Butterfly Sanctuary; Bobiri Butterfly Sanctuary",
+     "description": "A forest reserve and butterfly sanctuary near Kumasi with hundreds of butterfly species."
+    },
+    {
+     "name": "Rattray Park",
+     "town": "Kumasi",
+     "region": "Ashanti",
+     "category": "Urban Landmark",
+     "aliases": "Rattray Park, Kumasi",
+     "description": "A modern recreational park in Kumasi with gardens, fountains and a children's play area."
+    },
+    {
+     "name": "Asante Traditional Buildings",
+     "town": "Kumasi",
+     "region": "Ashanti",
+     "category": "Heritage & History",
+     "aliases": "Asante Traditional Buildings UNESCO Site; Asante Shrines",
+     "description": "A UNESCO World Heritage Site of surviving traditional Asante shrine buildings in the Ashanti Region."
+    },
+    {
+     "name": "Manhyia Palace",
+     "town": "Kumasi",
+     "region": "Ashanti",
+     "category": "Heritage & History",
+     "aliases": "Manhyia Palace, Kumasi",
+     "description": "The official residence of the Asantehene in Kumasi and a centre of Asante traditional authority."
+    },
+    {
+     "name": "Kumasi Fort",
+     "town": "Kumasi",
+     "region": "Ashanti",
+     "category": "Heritage & History",
+     "aliases": "Kumasi Fort and Military Museum",
+     "description": "A 19th-century fort in Kumasi that now houses the Ghana Armed Forces Museum."
+    },
+    {
+     "name": "Ahwiaa",
+     "town": "Kumasi",
+     "region": "Ashanti",
+     "category": "Market & Craft",
+     "aliases": "Ahwiaa Wood Carving Village",
+     "description": "A town near Kumasi known for traditional wood carving."
+    },
+    {
+     "name": "Besease",
+     "town": "Kumasi",
+     "region": "Ashanti",
+     "category": "Heritage & History",
+     "aliases": "Besease Traditional Shrine; Besease Asante building",
+     "description": "A village in the Ashanti Region with a traditional Asante shrine building that forms part of the UNESCO Asante Traditional Buildings."
+    },
+    {
+     "name": "Kwame Nkrumah University of Science and Technology",
+     "town": "Kumasi",
+     "region": "Ashanti",
+     "category": "Urban Landmark",
+     "aliases": "KNUST; Kumasi University of Science and Technology",
+     "description": "Ghana's leading science and technology university, whose park-like campus at Kumasi is a notable landmark."
+    }
+   ]
+  },
+  "Central": {
+   "towns": [
+    {
+     "name": "Abura-Dunkwa",
+     "region": "Central"
+    },
+    {
+     "name": "Nsaba",
+     "region": "Central"
+    },
+    {
+     "name": "Assin Foso",
+     "region": "Central"
+    },
+    {
+     "name": "Assin Bereku",
+     "region": "Central"
+    },
+    {
+     "name": "Nsuaem Kyekyewere",
+     "region": "Central"
+    },
+    {
+     "name": "Awutu Breku",
+     "region": "Central"
+    },
+    {
+     "name": "Potsin",
+     "region": "Central"
+    },
+    {
+     "name": "Afransi",
+     "region": "Central"
+    },
+    {
+     "name": "Esakyir",
+     "region": "Central"
+    },
+    {
+     "name": "Hemang",
+     "region": "Central"
+    },
+    {
+     "name": "Diaso",
+     "region": "Central"
+    },
+    {
+     "name": "Biriwa",
+     "region": "Central"
+    },
+    {
+     "name": "Abandze",
+     "region": "Central"
+    },
+    {
+     "name": "Jukwa",
+     "region": "Central"
+    },
+    {
+     "name": "Abakrampa",
+     "region": "Central"
+    },
+    {
+     "name": "Yamoransa",
+     "region": "Central"
+    },
+    {
+     "name": "Ofaakor",
+     "region": "Central"
+    },
+    {
+     "name": "Gomoa Fetteh",
+     "region": "Central"
+    },
+    {
+     "name": "Nyanyano",
+     "region": "Central"
+    },
+    {
+     "name": "Dominase",
+     "region": "Central"
+    },
+    {
+     "name": "Ekumfi Otuam",
+     "region": "Central"
+    },
+    {
+     "name": "Assin Manso",
+     "region": "Central"
+    },
+    {
+     "name": "Enyan Denkyira",
+     "region": "Central"
+    },
+    {
+     "name": "Gomoa Dawurampong",
+     "region": "Central"
+    }
+   ],
+   "attractions": [
+    {
+     "name": "Elmina Castle",
+     "town": "Elmina",
+     "region": "Central",
+     "category": "Heritage & History",
+     "aliases": "Sao Jorge da Mina; St. George's Castle; Elmina Castle",
+     "description": "A UNESCO World Heritage Site built by the Portuguese in 1482, the oldest European building in sub-Saharan Africa."
+    },
+    {
+     "name": "Kakum Canopy Walkway",
+     "town": "Cape Coast",
+     "region": "Central",
+     "category": "Scenic & Hiking",
+     "aliases": "Kakum Canopy Walk; Kakum Walkway",
+     "description": "A suspended canopy walkway through the rainforest of Kakum National Park."
+    },
+    {
+     "name": "Fort Coenraadsburg",
+     "town": "Elmina",
+     "region": "Central",
+     "category": "Heritage & History",
+     "aliases": "Fort St. Jago; Fort Coenraadsburg",
+     "description": "A hilltop fort at Elmina built by the Dutch in the 17th century."
+    },
+    {
+     "name": "Fort Lijdzaamheid",
+     "town": "Apam",
+     "region": "Central",
+     "category": "Heritage & History",
+     "aliases": "Fort Patience; Fort Lijdzaamheid",
+     "description": "A Dutch fort built at Apam in 1697, also known as Fort Patience."
+    },
+    {
+     "name": "Fort Goede Hoop",
+     "town": "Senya Beraku",
+     "region": "Central",
+     "category": "Heritage & History",
+     "aliases": "Fort Good Hope; Fort Goede Hoop",
+     "description": "A Dutch fort built in 1705 at Senya Beraku in the Central Region."
+    },
+    {
+     "name": "Fort Komenda",
+     "town": "Komenda",
+     "region": "Central",
+     "category": "Heritage & History",
+     "aliases": "Fort Komenda, British Komenda",
+     "description": "A fort at Komenda in the Central Region."
+    },
+    {
+     "name": "Assin Manso Slave River Site",
+     "town": "Assin Manso",
+     "region": "Central",
+     "category": "Heritage & History",
+     "aliases": "Assin Manso Slave River; Donkor Nsuo",
+     "description": "A heritage site at Assin Manso on the slave route where captives were bathed before being sold."
+    },
+    {
+     "name": "Cape Coast Castle Museum",
+     "town": "Cape Coast",
+     "region": "Central",
+     "category": "Museum & Art",
+     "aliases": "Cape Coast Castle Museum, Ghana",
+     "description": "A museum inside Cape Coast Castle illustrating the history of the transatlantic slave trade."
+    },
+    {
+     "name": "Elmina Java Museum",
+     "town": "Elmina",
+     "region": "Central",
+     "category": "Museum & Art",
+     "aliases": "Java Museum, Elmina",
+     "description": "A museum at Elmina documenting the history of African soldiers recruited by the Dutch in the 19th century."
+    },
+    {
+     "name": "Gramophone Records Museum and Research Centre of Ghana",
+     "town": "Cape Coast",
+     "region": "Central",
+     "category": "Museum & Art",
+     "aliases": "Gramophone Records Museum; Cape Coast Gramophone Museum",
+     "description": "A museum in Cape Coast preserving historic gramophone records and Ghanaian highlife music."
+    },
+    {
+     "name": "Fort William Lighthouse",
+     "town": "Cape Coast",
+     "region": "Central",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Cape Coast Castle Light; Fort William Lighthouse",
+     "description": "A lighthouse associated with Fort William at Cape Coast."
+    },
+    {
+     "name": "Cape Coast Sports Stadium",
+     "town": "Cape Coast",
+     "region": "Central",
+     "category": "Urban Landmark",
+     "aliases": "Cape Coast Stadium; Robert Mensah Stadium",
+     "description": "A multi-purpose stadium in Cape Coast used for football and athletics."
+    },
+    {
+     "name": "Biriwa Beach",
+     "town": "Biriwa",
+     "region": "Central",
+     "category": "Beach & Coast",
+     "aliases": "Biriwa; Biriwa Beach, Central Region",
+     "description": "A coastal town and beach in the Central Region of Ghana."
+    }
+   ]
+  },
+  "Eastern": {
+   "towns": [
+    {
+     "name": "Kukurantumi",
+     "region": "Eastern"
+    },
+    {
+     "name": "Achiase",
+     "region": "Eastern"
+    },
+    {
+     "name": "Ofoase",
+     "region": "Eastern"
+    },
+    {
+     "name": "Manso",
+     "region": "Eastern"
+    },
+    {
+     "name": "Atimpoku",
+     "region": "Eastern"
+    },
+    {
+     "name": "Kwabeng",
+     "region": "Eastern"
+    },
+    {
+     "name": "Coaltar",
+     "region": "Eastern"
+    },
+    {
+     "name": "New Abirem",
+     "region": "Eastern"
+    },
+    {
+     "name": "Osino",
+     "region": "Eastern"
+    },
+    {
+     "name": "Tease",
+     "region": "Eastern"
+    },
+    {
+     "name": "Krobo Odumase",
+     "region": "Eastern"
+    },
+    {
+     "name": "Adukrom",
+     "region": "Eastern"
+    },
+    {
+     "name": "Asesewa",
+     "region": "Eastern"
+    },
+    {
+     "name": "Adeiso",
+     "region": "Eastern"
+    },
+    {
+     "name": "Kpong",
+     "region": "Eastern"
+    },
+    {
+     "name": "Nkwatia",
+     "region": "Eastern"
+    },
+    {
+     "name": "Asuom",
+     "region": "Eastern"
+    },
+    {
+     "name": "Boso",
+     "region": "Eastern"
+    },
+    {
+     "name": "Akuse",
+     "region": "Eastern"
+    },
+    {
+     "name": "Apirede",
+     "region": "Eastern"
+    },
+    {
+     "name": "Larteh",
+     "region": "Eastern"
+    },
+    {
+     "name": "Tutu",
+     "region": "Eastern"
+    },
+    {
+     "name": "Akuapem-Mampong",
+     "region": "Eastern"
+    },
+    {
+     "name": "Adum",
+     "region": "Eastern"
+    },
+    {
+     "name": "Nsutam",
+     "region": "Eastern"
+    },
+    {
+     "name": "Bunso",
+     "region": "Eastern"
+    },
+    {
+     "name": "Asikam",
+     "region": "Eastern"
+    },
+    {
+     "name": "Kwahu Tafo",
+     "region": "Eastern"
+    },
+    {
+     "name": "Obo",
+     "region": "Eastern"
+    },
+    {
+     "name": "Anum",
+     "region": "Eastern"
+    },
+    {
+     "name": "Akim Tafo",
+     "region": "Eastern"
+    },
+    {
+     "name": "Nkurakan",
+     "region": "Eastern"
+    }
+   ],
+   "attractions": [
+    {
+     "name": "Akaa Falls",
+     "town": "Akim Tafo",
+     "region": "Eastern",
+     "category": "Nature & Wildlife",
+     "aliases": "Akaa Waterfalls; Akaa Falls, Kade",
+     "description": "A waterfall near Akaa in the Eastern Region, close to the Atewa Range."
+    },
+    {
+     "name": "Asenema Waterfall",
+     "town": "Koforidua",
+     "region": "Eastern",
+     "category": "Nature & Wildlife",
+     "aliases": "Asenema Falls",
+     "description": "A waterfall near Asenema in the Eastern Region, popular for hiking."
+    },
+    {
+     "name": "Obosomase Waterfalls",
+     "town": "Aburi",
+     "region": "Eastern",
+     "category": "Nature & Wildlife",
+     "aliases": "Obosomase Falls",
+     "description": "Waterfalls at Obosomase in the Akuapem area of the Eastern Region."
+    },
+    {
+     "name": "Atewa Range Forest Reserve",
+     "town": "Kibi",
+     "region": "Eastern",
+     "category": "Nature & Wildlife",
+     "aliases": "Atewa Forest; Atewa Range",
+     "description": "A forest reserve in the Atewa Range noted for its high biodiversity and bauxite deposits."
+    },
+    {
+     "name": "Adomi Bridge",
+     "town": "Atimpoku",
+     "region": "Eastern",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Adome Bridge; Volta Bridge",
+     "description": "A suspension bridge over the Volta River at Atimpoku, opened in 1957."
+    },
+    {
+     "name": "Kwahu Plateau",
+     "town": "Mpraeso",
+     "region": "Eastern",
+     "category": "Scenic & Hiking",
+     "aliases": "Kwahu Ridge; Kwahu Mountains",
+     "description": "A highland plateau in the Kwahu area of the Eastern Region, known for its escarpment views and paragliding."
+    },
+    {
+     "name": "Bunso Eco Park",
+     "town": "Bunso",
+     "region": "Eastern",
+     "category": "Nature & Wildlife",
+     "aliases": "Bunso Arboretum; Bunso Eco Park",
+     "description": "A conservation and recreation park at Bunso in the Eastern Region, formerly the Bunso Arboretum."
+    },
+    {
+     "name": "Fuller Waterfalls",
+     "town": "Asikam",
+     "region": "Eastern",
+     "category": "Nature & Wildlife",
+     "aliases": "Fuller Falls",
+     "description": "A waterfall in the Eastern Region of Ghana."
+    },
+    {
+     "name": "Kpong Dam",
+     "town": "Kpong",
+     "region": "Eastern",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Kpong Hydroelectric Dam",
+     "description": "A hydroelectric dam on the Volta River at Kpong in the Eastern Region."
+    },
+    {
+     "name": "Akuapem Hills",
+     "town": "Akropong",
+     "region": "Eastern",
+     "category": "Scenic & Hiking",
+     "aliases": "Akuapem Ridge; Akuapem Mountains",
+     "description": "A range of hills in the Eastern Region hosting towns such as Akropong, Aburi and Mampong."
+    },
+    {
+     "name": "Akwawa Mountain Peak",
+     "town": "Nkawkaw",
+     "region": "Eastern",
+     "category": "Scenic & Hiking",
+     "aliases": "Akwawa Mountain; Akwawa Peak",
+     "description": "A mountain peak near Nkawkaw in the Eastern Region listed among the region's tourist sites."
+    },
+    {
+     "name": "The Big Tree at Oda",
+     "town": "Akim Oda",
+     "region": "Eastern",
+     "category": "Nature & Wildlife",
+     "aliases": "Big Tree, Oda; Oda Big Tree",
+     "description": "A giant historic tree at Akim Oda listed among the Eastern Region's tourist sites."
+    }
+   ]
+  },
+  "Western": {
+   "towns": [
+    {
+     "name": "Kwesimintsim",
+     "region": "Western"
+    },
+    {
+     "name": "Effia",
+     "region": "Western"
+    },
+    {
+     "name": "Butre",
+     "region": "Western"
+    },
+    {
+     "name": "Princes Town",
+     "region": "Western"
+    },
+    {
+     "name": "Akwidaa",
+     "region": "Western"
+    },
+    {
+     "name": "Wassa-Akropong",
+     "region": "Western"
+    },
+    {
+     "name": "Asankragua",
+     "region": "Western"
+    },
+    {
+     "name": "Nsuaem",
+     "region": "Western"
+    },
+    {
+     "name": "Bawdie",
+     "region": "Western"
+    },
+    {
+     "name": "Huni Valley",
+     "region": "Western"
+    },
+    {
+     "name": "Damang",
+     "region": "Western"
+    },
+    {
+     "name": "Samreboi",
+     "region": "Western"
+    },
+    {
+     "name": "Ayanfuri",
+     "region": "Western"
+    },
+    {
+     "name": "Tarkwa Banso",
+     "region": "Western"
+    },
+    {
+     "name": "Kikam",
+     "region": "Western"
+    },
+    {
+     "name": "Beyin",
+     "region": "Western"
+    },
+    {
+     "name": "Newtown",
+     "region": "Western"
+    },
+    {
+     "name": "Ellenda",
+     "region": "Western"
+    },
+    {
+     "name": "Awiebo",
+     "region": "Western"
+    },
+    {
+     "name": "Eikwe",
+     "region": "Western"
+    },
+    {
+     "name": "Atuabo",
+     "region": "Western"
+    },
+    {
+     "name": "Bonyere",
+     "region": "Western"
+    },
+    {
+     "name": "Adjoa",
+     "region": "Western"
+    },
+    {
+     "name": "Mpatado",
+     "region": "Western"
+    },
+    {
+     "name": "Nsein",
+     "region": "Western"
+    },
+    {
+     "name": "Gwira Banso",
+     "region": "Western"
+    },
+    {
+     "name": "Bamianko",
+     "region": "Western"
+    },
+    {
+     "name": "Aketenchie",
+     "region": "Western"
+    },
+    {
+     "name": "Sekyere",
+     "region": "Western"
+    },
+    {
+     "name": "Asemko",
+     "region": "Western"
+    }
+   ],
+   "attractions": [
+    {
+     "name": "Nzulezo Stilt Village",
+     "town": "Beyin",
+     "region": "Western",
+     "category": "Cultural Village",
+     "aliases": "Nzulezu; Nzulezu Stilt Settlement; Nzulezo Village",
+     "description": "Nzulezo is a village built entirely on stilts and platforms over Lake Tadane near Beyin in the Jomoro District, and was added to the UNESCO World Heritage Tentative List in 2000. Reached only by canoe, it is one of the few ancient stilt settlements left in the world."
+    },
+    {
+     "name": "Fort Saint Anthony",
+     "town": "Axim",
+     "region": "Western",
+     "category": "Heritage & History",
+     "aliases": "Forte de Santo Antonio; Fort Santo Antonio; Fort Sint Anthony",
+     "description": "Fort Saint Anthony was built by the Portuguese in 1515 near Axim and was later captured and expanded by the Dutch before passing to the British in 1872. It was inscribed as a UNESCO World Heritage Site in 1979 and is now owned by the Ghanaian state."
+    },
+    {
+     "name": "Fort Sebastian",
+     "town": "Shama",
+     "region": "Western",
+     "category": "Heritage & History",
+     "aliases": "Fort San Sebastian; Sao Sebastiao de Shema; Shama Fort",
+     "description": "Fort San Sebastian is a former Portuguese fort at Shama, originally built in the 1520s and later held by the Dutch, that forms part of the UNESCO-listed Forts and Castles of Ghana. It is one of the oldest European trading forts on the Gold Coast."
+    },
+    {
+     "name": "Butre Beach",
+     "town": "Butre",
+     "region": "Western",
+     "category": "Beach & Coast",
+     "aliases": "Butre Bay; Boutry Beach; Butre Coastal Bay",
+     "description": "Butre Beach lies in the sheltered bay below Fort Batenstein in the Ahanta West District, framed by the historic village of Butre. The bay was historically used as a safe anchorage and landing point by European traders."
+    },
+    {
+     "name": "Akwidaa Beach",
+     "town": "Akwidaa",
+     "region": "Western",
+     "category": "Beach & Coast",
+     "aliases": "Akwidaa Fishing Village; Akwidaa Coastal Village",
+     "description": "Akwidaa is a coastal fishing village in the Ahanta West District between Cape Three Points and Princes Town. Its beach and the nearby Fort Dorothea ruins are visited for their scenery and colonial history."
+    },
+    {
+     "name": "Dixcove Beach",
+     "town": "Dixcove",
+     "region": "Western",
+     "category": "Beach & Coast",
+     "aliases": "Infuma Beach; Dixcove Coastal Beach",
+     "description": "Dixcove Beach is a fishing-community beach in the Ahanta West District below the promontory of Fort Metal Cross. It is a working landing site for fishermen and a base for visitors to the fort."
+    },
+    {
+     "name": "Western Regional Museum",
+     "town": "Sekondi",
+     "region": "Western",
+     "category": "Museum & Art",
+     "aliases": "Sekondi Museum; Western Region Museum",
+     "description": "The Western Regional Museum in Sekondi is administered by the Ghana Museums and Monuments Board and displays artefacts relating to the history and cultures of the Western Region. It is housed in a colonial-era building in the regional capital area."
+    },
+    {
+     "name": "Gold Fields Ghana Tarkwa Mine",
+     "town": "Tarkwa",
+     "region": "Western",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Tarkwa Gold Mine; Goldfields Tarkwa; Tarkwa Nsuaem Gold Mine",
+     "description": "The Gold Fields Ghana Tarkwa Mine is a large open-pit gold mining operation at Tarkwa in the Tarkwa-Nsuaem Municipality. Tarkwa is home to the University of Mines and Technology and is one of Ghana's principal gold-mining centres."
+    },
+    {
+     "name": "Ghana Goldfields Mine at Tarkwa",
+     "town": "Tarkwa",
+     "region": "Western",
+     "category": "Food & Agritourism",
+     "aliases": "Tarkwa Goldfields; Ghana Goldfields",
+     "description": "The popular Ghana Gold Fields mine is located in the Western Region at Tarkwa, as noted in the region's tourism overview. It is a major industrial site associated with Ghana's gold-mining heritage."
+    },
+    {
+     "name": "Bogoso Gold Mine",
+     "town": "Bogoso",
+     "region": "Western",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Bogoso Prestea Gold Mine; Bogoso Goldfields",
+     "description": "Bogoso in the Prestea-Huni Valley Municipal District is a historic gold-mining town on the Ankobra River. Mining at Bogoso and neighbouring Prestea dates back to the colonial era and remains a major activity in the district."
+    },
+    {
+     "name": "Ankobra River",
+     "town": "Bogoso",
+     "region": "Western",
+     "category": "Water & Amusement",
+     "aliases": "Ankobra; Ankobra River Ankobra",
+     "description": "The Ankobra River is one of the largest rivers in the Western Region, rising in the highlands and flowing to the Gulf of Guinea near Axim. It was historically important for gold trade and passes through towns such as Bogoso and Bamianko."
+    },
+    {
+     "name": "Nkroful Ancestral Home",
+     "town": "Nkroful",
+     "region": "Western",
+     "category": "Heritage & History",
+     "aliases": "Nkroful; Kwame Nkrumah Birthplace; Nkroful Museum",
+     "description": "Nkroful in the Ellembelle District is the birthplace of Kwame Nkrumah, Ghana's first president, and is celebrated as a heritage site. The Nzema community is the site of his original family home and associated memorial structures."
+    }
+   ]
+  },
+  "Volta": {
+   "towns": [
+    {
+     "name": "Juapong",
+     "region": "Volta"
+    },
+    {
+     "name": "Adaklu Waya",
+     "region": "Volta"
+    },
+    {
+     "name": "Ve Golokwati",
+     "region": "Volta"
+    },
+    {
+     "name": "Kpetoe",
+     "region": "Volta"
+    },
+    {
+     "name": "Ave-Dakpa",
+     "region": "Volta"
+    },
+    {
+     "name": "Dzolokpuita",
+     "region": "Volta"
+    },
+    {
+     "name": "Kpandu",
+     "region": "Volta"
+    },
+    {
+     "name": "Anfoega",
+     "region": "Volta"
+    },
+    {
+     "name": "Tsito",
+     "region": "Volta"
+    },
+    {
+     "name": "Peki",
+     "region": "Volta"
+    },
+    {
+     "name": "Kpedze",
+     "region": "Volta"
+    },
+    {
+     "name": "Wheta",
+     "region": "Volta"
+    },
+    {
+     "name": "Leklebi",
+     "region": "Volta"
+    },
+    {
+     "name": "Nogokpo",
+     "region": "Volta"
+    },
+    {
+     "name": "Abutia-Teti",
+     "region": "Volta"
+    },
+    {
+     "name": "Klikor",
+     "region": "Volta"
+    },
+    {
+     "name": "Anyako",
+     "region": "Volta"
+    },
+    {
+     "name": "Dzelukope",
+     "region": "Volta"
+    },
+    {
+     "name": "Mepe",
+     "region": "Volta"
+    },
+    {
+     "name": "Alakple",
+     "region": "Volta"
+    },
+    {
+     "name": "Vodza",
+     "region": "Volta"
+    },
+    {
+     "name": "Adafienu",
+     "region": "Volta"
+    },
+    {
+     "name": "Tadzewu",
+     "region": "Volta"
+    },
+    {
+     "name": "Tanyigbe",
+     "region": "Volta"
+    },
+    {
+     "name": "Sokode",
+     "region": "Volta"
+    },
+    {
+     "name": "Agate",
+     "region": "Volta"
+    },
+    {
+     "name": "Atiavi",
+     "region": "Volta"
+    },
+    {
+     "name": "Alavanyo",
+     "region": "Volta"
+    },
+    {
+     "name": "Tafi Atome",
+     "region": "Volta"
+    },
+    {
+     "name": "Liati Wote",
+     "region": "Volta"
+    },
+    {
+     "name": "Gbledi Gbogame",
+     "region": "Volta"
+    },
+    {
+     "name": "Fiaxor",
+     "region": "Volta"
+    }
+   ],
+   "attractions": [
+    {
+     "name": "Mount Afadja",
+     "town": "Gbledi Gbogame",
+     "region": "Volta",
+     "category": "Scenic & Hiking",
+     "aliases": "Mount Afadjato; Afadjato; Mountain Afadja",
+     "description": "Mount Afadja, known as Afadjato to the Ewe people, is one of the highest mountains in Ghana, with its summit in the Volta Region near the Togo border. It is one of the most visited tourist attractions in the Volta Region and lies in the Agumatsa Range."
+    },
+    {
+     "name": "Mount Adaklu",
+     "town": "Adaklu Waya",
+     "region": "Volta",
+     "category": "Scenic & Hiking",
+     "aliases": "Adaklu Mountain; Mount Adaklu Summit",
+     "description": "Mount Adaklu is a mountain about 12 km from Ho in the Adaklu District, standing roughly 580 m above sea level and venerated by nearby Ewe villages. Guided tours of the mountain are organised for tourists, with profits invested in the community."
+    },
+    {
+     "name": "Tafi Agome Caves",
+     "town": "Tafi Atome",
+     "region": "Volta",
+     "category": "Nature & Wildlife",
+     "aliases": "Tafi Agome Caves; Tafi Agome; Agome Caves",
+     "description": "The Tafi Agome Caves are a cave site in the Volta Region listed among the region's tourist attractions alongside the Tafi Atome Monkey Sanctuary. They are associated with the historical refuge traditions of the Tafi communities."
+    },
+    {
+     "name": "Amedzofe Falls",
+     "town": "Amedzofe",
+     "region": "Volta",
+     "category": "Nature & Wildlife",
+     "aliases": "Amedzofe Waterfall; Amedzofe Falls",
+     "description": "Amedzofe Falls is a waterfall in the Volta Region listed among the region's waterfalls and tourist attractions. It is found in the mountainous Amedzofe area of the Ho West District."
+    },
+    {
+     "name": "Biakpa Falls and Caves",
+     "town": "Biakpa",
+     "region": "Volta",
+     "category": "Nature & Wildlife",
+     "aliases": "Biakpa Waterfalls; Biakpa Caves; Biakpa Falls",
+     "description": "Biakpa Falls and Caves are a waterfall and cave attraction in the Volta Region listed among the region's waterfalls and tourist sites. They are located in the Avatime area near the Ghana-Togo borderlands."
+    },
+    {
+     "name": "Kpoeta Waterfalls",
+     "town": "Kpoeta",
+     "region": "Volta",
+     "category": "Nature & Wildlife",
+     "aliases": "Kpoeta Falls; Kpoeta waterfalls Ho West",
+     "description": "Kpoeta Waterfalls is a waterfall attraction in the Ho West District of the Volta Region, listed among the region's waterfalls. It lies in the forested hills of the district."
+    },
+    {
+     "name": "Akpom Falls and Logba Tota Cave",
+     "town": "Logba Tota",
+     "region": "Volta",
+     "category": "Nature & Wildlife",
+     "aliases": "Akpom Falls; Logba Tota limestone cave; Logba Tota",
+     "description": "Akpom Falls and the limestone cave at Logba Tota are natural attractions in the Volta Region listed among the region's waterfalls and caves. They are located in the Logba area of the Hohoe and Afadjato South districts."
+    },
+    {
+     "name": "Liate Wote Snake Village",
+     "town": "Liati Wote",
+     "region": "Volta",
+     "category": "Nature & Wildlife",
+     "aliases": "Liate Wote Snake Village; Liati Wote Snake Farm",
+     "description": "The Snake Village at Liate Wote is a wildlife attraction in the Volta Region listed among the region's tourist sites. It is located near Mount Afadja and Tagbo Falls in the Afadjato South District."
+    },
+    {
+     "name": "Adidime Waterfalls",
+     "town": "Klefe",
+     "region": "Volta",
+     "category": "Nature & Wildlife",
+     "aliases": "Adidime Falls Klefe; Adidime Waterfalls",
+     "description": "Adidime Waterfalls is a waterfall at Klefe in the Ho Municipal area of the Volta Region, listed among the region's tourist attractions. It lies in the hills close to Ho."
+    },
+    {
+     "name": "Ave Crocodile Resort",
+     "town": "Ave-Dakpa",
+     "region": "Volta",
+     "category": "Water & Amusement",
+     "aliases": "Ave Dakpa Crocodile Resort; Ave Crocodile Farm",
+     "description": "The Ave Crocodile Resort is a wildlife and leisure attraction at Ave Dakpa in the Akatsi North District of the Volta Region. It is listed among the region's tourist attractions and features a crocodile pond."
+    },
+    {
+     "name": "Tordzie Falls",
+     "town": "Kpandu",
+     "region": "Volta",
+     "category": "Nature & Wildlife",
+     "aliases": "Tordzie Waterfalls; Tordzi Falls",
+     "description": "Tordzie Falls is a waterfall on the Tordzie River near Kpandu in the Volta Region, popular with visitors for its cascades and surrounding vegetation. It is one of several waterfalls found in the region."
+    }
+   ]
+  },
+  "Bono": {
+   "towns": [
+    {
+     "name": "Jinijini",
+     "region": "Bono"
+    },
+    {
+     "name": "Sampa",
+     "region": "Bono"
+    },
+    {
+     "name": "Abesim",
+     "region": "Bono"
+    },
+    {
+     "name": "Bofourkrom",
+     "region": "Bono"
+    },
+    {
+     "name": "Kotokrom",
+     "region": "Bono"
+    },
+    {
+     "name": "Nsuatre",
+     "region": "Bono"
+    },
+    {
+     "name": "Asuotiano",
+     "region": "Bono"
+    },
+    {
+     "name": "Dwenase",
+     "region": "Bono"
+    },
+    {
+     "name": "Kwakuanya",
+     "region": "Bono"
+    },
+    {
+     "name": "Goka",
+     "region": "Bono"
+    },
+    {
+     "name": "Buni",
+     "region": "Bono"
+    },
+    {
+     "name": "Debibi",
+     "region": "Bono"
+    },
+    {
+     "name": "Kwame Twumasi",
+     "region": "Bono"
+    },
+    {
+     "name": "Koraso",
+     "region": "Bono"
+    },
+    {
+     "name": "Amasu",
+     "region": "Bono"
+    },
+    {
+     "name": "Basa",
+     "region": "Bono"
+    },
+    {
+     "name": "Tainso",
+     "region": "Bono"
+    },
+    {
+     "name": "Bofie",
+     "region": "Bono"
+    },
+    {
+     "name": "Akrobi",
+     "region": "Bono"
+    },
+    {
+     "name": "Kobedi",
+     "region": "Bono"
+    },
+    {
+     "name": "Berekum Fetentaa",
+     "region": "Bono"
+    },
+    {
+     "name": "Adom",
+     "region": "Bono"
+    },
+    {
+     "name": "Bantama",
+     "region": "Bono"
+    },
+    {
+     "name": "Mantukwa",
+     "region": "Bono"
+    },
+    {
+     "name": "Nsawkaw Nkwanta",
+     "region": "Bono"
+    },
+    {
+     "name": "Bomiri",
+     "region": "Bono"
+    },
+    {
+     "name": "Sampa Nkwanta",
+     "region": "Bono"
+    }
+   ],
+   "attractions": [
+    {
+     "name": "Kwafie Festival",
+     "town": "Dormaa Ahenkro",
+     "region": "Bono",
+     "category": "Cultural Village",
+     "aliases": "Kwafie; Kwafie Festival Dormaa; Dormaa Kwafie",
+     "description": "The Kwafie Festival is an annual festival celebrated by the chiefs and people of Dormaa, Berekum and Nsoatre in the Bono Region in November, December or January. It commemorates the ancestors and purification, and features a large bonfire in the palace courtyard."
+    },
+    {
+     "name": "Munufie Festival",
+     "town": "Drobo",
+     "region": "Bono",
+     "category": "Cultural Village",
+     "aliases": "Munufie; Munufie Festival Drobo; Drobo Munufie",
+     "description": "The Munufie Festival is celebrated by the people of Drobo in the Bono Region to cleanse and feed the stools and gods. It is climaxed with a large bonfire in the palace courtyard and re-enacts the legend that the people of Dormaa brought fire to Ghana."
+    },
+    {
+     "name": "Akwantukese Festival",
+     "town": "Suma Ahenkro",
+     "region": "Bono",
+     "category": "Cultural Village",
+     "aliases": "Akwantukese; Akwantukese Festival Suma; Suma Akwantukese",
+     "description": "The Akwantukese Festival is celebrated by the people of Suma in the Bono Region in March. It commemorates the historic migration of the Suma people and is observed with traditional rites and a durbar."
+    },
+    {
+     "name": "Akyiriwia Festival",
+     "town": "Seikwa",
+     "region": "Bono",
+     "category": "Cultural Village",
+     "aliases": "Akyiriwia; Akyiriwia Festival Atomfourso; Atomfourso Akyiriwia",
+     "description": "The Akyiriwia Festival is celebrated by the people of Atomfourso near Seikwa in the Tain District of the Bono Region. It is marked by a ban on noise making and funerals before the main celebration."
+    },
+    {
+     "name": "Sunyani Central Market",
+     "town": "Sunyani",
+     "region": "Bono",
+     "category": "Market & Craft",
+     "aliases": "Sunyani Market; Sunyani Central Market",
+     "description": "Sunyani Central Market is the principal trading market of Sunyani, the capital of the Bono Region, which is known as the green city of Ghana and a major conference destination. It serves as a hub for the region's agricultural produce and crafts."
+    },
+    {
+     "name": "University of Energy and Natural Resources",
+     "town": "Sunyani",
+     "region": "Bono",
+     "category": "Urban Landmark",
+     "aliases": "UENR; University of Energy and Natural Resources Sunyani",
+     "description": "The University of Energy and Natural Resources is a public university in Sunyani, the capital of the Bono Region. It is one of the region's flagship public institutions and contributes to research on energy and natural resource management."
+    },
+    {
+     "name": "Sunyani Technical University",
+     "town": "Sunyani",
+     "region": "Bono",
+     "category": "Urban Landmark",
+     "aliases": "Sunyani Polytechnic; Sunyani Technical University",
+     "description": "Sunyani Technical University, formerly Sunyani Polytechnic, is a public tertiary institution in Sunyani in the Bono Region. It is one of the region's principal educational landmarks."
+    },
+    {
+     "name": "Berekum Traditional Area",
+     "town": "Berekum",
+     "region": "Bono",
+     "category": "Cultural Village",
+     "aliases": "Berekum; Berekum Traditional Council; Berekum Township",
+     "description": "Berekum is a major town in the Bono Region and the seat of the Berekum Traditional Area, whose chiefs join the Kwafie Festival celebrations. The town is a centre of cashew and timber production in the region."
+    },
+    {
+     "name": "Wenchi Traditional Area",
+     "town": "Wenchi",
+     "region": "Bono",
+     "category": "Cultural Village",
+     "aliases": "Wenchi; Wenchi Traditional Council; Wenchi Township",
+     "description": "Wenchi is a town in the Bono Region and the capital of the Wenchi Municipal District, with a long-established traditional chieftaincy. It lies near Bui National Park and the Bui Dam."
+    },
+    {
+     "name": "Dormaa Ahenkro Palace",
+     "town": "Dormaa Ahenkro",
+     "region": "Bono",
+     "category": "Religious & Sacred",
+     "aliases": "Dormaa Palace; Dormaa Ahenkro Traditional Palace",
+     "description": "Dormaa Ahenkro is the capital of the Dormaa Central Municipal District and the seat of the Dormaa Traditional Area. Its palace courtyard is the setting for the bonfire rituals of the Munufie and Kwafie festivals."
+    },
+    {
+     "name": "Banda Ahenkro Heritage Area",
+     "town": "Banda Ahenkro",
+     "region": "Bono",
+     "category": "Heritage & History",
+     "aliases": "Banda Ahenkro; Banda Traditional Area; Banda",
+     "description": "Banda Ahenkro is the capital of the Banda District in the Bono Region, at the foot of the Banda Mountains near Bui National Park. The area is associated with the historic Banda kingdom and its heritage sites."
+    },
+    {
+     "name": "Nsawkaw Township",
+     "town": "Nsawkaw",
+     "region": "Bono",
+     "category": "Urban Landmark",
+     "aliases": "Nsawkaw; Nsawkaw Tain; Nsawkaw Town",
+     "description": "Nsawkaw is the capital of the Tain District in the Bono Region and one of the closest towns to Bui National Park. It is a growing commercial centre on the road to the Bui Dam."
+    },
+    {
+     "name": "Sampa Border Market",
+     "town": "Sampa",
+     "region": "Bono",
+     "category": "Market & Craft",
+     "aliases": "Sampa; Sampa Market; Sampa Border Town",
+     "description": "Sampa is the capital of the Jaman North District in the Bono Region and a border town on the Ghana-Côte d'Ivoire frontier. Its market serves cross-border trade in agricultural produce and manufactured goods."
+    },
+    {
+     "name": "Japekrom Township",
+     "town": "Japekrom",
+     "region": "Bono",
+     "category": "Urban Landmark",
+     "aliases": "Japekrom; Jaman South; New Drobo",
+     "description": "Japekrom is the capital of the Jaman South Municipal District in the Bono Region. It is a commercial and administrative centre serving the surrounding farming communities."
+    },
+    {
+     "name": "Odumase Township",
+     "town": "Odumase",
+     "region": "Bono",
+     "category": "Urban Landmark",
+     "aliases": "Odumase; Odumase Sunyani West; Odumase Bono",
+     "description": "Odumase is the capital of the Sunyani West District in the Bono Region, close to the regional capital Sunyani. It is an administrative and residential centre in the Sunyani conurbation."
+    },
+    {
+     "name": "Nkrankwanta Township",
+     "town": "Nkrankwanta",
+     "region": "Bono",
+     "category": "Urban Landmark",
+     "aliases": "Nkrankwanta; Dormaa West; Nkrankwanta Town",
+     "description": "Nkrankwanta is the capital of the Dormaa West District in the Bono Region. It lies in a productive cocoa and cashew growing area near the Côte d'Ivoire border."
+    },
+    {
+     "name": "Wamfie Township",
+     "town": "Wamfie",
+     "region": "Bono",
+     "category": "Urban Landmark",
+     "aliases": "Wamfie; Dormaa East; Wamfie Town",
+     "description": "Wamfie is the capital of the Dormaa East District in the Bono Region. It is an agricultural and administrative centre in the eastern part of the Dormaa traditional area."
+    },
+    {
+     "name": "Jinijini Township",
+     "town": "Jinijini",
+     "region": "Bono",
+     "category": "Urban Landmark",
+     "aliases": "Jinijini; Berekum West; Jinijini Town",
+     "description": "Jinijini is the capital of the Berekum West District in the Bono Region. It serves the surrounding cocoa, cashew and food-crop farming communities."
+    }
+   ]
+  },
+  "Bono East": {
+   "towns": [
+    {
+     "name": "Bono Manso",
+     "region": "Bono East"
+    },
+    {
+     "name": "Buoyem",
+     "region": "Bono East"
+    },
+    {
+     "name": "Nchiraa",
+     "region": "Bono East"
+    },
+    {
+     "name": "Yabraso",
+     "region": "Bono East"
+    },
+    {
+     "name": "Boabeng",
+     "region": "Bono East"
+    },
+    {
+     "name": "Fiema",
+     "region": "Bono East"
+    },
+    {
+     "name": "Techimantia",
+     "region": "Bono East"
+    },
+    {
+     "name": "Aworowa",
+     "region": "Bono East"
+    },
+    {
+     "name": "Krobo",
+     "region": "Bono East"
+    },
+    {
+     "name": "Ampoma",
+     "region": "Bono East"
+    },
+    {
+     "name": "Garadima",
+     "region": "Bono East"
+    },
+    {
+     "name": "Jato",
+     "region": "Bono East"
+    },
+    {
+     "name": "Pru",
+     "region": "Bono East"
+    },
+    {
+     "name": "Parambo",
+     "region": "Bono East"
+    },
+    {
+     "name": "Dama Nkwanta",
+     "region": "Bono East"
+    },
+    {
+     "name": "Bassa",
+     "region": "Bono East"
+    },
+    {
+     "name": "Kintampo Nkwanta",
+     "region": "Bono East"
+    },
+    {
+     "name": "Anyima",
+     "region": "Bono East"
+    },
+    {
+     "name": "Ahyiayem",
+     "region": "Bono East"
+    },
+    {
+     "name": "Baberu",
+     "region": "Bono East"
+    },
+    {
+     "name": "Dotobaa",
+     "region": "Bono East"
+    },
+    {
+     "name": "Akroso",
+     "region": "Bono East"
+    },
+    {
+     "name": "Nkwaeso",
+     "region": "Bono East"
+    },
+    {
+     "name": "Senya",
+     "region": "Bono East"
+    },
+    {
+     "name": "New Longoro",
+     "region": "Bono East"
+    },
+    {
+     "name": "Yabraso Kintampo",
+     "region": "Bono East"
+    },
+    {
+     "name": "Fakwasi",
+     "region": "Bono East"
+    },
+    {
+     "name": "Kawampe",
+     "region": "Bono East"
+    },
+    {
+     "name": "Kokofu",
+     "region": "Bono East"
+    }
+   ],
+   "attractions": [
+    {
+     "name": "Buoyem Caves and Bat Colony",
+     "town": "Buoyem",
+     "region": "Bono East",
+     "category": "Nature & Wildlife",
+     "aliases": "Buoyem Caves; Buoyem Bat Cave; Buoyem Caves and Bats Colony",
+     "description": "The Buoyem Caves and bats colony lie within the locality of Buoyem in the Techiman Municipality of the Bono East Region. The dry semi-deciduous forest houses a large colony of rosetta fruit bats, caves, sandstone rocks and waterfalls."
+    },
+    {
+     "name": "Tanoboase Sacred Grove and Shrine",
+     "town": "Tanoboase",
+     "region": "Bono East",
+     "category": "Religious & Sacred",
+     "aliases": "Tano Boase Sacred Grove; Tano Sacred Grove and Shrine; Tanoboase Sacred Grove",
+     "description": "The Tanoboase Sacred Grove and Shrine is near the village of Tanoboase in the Techiman Municipality and is believed to be the cradle and traditional home of the Bono people. It became a Community Based Ecotourism Project in 1996 and is part of Ghana's material cultural heritage."
+    },
+    {
+     "name": "Tano River Sacred Fish",
+     "town": "Tanoso",
+     "region": "Bono East",
+     "category": "Religious & Sacred",
+     "aliases": "Tano Sacred Fish; Tanoso Sacred Fish; Tano River Sacred Fish Pond",
+     "description": "The Tano River Sacred Fish site is located at Tanoso near Techiman in the Bono East Region. It houses a pool of sacred fish jealously protected by the community, said to have golden crowns."
+    },
+    {
+     "name": "Forikrom Boten Caves and Shrines",
+     "town": "Forikrom",
+     "region": "Bono East",
+     "category": "Religious & Sacred",
+     "aliases": "Forikrom Boten Caves; Boten Caves and Shrines; Forikrom Magic Cave",
+     "description": "Forikrom Boten Caves and shrines are located about eight kilometres off the Techiman-Nkoranza road in the Bono East Region. The range of giant rocks forms a shrine and caves, and the largest cave is believed to have been a refuge for women and children in times of war."
+    },
+    {
+     "name": "Kristo Boase Monastery",
+     "town": "Forikrom",
+     "region": "Bono East",
+     "category": "Religious & Sacred",
+     "aliases": "Kristo Boase Monastery; Kristo Boase; Benedictine Monastery Bono East",
+     "description": "Kristo Boase Monastery is home to a small community of eleven Benedictine monks in the Bono East Region. The monastery is set in a place of great beauty and historic interest and welcomes visitors from around the world each year."
+    },
+    {
+     "name": "Bono Manso Slave Trade Site",
+     "town": "Bono Manso",
+     "region": "Bono East",
+     "category": "Heritage & History",
+     "aliases": "Bono Manso; Manso; Bono-Manso",
+     "description": "Bono Manso, located on the Techiman-Kintampo road, was the capital of the Bono state from the 11th century to 1723 and a key node in the Trans-Saharan trade network. It is marketed today as a heritage site associated with the slave trade and is visited by members of the African diaspora."
+    },
+    {
+     "name": "Apoo Festival",
+     "town": "Techiman",
+     "region": "Bono East",
+     "category": "Cultural Village",
+     "aliases": "Apoo; Apo Festival; Apoo Festival Bono East",
+     "description": "The Apoo Festival is celebrated in the Bono East Region and is listed among the region's festive celebrations. It is a traditional festival during which grievances may be aired and social harmony is renewed."
+    },
+    {
+     "name": "Kurubi Festival",
+     "town": "Kintampo",
+     "region": "Bono East",
+     "category": "Cultural Village",
+     "aliases": "Kurubi; Kurubi Festival Kintampo; Wangara Kurubi",
+     "description": "The Kurubi Festival is celebrated by the people of Kintampo in November, mainly to unite all Wangara descent in Ghana. Virgins normally dance on stilts as an interesting part of the festival."
+    },
+    {
+     "name": "Nkyifie Festival",
+     "town": "Prang",
+     "region": "Bono East",
+     "category": "Cultural Village",
+     "aliases": "Nkyifie; Nkyifie Festival Prang; Prang Nkyifie",
+     "description": "The Nkyifie Festival is celebrated by the people of Prang in the Pru West District in September and October. It is listed among the festive celebrations of the Bono East Region."
+    },
+    {
+     "name": "Fokuo Festival",
+     "town": "Nkoranza",
+     "region": "Bono East",
+     "category": "Cultural Village",
+     "aliases": "Fokuo; Fokuo Festival Nkoranza; Sessiman Ntoa",
+     "description": "The Fokuo Festival is a notable festival celebrated by the people of Nkoranza (Sessiman) in the Bono East Region. It honours the deity called Ntoa, also known as Seesiman Ntoa, who played a critical role in leading the historical wars of the people of Nkoranza."
+    },
+    {
+     "name": "Techiman Central Market",
+     "town": "Techiman",
+     "region": "Bono East",
+     "category": "Market & Craft",
+     "aliases": "Techiman Market; Techiman Central Market; Techiman Great Market",
+     "description": "Techiman Central Market is one of the largest trading markets in Ghana and the commercial hub of the Bono East Region, whose capital is Techiman. It draws traders from across the region for yam, maize, beans, cassava and other produce."
+    },
+    {
+     "name": "Techiman Municipality",
+     "town": "Techiman",
+     "region": "Bono East",
+     "category": "Urban Landmark",
+     "aliases": "Techiman; Techiman Municipal District; Techiman City",
+     "description": "Techiman is the capital of the Bono East Region and the seat of the Techiman Municipal District. It succeeded Bono Manso as the leading commercial centre of the area after 1723."
+    },
+    {
+     "name": "Kintampo Municipality",
+     "town": "Kintampo",
+     "region": "Bono East",
+     "category": "Urban Landmark",
+     "aliases": "Kintampo; Kintampo North Municipal District; Kintampo Town",
+     "description": "Kintampo is the capital of the Kintampo North Municipal District in the Bono East Region. It is a major town on the Kumasi-Tamale road and a base for visiting Kintampo Waterfalls and Fuller Falls."
+    },
+    {
+     "name": "Yeji Fishing Harbour",
+     "town": "Yeji",
+     "region": "Bono East",
+     "category": "Food & Agritourism",
+     "aliases": "Yeji; Yeji Harbour; Yeji Fishing Port",
+     "description": "Yeji is the capital of the Pru East District in the Bono East Region and a fishing town on the shores of Lake Volta. Fishing activities take place along the region's side of Lake Volta and Yeji is a centre of the trade."
+    },
+    {
+     "name": "Atebubu Market",
+     "town": "Atebubu",
+     "region": "Bono East",
+     "category": "Market & Craft",
+     "aliases": "Atebubu; Atebubu Market; Atebubu-Amantin",
+     "description": "Atebubu is the capital of the Atebubu-Amantin Municipal District in the Bono East Region and a commercial centre for yam and food-crop trade. It is listed among the principal towns where yam production is high in the region."
+    },
+    {
+     "name": "Kwame Danso Township",
+     "town": "Kwame Danso",
+     "region": "Bono East",
+     "category": "Urban Landmark",
+     "aliases": "Kwame Danso; Sene West; Kwame Danso Town",
+     "description": "Kwame Danso is the capital of the Sene West District in the Bono East Region, one of the towns where yam production is high. It is an administrative and trading centre in the Sene area near Lake Volta."
+    }
+   ]
+  },
+  "Ahafo": {
+   "towns": [
+    {
+     "name": "Fawohoyeden",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Kasapin",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Ayomso",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Bediako",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Asumura",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Pomaakrom",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Bitre Ahenkro",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Nyamekyebekyere",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Ampenkro",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Abebresekrom",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Gyakontabuo",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Kwaopotey",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Nyankomagokrom",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Kofi Mmerekrom",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Daseana",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Gyasikrom",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Acherensua",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Dwommo",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Kwadwo Addaikrom",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Yamfo",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Abuom",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Anwiam",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Camp No. 1",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Dantano",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Noberkaw",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Asarekrom",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Nakete",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Kokooso",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Akokoa",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Bakamba",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Cherembo",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Dama-Nkwanta",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Kamampa",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Komfourkrom",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Nyomoase",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Parembo-Sawaba",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Zabrama",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Subompang",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Susuanso",
+     "region": "Ahafo"
+    },
+    {
+     "name": "Terchire",
+     "region": "Ahafo"
+    }
+   ],
+   "attractions": [
+    {
+     "name": "Mim Bour",
+     "town": "Mim",
+     "region": "Ahafo",
+     "category": "Scenic & Hiking",
+     "aliases": "Mim Rocky Mountains; Mim Buo; Mim Bour Mountains",
+     "description": "A group of three rocky peaks rising to about 410 m just west of Mim; the tallest is traditionally regarded as the father of the other two. The site has been partly developed for tourism with a reception centre, pool and gardens on the summit of the female mountain."
+    },
+    {
+     "name": "Mim Lake",
+     "town": "Mim",
+     "region": "Ahafo",
+     "category": "Nature & Wildlife",
+     "aliases": "Anwomasu Lake; Mim Anwomasu Lake",
+     "description": "A small inland lake on the outskirts of Mim, expanded from the natural Anwomasu river, that is preserved as a tourist and leisure site. It holds endemic and near-endemic cichlid fish including Hemichromis frempongi."
+    },
+    {
+     "name": "Mim Airstrip",
+     "town": "Mim",
+     "region": "Ahafo",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Mim Airfield; Mim Airport",
+     "description": "An airstrip serving the Mim area, located east of the Mim Bour mountains. It is one of the few aviation facilities in the Ahafo Region."
+    },
+    {
+     "name": "Anwomasu Dam",
+     "town": "Mim",
+     "region": "Ahafo",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Mim Dam; Anwomasu Reservoir",
+     "description": "A dam near Ayum Forest Products in Mim, connected by a conduit to Mim Lake, that historically served industrial and domestic water purposes."
+    },
+    {
+     "name": "Okomfo Anokye Tree",
+     "town": "Sankore",
+     "region": "Ahafo",
+     "category": "Religious & Sacred",
+     "aliases": "Okomfo Anokye Historic Tree; Sankore Sacred Tree",
+     "description": "A historic tree at Sankore associated with the legendary priest Okomfo Anokye and regarded as a sacred and heritage site in the Ahafo Region."
+    },
+    {
+     "name": "Tano River",
+     "town": "Goaso",
+     "region": "Ahafo",
+     "category": "Nature & Wildlife",
+     "aliases": "Tano River; River Tano; Tanoe River",
+     "description": "A 400 km river that drains the Tano Basin and flows through the forest belt around Goaso; it is culturally important to the Bono and Ahafo peoples and supports rich biodiversity."
+    },
+    {
+     "name": "Ahafo Mine",
+     "town": "Kenyasi",
+     "region": "Ahafo",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Newmont Ahafo Mine; Ahafo Gold Mine",
+     "description": "One of the largest open-pit gold mines in Ghana, located in the Kenyasi area and operated since 2007, with estimated reserves of around 17 million ounces of gold."
+    },
+    {
+     "name": "Adekyem Festival",
+     "town": "Bechem",
+     "region": "Ahafo",
+     "category": "Heritage & History",
+     "aliases": "Adekyem Festival; Bechem Adekyem",
+     "description": "An annual November festival celebrated by the people of Bechem that commemorates historical events from the town's founding and raises funds for local educational development."
+    },
+    {
+     "name": "Abetiase Festival",
+     "town": "Goaso",
+     "region": "Ahafo",
+     "category": "Heritage & History",
+     "aliases": "Abetiase Festival; Goaso Abetiase",
+     "description": "A bi-annual festival held at Goaso that celebrates local traditions and the town's historic role in relation to the Golden Stool."
+    },
+    {
+     "name": "Addae Tuntum Festival",
+     "town": "Kukuom",
+     "region": "Ahafo",
+     "category": "Heritage & History",
+     "aliases": "Akwasidae Tuntum Festival; Kukuom Addae Tuntum; Addae Tuntum",
+     "description": "An annual festival celebrated by the chiefs and people of Kukuom-Asunafo in the Ahafo Region, usually held in December or January. It commemorates the 18th-century Ebirimoro war between the Sefwi and Ahafo peoples and reaffirms the people's commitment to their chief."
+    },
+    {
+     "name": "Adikanfo Festival",
+     "town": "Hwidiem",
+     "region": "Ahafo",
+     "category": "Heritage & History",
+     "aliases": "Adikanfo Festival; Hwidiem Adikanfo; Adikanfo",
+     "description": "An annual festival celebrated by the chiefs and people of Hwidiem in the Ahafo Region, usually in September. It features a durbar of chiefs, drumming and animal sacrifices, and commemorates the migration of the people of Hwidiem from Denkyira Ntomu to their present home."
+    },
+    {
+     "name": "Apomasu Festival",
+     "town": "Ntotroso",
+     "region": "Ahafo",
+     "category": "Food & Agritourism",
+     "aliases": "Apomasu Yam Festival; Ntotroso Apomasu; Apomasu",
+     "description": "An annual yam harvest festival held in January by the chiefs and people of Ntotroso-Asutifi in the Ahafo Region. It has been commemorated for more than 900 years and is used to pay homage to the Apomasu shrine."
+    },
+    {
+     "name": "Nkompo Festival",
+     "town": "Acherensua",
+     "region": "Ahafo",
+     "category": "Heritage & History",
+     "aliases": "Nkompo Festival; Acherensua Nkompo; Nkompo",
+     "description": "An annual festival celebrated by the chiefs and people of Acherensua-Asutifi in the Ahafo Region, usually in January or September. It features a durbar of chiefs, traditional dress, dancing and drumming, and marks a historic event of the past."
+    },
+    {
+     "name": "Akwansramu Festival",
+     "town": "Mim",
+     "region": "Ahafo",
+     "category": "Heritage & History",
+     "aliases": "Akwansramu Festival; Mim Akwansramu; Akwansramu",
+     "description": "A December festival celebrated by the people of Mim in the Ahafo Region. Its name is a Twi term for espionage, and it commemorates the Asante warriors' patrol of the Mim-Akwaboa lands that averted an enemy incursion on Kumasi."
+    },
+    {
+     "name": "Ayum Forest Reserve",
+     "town": "Mim",
+     "region": "Ahafo",
+     "category": "Nature & Wildlife",
+     "aliases": "Ayum Forest Reserve; Ayum Reserve; Ayum Forest",
+     "description": "A 112 km2 forest reserve established in 1940 in the Asunafo South District of the Ahafo Region. Connected to the Subim and Bonsam Bepo reserves, it protects Guinean moist forest biodiversity including chimpanzees, elephants and other endangered species."
+    },
+    {
+     "name": "Bonsam Bepo Forest Reserve",
+     "town": "Akrodie",
+     "region": "Ahafo",
+     "category": "Nature & Wildlife",
+     "aliases": "Bonsam Bepo Forest Reserve; Bonsam Bepo Reserve; Bosam Bepo",
+     "description": "A 124 km2 forest reserve established in 1934 at Ahantamo near Akrodie in the Ahafo Region. It forms part of a 488 km2 forest complex together with the Ayum and Subim reserves."
+    },
+    {
+     "name": "Kasapin Tuesday Market",
+     "town": "Kasapin",
+     "region": "Ahafo",
+     "category": "Market & Craft",
+     "aliases": "Kasapin Market; Kasapin Tuesday-weekly market; Kasapin Weekly Market",
+     "description": "A vibrant weekly market held every Tuesday in Kasapin, Asunafo North, in the Ahafo Region. It draws traders and buyers from Accra, Kumasi, Mim, Goaso and Kwadwo Addaikrom."
+    },
+    {
+     "name": "Cathedral of St. Anthony",
+     "town": "Goaso",
+     "region": "Ahafo",
+     "category": "Religious & Sacred",
+     "aliases": "Cathedral of St. Anthony; Goaso Cathedral; St. Anthony Cathedral Goaso",
+     "description": "The cathedral of the Roman Catholic Diocese of Goaso, located in Goaso, the capital of the Ahafo Region. The diocese was established in 1997 from the Diocese of Sunyani."
+    },
+    {
+     "name": "Danso Abaim Festival",
+     "town": "Techimantia",
+     "region": "Ahafo",
+     "category": "Heritage & History",
+     "aliases": "Danso Abaim Festival; Techimantia Danso Abaim; Danso Abaim",
+     "description": "A traditional festival celebrated at Techimantia in the Tano South area of the Ahafo Region, listed among the festivals of the former Brong Ahafo area. Techimantia is one of the major towns of the Ahafo Region."
+    },
+    {
+     "name": "Mim Cashew Plantation",
+     "town": "Mim",
+     "region": "Ahafo",
+     "category": "Food & Agritourism",
+     "aliases": "Mim Cashew; Mim Cashew Plantation; Mim Cashew & Agric Products",
+     "description": "Cashew plantations in the Mim area of the Ahafo Region that supply the Mim Cashew and Agricultural Products Ltd factory, producer of the Mim Cashew Brandy."
+    }
+   ]
+  },
+  "Northern": {
+   "towns": [
+    {
+     "name": "Kpandai",
+     "region": "Northern"
+    },
+    {
+     "name": "Tatale",
+     "region": "Northern"
+    },
+    {
+     "name": "Adibo",
+     "region": "Northern"
+    },
+    {
+     "name": "Kpabia",
+     "region": "Northern"
+    },
+    {
+     "name": "Moliyili",
+     "region": "Northern"
+    },
+    {
+     "name": "Sheini",
+     "region": "Northern"
+    },
+    {
+     "name": "Shienga",
+     "region": "Northern"
+    },
+    {
+     "name": "Sumniboma",
+     "region": "Northern"
+    },
+    {
+     "name": "Kambali",
+     "region": "Northern"
+    },
+    {
+     "name": "Bimbagu",
+     "region": "Northern"
+    },
+    {
+     "name": "Garizegu",
+     "region": "Northern"
+    },
+    {
+     "name": "Saakpuli",
+     "region": "Northern"
+    },
+    {
+     "name": "Buntaga",
+     "region": "Northern"
+    },
+    {
+     "name": "Sabali",
+     "region": "Northern"
+    },
+    {
+     "name": "Nawuni",
+     "region": "Northern"
+    },
+    {
+     "name": "Zangbalun",
+     "region": "Northern"
+    },
+    {
+     "name": "Dalum",
+     "region": "Northern"
+    },
+    {
+     "name": "Gumo",
+     "region": "Northern"
+    },
+    {
+     "name": "Kpachi",
+     "region": "Northern"
+    },
+    {
+     "name": "Vogu",
+     "region": "Northern"
+    },
+    {
+     "name": "Satani",
+     "region": "Northern"
+    },
+    {
+     "name": "Tanshegu",
+     "region": "Northern"
+    },
+    {
+     "name": "Lugshegu",
+     "region": "Northern"
+    },
+    {
+     "name": "Yipelgu",
+     "region": "Northern"
+    },
+    {
+     "name": "Zugu",
+     "region": "Northern"
+    },
+    {
+     "name": "Gbulahagu",
+     "region": "Northern"
+    },
+    {
+     "name": "Gundaa",
+     "region": "Northern"
+    },
+    {
+     "name": "Kpendua",
+     "region": "Northern"
+    },
+    {
+     "name": "Kunkulung",
+     "region": "Northern"
+    },
+    {
+     "name": "Lingbunga",
+     "region": "Northern"
+    },
+    {
+     "name": "Nyerizegu",
+     "region": "Northern"
+    },
+    {
+     "name": "Gizaa",
+     "region": "Northern"
+    },
+    {
+     "name": "Kpana",
+     "region": "Northern"
+    },
+    {
+     "name": "Kuli",
+     "region": "Northern"
+    },
+    {
+     "name": "Lamashegu",
+     "region": "Northern"
+    },
+    {
+     "name": "Sakasaka",
+     "region": "Northern"
+    },
+    {
+     "name": "Kalpohin",
+     "region": "Northern"
+    },
+    {
+     "name": "Kpalsi",
+     "region": "Northern"
+    },
+    {
+     "name": "Dungu",
+     "region": "Northern"
+    },
+    {
+     "name": "Gumani",
+     "region": "Northern"
+    },
+    {
+     "name": "Vitting",
+     "region": "Northern"
+    },
+    {
+     "name": "Kanvili",
+     "region": "Northern"
+    },
+    {
+     "name": "Choggu",
+     "region": "Northern"
+    },
+    {
+     "name": "Yong",
+     "region": "Northern"
+    }
+   ],
+   "attractions": [
+    {
+     "name": "Gbewaa Palace",
+     "town": "Yendi",
+     "region": "Northern",
+     "category": "Heritage & History",
+     "aliases": "Naa Gbewaa Palace; Yaa Naa Palace; Gbewaa palace",
+     "description": "The royal palace at Yendi, traditional capital of the Kingdom of Dagbon, and the seat of the Yaa Naa, king of Ghana's oldest kingdom."
+    },
+    {
+     "name": "Deutsch Cemetery",
+     "town": "Yendi",
+     "region": "Northern",
+     "category": "Heritage & History",
+     "aliases": "German Cemetery Yendi; Deutsch Cemetery at Yendi",
+     "description": "A colonial-era cemetery at Yendi associated with the period of German involvement in the region, listed among the Northern Region's heritage sites."
+    },
+    {
+     "name": "Tamale Center for Culture and Arts",
+     "town": "Tamale",
+     "region": "Northern",
+     "category": "Museum & Art",
+     "aliases": "Tamale Cultural Centre; Tamale Centre for Culture and Arts",
+     "description": "A cultural centre in Tamale showcasing the arts, crafts and traditions of the peoples of the Northern Region."
+    },
+    {
+     "name": "Nkrumah Volini",
+     "town": "Tamale",
+     "region": "Northern",
+     "category": "Heritage & History",
+     "aliases": "Nkrumah Volini; Nkrumah Historic Site",
+     "description": "A historic site in Tamale associated with Kwame Nkrumah and the nationalist movement in northern Ghana."
+    },
+    {
+     "name": "Nuku Studio",
+     "town": "Tamale",
+     "region": "Northern",
+     "category": "Museum & Art",
+     "aliases": "Nuku Studios; Nuku Art Studio",
+     "description": "An art studio in Tamale contributing to the city's contemporary visual arts scene."
+    },
+    {
+     "name": "Diarre Napagaduungbanani",
+     "town": "Diare",
+     "region": "Northern",
+     "category": "Heritage & History",
+     "aliases": "Diarre Napagaduungbanani; Diare Heritage Site",
+     "description": "A traditional heritage site at Diare in the Northern Region recognised for its historical and cultural significance."
+    },
+    {
+     "name": "Sabali River (River Oti)",
+     "town": "Sabali",
+     "region": "Northern",
+     "category": "Nature & Wildlife",
+     "aliases": "Sabali; River Oti at Sabali; Sabali River",
+     "description": "A stretch of the River Oti at Sabali in the Northern Region, noted as a scenic riverine site."
+    },
+    {
+     "name": "Nawuni River (White Volta)",
+     "town": "Nawuni",
+     "region": "Northern",
+     "category": "Nature & Wildlife",
+     "aliases": "Nawuni River; White Volta at Nawuni",
+     "description": "The White Volta River at Nawuni, an important waterway and scenic natural site in the Northern Region."
+    },
+    {
+     "name": "Tamale Central Mosque",
+     "town": "Tamale",
+     "region": "Northern",
+     "category": "Religious & Sacred",
+     "aliases": "Tamale Central Mosque; Tamale Mosque",
+     "description": "The principal central mosque of Tamale, one of the city's best-known landmarks and a focal point of Islamic worship in northern Ghana."
+    },
+    {
+     "name": "Tamale Central Market",
+     "town": "Tamale",
+     "region": "Northern",
+     "category": "Market & Craft",
+     "aliases": "Aboabo Market; Tamale Central Market",
+     "description": "The main market of Tamale, a major trading hub for grains, livestock, yams and crafts from across the Northern Region."
+    },
+    {
+     "name": "Aliu Mahama Sports Stadium",
+     "town": "Tamale",
+     "region": "Northern",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Tamale Sports Stadium; Aliu Mahama Stadium",
+     "description": "Tamale's principal stadium, formerly the Tamale Sports Stadium, which hosted matches during the 2008 African Cup of Nations."
+    },
+    {
+     "name": "Tamale International Airport",
+     "town": "Tamale",
+     "region": "Northern",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Tamale Airport; Tamale International Airport",
+     "description": "The airport serving Tamale, located about 11 km from the city centre and operating regular domestic flights to Accra and other regional capitals."
+    },
+    {
+     "name": "Tamale Teaching Hospital",
+     "town": "Tamale",
+     "region": "Northern",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Tamale Teaching Hospital; TTH",
+     "description": "Ghana's third-largest hospital and the main referral health facility for the Northern Region, also used for medical teaching and research."
+    },
+    {
+     "name": "Dakpema Palace",
+     "town": "Tamale",
+     "region": "Northern",
+     "category": "Heritage & History",
+     "aliases": "Dakpema Palace; Dakpema Chief's Palace",
+     "description": "The palace of the Dakpema, the traditional chief of Tamale, whose influence shaped the city's establishment as an administrative centre."
+    }
+   ]
+  },
+  "Savannah": {
+   "towns": [
+    {
+     "name": "Gbinyiri",
+     "region": "Savannah"
+    },
+    {
+     "name": "Lukula",
+     "region": "Savannah"
+    },
+    {
+     "name": "Old Buipe",
+     "region": "Savannah"
+    },
+    {
+     "name": "Soma",
+     "region": "Savannah"
+    },
+    {
+     "name": "Tinga",
+     "region": "Savannah"
+    },
+    {
+     "name": "Banda Nkwanta",
+     "region": "Savannah"
+    },
+    {
+     "name": "Kusawgu",
+     "region": "Savannah"
+    },
+    {
+     "name": "Mankarigu",
+     "region": "Savannah"
+    },
+    {
+     "name": "Bamboi",
+     "region": "Savannah"
+    },
+    {
+     "name": "Nyange",
+     "region": "Savannah"
+    },
+    {
+     "name": "Jantong",
+     "region": "Savannah"
+    },
+    {
+     "name": "Kakpande",
+     "region": "Savannah"
+    },
+    {
+     "name": "Kpanshegu",
+     "region": "Savannah"
+    },
+    {
+     "name": "Libi",
+     "region": "Savannah"
+    },
+    {
+     "name": "Bunjai",
+     "region": "Savannah"
+    },
+    {
+     "name": "Kafaba",
+     "region": "Savannah"
+    },
+    {
+     "name": "Ntereso",
+     "region": "Savannah"
+    },
+    {
+     "name": "Mandari",
+     "region": "Savannah"
+    },
+    {
+     "name": "Chache",
+     "region": "Savannah"
+    },
+    {
+     "name": "Doli",
+     "region": "Savannah"
+    },
+    {
+     "name": "Sori",
+     "region": "Savannah"
+    },
+    {
+     "name": "Kadelso",
+     "region": "Savannah"
+    },
+    {
+     "name": "Dakrupe",
+     "region": "Savannah"
+    },
+    {
+     "name": "Wasipe",
+     "region": "Savannah"
+    }
+   ],
+   "attractions": [
+    {
+     "name": "Larabanga Mystic Stone",
+     "town": "Larabanga",
+     "region": "Savannah",
+     "category": "Religious & Sacred",
+     "aliases": "Larabanga Mystery Stone; Mystic Stone of Larabanga",
+     "description": "A sacred stone on the outskirts of Larabanga believed to return to its original position whenever it is moved; British road builders reportedly had to divert a road around it in the 1950s."
+    },
+    {
+     "name": "Larabanga Baobab (Ayuba's Grave)",
+     "town": "Larabanga",
+     "region": "Savannah",
+     "category": "Religious & Sacred",
+     "aliases": "Larabanga Baobab; Ayuba's Baobab; Baobab of Larabanga",
+     "description": "A baobab beside the Larabanga Mosque that is reputed to mark the grave of Ayuba, the mosque's founder, and whose leaves are used locally for healing."
+    },
+    {
+     "name": "Bole Mosque",
+     "town": "Bole",
+     "region": "Savannah",
+     "category": "Religious & Sacred",
+     "aliases": "Bole Mosque; Old Bole Mosque",
+     "description": "A Sudano-Sahelian adobe mosque in the centre of Bole, dated to around the 17th century, which collapsed in 2023 and was rebuilt with traditional materials in 2024."
+    },
+    {
+     "name": "Bui Reservoir",
+     "town": "Buipe",
+     "region": "Savannah",
+     "category": "Nature & Wildlife",
+     "aliases": "Bui Lake; Bui Reservoir",
+     "description": "The reservoir created by the Bui Dam, with a surface area of up to 440 km2 and a haven for hippos, cormorants and other wildlife."
+    },
+    {
+     "name": "Bui Gorge",
+     "town": "Buipe",
+     "region": "Savannah",
+     "category": "Scenic & Hiking",
+     "aliases": "Bui Gorge; Bui Gap",
+     "description": "The rocky gorge on the Black Volta where the Bui Dam is built, noted for its dramatic terrain and first surveyed by geologist Albert Ernest Kitson in 1925."
+    },
+    {
+     "name": "Salaga Slave Market",
+     "town": "Salaga",
+     "region": "Savannah",
+     "category": "Heritage & History",
+     "aliases": "Salaga Slave Market; Salaga Old Slave Market",
+     "description": "The site of the largest slave market in 18th- and 19th-century Ghana, from which captives were shipped to the coast; a young baobab now marks the former market area."
+    },
+    {
+     "name": "Salaga Slave Tree",
+     "town": "Salaga",
+     "region": "Savannah",
+     "category": "Heritage & History",
+     "aliases": "Salaga Slave Tree; Slave Tree of Salaga",
+     "description": "A historic tree at Salaga associated with the town's role in the trans-Saharan and Atlantic slave trades and preserved as a heritage landmark."
+    },
+    {
+     "name": "Wonkan Bawa (Slave Bathing Pond)",
+     "town": "Salaga",
+     "region": "Savannah",
+     "category": "Heritage & History",
+     "aliases": "Wonkan Bawa; Slave Bathing Spot",
+     "description": "A pond at Salaga whose Hausa name means the bathing spot of slaves, recalling the town's history as a major slave market."
+    },
+    {
+     "name": "Jakpa Palace",
+     "town": "Damongo",
+     "region": "Savannah",
+     "category": "Heritage & History",
+     "aliases": "Ndewura Jakpa Palace; Yagbonwura Palace",
+     "description": "The seat, official residence and meeting place of the Yagbonwura, overlord of the Gonja Kingdom, located at Damongo and built in Malian architectural style."
+    },
+    {
+     "name": "St Anne's Catholic Cathedral",
+     "town": "Damongo",
+     "region": "Savannah",
+     "category": "Religious & Sacred",
+     "aliases": "St Anne's Cathedral Damongo; Saint Anne's Catholic Cathedral",
+     "description": "The cathedral of the Roman Catholic Diocese of Damongo and one of the town's principal landmarks."
+    },
+    {
+     "name": "Gonja Kingdom Traditional Seat",
+     "town": "Damongo",
+     "region": "Savannah",
+     "category": "Heritage & History",
+     "aliases": "Yagbonwura Seat; Gonja Kingdom Seat",
+     "description": "Damongo has been the seat of the Gonja Kingdom since the Yagbonwura's court moved there from Nyange in 1944, making it a centre of Gonja heritage."
+    },
+    {
+     "name": "Kpembe Traditional Area",
+     "town": "Kpembe",
+     "region": "Savannah",
+     "category": "Heritage & History",
+     "aliases": "Kpembe; Kpembewura Traditional Area",
+     "description": "A traditional town just 2 km from Salaga that serves as the capital of the Kpembe Traditional Area, whose chief is the overlord of Salaga."
+    },
+    {
+     "name": "Mole Safari Lodge",
+     "town": "Larabanga",
+     "region": "Savannah",
+     "category": "Food & Agritourism",
+     "aliases": "Mole Motel; Mole Safari Lodge",
+     "description": "The accommodation and visitor complex at Mole National Park, described as West Africa's first luxury safari lodge and the base for park game drives and walking safaris."
+    },
+    {
+     "name": "Salaga Slave Wells",
+     "town": "Salaga",
+     "region": "Savannah",
+     "category": "Heritage & History",
+     "aliases": "Salaga Slave Wells; Salaga Wells",
+     "description": "Historic wells at Salaga that supplied water to the town's slave market and caravans, listed among the Savannah Region's tourism sites."
+    }
+   ]
+  },
+  "North East": {
+   "towns": [
+    {
+     "name": "Kulgu",
+     "region": "North East"
+    },
+    {
+     "name": "Tusugu",
+     "region": "North East"
+    },
+    {
+     "name": "Gingana",
+     "region": "North East"
+    },
+    {
+     "name": "Jilik",
+     "region": "North East"
+    },
+    {
+     "name": "Kpatiritinga",
+     "region": "North East"
+    },
+    {
+     "name": "Yikpabongo",
+     "region": "North East"
+    },
+    {
+     "name": "Birimi",
+     "region": "North East"
+    },
+    {
+     "name": "Kunkua",
+     "region": "North East"
+    },
+    {
+     "name": "Katigri",
+     "region": "North East"
+    },
+    {
+     "name": "Kpatarigu",
+     "region": "North East"
+    },
+    {
+     "name": "Yizesi",
+     "region": "North East"
+    },
+    {
+     "name": "Jadema",
+     "region": "North East"
+    },
+    {
+     "name": "Yanamoa",
+     "region": "North East"
+    },
+    {
+     "name": "Kubugu",
+     "region": "North East"
+    },
+    {
+     "name": "Kubori",
+     "region": "North East"
+    },
+    {
+     "name": "Gunbong",
+     "region": "North East"
+    },
+    {
+     "name": "Tantala",
+     "region": "North East"
+    },
+    {
+     "name": "Gbima",
+     "region": "North East"
+    },
+    {
+     "name": "Nangurima",
+     "region": "North East"
+    },
+    {
+     "name": "Goriba",
+     "region": "North East"
+    },
+    {
+     "name": "Zanwara",
+     "region": "North East"
+    },
+    {
+     "name": "Buguyiga",
+     "region": "North East"
+    },
+    {
+     "name": "Kikaayiri",
+     "region": "North East"
+    },
+    {
+     "name": "Yikpabongu",
+     "region": "North East"
+    },
+    {
+     "name": "Prima",
+     "region": "North East"
+    },
+    {
+     "name": "Kubagna",
+     "region": "North East"
+    },
+    {
+     "name": "Yirangu",
+     "region": "North East"
+    },
+    {
+     "name": "Santa",
+     "region": "North East"
+    },
+    {
+     "name": "Tuvuu",
+     "region": "North East"
+    },
+    {
+     "name": "Garigu",
+     "region": "North East"
+    },
+    {
+     "name": "Zukpeni",
+     "region": "North East"
+    },
+    {
+     "name": "Jaari",
+     "region": "North East"
+    },
+    {
+     "name": "Sakpaba",
+     "region": "North East"
+    },
+    {
+     "name": "Kusobi",
+     "region": "North East"
+    },
+    {
+     "name": "Wuntubri",
+     "region": "North East"
+    },
+    {
+     "name": "Muugu",
+     "region": "North East"
+    },
+    {
+     "name": "Tando",
+     "region": "North East"
+    },
+    {
+     "name": "Wuyima",
+     "region": "North East"
+    },
+    {
+     "name": "Siisi",
+     "region": "North East"
+    },
+    {
+     "name": "Aaba",
+     "region": "North East"
+    },
+    {
+     "name": "Kantim",
+     "region": "North East"
+    }
+   ],
+   "attractions": [
+    {
+     "name": "NaJeringa Defence Wall",
+     "town": "Nalerigu",
+     "region": "North East",
+     "category": "Heritage & History",
+     "aliases": "NaJeringa Wall; NaJeringa Defence Wall",
+     "description": "A historic wall built in the 1700s by a Mamprusi king to defend the capital at Nalerigu against raiders; its remains are preserved as a heritage site."
+    },
+    {
+     "name": "Zayaa Mosque-Shrine",
+     "town": "Wulugu",
+     "region": "North East",
+     "category": "Religious & Sacred",
+     "aliases": "Zayaa Mosque; Zayaa Shrine; Zayaa Mosque/Shrine",
+     "description": "A distinctive mosque and shrine at Wulugu with an intriguing mystical and spiritual history, noted for its unusual architecture."
+    },
+    {
+     "name": "Ancient Koma Figurines",
+     "town": "Yikpabongo",
+     "region": "North East",
+     "category": "Heritage & History",
+     "aliases": "Koma Figurines; Koma Terracotta Figurines",
+     "description": "Clay statuettes left behind by settlers over 1,000 years ago, discovered in the Yikpabongo area and important to West African archaeology."
+    },
+    {
+     "name": "Tusugu Cliff Dwellings",
+     "town": "Tusugu",
+     "region": "North East",
+     "category": "Heritage & History",
+     "aliases": "Tusugu Cliff Dwellings; Tusugu Cliff Settlement",
+     "description": "Well-preserved remains of an ancient settlement built into the Gambaga Escarpment, discovered in 1961."
+    },
+    {
+     "name": "Gingana Mountain & Rock Art",
+     "town": "Gingana",
+     "region": "North East",
+     "category": "Scenic & Hiking",
+     "aliases": "Gingana Mountain; Gingana Rock Paintings",
+     "description": "A scenic point on the Gambaga Escarpment overlooking the White Volta, notable for its ancient rock carvings and paintings."
+    },
+    {
+     "name": "Kpatiritinga Rock Art & Granaries",
+     "town": "Kpatiritinga",
+     "region": "North East",
+     "category": "Heritage & History",
+     "aliases": "Kpatiritinga Rock Art; Kpatiritinga Granaries",
+     "description": "A site along the Gambaga Escarpment with rock art and centuries-old adobe granaries, among the region's most impressive recent archaeological discoveries."
+    },
+    {
+     "name": "Tanfiok-Naamaa Rock Paintings",
+     "town": "Jilik",
+     "region": "North East",
+     "category": "Heritage & History",
+     "aliases": "Tanfiok-Naamaa Rock Paintings; Jilik Rock Paintings",
+     "description": "Prehistoric rock paintings of hunters and animals near Jilik that researchers believe may date back to the Stone Age."
+    },
+    {
+     "name": "White Volta River Rapids",
+     "town": "Gambaga",
+     "region": "North East",
+     "category": "Nature & Wildlife",
+     "aliases": "White Volta Rapids; White Volta River Rapids",
+     "description": "A stretch just north of Gambaga where the White Volta rushes through rocks, creating dramatic rapids along the base of the escarpment."
+    },
+    {
+     "name": "Gbintiri Market",
+     "town": "Gbintiri",
+     "region": "North East",
+     "category": "Market & Craft",
+     "aliases": "Gbintiri Market; Gbintri Market",
+     "description": "Held every six days, this is the largest market in the North East Region, drawing traders and livestock from across the area."
+    },
+    {
+     "name": "The Doves' Caves (Nmana Feeri)",
+     "town": "Nalerigu",
+     "region": "North East",
+     "category": "Nature & Wildlife",
+     "aliases": "Doves' Caves; Nmana Feeri; Doves Caves Nalerigu",
+     "description": "A group of rock outcrops a short hike from Nalerigu, popular for bouldering, exploring and views over the surrounding savanna."
+    },
+    {
+     "name": "Fire Festival (Bugum Chugu)",
+     "town": "Nalerigu",
+     "region": "North East",
+     "category": "Heritage & History",
+     "aliases": "Bugum Chugu; Fire Festival; Bugum Festival",
+     "description": "An exciting annual festival celebrated in most Mamprusi communities across the region in remembrance of an old legend, marked by night-time fire processions."
+    },
+    {
+     "name": "Damba Festival",
+     "town": "Nalerigu",
+     "region": "North East",
+     "category": "Heritage & History",
+     "aliases": "Damba Festival; Damba; Damma Festival",
+     "description": "A major annual festival of the Mamprusi and Dagomba peoples, celebrated at the NaYiri Palace in Nalerigu with drumming, dancing and traditional regalia."
+    },
+    {
+     "name": "Birimi Prehistoric Site",
+     "town": "Nalerigu",
+     "region": "North East",
+     "category": "Heritage & History",
+     "aliases": "Birimi Site; Birimi Prehistoric Site",
+     "description": "An archaeological site near Nalerigu associated with the Kintampo Complex civilisation and ancient pearl millet cultivation."
+    },
+    {
+     "name": "Mamprusi and Mossi Kings' Gravesites",
+     "town": "Gambaga",
+     "region": "North East",
+     "category": "Heritage & History",
+     "aliases": "Gambaga Gravesites; Mossi Chiefs' Gravesites",
+     "description": "Ancestral grave sites of ancient Mamprusi and Mossi kings at Gambaga, which was once the residence of Mamprusi kings."
+    },
+    {
+     "name": "Gambaga Witch Camp",
+     "town": "Gambaga",
+     "region": "North East",
+     "category": "Heritage & History",
+     "aliases": "Gambaga Witch Camp; Gambaga Witches Camp",
+     "description": "A settlement at Gambaga where women accused of witchcraft have historically sought refuge; it featured in the 2011 documentary The Witches of Gambaga."
+    },
+    {
+     "name": "Red Volta River",
+     "town": "Walewale",
+     "region": "North East",
+     "category": "Nature & Wildlife",
+     "aliases": "Red Volta; Red Volta River",
+     "description": "One of the two Volta headstreams flowing through the North East Region, offering canoeing and riverside scenery alongside the White Volta."
+    },
+    {
+     "name": "Nakpanduri Escarpment",
+     "town": "Nakpanduri",
+     "region": "North East",
+     "category": "Scenic & Hiking",
+     "aliases": "Nakpanduri Escarpment; Nakpanduri Scarp",
+     "description": "A dramatic section of the Gambaga Escarpment at Nakpanduri, known for its cliffs, caves and panoramic views across the North East Region."
+    },
+    {
+     "name": "White Volta River",
+     "town": "Gambaga",
+     "region": "North East",
+     "category": "Nature & Wildlife",
+     "aliases": "White Volta; White Volta River",
+     "description": "The major river of the North East Region, which together with the Red Volta forms the Volta River and is popular for canoeing."
+    }
+   ]
+  },
+  "Upper East": {
+   "towns": [
+    {
+     "name": "Tempane",
+     "region": "Upper East"
+    },
+    {
+     "name": "Nangodi",
+     "region": "Upper East"
+    },
+    {
+     "name": "Mirigu",
+     "region": "Upper East"
+    },
+    {
+     "name": "Manyoro",
+     "region": "Upper East"
+    },
+    {
+     "name": "Natugnia",
+     "region": "Upper East"
+    },
+    {
+     "name": "Zorko",
+     "region": "Upper East"
+    },
+    {
+     "name": "Yua",
+     "region": "Upper East"
+    },
+    {
+     "name": "Kayoro",
+     "region": "Upper East"
+    },
+    {
+     "name": "Kulungugu",
+     "region": "Upper East"
+    },
+    {
+     "name": "Pwalugu",
+     "region": "Upper East"
+    },
+    {
+     "name": "Widana",
+     "region": "Upper East"
+    },
+    {
+     "name": "Googo",
+     "region": "Upper East"
+    },
+    {
+     "name": "Winkongo",
+     "region": "Upper East"
+    },
+    {
+     "name": "Balungu",
+     "region": "Upper East"
+    },
+    {
+     "name": "Zaare",
+     "region": "Upper East"
+    },
+    {
+     "name": "Soe",
+     "region": "Upper East"
+    },
+    {
+     "name": "Namoo",
+     "region": "Upper East"
+    },
+    {
+     "name": "Doba",
+     "region": "Upper East"
+    },
+    {
+     "name": "Kusanaba",
+     "region": "Upper East"
+    },
+    {
+     "name": "Sapelliga",
+     "region": "Upper East"
+    },
+    {
+     "name": "Zorkor",
+     "region": "Upper East"
+    },
+    {
+     "name": "Gorogo",
+     "region": "Upper East"
+    },
+    {
+     "name": "Tilli",
+     "region": "Upper East"
+    },
+    {
+     "name": "Vea",
+     "region": "Upper East"
+    },
+    {
+     "name": "Nyariga",
+     "region": "Upper East"
+    }
+   ],
+   "attractions": [
+    {
+     "name": "Whispering Rocks and Shrines of Tongo",
+     "town": "Tengzug",
+     "region": "Upper East",
+     "category": "Scenic & Hiking",
+     "aliases": "Whistling Rocks of Tongo; Tongo Whispering Rocks; Tengzug Whistling Rocks",
+     "description": "A rock formation in Tengzug where one rock rests on another and emits strange whistling sounds in November and December. It is a notable natural landmark of the Tongo Hills."
+    },
+    {
+     "name": "Tono Dam",
+     "town": "Navrongo",
+     "region": "Upper East",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Tono Irrigation Dam; Navrongo-Tono Irrigation Dam; Tono Reservoir",
+     "description": "One of the largest agricultural dams in West Africa, a 2 km dam in the Kassena-Nankana District that irrigates about 2,490 hectares. Construction began in 1975 and was completed in 1985."
+    },
+    {
+     "name": "Cathedral Basilica of Our Lady of Seven Sorrows",
+     "town": "Navrongo",
+     "region": "Upper East",
+     "category": "Religious & Sacred",
+     "aliases": "Navrongo Cathedral; Navrongo Mud Church; Our Lady of Seven Sorrows Basilica",
+     "description": "A Roman Catholic cathedral and minor basilica in Navrongo and one of the oldest churches in Ghana. Its historic mud-built structure is a well-known regional monument."
+    },
+    {
+     "name": "Wuriyanga Mosque",
+     "town": "Wuriyanga",
+     "region": "Upper East",
+     "category": "Religious & Sacred",
+     "aliases": "Wuriyanga Ancient Mosque; Wuriyanga Mud Mosque",
+     "description": "A historic Sudano-Sahelian style mosque in the Upper East Region located southeast of Bawku and beyond Garu. It is a regional heritage site."
+    },
+    {
+     "name": "Pwalugu Hydroelectric Power Station",
+     "town": "Pwalugu",
+     "region": "Upper East",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Pwalugu Dam; Pwalugu Hydro-Solar Hybrid Plant; Pwalugu Power Station",
+     "description": "A 60 MW hydroelectric power station under construction on the White Volta at Pwalugu. It is planned to combine with a solar plant to form Ghana's first hydro-solar hybrid power project."
+    },
+    {
+     "name": "Navrongo Solar Power Station",
+     "town": "Navrongo",
+     "region": "Upper East",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Navrongo Solar Plant; Navrongo Solar Farm",
+     "description": "A 2.5 MW solar power plant in Navrongo, Upper East Region. It is one of Ghana's early utility-scale solar generation facilities."
+    },
+    {
+     "name": "Sirigu Art and Pottery Village",
+     "town": "Sirigu",
+     "region": "Upper East",
+     "category": "Market & Craft",
+     "aliases": "SWOPA; Sirigu Pottery and Arts Centre; Sirigu Women's Organisation for Pottery and Art",
+     "description": "A community art and pottery centre in Sirigu known for hand-painted pottery, basketry and decorated architecture. The SWOPA centre hosted UN Secretary-General Kofi Annan in 2002."
+    },
+    {
+     "name": "Bolgatanga Market",
+     "town": "Bolgatanga",
+     "region": "Upper East",
+     "category": "Market & Craft",
+     "aliases": "Bolga Market; Bolgatanga Central Market; Bolga Basket Market",
+     "description": "A major twice-weekly market in Bolgatanga where farmers and traders sell livestock and the region's famous woven baskets, leather goods and straw handicrafts."
+    },
+    {
+     "name": "Bolgatanga Craft Village",
+     "town": "Bolgatanga",
+     "region": "Upper East",
+     "category": "Market & Craft",
+     "aliases": "Bolga Craft Village; Bolgatanga Arts and Crafts Village",
+     "description": "A craft centre in Bolgatanga showcasing the region's basket weaving, leatherwork and metal jewellery. It sits adjacent to the Upper East Regional Museum."
+    },
+    {
+     "name": "Bongo Rocks",
+     "town": "Bongo",
+     "region": "Upper East",
+     "category": "Nature & Wildlife",
+     "aliases": "Bongo Rock Formations; Bongo Hills; Bongo Rocks Landscape",
+     "description": "Distinctive granite rock outcrops around Bongo in the Upper East Region. They form part of the region's savannah landscape near the Burkina Faso border."
+    },
+    {
+     "name": "Kukula Mystery Dam",
+     "town": "Kayoro",
+     "region": "Upper East",
+     "category": "Water & Amusement",
+     "aliases": "Kukula Dam; The Mystery Dam of Kayoro",
+     "description": "A small sacred dam at Kayoro in the Kassena-Nankana area traditionally regarded as mysterious. It lies near Paga and the Burkina Faso border."
+    },
+    {
+     "name": "Nasaga Game Reserve",
+     "town": "Paga",
+     "region": "Upper East",
+     "category": "Nature & Wildlife",
+     "aliases": "Nasaga Game Reserve; Nasaga Wildlife Reserve",
+     "description": "A game reserve about 8 km from Paga and the Burkina Faso border. It protects savannah wildlife in the far north-east of the Upper East Region."
+    },
+    {
+     "name": "Gologo Festival",
+     "town": "Tongo",
+     "region": "Upper East",
+     "category": "Cultural Village",
+     "aliases": "Gologo/Golib Festival; Golib Festival; Gologo Festival of the Talensi",
+     "description": "An annual festival celebrated by the Talensi of Tongo-Zug in March before the planting of grain. Sacrifices are offered for rain and a good harvest, followed by public dancing."
+    },
+    {
+     "name": "Fao Festival",
+     "town": "Paga",
+     "region": "Upper East",
+     "category": "Cultural Village",
+     "aliases": "Fao Harvest Festival; Fao Festival of Paga; Fao Thanksgiving Festival",
+     "description": "A harvest thanksgiving festival held at Paga, Chiana and Kayoro between November and February. Farmers display stalks of their first millet harvest in gratitude to the gods."
+    },
+    {
+     "name": "Samanpiid Festival",
+     "town": "Bawku",
+     "region": "Upper East",
+     "category": "Cultural Village",
+     "aliases": "Samanpiid Festival of the Kusasi; Samanpiid Harvest Festival",
+     "description": "An annual harvest festival celebrated by the Kusasi people of the Bawku Traditional Area in November and December. It gives thanks to the gods for a good harvest."
+    },
+    {
+     "name": "Boaram Festival",
+     "town": "Bolgatanga",
+     "region": "Upper East",
+     "category": "Cultural Village",
+     "aliases": "Boaram Festival of the Gurunsi; Boaram Harvest Festival",
+     "description": "A festival celebrated by the Gurunsi (Frafra) people of the Upper East Region. It is associated with harvest thanksgiving and traditional music and dance."
+    },
+    {
+     "name": "Tengana Festival",
+     "town": "Balungu",
+     "region": "Upper East",
+     "category": "Cultural Village",
+     "aliases": "Tengana Festival; Tengana Festival of Balungu; Tengana Festival of Winkongo",
+     "description": "A festival celebrated by the people of Balungu, Winkongo and Pwalugu in the Upper East Region. It honours the earth deity and the ancestors."
+    },
+    {
+     "name": "Ndaakoya Festival",
+     "town": "Bolgatanga",
+     "region": "Upper East",
+     "category": "Cultural Village",
+     "aliases": "Ndaakoya Festival; Ndaakoya Festival of the Frafra",
+     "description": "A festival celebrated by the Frafra, Talensi and Nabdam-speaking communities of the Upper East Region. It is a cultural gathering featuring music and dance."
+    }
+   ]
+  },
+  "Upper West": {
+   "towns": [
+    {
+     "name": "Tizza",
+     "region": "Upper West"
+    },
+    {
+     "name": "Hain",
+     "region": "Upper West"
+    },
+    {
+     "name": "Tuasa",
+     "region": "Upper West"
+    },
+    {
+     "name": "Sombo",
+     "region": "Upper West"
+    },
+    {
+     "name": "Bulenga",
+     "region": "Upper West"
+    },
+    {
+     "name": "Dahili",
+     "region": "Upper West"
+    },
+    {
+     "name": "Sankana",
+     "region": "Upper West"
+    },
+    {
+     "name": "Kassana",
+     "region": "Upper West"
+    },
+    {
+     "name": "Nakore",
+     "region": "Upper West"
+    },
+    {
+     "name": "Dondoli",
+     "region": "Upper West"
+    },
+    {
+     "name": "Bussie",
+     "region": "Upper West"
+    },
+    {
+     "name": "Tangasia",
+     "region": "Upper West"
+    },
+    {
+     "name": "Cherekpong",
+     "region": "Upper West"
+    },
+    {
+     "name": "Karni",
+     "region": "Upper West"
+    },
+    {
+     "name": "Naro",
+     "region": "Upper West"
+    },
+    {
+     "name": "Pulima",
+     "region": "Upper West"
+    },
+    {
+     "name": "Billaw",
+     "region": "Upper West"
+    },
+    {
+     "name": "Lassia",
+     "region": "Upper West"
+    },
+    {
+     "name": "Tuolu",
+     "region": "Upper West"
+    },
+    {
+     "name": "Kperisi",
+     "region": "Upper West"
+    },
+    {
+     "name": "Dobile",
+     "region": "Upper West"
+    },
+    {
+     "name": "Kpongu",
+     "region": "Upper West"
+    },
+    {
+     "name": "Bamahu",
+     "region": "Upper West"
+    },
+    {
+     "name": "Loho",
+     "region": "Upper West"
+    },
+    {
+     "name": "Guo",
+     "region": "Upper West"
+    },
+    {
+     "name": "Puffien",
+     "region": "Upper West"
+    }
+   ],
+   "attractions": [
+    {
+     "name": "Gwollu Defence Wall",
+     "town": "Gwollu",
+     "region": "Upper West",
+     "category": "Heritage & History",
+     "aliases": "Gwollu Slave Defence Wall; Gwollu Slave Trade Defence Wall; Gbollu Defence Wall",
+     "description": "A 19th-century wall built by Gwollu Koro Limann as a defence against slave raiders. It is one of Ghana's best-preserved relics of the slave trade era."
+    },
+    {
+     "name": "Gbele Resource Centre",
+     "town": "Tumu",
+     "region": "Upper West",
+     "category": "Nature & Wildlife",
+     "aliases": "Gbele Game Production Reserve; Gbelle Game Reserve; Gbele Resource Reserve",
+     "description": "One of Ghana's largest game reserves, located about 17 km south of Tumu. It protects roan antelope, hippos, elephants and many bird species and is the fourth largest reserve in Ghana."
+    },
+    {
+     "name": "Nakore Mosque",
+     "town": "Nakore",
+     "region": "Upper West",
+     "category": "Religious & Sacred",
+     "aliases": "Nakore Ancient Mosque; Nakore Mud Mosque",
+     "description": "A small historic mosque in Nakore, southwest of Wa, built in the Sudano-Sahelian architectural style. It is one of the region's ancient Sudanese mosques."
+    },
+    {
+     "name": "Dondoli Mosque",
+     "town": "Dondoli",
+     "region": "Upper West",
+     "category": "Religious & Sacred",
+     "aliases": "Dondoli Ancient Mosque; Dondoli Mud Mosque",
+     "description": "A 19th-century mosque in the village of Dondoli in Wa, built in the Sudano-Sahelian style. It is now in partial ruins and is a protected heritage site."
+    },
+    {
+     "name": "Wechiau Mosque",
+     "town": "Wechiau",
+     "region": "Upper West",
+     "category": "Religious & Sacred",
+     "aliases": "Wechiau Ancient Mosque; Wechiau Mud Mosque",
+     "description": "A historic mosque in the village of Wechiau in the Upper West Region. It is one of the region's traditional Sudano-Sahelian mosques."
+    },
+    {
+     "name": "Hippo Hide Tree House",
+     "town": "Wechiau",
+     "region": "Upper West",
+     "category": "Nature & Wildlife",
+     "aliases": "Hippo Hide; Hippo Hide Treehouse; Wechiau Tree House",
+     "description": "A tree-house lodge in the Wechiau Community Hippo Sanctuary overlooking the Black Volta. It allows visitors to watch hippos and birds from an elevated hide."
+    },
+    {
+     "name": "Bulenga Caves",
+     "town": "Bulenga",
+     "region": "Upper West",
+     "category": "Heritage & History",
+     "aliases": "Bulenga Ancient Caves; Bulenga Slave Caves",
+     "description": "Ancient caves at Bulenga that served as refuges during the slave raids in the Upper West Region. They are among the region's historic cave sites."
+    },
+    {
+     "name": "Dahili Caves",
+     "town": "Dahili",
+     "region": "Upper West",
+     "category": "Heritage & History",
+     "aliases": "Dahili Ancient Caves; Dahili Slave Caves",
+     "description": "Historic caves at Dahili used as hiding places during the 19th-century slave raids. They form part of the Upper West Region's slave-trade heritage."
+    },
+    {
+     "name": "Sankana Caves",
+     "town": "Sankana",
+     "region": "Upper West",
+     "category": "Heritage & History",
+     "aliases": "Sankana Ancient Caves; Sankana Slave Caves",
+     "description": "Caves at Sankana that provided refuge from slave raiders in the pre-colonial period. The site is associated with local resistance to slave raids."
+    },
+    {
+     "name": "Kassana Slave Camp",
+     "town": "Kassana",
+     "region": "Upper West",
+     "category": "Heritage & History",
+     "aliases": "Kassana Slave Market; Kassana Slave Camp and Market",
+     "description": "A former slave camp and market site in the Upper West Region linked to the trans-Saharan and Atlantic slave trade routes."
+    },
+    {
+     "name": "Tomb of Hilla Limann",
+     "town": "Gwollu",
+     "region": "Upper West",
+     "category": "Heritage & History",
+     "aliases": "Hilla Limann Tomb; Dr. Hilla Limann Grave",
+     "description": "The tomb of Dr. Hilla Limann, a former president of Ghana, who was born and raised in Gwollu. It is one of the town's principal heritage attractions."
+    },
+    {
+     "name": "Kaleo Solar Power Station",
+     "town": "Kaleo",
+     "region": "Upper West",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Kaleo Solar Plant; Kaleo Power Station",
+     "description": "A 13 MW solar power plant at Kaleo developed by the Volta River Authority between 2020 and 2022. Its output is fed into Ghana's national grid."
+    },
+    {
+     "name": "Black Volta River",
+     "town": "Wechiau",
+     "region": "Upper West",
+     "category": "Nature & Wildlife",
+     "aliases": "Mouhoun River; Volta Noire; Black Volta",
+     "description": "A major river that forms Ghana's north-western border with Burkina Faso along the Upper West Region. It supports the Wechiau hippo sanctuary and is a key regional waterway."
+    },
+    {
+     "name": "George Ekem Ferguson's Tomb",
+     "town": "Wa",
+     "region": "Upper West",
+     "category": "Heritage & History",
+     "aliases": "George Ferguson Tomb; Ferguson's Tomb",
+     "description": "The preserved tomb of George Ekem Ferguson, a Ghanaian colonial agent killed by slave raiders in 1897. It is located in Wa and is maintained as a historic site."
+    },
+    {
+     "name": "Wa Airport",
+     "town": "Wa",
+     "region": "Upper West",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Wa Regional Airport; Wa Airstrip",
+     "description": "An airport serving Wa and the Upper West Region. It connects the regional capital by air and supports travel to the north-west of Ghana."
+    },
+    {
+     "name": "Dumba Festival",
+     "town": "Wa",
+     "region": "Upper West",
+     "category": "Cultural Village",
+     "aliases": "Dumba Festival of the Wala; Dumba Festival",
+     "description": "A festival celebrated by the Wala people of Wa that includes a ritual testing the chief's fitness to rule. It is marked by drumming, dancing and a durbar."
+    },
+    {
+     "name": "Kobine Festival",
+     "town": "Lawra",
+     "region": "Upper West",
+     "category": "Cultural Village",
+     "aliases": "Kobine Festival of Lawra; Kobina Festival",
+     "description": "A post-harvest festival celebrated by the people of Lawra in early October. It acknowledges the spiritual guidance of the ancestral gods and features dancing competitions."
+    },
+    {
+     "name": "Kakube Festival",
+     "town": "Nandom",
+     "region": "Upper West",
+     "category": "Cultural Village",
+     "aliases": "Kakube Festival of Nandom; Kakube Festival",
+     "description": "A festival celebrated by the Nandom people in late November to early December. It thanks the family gods and asks them to bless the soil and protect the people."
+    },
+    {
+     "name": "Paaragbiele Festival",
+     "town": "Tumu",
+     "region": "Upper West",
+     "category": "Cultural Village",
+     "aliases": "Paragbiele Festival; Paaragbiele Festival of Tumu",
+     "description": "A festival celebrated by the Tumu people to thank the ancestors and God for guidance over the farming season. Farm produce is exhibited alongside music and dance."
+    },
+    {
+     "name": "Tinmaale Festival",
+     "town": "Hain",
+     "region": "Upper West",
+     "category": "Cultural Village",
+     "aliases": "Tinmaale Festival of Hain; Tinmaale Festival",
+     "description": "A festival celebrated by the residents of Hain in the Jirapa District of the Upper West Region."
+    }
+   ]
+  },
+  "Oti": {
+   "towns": [
+    {
+     "name": "Kete Krachi",
+     "region": "Oti"
+    },
+    {
+     "name": "Likpe-Mate",
+     "region": "Oti"
+    },
+    {
+     "name": "Dormabin",
+     "region": "Oti"
+    },
+    {
+     "name": "Buem",
+     "region": "Oti"
+    },
+    {
+     "name": "Akpafu",
+     "region": "Oti"
+    },
+    {
+     "name": "Kwadjokrom",
+     "region": "Oti"
+    },
+    {
+     "name": "Tapa",
+     "region": "Oti"
+    },
+    {
+     "name": "Abotoase",
+     "region": "Oti"
+    },
+    {
+     "name": "Brewaniase",
+     "region": "Oti"
+    },
+    {
+     "name": "Pampawie",
+     "region": "Oti"
+    },
+    {
+     "name": "Bodada",
+     "region": "Oti"
+    },
+    {
+     "name": "Okadjakrom",
+     "region": "Oti"
+    },
+    {
+     "name": "Teteman",
+     "region": "Oti"
+    },
+    {
+     "name": "Ntruo",
+     "region": "Oti"
+    },
+    {
+     "name": "Likpe-Bakua",
+     "region": "Oti"
+    },
+    {
+     "name": "Likpe-Agbome",
+     "region": "Oti"
+    },
+    {
+     "name": "Likpe-Todome",
+     "region": "Oti"
+    },
+    {
+     "name": "Santrokofi",
+     "region": "Oti"
+    },
+    {
+     "name": "Keri",
+     "region": "Oti"
+    },
+    {
+     "name": "Ntrubo",
+     "region": "Oti"
+    },
+    {
+     "name": "Borae",
+     "region": "Oti"
+    },
+    {
+     "name": "Baglo",
+     "region": "Oti"
+    },
+    {
+     "name": "Kute",
+     "region": "Oti"
+    },
+    {
+     "name": "Ampeyo",
+     "region": "Oti"
+    },
+    {
+     "name": "Pusupu",
+     "region": "Oti"
+    },
+    {
+     "name": "Bonakye",
+     "region": "Oti"
+    },
+    {
+     "name": "Sibi",
+     "region": "Oti"
+    },
+    {
+     "name": "Nkonya Ntumuru",
+     "region": "Oti"
+    },
+    {
+     "name": "Kwamekrom",
+     "region": "Oti"
+    }
+   ],
+   "attractions": [
+    {
+     "name": "Mount Dzebobo",
+     "town": "Nkwanta",
+     "region": "Oti",
+     "category": "Scenic & Hiking",
+     "aliases": "Mount Dzebobo; Dzebobo Mountain; Mont Dzebobo",
+     "description": "Ghana's second highest mountain at 876 metres, on the Togo border just south of Kyabobo National Park. Its name means 'seen from afar' in the Ewe language."
+    },
+    {
+     "name": "Hanging Village, Shiare",
+     "town": "Shiare",
+     "region": "Oti",
+     "category": "Cultural Village",
+     "aliases": "Shiare Hanging Village; The Hanging Village; Shiare Mountain Settlement",
+     "description": "A nine-century-old village settlement built in the Breast Mountains of the Oti Region. It is known as 'The Hanging Village' because of its steep mountain setting."
+    },
+    {
+     "name": "Kete Krachi Ferry Crossing",
+     "town": "Kete Krachi",
+     "region": "Oti",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Kete Krachi Ferry; Krachi Ferry; Volta Lake Ferry",
+     "description": "A ferry service linking Kete Krachi to Kwadjokrom across Lake Volta. It is an important transport link for the Oti Region."
+    },
+    {
+     "name": "Akwantutenten Festival",
+     "town": "Worawora",
+     "region": "Oti",
+     "category": "Cultural Village",
+     "aliases": "Akwantutenten Festival; Akwantutenten Festival of Worawora",
+     "description": "An annual festival celebrated by the chiefs and people of Worawora in the Jasikan District in September. It is observed by the Akan communities of the area."
+    },
+    {
+     "name": "Rice Festival",
+     "town": "Akpafu",
+     "region": "Oti",
+     "category": "Food & Agritourism",
+     "aliases": "Rice Festival of Akpafu; Akpafu Rice Festival",
+     "description": "An annual harvest festival celebrated by the chiefs and people of Akpafu in the Oti Region. It is held in January and celebrates the local rice harvest."
+    },
+    {
+     "name": "Kete Krachi Festival",
+     "town": "Kete Krachi",
+     "region": "Oti",
+     "category": "Cultural Village",
+     "aliases": "Kete Krachi Festival; Krachi Festival",
+     "description": "A festival celebrated in the Kete Krachi area of the Oti Region. It is one of the region's principal cultural events."
+    },
+    {
+     "name": "Nanaba Festival",
+     "town": "Nkwanta",
+     "region": "Oti",
+     "category": "Cultural Village",
+     "aliases": "Nanaba Festival; Nanaba Festival of the Oti Region",
+     "description": "A festival celebrated in the Oti Region and listed by the Ghana Tourism Authority among its key cultural events."
+    },
+    {
+     "name": "Kyabobo Waterfalls",
+     "town": "Nkwanta",
+     "region": "Oti",
+     "category": "Water & Amusement",
+     "aliases": "Kyabobo Falls; Kyabobo Lower Fall; Kyabobo Waterfalls",
+     "description": "Waterfalls inside Kyabobo National Park in the Oti Region. They are among the park's visitor attractions."
+    },
+    {
+     "name": "Kyabobo Hiking Trails",
+     "town": "Nkwanta",
+     "region": "Oti",
+     "category": "Scenic & Hiking",
+     "aliases": "Kyabobo Trails; Kyabobo Hiking and Mountain Biking Trails",
+     "description": "Seven hiking trails and two mountain-biking trails in Kyabobo National Park. The most popular trail follows a ridge to a peak on one of the Breast Mountains."
+    }
+   ]
+  },
+  "Western North": {
+   "towns": [
+    {
+     "name": "Sefwi Akontombra",
+     "region": "Western North"
+    },
+    {
+     "name": "Anhwiaso",
+     "region": "Western North"
+    },
+    {
+     "name": "Sefwi Debiso",
+     "region": "Western North"
+    },
+    {
+     "name": "Adwuofua",
+     "region": "Western North"
+    },
+    {
+     "name": "Boinso",
+     "region": "Western North"
+    },
+    {
+     "name": "Omanpe",
+     "region": "Western North"
+    },
+    {
+     "name": "Sewum",
+     "region": "Western North"
+    },
+    {
+     "name": "Jensue",
+     "region": "Western North"
+    },
+    {
+     "name": "Nyankomam",
+     "region": "Western North"
+    },
+    {
+     "name": "Old Yakasi",
+     "region": "Western North"
+    },
+    {
+     "name": "New Yakasi",
+     "region": "Western North"
+    },
+    {
+     "name": "Achimfo",
+     "region": "Western North"
+    },
+    {
+     "name": "Yiwabra",
+     "region": "Western North"
+    },
+    {
+     "name": "Abochia",
+     "region": "Western North"
+    },
+    {
+     "name": "Ayiem",
+     "region": "Western North"
+    },
+    {
+     "name": "Elluokrom",
+     "region": "Western North"
+    },
+    {
+     "name": "Boako",
+     "region": "Western North"
+    },
+    {
+     "name": "Ahimakrom",
+     "region": "Western North"
+    },
+    {
+     "name": "Kunkunso",
+     "region": "Western North"
+    },
+    {
+     "name": "Sefwi Dwenase",
+     "region": "Western North"
+    },
+    {
+     "name": "Benchema",
+     "region": "Western North"
+    },
+    {
+     "name": "Nkatieso",
+     "region": "Western North"
+    },
+    {
+     "name": "Afere",
+     "region": "Western North"
+    },
+    {
+     "name": "Kama",
+     "region": "Western North"
+    },
+    {
+     "name": "Amoaya",
+     "region": "Western North"
+    },
+    {
+     "name": "Kwawkrom",
+     "region": "Western North"
+    }
+   ],
+   "attractions": [
+    {
+     "name": "Bia National Park",
+     "town": "Sefwi Debiso",
+     "region": "Western North",
+     "category": "Nature & Wildlife",
+     "aliases": "Bia National Park; Bia National Park and Resource Reserve",
+     "description": "A 563 sq km national park in the Bia West District, established as a park in 1974 and part of a UNESCO biosphere reserve. It protects some of Ghana's last untouched forest, with 62 mammal species and over 189 bird species."
+    },
+    {
+     "name": "Bia Resource Reserve",
+     "town": "Sefwi Debiso",
+     "region": "Western North",
+     "category": "Nature & Wildlife",
+     "aliases": "Bia Resource Reserve; Bia Reserve",
+     "description": "The southern part of the Bia Conservancy Area in the Western North Region. Together with Bia National Park it forms a twin conservation area and biosphere reserve."
+    },
+    {
+     "name": "Bia Conservancy Area",
+     "town": "Sefwi Debiso",
+     "region": "Western North",
+     "category": "Nature & Wildlife",
+     "aliases": "Bia Biosphere Reserve; Bia Conservancy Area; Bia UNESCO Biosphere Reserve",
+     "description": "A designated UNESCO biosphere reserve in the Western North Region covering nearly 306 sq km. It contains the Bia National Park and the Bia Resource Reserve."
+    },
+    {
+     "name": "Chirano Gold Mine",
+     "town": "Chirano",
+     "region": "Western North",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Chirano Gold Mine; Asante Gold Chirano; Chirano Mine",
+     "description": "An underground and open-pit gold mine in the Western North Region within the Bibiani gold belt. It is operated as Asante Gold Chirano Ltd."
+    },
+    {
+     "name": "Awaso Bauxite Mine",
+     "town": "Awaso",
+     "region": "Western North",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Ghana Bauxite Company Mine; Awaso Bauxite Mine",
+     "description": "A bauxite mine at Awaso near Bibiani operated by the Ghana Bauxite Company. It is served by a branch of the western Ghana rail system."
+    },
+    {
+     "name": "Bia River",
+     "town": "Adabokrom",
+     "region": "Western North",
+     "category": "Nature & Wildlife",
+     "aliases": "Bia River; River Bia",
+     "description": "A transboundary river that drains the Bia conservation zone in the Western North Region, including Sefwi, Aowin and Suaman. It empties into Aby Lagoon on the Ghana-Ivory Coast border."
+    },
+    {
+     "name": "Dadieso Forest Reserve",
+     "town": "Dadieso",
+     "region": "Western North",
+     "category": "Nature & Wildlife",
+     "aliases": "Dadieso Forest Reserve; Dadieso Reserve",
+     "description": "A forest reserve located at Dadieso, the capital of Suaman District in the Western North Region."
+    },
+    {
+     "name": "Apaso Sacred Site",
+     "town": "Sefwi Debiso",
+     "region": "Western North",
+     "category": "Religious & Sacred",
+     "aliases": "Apaso; Apaso Sacred Site; Apaso Cultural Site",
+     "description": "A sacred cultural site inside Bia National Park near two small pools. Visitors traditionally sacrifice and give gifts to the gods there."
+    },
+    {
+     "name": "Alluolue Festival",
+     "town": "Sefwi Wiawso",
+     "region": "Western North",
+     "category": "Cultural Village",
+     "aliases": "Alluolue Festival; Eluo Festival; Sefwi Yam Festival",
+     "description": "An annual yam festival celebrated by the chiefs and people of Sefwi Wiawso and Sefwi Bekwai, usually in July. It is the common yam festival of the Sefwi traditional states."
+    },
+    {
+     "name": "Boin Tano Forest Reserve",
+     "town": "Sefwi Wiawso",
+     "region": "Western North",
+     "category": "Nature & Wildlife",
+     "aliases": "Boin Tano Forest Reserve; Boin Tano Reserve; Boin-Tano",
+     "description": "A 129 km2 nature reserve established in 1968 in the Western North Region of Ghana. It is rich in both floral and faunal species."
+    },
+    {
+     "name": "Krokosua Hills Forest Reserve",
+     "town": "Juaboso",
+     "region": "Western North",
+     "category": "Nature & Wildlife",
+     "aliases": "Krokosua Hills Forest Reserve; Krokosua Hills; Krokosua Reserve",
+     "description": "A 481 km2 forest reserve established in 1935 in the Western North Region of Ghana. It is noted for chimpanzee reports and as habitat of the critically endangered Krokosua squeaking frog."
+    },
+    {
+     "name": "Cathedral of St. Joseph",
+     "town": "Sefwi Wiawso",
+     "region": "Western North",
+     "category": "Religious & Sacred",
+     "aliases": "Cathedral of St. Joseph; Wiawso Cathedral; St. Joseph Cathedral Wiawso",
+     "description": "The cathedral of the Roman Catholic Diocese of Wiawso, located at Wiawso in the Western North Region. The diocese was established in 1999 from the Diocese of Sekondi-Takoradi."
+    },
+    {
+     "name": "Bibiani Gold Project",
+     "town": "Bibiani",
+     "region": "Western North",
+     "category": "Engineering & Infrastructure",
+     "aliases": "Bibiani Gold Project; Bibiani Gold Mine; Bibiani Mine",
+     "description": "An underground gold mine development at Bibiani in the Western North Region, being developed by Asante Gold. The town of Bibiani is the capital of the Bibiani/Anhwiaso/Bekwai Municipal Assembly."
+    },
+    {
+     "name": "Disue River",
+     "town": "Enchi",
+     "region": "Western North",
+     "category": "Nature & Wildlife",
+     "aliases": "Disue River; Desue River; River Disue",
+     "description": "A tributary of the Tano River, also called the Desue, that flows through the township of Enchi, capital of the Aowin Municipality in the Western North Region."
+    },
+    {
+     "name": "Tano Nimri Forest Reserve",
+     "town": "Enchi",
+     "region": "Western North",
+     "category": "Nature & Wildlife",
+     "aliases": "Tano Nimiri Forest Reserve; Tano-Nimire Forest Reserve; Tano Nimri FR",
+     "description": "A 206 km2 forest reserve established in 1935 in south-western Ghana, lying in the Enchi Forest District and sharing a boundary with the Boin Tano reserve. It is designated an Important Bird Area and is thought to hold western chimpanzees."
+    },
+    {
+     "name": "Tano Anwia Forest Reserve",
+     "town": "Enchi",
+     "region": "Western North",
+     "category": "Nature & Wildlife",
+     "aliases": "Tano Anwia IBA; Tano-Anwia Forest Reserve",
+     "description": "A forest reserve near Enchi in the Aowin Municipality of Ghana's Western North Region. It is recognised by BirdLife International as an Important Bird Area."
+    },
+    {
+     "name": "St. Joseph's Cathedral, Wiawso",
+     "town": "Sefwi Wiawso",
+     "region": "Western North",
+     "category": "Religious & Sacred",
+     "aliases": "Cathedral of St. Joseph; St Joseph Cathedral Wiawso; Wiawso Catholic Cathedral",
+     "description": "The Catholic cathedral of the Diocese of Wiawso, listed among the cathedrals of Ghana, in the regional capital Sefwi Wiawso."
+    },
+    {
+     "name": "Cathedral Church of the Ascension, Sefwi Wiawso",
+     "town": "Sefwi Wiawso",
+     "region": "Western North",
+     "category": "Religious & Sacred",
+     "aliases": "Cathedral Church of Ascension; Ascension Anglican Cathedral Sefwi-Wiawso",
+     "description": "An Anglican cathedral of the Church of the Province of West Africa, listed at Sefwi-Wiawso in Ghana's Western North Region."
+    }
+   ]
+  }
+ }
+}

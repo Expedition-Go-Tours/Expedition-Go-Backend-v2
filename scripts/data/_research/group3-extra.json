@@ -1,0 +1,156 @@
+{
+  "regions": {
+    "Ahafo": {
+      "attractions": [
+        {
+          "name": "Addae Tuntum Festival",
+          "town": "Kukuom",
+          "region": "Ahafo",
+          "category": "Heritage & History",
+          "aliases": "Akwasidae Tuntum Festival; Kukuom Addae Tuntum; Addae Tuntum",
+          "description": "An annual festival celebrated by the chiefs and people of Kukuom-Asunafo in the Ahafo Region, usually held in December or January. It commemorates the 18th-century Ebirimoro war between the Sefwi and Ahafo peoples and reaffirms the people's commitment to their chief.",
+          "source": "https://en.wikipedia.org/wiki/Addae_Tuntum_Festival"
+        },
+        {
+          "name": "Adikanfo Festival",
+          "town": "Hwidiem",
+          "region": "Ahafo",
+          "category": "Heritage & History",
+          "aliases": "Adikanfo Festival; Hwidiem Adikanfo; Adikanfo",
+          "description": "An annual festival celebrated by the chiefs and people of Hwidiem in the Ahafo Region, usually in September. It features a durbar of chiefs, drumming and animal sacrifices, and commemorates the migration of the people of Hwidiem from Denkyira Ntomu to their present home.",
+          "source": "https://en.wikipedia.org/wiki/Adikanfo_Festival"
+        },
+        {
+          "name": "Apomasu Festival",
+          "town": "Ntotroso",
+          "region": "Ahafo",
+          "category": "Food & Agritourism",
+          "aliases": "Apomasu Yam Festival; Ntotroso Apomasu; Apomasu",
+          "description": "An annual yam harvest festival held in January by the chiefs and people of Ntotroso-Asutifi in the Ahafo Region. It has been commemorated for more than 900 years and is used to pay homage to the Apomasu shrine.",
+          "source": "https://en.wikipedia.org/wiki/Apomasu_Festival"
+        },
+        {
+          "name": "Nkompo Festival",
+          "town": "Acherensua",
+          "region": "Ahafo",
+          "category": "Heritage & History",
+          "aliases": "Nkompo Festival; Acherensua Nkompo; Nkompo",
+          "description": "An annual festival celebrated by the chiefs and people of Acherensua-Asutifi in the Ahafo Region, usually in January or September. It features a durbar of chiefs, traditional dress, dancing and drumming, and marks a historic event of the past.",
+          "source": "https://en.wikipedia.org/wiki/Nkompo_Festival"
+        },
+        {
+          "name": "Akwansramu Festival",
+          "town": "Mim",
+          "region": "Ahafo",
+          "category": "Heritage & History",
+          "aliases": "Akwansramu Festival; Mim Akwansramu; Akwansramu",
+          "description": "A December festival celebrated by the people of Mim in the Ahafo Region. Its name is a Twi term for espionage, and it commemorates the Asante warriors' patrol of the Mim-Akwaboa lands that averted an enemy incursion on Kumasi.",
+          "source": "https://en.wikipedia.org/wiki/Mim,_Ahafo"
+        },
+        {
+          "name": "Ayum Forest Reserve",
+          "town": "Mim",
+          "region": "Ahafo",
+          "category": "Nature & Wildlife",
+          "aliases": "Ayum Forest Reserve; Ayum Reserve; Ayum Forest",
+          "description": "A 112 km2 forest reserve established in 1940 in the Asunafo South District of the Ahafo Region. Connected to the Subim and Bonsam Bepo reserves, it protects Guinean moist forest biodiversity including chimpanzees, elephants and other endangered species.",
+          "source": "https://en.wikipedia.org/wiki/Ayum_Forest_Reserve"
+        },
+        {
+          "name": "Bonsam Bepo Forest Reserve",
+          "town": "Akrodie",
+          "region": "Ahafo",
+          "category": "Nature & Wildlife",
+          "aliases": "Bonsam Bepo Forest Reserve; Bonsam Bepo Reserve; Bosam Bepo",
+          "description": "A 124 km2 forest reserve established in 1934 at Ahantamo near Akrodie in the Ahafo Region. It forms part of a 488 km2 forest complex together with the Ayum and Subim reserves.",
+          "source": "https://en.wikipedia.org/wiki/Bonsam_Bepo_Forest_Reserve"
+        },
+        {
+          "name": "Kasapin Tuesday Market",
+          "town": "Kasapin",
+          "region": "Ahafo",
+          "category": "Market & Craft",
+          "aliases": "Kasapin Market; Kasapin Tuesday-weekly market; Kasapin Weekly Market",
+          "description": "A vibrant weekly market held every Tuesday in Kasapin, Asunafo North, in the Ahafo Region. It draws traders and buyers from Accra, Kumasi, Mim, Goaso and Kwadwo Addaikrom.",
+          "source": "https://en.wikipedia.org/wiki/Kasapin"
+        },
+        {
+          "name": "Cathedral of St. Anthony",
+          "town": "Goaso",
+          "region": "Ahafo",
+          "category": "Religious & Sacred",
+          "aliases": "Cathedral of St. Anthony; Goaso Cathedral; St. Anthony Cathedral Goaso",
+          "description": "The cathedral of the Roman Catholic Diocese of Goaso, located in Goaso, the capital of the Ahafo Region. The diocese was established in 1997 from the Diocese of Sunyani.",
+          "source": "https://en.wikipedia.org/wiki/Diocese_of_Goaso"
+        },
+        {
+          "name": "Danso Abaim Festival",
+          "town": "Techimantia",
+          "region": "Ahafo",
+          "category": "Heritage & History",
+          "aliases": "Danso Abaim Festival; Techimantia Danso Abaim; Danso Abaim",
+          "description": "A traditional festival celebrated at Techimantia in the Tano South area of the Ahafo Region, listed among the festivals of the former Brong Ahafo area. Techimantia is one of the major towns of the Ahafo Region.",
+          "source": "https://en.wikipedia.org/wiki/List_of_festivals_in_Ghana"
+        },
+        {
+          "name": "Mim Cashew Plantation",
+          "town": "Mim",
+          "region": "Ahafo",
+          "category": "Food & Agritourism",
+          "aliases": "Mim Cashew; Mim Cashew Plantation; Mim Cashew & Agric Products",
+          "description": "Cashew plantations in the Mim area of the Ahafo Region that supply the Mim Cashew and Agricultural Products Ltd factory, producer of the Mim Cashew Brandy.",
+          "source": "https://en.wikipedia.org/wiki/Mim,_Ahafo"
+        }
+      ]
+    },
+    "Western North": {
+      "attractions": [
+        {
+          "name": "Boin Tano Forest Reserve",
+          "town": "Sefwi Wiawso",
+          "region": "Western North",
+          "category": "Nature & Wildlife",
+          "aliases": "Boin Tano Forest Reserve; Boin Tano Reserve; Boin-Tano",
+          "description": "A 129 km2 nature reserve established in 1968 in the Western North Region of Ghana. It is rich in both floral and faunal species.",
+          "source": "https://en.wikipedia.org/wiki/Boin_Tano_Forest_Reserve"
+        },
+        {
+          "name": "Krokosua Hills Forest Reserve",
+          "town": "Juaboso",
+          "region": "Western North",
+          "category": "Nature & Wildlife",
+          "aliases": "Krokosua Hills Forest Reserve; Krokosua Hills; Krokosua Reserve",
+          "description": "A 481 km2 forest reserve established in 1935 in the Western North Region of Ghana. It is noted for chimpanzee reports and as habitat of the critically endangered Krokosua squeaking frog.",
+          "source": "https://en.wikipedia.org/wiki/Krokosua_Hills_Forest_Reserve"
+        },
+        {
+          "name": "Cathedral of St. Joseph",
+          "town": "Sefwi Wiawso",
+          "region": "Western North",
+          "category": "Religious & Sacred",
+          "aliases": "Cathedral of St. Joseph; Wiawso Cathedral; St. Joseph Cathedral Wiawso",
+          "description": "The cathedral of the Roman Catholic Diocese of Wiawso, located at Wiawso in the Western North Region. The diocese was established in 1999 from the Diocese of Sekondi-Takoradi.",
+          "source": "https://en.wikipedia.org/wiki/Diocese_of_Wiawso"
+        },
+        {
+          "name": "Bibiani Gold Project",
+          "town": "Bibiani",
+          "region": "Western North",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Bibiani Gold Project; Bibiani Gold Mine; Bibiani Mine",
+          "description": "An underground gold mine development at Bibiani in the Western North Region, being developed by Asante Gold. The town of Bibiani is the capital of the Bibiani/Anhwiaso/Bekwai Municipal Assembly.",
+          "source": "https://en.wikipedia.org/wiki/Bibiani"
+        },
+        {
+          "name": "Disue River",
+          "town": "Enchi",
+          "region": "Western North",
+          "category": "Nature & Wildlife",
+          "aliases": "Disue River; Desue River; River Disue",
+          "description": "A tributary of the Tano River, also called the Desue, that flows through the township of Enchi, capital of the Aowin Municipality in the Western North Region.",
+          "source": "https://en.wikipedia.org/wiki/Enchi"
+        }
+      ]
+    }
+  }
+}

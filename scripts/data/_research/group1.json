@@ -1,0 +1,824 @@
+{
+  "regions": {
+    "Greater Accra": {
+      "towns": [
+        "Accra", "Lartebiokorshie", "Darkuman", "Dansoman", "Ada Foah", "Sege",
+        "Adenta", "Ashaiman", "Kokomlemle", "Nima", "Accra New Town", "Dzorwulu",
+        "Sowutuom", "Abokobi", "Amomole", "Ngleshie Amanfro", "Amasaman", "Osu",
+        "Kpone", "Nungua", "Labadi", "Madina", "Teshie", "Prampram", "Achimota",
+        "Dodowa", "Tema", "Tema Community 18", "Weija", "Tema Newtown", "Ningo",
+        "Afienya", "Oyibi", "Danfa", "Bortianor", "Gbawe", "Mallam", "Kwabenya",
+        "Dome", "Haatso", "Legon", "Kaneshie", "Adabraka", "Labone", "Cantonments",
+        "Sakumono", "Odorkor", "Pokuase", "Lashibi"
+      ],
+      "attractions": [
+        {
+          "name": "Kwame Nkrumah Mausoleum",
+          "town": "Accra",
+          "region": "Greater Accra",
+          "category": "Heritage & History",
+          "aliases": "Kwame Nkrumah Memorial Park; Nkrumah Mausoleum; Kwame Nkrumah Mausoleum and Memorial Park",
+          "description": "Memorial and final resting place of Ghana's first president, Kwame Nkrumah, located in downtown Accra. It features a marble mausoleum, a museum and landscaped grounds.",
+          "source": "https://en.wikipedia.org/wiki/Kwame_Nkrumah_Mausoleum"
+        },
+        {
+          "name": "National Museum of Ghana",
+          "town": "Accra",
+          "region": "Greater Accra",
+          "category": "Museum & Art",
+          "aliases": "Ghana National Museum; National Museum, Accra",
+          "description": "Ghana's largest museum, established in 1957 on Barnes Road in Accra, holding archaeological, ethnographic and art collections.",
+          "source": "https://en.wikipedia.org/wiki/National_Museum_of_Ghana"
+        },
+        {
+          "name": "W. E. B. Du Bois Memorial Centre for Pan African Culture",
+          "town": "Accra",
+          "region": "Greater Accra",
+          "category": "Museum & Art",
+          "aliases": "Du Bois Centre; W.E.B. Du Bois Centre; Du Bois Memorial Centre",
+          "description": "Research centre, museum and mausoleum in Accra dedicated to the Pan-Africanist W. E. B. Du Bois, who spent his final years in Ghana.",
+          "source": "https://en.wikipedia.org/wiki/W._E._B._Du_Bois_Memorial_Centre_for_Pan_African_Culture"
+        },
+        {
+          "name": "Jamestown Lighthouse",
+          "town": "Accra",
+          "region": "Greater Accra",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Jamestown Light; Accra Lighthouse",
+          "description": "A lighthouse in the Jamestown district of Accra, standing above the old British colonial harbour area.",
+          "source": "https://en.wikipedia.org/wiki/Jamestown_Lighthouse"
+        },
+        {
+          "name": "Labadi Beach",
+          "town": "Accra",
+          "region": "Greater Accra",
+          "category": "Beach & Coast",
+          "aliases": "La Pleasure Beach; Labadi Pleasure Beach",
+          "description": "Accra's best-known public beach, located at La in the city's east and popular for its weekend entertainment.",
+          "source": "https://en.wikipedia.org/wiki/Labadi_Beach"
+        },
+        {
+          "name": "Ussher Fort",
+          "town": "Accra",
+          "region": "Greater Accra",
+          "category": "Heritage & History",
+          "aliases": "Fort Ussher; Ussher Fort Museum",
+          "description": "A 17th-century fort in Accra built by the Dutch and later used by the British, now home to a museum with slave-route exhibits.",
+          "source": "https://en.wikipedia.org/wiki/Ussher_Fort"
+        },
+        {
+          "name": "Fort James",
+          "town": "Accra",
+          "region": "Greater Accra",
+          "category": "Heritage & History",
+          "aliases": "James Fort; Fort James, Accra",
+          "description": "A British fort built in 1673 on the Accra coast, used historically in the transatlantic slave trade.",
+          "source": "https://en.wikipedia.org/wiki/Fort_James_(Ghana)"
+        },
+        {
+          "name": "Osu Castle",
+          "town": "Osu",
+          "region": "Greater Accra",
+          "category": "Heritage & History",
+          "aliases": "Christiansborg Castle; Fort Christiansborg",
+          "description": "A castle at Osu in Accra, built by the Danish in the 17th century and long used as Ghana's seat of government.",
+          "source": "https://en.wikipedia.org/wiki/Osu_Castle"
+        },
+        {
+          "name": "Fort Augustaborg",
+          "town": "Teshie",
+          "region": "Greater Accra",
+          "category": "Heritage & History",
+          "aliases": "Fort Augustaborg, Teshie; Augustaborg",
+          "description": "A Danish fort built at Teshie in 1787 on the Accra coast.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Augustaborg"
+        },
+        {
+          "name": "Fort Vernon",
+          "town": "Prampram",
+          "region": "Greater Accra",
+          "category": "Heritage & History",
+          "aliases": "Fort Vernon, Prampram",
+          "description": "An 18th-century fort at Prampram in the Greater Accra Region, established in 1742.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Vernon"
+        },
+        {
+          "name": "Efua Sutherland Children's Park",
+          "town": "Accra",
+          "region": "Greater Accra",
+          "category": "Water & Amusement",
+          "aliases": "Children's Park Accra; Efua Sutherland Park",
+          "description": "A public children's park in central Accra named after the playwright Efua Sutherland.",
+          "source": "https://en.wikipedia.org/wiki/Efua_Sutherland_Children%27s_Park"
+        },
+        {
+          "name": "Museum of Science and Technology",
+          "town": "Accra",
+          "region": "Greater Accra",
+          "category": "Museum & Art",
+          "aliases": "Ghana Museum of Science and Technology; Accra Science Museum",
+          "description": "A science and technology museum on Barnes Road in Accra, opened in 1963.",
+          "source": "https://en.wikipedia.org/wiki/Museum_of_Science_and_Technology_(Accra)"
+        },
+        {
+          "name": "Independence Square",
+          "town": "Accra",
+          "region": "Greater Accra",
+          "category": "Urban Landmark",
+          "aliases": "Black Star Square; Independence Square, Accra",
+          "description": "A large public ceremonial square in Accra used for national celebrations and parades.",
+          "source": "https://en.wikipedia.org/wiki/Independence_Square_(Ghana)"
+        },
+        {
+          "name": "Black Star Gate",
+          "town": "Accra",
+          "region": "Greater Accra",
+          "category": "Urban Landmark",
+          "aliases": "Black Star Monument; Independence Arch",
+          "description": "A monument and ceremonial gate at Independence Square in Accra, topped with the Black Star.",
+          "source": "https://en.wikipedia.org/wiki/Black_Star_Gate"
+        },
+        {
+          "name": "Makola Market",
+          "town": "Accra",
+          "region": "Greater Accra",
+          "category": "Market & Craft",
+          "aliases": "Makola; Accra Central Market",
+          "description": "One of Accra's largest and busiest open-air markets, a major centre for foodstuffs and textiles.",
+          "source": "https://en.wikipedia.org/wiki/Makola_Market"
+        },
+        {
+          "name": "Accra Mall",
+          "town": "Accra",
+          "region": "Greater Accra",
+          "category": "Market & Craft",
+          "aliases": "Accra Mall, Spintex; Accra Shopping Mall",
+          "description": "A large shopping mall in Accra, opened in 2008 on the Spintex Road.",
+          "source": "https://en.wikipedia.org/wiki/Accra_Mall"
+        },
+        {
+          "name": "National Theatre of Ghana",
+          "town": "Accra",
+          "region": "Greater Accra",
+          "category": "Urban Landmark",
+          "aliases": "National Theatre, Accra; Ghana National Theatre",
+          "description": "The national performing arts venue in Accra, known for its distinctive curved architecture.",
+          "source": "https://en.wikipedia.org/wiki/National_Theatre_of_Ghana"
+        },
+        {
+          "name": "Tema Harbour",
+          "town": "Tema",
+          "region": "Greater Accra",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Port of Tema; Tema Port",
+          "description": "Ghana's principal seaport, located at Tema east of Accra.",
+          "source": "https://en.wikipedia.org/wiki/Tema_Harbour"
+        },
+        {
+          "name": "Achimota Forest",
+          "town": "Accra",
+          "region": "Greater Accra",
+          "category": "Nature & Wildlife",
+          "aliases": "Achimota Forest Reserve",
+          "description": "A forest reserve in the Achimota area of Accra, an important urban green space.",
+          "source": "https://en.wikipedia.org/wiki/Achimota_Forest"
+        },
+        {
+          "name": "Ada Foah",
+          "town": "Ada Foah",
+          "region": "Greater Accra",
+          "category": "Beach & Coast",
+          "aliases": "Ada; Ada-Foah",
+          "description": "A coastal town at the mouth of the Volta River, known for its estuary, beaches and resorts.",
+          "source": "https://en.wikipedia.org/wiki/Ada_Foah"
+        },
+        {
+          "name": "Shai Hills Resource Reserve",
+          "town": "Dodowa",
+          "region": "Greater Accra",
+          "category": "Nature & Wildlife",
+          "aliases": "Shai Hills; Shai Hills Reserve",
+          "description": "A resource reserve near Dodowa in Greater Accra, home to baboons, antelope and the historic Shai caves.",
+          "source": "https://en.wikipedia.org/wiki/Shai_Hills_Resource_Reserve"
+        },
+        {
+          "name": "Nkyinkyim Museum",
+          "town": "Ada Foah",
+          "region": "Greater Accra",
+          "category": "Museum & Art",
+          "aliases": "Nkyinkyim; Nkyinkyim Museum, Ada",
+          "description": "An art museum and installation at Nuhalenya near Ada, founded by the artist Kwame Akoto-Bamfo.",
+          "source": "https://en.wikipedia.org/wiki/List_of_museums_in_Ghana"
+        }
+      ]
+    },
+    "Ashanti": {
+      "towns": [
+        "Adansi Asokwa", "Fomena", "New Edubiase", "Boamang", "Kodie", "Tepa",
+        "Adugyama", "Mankranso", "Akrofuom", "Jacobu", "Manso Nkwanta", "Manso Adubia",
+        "Konongo", "Agogo", "Juaso", "Asokore Mampong", "Asokwa", "Twedie", "Nyinahin",
+        "Nkawie", "Barekese", "Bekwai", "Asiwa", "Kuntanse", "Ejisu", "Ejura",
+        "Juaben", "Kumasi", "Mamponteng", "Kwadaso", "Mampong", "Tutuka", "Obuasi",
+        "Offinso", "Akomadan", "Oforikrom", "Old Tafo", "Drobonso", "Nsuta",
+        "Effiduase", "Kumawu", "Agona", "Suame"
+      ],
+      "attractions": [
+        {
+          "name": "Manhyia Palace Museum",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Museum & Art",
+          "aliases": "Manhyia Museum; Manhyia Palace",
+          "description": "A museum in the Manhyia Palace at Kumasi, seat of the Asantehene, displaying Asante royal regalia and history.",
+          "source": "https://en.wikipedia.org/wiki/Manhyia_Palace_Museum"
+        },
+        {
+          "name": "Lake Bosumtwi",
+          "town": "Kuntanse",
+          "region": "Ashanti",
+          "category": "Nature & Wildlife",
+          "aliases": "Lake Bosomtwe; Bosumtwi Crater Lake",
+          "description": "A meteorite crater lake in the Ashanti Region, the only natural lake in Ghana.",
+          "source": "https://en.wikipedia.org/wiki/Lake_Bosumtwi"
+        },
+        {
+          "name": "Armed Forces Museum",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Museum & Art",
+          "aliases": "Ghana Armed Forces Museum; Kumasi Military Museum",
+          "description": "A military museum in Kumasi housed in a former British fort, tracing Ghana's military history.",
+          "source": "https://en.wikipedia.org/wiki/Armed_Forces_Museum_(Ghana)"
+        },
+        {
+          "name": "Prempeh II Jubilee Museum",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Museum & Art",
+          "aliases": "Prempeh II Museum; Jubilee Museum",
+          "description": "A museum in Kumasi holding Asante royal artefacts associated with Asantehene Prempeh II.",
+          "source": "https://en.wikipedia.org/wiki/Prempeh_II_Jubilee_Museum"
+        },
+        {
+          "name": "Yaa Asantewaa Museum",
+          "town": "Ejisu",
+          "region": "Ashanti",
+          "category": "Museum & Art",
+          "aliases": "Yaa Asantewaa Palace Museum",
+          "description": "A museum at Ejisu in the Ashanti Region commemorating the queen mother Yaa Asantewaa.",
+          "source": "https://en.wikipedia.org/wiki/Yaa_Asantewaa_Museum"
+        },
+        {
+          "name": "Centre for National Culture",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Market & Craft",
+          "aliases": "Kumasi Cultural Centre; National Cultural Centre, Kumasi",
+          "description": "A cultural centre in Kumasi with craft shops, a museum and performance spaces.",
+          "source": "https://en.wikipedia.org/wiki/Centre_for_National_Culture_(Kumasi)"
+        },
+        {
+          "name": "Kejetia Market",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Market & Craft",
+          "aliases": "Kumasi Kejetia Market; Kejetia",
+          "description": "A large market in Kumasi, one of the biggest in West Africa.",
+          "source": "https://en.wikipedia.org/wiki/Kejetia_Market"
+        },
+        {
+          "name": "Kumasi Zoo",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Nature & Wildlife",
+          "aliases": "Kumasi Zoological Gardens",
+          "description": "A zoological garden in central Kumasi housing a range of West African wildlife.",
+          "source": "https://en.wikipedia.org/wiki/Kumasi_Zoo"
+        },
+        {
+          "name": "Bonwire",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Market & Craft",
+          "aliases": "Bonwire Kente Village; Kente weaving village",
+          "description": "A town in the Ashanti Region renowned as the home of Asante kente cloth weaving.",
+          "source": "https://en.wikipedia.org/wiki/Bonwire"
+        },
+        {
+          "name": "Ntonso",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Market & Craft",
+          "aliases": "Ntonso Adinkra Village; Adinkra cloth village",
+          "description": "A town near Kumasi known for traditional adinkra cloth printing.",
+          "source": "https://en.wikipedia.org/wiki/Ntonso"
+        },
+        {
+          "name": "Bobiri Butterfly Sanctuary",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Nature & Wildlife",
+          "aliases": "Bobiri Forest and Butterfly Sanctuary; Bobiri Butterfly Sanctuary",
+          "description": "A forest reserve and butterfly sanctuary near Kumasi with hundreds of butterfly species.",
+          "source": "https://en.wikipedia.org/wiki/Bobiri_Butterfly_Sanctuary"
+        },
+        {
+          "name": "Bomfobiri Wildlife Sanctuary",
+          "town": "Kumawu",
+          "region": "Ashanti",
+          "category": "Nature & Wildlife",
+          "aliases": "Bomfobiri Sanctuary",
+          "description": "A wildlife sanctuary in the Ashanti Region known for its rocky terrain and wildlife.",
+          "source": "https://en.wikipedia.org/wiki/Bomfobiri_Wildlife_Sanctuary"
+        },
+        {
+          "name": "Kogyae Strict Nature Reserve",
+          "town": "Agogo",
+          "region": "Ashanti",
+          "category": "Nature & Wildlife",
+          "aliases": "Kogyae Nature Reserve",
+          "description": "A strict nature reserve in the Ashanti Region protected for research and biodiversity.",
+          "source": "https://en.wikipedia.org/wiki/Kogyae_Strict_Nature_Reserve"
+        },
+        {
+          "name": "Owabi Wildlife Sanctuary",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Nature & Wildlife",
+          "aliases": "Owabi Forest Reserve and Bird Sanctuary",
+          "description": "A bird and wildlife sanctuary around the Owabi reservoir near Kumasi.",
+          "source": "https://en.wikipedia.org/wiki/Owabi_Wildlife_Sanctuary"
+        },
+        {
+          "name": "Rattray Park",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Urban Landmark",
+          "aliases": "Rattray Park, Kumasi",
+          "description": "A modern recreational park in Kumasi with gardens, fountains and a children's play area.",
+          "source": "https://en.wikipedia.org/wiki/Rattray_Park"
+        },
+        {
+          "name": "Asante Traditional Buildings",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Heritage & History",
+          "aliases": "Asante Traditional Buildings UNESCO Site; Asante Shrines",
+          "description": "A UNESCO World Heritage Site of surviving traditional Asante shrine buildings in the Ashanti Region.",
+          "source": "https://en.wikipedia.org/wiki/Asante_Traditional_Buildings"
+        },
+        {
+          "name": "Manhyia Palace",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Heritage & History",
+          "aliases": "Manhyia Palace, Kumasi",
+          "description": "The official residence of the Asantehene in Kumasi and a centre of Asante traditional authority.",
+          "source": "https://en.wikipedia.org/wiki/Manhyia_Palace"
+        },
+        {
+          "name": "Kumasi Fort",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Heritage & History",
+          "aliases": "Kumasi Fort and Military Museum",
+          "description": "A 19th-century fort in Kumasi that now houses the Ghana Armed Forces Museum.",
+          "source": "https://en.wikipedia.org/wiki/Kumasi_Fort"
+        },
+        {
+          "name": "Ahwiaa",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Market & Craft",
+          "aliases": "Ahwiaa Wood Carving Village",
+          "description": "A town near Kumasi known for traditional wood carving.",
+          "source": "https://en.wikipedia.org/wiki/Ahwiaa"
+        },
+        {
+          "name": "Besease",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Heritage & History",
+          "aliases": "Besease Traditional Shrine; Besease Asante building",
+          "description": "A village in the Ashanti Region with a traditional Asante shrine building that forms part of the UNESCO Asante Traditional Buildings.",
+          "source": "https://en.wikipedia.org/wiki/Besease"
+        },
+        {
+          "name": "Kwame Nkrumah University of Science and Technology",
+          "town": "Kumasi",
+          "region": "Ashanti",
+          "category": "Urban Landmark",
+          "aliases": "KNUST; Kumasi University of Science and Technology",
+          "description": "Ghana's leading science and technology university, whose park-like campus at Kumasi is a notable landmark.",
+          "source": "https://en.wikipedia.org/wiki/Kwame_Nkrumah_University_of_Science_and_Technology"
+        }
+      ]
+    },
+    "Central": {
+      "towns": [
+        "Abura-Dunkwa", "Nsaba", "Agona Swedru", "Ajumako", "Breman Asikuma",
+        "Assin Foso", "Assin Bereku", "Nsuaem Kyekyewere", "Kasoa", "Awutu Breku",
+        "Cape Coast", "Winneba", "Apam", "Potsin", "Afransi", "Esakyir", "Elmina",
+        "Saltpond", "Twifo Praso", "Hemang", "Dunkwa-on-Offin", "Diaso", "Mankessim",
+        "Anomabo", "Moree", "Senya Beraku", "Biriwa", "Komenda", "Abandze", "Jukwa",
+        "Abakrampa", "Yamoransa", "Bawjiase", "Ofaakor", "Gomoa Fetteh", "Nyanyano",
+        "Dominase", "Ekumfi Otuam", "Assin Manso", "Enyan Denkyira", "Gomoa Dawurampong",
+        "Abura"
+      ],
+      "attractions": [
+        {
+          "name": "Cape Coast Castle",
+          "town": "Cape Coast",
+          "region": "Central",
+          "category": "Heritage & History",
+          "aliases": "Cape Coast Slave Castle; Carolusborg",
+          "description": "A UNESCO World Heritage Site and former slave-trade castle on the Cape Coast shoreline.",
+          "source": "https://en.wikipedia.org/wiki/Cape_Coast_Castle"
+        },
+        {
+          "name": "Elmina Castle",
+          "town": "Elmina",
+          "region": "Central",
+          "category": "Heritage & History",
+          "aliases": "Sao Jorge da Mina; St. George's Castle; Elmina Castle",
+          "description": "A UNESCO World Heritage Site built by the Portuguese in 1482, the oldest European building in sub-Saharan Africa.",
+          "source": "https://en.wikipedia.org/wiki/Elmina_Castle"
+        },
+        {
+          "name": "Kakum National Park",
+          "town": "Cape Coast",
+          "region": "Central",
+          "category": "Nature & Wildlife",
+          "aliases": "Kakum National Park; Kakum Rainforest",
+          "description": "A rainforest national park north of Cape Coast famous for its canopy walkway.",
+          "source": "https://en.wikipedia.org/wiki/Kakum_National_Park"
+        },
+        {
+          "name": "Kakum Canopy Walkway",
+          "town": "Cape Coast",
+          "region": "Central",
+          "category": "Scenic & Hiking",
+          "aliases": "Kakum Canopy Walk; Kakum Walkway",
+          "description": "A suspended canopy walkway through the rainforest of Kakum National Park.",
+          "source": "https://en.wikipedia.org/wiki/Kakum_National_Park"
+        },
+        {
+          "name": "Fort Coenraadsburg",
+          "town": "Elmina",
+          "region": "Central",
+          "category": "Heritage & History",
+          "aliases": "Fort St. Jago; Fort Coenraadsburg",
+          "description": "A hilltop fort at Elmina built by the Dutch in the 17th century.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Coenraadsburg"
+        },
+        {
+          "name": "Fort Amsterdam",
+          "town": "Abandze",
+          "region": "Central",
+          "category": "Heritage & History",
+          "aliases": "Fort Amsterdam, Ghana; Fort Cormantin",
+          "description": "A 17th-century fort at Abandze in the Central Region, originally built by the English.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Amsterdam_(Ghana)"
+        },
+        {
+          "name": "Fort William",
+          "town": "Anomabo",
+          "region": "Central",
+          "category": "Heritage & History",
+          "aliases": "Fort William, Anomabu; Anomabu Castle",
+          "description": "An 18th-century fort at Anomabu on the Central Region coast.",
+          "source": "https://en.wikipedia.org/wiki/Fort_William_(Ghana)"
+        },
+        {
+          "name": "Fort Nassau",
+          "town": "Moree",
+          "region": "Central",
+          "category": "Heritage & History",
+          "aliases": "Fort Nassau, Ghana",
+          "description": "A Dutch fort built in 1612 at Moree in the Central Region.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Nassau_(Ghana)"
+        },
+        {
+          "name": "Fort Lijdzaamheid",
+          "town": "Apam",
+          "region": "Central",
+          "category": "Heritage & History",
+          "aliases": "Fort Patience; Fort Lijdzaamheid",
+          "description": "A Dutch fort built at Apam in 1697, also known as Fort Patience.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Lijdzaamheid"
+        },
+        {
+          "name": "Fort Goede Hoop",
+          "town": "Senya Beraku",
+          "region": "Central",
+          "category": "Heritage & History",
+          "aliases": "Fort Good Hope; Fort Goede Hoop",
+          "description": "A Dutch fort built in 1705 at Senya Beraku in the Central Region.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Goede_Hoop_(Ghana)"
+        },
+        {
+          "name": "Fort McCarthy",
+          "town": "Cape Coast",
+          "region": "Central",
+          "category": "Heritage & History",
+          "aliases": "Fort McCarthy, Cape Coast",
+          "description": "A 19th-century fort in Cape Coast built in 1822.",
+          "source": "https://en.wikipedia.org/wiki/Fort_McCarthy"
+        },
+        {
+          "name": "Fort Vredenburg",
+          "town": "Komenda",
+          "region": "Central",
+          "category": "Heritage & History",
+          "aliases": "Fort Vredenburg, Komenda",
+          "description": "A Dutch fort at Komenda in the Central Region.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Vredenburg"
+        },
+        {
+          "name": "Fort Komenda",
+          "town": "Komenda",
+          "region": "Central",
+          "category": "Heritage & History",
+          "aliases": "Fort Komenda, British Komenda",
+          "description": "A fort at Komenda in the Central Region.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Komenda"
+        },
+        {
+          "name": "Fort Fredericksburg",
+          "town": "Komenda",
+          "region": "Central",
+          "category": "Heritage & History",
+          "aliases": "Fort Fredericksburg, Amanful",
+          "description": "A historic fort in the Central Region of Ghana.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Fredericksburg"
+        },
+        {
+          "name": "Assin Manso Slave River Site",
+          "town": "Assin Manso",
+          "region": "Central",
+          "category": "Heritage & History",
+          "aliases": "Assin Manso Slave River; Donkor Nsuo",
+          "description": "A heritage site at Assin Manso on the slave route where captives were bathed before being sold.",
+          "source": "https://en.wikipedia.org/wiki/Assin_Manso_Slave_River_Site"
+        },
+        {
+          "name": "Cape Coast Castle Museum",
+          "town": "Cape Coast",
+          "region": "Central",
+          "category": "Museum & Art",
+          "aliases": "Cape Coast Castle Museum, Ghana",
+          "description": "A museum inside Cape Coast Castle illustrating the history of the transatlantic slave trade.",
+          "source": "https://en.wikipedia.org/wiki/Cape_Coast_Castle_Museum"
+        },
+        {
+          "name": "Elmina Java Museum",
+          "town": "Elmina",
+          "region": "Central",
+          "category": "Museum & Art",
+          "aliases": "Java Museum, Elmina",
+          "description": "A museum at Elmina documenting the history of African soldiers recruited by the Dutch in the 19th century.",
+          "source": "https://en.wikipedia.org/wiki/Elmina_Java_Museum"
+        },
+        {
+          "name": "Gramophone Records Museum and Research Centre of Ghana",
+          "town": "Cape Coast",
+          "region": "Central",
+          "category": "Museum & Art",
+          "aliases": "Gramophone Records Museum; Cape Coast Gramophone Museum",
+          "description": "A museum in Cape Coast preserving historic gramophone records and Ghanaian highlife music.",
+          "source": "https://en.wikipedia.org/wiki/Gramophone_Records_Museum_and_Research_Centre_of_Ghana"
+        },
+        {
+          "name": "Fort William Lighthouse",
+          "town": "Cape Coast",
+          "region": "Central",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Cape Coast Castle Light; Fort William Lighthouse",
+          "description": "A lighthouse associated with Fort William at Cape Coast.",
+          "source": "https://en.wikipedia.org/wiki/Fort_William_Lighthouse"
+        },
+        {
+          "name": "Cape Coast Sports Stadium",
+          "town": "Cape Coast",
+          "region": "Central",
+          "category": "Urban Landmark",
+          "aliases": "Cape Coast Stadium; Robert Mensah Stadium",
+          "description": "A multi-purpose stadium in Cape Coast used for football and athletics.",
+          "source": "https://en.wikipedia.org/wiki/Cape_Coast_Sports_Stadium"
+        },
+        {
+          "name": "Biriwa Beach",
+          "town": "Biriwa",
+          "region": "Central",
+          "category": "Beach & Coast",
+          "aliases": "Biriwa; Biriwa Beach, Central Region",
+          "description": "A coastal town and beach in the Central Region of Ghana.",
+          "source": "https://en.wikipedia.org/wiki/Biriwa"
+        }
+      ]
+    },
+    "Eastern": {
+      "towns": [
+        "Kukurantumi", "Kibi", "Achiase", "Akropong", "Aburi", "Ofoase", "Manso",
+        "Atimpoku", "Anyinam", "Kwabeng", "Coaltar", "Akim Oda", "New Abirem",
+        "Akim Swedru", "Akwatia", "Begoro", "Osino", "Kade", "Donkorkrom", "Tease",
+        "Abetifi", "Mpraeso", "Nkawkaw", "Krobo Odumase", "Effiduase", "Koforidua",
+        "Nsawam", "Adukrom", "Suhum", "Asesewa", "Adeiso", "Asamankese", "Somanya",
+        "Kpong", "Akosombo", "Nkwatia", "Tafo", "Asuom", "Boso", "Akuse", "Apirede",
+        "Larteh", "Tutu", "Akuapem-Mampong", "Adum", "Nsutam", "Bunso", "Asikam",
+        "Kwahu Tafo", "Obo", "Anum", "Akim Tafo", "Nkurakan"
+      ],
+      "attractions": [
+        {
+          "name": "Aburi Botanical Gardens",
+          "town": "Aburi",
+          "region": "Eastern",
+          "category": "Nature & Wildlife",
+          "aliases": "Aburi Gardens; Aburi Botanical Garden",
+          "description": "A botanical garden at Aburi in the Akuapem Hills, established in the late 19th century.",
+          "source": "https://en.wikipedia.org/wiki/Aburi_Botanical_Gardens"
+        },
+        {
+          "name": "Boti Falls",
+          "town": "Boti",
+          "region": "Eastern",
+          "category": "Nature & Wildlife",
+          "aliases": "Boti Waterfalls; Boti Falls, Yilo Krobo",
+          "description": "A twin waterfall on the Ponpon River near Boti in the Eastern Region, with a lower and an upper fall.",
+          "source": "https://en.wikipedia.org/wiki/Boti_Falls"
+        },
+        {
+          "name": "Akaa Falls",
+          "town": "Akim Tafo",
+          "region": "Eastern",
+          "category": "Nature & Wildlife",
+          "aliases": "Akaa Waterfalls; Akaa Falls, Kade",
+          "description": "A waterfall near Akaa in the Eastern Region, close to the Atewa Range.",
+          "source": "https://en.wikipedia.org/wiki/Akaa_Falls"
+        },
+        {
+          "name": "Asenema Waterfall",
+          "town": "Koforidua",
+          "region": "Eastern",
+          "category": "Nature & Wildlife",
+          "aliases": "Asenema Falls",
+          "description": "A waterfall near Asenema in the Eastern Region, popular for hiking.",
+          "source": "https://en.wikipedia.org/wiki/Asenema_Waterfall"
+        },
+        {
+          "name": "Obosomase Waterfalls",
+          "town": "Aburi",
+          "region": "Eastern",
+          "category": "Nature & Wildlife",
+          "aliases": "Obosomase Falls",
+          "description": "Waterfalls at Obosomase in the Akuapem area of the Eastern Region.",
+          "source": "https://en.wikipedia.org/wiki/Obosomase_Waterfalls"
+        },
+        {
+          "name": "Umbrella Rock",
+          "town": "Boti",
+          "region": "Eastern",
+          "category": "Scenic & Hiking",
+          "aliases": "Umbrella Rock, Boti; Umbrella Rock, Yilo Krobo",
+          "description": "A naturally balanced rock formation near Boti Falls that resembles an open umbrella.",
+          "source": "https://en.wikipedia.org/wiki/Umbrella_Rock"
+        },
+        {
+          "name": "Atewa Range Forest Reserve",
+          "town": "Kibi",
+          "region": "Eastern",
+          "category": "Nature & Wildlife",
+          "aliases": "Atewa Forest; Atewa Range",
+          "description": "A forest reserve in the Atewa Range noted for its high biodiversity and bauxite deposits.",
+          "source": "https://en.wikipedia.org/wiki/Atewa_Range_Forest_Reserve"
+        },
+        {
+          "name": "Akosombo Dam",
+          "town": "Akosombo",
+          "region": "Eastern",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Volta Dam; Akosombo Hydroelectric Project",
+          "description": "A hydroelectric dam on the Volta River at Akosombo, completed in 1965, which created Lake Volta.",
+          "source": "https://en.wikipedia.org/wiki/Akosombo_Dam"
+        },
+        {
+          "name": "Adomi Bridge",
+          "town": "Atimpoku",
+          "region": "Eastern",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Adome Bridge; Volta Bridge",
+          "description": "A suspension bridge over the Volta River at Atimpoku, opened in 1957.",
+          "source": "https://en.wikipedia.org/wiki/Adomi_Bridge"
+        },
+        {
+          "name": "Lake Volta",
+          "town": "Akosombo",
+          "region": "Eastern",
+          "category": "Nature & Wildlife",
+          "aliases": "Volta Lake",
+          "description": "The world's largest man-made reservoir by surface area, formed by the Akosombo Dam on the Volta River.",
+          "source": "https://en.wikipedia.org/wiki/Lake_Volta"
+        },
+        {
+          "name": "Dodi Island",
+          "town": "Akosombo",
+          "region": "Eastern",
+          "category": "Nature & Wildlife",
+          "aliases": "Dodi Island, Volta Lake",
+          "description": "An island in Lake Volta used for recreation and holiday resorts.",
+          "source": "https://en.wikipedia.org/wiki/Dodi_Island"
+        },
+        {
+          "name": "Kwahu Plateau",
+          "town": "Mpraeso",
+          "region": "Eastern",
+          "category": "Scenic & Hiking",
+          "aliases": "Kwahu Ridge; Kwahu Mountains",
+          "description": "A highland plateau in the Kwahu area of the Eastern Region, known for its escarpment views and paragliding.",
+          "source": "https://en.wikipedia.org/wiki/Kwahu_Plateau"
+        },
+        {
+          "name": "Tetteh Quarshie cocoa farm",
+          "town": "Akuapem-Mampong",
+          "region": "Eastern",
+          "category": "Food & Agritourism",
+          "aliases": "Tetteh Quarshie Cocoa Farm, Mampong; Tetteh Quarshie Farm",
+          "description": "The cocoa farm at Mampong Akuapem where Tetteh Quarshie planted some of Ghana's first cocoa trees in 1879.",
+          "source": "https://en.wikipedia.org/wiki/Tetteh_Quarshie_cocoa_farm"
+        },
+        {
+          "name": "Abetifi Stone Age Park",
+          "town": "Abetifi",
+          "region": "Eastern",
+          "category": "Heritage & History",
+          "aliases": "Abetifi Stone Age Site; Abetifi Archaeological Site",
+          "description": "A park at Abetifi in the Kwahu area preserving Stone Age rock shelters and artefacts.",
+          "source": "https://en.wikipedia.org/wiki/Abetifi_Stone_Age_Park"
+        },
+        {
+          "name": "Bunso Eco Park",
+          "town": "Bunso",
+          "region": "Eastern",
+          "category": "Nature & Wildlife",
+          "aliases": "Bunso Arboretum; Bunso Eco Park",
+          "description": "A conservation and recreation park at Bunso in the Eastern Region, formerly the Bunso Arboretum.",
+          "source": "https://en.wikipedia.org/wiki/Bunso_Eco_Park"
+        },
+        {
+          "name": "Fuller Waterfalls",
+          "town": "Asikam",
+          "region": "Eastern",
+          "category": "Nature & Wildlife",
+          "aliases": "Fuller Falls",
+          "description": "A waterfall in the Eastern Region of Ghana.",
+          "source": "https://en.wikipedia.org/wiki/Fuller_Waterfalls"
+        },
+        {
+          "name": "Digya National Park",
+          "town": "Donkorkrom",
+          "region": "Eastern",
+          "category": "Nature & Wildlife",
+          "aliases": "Digya National Park, Lake Volta",
+          "description": "Ghana's oldest national park, on the western shore of Lake Volta in the Afram Plains.",
+          "source": "https://en.wikipedia.org/wiki/Digya_National_Park"
+        },
+        {
+          "name": "Kpong Dam",
+          "town": "Kpong",
+          "region": "Eastern",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Kpong Hydroelectric Dam",
+          "description": "A hydroelectric dam on the Volta River at Kpong in the Eastern Region.",
+          "source": "https://en.wikipedia.org/wiki/Kpong_Dam"
+        },
+        {
+          "name": "Akuapem Hills",
+          "town": "Akropong",
+          "region": "Eastern",
+          "category": "Scenic & Hiking",
+          "aliases": "Akuapem Ridge; Akuapem Mountains",
+          "description": "A range of hills in the Eastern Region hosting towns such as Akropong, Aburi and Mampong.",
+          "source": "https://en.wikipedia.org/wiki/Akuapem"
+        },
+        {
+          "name": "Akwawa Mountain Peak",
+          "town": "Nkawkaw",
+          "region": "Eastern",
+          "category": "Scenic & Hiking",
+          "aliases": "Akwawa Mountain; Akwawa Peak",
+          "description": "A mountain peak near Nkawkaw in the Eastern Region listed among the region's tourist sites.",
+          "source": "https://en.wikipedia.org/wiki/Eastern_Region_(Ghana)"
+        },
+        {
+          "name": "The Big Tree at Oda",
+          "town": "Akim Oda",
+          "region": "Eastern",
+          "category": "Nature & Wildlife",
+          "aliases": "Big Tree, Oda; Oda Big Tree",
+          "description": "A giant historic tree at Akim Oda listed among the Eastern Region's tourist sites.",
+          "source": "https://en.wikipedia.org/wiki/Eastern_Region_(Ghana)"
+        }
+      ]
+    }
+  }
+}

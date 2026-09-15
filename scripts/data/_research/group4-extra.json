@@ -1,0 +1,107 @@
+{
+  "regions": {
+    "Western North": {
+      "attractions": [
+        {
+          "name": "Krokosua Hills Forest Reserve",
+          "town": "Juaboso",
+          "region": "Western North",
+          "category": "Nature & Wildlife",
+          "aliases": "Krokosua Hills; Krokosua Forest Reserve; Krokosua Hills FR",
+          "description": "A 481 km2 forest reserve established in 1935 in the Krokosua Hills of south-western Ghana, near Juaboso. It is a heavily logged reserve where chimpanzee presence has been reported and is an IUCN Category V protected landscape.",
+          "source": "https://en.wikipedia.org/wiki/Krokosua_Hills_Forest_Reserve"
+        },
+        {
+          "name": "Boin Tano Forest Reserve",
+          "town": "Enchi",
+          "region": "Western North",
+          "category": "Nature & Wildlife",
+          "aliases": "Boin-Tano Forest Reserve; Boi-Tano Forest Reserve; Boin Tano FR",
+          "description": "A 129 km2 nature reserve established in 1968 in the Aowin Municipal District of Ghana's Western North Region. It is rich in floral and faunal species and is designated an Important Bird Area by BirdLife International.",
+          "source": "https://en.wikipedia.org/wiki/Boin_Tano_Forest_Reserve"
+        },
+        {
+          "name": "Tano Nimri Forest Reserve",
+          "town": "Enchi",
+          "region": "Western North",
+          "category": "Nature & Wildlife",
+          "aliases": "Tano Nimiri Forest Reserve; Tano-Nimire Forest Reserve; Tano Nimri FR",
+          "description": "A 206 km2 forest reserve established in 1935 in south-western Ghana, lying in the Enchi Forest District and sharing a boundary with the Boin Tano reserve. It is designated an Important Bird Area and is thought to hold western chimpanzees.",
+          "source": "https://en.wikipedia.org/wiki/Tano_Nimri_Forest_Reserve"
+        },
+        {
+          "name": "Tano Anwia Forest Reserve",
+          "town": "Enchi",
+          "region": "Western North",
+          "category": "Nature & Wildlife",
+          "aliases": "Tano Anwia IBA; Tano-Anwia Forest Reserve",
+          "description": "A forest reserve near Enchi in the Aowin Municipality of Ghana's Western North Region. It is recognised by BirdLife International as an Important Bird Area.",
+          "source": "https://en.wikipedia.org/wiki/Enchi"
+        },
+        {
+          "name": "Dadieso Forest Reserve",
+          "town": "Dadieso",
+          "region": "Western North",
+          "category": "Nature & Wildlife",
+          "aliases": "Dadieso Forest Reserve; Dadieso FR",
+          "description": "A forest reserve located at Dadieso, the capital of the Suaman District in Ghana's Western North Region.",
+          "source": "https://en.wikipedia.org/wiki/Dadieso"
+        },
+        {
+          "name": "Ankobra River",
+          "town": "Sefwi Wiawso",
+          "region": "Western North",
+          "category": "Scenic & Hiking",
+          "aliases": "Ankobra; River Ankobra; Ankobra Basin",
+          "description": "A river that originates northeast of Wiawso in Ghana's Western North Region and flows about 190 km south to the Gulf of Guinea. Its upper reaches contain rapids and several hydro-electric schemes have been proposed there.",
+          "source": "https://en.wikipedia.org/wiki/Ankobra_River"
+        },
+        {
+          "name": "Disue River",
+          "town": "Enchi",
+          "region": "Western North",
+          "category": "Nature & Wildlife",
+          "aliases": "Desue River; Disue; Desue",
+          "description": "A tributary of the Tano River that flows through the township of Enchi in the Aowin Municipality of Ghana's Western North Region.",
+          "source": "https://en.wikipedia.org/wiki/Enchi"
+        },
+        {
+          "name": "Alluolue Festival",
+          "town": "Sefwi Wiawso",
+          "region": "Western North",
+          "category": "Heritage & History",
+          "aliases": "Alluolue; Eluo Festival; Elue Festival; Alluelie Festival",
+          "description": "An annual yam festival celebrated in July by the chiefs and people of Sefwi Wiawso and Sefwi Bekwai in Ghana's Western North Region. It features a durbar of chiefs, traditional dress, drumming, dancing and the sharing of food and drinks.",
+          "source": "https://en.wikipedia.org/wiki/Alluolue_Festival"
+        },
+        {
+          "name": "St. Joseph's Cathedral, Wiawso",
+          "town": "Sefwi Wiawso",
+          "region": "Western North",
+          "category": "Religious & Sacred",
+          "aliases": "Cathedral of St. Joseph; St Joseph Cathedral Wiawso; Wiawso Catholic Cathedral",
+          "description": "The Catholic cathedral of the Diocese of Wiawso, listed among the cathedrals of Ghana, in the regional capital Sefwi Wiawso.",
+          "source": "https://en.wikipedia.org/wiki/List_of_cathedrals_in_Ghana"
+        },
+        {
+          "name": "Cathedral Church of the Ascension, Sefwi Wiawso",
+          "town": "Sefwi Wiawso",
+          "region": "Western North",
+          "category": "Religious & Sacred",
+          "aliases": "Cathedral Church of Ascension; Ascension Anglican Cathedral Sefwi-Wiawso",
+          "description": "An Anglican cathedral of the Church of the Province of West Africa, listed at Sefwi-Wiawso in Ghana's Western North Region.",
+          "source": "https://en.wikipedia.org/wiki/List_of_cathedrals_in_Ghana"
+        },
+        {
+          "name": "Bibiani Gold Project",
+          "town": "Bibiani",
+          "region": "Western North",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Bibiani Gold Mine; Bibiani underground mine; Bibiani Gold Project",
+          "description": "An underground gold mine development at Bibiani in the Bibiani/Anhwiaso/Bekwai Municipality of Ghana's Western North Region, being developed by Canada-based Asante Gold.",
+          "source": "https://en.wikipedia.org/wiki/Bibiani"
+        }
+      ]
+    }
+  }
+}

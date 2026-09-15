@@ -1,0 +1,1042 @@
+{
+  "regions": {
+    "Upper East": {
+      "towns": [
+        "Bolgatanga",
+        "Navrongo",
+        "Paga",
+        "Sandema",
+        "Bawku",
+        "Zebilla",
+        "Bongo",
+        "Garu",
+        "Pusiga",
+        "Tongo",
+        "Tempane",
+        "Zuarungu",
+        "Fumbisi",
+        "Nangodi",
+        "Binduri",
+        "Sirigu",
+        "Kandiga",
+        "Mirigu",
+        "Manyoro",
+        "Natugnia",
+        "Zorko",
+        "Yua",
+        "Chiana",
+        "Kayoro",
+        "Kulungugu",
+        "Pwalugu",
+        "Widana",
+        "Googo",
+        "Winkongo",
+        "Balungu",
+        "Zaare",
+        "Soe",
+        "Namoo",
+        "Doba",
+        "Kusanaba",
+        "Sapelliga",
+        "Zorkor",
+        "Gorogo",
+        "Tilli",
+        "Vea",
+        "Nyariga",
+        "Sumbrungu"
+      ],
+      "attractions": [
+        {
+          "name": "Paga Crocodile Pond",
+          "town": "Paga",
+          "region": "Upper East",
+          "category": "Nature & Wildlife",
+          "aliases": "Zenga Crocodile Pond; Chief's Pond; Paga Crocodile Sanctuary",
+          "description": "A sacred pond in Paga inhabited by tame West African crocodiles that visitors can touch and photograph. It lies about 44 km from Bolgatanga and is one of Ghana's best-known wildlife attractions.",
+          "source": "https://en.wikipedia.org/wiki/Paga_Crocodile_Pond"
+        },
+        {
+          "name": "Pikworo Slave Camp",
+          "town": "Paga Nania",
+          "region": "Upper East",
+          "category": "Heritage & History",
+          "aliases": "Paga-Nania Slave Camp; Pikworo Slave Transit Camp; Pikworo Camp",
+          "description": "An 18th- and 19th-century slave transit camp established in 1704 about 3 km west of Paga. Captives were held here before being marched to the Salaga slave market and onward to the coast.",
+          "source": "https://en.wikipedia.org/wiki/Pikworo_Slave_camp"
+        },
+        {
+          "name": "Tongo Hills",
+          "town": "Tongo",
+          "region": "Upper East",
+          "category": "Scenic & Hiking",
+          "aliases": "Tengzug Hills; Tongo-Tenzug Hills; Tongo Rock Formations",
+          "description": "A dramatic granite mountain range south of Tongo noted for unique rock formations, caves and spiritual significance. It is a popular hiking destination in the Upper East Region.",
+          "source": "https://en.wikipedia.org/wiki/Tongo_Hills"
+        },
+        {
+          "name": "Tengzug Shrine",
+          "town": "Tongo",
+          "region": "Upper East",
+          "category": "Religious & Sacred",
+          "aliases": "Tenzug Shrine; Tongo-Tenzug Shrine; Tengzug Sacred Groves",
+          "description": "A sacred shrine complex in the Tongo Hills near Tengzug village, central to Talensi traditional religion. It is one of the region's most important spiritual sites.",
+          "source": "https://visitghana.com/attractions/upper-east-region/"
+        },
+        {
+          "name": "Whispering Rocks and Shrines of Tongo",
+          "town": "Tengzug",
+          "region": "Upper East",
+          "category": "Scenic & Hiking",
+          "aliases": "Whistling Rocks of Tongo; Tongo Whispering Rocks; Tengzug Whistling Rocks",
+          "description": "A rock formation in Tengzug where one rock rests on another and emits strange whistling sounds in November and December. It is a notable natural landmark of the Tongo Hills.",
+          "source": "https://en.wikipedia.org/wiki/Whispering_Rocks_and_Shrines_of_Tongo"
+        },
+        {
+          "name": "Upper East Regional Museum",
+          "town": "Bolgatanga",
+          "region": "Upper East",
+          "category": "Museum & Art",
+          "aliases": "Bolgatanga Museum; Bolgatanga Regional Museum; Upper East Museum",
+          "description": "A museum in Bolgatanga established in 1972 that displays the cultural and historical heritage of the Upper East Region. It is located behind the Regional Library near the craft village.",
+          "source": "https://en.wikipedia.org/wiki/Upper_East_Regional_Museum"
+        },
+        {
+          "name": "Tono Dam",
+          "town": "Navrongo",
+          "region": "Upper East",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Tono Irrigation Dam; Navrongo-Tono Irrigation Dam; Tono Reservoir",
+          "description": "One of the largest agricultural dams in West Africa, a 2 km dam in the Kassena-Nankana District that irrigates about 2,490 hectares. Construction began in 1975 and was completed in 1985.",
+          "source": "https://en.wikipedia.org/wiki/Tono_Dam_(Ghana)"
+        },
+        {
+          "name": "Cathedral Basilica of Our Lady of Seven Sorrows",
+          "town": "Navrongo",
+          "region": "Upper East",
+          "category": "Religious & Sacred",
+          "aliases": "Navrongo Cathedral; Navrongo Mud Church; Our Lady of Seven Sorrows Basilica",
+          "description": "A Roman Catholic cathedral and minor basilica in Navrongo and one of the oldest churches in Ghana. Its historic mud-built structure is a well-known regional monument.",
+          "source": "https://en.wikipedia.org/wiki/Navrongo_Cathedral"
+        },
+        {
+          "name": "Naa Gbewaa Shrine",
+          "town": "Pusiga",
+          "region": "Upper East",
+          "category": "Religious & Sacred",
+          "aliases": "Naa Gbewa Shrine; Gbewaa Shrine; Naa Gbewaa Sacred Shrine",
+          "description": "A sacred ancestral shrine in Pusiga dedicated to Naa Gbewaa, founder of the Mamprusi, Dagomba and related northern Ghanaian kingdoms. It commemorates the founding of the Mole-Dagbon people.",
+          "source": "https://en.wikipedia.org/wiki/Naa_Gbewaa_Shrine"
+        },
+        {
+          "name": "Wuriyanga Mosque",
+          "town": "Wuriyanga",
+          "region": "Upper East",
+          "category": "Religious & Sacred",
+          "aliases": "Wuriyanga Ancient Mosque; Wuriyanga Mud Mosque",
+          "description": "A historic Sudano-Sahelian style mosque in the Upper East Region located southeast of Bawku and beyond Garu. It is a regional heritage site.",
+          "source": "https://en.wikipedia.org/wiki/Wuriyanga_Mosque"
+        },
+        {
+          "name": "Pwalugu Hydroelectric Power Station",
+          "town": "Pwalugu",
+          "region": "Upper East",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Pwalugu Dam; Pwalugu Hydro-Solar Hybrid Plant; Pwalugu Power Station",
+          "description": "A 60 MW hydroelectric power station under construction on the White Volta at Pwalugu. It is planned to combine with a solar plant to form Ghana's first hydro-solar hybrid power project.",
+          "source": "https://en.wikipedia.org/wiki/Pwalugu_Hydroelectric_Power_Station"
+        },
+        {
+          "name": "Navrongo Solar Power Station",
+          "town": "Navrongo",
+          "region": "Upper East",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Navrongo Solar Plant; Navrongo Solar Farm",
+          "description": "A 2.5 MW solar power plant in Navrongo, Upper East Region. It is one of Ghana's early utility-scale solar generation facilities.",
+          "source": "https://en.wikipedia.org/wiki/Navrongo_Solar_Power_Station"
+        },
+        {
+          "name": "Kulungugu Bomb Site",
+          "town": "Kulungugu",
+          "region": "Upper East",
+          "category": "Heritage & History",
+          "aliases": "Kulungugu Bomb Attack Site; 1962 Kulungugu Bomb Site; Kulungugu Monument",
+          "description": "The site of the 1962 Kulungugu bomb attack, a failed assassination attempt on Ghana's first president, Dr. Kwame Nkrumah. It lies near the Burkina Faso border in Pusiga District.",
+          "source": "https://en.wikipedia.org/wiki/Kulungugu"
+        },
+        {
+          "name": "Sirigu Art and Pottery Village",
+          "town": "Sirigu",
+          "region": "Upper East",
+          "category": "Market & Craft",
+          "aliases": "SWOPA; Sirigu Pottery and Arts Centre; Sirigu Women's Organisation for Pottery and Art",
+          "description": "A community art and pottery centre in Sirigu known for hand-painted pottery, basketry and decorated architecture. The SWOPA centre hosted UN Secretary-General Kofi Annan in 2002.",
+          "source": "https://en.wikipedia.org/wiki/Sirigu,_Ghana"
+        },
+        {
+          "name": "Bolgatanga Market",
+          "town": "Bolgatanga",
+          "region": "Upper East",
+          "category": "Market & Craft",
+          "aliases": "Bolga Market; Bolgatanga Central Market; Bolga Basket Market",
+          "description": "A major twice-weekly market in Bolgatanga where farmers and traders sell livestock and the region's famous woven baskets, leather goods and straw handicrafts.",
+          "source": "https://touringghana.com/upper-east-region/"
+        },
+        {
+          "name": "Bolgatanga Craft Village",
+          "town": "Bolgatanga",
+          "region": "Upper East",
+          "category": "Market & Craft",
+          "aliases": "Bolga Craft Village; Bolgatanga Arts and Crafts Village",
+          "description": "A craft centre in Bolgatanga showcasing the region's basket weaving, leatherwork and metal jewellery. It sits adjacent to the Upper East Regional Museum.",
+          "source": "https://en.wikipedia.org/wiki/Upper_East_Region"
+        },
+        {
+          "name": "Bongo Rocks",
+          "town": "Bongo",
+          "region": "Upper East",
+          "category": "Nature & Wildlife",
+          "aliases": "Bongo Rock Formations; Bongo Hills; Bongo Rocks Landscape",
+          "description": "Distinctive granite rock outcrops around Bongo in the Upper East Region. They form part of the region's savannah landscape near the Burkina Faso border.",
+          "source": "https://en.wikipedia.org/wiki/Upper_East_Region"
+        },
+        {
+          "name": "Kukula Mystery Dam",
+          "town": "Kayoro",
+          "region": "Upper East",
+          "category": "Water & Amusement",
+          "aliases": "Kukula Dam; The Mystery Dam of Kayoro",
+          "description": "A small sacred dam at Kayoro in the Kassena-Nankana area traditionally regarded as mysterious. It lies near Paga and the Burkina Faso border.",
+          "source": "https://visitghana.com/attractions/upper-east-region/"
+        },
+        {
+          "name": "Nasaga Game Reserve",
+          "town": "Paga",
+          "region": "Upper East",
+          "category": "Nature & Wildlife",
+          "aliases": "Nasaga Game Reserve; Nasaga Wildlife Reserve",
+          "description": "A game reserve about 8 km from Paga and the Burkina Faso border. It protects savannah wildlife in the far north-east of the Upper East Region.",
+          "source": "https://en.wikipedia.org/wiki/Paga_Crocodile_Pond"
+        },
+        {
+          "name": "Gologo Festival",
+          "town": "Tongo",
+          "region": "Upper East",
+          "category": "Cultural Village",
+          "aliases": "Gologo/Golib Festival; Golib Festival; Gologo Festival of the Talensi",
+          "description": "An annual festival celebrated by the Talensi of Tongo-Zug in March before the planting of grain. Sacrifices are offered for rain and a good harvest, followed by public dancing.",
+          "source": "https://en.wikipedia.org/wiki/Upper_East_Region"
+        },
+        {
+          "name": "Fao Festival",
+          "town": "Paga",
+          "region": "Upper East",
+          "category": "Cultural Village",
+          "aliases": "Fao Harvest Festival; Fao Festival of Paga; Fao Thanksgiving Festival",
+          "description": "A harvest thanksgiving festival held at Paga, Chiana and Kayoro between November and February. Farmers display stalks of their first millet harvest in gratitude to the gods.",
+          "source": "https://en.wikipedia.org/wiki/Upper_East_Region"
+        },
+        {
+          "name": "Samanpiid Festival",
+          "town": "Bawku",
+          "region": "Upper East",
+          "category": "Cultural Village",
+          "aliases": "Samanpiid Festival of the Kusasi; Samanpiid Harvest Festival",
+          "description": "An annual harvest festival celebrated by the Kusasi people of the Bawku Traditional Area in November and December. It gives thanks to the gods for a good harvest.",
+          "source": "https://en.wikipedia.org/wiki/Upper_East_Region"
+        },
+        {
+          "name": "Boaram Festival",
+          "town": "Bolgatanga",
+          "region": "Upper East",
+          "category": "Cultural Village",
+          "aliases": "Boaram Festival of the Gurunsi; Boaram Harvest Festival",
+          "description": "A festival celebrated by the Gurunsi (Frafra) people of the Upper East Region. It is associated with harvest thanksgiving and traditional music and dance.",
+          "source": "https://en.wikipedia.org/wiki/Upper_East_Region"
+        },
+        {
+          "name": "Tengana Festival",
+          "town": "Balungu",
+          "region": "Upper East",
+          "category": "Cultural Village",
+          "aliases": "Tengana Festival; Tengana Festival of Balungu; Tengana Festival of Winkongo",
+          "description": "A festival celebrated by the people of Balungu, Winkongo and Pwalugu in the Upper East Region. It honours the earth deity and the ancestors.",
+          "source": "https://en.wikipedia.org/wiki/Upper_East_Region"
+        },
+        {
+          "name": "Ndaakoya Festival",
+          "town": "Bolgatanga",
+          "region": "Upper East",
+          "category": "Cultural Village",
+          "aliases": "Ndaakoya Festival; Ndaakoya Festival of the Frafra",
+          "description": "A festival celebrated by the Frafra, Talensi and Nabdam-speaking communities of the Upper East Region. It is a cultural gathering featuring music and dance.",
+          "source": "https://en.wikipedia.org/wiki/Upper_East_Region"
+        }
+      ]
+    },
+    "Upper West": {
+      "towns": [
+        "Wa",
+        "Jirapa",
+        "Lawra",
+        "Nandom",
+        "Nadowli",
+        "Tumu",
+        "Gwollu",
+        "Funsi",
+        "Wechiau",
+        "Issa",
+        "Lambussie",
+        "Hamile",
+        "Kaleo",
+        "Tizza",
+        "Hain",
+        "Tuasa",
+        "Sombo",
+        "Bulenga",
+        "Dahili",
+        "Sankana",
+        "Kassana",
+        "Nakore",
+        "Dondoli",
+        "Daffiama",
+        "Bussie",
+        "Tangasia",
+        "Cherekpong",
+        "Babile",
+        "Dorimon",
+        "Karni",
+        "Naro",
+        "Pulima",
+        "Billaw",
+        "Lassia",
+        "Tuolu",
+        "Kperisi",
+        "Dobile",
+        "Kpongu",
+        "Bamahu",
+        "Loho",
+        "Guo",
+        "Puffien"
+      ],
+      "attractions": [
+        {
+          "name": "Wa Naa's Palace",
+          "town": "Wa",
+          "region": "Upper West",
+          "category": "Heritage & History",
+          "aliases": "Wa Naa Palace; Palace of the Wa Naa; Wa Na's Palace",
+          "description": "The official residence of the Wa Naa, paramount chief of the Wala people, in the heart of Wa. The 19th-century palace is a centre of Wala culture, politics and religion, with graves of former Wa Naas in front.",
+          "source": "https://en.wikipedia.org/wiki/Wa_Naa%27s_Palace"
+        },
+        {
+          "name": "Wechiau Community Hippo Sanctuary",
+          "town": "Wechiau",
+          "region": "Upper West",
+          "category": "Nature & Wildlife",
+          "aliases": "Wechiau Hippo Sanctuary; Wechiau Hippopotamus Sanctuary; Wechiau Community Hippopotamus Sanctuary",
+          "description": "A community-managed sanctuary along a 40 km stretch of the Black Volta near Wechiau that protects a wild hippopotamus population. It is also a noted birdwatching area with over 200 bird species recorded.",
+          "source": "https://en.wikipedia.org/wiki/Wechiau_Community_Hippo_Sanctuary"
+        },
+        {
+          "name": "Gwollu Defence Wall",
+          "town": "Gwollu",
+          "region": "Upper West",
+          "category": "Heritage & History",
+          "aliases": "Gwollu Slave Defence Wall; Gwollu Slave Trade Defence Wall; Gbollu Defence Wall",
+          "description": "A 19th-century wall built by Gwollu Koro Limann as a defence against slave raiders. It is one of Ghana's best-preserved relics of the slave trade era.",
+          "source": "https://en.wikipedia.org/wiki/Gwollu_Defence_Wall"
+        },
+        {
+          "name": "Gbele Resource Centre",
+          "town": "Tumu",
+          "region": "Upper West",
+          "category": "Nature & Wildlife",
+          "aliases": "Gbele Game Production Reserve; Gbelle Game Reserve; Gbele Resource Reserve",
+          "description": "One of Ghana's largest game reserves, located about 17 km south of Tumu. It protects roan antelope, hippos, elephants and many bird species and is the fourth largest reserve in Ghana.",
+          "source": "https://en.wikipedia.org/wiki/Gbele_Resource_Centre"
+        },
+        {
+          "name": "Nakore Mosque",
+          "town": "Nakore",
+          "region": "Upper West",
+          "category": "Religious & Sacred",
+          "aliases": "Nakore Ancient Mosque; Nakore Mud Mosque",
+          "description": "A small historic mosque in Nakore, southwest of Wa, built in the Sudano-Sahelian architectural style. It is one of the region's ancient Sudanese mosques.",
+          "source": "https://en.wikipedia.org/wiki/Nakore_Mosque"
+        },
+        {
+          "name": "Dondoli Mosque",
+          "town": "Dondoli",
+          "region": "Upper West",
+          "category": "Religious & Sacred",
+          "aliases": "Dondoli Ancient Mosque; Dondoli Mud Mosque",
+          "description": "A 19th-century mosque in the village of Dondoli in Wa, built in the Sudano-Sahelian style. It is now in partial ruins and is a protected heritage site.",
+          "source": "https://en.wikipedia.org/wiki/Dondoli_Mosque"
+        },
+        {
+          "name": "Wechiau Mosque",
+          "town": "Wechiau",
+          "region": "Upper West",
+          "category": "Religious & Sacred",
+          "aliases": "Wechiau Ancient Mosque; Wechiau Mud Mosque",
+          "description": "A historic mosque in the village of Wechiau in the Upper West Region. It is one of the region's traditional Sudano-Sahelian mosques.",
+          "source": "https://en.wikipedia.org/wiki/Wechiau_Mosque"
+        },
+        {
+          "name": "Hippo Hide Tree House",
+          "town": "Wechiau",
+          "region": "Upper West",
+          "category": "Nature & Wildlife",
+          "aliases": "Hippo Hide; Hippo Hide Treehouse; Wechiau Tree House",
+          "description": "A tree-house lodge in the Wechiau Community Hippo Sanctuary overlooking the Black Volta. It allows visitors to watch hippos and birds from an elevated hide.",
+          "source": "https://visitghana.com/attractions/upper-west-region/"
+        },
+        {
+          "name": "Bulenga Caves",
+          "town": "Bulenga",
+          "region": "Upper West",
+          "category": "Heritage & History",
+          "aliases": "Bulenga Ancient Caves; Bulenga Slave Caves",
+          "description": "Ancient caves at Bulenga that served as refuges during the slave raids in the Upper West Region. They are among the region's historic cave sites.",
+          "source": "https://visitghana.com/attractions/upper-west-region/"
+        },
+        {
+          "name": "Dahili Caves",
+          "town": "Dahili",
+          "region": "Upper West",
+          "category": "Heritage & History",
+          "aliases": "Dahili Ancient Caves; Dahili Slave Caves",
+          "description": "Historic caves at Dahili used as hiding places during the 19th-century slave raids. They form part of the Upper West Region's slave-trade heritage.",
+          "source": "https://visitghana.com/attractions/upper-west-region/"
+        },
+        {
+          "name": "Sankana Caves",
+          "town": "Sankana",
+          "region": "Upper West",
+          "category": "Heritage & History",
+          "aliases": "Sankana Ancient Caves; Sankana Slave Caves",
+          "description": "Caves at Sankana that provided refuge from slave raiders in the pre-colonial period. The site is associated with local resistance to slave raids.",
+          "source": "https://visitghana.com/attractions/upper-west-region/"
+        },
+        {
+          "name": "Kassana Slave Camp",
+          "town": "Kassana",
+          "region": "Upper West",
+          "category": "Heritage & History",
+          "aliases": "Kassana Slave Market; Kassana Slave Camp and Market",
+          "description": "A former slave camp and market site in the Upper West Region linked to the trans-Saharan and Atlantic slave trade routes.",
+          "source": "https://visitghana.com/attractions/upper-west-region/"
+        },
+        {
+          "name": "Tomb of Hilla Limann",
+          "town": "Gwollu",
+          "region": "Upper West",
+          "category": "Heritage & History",
+          "aliases": "Hilla Limann Tomb; Dr. Hilla Limann Grave",
+          "description": "The tomb of Dr. Hilla Limann, a former president of Ghana, who was born and raised in Gwollu. It is one of the town's principal heritage attractions.",
+          "source": "https://en.wikipedia.org/wiki/Gwollu"
+        },
+        {
+          "name": "Kaleo Solar Power Station",
+          "town": "Kaleo",
+          "region": "Upper West",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Kaleo Solar Plant; Kaleo Power Station",
+          "description": "A 13 MW solar power plant at Kaleo developed by the Volta River Authority between 2020 and 2022. Its output is fed into Ghana's national grid.",
+          "source": "https://en.wikipedia.org/wiki/Kaleo_Solar_Power_Station"
+        },
+        {
+          "name": "Black Volta River",
+          "town": "Wechiau",
+          "region": "Upper West",
+          "category": "Nature & Wildlife",
+          "aliases": "Mouhoun River; Volta Noire; Black Volta",
+          "description": "A major river that forms Ghana's north-western border with Burkina Faso along the Upper West Region. It supports the Wechiau hippo sanctuary and is a key regional waterway.",
+          "source": "https://en.wikipedia.org/wiki/Black_Volta"
+        },
+        {
+          "name": "George Ekem Ferguson's Tomb",
+          "town": "Wa",
+          "region": "Upper West",
+          "category": "Heritage & History",
+          "aliases": "George Ferguson Tomb; Ferguson's Tomb",
+          "description": "The preserved tomb of George Ekem Ferguson, a Ghanaian colonial agent killed by slave raiders in 1897. It is located in Wa and is maintained as a historic site.",
+          "source": "https://touringghana.com/upper-west-region/"
+        },
+        {
+          "name": "Wa Airport",
+          "town": "Wa",
+          "region": "Upper West",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Wa Regional Airport; Wa Airstrip",
+          "description": "An airport serving Wa and the Upper West Region. It connects the regional capital by air and supports travel to the north-west of Ghana.",
+          "source": "https://en.wikipedia.org/wiki/Wa,_Ghana"
+        },
+        {
+          "name": "Dumba Festival",
+          "town": "Wa",
+          "region": "Upper West",
+          "category": "Cultural Village",
+          "aliases": "Dumba Festival of the Wala; Dumba Festival",
+          "description": "A festival celebrated by the Wala people of Wa that includes a ritual testing the chief's fitness to rule. It is marked by drumming, dancing and a durbar.",
+          "source": "https://en.wikipedia.org/wiki/Dumba_Festival"
+        },
+        {
+          "name": "Kobine Festival",
+          "town": "Lawra",
+          "region": "Upper West",
+          "category": "Cultural Village",
+          "aliases": "Kobine Festival of Lawra; Kobina Festival",
+          "description": "A post-harvest festival celebrated by the people of Lawra in early October. It acknowledges the spiritual guidance of the ancestral gods and features dancing competitions.",
+          "source": "https://en.wikipedia.org/wiki/Upper_West_Region"
+        },
+        {
+          "name": "Kakube Festival",
+          "town": "Nandom",
+          "region": "Upper West",
+          "category": "Cultural Village",
+          "aliases": "Kakube Festival of Nandom; Kakube Festival",
+          "description": "A festival celebrated by the Nandom people in late November to early December. It thanks the family gods and asks them to bless the soil and protect the people.",
+          "source": "https://touringghana.com/upper-west-region/"
+        },
+        {
+          "name": "Paaragbiele Festival",
+          "town": "Tumu",
+          "region": "Upper West",
+          "category": "Cultural Village",
+          "aliases": "Paragbiele Festival; Paaragbiele Festival of Tumu",
+          "description": "A festival celebrated by the Tumu people to thank the ancestors and God for guidance over the farming season. Farm produce is exhibited alongside music and dance.",
+          "source": "https://visitghana.com/attractions/upper-west-region/"
+        },
+        {
+          "name": "Tinmaale Festival",
+          "town": "Hain",
+          "region": "Upper West",
+          "category": "Cultural Village",
+          "aliases": "Tinmaale Festival of Hain; Tinmaale Festival",
+          "description": "A festival celebrated by the residents of Hain in the Jirapa District of the Upper West Region.",
+          "source": "https://en.wikipedia.org/wiki/Hain,_Ghana"
+        },
+        {
+          "name": "Damba Festival",
+          "town": "Wa",
+          "region": "Upper West",
+          "category": "Cultural Village",
+          "aliases": "Damba Festival of the Wala; Damba Festival",
+          "description": "A traditional festival widely celebrated in the Upper West Region, including Wa. It is associated with the birth and naming of the Prophet Muhammad and features horseback processions.",
+          "source": "https://en.wikipedia.org/wiki/Upper_West_Region"
+        }
+      ]
+    },
+    "Oti": {
+      "towns": [
+        "Dambai",
+        "Jasikan",
+        "Kadjebi",
+        "Nkwanta",
+        "Kete Krachi",
+        "Chinderi",
+        "Kpassa",
+        "Nkonya Ahenkro",
+        "Likpe-Mate",
+        "Worawora",
+        "Shiare",
+        "Dormabin",
+        "Buem",
+        "Akpafu",
+        "Apesokubi",
+        "Kwadjokrom",
+        "Tapa",
+        "Abotoase",
+        "Bowiri",
+        "Brewaniase",
+        "Pampawie",
+        "Bodada",
+        "Okadjakrom",
+        "Teteman",
+        "Ntruo",
+        "Likpe-Bakua",
+        "Likpe-Agbome",
+        "Likpe-Todome",
+        "Santrokofi",
+        "Odumase",
+        "Keri",
+        "Chilinga",
+        "Ntrubo",
+        "Borae",
+        "Baglo",
+        "Kute",
+        "Ampeyo",
+        "Pusupu",
+        "Bonakye",
+        "Sibi",
+        "Nkonya Ntumuru",
+        "Kwamekrom"
+      ],
+      "attractions": [
+        {
+          "name": "Kyabobo National Park",
+          "town": "Nkwanta",
+          "region": "Oti",
+          "category": "Nature & Wildlife",
+          "aliases": "Kyabobo National Park; Kyabobo Reserve; Kyabobo Park",
+          "description": "A 360 sq km national park in the Oti Region on the border with Togo, established in 1993. It protects elephants, leopards, buffalo and the rock hyrax and is an Important Bird Area.",
+          "source": "https://en.wikipedia.org/wiki/Kyabobo_National_Park"
+        },
+        {
+          "name": "Lake Volta",
+          "town": "Dambai",
+          "region": "Oti",
+          "category": "Water & Amusement",
+          "aliases": "Volta Lake; Lake Volta Reservoir",
+          "description": "The world's largest artificial reservoir by surface area, formed by the Akosombo Dam. It borders the Oti Region and is used for fishing, transport and recreation.",
+          "source": "https://en.wikipedia.org/wiki/Lake_Volta"
+        },
+        {
+          "name": "Mount Dzebobo",
+          "town": "Nkwanta",
+          "region": "Oti",
+          "category": "Scenic & Hiking",
+          "aliases": "Mount Dzebobo; Dzebobo Mountain; Mont Dzebobo",
+          "description": "Ghana's second highest mountain at 876 metres, on the Togo border just south of Kyabobo National Park. Its name means 'seen from afar' in the Ewe language.",
+          "source": "https://en.wikipedia.org/wiki/Mount_Dzebobo"
+        },
+        {
+          "name": "Breast Mountain",
+          "town": "Chilinga",
+          "region": "Oti",
+          "category": "Scenic & Hiking",
+          "aliases": "Breast Mountains; The Breast Mountains; Breast Mountain of Chilinga",
+          "description": "A distinctive twin-peaked mountain in the Oti Region near Chilinga and within Kyabobo National Park. A popular hiking trail leads to its summit.",
+          "source": "https://visitghana.com/attractions/oti-region/"
+        },
+        {
+          "name": "Chaiso Forest Reserve",
+          "town": "Nkwanta",
+          "region": "Oti",
+          "category": "Nature & Wildlife",
+          "aliases": "Chaiso Forest Reserve; Chaiso Reserve",
+          "description": "A forest reserve in the Oti Region listed among the region's notable natural attractions. It protects transitional forest and savannah habitat.",
+          "source": "https://visitghana.com/attractions/oti-region/"
+        },
+        {
+          "name": "Hanging Village, Shiare",
+          "town": "Shiare",
+          "region": "Oti",
+          "category": "Cultural Village",
+          "aliases": "Shiare Hanging Village; The Hanging Village; Shiare Mountain Settlement",
+          "description": "A nine-century-old village settlement built in the Breast Mountains of the Oti Region. It is known as 'The Hanging Village' because of its steep mountain setting.",
+          "source": "https://en.wikipedia.org/wiki/Shiare"
+        },
+        {
+          "name": "Oti River",
+          "town": "Dambai",
+          "region": "Oti",
+          "category": "Water & Amusement",
+          "aliases": "Pendjari River; Oti River; River Oti",
+          "description": "An international river that rises in Benin and flows through Togo before joining the Volta in Ghana. It gives the Oti Region its name and passes Dambai.",
+          "source": "https://en.wikipedia.org/wiki/Oti_River"
+        },
+        {
+          "name": "Kete Krachi Ferry Crossing",
+          "town": "Kete Krachi",
+          "region": "Oti",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Kete Krachi Ferry; Krachi Ferry; Volta Lake Ferry",
+          "description": "A ferry service linking Kete Krachi to Kwadjokrom across Lake Volta. It is an important transport link for the Oti Region.",
+          "source": "https://en.wikipedia.org/wiki/Kete_Krachi"
+        },
+        {
+          "name": "Akwantutenten Festival",
+          "town": "Worawora",
+          "region": "Oti",
+          "category": "Cultural Village",
+          "aliases": "Akwantutenten Festival; Akwantutenten Festival of Worawora",
+          "description": "An annual festival celebrated by the chiefs and people of Worawora in the Jasikan District in September. It is observed by the Akan communities of the area.",
+          "source": "https://en.wikipedia.org/wiki/Akwantutenten_Festival"
+        },
+        {
+          "name": "Rice Festival",
+          "town": "Akpafu",
+          "region": "Oti",
+          "category": "Food & Agritourism",
+          "aliases": "Rice Festival of Akpafu; Akpafu Rice Festival",
+          "description": "An annual harvest festival celebrated by the chiefs and people of Akpafu in the Oti Region. It is held in January and celebrates the local rice harvest.",
+          "source": "https://en.wikipedia.org/wiki/Rice_Festival"
+        },
+        {
+          "name": "Kete Krachi Festival",
+          "town": "Kete Krachi",
+          "region": "Oti",
+          "category": "Cultural Village",
+          "aliases": "Kete Krachi Festival; Krachi Festival",
+          "description": "A festival celebrated in the Kete Krachi area of the Oti Region. It is one of the region's principal cultural events.",
+          "source": "https://visitghana.com/attractions/oti-region/"
+        },
+        {
+          "name": "Nanaba Festival",
+          "town": "Nkwanta",
+          "region": "Oti",
+          "category": "Cultural Village",
+          "aliases": "Nanaba Festival; Nanaba Festival of the Oti Region",
+          "description": "A festival celebrated in the Oti Region and listed by the Ghana Tourism Authority among its key cultural events.",
+          "source": "https://visitghana.com/attractions/oti-region/"
+        },
+        {
+          "name": "Kyabobo Waterfalls",
+          "town": "Nkwanta",
+          "region": "Oti",
+          "category": "Water & Amusement",
+          "aliases": "Kyabobo Falls; Kyabobo Lower Fall; Kyabobo Waterfalls",
+          "description": "Waterfalls inside Kyabobo National Park in the Oti Region. They are among the park's visitor attractions.",
+          "source": "https://en.wikipedia.org/wiki/Kyabobo_National_Park"
+        },
+        {
+          "name": "Kyabobo Hiking Trails",
+          "town": "Nkwanta",
+          "region": "Oti",
+          "category": "Scenic & Hiking",
+          "aliases": "Kyabobo Trails; Kyabobo Hiking and Mountain Biking Trails",
+          "description": "Seven hiking trails and two mountain-biking trails in Kyabobo National Park. The most popular trail follows a ridge to a peak on one of the Breast Mountains.",
+          "source": "https://en.wikipedia.org/wiki/Kyabobo_National_Park"
+        },
+        {
+          "name": "Dambai",
+          "town": "Dambai",
+          "region": "Oti",
+          "category": "Urban Landmark",
+          "aliases": "Dambai; Dambai Town; Dambai Regional Capital",
+          "description": "The capital of the Oti Region, situated on the eastern bank of the Oti River. It is the region's administrative and commercial centre.",
+          "source": "https://en.wikipedia.org/wiki/Dambai"
+        },
+        {
+          "name": "Kete Krachi",
+          "town": "Kete Krachi",
+          "region": "Oti",
+          "category": "Urban Landmark",
+          "aliases": "Kete-Krachi; Kete Krachi Town; Krachi",
+          "description": "A historic town and capital of Krachi West District on the shores of Lake Volta. It has a population of about 11,788 and is a ferry and trading hub.",
+          "source": "https://en.wikipedia.org/wiki/Kete_Krachi"
+        },
+        {
+          "name": "Jasikan",
+          "town": "Jasikan",
+          "region": "Oti",
+          "category": "Urban Landmark",
+          "aliases": "Jasikan; Jasikan Town; Buem",
+          "description": "The capital of Jasikan District and the business hub of the Buem enclave in the Oti Region. It is home to Jasikan College of Education and Bueman Secondary School.",
+          "source": "https://en.wikipedia.org/wiki/Jasikan"
+        },
+        {
+          "name": "Kadjebi",
+          "town": "Kadjebi",
+          "region": "Oti",
+          "category": "Urban Landmark",
+          "aliases": "Kadjebi; Kadjebi Town",
+          "description": "A prominent town and administrative capital of Kadjebi District in the Oti Region. It is the seat of the Kadjebi-Akan Traditional Area.",
+          "source": "https://en.wikipedia.org/wiki/Kadjebi"
+        },
+        {
+          "name": "Nkwanta",
+          "town": "Nkwanta",
+          "region": "Oti",
+          "category": "Urban Landmark",
+          "aliases": "Nkwanta; Nkwanta Town",
+          "description": "The district capital of Nkwanta South Municipal District and the nearest town to Kyabobo National Park. It is a commercial centre in the northern Oti Region.",
+          "source": "https://en.wikipedia.org/wiki/Nkwanta"
+        },
+        {
+          "name": "Worawora",
+          "town": "Worawora",
+          "region": "Oti",
+          "category": "Urban Landmark",
+          "aliases": "Worawora; Worawora Town",
+          "description": "A town in the Oti Region on the Kpando-Dambai road. It hosts the annual Akwantutenten Festival.",
+          "source": "https://en.wikipedia.org/wiki/Worawora"
+        },
+        {
+          "name": "Nkonya Ahenkro",
+          "town": "Nkonya Ahenkro",
+          "region": "Oti",
+          "category": "Urban Landmark",
+          "aliases": "Nkonya Ahenkro; Nkonya Town",
+          "description": "The capital of Biakoye District in the Oti Region. It is the main town of the Nkonya people.",
+          "source": "https://en.wikipedia.org/wiki/Nkonya_Ahenkro"
+        },
+        {
+          "name": "Chinderi",
+          "town": "Chinderi",
+          "region": "Oti",
+          "category": "Urban Landmark",
+          "aliases": "Chinderi; Chinderi Town",
+          "description": "The capital town of the Krachi Nchumuru District in the Oti Region.",
+          "source": "https://en.wikipedia.org/wiki/Chinderi"
+        },
+        {
+          "name": "Kpassa",
+          "town": "Kpassa",
+          "region": "Oti",
+          "category": "Urban Landmark",
+          "aliases": "Kpassa; Kpassa Town",
+          "description": "The capital of Nkwanta North District in the Oti Region, mainly inhabited by Konkomba people. It is a growing farming and commercial centre.",
+          "source": "https://en.wikipedia.org/wiki/Kpassa"
+        }
+      ]
+    },
+    "Western North": {
+      "towns": [
+        "Sefwi Wiawso",
+        "Bibiani",
+        "Sefwi Bekwai",
+        "Enchi",
+        "Juaboso",
+        "Sefwi Akontombra",
+        "Dadieso",
+        "Adabokrom",
+        "Essam",
+        "Bodi",
+        "Chirano",
+        "Awaso",
+        "Anhwiaso",
+        "Sefwi Debiso",
+        "Adwuofua",
+        "Asawinso",
+        "Boinso",
+        "Omanpe",
+        "Sewum",
+        "Jensue",
+        "Nyankomam",
+        "Old Yakasi",
+        "New Yakasi",
+        "Achimfo",
+        "Jema",
+        "Yiwabra",
+        "Abochia",
+        "Nsawora",
+        "Ayiem",
+        "Elluokrom",
+        "Sui",
+        "Boako",
+        "Ahimakrom",
+        "Kunkunso",
+        "Sefwi Dwenase",
+        "Benchema",
+        "Nkatieso",
+        "Afere",
+        "Kama",
+        "Datano",
+        "Amoaya",
+        "Kwawkrom"
+      ],
+      "attractions": [
+        {
+          "name": "Bia National Park",
+          "town": "Sefwi Debiso",
+          "region": "Western North",
+          "category": "Nature & Wildlife",
+          "aliases": "Bia National Park; Bia National Park and Resource Reserve",
+          "description": "A 563 sq km national park in the Bia West District, established as a park in 1974 and part of a UNESCO biosphere reserve. It protects some of Ghana's last untouched forest, with 62 mammal species and over 189 bird species.",
+          "source": "https://en.wikipedia.org/wiki/Bia_National_Park"
+        },
+        {
+          "name": "Bia Resource Reserve",
+          "town": "Sefwi Debiso",
+          "region": "Western North",
+          "category": "Nature & Wildlife",
+          "aliases": "Bia Resource Reserve; Bia Reserve",
+          "description": "The southern part of the Bia Conservancy Area in the Western North Region. Together with Bia National Park it forms a twin conservation area and biosphere reserve.",
+          "source": "https://visitghana.com/attractions/bia-national-park/"
+        },
+        {
+          "name": "Bia Conservancy Area",
+          "town": "Sefwi Debiso",
+          "region": "Western North",
+          "category": "Nature & Wildlife",
+          "aliases": "Bia Biosphere Reserve; Bia Conservancy Area; Bia UNESCO Biosphere Reserve",
+          "description": "A designated UNESCO biosphere reserve in the Western North Region covering nearly 306 sq km. It contains the Bia National Park and the Bia Resource Reserve.",
+          "source": "https://visitghana.com/attractions/bia-national-park/"
+        },
+        {
+          "name": "Chirano Gold Mine",
+          "town": "Chirano",
+          "region": "Western North",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Chirano Gold Mine; Asante Gold Chirano; Chirano Mine",
+          "description": "An underground and open-pit gold mine in the Western North Region within the Bibiani gold belt. It is operated as Asante Gold Chirano Ltd.",
+          "source": "https://en.wikipedia.org/wiki/Chirano_Gold_Mine"
+        },
+        {
+          "name": "Awaso Bauxite Mine",
+          "town": "Awaso",
+          "region": "Western North",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Ghana Bauxite Company Mine; Awaso Bauxite Mine",
+          "description": "A bauxite mine at Awaso near Bibiani operated by the Ghana Bauxite Company. It is served by a branch of the western Ghana rail system.",
+          "source": "https://en.wikipedia.org/wiki/Awaso"
+        },
+        {
+          "name": "Tano River",
+          "town": "Enchi",
+          "region": "Western North",
+          "category": "Nature & Wildlife",
+          "aliases": "Tano River; Tanoe River; River Tano",
+          "description": "A 400 km river that flows through the Western North Region and forms part of Ghana's border with Ivory Coast. The Tano is the largest water body in the Aowin Municipality around Enchi.",
+          "source": "https://en.wikipedia.org/wiki/Tano_River"
+        },
+        {
+          "name": "Ankobra River",
+          "town": "Sefwi Wiawso",
+          "region": "Western North",
+          "category": "Nature & Wildlife",
+          "aliases": "Ankobra River; River Ankobra",
+          "description": "A river that originates north-east of Wiawso in the Western North Region and flows about 190 km to the Gulf of Guinea. It is one of Ghana's largest water basins.",
+          "source": "https://en.wikipedia.org/wiki/Ankobra_River"
+        },
+        {
+          "name": "Bia River",
+          "town": "Adabokrom",
+          "region": "Western North",
+          "category": "Nature & Wildlife",
+          "aliases": "Bia River; River Bia",
+          "description": "A transboundary river that drains the Bia conservation zone in the Western North Region, including Sefwi, Aowin and Suaman. It empties into Aby Lagoon on the Ghana-Ivory Coast border.",
+          "source": "https://en.wikipedia.org/wiki/Bia_River"
+        },
+        {
+          "name": "Dadieso Forest Reserve",
+          "town": "Dadieso",
+          "region": "Western North",
+          "category": "Nature & Wildlife",
+          "aliases": "Dadieso Forest Reserve; Dadieso Reserve",
+          "description": "A forest reserve located at Dadieso, the capital of Suaman District in the Western North Region.",
+          "source": "https://en.wikipedia.org/wiki/Dadieso"
+        },
+        {
+          "name": "Apaso Sacred Site",
+          "town": "Sefwi Debiso",
+          "region": "Western North",
+          "category": "Religious & Sacred",
+          "aliases": "Apaso; Apaso Sacred Site; Apaso Cultural Site",
+          "description": "A sacred cultural site inside Bia National Park near two small pools. Visitors traditionally sacrifice and give gifts to the gods there.",
+          "source": "https://en.wikipedia.org/wiki/Bia_National_Park"
+        },
+        {
+          "name": "Alluolue Festival",
+          "town": "Sefwi Wiawso",
+          "region": "Western North",
+          "category": "Cultural Village",
+          "aliases": "Alluolue Festival; Eluo Festival; Sefwi Yam Festival",
+          "description": "An annual yam festival celebrated by the chiefs and people of Sefwi Wiawso and Sefwi Bekwai, usually in July. It is the common yam festival of the Sefwi traditional states.",
+          "source": "https://en.wikipedia.org/wiki/Alluolue_Festival"
+        },
+        {
+          "name": "Bonsai Waterfalls",
+          "town": "Bibiani",
+          "region": "Western North",
+          "category": "Water & Amusement",
+          "aliases": "Bonsai Waterfalls; Bonsai Falls",
+          "description": "A waterfall listed by the Ghana Tourism Authority among the attractions of the Western North Region.",
+          "source": "https://visitghana.com/attractions/western-north-region/"
+        },
+        {
+          "name": "Sefwi Wiawso",
+          "town": "Sefwi Wiawso",
+          "region": "Western North",
+          "category": "Urban Landmark",
+          "aliases": "Wiawso; Sefwi-Wiawso; Sefwi Wiawso Town",
+          "description": "The capital of the Western North Region and of Sefwi-Wiawso Municipal District. It is the seat of the Omanhene of the Sefwi Wiawso Traditional Area.",
+          "source": "https://en.wikipedia.org/wiki/Sefwi-Wiawso_Municipal_District"
+        },
+        {
+          "name": "Bibiani",
+          "town": "Bibiani",
+          "region": "Western North",
+          "category": "Urban Landmark",
+          "aliases": "Bibiani; Bibiani Town",
+          "description": "A town and capital of the Bibiani/Anhwiaso/Bekwai Municipal Assembly in the Western North Region. It is a centre of gold mining and cocoa trade.",
+          "source": "https://en.wikipedia.org/wiki/Bibiani"
+        },
+        {
+          "name": "Enchi",
+          "town": "Enchi",
+          "region": "Western North",
+          "category": "Urban Landmark",
+          "aliases": "Enchi; Enchi Town",
+          "description": "A town and capital of the Aowin Municipality in the Western North Region. It lies on the Tano River in a cocoa- and timber-producing area.",
+          "source": "https://en.wikipedia.org/wiki/Enchi"
+        },
+        {
+          "name": "Juaboso",
+          "town": "Juaboso",
+          "region": "Western North",
+          "category": "Urban Landmark",
+          "aliases": "Juaboso; Juabeso",
+          "description": "A small town and capital of Juaboso District in the Western North Region. It is a cocoa-farming centre.",
+          "source": "https://en.wikipedia.org/wiki/Juaboso"
+        },
+        {
+          "name": "Sefwi Akontombra",
+          "town": "Sefwi Akontombra",
+          "region": "Western North",
+          "category": "Urban Landmark",
+          "aliases": "Sefwi Akontombra; Akontombra",
+          "description": "A small town and capital of the Sefwi Akontombra District in the Western North Region.",
+          "source": "https://en.wikipedia.org/wiki/Sefwi_Akontombra"
+        },
+        {
+          "name": "Adabokrom",
+          "town": "Adabokrom",
+          "region": "Western North",
+          "category": "Urban Landmark",
+          "aliases": "Adabokrom; Sefwi Adabokrom",
+          "description": "A town in the Western North Region and capital of Bia East District. It is noted for cocoa production.",
+          "source": "https://en.wikipedia.org/wiki/Adabokrom"
+        },
+        {
+          "name": "Essam",
+          "town": "Essam",
+          "region": "Western North",
+          "category": "Urban Landmark",
+          "aliases": "Essam; Essam, Ghana",
+          "description": "A small town and capital of Bia West District in the Western North Region. Its people are mainly Sefwi farmers.",
+          "source": "https://en.wikipedia.org/wiki/Essam,_Ghana"
+        },
+        {
+          "name": "Dadieso",
+          "town": "Dadieso",
+          "region": "Western North",
+          "category": "Urban Landmark",
+          "aliases": "Dadieso; Dadieso Town",
+          "description": "A community and the district capital of the Suaman District in the Western North Region. It is the location of the Dadieso Forest Reserve.",
+          "source": "https://en.wikipedia.org/wiki/Dadieso"
+        },
+        {
+          "name": "Bodi",
+          "town": "Bodi",
+          "region": "Western North",
+          "category": "Urban Landmark",
+          "aliases": "Bodi; Bodi Town",
+          "description": "The capital town of Bodi District in the north-west of the Western North Region.",
+          "source": "https://en.wikipedia.org/wiki/Bodi_District"
+        },
+        {
+          "name": "Sefwi Debiso",
+          "town": "Sefwi Debiso",
+          "region": "Western North",
+          "category": "Urban Landmark",
+          "aliases": "Sefwi Debiso; Debiso",
+          "description": "A town in the Bia West District noted for cocoa and timber production. It serves as a gateway to Bia National Park.",
+          "source": "https://en.wikipedia.org/wiki/Sefwi_Debiso"
+        },
+        {
+          "name": "Sefwi Bekwai",
+          "town": "Sefwi Bekwai",
+          "region": "Western North",
+          "category": "Urban Landmark",
+          "aliases": "Sefwi Bekwai; Bekwai",
+          "description": "One of the largest townships in Sefwi land and one of the three traditional Sefwi states. It co-hosts the Alluolue yam festival with Sefwi Wiawso.",
+          "source": "https://en.wikipedia.org/wiki/Sefwi_people"
+        }
+      ]
+    }
+  }
+}

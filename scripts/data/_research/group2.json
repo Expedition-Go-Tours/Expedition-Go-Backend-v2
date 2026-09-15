@@ -1,0 +1,795 @@
+{
+  "regions": {
+    "Western": {
+      "towns": [
+        "Sekondi-Takoradi", "Takoradi", "Sekondi", "Kwesimintsim", "Effia", "Shama", "Tarkwa", "Bogoso", "Prestea", "Axim",
+        "Agona Nkwanta", "Dixcove", "Butre", "Princes Town", "Akwidaa", "Cape Three Points", "Mpohor", "Daboase", "Manso Amenfi",
+        "Wassa-Akropong", "Asankragua", "Nsuaem", "Bawdie", "Huni Valley", "Damang", "Samreboi", "Aboso", "Ayanfuri", "Tarkwa Banso",
+        "Nkroful", "Kikam", "Beyin", "Half Assini", "Elubo", "Newtown", "Ellenda", "Awiebo", "Eikwe", "Atuabo", "Bonyere",
+        "Adjoa", "Mpatado", "Nsein", "Gwira Banso", "Bamianko", "Aketenchie", "Nkwanta", "Sekyere", "Asemko", "Akropong"
+      ],
+      "attractions": [
+        {
+          "name": "Nzulezo Stilt Village",
+          "town": "Beyin",
+          "region": "Western",
+          "category": "Cultural Village",
+          "aliases": "Nzulezu; Nzulezu Stilt Settlement; Nzulezo Village",
+          "description": "Nzulezo is a village built entirely on stilts and platforms over Lake Tadane near Beyin in the Jomoro District, and was added to the UNESCO World Heritage Tentative List in 2000. Reached only by canoe, it is one of the few ancient stilt settlements left in the world.",
+          "source": "https://en.wikipedia.org/wiki/Nzulezo"
+        },
+        {
+          "name": "Ankasa Conservation Area",
+          "town": "Axim",
+          "region": "Western",
+          "category": "Nature & Wildlife",
+          "aliases": "Ankasa Protected Area; Nini Suhien National Park; Ankasa Forest Reserve",
+          "description": "The Ankasa Conservation Area is a 500 km2 tropical evergreen rainforest in southwestern Ghana that encompasses the Nini Suhien National Park and the Ankasa Forest Reserve. It has the highest biological diversity of any forest in Ghana, with over 800 plant species, 639 butterfly species and more than 190 bird species.",
+          "source": "https://en.wikipedia.org/wiki/Ankasa_Conservation_Area"
+        },
+        {
+          "name": "Cape Three Points",
+          "town": "Cape Three Points",
+          "region": "Western",
+          "category": "Scenic & Hiking",
+          "aliases": "Cape Three Points Lighthouse; Cape of Three Points; Cape Three Points Peninsula",
+          "description": "Cape Three Points is a small peninsula and fishing village in the Ahanta West Municipal District that forms the southernmost tip of Ghana on the Atlantic Ocean. It is known for its 1925 lighthouse and for the discovery of Ghana's offshore oil in commercial quantities nearby.",
+          "source": "https://en.wikipedia.org/wiki/Cape_Three_Points"
+        },
+        {
+          "name": "Fort Metal Cross",
+          "town": "Dixcove",
+          "region": "Western",
+          "category": "Heritage & History",
+          "aliases": "Fort Dixcove; Fort Metalen Kruis; Dixcove Fort",
+          "description": "Fort Metal Cross is a military structure built from 1683 on a promontory at the fishing community of Infuma in Dixcove, Ahanta West District. It was inscribed as a UNESCO World Heritage Site in 1979 as part of the Forts and Castles of Ghana.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Metal_Cross"
+        },
+        {
+          "name": "Fort Apollonia",
+          "town": "Beyin",
+          "region": "Western",
+          "category": "Heritage & History",
+          "aliases": "Fort Willem III; Apollonia Fort; Fort Apollonia Museum",
+          "description": "Fort Apollonia is a fort in Beyin built by the British between 1768 and 1770 on a site used earlier by Swedish and British traders. Inscribed as a UNESCO World Heritage Site in 1979, it has housed the Museum of Nzema Culture and History since 2010.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Apollonia"
+        },
+        {
+          "name": "Fort Saint Anthony",
+          "town": "Axim",
+          "region": "Western",
+          "category": "Heritage & History",
+          "aliases": "Forte de Santo Antonio; Fort Santo Antonio; Fort Sint Anthony",
+          "description": "Fort Saint Anthony was built by the Portuguese in 1515 near Axim and was later captured and expanded by the Dutch before passing to the British in 1872. It was inscribed as a UNESCO World Heritage Site in 1979 and is now owned by the Ghanaian state.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Saint_Anthony"
+        },
+        {
+          "name": "Fort Batenstein",
+          "town": "Butre",
+          "region": "Western",
+          "category": "Heritage & History",
+          "aliases": "Batenstein Fort; Fort Boutry; Fort Batensteyn",
+          "description": "Fort Batenstein was a fort and trading post established by the Dutch on the Gold Coast in 1656 near Butre, where the Treaty of Butre was signed with the Ahanta. It was designated a UNESCO World Heritage Site in 1979 and survives today as a ruin overlooking Butre bay.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Batenstein"
+        },
+        {
+          "name": "Fort Sebastian",
+          "town": "Shama",
+          "region": "Western",
+          "category": "Heritage & History",
+          "aliases": "Fort San Sebastian; Sao Sebastiao de Shema; Shama Fort",
+          "description": "Fort San Sebastian is a former Portuguese fort at Shama, originally built in the 1520s and later held by the Dutch, that forms part of the UNESCO-listed Forts and Castles of Ghana. It is one of the oldest European trading forts on the Gold Coast.",
+          "source": "https://en.wikipedia.org/wiki/Fort_San_Sebastian"
+        },
+        {
+          "name": "Fort Orange",
+          "town": "Sekondi",
+          "region": "Western",
+          "category": "Heritage & History",
+          "aliases": "Fort Sekondi; Sekondi Fort",
+          "description": "Fort Orange at Sekondi was built by the Dutch in the 17th century and later ceded to the British, serving as a trading and administrative post on the Gold Coast. It is among the forts included in the UNESCO World Heritage listing of Ghana's castles and forts.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Orange,_Ghana"
+        },
+        {
+          "name": "Fort Fredericksburg",
+          "town": "Princes Town",
+          "region": "Western",
+          "category": "Heritage & History",
+          "aliases": "Fort Gross Friedrichsburg; Gross Friedrichsburg; Fort Hollandia",
+          "description": "Fort Gross Friedrichsburg was built by Brandenburg-Prussia from 1683 near present-day Princes Town, making it the Brandenburger Gold Coast's principal fort. It was later renamed Fort Hollandia by the Dutch and is part of Ghana's UNESCO-listed forts.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Gro%C3%9F_Friedrichsburg"
+        },
+        {
+          "name": "Butre Beach",
+          "town": "Butre",
+          "region": "Western",
+          "category": "Beach & Coast",
+          "aliases": "Butre Bay; Boutry Beach; Butre Coastal Bay",
+          "description": "Butre Beach lies in the sheltered bay below Fort Batenstein in the Ahanta West District, framed by the historic village of Butre. The bay was historically used as a safe anchorage and landing point by European traders.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Batenstein"
+        },
+        {
+          "name": "Busua Beach",
+          "town": "Busua",
+          "region": "Western",
+          "category": "Beach & Coast",
+          "aliases": "Busua Beach Resort; Busua Bay",
+          "description": "Busua is a coastal town and beach in the Ahanta West District of the Western Region, popular for surfing and seaside recreation. It lies close to the historic fort settlements of Dixcove and Butre.",
+          "source": "https://en.wikipedia.org/wiki/Busua"
+        },
+        {
+          "name": "Akwidaa Beach",
+          "town": "Akwidaa",
+          "region": "Western",
+          "category": "Beach & Coast",
+          "aliases": "Akwidaa Fishing Village; Akwidaa Coastal Village",
+          "description": "Akwidaa is a coastal fishing village in the Ahanta West District between Cape Three Points and Princes Town. Its beach and the nearby Fort Dorothea ruins are visited for their scenery and colonial history.",
+          "source": "https://en.wikipedia.org/wiki/Akwidaa"
+        },
+        {
+          "name": "Dixcove Beach",
+          "town": "Dixcove",
+          "region": "Western",
+          "category": "Beach & Coast",
+          "aliases": "Infuma Beach; Dixcove Coastal Beach",
+          "description": "Dixcove Beach is a fishing-community beach in the Ahanta West District below the promontory of Fort Metal Cross. It is a working landing site for fishermen and a base for visitors to the fort.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Metal_Cross"
+        },
+        {
+          "name": "Western Regional Museum",
+          "town": "Sekondi",
+          "region": "Western",
+          "category": "Museum & Art",
+          "aliases": "Sekondi Museum; Western Region Museum",
+          "description": "The Western Regional Museum in Sekondi is administered by the Ghana Museums and Monuments Board and displays artefacts relating to the history and cultures of the Western Region. It is housed in a colonial-era building in the regional capital area.",
+          "source": "https://en.wikipedia.org/wiki/Western_Regional_Museum"
+        },
+        {
+          "name": "Gold Fields Ghana Tarkwa Mine",
+          "town": "Tarkwa",
+          "region": "Western",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Tarkwa Gold Mine; Goldfields Tarkwa; Tarkwa Nsuaem Gold Mine",
+          "description": "The Gold Fields Ghana Tarkwa Mine is a large open-pit gold mining operation at Tarkwa in the Tarkwa-Nsuaem Municipality. Tarkwa is home to the University of Mines and Technology and is one of Ghana's principal gold-mining centres.",
+          "source": "https://en.wikipedia.org/wiki/Tarkwa"
+        },
+        {
+          "name": "Ghana Goldfields Mine at Tarkwa",
+          "town": "Tarkwa",
+          "region": "Western",
+          "category": "Food & Agritourism",
+          "aliases": "Tarkwa Goldfields; Ghana Goldfields",
+          "description": "The popular Ghana Gold Fields mine is located in the Western Region at Tarkwa, as noted in the region's tourism overview. It is a major industrial site associated with Ghana's gold-mining heritage.",
+          "source": "https://en.wikipedia.org/wiki/Western_Region_(Ghana)"
+        },
+        {
+          "name": "Bogoso Gold Mine",
+          "town": "Bogoso",
+          "region": "Western",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Bogoso Prestea Gold Mine; Bogoso Goldfields",
+          "description": "Bogoso in the Prestea-Huni Valley Municipal District is a historic gold-mining town on the Ankobra River. Mining at Bogoso and neighbouring Prestea dates back to the colonial era and remains a major activity in the district.",
+          "source": "https://en.wikipedia.org/wiki/Bogoso"
+        },
+        {
+          "name": "Ankobra River",
+          "town": "Bogoso",
+          "region": "Western",
+          "category": "Water & Amusement",
+          "aliases": "Ankobra; Ankobra River Ankobra",
+          "description": "The Ankobra River is one of the largest rivers in the Western Region, rising in the highlands and flowing to the Gulf of Guinea near Axim. It was historically important for gold trade and passes through towns such as Bogoso and Bamianko.",
+          "source": "https://en.wikipedia.org/wiki/Ankobra_River"
+        },
+        {
+          "name": "Nkroful Ancestral Home",
+          "town": "Nkroful",
+          "region": "Western",
+          "category": "Heritage & History",
+          "aliases": "Nkroful; Kwame Nkrumah Birthplace; Nkroful Museum",
+          "description": "Nkroful in the Ellembelle District is the birthplace of Kwame Nkrumah, Ghana's first president, and is celebrated as a heritage site. The Nzema community is the site of his original family home and associated memorial structures.",
+          "source": "https://en.wikipedia.org/wiki/Nkroful"
+        }
+      ]
+    },
+    "Volta": {
+      "towns": [
+        "Ho", "Anloga", "Keta", "Hohoe", "Aflao", "Sogakope", "Akatsi", "Juapong", "Denu", "Adaklu Waya",
+        "Ve Golokwati", "Kpetoe", "Ave-Dakpa", "Adidome", "Dzolokpuita", "Dzodze", "Kpandu", "Anfoega", "Battor", "Kpeve",
+        "Tsito", "Peki", "Kpedze", "Wheta", "Leklebi", "Nogokpo", "Abutia-Teti", "Klikor", "Anyako", "Dzelukope",
+        "Mepe", "Alakple", "Vodza", "Adafienu", "Tadzewu", "Have", "Vakpo", "Tanyigbe", "Sokode", "Agate",
+        "Atiavi", "Alavanyo", "Tafi Atome", "Liati Wote", "Gbledi Gbogame", "Amedzofe", "Kpando", "Fiaxor"
+      ],
+      "attractions": [
+        {
+          "name": "Wli Waterfalls",
+          "town": "Hohoe",
+          "region": "Volta",
+          "category": "Nature & Wildlife",
+          "aliases": "Wli Falls; Agumatsa Waterfalls; Wli Agumatsa Falls",
+          "description": "Wli Waterfalls is the highest waterfall in Ghana and the tallest in West Africa, located 20 km from Hohoe in the Hohoe Municipality. Formed by the Agumatsa River, it consists of an upper fall of about 80 metres and a lower fall of about 65 metres within the Agumatsa wildlife sanctuary.",
+          "source": "https://en.wikipedia.org/wiki/Wli_waterfalls"
+        },
+        {
+          "name": "Mount Afadja",
+          "town": "Gbledi Gbogame",
+          "region": "Volta",
+          "category": "Scenic & Hiking",
+          "aliases": "Mount Afadjato; Afadjato; Mountain Afadja",
+          "description": "Mount Afadja, known as Afadjato to the Ewe people, is one of the highest mountains in Ghana, with its summit in the Volta Region near the Togo border. It is one of the most visited tourist attractions in the Volta Region and lies in the Agumatsa Range.",
+          "source": "https://en.wikipedia.org/wiki/Mount_Afadja"
+        },
+        {
+          "name": "Tagbo Falls",
+          "town": "Liati Wote",
+          "region": "Volta",
+          "category": "Nature & Wildlife",
+          "aliases": "Tagbo Waterfall; Tagbo Falls Liati Wote",
+          "description": "Tagbo Falls is a waterfall near Mount Afadja in the Volta Region, located at Liati Wote about 27 kilometres east of Hohoe. The water falls in several stages, with the last stage about 60 metres high, surrounded by rainforest.",
+          "source": "https://en.wikipedia.org/wiki/Tagbo_Falls"
+        },
+        {
+          "name": "Tafi Atome Monkey Sanctuary",
+          "town": "Tafi Atome",
+          "region": "Volta",
+          "category": "Nature & Wildlife",
+          "aliases": "Tafi Atome Monkey Sanctuary and Cultural Village; Tafi-Atome Monkey Sanctuary",
+          "description": "The Tafi Atome Monkey Sanctuary is a traditional sacred grove conservation established in 1993 as a community-based ecotourism project. It is home to mona and patas monkeys, which the local community has protected for generations as sacred messengers of the gods.",
+          "source": "https://en.wikipedia.org/wiki/Tafi_Atome_Monkey_Sanctuary"
+        },
+        {
+          "name": "Mount Adaklu",
+          "town": "Adaklu Waya",
+          "region": "Volta",
+          "category": "Scenic & Hiking",
+          "aliases": "Adaklu Mountain; Mount Adaklu Summit",
+          "description": "Mount Adaklu is a mountain about 12 km from Ho in the Adaklu District, standing roughly 580 m above sea level and venerated by nearby Ewe villages. Guided tours of the mountain are organised for tourists, with profits invested in the community.",
+          "source": "https://en.wikipedia.org/wiki/Mount_Adaklu"
+        },
+        {
+          "name": "Volta Regional Museum",
+          "town": "Ho",
+          "region": "Volta",
+          "category": "Museum & Art",
+          "aliases": "Ho Museum; Volta Museum; Musée régional de la Volta",
+          "description": "The Volta Regional Museum in Ho is an ethnographic museum dedicated to the history and traditions of the Volta Region, administered by the Ghana Museums and Monuments Board. Its exhibits include the Chair of State of the last German colonial governor, woodcraft, pottery, kente textiles, masks and musical instruments.",
+          "source": "https://en.wikipedia.org/wiki/Volta_Regional_Museum"
+        },
+        {
+          "name": "Fort Prinzenstein",
+          "town": "Keta",
+          "region": "Volta",
+          "category": "Heritage & History",
+          "aliases": "Fort Prinsensten; Keta Fort; Prinzenstein Fort",
+          "description": "Fort Prinzenstein is a fort at Keta built by Danish traders in 1784 and used in the slave trade, and is one of the few such forts east of the Volta River. It was designated a UNESCO World Heritage Site in 1979 as part of Ghana's forts and castles.",
+          "source": "https://en.wikipedia.org/wiki/Fort_Prinzenstein"
+        },
+        {
+          "name": "Amedzofe",
+          "town": "Amedzofe",
+          "region": "Volta",
+          "category": "Cultural Village",
+          "aliases": "Amedzofe Village; Amedzofe Mountain Settlement",
+          "description": "Amedzofe is a mountain settlement in the Ho West District at about 677 metres above sea level, known for the Ote Falls, Mount Gemi, its cool weather and landscape. It is home to the oldest EP Church in the Avatime Traditional Area, built in 1889 by German missionaries.",
+          "source": "https://en.wikipedia.org/wiki/Amedzofe,_Ghana"
+        },
+        {
+          "name": "Mount Gemi",
+          "town": "Amedzofe",
+          "region": "Volta",
+          "category": "Scenic & Hiking",
+          "aliases": "Gemi Mountain; Mount Gemi Amedzofe",
+          "description": "Mount Gemi is a mountain near the village of Amedzofe in the Ho West District, described as one of the natural gifts of the Amedzofe area. It offers panoramic views over the Amedzofe settlement and surrounding Volta landscape.",
+          "source": "https://en.wikipedia.org/wiki/Amedzofe,_Ghana"
+        },
+        {
+          "name": "Ote Falls",
+          "town": "Amedzofe",
+          "region": "Volta",
+          "category": "Nature & Wildlife",
+          "aliases": "Ote Otay Falls; Ote Waterfall",
+          "description": "Ote Falls is a waterfall at Amedzofe in the Ho West District of the Volta Region, listed among the four natural gifts of the mountain settlement. It lies near Mount Gemi and the historic mission village.",
+          "source": "https://en.wikipedia.org/wiki/Amedzofe,_Ghana"
+        },
+        {
+          "name": "Tafi Agome Caves",
+          "town": "Tafi Atome",
+          "region": "Volta",
+          "category": "Nature & Wildlife",
+          "aliases": "Tafi Agome Caves; Tafi Agome; Agome Caves",
+          "description": "The Tafi Agome Caves are a cave site in the Volta Region listed among the region's tourist attractions alongside the Tafi Atome Monkey Sanctuary. They are associated with the historical refuge traditions of the Tafi communities.",
+          "source": "https://en.wikipedia.org/wiki/Volta_Region"
+        },
+        {
+          "name": "Amedzofe Falls",
+          "town": "Amedzofe",
+          "region": "Volta",
+          "category": "Nature & Wildlife",
+          "aliases": "Amedzofe Waterfall; Amedzofe Falls",
+          "description": "Amedzofe Falls is a waterfall in the Volta Region listed among the region's waterfalls and tourist attractions. It is found in the mountainous Amedzofe area of the Ho West District.",
+          "source": "https://en.wikipedia.org/wiki/Volta_Region"
+        },
+        {
+          "name": "Biakpa Falls and Caves",
+          "town": "Biakpa",
+          "region": "Volta",
+          "category": "Nature & Wildlife",
+          "aliases": "Biakpa Waterfalls; Biakpa Caves; Biakpa Falls",
+          "description": "Biakpa Falls and Caves are a waterfall and cave attraction in the Volta Region listed among the region's waterfalls and tourist sites. They are located in the Avatime area near the Ghana-Togo borderlands.",
+          "source": "https://en.wikipedia.org/wiki/Volta_Region"
+        },
+        {
+          "name": "Kpoeta Waterfalls",
+          "town": "Kpoeta",
+          "region": "Volta",
+          "category": "Nature & Wildlife",
+          "aliases": "Kpoeta Falls; Kpoeta waterfalls Ho West",
+          "description": "Kpoeta Waterfalls is a waterfall attraction in the Ho West District of the Volta Region, listed among the region's waterfalls. It lies in the forested hills of the district.",
+          "source": "https://en.wikipedia.org/wiki/Volta_Region"
+        },
+        {
+          "name": "Akpom Falls and Logba Tota Cave",
+          "town": "Logba Tota",
+          "region": "Volta",
+          "category": "Nature & Wildlife",
+          "aliases": "Akpom Falls; Logba Tota limestone cave; Logba Tota",
+          "description": "Akpom Falls and the limestone cave at Logba Tota are natural attractions in the Volta Region listed among the region's waterfalls and caves. They are located in the Logba area of the Hohoe and Afadjato South districts.",
+          "source": "https://en.wikipedia.org/wiki/Volta_Region"
+        },
+        {
+          "name": "Liate Wote Snake Village",
+          "town": "Liati Wote",
+          "region": "Volta",
+          "category": "Nature & Wildlife",
+          "aliases": "Liate Wote Snake Village; Liati Wote Snake Farm",
+          "description": "The Snake Village at Liate Wote is a wildlife attraction in the Volta Region listed among the region's tourist sites. It is located near Mount Afadja and Tagbo Falls in the Afadjato South District.",
+          "source": "https://en.wikipedia.org/wiki/Volta_Region"
+        },
+        {
+          "name": "Adidime Waterfalls",
+          "town": "Klefe",
+          "region": "Volta",
+          "category": "Nature & Wildlife",
+          "aliases": "Adidime Falls Klefe; Adidime Waterfalls",
+          "description": "Adidime Waterfalls is a waterfall at Klefe in the Ho Municipal area of the Volta Region, listed among the region's tourist attractions. It lies in the hills close to Ho.",
+          "source": "https://en.wikipedia.org/wiki/Volta_Region"
+        },
+        {
+          "name": "Ave Crocodile Resort",
+          "town": "Ave-Dakpa",
+          "region": "Volta",
+          "category": "Water & Amusement",
+          "aliases": "Ave Dakpa Crocodile Resort; Ave Crocodile Farm",
+          "description": "The Ave Crocodile Resort is a wildlife and leisure attraction at Ave Dakpa in the Akatsi North District of the Volta Region. It is listed among the region's tourist attractions and features a crocodile pond.",
+          "source": "https://en.wikipedia.org/wiki/Volta_Region"
+        },
+        {
+          "name": "Adomi Bridge",
+          "town": "Atimpoku",
+          "region": "Volta",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Adome Bridge; Volta Bridge; Adomi Bridge",
+          "description": "The Adomi Bridge is a suspension bridge spanning the Volta River at Atimpoku, connecting the Volta Region with the Eastern Region on the Accra-Ho road. It is a landmark engineering structure and a well-known viewpoint over the Volta River.",
+          "source": "https://en.wikipedia.org/wiki/Adomi_Bridge"
+        },
+        {
+          "name": "Keta Lagoon",
+          "town": "Keta",
+          "region": "Volta",
+          "category": "Nature & Wildlife",
+          "aliases": "Keta Lagoon Complex; Keta Lagoon Ramsar Site",
+          "description": "The Keta Lagoon is a large brackish lagoon along the Volta Region coast near Keta, forming part of the Keta Lagoon Complex Ramsar site. It is an important habitat for waterbirds and supports local fishing communities.",
+          "source": "https://en.wikipedia.org/wiki/Keta_Lagoon"
+        },
+        {
+          "name": "Tordzie Falls",
+          "town": "Kpandu",
+          "region": "Volta",
+          "category": "Nature & Wildlife",
+          "aliases": "Tordzie Waterfalls; Tordzi Falls",
+          "description": "Tordzie Falls is a waterfall on the Tordzie River near Kpandu in the Volta Region, popular with visitors for its cascades and surrounding vegetation. It is one of several waterfalls found in the region.",
+          "source": "https://en.wikipedia.org/wiki/Volta_Region"
+        }
+      ]
+    },
+    "Bono": {
+      "towns": [
+        "Sunyani", "Berekum", "Dormaa Ahenkro", "Wenchi", "Nsawkaw", "Banda Ahenkro", "Jinijini", "Wamfie", "Nkrankwanta",
+        "Sampa", "Odumase", "Japekrom", "Drobo", "Nsoatre", "Abesim", "Fiapre", "Chiraa", "Bofourkrom", "Atronie",
+        "Kotokrom", "Kwatire", "Nsuatre", "Dormaa Akwamu", "Asuotiano", "Seikwa", "Badu", "Dwenase", "Kwakuanya",
+        "Goka", "Suma Ahenkro", "Buni", "Debibi", "Kwame Twumasi", "Koraso", "Amasu", "Basa", "Tainso", "Bofie",
+        "Akrobi", "Kobedi", "Berekum Fetentaa", "Adom", "Bantama", "Mantukwa", "Nsawkaw Nkwanta", "Bomiri", "Sampa Nkwanta"
+      ],
+      "attractions": [
+        {
+          "name": "Bui National Park",
+          "town": "Nsawkaw",
+          "region": "Bono",
+          "category": "Nature & Wildlife",
+          "aliases": "Bui National Park; Bui Park; Bui Game Reserve",
+          "description": "Bui National Park was established in 1971 and spans 1,821 km2, bisected by the Black Volta River, with the section west of the river in the Bono Region. It is notable for its large hippopotamus population and has been designated an Important Bird Area by BirdLife International.",
+          "source": "https://en.wikipedia.org/wiki/Bui_National_Park"
+        },
+        {
+          "name": "Bui Dam",
+          "town": "Bui",
+          "region": "Bono",
+          "category": "Engineering & Infrastructure",
+          "aliases": "Bui Hydroelectric Project; Bui Power Station; Bui Reservoir",
+          "description": "The Bui Dam is a 400-megawatt hydroelectric project on the Black Volta River at the Bui Gorge, on the border of the Bono and Savannah Regions, inaugurated in December 2013. It is Ghana's second-largest hydroelectric generating plant after the Akosombo Dam.",
+          "source": "https://en.wikipedia.org/wiki/Bui_Dam"
+        },
+        {
+          "name": "Duasidan Monkey Sanctuary",
+          "town": "Dormaa Ahenkro",
+          "region": "Bono",
+          "category": "Nature & Wildlife",
+          "aliases": "Duasidan Monkey Sanctuary; Duasidan; Dormaa Monkey Sanctuary",
+          "description": "Duasidan Monkey Sanctuary is located about 10 km southwest of Dormaa Ahenkro in the Bono Region and hosts a rare breed of mona monkeys. Bamboo trees form a canopy in the forest, which serves as a resting ground for visitors.",
+          "source": "https://en.wikipedia.org/wiki/Bono_Region"
+        },
+        {
+          "name": "Kwafie Festival",
+          "town": "Dormaa Ahenkro",
+          "region": "Bono",
+          "category": "Cultural Village",
+          "aliases": "Kwafie; Kwafie Festival Dormaa; Dormaa Kwafie",
+          "description": "The Kwafie Festival is an annual festival celebrated by the chiefs and people of Dormaa, Berekum and Nsoatre in the Bono Region in November, December or January. It commemorates the ancestors and purification, and features a large bonfire in the palace courtyard.",
+          "source": "https://en.wikipedia.org/wiki/Kwafie_Festival"
+        },
+        {
+          "name": "Munufie Festival",
+          "town": "Drobo",
+          "region": "Bono",
+          "category": "Cultural Village",
+          "aliases": "Munufie; Munufie Festival Drobo; Drobo Munufie",
+          "description": "The Munufie Festival is celebrated by the people of Drobo in the Bono Region to cleanse and feed the stools and gods. It is climaxed with a large bonfire in the palace courtyard and re-enacts the legend that the people of Dormaa brought fire to Ghana.",
+          "source": "https://en.wikipedia.org/wiki/Bono_Region"
+        },
+        {
+          "name": "Akwantukese Festival",
+          "town": "Suma Ahenkro",
+          "region": "Bono",
+          "category": "Cultural Village",
+          "aliases": "Akwantukese; Akwantukese Festival Suma; Suma Akwantukese",
+          "description": "The Akwantukese Festival is celebrated by the people of Suma in the Bono Region in March. It commemorates the historic migration of the Suma people and is observed with traditional rites and a durbar.",
+          "source": "https://en.wikipedia.org/wiki/Bono_Region"
+        },
+        {
+          "name": "Akyiriwia Festival",
+          "town": "Seikwa",
+          "region": "Bono",
+          "category": "Cultural Village",
+          "aliases": "Akyiriwia; Akyiriwia Festival Atomfourso; Atomfourso Akyiriwia",
+          "description": "The Akyiriwia Festival is celebrated by the people of Atomfourso near Seikwa in the Tain District of the Bono Region. It is marked by a ban on noise making and funerals before the main celebration.",
+          "source": "https://en.wikipedia.org/wiki/Bono_Region"
+        },
+        {
+          "name": "Sunyani Central Market",
+          "town": "Sunyani",
+          "region": "Bono",
+          "category": "Market & Craft",
+          "aliases": "Sunyani Market; Sunyani Central Market",
+          "description": "Sunyani Central Market is the principal trading market of Sunyani, the capital of the Bono Region, which is known as the green city of Ghana and a major conference destination. It serves as a hub for the region's agricultural produce and crafts.",
+          "source": "https://en.wikipedia.org/wiki/Sunyani"
+        },
+        {
+          "name": "University of Energy and Natural Resources",
+          "town": "Sunyani",
+          "region": "Bono",
+          "category": "Urban Landmark",
+          "aliases": "UENR; University of Energy and Natural Resources Sunyani",
+          "description": "The University of Energy and Natural Resources is a public university in Sunyani, the capital of the Bono Region. It is one of the region's flagship public institutions and contributes to research on energy and natural resource management.",
+          "source": "https://en.wikipedia.org/wiki/University_of_Energy_and_Natural_Resources"
+        },
+        {
+          "name": "Sunyani Technical University",
+          "town": "Sunyani",
+          "region": "Bono",
+          "category": "Urban Landmark",
+          "aliases": "Sunyani Polytechnic; Sunyani Technical University",
+          "description": "Sunyani Technical University, formerly Sunyani Polytechnic, is a public tertiary institution in Sunyani in the Bono Region. It is one of the region's principal educational landmarks.",
+          "source": "https://en.wikipedia.org/wiki/Sunyani_Technical_University"
+        },
+        {
+          "name": "Berekum Traditional Area",
+          "town": "Berekum",
+          "region": "Bono",
+          "category": "Cultural Village",
+          "aliases": "Berekum; Berekum Traditional Council; Berekum Township",
+          "description": "Berekum is a major town in the Bono Region and the seat of the Berekum Traditional Area, whose chiefs join the Kwafie Festival celebrations. The town is a centre of cashew and timber production in the region.",
+          "source": "https://en.wikipedia.org/wiki/Berekum"
+        },
+        {
+          "name": "Wenchi Traditional Area",
+          "town": "Wenchi",
+          "region": "Bono",
+          "category": "Cultural Village",
+          "aliases": "Wenchi; Wenchi Traditional Council; Wenchi Township",
+          "description": "Wenchi is a town in the Bono Region and the capital of the Wenchi Municipal District, with a long-established traditional chieftaincy. It lies near Bui National Park and the Bui Dam.",
+          "source": "https://en.wikipedia.org/wiki/Wenchi"
+        },
+        {
+          "name": "Dormaa Ahenkro Palace",
+          "town": "Dormaa Ahenkro",
+          "region": "Bono",
+          "category": "Religious & Sacred",
+          "aliases": "Dormaa Palace; Dormaa Ahenkro Traditional Palace",
+          "description": "Dormaa Ahenkro is the capital of the Dormaa Central Municipal District and the seat of the Dormaa Traditional Area. Its palace courtyard is the setting for the bonfire rituals of the Munufie and Kwafie festivals.",
+          "source": "https://en.wikipedia.org/wiki/Dormaa_Ahenkro"
+        },
+        {
+          "name": "Banda Ahenkro Heritage Area",
+          "town": "Banda Ahenkro",
+          "region": "Bono",
+          "category": "Heritage & History",
+          "aliases": "Banda Ahenkro; Banda Traditional Area; Banda",
+          "description": "Banda Ahenkro is the capital of the Banda District in the Bono Region, at the foot of the Banda Mountains near Bui National Park. The area is associated with the historic Banda kingdom and its heritage sites.",
+          "source": "https://en.wikipedia.org/wiki/Banda_Ahenkro"
+        },
+        {
+          "name": "Nsawkaw Township",
+          "town": "Nsawkaw",
+          "region": "Bono",
+          "category": "Urban Landmark",
+          "aliases": "Nsawkaw; Nsawkaw Tain; Nsawkaw Town",
+          "description": "Nsawkaw is the capital of the Tain District in the Bono Region and one of the closest towns to Bui National Park. It is a growing commercial centre on the road to the Bui Dam.",
+          "source": "https://en.wikipedia.org/wiki/Nsawkaw"
+        },
+        {
+          "name": "Sampa Border Market",
+          "town": "Sampa",
+          "region": "Bono",
+          "category": "Market & Craft",
+          "aliases": "Sampa; Sampa Market; Sampa Border Town",
+          "description": "Sampa is the capital of the Jaman North District in the Bono Region and a border town on the Ghana-Côte d'Ivoire frontier. Its market serves cross-border trade in agricultural produce and manufactured goods.",
+          "source": "https://en.wikipedia.org/wiki/Sampa,_Ghana"
+        },
+        {
+          "name": "Japekrom Township",
+          "town": "Japekrom",
+          "region": "Bono",
+          "category": "Urban Landmark",
+          "aliases": "Japekrom; Jaman South; New Drobo",
+          "description": "Japekrom is the capital of the Jaman South Municipal District in the Bono Region. It is a commercial and administrative centre serving the surrounding farming communities.",
+          "source": "https://en.wikipedia.org/wiki/Japekrom,_Ghana"
+        },
+        {
+          "name": "Odumase Township",
+          "town": "Odumase",
+          "region": "Bono",
+          "category": "Urban Landmark",
+          "aliases": "Odumase; Odumase Sunyani West; Odumase Bono",
+          "description": "Odumase is the capital of the Sunyani West District in the Bono Region, close to the regional capital Sunyani. It is an administrative and residential centre in the Sunyani conurbation.",
+          "source": "https://en.wikipedia.org/wiki/Odumase,_Ghana"
+        },
+        {
+          "name": "Nkrankwanta Township",
+          "town": "Nkrankwanta",
+          "region": "Bono",
+          "category": "Urban Landmark",
+          "aliases": "Nkrankwanta; Dormaa West; Nkrankwanta Town",
+          "description": "Nkrankwanta is the capital of the Dormaa West District in the Bono Region. It lies in a productive cocoa and cashew growing area near the Côte d'Ivoire border.",
+          "source": "https://en.wikipedia.org/wiki/Nkrankwanta"
+        },
+        {
+          "name": "Wamfie Township",
+          "town": "Wamfie",
+          "region": "Bono",
+          "category": "Urban Landmark",
+          "aliases": "Wamfie; Dormaa East; Wamfie Town",
+          "description": "Wamfie is the capital of the Dormaa East District in the Bono Region. It is an agricultural and administrative centre in the eastern part of the Dormaa traditional area.",
+          "source": "https://en.wikipedia.org/wiki/Wamfie"
+        },
+        {
+          "name": "Jinijini Township",
+          "town": "Jinijini",
+          "region": "Bono",
+          "category": "Urban Landmark",
+          "aliases": "Jinijini; Berekum West; Jinijini Town",
+          "description": "Jinijini is the capital of the Berekum West District in the Bono Region. It serves the surrounding cocoa, cashew and food-crop farming communities.",
+          "source": "https://en.wikipedia.org/wiki/Jinijini"
+        }
+      ]
+    },
+    "Bono East": {
+      "towns": [
+        "Techiman", "Kintampo", "Nkoranza", "Atebubu", "Yeji", "Prang", "Kwame Danso", "Kajaji", "Tuobodom", "Jema",
+        "Busunya", "Bono Manso", "Tanoboase", "Tanoso", "Buoyem", "Nchiraa", "Forikrom", "Yabraso", "Boabeng", "Fiema",
+        "Techimantia", "Nsuta", "Aworowa", "Dromankese", "Offuman", "Krobo", "Ampoma", "Amantin", "Garadima", "Jato",
+        "Pru", "Parambo", "Dama Nkwanta", "Bassa", "Kintampo Nkwanta", "Anyima", "Ahyiayem", "Baberu", "Dotobaa", "Akroso",
+        "Nkwaeso", "Senya", "Manso", "New Longoro", "Yabraso Kintampo", "Fakwasi", "Kawampe", "Kokofu"
+      ],
+      "attractions": [
+        {
+          "name": "Boabeng-Fiema Monkey Sanctuary",
+          "town": "Boabeng",
+          "region": "Bono East",
+          "category": "Nature & Wildlife",
+          "aliases": "Boabeng-Fiema Monkey Wildlife Sanctuary; Boabeng Fiema; Fiema Monkey Sanctuary",
+          "description": "The Boabeng-Fiema Monkey Wildlife Sanctuary lies at the twin communities of Boabeng and Fiema, 22 km from Nkoranza North District in the Bono East Region. The 4.4 km2 forest is home to about 700 monkeys, including Campbell's mona monkey and the critically endangered Geoffroy's pied colobus.",
+          "source": "https://en.wikipedia.org/wiki/Boabeng-Fiema_Monkey_Sanctuary"
+        },
+        {
+          "name": "Kintampo Waterfalls",
+          "town": "Kintampo",
+          "region": "Bono East",
+          "category": "Nature & Wildlife",
+          "aliases": "Kintampo Waterfalls; Sanders Falls; Kintampo Falls",
+          "description": "Kintampo Waterfalls is one of Ghana's highest waterfalls, located in the Bono East Region on the Pumpum River about 4 km north of Kintampo. It was formerly known as Sanders Falls during colonial times and has three main drops with the longest measuring about 25 metres.",
+          "source": "https://en.wikipedia.org/wiki/Kintampo_waterfalls"
+        },
+        {
+          "name": "Fuller Falls",
+          "town": "Yabraso",
+          "region": "Bono East",
+          "category": "Nature & Wildlife",
+          "aliases": "Kintampo Fuller Falls; Fuller Falls Kintampo; Yabraso Falls",
+          "description": "Fuller Falls falls gently from the east over a series of cascades along the Oyoko River at Yabraso, about 7 km west of Kintampo town, and flows into the Black Volta at Dwire Kumbo. It is listed among the tourist attractions of the Bono East Region.",
+          "source": "https://en.wikipedia.org/wiki/Bono_East_Region"
+        },
+        {
+          "name": "Digya National Park",
+          "town": "Kajaji",
+          "region": "Bono East",
+          "category": "Nature & Wildlife",
+          "aliases": "Digya National Park; Digya Park; Digya Wildlife Park",
+          "description": "Digya National Park is Ghana's oldest wildlife park and lies on the western shore of Lake Volta, adjoining the Bono East Region. It is listed among the tourist attractions of the Bono East Region and protects savanna and woodland wildlife.",
+          "source": "https://en.wikipedia.org/wiki/Digya_National_Park"
+        },
+        {
+          "name": "Buoyem Caves and Bat Colony",
+          "town": "Buoyem",
+          "region": "Bono East",
+          "category": "Nature & Wildlife",
+          "aliases": "Buoyem Caves; Buoyem Bat Cave; Buoyem Caves and Bats Colony",
+          "description": "The Buoyem Caves and bats colony lie within the locality of Buoyem in the Techiman Municipality of the Bono East Region. The dry semi-deciduous forest houses a large colony of rosetta fruit bats, caves, sandstone rocks and waterfalls.",
+          "source": "https://en.wikipedia.org/wiki/Bono_East_Region"
+        },
+        {
+          "name": "Tanoboase Sacred Grove and Shrine",
+          "town": "Tanoboase",
+          "region": "Bono East",
+          "category": "Religious & Sacred",
+          "aliases": "Tano Boase Sacred Grove; Tano Sacred Grove and Shrine; Tanoboase Sacred Grove",
+          "description": "The Tanoboase Sacred Grove and Shrine is near the village of Tanoboase in the Techiman Municipality and is believed to be the cradle and traditional home of the Bono people. It became a Community Based Ecotourism Project in 1996 and is part of Ghana's material cultural heritage.",
+          "source": "https://en.wikipedia.org/wiki/Tanoboase_Sacred_Grove_and_Shrine"
+        },
+        {
+          "name": "Tano River Sacred Fish",
+          "town": "Tanoso",
+          "region": "Bono East",
+          "category": "Religious & Sacred",
+          "aliases": "Tano Sacred Fish; Tanoso Sacred Fish; Tano River Sacred Fish Pond",
+          "description": "The Tano River Sacred Fish site is located at Tanoso near Techiman in the Bono East Region. It houses a pool of sacred fish jealously protected by the community, said to have golden crowns.",
+          "source": "https://en.wikipedia.org/wiki/Bono_East_Region"
+        },
+        {
+          "name": "Nchiraa Waterfalls",
+          "town": "Nchiraa",
+          "region": "Bono East",
+          "category": "Nature & Wildlife",
+          "aliases": "Nchiraa Falls; Nchiraa Waterfalls; Wurobo Ancestral Cave",
+          "description": "Nchiraa Waterfalls offers tourists a hiking adventure on a rocky and challenging footpath that leads to the waterfall in the Bono East Region. The nearby Wurobo Ancestral Cave, about 8 km from Nchiraa settlement, is believed to be the original dwelling place of the people of Nchiraa.",
+          "source": "https://en.wikipedia.org/wiki/Bono_East_Region"
+        },
+        {
+          "name": "Forikrom Boten Caves and Shrines",
+          "town": "Forikrom",
+          "region": "Bono East",
+          "category": "Religious & Sacred",
+          "aliases": "Forikrom Boten Caves; Boten Caves and Shrines; Forikrom Magic Cave",
+          "description": "Forikrom Boten Caves and shrines are located about eight kilometres off the Techiman-Nkoranza road in the Bono East Region. The range of giant rocks forms a shrine and caves, and the largest cave is believed to have been a refuge for women and children in times of war.",
+          "source": "https://en.wikipedia.org/wiki/Bono_East_Region"
+        },
+        {
+          "name": "Kristo Boase Monastery",
+          "town": "Forikrom",
+          "region": "Bono East",
+          "category": "Religious & Sacred",
+          "aliases": "Kristo Boase Monastery; Kristo Boase; Benedictine Monastery Bono East",
+          "description": "Kristo Boase Monastery is home to a small community of eleven Benedictine monks in the Bono East Region. The monastery is set in a place of great beauty and historic interest and welcomes visitors from around the world each year.",
+          "source": "https://en.wikipedia.org/wiki/Bono_East_Region"
+        },
+        {
+          "name": "Bono Manso Slave Trade Site",
+          "town": "Bono Manso",
+          "region": "Bono East",
+          "category": "Heritage & History",
+          "aliases": "Bono Manso; Manso; Bono-Manso",
+          "description": "Bono Manso, located on the Techiman-Kintampo road, was the capital of the Bono state from the 11th century to 1723 and a key node in the Trans-Saharan trade network. It is marketed today as a heritage site associated with the slave trade and is visited by members of the African diaspora.",
+          "source": "https://en.wikipedia.org/wiki/Bono_Manso"
+        },
+        {
+          "name": "Apoo Festival",
+          "town": "Techiman",
+          "region": "Bono East",
+          "category": "Cultural Village",
+          "aliases": "Apoo; Apo Festival; Apoo Festival Bono East",
+          "description": "The Apoo Festival is celebrated in the Bono East Region and is listed among the region's festive celebrations. It is a traditional festival during which grievances may be aired and social harmony is renewed.",
+          "source": "https://en.wikipedia.org/wiki/Apoo_festival"
+        },
+        {
+          "name": "Kurubi Festival",
+          "town": "Kintampo",
+          "region": "Bono East",
+          "category": "Cultural Village",
+          "aliases": "Kurubi; Kurubi Festival Kintampo; Wangara Kurubi",
+          "description": "The Kurubi Festival is celebrated by the people of Kintampo in November, mainly to unite all Wangara descent in Ghana. Virgins normally dance on stilts as an interesting part of the festival.",
+          "source": "https://en.wikipedia.org/wiki/Bono_East_Region"
+        },
+        {
+          "name": "Nkyifie Festival",
+          "town": "Prang",
+          "region": "Bono East",
+          "category": "Cultural Village",
+          "aliases": "Nkyifie; Nkyifie Festival Prang; Prang Nkyifie",
+          "description": "The Nkyifie Festival is celebrated by the people of Prang in the Pru West District in September and October. It is listed among the festive celebrations of the Bono East Region.",
+          "source": "https://en.wikipedia.org/wiki/Bono_East_Region"
+        },
+        {
+          "name": "Fokuo Festival",
+          "town": "Nkoranza",
+          "region": "Bono East",
+          "category": "Cultural Village",
+          "aliases": "Fokuo; Fokuo Festival Nkoranza; Sessiman Ntoa",
+          "description": "The Fokuo Festival is a notable festival celebrated by the people of Nkoranza (Sessiman) in the Bono East Region. It honours the deity called Ntoa, also known as Seesiman Ntoa, who played a critical role in leading the historical wars of the people of Nkoranza.",
+          "source": "https://en.wikipedia.org/wiki/Bono_East_Region"
+        },
+        {
+          "name": "Techiman Central Market",
+          "town": "Techiman",
+          "region": "Bono East",
+          "category": "Market & Craft",
+          "aliases": "Techiman Market; Techiman Central Market; Techiman Great Market",
+          "description": "Techiman Central Market is one of the largest trading markets in Ghana and the commercial hub of the Bono East Region, whose capital is Techiman. It draws traders from across the region for yam, maize, beans, cassava and other produce.",
+          "source": "https://en.wikipedia.org/wiki/Techiman"
+        },
+        {
+          "name": "Techiman Municipality",
+          "town": "Techiman",
+          "region": "Bono East",
+          "category": "Urban Landmark",
+          "aliases": "Techiman; Techiman Municipal District; Techiman City",
+          "description": "Techiman is the capital of the Bono East Region and the seat of the Techiman Municipal District. It succeeded Bono Manso as the leading commercial centre of the area after 1723.",
+          "source": "https://en.wikipedia.org/wiki/Techiman"
+        },
+        {
+          "name": "Kintampo Municipality",
+          "town": "Kintampo",
+          "region": "Bono East",
+          "category": "Urban Landmark",
+          "aliases": "Kintampo; Kintampo North Municipal District; Kintampo Town",
+          "description": "Kintampo is the capital of the Kintampo North Municipal District in the Bono East Region. It is a major town on the Kumasi-Tamale road and a base for visiting Kintampo Waterfalls and Fuller Falls.",
+          "source": "https://en.wikipedia.org/wiki/Kintampo,_Ghana"
+        },
+        {
+          "name": "Yeji Fishing Harbour",
+          "town": "Yeji",
+          "region": "Bono East",
+          "category": "Food & Agritourism",
+          "aliases": "Yeji; Yeji Harbour; Yeji Fishing Port",
+          "description": "Yeji is the capital of the Pru East District in the Bono East Region and a fishing town on the shores of Lake Volta. Fishing activities take place along the region's side of Lake Volta and Yeji is a centre of the trade.",
+          "source": "https://en.wikipedia.org/wiki/Yeji,_Ghana"
+        },
+        {
+          "name": "Atebubu Market",
+          "town": "Atebubu",
+          "region": "Bono East",
+          "category": "Market & Craft",
+          "aliases": "Atebubu; Atebubu Market; Atebubu-Amantin",
+          "description": "Atebubu is the capital of the Atebubu-Amantin Municipal District in the Bono East Region and a commercial centre for yam and food-crop trade. It is listed among the principal towns where yam production is high in the region.",
+          "source": "https://en.wikipedia.org/wiki/Atebubu"
+        },
+        {
+          "name": "Kwame Danso Township",
+          "town": "Kwame Danso",
+          "region": "Bono East",
+          "category": "Urban Landmark",
+          "aliases": "Kwame Danso; Sene West; Kwame Danso Town",
+          "description": "Kwame Danso is the capital of the Sene West District in the Bono East Region, one of the towns where yam production is high. It is an administrative and trading centre in the Sene area near Lake Volta.",
+          "source": "https://en.wikipedia.org/wiki/Kwame_Danso"
+        }
+      ]
+    }
+  }
+}
