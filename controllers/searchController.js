@@ -49,6 +49,38 @@ function compactSearch(x) {
   return normaliseSearch(x).replace(/\s+/g, '');
 }
 
+/**
+ * Does `needle` occur in `haystack` starting at a word boundary?
+ *
+ * Raw `includes` produces mid-word false positives — searching "tema" matched
+ * "Asan·tema·nso". Anchoring to a boundary keeps genuine middle-of-name matches
+ * ("kakum" in "Cape Coast Castle, Kakum") while rejecting those.
+ */
+function wordStartIncludes(haystack, needle) {
+  if (!haystack || !needle) return false;
+  let from = 0;
+  for (;;) {
+    const idx = haystack.indexOf(needle, from);
+    if (idx === -1) return false;
+    if (idx === 0 || !/[a-z0-9]/.test(haystack[idx - 1])) return true;
+    from = idx + 1;
+  }
+}
+
+/**
+ * Word-anchored compact match: the query with separators stripped must match
+ * the name (also stripped) starting at a word boundary. Lets "capecoast" match
+ * "Cape Coast" without letting "tema" match "Asantemanso".
+ */
+function compactWordStartMatch(name, cq) {
+  if (!name || !cq) return false;
+  const words = name.split(/[^a-z0-9]+/).filter(Boolean);
+  for (let i = 0; i < words.length; i++) {
+    if (words.slice(i).join('').startsWith(cq)) return true;
+  }
+  return false;
+}
+
 /* ── Levenshtein (edit distance) — matches prototype ────────────────────── */
 function limitedEditDistance(a, b, maxDist) {
   a = String(a || '');
@@ -113,14 +145,14 @@ function scoreRecord(kind, item, nq, cq) {
   else if (aliases.split(';').map(x => x.trim()).includes(nq)) score = 835;
   // Tier 6: alias prefix
   else if (aliases.startsWith(nq)) score = 800;
-  // Tier 7: contains
-  else if (name.includes(nq)) score = 745;
-  // Tier 8: compact-contains
-  else if (cq.length > 2 && cname.includes(cq)) score = 725;
-  // Tier 9: all-tokens
+  // Tier 7: contains (word-anchored — no mid-word matches)
+  else if (wordStartIncludes(name, nq)) score = 745;
+  // Tier 8: compact-contains (word-anchored, tolerates differing spacing)
+  else if (cq.length > 2 && compactWordStartMatch(name, cq)) score = 725;
+  // Tier 9: all-tokens (each token word-anchored)
   else {
     const tokens = nq.split(' ').filter(Boolean);
-    const allTokens = tokens.length && tokens.every(t => all.includes(t));
+    const allTokens = tokens.length && tokens.every(t => wordStartIncludes(all, t));
     if (allTokens) score = 675 + Math.min(tokens.length * 12, 60);
   }
 
@@ -219,7 +251,13 @@ function placeMeta(place) {
   // exact-city fallback. Take the larger so the number can never undersell.
   const tours = Math.max(place.listingCount || 0, place.tourCount || 0);
   const attractions = place.attractionCount || 0;
-  if (tours > 0) return `${tours} tour${tours === 1 ? '' : 's'} available`;
+  if (tours > 0) {
+    // When the place has no tours of its own the count comes from its region —
+    // say so, rather than implying the tours are here.
+    return place.fallbackRegion
+      ? `${tours} tour${tours === 1 ? '' : 's'} in ${place.fallbackRegion}`
+      : `${tours} tour${tours === 1 ? '' : 's'} available`;
+  }
   if (attractions > 0) return `${attractions} attraction${attractions === 1 ? '' : 's'}`;
   return 'Destination in Ghana';
 }
@@ -241,9 +279,10 @@ async function applyListingCounts(results, placeScope) {
 
   await Promise.all(places.map(async (r) => {
     try {
-      const count = await placeTourCount(r.entity.name, placeScope);
-      if (count == null) return;
-      r.entity.listingCount = count;
+      const result = await placeTourCount(r.entity.name, placeScope);
+      if (result == null) return;
+      r.entity.listingCount = result.count;
+      r.entity.fallbackRegion = result.fallbackRegion;
       r.meta = placeMeta(r.entity);
     } catch { /* keep the cheap exact-city count */ }
   }));

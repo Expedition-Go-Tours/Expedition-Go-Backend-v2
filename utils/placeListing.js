@@ -141,7 +141,8 @@ async function placeTourCount(placeQuery, scope = {}) {
 
   const useRegionFallback = localIds.size === 0 && !!regionFallback && regionFallback.ids.size > 0;
   const effective = useRegionFallback ? new Set([...regionFallback.ids, ...nearIds]) : ids;
-  if (effective.size === 0) return 0;
+  const fallbackRegion = useRegionFallback ? regionFallback.region : null;
+  if (effective.size === 0) return { count: 0, fallbackRegion };
 
   const tourWhere = {
     status: 'ACTIVE',
@@ -149,13 +150,13 @@ async function placeTourCount(placeQuery, scope = {}) {
     id: { in: [...effective] },
   };
 
-  if (scope.ghanaOnly) {
-    return prisma.travioGhanaTour.count({ where: { isActive: true, tour: tourWhere } });
-  }
-  if (scope.expeditionOnly) {
-    return prisma.expeditionTour.count({ where: { isActive: true, tour: tourWhere } });
-  }
-  return prisma.tour.count({ where: tourWhere });
+  const count = scope.ghanaOnly
+    ? await prisma.travioGhanaTour.count({ where: { isActive: true, tour: tourWhere } })
+    : scope.expeditionOnly
+      ? await prisma.expeditionTour.count({ where: { isActive: true, tour: tourWhere } })
+      : await prisma.tour.count({ where: tourWhere });
+
+  return { count, fallbackRegion };
 }
 
 module.exports = { placeTourIds, radiusForType, regionTourIds, placeTourCount };
