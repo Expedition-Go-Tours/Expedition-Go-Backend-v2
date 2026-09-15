@@ -187,7 +187,7 @@ function buildSuggestion(kind, item, score) {
     icon = '▦';
     badge = 'Region';
     subtitle = 'Region in Ghana';
-    meta = `${item.attractionCount || 0} attraction site${(item.attractionCount || 0) === 1 ? '' : 's'} in database`;
+    meta = `${item.attractionCount || 0} attraction site${(item.attractionCount || 0) === 1 ? '' : 's'}`;
   }
 
   return { kind, name, region, subtitle, meta, icon, badge, score, entity: item };
