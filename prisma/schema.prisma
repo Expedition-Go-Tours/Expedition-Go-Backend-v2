@@ -1198,7 +1198,7 @@ model Review {
 
   // Travel metadata
   travelMonth String?
-  companions  String[]
+  companions  String[] @default([])
 
   // Moderation
   status      ReviewStatus @default(PENDING)
