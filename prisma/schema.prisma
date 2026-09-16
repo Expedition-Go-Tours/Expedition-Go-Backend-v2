@@ -686,6 +686,10 @@ model Tour {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // External Reviews (crawled from review platforms)
+  externalReviewUrls Json?            // [{platform: "getyourguide", url: "https://..."}]
+  externalReviews    ExternalReview[]
+
   @@index([supplierId])
   @@index([supplierId, status]) // Supplier dashboard: my tours by status
   @@index([status])
@@ -1870,10 +1874,6 @@ model KeywordRequest {
   reviewedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  // External Reviews (crawled from review platforms)
-  externalReviewUrls Json?            // [{platform: "getyourguide", url: "https://..."}]
-  externalReviews    ExternalReview[]
 
   @@index([supplierId])
   @@index([status])
