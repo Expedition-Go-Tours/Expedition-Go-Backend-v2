@@ -3,6 +3,7 @@ const { signAccessToken } = require('../../config/jwt');
 
 jest.mock('../../utils/prismaClient', () => ({
   travioGhanaTour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
+  expeditionTour: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), count: jest.fn() },
   tour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn() },
   user: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn() },
   supplierProfile: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
@@ -112,7 +113,7 @@ beforeEach(() => {
   jest.clearAllMocks();
 
   // Broad safe defaults — individual tests override as needed
-  const models = ['travioGhanaTour', 'tour', 'user', 'review', 'booking', 'specialOffer', 'payout', 'notification', 'teamMember', 'payoutRequest', 'dispute', 'chatConversation', 'cancellationRecord', 'wishlistItem'];
+  const models = ['travioGhanaTour', 'expeditionTour', 'tour', 'user', 'review', 'booking', 'specialOffer', 'payout', 'notification', 'teamMember', 'payoutRequest', 'dispute', 'chatConversation', 'cancellationRecord', 'wishlistItem'];
   for (const m of models) {
     prisma[m].findMany?.mockResolvedValue([]);
     prisma[m].count?.mockResolvedValue(0);
