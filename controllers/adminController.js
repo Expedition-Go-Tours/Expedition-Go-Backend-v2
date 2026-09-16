@@ -24,6 +24,26 @@ const { enqueueNotification } = require('../utils/queue');
 const { buildTourDiff, computeChangesSummary, mergeDraftContent, buildLiveUpdateData } = require('../utils/tourDraft');
 const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
 
+const GHANA_ROLE = 'ghana';
+
+/**
+ * Prisma filter: exclude bookings from Ghana-based suppliers.
+ *
+ * TravioAfrica admin dashboard should only show data from non-Ghana
+ * suppliers.  Ghana suppliers' data belongs on the TravioGhana admin
+ * dashboard (travioGhanaAdminController).
+ *
+ * Inverse of ghanaBookingWhere() in travioGhanaAdminController.js.
+ */
+function notGhanaSupplierWhere(extra = {}) {
+  return {
+    AND: [
+      { tour: { supplier: { roles: { hasNot: GHANA_ROLE } } } },
+      extra,
+    ],
+  };
+}
+
 function buildAuditMessage(action, resource, metadata = {}) {
   if (action.startsWith('webhook.')) {
     const eventType = action.replace(/^webhook\.(stripe|test)\.?/, '');
@@ -207,7 +227,11 @@ exports.getOverview = catchAsync(async (req, res, next) => {
         COUNT(*) FILTER (WHERE "createdAt" >= ${monthStart})::int AS "monthBookings",
         COUNT(*) FILTER (WHERE "createdAt" >= ${yearStart})::int AS "ytdBookings"
       FROM "Booking"
-      WHERE "createdAt" >= ${scanStart} OR "paidAt" >= ${scanStart}
+      WHERE ("createdAt" >= ${scanStart} OR "paidAt" >= ${scanStart})
+        AND NOT EXISTS (
+          SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+          WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+        )
     `,
 
     /* Signups, active users and total events in a single scan (FILTER aggregation) */
@@ -240,6 +264,10 @@ exports.getOverview = catchAsync(async (req, res, next) => {
             SELECT "createdAt"::date AS date, COUNT(*)::int AS count
             FROM "Booking"
             WHERE "createdAt" >= CURRENT_DATE - (${periodDays - 1} || ' days')::interval
+              AND NOT EXISTS (
+                SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+                WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+              )
             GROUP BY "createdAt"::date
           ) b ON b.date >= d.date AND b.date < d.date + INTERVAL '7 days'
           GROUP BY date_trunc('week', d.date), d.date
@@ -257,6 +285,10 @@ exports.getOverview = catchAsync(async (req, res, next) => {
             SELECT "createdAt"::date AS date, COUNT(*)::int AS count
             FROM "Booking"
             WHERE "createdAt" >= CURRENT_DATE - (${Math.min(periodDays || 7, 30) - 1} || ' days')::interval
+              AND NOT EXISTS (
+                SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+                WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+              )
             GROUP BY "createdAt"::date
           ) b ON d.date = b.date
           ORDER BY d.date ASC
@@ -278,6 +310,10 @@ exports.getOverview = catchAsync(async (req, res, next) => {
         SELECT "tourId", COUNT(*)::int AS booking_count, SUM(total)::float AS total_revenue
         FROM "Booking"
         WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}
+          AND NOT EXISTS (
+            SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+            WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+          )
         GROUP BY "tourId"
       ) b ON b."tourId" = t.id
       LEFT JOIN (
@@ -311,6 +347,9 @@ exports.getOverview = catchAsync(async (req, res, next) => {
         FROM "Booking" bo
         JOIN "Tour" t ON t.id = bo."tourId"
         WHERE bo."paymentStatus" = 'SUCCEEDED' AND bo."paidAt" >= ${currentPeriodStart}
+          AND NOT EXISTS (
+            SELECT 1 FROM "User" _u WHERE _u.id = t."supplierId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+          )
         GROUP BY t."supplierId"
       ) period ON period."supplierId" = u.id
       WHERE sp.status = 'ACTIVE'
@@ -321,7 +360,7 @@ exports.getOverview = catchAsync(async (req, res, next) => {
     /* Booking status distribution (platform-wide snapshot) */
     prisma.booking.groupBy({
       by: ['status'],
-      where: { isSimulated: false },
+      where: { isSimulated: false, ...notGhanaSupplierWhere() },
       _count: true,
     }),
 
@@ -464,6 +503,10 @@ exports.getRevenueTrend = catchAsync(async (req, res, next) => {
       FROM "Booking"
       WHERE "paidAt" >= NOW() - INTERVAL '24 months'
         AND "paymentStatus" = 'SUCCEEDED'
+        AND NOT EXISTS (
+          SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+          WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+        )
       GROUP BY DATE_TRUNC('month', "paidAt")
       ORDER BY month ASC
     `;
@@ -523,8 +566,8 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
   // view or KPI totals. Admins can still audit them via the explicit
   // status=ARCHIVED filter, which bypasses this exclusion.
   const where = filterStatus
-    ? { status: filterStatus }
-    : { status: { not: 'ARCHIVED' } };
+    ? { status: filterStatus, supplier: { roles: { hasNot: GHANA_ROLE } } }
+    : { status: { not: 'ARCHIVED' }, supplier: { roles: { hasNot: GHANA_ROLE } } };
   // category filtering via JSON is expensive at scale; accept this for now.
   if (category) {
     where.categorization = { path: ['category'], equals: category };
@@ -708,6 +751,10 @@ exports.getCLV = catchAsync(async (req, res, next) => {
         ROUND(SUM("total")::numeric, 2)                AS "totalRevenue"
       FROM "Booking"
       WHERE "paymentStatus" = 'SUCCEEDED'
+        AND NOT EXISTS (
+          SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+          WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+        )
     `,
 
     // Repeat booking rate
@@ -716,6 +763,10 @@ exports.getCLV = catchAsync(async (req, res, next) => {
         SELECT "customerId", COUNT(*)::int AS booking_count
         FROM "Booking"
         WHERE "paymentStatus" = 'SUCCEEDED'
+          AND NOT EXISTS (
+            SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+            WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+          )
         GROUP BY "customerId"
       )
       SELECT
@@ -732,6 +783,10 @@ exports.getCLV = catchAsync(async (req, res, next) => {
         SELECT "customerId", COUNT(*)::int AS booking_count
         FROM "Booking"
         WHERE "paymentStatus" = 'SUCCEEDED'
+          AND NOT EXISTS (
+            SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+            WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+          )
         GROUP BY "customerId"
       )
       SELECT
@@ -768,6 +823,10 @@ exports.getCLV = catchAsync(async (req, res, next) => {
       FROM "Booking" b
       JOIN "User" u ON u.id = b."customerId"
       WHERE b."paymentStatus" = 'SUCCEEDED'
+        AND NOT EXISTS (
+          SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+          WHERE _t.id = b."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+        )
       GROUP BY u.id, u.name, u.email
       ORDER BY "totalSpent" DESC
       LIMIT 20
@@ -1231,6 +1290,7 @@ exports.getTodayBookings = catchAsync(async (req, res, next) => {
 
   const bookings = await prisma.booking.findMany({
     where: {
+      ...notGhanaSupplierWhere(),
       createdAt: { gte: startOfDay, lt: endOfDay },
     },
     include: {
@@ -1425,7 +1485,7 @@ exports.getBookings = catchAsync(async (req, res) => {
   const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
   const skip = (pageNum - 1) * limitNum;
 
-  const where = { isSimulated: false };
+  const where = { isSimulated: false, ...notGhanaSupplierWhere() };
 
   if (status) {
     where.status = status;
@@ -1566,8 +1626,8 @@ exports.getBookings = catchAsync(async (req, res) => {
 exports.getBookingById = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
-  const booking = await prisma.booking.findUnique({
-    where: { id },
+  const booking = await prisma.booking.findFirst({
+    where: { id, ...notGhanaSupplierWhere() },
     select: {
       id: true,
       bookingNumber: true,

@@ -3,6 +3,19 @@ const catchAsync = require('../utils/catchAsync');
 
 const CACHE_PREFIX = 'expedition:analytics:';
 const cache = require('../utils/cacheHelper');
+const GHANA_ROLE = 'ghana';
+
+/**
+ * Prisma booking where clause: Expedition bookings excluding Ghana suppliers.
+ *
+ * Ghana suppliers' bookings belong on the TravioGhana admin dashboard,
+ * not the Expedition analytics.  Mirrors the inverse of
+ * ghanaBookingWhere() in travioGhanaAdminController.js.
+ */
+const EXPEDITION_NOT_GHANA = {
+  source: 'EXPEDITION',
+  tour: { supplier: { roles: { hasNot: GHANA_ROLE } } },
+};
 
 function dateRange(startDate, endDate, defaultDays = 30) {
   const end = endDate ? new Date(endDate) : new Date();
@@ -26,24 +39,24 @@ exports.getAnalyticsOverview = catchAsync(async (req, res, next) => {
       pendingPayouts,
     ] = await Promise.all([
       prisma.booking.count({
-        where: { source: 'EXPEDITION', isSimulated: false, createdAt: { gte: start, lte: end } },
+        where: { ...EXPEDITION_NOT_GHANA, isSimulated: false, createdAt: { gte: start, lte: end } },
       }),
       prisma.booking.count({
-        where: { source: 'EXPEDITION', status: 'CONFIRMED', isSimulated: false, createdAt: { gte: start, lte: end } },
+        where: { ...EXPEDITION_NOT_GHANA, status: 'CONFIRMED', isSimulated: false, createdAt: { gte: start, lte: end } },
       }),
       prisma.booking.aggregate({
-        where: { source: 'EXPEDITION', paymentStatus: 'SUCCEEDED', isSimulated: false, createdAt: { gte: start, lte: end } },
+        where: { ...EXPEDITION_NOT_GHANA, paymentStatus: 'SUCCEEDED', isSimulated: false, createdAt: { gte: start, lte: end } },
         _sum: { grossAmount: true },
       }),
       prisma.expeditionTour.count({ where: { isActive: true } }),
       prisma.booking.groupBy({
         by: ['customerId'],
-        where: { source: 'EXPEDITION', isSimulated: false, createdAt: { gte: start, lte: end } },
+        where: { ...EXPEDITION_NOT_GHANA, isSimulated: false, createdAt: { gte: start, lte: end } },
         _count: { customerId: true },
       }),
       prisma.payout.aggregate({
         where: {
-          booking: { source: 'EXPEDITION', isSimulated: false },
+          booking: { ...EXPEDITION_NOT_GHANA, isSimulated: false },
           status: 'PENDING',
           createdAt: { gte: start, lte: end },
         },
@@ -76,7 +89,7 @@ exports.getRevenueTrend = catchAsync(async (req, res, next) => {
   const result = await cache.getOrSet(cacheKey, async () => {
     const bookings = await prisma.booking.findMany({
       where: {
-        source: 'EXPEDITION', isSimulated: false,
+        ...EXPEDITION_NOT_GHANA, isSimulated: false,
         paymentStatus: 'SUCCEEDED',
         paidAt: { gte: start, lte: end },
       },
@@ -123,7 +136,7 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
   const result = await cache.getOrSet(cacheKey, async () => {
     const bookings = await prisma.booking.groupBy({
       by: ['tourId'],
-      where: { source: 'EXPEDITION', isSimulated: false, createdAt: { gte: start, lte: end } },
+      where: { ...EXPEDITION_NOT_GHANA, isSimulated: false, createdAt: { gte: start, lte: end } },
       _count: { id: true },
       _sum: { grossAmount: true },
       orderBy: { _count: { id: 'desc' } },
@@ -170,12 +183,12 @@ exports.getBookingAnalytics = catchAsync(async (req, res, next) => {
     const [statusBreakdown, dailyTrend] = await Promise.all([
       prisma.booking.groupBy({
         by: ['status'],
-        where: { source: 'EXPEDITION', isSimulated: false, createdAt: { gte: start, lte: end } },
+        where: { ...EXPEDITION_NOT_GHANA, isSimulated: false, createdAt: { gte: start, lte: end } },
         _count: { id: true },
       }),
       (async () => {
         const records = await prisma.booking.findMany({
-          where: { source: 'EXPEDITION', isSimulated: false, createdAt: { gte: start, lte: end } },
+          where: { ...EXPEDITION_NOT_GHANA, isSimulated: false, createdAt: { gte: start, lte: end } },
           select: { createdAt: true, grossAmount: true, status: true },
           orderBy: { createdAt: 'asc' },
         });
@@ -237,10 +250,10 @@ exports.getConversionFunnel = catchAsync(async (req, res, next) => {
         },
       }),
       prisma.booking.count({
-        where: { source: 'EXPEDITION', isSimulated: false, createdAt: { gte: start, lte: end } },
+        where: { ...EXPEDITION_NOT_GHANA, isSimulated: false, createdAt: { gte: start, lte: end } },
       }),
       prisma.booking.count({
-        where: { source: 'EXPEDITION', status: 'CONFIRMED', isSimulated: false, createdAt: { gte: start, lte: end } },
+        where: { ...EXPEDITION_NOT_GHANA, status: 'CONFIRMED', isSimulated: false, createdAt: { gte: start, lte: end } },
       }),
     ]);
 
@@ -276,7 +289,7 @@ exports.getCustomerAnalytics = catchAsync(async (req, res, next) => {
 
   const result = await cache.getOrSet(cacheKey, async () => {
     const bookings = await prisma.booking.findMany({
-      where: { source: 'EXPEDITION', isSimulated: false, createdAt: { gte: start, lte: end } },
+      where: { ...EXPEDITION_NOT_GHANA, isSimulated: false, createdAt: { gte: start, lte: end } },
       select: { customerId: true, grossAmount: true, createdAt: true },
     });
 
@@ -329,7 +342,7 @@ exports.getCartAbandonment = catchAsync(async (req, res, next) => {
         select: { createdAt: true, expiresAt: true },
       }),
       prisma.booking.count({
-        where: { source: 'EXPEDITION', isSimulated: false, createdAt: { gte: start, lte: end } },
+        where: { ...EXPEDITION_NOT_GHANA, isSimulated: false, createdAt: { gte: start, lte: end } },
       }),
     ]);
 
