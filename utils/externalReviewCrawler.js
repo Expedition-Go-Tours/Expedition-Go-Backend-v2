@@ -31,7 +31,7 @@ const SYNC_CACHE_TTL = 300; // 5 min
 // Platform detection regexes
 const PLATFORM_PATTERNS = {
   google: /google\.com|goo\.gl|maps\.google/i,
-  viator: /viator\.com/i,
+  viator: /viator\.com|tripadvisor\.com/i,
   getyourguide: /getyourguide\.com/i,
 };
 
