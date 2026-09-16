@@ -1999,3 +1999,37 @@ enum RefundClaimStatus {
   ADMIN_DECLINED // admin declined to release
   WITHDRAWN // customer withdrew (reserved for future)
 }
+
+/// Audit trail of cookie-consent decisions.
+///
+/// The visitor's own browser remains the source of truth for *applying* a
+/// choice (see the storefront's eg_consent cookie); this table exists because
+/// PECR/UK GDPR require us to be able to *demonstrate* that consent was given —
+/// what was agreed to, against which policy version, and when.
+///
+/// Purely additive: no relations, so nothing existing is affected. `userId` is a
+/// soft reference — an erasure request should delete the matching rows.
+model ConsentRecord {
+  id            String   @id @default(cuid())
+  /// Signed-in user, when there was one. Nullable: consent is collected from
+  /// anonymous visitors too.
+  userId        String?
+  /// Which revision of the cookie policy this decision was made against.
+  policyVersion Int
+  necessary     Boolean  @default(true)
+  functional    Boolean  @default(false)
+  analytics     Boolean  @default(false)
+  marketing     Boolean  @default(false)
+  /// accept-all | reject-non-essential | preferences
+  source        String
+  policyPath    String?
+  userAgent     String?
+  ipAddress     String?
+  /// When the visitor made the decision (client clock).
+  decidedAt     DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+  @@index([decidedAt])
+}
+

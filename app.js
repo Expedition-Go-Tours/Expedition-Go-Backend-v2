@@ -312,6 +312,7 @@ const travioAfricaRoutes = require('./routes/travioAfricaRoutes');
 const blogRoutes = require('./routes/blogRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');
 const homepageRoutes = require('./routes/homepageRoutes');
+const consentRoutes = require('./routes/consentRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const maintenanceMode = require('./middleware/maintenanceMode');
 
@@ -353,6 +354,7 @@ app.use('/api/travioafrica', travioAfricaRoutes);
 app.use('/api/blog', blogRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/homepage', homepageRoutes);
+app.use('/api/consent', consentRoutes);
 app.use('/api/analytics', analyticsRoutes);
 
 // SEO prerender — serves pre-rendered HTML with meta tags + JSON-LD to bots.
