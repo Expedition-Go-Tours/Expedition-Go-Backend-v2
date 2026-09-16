@@ -1355,7 +1355,6 @@ exports.createTour = catchAsync(async (req, res, next) => {
       activityType: parsedCategory?.activityType || null,
       difficulty: parsedCategory?.difficulty || null,
       durationMinutes: durationToMinutes(parsedCategory?.duration),
-      externalReviewUrls: req.body.externalReviewUrls || null,
     },
     include: {
       supplier: {
@@ -1686,7 +1685,6 @@ exports.updateTour = catchAsync(async (req, res, next) => {
     if (productContent !== undefined) updateData.productContent = productContent;
     if (schedulesAndPricing !== undefined) updateData.schedulesAndPricing = schedulesAndPricing;
     if (bookingAndTickets !== undefined) updateData.bookingAndTickets = bookingAndTickets;
-    if (req.body.externalReviewUrls !== undefined) updateData.externalReviewUrls = req.body.externalReviewUrls;
     if (coverPhoto !== undefined) updateData.coverPhoto = coverPhoto;
     if (tags !== undefined) updateData.tags = tags;
     // â”€â”€ Live-tour edits stay live â”€â”€

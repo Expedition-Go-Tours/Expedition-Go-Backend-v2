@@ -386,8 +386,7 @@ exports.getTourReviews = catchAsync(async (req, res, next) => {
     limit = 10,
     rating,
     sortBy = 'createdAt',
-    sortOrder = 'desc',
-    includeExternal,
+    sortOrder = 'desc'
   } = req.query;
 
   // Whitelist sortable Review columns — never interpolate a client-supplied
@@ -400,133 +399,76 @@ exports.getTourReviews = catchAsync(async (req, res, next) => {
   const cacheKey = 'reviews:tour:' + tourId + ':' + crypto.createHash('md5').update(JSON.stringify(req.query)).digest('hex');
 
   const result = await cache.getOrSet(cacheKey, async () => {
-    const parsedRating = rating ? parseInt(rating) : null;
-    const parsedLimit = Math.min(parseInt(limit), 100);
-    const parsedPage = parseInt(page);
-    const skip = (parsedPage - 1) * parsedLimit;
-    const wantExternal = includeExternal === 'true' || includeExternal === '1';
+    const where = {
+      tourId,
+      status: 'APPROVED'
+    };
 
-    // ── Internal reviews ──
-    const internalWhere = { tourId, status: 'APPROVED' };
-    if (parsedRating) internalWhere.rating = parsedRating;
-
-    const [internalReviews, internalCount] = await Promise.all([
-      prisma.review.findMany({
-        where: internalWhere,
-        include: {
-          customer: { select: { id: true, name: true, photoURL: true } },
-        },
-        orderBy: { [orderField]: orderDir },
-      }),
-      prisma.review.count({ where: internalWhere }),
-    ]);
-
-    // Normalize internal reviews to common shape
-    const normalizedInternal = internalReviews.map((r) => ({
-      id: r.id,
-      source: 'internal',
-      platform: null,
-      rating: r.rating,
-      title: r.title,
-      text: r.comment,
-      photos: Array.isArray(r.photos) ? r.photos : [],
-      createdAt: r.createdAt,
-      author: {
-        name: r.customer?.name || 'Anonymous',
-        photoURL: r.customer?.photoURL || null,
-      },
-      // Internal-specific fields (preserved for backward compat)
-      _internal: r,
-    }));
-
-    // ── External reviews (only when requested) ──
-    let normalizedExternal = [];
-    let externalCount = 0;
-
-    if (wantExternal) {
-      const externalWhere = { tourId, displayed: true, rating: { gte: 4 } };
-      if (parsedRating) externalWhere.rating = parsedRating;
-
-      const externalReviews = await prisma.externalReview.findMany({
-        where: externalWhere,
-        orderBy: { reviewDate: 'desc' },
-      });
-
-      externalCount = externalReviews.length;
-
-      normalizedExternal = externalReviews.map((r) => ({
-        id: r.id,
-        source: 'external',
-        platform: r.platform,
-        rating: r.rating,
-        title: r.title,
-        text: r.text,
-        photos: [],
-        createdAt: r.reviewDate || r.importedAt,
-        author: {
-          name: r.authorName || 'Anonymous',
-          photoURL: r.authorPhoto || null,
-        },
-      }));
+    if (rating) {
+      where.rating = parseInt(rating);
     }
 
-    // ── Merge, sort, paginate ──
-    const allReviews = [...normalizedInternal, ...normalizedExternal];
+    const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    // Sort
-    allReviews.sort((a, b) => {
-      const aVal = a[orderField] || a.createdAt;
-      const bVal = b[orderField] || b.createdAt;
-      if (orderDir === 'asc') return new Date(aVal) - new Date(bVal);
-      return new Date(bVal) - new Date(aVal);
-    });
-
-    const totalCount = internalCount + externalCount;
-    const totalPages = Math.ceil(totalCount / parsedLimit);
-    const paginatedReviews = allReviews.slice(skip, skip + parsedLimit);
-
-    // ── Combined rating distribution ──
-    const [internalDist, externalDist] = await Promise.all([
+    const [reviews, totalCount, ratingDistribution] = await Promise.all([
+      prisma.review.findMany({
+        where,
+        include: {
+          customer: {
+            select: {
+              id: true,
+              name: true,
+              photoURL: true
+            }
+          }
+        },
+        orderBy: {
+          [orderField]: orderDir
+        },
+        skip,
+        take: parseInt(limit)
+      }),
+      prisma.review.count({ where }),
       prisma.review.groupBy({
         by: ['rating'],
-        where: { tourId, status: 'APPROVED' },
+        where: {
+          tourId,
+          status: 'APPROVED'
+        },
         _count: true,
-        orderBy: { rating: 'desc' },
-      }),
-      wantExternal
-        ? prisma.externalReview.groupBy({
-            by: ['rating'],
-            where: { tourId, displayed: true, rating: { gte: 4 } },
-            _count: true,
-            orderBy: { rating: 'desc' },
-          })
-        : Promise.resolve([]),
+        orderBy: {
+          rating: 'desc'
+        }
+      })
     ]);
 
-    // Merge distributions
-    const distMap = {};
-    for (const d of internalDist) {
-      distMap[d.rating] = (distMap[d.rating] || 0) + d._count;
-    }
-    for (const d of externalDist) {
-      distMap[d.rating] = (distMap[d.rating] || 0) + d._count;
-    }
-    const ratingDistribution = Object.entries(distMap)
-      .map(([r, count]) => ({ rating: parseInt(r), _count: count }))
-      .sort((a, b) => b.rating - a.rating);
+    const totalPages = Math.ceil(totalCount / parseInt(limit));
+
+    const optimizedReviews = reviews.map((review) => ({
+      ...review,
+      photos: Array.isArray(review.photos)
+        ? review.photos
+        : review.photos,
+      customer: {
+        ...review.customer,
+        photoURL: review.customer.photoURL
+          ? review.customer.photoURL
+          : review.customer.photoURL,
+      },
+    }));
 
     return {
       status: 'success',
       data: {
-        reviews: paginatedReviews,
+        reviews: optimizedReviews,
         pagination: {
-          currentPage: parsedPage,
+          currentPage: parseInt(page),
           totalPages,
           totalCount,
-          limit: parsedLimit,
+          limit: parseInt(limit)
         },
-        ratingDistribution,
-      },
+        ratingDistribution
+      }
     };
   }, 300);
 

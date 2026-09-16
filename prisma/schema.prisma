@@ -686,10 +686,6 @@ model Tour {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // External Reviews (crawled from review platforms)
-  externalReviewUrls Json?            // [{platform: "getyourguide", url: "https://..."}]
-  externalReviews    ExternalReview[]
-
   @@index([supplierId])
   @@index([supplierId, status]) // Supplier dashboard: my tours by status
   @@index([status])
@@ -1237,29 +1233,6 @@ model Review {
   @@index([createdAt])
   @@index([tourId, status, rating]) // Tour page: approved reviews sorted by rating
   @@index([status, createdAt]) // Moderation queue
-}
-
-model ExternalReview {
-  id           String    @id @default(cuid())
-  tourId       String
-  tour         Tour      @relation(fields: [tourId], references: [id], onDelete: Cascade)
-  platform     String    // "google" | "viator" | "getyourguide" | "other"
-  platformUrl  String    // the source URL
-  externalId   String?   // platform's review ID (for dedup)
-  authorName   String?
-  authorPhoto  String?
-  rating       Float?    // normalized to 1-5
-  title        String?
-  text         String?
-  reviewDate   DateTime?
-  language     String?
-  importedAt   DateTime  @default(now())
-  verified     Boolean   @default(false)  // shown immediately, admin can flag
-  displayed    Boolean   @default(true)
-
-  @@unique([tourId, platform, externalId])
-  @@index([tourId])
-  @@index([tourId, displayed, reviewDate])
 }
 
 model CartItem {
