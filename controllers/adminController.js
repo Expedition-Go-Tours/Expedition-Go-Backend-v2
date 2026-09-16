@@ -38,7 +38,7 @@ const GHANA_ROLE = 'ghana';
 function notGhanaSupplierWhere(extra = {}) {
   return {
     AND: [
-      { tour: { supplier: { roles: { hasNot: GHANA_ROLE } } } },
+      { NOT: { tour: { supplier: { roles: { has: GHANA_ROLE } } } } },
       extra,
     ],
   };
@@ -566,8 +566,8 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
   // view or KPI totals. Admins can still audit them via the explicit
   // status=ARCHIVED filter, which bypasses this exclusion.
   const where = filterStatus
-    ? { status: filterStatus, supplier: { roles: { hasNot: GHANA_ROLE } } }
-    : { status: { not: 'ARCHIVED' }, supplier: { roles: { hasNot: GHANA_ROLE } } };
+    ? { status: filterStatus, NOT: { supplier: { roles: { has: GHANA_ROLE } } } }
+    : { status: { not: 'ARCHIVED' }, NOT: { supplier: { roles: { has: GHANA_ROLE } } } };
   // category filtering via JSON is expensive at scale; accept this for now.
   if (category) {
     where.categorization = { path: ['category'], equals: category };
