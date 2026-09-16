@@ -82,9 +82,18 @@ async function fetchPage(url) {
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Cache-Control': 'no-cache',
+        'Sec-Ch-Ua': '"Chromium";v="131", "Not_A Brand";v="24"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
       },
       signal: controller.signal,
       redirect: 'follow',
@@ -93,6 +102,11 @@ async function fetchPage(url) {
     clearTimeout(timeout);
 
     if (!response.ok) {
+      // If fetch fails with 403/429, try Playwright fallback
+      if (response.status === 403 || response.status === 429) {
+        logger.info(`[ExternalReview] fetch() got ${response.status} for ${url}, trying headless browser...`);
+        return await fetchWithBrowser(url);
+      }
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
@@ -101,9 +115,73 @@ async function fetchPage(url) {
   } catch (err) {
     clearTimeout(timeout);
     if (err.name === 'AbortError') {
-      throw new Error(`Fetch timeout after ${FETCH_TIMEOUT_MS}ms: ${url}`);
+      // Timeout — try headless browser
+      logger.info(`[ExternalReview] fetch() timeout for ${url}, trying headless browser...`);
+      return await fetchWithBrowser(url);
     }
     throw err;
+  }
+}
+
+// ─── Headless Browser Fallback ──────────────────────────────────────
+
+async function fetchWithBrowser(url) {
+  // Try Puppeteer first (lighter), fall back to Playwright
+  try {
+    return await fetchWithPuppeteer(url);
+  } catch (err) {
+    logger.info(`[ExternalReview] Puppeteer failed (${err.message}), trying Playwright...`);
+    return await fetchWithPlaywright(url);
+  }
+}
+
+async function fetchWithPuppeteer(url) {
+  let browser = null;
+  try {
+    const puppeteer = require('puppeteer');
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    });
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+    await page.setViewport({ width: 1920, height: 1080 });
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    // Scroll to trigger lazy-loaded reviews
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await new Promise((r) => setTimeout(r, 2000));
+    const html = await page.content();
+    const finalUrl = page.url();
+    return { html, finalUrl };
+  } catch (err) {
+    throw new Error(`Puppeteer fetch failed: ${err.message}`);
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
+async function fetchWithPlaywright(url) {
+  let browser = null;
+  try {
+    const { chromium } = require('playwright');
+    browser = await chromium.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    });
+    const page = await context.newPage();
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(2000);
+    const html = await page.content();
+    const finalUrl = page.url();
+    return { html, finalUrl };
+  } catch (err) {
+    throw new Error(`Playwright fetch failed: ${err.message}`);
+  } finally {
+    if (browser) await browser.close().catch(() => {});
   }
 }
 
