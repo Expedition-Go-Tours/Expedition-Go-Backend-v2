@@ -449,17 +449,24 @@ async function crawlReviews(url, platform, tourTitle) {
 
     // 2. Check if we got a real page or a challenge page
     if (isChallengePage(html)) {
-      throw new Error('Bot protection challenge detected — page has no review content. Consider using the platform API or a captcha-solving service.');
+      throw new Error('Bot protection challenge detected (DataDome/Cloudflare). This platform needs its official API or a captcha-solving service.');
     }
 
     // 3. Extract review section (smart trimming)
     const sectionHtml = extractReviewSection(html, platform);
 
-    // 3. AI extraction
+    // 4. AI extraction
     const rawReviews = await extractReviewsWithAI(sectionHtml, platform, tourTitle);
 
-    // 4. Filter and normalize
+    // 5. Filter and normalize
     reviews = filterAndNormalize(rawReviews);
+
+    // 6. If the AI found nothing AND the source HTML had no review markers,
+    //    the page is a client-rendered shell — report it instead of silently
+    //    returning zero so the supplier knows the URL can't be crawled.
+    if (rawReviews.length === 0 && !hasReviewContent(html)) {
+      throw new Error('No review content found on the page — the platform loads reviews client-side or blocks automated access. Use the platform API or add reviews manually.');
+    }
 
     logger.info(`[ExternalReview] Crawled ${url}: ${rawReviews.length} raw → ${reviews.length} filtered (4+ stars)`);
   } catch (err) {
