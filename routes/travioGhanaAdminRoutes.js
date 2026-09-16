@@ -328,12 +328,12 @@ const chatController = require('../controllers/chatController');
 router.get('/chat/conversations', chatController.getConversations);
 router.post('/chat/conversations', chatController.getOrCreateConversation);
 router.get('/chat/conversations/unread-count', chatController.getUnreadCount);
-router.get('/chat/conversations/:conversationId/messages', chatController.getMessages);
-router.post('/chat/conversations/:conversationId/messages', chatController.sendMessage);
-router.patch('/chat/conversations/:conversationId/read', chatController.markAsRead);
-router.put('/chat/conversations/:conversationId/messages/:messageId', chatController.updateMessage);
-router.delete('/chat/conversations/:conversationId/messages/:messageId', chatController.deleteMessage);
-router.delete('/chat/conversations/:conversationId', chatController.deleteConversation);
+router.get('/chat/conversations/:id/messages', chatController.getMessages);
+router.post('/chat/conversations/:id/messages', chatController.sendMessage);
+router.patch('/chat/conversations/:id/read', chatController.markAsRead);
+router.put('/chat/conversations/:id/messages/:messageId', chatController.updateMessage);
+router.delete('/chat/conversations/:id/messages/:messageId', chatController.deleteMessage);
+router.delete('/chat/conversations/:id', chatController.deleteConversation);
 router.post('/chat/upload', chatController.uploadImage);
 router.get('/chat/admin-support', chatController.getAdminSupport);
 
