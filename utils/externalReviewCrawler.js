@@ -88,6 +88,35 @@ function isChallengePage(html) {
   return indicators.some((i) => lower.includes(i.toLowerCase()));
 }
 
+/**
+ * Heuristic: does this HTML actually contain review content?
+ *
+ * A static fetch of a client-rendered page (GetYourGuide, Google Maps) returns
+ * the SPA shell with an empty review list. These markers indicate real reviews:
+ *   - a non-empty review list in embedded state ("reviews":[{...}])
+ *   - review card markup (data-test="review", review-card, review-item…)
+ *   - a totalReviews count greater than zero
+ */
+function hasReviewContent(html) {
+  if (!html || html.length < 2000) return false;
+
+  // Non-empty embedded review arrays
+  if (/"reviews"\s*:\s*\[\s*\{/.test(html)) return true;
+  if (/"reviewsWithMedia"\s*:\s*\[\s*\{/.test(html)) return true;
+
+  // Review card markup
+  if (/data-test="review/.test(html)) return true;
+  if (/class="[^"]*review-card/.test(html)) return true;
+  if (/class="[^"]*review-item/.test(html)) return true;
+  if (/data-reviewid=/.test(html)) return true;
+
+  // A positive review count
+  const totalMatch = html.match(/"totalReviews"\s*:\s*(\d+)/);
+  if (totalMatch && parseInt(totalMatch[1], 10) > 0) return true;
+
+  return false;
+}
+
 // ─── HTML Fetching ──────────────────────────────────────────────────
 
 async function fetchPage(url) {
@@ -118,7 +147,7 @@ async function fetchPage(url) {
     clearTimeout(timeout);
 
     if (!response.ok) {
-      // If fetch fails with 403/429, try Playwright fallback
+      // If fetch fails with 403/429, try browser fallback
       if (response.status === 403 || response.status === 429) {
         logger.info(`[ExternalReview] fetch() got ${response.status} for ${url}, trying headless browser...`);
         return await fetchWithBrowser(url);
@@ -127,6 +156,21 @@ async function fetchPage(url) {
     }
 
     const html = await response.text();
+
+    // Static fetch often returns the SPA shell without reviews (GetYourGuide,
+    // Google load reviews client-side). If the HTML is a challenge page or
+    // carries no review content, retry through a real browser.
+    if (isChallengePage(html) || !hasReviewContent(html)) {
+      logger.info(`[ExternalReview] fetch() returned no review content for ${url}, trying headless browser...`);
+      try {
+        return await fetchWithBrowser(url);
+      } catch (browserErr) {
+        logger.warn(`[ExternalReview] Browser fallback failed: ${browserErr.message}`);
+        // Return the original HTML so the caller can report a clear error
+        return { html, finalUrl: response.url };
+      }
+    }
+
     return { html, finalUrl: response.url };
   } catch (err) {
     clearTimeout(timeout);
@@ -577,6 +621,11 @@ async function runWeeklyReviewSync() {
 module.exports = {
   detectPlatform,
   fetchPage,
+  fetchWithBrowser,
+  fetchWithPuppeteer,
+  fetchWithPlaywright,
+  isChallengePage,
+  hasReviewContent,
   extractReviewSection,
   extractReviewsWithAI,
   filterAndNormalize,
