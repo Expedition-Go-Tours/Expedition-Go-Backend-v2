@@ -843,6 +843,12 @@ exports.getTours = catchAsync(async (req, res, next) => {
             totalBookings: true, totalRevenue: true, averageRating: true,
             reviewCount: true, viewCount: true, createdAt: true,
             supplier: { select: { id: true, name: true, email: true } },
+            expeditionTour: {
+              select: {
+                isActive: true, bookingFlow: true, externalUrl: true,
+                displayOrder: true, isFeatured: true,
+              },
+            },
           },
         },
       },

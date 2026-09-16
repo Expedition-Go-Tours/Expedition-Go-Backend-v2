@@ -137,7 +137,9 @@ exports.getMonthlyRevenue = catchAsync(async (req, res) => {
 /**
  * GET /api/travioghana/supplier/tours
  *
- * Supplier's Ghana tours (via TravioGhanaTour model).
+ * Supplier's storefront listings across BOTH Ghana (TravioGhanaTour) and
+ * Expedition (ExpeditionTour) — each row carries a `storefront` marker
+ * ('GHANA' | 'EXPEDITION') so the frontend can badge / read-only-gate listings.
  */
 exports.getSupplierTours = catchAsync(async (req, res) => {
   const supplierId = req.user.id;
@@ -148,36 +150,67 @@ exports.getSupplierTours = catchAsync(async (req, res) => {
   const where = { tour: { supplierId } };
   if (status) where.isActive = status === 'ACTIVE';
 
-  const [records, total] = await Promise.all([
-    prisma.travioGhanaTour.findMany({
-      where,
-      skip,
-      take,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        tour: {
-          select: {
-            id: true, title: true, slug: true, coverPhoto: true, photos: true,
-            category: true, status: true, draftStatus: true, averageRating: true,
-            reviewCount: true, totalBookings: true, durationMinutes: true,
-            city: true, country: true, description: true, tags: true,
-            schedulesAndPricing: true, productContent: true, categorization: true,
-            bookingAndTickets: true, createdAt: true, updatedAt: true,
-            _count: { select: { bookings: true } },
-            supplier: { select: { id: true, name: true, photoURL: true } },
-          },
-        },
-      },
-    }),
-    prisma.travioGhanaTour.count({ where }),
+  const listingSelect = {
+    id: true, tourId: true, isActive: true, bookingFlow: true, externalUrl: true,
+    displayOrder: true, isFeatured: true, createdAt: true, updatedAt: true,
+  };
+  const tourSelect = {
+    select: {
+      id: true, title: true, slug: true, coverPhoto: true, photos: true,
+      category: true, status: true, draftStatus: true, averageRating: true,
+      reviewCount: true, totalBookings: true, durationMinutes: true,
+      city: true, country: true, description: true, tags: true,
+      schedulesAndPricing: true, productContent: true, categorization: true,
+      bookingAndTickets: true, createdAt: true, updatedAt: true,
+      _count: { select: { bookings: true } },
+      supplier: { select: { id: true, name: true, photoURL: true } },
+    },
+  };
+
+  const [ghanaRows, expeditionRows] = await Promise.all([
+    prisma.travioGhanaTour.findMany({ where, select: { ...listingSelect, tour: tourSelect } }),
+    prisma.expeditionTour.findMany({ where, select: { ...listingSelect, tour: tourSelect } }),
   ]);
+
+  const mapRow = (r, storefront) => ({
+    ...r,
+    ...r.tour,
+    storefront,
+    bookings: r.tour._count?.bookings ?? 0,
+    _count: undefined,
+  });
+
+  // A Tour can be listed on both storefronts — dedupe by tourId so each tour
+  // appears once, tagged with its storefront presence ('GHANA' | 'EXPEDITION' |
+  // 'BOTH'). Ghana rows are primary (manageable); expedition presence is
+  // surfaced via `expeditionListing` so the frontend can badge/read-only-gate.
+  const merged = new Map();
+  for (const r of ghanaRows) merged.set(r.tourId, mapRow(r, 'GHANA'));
+  for (const r of expeditionRows) {
+    const row = mapRow(r, 'EXPEDITION');
+    if (merged.has(r.tourId)) {
+      merged.set(r.tourId, {
+        ...merged.get(r.tourId),
+        storefront: 'BOTH',
+        expeditionListing: {
+          isActive: r.isActive, bookingFlow: r.bookingFlow, externalUrl: r.externalUrl,
+          displayOrder: r.displayOrder, isFeatured: r.isFeatured,
+        },
+      });
+    } else {
+      merged.set(r.tourId, row);
+    }
+  }
+
+  const all = [...merged.values()].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  const total = all.length;
+  const tours = all.slice(skip, skip + take);
 
   res.json({
     status: 'success',
-    data: {
-      tours: records.map(r => ({ ...r, ...r.tour, bookings: r.tour._count?.bookings ?? 0, _count: undefined })),
-      pagination: { currentPage: parseInt(page), totalPages: Math.ceil(total / take), totalCount: total, limit: take },
-    },
+    data: { tours },
+    pagination: { currentPage: parseInt(page), totalPages: Math.ceil(total / take), totalCount: total, limit: take },
   });
 });
 
@@ -196,11 +229,13 @@ exports.getSupplierReviews = catchAsync(async (req, res) => {
   const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
   const take = Math.min(parseInt(limit), 50);
 
-  const supplierTours = await prisma.travioGhanaTour.findMany({
-    where: { tour: { supplierId } },
-    select: { tourId: true },
-  });
-  const tourIds = supplierTours.map(t => t.tourId);
+  const [ghanaTours, expeditionTours] = await Promise.all([
+    prisma.travioGhanaTour.findMany({ where: { tour: { supplierId } }, select: { tourId: true } }),
+    prisma.expeditionTour.findMany({ where: { tour: { supplierId } }, select: { tourId: true } }),
+  ]);
+  const ghanaIds = new Set(ghanaTours.map(t => t.tourId));
+  const expeditionIds = new Set(expeditionTours.map(t => t.tourId));
+  const tourIds = [...ghanaIds, ...expeditionIds];
 
   const [reviews, total] = await Promise.all([
     prisma.review.findMany({
@@ -216,9 +251,14 @@ exports.getSupplierReviews = catchAsync(async (req, res) => {
     prisma.review.count({ where: { tourId: { in: tourIds } } }),
   ]);
 
+  const augmented = reviews.map(review => ({
+    ...review,
+    storefront: expeditionIds.has(review.tourId) && !ghanaIds.has(review.tourId) ? 'EXPEDITION' : 'GHANA',
+  }));
+
   res.json({
     status: 'success',
-    data: { reviews },
+    data: { reviews: augmented },
     pagination: { currentPage: parseInt(page), totalPages: Math.ceil(total / take), totalCount: total, limit: take },
   });
 });
