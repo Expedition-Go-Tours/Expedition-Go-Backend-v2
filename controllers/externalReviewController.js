@@ -10,7 +10,7 @@ const prisma = require('../utils/prismaClient');
 const cache = require('../utils/cacheHelper');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
-const { syncTourReviews, runWeeklyReviewSync } = require('../utils/externalReviewCrawler');
+const { syncTourReviews, runWeeklyReviewSync, SYNC_CACHE_TTL } = require('../utils/externalReviewCrawler');
 
 // ─── Sync Reviews for a Tour ────────────────────────────────────────
 

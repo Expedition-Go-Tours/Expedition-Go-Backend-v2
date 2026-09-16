@@ -167,10 +167,10 @@ async function fetchWithPuppeteer(url) {
     await page.setViewport({ width: 1920, height: 1080 });
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
     // Scroll to trigger lazy-loaded reviews
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); // eslint-disable-line no-undef
     await new Promise((r) => setTimeout(r, 3000));
     // Scroll again for pages with infinite scroll
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); // eslint-disable-line no-undef
     await new Promise((r) => setTimeout(r, 2000));
     const html = await page.content();
     const finalUrl = page.url();
@@ -195,7 +195,7 @@ async function fetchWithPlaywright(url) {
     });
     const page = await context.newPage();
     await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); // eslint-disable-line no-undef
     await page.waitForTimeout(2000);
     const html = await page.content();
     const finalUrl = page.url();
@@ -533,6 +533,7 @@ module.exports = {
   crawlReviews,
   syncTourReviews,
   runWeeklyReviewSync,
+  SYNC_CACHE_TTL,
   MIN_RATING,
   MAX_HTML_SIZE,
   FETCH_TIMEOUT_MS,

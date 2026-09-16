@@ -33,7 +33,7 @@ describe('adminNotificationService', () => {
       const result = await service.notifyAdmin({ type: 'TEST', title: 'Test', message: 'Hello', data: { key: 'val' } });
 
       expect(prisma.adminNotification.create).toHaveBeenCalledWith({
-        data: { type: 'TEST', title: 'Test', message: 'Hello', data: { key: 'val' } },
+        data: { type: 'TEST', title: 'Test', message: 'Hello', data: { key: 'val' }, storefront: null },
       });
       expect(mockIo.to).toHaveBeenCalledWith('admin-room');
       expect(mockIo.emit).toHaveBeenCalledWith('admin-notification', expect.objectContaining({ type: 'TEST', title: 'Test' }));
