@@ -72,6 +72,22 @@ function detectPlatform(url) {
   return 'other';
 }
 
+// ─── Challenge Page Detection ───────────────────────────────────────
+
+function isChallengePage(html) {
+  const indicators = [
+    'captcha-delivery.com',
+    'cf-browser-verification',
+    'challenge-platform',
+    'DataDome CAPTCHA',
+    'geo.captcha-delivery.com',
+    'hcaptcha.com/recaptcha',
+    'grecaptcha',
+  ];
+  const lower = html.toLowerCase();
+  return indicators.some((i) => lower.includes(i.toLowerCase()));
+}
+
 // ─── HTML Fetching ──────────────────────────────────────────────────
 
 async function fetchPage(url) {
@@ -337,7 +353,12 @@ async function crawlReviews(url, platform, tourTitle) {
     // 1. Fetch page
     const { html } = await fetchPage(url);
 
-    // 2. Extract review section (smart trimming)
+    // 2. Check if we got a real page or a challenge page
+    if (isChallengePage(html)) {
+      throw new Error('Bot protection challenge detected — page has no review content. Consider using the platform API or a captcha-solving service.');
+    }
+
+    // 3. Extract review section (smart trimming)
     const sectionHtml = extractReviewSection(html, platform);
 
     // 3. AI extraction
