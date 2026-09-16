@@ -42,6 +42,12 @@ const REVIEW_SELECTORS = {
     '.review-card',
     '[class*="ReviewCard"]',
     '[class*="review-item"]',
+    // TripAdvisor selectors
+    '.review-container',
+    '[data-reviewid]',
+    '.Dq9MA',
+    '.IrOVk',
+    '.WlYyy',
   ],
   getyourguide: [
     '[data-test="review"]',
