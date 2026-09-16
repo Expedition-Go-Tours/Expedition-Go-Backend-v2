@@ -231,7 +231,6 @@ async function fetchWithPuppeteer(url) {
     if (browser) await browser.close().catch(() => {});
   }
 }
-}
 
 async function fetchWithPlaywright(url) {
   let browser = null;
