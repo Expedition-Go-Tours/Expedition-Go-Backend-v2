@@ -261,15 +261,14 @@ ALTER TABLE "Payout"
 -- 17. Review — drop/re-add FK (bookingId now nullable), add companions, drop stale index
 -- ============================================================================
 
--- Drop the unique constraint on bookingId (schema now has @@unique but FK is nullable)
+-- Drop/re-add FK (bookingId now nullable)
 ALTER TABLE "Review" DROP CONSTRAINT IF EXISTS "Review_bookingId_fkey";
-DROP INDEX IF EXISTS "Review_bookingId_key";
 
 -- Drop the old composite index
 DROP INDEX IF EXISTS "idx_review_tour_status_created";
 
--- Add companions column
-ALTER TABLE "Review" ADD COLUMN "companions" TEXT[] DEFAULT ARRAY[]::TEXT[];
+-- Set companions default (column exists from prior partial migration but has no default)
+ALTER TABLE "Review" ALTER COLUMN "companions" SET DEFAULT ARRAY[]::TEXT[];
 
 -- Make bookingId nullable
 ALTER TABLE "Review" ALTER COLUMN "bookingId" DROP NOT NULL;
