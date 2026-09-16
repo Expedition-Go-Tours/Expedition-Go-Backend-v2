@@ -1580,7 +1580,7 @@ exports.getBookings = catchAsync(async (req, res) => {
     prisma.booking.count({ where }),
     prisma.booking.groupBy({
       by: ['status'],
-      where: { isSimulated: false },
+      where: { isSimulated: false, ...notGhanaSupplierWhere() },
       _count: { id: true },
     }),
   ]);
@@ -1723,8 +1723,8 @@ exports.confirmPayment = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { reference } = req.body;
 
-  const booking = await prisma.booking.findUnique({
-    where: { id },
+  const booking = await prisma.booking.findFirst({
+    where: { id, ...notGhanaSupplierWhere() },
     select: { id: true, status: true, paymentStatus: true },
   });
 
@@ -1794,8 +1794,8 @@ exports.confirmPayment = catchAsync(async (req, res, next) => {
 exports.chargePayLaterBooking = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
-  const booking = await prisma.booking.findUnique({
-    where: { id },
+  const booking = await prisma.booking.findFirst({
+    where: { id, ...notGhanaSupplierWhere() },
     select: {
       id: true,
       bookingNumber: true,
