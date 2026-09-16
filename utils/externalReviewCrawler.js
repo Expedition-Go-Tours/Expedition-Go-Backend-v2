@@ -1,20 +1,23 @@
 /**
  * External Review Crawler
  *
- * Fetches review pages from external platforms (Google, Viator, GetYourGuide)
- * and uses AI (MiMo) to extract structured review data. Only imports reviews
- * with 4+ star ratings.
+ * Scrapes reviews from external platforms and stores them for a tour.
  *
- * Flow:
- *   1. fetchPage(url) → raw HTML
- *   2. extractReviewSection(html, platform) → trimmed reviews HTML
- *   3. extractReviewsWithAI(html, platform, tourTitle) → Review[]
- *   4. filterAndNormalize(reviews) → filtered Review[]
- *   5. syncTourReviews(tourId) → upsert into ExternalReview table
+ * Platform strategy:
+ *   - tripadvisor / viator → Puppeteer + TripAdvisor DOM selectors
+ *   - getyourguide        → Puppeteer + GetYourGuide DOM selectors
+ *   - google              → Puppeteer + Google Maps DOM selectors
+ *   - other               → fetch + MiMo AI extraction (generic fallback)
+ *
+ * All imported reviews are filtered to 4+ stars. Scraping runs through a real
+ * headless Chromium because every one of these platforms renders reviews
+ * client-side (the static HTML is an empty SPA shell), and TripAdvisor serves a
+ * DataDome CAPTCHA to plain fetch requests.
  *
  * @module utils/externalReviewCrawler
  */
 
+const crypto = require('crypto');
 const prisma = require('./prismaClient');
 const cache = require('./cacheHelper');
 const { callMimo, parseJson } = require('./mimoClient');
@@ -27,6 +30,10 @@ const MAX_HTML_SIZE = 40000;
 const FETCH_TIMEOUT_MS = 15000;
 const MAX_CONCURRENT_SYNCS = 3;
 const SYNC_CACHE_TTL = 300; // 5 min
+const MAX_PAGES = 50; // pagination depth per URL
+const DELAY_BETWEEN_PAGES_MS = 4000;
+const PAGE_TIMEOUT_MS = 30000;
+const SELECTOR_TIMEOUT_MS = 10000;
 
 // Platform detection regexes
 const PLATFORM_PATTERNS = {
@@ -35,32 +42,11 @@ const PLATFORM_PATTERNS = {
   getyourguide: /getyourguide\.com/i,
 };
 
-// Platform-specific review section selectors (used for HTML trimming)
-const REVIEW_SELECTORS = {
-  viator: [
-    '[data-test="review"]',
-    '.review-card',
-    '[class*="ReviewCard"]',
-    '[class*="review-item"]',
-    // TripAdvisor selectors
-    '.review-container',
-    '[data-reviewid]',
-    '.Dq9MA',
-    '.IrOVk',
-    '.WlYyy',
-  ],
-  getyourguide: [
-    '[data-test="review"]',
-    '.review-item',
-    '[class*="ReviewCard"]',
-    '[class*="review-entry"]',
-  ],
-  google: [
-    '.jftiEf',
-    '.WMbnJc',
-    '[data-review-id]',
-    '[class*="review"]',
-  ],
+// Platform-specific review card selectors (battle-tested against the live sites)
+const REVIEW_CARD_SELECTORS = {
+  tripadvisor: '[data-automation="reviewCard"], .review-container, .biGQs._P.pZUbB.KxBGd',
+  getyourguide: '[data-activity-review-card], .review-card, .review',
+  google: '.jftiEf, .review-container, [class*="review-item"], [data-review-id]',
 };
 
 // ─── Platform Detection ─────────────────────────────────────────────
@@ -70,6 +56,43 @@ function detectPlatform(url) {
     if (pattern.test(url)) return platform;
   }
   return 'other';
+}
+
+/** Map the raw platform to the scraper key (viator → tripadvisor). */
+function scraperKeyFor(platform) {
+  if (platform === 'viator') return 'tripadvisor';
+  return platform;
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function hashString(str) {
+  return crypto.createHash('md5').update(str).digest('hex').slice(0, 12);
+}
+
+function clampRating(rating) {
+  const r = parseInt(rating, 10);
+  if (isNaN(r)) return 5;
+  return Math.max(1, Math.min(5, r));
+}
+
+function normalizeDate(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  // Reject implausible dates (before 2010 or in the future)
+  if (d < new Date('2010-01-01') || d > new Date()) return null;
+  return d;
+}
+
+function truncate(str, len) {
+  if (!str) return null;
+  const s = String(str).trim();
+  return s.length > len ? s.slice(0, len) : s;
 }
 
 // ─── Challenge Page Detection ───────────────────────────────────────
@@ -88,276 +111,252 @@ function isChallengePage(html) {
   return indicators.some((i) => lower.includes(i.toLowerCase()));
 }
 
-/**
- * Heuristic: does this HTML actually contain review content?
- *
- * A static fetch of a client-rendered page (GetYourGuide, Google Maps) returns
- * the SPA shell with an empty review list. These markers indicate real reviews:
- *   - a non-empty review list in embedded state ("reviews":[{...}])
- *   - review card markup (data-test="review", review-card, review-item…)
- *   - a totalReviews count greater than zero
- */
-function hasReviewContent(html) {
-  if (!html || html.length < 2000) return false;
+// ─── Browser Management ─────────────────────────────────────────────
 
-  // Non-empty embedded review arrays
-  if (/"reviews"\s*:\s*\[\s*\{/.test(html)) return true;
-  if (/"reviewsWithMedia"\s*:\s*\[\s*\{/.test(html)) return true;
+let sharedBrowser = null;
 
-  // Review card markup
-  if (/data-test="review/.test(html)) return true;
-  if (/class="[^"]*review-card/.test(html)) return true;
-  if (/class="[^"]*review-item/.test(html)) return true;
-  if (/data-reviewid=/.test(html)) return true;
-
-  // A positive review count
-  const totalMatch = html.match(/"totalReviews"\s*:\s*(\d+)/);
-  if (totalMatch && parseInt(totalMatch[1], 10) > 0) return true;
-
-  return false;
+async function getBrowser() {
+  if (sharedBrowser && sharedBrowser.connected) return sharedBrowser;
+  const puppeteer = require('puppeteer');
+  sharedBrowser = await puppeteer.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-blink-features=AutomationControlled',
+      '--window-size=1920,1080',
+    ],
+  });
+  return sharedBrowser;
 }
 
-// ─── HTML Fetching ──────────────────────────────────────────────────
+async function closeBrowser() {
+  if (sharedBrowser) {
+    await sharedBrowser.close().catch(() => {});
+    sharedBrowser = null;
+  }
+}
 
-async function fetchPage(url) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+async function newStealthPage(browser) {
+  const page = await browser.newPage();
+  await page.setUserAgent(
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  );
+  await page.setViewport({ width: 1920, height: 1080 });
+  // Hide the webdriver flag — the single most effective anti-detection tweak
+  await page.evaluateOnNewDocument(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => false });
+  });
+  return page;
+}
 
+// ─── TripAdvisor Scraper ────────────────────────────────────────────
+
+async function scrapeTripAdvisor(page, url, tourTitle) {
+  const reviews = [];
+
+  for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
+    const pageUrl = pageNum === 1
+      ? url
+      : url.replace('-Review-', `-Review-or${(pageNum - 1) * 10}-`);
+
+    try {
+      await page.goto(pageUrl, { waitUntil: 'networkidle2', timeout: PAGE_TIMEOUT_MS });
+      await page.waitForSelector(REVIEW_CARD_SELECTORS.tripadvisor, { timeout: SELECTOR_TIMEOUT_MS }).catch(() => {});
+
+      const pageReviews = await page.evaluate((selector) => {
+        const cards = document.querySelectorAll(selector);
+        return Array.from(cards).map((card) => {
+          const ratingEl = card.querySelector('[class*="bubble_"]');
+          const ratingMatch = (ratingEl?.className || '').match(/bubble_(\d+)/);
+          const rating = ratingMatch ? parseInt(ratingMatch[1], 10) : 5;
+
+          const nameEl = card.querySelector('.info_text .default_name, a[href*="/Profile/"] span');
+          const titleEl = card.querySelector('.noQuotes, .cRVSd span');
+          const textEl = card.querySelector('.partial_entry, .glasR4aX');
+          const dateEl = card.querySelector('.rating .relativeDate, span[class*="eventDate"]');
+          const avatarEl = card.querySelector('.avatar, img[src*="avatar"]');
+          const idEl = card.querySelector('[id]');
+
+          return {
+            externalId: idEl?.id?.replace('review_', '') || null,
+            author: nameEl?.textContent?.trim() || '',
+            rating,
+            title: titleEl?.textContent?.trim() || '',
+            text: textEl?.textContent?.trim() || '',
+            date: dateEl?.getAttribute('title') || dateEl?.textContent?.trim() || '',
+            authorPhoto: avatarEl?.getAttribute('src') || null,
+          };
+        }).filter((r) => r.author || r.text);
+      }, REVIEW_CARD_SELECTORS.tripadvisor);
+
+      if (pageReviews.length === 0 && pageNum > 1) break;
+      reviews.push(...pageReviews);
+      logger.info(`[ExternalReview] TripAdvisor page ${pageNum}: ${pageReviews.length} reviews`);
+    } catch (err) {
+      logger.warn(`[ExternalReview] TripAdvisor page ${pageNum} failed: ${err.message}`);
+      if (pageNum === 1) throw err;
+      break;
+    }
+
+    if (pageNum < MAX_PAGES) await sleep(DELAY_BETWEEN_PAGES_MS);
+  }
+
+  return reviews;
+}
+
+// ─── GetYourGuide Scraper ───────────────────────────────────────────
+
+async function scrapeGetYourGuide(page, url, tourTitle) {
+  const reviews = [];
+  const baseUrl = url.split('?')[0];
+
+  for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
+    const pageUrl = pageNum === 1 ? baseUrl : `${baseUrl}?page=${pageNum}`;
+
+    try {
+      await page.goto(pageUrl, { waitUntil: 'networkidle2', timeout: PAGE_TIMEOUT_MS });
+      await page.waitForSelector(REVIEW_CARD_SELECTORS.getyourguide, { timeout: SELECTOR_TIMEOUT_MS }).catch(() => {});
+
+      const pageReviews = await page.evaluate((selector) => {
+        const cards = document.querySelectorAll(selector);
+        return Array.from(cards).map((card) => {
+          const nameEl = card.querySelector('.reviewer-name, .user-profile-name, [class*="userName"]');
+          const titleEl = card.querySelector('.review-title, h3, [class*="reviewTitle"]');
+          const textEl = card.querySelector('.review-text, .review-body, [class*="reviewText"]');
+          const ratingEl = card.querySelector('[class*="rating"], [data-rating]');
+          const dateEl = card.querySelector('.review-date, time, [class*="date"]');
+          const avatarEl = card.querySelector('img[class*="avatar"], img[class*="profile"]');
+
+          const ratingAttr = ratingEl?.getAttribute('data-rating') || ratingEl?.className || '';
+          const ratingMatch = ratingAttr.match(/(\d+)/);
+          const rating = ratingMatch ? parseInt(ratingMatch[1], 10) : 5;
+
+          return {
+            externalId: null,
+            author: nameEl?.textContent?.trim() || 'Anonymous',
+            rating,
+            title: titleEl?.textContent?.trim() || '',
+            text: textEl?.textContent?.trim() || '',
+            date: dateEl?.getAttribute('datetime') || dateEl?.textContent?.trim() || '',
+            authorPhoto: avatarEl?.getAttribute('src') || null,
+          };
+        }).filter((r) => r.author !== 'Anonymous' || r.text);
+      }, REVIEW_CARD_SELECTORS.getyourguide);
+
+      if (pageReviews.length === 0 && pageNum > 1) break;
+      reviews.push(...pageReviews);
+      logger.info(`[ExternalReview] GetYourGuide page ${pageNum}: ${pageReviews.length} reviews`);
+    } catch (err) {
+      logger.warn(`[ExternalReview] GetYourGuide page ${pageNum} failed: ${err.message}`);
+      if (pageNum === 1) throw err;
+      break;
+    }
+
+    if (pageNum < MAX_PAGES) await sleep(DELAY_BETWEEN_PAGES_MS);
+  }
+
+  return reviews;
+}
+
+// ─── Google Maps Scraper ────────────────────────────────────────────
+
+async function scrapeGoogle(page, url) {
   try {
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Cache-Control': 'no-cache',
-        'Sec-Ch-Ua': '"Chromium";v="131", "Not_A Brand";v="24"',
-        'Sec-Ch-Ua-Mobile': '?0',
-        'Sec-Ch-Ua-Platform': '"Windows"',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Upgrade-Insecure-Requests': '1',
-      },
-      signal: controller.signal,
-      redirect: 'follow',
-    });
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: PAGE_TIMEOUT_MS });
+    await sleep(3000);
 
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      // If fetch fails with 403/429, try browser fallback
-      if (response.status === 403 || response.status === 429) {
-        logger.info(`[ExternalReview] fetch() got ${response.status} for ${url}, trying headless browser...`);
-        return await fetchWithBrowser(url);
-      }
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    // Open the reviews tab when present
+    const reviewsTab = await page.$('[data-tab-id="reviews"], [role="tab"][aria-label*="Reviews"], button[jsaction*="reviews"]');
+    if (reviewsTab) {
+      await reviewsTab.click();
+      await sleep(3000);
     }
 
-    const html = await response.text();
-
-    // Static fetch often returns the SPA shell without reviews (GetYourGuide,
-    // Google load reviews client-side). If the HTML is a challenge page or
-    // carries no review content, retry through a real browser.
-    if (isChallengePage(html) || !hasReviewContent(html)) {
-      logger.info(`[ExternalReview] fetch() returned no review content for ${url}, trying headless browser...`);
-      try {
-        return await fetchWithBrowser(url);
-      } catch (browserErr) {
-        logger.warn(`[ExternalReview] Browser fallback failed: ${browserErr.message}`);
-        // Return the original HTML so the caller can report a clear error
-        return { html, finalUrl: response.url };
-      }
+    // Scroll to load more reviews
+    for (let i = 0; i < 10; i++) {
+      await page.evaluate(() => {
+        const scrollable = document.querySelector('[class*="m6QErb"][class*="DxyBCb"], .section-scrollbox, [role="main"]');
+        if (scrollable) scrollable.scrollTop = scrollable.scrollHeight;
+      });
+      await sleep(2000);
     }
 
-    return { html, finalUrl: response.url };
+    const reviews = await page.evaluate((selector) => {
+      const els = document.querySelectorAll(selector);
+      return Array.from(els).map((el) => {
+        const nameEl = el.querySelector('.d4r55, .reviewer-name, [class*="userName"], span[class*="fontBodyMedium"] span:first-child');
+        const ratingEl = el.querySelector('[role="img"][aria-label*="star"], .kvMYJc, [class*="rating"]');
+        const textEl = el.querySelector('.wiI7pd, .review-text, [class*="reviewText"], span[class*="fontBodyMedium"]');
+        const dateEl = el.querySelector('.rsqaWe, .review-date, [class*="date"]');
+
+        let rating = 5;
+        if (ratingEl) {
+          const m = (ratingEl.getAttribute('aria-label') || '').match(/(\d+)/);
+          if (m) rating = parseInt(m[1], 10);
+        }
+
+        return {
+          externalId: el.getAttribute('data-review-id') || null,
+          author: nameEl?.textContent?.trim() || '',
+          rating,
+          title: '',
+          text: textEl?.textContent?.trim() || '',
+          date: dateEl?.textContent?.trim() || '',
+          authorPhoto: null,
+        };
+      }).filter((r) => r.author && r.text);
+    }, REVIEW_CARD_SELECTORS.google);
+
+    logger.info(`[ExternalReview] Google Maps: ${reviews.length} reviews`);
+    return reviews;
   } catch (err) {
-    clearTimeout(timeout);
-    if (err.name === 'AbortError') {
-      // Timeout — try headless browser
-      logger.info(`[ExternalReview] fetch() timeout for ${url}, trying headless browser...`);
-      return await fetchWithBrowser(url);
-    }
+    logger.warn(`[ExternalReview] Google scrape failed: ${err.message}`);
     throw err;
   }
 }
 
-// ─── Headless Browser Fallback ──────────────────────────────────────
+// ─── Generic AI Fallback ────────────────────────────────────────────
 
-async function fetchWithBrowser(url) {
-  // Try Puppeteer first (lighter), fall back to Playwright
+async function fetchPage(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    return await fetchWithPuppeteer(url);
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      signal: controller.signal,
+      redirect: 'follow',
+    });
+    clearTimeout(timeout);
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    return await response.text();
   } catch (err) {
-    logger.info(`[ExternalReview] Puppeteer failed (${err.message}), trying Playwright...`);
-    return await fetchWithPlaywright(url);
+    clearTimeout(timeout);
+    throw err;
   }
 }
-
-async function fetchWithPuppeteer(url) {
-  let browser = null;
-  try {
-    const puppeteer = require('puppeteer-extra');
-    const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-    puppeteer.use(StealthPlugin());
-
-    browser = await puppeteer.launch({
-      headless: 'new',
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled'],
-    });
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
-    await page.setViewport({ width: 1920, height: 1080 });
-
-    // Intercept API responses to capture review data
-    const apiReviews = [];
-    page.on('response', async (response) => {
-      try {
-        const respUrl = response.url();
-        if (respUrl.includes('review') && respUrl.includes('api')) {
-          const contentType = response.headers()['content-type'] || '';
-          if (contentType.includes('json')) {
-            const data = await response.json().catch(() => null);
-            if (data && (data.reviews || data.data?.reviews)) {
-              apiReviews.push(data);
-            }
-          }
-        }
-      } catch (_) { /* ignore */ }
-    });
-
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-
-    // Scroll down to trigger lazy-loaded reviews
-    for (let i = 0; i < 3; i++) {
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-
-    // Wait for review elements to appear (platform-specific selectors)
-    const reviewSelectors = [
-      '[data-test="review"]',
-      '.review-card',
-      '[class*="ReviewCard"]',
-      '[class*="review-item"]',
-      '[class*="review-entry"]',
-      '.review-container',
-      '[data-reviewid]',
-    ];
-
-    for (const selector of reviewSelectors) {
-      try {
-        await page.waitForSelector(selector, { timeout: 5000 });
-        break;
-      } catch (_) { /* try next selector */ }
-    }
-
-    // Final scroll and wait
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await new Promise((r) => setTimeout(r, 2000));
-
-    const html = await page.content();
-    const finalUrl = page.url();
-
-    // If we captured API review data, inject it into the HTML as a script tag
-    // so the AI extractor can find it
-    let enrichedHtml = html;
-    if (apiReviews.length > 0) {
-      const reviewJson = JSON.stringify(apiReviews);
-      enrichedHtml = html + `\n<script id="api-reviews" type="application/json">${reviewJson}</script>`;
-    }
-
-    return { html: enrichedHtml, finalUrl };
-  } catch (err) {
-    throw new Error(`Puppeteer fetch failed: ${err.message}`);
-  } finally {
-    if (browser) await browser.close().catch(() => {});
-  }
-}
-
-async function fetchWithPlaywright(url) {
-  let browser = null;
-  try {
-    const { chromium } = require('playwright');
-    browser = await chromium.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
-    const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    });
-    const page = await context.newPage();
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); // eslint-disable-line no-undef
-    await page.waitForTimeout(2000);
-    const html = await page.content();
-    const finalUrl = page.url();
-    return { html, finalUrl };
-  } catch (err) {
-    throw new Error(`Playwright fetch failed: ${err.message}`);
-  } finally {
-    if (browser) await browser.close().catch(() => {});
-  }
-}
-
-// ─── Smart HTML Extraction ──────────────────────────────────────────
 
 function extractReviewSection(html, platform) {
-  // Try platform-specific selectors to extract just the reviews section
-  const selectors = REVIEW_SELECTORS[platform] || [];
-
-  for (const selector of selectors) {
-    // Simple regex-based extraction for common patterns
-    // This avoids requiring a full DOM parser dependency
-    const classMatch = selector.match(/\[class\*="([^"]+)"\]/);
-    if (classMatch) {
-      const className = classMatch[1];
-      // Find the first occurrence of this class and extract surrounding content
-      const idx = html.indexOf(className);
-      if (idx !== -1) {
-        // Extract a chunk around the reviews section (40KB)
-        const start = Math.max(0, idx - 2000);
-        const end = Math.min(html.length, start + MAX_HTML_SIZE);
-        return html.slice(start, end);
-      }
-    }
-
-    // data-test attribute matching
-    const dataTestMatch = selector.match(/\[data-test="([^"]+)"\]/);
-    if (dataTestMatch) {
-      const attr = `data-test="${dataTestMatch[1]}"`;
-      const idx = html.indexOf(attr);
-      if (idx !== -1) {
-        const start = Math.max(0, idx - 2000);
-        const end = Math.min(html.length, start + MAX_HTML_SIZE);
-        return html.slice(start, end);
-      }
-    }
-  }
-
-  // Fallback: look for common review-related strings
-  const fallbackMarkers = ['review', 'Review', 'rating', 'Rating', 'testimonial', 'Testimonial'];
-  for (const marker of fallbackMarkers) {
+  if (!html) return '';
+  const markers = ['review', 'Review', 'rating', 'testimonial'];
+  for (const marker of markers) {
     const idx = html.indexOf(marker);
     if (idx !== -1) {
       const start = Math.max(0, idx - 2000);
-      const end = Math.min(html.length, start + MAX_HTML_SIZE);
-      return html.slice(start, end);
+      return html.slice(start, start + MAX_HTML_SIZE);
     }
   }
-
-  // Final fallback: truncate to MAX_HTML_SIZE
   return html.slice(0, MAX_HTML_SIZE);
 }
 
-// ─── AI Review Extraction ───────────────────────────────────────────
-
 async function extractReviewsWithAI(html, platform, tourTitle) {
   const truncated = html.slice(0, MAX_HTML_SIZE);
-
   const systemPrompt = `You are a review extractor. Given HTML from a ${platform} review page, extract all customer reviews as a JSON array. Return ONLY the JSON array, no other text.`;
-
   const userPrompt = `Extract all customer reviews from this ${platform} page HTML for the tour "${tourTitle}".
 
 Return a JSON array. Each review object:
@@ -371,70 +370,52 @@ Return a JSON array. Each review object:
 }
 
 Rules:
-- Only extract actual customer reviews, not ads, tour descriptions, or navigation
-- Normalize rating to a 1-5 scale (if the platform uses percentages, divide by 20)
+- Only actual customer reviews, not ads, tour descriptions, or navigation
+- Normalize rating to a 1-5 scale
 - date should be in ISO format (YYYY-MM-DD)
-- platformReviewId: use the platform's unique review ID if visible in the HTML
 - Return [] if no reviews found
-- Be thorough — extract ALL reviews visible in the HTML
 
 HTML:
 ${truncated}`;
 
   try {
-    const response = await callMimo({
-      system: systemPrompt,
-      user: userPrompt,
-      maxTokens: 4096,
-      temperature: 0.1, // Low temperature for consistent extraction
-    });
-
+    const response = await callMimo({ system: systemPrompt, user: userPrompt, maxTokens: 4096, temperature: 0.1 });
     const reviews = parseJson(response);
-
-    if (!Array.isArray(reviews)) {
-      logger.warn('[ExternalReview] AI returned non-array:', typeof reviews);
-      return [];
-    }
-
-    return reviews;
+    if (!Array.isArray(reviews)) return [];
+    return reviews.map((r) => ({
+      externalId: r.platformReviewId ? String(r.platformReviewId).trim() : null,
+      author: r.author ? String(r.author).trim() : null,
+      rating: Number(r.rating),
+      title: r.title ? String(r.title).trim() : null,
+      text: r.text ? String(r.text).trim() : null,
+      date: r.date || null,
+      authorPhoto: null,
+    }));
   } catch (err) {
     logger.error('[ExternalReview] AI extraction failed:', err.message);
     return [];
   }
 }
 
-// ─── Filtering & Normalization ──────────────────────────────────────
+// ─── Normalization ──────────────────────────────────────────────────
 
 function filterAndNormalize(reviews) {
   return reviews
     .filter((r) => {
-      // Must have rating >= MIN_RATING
       const rating = Number(r.rating);
       return !isNaN(rating) && rating >= MIN_RATING;
     })
     .map((r) => ({
-      authorName: r.author ? String(r.author).trim().slice(0, 200) : null,
+      externalId: r.externalId || null,
+      authorName: truncate(r.author, 200),
       authorPhoto: r.authorPhoto || null,
-      rating: Math.min(5, Math.max(1, Number(r.rating))),
-      title: r.title ? String(r.title).trim().slice(0, 500) : null,
-      text: r.text ? String(r.text).trim().slice(0, 5000) : null,
-      reviewDate: r.date ? parseDate(r.date) : null,
-      language: r.language ? String(r.language).trim().slice(0, 10) : null,
-      externalId: r.platformReviewId ? String(r.platformReviewId).trim() : null,
+      rating: clampRating(r.rating),
+      title: truncate(r.title, 500),
+      text: truncate(r.text, 5000),
+      reviewDate: normalizeDate(r.date),
+      language: null,
     }))
-    .filter((r) => r.text || r.title); // Must have at least text or title
-}
-
-function parseDate(dateStr) {
-  try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return null;
-    // Don't accept future dates or dates before 2010
-    if (d > new Date() || d < new Date('2010-01-01')) return null;
-    return d;
-  } catch {
-    return null;
-  }
+    .filter((r) => r.text || r.title);
 }
 
 // ─── Single URL Crawl ───────────────────────────────────────────────
@@ -444,31 +425,32 @@ async function crawlReviews(url, platform, tourTitle) {
   let reviews = [];
 
   try {
-    // 1. Fetch page
-    const { html } = await fetchPage(url);
+    const scraperKey = scraperKeyFor(platform);
 
-    // 2. Check if we got a real page or a challenge page
-    if (isChallengePage(html)) {
-      throw new Error('Bot protection challenge detected (DataDome/Cloudflare). This platform needs its official API or a captcha-solving service.');
+    if (scraperKey === 'tripadvisor' || scraperKey === 'getyourguide' || scraperKey === 'google') {
+      const browser = await getBrowser();
+      const page = await newStealthPage(browser);
+      try {
+        let raw;
+        if (scraperKey === 'tripadvisor') raw = await scrapeTripAdvisor(page, url, tourTitle);
+        else if (scraperKey === 'getyourguide') raw = await scrapeGetYourGuide(page, url, tourTitle);
+        else raw = await scrapeGoogle(page, url);
+        reviews = filterAndNormalize(raw);
+      } finally {
+        await page.close().catch(() => {});
+      }
+    } else {
+      // Generic fallback: fetch + AI extraction
+      const html = await fetchPage(url);
+      if (isChallengePage(html)) {
+        throw new Error('Bot protection challenge detected — this platform needs its official API or a captcha-solving service.');
+      }
+      const section = extractReviewSection(html, platform);
+      const raw = await extractReviewsWithAI(section, platform, tourTitle);
+      reviews = filterAndNormalize(raw);
     }
 
-    // 3. Extract review section (smart trimming)
-    const sectionHtml = extractReviewSection(html, platform);
-
-    // 4. AI extraction
-    const rawReviews = await extractReviewsWithAI(sectionHtml, platform, tourTitle);
-
-    // 5. Filter and normalize
-    reviews = filterAndNormalize(rawReviews);
-
-    // 6. If the AI found nothing AND the source HTML had no review markers,
-    //    the page is a client-rendered shell — report it instead of silently
-    //    returning zero so the supplier knows the URL can't be crawled.
-    if (rawReviews.length === 0 && !hasReviewContent(html)) {
-      throw new Error('No review content found on the page — the platform loads reviews client-side or blocks automated access. Use the platform API or add reviews manually.');
-    }
-
-    logger.info(`[ExternalReview] Crawled ${url}: ${rawReviews.length} raw → ${reviews.length} filtered (4+ stars)`);
+    logger.info(`[ExternalReview] ${platform} ${url}: ${reviews.length} reviews imported (4+ stars)`);
   } catch (err) {
     logger.error(`[ExternalReview] Failed to crawl ${url}:`, err.message);
     errors.push(`${platform}: ${err.message}`);
@@ -503,15 +485,12 @@ async function syncTourReviews(tourId) {
 
       for (const review of reviews) {
         try {
-          const externalId = review.externalId || `${detectedPlatform}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          const externalId = review.externalId
+            || `${detectedPlatform}-${hashString(review.authorName + (review.text || '').slice(0, 100))}`;
 
           await prisma.externalReview.upsert({
             where: {
-              tourId_platform_externalId: {
-                tourId: tour.id,
-                platform: detectedPlatform,
-                externalId,
-              },
+              tourId_platform_externalId: { tourId: tour.id, platform: detectedPlatform, externalId },
             },
             create: {
               tourId: tour.id,
@@ -533,17 +512,15 @@ async function syncTourReviews(tourId) {
               title: review.title,
               text: review.text,
               reviewDate: review.reviewDate,
-              language: review.language,
               importedAt: new Date(),
             },
           });
           totalImported++;
         } catch (err) {
-          // Unique constraint violation = duplicate, skip
           if (err.code === 'P2002') {
             totalSkipped++;
           } else {
-            logger.error(`[ExternalReview] Upsert failed for review:`, err.message);
+            logger.error('[ExternalReview] Upsert failed:', err.message);
             allErrors.push(`Upsert: ${err.message}`);
           }
         }
@@ -554,19 +531,13 @@ async function syncTourReviews(tourId) {
     }
   }
 
-  // Invalidate review caches after sync
   try {
     cache.invalidateReviewCaches(tourId);
   } catch (err) {
     logger.warn('[ExternalReview] Cache invalidation failed:', err.message);
   }
 
-  return {
-    imported: totalImported,
-    skipped: totalSkipped,
-    errors: allErrors,
-    total: totalImported + totalSkipped,
-  };
+  return { imported: totalImported, skipped: totalSkipped, errors: allErrors, total: totalImported + totalSkipped };
 }
 
 // ─── Weekly Bulk Sync ───────────────────────────────────────────────
@@ -575,12 +546,8 @@ async function runWeeklyReviewSync() {
   const startTime = Date.now();
   logger.info('[ExternalReview] Starting weekly review sync...');
 
-  // Find all tours with external review URLs
   const tours = await prisma.tour.findMany({
-    where: {
-      externalReviewUrls: { not: null },
-      status: 'ACTIVE',
-    },
+    where: { externalReviewUrls: { not: null }, status: 'ACTIVE' },
     select: { id: true, title: true },
   });
 
@@ -593,28 +560,26 @@ async function runWeeklyReviewSync() {
   let totalErrors = 0;
   let processed = 0;
 
-  // Process in batches of MAX_CONCURRENT_SYNCS
-  for (let i = 0; i < tours.length; i += MAX_CONCURRENT_SYNCS) {
-    const batch = tours.slice(i, i + MAX_CONCURRENT_SYNCS);
-    const results = await Promise.allSettled(
-      batch.map((tour) => syncTourReviews(tour.id))
-    );
+  try {
+    for (let i = 0; i < tours.length; i += MAX_CONCURRENT_SYNCS) {
+      const batch = tours.slice(i, i + MAX_CONCURRENT_SYNCS);
+      const results = await Promise.allSettled(batch.map((t) => syncTourReviews(t.id)));
 
-    for (const result of results) {
-      if (result.status === 'fulfilled') {
-        totalImported += result.value.imported;
-        totalErrors += result.value.errors.length;
-      } else {
-        totalErrors++;
-        logger.error('[ExternalReview] Batch sync failed:', result.reason?.message);
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          totalImported += result.value.imported;
+          totalErrors += result.value.errors.length;
+        } else {
+          totalErrors++;
+          logger.error('[ExternalReview] Batch sync failed:', result.reason?.message);
+        }
+        processed++;
       }
-      processed++;
-    }
 
-    // Small delay between batches to avoid overwhelming external sites
-    if (i + MAX_CONCURRENT_SYNCS < tours.length) {
-      await new Promise((r) => setTimeout(r, 2000));
+      if (i + MAX_CONCURRENT_SYNCS < tours.length) await sleep(2000);
     }
+  } finally {
+    await closeBrowser();
   }
 
   const duration = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -627,20 +592,19 @@ async function runWeeklyReviewSync() {
 
 module.exports = {
   detectPlatform,
+  scraperKeyFor,
   fetchPage,
-  fetchWithBrowser,
-  fetchWithPuppeteer,
-  fetchWithPlaywright,
-  isChallengePage,
-  hasReviewContent,
   extractReviewSection,
   extractReviewsWithAI,
   filterAndNormalize,
+  isChallengePage,
   crawlReviews,
   syncTourReviews,
   runWeeklyReviewSync,
-  SYNC_CACHE_TTL,
+  getBrowser,
+  closeBrowser,
   MIN_RATING,
   MAX_HTML_SIZE,
   FETCH_TIMEOUT_MS,
+  MAX_PAGES,
 };
