@@ -12,6 +12,25 @@ const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 const ctrl = require('../controllers/externalReviewController');
 
+// ─── Scraper pipeline (API-key auth) ────────────────────────────────
+//
+// The GitHub Actions scraper runs from clean IPs (the datacenter IP of this
+// server is blocked by TripAdvisor/GetYourGuide). It reads the pending URL
+// list here, scrapes, and posts results back. Authenticated with a shared
+// secret header instead of a user JWT.
+
+function requireScraperKey(req, res, next) {
+  const secret = process.env.REVIEW_SCRAPER_KEY;
+  const provided = req.headers['x-scraper-key'];
+  if (!secret || !provided || provided !== secret) {
+    return res.status(401).json({ status: 'fail', message: 'Invalid scraper key' });
+  }
+  next();
+}
+
+router.get('/external-reviews/pending-urls', requireScraperKey, ctrl.getPendingUrls);
+router.post('/external-reviews/ingest', requireScraperKey, ctrl.ingestReviews);
+
 // ─── Public (no auth) ───────────────────────────────────────────────
 
 // Storefront: get external reviews for display (4+ stars only)

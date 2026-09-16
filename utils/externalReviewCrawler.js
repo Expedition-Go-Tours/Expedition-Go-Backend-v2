@@ -607,4 +607,5 @@ module.exports = {
   MAX_HTML_SIZE,
   FETCH_TIMEOUT_MS,
   MAX_PAGES,
+  SYNC_CACHE_TTL,
 };
