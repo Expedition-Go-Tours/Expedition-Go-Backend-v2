@@ -501,7 +501,7 @@ exports.getPayouts = catchAsync(async (req, res) => {
           select: { id: true, bookingNumber: true, grossAmount: true, tour: { select: { id: true, title: true, coverPhoto: true } } },
         },
         payoutMethod: {
-          select: { id: true, type: true, accountNumber: true, mobileNumber: true, paypalEmail: true },
+          select: { id: true, type: true, accountNumber: true, paypalEmail: true },
         },
       },
     }),
