@@ -686,6 +686,7 @@ jobs:
             npx prisma generate
 
             echo "=== Running migrations ==="
+            npx prisma migrate resolve --rolled-back 20260916120000_reconcile_schema_drift 2>/dev/null || true
             npx prisma migrate deploy
 
             echo "=== Reloading API (graceful cluster reload, zero-downtime) ==="

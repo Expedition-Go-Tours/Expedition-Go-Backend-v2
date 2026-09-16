@@ -50,6 +50,8 @@ ssh -i "$SSH_KEY" "$SERVER" bash -s <<REMOTE
   # `set -e` means a failed migration aborts the deploy and the running code
   # keeps serving — never a half-migrated database with new code on top.
   npx prisma migrate status || true
+  # One-time: resolve the stuck reconcile_schema_drift migration (applied before FK safety drops)
+  npx prisma migrate resolve --rolled-back 20260916120000_reconcile_schema_drift 2>/dev/null || true
   npx prisma migrate deploy
 
   echo "--- preflight: guard against a stray second PM2 daemon ---"

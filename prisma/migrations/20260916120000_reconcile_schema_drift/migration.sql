@@ -52,14 +52,17 @@ CREATE INDEX IF NOT EXISTS "TravioAfricaTour_isActive_displayOrder_idx"
 CREATE INDEX IF NOT EXISTS "TravioAfricaTour_isActive_isFeatured_displayOrder_idx"
     ON "TravioAfricaTour"("isActive", "isFeatured", "displayOrder");
 
+ALTER TABLE "TravioAfricaTour" DROP CONSTRAINT IF EXISTS "TravioAfricaTour_tourId_fkey";
 ALTER TABLE "TravioAfricaTour"
     ADD CONSTRAINT "TravioAfricaTour_tourId_fkey"
     FOREIGN KEY ("tourId") REFERENCES "Tour"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
+ALTER TABLE "TravioAfricaTour" DROP CONSTRAINT IF EXISTS "TravioAfricaTour_publishedById_fkey";
 ALTER TABLE "TravioAfricaTour"
     ADD CONSTRAINT "TravioAfricaTour_publishedById_fkey"
     FOREIGN KEY ("publishedById") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
+ALTER TABLE "TravioAfricaTour" DROP CONSTRAINT IF EXISTS "TravioAfricaTour_unpublishedById_fkey";
 ALTER TABLE "TravioAfricaTour"
     ADD CONSTRAINT "TravioAfricaTour_unpublishedById_fkey"
     FOREIGN KEY ("unpublishedById") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -100,10 +103,12 @@ CREATE INDEX IF NOT EXISTS "Article_categoryId_idx" ON "Article"("categoryId");
 CREATE INDEX IF NOT EXISTS "Article_status_publishedAt_idx" ON "Article"("status", "publishedAt");
 CREATE INDEX IF NOT EXISTS "Article_locale_status_publishedAt_idx" ON "Article"("locale", "status", "publishedAt");
 
+ALTER TABLE "Article" DROP CONSTRAINT IF EXISTS "Article_authorId_fkey";
 ALTER TABLE "Article"
     ADD CONSTRAINT "Article_authorId_fkey"
     FOREIGN KEY ("authorId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
+ALTER TABLE "Article" DROP CONSTRAINT IF EXISTS "Article_categoryId_fkey";
 ALTER TABLE "Article"
     ADD CONSTRAINT "Article_categoryId_fkey"
     FOREIGN KEY ("categoryId") REFERENCES "ArticleCategory"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -116,6 +121,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "ArticleCategory_slug_key" ON "ArticleCategory
 CREATE INDEX IF NOT EXISTS "ArticleCategory_slug_idx" ON "ArticleCategory"("slug");
 CREATE INDEX IF NOT EXISTS "ArticleCategory_parentId_idx" ON "ArticleCategory"("parentId");
 
+ALTER TABLE "ArticleCategory" DROP CONSTRAINT IF EXISTS "ArticleCategory_parentId_fkey";
 ALTER TABLE "ArticleCategory"
     ADD CONSTRAINT "ArticleCategory_parentId_fkey"
     FOREIGN KEY ("parentId") REFERENCES "ArticleCategory"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -134,10 +140,12 @@ CREATE INDEX IF NOT EXISTS "ArticleTag_slug_idx" ON "ArticleTag"("slug");
 CREATE INDEX IF NOT EXISTS "ArticleTagOnArticle_articleId_idx" ON "ArticleTagOnArticle"("articleId");
 CREATE INDEX IF NOT EXISTS "ArticleTagOnArticle_tagId_idx" ON "ArticleTagOnArticle"("tagId");
 
+ALTER TABLE "ArticleTagOnArticle" DROP CONSTRAINT IF EXISTS "ArticleTagOnArticle_articleId_fkey";
 ALTER TABLE "ArticleTagOnArticle"
     ADD CONSTRAINT "ArticleTagOnArticle_articleId_fkey"
     FOREIGN KEY ("articleId") REFERENCES "Article"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
+ALTER TABLE "ArticleTagOnArticle" DROP CONSTRAINT IF EXISTS "ArticleTagOnArticle_tagId_fkey";
 ALTER TABLE "ArticleTagOnArticle"
     ADD CONSTRAINT "ArticleTagOnArticle_tagId_fkey"
     FOREIGN KEY ("tagId") REFERENCES "ArticleTag"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -149,10 +157,12 @@ ALTER TABLE "ArticleTagOnArticle"
 CREATE INDEX IF NOT EXISTS "ArticleTour_articleId_idx" ON "ArticleTour"("articleId");
 CREATE INDEX IF NOT EXISTS "ArticleTour_tourId_idx" ON "ArticleTour"("tourId");
 
+ALTER TABLE "ArticleTour" DROP CONSTRAINT IF EXISTS "ArticleTour_articleId_fkey";
 ALTER TABLE "ArticleTour"
     ADD CONSTRAINT "ArticleTour_articleId_fkey"
     FOREIGN KEY ("articleId") REFERENCES "Article"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
+ALTER TABLE "ArticleTour" DROP CONSTRAINT IF EXISTS "ArticleTour_tourId_fkey";
 ALTER TABLE "ArticleTour"
     ADD CONSTRAINT "ArticleTour_tourId_fkey"
     FOREIGN KEY ("tourId") REFERENCES "Tour"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -172,6 +182,7 @@ ALTER TABLE "Attraction" ALTER COLUMN "updatedAt" TYPE TIMESTAMP(3);
 DROP INDEX IF EXISTS "Booking_customerId_createdAt_idx";
 DROP INDEX IF EXISTS "idx_booking_tour_status_created";
 
+ALTER TABLE "Booking" DROP CONSTRAINT IF EXISTS "Booking_appliedOfferId_fkey";
 ALTER TABLE "Booking"
     ADD CONSTRAINT "Booking_appliedOfferId_fkey"
     FOREIGN KEY ("appliedOfferId") REFERENCES "SpecialOffer"("id") ON DELETE SET NULL ON UPDATE CASCADE;
