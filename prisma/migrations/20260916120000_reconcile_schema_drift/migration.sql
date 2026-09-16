@@ -267,8 +267,8 @@ ALTER TABLE "Review" DROP CONSTRAINT IF EXISTS "Review_bookingId_fkey";
 -- Drop the old composite index
 DROP INDEX IF EXISTS "idx_review_tour_status_created";
 
--- Set companions default (column exists from prior partial migration but has no default)
-ALTER TABLE "Review" ALTER COLUMN "companions" SET DEFAULT ARRAY[]::TEXT[];
+-- Add companions column (not present in any migration history)
+ALTER TABLE "Review" ADD COLUMN "companions" TEXT[] DEFAULT ARRAY[]::TEXT[];
 
 -- Make bookingId nullable
 ALTER TABLE "Review" ALTER COLUMN "bookingId" DROP NOT NULL;
