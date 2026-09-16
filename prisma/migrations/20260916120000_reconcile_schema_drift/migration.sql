@@ -279,6 +279,7 @@ ALTER TABLE "Review" DROP CONSTRAINT IF EXISTS "Review_bookingId_fkey";
 DROP INDEX IF EXISTS "idx_review_tour_status_created";
 
 -- Add companions column (not present in any migration history)
+ALTER TABLE "Review" DROP COLUMN IF EXISTS "companions";
 ALTER TABLE "Review" ADD COLUMN "companions" TEXT[] DEFAULT ARRAY[]::TEXT[];
 
 -- Make bookingId nullable
