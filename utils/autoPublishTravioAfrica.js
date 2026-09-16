@@ -12,6 +12,7 @@
 
 const prisma = require('./prismaClient');
 const logger = require('./logger');
+const { isGhanaSupplier } = require('./supplierCountry');
 
 const AFRICA_ROLE = 'travioafrica';
 
@@ -42,8 +43,10 @@ async function publishTourToAfrica(tourId, actorId) {
     });
 
     const country = supplierProfile?.businessInfo?.country;
-    // Ghana suppliers go to TravioGhana, not TravioAfrica
-    if (!country || country === 'Ghana') {
+    // Ghana suppliers go to TravioGhana, not TravioAfrica. Compare through the
+    // helper so legacy full-name values ("Ghana") are not mistaken for a
+    // non-Ghana supplier and published to the wrong storefront.
+    if (!country || isGhanaSupplier(country)) {
       return null;
     }
 
@@ -109,7 +112,7 @@ async function reconcileTravioAfricaPublish() {
     // Non-Ghana African suppliers
     const africaSuppliers = suppliers.filter((s) => {
       const c = s.businessInfo?.country;
-      return c && c !== 'Ghana';
+      return c && !isGhanaSupplier(c);
     });
 
     let enqueued = 0;

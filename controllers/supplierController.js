@@ -15,6 +15,7 @@ const { sendSupplierStatusEmail } = require('../utils/emailService');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const { enqueueNotification } = require('../utils/queue');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
+const { isGhanaSupplier } = require('../utils/supplierCountry');
 const {
   parseDocuments,
   parseVehiclePhotos,
@@ -642,7 +643,7 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
 
   // Ghana-based suppliers get their tours auto-published immediately
   // (the periodic reconcile sweep covers it within 30 min regardless).
-  if (action === 'approve' && supplierProfile.businessInfo?.country === 'Ghana') {
+  if (action === 'approve' && isGhanaSupplier(supplierProfile.businessInfo?.country)) {
     try {
       const { enqueueGhanaPublish } = require('../utils/queue');
       const tours = await prisma.tour.findMany({
@@ -658,7 +659,7 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
   }
 
   // Non-Ghana African suppliers get their tours auto-published to TravioAfrica
-  if (action === 'approve' && supplierProfile.businessInfo?.country && supplierProfile.businessInfo.country !== 'Ghana') {
+  if (action === 'approve' && supplierProfile.businessInfo?.country && !isGhanaSupplier(supplierProfile.businessInfo.country)) {
     try {
       const { enqueueTravioAfricaPublish } = require('../utils/queue');
       const tours = await prisma.tour.findMany({

@@ -14,6 +14,7 @@
 
 const prisma = require('./prismaClient');
 const logger = require('./logger');
+const { isGhanaSupplier } = require('./supplierCountry');
 
 const GHANA_ROLE = 'ghana';
 
@@ -45,8 +46,8 @@ async function publishTourToGhana(tourId, actorId) {
       select: { businessInfo: true },
     });
 
-    const isGhanaSupplier = supplierProfile?.businessInfo?.country === 'Ghana';
-    if (!isGhanaSupplier) {
+    const ghanaBased = isGhanaSupplier(supplierProfile?.businessInfo?.country);
+    if (!ghanaBased) {
       logger.info(`[Travio Ghana] Supplier for tour ${tourId} is not Ghana-based, skipping auto-publish`);
       return null;
     }
@@ -116,7 +117,7 @@ async function reconcileGhanaPublish() {
       select: { userId: true, businessInfo: true },
     });
 
-    const ghanaSuppliers = suppliers.filter((s) => s.businessInfo?.country === 'Ghana');
+    const ghanaSuppliers = suppliers.filter((s) => isGhanaSupplier(s.businessInfo?.country));
     let enqueued = 0;
 
     for (const supplier of ghanaSuppliers) {
