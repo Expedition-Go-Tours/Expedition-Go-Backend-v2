@@ -3,7 +3,7 @@
  *
  * Every query targets Ghana-specific data:
  *   - Tours: TravioGhanaTour model (not Tour)
- *   - Bookings: Booking WHERE source = 'GHANA'
+ *   - Bookings: Booking WHERE source = 'GHANA' OR supplier has 'ghana' role
  *   - Suppliers: User WHERE 'ghana' = ANY(roles)
  *   - Reviews: Reviews on Ghana tours
  *
@@ -21,6 +21,23 @@ const adminController = require('./adminController');
 // ── Ghana-scoped constants ──────────────────────────────────────────────
 const GHANA_SOURCE = 'GHANA';
 const GHANA_ROLE = 'ghana';
+
+/**
+ * Prisma filter: bookings belonging to Ghana suppliers.
+ *
+ * Matches bookings whose source is GHANA *or* whose tour's supplier has
+ * the 'ghana' role.  This ensures bookings made through the Expedition
+ * storefront by a Ghana-based supplier appear in the Ghana admin dashboard.
+ */
+function ghanaBookingWhere(extra = {}) {
+  return {
+    OR: [
+      { source: GHANA_SOURCE },
+      { tour: { supplier: { roles: { has: GHANA_ROLE } } } },
+    ],
+    ...extra,
+  };
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // OVERVIEW / ANALYTICS
@@ -91,7 +108,10 @@ exports.getOverview = catchAsync(async (req, res, next) => {
           COUNT(*) FILTER (WHERE "createdAt" >= ${monthStart})::int AS "monthBookings",
           COUNT(*) FILTER (WHERE "createdAt" >= ${yearStart})::int AS "ytdBookings"
         FROM "Booking"
-        WHERE "source"::text = ${GHANA_SOURCE}
+        WHERE ("source"::text = ${GHANA_SOURCE} OR EXISTS (
+          SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+          WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+        ))
           AND ("createdAt" >= ${scanStart} OR "paidAt" >= ${scanStart})
       `,
 
@@ -125,7 +145,10 @@ exports.getOverview = catchAsync(async (req, res, next) => {
             LEFT JOIN (
               SELECT "createdAt"::date AS date, COUNT(*)::int AS count
               FROM "Booking"
-              WHERE "source"::text = ${GHANA_SOURCE}
+              WHERE ("source"::text = ${GHANA_SOURCE} OR EXISTS (
+                SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+                WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+              ))
                 AND "createdAt" >= CURRENT_DATE - (${periodDays - 1} || ' days')::interval
               GROUP BY "createdAt"::date
             ) b ON b.date >= d.date AND b.date < d.date + INTERVAL '7 days'
@@ -143,7 +166,10 @@ exports.getOverview = catchAsync(async (req, res, next) => {
             LEFT JOIN (
               SELECT "createdAt"::date AS date, COUNT(*)::int AS count
               FROM "Booking"
-              WHERE "source"::text = ${GHANA_SOURCE}
+              WHERE ("source"::text = ${GHANA_SOURCE} OR EXISTS (
+                SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+                WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+              ))
                 AND "createdAt" >= CURRENT_DATE - (${Math.min(periodDays || 7, 30) - 1} || ' days')::interval
               GROUP BY "createdAt"::date
             ) b ON d.date = b.date
@@ -200,7 +226,9 @@ exports.getOverview = catchAsync(async (req, res, next) => {
           FROM "Booking" bo
           JOIN "Tour" t ON t.id = bo."tourId"
           WHERE bo."paymentStatus" = 'SUCCEEDED' AND bo."paidAt" >= ${currentPeriodStart}
-            AND bo."source"::text = ${GHANA_SOURCE}
+            AND (bo."source"::text = ${GHANA_SOURCE} OR EXISTS (
+              SELECT 1 FROM "User" _u WHERE _u.id = t."supplierId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+            ))
           GROUP BY t."supplierId"
         ) period ON period."supplierId" = u.id
         WHERE sp.status = 'ACTIVE' AND ${GHANA_ROLE} = ANY(u."roles"::text[])
@@ -212,7 +240,10 @@ exports.getOverview = catchAsync(async (req, res, next) => {
       prisma.$queryRaw`
         SELECT status, COUNT(*)::int AS count
         FROM "Booking"
-        WHERE "source"::text = ${GHANA_SOURCE}
+        WHERE ("source"::text = ${GHANA_SOURCE} OR EXISTS (
+          SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+          WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+        ))
         GROUP BY status
       `,
 
@@ -332,7 +363,10 @@ exports.getRevenueTrend = catchAsync(async (req, res, next) => {
         ROUND(SUM("commissionAmount")::numeric, 2) AS commission,
         ROUND(SUM("supplierPayout")::numeric, 2)   AS "supplierPayout"
       FROM "Booking"
-      WHERE "source"::text = ${GHANA_SOURCE}
+      WHERE ("source"::text = ${GHANA_SOURCE} OR EXISTS (
+        SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+        WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+      ))
         AND "paidAt" >= NOW() - INTERVAL '24 months'
         AND "paymentStatus" = 'SUCCEEDED'
       GROUP BY DATE_TRUNC('month', "paidAt")
@@ -513,8 +547,6 @@ exports.getFunnel = catchAsync(async (req, res, next) => {
 exports.getCLV = catchAsync(async (req, res, next) => {
   const bucket = Math.floor(Date.now() / 300000);
   const data = await cache.getOrSet(`ghana:admin:clv:${bucket}`, async () => {
-    const yearStart = new Date(new Date().getFullYear(), 0, 1);
-
     const [basicStats, repeatRate, bookingDistribution, topCustomers] = await Promise.all([
       prisma.$queryRaw`
         SELECT
@@ -523,7 +555,10 @@ exports.getCLV = catchAsync(async (req, res, next) => {
           ROUND(AVG(b."total")::numeric, 2) AS "avgBookingValue",
           ROUND(SUM(b."total")::numeric, 2) AS "totalRevenue"
         FROM "Booking" b
-        WHERE b."paymentStatus" = 'SUCCEEDED' AND b."source"::text = ${GHANA_SOURCE}
+        WHERE b."paymentStatus" = 'SUCCEEDED' AND (b."source"::text = ${GHANA_SOURCE} OR EXISTS (
+          SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+          WHERE _t.id = b."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+        ))
       `,
       prisma.$queryRaw`
         SELECT
@@ -535,7 +570,10 @@ exports.getCLV = catchAsync(async (req, res, next) => {
         FROM (
           SELECT "customerId", COUNT(*) AS "bookingCount"
           FROM "Booking"
-          WHERE "paymentStatus" = 'SUCCEEDED' AND "source"::text = ${GHANA_SOURCE}
+          WHERE "paymentStatus" = 'SUCCEEDED' AND ("source"::text = ${GHANA_SOURCE} OR EXISTS (
+            SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+            WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+          ))
           GROUP BY "customerId"
         ) sub
       `,
@@ -553,7 +591,10 @@ exports.getCLV = catchAsync(async (req, res, next) => {
         FROM (
           SELECT "customerId", COUNT(*) AS booking_count
           FROM "Booking"
-          WHERE "paymentStatus" = 'SUCCEEDED' AND "source"::text = ${GHANA_SOURCE}
+          WHERE "paymentStatus" = 'SUCCEEDED' AND ("source"::text = ${GHANA_SOURCE} OR EXISTS (
+            SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+            WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+          ))
           GROUP BY "customerId"
         ) sub
         GROUP BY CASE
@@ -574,7 +615,10 @@ exports.getCLV = catchAsync(async (req, res, next) => {
           MAX(b."paidAt") AS "lastBookingDate"
         FROM "Booking" b
         JOIN "User" u ON u.id = b."customerId"
-        WHERE b."paymentStatus" = 'SUCCEEDED' AND b."source"::text = ${GHANA_SOURCE}
+        WHERE b."paymentStatus" = 'SUCCEEDED' AND (b."source"::text = ${GHANA_SOURCE} OR EXISTS (
+          SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+          WHERE _t.id = b."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+        ))
         GROUP BY u.id, u.name, u.email
         ORDER BY "totalSpent" DESC
         LIMIT 20
@@ -997,7 +1041,7 @@ exports.getTourReviewQueue = catchAsync(async (req, res, next) => {
 
   // Mirror the shared admin review queue: live-tour edits keep status ACTIVE
   // while the edit lives in draftStatus, so tabs must look at both columns.
-  let where = { ...ghanaScope };
+  const where = { ...ghanaScope };
   if (requestedStatus === 'PENDING_EDITS') {
     where.draftStatus = 'PENDING_APPROVAL';
   } else if (requestedStatus === 'PENDING_APPROVAL') {
@@ -1205,23 +1249,24 @@ exports.getBookings = catchAsync(async (req, res, next) => {
   const orderField = ALLOWED_BOOKING_SORTS.includes(sortBy) ? sortBy : 'createdAt';
   const orderDir = sortOrder === 'asc' ? 'asc' : 'desc';
 
-  const where = { source: GHANA_SOURCE };
-  if (status) where.status = status.toUpperCase();
-  if (paymentStatus) where.paymentStatus = paymentStatus.toUpperCase();
+  const extra = {};
+  if (status) extra.status = status.toUpperCase();
+  if (paymentStatus) extra.paymentStatus = paymentStatus.toUpperCase();
   if (startDate || endDate) {
-    where.createdAt = {};
-    if (startDate) where.createdAt.gte = new Date(startDate);
-    if (endDate) where.createdAt.lte = new Date(endDate + 'T23:59:59.999Z');
+    extra.createdAt = {};
+    if (startDate) extra.createdAt.gte = new Date(startDate);
+    if (endDate) extra.createdAt.lte = new Date(endDate + 'T23:59:59.999Z');
   }
   if (search && search.trim()) {
     const term = search.trim();
-    where.OR = [
+    extra.OR = [
       { bookingNumber: { contains: term, mode: 'insensitive' } },
       { customer: { name: { contains: term, mode: 'insensitive' } } },
       { customer: { email: { contains: term, mode: 'insensitive' } } },
       { tour: { title: { contains: term, mode: 'insensitive' } } },
     ];
   }
+  const where = ghanaBookingWhere(extra);
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const take = Math.min(parseInt(limit), 100);
@@ -1252,10 +1297,10 @@ exports.getBookings = catchAsync(async (req, res, next) => {
     prisma.booking.count({ where }),
     prisma.booking.groupBy({
       by: ['status'],
-      where: { source: GHANA_SOURCE },
+      where: ghanaBookingWhere(),
       _count: { _all: true },
     }),
-    prisma.booking.count({ where: { source: GHANA_SOURCE } }),
+    prisma.booking.count({ where: ghanaBookingWhere() }),
   ]);
 
   const countsObj = { total: ghanaTotal, PENDING: 0, CONFIRMED: 0, COMPLETED: 0, CANCELLED: 0 };
@@ -1286,10 +1331,7 @@ exports.getTodayBookings = catchAsync(async (req, res, next) => {
   const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
 
   const bookings = await prisma.booking.findMany({
-    where: {
-      source: GHANA_SOURCE,
-      createdAt: { gte: startOfDay, lt: endOfDay },
-    },
+    where: ghanaBookingWhere({ createdAt: { gte: startOfDay, lt: endOfDay } }),
     include: {
       customer: { select: { id: true, name: true, email: true } },
       tour: {
@@ -1313,7 +1355,7 @@ exports.getBookingById = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
   const booking = await prisma.booking.findFirst({
-    where: { id, source: GHANA_SOURCE },
+    where: ghanaBookingWhere({ id }),
     include: {
       customer: { select: { id: true, name: true, email: true, phone: true } },
       tour: {
@@ -1347,7 +1389,7 @@ exports.confirmPayment = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
   const booking = await prisma.booking.findFirst({
-    where: { id, source: GHANA_SOURCE },
+    where: ghanaBookingWhere({ id }),
   });
 
   if (!booking) {
@@ -1481,7 +1523,7 @@ exports.getSupplierDetail = catchAsync(async (req, res, next) => {
       take: 10,
     }),
     prisma.booking.findMany({
-      where: { source: GHANA_SOURCE, tour: { supplierId: user.id } },
+      where: ghanaBookingWhere({ tour: { supplierId: user.id } }),
       select: {
         id: true, bookingNumber: true, status: true, grossAmount: true,
         currency: true, createdAt: true,
@@ -1846,7 +1888,7 @@ exports.getPendingReviews = catchAsync(async (req, res, next) => {
  */
 exports.moderateReview = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const { action, status, reason } = req.body || {};
+  const { action, status } = req.body || {};
 
   // Frontend sends { action: 'approve' | 'reject' | 'flag', reason } (same as
   // the shared admin controller); accept the older { status } form too.
