@@ -111,6 +111,8 @@ const SCHEDULES = [
   // CLEANUP — reconciles
   { jobName: 'reconcile-ghana',             queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
   { jobName: 'reconcile-travioafrica',      queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
+  // CLEANUP — external review sync (weekly)
+  { jobName: 'sync-external-reviews',       queue: 'cleanup',      everyMs: 7 * 24 * 3600 * 1000 },
   // AGGREGATIONS
   { jobName: 'refresh-popularity',          queue: 'aggregation', everyMs: 3600 * 1000 },
   { jobName: 'cleanup-events',              queue: 'aggregation', everyMs: 24 * 3600 * 1000 },
@@ -1009,6 +1011,11 @@ function registerWorkers() {
         case 'reconcile-travioafrica': {
           const { reconcileTravioAfricaPublish } = require('./autoPublishTravioAfrica');
           await reconcileTravioAfricaPublish();
+          break;
+        }
+        case 'sync-external-reviews': {
+          const { runWeeklyReviewSync } = require('./externalReviewCrawler');
+          await runWeeklyReviewSync();
           break;
         }
       case 'cleanup-notifications': {
