@@ -61,6 +61,40 @@ exports.getDashboard = catchAsync(async (req, res) => {
     const tourMap = Object.fromEntries(tourStats.map(t => [t.status, t._count]));
     const bookingMap = Object.fromEntries(bookingStats.map(b => [b.status, b._count]));
 
+    // Top products — the supplier's tours ranked by booking volume, with the
+    // revenue each has generated. Drives the "Top Products" card on the
+    // dashboard (previously a hardcoded "coming soon" placeholder).
+    const topProductRows = await prisma.booking.groupBy({
+      by: ['tourId'],
+      where: { tour: { supplierId }, isSimulated: false, status: { not: 'CANCELLED' } },
+      _count: { _all: true },
+      _sum: { grossAmount: true },
+      orderBy: { _count: { tourId: 'desc' } },
+      take: 5,
+    });
+
+    const topTourIds = topProductRows.map((r) => r.tourId);
+    const topTours = topTourIds.length
+      ? await prisma.tour.findMany({
+          where: { id: { in: topTourIds } },
+          select: { id: true, title: true, coverPhoto: true, status: true, averageRating: true, reviewCount: true },
+        })
+      : [];
+    const topTourMap = Object.fromEntries(topTours.map((t) => [t.id, t]));
+
+    const topProducts = topProductRows
+      .filter((r) => topTourMap[r.tourId])
+      .map((r) => ({
+        id: r.tourId,
+        title: topTourMap[r.tourId].title,
+        coverPhoto: topTourMap[r.tourId].coverPhoto || null,
+        status: topTourMap[r.tourId].status,
+        averageRating: Number(topTourMap[r.tourId].averageRating) || 0,
+        reviewCount: topTourMap[r.tourId].reviewCount || 0,
+        bookings: r._count?._all || 0,
+        revenue: Number(r._sum?.grossAmount || 0),
+      }));
+
     // Response shape mirrors the shared supplierController.getDashboard —
     // the supplier dashboard frontend reads tours.active, bookings.confirmed,
     // bookings.pending and earnings.totalEarnings from the nested object.
@@ -90,6 +124,7 @@ exports.getDashboard = catchAsync(async (req, res) => {
         averageRating: Number(supplierProfile?.averageRating) || 0,
         totalReviews: reviewCount,
       },
+      topProducts,
     };
   }, ttl);
 
