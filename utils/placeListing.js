@@ -48,20 +48,31 @@ async function regionTourIds(region, scope = {}) {
   const key = `hp:regiontours:${normalized.toLowerCase()}${scope.ghanaOnly ? ':ghana' : ''}${scope.expeditionOnly ? ':exp' : ''}`;
 
   return cache.getOrSet(key, async () => {
-    const where = {
-      status: 'ACTIVE',
-      supplier: { supplierProfile: { status: 'ACTIVE' } },
-      OR: [
-        // Based in the region (the tour's first stop).
-        { region: { in: [normalized, bare], mode: 'insensitive' } },
-        // ...or merely VISITS it — a stop in the itinerary is in the region.
-        { itineraryRegions: { hasSome: [normalized, bare] } },
-      ],
-    };
-    if (scope.ghanaOnly) where.travioGhanaTour = { isActive: true };
-    else if (scope.expeditionOnly) where.expeditionTour = { isActive: true };
+    // Prefix-match the region column so "Bono" finds both "Bono Region" and
+    // "Bono East Region" — a place in a region with no tours still surfaces
+    // its sibling sub-regions instead of dead-ending.
+    // itineraryRegions is a JSON text array stored as full names
+    // ("Bono East Region"), so a substring check on the array text covers
+    // prefix matching there too.
+    const regionPattern = bare.replace(/'/g, "''");
+    const conditions = [
+      `t.region ILIKE '${regionPattern}%'`,
+      `t."itineraryRegions"::text ILIKE '%${regionPattern}%'`,
+    ];
 
-    const rows = await prisma.tour.findMany({ where, select: { id: true } });
+    let joinSql = '';
+    if (scope.ghanaOnly) {
+      joinSql = 'JOIN "TravioGhanaTour" tgt ON tgt."tourId" = t.id AND tgt."isActive" = true';
+    } else if (scope.expeditionOnly) {
+      joinSql = 'JOIN "ExpeditionTour" et ON et."tourId" = t.id AND et."isActive" = true';
+    }
+
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT t.id FROM "Tour" t ${joinSql}
+       WHERE t.status = 'ACTIVE'
+         AND EXISTS (SELECT 1 FROM "SupplierProfile" sp WHERE sp."userId" = t."supplierId" AND sp.status = 'ACTIVE')
+         AND (${conditions.join(' OR ')})`,
+    );
     return rows.map((r) => r.id);
   }, 300);
 }
