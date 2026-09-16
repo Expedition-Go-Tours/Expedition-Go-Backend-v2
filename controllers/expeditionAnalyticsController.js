@@ -14,7 +14,7 @@ const GHANA_ROLE = 'ghana';
  */
 const EXPEDITION_NOT_GHANA = {
   source: 'EXPEDITION',
-  tour: { NOT: { supplier: { roles: { has: GHANA_ROLE } } } },
+  NOT: [{ tour: { supplier: { roles: { has: GHANA_ROLE } } } }],
 };
 
 function dateRange(startDate, endDate, defaultDays = 30) {

@@ -38,7 +38,7 @@ const GHANA_ROLE = 'ghana';
 function notGhanaSupplierWhere(extra = {}) {
   return {
     AND: [
-      { NOT: { tour: { supplier: { roles: { has: GHANA_ROLE } } } } },
+      { NOT: [{ tour: { supplier: { roles: { has: GHANA_ROLE } } } }] },
       extra,
     ],
   };
