@@ -225,9 +225,6 @@ router.delete('/cart/clear', bookingController.clearCart);
  *                         name:
  *                           type: string
  *                           example: John Doe
- *                         age:
- *                           type: integer
- *                           example: 35
  *                         ageGroup:
  *                           type: string
  *                           example: Adult
@@ -261,13 +258,10 @@ router.delete('/cart/clear', bookingController.clearCart);
  *                   location: "New York, USA"
  *                   details:
  *                     - name: John Doe
- *                       age: 35
  *                       ageGroup: Adult
  *                     - name: Jane Doe
- *                       age: 32
  *                       ageGroup: Adult
  *                     - name: Jimmy Doe
- *                       age: 8
  *                       ageGroup: Child
  *                 specialRequests: Please arrange hotel pickup from Marriott Times Square
  *                 paymentMethodId: pm_1234567890abcdef

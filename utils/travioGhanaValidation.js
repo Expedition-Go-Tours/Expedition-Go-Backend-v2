@@ -56,7 +56,6 @@ const travelerWithDetailsSchema = travelerSchema.extend({
     .array(
       z.object({
         name: z.string().min(1).max(100).optional(),
-        age: z.number().int().min(0).max(150).optional(),
         ageGroup: z.string().max(50).optional(),
         specialRequests: z.string().max(500).optional(),
       }),

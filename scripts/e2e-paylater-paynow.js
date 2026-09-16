@@ -93,7 +93,7 @@ function addDays(days) {
       adults: 1, children: 0, infants: 0,
       phoneNumber: '+12025551234',
       location: 'New York, USA',
-      details: [{ name: 'E2E Tester', age: 30, ageGroup: 'adult' }],
+      details: [{ name: 'E2E Tester', ageGroup: 'adult' }],
     },
     paymentMethodId: 'pm_card_visa',
     paymentTiming: 'later',

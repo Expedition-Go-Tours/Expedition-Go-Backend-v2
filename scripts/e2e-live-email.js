@@ -118,7 +118,7 @@ const travelersPayload = (name) => ({
   adults: 1, children: 0, infants: 0,
   phoneNumber: '+12025551234',
   location: 'New York, USA',
-  details: [{ name, age: 30, ageGroup: 'adult' }],
+  details: [{ name, ageGroup: 'adult' }],
 });
 
 (async () => {

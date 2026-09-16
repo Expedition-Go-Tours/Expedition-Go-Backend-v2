@@ -152,7 +152,7 @@ async function postSignedWebhook(event) {
       infants: 0,
       phoneNumber: '+12025551234',
       location: 'New York, USA',
-      details: [{ name: 'E2E Tester', age: 30, ageGroup: 'adult' }],
+      details: [{ name: 'E2E Tester', ageGroup: 'adult' }],
     },
     paymentTiming: 'now',
   };

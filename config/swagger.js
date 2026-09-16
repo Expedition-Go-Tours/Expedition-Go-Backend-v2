@@ -1520,7 +1520,6 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
                     type: 'object',
                     properties: {
                       name: { type: 'string', example: 'John Doe' },
-                      age: { type: 'integer', example: 35 },
                       ageGroup: { type: 'string', example: 'Adult' },
                       specialRequests: { type: 'string', example: 'Vegetarian meal' }
                     }
@@ -1532,9 +1531,9 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
                 children: 1,
                 infants: 0,
                 details: [
-                  { name: 'John Doe', age: 35, ageGroup: 'Adult' },
-                  { name: 'Jane Doe', age: 32, ageGroup: 'Adult' },
-                  { name: 'Jimmy Doe', age: 8, ageGroup: 'Child' }
+                  { name: 'John Doe', ageGroup: 'Adult' },
+                  { name: 'Jane Doe', ageGroup: 'Adult' },
+                  { name: 'Jimmy Doe', ageGroup: 'Child' }
                 ]
               }
             },
