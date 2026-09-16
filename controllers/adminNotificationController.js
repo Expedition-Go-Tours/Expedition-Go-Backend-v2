@@ -2,6 +2,24 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const adminNotifService = require('../utils/adminNotificationService');
 
+const GHANA_ROLE = 'ghana';
+
+/**
+ * Exclude notifications related to Ghana suppliers.
+ *
+ * Notifications whose `data` JSON contains a `supplierId` pointing to a
+ * supplier with the 'ghana' role are Ghana-scoped and must not appear
+ * on the TravioAfrica admin dashboard.
+ */
+function excludeGhanaNotifications() {
+  return {
+    OR: [
+      { storefront: null },
+      { storefront: { not: 'ghana' } },
+    ],
+  };
+}
+
 const TYPE_PERMISSION = {
   NEW_SUPPLIER_APPLICATION: ['suppliers.view', 'suppliers.approve'],
   REVIEW_NEEDS_MODERATION: ['reviews.view', 'reviews.moderate'],
@@ -82,7 +100,7 @@ function buildPermissionWhere(permissionKeys = []) {
 
 exports.getNotifications = catchAsync(async (req, res) => {
   const { page = 1, limit = 20, unacknowledgedOnly = false } = req.query;
-  const where = buildPermissionWhere(req.user.permissionKeys || []);
+  const where = { ...buildPermissionWhere(req.user.permissionKeys || []), ...excludeGhanaNotifications() };
   const result = await adminNotifService.getNotifications({
     page: parseInt(page),
     limit: parseInt(limit),
@@ -93,7 +111,7 @@ exports.getNotifications = catchAsync(async (req, res) => {
 });
 
 exports.getUnreadCount = catchAsync(async (req, res) => {
-  const where = buildPermissionWhere(req.user.permissionKeys || []);
+  const where = { ...buildPermissionWhere(req.user.permissionKeys || []), ...excludeGhanaNotifications() };
   const result = await adminNotifService.getNotifications({ limit: 1, unacknowledgedOnly: true, where });
   res.status(200).json({
     status: 'success',
@@ -109,7 +127,7 @@ exports.acknowledge = catchAsync(async (req, res, next) => {
 });
 
 exports.acknowledgeAll = catchAsync(async (req, res) => {
-  const where = buildPermissionWhere(req.user.permissionKeys || []);
+  const where = { ...buildPermissionWhere(req.user.permissionKeys || []), ...excludeGhanaNotifications() };
   const result = await adminNotifService.acknowledgeAll(req.user.id, where);
   res.status(200).json({
     status: 'success',
@@ -118,7 +136,7 @@ exports.acknowledgeAll = catchAsync(async (req, res) => {
 });
 
 exports.getStats = catchAsync(async (req, res) => {
-  const where = buildPermissionWhere(req.user.permissionKeys || []);
+  const where = { ...buildPermissionWhere(req.user.permissionKeys || []), ...excludeGhanaNotifications() };
   const stats = await adminNotifService.getStats(where);
   res.status(200).json({ status: 'success', data: stats });
 });

@@ -1,6 +1,9 @@
 const prisma = require('./prismaClient');
 const { notifyDiscord, sendViaBot } = require('./discordNotifier');
 const channelEmbeds = require('./channelEmbeds');
+const { isGhanaSupplier } = require('./supplierCountry');
+
+const GHANA_ROLE = 'ghana';
 
 /**
  * Types that get mirrored to Discord. Types with richer explicit embeds
@@ -101,10 +104,34 @@ function mirrorToDiscord(type, title, message, data) {
   }).catch(() => {});
 }
 
-async function notifyAdmin({ type, title, message, data = {} }) {
+async function notifyAdmin({ type, title, message, data = {}, storefront = null }) {
   try {
+    // Auto-detect storefront from supplier if not explicitly provided
+    let resolvedStorefront = storefront;
+    if (!resolvedStorefront && data?.supplierId) {
+      try {
+        const user = await prisma.user.findUnique({
+          where: { id: data.supplierId },
+          select: { roles: true },
+        });
+        if (user?.roles?.includes(GHANA_ROLE)) resolvedStorefront = 'ghana';
+      } catch (_) { /* best-effort, don't fail notification */ }
+    }
+    if (!resolvedStorefront && data?.bookingId) {
+      try {
+        const booking = await prisma.booking.findUnique({
+          where: { id: data.bookingId },
+          select: { tour: { select: { supplier: { select: { roles: true } } } } },
+        });
+        if (booking?.tour?.supplier?.roles?.includes(GHANA_ROLE)) resolvedStorefront = 'ghana';
+      } catch (_) { /* best-effort */ }
+    }
+    if (!resolvedStorefront && data?.source === 'ghana') {
+      resolvedStorefront = 'ghana';
+    }
+
     const notification = await prisma.adminNotification.create({
-      data: { type, title, message, data },
+      data: { type, title, message, data, storefront: resolvedStorefront },
     });
 
     const app = require('../app');

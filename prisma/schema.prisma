@@ -1392,6 +1392,9 @@ model AdminNotification {
   message String
   data    Json? // Additional structured data (supplierId, reviewId, payoutId, etc.)
 
+  // Storefront scoping — 'ghana' | 'expedition' | null (platform-wide)
+  storefront String?
+
   // Status
   acknowledged   Boolean   @default(false)
   acknowledgedAt DateTime?
@@ -1402,6 +1405,7 @@ model AdminNotification {
   @@index([type])
   @@index([acknowledged])
   @@index([createdAt])
+  @@index([storefront])
 }
 
 // ================================
