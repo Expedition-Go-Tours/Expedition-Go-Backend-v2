@@ -1,5 +1,5 @@
 -- AlterTable
-ALTER TABLE "AdminNotification" ADD COLUMN "storefront" TEXT;
+ALTER TABLE "AdminNotification" ADD COLUMN IF NOT EXISTS "storefront" TEXT;
 
 -- CreateIndex
-CREATE INDEX "AdminNotification_storefront_idx" ON "AdminNotification"("storefront");
+CREATE INDEX IF NOT EXISTS "AdminNotification_storefront_idx" ON "AdminNotification"("storefront");
