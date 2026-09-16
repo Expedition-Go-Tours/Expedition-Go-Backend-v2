@@ -34,6 +34,24 @@ ssh -i "$SSH_KEY" "$SERVER" bash -s <<REMOTE
     npm install --production --silent
   fi
 
+  echo "--- prisma migrate ---"
+  # Migrations are applied here, not by hand. Leaving this step manual is how
+  # schema.prisma, the migration history and production drifted apart: two
+  # indexes and a column default existed only in the database, and the
+  # travioafrica enum value existed only in the schema.
+  #
+  # RULE FOR EVERY MIGRATION: it must be backward-compatible with the code that
+  # is already running (expand/contract — add nullable, backfill, switch reads,
+  # drop in a later release). This step applies automatically on every deploy,
+  # so a destructive migration takes effect the moment a deploy runs.
+  #
+  # `migrate status` is read-only and exits non-zero when something is pending,
+  # hence `|| true`; it is here so the deploy log shows what is about to change.
+  # `set -e` means a failed migration aborts the deploy and the running code
+  # keeps serving — never a half-migrated database with new code on top.
+  npx prisma migrate status || true
+  npx prisma migrate deploy
+
   echo "--- preflight: guard against a stray second PM2 daemon ---"
   # A PM2 daemon started as root (e.g. an ad-hoc 'sudo pm2 restart') binds
   # port 5000 and makes the deploy-owned expedition-api crash-loop on

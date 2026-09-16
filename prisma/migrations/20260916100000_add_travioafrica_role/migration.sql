@@ -1,0 +1,12 @@
+-- The 'travioafrica' role was added to the Prisma schema (during the per-option
+-- booking work) without a matching migration, so the live enum never received
+-- it and the schema drifted from the migration history.
+--
+-- utils/autoPublishTravioAfrica.js assigns exactly this role to non-Ghana
+-- suppliers, so until it exists the write fails on every publish: the listing
+-- is created, the role assignment throws, and the error is caught and logged —
+-- leaving the supplier without the role, silently.
+--
+-- Additive and safe. PostgreSQL has allowed ALTER TYPE ... ADD VALUE inside a
+-- transaction since 12, so this runs normally through `prisma migrate deploy`.
+ALTER TYPE "UserRole" ADD VALUE IF NOT EXISTS 'travioafrica';

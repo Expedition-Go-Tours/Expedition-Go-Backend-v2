@@ -920,6 +920,7 @@ model Booking {
   @@index([customerId, status, travelDate]) // "My bookings" filtered pages
   @@index([status, travelDate]) // Admin/supplier date-range queries
   @@index([payoutStatus]) // Finance eligibility sweeps + KPI queries
+  @@index([optionId]) // Per-option capacity + availability lookups
 }
 
 model BookingReminder {
@@ -956,7 +957,10 @@ model BookingChange {
   // APPLIED | PENDING_PAYMENT | DISCARDED | EXPIRED | FAILED
   status    String   @default("APPLIED")
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // The DB default comes from migration 20260907150000; declared here so the
+  // schema and the migration history agree (drift would otherwise want to drop
+  // it on every db push).
+  updatedAt DateTime @updatedAt @default(now())
 
   @@index([bookingId])
   @@index([bookingId, status])
@@ -1009,6 +1013,7 @@ model CheckoutDraft {
   @@index([tourId, travelDate, status]) // Hold-aware capacity checks
   @@index([status, expiresAt]) // Expiry sweep
   @@index([customerId]) // "My checkouts" + dedup guard
+  @@index([optionId]) // Per-option hold lookups
 }
 
 model Payout {

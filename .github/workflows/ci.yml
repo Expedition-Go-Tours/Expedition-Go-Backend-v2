@@ -132,6 +132,23 @@ jobs:
         if: steps.nm-cache.outputs.cache-hit != 'true'
       - run: npx prisma generate
       - run: npx prisma migrate deploy
+      # The schema file and the migration history must agree.
+      #
+      # `migrate deploy` only applies migrations it already knows about, so a
+      # change made to schema.prisma without a matching migration is invisible
+      # to it. That is exactly how the travioafrica enum value and the two
+      # optionId indexes drifted apart in production: the schema said one thing,
+      # the migrations another, and nothing compared them. `migrate diff` exits
+      # non-zero when they differ, so the build fails instead of shipping.
+      #
+      # Runs against the throwaway Postgres this job already starts, which has
+      # every migration applied by the step above — no shadow database needed.
+      - name: Schema must match the migrations
+        run: |
+          npx prisma migrate diff \
+            --from-url "$DATABASE_URL" \
+            --to-schema-datamodel prisma/schema.prisma \
+            --exit-code
       - run: node prisma/seed.js
       - run: npx jest __tests__/api/ --no-coverage --forceExit --reporters=default --reporters=jest-junit
 
