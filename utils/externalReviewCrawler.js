@@ -165,21 +165,72 @@ async function fetchWithPuppeteer(url) {
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
     await page.setViewport({ width: 1920, height: 1080 });
+
+    // Intercept API responses to capture review data
+    const apiReviews = [];
+    page.on('response', async (response) => {
+      try {
+        const respUrl = response.url();
+        if (respUrl.includes('review') && respUrl.includes('api')) {
+          const contentType = response.headers()['content-type'] || '';
+          if (contentType.includes('json')) {
+            const data = await response.json().catch(() => null);
+            if (data && (data.reviews || data.data?.reviews)) {
+              apiReviews.push(data);
+            }
+          }
+        }
+      } catch (_) { /* ignore */ }
+    });
+
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-    // Scroll to trigger lazy-loaded reviews
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); // eslint-disable-line no-undef
-    await new Promise((r) => setTimeout(r, 3000));
-    // Scroll again for pages with infinite scroll
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); // eslint-disable-line no-undef
+
+    // Scroll down to trigger lazy-loaded reviews
+    for (let i = 0; i < 3; i++) {
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+
+    // Wait for review elements to appear (platform-specific selectors)
+    const reviewSelectors = [
+      '[data-test="review"]',
+      '.review-card',
+      '[class*="ReviewCard"]',
+      '[class*="review-item"]',
+      '[class*="review-entry"]',
+      '.review-container',
+      '[data-reviewid]',
+    ];
+
+    for (const selector of reviewSelectors) {
+      try {
+        await page.waitForSelector(selector, { timeout: 5000 });
+        break;
+      } catch (_) { /* try next selector */ }
+    }
+
+    // Final scroll and wait
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
     await new Promise((r) => setTimeout(r, 2000));
+
     const html = await page.content();
     const finalUrl = page.url();
-    return { html, finalUrl };
+
+    // If we captured API review data, inject it into the HTML as a script tag
+    // so the AI extractor can find it
+    let enrichedHtml = html;
+    if (apiReviews.length > 0) {
+      const reviewJson = JSON.stringify(apiReviews);
+      enrichedHtml = html + `\n<script id="api-reviews" type="application/json">${reviewJson}</script>`;
+    }
+
+    return { html: enrichedHtml, finalUrl };
   } catch (err) {
     throw new Error(`Puppeteer fetch failed: ${err.message}`);
   } finally {
     if (browser) await browser.close().catch(() => {});
   }
+}
 }
 
 async function fetchWithPlaywright(url) {
