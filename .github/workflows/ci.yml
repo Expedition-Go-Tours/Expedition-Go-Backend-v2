@@ -660,25 +660,20 @@ jobs:
           DISCORD_DEPLOY_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
         run: node scripts/deployNotify.js
 
-      - name: Fix node_modules ownership (root-owned leftovers)
+      - name: Deploy to Hetzner via SSH
+        id: deploy_ssh
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.HETZNER_HOST }}
           username: root
           key: ${{ secrets.HETZNER_SSH_KEY }}
           script: |
-            chown -R deploy:deploy /home/deploy/Expedition-Go-Backend-v2/node_modules 2>/dev/null || true
-
-      - name: Deploy to Hetzner via SSH
-        id: deploy_ssh
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.HETZNER_HOST }}
-          username: deploy
-          key: ${{ secrets.HETZNER_SSH_KEY }}
-          script: |
             set -euo pipefail
-            cd /home/deploy/Expedition-Go-Backend-v2
+            APP_DIR="/home/deploy/Expedition-Go-Backend-v2"
+            cd "$APP_DIR"
+
+            echo "=== Fixing node_modules ownership ==="
+            chown -R deploy:deploy "$APP_DIR/node_modules" 2>/dev/null || true
 
             echo "=== Syncing to latest code (dirty-tree safe) ==="
             git fetch origin main
@@ -689,30 +684,27 @@ jobs:
             git reset --hard origin/main
 
             echo "=== Installing dependencies ==="
-            npm ci --omit=dev
+            su - deploy -c "cd $APP_DIR && npm ci --omit=dev"
 
             echo "=== Generating Prisma client ==="
-            npx prisma generate
+            su - deploy -c "cd $APP_DIR && npx prisma generate"
 
             echo "=== Running migrations ==="
-            npx prisma migrate resolve --rolled-back 20260916120000_reconcile_schema_drift 2>/dev/null || true
-            npx prisma migrate deploy
+            su - deploy -c "cd $APP_DIR && npx prisma migrate resolve --rolled-back 20260916120000_reconcile_schema_drift 2>/dev/null || true"
+            su - deploy -c "cd $APP_DIR && npx prisma migrate deploy"
 
             echo "=== Reloading API (graceful cluster reload, zero-downtime) ==="
-            # One-time migration: if the API is still running as a single fork
-            # instance (pre-cluster), swap it to the ecosystem definition
-            # (cluster, 2 workers) first. Afterwards, pm2 reload rolls workers
-            # one at a time so the API never drops.
-            CUR_MODE=$(pm2 jlist 2>/dev/null | python3 -c "
+            # PM2 commands MUST run as deploy user to avoid a second daemon.
+            su - deploy -c 'cd /home/deploy/Expedition-Go-Backend-v2 && CUR_MODE=$(pm2 jlist 2>/dev/null | python3 -c "
             import sys, json
             try:
                 d = json.load(sys.stdin)
                 for p in d:
-                    if p.get('name') == 'expedition-api':
-                        print((p.get('pm2_env') or {}).get('exec_mode', 'fork'))
+                    if p.get(\"name\") == \"expedition-api\":
+                        print((p.get(\"pm2_env\") or {}).get(\"exec_mode\", \"fork\"))
                         break
             except Exception:
-                print('fork')
+                print(\"fork\")
             " 2>/dev/null || echo fork)
             if [ "$CUR_MODE" != "cluster_mode" ]; then
               echo "API not in cluster mode yet — migrating via ecosystem config"
@@ -720,13 +712,13 @@ jobs:
               pm2 start ecosystem.config.js --only expedition-api
             else
               pm2 reload ecosystem.config.js --only expedition-api --update-env
-            fi
+            fi'
 
             echo "=== Restarting support apps (reconnect-safe, no graceful needed) ==="
-            pm2 restart discord-bot clip-service >/dev/null 2>&1 || true
+            su - deploy -c 'pm2 restart discord-bot clip-service >/dev/null 2>&1 || true'
 
             echo "=== Saving PM2 process list ==="
-            pm2 save
+            su - deploy -c 'pm2 save'
 
             echo "=== Flushing homepage cache (code changes live immediately) ==="
             # TTL is the safety net, not the invalidation mechanism — clear the
