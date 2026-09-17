@@ -665,67 +665,59 @@ jobs:
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.HETZNER_HOST }}
-          username: deploy
+          username: root
           key: ${{ secrets.HETZNER_SSH_KEY }}
           script: |
             set -euo pipefail
-            cd /home/deploy/Expedition-Go-Backend-v2
+            APP_DIR="/home/deploy/Expedition-Go-Backend-v2"
+            cd "$APP_DIR"
+
+            echo "=== Fixing file ownership ==="
+            chown -R deploy:deploy "$APP_DIR"
 
             echo "=== Syncing to latest code (dirty-tree safe) ==="
             git fetch origin main
-            # Preserve any local changes (manual edits, stray files) in a stash
-            # so they can never block the production deploy, then guarantee the
-            # working tree exactly matches origin/main.
             git stash push -u -m "ci-deploy-auto-stash $(date -u +%F_%T)" 2>/dev/null || true
             git reset --hard origin/main
 
             echo "=== Installing dependencies ==="
-            # Use npm install (not npm ci) to avoid tearing down node_modules,
-            # which fails when root-owned leftovers from manual deploys exist.
-            npm install --production
+            su - deploy -c "cd $APP_DIR && npm install --production"
 
             echo "=== Generating Prisma client ==="
-            npx prisma generate
+            su - deploy -c "cd $APP_DIR && npx prisma generate"
 
             echo "=== Running migrations ==="
-            npx prisma migrate resolve --rolled-back 20260916120000_reconcile_schema_drift 2>/dev/null || true
-            npx prisma migrate deploy
+            su - deploy -c "cd $APP_DIR && npx prisma migrate resolve --rolled-back 20260916120000_reconcile_schema_drift 2>/dev/null || true"
+            su - deploy -c "cd $APP_DIR && npx prisma migrate deploy"
 
             echo "=== Reloading API (graceful cluster reload, zero-downtime) ==="
-            # One-time migration: if the API is still running as a single fork
-            # instance (pre-cluster), swap it to the ecosystem definition
-            # (cluster, 2 workers) first. Afterwards, pm2 reload rolls workers
-            # one at a time so the API never drops.
-            CUR_MODE=$(pm2 jlist 2>/dev/null | python3 -c "
+            su - deploy -c "cd $APP_DIR && CUR_MODE=\$(pm2 jlist 2>/dev/null | python3 -c '
             import sys, json
             try:
                 d = json.load(sys.stdin)
                 for p in d:
-                    if p.get('name') == 'expedition-api':
-                        print((p.get('pm2_env') or {}).get('exec_mode', 'fork'))
+                    if p.get(\"name\") == \"expedition-api\":
+                        print((p.get(\"pm2_env\") or {}).get(\"exec_mode\", \"fork\"))
                         break
             except Exception:
-                print('fork')
-            " 2>/dev/null || echo fork)
-            if [ "$CUR_MODE" != "cluster_mode" ]; then
-              echo "API not in cluster mode yet — migrating via ecosystem config"
+                print(\"fork\")
+            ' 2>/dev/null || echo fork)
+            if [ \"\$CUR_MODE\" != \"cluster_mode\" ]; then
+              echo \"API not in cluster mode yet\"
               pm2 delete expedition-api >/dev/null 2>&1 || true
               pm2 start ecosystem.config.js --only expedition-api
             else
               pm2 reload ecosystem.config.js --only expedition-api --update-env
-            fi
+            fi"
 
-            echo "=== Restarting support apps (reconnect-safe, no graceful needed) ==="
-            pm2 restart discord-bot clip-service >/dev/null 2>&1 || true
+            echo "=== Restarting support apps ==="
+            su - deploy -c "pm2 restart discord-bot clip-service >/dev/null 2>&1 || true"
 
             echo "=== Saving PM2 process list ==="
-            pm2 save
+            su - deploy -c "pm2 save"
 
-            echo "=== Flushing homepage cache (code changes live immediately) ==="
-            # TTL is the safety net, not the invalidation mechanism — clear the
-            # whole homepage cache family so a ranking/code change is served on
-            # the very next request instead of waiting out the Redis TTL.
-            REDIS_URL_VALUE="$(grep -m1 '^REDIS_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d '\"' || true)"
+            echo "=== Flushing homepage cache ==="
+            REDIS_URL_VALUE="$(grep -m1 '^REDIS_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || true)"
             if [ -n "${REDIS_URL_VALUE:-}" ]; then
               redis-cli -u "$REDIS_URL_VALUE" --scan --pattern 'hp:*' 2>/dev/null \
                 | xargs -r redis-cli -u "$REDIS_URL_VALUE" del >/dev/null 2>&1 || true
