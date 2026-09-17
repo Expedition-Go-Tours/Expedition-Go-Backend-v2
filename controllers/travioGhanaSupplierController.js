@@ -202,9 +202,17 @@ exports.getSupplierTours = catchAsync(async (req, res) => {
     },
   };
 
-  const [ghanaRows, expeditionRows] = await Promise.all([
+  const [ghanaRows, expeditionRows, supplierTours] = await Promise.all([
     prisma.travioGhanaTour.findMany({ where, select: { ...listingSelect, tour: tourSelect } }),
     prisma.expeditionTour.findMany({ where, select: { ...listingSelect, tour: tourSelect } }),
+    // Every non-archived tour owned by the supplier, including drafts and
+    // submissions that have no storefront listing row yet. Without this the
+    // dashboard could never show a draft — listing rows only exist once a
+    // tour has been published to a storefront.
+    prisma.tour.findMany({
+      where: { supplierId, status: { not: 'ARCHIVED' } },
+      select: { ...tourSelect.select },
+    }),
   ]);
 
   const mapRow = (r, storefront) => ({
@@ -235,6 +243,19 @@ exports.getSupplierTours = catchAsync(async (req, res) => {
     } else {
       merged.set(r.tourId, row);
     }
+  }
+
+  // Tours with no storefront listing (drafts, brand-new products, rejected
+  // submissions) still belong on the supplier's dashboard so they can be
+  // edited and submitted. Tag them with a null storefront.
+  for (const t of supplierTours) {
+    if (merged.has(t.id)) continue;
+    merged.set(t.id, {
+      ...t,
+      storefront: null,
+      bookings: t._count?.bookings ?? 0,
+      _count: undefined,
+    });
   }
 
   const all = [...merged.values()].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));

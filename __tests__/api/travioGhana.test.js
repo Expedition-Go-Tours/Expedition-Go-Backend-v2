@@ -316,6 +316,22 @@ describe('TravioGhana API — supplier endpoints', () => {
     expect(res.body.status).toBe('success');
   });
 
+  it('GET /tours includes drafts that have no storefront listing', async () => {
+    prisma.travioGhanaTour.findMany.mockResolvedValue([]);
+    prisma.expeditionTour.findMany.mockResolvedValue([]);
+    prisma.tour.findMany.mockResolvedValue([
+      { ...mockTour, id: 'draft-1', status: 'DRAFT', draftStatus: 'DRAFT', createdAt: new Date(), updatedAt: new Date(), _count: { bookings: 0 } },
+    ]);
+    const res = await request(app).get('/api/travioghana/supplier/tours').set(auth(supplierToken));
+    expect(res.status).toBe(200);
+    expect(res.body.data.tours).toHaveLength(1);
+    expect(res.body.data.tours[0].status).toBe('DRAFT');
+    expect(res.body.data.tours[0].storefront).toBeNull();
+    expect(prisma.tour.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { supplierId: 'supplier-1', status: { not: 'ARCHIVED' } } })
+    );
+  });
+
   it('GET /reviews returns 200 (uses customer relation)', async () => {
     prisma.travioGhanaTour.findMany.mockResolvedValue([{ tourId: 'tour-1' }]);
     prisma.review.findMany.mockResolvedValue([{ id: 'rev-1', rating: 5, customer: { id: 'customer-1', name: 'Perf Customer' }, tour: { id: 'tour-1', title: 'Test' } }]);
