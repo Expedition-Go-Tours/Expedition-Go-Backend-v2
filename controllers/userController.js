@@ -18,6 +18,7 @@ const AppError = require('../utils/appError');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudinaryHelper');
 const { logActivity } = require('../utils/auditLogger');
 const { invalidateUserCache } = require('../middleware/authMiddleware');
+const { getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
 
 exports.getMe = catchAsync(async (req, res, next) => {
   if (!req.user) {
@@ -52,6 +53,29 @@ exports.updateMe = catchAsync(async (req, res, next) => {
   if (req.body.language !== undefined) updates.language = req.body.language;
   if (req.body.timezone !== undefined) updates.timezone = req.body.timezone;
   if (req.body.logoUrl !== undefined) updates.logoUrl = req.body.logoUrl;
+
+  //  Location (account settings)
+  if (req.body.address !== undefined) updates.address = req.body.address || null;
+  if (req.body.city !== undefined) updates.city = req.body.city || null;
+  if (req.body.state !== undefined) updates.state = req.body.state || null;
+  if (req.body.zipCode !== undefined) updates.zipCode = req.body.zipCode || null;
+  if (req.body.country !== undefined) updates.country = req.body.country || null;
+  if (req.body.homeAirport !== undefined) updates.homeAirport = req.body.homeAirport || null;
+
+  //  Date of birth — must be a real date, not in the future, and plausible.
+  if (req.body.dateOfBirth !== undefined) {
+    if (!req.body.dateOfBirth) {
+      updates.dateOfBirth = null;
+    } else {
+      const dob = new Date(req.body.dateOfBirth);
+      const now = new Date();
+      const earliest = new Date('1900-01-01');
+      if (isNaN(dob.getTime()) || dob > now || dob < earliest) {
+        return next(new AppError('Invalid date of birth', 400));
+      }
+      updates.dateOfBirth = dob;
+    }
+  }
 
   if (req.file) {
     if (!isValidCloudinaryUrl(req.file.path)) {
@@ -357,6 +381,130 @@ exports.syncMe = catchAsync(async (req, res) => {
   });
 
   res.status(200).json({ status: 'success', data: { user } });
+});
+
+// ─── Saved cards (Stripe payment methods) ───────────────────────────────
+//
+// Cards are stored on the Stripe Customer (never in our DB). These endpoints
+// expose the customer's own saved cards for the Account Settings page. Card
+// details never touch our servers — Stripe Elements collects them client-side.
+
+/** Resolve the caller's Stripe customer, failing loudly if it can't be created. */
+async function requireCustomer(user) {
+  const customerId = await ensureStripeCustomer(user);
+  if (!customerId) {
+    throw new AppError('Could not initialize your billing profile. Please try again.', 502);
+  }
+  return customerId;
+}
+
+/** Shape a Stripe PaymentMethod into the fields the UI needs. */
+function toSavedCard(pm, defaultPaymentMethodId) {
+  const card = pm.card || {};
+  const now = new Date();
+  const expired =
+    card.exp_year != null &&
+    (card.exp_year < now.getFullYear() ||
+      (card.exp_year === now.getFullYear() && card.exp_month < now.getMonth() + 1));
+
+  return {
+    id: pm.id,
+    brand: card.brand || 'card',
+    last4: card.last4 || '****',
+    expMonth: card.exp_month ?? null,
+    expYear: card.exp_year ?? null,
+    expired,
+    isDefault: pm.id === defaultPaymentMethodId,
+  };
+}
+
+/**
+ * GET /api/users/payment-methods
+ * Lists the authenticated customer's saved cards.
+ */
+exports.listPaymentMethods = catchAsync(async (req, res) => {
+  const customerId = await requireCustomer(req.user);
+  const stripe = getStripe();
+
+  const [methods, customer] = await Promise.all([
+    stripe.paymentMethods.list({ customer: customerId, type: 'card' }),
+    stripe.customers.retrieve(customerId),
+  ]);
+
+  const defaultPmId = customer?.invoice_settings?.default_payment_method || null;
+  const cards = (methods.data || []).map((pm) => toSavedCard(pm, defaultPmId));
+
+  // Surface the default first, then most-recently-usable.
+  cards.sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
+
+  res.status(200).json({ status: 'success', data: { cards } });
+});
+
+/**
+ * POST /api/users/payment-methods/setup-intent
+ * Creates a SetupIntent so the client can collect + save a card.
+ */
+exports.createSetupIntent = catchAsync(async (req, res) => {
+  const customerId = await requireCustomer(req.user);
+  const stripe = getStripe();
+
+  const intent = await stripe.setupIntents.create({
+    customer: customerId,
+    automatic_payment_methods: { enabled: true },
+    metadata: { userId: req.user.id },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { clientSecret: intent.client_secret },
+  });
+});
+
+/**
+ * PATCH /api/users/payment-methods/:id/default
+ * Marks a saved card as the customer's default.
+ */
+exports.setDefaultPaymentMethod = catchAsync(async (req, res, next) => {
+  const customerId = await requireCustomer(req.user);
+  const stripe = getStripe();
+
+  // Ownership check — the card must belong to this customer.
+  const pm = await stripe.paymentMethods.retrieve(req.params.id).catch(() => null);
+  if (!pm || pm.customer !== customerId) {
+    return next(new AppError('Card not found', 404));
+  }
+
+  await stripe.customers.update(customerId, {
+    invoice_settings: { default_payment_method: pm.id },
+  });
+
+  res.status(200).json({ status: 'success', data: { id: pm.id } });
+});
+
+/**
+ * DELETE /api/users/payment-methods/:id
+ * Detaches a saved card from the customer.
+ */
+exports.detachPaymentMethod = catchAsync(async (req, res, next) => {
+  const customerId = await requireCustomer(req.user);
+  const stripe = getStripe();
+
+  const pm = await stripe.paymentMethods.retrieve(req.params.id).catch(() => null);
+  if (!pm || pm.customer !== customerId) {
+    return next(new AppError('Card not found', 404));
+  }
+
+  await stripe.paymentMethods.detach(pm.id);
+
+  await logActivity({
+    userId: req.user.id,
+    action: 'user.payment_method_removed',
+    resource: 'User',
+    resourceId: req.user.id,
+    metadata: { brand: pm.card?.brand, last4: pm.card?.last4 },
+  });
+
+  res.status(200).json({ status: 'success' });
 });
 
 module.exports = exports;

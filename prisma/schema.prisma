@@ -317,6 +317,16 @@ model User {
   photoURL     String     @default("")
   logoUrl      String?
   phone        String?
+  dateOfBirth  DateTime?  @db.Date
+
+  // Location (account settings)
+  address     String?
+  city        String?
+  state       String?
+  zipCode     String?
+  country     String?
+  homeAirport String?
+
   roles        UserRole[] @default([customer])
 
   // Stripe Integration

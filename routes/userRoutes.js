@@ -322,6 +322,12 @@ router.use(protect);
 router.get('/me', userController.getMe);
 router.delete('/me', userController.deleteMe);
 
+// Saved cards (Stripe payment methods) — Account Settings
+router.get('/payment-methods', userController.listPaymentMethods);
+router.post('/payment-methods/setup-intent', userController.createSetupIntent);
+router.patch('/payment-methods/:id/default', userController.setDefaultPaymentMethod);
+router.delete('/payment-methods/:id', userController.detachPaymentMethod);
+
 /**
  * @swagger
  * /users/wishlist:
