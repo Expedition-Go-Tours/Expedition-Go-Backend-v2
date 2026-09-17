@@ -13,7 +13,7 @@
 // Canonical host. MUST match the domain the site actually serves (the other
 // host must 301/308 to this one). Configurable so switching hosts is an env
 // change, not a code change.
-const SITE_URL = (process.env.SITE_URL || 'https://expeditiongotours.com').replace(/\/+$/, '');
+const SITE_URL = (process.env.SITE_URL || 'https://www.expeditiongotours.com').replace(/\/+$/, '');
 const SITE_NAME = 'Expedition-Go Tours';
 const DEFAULT_IMAGE = 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1759237936/hero-bg_e5jwmx.jpg';
 const DEFAULT_DESCRIPTION = 'Discover authentic Ghana tours and experiences. Book cultural tours, wildlife safaris, food tours, and adventure activities across Accra, Cape Coast, Volta Region, and more. Free cancellation, best prices guaranteed.';
