@@ -51,7 +51,47 @@ function ogTag(property, content) {
   return `<meta property="${property}" content="${escapeHtml(content)}">`;
 }
 
-function buildHtml({ title, description, keywords, image, url, canonical, type, jsonLd, price, rating, robots }) {
+// Site-wide internal links. Rendered into every prerendered page so crawlers
+// can discover pages by following links, not just by reading the sitemap.
+const NAV_LINKS = [
+  { href: '/', label: 'Home' },
+  { href: '/tours', label: 'Tours' },
+  { href: '/about-us', label: 'About Us' },
+  { href: '/stories', label: 'Stories' },
+  { href: '/reviews', label: 'Reviews' },
+  { href: '/blog', label: 'Blog' },
+  { href: '/faq', label: 'FAQ' },
+  { href: '/contact-us', label: 'Contact' },
+];
+
+const FOOTER_LINKS = [
+  { href: '/tours', label: 'All Tours' },
+  { href: '/about-us', label: 'About Us' },
+  { href: '/careers', label: 'Careers' },
+  { href: '/partnerships', label: 'Partnerships' },
+  { href: '/content-creators', label: 'Content Creators' },
+  { href: '/travel-agents', label: 'Travel Agents' },
+  { href: '/hotels', label: 'Hotels' },
+  { href: '/transport', label: 'Transport' },
+  { href: '/transport-providers', label: 'Transport Providers' },
+  { href: '/foundation', label: 'Foundation' },
+  { href: '/faq', label: 'FAQ' },
+  { href: '/help-centre', label: 'Help Centre' },
+  { href: '/contact-us', label: 'Contact Us' },
+  { href: '/terms-and-conditions', label: 'Terms & Conditions' },
+  { href: '/privacy-policy', label: 'Privacy Policy' },
+  { href: '/cookies-policy', label: 'Cookie Policy' },
+  { href: '/refund-policy', label: 'Refund Policy' },
+  { href: '/supplier-terms', label: 'Supplier Terms' },
+];
+
+function linkList(links) {
+  return links
+    .map((l) => `<a href="${SITE_URL}${l.href}">${escapeHtml(l.label)}</a>`)
+    .join('\n        ');
+}
+
+function buildHtml({ title, description, keywords, image, url, canonical, type, jsonLd, price, rating, robots, bodyHtml }) {
   const fullTitle = `${title} | ${SITE_NAME}`;
   const ogImage = image?.startsWith('http') ? image : `${SITE_URL}${image || ''}`;
 
@@ -82,16 +122,30 @@ function buildHtml({ title, description, keywords, image, url, canonical, type, 
   ${jsonLd ? jsonLd.map((s) => `<script type="application/ld+json">${JSON.stringify(s)}</script>`).join('\n  ') : ''}
 </head>
 <body>
-  <div id="root">
-    <h1>${escapeHtml(title)}</h1>
-    <p>${escapeHtml(description)}</p>
-    ${rating ? `<p>Rating: ${rating.value}/5 (${rating.count} reviews)</p>` : ''}
-    <nav aria-label="Breadcrumb">
-      <a href="${SITE_URL}">Home</a> &gt;
-      <a href="${SITE_URL}/tours">Tours</a> &gt;
-      <span>${escapeHtml(title)}</span>
+  <header>
+    <nav aria-label="Main">
+        ${linkList(NAV_LINKS)}
     </nav>
-  </div>
+  </header>
+  <main>
+    <div id="root">
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(description)}</p>
+      ${rating ? `<p>Rating: ${rating.value}/5 (${rating.count} reviews)</p>` : ''}
+      <nav aria-label="Breadcrumb">
+        <a href="${SITE_URL}">Home</a> &gt;
+        <a href="${SITE_URL}/tours">Tours</a> &gt;
+        <span>${escapeHtml(title)}</span>
+      </nav>
+      ${bodyHtml || ''}
+    </div>
+  </main>
+  <footer>
+    <nav aria-label="Footer">
+        ${linkList(FOOTER_LINKS)}
+    </nav>
+    <p>&copy; ${new Date().getFullYear()} ${SITE_NAME}. All rights reserved.</p>
+  </footer>
   <script>window.__PRERENDERED__ = true;</script>
 </body>
 </html>`;
@@ -178,10 +232,43 @@ async function handleTourPage(slug) {
   const city = tour.city || tour.location?.split(',')[0]?.trim() || 'Ghana';
   const region = tour.location?.split(',')[1]?.trim() || '';
   const image = tour.coverPhoto || tour.photos?.[0] || DEFAULT_IMAGE;
+  const durationLabel = tour.durationMinutes
+    ? `${Math.floor(tour.durationMinutes / 60)}h${tour.durationMinutes % 60 ? ` ${tour.durationMinutes % 60}m` : ''}`
+    : 'Experience';
+
+  // Related tours — internal links so crawlers discover the rest of the catalogue
+  // from any tour page. Best-effort: a failure never blocks the page.
+  let relatedHtml = '';
+  try {
+    const listData = await fetchJson(`${API}/api/expedition/tours?limit=8`);
+    const others = (listData?.data?.tours || [])
+      .map((l) => l.tour || l)
+      .filter((t) => t && t.slug && t.slug !== slug)
+      .slice(0, 6);
+    if (others.length) {
+      relatedHtml = `<section aria-label="Related tours">
+        <h2>More tours in Ghana</h2>
+        <ul>
+          ${others.map((t) => `<li><a href="${SITE_URL}/tour/${encodeURIComponent(t.slug)}">${escapeHtml(t.title)}</a></li>`).join('\n          ')}
+        </ul>
+      </section>`;
+    }
+  } catch { /* related tours are non-critical */ }
+
+  const highlights = Array.isArray(tour.highlights) ? tour.highlights.filter(Boolean).slice(0, 8) : [];
+
+  const bodyHtml = `
+      <p><strong>Duration:</strong> ${escapeHtml(durationLabel)}</p>
+      ${tour.category ? `<p><strong>Category:</strong> ${escapeHtml(tour.category)}</p>` : ''}
+      ${tour.startingPrice ? `<p><strong>From:</strong> $${escapeHtml(String(tour.startingPrice))} ${escapeHtml(tour.currency || 'USD')} per person</p>` : ''}
+      ${tour.description ? `<section aria-label="Description"><h2>About this tour</h2><p>${escapeHtml(tour.description)}</p></section>` : ''}
+      ${highlights.length ? `<section aria-label="Highlights"><h2>Highlights</h2><ul>${highlights.map((h) => `<li>${escapeHtml(h)}</li>`).join('')}</ul></section>` : ''}
+      <p><a href="${SITE_URL}/tour/${encodeURIComponent(slug)}">Book this tour on ${SITE_NAME}</a></p>
+      ${relatedHtml}`;
 
   return buildHtml({
     title: `${tour.title} in ${city}`,
-    description: `${tour.title} - ${tour.durationMinutes ? Math.round(tour.durationMinutes / 60) + 'h' : 'Experience'} in ${city}${region ? ', ' + region : ''}, Ghana. Book from $${tour.startingPrice || 0}. ${tour.averageRating ? `Rated ${tour.averageRating}/5` : ''} Free cancellation, instant confirmation.`,
+    description: `${tour.title} - ${durationLabel} in ${city}${region ? ', ' + region : ''}, Ghana. Book from $${tour.startingPrice || 0}. ${tour.averageRating ? `Rated ${tour.averageRating}/5` : ''} Free cancellation, instant confirmation.`,
     keywords: `${tour.title}, ${city} tours, ${tour.category || 'tours'} in ${city}, Ghana tours, book ${tour.title}, things to do in ${city}`,
     image,
     url: `${SITE_URL}/tour/${slug}`,
@@ -189,6 +276,7 @@ async function handleTourPage(slug) {
     type: 'product',
     price: { amount: String(tour.startingPrice || 0), currency: tour.currency || 'USD' },
     rating: tour.averageRating && tour.reviewCount ? { value: tour.averageRating, count: tour.reviewCount } : undefined,
+    bodyHtml,
     jsonLd: [
       buildProductSchema(tour),
       buildBreadcrumbSchema([
@@ -302,6 +390,66 @@ function handleStaticPage(path) {
       description: 'Read inspiring travel stories from Ghana. Discover hidden gems, local culture, food experiences, wildlife adventures, and travel tips for your Ghana vacation.',
       keywords: 'Ghana travel blog, Ghana travel stories, Ghana travel guide, things to do in Ghana',
     },
+    '/partnerships': {
+      title: 'Partnerships',
+      description: 'Partner with Expedition-Go Tours. We work with hotels, transport providers, travel agents, and content creators to grow Ghana tourism.',
+      keywords: 'Ghana tourism partnership, travel partnership Ghana, Expedition-Go Tours partners',
+    },
+    '/content-creators': {
+      title: 'Content Creators Programme',
+      description: 'Join the Expedition-Go Tours content creators programme. Collaborate with us on Ghana travel content and experiences.',
+      keywords: 'Ghana travel content creators, influencer programme Ghana, travel collaboration',
+    },
+    '/travel-agents': {
+      title: 'For Travel Agents',
+      description: 'Expedition-Go Tours works with travel agents worldwide to book authentic Ghana tours and experiences for their clients.',
+      keywords: 'Ghana travel agents, book Ghana tours for clients, Ghana tour operator B2B',
+    },
+    '/hotels': {
+      title: 'For Hotels & Accommodation Providers',
+      description: 'Partner with Expedition-Go Tours to offer your guests curated Ghana tours and experiences. Add value to every stay.',
+      keywords: 'Ghana hotels tours, hotel partnership Ghana, guest experiences Ghana',
+    },
+    '/transport': {
+      title: 'Transport & Airport Transfers',
+      description: 'Book reliable airport transfers and transport across Ghana with Expedition-Go Tours. Private drivers, comfortable vehicles, punctual pickup.',
+      keywords: 'Ghana airport transfer, Accra airport pickup, Ghana transport service, private driver Ghana',
+    },
+    '/transport-providers': {
+      title: 'For Transport Providers',
+      description: 'Partner with Expedition-Go Tours as a transport provider. Grow your Ghana transfer and transport business with qualified bookings.',
+      keywords: 'Ghana transport providers, partner transport Ghana, Ghana driver partnership',
+    },
+    '/terms-and-conditions': {
+      title: 'Terms & Conditions',
+      description: 'Read the terms and conditions governing bookings and use of the Expedition-Go Tours platform.',
+      keywords: 'Expedition-Go Tours terms, booking terms Ghana tours',
+    },
+    '/privacy-policy': {
+      title: 'Privacy Policy',
+      description: 'Learn how Expedition-Go Tours collects, uses, and protects your personal data.',
+      keywords: 'Expedition-Go Tours privacy policy, data protection Ghana',
+    },
+    '/cookies-policy': {
+      title: 'Cookie Policy',
+      description: 'How Expedition-Go Tours uses cookies and similar technologies, and how you can control them.',
+      keywords: 'Expedition-Go Tours cookie policy, cookies Ghana tours',
+    },
+    '/refund-policy': {
+      title: 'Refund Policy',
+      description: 'Understand the cancellation and refund policy for tours booked through Expedition-Go Tours.',
+      keywords: 'Ghana tours refund policy, cancellation policy Ghana tours',
+    },
+    '/foundation': {
+      title: 'Expedition-Go Foundation',
+      description: 'The Expedition-Go Foundation supports community, conservation, and education projects across Ghana.',
+      keywords: 'Expedition-Go Foundation, Ghana community tourism, responsible travel Ghana',
+    },
+    '/supplier-terms': {
+      title: 'Supplier Terms',
+      description: 'Terms and conditions for suppliers listing tours and experiences on Expedition-Go Tours.',
+      keywords: 'Expedition-Go Tours supplier terms, list tours Ghana',
+    },
   };
 
   const page = pages[path];
@@ -316,6 +464,22 @@ function handleStaticPage(path) {
       { name: 'Home', url: `${SITE_URL}/` },
       { name: page.title, url: `${SITE_URL}${path}` },
     ])],
+  });
+}
+
+/**
+ * Real 404 page. Returned with HTTP 404 (never a 200 homepage duplicate) so
+ * Google stops treating unknown URLs as soft duplicates of the homepage.
+ */
+function handleNotFoundPage() {
+  return buildHtml({
+    title: 'Page not found',
+    description: 'The page you are looking for could not be found. Browse Ghana tours and experiences on Expedition-Go Tours instead.',
+    image: DEFAULT_IMAGE,
+    url: `${SITE_URL}/404`,
+    canonical: `${SITE_URL}/404`,
+    robots: 'noindex, follow',
+    bodyHtml: '<p><a href="' + SITE_URL + '/tours">Browse all Ghana tours</a></p>',
   });
 }
 
@@ -361,7 +525,13 @@ exports.prerender = async (req, res) => {
     }
 
     if (!html) {
-      html = handleHomePage(); // fallback
+      // Unknown URL → real 404. Previously this fell back to the homepage with
+      // HTTP 200, which made every unknown path a soft duplicate of "/" and
+      // kept them stuck in Google's "Discovered – currently not indexed".
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      res.setHeader('X-Prerender', 'true');
+      return res.status(404).send(handleNotFoundPage());
     }
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
