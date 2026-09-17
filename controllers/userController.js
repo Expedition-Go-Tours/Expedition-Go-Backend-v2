@@ -389,12 +389,34 @@ exports.syncMe = catchAsync(async (req, res) => {
 // expose the customer's own saved cards for the Account Settings page. Card
 // details never touch our servers — Stripe Elements collects them client-side.
 
-/** Resolve the caller's Stripe customer, failing loudly if it can't be created. */
+/** Resolve the caller's Stripe customer, failing loudly if it can't be created.
+ *  Self-heals stale stripeCustomerId values (e.g. customer deleted in Stripe). */
 async function requireCustomer(user) {
-  const customerId = await ensureStripeCustomer(user);
+  let customerId = await ensureStripeCustomer(user);
   if (!customerId) {
     throw new AppError('Could not initialize your billing profile. Please try again.', 502);
   }
+
+  // Verify the customer actually exists in Stripe; if not, clear the stale
+  // ID and create a fresh customer.
+  try {
+    await getStripe().customers.retrieve(customerId);
+  } catch (err) {
+    if (err.code === 'resource_missing') {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { stripeCustomerId: null },
+      });
+      invalidateUserCache(user.id);
+      customerId = await ensureStripeCustomer({ ...user, stripeCustomerId: null });
+      if (!customerId) {
+        throw new AppError('Could not initialize your billing profile. Please try again.', 502);
+      }
+    } else {
+      throw err;
+    }
+  }
+
   return customerId;
 }
 
