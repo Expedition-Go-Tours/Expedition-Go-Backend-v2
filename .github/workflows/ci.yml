@@ -660,6 +660,15 @@ jobs:
           DISCORD_DEPLOY_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
         run: node scripts/deployNotify.js
 
+      - name: Fix node_modules ownership (root-owned leftovers)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: root
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          script: |
+            chown -R deploy:deploy /home/deploy/Expedition-Go-Backend-v2/node_modules 2>/dev/null || true
+
       - name: Deploy to Hetzner via SSH
         id: deploy_ssh
         uses: appleboy/ssh-action@v1
