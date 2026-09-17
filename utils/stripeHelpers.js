@@ -25,7 +25,7 @@ function getStripe() {
     _stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
       apiVersion: '2025-02-24.acacia',
       maxNetworkRetries: 2,
-      timeout: 30000,
+      timeout: 15000,
     });
   }
   return _stripe;

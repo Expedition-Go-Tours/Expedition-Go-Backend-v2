@@ -19,6 +19,9 @@ const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../utils/cloudi
 const { logActivity } = require('../utils/auditLogger');
 const { invalidateUserCache } = require('../middleware/authMiddleware');
 const { getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
+const redis = require('../utils/redisClient');
+
+const PM_CACHE_TTL = 30; // seconds — payment methods list cache
 
 exports.getMe = catchAsync(async (req, res, next) => {
   if (!req.user) {
@@ -390,34 +393,34 @@ exports.syncMe = catchAsync(async (req, res) => {
 // details never touch our servers — Stripe Elements collects them client-side.
 
 /** Resolve the caller's Stripe customer, failing loudly if it can't be created.
- *  Self-heals stale stripeCustomerId values (e.g. customer deleted in Stripe). */
+ *  Self-heals stale stripeCustomerId values (e.g. customer deleted in Stripe).
+ *
+ *  NOTE: We no longer call customers.retrieve() eagerly here — that added
+ * 200-500ms on every card endpoint. Instead, downstream Stripe calls will
+ * surface `resource_missing` if the customer is gone, and callers can use
+ * healStaleCustomer() to recover. */
 async function requireCustomer(user) {
-  let customerId = await ensureStripeCustomer(user);
+  const customerId = await ensureStripeCustomer(user);
   if (!customerId) {
     throw new AppError('Could not initialize your billing profile. Please try again.', 502);
   }
-
-  // Verify the customer actually exists in Stripe; if not, clear the stale
-  // ID and create a fresh customer.
-  try {
-    await getStripe().customers.retrieve(customerId);
-  } catch (err) {
-    if (err.code === 'resource_missing') {
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { stripeCustomerId: null },
-      });
-      invalidateUserCache(user.id);
-      customerId = await ensureStripeCustomer({ ...user, stripeCustomerId: null });
-      if (!customerId) {
-        throw new AppError('Could not initialize your billing profile. Please try again.', 502);
-      }
-    } else {
-      throw err;
-    }
-  }
-
   return customerId;
+}
+
+/** Repair a stale Stripe customer mapping: clear the stored ID, create a
+ *  fresh customer, and return the new ID. Throws on failure. */
+async function healStaleCustomer(user, err) {
+  if (!err || err.code !== 'resource_missing') throw err;
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { stripeCustomerId: null },
+  });
+  invalidateUserCache(user.id);
+  const freshId = await ensureStripeCustomer({ ...user, stripeCustomerId: null });
+  if (!freshId) {
+    throw new AppError('Could not initialize your billing profile. Please try again.', 502);
+  }
+  return freshId;
 }
 
 /** Shape a Stripe PaymentMethod into the fields the UI needs. */
@@ -443,21 +446,51 @@ function toSavedCard(pm, defaultPaymentMethodId) {
 /**
  * GET /api/users/payment-methods
  * Lists the authenticated customer's saved cards.
+ *
+ * Results are cached in Redis for PM_CACHE_TTL seconds to avoid hitting
+ * Stripe on every page load / tab switch.
  */
 exports.listPaymentMethods = catchAsync(async (req, res) => {
-  const customerId = await requireCustomer(req.user);
+  const userId = req.user.id;
+  const cacheKey = `pm:list:${userId}`;
+
+  // ── Serve from cache if available ────────────────────────────────────
+  const cached = await redis.get(cacheKey);
+  if (cached) {
+    return res.status(200).json({ status: 'success', data: { cards: cached } });
+  }
+
+  // ── Cache miss — fetch from Stripe ───────────────────────────────────
+  let customerId = await requireCustomer(req.user);
   const stripe = getStripe();
 
-  const [methods, customer] = await Promise.all([
-    stripe.paymentMethods.list({ customer: customerId, type: 'card' }),
-    stripe.customers.retrieve(customerId),
-  ]);
+  let methods, customer;
+  try {
+    [methods, customer] = await Promise.all([
+      stripe.paymentMethods.list({ customer: customerId, type: 'card' }),
+      stripe.customers.retrieve(customerId),
+    ]);
+  } catch (err) {
+    // Self-heal: if the stored customer was deleted in Stripe, retry once.
+    if (err.code === 'resource_missing') {
+      customerId = await healStaleCustomer(req.user, err);
+      [methods, customer] = await Promise.all([
+        stripe.paymentMethods.list({ customer: customerId, type: 'card' }),
+        stripe.customers.retrieve(customerId),
+      ]);
+    } else {
+      throw err;
+    }
+  }
 
   const defaultPmId = customer?.invoice_settings?.default_payment_method || null;
   const cards = (methods.data || []).map((pm) => toSavedCard(pm, defaultPmId));
 
   // Surface the default first, then most-recently-usable.
   cards.sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
+
+  // ── Populate cache ───────────────────────────────────────────────────
+  await redis.set(cacheKey, cards, PM_CACHE_TTL);
 
   res.status(200).json({ status: 'success', data: { cards } });
 });
@@ -467,14 +500,28 @@ exports.listPaymentMethods = catchAsync(async (req, res) => {
  * Creates a SetupIntent so the client can collect + save a card.
  */
 exports.createSetupIntent = catchAsync(async (req, res) => {
-  const customerId = await requireCustomer(req.user);
+  let customerId = await requireCustomer(req.user);
   const stripe = getStripe();
 
-  const intent = await stripe.setupIntents.create({
-    customer: customerId,
-    automatic_payment_methods: { enabled: true },
-    metadata: { userId: req.user.id },
-  });
+  let intent;
+  try {
+    intent = await stripe.setupIntents.create({
+      customer: customerId,
+      automatic_payment_methods: { enabled: true },
+      metadata: { userId: req.user.id },
+    });
+  } catch (err) {
+    if (err.code === 'resource_missing') {
+      customerId = await healStaleCustomer(req.user, err);
+      intent = await stripe.setupIntents.create({
+        customer: customerId,
+        automatic_payment_methods: { enabled: true },
+        metadata: { userId: req.user.id },
+      });
+    } else {
+      throw err;
+    }
+  }
 
   res.status(200).json({
     status: 'success',
@@ -487,19 +534,35 @@ exports.createSetupIntent = catchAsync(async (req, res) => {
  * Marks a saved card as the customer's default.
  */
 exports.setDefaultPaymentMethod = catchAsync(async (req, res, next) => {
-  const customerId = await requireCustomer(req.user);
+  let customerId = await requireCustomer(req.user);
   const stripe = getStripe();
 
   // Ownership check — the card must belong to this customer.
-  const pm = await stripe.paymentMethods.retrieve(req.params.id).catch(() => null);
-  if (!pm || pm.customer !== customerId) {
-    return next(new AppError('Card not found', 404));
+  let pm;
+  try {
+    pm = await stripe.paymentMethods.retrieve(req.params.id);
+  } catch (err) {
+    if (err.code === 'resource_missing') return next(new AppError('Card not found', 404));
+    throw err;
+  }
+  if (pm.customer !== customerId) return next(new AppError('Card not found', 404));
+
+  try {
+    await stripe.customers.update(customerId, {
+      invoice_settings: { default_payment_method: pm.id },
+    });
+  } catch (err) {
+    if (err.code === 'resource_missing') {
+      customerId = await healStaleCustomer(req.user, err);
+      await stripe.customers.update(customerId, {
+        invoice_settings: { default_payment_method: pm.id },
+      });
+    } else {
+      throw err;
+    }
   }
 
-  await stripe.customers.update(customerId, {
-    invoice_settings: { default_payment_method: pm.id },
-  });
-
+  await redis.del(`pm:list:${req.user.id}`).catch(() => {});
   res.status(200).json({ status: 'success', data: { id: pm.id } });
 });
 
@@ -508,16 +571,21 @@ exports.setDefaultPaymentMethod = catchAsync(async (req, res, next) => {
  * Detaches a saved card from the customer.
  */
 exports.detachPaymentMethod = catchAsync(async (req, res, next) => {
-  const customerId = await requireCustomer(req.user);
+  let customerId = await requireCustomer(req.user);
   const stripe = getStripe();
 
-  const pm = await stripe.paymentMethods.retrieve(req.params.id).catch(() => null);
-  if (!pm || pm.customer !== customerId) {
-    return next(new AppError('Card not found', 404));
+  let pm;
+  try {
+    pm = await stripe.paymentMethods.retrieve(req.params.id);
+  } catch (err) {
+    if (err.code === 'resource_missing') return next(new AppError('Card not found', 404));
+    throw err;
   }
+  if (pm.customer !== customerId) return next(new AppError('Card not found', 404));
 
   await stripe.paymentMethods.detach(pm.id);
 
+  await redis.del(`pm:list:${req.user.id}`).catch(() => {});
   await logActivity({
     userId: req.user.id,
     action: 'user.payment_method_removed',

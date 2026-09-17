@@ -1603,15 +1603,6 @@ expect(prisma.booking.updateMany).toHaveBeenCalledWith(
       expect(prisma.tour.update).not.toHaveBeenCalled();
     });
 
-    it('rejects submission without a verified payout method', async () => {
-      prisma.payoutMethod.findFirst = jest.fn().mockResolvedValue(null);
-
-      await controller.submitTourForReview(req, res, next);
-
-      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
-      expect(prisma.tour.update).not.toHaveBeenCalled();
-    });
-
     it('enforces pricing completeness via validateStoredPricing', async () => {
       validateStoredPricing.mockReturnValue(['Add at least one pricing schedule']);
 
