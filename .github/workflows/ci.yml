@@ -682,7 +682,7 @@ jobs:
             echo "=== Installing dependencies ==="
             # Use npm install (not npm ci) to avoid tearing down node_modules,
             # which fails when root-owned leftovers from manual deploys exist.
-            npm install --production --silent
+            npm install --production
 
             echo "=== Generating Prisma client ==="
             npx prisma generate
