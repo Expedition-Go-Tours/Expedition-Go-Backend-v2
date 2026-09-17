@@ -179,8 +179,9 @@ exports.getMonthlyRevenue = catchAsync(async (req, res) => {
 exports.getSupplierTours = catchAsync(async (req, res) => {
   const supplierId = req.user.id;
   const { page = 1, limit = 20, status } = req.query;
-  const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
-  const take = Math.min(parseInt(limit), 50);
+  const MAX_LIMIT = 200;
+  const take = Math.min(parseInt(limit), MAX_LIMIT);
+  const skip = (parseInt(page) - 1) * take;
 
   const where = { tour: { supplierId } };
   if (status) where.isActive = status === 'ACTIVE';

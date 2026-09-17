@@ -332,6 +332,23 @@ describe('TravioGhana API — supplier endpoints', () => {
     );
   });
 
+  it('GET /tours honours limit up to 200 instead of capping at 50', async () => {
+    prisma.travioGhanaTour.findMany.mockResolvedValue([]);
+    prisma.expeditionTour.findMany.mockResolvedValue([]);
+    const many = Array.from({ length: 120 }, (_, i) => ({
+      ...mockTour,
+      id: `tour-${i}`,
+      createdAt: new Date(Date.now() - i * 1000),
+      updatedAt: new Date(),
+      _count: { bookings: 0 },
+    }));
+    prisma.tour.findMany.mockResolvedValue(many);
+    const res = await request(app).get('/api/travioghana/supplier/tours?limit=200').set(auth(supplierToken));
+    expect(res.status).toBe(200);
+    expect(res.body.data.tours).toHaveLength(120);
+    expect(res.body.pagination.limit).toBe(200);
+  });
+
   it('GET /reviews returns 200 (uses customer relation)', async () => {
     prisma.travioGhanaTour.findMany.mockResolvedValue([{ tourId: 'tour-1' }]);
     prisma.review.findMany.mockResolvedValue([{ id: 'rev-1', rating: 5, customer: { id: 'customer-1', name: 'Perf Customer' }, tour: { id: 'tour-1', title: 'Test' } }]);
