@@ -2158,6 +2158,13 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
       : 'Tour submitted for review. An admin will review it shortly.',
     data: { tour: updated }
   });
+
+  // Ensure storefront listing rows exist so admin review queues can see
+  // the tour (Ghana admin filters on travioGhanaTour, Africa admin on
+  // travioAfricaTour). The workers now accept PENDING_APPROVAL tours.
+  const { enqueueGhanaPublish, enqueueTravioAfricaPublish } = require('../utils/queue');
+  enqueueGhanaPublish(id, supplierId).catch((err) => logger.warn('[Ghana] enqueueGhanaPublish failed:', err?.message));
+  enqueueTravioAfricaPublish(id, supplierId).catch((err) => logger.warn('[Africa] enqueueTravioAfricaPublish failed:', err?.message));
 });
 
 /**

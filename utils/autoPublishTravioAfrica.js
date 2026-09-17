@@ -32,7 +32,7 @@ async function publishTourToAfrica(tourId, actorId) {
       return null;
     }
 
-    if (tour.status !== 'ACTIVE') {
+    if (!['ACTIVE', 'PENDING_APPROVAL'].includes(tour.status)) {
       logger.info(`[Travio Africa] Tour ${tourId} status is ${tour.status}, skipping`);
       return null;
     }
@@ -61,14 +61,14 @@ async function publishTourToAfrica(tourId, actorId) {
       // Re-activate sweep-deactivated listing
       return prisma.travioAfricaTour.update({
         where: { tourId },
-        data: { isActive: true, lastSyncAt: new Date() },
+        data: { isActive: tour.status === 'ACTIVE', lastSyncAt: new Date() },
       });
     }
 
     const africaTour = await prisma.travioAfricaTour.create({
       data: {
         tourId,
-        isActive: true,
+        isActive: tour.status === 'ACTIVE',
         bookingFlow: 'DIRECT',
         publishedById: actorId || null,
         publishedAt: new Date(),

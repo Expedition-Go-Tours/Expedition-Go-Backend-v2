@@ -36,7 +36,7 @@ async function publishTourToGhana(tourId, actorId) {
       return null;
     }
 
-    if (tour.status !== 'ACTIVE') {
+    if (!['ACTIVE', 'PENDING_APPROVAL'].includes(tour.status)) {
       logger.info(`[Travio Ghana] Tour ${tourId} status is ${tour.status}, skipping auto-publish`);
       return null;
     }
@@ -68,14 +68,14 @@ async function publishTourToGhana(tourId, actorId) {
       // ACTIVE again) — safe to re-activate.
       return prisma.travioGhanaTour.update({
         where: { tourId },
-        data: { isActive: true, lastSyncAt: new Date() },
+        data: { isActive: tour.status === 'ACTIVE', lastSyncAt: new Date() },
       });
     }
 
     const ghanaTour = await prisma.travioGhanaTour.create({
       data: {
         tourId,
-        isActive: true,
+        isActive: tour.status === 'ACTIVE',
         bookingFlow: 'DIRECT',
         publishedById: actorId || null,
         publishedAt: new Date(),
