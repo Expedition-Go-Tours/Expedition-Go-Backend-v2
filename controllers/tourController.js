@@ -1954,15 +1954,6 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
   const hasBody = req.body && typeof req.body === 'object' && !Array.isArray(req.body) && Object.keys(req.body).length > 0;
 
-  // Money needs somewhere to go â€” a verified payout method is required
-  const hasVerifiedMethod = await prisma.payoutMethod.findFirst({
-    where: { supplierId, verified: true },
-    select: { id: true },
-  });
-  if (!hasVerifiedMethod) {
-    return next(new AppError('You must add and verify at least one payout method before submitting a tour for review', 400));
-  }
-
   // Persist the submitted payload and validate it atomically so the review
   // decision always reflects exactly what the supplier submitted â€” never a
   // stale stored draft. If validation fails the whole transaction rolls back.
