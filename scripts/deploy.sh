@@ -13,9 +13,11 @@ set -euo pipefail
 
 SERVER="root@2.28.45.181"
 SSH_KEY="$HOME/.ssh/hetzner_new"
-APP_DIR="/home/deploy/Expedition-Go-Backend-v2"
-SKIP_INSTALL=false
 
+# Fix ownership: package-lock.json may be root-owned from a previous manual deploy
+chown deploy:deploy package-lock.json 2>/dev/null || true
+# Use npm install (not npm ci) to avoid tearing down node_modules,
+npm install --production
 if [[ "${1:-}" == "--skip-install" ]]; then
   SKIP_INSTALL=true
 fi
