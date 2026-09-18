@@ -9,7 +9,7 @@
  *
  *   node scripts/refresh-attraction-images.js           # only duplicated images
  *   node scripts/refresh-attraction-images.js --all     # every attraction with an image
- *   node scripts/refresh-attraction-images.js --missing # every attraction with no image
+ *   node scripts/refresh-attraction-images.js --missing # no-image attractions that have tours
  *
  * Manually-curated attractions (manualOverride) are never touched.
  */
@@ -25,7 +25,7 @@ async function main() {
 
   const rows = await prisma.attraction.findMany({
     where: missing
-      ? { heroImage: null, manualOverride: false }
+      ? { heroImage: null, manualOverride: false, tourCount: { gte: 1 } }
       : { heroImage: { not: null }, manualOverride: false },
     select: { id: true, name: true, aliases: true, heroImage: true },
   });
