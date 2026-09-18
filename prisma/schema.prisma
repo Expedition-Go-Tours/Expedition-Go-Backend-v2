@@ -675,6 +675,13 @@ model Tour {
   totalRevenue  Decimal  @default(0) @db.Decimal(10, 2)
   averageRating Decimal? @db.Decimal(3, 2)
   reviewCount   Int      @default(0)
+  /// Combined rating/count used for homepage ranking and trust signals:
+  /// in-app reviews plus counted external platforms (TripAdvisor,
+  /// GetYourGuide). Denormalized so ranking can filter/order in SQL — external
+  /// reviews then affect WHICH tours surface, not just their order. Maintained
+  /// by utils/ratingHelper.js (in-app changes) and the external-review sync.
+  combinedRating      Decimal? @db.Decimal(3, 2)
+  combinedReviewCount Int      @default(0)
   viewCount     Int      @default(0)
 
   // Relationships
@@ -692,6 +699,7 @@ model Tour {
   checkoutDrafts      CheckoutDraft[]
   dailyStats          DailyTourStats[]
   imageAnalyses       TourImageAnalysis[]
+  externalReviewStats TourExternalReviewStat[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -703,6 +711,8 @@ model Tour {
   @@index([slug])
   @@index([createdAt])
   @@index([averageRating])
+  @@index([combinedRating])
+  @@index([combinedReviewCount])
   @@index([city])
   @@index([country])
   @@index([region])
@@ -715,6 +725,35 @@ model Tour {
   @@index([difficulty])
   @@index([primaryTheme])
   @@index([durationMinutes])
+}
+
+/// Per-platform external review aggregate for a tour (TripAdvisor, GetYourGuide).
+/// Stores the OFFICIAL rating/review total shown on the platform's product page
+/// so homepage ranking can count external social proof alongside in-app reviews.
+/// Individual review rows stay in the storefront's static dataset — this table
+/// only holds the numbers ranking needs.
+model TourExternalReviewStat {
+  id           String   @id @default(cuid())
+  tourId       String
+  tour         Tour     @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  /// Platform the aggregate came from: TRIPADVISOR | GETYOURGUIDE
+  source       String
+  /// Official rating from the platform's product header (e.g. 4.9)
+  rating       Decimal? @db.Decimal(3, 2)
+  /// Official review total from the platform's product header (e.g. 595)
+  reviewCount  Int      @default(0)
+  /// Star → count breakdown when the platform exposes it (1★ bucket removed)
+  distribution Json?
+  /// Scraped product identity, kept for traceability and re-mapping
+  productId    String?
+  productUrl   String?
+  syncedAt     DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tourId, source])
+  @@index([tourId])
+  @@index([source])
 }
 
 model TourDateOverride {

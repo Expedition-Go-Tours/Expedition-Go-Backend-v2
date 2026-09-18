@@ -584,7 +584,8 @@ function extractStartingPrice(schedulesAndPricing) {
 const TOUR_SELECT = {
   id: true, title: true, slug: true, coverPhoto: true, photos: true,
   category: true, city: true, country: true, region: true, averageRating: true,
-  reviewCount: true, totalBookings: true, schedulesAndPricing: true,
+  reviewCount: true, combinedRating: true, combinedReviewCount: true,
+  totalBookings: true, schedulesAndPricing: true,
   durationMinutes: true, difficulty: true, tags: true, attractions: true,
   itineraryCities: true, itineraryRegions: true,
   latitude: true, longitude: true, createdAt: true,
@@ -743,17 +744,20 @@ async function getTopRated(limit = DEFAULT_LIMIT, userId = null, ghanaOnly = fal
   const ttl = 300;
 
   return cache.getOrSet(cacheKey, async () => {
+    // Rank on the COMBINED rating/count (in-app + counted external platforms)
+    // so a tour with strong TripAdvisor/GetYourGuide reviews but few in-app
+    // reviews is selected and ordered on its real standing.
     const scope = {
       status: 'ACTIVE',
-      reviewCount: { gte: MIN_REVIEWS_TOP_RATED },
-      averageRating: { not: null },
+      combinedReviewCount: { gte: MIN_REVIEWS_TOP_RATED },
+      combinedRating: { not: null },
       supplier: { supplierProfile: { status: 'ACTIVE' } },
       ...ghanaScope(ghanaOnly),
       ...expeditionScope(expeditionOnly),
     };
     const orderBy = [
-      { averageRating: 'desc' },
-      { reviewCount: 'desc' },
+      { combinedRating: 'desc' },
+      { combinedReviewCount: 'desc' },
     ];
 
     // XGBoost personalization boost (light — 10% weight)
@@ -775,15 +779,20 @@ async function getTopRated(limit = DEFAULT_LIMIT, userId = null, ghanaOnly = fal
     // Compute Bayesian ratings and normalize
     const scoreTours = (tours) => {
       if (tours.length === 0) return [];
-      const bayesianScores = tours.map(t => bayesianRating(t.averageRating, t.reviewCount));
+      // Prefer the denormalized combined stats (in-app + external); fall back
+      // to the internal columns for rows fetched without the combined select.
+      const ratingOf = (t) => (t.combinedRating != null ? t.combinedRating : t.averageRating);
+      const countOf = (t) => (t.combinedReviewCount != null ? t.combinedReviewCount : (t.reviewCount || 0));
+
+      const bayesianScores = tours.map(t => bayesianRating(ratingOf(t), countOf(t)));
       const maxBayesian = Math.max(...bayesianScores, 1);
-      const maxReviews = Math.max(...tours.map(t => t.reviewCount || 0), 1);
+      const maxReviews = Math.max(...tours.map(t => countOf(t)), 1);
       const maxBookings = Math.max(...tours.map(t => t.totalBookings || 0), 1);
 
       return tours.map((t, i) => {
         const bay = bayesianScores[i];
         const nBay = normalize(bay, maxBayesian);
-        const nRev = normalize(t.reviewCount || 0, maxReviews);
+        const nRev = normalize(countOf(t), maxReviews);
         const nBook = normalize(t.totalBookings || 0, maxBookings);
 
         let score = (nBay * 0.50) + (nRev * 0.30) + (nBook * 0.20);
@@ -1122,8 +1131,8 @@ async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT, ghanaOnly
         }
       : {};
     const orderBy = [
-      { averageRating: 'desc' },
-      { reviewCount: 'desc' },
+      { combinedRating: 'desc' },
+      { combinedReviewCount: 'desc' },
       { totalBookings: 'desc' },
     ];
 

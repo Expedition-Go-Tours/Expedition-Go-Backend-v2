@@ -285,6 +285,7 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
 const authRoutes = require('./routes/authRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const externalReviewRoutes = require('./routes/externalReviewRoutes');
 const payoutRoutes = require('./routes/payoutRoutes');
 const payoutMethodRoutes = require('./routes/payoutMethodRoutes');
 const financeRoutes = require('./routes/financeRoutes');
@@ -333,6 +334,9 @@ app.use('/api/email/inbound', emailInboundRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/auth', authRoutes);
+// Machine-to-machine external-reviews sync — mounted BEFORE the admin router so
+// it is guarded by a service token, not the admin JWT/session middleware.
+app.use('/api/admin/external-reviews', externalReviewRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin/settings', adminSettingsRoutes);
 app.use('/api/admin/system', adminSystemRoutes);

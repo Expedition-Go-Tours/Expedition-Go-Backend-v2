@@ -55,9 +55,11 @@ const DIFFICULTY_MAP = { easy: 0, moderate: 1, challenging: 2, expert: 3 };
 function computeFeatures(tour, context = {}) {
   const now = Date.now();
 
-  // [0] Bayesian rating
-  const n = tour.reviewCount || 0;
-  const avg = tour.averageRating ? parseFloat(tour.averageRating) : 0;
+  // [0] Bayesian rating — prefer the combined (in-app + external) stats so
+  // external reviews influence the recommendation ranking too.
+  const n = tour.combinedReviewCount != null ? tour.combinedReviewCount : (tour.reviewCount || 0);
+  const avgSource = tour.combinedRating != null ? tour.combinedRating : tour.averageRating;
+  const avg = avgSource ? parseFloat(avgSource) : 0;
   const bayesian = (BAYESIAN_C * BAYESIAN_M + n * avg) / (BAYESIAN_C + n);
 
   // [1] Booking velocity (14-day, normalized by log)
@@ -65,7 +67,7 @@ function computeFeatures(tour, context = {}) {
   const bookingVelocityNorm = Math.log10(velocity14d + 1) / 3;
 
   // [2] Review count (log normalized)
-  const reviewCountLog = Math.log10((tour.reviewCount || 0) + 1) / 3;
+  const reviewCountLog = Math.log10(n + 1) / 3;
 
   // [3] Total bookings (log normalized)
   const totalBookingsLog = Math.log10((tour.totalBookings || 0) + 1) / 5;

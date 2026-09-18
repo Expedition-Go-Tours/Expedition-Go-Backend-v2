@@ -11,6 +11,10 @@ describe('ratingHelper', () => {
         findUnique: jest.fn(),
         update: jest.fn(),
       },
+      tourExternalReviewStat: {
+        // No external aggregates by default — combined == internal.
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       review: {
         aggregate: jest.fn(),
       },
@@ -29,7 +33,12 @@ describe('ratingHelper', () => {
       const expectedAvg = Math.round(((4.0 * 5) + 5) / 6 * 100) / 100;
       expect(tx.tour.update).toHaveBeenCalledWith({
         where: { id: tourId },
-        data: { averageRating: expectedAvg, reviewCount: 6 },
+        data: {
+          averageRating: expectedAvg,
+          reviewCount: 6,
+          combinedRating: Math.round(expectedAvg * 10) / 10,
+          combinedReviewCount: 6,
+        },
       });
     });
 
@@ -40,8 +49,23 @@ describe('ratingHelper', () => {
 
       expect(tx.tour.update).toHaveBeenCalledWith({
         where: { id: tourId },
-        data: { averageRating: 4, reviewCount: 1 },
+        data: { averageRating: 4, reviewCount: 1, combinedRating: 4, combinedReviewCount: 1 },
       });
+    });
+
+    it('includes external reviews in the combined fields', async () => {
+      tx.tour.findUnique.mockResolvedValue({ averageRating: 4.0, reviewCount: 5 });
+      tx.tourExternalReviewStat.findMany.mockResolvedValue([
+        { source: 'TRIPADVISOR', rating: 4.5, reviewCount: 95, distribution: null },
+      ]);
+
+      await addApprovedRating(tx, tourId, 5);
+
+      // internal 4.17 (6 reviews) + external 4.5 (95) => 101 reviews @ 4.5
+      const data = tx.tour.update.mock.calls[0][0].data;
+      expect(data.reviewCount).toBe(6);
+      expect(data.combinedReviewCount).toBe(101);
+      expect(data.combinedRating).toBe(4.5);
     });
   });
 
@@ -54,7 +78,12 @@ describe('ratingHelper', () => {
       const expectedAvg = Math.round(((4.5 * 10) - 5) / 9 * 100) / 100;
       expect(tx.tour.update).toHaveBeenCalledWith({
         where: { id: tourId },
-        data: { averageRating: expectedAvg, reviewCount: 9 },
+        data: {
+          averageRating: expectedAvg,
+          reviewCount: 9,
+          combinedRating: Math.round(expectedAvg * 10) / 10,
+          combinedReviewCount: 9,
+        },
       });
     });
 
@@ -65,7 +94,7 @@ describe('ratingHelper', () => {
 
       expect(tx.tour.update).toHaveBeenCalledWith({
         where: { id: tourId },
-        data: { averageRating: null, reviewCount: 0 },
+        data: { averageRating: null, reviewCount: 0, combinedRating: null, combinedReviewCount: 0 },
       });
     });
 
@@ -76,8 +105,23 @@ describe('ratingHelper', () => {
 
       expect(tx.tour.update).toHaveBeenCalledWith({
         where: { id: tourId },
-        data: { averageRating: null, reviewCount: 0 },
+        data: { averageRating: null, reviewCount: 0, combinedRating: null, combinedReviewCount: 0 },
       });
+    });
+
+    it('keeps external reviews in the combined count when the last in-app review goes', async () => {
+      tx.tour.findUnique.mockResolvedValue({ averageRating: 4.0, reviewCount: 1 });
+      tx.tourExternalReviewStat.findMany.mockResolvedValue([
+        { source: 'GETYOURGUIDE', rating: 4.8, reviewCount: 50, distribution: null },
+      ]);
+
+      await removeApprovedRating(tx, tourId, 4);
+
+      const data = tx.tour.update.mock.calls[0][0].data;
+      expect(data.averageRating).toBeNull();
+      expect(data.reviewCount).toBe(0);
+      expect(data.combinedRating).toBe(4.8);
+      expect(data.combinedReviewCount).toBe(50);
     });
   });
 
@@ -90,7 +134,11 @@ describe('ratingHelper', () => {
       const expectedAvg = Math.round(((4.0 * 5) - 4 + 5) / 5 * 100) / 100;
       expect(tx.tour.update).toHaveBeenCalledWith({
         where: { id: tourId },
-        data: { averageRating: expectedAvg },
+        data: {
+          averageRating: expectedAvg,
+          combinedRating: Math.round(expectedAvg * 10) / 10,
+          combinedReviewCount: 5,
+        },
       });
     });
   });
