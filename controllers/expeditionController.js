@@ -320,7 +320,14 @@ exports.getTours = catchAsync(async (req, res) => {
     // storefront displays the combined number, so ordering must match it.
     // `combinedRating` is nullable and PostgreSQL sorts NULLs FIRST on DESC,
     // which put unrated tours at the top; force nulls last on the relation.
-    if (sortBy === 'rating') orderBy.unshift({ tour: { combinedRating: { sort: 'desc', nulls: 'last' } } });
+    if (sortBy === 'rating') {
+      // Highest combined rating first, ties broken by the larger review count
+      // (more reviews = more trustworthy), then the curated display order.
+      orderBy.unshift(
+        { tour: { combinedRating: { sort: 'desc', nulls: 'last' } } },
+        { tour: { combinedReviewCount: 'desc' } },
+      );
+    }
     else if (sortBy === 'newest') orderBy.unshift({ createdAt: 'desc' });
     else if (sortBy === 'popular') orderBy.unshift({ tour: { combinedReviewCount: 'desc' } });
     else if (sortBy === 'views') orderBy.unshift({ tour: { viewCount: 'desc' } });
