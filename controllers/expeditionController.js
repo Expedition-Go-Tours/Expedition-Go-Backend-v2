@@ -2237,6 +2237,7 @@ exports.getCheckoutDraft = catchAsync(async (req, res, next) => {
         leadTraveler: {
           name: draft.payload?.leadTraveler?.name || null,
           email: draft.payload?.leadTraveler?.email || null,
+          phone: draft.payload?.leadTraveler?.phone || null,
         },
         promoCode: draft.payload?.promoCode || null,
         currency: draft.pricing?.currency || 'USD',
