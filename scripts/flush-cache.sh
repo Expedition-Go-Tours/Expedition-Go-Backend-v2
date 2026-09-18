@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# Flush the app's derived caches (hp:*) from Redis after a deploy.
+# Flush the app's derived caches (hp:*, expedition:*) from Redis after a deploy.
 #
-# Why: homepage / place caches are derived and can mask a code change (this bit
-# us once — a new region-fallback served a pre-deploy body until the cache
+# Why: homepage / expedition caches are derived and can mask a code change (this
+# bit us once — a new region-fallback served a pre-deploy body until the cache
 # expired). Flushing them right after the reload makes every deploy start clean.
 #
-# SAFETY: scoped to the 'hp:' namespace. NEVER FLUSHDB — Redis also holds the
-# BullMQ queues, sessions and rate-limit counters.
+# SAFETY: scoped to the derived-cache namespaces. NEVER FLUSHDB — Redis also
+# holds the BullMQ queues, sessions and rate-limit counters.
 #
 # Usage: bash scripts/flush-cache.sh [path/to/.env]
+#        FLUSH_PATTERNS="hp:*" bash scripts/flush-cache.sh   # override patterns
 set -euo pipefail
 
 ENV_FILE="${1:-/home/deploy/Expedition-Go-Backend-v2/.env}"
+# Derived-cache namespaces to clear. Expedition detail/list payloads now embed
+# the combined review stats, so they must be cleared alongside the homepage.
+PATTERNS="${FLUSH_PATTERNS:-hp:* expedition:*}"
 
 if ! command -v redis-cli >/dev/null 2>&1; then
   echo "flush-cache: redis-cli not found — skipping"
@@ -45,11 +49,16 @@ if ! redis-cli "${ARGS[@]}" PING >/dev/null 2>&1; then
   exit 0
 fi
 
-KEYS=$(redis-cli "${ARGS[@]}" --scan --pattern 'hp:*' 2>/dev/null || true)
-if [ -z "$KEYS" ]; then
-  echo "flush-cache: no hp:* keys"
-  exit 0
-fi
-
-echo "$KEYS" | xargs -r redis-cli "${ARGS[@]}" DEL >/dev/null 2>&1 || true
-echo "flush-cache: flushed $(echo "$KEYS" | wc -l | tr -d ' ') hp:* keys"
+TOTAL=0
+for PATTERN in $PATTERNS; do
+  KEYS=$(redis-cli "${ARGS[@]}" --scan --pattern "$PATTERN" 2>/dev/null || true)
+  if [ -z "$KEYS" ]; then
+    echo "flush-cache: no $PATTERN keys"
+    continue
+  fi
+  COUNT=$(printf '%s\n' "$KEYS" | wc -l | tr -d ' ')
+  printf '%s\n' "$KEYS" | xargs -r redis-cli "${ARGS[@]}" DEL >/dev/null 2>&1 || true
+  echo "flush-cache: flushed $COUNT $PATTERN keys"
+  TOTAL=$((TOTAL + COUNT))
+done
+echo "flush-cache: done ($TOTAL keys)"

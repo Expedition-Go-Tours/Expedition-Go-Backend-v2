@@ -716,15 +716,12 @@ jobs:
             echo "=== Saving PM2 process list ==="
             su - deploy -c "pm2 save"
 
-            echo "=== Flushing homepage cache ==="
-            REDIS_URL_VALUE="$(grep -m1 '^REDIS_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || true)"
-            if [ -n "${REDIS_URL_VALUE:-}" ]; then
-              redis-cli -u "$REDIS_URL_VALUE" --scan --pattern 'hp:*' 2>/dev/null \
-                | xargs -r redis-cli -u "$REDIS_URL_VALUE" del >/dev/null 2>&1 || true
-              echo "homepage cache flushed"
-            else
-              echo "REDIS_URL not found — skipping homepage cache flush"
-            fi
+            echo "=== Flushing derived caches (hp:*, expedition:*) ==="
+            # Use the repo's flush script: it parses REDIS_URL in Python and
+            # passes host/port/password to redis-cli explicitly, because
+            # redis-cli's own -u parsing fails on this box's URL (special chars).
+            su - deploy -c "cd $APP_DIR && bash scripts/flush-cache.sh" \
+              || echo "cache flush skipped (script failed)"
 
             echo "=== Deploy complete ==="
 
