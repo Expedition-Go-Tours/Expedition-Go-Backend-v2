@@ -758,21 +758,27 @@ async function getTopRated(limit = DEFAULT_LIMIT, userId = null, ghanaOnly = fal
   const ttl = 300;
 
   return cache.getOrSet(cacheKey, async () => {
+    // External reviews are an Expedition-only feature: only the Expedition
+    // storefront displays them, so only its ranking may count them. Ghana and
+    // the default storefront keep ranking on in-app reviews, matching what they
+    // show. (The combined columns stay populated for every tour regardless.)
+    const useCombined = expeditionOnly === true;
+
     // Rank on the COMBINED rating/count (in-app + counted external platforms)
-    // so a tour with strong TripAdvisor/GetYourGuide reviews but few in-app
-    // reviews is selected and ordered on its real standing.
+    // for Expedition, so a tour with strong TripAdvisor/GetYourGuide reviews
+    // but few in-app reviews is selected and ordered on its real standing.
     const scope = {
       status: 'ACTIVE',
-      combinedReviewCount: { gte: MIN_REVIEWS_TOP_RATED },
-      combinedRating: { not: null },
+      ...(useCombined
+        ? { combinedReviewCount: { gte: MIN_REVIEWS_TOP_RATED }, combinedRating: { not: null } }
+        : { reviewCount: { gte: MIN_REVIEWS_TOP_RATED }, averageRating: { not: null } }),
       supplier: { supplierProfile: { status: 'ACTIVE' } },
       ...ghanaScope(ghanaOnly),
       ...expeditionScope(expeditionOnly),
     };
-    const orderBy = [
-      { combinedRating: 'desc' },
-      { combinedReviewCount: 'desc' },
-    ];
+    const orderBy = useCombined
+      ? [{ combinedRating: 'desc' }, { combinedReviewCount: 'desc' }]
+      : [{ averageRating: 'desc' }, { reviewCount: 'desc' }];
 
     // XGBoost personalization boost (light — 10% weight)
     const categoryAffinity = {};
@@ -793,10 +799,9 @@ async function getTopRated(limit = DEFAULT_LIMIT, userId = null, ghanaOnly = fal
     // Compute Bayesian ratings and normalize
     const scoreTours = (tours) => {
       if (tours.length === 0) return [];
-      // Prefer the denormalized combined stats (in-app + external); fall back
-      // to the internal columns for rows fetched without the combined select.
-      const ratingOf = (t) => (t.combinedRating != null ? t.combinedRating : t.averageRating);
-      const countOf = (t) => (t.combinedReviewCount != null ? t.combinedReviewCount : (t.reviewCount || 0));
+      // Combined stats only for Expedition; other storefronts rank on internal.
+      const ratingOf = (t) => (useCombined && t.combinedRating != null ? t.combinedRating : t.averageRating);
+      const countOf = (t) => (useCombined && t.combinedReviewCount != null ? t.combinedReviewCount : (t.reviewCount || 0));
 
       const bayesianScores = tours.map(t => bayesianRating(ratingOf(t), countOf(t)));
       const maxBayesian = Math.max(...bayesianScores, 1);
@@ -1147,11 +1152,12 @@ async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT, ghanaOnly
           ],
         }
       : {};
-    const orderBy = [
-      { combinedRating: 'desc' },
-      { combinedReviewCount: 'desc' },
-      { totalBookings: 'desc' },
-    ];
+    // External reviews count for Expedition only (see getTopRated).
+    const useCombined = expeditionOnly === true;
+
+    const orderBy = useCombined
+      ? [{ combinedRating: 'desc' }, { combinedReviewCount: 'desc' }, { totalBookings: 'desc' }]
+      : [{ averageRating: 'desc' }, { reviewCount: 'desc' }, { totalBookings: 'desc' }];
 
     // Score each tour using XGBoost ranking service
     const xgboost = require('./xgboostService');
@@ -1169,6 +1175,7 @@ async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT, ghanaOnly
         userTagAffinity,
         userLat: lat,
         userLng: lng,
+        useCombined,
       });
       return ranked.map(t => ({
         ...mapTourCard(t),

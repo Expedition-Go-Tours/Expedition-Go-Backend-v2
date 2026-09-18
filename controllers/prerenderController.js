@@ -210,11 +210,15 @@ function buildProductSchema(tour) {
       seller: { '@type': 'Organization', name: SITE_NAME },
     },
   };
-  if (tour.averageRating && tour.reviewCount) {
+  // Report the combined (in-app + external) standing when the API provides it,
+  // falling back to the internal stats.
+  const ratingValue = tour.combinedRating != null ? tour.combinedRating : tour.averageRating;
+  const reviewCountValue = tour.combinedReviewCount != null ? tour.combinedReviewCount : tour.reviewCount;
+  if (ratingValue && reviewCountValue) {
     schema.aggregateRating = {
       '@type': 'AggregateRating',
-      ratingValue: tour.averageRating,
-      reviewCount: tour.reviewCount,
+      ratingValue,
+      reviewCount: reviewCountValue,
       bestRating: 5,
       worstRating: 1,
     };

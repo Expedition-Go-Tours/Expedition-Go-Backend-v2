@@ -128,26 +128,37 @@ describe('getLocationTourIds', () => {
   });
 });
 
-describe('getTopRated city-scoped ordering', () => {
+describe('getTopRated brand-scoped ordering', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it('orders by Bayesian score, not raw rating, when a city is set', async () => {
-    // Location prefilter returns three tours.
+  // t1: one strong in-app review. t2: weak in-app but huge external. t3: solid in-app.
+  const TOURS = [
+    { id: 't1', title: 'One review 5.0', averageRating: 5, reviewCount: 1, combinedRating: 5, combinedReviewCount: 1, totalBookings: 0, schedulesAndPricing: {} },
+    { id: 't2', title: 'External heavy', averageRating: 3, reviewCount: 2, combinedRating: 4.9, combinedReviewCount: 300, totalBookings: 0, schedulesAndPricing: {} },
+    { id: 't3', title: 'Solid in-app', averageRating: 4.8, reviewCount: 10, combinedRating: 4.8, combinedReviewCount: 10, totalBookings: 0, schedulesAndPricing: {} },
+  ];
+
+  it('Expedition ranks on the combined (in-app + external) stats', async () => {
     prisma.$queryRaw.mockResolvedValue([{ id: 't1' }, { id: 't2' }, { id: 't3' }]);
-    // The database hands them back in raw-rating order — the order that used to
-    // leak straight to the homepage.
-    prisma.tour.findMany.mockResolvedValue([
-      { id: 't1', title: 'Few reviews, 5.0', combinedRating: 5, combinedReviewCount: 1, averageRating: 5, reviewCount: 1, totalBookings: 0, schedulesAndPricing: {} },
-      { id: 't2', title: 'Many reviews, 4.8', combinedRating: 4.8, combinedReviewCount: 325, averageRating: 4.8, reviewCount: 325, totalBookings: 0, schedulesAndPricing: {} },
-      { id: 't3', title: 'Many reviews, 4.7', combinedRating: 4.7, combinedReviewCount: 225, averageRating: 4.7, reviewCount: 225, totalBookings: 0, schedulesAndPricing: {} },
-    ]);
+    prisma.tour.findMany.mockResolvedValue(TOURS);
 
     const result = await ranking.getTopRated(3, null, false, true, 'Accra');
     const tours = Array.isArray(result) ? result : result.tours;
 
-    // Bayesian smoothing must put the 325-review 4.8 first, not the 1-review 5.0.
+    // t2's 300 external reviews dominate the combined standing.
     expect(tours.map((t) => t.id)).toEqual(['t2', 't3', 't1']);
+  });
+
+  it('Ghana ranks on in-app reviews only — external is Expedition-only', async () => {
+    prisma.$queryRaw.mockResolvedValue([{ id: 't1' }, { id: 't2' }, { id: 't3' }]);
+    prisma.tour.findMany.mockResolvedValue(TOURS);
+
+    const result = await ranking.getTopRated(3, null, true, false, 'Accra');
+    const tours = Array.isArray(result) ? result : result.tours;
+
+    // Ignoring external: t3 (4.8/10) leads; t2 (3.0/2) is last.
+    expect(tours.map((t) => t.id)).toEqual(['t3', 't1', 't2']);
   });
 });

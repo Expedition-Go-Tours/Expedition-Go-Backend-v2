@@ -6,6 +6,7 @@ jest.mock('../../utils/prismaClient', () => ({
 
 jest.mock('../../utils/cacheHelper', () => ({
   invalidateHomepageCaches: jest.fn(() => Promise.resolve()),
+  invalidateKeys: jest.fn(() => Promise.resolve()),
 }));
 
 const prisma = require('../../utils/prismaClient');
@@ -54,6 +55,8 @@ describe('externalReviewStats', () => {
         data: { combinedRating: 4.9, combinedReviewCount: 605 },
       });
       expect(cache.invalidateHomepageCaches).toHaveBeenCalled();
+      // Expedition detail/list payloads now embed the combined stats too.
+      expect(cache.invalidateKeys).toHaveBeenCalledWith(['expedition:*']);
     });
 
     it('reports products it cannot match', async () => {

@@ -225,7 +225,11 @@ async function syncExternalReviewStats(payload = {}) {
   const touchedTourIds = rows.map((r) => r.tourId);
   const toursUpdated = await recomputeCombinedStatsForTours(touchedTourIds);
 
+  // Refresh every cache that reads the combined stats: the homepage sections
+  // and the Expedition detail/list/featured/sitemap payloads (which now carry
+  // the combined rating for SEO and sort by it).
   await cache.invalidateHomepageCaches();
+  await cache.invalidateKeys(['expedition:*']).catch(() => {});
 
   return {
     matched: rows.length,

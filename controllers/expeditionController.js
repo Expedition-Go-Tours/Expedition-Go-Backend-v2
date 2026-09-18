@@ -154,12 +154,14 @@ function buildTourSchemaUrl(tour) {
       availability: 'https://schema.org/InStock',
       url: `https://travioafrica.com/tour/${tour.slug}`,
     },
-    ...(tour.averageRating
+    // Structured data must report the same standing customers see (in-app +
+    // external), falling back to the internal stats when combined is absent.
+    ...((tour.combinedRating != null ? tour.combinedRating : tour.averageRating)
       ? {
           aggregateRating: {
             '@type': 'AggregateRating',
-            ratingValue: tour.averageRating,
-            reviewCount: tour.reviewCount || 0,
+            ratingValue: tour.combinedRating != null ? tour.combinedRating : tour.averageRating,
+            reviewCount: tour.combinedReviewCount != null ? tour.combinedReviewCount : (tour.reviewCount || 0),
           },
         }
       : {}),
@@ -317,9 +319,11 @@ exports.getTours = catchAsync(async (req, res) => {
     // Prisma relation ordering uses simple 'asc'/'desc' — the { sort, nulls }
     // object form is only valid for top-level columns, not nested relations.
     // Nulls-last is the default for descending order.
-    if (sortBy === 'rating') orderBy.unshift({ tour: { averageRating: 'desc' } });
+    // Sort by the combined (in-app + external) stats — the Expedition
+    // storefront displays the combined number, so ordering must match it.
+    if (sortBy === 'rating') orderBy.unshift({ tour: { combinedRating: 'desc' } });
     else if (sortBy === 'newest') orderBy.unshift({ createdAt: 'desc' });
-    else if (sortBy === 'popular') orderBy.unshift({ tour: { reviewCount: 'desc' } });
+    else if (sortBy === 'popular') orderBy.unshift({ tour: { combinedReviewCount: 'desc' } });
     else if (sortBy === 'views') orderBy.unshift({ tour: { viewCount: 'desc' } });
     else if (sortBy === 'price_asc' || sortBy === 'price_desc') {
       orderBy.unshift({ createdAt: sortBy === 'price_asc' ? 'asc' : 'desc' });
@@ -728,7 +732,7 @@ exports.getRecommendedTours = catchAsync(async (req, res, next) => {
         },
       },
       take: limit,
-      orderBy: [{ tour: { averageRating: 'desc' } }, { tour: { reviewCount: 'desc' } }],
+      orderBy: [{ tour: { combinedRating: 'desc' } }, { tour: { combinedReviewCount: 'desc' } }],
       include: {
         tour: {
           select: {
@@ -760,7 +764,7 @@ exports.getRecommendedTours = catchAsync(async (req, res, next) => {
           },
         },
         take: limit - tours.length,
-        orderBy: [{ tour: { averageRating: 'desc' } }, { tour: { reviewCount: 'desc' } }],
+        orderBy: [{ tour: { combinedRating: 'desc' } }, { tour: { combinedReviewCount: 'desc' } }],
         include: {
           tour: {
             select: {
@@ -792,7 +796,7 @@ exports.getRecommendedTours = catchAsync(async (req, res, next) => {
           },
         },
         take: limit,
-        orderBy: [{ tour: { reviewCount: 'desc' } }],
+        orderBy: [{ tour: { combinedReviewCount: 'desc' } }],
         include: {
           tour: {
             select: {
@@ -865,7 +869,7 @@ exports.getSupplierTours = catchAsync(async (req, res, next) => {
         },
       },
       take: limit,
-      orderBy: { tour: { averageRating: 'desc' } },
+      orderBy: { tour: { combinedRating: 'desc' } },
       include: {
         tour: {
           select: {
@@ -938,6 +942,12 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
       currency: extractCurrency(t.schedulesAndPricing),
       averageRating: t.averageRating ? Number(t.averageRating) : null,
       reviewCount: t._count?.reviews || 0,
+      // Combined (in-app + external) stats — additive fields used for
+      // structured data / SEO. The storefront still receives the internal
+      // numbers above and merges external ones client-side, so these extra
+      // fields do not double-count on the card.
+      combinedRating: t.combinedRating != null ? Number(t.combinedRating) : null,
+      combinedReviewCount: t.combinedReviewCount || 0,
       city: t.city,
       country: t.country,
       highlights: productContent.highlights || [],

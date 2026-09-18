@@ -55,10 +55,11 @@ const DIFFICULTY_MAP = { easy: 0, moderate: 1, challenging: 2, expert: 3 };
 function computeFeatures(tour, context = {}) {
   const now = Date.now();
 
-  // [0] Bayesian rating — prefer the combined (in-app + external) stats so
-  // external reviews influence the recommendation ranking too.
-  const n = tour.combinedReviewCount != null ? tour.combinedReviewCount : (tour.reviewCount || 0);
-  const avgSource = tour.combinedRating != null ? tour.combinedRating : tour.averageRating;
+  // [0] Bayesian rating. External reviews are Expedition-only, so honour the
+  // caller's brand flag rather than always preferring the combined columns.
+  const useCombined = context.useCombined === true;
+  const n = useCombined && tour.combinedReviewCount != null ? tour.combinedReviewCount : (tour.reviewCount || 0);
+  const avgSource = useCombined && tour.combinedRating != null ? tour.combinedRating : tour.averageRating;
   const avg = avgSource ? parseFloat(avgSource) : 0;
   const bayesian = (BAYESIAN_C * BAYESIAN_M + n * avg) / (BAYESIAN_C + n);
 
