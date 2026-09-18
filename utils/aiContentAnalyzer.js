@@ -499,7 +499,7 @@ async function selectHeroImage(attractionName, usedImages = null) {
       status: 'ACTIVE',
       attractions: { has: attractionName },
     },
-    select: { id: true, coverPhoto: true, photos: true, averageRating: true },
+    select: { id: true, coverPhoto: true, photos: true, averageRating: true, city: true },
     orderBy: { averageRating: 'desc' },
     take: 10,
   });
@@ -598,17 +598,39 @@ async function selectHeroImage(attractionName, usedImages = null) {
     }
   }
 
-  // Step 5: All images used — return best tour's cover anyway
-  if (bestTour.coverPhoto) {
-    return {
-      heroImage: bestTour.coverPhoto,
-      heroImageSource: 'fallback',
-      heroImageTourId: bestTour.id,
-      imageRelevance: null,
-    };
+  // Step 5: Widen the pool — pull an unused photo from OTHER tours in the same
+  // city. A section that shows three different attractions must never repeat the
+  // same photo; a location-relevant alternative beats a duplicate.
+  const city = tours.map((t) => t.city).find(Boolean) || null;
+  if (city) {
+    try {
+      const otherTours = await prisma.tour.findMany({
+        where: { status: 'ACTIVE', city, id: { notIn: tours.map((t) => t.id) } },
+        select: { id: true, coverPhoto: true, photos: true },
+        orderBy: { averageRating: 'desc' },
+        take: 25,
+      });
+      for (const tour of otherTours) {
+        for (const imageUrl of [tour.coverPhoto, ...(tour.photos || [])].filter(Boolean)) {
+          if (!usedImages.has(imageUrl)) {
+            usedImages.add(imageUrl);
+            return {
+              heroImage: imageUrl,
+              heroImageSource: 'city_fallback',
+              heroImageTourId: tour.id,
+              imageRelevance: null,
+            };
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn(`[selectHeroImage] City fallback failed for "${attractionName}": ${err.message}`);
+    }
   }
 
-  return { heroImage: null, heroImageSource: null, heroImageTourId: null, imageRelevance: null };
+  // Step 6: Nothing distinct available — leave the attraction imageless rather
+  // than repeat another attraction's photo (the card renders without an image).
+  return { heroImage: null, heroImageSource: 'none', heroImageTourId: null, imageRelevance: null };
 }
 
 /**
