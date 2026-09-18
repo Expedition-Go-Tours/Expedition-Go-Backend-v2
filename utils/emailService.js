@@ -1048,7 +1048,7 @@ async function sendSupplierProductSubmittedEmail(tour) {
     data: {
       supplierName: supplier.name || 'Supplier',
       tourTitle: tour.title || 'your product',
-      supplierProductsUrl: emailUrls.supplierProducts(),
+      supplierProductsUrl: emailUrls.supplierProductsForUser(supplier),
     },
   });
 }
@@ -1069,7 +1069,7 @@ async function sendSupplierProductUpdateSubmittedEmail(tour) {
     data: {
       supplierName: supplier.name || 'Supplier',
       tourTitle: tour.title || 'your product',
-      supplierProductUrl: emailUrls.supplierProduct(tour.id),
+      supplierProductUrl: emailUrls.supplierProductForUser(tour.id, supplier),
     },
   });
 }

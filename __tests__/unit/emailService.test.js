@@ -435,6 +435,24 @@ describe('product submission emails', () => {
     expect(result).toEqual({ success: false, reason: 'no-recipient' });
     expect(__send).not.toHaveBeenCalled();
   });
+
+  it('routes Ghana suppliers to the Ghana dashboard', async () => {
+    await sendSupplierProductSubmittedEmail({
+      ...tour,
+      supplier: { name: 'Accra Tours', email: 'supplier@test.com', roles: ['supplier', 'ghana'] },
+    });
+    expect(__send.mock.calls[0][0].html).toContain('https://supplier.travioghana.com/products');
+  });
+
+  it('routes non-Ghana suppliers to the default dashboard', async () => {
+    await sendSupplierProductUpdateSubmittedEmail({
+      ...tour,
+      supplier: { name: 'Accra Tours', email: 'supplier@test.com', roles: ['supplier'] },
+    });
+    const html = __send.mock.calls[0][0].html;
+    expect(html).not.toContain('supplier.travioghana.com');
+    expect(html).toContain('/products/build/tour-1/type');
+  });
 });
 
 // ---------------------------------------------------------------------------

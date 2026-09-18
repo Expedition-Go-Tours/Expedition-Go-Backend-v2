@@ -19,6 +19,19 @@ const { normalizeOrigin, getAllowedClientOrigins } = require('../utils/clientOri
 
 const CLIENT_URL = (process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/$/, '');
 const DASHBOARD_URL = (process.env.SUPPLIER_DASHBOARD_URL || process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/$/, '');
+// Ghana suppliers sign in on a separate dashboard from the TravioAfrica one.
+const GHANA_DASHBOARD_URL = (process.env.GHANA_SUPPLIER_DASHBOARD_URL || 'https://supplier.travioghana.com').replace(/\/$/, '');
+
+/**
+ * Resolve the supplier dashboard base URL for a user. Suppliers with the
+ * `ghana` role use the Ghana dashboard; everyone else uses the default one.
+ * Accepts a plain user object (with `roles`) or a `{ supplier }` wrapper.
+ */
+function dashboardBaseForUser(user) {
+  const rec = user && user.supplier ? user.supplier : user;
+  const roles = Array.isArray(rec?.roles) ? rec.roles : [];
+  return roles.includes('ghana') ? GHANA_DASHBOARD_URL : DASHBOARD_URL;
+}
 
 function baseUrl(origin) {
   return String(origin || CLIENT_URL).replace(/\/$/, '');
@@ -123,6 +136,9 @@ module.exports = {
   supplierBookings: () => `${DASHBOARD_URL}/bookings`,
   supplierProducts: () => `${DASHBOARD_URL}/products`,
   supplierProduct: (tourId) => `${DASHBOARD_URL}/products/build/${encodeURIComponent(tourId)}/type`,
+  // Brand-aware variants — route Ghana suppliers to the Ghana dashboard.
+  supplierProductsForUser: (user) => `${dashboardBaseForUser(user)}/products`,
+  supplierProductForUser: (tourId, user) => `${dashboardBaseForUser(user)}/products/build/${encodeURIComponent(tourId)}/type`,
   supplierReview: (reviewId) => `${DASHBOARD_URL}/reviews?reviewId=${encodeURIComponent(reviewId)}`,
   supplierReplyReview: (reviewId) => `${DASHBOARD_URL}/reviews?reviewId=${encodeURIComponent(reviewId)}&reply=1`,
 };

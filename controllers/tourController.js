@@ -2076,7 +2076,7 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
       data: updateData,
       include: {
         supplier: {
-          select: { id: true, name: true, email: true, photoURL: true }
+          select: { id: true, name: true, email: true, photoURL: true, roles: true }
         }
       }
     });
