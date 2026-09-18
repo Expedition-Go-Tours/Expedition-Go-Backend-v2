@@ -749,3 +749,100 @@ describe('googleCallback', () => {
     });
   });
 });
+
+// ================================
+// GOOGLE AUTH — BRAND ROUTING
+// ================================
+describe('googleAuth brand routing', () => {
+  const saved = {};
+
+  beforeEach(() => {
+    saved.allowed = process.env.ALLOWED_ORIGINS;
+    saved.ghanaId = process.env.GOOGLE_CLIENT_ID_GHANA;
+    saved.ghanaSecret = process.env.GOOGLE_CLIENT_SECRET_GHANA;
+    saved.expId = process.env.GOOGLE_CLIENT_ID_EXPEDITION;
+    saved.expSecret = process.env.GOOGLE_CLIENT_SECRET_EXPEDITION;
+    saved.defaultId = process.env.GOOGLE_CLIENT_ID;
+    saved.defaultSecret = process.env.GOOGLE_CLIENT_SECRET;
+    passport.authenticate.mockReturnValue(jest.fn());
+  });
+
+  afterEach(() => {
+    const restore = (key, value) => {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    };
+    restore('ALLOWED_ORIGINS', saved.allowed);
+    restore('GOOGLE_CLIENT_ID_GHANA', saved.ghanaId);
+    restore('GOOGLE_CLIENT_SECRET_GHANA', saved.ghanaSecret);
+    restore('GOOGLE_CLIENT_ID_EXPEDITION', saved.expId);
+    restore('GOOGLE_CLIENT_SECRET_EXPEDITION', saved.expSecret);
+    restore('GOOGLE_CLIENT_ID', saved.defaultId);
+    restore('GOOGLE_CLIENT_SECRET', saved.defaultSecret);
+  });
+
+  it('uses the Ghana client for a Ghana storefront origin', () => {
+    process.env.ALLOWED_ORIGINS = 'https://travioghana.com';
+    process.env.GOOGLE_CLIENT_ID_GHANA = 'ghana-id';
+    process.env.GOOGLE_CLIENT_SECRET_GHANA = 'ghana-secret';
+
+    controller.googleAuth(mockReq({ query: { state: 'https://travioghana.com' } }), mockRes(), mockNext());
+
+    expect(passport.authenticate).toHaveBeenCalledWith(
+      'google-ghana',
+      expect.objectContaining({ state: 'https://travioghana.com' })
+    );
+  });
+
+  it('uses the Expedition client for an Expedition storefront origin', () => {
+    process.env.ALLOWED_ORIGINS = 'https://expeditiongotours.com';
+    process.env.GOOGLE_CLIENT_ID_EXPEDITION = 'exp-id';
+    process.env.GOOGLE_CLIENT_SECRET_EXPEDITION = 'exp-secret';
+
+    controller.googleAuth(mockReq({ query: { state: 'https://expeditiongotours.com' } }), mockRes(), mockNext());
+
+    expect(passport.authenticate).toHaveBeenCalledWith('google-expedition', expect.anything());
+  });
+
+  it('falls back to the default client when the brand has no credentials', () => {
+    process.env.ALLOWED_ORIGINS = 'https://travioghana.com';
+    delete process.env.GOOGLE_CLIENT_ID_GHANA;
+    delete process.env.GOOGLE_CLIENT_SECRET_GHANA;
+    process.env.GOOGLE_CLIENT_ID = 'default-id';
+    process.env.GOOGLE_CLIENT_SECRET = 'default-secret';
+
+    controller.googleAuth(mockReq({ query: { state: 'https://travioghana.com' } }), mockRes(), mockNext());
+
+    expect(passport.authenticate).toHaveBeenCalledWith('google', expect.anything());
+  });
+});
+
+describe('googleCallback brand routing', () => {
+  const savedGhanaId = process.env.GOOGLE_CLIENT_ID_GHANA;
+  const savedGhanaSecret = process.env.GOOGLE_CLIENT_SECRET_GHANA;
+
+  afterEach(() => {
+    if (savedGhanaId === undefined) delete process.env.GOOGLE_CLIENT_ID_GHANA;
+    else process.env.GOOGLE_CLIENT_ID_GHANA = savedGhanaId;
+    if (savedGhanaSecret === undefined) delete process.env.GOOGLE_CLIENT_SECRET_GHANA;
+    else process.env.GOOGLE_CLIENT_SECRET_GHANA = savedGhanaSecret;
+  });
+
+  it('uses the Ghana client when the callback host is the Ghana API', async () => {
+    process.env.GOOGLE_CLIENT_ID_GHANA = 'ghana-id';
+    process.env.GOOGLE_CLIENT_SECRET_GHANA = 'ghana-secret';
+    simulatePassport([null, null, { message: 'nope' }]);
+
+    await controller.googleCallback(mockReq({ hostname: 'api.travioghana.com' }), mockRes(), mockNext());
+
+    expect(passport.authenticate).toHaveBeenCalledWith('google-ghana', expect.anything(), expect.any(Function));
+  });
+
+  it('uses the default client for the TravioAfrica callback host', async () => {
+    simulatePassport([null, null, { message: 'nope' }]);
+
+    await controller.googleCallback(mockReq({ hostname: 'apiv1.travioafrica.com' }), mockRes(), mockNext());
+
+    expect(passport.authenticate).toHaveBeenCalledWith('google', expect.anything(), expect.any(Function));
+  });
+});

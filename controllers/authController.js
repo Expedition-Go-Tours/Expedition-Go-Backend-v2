@@ -8,6 +8,8 @@ const { enqueueEvent, enqueueCreateStripeCustomer } = require('../utils/queue');
 const { logAuthEvent } = require('../utils/auditLogger');
 const passport = require('passport');
 const { OAuth2Client } = require('google-auth-library');
+const { resolveBrand } = require('../utils/brandResolver');
+const { googleStrategyFor, googleClientIdFor, isGoogleBrandConfigured } = require('../config/googleBrands');
 
 exports.login = catchAsync(async (req, res, next) => {
   const { email, password } = req.body;
@@ -397,19 +399,26 @@ function resolveOAuthReturnOrigin(req) {
 }
 
 exports.googleAuth = catchAsync(async (req, res, next) => {
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+  const origin = resolveOAuthReturnOrigin(req);
+  const brand = resolveBrand(origin);
+
+  if (!isGoogleBrandConfigured(brand) && !isGoogleBrandConfigured('default')) {
     return res.redirect(`${getClientOrigin(req)}/login?error=Google sign-in is not configured. Contact an administrator.`);
   }
-  passport.authenticate('google', {
+
+  passport.authenticate(googleStrategyFor(brand), {
     session: false,
     scope: ['profile', 'email'],
-    state: resolveOAuthReturnOrigin(req),
+    state: origin,
     prompt: req.query.prompt || 'select_account',
   })(req, res, next);
 });
 
 exports.googleCallback = catchAsync(async (req, res, next) => {
-  passport.authenticate('google', { session: false }, async (err, user, info) => {
+  // Each brand's client registers a callback on that brand's API host, so the
+  // callback request's own host identifies which client exchanged the code.
+  const brand = resolveBrand(req.hostname || req.headers.host);
+  passport.authenticate(googleStrategyFor(brand), { session: false }, async (err, user, info) => {
     if (err) return next(err);
     if (!user) return next(new AppError(info?.message || 'Google authentication failed', 401));
 
@@ -451,17 +460,20 @@ exports.googleOneTap = catchAsync(async (req, res, next) => {
   const { credential } = req.body;
   if (!credential) return next(new AppError('Google credential is required', 400));
 
-  if (!process.env.GOOGLE_CLIENT_ID) {
+  const brand = resolveBrand(req.headers.origin || req.headers.referer);
+  const clientId = googleClientIdFor(brand);
+
+  if (!clientId) {
     return next(new AppError('Google sign-in is not configured', 503));
   }
 
-  const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+  const client = new OAuth2Client(clientId);
 
   let payload;
   try {
     const ticket = await client.verifyIdToken({
       idToken: credential,
-      audience: process.env.GOOGLE_CLIENT_ID,
+      audience: clientId,
     });
     payload = ticket.getPayload();
   } catch {
