@@ -316,12 +316,11 @@ exports.getTours = catchAsync(async (req, res) => {
     }
 
     const orderBy = [{ displayOrder: 'asc' }];
-    // Prisma relation ordering uses simple 'asc'/'desc' — the { sort, nulls }
-    // object form is only valid for top-level columns, not nested relations.
-    // Nulls-last is the default for descending order.
     // Sort by the combined (in-app + external) stats — the Expedition
     // storefront displays the combined number, so ordering must match it.
-    if (sortBy === 'rating') orderBy.unshift({ tour: { combinedRating: 'desc' } });
+    // `combinedRating` is nullable and PostgreSQL sorts NULLs FIRST on DESC,
+    // which put unrated tours at the top; force nulls last on the relation.
+    if (sortBy === 'rating') orderBy.unshift({ tour: { combinedRating: { sort: 'desc', nulls: 'last' } } });
     else if (sortBy === 'newest') orderBy.unshift({ createdAt: 'desc' });
     else if (sortBy === 'popular') orderBy.unshift({ tour: { combinedReviewCount: 'desc' } });
     else if (sortBy === 'views') orderBy.unshift({ tour: { viewCount: 'desc' } });
@@ -732,7 +731,7 @@ exports.getRecommendedTours = catchAsync(async (req, res, next) => {
         },
       },
       take: limit,
-      orderBy: [{ tour: { combinedRating: 'desc' } }, { tour: { combinedReviewCount: 'desc' } }],
+      orderBy: [{ tour: { combinedRating: { sort: 'desc', nulls: 'last' } } }, { tour: { combinedReviewCount: 'desc' } }],
       include: {
         tour: {
           select: {
@@ -764,7 +763,7 @@ exports.getRecommendedTours = catchAsync(async (req, res, next) => {
           },
         },
         take: limit - tours.length,
-        orderBy: [{ tour: { combinedRating: 'desc' } }, { tour: { combinedReviewCount: 'desc' } }],
+        orderBy: [{ tour: { combinedRating: { sort: 'desc', nulls: 'last' } } }, { tour: { combinedReviewCount: 'desc' } }],
         include: {
           tour: {
             select: {
@@ -869,7 +868,7 @@ exports.getSupplierTours = catchAsync(async (req, res, next) => {
         },
       },
       take: limit,
-      orderBy: { tour: { combinedRating: 'desc' } },
+      orderBy: { tour: { combinedRating: { sort: 'desc', nulls: 'last' } } },
       include: {
         tour: {
           select: {
