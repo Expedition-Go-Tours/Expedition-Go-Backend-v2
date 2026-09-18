@@ -461,19 +461,21 @@ exports.googleOneTap = catchAsync(async (req, res, next) => {
   if (!credential) return next(new AppError('Google credential is required', 400));
 
   const brand = resolveBrand(req.headers.origin || req.headers.referer);
-  const clientId = googleClientIdFor(brand);
+  // Accept the brand's client ID, and fall back to the default one so One Tap
+  // keeps working for a frontend that has not yet picked up its brand client ID.
+  const audiences = [...new Set([googleClientIdFor(brand), googleClientIdFor('default')].filter(Boolean))];
 
-  if (!clientId) {
+  if (!audiences.length) {
     return next(new AppError('Google sign-in is not configured', 503));
   }
 
-  const client = new OAuth2Client(clientId);
+  const client = new OAuth2Client(audiences[0]);
 
   let payload;
   try {
     const ticket = await client.verifyIdToken({
       idToken: credential,
-      audience: clientId,
+      audience: audiences,
     });
     payload = ticket.getPayload();
   } catch {
