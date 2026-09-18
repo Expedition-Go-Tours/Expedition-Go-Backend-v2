@@ -1787,6 +1787,9 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       tourTitle: tour.title,
       tourDescription: tour.description || null,
       tourCoverPhoto: tour.coverPhoto || (Array.isArray(tour.photos) ? tour.photos[0] : null),
+      // Attach the Stripe customer so hosted Checkout can offer previously
+      // saved cards; email stays as the fallback when customer creation fails.
+      customerId: await ensureStripeCustomer(req.user).catch(() => null),
       customerEmail: req.user?.email,
       expiresAt: holdResult.expiresAt,
       clientUrl: resolveAllowedClientUrl(req),

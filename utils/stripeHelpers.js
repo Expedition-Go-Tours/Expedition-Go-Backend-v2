@@ -113,6 +113,10 @@ async function createPaymentIntent({
     };
     if (isValidStripeCustomerId(cust)) {
       paymentIntentData.customer = cust;
+      // Save the card to the customer so it appears in the Payment Element on
+      // the next checkout. Requires a customer — Stripe rejects
+      // setup_future_usage on an intent with no customer attached.
+      paymentIntentData.setup_future_usage = 'off_session';
     }
 
     // Idempotency: an explicit key wins, otherwise derive one from the FINAL
@@ -193,7 +197,9 @@ async function createCustomCheckoutPaymentIntent({
     // Payment Element + confirmPayment requires automatic payment methods
     // enabled; Stripe keeps card data inside its iframe — never our server.
     automatic_payment_methods: { enabled: true },
-    ...(isValidStripeCustomerId(cust) ? { customer: cust } : {}),
+    // Save the card to the customer on success so it shows as a saved card on
+    // the next checkout. Only valid alongside a customer.
+    ...(isValidStripeCustomerId(cust) ? { customer: cust, setup_future_usage: 'off_session' } : {}),
     metadata: { bookingIds: draftId, source, paymentTiming: 'now' },
   });
 
@@ -294,7 +300,12 @@ async function createCheckoutSession({
     success_url: successUrl,
     cancel_url: cancelUrl,
     metadata: { bookingIds: bookingId, source },
-    payment_intent_data: { metadata: { bookingIds: bookingId, source } },
+    payment_intent_data: {
+      metadata: { bookingIds: bookingId, source },
+      // Persist the card to the customer so Stripe can offer it as a saved
+      // card on the next checkout. Only valid when a customer is attached.
+      ...(customerId ? { setup_future_usage: 'off_session' } : {}),
+    },
     ...(customerId ? { customer: customerId } : {}),
     ...((!customerId && customerEmail) ? { customer_email: customerEmail } : {}),
     ...(expiresAt ? { expires_at: Math.floor(expiresAt.getTime() / 1000) } : {}),

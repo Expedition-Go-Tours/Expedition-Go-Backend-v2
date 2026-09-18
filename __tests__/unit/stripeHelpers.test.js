@@ -50,6 +50,7 @@ const {
   verifyWebhookSignature,
   cancelPaymentIntent,
   createPaymentIntent,
+  createCustomCheckoutPaymentIntent,
   createCheckoutSession,
   createStripeCustomer,
   ensureStripeCustomer,
@@ -606,6 +607,18 @@ describe('createPaymentIntent customer guard', () => {
     expect(data.customer).toBe('cus_abc123');
   });
 
+  it('saves the card for future use when a customer is attached', async () => {
+    await createPaymentIntent({ amount: 1000, customerId: 'cus_abc123' });
+    const [data] = mockStripeInstance.paymentIntents.create.mock.calls[0];
+    expect(data.setup_future_usage).toBe('off_session');
+  });
+
+  it('omits setup_future_usage without a customer (Stripe rejects it)', async () => {
+    await createPaymentIntent({ amount: 1000, customerId: null });
+    const [data] = mockStripeInstance.paymentIntents.create.mock.calls[0];
+    expect(data).not.toHaveProperty('setup_future_usage');
+  });
+
   it('still sends amount, payment method and metadata', async () => {
     await createPaymentIntent({ amount: 1000, currency: 'USD', paymentMethodId: 'pm_1', metadata: { tourId: 't1' } });
     const [data] = mockStripeInstance.paymentIntents.create.mock.calls[0];
@@ -761,6 +774,47 @@ describe('createCheckoutSession redirect URLs', () => {
     await createCheckoutSession({ amount: 10000, bookingId: 'booking-1', clientUrl: 'https://expeditiongotours.vercel.app' });
     const [data] = mockStripeInstance.checkout.sessions.create.mock.calls[0];
     expect(data.success_url).toBe('https://expeditiongotours.vercel.app/booking/confirmation/booking-1');
+  });
+
+  it('saves the card for future use when a customer is attached', async () => {
+    await createCheckoutSession({ amount: 10000, bookingId: 'booking-1', customerId: 'cus_abc123' });
+    const [data] = mockStripeInstance.checkout.sessions.create.mock.calls[0];
+    expect(data.customer).toBe('cus_abc123');
+    expect(data.payment_intent_data.setup_future_usage).toBe('off_session');
+  });
+
+  it('omits setup_future_usage when only an email is available', async () => {
+    await createCheckoutSession({ amount: 10000, bookingId: 'booking-1', customerEmail: 'a@b.com' });
+    const [data] = mockStripeInstance.checkout.sessions.create.mock.calls[0];
+    expect(data).not.toHaveProperty('customer');
+    expect(data.payment_intent_data).not.toHaveProperty('setup_future_usage');
+  });
+});
+
+describe('createCustomCheckoutPaymentIntent', () => {
+  beforeEach(() => {
+    mockStripeInstance.paymentIntents.create.mockClear();
+    mockStripeInstance.paymentIntents.create.mockResolvedValue({ id: 'pi_pe', client_secret: 'secret_pe' });
+  });
+
+  it('enables automatic payment methods and saves the card for a customer', async () => {
+    await createCustomCheckoutPaymentIntent({
+      amount: 5000,
+      currency: 'USD',
+      customerId: 'cus_abc123',
+      draftId: 'draft-1',
+    });
+    const [data] = mockStripeInstance.paymentIntents.create.mock.calls[0];
+    expect(data.automatic_payment_methods).toEqual({ enabled: true });
+    expect(data.customer).toBe('cus_abc123');
+    expect(data.setup_future_usage).toBe('off_session');
+  });
+
+  it('omits customer and setup_future_usage when no customer is available', async () => {
+    await createCustomCheckoutPaymentIntent({ amount: 5000, draftId: 'draft-1' });
+    const [data] = mockStripeInstance.paymentIntents.create.mock.calls[0];
+    expect(data).not.toHaveProperty('customer');
+    expect(data).not.toHaveProperty('setup_future_usage');
   });
 });
 
