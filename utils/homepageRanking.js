@@ -343,16 +343,27 @@ function locationTier(tour, city) {
 }
 
 /**
+ * Canonical ordering for a scored section: highest score first, ties broken by
+ * the stronger location tier.
+ *
+ * Every section MUST sort its scored rows with this. A scorer that computes
+ * `_score` but leaves rows in database order lets a raw 5.0 with one review
+ * outrank a Bayesian-smoothed 4.8 with hundreds — the exact thing the smoothing
+ * exists to prevent. `mergeLocationFirst` is only applied on the non-scoped
+ * path, so scorers used by city-scoped paths must sort themselves.
+ */
+function byScore(a, b) {
+  if (b._score !== a._score) return b._score - a._score;
+  return (a._locationTier ?? 99) - (b._locationTier ?? 99);
+}
+
+/**
  * Rank location-relevant tours first (by the section's own score), then the
  * global backfill — so a section is never empty when a city has few tours.
  * `local` and `backfill` are scored arrays carrying `_score` and
  * `_locationTier`. Ties break toward the stronger location tier.
  */
 function mergeLocationFirst(local, backfill, limit) {
-  const byScore = (a, b) => {
-    if (b._score !== a._score) return b._score - a._score;
-    return (a._locationTier ?? 99) - (b._locationTier ?? 99);
-  };
   local.sort(byScore);
   backfill.sort(byScore);
 
@@ -676,7 +687,10 @@ async function getLikelySellOut(limit = DEFAULT_LIMIT, userId = null, ghanaOnly 
           _velocity14d: vel,
           _locationTier: locationTier(t, city),
         };
-      });
+      })
+        // Same as Top Rated: the city-scoped path slices this directly, so it
+        // must be score-ordered rather than left in database order.
+        .sort(byScore);
     };
 
     // City-scoped: location-relevant tours, backfill from nearby if short.
@@ -808,7 +822,10 @@ async function getTopRated(limit = DEFAULT_LIMIT, userId = null, ghanaOnly = fal
           _bayesianRating: Math.round(bay * 100) / 100,
           _locationTier: locationTier(t, city),
         };
-      });
+      })
+        // Sort here, not only in mergeLocationFirst: the city-scoped path
+        // slices this array directly and would otherwise keep database order.
+        .sort(byScore);
     };
 
     // City-scoped: location-relevant tours, backfill from nearby if short.
