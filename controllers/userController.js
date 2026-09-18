@@ -484,6 +484,23 @@ exports.listPaymentMethods = catchAsync(async (req, res) => {
   }
 
   const defaultPmId = customer?.invoice_settings?.default_payment_method || null;
+
+  // Self-heal: cards saved before allow_redisplay was set are attached but
+  // invisible to the Payment Element. Upgrade them so they can be offered
+  // again at checkout.
+  const needsUpgrade = (methods.data || []).filter(
+    (pm) => pm.allow_redisplay && pm.allow_redisplay !== 'always'
+  );
+  if (needsUpgrade.length) {
+    await Promise.all(
+      needsUpgrade.map((pm) =>
+        stripe.paymentMethods
+          .update(pm.id, { allow_redisplay: 'always' })
+          .catch((err) => console.warn(`[Stripe] Could not upgrade allow_redisplay for ${pm.id}:`, err.message))
+      )
+    );
+  }
+
   const cards = (methods.data || []).map((pm) => toSavedCard(pm, defaultPmId));
 
   // Surface the default first, then most-recently-usable.
