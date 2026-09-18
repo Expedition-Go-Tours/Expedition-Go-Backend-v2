@@ -387,6 +387,41 @@ async function createStripeCustomer({ userId, email, name }) {
 }
 
 /**
+ * Create a short-lived Customer Session for the Payment Element.
+ *
+ * The Payment Element only offers a customer's saved payment methods when the
+ * Elements instance is initialised with a Customer Session client secret.
+ * Features mirror the app: redisplay saved cards, allow saving new ones
+ * (off-session reuse) and allow removing them.
+ *
+ * @param {string} customerId - Stripe Customer id (cus_...)
+ * @returns {Promise<string|null>} the session client secret, or null on failure
+ */
+async function createCustomerSession(customerId) {
+  if (!isValidStripeCustomerId(customerId)) return null;
+  try {
+    const session = await getStripe().customerSessions.create({
+      customer: customerId,
+      components: {
+        payment_element: {
+          enabled: true,
+          features: {
+            payment_method_redisplay: 'enabled',
+            payment_method_save: 'enabled',
+            payment_method_remove: 'enabled',
+            payment_method_save_usage: 'off_session',
+          },
+        },
+      },
+    });
+    return session?.client_secret || null;
+  } catch (err) {
+    console.warn('[Stripe] Could not create customer session:', err.message);
+    return null;
+  }
+}
+
+/**
  * Ensure a user has a Stripe Customer, creating one lazily if missing.
  *
  * Returns the existing/created customer ID, or `null` when one could not be
@@ -1485,6 +1520,7 @@ module.exports = {
   createCustomCheckoutPaymentIntent,
   createStripeCustomer,
   ensureStripeCustomer,
+  createCustomerSession,
   createCheckoutSession,
   resolveSessionBookingIds,
   createRefund,

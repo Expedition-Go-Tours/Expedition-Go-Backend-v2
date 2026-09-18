@@ -11,7 +11,7 @@ const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTou
 const { resolvePickupSelection, normalizePickupSnapshot } = require('../utils/geoUtils');
 const { pickupAddressLabel } = require('../utils/emailFormatting');
 const { validatePassengerMix } = require('../utils/passengerMix');
-const { createPaymentIntent, createCheckoutSession, createCustomCheckoutPaymentIntent, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
+const { createPaymentIntent, createCheckoutSession, createCustomCheckoutPaymentIntent, createCustomerSession, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
 const { resolveAllowedClientUrl } = require('../utils/clientOrigin');
 const { acquireHold, releaseHold, HOLD_MINUTES } = require('../utils/checkoutHold');
 const { notifyAdmin } = require('../utils/adminNotificationService');
@@ -2193,11 +2193,17 @@ exports.getCheckoutDraft = catchAsync(async (req, res, next) => {
 
   let paymentIntentId = null;
   let clientSecret = null;
+  let customerSessionClientSecret = null;
   if (draft.stripeSessionId && draft.stripeSessionId.startsWith('pi_')) {
     paymentIntentId = draft.stripeSessionId;
     try {
       const pi = await getStripe().paymentIntents.retrieve(draft.stripeSessionId);
       clientSecret = pi?.client_secret || null;
+      // The Payment Element only shows the customer's saved cards when given a
+      // Customer Session for the SAME customer the PaymentIntent belongs to.
+      if (pi?.customer && typeof pi.customer === 'string') {
+        customerSessionClientSecret = await createCustomerSession(pi.customer);
+      }
     } catch { clientSecret = null; }
   }
 
@@ -2243,6 +2249,7 @@ exports.getCheckoutDraft = catchAsync(async (req, res, next) => {
         },
         paymentIntentId,
         clientSecret,
+        customerSessionClientSecret,
       },
     },
   });

@@ -37,6 +37,7 @@ jest.mock('stripe', () => {
     customers: { create: jest.fn(), list: jest.fn() },
     paymentIntents: { create: jest.fn(), retrieve: jest.fn(), update: jest.fn(), cancel: jest.fn() },
     checkout: { sessions: { create: jest.fn() } },
+    customerSessions: { create: jest.fn() },
   };
   return jest.fn(() => mockStripeInstance);
 });
@@ -54,6 +55,7 @@ const {
   createCheckoutSession,
   createStripeCustomer,
   ensureStripeCustomer,
+  createCustomerSession,
   handlePaymentSucceeded,
 } = require('../../utils/stripeHelpers');
 const redis = require('../../utils/redisClient');
@@ -955,5 +957,44 @@ describe('ensureStripeCustomer', () => {
   it('returns null for a missing user', async () => {
     await expect(ensureStripeCustomer(null)).resolves.toBeNull();
     await expect(ensureStripeCustomer({})).resolves.toBeNull();
+  });
+});
+
+describe('createCustomerSession', () => {
+  beforeEach(() => {
+    mockStripeInstance.customerSessions.create.mockReset();
+  });
+
+  it('enables payment element redisplay/save/remove for the customer', async () => {
+    mockStripeInstance.customerSessions.create.mockResolvedValue({ id: 'cuss_1', client_secret: 'cuss_sec_1' });
+
+    const secret = await createCustomerSession('cus_abc123');
+
+    expect(secret).toBe('cuss_sec_1');
+    expect(mockStripeInstance.customerSessions.create).toHaveBeenCalledWith({
+      customer: 'cus_abc123',
+      components: {
+        payment_element: {
+          enabled: true,
+          features: {
+            payment_method_redisplay: 'enabled',
+            payment_method_save: 'enabled',
+            payment_method_remove: 'enabled',
+            payment_method_save_usage: 'off_session',
+          },
+        },
+      },
+    });
+  });
+
+  it('returns null without calling Stripe for an invalid customer id', async () => {
+    await expect(createCustomerSession('not-a-customer')).resolves.toBeNull();
+    await expect(createCustomerSession(null)).resolves.toBeNull();
+    expect(mockStripeInstance.customerSessions.create).not.toHaveBeenCalled();
+  });
+
+  it('returns null when Stripe rejects the session', async () => {
+    mockStripeInstance.customerSessions.create.mockRejectedValue(new Error('stripe down'));
+    await expect(createCustomerSession('cus_abc123')).resolves.toBeNull();
   });
 });
