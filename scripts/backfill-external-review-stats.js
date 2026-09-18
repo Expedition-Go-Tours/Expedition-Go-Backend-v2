@@ -77,4 +77,7 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect().catch(() => {});
+    // The cache helper keeps a Redis connection open, which would otherwise
+    // hold the event loop after the work is done — exit explicitly.
+    process.exit(process.exitCode || 0);
   });
