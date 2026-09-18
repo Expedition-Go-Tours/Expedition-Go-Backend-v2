@@ -1480,6 +1480,9 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, gha
       const baseWhere = {
         status: 'ACTIVE',
         tourCount: { gte: 1 },  // exclude zero-tour junk
+        // Placeholders and uncurated rows are not attractions: `City / Town`
+        // covers 800 bare place names, and `not` also drops NULL categories.
+        category: { not: 'City / Town' },
       };
       const attractionOrder = [
         { isFeatured: 'desc' },
@@ -1518,7 +1521,7 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, gha
       }
 
       // Filter out logistics/transport/junk attractions
-      const JUNK_PATTERNS = /airport|dropoff|arrival|return back|nightlife|night life|pub |bar |transport/i;
+      const JUNK_PATTERNS = /airport|dropoff|arrival|return back|nightlife|night life|pub |bar |transport|municipality|metropolis|municipal district/i;
       const LOGISTICS_PATTERNS = /pickup|dropoff|transfer|shuttle|drive to|drive back/i;
 
       const filtered = attractions.filter(a => {
