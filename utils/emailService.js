@@ -5,7 +5,7 @@
  * sendgrid-templates/generated/<key>.html using utils/emailRenderer.js and is
  * delivered through Resend (raw HTML — no cloud template sync required).
  *
- * The 28 template keys mirror scripts/buildEmailTemplates.js so the send layer
+ * The template keys mirror scripts/buildEmailTemplates.js so the send layer
  * and the templates can never drift apart. Legacy helpers (sendEmail,
  * sendBookingConfirmationEmail, ...) remain exported so queue workers,
  * controllers and tests keep working unchanged.
@@ -1029,6 +1029,52 @@ async function sendSupplierPayoutFailedEmail({ booking, payout, reason } = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Product submission / update review notifications
+// ---------------------------------------------------------------------------
+
+/**
+ * Confirmation to the supplier after a brand-new product is submitted for
+ * review. `tour` is expected to carry its `supplier` relation.
+ */
+async function sendSupplierProductSubmittedEmail(tour) {
+  const supplier = tour?.supplier || {};
+  const to = supplier.email;
+  if (!to) return { success: false, reason: 'no-recipient' };
+
+  return sendRendered({
+    to,
+    subject: 'Your product has been submitted for review',
+    key: 'supplier-product-submitted',
+    data: {
+      supplierName: supplier.name || 'Supplier',
+      tourTitle: tour.title || 'your product',
+      supplierProductsUrl: emailUrls.supplierProducts(),
+    },
+  });
+}
+
+/**
+ * Confirmation to the supplier after an update to a live product is submitted
+ * for review. `tour` is expected to carry its `supplier` relation.
+ */
+async function sendSupplierProductUpdateSubmittedEmail(tour) {
+  const supplier = tour?.supplier || {};
+  const to = supplier.email;
+  if (!to) return { success: false, reason: 'no-recipient' };
+
+  return sendRendered({
+    to,
+    subject: 'Your product update is under review',
+    key: 'supplier-product-update-submitted',
+    data: {
+      supplierName: supplier.name || 'Supplier',
+      tourTitle: tour.title || 'your product',
+      supplierProductUrl: emailUrls.supplierProduct(tour.id),
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Finance v2 — payout request + dispute emails (generic inline template)
 // ---------------------------------------------------------------------------
 
@@ -1500,6 +1546,8 @@ module.exports = {
   sendSupplierPayoutScheduledEmail,
   sendSupplierPayoutCompletedEmail,
   sendSupplierPayoutFailedEmail,
+  sendSupplierProductSubmittedEmail,
+  sendSupplierProductUpdateSubmittedEmail,
 
   // finance v2
   sendFinancePayoutRequestEmail,

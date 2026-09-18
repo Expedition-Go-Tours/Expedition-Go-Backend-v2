@@ -1,5 +1,5 @@
 /**
- * Email Template Definitions — all 28 transactional emails.
+ * Email Template Definitions — all transactional emails.
  *
  * Each definition is { key, name, build(data) } where build() returns the body
  * HTML rendered inside the shared shell. The compiled full documents are
@@ -792,6 +792,40 @@ const supplierPayoutFailed = {
 };
 
 // ---------------------------------------------------------------------------
+// Product submission / update review notifications
+// ---------------------------------------------------------------------------
+const supplierProductSubmitted = {
+  key: 'supplier-product-submitted',
+  name: 'Supplier · Product submitted for review',
+  build() {
+    return B.shell('Your product has been submitted for review', `
+      ${B.hero({ heading: 'Your product has been submitted for review', subtitle: 'Hello {{supplierName}},<br>Thank you for submitting <strong>{{tourTitle}}</strong> to {{brandName}}.', badgeText: 'Under review', badgeColor: 'info' })}
+      ${B.paragraph('We\u2019ve successfully received your product and it is now under review by our team.')}
+      ${B.callout('Due to the volume of submissions we receive, the review process may take approximately 2\u20133 working days.', 'info')}
+      ${B.paragraph('Please keep an eye on your email during this period. If we need any additional information or changes from you, we\u2019ll contact you.')}
+      ${B.paragraph('We\u2019ll notify you once the review is complete and your product has been approved, or if any further action is required.')}
+      ${B.paragraph('Thank you for partnering with {{brandName}}.', { muted: true, small: true })}
+      ${B.buttonPrimary('Go to my products', '{{supplierProductsUrl}}')}
+    `);
+  },
+};
+
+const supplierProductUpdateSubmitted = {
+  key: 'supplier-product-update-submitted',
+  name: 'Supplier · Product update submitted for review',
+  build() {
+    return B.shell('Your product update is under review', `
+      ${B.hero({ heading: 'Your product update is under review', subtitle: 'Hello {{supplierName}},<br>We\u2019ve received your recent updates to <strong>{{tourTitle}}</strong>.', badgeText: 'Update received', badgeColor: 'info' })}
+      ${B.paragraph('The changes are now being reviewed by our team.')}
+      ${B.callout('Once approved, please allow 24\u201348 hours for the updated information to reflect on the {{brandName}} platform.', 'info')}
+      ${B.paragraph('If we need any additional information or changes from you, we\u2019ll contact you.')}
+      ${B.paragraph('Thank you for partnering with {{brandName}}.', { muted: true, small: true })}
+      ${B.buttonPrimary('View my product', '{{supplierProductUrl}}')}
+    `);
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Chat & messaging notifications (GetYourGuide / Viator-style)
 // ---------------------------------------------------------------------------
 const chatNewMessage = {
@@ -847,6 +881,8 @@ const TEMPLATE_DEFS = [
   supplierPayoutScheduled,
   supplierPayoutCompleted,
   supplierPayoutFailed,
+  supplierProductSubmitted,
+  supplierProductUpdateSubmitted,
   chatNewMessage,
 ];
 

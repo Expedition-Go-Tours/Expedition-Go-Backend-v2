@@ -42,6 +42,8 @@ const {
   sendPayoutNotificationEmail,
   sendSupplierBookingNotification,
   sendSupplierNewBookingEmail,
+  sendSupplierProductSubmittedEmail,
+  sendSupplierProductUpdateSubmittedEmail,
   generatePrintableTicketHtml,
 } = require('../../utils/emailService');
 
@@ -116,12 +118,12 @@ describe('renderTemplate', () => {
     await expect(renderTemplate('does-not-exist', {})).rejects.toThrow('Template not found');
   });
 
-  it('renders all 33 compiled templates with no leftover braces', async () => {
+  it('renders all 35 compiled templates with no leftover braces', async () => {
     const fs = require('fs');
     const path = require('path');
     const dir = path.join(__dirname, '..', '..', 'sendgrid-templates', 'generated');
     const files = fs.readdirSync(dir).filter((f) => f.endsWith('.html'));
-    expect(files.length).toBe(33);
+    expect(files.length).toBe(35);
 
     for (const file of files) {
       const key = file.replace(/\.html$/, '');
@@ -396,6 +398,42 @@ describe('sendSupplierStatusEmail', () => {
   it('throws for unknown status', async () => {
     await expect(sendSupplierStatusEmail('t@t.com', 'UNKNOWN', {}))
       .rejects.toThrow('Unknown supplier status');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Product submission / update review emails
+// ---------------------------------------------------------------------------
+describe('product submission emails', () => {
+  const tour = {
+    id: 'tour-1',
+    title: 'Cape Coast Castle Tour',
+    supplier: { name: 'Accra Tours', email: 'supplier@test.com' },
+  };
+
+  it('sends the new-product submission email', async () => {
+    await sendSupplierProductSubmittedEmail(tour);
+    const payload = __send.mock.calls[0][0];
+    expect(payload.to).toBe('supplier@test.com');
+    expect(payload.subject).toBe('Your product has been submitted for review');
+    expect(payload.html).toContain('Cape Coast Castle Tour');
+    expect(payload.html).toContain('Accra Tours');
+    expect(payload.html).toContain('2\u20133 working days');
+  });
+
+  it('sends the product update submission email', async () => {
+    await sendSupplierProductUpdateSubmittedEmail(tour);
+    const payload = __send.mock.calls[0][0];
+    expect(payload.to).toBe('supplier@test.com');
+    expect(payload.subject).toBe('Your product update is under review');
+    expect(payload.html).toContain('Cape Coast Castle Tour');
+    expect(payload.html).toContain('24\u201348 hours');
+  });
+
+  it('skips sending when the supplier has no email', async () => {
+    const result = await sendSupplierProductSubmittedEmail({ id: 't', title: 'X', supplier: {} });
+    expect(result).toEqual({ success: false, reason: 'no-recipient' });
+    expect(__send).not.toHaveBeenCalled();
   });
 });
 

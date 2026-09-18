@@ -49,6 +49,7 @@ const crypto = require('crypto');
 const { enqueueEvent } = require('../utils/queue');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const logger = require('../utils/logger');
+const emailService = require('../utils/emailService');
 
 // ================================
 // PUBLIC TOUR ENDPOINTS
@@ -2075,7 +2076,7 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
       data: updateData,
       include: {
         supplier: {
-          select: { id: true, name: true, photoURL: true }
+          select: { id: true, name: true, email: true, photoURL: true }
         }
       }
     });
@@ -2131,6 +2132,15 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
       changesSummary: hasDraft ? computeChangesSummary(contentDiff) : undefined,
     },
   });
+
+  // Confirm receipt to the supplier. Fire-and-forget: an email provider hiccup
+  // must never block or fail the submission itself.
+  const sendSubmissionEmail = hasDraft
+    ? emailService.sendSupplierProductUpdateSubmittedEmail
+    : emailService.sendSupplierProductSubmittedEmail;
+  sendSubmissionEmail(updated).catch((err) =>
+    logger.warn('[Email] Failed to send product submission confirmation:', err?.message)
+  );
 
   // Mark newly uploaded photos as ATTACHED synchronously before responding so
   // the frontend unmount cleanup cannot race and delete them from Cloudinary.

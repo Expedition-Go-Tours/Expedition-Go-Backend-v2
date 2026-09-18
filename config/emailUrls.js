@@ -121,6 +121,8 @@ module.exports = {
   supplierEarnings: () => `${DASHBOARD_URL}/earnings`,
   supplierPayouts: () => `${DASHBOARD_URL}/earnings/payouts`,
   supplierBookings: () => `${DASHBOARD_URL}/bookings`,
+  supplierProducts: () => `${DASHBOARD_URL}/products`,
+  supplierProduct: (tourId) => `${DASHBOARD_URL}/products/build/${encodeURIComponent(tourId)}/type`,
   supplierReview: (reviewId) => `${DASHBOARD_URL}/reviews?reviewId=${encodeURIComponent(reviewId)}`,
   supplierReplyReview: (reviewId) => `${DASHBOARD_URL}/reviews?reviewId=${encodeURIComponent(reviewId)}&reply=1`,
 };
