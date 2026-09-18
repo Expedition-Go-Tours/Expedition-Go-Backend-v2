@@ -7,8 +7,9 @@
  * which now refuses to reuse an image already assigned elsewhere and widens the
  * pool to other tours in the same city.
  *
- *   node scripts/refresh-attraction-images.js          # only duplicated images
- *   node scripts/refresh-attraction-images.js --all    # every attraction with an image
+ *   node scripts/refresh-attraction-images.js           # only duplicated images
+ *   node scripts/refresh-attraction-images.js --all     # every attraction with an image
+ *   node scripts/refresh-attraction-images.js --missing # every attraction with no image
  *
  * Manually-curated attractions (manualOverride) are never touched.
  */
@@ -16,23 +17,26 @@
 const prisma = require('../utils/prismaClient');
 const logger = require('../utils/logger');
 const { selectHeroImage } = require('../utils/aiContentAnalyzer');
+const { variantsFor } = require('../utils/attractionMatch');
 
 async function main() {
   const all = process.argv.includes('--all');
+  const missing = process.argv.includes('--missing');
 
   const rows = await prisma.attraction.findMany({
-    where: { heroImage: { not: null }, manualOverride: false },
-    select: { id: true, name: true, heroImage: true },
+    where: missing
+      ? { heroImage: null, manualOverride: false }
+      : { heroImage: { not: null }, manualOverride: false },
+    select: { id: true, name: true, aliases: true, heroImage: true },
   });
 
   const counts = new Map();
   for (const r of rows) counts.set(r.heroImage, (counts.get(r.heroImage) || 0) + 1);
 
-  const targets = all ? rows : rows.filter((r) => counts.get(r.heroImage) > 1);
+  const targets = all || missing ? rows : rows.filter((r) => counts.get(r.heroImage) > 1);
 
-  logger.info(
-    `[refresh-attraction-images] ${targets.length} attraction(s) to re-select${all ? ' (all)' : ' (duplicates only)'}`
-  );
+  const mode = all ? ' (all)' : missing ? ' (missing images)' : ' (duplicates only)';
+  logger.info(`[refresh-attraction-images] ${targets.length} attraction(s) to re-select${mode}`);
   if (targets.length === 0) return;
 
   // Clear first: otherwise the selector's global "already used" set counts each
@@ -45,7 +49,7 @@ async function main() {
   let changed = 0;
   for (const a of targets) {
     try {
-      const sel = await selectHeroImage(a.name);
+      const sel = await selectHeroImage(a.name, null, variantsFor(a));
       await prisma.attraction.update({
         where: { id: a.id },
         data: { ...sel, lastComputedAt: new Date() },

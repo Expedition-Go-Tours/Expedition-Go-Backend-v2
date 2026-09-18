@@ -2,6 +2,7 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const prisma = require('../utils/prismaClient');
 const { upsertAttraction, selectHeroImage } = require('../utils/aiContentAnalyzer');
+const { variantsFor } = require('../utils/attractionMatch');
 
 /**
  * GET /admin/attractions
@@ -45,7 +46,7 @@ exports.updateAttraction = catchAsync(async (req, res, next) => {
     updateData.manualOverride = Boolean(manualOverride);
     if (!manualOverride) {
       // Re-select image via AI when unlocking
-      const imageSelection = await selectHeroImage(attraction.name);
+      const imageSelection = await selectHeroImage(attraction.name, null, variantsFor(attraction));
       Object.assign(updateData, imageSelection);
     }
   }

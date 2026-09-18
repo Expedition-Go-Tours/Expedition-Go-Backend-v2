@@ -30,6 +30,7 @@ const { Prisma } = require('@prisma/client');
 const cache = require('./cacheHelper');
 const { cheapestRetailPrice } = require('./tourHelpers');
 const { resolvePlace, normalizeRegion } = require('./placeResolver');
+const { buildAttractionIndex, canonicalFor } = require('./attractionMatch');
 
 /**
  * Ghana platform scope — filters tour queries to tours published on
@@ -1420,6 +1421,18 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, gha
   const ttl = hasLocation ? 300 : 600; // shorter TTL for location-based (more variants)
 
   return cache.getOrSet(cacheKey, async () => {
+    // Alias index: an itinerary stop ("Boti Waterfalls") resolves to its
+    // curated attraction ("Boti Falls"). Without this the section hides every
+    // attraction whose tour stops are spelled differently.
+    const allAttractions = await prisma.attraction.findMany({
+      select: { id: true, name: true, aliases: true },
+    });
+    const attractionIndex = buildAttractionIndex(allAttractions);
+    const canonicalName = (stop) => {
+      const match = canonicalFor(attractionIndex, stop);
+      return (match ? match.name : stop).trim().toLowerCase();
+    };
+
     // ── Platform scope: attraction names present on platform-published tours ──
     // The Attraction table is global (not platform-scoped), so restrict it to
     // names that actually appear on the platform's curated tours.
@@ -1434,7 +1447,7 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, gha
       platformNames = new Set();
       for (const t of curatedTours) {
         for (const n of (t.attractions || [])) {
-          if (n && typeof n === 'string') platformNames.add(n.trim().toLowerCase());
+          if (n && typeof n === 'string' && n.trim()) platformNames.add(canonicalName(n));
         }
       }
       if (platformNames.size === 0) return getAttractionsLegacy(limit, lat, lng, ghanaOnly, expeditionOnly);
@@ -1456,7 +1469,7 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, gha
         });
         for (const t of cityTours) {
           for (const n of (t.attractions || [])) {
-            if (n && typeof n === 'string' && n.trim()) cityAttractionNames.add(n.trim().toLowerCase());
+            if (n && typeof n === 'string' && n.trim()) cityAttractionNames.add(canonicalName(n));
           }
         }
       }
@@ -1477,8 +1490,14 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, gha
       // City-matched attractions first, then a global pool for backfill.
       let attractions = [];
       if (cityAttractionNames && cityAttractionNames.size) {
+        const cityNames = [...cityAttractionNames];
         attractions = await prisma.attraction.findMany({
-          where: { ...baseWhere, name: { in: [...cityAttractionNames] } },
+          where: {
+            ...baseWhere,
+            // `in` is case-sensitive in Postgres; match each canonical name
+            // case-insensitively so city scoping actually applies.
+            OR: cityNames.map((n) => ({ name: { equals: n, mode: 'insensitive' } })),
+          },
           orderBy: attractionOrder,
           take: limit * 3,
         });

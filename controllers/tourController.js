@@ -33,6 +33,7 @@ const { shouldCountTourView } = require('../utils/viewTracking');
 const { haversineKm, resolveCityCentroid, findNearbyCities } = require('../utils/locationGeo');
 const { rankByPlace, resolvePlace } = require('../utils/placeResolver');
 const { placeTourIds } = require('../utils/placeListing');
+const { variantsFor } = require('../utils/attractionMatch');
 const eventEmitter = require('../utils/eventEmitter');
 
 const { rankTourIdsBySearch } = require('../utils/fullTextSearch');
@@ -528,12 +529,25 @@ exports.getSearchFallback = catchAsync(async (req, res) => {
   const cacheKey = `hp:fallback:${crypto.createHash('md5').update(`${lookup.toLowerCase()}:${attraction ? 'att' : region ? 'reg' : 'q'}:${limit}`).digest('hex')}`;
 
   const data = await cache.getOrSet(cacheKey, async () => {
-    // Attraction fallback: find tours whose attractions[] contain the name
+    // Attraction fallback: find tours whose attractions[] contain the name.
+    // Resolve to the canonical attraction + its aliases first, so a tour whose
+    // itinerary stop is spelled differently ("Boti Waterfalls") still matches.
     if (attraction) {
+      const attrRows = await prisma.attraction.findMany({
+        where: {
+          OR: [
+            { name: { equals: attraction, mode: 'insensitive' } },
+            { aliases: { contains: attraction, mode: 'insensitive' } },
+          ],
+        },
+        select: { name: true, aliases: true },
+      });
+      const attractionVariants = [...new Set([attraction, ...attrRows.flatMap(variantsFor)])];
+
       const matchingTours = await prisma.tour.findMany({
         where: {
           status: 'ACTIVE',
-          attractions: { has: attraction },
+          attractions: { hasSome: attractionVariants },
         },
         select: {
           id: true, title: true, slug: true, coverPhoto: true, city: true,

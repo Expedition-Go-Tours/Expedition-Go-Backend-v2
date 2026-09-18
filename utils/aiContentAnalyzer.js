@@ -17,6 +17,7 @@
 const prisma = require('./prismaClient');
 const logger = require('./logger');
 const { callMimo, parseJson } = require('./mimoClient');
+const { variantsFor } = require('./attractionMatch');
 
 // MiMo version label for DB records (resolution logic lives in mimoClient.js)
 const MIMO_MODEL = 'mimo-v2.5';
@@ -478,9 +479,11 @@ function slugify(str) {
  *
  * @param {string} attractionName - The attraction name (e.g., "Cape Coast Castle")
  * @param {Set<string>} [usedImages] - Set of already-used image URLs for dedup
+ * @param {string[]} [variants] - Name + aliases; a tour whose itinerary stop is
+ *   spelled differently still contributes photos
  * @returns {Object} { heroImage, heroImageSource, heroImageTourId, imageRelevance }
  */
-async function selectHeroImage(attractionName, usedImages = null) {
+async function selectHeroImage(attractionName, usedImages = null, variants = null) {
   // Build dedup set from existing attraction hero images in the database
   if (!usedImages) {
     usedImages = new Set();
@@ -493,11 +496,12 @@ async function selectHeroImage(attractionName, usedImages = null) {
     }
   }
 
-  // Find all tours that visit this attraction
+  // Find all tours that visit this attraction (name + aliases)
+  const matchVariants = Array.isArray(variants) && variants.length ? variants : [attractionName];
   const tours = await prisma.tour.findMany({
     where: {
       status: 'ACTIVE',
-      attractions: { has: attractionName },
+      attractions: { hasSome: matchVariants },
     },
     select: { id: true, coverPhoto: true, photos: true, averageRating: true, city: true },
     orderBy: { averageRating: 'desc' },
@@ -654,14 +658,18 @@ async function upsertAttraction(attractionName, _tour) {
     return;
   }
 
-  // Select best hero image via AI
-  const imageSelection = await selectHeroImage(name);
+  // Name + curated aliases: an itinerary stop spelled differently
+  // ("Boti Waterfalls" vs "Boti Falls") must still count as a visit.
+  const variants = variantsFor({ name, aliases: existing?.aliases });
 
-  // Compute centroid coordinates from tours visiting this attraction
+  // Select best hero image via AI
+  const imageSelection = await selectHeroImage(name, null, variants);
+
+  // Compute centroid coordinates from tours visiting this attraction.
   const visitingTours = await prisma.tour.findMany({
     where: {
       status: 'ACTIVE',
-      attractions: { has: name },
+      attractions: { hasSome: variants },
     },
     select: {
       latitude: true,
@@ -724,10 +732,16 @@ async function upsertAttraction(attractionName, _tour) {
  * Refresh metadata for an attraction without changing its hero image.
  */
 async function refreshAttractionMetadata(attractionId, attractionName) {
+  const attraction = await prisma.attraction.findUnique({
+    where: { id: attractionId },
+    select: { aliases: true },
+  });
+  const variants = variantsFor({ name: attractionName, aliases: attraction?.aliases });
+
   const visitingTours = await prisma.tour.findMany({
     where: {
       status: 'ACTIVE',
-      attractions: { has: attractionName },
+      attractions: { hasSome: variants },
     },
     select: {
       averageRating: true,
