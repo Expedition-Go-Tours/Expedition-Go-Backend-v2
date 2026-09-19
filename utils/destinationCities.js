@@ -230,12 +230,24 @@ async function destinationCityFromPatch(patch, existing = null, index = null, cl
   }
 }
 
+/**
+ * The curated major cities (name, region, centroid) — the picklist suppliers
+ * choose from and the destination rail groups by.
+ */
+async function listMajorCities(index = null) {
+  const idx = index || (await buildMajorCityIndex());
+  return idx.cities
+    .map((c) => ({ name: c.name, region: c.region, lat: c.lat, lng: c.lng }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 module.exports = {
   buildMajorCityIndex,
   majorCityForTour,
   destinationCityFor,
   destinationCityFromPatch,
   enrichDestinationCity,
+  listMajorCities,
   normalizePlace,
   NEAREST_CITY_MAX_KM,
 };

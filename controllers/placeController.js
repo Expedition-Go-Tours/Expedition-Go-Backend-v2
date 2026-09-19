@@ -12,6 +12,7 @@ const prisma = require('../utils/prismaClient');
 const cache = require('../utils/cacheHelper');
 const catchAsync = require('../utils/catchAsync');
 const { resolvePlace } = require('../utils/placeResolver');
+const { listMajorCities } = require('../utils/destinationCities');
 
 /** Map the `scope` query param to a resolver scope. */
 function parseScope(req) {
@@ -37,6 +38,19 @@ exports.resolve = catchAsync(async (req, res) => {
   const q = (req.query.q || '').trim();
   const place = q.length >= 2 ? await resolvePlace(q, parseScope(req)) : null;
   res.json({ status: 'success', data: { query: q, place } });
+});
+
+/**
+ * GET /api/places/cities
+ *
+ * The curated major-city picklist (Ghana's 16 region capitals). Suppliers
+ * choose from this so a tour's city is canonical from creation, instead of
+ * whatever the geocoder returns for an address ("La-Dade-Kotopon Municipal
+ * District"). Cached — it only changes when the attractions XLSX does.
+ */
+exports.cities = catchAsync(async (req, res) => {
+  const cities = await cache.getOrSet('hp:place:cities', () => listMajorCities(), 3600);
+  res.json({ status: 'success', data: { cities } });
 });
 
 exports.suggest = catchAsync(async (req, res) => {

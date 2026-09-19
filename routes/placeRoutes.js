@@ -43,4 +43,16 @@ router.get('/suggest', placeController.suggest);
  */
 router.get('/resolve', placeController.resolve);
 
+/**
+ * @swagger
+ * /places/cities:
+ *   get:
+ *     summary: Curated major-city picklist (Ghana's region capitals)
+ *     tags: [Places]
+ *     responses:
+ *       200:
+ *         description: Cities retrieved successfully
+ */
+router.get('/cities', placeController.cities);
+
 module.exports = router;

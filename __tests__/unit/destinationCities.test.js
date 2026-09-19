@@ -2,6 +2,7 @@ const {
   majorCityForTour,
   destinationCityFor,
   destinationCityFromPatch,
+  listMajorCities,
   normalizePlace,
 } = require('../../utils/destinationCities');
 const {
@@ -149,5 +150,15 @@ describe('destinationCityFromPatch', () => {
   it('prefers the patch over the existing row', async () => {
     const existing = { city: 'Aburi', country: 'Ghana' };
     expect(await destinationCityFromPatch({ city: 'Nzulezo' }, existing, index)).toBe('Sekondi-Takoradi');
+  });
+});
+
+describe('listMajorCities', () => {
+  it('returns the curated cities sorted by name', async () => {
+    const cities = await listMajorCities(makeIndex());
+    expect(cities.map((c) => c.name)).toEqual([
+      'Accra', 'Cape Coast', 'Damongo', 'Koforidua', 'Kumasi', 'Sekondi-Takoradi',
+    ]);
+    expect(cities.find((c) => c.name === 'Accra').region).toBe('Greater Accra');
   });
 });
