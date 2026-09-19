@@ -642,6 +642,11 @@ model Tour {
   // itinerary stops in Amedzofe/Tafi/Wli).
   itineraryCities  String[] @default([]) // Extracted from productContent.locations[].city
   itineraryRegions String[] @default([]) // Extracted from productContent.locations[].region
+  // Canonical destination city for the homepage "Popular Destinations" rail and
+  // place-scoped listings: one of Ghana's 16 region capitals for Ghana tours
+  // (free-text Tour.city is often a district or village), the tour's own city
+  // otherwise. Computed by utils/destinationCities.js.
+  destinationCity String?
 
   // Normalized categorization (extracted from categorization JSON for indexed filtering)
   category        String? // e.g. "Adventure", "Cultural", "Nature"

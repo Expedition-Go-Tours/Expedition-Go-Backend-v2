@@ -252,6 +252,7 @@ async function getLocationTourIds(city, ghanaOnly = false, expeditionOnly = fals
         AND sp.status = 'ACTIVE'
         AND (
           LOWER(t.city) = ${lower}
+          OR LOWER(t."destinationCity") = ${lower}
           OR LOWER(t.region) = ${lower}
           OR LOWER(t.region) LIKE ${regionWithSuffix} ESCAPE '\\'
           OR LOWER(t.title) LIKE ${likeStarts} ESCAPE '\\'

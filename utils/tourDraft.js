@@ -628,6 +628,11 @@ async function buildLiveUpdateData(tx, liveRow, draftContent) {
     updateData.slug = await createSlug(merged.title, tx);
   }
 
+  // Derived canonical destination city — set here so every live-apply path
+  // (supplier submit, admin draft approval) keeps it in sync.
+  const { destinationCityFromPatch } = require('./destinationCities');
+  updateData.destinationCity = await destinationCityFromPatch(updateData, liveRow, null, tx);
+
   return updateData;
 }
 

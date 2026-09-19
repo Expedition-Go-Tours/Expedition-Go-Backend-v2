@@ -1,5 +1,7 @@
 const {
   majorCityForTour,
+  destinationCityFor,
+  destinationCityFromPatch,
   normalizePlace,
 } = require('../../utils/destinationCities');
 const {
@@ -113,5 +115,39 @@ describe('majorCityForTour', () => {
   it('returns null when nothing matches', () => {
     expect(majorCityForTour({ region: null, city: null, title: 'Mystery Tour' }, index)).toBeNull();
     expect(majorCityForTour(null, index)).toBeNull();
+  });
+});
+
+describe('destinationCityFor', () => {
+  const index = makeIndex();
+
+  it('maps a Ghana tour to its curated capital', () => {
+    expect(destinationCityFor({ country: 'Ghana', region: 'Eastern Region', city: 'Aburi' }, index)).toBe('Koforidua');
+  });
+
+  it("keeps a non-Ghana tour's own city", () => {
+    expect(destinationCityFor({ country: 'Kenya', city: 'Nairobi' }, index)).toBe('Nairobi');
+  });
+
+  it('returns null for an unmappable Ghana tour', () => {
+    expect(destinationCityFor({ country: 'Ghana', city: null, title: 'Mystery' }, index)).toBeNull();
+  });
+});
+
+describe('destinationCityFromPatch', () => {
+  const index = makeIndex();
+
+  it('uses the patch when it carries location', async () => {
+    expect(await destinationCityFromPatch({ city: 'Aburi', country: 'Ghana' }, null, index)).toBe('Koforidua');
+  });
+
+  it('falls back to the existing row when the patch omits location', async () => {
+    const existing = { city: 'Aburi', country: 'Ghana', region: null };
+    expect(await destinationCityFromPatch({ title: 'Renamed' }, existing, index)).toBe('Koforidua');
+  });
+
+  it('prefers the patch over the existing row', async () => {
+    const existing = { city: 'Aburi', country: 'Ghana' };
+    expect(await destinationCityFromPatch({ city: 'Nzulezo' }, existing, index)).toBe('Sekondi-Takoradi');
   });
 });

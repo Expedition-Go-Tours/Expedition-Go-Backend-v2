@@ -34,6 +34,7 @@ const { haversineKm, resolveCityCentroid, findNearbyCities } = require('../utils
 const { rankByPlace, resolvePlace } = require('../utils/placeResolver');
 const { placeTourIds } = require('../utils/placeListing');
 const { variantsFor } = require('../utils/attractionMatch');
+const { destinationCityFromPatch } = require('../utils/destinationCities');
 const eventEmitter = require('../utils/eventEmitter');
 
 const { rankTourIdsBySearch } = require('../utils/fullTextSearch');
@@ -1340,6 +1341,8 @@ exports.createTour = catchAsync(async (req, res, next) => {
 
   const parsedCategory = typeof categorization === 'string' ? JSON.parse(categorization) : categorization;
 
+  const destinationCity = await destinationCityFromPatch({ city, region, country, latitude, longitude, attractions, title });
+
   // â”€â”€â”€ BLOCKING PHASE: Database writes â”€â”€â”€
   const tour = await prisma.tour.create({
     data: {
@@ -1363,6 +1366,7 @@ exports.createTour = catchAsync(async (req, res, next) => {
       city: city ?? null,
       country: country ?? null,
       region: region ?? null,
+      destinationCity,
       attractions: Array.isArray(attractions) ? attractions : [],
       theme: theme || { primary: null, secondary: [] },
       category: parsedCategory?.category || null,
@@ -1789,6 +1793,10 @@ exports.updateTour = catchAsync(async (req, res, next) => {
         data: { isActive: false, unpublishReason: 'Tour status changed to ' + effectiveStatus },
       });
     }
+
+    // Derived canonical destination city (merged over the live row so a
+    // partial autosave that omits location keeps the right value).
+    updateData.destinationCity = await destinationCityFromPatch(updateData, existingTour, null, tx);
 
     const tour = await tx.tour.update({
       where: { id },

@@ -19,6 +19,7 @@
  */
 
 const prisma = require('./prismaClient');
+const logger = require('./logger');
 const { resolveRegionCentroid } = require('./locationGeo');
 const { normalizeRegion } = require('./placeResolver');
 const { GHANA_REGION_CAPITALS, canonicalGhanaRegion, capitalForRegion } = require('./ghanaRegions');
@@ -61,8 +62,8 @@ function townHead(town) {
  * Build the curated index: the 16 capital cities (with region centroids) and a
  * normalized locality → region map from the imported Attraction rows.
  */
-async function buildMajorCityIndex() {
-  const rows = await prisma.attraction.findMany({
+async function buildMajorCityIndex(client = prisma) {
+  const rows = await client.attraction.findMany({
     where: { status: 'ACTIVE', region: { not: null } },
     select: { name: true, town: true, region: true, category: true, placeType: true },
     orderBy: [{ tourCount: 'desc' }, { priority: 'desc' }],
@@ -177,9 +178,64 @@ function majorCityForTour(tour, index) {
   return null;
 }
 
+/**
+ * The value to persist in `Tour.destinationCity` for a tour-shaped object: the
+ * curated capital for Ghana tours, the tour's own city otherwise. Null means
+ * "no destination" (a Ghana tour that could not be mapped).
+ */
+function destinationCityFor(tour, index) {
+  if (!tour) return null;
+  const country = String(tour.country || '').trim().toLowerCase();
+  const isGhana = !country || country === 'ghana';
+  if (isGhana) return majorCityForTour(tour, index);
+  return String(tour.city || '').trim() || null;
+}
+
+/**
+ * Compute `destinationCity` for a tour-shaped object about to be written.
+ * Builds the curated index once per call; pass `index` to reuse one across
+ * many tours (the backfill does).
+ */
+async function enrichDestinationCity(data, index = null) {
+  const idx = index || (await buildMajorCityIndex());
+  return { ...data, destinationCity: destinationCityFor(data, idx) };
+}
+
+/**
+ * Compute `destinationCity` for a partial patch merged over an existing row, so
+ * an edit that omits location keeps the correct value.
+ *
+ * Derived and non-critical: a failure is logged and yields null rather than
+ * aborting the tour write (the backfill repairs any gap).
+ */
+async function destinationCityFromPatch(patch, existing = null, index = null, client = prisma) {
+  try {
+    const pick = (key) =>
+      patch && patch[key] !== undefined ? patch[key] : existing ? existing[key] : undefined;
+    const merged = {
+      city: pick('city'),
+      region: pick('region'),
+      country: pick('country'),
+      itineraryRegions: pick('itineraryRegions'),
+      latitude: pick('latitude'),
+      longitude: pick('longitude'),
+      title: pick('title'),
+      attractions: pick('attractions'),
+    };
+    const idx = index || (await buildMajorCityIndex(client));
+    return destinationCityFor(merged, idx);
+  } catch (err) {
+    logger.warn(`[destinationCities] destinationCity computation failed: ${err.message}`);
+    return null;
+  }
+}
+
 module.exports = {
   buildMajorCityIndex,
   majorCityForTour,
+  destinationCityFor,
+  destinationCityFromPatch,
+  enrichDestinationCity,
   normalizePlace,
   NEAREST_CITY_MAX_KM,
 };
