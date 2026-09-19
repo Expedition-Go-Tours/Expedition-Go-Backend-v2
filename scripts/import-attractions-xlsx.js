@@ -41,25 +41,8 @@ const REGION_PRIORITY = {
   'Western North': 'Standard',
 };
 
-/** Region capitals for auto-assigning placeType */
-const REGION_CAPITALS = {
-  'Greater Accra': 'Accra',
-  'Ashanti': 'Kumasi',
-  'Central': 'Cape Coast',
-  'Eastern': 'Koforidua',
-  'Western': 'Sekondi-Takoradi',
-  'Volta': 'Ho',
-  'Bono': 'Sunyani',
-  'Northern': 'Tamale',
-  'Oti': 'Dambai',
-  'Bono East': 'Techiman',
-  'Ahafo': 'Goaso',
-  'Savannah': 'Damongo',
-  'North East': 'Nalerigu',
-  'Upper East': 'Bolgatanga',
-  'Upper West': 'Wa',
-  'Western North': 'Sefwi Wiawso',
-};
+/** Region capitals for auto-assigning placeType (shared with the homepage). */
+const { GHANA_REGION_CAPITALS: REGION_CAPITALS } = require('../utils/ghanaRegions');
 
 function slugify(name) {
   return String(name || '')

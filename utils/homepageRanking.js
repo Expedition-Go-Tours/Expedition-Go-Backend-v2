@@ -31,6 +31,7 @@ const cache = require('./cacheHelper');
 const { cheapestRetailPrice } = require('./tourHelpers');
 const { resolvePlace, normalizeRegion } = require('./placeResolver');
 const { buildAttractionIndex, canonicalFor } = require('./attractionMatch');
+const logger = require('./logger');
 
 /**
  * Ghana platform scope — filters tour queries to tours published on
@@ -2328,6 +2329,12 @@ async function getPopularDestinations(limit = 10, userId = null, lat = null, lng
   const ttl = 3600; // 1 hour (changes infrequently)
 
   return cache.getOrSet(cacheKey, async () => {
+    // Expedition lists curated major cities (see destinationCities.js) so the
+    // section never shows supplier-typed districts or villages.
+    if (expeditionOnly) {
+      return getPopularDestinationsCurated(limit, lat, lng, city);
+    }
+
     // Platform scope: restrict to tours published on TravioGhana / Expedition.
     // Prisma.sql/Prisma.empty are required — a plain `${string}` interpolation
     // would be parameterized (escaped as a literal), not inlined as SQL.
@@ -2437,6 +2444,160 @@ async function getPopularDestinations(limit = 10, userId = null, lat = null, lng
 
     return results;
   }, ttl);
+}
+
+/**
+ * Curated "Popular Destinations" for Expedition.
+ *
+ * Buckets every in-scope tour into one of Ghana's 16 region capitals (see
+ * destinationCities.js) so the section never lists supplier-typed districts or
+ * villages, then aggregates bookings, rating and a hero image per city.
+ * Non-Ghana tours keep their own catalog city so the Africa-wide catalog is
+ * unaffected.
+ */
+async function getPopularDestinationsCurated(limit, lat, lng, excludeCity) {
+  const { buildMajorCityIndex, majorCityForTour, normalizePlace } = require('./destinationCities');
+  const index = await buildMajorCityIndex();
+
+  const tours = await prisma.tour.findMany({
+    where: {
+      status: 'ACTIVE',
+      ...expeditionScope(true),
+      supplier: { supplierProfile: { status: 'ACTIVE' } },
+    },
+    select: {
+      city: true,
+      region: true,
+      country: true,
+      itineraryRegions: true,
+      latitude: true,
+      longitude: true,
+      title: true,
+      attractions: true,
+      totalBookings: true,
+      averageRating: true,
+      reviewCount: true,
+      coverPhoto: true,
+    },
+  });
+
+  const exclude = excludeCity ? excludeCity.trim().toLowerCase() : null;
+  const buckets = new Map();
+  let unmapped = 0;
+
+  for (const tour of tours) {
+    const country = String(tour.country || '').trim().toLowerCase();
+    const isGhana = !country || country === 'ghana';
+
+    // Ghana tours are pinned to a curated capital; other countries keep their
+    // own city.
+    const key = isGhana ? majorCityForTour(tour, index) : (tour.city || '').trim() || null;
+    if (!key) {
+      unmapped += 1;
+      continue;
+    }
+    if (exclude && key.toLowerCase() === exclude) continue;
+
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      const curated = index.cityByKey.get(normalizePlace(key));
+      bucket = {
+        city: key,
+        country: curated ? 'Ghana' : tour.country || null,
+        lat: curated ? curated.lat : null,
+        lng: curated ? curated.lng : null,
+        tourCount: 0,
+        totalBookings: 0,
+        ratingSum: 0,
+        ratingCount: 0,
+        coordSumLat: 0,
+        coordSumLng: 0,
+        coordCount: 0,
+        heroImage: null,
+        heroRating: -1,
+        heroReviews: -1,
+      };
+      buckets.set(key, bucket);
+    }
+
+    bucket.tourCount += 1;
+    bucket.totalBookings += tour.totalBookings || 0;
+    if (tour.averageRating != null) {
+      bucket.ratingSum += Number(tour.averageRating);
+      bucket.ratingCount += 1;
+    }
+    if (tour.latitude != null && tour.longitude != null) {
+      bucket.coordSumLat += tour.latitude;
+      bucket.coordSumLng += tour.longitude;
+      bucket.coordCount += 1;
+    }
+    if (tour.coverPhoto) {
+      const rating = tour.averageRating != null ? Number(tour.averageRating) : 0;
+      const reviews = tour.reviewCount || 0;
+      if (rating > bucket.heroRating || (rating === bucket.heroRating && reviews > bucket.heroReviews)) {
+        bucket.heroImage = tour.coverPhoto;
+        bucket.heroRating = rating;
+        bucket.heroReviews = reviews;
+      }
+    }
+  }
+
+  if (unmapped > 0) {
+    logger.warn(`[getPopularDestinations] ${unmapped} Expedition tour(s) could not be mapped to a curated city`);
+  }
+
+  const xgboost = require('./xgboostService');
+
+  const ranked = [...buckets.values()].map((b) => {
+    const avgRating = b.ratingCount > 0 ? b.ratingSum / b.ratingCount : null;
+    const cityLat = b.lat != null ? b.lat : (b.coordCount > 0 ? b.coordSumLat / b.coordCount : null);
+    const cityLng = b.lng != null ? b.lng : (b.coordCount > 0 ? b.coordSumLng / b.coordCount : null);
+
+    const tourCountScore = Math.log10(b.tourCount + 1) / 2;
+    const bookingsScore = Math.log10(b.totalBookings + 1) / 4;
+    const ratingScore = avgRating ? avgRating / 5 : 0.5;
+
+    let distanceScore = 0.5;
+    if (lat && lng && cityLat != null && cityLng != null) {
+      const dist = xgboost.haversineKm(lat, lng, cityLat, cityLng);
+      distanceScore = Math.max(0, 1 - dist / 500);
+    }
+
+    const score = (tourCountScore * 0.25) + (bookingsScore * 0.30) + (ratingScore * 0.30) + (distanceScore * 0.15);
+    return {
+      city: b.city,
+      country: b.country,
+      tourCount: b.tourCount,
+      totalBookings: b.totalBookings,
+      avgRating,
+      heroImage: b.heroImage,
+      _score: score,
+    };
+  });
+
+  ranked.sort((a, b) => b._score - a._score);
+
+  // Never repeat a hero image across cards — a duplicate is worse than none
+  // (the card falls back to its placeholder).
+  const usedImages = new Set();
+  const results = [];
+  for (const c of ranked) {
+    if (results.length >= limit) break;
+    let heroImage = c.heroImage;
+    if (heroImage && usedImages.has(heroImage)) heroImage = null;
+    if (heroImage) usedImages.add(heroImage);
+
+    results.push({
+      city: c.city,
+      country: c.country,
+      tourCount: c.tourCount,
+      totalBookings: c.totalBookings,
+      avgRating: c.avgRating,
+      heroImage,
+    });
+  }
+
+  return results;
 }
 
 // ─── Haversine distance helper ────────────────────────────────────────
