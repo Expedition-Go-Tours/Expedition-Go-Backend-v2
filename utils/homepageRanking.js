@@ -31,7 +31,6 @@ const cache = require('./cacheHelper');
 const { cheapestRetailPrice } = require('./tourHelpers');
 const { resolvePlace, normalizeRegion } = require('./placeResolver');
 const { buildAttractionIndex, canonicalFor } = require('./attractionMatch');
-const logger = require('./logger');
 
 /**
  * Ghana platform scope — filters tour queries to tours published on
@@ -2450,128 +2449,77 @@ async function getPopularDestinations(limit = 10, userId = null, lat = null, lng
 /**
  * Curated "Popular Destinations" for Expedition.
  *
- * Buckets every in-scope tour into one of Ghana's 16 region capitals (see
- * destinationCities.js) so the section never lists supplier-typed districts or
- * villages, then aggregates bookings, rating and a hero image per city.
- * Non-Ghana tours keep their own catalog city so the Africa-wide catalog is
- * unaffected.
+ * Reads the persisted `Tour.destinationCity` (see destinationCities.js) — one of
+ * Ghana's 16 region capitals for Ghana tours, the tour's own city otherwise — so
+ * the section is a single indexed GROUP BY and never lists supplier-typed
+ * districts or villages. NULL means "no destination" and is excluded.
  */
 async function getPopularDestinationsCurated(limit, lat, lng, excludeCity) {
-  const { buildMajorCityIndex, majorCityForTour, normalizePlace } = require('./destinationCities');
-  const index = await buildMajorCityIndex();
+  const { buildMajorCityIndex, normalizePlace } = require('./destinationCities');
 
-  const tours = await prisma.tour.findMany({
-    where: {
-      status: 'ACTIVE',
-      ...expeditionScope(true),
-      supplier: { supplierProfile: { status: 'ACTIVE' } },
-    },
-    select: {
-      city: true,
-      region: true,
-      country: true,
-      itineraryRegions: true,
-      latitude: true,
-      longitude: true,
-      title: true,
-      attractions: true,
-      totalBookings: true,
-      averageRating: true,
-      reviewCount: true,
-      coverPhoto: true,
-    },
+  const where = {
+    status: 'ACTIVE',
+    ...expeditionScope(true),
+    supplier: { supplierProfile: { status: 'ACTIVE' } },
+    destinationCity: { not: null },
+  };
+  if (excludeCity) {
+    where.NOT = { destinationCity: { equals: excludeCity.trim(), mode: 'insensitive' } };
+  }
+
+  const groups = await prisma.tour.groupBy({
+    by: ['destinationCity', 'country'],
+    where,
+    _count: { _all: true },
+    _sum: { totalBookings: true },
+    _avg: { averageRating: true },
   });
 
-  const exclude = excludeCity ? excludeCity.trim().toLowerCase() : null;
-  const buckets = new Map();
-  let unmapped = 0;
+  if (groups.length === 0) return [];
 
-  for (const tour of tours) {
-    const country = String(tour.country || '').trim().toLowerCase();
-    const isGhana = !country || country === 'ghana';
-
-    // Ghana tours are pinned to a curated capital; other countries keep their
-    // own city.
-    const key = isGhana ? majorCityForTour(tour, index) : (tour.city || '').trim() || null;
-    if (!key) {
-      unmapped += 1;
-      continue;
-    }
-    if (exclude && key.toLowerCase() === exclude) continue;
-
-    let bucket = buckets.get(key);
-    if (!bucket) {
-      const curated = index.cityByKey.get(normalizePlace(key));
-      bucket = {
-        city: key,
-        country: curated ? 'Ghana' : tour.country || null,
-        lat: curated ? curated.lat : null,
-        lng: curated ? curated.lng : null,
-        tourCount: 0,
-        totalBookings: 0,
-        ratingSum: 0,
-        ratingCount: 0,
-        coordSumLat: 0,
-        coordSumLng: 0,
-        coordCount: 0,
-        heroImage: null,
-        heroRating: -1,
-        heroReviews: -1,
-      };
-      buckets.set(key, bucket);
-    }
-
-    bucket.tourCount += 1;
-    bucket.totalBookings += tour.totalBookings || 0;
-    if (tour.averageRating != null) {
-      bucket.ratingSum += Number(tour.averageRating);
-      bucket.ratingCount += 1;
-    }
-    if (tour.latitude != null && tour.longitude != null) {
-      bucket.coordSumLat += tour.latitude;
-      bucket.coordSumLng += tour.longitude;
-      bucket.coordCount += 1;
-    }
-    if (tour.coverPhoto) {
-      const rating = tour.averageRating != null ? Number(tour.averageRating) : 0;
-      const reviews = tour.reviewCount || 0;
-      if (rating > bucket.heroRating || (rating === bucket.heroRating && reviews > bucket.heroReviews)) {
-        bucket.heroImage = tour.coverPhoto;
-        bucket.heroRating = rating;
-        bucket.heroReviews = reviews;
-      }
-    }
+  // Hero image per city: the best-rated tour's cover photo.
+  const heroTours = await prisma.tour.findMany({
+    where: {
+      ...where,
+      destinationCity: { in: groups.map((g) => g.destinationCity) },
+      coverPhoto: { not: null },
+    },
+    select: { destinationCity: true, coverPhoto: true },
+    orderBy: [{ averageRating: 'desc' }, { reviewCount: 'desc' }],
+  });
+  const heroByCity = new Map();
+  for (const t of heroTours) {
+    if (!heroByCity.has(t.destinationCity)) heroByCity.set(t.destinationCity, t.coverPhoto);
   }
 
-  if (unmapped > 0) {
-    logger.warn(`[getPopularDestinations] ${unmapped} Expedition tour(s) could not be mapped to a curated city`);
-  }
-
+  const index = await buildMajorCityIndex();
   const xgboost = require('./xgboostService');
 
-  const ranked = [...buckets.values()].map((b) => {
-    const avgRating = b.ratingCount > 0 ? b.ratingSum / b.ratingCount : null;
-    const cityLat = b.lat != null ? b.lat : (b.coordCount > 0 ? b.coordSumLat / b.coordCount : null);
-    const cityLng = b.lng != null ? b.lng : (b.coordCount > 0 ? b.coordSumLng / b.coordCount : null);
+  const ranked = groups.map((g) => {
+    const city = g.destinationCity;
+    const curated = index.cityByKey.get(normalizePlace(city));
+    const tourCount = g._count._all;
+    const totalBookings = g._sum.totalBookings || 0;
+    const avgRating = g._avg.averageRating != null ? Number(g._avg.averageRating) : null;
 
-    const tourCountScore = Math.log10(b.tourCount + 1) / 2;
-    const bookingsScore = Math.log10(b.totalBookings + 1) / 4;
+    const tourCountScore = Math.log10(tourCount + 1) / 2;
+    const bookingsScore = Math.log10(totalBookings + 1) / 4;
     const ratingScore = avgRating ? avgRating / 5 : 0.5;
 
     let distanceScore = 0.5;
-    if (lat && lng && cityLat != null && cityLng != null) {
-      const dist = xgboost.haversineKm(lat, lng, cityLat, cityLng);
+    if (lat && lng && curated && curated.lat != null && curated.lng != null) {
+      const dist = xgboost.haversineKm(lat, lng, curated.lat, curated.lng);
       distanceScore = Math.max(0, 1 - dist / 500);
     }
 
     const score = (tourCountScore * 0.25) + (bookingsScore * 0.30) + (ratingScore * 0.30) + (distanceScore * 0.15);
     return {
-      city: b.city,
-      country: b.country,
-      tourCount: b.tourCount,
-      totalBookings: b.totalBookings,
+      city,
+      country: g.country || null,
+      tourCount,
+      totalBookings,
       avgRating,
-      heroImage: b.heroImage,
+      heroImage: heroByCity.get(city) || null,
       _score: score,
     };
   });
