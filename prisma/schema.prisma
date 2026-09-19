@@ -721,6 +721,7 @@ model Tour {
   @@index([city])
   @@index([country])
   @@index([region])
+  @@index([destinationCity]) // Popular Destinations / place-scoped listings
   @@index([itineraryCities], type: Gin) // itinerary city search
   @@index([itineraryRegions], type: Gin) // itinerary region search
   @@index([country, city])
