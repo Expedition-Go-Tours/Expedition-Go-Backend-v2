@@ -13,7 +13,7 @@
 
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
-const { makeSupplierController } = require('./travioGhanaSupplierController');
+const { makeSupplierController } = require('../src/core/supplier');
 
 const base = makeSupplierController('africa');
 

@@ -1426,7 +1426,7 @@ const updateBookingStatus = catchAsync(async (req, res, next) => {
 });
 
 
-const { makeStorefrontController } = require('./expeditionController');
+const makeStorefrontController = require('../src/core/storefront');
 
 module.exports = {
   ...makeStorefrontController('ghana'),
