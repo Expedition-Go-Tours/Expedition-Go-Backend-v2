@@ -57,7 +57,7 @@ controller.getOverview = catchAsync(async (req, res, next) => {
 
   const now = new Date();
   const bucket = Math.floor(now.getTime() / 120000);
-  const cacheKey = `ghana:admin:overview:${bucket}:${periodDays}`;
+  const cacheKey = `${BRAND.cachePrefix}admin:overview:${bucket}:${periodDays}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -220,7 +220,7 @@ controller.getOverview = catchAsync(async (req, res, next) => {
           sp."averageRating"
         FROM "SupplierProfile" sp
         JOIN "User" u ON u.id = sp."userId"
-        LEFT JOIN (
+        JOIN (
           SELECT t."supplierId",
                  COUNT(*)::int AS booking_count,
                  SUM(bo."supplierPayout")::float AS total_earnings,
@@ -356,7 +356,7 @@ controller.getOverview = catchAsync(async (req, res, next) => {
  */
 controller.getRevenueTrend = catchAsync(async (req, res, next) => {
   const bucket = Math.floor(Date.now() / 300000);
-  const months = await cache.getOrSet(`ghana:admin:revenueTrend:${bucket}`, async () => {
+  const months = await cache.getOrSet(`${BRAND.cachePrefix}admin:revenueTrend:${bucket}`, async () => {
     return prisma.$queryRaw`
       SELECT
         DATE_TRUNC('month', "paidAt")::date AS month,
@@ -466,7 +466,7 @@ controller.getUserGrowth = catchAsync(async (req, res, next) => {
   // period: 30d | 90d | 1y — default 24 months (backward compat).
   const periodMonths = { '30d': 1, '90d': 3, '1y': 12 }[req.query.period] || 24;
   const bucket = Math.floor(Date.now() / 300000);
-  const growth = await cache.getOrSet(`ghana:admin:userGrowth:${bucket}:${periodMonths}`, async () => {
+  const growth = await cache.getOrSet(`${BRAND.cachePrefix}admin:userGrowth:${bucket}:${periodMonths}`, async () => {
     return prisma.$queryRaw`
       SELECT
         DATE_TRUNC('month', "createdAt")::date AS month,
@@ -495,7 +495,7 @@ controller.getFunnel = catchAsync(async (req, res, next) => {
   startDate.setDate(startDate.getDate() - days);
 
   const bucket = Math.floor(Date.now() / 300000);
-  const data = await cache.getOrSet(`ghana:admin:funnel:${bucket}:${days}`, async () => {
+  const data = await cache.getOrSet(`${BRAND.cachePrefix}admin:funnel:${bucket}:${days}`, async () => {
     const [viewed, cartAdded, checkoutStarted, completed] = await Promise.all([
       prisma.event.groupBy({
         by: ['userId'],
@@ -548,7 +548,7 @@ controller.getFunnel = catchAsync(async (req, res, next) => {
  */
 controller.getCLV = catchAsync(async (req, res, next) => {
   const bucket = Math.floor(Date.now() / 300000);
-  const data = await cache.getOrSet(`ghana:admin:clv:${bucket}`, async () => {
+  const data = await cache.getOrSet(`${BRAND.cachePrefix}admin:clv:${bucket}`, async () => {
     const [basicStats, repeatRate, bookingDistribution, topCustomers] = await Promise.all([
       prisma.$queryRaw`
         SELECT
@@ -738,7 +738,7 @@ controller.getCartAbandonment = catchAsync(async (req, res, next) => {
   startDate.setDate(startDate.getDate() - days);
 
   const bucket = Math.floor(Date.now() / 300000);
-  const data = await cache.getOrSet(`ghana:admin:cartAbandon:${bucket}:${days}`, async () => {
+  const data = await cache.getOrSet(`${BRAND.cachePrefix}admin:cartAbandon:${bucket}:${days}`, async () => {
     const [cartMetrics, cartByTour, dailyAbandonment] = await Promise.all([
       prisma.$queryRaw`
         WITH cart_users AS (
@@ -1821,19 +1821,23 @@ controller.getFailedTours = catchAsync(async (req, res, next) => {
  * Pending reviews on Ghana tours.
  */
 controller.getPendingReviews = catchAsync(async (req, res, next) => {
-  const { page = 1, limit = 20 } = req.query;
+  const { page = 1, limit = 20, status } = req.query;
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const take = Math.min(parseInt(limit), 100);
 
-  // Get tour IDs that belong to Ghana
-  const ghanaTourIds = await prisma[BRAND.listingModel].findMany({
+  // Reviews on this brand's tours only.
+  const listingRows = await prisma[BRAND.listingModel].findMany({
     select: { tourId: true },
   });
-  const tourIds = ghanaTourIds.map((r) => r.tourId);
+  const tourIds = listingRows.map((r) => r.tourId);
 
+  // The moderation UI has All / Pending / Approved / Rejected / Flagged tabs
+  // and sends the uppercase status. "ALL" (or no param) returns every review
+  // on the brand's tours; otherwise filter to that status.
+  const statusFilter = status && status !== 'ALL' ? status : undefined;
   const where = {
     tourId: { in: tourIds },
-    status: 'PENDING',
+    ...(statusFilter ? { status: statusFilter } : {}),
   };
 
   const [reviews, totalCount, counts] = await Promise.all([

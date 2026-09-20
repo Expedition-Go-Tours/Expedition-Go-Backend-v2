@@ -17,6 +17,7 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   tourDateOverride: { findMany: jest.fn() },
   wishlistItem: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
   notification: { findMany: jest.fn(), count: jest.fn(), updateMany: jest.fn(), aggregate: jest.fn(), update: jest.fn() },
+  adminNotification: { findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), updateMany: jest.fn(), update: jest.fn(), create: jest.fn() },
   payout: { findMany: jest.fn(), findFirst: jest.fn(), aggregate: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
   payoutRequest: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
   dispute: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn() },
@@ -524,8 +525,10 @@ describe('TravioGhana API — admin endpoints', () => {
   });
 
   it('GET /notifications returns 200', async () => {
-    prisma.notification.findMany.mockResolvedValue([]);
-    prisma.notification.count.mockResolvedValue(0);
+    // The admin feed reads the AdminNotification model (not the customer
+    // Notification model) so the bell/card show admin-scoped items.
+    prisma.adminNotification.findMany.mockResolvedValue([]);
+    prisma.adminNotification.count.mockResolvedValue(0);
     const res = await request(app).get('/api/travioghana/admin/notifications').set(auth(adminToken));
     expect(res.status).toBe(200);
   });

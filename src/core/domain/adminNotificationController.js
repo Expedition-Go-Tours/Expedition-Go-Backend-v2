@@ -2,18 +2,24 @@ const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
 const adminNotifService = require('../services/adminNotificationService');
 
-const { getBrand } = require('../../../config/brands');
-
-const GHANA_ROLE = getBrand('ghana').role;
+const { brandKeyFromUser } = require('../../../middleware/brandContext');
 
 /**
- * Exclude notifications related to Ghana suppliers.
+ * Brand-scope the admin notification feed.
  *
- * Notifications whose `data` JSON contains a `supplierId` pointing to a
- * supplier with the 'ghana' role are Ghana-scoped and must not appear
- * on the TravioAfrica admin dashboard.
+ * Every AdminNotification is tagged with a `storefront` at creation time
+ * ('ghana' when it is tied to a Ghana supplier/booking, null otherwise — see
+ * adminNotificationService.notifyAdmin). Ghana's admin sees only its own
+ * notifications; every other platform (Africa, and the legacy shared admin)
+ * sees everything NOT tagged Ghana, which is the pre-isolation default, so no
+ * notification is ever orphaned.
+ *
+ * The brand comes from the request's brand-scoped mount (req.brandKey), with
+ * the admin's brand role as a fallback.
  */
-function excludeGhanaNotifications() {
+function brandNotificationWhere(req) {
+  const brandKey = req.brandKey || brandKeyFromUser(req.user);
+  if (brandKey === 'ghana') return { storefront: 'ghana' };
   return {
     OR: [
       { storefront: null },
@@ -102,7 +108,7 @@ function buildPermissionWhere(permissionKeys = []) {
 
 exports.getNotifications = catchAsync(async (req, res) => {
   const { page = 1, limit = 20, unacknowledgedOnly = false } = req.query;
-  const where = { ...buildPermissionWhere(req.user.permissionKeys || []), ...excludeGhanaNotifications() };
+  const where = { ...buildPermissionWhere(req.user.permissionKeys || []), ...brandNotificationWhere(req) };
   const result = await adminNotifService.getNotifications({
     page: parseInt(page),
     limit: parseInt(limit),
@@ -113,7 +119,7 @@ exports.getNotifications = catchAsync(async (req, res) => {
 });
 
 exports.getUnreadCount = catchAsync(async (req, res) => {
-  const where = { ...buildPermissionWhere(req.user.permissionKeys || []), ...excludeGhanaNotifications() };
+  const where = { ...buildPermissionWhere(req.user.permissionKeys || []), ...brandNotificationWhere(req) };
   const result = await adminNotifService.getNotifications({ limit: 1, unacknowledgedOnly: true, where });
   res.status(200).json({
     status: 'success',
@@ -129,7 +135,7 @@ exports.acknowledge = catchAsync(async (req, res, next) => {
 });
 
 exports.acknowledgeAll = catchAsync(async (req, res) => {
-  const where = { ...buildPermissionWhere(req.user.permissionKeys || []), ...excludeGhanaNotifications() };
+  const where = { ...buildPermissionWhere(req.user.permissionKeys || []), ...brandNotificationWhere(req) };
   const result = await adminNotifService.acknowledgeAll(req.user.id, where);
   res.status(200).json({
     status: 'success',
@@ -138,7 +144,7 @@ exports.acknowledgeAll = catchAsync(async (req, res) => {
 });
 
 exports.getStats = catchAsync(async (req, res) => {
-  const where = { ...buildPermissionWhere(req.user.permissionKeys || []), ...excludeGhanaNotifications() };
+  const where = { ...buildPermissionWhere(req.user.permissionKeys || []), ...brandNotificationWhere(req) };
   const stats = await adminNotifService.getStats(where);
   res.status(200).json({ status: 'success', data: stats });
 });

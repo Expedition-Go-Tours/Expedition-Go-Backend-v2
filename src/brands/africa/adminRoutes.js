@@ -31,6 +31,7 @@ const payoutController = require('../../core/domain/payoutController');
 const payoutMethodController = require('../../core/domain/payoutMethodController');
 const supplierController = require('../../core/domain/supplierController');
 const reviewController = require('../../core/domain/reviewController');
+const adminNotifController = require('../../core/domain/adminNotificationController');
 
 const router = express.Router();
 
@@ -113,11 +114,13 @@ router.patch('/reviews/:id/admin/response', requirePermission('reviews.moderate'
 router.delete('/reviews/:id/admin/response', requirePermission('reviews.moderate'), reviewController.adminDeleteSupplierResponse);
 
 // NOTIFICATIONS — Africa-scoped
-router.get('/notifications', africa.getNotifications);
-router.get('/notifications/unread-count', africa.getUnreadCount);
-router.get('/notifications/stats', africa.getNotificationStats);
-router.patch('/notifications/:id/acknowledge', africa.acknowledgeNotification);
-router.patch('/notifications/acknowledge-all', africa.acknowledgeAllNotifications);
+// AdminNotification model (not the customer Notification model), scoped to
+// everything not tagged Ghana by the shared controller.
+router.get('/notifications', adminNotifController.getNotifications);
+router.get('/notifications/unread-count', adminNotifController.getUnreadCount);
+router.get('/notifications/stats', adminNotifController.getStats);
+router.patch('/notifications/:id/acknowledge', adminNotifController.acknowledge);
+router.patch('/notifications/acknowledge-all', adminNotifController.acknowledgeAll);
 
 // CHAT — proxied to shared chat controller
 const chatController = require('../../core/domain/chatController');

@@ -317,11 +317,13 @@ router.delete('/reviews/:id/admin/response',
 // ══════════════════════════════════════════════════════════════════════════
 // NOTIFICATIONS — Ghana-scoped (filters by source)
 // ══════════════════════════════════════════════════════════════════════════
-router.get('/notifications', ghana.getNotifications);
-router.get('/notifications/unread-count', ghana.getUnreadCount);
-router.get('/notifications/stats', ghana.getNotificationStats);
-router.patch('/notifications/:id/acknowledge', ghana.acknowledgeNotification);
-router.patch('/notifications/acknowledge-all', ghana.acknowledgeAllNotifications);
+// AdminNotification model (not the customer Notification model), scoped to
+// Ghana's storefront by the shared controller.
+router.get('/notifications', adminNotifController.getNotifications);
+router.get('/notifications/unread-count', adminNotifController.getUnreadCount);
+router.get('/notifications/stats', adminNotifController.getStats);
+router.patch('/notifications/:id/acknowledge', adminNotifController.acknowledge);
+router.patch('/notifications/acknowledge-all', adminNotifController.acknowledgeAll);
 
 // ══════════════════════════════════════════════════════════════════════════
 // CHAT — proxied to shared chat controller (admin talks to all users)
