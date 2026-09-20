@@ -281,10 +281,15 @@ function cityForPlace(row, type) {
  * name-prefix, name-substring, then town/alias matches, and prefers cities over
  * towns over attractions within a rank. The response is a flat, typed list:
  * `{ name, type, city, region, lat, lng }`.
+ *
+ * `types` optionally restricts results to a subset of `city` / `town` /
+ * `attraction` (e.g. a city picker passes `['city', 'town']`).
  */
-async function searchPlaces(query = '', limit = 25) {
+async function searchPlaces(query = '', limit = 25, types = null) {
   const q = normalizePlace(query);
   const take = Math.min(Math.max(Number(limit) || 25, 1), 100);
+  const allowed = Array.isArray(types) && types.length > 0 ? new Set(types) : null;
+  const inTypes = (type) => !allowed || allowed.has(type);
   const select = {
     name: true,
     town: true,
@@ -296,11 +301,22 @@ async function searchPlaces(query = '', limit = 25) {
     tourCount: true,
   };
 
+  // Translate the type filter into a Prisma category constraint so the DB does
+  // the heavy lifting (cities/towns share the `City / Town` category).
+  const typeWhere = (() => {
+    if (!allowed) return {};
+    const wantsPlace = allowed.has('city') || allowed.has('town');
+    const wantsAttraction = allowed.has('attraction');
+    if (wantsPlace && !wantsAttraction) return { category: 'City / Town' };
+    if (wantsAttraction && !wantsPlace) return { category: { not: 'City / Town' } };
+    return {};
+  })();
+
   // Default list — no usable query yet.
   if (q.length < 2) {
     const capitals = await listMajorCities();
     const top = await prisma.attraction.findMany({
-      where: { status: 'ACTIVE' },
+      where: { status: 'ACTIVE', ...typeWhere },
       select,
       orderBy: [{ tourCount: 'desc' }, { name: 'asc' }],
       take: 60,
@@ -308,6 +324,7 @@ async function searchPlaces(query = '', limit = 25) {
     const seen = new Set();
     const out = [];
     for (const c of capitals) {
+      if (!inTypes('city')) continue;
       seen.add(normalizePlace(c.name));
       out.push({ name: c.name, type: 'city', city: c.name, region: c.region || null, lat: c.lat ?? null, lng: c.lng ?? null });
     }
@@ -316,6 +333,7 @@ async function searchPlaces(query = '', limit = 25) {
       if (seen.has(key)) continue;
       seen.add(key);
       const type = placeTypeFor(r);
+      if (!inTypes(type)) continue;
       out.push({ name: r.name, type, city: cityForPlace(r, type), region: r.region || null, lat: r.latitude ?? null, lng: r.longitude ?? null });
     }
     return out.slice(0, take);
@@ -324,6 +342,7 @@ async function searchPlaces(query = '', limit = 25) {
   const candidates = await prisma.attraction.findMany({
     where: {
       status: 'ACTIVE',
+      ...typeWhere,
       OR: [
         { name: { contains: q, mode: 'insensitive' } },
         { town: { contains: q, mode: 'insensitive' } },
@@ -348,6 +367,7 @@ async function searchPlaces(query = '', limit = 25) {
       else score = 4;
       return { r, score, type: placeTypeFor(r) };
     })
+    .filter((x) => inTypes(x.type))
     .sort((a, b) => {
       if (a.score !== b.score) return a.score - b.score;
       const ta = PLACE_TYPE_RANK[a.type];

@@ -54,18 +54,25 @@ exports.cities = catchAsync(async (req, res) => {
 });
 
 /**
- * GET /api/places/search?q=&limit=
+ * GET /api/places/search?q=&limit=&types=
  *
  * Flat, typed autocomplete over the curated places catalog (cities, towns and
  * attractions — the XLSX import). Used by the supplier product builder's
- * location modal to replace the 16-capital picklist with a searchable field.
- * Cached per query; empty `q` returns major cities + top places.
+ * location modal. `types` is a comma-separated subset of `city,town,attraction`
+ * (e.g. a city picker sends `types=city,town`). Cached per query; empty `q`
+ * returns major cities + top places.
  */
 exports.search = catchAsync(async (req, res) => {
   const q = String(req.query.q || '').trim();
   const limit = Math.min(Math.max(parseInt(req.query.limit) || 25, 1), 100);
-  const key = `hp:place:search:${crypto.createHash('md5').update(`${q.toLowerCase()}:${limit}`).digest('hex')}`;
-  const places = await cache.getOrSet(key, () => searchPlaces(q, limit), 3600);
+  const allowedTypes = new Set(['city', 'town', 'attraction']);
+  const types = String(req.query.types || '')
+    .split(',')
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => allowedTypes.has(t));
+  const typesKey = types.length > 0 ? [...types].sort().join(',') : 'all';
+  const key = `hp:place:search:${crypto.createHash('md5').update(`${q.toLowerCase()}:${limit}:${typesKey}`).digest('hex')}`;
+  const places = await cache.getOrSet(key, () => searchPlaces(q, limit, types.length > 0 ? types : null), 3600);
   res.json({ status: 'success', data: { places } });
 });
 
