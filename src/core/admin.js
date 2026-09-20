@@ -552,10 +552,12 @@ controller.getFunnel = catchAsync(async (req, res, next) => {
           UNION ALL
           -- Current checkout flow: a booking materialized from Stripe emits
           -- <eventNamespace>.booking_reserved (the legacy cart.added /
-          -- booking.initiated pair only fires on the retired cart flow).
+          -- booking.initiated pair only fires on the retired cart flow). Match
+          -- any brand prefix — the source filter below already scopes the brand,
+          -- and Expedition's bookings roll up under Ghana.
           SELECT 'booking_completed', COALESCE("userId", "sessionId")
           FROM "Event"
-          WHERE "name" = ${`${BRAND.eventNamespace}.booking_reserved`} AND "createdAt" >= ${startDate}
+          WHERE "name" LIKE '%.booking_reserved' AND "createdAt" >= ${startDate}
             AND "properties"->>'source' = ${brandKey}
         ) s
         WHERE identity IS NOT NULL
