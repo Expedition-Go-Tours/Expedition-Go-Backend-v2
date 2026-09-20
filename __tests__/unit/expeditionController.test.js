@@ -711,7 +711,7 @@ describe('expeditionController', () => {
     });
   });
 
-  describe('getExpeditionWishlist', () => {
+  describe('getWishlist', () => {
     it('returns wishlist tours filtered to Expedition', async () => {
       const added1 = new Date('2026-01-02T10:00:00Z');
       const mockItems = [
@@ -719,7 +719,7 @@ describe('expeditionController', () => {
       ];
       prisma.wishlistItem.findMany.mockResolvedValue(mockItems);
 
-      await controller.getExpeditionWishlist(req, res, next);
+      await controller.getWishlist(req, res, next);
 
       expect(prisma.wishlistItem.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -742,7 +742,7 @@ describe('expeditionController', () => {
     it('returns empty array when wishlist is empty', async () => {
       prisma.wishlistItem.findMany.mockResolvedValue([]);
 
-      await controller.getExpeditionWishlist(req, res, next);
+      await controller.getWishlist(req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(
@@ -755,7 +755,7 @@ describe('expeditionController', () => {
         { id: 'wi1', addedAt: new Date(), tour: null },
       ]);
 
-      await controller.getExpeditionWishlist(req, res, next);
+      await controller.getWishlist(req, res, next);
 
       const body = res.json.mock.calls[0][0];
       expect(body.data.tours).toEqual([]);
@@ -763,14 +763,14 @@ describe('expeditionController', () => {
     });
   });
 
-  describe('toggleExpeditionWishlist', () => {
+  describe('toggleWishlist', () => {
     it('adds a tour to wishlist', async () => {
       req.params.tourId = 'tour-2';
       prisma.expeditionTour.findFirst.mockResolvedValue(mockExpeditionTour);
       prisma.wishlistItem.findUnique.mockResolvedValue(null);
       prisma.wishlistItem.create.mockResolvedValue({ id: 'wi1' });
 
-      await controller.toggleExpeditionWishlist(req, res, next);
+      await controller.toggleWishlist(req, res, next);
 
       expect(prisma.expeditionTour.findFirst).toHaveBeenCalledWith({
         where: { tourId: 'tour-2', isActive: true },
@@ -789,7 +789,7 @@ describe('expeditionController', () => {
       prisma.wishlistItem.findUnique.mockResolvedValue({ id: 'wi1' });
       prisma.wishlistItem.delete.mockResolvedValue({ id: 'wi1' });
 
-      await controller.toggleExpeditionWishlist(req, res, next);
+      await controller.toggleWishlist(req, res, next);
 
       expect(prisma.wishlistItem.delete).toHaveBeenCalledWith({ where: { id: 'wi1' } });
       expect(prisma.wishlistItem.create).not.toHaveBeenCalled();
@@ -801,7 +801,7 @@ describe('expeditionController', () => {
       req.params.tourId = 'tour-99';
       prisma.expeditionTour.findFirst.mockResolvedValue(null);
 
-      await controller.toggleExpeditionWishlist(req, res, next);
+      await controller.toggleWishlist(req, res, next);
 
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
     });

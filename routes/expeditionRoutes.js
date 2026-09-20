@@ -753,7 +753,7 @@ router.post('/checkout/draft/:id/release', protect, restrictTo('customer'), expe
  *       401:
  *         description: Authentication required
  */
-router.get('/wishlist', protect, restrictTo('customer'), expeditionController.getExpeditionWishlist);
+router.get('/wishlist', protect, restrictTo('customer'), expeditionController.getWishlist);
 
 /**
  * @swagger
@@ -800,7 +800,7 @@ router.get('/wishlist', protect, restrictTo('customer'), expeditionController.ge
  *       404:
  *         description: Tour not available on Expedition
  */
-router.patch('/wishlist/:tourId', protect, restrictTo('customer'), validate(tourIdParamSchema), expeditionController.toggleExpeditionWishlist);
+router.patch('/wishlist/:tourId', protect, restrictTo('customer'), validate(tourIdParamSchema), expeditionController.toggleWishlist);
 
 /**
  * @swagger

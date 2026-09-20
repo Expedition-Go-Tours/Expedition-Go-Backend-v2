@@ -348,7 +348,7 @@ controller.getTours = catchAsync(async (req, res) => {
       ? Math.min(500, Math.max(take, parseInt(page) * take))
       : take;
 
-    let records = await prisma.expeditionTour.findMany({
+    let records = await prisma[BRAND.listingModel].findMany({
       where: { isActive: true, tour: tourWhere },
       orderBy,
       skip: sortBy === 'price_asc' || sortBy === 'price_desc' ? 0 : skip,
@@ -398,7 +398,7 @@ controller.getTours = catchAsync(async (req, res) => {
       });
     }
 
-    const totalCount = await prisma.expeditionTour.count({ where: { isActive: true, tour: tourWhere } });
+    const totalCount = await prisma[BRAND.listingModel].count({ where: { isActive: true, tour: tourWhere } });
     const totalPages = Math.ceil(totalCount / take);
 
     return {
@@ -434,7 +434,7 @@ controller.getTours = catchAsync(async (req, res) => {
 
 controller.getFeaturedTours = catchAsync(async (req, res) => {
   const result = await cache.getOrSet(FEATURED_CACHE_KEY, async () => {
-    const records = await prisma.expeditionTour.findMany({
+    const records = await prisma[BRAND.listingModel].findMany({
       where: { isActive: true, isFeatured: true, tour: { status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } } },
       orderBy: { displayOrder: 'asc' },
       take: 8,
@@ -525,7 +525,7 @@ controller.getTourReviews = catchAsync(async (req, res, next) => {
   const cacheKey = `${CACHE_PREFIX}reviews:${slug}:${page}:${limit}:${sortBy}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
-    const expeditionTour = await prisma.expeditionTour.findFirst({
+    const expeditionTour = await prisma[BRAND.listingModel].findFirst({
       where: { tour: { slug }, isActive: true },
       select: { tourId: true },
     });
@@ -575,7 +575,7 @@ controller.getSimilarTours = catchAsync(async (req, res, next) => {
   const cacheKey = `${CACHE_PREFIX}similar:${slug}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
-    const expeditionTour = await prisma.expeditionTour.findFirst({
+    const expeditionTour = await prisma[BRAND.listingModel].findFirst({
       where: { tour: { slug }, isActive: true },
       include: {
         tour: {
@@ -594,7 +594,7 @@ controller.getSimilarTours = catchAsync(async (req, res, next) => {
     const currentTour = expeditionTour.tour;
 
     // Fetch candidates: same category OR same city OR same AI category
-    const candidates = await prisma.expeditionTour.findMany({
+    const candidates = await prisma[BRAND.listingModel].findMany({
       where: {
         isActive: true,
         tour: {
@@ -733,7 +733,7 @@ controller.getRecommendedTours = catchAsync(async (req, res, next) => {
     const sourceCountry = source.country || pc.location?.country || null;
 
     // 2. Same-city tours first (highest relevance)
-    let tours = await prisma.expeditionTour.findMany({
+    let tours = await prisma[BRAND.listingModel].findMany({
       where: {
         isActive: true,
         tour: {
@@ -765,7 +765,7 @@ controller.getRecommendedTours = catchAsync(async (req, res, next) => {
     // 3. If fewer than 3 city matches, backfill with same-country tours
     if (sourceCountry && tours.length < 3) {
       const existingIds = new Set([source.id, ...tours.map((r) => r.tour.id)]);
-      const countryTours = await prisma.expeditionTour.findMany({
+      const countryTours = await prisma[BRAND.listingModel].findMany({
         where: {
           isActive: true,
           tour: {
@@ -798,7 +798,7 @@ controller.getRecommendedTours = catchAsync(async (req, res, next) => {
 
     // 4. 404 fallback: if still no tours, try broad fetch
     if (tours.length === 0) {
-      tours = await prisma.expeditionTour.findMany({
+      tours = await prisma[BRAND.listingModel].findMany({
         where: {
           isActive: true,
           tour: {
@@ -870,7 +870,7 @@ controller.getSupplierTours = catchAsync(async (req, res, next) => {
   const cacheKey = `${CACHE_PREFIX}supplier-tours:${supplierId}:${excludeTourId || 'none'}:${limit}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
-    const tours = await prisma.expeditionTour.findMany({
+    const tours = await prisma[BRAND.listingModel].findMany({
       where: {
         isActive: true,
         tour: {
@@ -910,7 +910,7 @@ controller.getTourBySlug = catchAsync(async (req, res, next) => {
   const { slug } = req.params;
 
   const result = await cache.getOrSet(DETAIL_CACHE_KEY(slug), async () => {
-    const record = await prisma.expeditionTour.findFirst({
+    const record = await prisma[BRAND.listingModel].findFirst({
       where: { isActive: true, tour: { slug, status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } } },
       include: {
         tour: {
@@ -1066,7 +1066,7 @@ controller.getTourBySlug = catchAsync(async (req, res, next) => {
 
 controller.getSitemap = catchAsync(async (req, res) => {
   const result = await cache.getOrSet(SITEMAP_CACHE_KEY, async () => {
-    const records = await prisma.expeditionTour.findMany({
+    const records = await prisma[BRAND.listingModel].findMany({
       where: { isActive: true, tour: { status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } } },
       orderBy: { displayOrder: 'asc' },
       select: {
@@ -1187,7 +1187,7 @@ controller.searchTours = catchAsync(async (req, res) => {
   const where = { status: 'ACTIVE' };
 
   // Exclude tours already curated
-  const curatedIds = await prisma.expeditionTour.findMany({
+  const curatedIds = await prisma[BRAND.listingModel].findMany({
     select: { tourId: true },
   });
   const excludedIds = curatedIds.map((c) => c.tourId);
@@ -1270,7 +1270,7 @@ controller.searchTours = catchAsync(async (req, res) => {
 });
 
 controller.getAdminTours = catchAsync(async (req, res) => {
-  const records = await prisma.expeditionTour.findMany({
+  const records = await prisma[BRAND.listingModel].findMany({
     orderBy: { displayOrder: 'asc' },
     include: {
       addedBy: { select: { id: true, name: true, email: true } },
@@ -1334,7 +1334,7 @@ controller.addTour = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found', 404));
   }
 
-  const existing = await prisma.expeditionTour.findUnique({
+  const existing = await prisma[BRAND.listingModel].findUnique({
     where: { tourId },
   });
 
@@ -1342,11 +1342,11 @@ controller.addTour = catchAsync(async (req, res, next) => {
     return next(new AppError(`Tour is already in the ${BRAND.brandName.toLowerCase()} list`, 409));
   }
 
-  const maxOrder = await prisma.expeditionTour.aggregate({
+  const maxOrder = await prisma[BRAND.listingModel].aggregate({
     _max: { displayOrder: true },
   });
 
-  const record = await prisma.expeditionTour.create({
+  const record = await prisma[BRAND.listingModel].create({
     data: {
       tourId,
       displayOrder: displayOrder ?? (maxOrder._max.displayOrder ?? 0) + 1,
@@ -1365,12 +1365,12 @@ controller.updateTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { displayOrder, isFeatured, isActive } = req.body;
 
-  const existing = await prisma.expeditionTour.findUnique({ where: { id } });
+  const existing = await prisma[BRAND.listingModel].findUnique({ where: { id } });
   if (!existing) {
     return next(new AppError(`${BRAND.brandName} tour not found`, 404));
   }
 
-  const record = await prisma.expeditionTour.update({
+  const record = await prisma[BRAND.listingModel].update({
     where: { id },
     data: {
       ...(displayOrder !== undefined && { displayOrder }),
@@ -1387,12 +1387,12 @@ controller.updateTour = catchAsync(async (req, res, next) => {
 controller.removeTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
-  const existing = await prisma.expeditionTour.findUnique({ where: { id } });
+  const existing = await prisma[BRAND.listingModel].findUnique({ where: { id } });
   if (!existing) {
     return next(new AppError(`${BRAND.brandName} tour not found`, 404));
   }
 
-  await prisma.expeditionTour.delete({ where: { id } });
+  await prisma[BRAND.listingModel].delete({ where: { id } });
 
   await invalidateCaches();
 
@@ -1403,7 +1403,7 @@ controller.refreshCache = catchAsync(async (req, res, next) => {
   const { tourId } = req.params;
 
   if (tourId && tourId !== 'all') {
-    const record = await prisma.expeditionTour.findUnique({
+    const record = await prisma[BRAND.listingModel].findUnique({
       where: { id: tourId },
       select: { id: true },
     });
@@ -1464,7 +1464,7 @@ controller.getTourAvailability = catchAsync(async (req, res, next) => {
   const { slug } = req.params;
   const { startDate, endDate, option } = req.query;
 
-  const expeditionTour = await prisma.expeditionTour.findFirst({
+  const expeditionTour = await prisma[BRAND.listingModel].findFirst({
     where: { tour: { slug }, isActive: true },
     select: { tourId: true },
   });
@@ -1552,7 +1552,7 @@ controller.calculateCheckout = catchAsync(async (req, res, next) => {
       throw new AppError('Tour not found or not available for booking', 404);
     }
 
-    const expTourCalc = await prisma.expeditionTour.findUnique({
+    const expTourCalc = await prisma[BRAND.listingModel].findUnique({
       where: { tourId },
       select: { isActive: true },
     });
@@ -1669,7 +1669,7 @@ controller.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError('Tour not found or not available', 404));
   }
 
-  const expTour = await prisma.expeditionTour.findUnique({
+  const expTour = await prisma[BRAND.listingModel].findUnique({
     where: { tourId },
     select: { isActive: true },
   });
@@ -2315,7 +2315,7 @@ controller.releaseCheckoutDraft = catchAsync(async (req, res, next) => {
 // ================================
 
 // Fields transformForListing() reads when shaping a wishlist tour.
-const EXPEDITION_WISHLIST_TOUR_SELECT = {
+const WISHLIST_TOUR_SELECT = {
   id: true,
   title: true,
   slug: true,
@@ -2334,17 +2334,17 @@ const EXPEDITION_WISHLIST_TOUR_SELECT = {
   supplier: { select: { name: true, photoURL: true } },
 };
 
-controller.getExpeditionWishlist = catchAsync(async (req, res, next) => {
+controller.getWishlist = catchAsync(async (req, res, next) => {
   const items = await prisma.wishlistItem.findMany({
     where: {
       userId: req.user.id,
       tour: {
         status: { not: 'DRAFT' },
-        expeditionTour: { isActive: true },
+        [BRAND.listingModel]: { isActive: true },
       },
     },
     orderBy: { addedAt: 'desc' },
-    include: { tour: { select: EXPEDITION_WISHLIST_TOUR_SELECT } },
+    include: { tour: { select: WISHLIST_TOUR_SELECT } },
   });
 
   const tours = items
@@ -2358,10 +2358,10 @@ controller.getExpeditionWishlist = catchAsync(async (req, res, next) => {
   });
 });
 
-controller.toggleExpeditionWishlist = catchAsync(async (req, res, next) => {
+controller.toggleWishlist = catchAsync(async (req, res, next) => {
   const { tourId } = req.params;
 
-  const expeditionTour = await prisma.expeditionTour.findFirst({
+  const expeditionTour = await prisma[BRAND.listingModel].findFirst({
     where: { tourId, isActive: true },
     select: { id: true },
   });
@@ -3039,3 +3039,4 @@ controller.updateMyPickup = catchAsync(async (req, res, next) => {
 }
 
 module.exports = makeStorefrontController('expedition');
+module.exports.makeStorefrontController = makeStorefrontController;
