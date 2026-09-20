@@ -1,30 +1,30 @@
 const crypto = require('crypto');
-const prisma = require('../utils/prismaClient');
-const catchAsync = require('../utils/catchAsync');
-const AppError = require('../utils/appError');
-const cache = require('../utils/cacheHelper');
-const { haversineKm, resolveCityCentroid } = require('../utils/locationGeo');
-const { placeTourIds } = require('../utils/placeListing');
-const { placeRankFor, normalizeRegion } = require('../utils/placeResolver');
-const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/queue');
-const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, isValidEmail } = require('../utils/bookingHelpers');
-const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../utils/tourHelpers');
-const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../utils/availabilityCore');
-const { resolvePickupSelection } = require('../utils/geoUtils');
-const { validatePassengerMix } = require('../utils/passengerMix');
-const { createPaymentIntent, createCheckoutSession, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
-const { resolveAllowedClientUrl } = require('../utils/clientOrigin');
-const { acquireHold, releaseHold } = require('../utils/checkoutHold');
-const { notifyAdmin } = require('../utils/adminNotificationService');
-const getConfig = require('../utils/getConfig');
-const { detachBookingFromActiveRequests } = require('../utils/financeHelpers');
-const { logActivity } = require('../utils/auditLogger');
-const { shouldCountTourView } = require('../utils/viewTracking');
-const eventEmitter = require('../utils/eventEmitter');
-const { sanitizeBookingPaymentInternals } = require('../utils/sanitizeBookings');
-const { bookingRefundState } = require('../utils/bookingRefundState');
+const prisma = require('../../../utils/prismaClient');
+const catchAsync = require('../../../utils/catchAsync');
+const AppError = require('../../../utils/appError');
+const cache = require('../../../utils/cacheHelper');
+const { haversineKm, resolveCityCentroid } = require('../../../utils/locationGeo');
+const { placeTourIds } = require('../../../utils/placeListing');
+const { placeRankFor, normalizeRegion } = require('../../../utils/placeResolver');
+const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../../../utils/queue');
+const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, isValidEmail } = require('../../../utils/bookingHelpers');
+const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../../../utils/tourHelpers');
+const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../../../utils/availabilityCore');
+const { resolvePickupSelection } = require('../../../utils/geoUtils');
+const { validatePassengerMix } = require('../../../utils/passengerMix');
+const { createPaymentIntent, createCheckoutSession, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../../../utils/stripeHelpers');
+const { resolveAllowedClientUrl } = require('../../../utils/clientOrigin');
+const { acquireHold, releaseHold } = require('../../../utils/checkoutHold');
+const { notifyAdmin } = require('../../../utils/adminNotificationService');
+const getConfig = require('../../../utils/getConfig');
+const { detachBookingFromActiveRequests } = require('../../../utils/financeHelpers');
+const { logActivity } = require('../../../utils/auditLogger');
+const { shouldCountTourView } = require('../../../utils/viewTracking');
+const eventEmitter = require('../../../utils/eventEmitter');
+const { sanitizeBookingPaymentInternals } = require('../../../utils/sanitizeBookings');
+const { bookingRefundState } = require('../../../utils/bookingRefundState');
 
-const { getBrand } = require('../config/brands');
+const { getBrand } = require('../../../config/brands');
 const BRAND = getBrand('ghana');
 
 const CACHE_PREFIX = BRAND.cachePrefix;
@@ -213,7 +213,7 @@ const getTours = catchAsync(async (req, res) => {
     // Mood keyword filtering: case-insensitive tag matching
     let moodTourIds = null;
     if (mood) {
-      const KEYWORD_CATEGORIES = require('../utils/keywordCategories');
+      const KEYWORD_CATEGORIES = require('../../../utils/keywordCategories');
       if (KEYWORD_CATEGORIES && KEYWORD_CATEGORIES[mood]) {
         const keywords = KEYWORD_CATEGORIES[mood].map(k => k.toLowerCase());
         if (keywords.length > 0) {
@@ -242,7 +242,7 @@ const getTours = catchAsync(async (req, res) => {
     }
     if (effectiveSearch) {
       // Use BM25 for relevance-ranked search when available
-      const bm25 = require('../utils/bm25Index');
+      const bm25 = require('../../../utils/bm25Index');
       if (bm25.isReady()) {
         const results = bm25.search(effectiveSearch, 100);
         if (results.length > 0) {
@@ -485,7 +485,7 @@ const getTourBySlug = catchAsync(async (req, res, next) => {
       instantConfirmation: bookingAndTickets.instantConfirmation !== false,
       // Sellable options (multi-option tours). >1 ⇒ the storefront shows an
       // option picker; defaultOptionId is what option-agnostic requests use.
-      options: require('../utils/tourOptions').optionSummaries(t),
+      options: require('../../../utils/tourOptions').optionSummaries(t),
       defaultOptionId: (Array.isArray(productContent.options) && productContent.options.length > 0
         ? (productContent.options[0] && productContent.options[0].id) || null
         : null) || null,
@@ -626,7 +626,7 @@ const confirmBooking = catchAsync(async (req, res, next) => {
   // pricing/availability/capacity/cut-off all run against the selected option.
   let optionRef = null;
   if (req.body.optionId) {
-    const appliedG = require('../utils/tourOptions').applyOption(tour, String(req.body.optionId));
+    const appliedG = require('../../../utils/tourOptions').applyOption(tour, String(req.body.optionId));
     if (appliedG.optionScope) {
       optionRef = {
         optionId: appliedG.optionId,
@@ -710,7 +710,7 @@ const confirmBooking = catchAsync(async (req, res, next) => {
   // the activity (default 24h) — a reservation closer than the pay-later minimum
   // lead time could never be auto-charged in time, so it is refused up front.
   // Pay-now bookings are unaffected.
-  require('../utils/payLaterLeadTime').assertPayLaterLeadTime({ paymentTiming, startAt });
+  require('../../../utils/payLaterLeadTime').assertPayLaterLeadTime({ paymentTiming, startAt });
 
   const appliedOffer = pricing.appliedOffer || null;
   const totalTravelers = travelerCount(travelers);
@@ -1406,7 +1406,7 @@ const updateBookingStatus = catchAsync(async (req, res, next) => {
 
   // Completed + paid → nudge the customer to write a review.
   if (status === 'COMPLETED') {
-    const { enqueueReviewRequest } = require('../utils/reviewRequestNotify');
+    const { enqueueReviewRequest } = require('../../../utils/reviewRequestNotify');
     enqueueReviewRequest(updated, updated.tour);
   }
 
@@ -1426,7 +1426,7 @@ const updateBookingStatus = catchAsync(async (req, res, next) => {
 });
 
 
-const makeStorefrontController = require('../src/core/storefront');
+const makeStorefrontController = require('../../core/storefront');
 
 module.exports = {
   ...makeStorefrontController('ghana'),

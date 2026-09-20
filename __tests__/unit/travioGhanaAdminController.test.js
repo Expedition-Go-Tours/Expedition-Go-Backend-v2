@@ -24,8 +24,8 @@ jest.mock('../../utils/queue', () => ({
   enqueueEmail: jest.fn(() => Promise.resolve()),
 }));
 
-const ghanaAdmin = require('../../controllers/travioGhanaAdminController');
-const africaAdmin = require('../../controllers/travioAfricaAdminController');
+const ghanaAdmin = require('../../src/brands/ghana/adminController');
+const africaAdmin = require('../../src/brands/africa/adminController');
 
 const EXPECTED_FUNCTIONS = [
   'getOverview', 'getRevenueTrend', 'getTourPerformance', 'getUserGrowth', 'getFunnel', 'getCLV',

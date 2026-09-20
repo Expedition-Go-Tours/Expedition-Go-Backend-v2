@@ -12,7 +12,7 @@
 const express = require('express');
 const { protect, restrictTo } = require('../../../middleware/authMiddleware');
 const { resolveSupplier, requireTeamRole, requireTeamPermission } = require('../../../middleware/teamRoleMiddleware');
-const africaSupplier = require('../../../controllers/travioAfricaSupplierController');
+const africaSupplier = require('./supplierController');
 
 // Shared controllers for proxied endpoints
 const supplierSettingsController = require('../../../controllers/supplierSettingsController');

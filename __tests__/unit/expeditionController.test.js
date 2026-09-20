@@ -100,7 +100,7 @@ const { createPaymentIntent, createCheckoutSession, calculateCommission, createR
 const { acquireHold, releaseHold } = require('../../utils/checkoutHold');
 const { logActivity } = require('../../utils/auditLogger');
 
-const controller = require('../../controllers/expeditionController');
+const controller = require('../../src/brands/expedition/controller');
 
 const mockTour = {
   id: 'tour-1',

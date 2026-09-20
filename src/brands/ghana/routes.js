@@ -2,11 +2,11 @@ const express = require('express');
 const { createLimiter } = require('../../../middleware/dynamicRateLimiter');
 const { protect } = require('../../../middleware/authMiddleware');
 const { restrictTo } = require('../../../middleware/authMiddleware');
-const travioGhanaController = require('../../../controllers/travioGhanaController');
+const travioGhanaController = require('./controller');
 const payLaterPaymentController = require('../../../controllers/payLaterPaymentController');
 const reviewController = require('../../../controllers/reviewController');
 const { uploadReviewPhotos } = require('../../../middleware/uploadMiddleware');
-const travioGhanaHomepageController = require('../../../controllers/travioGhanaHomepageController');
+const travioGhanaHomepageController = require('./homepageController');
 const validate = require('../../../middleware/validate');
 const {
   getToursSchema,

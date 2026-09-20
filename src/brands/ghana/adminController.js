@@ -1,4 +1,4 @@
-const makeAdminController = require('../src/core/admin');
+const makeAdminController = require('../../core/admin');
 
 const controller = makeAdminController('ghana');
 module.exports = controller;

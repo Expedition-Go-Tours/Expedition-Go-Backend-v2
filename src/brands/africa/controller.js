@@ -10,10 +10,10 @@
  * Africa currently inherits the factory's default storefront behaviours.
  * When Africa's storefront diverges (same pattern Ghana used), add
  * Africa-specific overrides here:
- *   const makeStorefrontController = require('../src/core/storefront');
+ *   const makeStorefrontController = require('../../core/storefront');
  *   module.exports = { ...makeStorefrontController('africa'), <overrides> };
  */
 
-const { makeStorefrontController } = require('./expeditionController');
+const { makeStorefrontController } = require('../expedition/controller');
 
 module.exports = makeStorefrontController('africa');

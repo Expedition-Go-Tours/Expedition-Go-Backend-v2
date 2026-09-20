@@ -8,6 +8,6 @@
  * domains/URLs.
  */
 
-const makeAdminController = require('../src/core/admin');
+const makeAdminController = require('../../core/admin');
 
 module.exports = makeAdminController('africa');

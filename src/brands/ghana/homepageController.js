@@ -18,10 +18,10 @@
  * section is never empty.
  */
 
-const catchAsync = require('../utils/catchAsync');
-const prisma = require('../utils/prismaClient');
-const cache = require('../utils/cacheHelper');
-const ranking = require('../utils/homepageRanking');
+const catchAsync = require('../../../utils/catchAsync');
+const prisma = require('../../../utils/prismaClient');
+const cache = require('../../../utils/cacheHelper');
+const ranking = require('../../../utils/homepageRanking');
 
 const GHANA = true; // every ranking call in this controller is Ghana-scoped
 

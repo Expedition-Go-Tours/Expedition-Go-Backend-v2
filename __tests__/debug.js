@@ -15,7 +15,7 @@ jest.mock('../../utils/cacheHelper', () => ({
   invalidateKeys: jest.fn(),
 }));
 
-const controller = require('../../controllers/expeditionController');
+const controller = require('../../src/brands/expedition/controller');
 const prisma = require('../../utils/prismaClient');
 const cache = require('../../utils/cacheHelper');
 

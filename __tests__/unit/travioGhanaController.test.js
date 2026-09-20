@@ -57,7 +57,7 @@ jest.mock('../../utils/checkoutHold', () => ({ acquireHold: jest.fn(), releaseHo
 jest.mock('../../utils/availabilityCalendar', () => ({ buildAvailabilityCalendar: jest.fn(() => Promise.resolve([])) }));
 
 const prisma = require('../../utils/prismaClient');
-const controller = require('../../controllers/travioGhanaController');
+const controller = require('../../src/brands/ghana/controller');
 
 const mockTour = {
   id: 'tour-1',

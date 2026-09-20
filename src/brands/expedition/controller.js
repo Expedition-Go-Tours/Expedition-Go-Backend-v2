@@ -1,4 +1,4 @@
-const makeStorefrontController = require('../src/core/storefront');
+const makeStorefrontController = require('../../core/storefront');
 
 const controller = makeStorefrontController('expedition');
 module.exports = controller;

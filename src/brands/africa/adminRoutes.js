@@ -16,7 +16,7 @@ const { protect, restrictTo } = require('../../../middleware/authMiddleware');
 const { requirePermission } = require('../../../middleware/permissionMiddleware');
 const { createLimiter } = require('../../../middleware/dynamicRateLimiter');
 
-const africa = require('../../../controllers/travioAfricaAdminController');
+const africa = require('./adminController');
 const adminController = require('../../../controllers/adminController');
 const adminAiController = require('../../../controllers/adminAiController');
 const verificationController = require('../../../controllers/supplierVerificationController');

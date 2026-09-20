@@ -11,9 +11,9 @@
  * simplified here to query only the Africa listing model.
  */
 
-const prisma = require('../utils/prismaClient');
-const catchAsync = require('../utils/catchAsync');
-const makeSupplierController = require('../src/core/supplier');
+const prisma = require('../../../utils/prismaClient');
+const catchAsync = require('../../../utils/catchAsync');
+const makeSupplierController = require('../../core/supplier');
 
 const base = makeSupplierController('africa');
 
