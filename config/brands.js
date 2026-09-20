@@ -27,6 +27,17 @@ const BRANDS = {
     storefrontDomain: 'expeditiongotours.com',
     storefrontUrl: 'https://expeditiongotours.com',
     supportEmail: 'support@expeditiongo.com',
+    // Email identity. Expedition is Ghana's sub-store: it deliberately shares
+    // Ghana's template, logo and support inbox, distinguished only by the
+    // `poweredByLabel` badge in the header.
+    email: {
+      logoUrl: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1789926536/TravioG_csfsyl.png',
+      brandName: 'Travio Ghana',
+      supportEmail: 'support@travioghana.com',
+      from: 'Travio Ghana <notifications@travioghana.com>',
+      poweredByLabel: 'by Expedition Go',
+      receivingDomain: 'travioghana.com',
+    },
     cachePrefix: 'expedition:',
     eventNamespace: 'expedition',
     listingModel: 'expeditionTour', // Prisma model (camelCase)
@@ -56,6 +67,14 @@ const BRANDS = {
     storefrontUrl: 'https://travioghana.com',
     supplierDashboardUrl: 'https://supplier.travioghana.com',
     supportEmail: 'support@travioghana.com',
+    email: {
+      logoUrl: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1789926536/TravioG_csfsyl.png',
+      brandName: 'Travio Ghana',
+      supportEmail: 'support@travioghana.com',
+      from: 'Travio Ghana <notifications@travioghana.com>',
+      poweredByLabel: null,
+      receivingDomain: 'travioghana.com',
+    },
     cachePrefix: 'ghana:',
     eventNamespace: 'ghana',
     listingModel: 'travioGhanaTour', // Prisma model (camelCase)
@@ -89,6 +108,16 @@ const BRANDS = {
     supplierDashboardUrl: 'https://supplier.travioafrica.com',
     adminDashboardUrl: 'https://admin.travioafrica.com',
     supportEmail: 'support@travioafrica.com',
+    email: {
+      logoUrl: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1778862668/TRAVOI_AFRICA_NEW_kd1tnr.png',
+      brandName: 'Travio Africa',
+      supportEmail: 'support@travioafrica.com',
+      from: 'Travio Africa <notifications@travioafrica.com>',
+      poweredByLabel: null,
+      // Africa keeps its dedicated receiving subdomain: existing in-flight
+      // reply addresses were minted against it and must keep resolving.
+      receivingDomain: 'messages.travioafrica.com',
+    },
     cachePrefix: 'travioafrica:',
     eventNamespace: 'travioafrica',
     listingModel: 'travioAfricaTour', // Prisma model (camelCase)
@@ -129,6 +158,36 @@ function getDefaultBrand() {
   return BRANDS[DEFAULT_BRAND];
 }
 
+/**
+ * Email identity for a brand (logo, display name, support inbox, From: header,
+ * "powered by" badge, receiving domain) with safe fallbacks, so a brand that
+ * has no `email` block still renders something sensible.
+ */
+function getBrandEmail(key) {
+  const brand = getBrand(key);
+  const e = brand.email || {};
+  const brandName = e.brandName || brand.brandName;
+  return {
+    key: brand.key,
+    logoUrl: e.logoUrl || '',
+    brandName,
+    supportEmail: e.supportEmail || brand.supportEmail,
+    from: e.from || `${brandName} <notifications@travioafrica.com>`,
+    poweredByLabel: e.poweredByLabel || null,
+    receivingDomain: e.receivingDomain || 'messages.travioafrica.com',
+  };
+}
+
+/** Every configured inbound/reply domain (for the inbound parser allow-list). */
+function getReceivingDomains() {
+  const set = new Set();
+  for (const b of Object.values(BRANDS)) {
+    const d = b.email && b.email.receivingDomain;
+    if (d) set.add(String(d).toLowerCase());
+  }
+  return [...set];
+}
+
 module.exports = {
   BRANDS,
   DEFAULT_BRAND,
@@ -136,4 +195,6 @@ module.exports = {
   resolveBrandKey,
   getBrand,
   getDefaultBrand,
+  getBrandEmail,
+  getReceivingDomains,
 };

@@ -9,9 +9,29 @@
  */
 
 const crypto = require('crypto');
+const { getBrandEmail, getReceivingDomains } = require('../../../config/brands');
 
 const RECEIVING_DOMAIN = (process.env.RESEND_RECEIVING_DOMAIN || 'messages.travioafrica.com').replace(/^@/, '');
 const SECRET = process.env.RESEND_INBOUND_WEBHOOK_SECRET || '';
+
+/** Every domain an inbound reply may arrive on (all brands), lower-cased. */
+function receivingDomains() {
+  const set = new Set(getReceivingDomains());
+  // Always include the legacy env domain so existing in-flight replies resolve.
+  set.add(String(RECEIVING_DOMAIN).toLowerCase());
+  return [...set];
+}
+
+/**
+ * The reply domain for a conversation's brand. With no brand we honour the
+ * legacy RESEND_RECEIVING_DOMAIN override (back-compat); with a brand we use
+ * the registry's domain, falling back to that override.
+ */
+function receivingDomainFor(brandKey) {
+  if (!brandKey) return RECEIVING_DOMAIN.toLowerCase();
+  const brand = getBrandEmail(brandKey);
+  return (brand.receivingDomain || RECEIVING_DOMAIN).replace(/^@/, '').toLowerCase();
+}
 
 function tokenFor(conversationId) {
   return `c${crypto
@@ -36,8 +56,8 @@ async function ensureConversationToken(prisma, conversationId) {
   return token;
 }
 
-function replyAddressFor(conversationId) {
-  return `c-${tokenFor(conversationId).slice(1)}@${RECEIVING_DOMAIN}`;
+function replyAddressFor(conversationId, brandKey = null) {
+  return `c-${tokenFor(conversationId).slice(1)}@${receivingDomainFor(brandKey)}`;
 }
 
 /** Canonical stored/local token (matches inbound `c-<hex>` addresses). */
@@ -56,7 +76,10 @@ function parseEmail(value) {
  * Extract inbound tokens from a list of `to` addresses.
  * Returns [{ token, local, domain }] for addresses matching c-<hex>@domain.
  */
-function tokensFromRecipients(toList, domain = RECEIVING_DOMAIN) {
+function tokensFromRecipients(toList, domains = receivingDomains()) {
+  const allowed = new Set(
+    (Array.isArray(domains) ? domains : [domains]).map((d) => String(d).replace(/^@/, '').toLowerCase()),
+  );
   const list = Array.isArray(toList) ? toList : [];
   const out = [];
   for (const value of list) {
@@ -65,9 +88,9 @@ function tokensFromRecipients(toList, domain = RECEIVING_DOMAIN) {
     if (at < 0) continue;
     const local = email.slice(0, at);
     const host = email.slice(at + 1);
-    if (host !== domain.toLowerCase()) continue;
+    if (!allowed.has(host)) continue;
     const m = local.match(/^c-([0-9a-f]{16})$/i);
-    if (m) out.push({ token: local, hex: m[1].toLowerCase() });
+    if (m) out.push({ token: local, hex: m[1].toLowerCase(), domain: host });
   }
   return out;
 }
@@ -172,6 +195,8 @@ function htmlToText(html) {
 
 module.exports = {
   RECEIVING_DOMAIN,
+  receivingDomains,
+  receivingDomainFor,
   tokenFor,
   canonicalToken,
   ensureConversationToken,

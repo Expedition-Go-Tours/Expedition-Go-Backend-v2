@@ -667,7 +667,7 @@ async function notifyConversationByEmail({ conversationId, type, senderId, sende
   const [conversation, sender] = await Promise.all([
     prisma.conversation.findUnique({
       where: { id: conversationId },
-      select: { id: true, type: true, bookingId: true, bookingNumber: true, tourTitle: true },
+      select: { id: true, type: true, brand: true, bookingId: true, bookingNumber: true, tourTitle: true },
     }),
     prisma.user.findUnique({
       where: { id: senderId },
@@ -690,7 +690,9 @@ async function notifyConversationByEmail({ conversationId, type, senderId, sende
   if (withEmail.length === 0) return;
 
   const token = await chatInbound.ensureConversationToken(prisma, conversationId).catch(() => null);
-  const replyTo = token ? chatInbound.replyAddressFor(conversationId) : null;
+  // Reply address is minted on the conversation's own brand domain so the reply
+  // lands back on the right inbound webhook.
+  const replyTo = token ? chatInbound.replyAddressFor(conversationId, conversation?.brand || null) : null;
 
   const displayName = sender?.name || senderName || 'Someone';
   for (const user of withEmail) {

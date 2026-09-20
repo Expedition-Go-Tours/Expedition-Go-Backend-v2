@@ -43,40 +43,55 @@ function getResend() {
 }
 
 // ---------------------------------------------------------------------------
-// Shared shell values (resolved once per process from config + env)
+// Brand-aware shell values (resolved once per brand per process)
+//
+// Every brand's email identity lives in config/brands.js (`email` block). The
+// DB/env config remains the fallback for the default brand so existing
+// deployments keep rendering exactly as before.
 // ---------------------------------------------------------------------------
-let shellCache = null;
-let shellPromise = null;
+const { getBrandEmail, BRANDS, DEFAULT_BRAND, resolveBrandKey } = require('../../../config/brands');
 
-async function getShellVars() {
-  if (shellCache) return shellCache;
-  if (shellPromise) return shellPromise;
+const shellCache = new Map();
+const shellPromises = new Map();
 
-  shellPromise = (async () => {
-    try {
-      const [brandName, supportEmail, logoUrl] = await Promise.all([
-        getConfig('platform.name'),
-        getConfig('email.support_email'),
-        getConfig('email.logo_url'),
-      ]);
-      shellCache = {
-        brandName: brandName || 'Travio Africa',
-        supportEmail: supportEmail || process.env.SUPPORT_EMAIL || 'support@travioafrica.com',
-        logoUrl: logoUrl || process.env.LOGO_URL || 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1778862668/TRAVOI_AFRICA_NEW_kd1tnr.png',
-        year: new Date().getFullYear(),
-      };
-    } catch {
-      shellCache = {
-        brandName: 'Travio Africa',
-        supportEmail: process.env.SUPPORT_EMAIL || 'support@travioafrica.com',
-        logoUrl: process.env.LOGO_URL || 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1778862668/TRAVOI_AFRICA_NEW_kd1tnr.png',
-        year: new Date().getFullYear(),
-      };
-    }
-    return shellCache;
-  })();
+async function resolveShellVars(brandKey) {
+  const brand = getBrandEmail(brandKey);
+  try {
+    const [cfgBrandName, cfgSupport, cfgLogo] = await Promise.all([
+      getConfig('platform.name'),
+      getConfig('email.support_email'),
+      getConfig('email.logo_url'),
+    ]);
+    return {
+      brandName: brand.brandName || cfgBrandName || 'Travio Africa',
+      supportEmail: brand.supportEmail || cfgSupport || process.env.SUPPORT_EMAIL || 'support@travioafrica.com',
+      logoUrl: brand.logoUrl || cfgLogo || process.env.LOGO_URL || '',
+      poweredByLabel: brand.poweredByLabel || '',
+      year: new Date().getFullYear(),
+    };
+  } catch {
+    return {
+      brandName: brand.brandName || 'Travio Africa',
+      supportEmail: brand.supportEmail || process.env.SUPPORT_EMAIL || 'support@travioafrica.com',
+      logoUrl: brand.logoUrl || process.env.LOGO_URL || '',
+      poweredByLabel: brand.poweredByLabel || '',
+      year: new Date().getFullYear(),
+    };
+  }
+}
 
-  return shellPromise;
+async function getShellVars(brandKey = null) {
+  const cacheKey = brandKey || '__default__';
+  if (shellCache.has(cacheKey)) return shellCache.get(cacheKey);
+  if (shellPromises.has(cacheKey)) return shellPromises.get(cacheKey);
+
+  const p = resolveShellVars(brandKey).then((vars) => {
+    shellCache.set(cacheKey, vars);
+    shellPromises.delete(cacheKey);
+    return vars;
+  });
+  shellPromises.set(cacheKey, p);
+  return p;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,7 +115,7 @@ function loadTemplate(key) {
 async function renderTemplate(key, data = {}, opts = {}) {
   const source = loadTemplate(key);
   if (source === null) throw new Error(`[Email] Template not found: ${key}`);
-  const shell = await getShellVars();
+  const shell = await getShellVars(opts.brandKey || data.brandKey || null);
   const merged = {
     ...shell,
     preheader: opts.preheader || data.preheader || '',
@@ -109,8 +124,18 @@ async function renderTemplate(key, data = {}, opts = {}) {
   return render(source, merged);
 }
 
-function parseFrom() {
-  const fromRaw = process.env.EMAIL_FROM || '';
+/**
+ * Resolve the From: header for a brand. `EMAIL_FROM` (env) still wins when set,
+ * so ops can override without a deploy; otherwise the brand registry's
+ * `email.from` is used (falling back to Travio Africa).
+ */
+function parseFrom(brandKey = null) {
+  const brand = getBrandEmail(brandKey);
+  // Per-brand env override (EMAIL_FROM_GHANA / _EXPEDITION). The legacy
+  // EMAIL_FROM stays the Africa/default override so existing config is honoured.
+  const suffix = brand.key && brand.key !== 'africa' ? `_${brand.key.toUpperCase()}` : '';
+  const envFrom = process.env[`EMAIL_FROM${suffix}`] || (suffix ? null : process.env.EMAIL_FROM);
+  const fromRaw = envFrom || brand.from || '';
   const match = fromRaw.match(/^(.*?)\s*<([^>]+)>$/);
   return {
     from: fromRaw || 'Travio Africa <notifications@travioafrica.com>',
@@ -131,7 +156,7 @@ function normalizeAttachments(attachments = []) {
 /**
  * Core delivery — render a compiled template and send via Resend.
  */
-async function sendHtml({ to, subject, html, text = '', attachments = [], replyTo, inReplyTo }) {
+async function sendHtml({ to, subject, html, text = '', attachments = [], replyTo, inReplyTo, brandKey = null }) {
   const client = getResend();
 
   if (!client) {
@@ -140,7 +165,7 @@ async function sendHtml({ to, subject, html, text = '', attachments = [], replyT
   }
 
   try {
-    const fromInfo = parseFrom();
+    const fromInfo = parseFrom(brandKey);
     const replyToValue = replyTo || process.env.EMAIL_REPLY_TO;
     const extraHeaders = {};
     if (replyToValue) extraHeaders['Reply-To'] = replyToValue;
@@ -197,8 +222,9 @@ async function sendHtml({ to, subject, html, text = '', attachments = [], replyT
 }
 
 async function sendRendered({ to, subject, key, data = {}, attachments = [], opts = {} }) {
-  const html = await renderTemplate(key, data, opts);
-    return sendHtml({ to, subject, html, text: opts.text || '', attachments, replyTo: opts.replyTo, inReplyTo: opts.inReplyTo });
+  const brandKey = opts.brandKey || data.brandKey || null;
+  const html = await renderTemplate(key, data, { ...opts, brandKey });
+    return sendHtml({ to, subject, html, text: opts.text || '', attachments, replyTo: opts.replyTo, inReplyTo: opts.inReplyTo, brandKey });
 }
 
 /**
@@ -214,13 +240,13 @@ async function sendEmail({ to, subject, template, data = {}, attachments = [], o
   // Legacy / inline path
   const content = generateEmailContent(template, data);
   if (content && content.html) {
-    const shell = await getShellVars();
+    const shell = await getShellVars(opts?.brandKey || null);
     const merged = { ...shell, year: shell.year, ...data };
     let html = content.html;
     for (const [k, v] of Object.entries(merged)) {
       html = html.split(`{{${k}}}`).join(v == null ? '' : String(v));
     }
-    return sendHtml({ to, subject, html, text: content.text || '', attachments, replyTo: opts?.replyTo, inReplyTo: opts?.inReplyTo });
+    return sendHtml({ to, subject, html, text: content.text || '', attachments, replyTo: opts?.replyTo, inReplyTo: opts?.inReplyTo, brandKey: opts?.brandKey || null });
   }
   throw new Error(`[Email] No template or inline generator for: ${template}`);
 }
@@ -275,11 +301,43 @@ function paymentStatusLabel(status) {
 }
 
 /**
+ * Resolve which brand's email identity an email should use.
+ *
+ * Priority (first signal that maps to a known brand wins):
+ *   - explicit brandKey
+ *   - booking.source        (GHANA / EXPEDITION / TRAVIO_AFRICA)
+ *   - supplier / user roles (ghana / travioafrica)
+ *   - conversation.brand    (chat)
+ * Falls back to the default brand (Africa) so nothing ever renders unbranded.
+ */
+function resolveEmailBrand({ brandKey, booking, supplier, user, conversation } = {}) {
+  if (brandKey) return resolveBrandKey(brandKey);
+
+  const fromSource = booking && booking.source;
+  if (fromSource) {
+    const hit = Object.values(BRANDS).find((b) => b.source === fromSource);
+    if (hit) return hit.key;
+  }
+
+  const rec = supplier && supplier.supplier ? supplier.supplier : supplier;
+  const roles = (user && user.roles) || (rec && rec.roles) || (conversation && conversation.brand ? [] : null);
+  if (Array.isArray(roles)) {
+    if (roles.includes('ghana')) return 'ghana';
+    if (roles.includes('travioafrica')) return 'africa';
+  }
+
+  if (conversation && conversation.brand) return resolveBrandKey(conversation.brand);
+
+  return DEFAULT_BRAND;
+}
+
+/**
  * Shared booking data used by every booking-scoped template.
  * Callers can override any field afterwards.
  */
-async function buildBookingBase(booking) {
-  const shell = await getShellVars();
+async function buildBookingBase(booking, opts = {}) {
+  const brandKey = resolveEmailBrand({ brandKey: opts.brandKey, booking, supplier: booking && booking.tour && booking.tour.supplier });
+  const shell = await getShellVars(brandKey);
   const customer = booking.customer || {};
   const tour = booking.tour || {};
   const supplier = tour.supplier || {};
@@ -306,6 +364,10 @@ async function buildBookingBase(booking) {
   const clientOrigin = emailUrls.bookingClientOrigin(booking);
 
   const base = {
+    // Which brand identity this email renders as. Read by renderTemplate /
+    // sendRendered (opts.brandKey wins) so callers don't have to thread it.
+    brandKey,
+    poweredByLabel: shell.poweredByLabel || '',
     // identity — account holder (the recipient / addressee of emails)
     customerName: customer.name || 'Guest',
     customerEmail: customer.email || '',
@@ -391,7 +453,6 @@ async function sendBookingConfirmedEmail(booking) {
       (typeof ticket.cancellationPolicy === 'object' && ticket.cancellationPolicy.text) ||
       (typeof ticket.cancellationPolicy === 'string' && ticket.cancellationPolicy) ||
       'Free cancellation up to 24 hours before your experience.',
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -407,7 +468,6 @@ async function sendReserveLaterConfirmedEmail(booking) {
   const data = {
     ...base,
     paymentDateLabel: fmt.formatLongDate(b.travelDate),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -424,7 +484,6 @@ async function sendPaymentReminderEmail(booking, { paymentDate, paymentAmount } 
     ...base,
     paymentAmountLabel: fmt.formatCurrency(paymentAmount ?? b.grossAmount, b.currency),
     paymentDateLabel: fmt.formatLongDate(paymentDate || b.travelDate),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -444,7 +503,6 @@ async function sendPaymentSuccessfulEmail(booking, { paymentReference, amount } 
     paymentReference: paymentReference || b.bookingNumber || '',
     paymentAmountLabel: fmt.formatCurrency(paid, b.currency),
     outstandingBalanceLabel: fmt.formatCurrency(outstanding, b.currency),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -463,7 +521,6 @@ async function sendPayLaterChargedEmail(booking, { paymentReference, chargedAt }
     paymentReference: paymentReference || b.bookingNumber || '',
     chargedAtLabel: fmt.formatLongDate(chargedAt || b.paidAt || new Date()),
     paymentStatusLabel: 'Paid',
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -485,7 +542,6 @@ async function sendAwaitingConfirmationEmail(booking, { paymentReference, paidAt
     paymentReference: paymentReference || b.bookingNumber || '',
     paidAtLabel: fmt.formatLongDate(paidAt || b.paidAt || new Date()),
     paymentStatusLabel: 'Paid',
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -502,7 +558,6 @@ async function sendPaymentUnsuccessfulEmail(booking, { deadline, amount } = {}) 
     ...base,
     paymentAmountLabel: fmt.formatCurrency(amount ?? b.grossAmount, b.currency),
     deadlineLabel: fmt.formatLongDate(deadline || b.travelDate),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -523,7 +578,6 @@ async function sendCustomerBookingChangedEmail(booking, { changes = [], previous
     adjustmentLabel: fmt.formatCurrency(adjustment ?? 0, currency),
     newTotalLabel: fmt.formatCurrency(newTotal ?? b.grossAmount, currency),
     paymentStatusLabel: paymentStatusLabel(b.paymentStatus),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -539,7 +593,6 @@ async function sendPickupDetailsUpdatedEmail(booking, { previousPickupLocation =
   const data = {
     ...base,
     previousPickupLocation,
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -555,7 +608,6 @@ async function sendPickupLocationRequiredEmail(booking, { deadline } = {}) {
   const data = {
     ...base,
     deadlineLabel: fmt.formatLongDate(deadline || b.travelDate),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -581,7 +633,6 @@ async function sendBookingReminderEmail(booking, { items = [] } = {}) {
     ...base,
     items: reminderItems,
     supplierContact: b.tour?.supplier?.phone || b.tour?.supplier?.email || '',
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -599,7 +650,6 @@ async function sendCustomerCancelledFullRefundEmail(booking, { cancelledAt, refu
     cancelledAtLabel: fmt.formatDateTime(cancelledAt || b.cancelledAt || new Date()),
     cancellationReason: b.cancellationReason || '',
     refundAmountLabel: fmt.formatCurrency(refundAmount ?? b.refundAmount ?? b.grossAmount, b.currency),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -619,7 +669,6 @@ async function sendCustomerCancelledNoRefundEmail(booking, { cancelledAt, cancel
     cancellationDeadlineLabel: fmt.formatDateTime(deadline),
     cancellationFeeLabel: fmt.formatCurrency(cancellationFee ?? b.grossAmount, b.currency),
     refundAmountLabel: fmt.formatCurrency(refundAmount ?? 0, b.currency),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -636,7 +685,6 @@ async function sendRefundProcessingEmail(booking, { refundReference } = {}) {
     ...base,
     refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.grossAmount, b.currency),
     refundReference: refundReference || '',
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -654,7 +702,6 @@ async function sendRefundCompletedEmail(booking, { refundReference, refundedAt }
     refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.grossAmount, b.currency),
     refundReference: refundReference || '',
     refundedAtLabel: fmt.formatDateTime(refundedAt || b.refundedAt || new Date()),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -676,7 +723,6 @@ async function sendSupplierChangedBookingEmail(booking, { changes = [], changeRe
     acceptUrl: emailUrls.manageBooking(b.id, origin),
     rescheduleUrl: emailUrls.manageBooking(b.id, origin),
     cancelUrl: emailUrls.viewCancellation(b.id, origin),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -693,7 +739,6 @@ async function sendSupplierCancelledBookingEmail(booking, { reason, refundAmount
     ...base,
     cancellationReason: reason || b.cancellationReason || '',
     refundAmountLabel: fmt.formatCurrency(refundAmount ?? b.refundAmount ?? b.grossAmount, b.currency),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -711,7 +756,6 @@ async function sendReviewRequestEmail(booking) {
     ...base,
     reviewUrl: emailUrls.writeReview(b.id, origin, b.tour?.slug, b.tour?.id),
     browseUrl: emailUrls.browseExperiences(origin),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: base.customerEmail,
@@ -767,7 +811,6 @@ async function sendSupplierNewBookingEmail(booking) {
     totalLabel: base.totalLabel,
     commissionLabel: base.commissionLabel,
     payoutAmountLabel: base.payoutAmountLabel,
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: supplier.email,
@@ -791,7 +834,6 @@ async function sendSupplierPayLaterChargedEmail(booking, { paymentReference, cha
     payoutAmountLabel: base.payoutAmountLabel,
     paymentReference: paymentReference || b.bookingNumber || '',
     chargedAtLabel: fmt.formatLongDate(chargedAt || b.paidAt || new Date()),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: supplier.email,
@@ -812,7 +854,6 @@ async function sendSupplierBookingChangedEmail(booking, { changes = [], previous
     previousPayoutLabel: fmt.formatCurrency(previousPayout ?? b.supplierPayout, currency),
     newPayoutLabel: fmt.formatCurrency(newPayout ?? b.supplierPayout, currency),
     payoutAdjustmentLabel: fmt.formatCurrency(payoutAdjustment ?? 0, currency),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: supplier.email,
@@ -831,7 +872,6 @@ async function sendSupplierContactUpdatedEmail(booking, { customerPhone, custome
     customerPhone: customerPhone || base.customerPhone,
     customerEmail: customerEmail || base.customerEmail,
     emergencyContact: emergencyContact || '',
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: supplier.email,
@@ -848,7 +888,6 @@ async function sendSupplierPickupUpdatedEmail(booking, { previousPickupLocation 
   const data = {
     ...base,
     previousPickupLocation,
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: supplier.email,
@@ -867,7 +906,6 @@ async function sendSupplierPickupRequiredEmail(booking, { deadline } = {}) {
     ...base,
     deadlineLabel: fmt.formatLongDate(deadline || b.travelDate),
     pickupUrl: emailUrls.addPickupLocation(b.id, origin),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: supplier.email,
@@ -883,7 +921,6 @@ async function sendSupplierBookingReminderEmail(booking) {
   const supplier = b.tour?.supplier || {};
   const data = {
     ...base,
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: supplier.email,
@@ -900,7 +937,6 @@ async function sendSupplierCustomerCancelledFreeEmail(booking, { cancelledAt } =
   const data = {
     ...base,
     cancelledAtLabel: fmt.formatDateTime(cancelledAt || b.cancelledAt || new Date()),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: supplier.email,
@@ -919,7 +955,6 @@ async function sendSupplierCustomerCancelledLateEmail(booking, { cancelledAt } =
     ...base,
     cancelledAtLabel: fmt.formatDateTime(cancelledAt || b.cancelledAt || new Date()),
     cancellationDeadlineLabel: fmt.formatDateTime(deadline),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: supplier.email,
@@ -937,7 +972,6 @@ async function sendSupplierPlatformCancelledEmail(booking, { reason, compensatio
     ...base,
     cancellationReason: reason || b.cancellationReason || '',
     compensationLabel: fmt.formatCurrency(compensation ?? 0, b.currency),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: supplier.email,
@@ -955,7 +989,6 @@ async function sendSupplierCancellationRecordedEmail(booking, { reason } = {}) {
     ...base,
     cancellationReason: reason || b.cancellationReason || '',
     refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.grossAmount, b.currency),
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: supplier.email,
@@ -977,7 +1010,6 @@ async function sendSupplierPayoutScheduledEmail({ booking, payout, payoutDate } 
     payoutDateLabel: fmt.formatLongDate(payoutDate || payout?.date),
     paymentDestination: payout?.methodLabel || payout?.destination || '',
     statusLabel: 'Scheduled',
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: supplier.email,
@@ -999,7 +1031,6 @@ async function sendSupplierPayoutCompletedEmail({ booking, payout, payoutDate } 
     payoutDateLabel: fmt.formatLongDate(payoutDate || payout?.date),
     paymentDestination: payout?.methodLabel || payout?.destination || '',
     statusLabel: 'Completed',
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: supplier.email,
@@ -1018,7 +1049,6 @@ async function sendSupplierPayoutFailedEmail({ booking, payout, reason } = {}) {
     ...base,
     payoutAmountLabel: fmt.formatCurrency(payout?.amount ?? b.supplierPayout, currency),
     payoutReason: reason || payout?.failureReason || '',
-    supportEmail: (await getShellVars()).supportEmail,
   };
   return sendRendered({
     to: supplier.email,
@@ -1509,6 +1539,7 @@ module.exports = {
   sendEmail,
   renderTemplate,
   getShellVars,
+  resolveEmailBrand,
 
   // customer
   sendBookingConfirmedEmail,

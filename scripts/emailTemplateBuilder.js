@@ -92,6 +92,9 @@ function shell(title, bodyHtml) {
           <tr>
             <td align="center" style="padding:0 0 24px 0;">
               <img src="{{logoUrl}}" alt="{{brandName}}" width="170" style="display:block;width:170px;max-width:170px;height:auto;border:0;outline:none;">
+              {{#if poweredByLabel}}<div style="margin-top:10px;">
+                <span style="display:inline-block;font-family:${FONT};font-size:12px;font-weight:700;letter-spacing:0.3px;color:${COLORS.accent};background-color:${COLORS.accentSoft};border-radius:999px;padding:5px 14px;line-height:1;">{{poweredByLabel}}</span>
+              </div>{{/if}}
             </td>
           </tr>
           <!-- Card -->
