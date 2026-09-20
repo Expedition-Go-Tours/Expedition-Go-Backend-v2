@@ -79,6 +79,7 @@ router.delete('/special-offers/:id', resolveSupplier, requireTeamPermission('pro
 // Cancellation (proxied to shared controller)
 router.get('/cancellation/summary', resolveSupplier, cancellationController.getCancellationSummary);
 router.get('/cancellation/records', resolveSupplier, cancellationController.getCancellationRecords);
+router.get('/products/list', resolveSupplier, cancellationController.getCancellationProducts);
 
 // Pickup planner (proxied to shared bookingController)
 router.get('/pickup-planner', resolveSupplier, requireTeamPermission('bookings.view'), bookingController.getPickupPlanner);

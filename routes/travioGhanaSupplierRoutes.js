@@ -81,6 +81,7 @@ router.delete('/special-offers/:id', resolveSupplier, requireTeamPermission('pro
 // Cancellation (proxied to shared controller)
 router.get('/cancellation/summary', resolveSupplier, cancellationController.getCancellationSummary);
 router.get('/cancellation/records', resolveSupplier, cancellationController.getCancellationRecords);
+router.get('/products/list', resolveSupplier, cancellationController.getCancellationProducts);
 
 // Pickup planner (proxied to shared bookingController — the frontend rewrites
 // /bookings/supplier/pickup-planner to this Ghana namespace)
