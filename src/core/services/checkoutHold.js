@@ -120,6 +120,22 @@ async function acquireHold({
     });
   });
 
+  // ── Analytics: the customer started checkout ──────────────────────────
+  // The live flow has no cart step, so "checkout started" is the meaningful
+  // mid-funnel signal (it also covers the abandoned-checkout drop-off).
+  try {
+    const { enqueueEvent } = require('./queue');
+    const { BRANDS } = require('../../../config/brands');
+    const brand = Object.values(BRANDS).find((b) => b.source === (source || 'EXPEDITION')) || BRANDS.expedition;
+    enqueueEvent({
+      name: `${brand.eventNamespace}.checkout_started`,
+      userId: customerId,
+      resource: 'Tour',
+      resourceId: tourId,
+      properties: { tourId, total: pricing?.total ?? null, currency: pricing?.currency || 'USD', source: brand.key },
+    });
+  } catch { /* analytics is best-effort */ }
+
   return { ok: true, draftId: draft.id, expiresAt: draft.expiresAt };
 }
 

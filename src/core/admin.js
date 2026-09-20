@@ -540,9 +540,12 @@ controller.getFunnel = catchAsync(async (req, res, next) => {
           WHERE "name" = 'cart.added' AND "createdAt" >= ${startDate}
             AND "properties"->>'source' = ${brandKey}
           UNION ALL
+          -- Legacy cart flow emits booking.initiated; the live checkout emits
+          -- <eventNamespace>.checkout_started from acquireHold.
           SELECT 'checkout_started', COALESCE("userId", "sessionId")
           FROM "Event"
-          WHERE "name" = 'booking.initiated' AND "createdAt" >= ${startDate}
+          WHERE ("name" = 'booking.initiated' OR "name" LIKE '%.checkout_started')
+            AND "createdAt" >= ${startDate}
             AND "properties"->>'source' = ${brandKey}
           UNION ALL
           SELECT 'booking_completed', COALESCE("userId", "sessionId")
