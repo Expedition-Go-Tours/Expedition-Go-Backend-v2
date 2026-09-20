@@ -292,6 +292,30 @@ async function materializeHold(draftId, session, paymentIntentId) {
     return { ok: false, reason: oversold ? 'sold_out' : 'already_settled', oversold };
   }
 
+  // ── Analytics: record the completed booking for the conversion funnel ──
+  // The pay-now path materializes the Booking here (from the Stripe webhook),
+  // not in the request that started checkout, so this is the only place the
+  // completion step can be recorded. Brand comes off the draft payload.
+  try {
+    const { enqueueEvent } = require('./queue');
+    const { BRANDS } = require('../../../config/brands');
+    const brandSource = draft.payload?._source || 'EXPEDITION';
+    const brand = Object.values(BRANDS).find((b) => b.source === brandSource) || BRANDS.expedition;
+    enqueueEvent({
+      name: `${brand.eventNamespace}.booking_reserved`,
+      userId: createdBooking.customerId,
+      resource: 'Booking',
+      resourceId: createdBooking.id,
+      properties: {
+        tourId: createdBooking.tourId,
+        total: createdBooking.grossAmount,
+        currency: createdBooking.currency,
+        paymentTiming: 'now',
+        source: brand.key,
+      },
+    });
+  } catch { /* analytics is best-effort */ }
+
   // ── Supplier notification (after commit, fire-and-forget) ─────────────
   // Pay-now bookings never notified the supplier before; the draft carries the
   // platform so the message and data.source are correct for either storefront.

@@ -2054,12 +2054,17 @@ controller.confirmBooking = catchAsync(async (req, res, next) => {
         discount: pricing.discount || 0,
         currency: pricing.currency,
       },
-      commission,
-      clientOrigin: resolveAllowedClientUrl(req),
-      ...(optionRef ? { optionId: optionRef.optionId, optionScope: optionRef.optionScope } : {}),
-    });
-  } catch (err) {
-    console.error('[Expedition] Failed to acquire hold:', err.message);
+        commission,
+        // Brand identity must ride on the draft: the webhook that materializes
+        // the booking has no request to derive it from, and it stamps both the
+        // Booking.source and the funnel's analytics event from it.
+        source: BRAND.source,
+        bookingPrefix: BRAND.bookingPrefix,
+        clientOrigin: resolveAllowedClientUrl(req),
+        ...(optionRef ? { optionId: optionRef.optionId, optionScope: optionRef.optionScope } : {}),
+      });
+    } catch (err) {
+      console.error('[Expedition] Failed to acquire hold:', err.message);
     return next(new AppError(err.message || 'Could not reserve your spot. Please try again.', 409));
   }
   if (!holdResult.ok) {
