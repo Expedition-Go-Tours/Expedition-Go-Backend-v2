@@ -18,6 +18,7 @@ const cache = require('./services/cacheHelper');
 const { logActivity } = require('./services/auditLogger');
 const adminController = require('./domain/adminController');
 const { getBrand } = require('../../config/brands');
+const { Prisma } = require('@prisma/client');
 
 function makeAdminController(brandKey) {
   const BRAND = getBrand(brandKey);
@@ -189,7 +190,7 @@ controller.getOverview = catchAsync(async (req, res, next) => {
           COALESCE(r.review_count, 0)::int AS "reviewCount",
           COALESCE((t."schedulesAndPricing"->>'currency'), 'USD') AS "currency"
         FROM "Tour" t
-        JOIN "${BRAND.listingTableName}" g ON g."tourId" = t.id
+        JOIN ${Prisma.raw(`"${BRAND.listingTableName}"`)} g ON g."tourId" = t.id
         LEFT JOIN (
           SELECT "tourId", COUNT(*)::int AS booking_count, SUM(total)::float AS total_revenue
           FROM "Booking"
@@ -1704,7 +1705,7 @@ controller.getAiStatus = catchAsync(async (req, res, next) => {
   const statusCounts = await prisma.$queryRaw`
     SELECT t."aiProcessingStatus", COUNT(*)::int AS count
     FROM "Tour" t
-    JOIN "${BRAND.listingTableName}" g ON g."tourId" = t.id
+    JOIN ${Prisma.raw(`"${BRAND.listingTableName}"`)} g ON g."tourId" = t.id
     WHERE t.status = 'ACTIVE'
     GROUP BY t."aiProcessingStatus"
   `;
