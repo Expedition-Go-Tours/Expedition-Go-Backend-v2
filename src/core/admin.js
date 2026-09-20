@@ -191,7 +191,7 @@ controller.getOverview = catchAsync(async (req, res, next) => {
           COALESCE((t."schedulesAndPricing"->>'currency'), 'USD') AS "currency"
         FROM "Tour" t
         JOIN ${Prisma.raw(`"${BRAND.listingTableName}"`)} g ON g."tourId" = t.id
-        LEFT JOIN (
+        JOIN (
           SELECT "tourId", COUNT(*)::int AS booking_count, SUM(total)::float AS total_revenue
           FROM "Booking"
           WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}
