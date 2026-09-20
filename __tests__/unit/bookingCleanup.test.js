@@ -1,12 +1,12 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   booking: { findMany: jest.fn(), updateMany: jest.fn() },
 }));
 
-jest.mock('../../utils/reviewRequestNotify', () => ({
+jest.mock('../../src/core/services/reviewRequestNotify', () => ({
   enqueueReviewRequest: jest.fn(),
 }));
 
-jest.mock('../../utils/stripeHelpers', () => {
+jest.mock('../../src/core/services/stripeHelpers', () => {
   let stripeInstance = null;
   return {
     getStripe: jest.fn(() => {
@@ -30,16 +30,16 @@ jest.mock('../../utils/stripeHelpers', () => {
   };
 });
 
-jest.mock('../../utils/queue', () => ({
+jest.mock('../../src/core/services/queue', () => ({
   enqueueNotification: jest.fn(() => Promise.resolve()),
   enqueueEvent: jest.fn(() => Promise.resolve()),
 }));
 
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
 
-const prisma = require('../../utils/prismaClient');
-const { getStripe, handlePaymentSucceeded } = require('../../utils/stripeHelpers');
-const { cancelStalePendingBookings, autoCompleteBookings } = require('../../utils/bookingCleanup');
+const prisma = require('../../src/core/services/prismaClient');
+const { getStripe, handlePaymentSucceeded } = require('../../src/core/services/stripeHelpers');
+const { cancelStalePendingBookings, autoCompleteBookings } = require('../../src/core/services/bookingCleanup');
 
 const pendingBooking = (overrides = {}) => ({
   id: 'b-pending-1',

@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   booking: { findFirst: jest.fn() },
   review: { findFirst: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   tour: { findMany: jest.fn() },
@@ -10,23 +10,23 @@ jest.mock('../../utils/prismaClient', () => ({
   })),
 }));
 
-jest.mock('../../utils/queue', () => ({ enqueueNotification: jest.fn(), enqueueEvent: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn() }));
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
-jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
-jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
-jest.mock('../../utils/ratingHelper', () => ({ addApprovedRating: jest.fn(), removeApprovedRating: jest.fn(), recalculateSupplierRating: jest.fn() }));
-jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateReviewCaches: jest.fn(), invalidateTourCaches: jest.fn() }));
-jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
+jest.mock('../../src/core/services/queue', () => ({ enqueueNotification: jest.fn(), enqueueEvent: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/adminNotificationService', () => ({ notifyAdmin: jest.fn() }));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn() }));
+jest.mock('../../src/core/services/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
+jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
+jest.mock('../../src/core/services/ratingHelper', () => ({ addApprovedRating: jest.fn(), removeApprovedRating: jest.fn(), recalculateSupplierRating: jest.fn() }));
+jest.mock('../../src/core/services/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateReviewCaches: jest.fn(), invalidateTourCaches: jest.fn() }));
+jest.mock('../../src/core/services/eventEmitter', () => ({ emit: jest.fn() }));
 
-const prisma = require('../../utils/prismaClient');
-const { enqueueNotification, enqueueEvent } = require('../../utils/queue');
-const { notifyAdmin } = require('../../utils/adminNotificationService');
-const { logActivity } = require('../../utils/auditLogger');
-const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
-const { addApprovedRating, removeApprovedRating, recalculateSupplierRating } = require('../../utils/ratingHelper');
-const cache = require('../../utils/cacheHelper');
-const controller = require('../../controllers/reviewController');
+const prisma = require('../../src/core/services/prismaClient');
+const { enqueueNotification, enqueueEvent } = require('../../src/core/services/queue');
+const { notifyAdmin } = require('../../src/core/services/adminNotificationService');
+const { logActivity } = require('../../src/core/services/auditLogger');
+const { deleteCloudinaryImage } = require('../../src/core/services/cloudinaryHelper');
+const { addApprovedRating, removeApprovedRating, recalculateSupplierRating } = require('../../src/core/services/ratingHelper');
+const cache = require('../../src/core/services/cacheHelper');
+const controller = require('../../src/core/domain/reviewController');
 
 describe('reviewController', () => {
   let req, res, next;

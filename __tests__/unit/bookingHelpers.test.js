@@ -1,15 +1,15 @@
 jest.mock('uuid', () => ({ v4: () => 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }));
 
 const mockUpsert = jest.fn();
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   booking: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), aggregate: jest.fn() },
   $transaction: jest.fn((cb) => cb({ bookingCounter: { upsert: mockUpsert } })),
   $queryRaw: jest.fn(),
 }));
 
-jest.mock('../../utils/getConfig', () => jest.fn().mockResolvedValue('2.50'));
+jest.mock('../../src/core/services/getConfig', () => jest.fn().mockResolvedValue('2.50'));
 
-const prisma = require('../../utils/prismaClient');
+const prisma = require('../../src/core/services/prismaClient');
 
 const {
   generateBookingNumber,
@@ -22,7 +22,7 @@ const {
   evaluateCancellationPolicy,
   calculateRefundAmount,
   getUpcomingBookings,
-} = require('../../utils/bookingHelpers');
+} = require('../../src/core/services/bookingHelpers');
 
 beforeEach(() => {
   jest.clearAllMocks();

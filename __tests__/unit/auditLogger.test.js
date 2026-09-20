@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   auditLog: {
     create: jest.fn(),
     findMany: jest.fn(),
@@ -11,8 +11,8 @@ jest.mock('../../utils/prismaClient', () => ({
   $transaction: jest.fn(),
 }));
 
-const prisma = require('../../utils/prismaClient');
-const logger = require('../../utils/auditLogger');
+const prisma = require('../../src/core/services/prismaClient');
+const logger = require('../../src/core/services/auditLogger');
 
 // Interactive transaction helper: runs callback with a fake tx client that
 // reuses the same auditLog mocks so assertions stay on prisma.auditLog.create.

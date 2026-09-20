@@ -1,4 +1,4 @@
-const { validateReadOnly } = require('../../utils/sqlGuard');
+const { validateReadOnly } = require('../../src/core/services/sqlGuard');
 
 describe('validateReadOnly', () => {
   describe('happy path', () => {

@@ -1,4 +1,4 @@
-const { logActivity } = require('../utils/auditLogger');
+const { logActivity } = require('../src/core/services/auditLogger');
 
 // Endpoints we never want to audit-log errors for (noise / self-inflicted traffic).
 const SKIP_ERROR_LOG = [

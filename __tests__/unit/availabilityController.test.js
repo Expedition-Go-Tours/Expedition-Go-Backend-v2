@@ -1,13 +1,13 @@
 const { parseISO, addDays, format } = require('date-fns');
 
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   tour: { findFirst: jest.fn(), findUnique: jest.fn() },
   tourDateOverride: { findMany: jest.fn(), upsert: jest.fn(), deleteMany: jest.fn() },
   booking: { findMany: jest.fn(), count: jest.fn() },
   $transaction: jest.fn(),
 }));
 
-jest.mock('../../utils/getConfig', () =>
+jest.mock('../../src/core/services/getConfig', () =>
   jest.fn(async (key) => {
     if (key === 'availability.limited_ratio') return '0.7';
     if (key === 'availability.full_ratio') return '1';
@@ -18,13 +18,13 @@ jest.mock('../../utils/getConfig', () =>
 // The calendar cache (availability:cal:{tourId}:*) would otherwise persist
 // results across tests that reuse the same tour/date key with different DB
 // mocks. Bypass caching entirely: always run the fetch function.
-jest.mock('../../utils/cacheHelper', () => ({
+jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn(async (_key, fetchFn, _ttl) => fetchFn()),
   invalidateKeys: jest.fn().mockResolvedValue(undefined),
 }));
 
-const prisma = require('../../utils/prismaClient');
-const controller = require('../../controllers/availabilityController');
+const prisma = require('../../src/core/services/prismaClient');
+const controller = require('../../src/core/domain/availabilityController');
 
 describe('availabilityController', () => {
   let req, res, next;

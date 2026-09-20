@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   tour: {
     findMany: jest.fn(),
     findFirst: jest.fn(),
@@ -19,20 +19,20 @@ jest.mock('../../utils/prismaClient', () => ({
   $queryRawUnsafe: jest.fn(),
 }));
 
-jest.mock('../../utils/cacheHelper', () => ({
+jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
   invalidateTourCaches: jest.fn(() => Promise.resolve()),
   invalidateKeys: jest.fn(),
 }));
 
-jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
-jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()), enqueueNotification: jest.fn(() => Promise.resolve()), enqueueAiScoring: jest.fn(() => Promise.resolve()), enqueueGhanaPublish: jest.fn(() => Promise.resolve()), enqueueTravioAfricaPublish: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn(() => Promise.resolve()), emitToRoom: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/cloudinaryHelper', () => ({
+jest.mock('../../src/core/services/eventEmitter', () => ({ emit: jest.fn() }));
+jest.mock('../../src/core/services/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()), enqueueNotification: jest.fn(() => Promise.resolve()), enqueueAiScoring: jest.fn(() => Promise.resolve()), enqueueGhanaPublish: jest.fn(() => Promise.resolve()), enqueueTravioAfricaPublish: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/adminNotificationService', () => ({ notifyAdmin: jest.fn(() => Promise.resolve()), emitToRoom: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/cloudinaryHelper', () => ({
   deleteCloudinaryImage: jest.fn(),
   isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')),
 }));
-jest.mock('../../utils/tourHelpers', () => ({
+jest.mock('../../src/core/services/tourHelpers', () => ({
   createSlug: jest.fn(),
   validateTourData: jest.fn(),
   normalizeProductPayload: jest.fn((d) => d),
@@ -41,7 +41,7 @@ jest.mock('../../utils/tourHelpers', () => ({
   reconcileAvailability: jest.fn((b) => b),
   durationToMinutes: jest.fn(),
 }));
-jest.mock('../../utils/productToTour', () => ({
+jest.mock('../../src/core/services/productToTour', () => ({
   productToTour: jest.fn((flat) => ({
     title: flat.title || '',
     categorization: {
@@ -104,9 +104,9 @@ jest.mock('../../utils/productToTour', () => ({
     }
   }))
 }));
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
-jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn() }));
-jest.mock('../../utils/tourFilterBuilder', () => ({
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn() }));
+jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn() }));
+jest.mock('../../src/core/services/tourFilterBuilder', () => ({
   buildTourFilters: jest.fn(),
   buildSortOptions: jest.fn(),
   getAvailableFilterOptions: jest.fn(),
@@ -114,16 +114,16 @@ jest.mock('../../utils/tourFilterBuilder', () => ({
   findNearbyTourIds: jest.fn(),
   getTourDistances: jest.fn(),
 }));
-jest.mock('../../utils/popularityScorer', () => ({ getPopularByCategory: jest.fn() }));
-jest.mock('../../utils/fullTextSearch', () => ({ rankTourIdsBySearch: jest.fn() }));
+jest.mock('../../src/core/services/popularityScorer', () => ({ getPopularByCategory: jest.fn() }));
+jest.mock('../../src/core/services/fullTextSearch', () => ({ rankTourIdsBySearch: jest.fn() }));
 
-const prisma = require('../../utils/prismaClient');
-const cache = require('../../utils/cacheHelper');
-const { notifyAdmin } = require('../../utils/adminNotificationService');
-const { validateTourData, validateStoredPricing } = require('../../utils/tourHelpers');
-const { logActivity } = require('../../utils/auditLogger');
-const tourController = require('../../controllers/tourController');
-const tourDraft = require('../../utils/tourDraft');
+const prisma = require('../../src/core/services/prismaClient');
+const cache = require('../../src/core/services/cacheHelper');
+const { notifyAdmin } = require('../../src/core/services/adminNotificationService');
+const { validateTourData, validateStoredPricing } = require('../../src/core/services/tourHelpers');
+const { logActivity } = require('../../src/core/services/auditLogger');
+const tourController = require('../../src/core/domain/tourController');
+const tourDraft = require('../../src/core/services/tourDraft');
 
 let req, res, next;
 
@@ -727,7 +727,7 @@ describe('getTourDraft', () => {
 });
 
 describe('admin draft review', () => {
-  const adminController = require('../../controllers/adminController');
+  const adminController = require('../../src/core/domain/adminController');
 
   it('merges an approved draft into the live columns and notifies the supplier', async () => {
     jest.clearAllMocks();

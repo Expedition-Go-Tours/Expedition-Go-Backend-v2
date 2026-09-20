@@ -1,7 +1,7 @@
 /**
  * Simulation: Test destination ranking with XGBoost
  */
-const xgboost = require('../utils/xgboostService');
+const xgboost = require('../src/core/services/xgboostService');
 
 // Simulate destination data (from SQL query)
 const destinations = [

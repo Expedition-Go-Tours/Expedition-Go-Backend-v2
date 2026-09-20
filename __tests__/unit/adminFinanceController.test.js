@@ -1,15 +1,15 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   payoutRequest: { findFirst: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), update: jest.fn() },
   payoutMethod: { findMany: jest.fn() },
   $transaction: jest.fn(),
 }));
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
-jest.mock('../../utils/queue', () => ({ enqueueNotification: jest.fn(), enqueueEmail: jest.fn() }));
-jest.mock('../../utils/financeHelpers', () => ({ detachBookingFromActiveRequests: jest.fn(), unfreezeBookingAfterDispute: jest.fn() }));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn() }));
+jest.mock('../../src/core/services/queue', () => ({ enqueueNotification: jest.fn(), enqueueEmail: jest.fn() }));
+jest.mock('../../src/core/services/financeHelpers', () => ({ detachBookingFromActiveRequests: jest.fn(), unfreezeBookingAfterDispute: jest.fn() }));
 
-const prisma = require('../../utils/prismaClient');
-const AppError = require('../../utils/appError');
-const controller = require('../../controllers/adminFinanceController');
+const prisma = require('../../src/core/services/prismaClient');
+const AppError = require('../../src/core/services/appError');
+const controller = require('../../src/core/domain/adminFinanceController');
 
 describe('adminFinanceController.completePayoutRequest — reference validation', () => {
   let req, res, next;

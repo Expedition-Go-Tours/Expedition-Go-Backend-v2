@@ -4,7 +4,7 @@ jest.mock('../../config/jwt', () => ({
   verifyAccessToken: (...args) => mockVerifyAccessToken(...args),
 }));
 
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   expeditionTour: { findFirst: jest.fn(), findUnique: jest.fn() },
   tour: { findUnique: jest.fn(), findFirst: jest.fn() },
   user: { findUnique: jest.fn() },
@@ -22,23 +22,23 @@ jest.mock('../../utils/prismaClient', () => ({
   $queryRawUnsafe: jest.fn(),
 }));
 
-jest.mock('../../utils/queue', () => ({
+jest.mock('../../src/core/services/queue', () => ({
   enqueueEmail: jest.fn(() => Promise.resolve()),
   enqueueEvent: jest.fn(() => Promise.resolve()),
   enqueueNotification: jest.fn(() => Promise.resolve()),
 }));
 
-jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
-jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((_, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/eventEmitter', () => ({ emit: jest.fn() }));
+jest.mock('../../src/core/services/cacheHelper', () => ({ getOrSet: jest.fn((_, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
 
-jest.mock('../../utils/bookingHelpers', () => ({
+jest.mock('../../src/core/services/bookingHelpers', () => ({
   generateBookingNumber: jest.fn(() => Promise.resolve('BK-EXP-E2E-001')),
   validateTravelerInfo: jest.fn(() => ({ isValid: true, errors: [] })),
 }));
 
-jest.mock('../../utils/getConfig', () => {
+jest.mock('../../src/core/services/getConfig', () => {
   const fn = jest.fn();
   fn.mockImplementation((key, defaultValue) => {
     const values = {
@@ -51,13 +51,13 @@ jest.mock('../../utils/getConfig', () => {
   return fn;
 });
 
-jest.mock('../../utils/tourHelpers', () => ({
+jest.mock('../../src/core/services/tourHelpers', () => ({
   checkTourAvailability: jest.fn(),
   calculateTourPrice: jest.fn(),
 }));
 
-jest.mock('../../utils/stripeHelpers', () => {
-  const actual = jest.requireActual('../../utils/stripeHelpers');
+jest.mock('../../src/core/services/stripeHelpers', () => {
+  const actual = jest.requireActual('../../src/core/services/stripeHelpers');
   return {
     createPaymentIntent: jest.fn(),
     createCheckoutSession: jest.fn(),
@@ -78,10 +78,10 @@ beforeAll(() => {
 
 const request = require('supertest');
 const app = require('../../app');
-const prisma = require('../../utils/prismaClient');
-const tourHelpers = require('../../utils/tourHelpers');
-const bookingHelpers = require('../../utils/bookingHelpers');
-const { createPaymentIntent, createCheckoutSession, calculateCommission, processStripeWebhook, getStripe } = require('../../utils/stripeHelpers');
+const prisma = require('../../src/core/services/prismaClient');
+const tourHelpers = require('../../src/core/services/tourHelpers');
+const bookingHelpers = require('../../src/core/services/bookingHelpers');
+const { createPaymentIntent, createCheckoutSession, calculateCommission, processStripeWebhook, getStripe } = require('../../src/core/services/stripeHelpers');
 
 
 const mockUser = {

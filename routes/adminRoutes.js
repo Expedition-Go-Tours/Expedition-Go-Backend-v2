@@ -14,9 +14,9 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
-const adminController = require('../controllers/adminController');
-const adminNotifController = require('../controllers/adminNotificationController');
-const adminSettingsController = require('../controllers/adminSettingsController');
+const adminController = require('../src/core/domain/adminController');
+const adminNotifController = require('../src/core/domain/adminNotificationController');
+const adminSettingsController = require('../src/core/domain/adminSettingsController');
 
 const router = express.Router();
 
@@ -969,13 +969,13 @@ router.get('/search/tours', requirePermission('tours.view'), adminController.sea
 router.patch('/suppliers/:id/expedition-role', requirePermission('suppliers.approve'), adminController.toggleSupplierExpeditionRole);
 
 // ── Attraction Management ──
-const adminAttractionController = require('../controllers/adminAttractionController');
+const adminAttractionController = require('../src/core/domain/adminAttractionController');
 router.get('/attractions', adminAttractionController.getAttractions);
 router.patch('/attractions/:id', adminAttractionController.updateAttraction);
 router.post('/attractions/:id/recompute', adminAttractionController.recomputeAttraction);
 
 // ── AI Processing Status ──
-const adminAiController = require('../controllers/adminAiController');
+const adminAiController = require('../src/core/domain/adminAiController');
 router.get('/ai/status', adminAiController.getAiStatus);
 router.get('/ai/failed', adminAiController.getFailedTours);
 router.post('/ai/retry', adminAiController.retryFailed);

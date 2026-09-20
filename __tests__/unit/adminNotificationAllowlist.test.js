@@ -5,7 +5,7 @@
  * silently filtered because they were missing from ADMIN_NOTIFICATION_TYPES.
  */
 
-const { buildPermissionWhere } = require('../../controllers/adminNotificationController');
+const { buildPermissionWhere } = require('../../src/core/domain/adminNotificationController');
 
 function visibleTypes(permissionKeys) {
   const where = buildPermissionWhere(permissionKeys);

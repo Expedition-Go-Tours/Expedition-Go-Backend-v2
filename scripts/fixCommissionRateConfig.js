@@ -12,7 +12,7 @@
  * Usage: node scripts/fixCommissionRateConfig.js
  */
 const { PrismaClient } = require('@prisma/client');
-const { normalizeCommissionRate } = require('../utils/commission');
+const { normalizeCommissionRate } = require('../src/core/services/commission');
 
 const prisma = new PrismaClient();
 

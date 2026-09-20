@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   user: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
   booking: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn(), count: jest.fn() },
   tour: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), update: jest.fn() },
@@ -9,23 +9,23 @@ jest.mock('../../utils/prismaClient', () => ({
   $disconnect: jest.fn(),
 }));
 
-const prisma = require('../../utils/prismaClient');
-const { enqueueEmail, enqueueEvent, enqueueNotification } = require('../../utils/queue');
-jest.mock('../../utils/queue', () => ({
+const prisma = require('../../src/core/services/prismaClient');
+const { enqueueEmail, enqueueEvent, enqueueNotification } = require('../../src/core/services/queue');
+jest.mock('../../src/core/services/queue', () => ({
   enqueueEmail: jest.fn(() => Promise.resolve()),
   enqueueEvent: jest.fn(() => Promise.resolve()),
   enqueueNotification: jest.fn(() => Promise.resolve()),
   enqueueWebhookRetry: jest.fn(() => Promise.resolve()),
 }));
-jest.mock('../../utils/eventEmitter', () => ({
+jest.mock('../../src/core/services/eventEmitter', () => ({
   emit: jest.fn(),
 }));
-jest.mock('../../utils/redisClient', () => ({
+jest.mock('../../src/core/services/redisClient', () => ({
   setnx: jest.fn(async () => null),
   del: jest.fn(async () => undefined),
 }));
-jest.mock('../../utils/emailService', () => ({}));
-jest.mock('../../utils/getConfig', () => jest.fn((key, defaultValue) => Promise.resolve(defaultValue)));
+jest.mock('../../src/core/services/emailService', () => ({}));
+jest.mock('../../src/core/services/getConfig', () => jest.fn((key, defaultValue) => Promise.resolve(defaultValue)));
 
 const mockConstructEvent = jest.fn();
 let mockStripeInstance;
@@ -57,9 +57,9 @@ const {
   ensureStripeCustomer,
   createCustomerSession,
   handlePaymentSucceeded,
-} = require('../../utils/stripeHelpers');
-const redis = require('../../utils/redisClient');
-const getConfig = require('../../utils/getConfig');
+} = require('../../src/core/services/stripeHelpers');
+const redis = require('../../src/core/services/redisClient');
+const getConfig = require('../../src/core/services/getConfig');
 
 const mockBooking = {
   id: 'booking-1',

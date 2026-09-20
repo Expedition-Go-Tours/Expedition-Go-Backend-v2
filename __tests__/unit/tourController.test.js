@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => {
+jest.mock('../../src/core/services/prismaClient', () => {
   const booking = { groupBy: jest.fn(), aggregate: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 0 }) };
   return {
     tour: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), groupBy: jest.fn(), aggregate: jest.fn() },
@@ -15,7 +15,7 @@ jest.mock('../../utils/prismaClient', () => {
   };
 });
 
-jest.mock('../../utils/cacheHelper', () => ({
+jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
   invalidateTourCaches: jest.fn(),
   invalidateKeys: jest.fn(),
@@ -26,29 +26,29 @@ jest.mock('../../utils/cacheHelper', () => ({
   REVIEWS_TOUR_PREFIX: (tourId) => `reviews:tour:${tourId}:*`,
 }));
 
-jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn(), deriveSessionId: jest.fn(() => 'test-session-id') }));
-jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()), enqueueNotification: jest.fn(() => Promise.resolve()), enqueueAiScoring: jest.fn(() => Promise.resolve()), enqueueGhanaPublish: jest.fn(() => Promise.resolve()), enqueueTravioAfricaPublish: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn(() => Promise.resolve()), emitToRoom: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
-jest.mock('../../utils/tourHelpers', () => ({ createSlug: jest.fn(), validateTourData: jest.fn(), normalizeProductPayload: jest.fn((d) => d), validateStoredPricing: jest.fn(), rebuildSchedulePrices: jest.fn(), reconcileAvailability: jest.fn((b) => b), durationToMinutes: jest.fn() }));
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
-jest.mock('../../utils/stripeHelpers', () => ({ cancelPaymentIntent: jest.fn() }));
-jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn() }));
-jest.mock('../../utils/tourFilterBuilder', () => ({ buildTourFilters: jest.fn(), buildSortOptions: jest.fn(), getAvailableFilterOptions: jest.fn(), validateFilterParams: jest.fn(), findNearbyTourIds: jest.fn(), getTourDistances: jest.fn() }));
-jest.mock('../../utils/popularityScorer', () => ({ getPopularByCategory: jest.fn() }));
-jest.mock('../../utils/fullTextSearch', () => ({ rankTourIdsBySearch: jest.fn() }));
+jest.mock('../../src/core/services/eventEmitter', () => ({ emit: jest.fn(), deriveSessionId: jest.fn(() => 'test-session-id') }));
+jest.mock('../../src/core/services/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()), enqueueNotification: jest.fn(() => Promise.resolve()), enqueueAiScoring: jest.fn(() => Promise.resolve()), enqueueGhanaPublish: jest.fn(() => Promise.resolve()), enqueueTravioAfricaPublish: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/adminNotificationService', () => ({ notifyAdmin: jest.fn(() => Promise.resolve()), emitToRoom: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
+jest.mock('../../src/core/services/tourHelpers', () => ({ createSlug: jest.fn(), validateTourData: jest.fn(), normalizeProductPayload: jest.fn((d) => d), validateStoredPricing: jest.fn(), rebuildSchedulePrices: jest.fn(), reconcileAvailability: jest.fn((b) => b), durationToMinutes: jest.fn() }));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn() }));
+jest.mock('../../src/core/services/stripeHelpers', () => ({ cancelPaymentIntent: jest.fn() }));
+jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn() }));
+jest.mock('../../src/core/services/tourFilterBuilder', () => ({ buildTourFilters: jest.fn(), buildSortOptions: jest.fn(), getAvailableFilterOptions: jest.fn(), validateFilterParams: jest.fn(), findNearbyTourIds: jest.fn(), getTourDistances: jest.fn() }));
+jest.mock('../../src/core/services/popularityScorer', () => ({ getPopularByCategory: jest.fn() }));
+jest.mock('../../src/core/services/fullTextSearch', () => ({ rankTourIdsBySearch: jest.fn() }));
 jest.mock('../../config/jwt', () => ({ verifyAccessToken: jest.fn() }));
 
-const prisma = require('../../utils/prismaClient');
-const cache = require('../../utils/cacheHelper');
-const { enqueueEvent, enqueueNotification } = require('../../utils/queue');
-const { notifyAdmin } = require('../../utils/adminNotificationService');
-const { emit } = require('../../utils/eventEmitter');
-const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
-const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices, durationToMinutes } = require('../../utils/tourHelpers');
-const { logActivity } = require('../../utils/auditLogger');
-const { cancelPaymentIntent } = require('../../utils/stripeHelpers');
-const { cloudinaryUrl } = require('../../utils/imageOptimizer');
+const prisma = require('../../src/core/services/prismaClient');
+const cache = require('../../src/core/services/cacheHelper');
+const { enqueueEvent, enqueueNotification } = require('../../src/core/services/queue');
+const { notifyAdmin } = require('../../src/core/services/adminNotificationService');
+const { emit } = require('../../src/core/services/eventEmitter');
+const { deleteCloudinaryImage } = require('../../src/core/services/cloudinaryHelper');
+const { createSlug, validateTourData, validateStoredPricing, rebuildSchedulePrices, durationToMinutes } = require('../../src/core/services/tourHelpers');
+const { logActivity } = require('../../src/core/services/auditLogger');
+const { cancelPaymentIntent } = require('../../src/core/services/stripeHelpers');
+const { cloudinaryUrl } = require('../../src/core/services/imageOptimizer');
 const {
   buildTourFilters,
   buildSortOptions,
@@ -56,12 +56,12 @@ const {
   validateFilterParams,
   findNearbyTourIds,
   getTourDistances,
-} = require('../../utils/tourFilterBuilder');
-const { getPopularByCategory } = require('../../utils/popularityScorer');
-const { rankTourIdsBySearch } = require('../../utils/fullTextSearch');
+} = require('../../src/core/services/tourFilterBuilder');
+const { getPopularByCategory } = require('../../src/core/services/popularityScorer');
+const { rankTourIdsBySearch } = require('../../src/core/services/fullTextSearch');
 const { verifyAccessToken } = require('../../config/jwt');
 
-const controller = require('../../controllers/tourController');
+const controller = require('../../src/core/domain/tourController');
 
 describe('tourController', () => {
   let req, res, next;

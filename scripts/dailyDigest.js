@@ -27,8 +27,8 @@ require('dotenv').config();
 
 const { PrismaClient } = require('@prisma/client');
 const { execSync } = require('child_process');
-const { notifyDiscord } = require('../utils/discordNotifier');
-const { callMimo } = require('../utils/mimoClient');
+const { notifyDiscord } = require('../src/core/services/discordNotifier');
+const { callMimo } = require('../src/core/services/mimoClient');
 
 const prisma = new PrismaClient();
 

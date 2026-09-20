@@ -6,7 +6,7 @@ jest.mock('../../config/jwt', () => ({
   signRefreshToken: jest.fn(),
 }));
 
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   article: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn() },
   articleCategory: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   articleTag: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
@@ -17,14 +17,14 @@ jest.mock('../../utils/prismaClient', () => ({
   $transaction: jest.fn(),
 }));
 
-jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
-jest.mock('../../utils/cacheHelper', () => ({
+jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
+jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
   invalidateKeys: jest.fn(() => Promise.resolve()),
   invalidateKey: jest.fn(() => Promise.resolve()),
   _clearMemory: jest.fn(),
 }));
-jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()) }));
 jest.mock('@sanity/client', () => jest.fn(() => ({
   fetch: jest.fn().mockResolvedValue(null),
 })));
@@ -53,9 +53,9 @@ jest.mock('../../middleware/uploadMiddleware', () => {
 });
 
 const app = require('../../app');
-const prisma = require('../../utils/prismaClient');
+const prisma = require('../../src/core/services/prismaClient');
 const jwt = require('../../config/jwt');
-const cache = require('../../utils/cacheHelper');
+const cache = require('../../src/core/services/cacheHelper');
 
 const mockAuthor = { id: 'author-1', name: 'Admin User', photoURL: '/photos/admin.jpg' };
 const mockCategory = { id: 'cat-1', name: 'Destinations', slug: 'destinations' };
@@ -705,7 +705,7 @@ describe('Blog API — Auth Enforcement on Admin Routes', () => {
 });
 
 describe('JSON-LD Structured Data Validation', () => {
-  const { buildArticleSchema, buildArticleListSchema } = require('../../utils/blogSEO');
+  const { buildArticleSchema, buildArticleListSchema } = require('../../src/core/services/blogSEO');
 
   const article = {
     title: 'Test Article',

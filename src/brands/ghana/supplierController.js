@@ -1,5 +1,5 @@
-const prisma = require('../../../utils/prismaClient');
-const catchAsync = require('../../../utils/catchAsync');
+const prisma = require('../../core/services/prismaClient');
+const catchAsync = require('../../core/services/catchAsync');
 const makeSupplierController = require('../../core/supplier');
 
 

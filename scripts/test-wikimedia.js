@@ -1,7 +1,7 @@
 /**
  * Test: Wikimedia reference image fetcher
  */
-const { fetchReferenceImages } = require('../utils/wikimediaRefImages');
+const { fetchReferenceImages } = require('../src/core/services/wikimediaRefImages');
 
 async function test() {
   const attractions = [

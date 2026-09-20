@@ -17,8 +17,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const prisma = require('../../../utils/prismaClient');
-const { geocodedRegionFor, normalizeRegion } = require('../../../utils/placeResolver');
+const prisma = require('../../../src/core/services/prismaClient');
+const { geocodedRegionFor, normalizeRegion } = require('../../../src/core/services/placeResolver');
 
 const OUT = path.resolve(__dirname, 'town-region-sweep.json');
 const delayArg = process.argv.find((a) => a.startsWith('--delayMs='));

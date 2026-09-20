@@ -1,7 +1,7 @@
-jest.mock('../../utils/redisClient');
+jest.mock('../../src/core/services/redisClient');
 
-const redis = require('../../utils/redisClient');
-const cache = require('../../utils/cacheHelper');
+const redis = require('../../src/core/services/redisClient');
+const cache = require('../../src/core/services/cacheHelper');
 
 describe('cacheHelper', () => {
   beforeEach(() => {

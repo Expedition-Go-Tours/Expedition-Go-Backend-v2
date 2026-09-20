@@ -1,7 +1,7 @@
 const request = require('supertest');
 const { signAccessToken } = require('../../config/jwt');
 
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   travioGhanaTour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   expeditionTour: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), count: jest.fn() },
   tour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn() },
@@ -30,7 +30,7 @@ jest.mock('../../utils/prismaClient', () => ({
   $queryRawUnsafe: jest.fn(),
 }));
 
-jest.mock('../../utils/homepageRanking', () => {
+jest.mock('../../src/core/services/homepageRanking', () => {
   const empty = () => jest.fn().mockResolvedValue([]);
   return {
     getLikelySellOut: empty(),
@@ -44,24 +44,24 @@ jest.mock('../../utils/homepageRanking', () => {
   };
 });
 
-jest.mock('../../utils/cacheHelper', () => ({
+jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
   invalidateKey: jest.fn(() => Promise.resolve()),
   invalidateKeys: jest.fn(() => Promise.resolve()),
 }));
-jest.mock('../../utils/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()), enqueueEmail: jest.fn(() => Promise.resolve()), enqueueNotification: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/getConfig', () => jest.fn((key, def) => Promise.resolve(def)));
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/tourHelpers', () => ({
+jest.mock('../../src/core/services/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()), enqueueEmail: jest.fn(() => Promise.resolve()), enqueueNotification: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/getConfig', () => jest.fn((key, def) => Promise.resolve(def)));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/tourHelpers', () => ({
   checkTourAvailability: jest.fn(() => Promise.resolve({ available: true, availableSpots: 10, reason: null })),
   calculateTourPrice: jest.fn(() => Promise.resolve({ success: true, currency: 'USD', subtotal: 100, fees: 5, discount: 0, total: 105 })),
   cheapestRetailPrice: jest.fn(() => 100),
 }));
-jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
+jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
 
 const app = require('../../app');
-const prisma = require('../../utils/prismaClient');
+const prisma = require('../../src/core/services/prismaClient');
 
 const ADMIN_USER = { id: 'admin-1', name: 'Perf Admin', email: 'perf-admin@test.com', roles: ['admin'], active: true, adminRoleId: 'role-super', photoURL: '', notificationPreferences: null };
 const SUPPLIER_USER = { id: 'supplier-1', name: 'Perf Supplier', email: 'perf-supplier@test.com', roles: ['supplier', 'ghana'], active: true, photoURL: '', notificationPreferences: { emailNotifications: {}, pushNotifications: {} } };

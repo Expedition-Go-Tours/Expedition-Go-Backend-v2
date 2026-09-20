@@ -12,7 +12,7 @@ const {
   approvalRefundRequest,
   approvalRefundResult,
   money,
-} = require('../../utils/channelEmbeds');
+} = require('../../src/core/services/channelEmbeds');
 
 describe('channelEmbeds — sales', () => {
   it('salesBookingConfirmed includes customer + commission', () => {

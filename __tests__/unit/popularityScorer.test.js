@@ -1,4 +1,4 @@
-const scorer = require('../../utils/popularityScorer');
+const scorer = require('../../src/core/services/popularityScorer');
 
 describe('popularityScorer', () => {
   describe('computePopularScore', () => {

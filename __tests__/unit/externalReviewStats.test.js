@@ -1,20 +1,20 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   tour: { findMany: jest.fn(), update: jest.fn() },
   tourExternalReviewStat: { findMany: jest.fn(), upsert: jest.fn(), deleteMany: jest.fn() },
   $transaction: jest.fn((ops) => Promise.all(ops)),
 }));
 
-jest.mock('../../utils/cacheHelper', () => ({
+jest.mock('../../src/core/services/cacheHelper', () => ({
   invalidateHomepageCaches: jest.fn(() => Promise.resolve()),
   invalidateKeys: jest.fn(() => Promise.resolve()),
 }));
 
-const prisma = require('../../utils/prismaClient');
-const cache = require('../../utils/cacheHelper');
+const prisma = require('../../src/core/services/prismaClient');
+const cache = require('../../src/core/services/cacheHelper');
 const {
   syncExternalReviewStats,
   recomputeCombinedStatsForTours,
-} = require('../../utils/externalReviewStats');
+} = require('../../src/core/services/externalReviewStats');
 
 const CAPE_TOUR = { id: 't1', title: 'Cape Coast Castle, Elmina Castle & Kakum National Park Day Tour', city: 'Accra', country: 'Ghana', region: null };
 

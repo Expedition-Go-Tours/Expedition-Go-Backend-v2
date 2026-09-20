@@ -5,7 +5,7 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
 const { execSync } = require('child_process');
 const { Client: Pg } = require('pg');
-const { callMimo } = require('../../utils/mimoClient');
+const { callMimo } = require('../../src/core/services/mimoClient');
 const { answerQuestion } = require('./queryAgent');
 const { startIncidentMonitor } = require('./incidentMonitor');
 const { buildDigestMessage } = require('../../scripts/dailyDigest');

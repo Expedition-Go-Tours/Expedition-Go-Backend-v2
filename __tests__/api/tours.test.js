@@ -1,6 +1,6 @@
 const request = require('supertest');
 const app = require('../../app');
-const prisma = require('../../utils/prismaClient');
+const prisma = require('../../src/core/services/prismaClient');
 
 const dbAvailable = process.env.TEST_DB_AVAILABLE === 'true';
 const describeDb = dbAvailable ? describe : describe.skip;

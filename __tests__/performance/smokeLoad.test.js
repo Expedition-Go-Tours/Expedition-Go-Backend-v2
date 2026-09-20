@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   user: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), count: jest.fn() },
   tour: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), count: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn() },
   booking: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
@@ -12,7 +12,7 @@ jest.mock('../../utils/prismaClient', () => ({
   $disconnect: jest.fn(),
 }));
 
-jest.mock('../../utils/cacheHelper', () => ({
+jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
   invalidateTourCaches: jest.fn(),
   invalidateKeys: jest.fn(),
@@ -23,21 +23,21 @@ jest.mock('../../utils/cacheHelper', () => ({
   REVIEWS_TOUR_PREFIX: (tourId) => `reviews:tour:${tourId}:*`,
 }));
 
-jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
-jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn(() => true) }));
-jest.mock('../../utils/tourHelpers', () => ({ createSlug: jest.fn(), validateTourData: jest.fn() }));
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
-jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
-jest.mock('../../utils/tourFilterBuilder', () => ({ buildTourFilters: jest.fn(), buildSortOptions: jest.fn(), getAvailableFilterOptions: jest.fn(), validateFilterParams: jest.fn(), findNearbyTourIds: jest.fn(), getTourDistances: jest.fn() }));
-jest.mock('../../utils/popularityScorer', () => ({ getPopularByCategory: jest.fn() }));
-jest.mock('../../utils/fullTextSearch', () => ({ rankTourIdsBySearch: jest.fn() }));
-jest.mock('../../utils/getConfig', () => jest.fn().mockResolvedValue('0.15'));
-jest.mock('../../utils/specialOfferEngine', () => ({ findBestDiscount: jest.fn().mockResolvedValue({ discountAmount: 0, finalPrice: 100, appliedOffer: null }) }));
+jest.mock('../../src/core/services/eventEmitter', () => ({ emit: jest.fn() }));
+jest.mock('../../src/core/services/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn(() => true) }));
+jest.mock('../../src/core/services/tourHelpers', () => ({ createSlug: jest.fn(), validateTourData: jest.fn() }));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn() }));
+jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
+jest.mock('../../src/core/services/tourFilterBuilder', () => ({ buildTourFilters: jest.fn(), buildSortOptions: jest.fn(), getAvailableFilterOptions: jest.fn(), validateFilterParams: jest.fn(), findNearbyTourIds: jest.fn(), getTourDistances: jest.fn() }));
+jest.mock('../../src/core/services/popularityScorer', () => ({ getPopularByCategory: jest.fn() }));
+jest.mock('../../src/core/services/fullTextSearch', () => ({ rankTourIdsBySearch: jest.fn() }));
+jest.mock('../../src/core/services/getConfig', () => jest.fn().mockResolvedValue('0.15'));
+jest.mock('../../src/core/services/specialOfferEngine', () => ({ findBestDiscount: jest.fn().mockResolvedValue({ discountAmount: 0, finalPrice: 100, appliedOffer: null }) }));
 
-const prisma = require('../../utils/prismaClient');
-const { validateFilterParams } = require('../../utils/tourFilterBuilder');
+const prisma = require('../../src/core/services/prismaClient');
+const { validateFilterParams } = require('../../src/core/services/tourFilterBuilder');
 const { LoadTest, runLoadTestScenarios } = require('./loadTest');
-const tourController = require('../../controllers/tourController');
+const tourController = require('../../src/core/domain/tourController');
 
 const mockTour = {
   id: 'tour-1',

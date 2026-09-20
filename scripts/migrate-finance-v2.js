@@ -18,7 +18,7 @@
  *       backfill PayoutRequest per supplier+currency (status PROCESSING) and
  *       the legacy rows are marked CANCELLED with a migration note.
  */
-const prisma = require('../utils/prismaClient');
+const prisma = require('../src/core/services/prismaClient');
 
 const DRY_RUN = process.argv.includes('--dry-run');
 

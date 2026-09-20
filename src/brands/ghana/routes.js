@@ -3,8 +3,8 @@ const { createLimiter } = require('../../../middleware/dynamicRateLimiter');
 const { protect } = require('../../../middleware/authMiddleware');
 const { restrictTo } = require('../../../middleware/authMiddleware');
 const travioGhanaController = require('./controller');
-const payLaterPaymentController = require('../../../controllers/payLaterPaymentController');
-const reviewController = require('../../../controllers/reviewController');
+const payLaterPaymentController = require('../../core/domain/payLaterPaymentController');
+const reviewController = require('../../core/domain/reviewController');
 const { uploadReviewPhotos } = require('../../../middleware/uploadMiddleware');
 const travioGhanaHomepageController = require('./homepageController');
 const validate = require('../../../middleware/validate');
@@ -33,7 +33,7 @@ const {
   analyticsOverviewSchema,
   analyticsRevenueTrendSchema,
   analyticsFunnelSchema,
-} = require('../../../utils/travioGhanaValidation');
+} = require('../../core/services/travioGhanaValidation');
 
 const router = express.Router();
 

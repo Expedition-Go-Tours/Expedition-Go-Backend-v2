@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   user: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
   booking: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn(), count: jest.fn() },
   tour: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), update: jest.fn() },
@@ -12,7 +12,7 @@ jest.mock('../../utils/prismaClient', () => ({
   $disconnect: jest.fn(),
 }));
 
-jest.mock('../../utils/queue', () => ({
+jest.mock('../../src/core/services/queue', () => ({
   enqueueEmail: jest.fn(() => Promise.resolve()),
   enqueueEvent: jest.fn(() => Promise.resolve()),
   enqueueNotification: jest.fn(() => Promise.resolve()),
@@ -20,11 +20,11 @@ jest.mock('../../utils/queue', () => ({
   enqueueAiScoring: jest.fn(() => Promise.resolve()),
 }));
 
-jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
+jest.mock('../../src/core/services/eventEmitter', () => ({ emit: jest.fn() }));
 
-jest.mock('../../utils/emailService', () => ({}));
+jest.mock('../../src/core/services/emailService', () => ({}));
 
-jest.mock('../../utils/getConfig', () => jest.fn().mockResolvedValue('0'));
+jest.mock('../../src/core/services/getConfig', () => jest.fn().mockResolvedValue('0'));
 
 jest.mock('stripe', () => {
   return jest.fn().mockImplementation(() => ({
@@ -39,13 +39,13 @@ beforeAll(() => {
   process.env.STRIPE_SECRET_KEY = 'sk_test_load';
 });
 
-const prisma = require('../../utils/prismaClient');
+const prisma = require('../../src/core/services/prismaClient');
 const { LoadTest, runLoadTestScenarios } = require('./loadTest');
 const {
   calculateCommission,
   processStripeWebhook,
   verifyWebhookSignature,
-} = require('../../utils/stripeHelpers');
+} = require('../../src/core/services/stripeHelpers');
 
 const mockBooking = {
   id: 'booking-load-1',

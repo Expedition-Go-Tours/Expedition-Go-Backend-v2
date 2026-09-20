@@ -1,24 +1,24 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   user: { findUnique: jest.fn() },
   review: { findFirst: jest.fn() },
   conversationParticipant: { findFirst: jest.fn(), findUnique: jest.fn() },
 }));
 
-jest.mock('../../utils/auditLogger', () => ({
+jest.mock('../../src/core/services/auditLogger', () => ({
   logActivity: jest.fn().mockResolvedValue(),
 }));
 
-jest.mock('../../utils/chatService', () => ({
+jest.mock('../../src/core/services/chatService', () => ({
   getSharedAdminId: jest.fn().mockResolvedValue('shared-admin'),
   resolveChatUserId: jest.fn(),
   sendMessage: jest.fn(),
   markAsRead: jest.fn(),
 }));
 
-jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
+jest.mock('../../src/core/services/eventEmitter', () => ({ emit: jest.fn() }));
 
-const prisma = require('../../utils/prismaClient');
-const { logActivity } = require('../../utils/auditLogger');
+const prisma = require('../../src/core/services/prismaClient');
+const { logActivity } = require('../../src/core/services/auditLogger');
 
 function createMockSocket(overrides = {}) {
   return {

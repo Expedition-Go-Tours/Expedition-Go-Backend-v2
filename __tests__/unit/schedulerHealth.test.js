@@ -28,7 +28,7 @@ jest.mock('ioredis', () => jest.fn(() => ({
 
 if (!global.__fakeExecStore) global.__fakeExecStore = {};
 
-jest.mock('../../utils/redisClient', () => {
+jest.mock('../../src/core/services/redisClient', () => {
   const mockConn = {
     status: 'ready',
     get: jest.fn(async (key) => {
@@ -52,14 +52,14 @@ jest.mock('../../utils/redisClient', () => {
   };
 });
 
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   booking: { findUnique: jest.fn() },
   cartItem: { findMany: jest.fn(), deleteMany: jest.fn() },
 }));
 
 process.env.REDIS_URL = 'redis://localhost:6379';
 
-const queueModule = require('../../utils/queue');
+const queueModule = require('../../src/core/services/queue');
 const fakeStore = global.__fakeExecStore;
 
 describe('scheduler execution health — cluster-safe (Redis-backed)', () => {

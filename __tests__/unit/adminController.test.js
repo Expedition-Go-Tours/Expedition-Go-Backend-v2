@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   booking: { aggregate: jest.fn(), count: jest.fn(), groupBy: jest.fn(), findMany: jest.fn() },
   user: { count: jest.fn(), findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
   adminRole: { findUnique: jest.fn() },
@@ -9,21 +9,21 @@ jest.mock('../../utils/prismaClient', () => ({
   $queryRaw: jest.fn(),
 }));
 
-jest.mock('../../utils/imageOptimizer', () => ({
+jest.mock('../../src/core/services/imageOptimizer', () => ({
   cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`),
 }));
-jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()), invalidateTourCaches: jest.fn(() => Promise.resolve()), invalidateKey: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/queue', () => ({ enqueueNotification: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn(() => Promise.resolve()), emitToRoom: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()), invalidateTourCaches: jest.fn(() => Promise.resolve()), invalidateKey: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/queue', () => ({ enqueueNotification: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/adminNotificationService', () => ({ notifyAdmin: jest.fn(() => Promise.resolve()), emitToRoom: jest.fn(() => Promise.resolve()) }));
 
-const prisma = require('../../utils/prismaClient');
-const { cloudinaryUrl } = require('../../utils/imageOptimizer');
-const { enqueueNotification } = require('../../utils/queue');
-const adminNotifService = require('../../utils/adminNotificationService');
-const { logActivity } = require('../../utils/auditLogger');
-const cache = require('../../utils/cacheHelper');
-const controller = require('../../controllers/adminController');
+const prisma = require('../../src/core/services/prismaClient');
+const { cloudinaryUrl } = require('../../src/core/services/imageOptimizer');
+const { enqueueNotification } = require('../../src/core/services/queue');
+const adminNotifService = require('../../src/core/services/adminNotificationService');
+const { logActivity } = require('../../src/core/services/auditLogger');
+const cache = require('../../src/core/services/cacheHelper');
+const controller = require('../../src/core/domain/adminController');
 
 describe('adminController', () => {
   let req, res, next;

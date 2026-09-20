@@ -13,7 +13,7 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { requirePermission, requireSuperAdmin } = require('../middleware/permissionMiddleware');
-const adminUserController = require('../controllers/adminUserController');
+const adminUserController = require('../src/core/domain/adminUserController');
 
 const router = express.Router();
 

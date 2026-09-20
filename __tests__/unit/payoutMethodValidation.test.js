@@ -7,7 +7,7 @@ const {
   routingNumberIsValid,
   sortCodeIsValid,
   BIC_REGEX,
-} = require('../../utils/payoutMethodValidation');
+} = require('../../src/core/services/payoutMethodValidation');
 
 describe('payoutMethodValidation helpers', () => {
   it.each([

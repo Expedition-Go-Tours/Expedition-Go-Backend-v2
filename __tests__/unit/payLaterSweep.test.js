@@ -1,8 +1,8 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   booking: { findMany: jest.fn(), updateMany: jest.fn(), update: jest.fn().mockResolvedValue({}) },
 }));
 
-jest.mock('../../utils/stripeHelpers', () => {
+jest.mock('../../src/core/services/stripeHelpers', () => {
   let stripeInstance = null;
   return {
     getStripe: jest.fn(() => {
@@ -20,28 +20,28 @@ jest.mock('../../utils/stripeHelpers', () => {
   };
 });
 
-jest.mock('../../utils/queue', () => ({
+jest.mock('../../src/core/services/queue', () => ({
   enqueueNotification: jest.fn(() => Promise.resolve()),
   enqueueEvent: jest.fn(() => Promise.resolve()),
   enqueueEmail: jest.fn(() => Promise.resolve()),
 }));
 
-jest.mock('../../utils/adminNotificationService', () => ({
+jest.mock('../../src/core/services/adminNotificationService', () => ({
   notifyAdmin: jest.fn(() => Promise.resolve()),
 }));
 
-jest.mock('../../utils/discordNotifier', () => ({
+jest.mock('../../src/core/services/discordNotifier', () => ({
   notifyDiscord: jest.fn(() => Promise.resolve()),
 }));
 
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
 
-const prisma = require('../../utils/prismaClient');
-const { getStripe, handlePaymentSucceeded } = require('../../utils/stripeHelpers');
-const { enqueueNotification, enqueueEmail } = require('../../utils/queue');
-const { notifyAdmin } = require('../../utils/adminNotificationService');
-const { notifyDiscord } = require('../../utils/discordNotifier');
-const { chargePayLaterBookings } = require('../../utils/payLaterSweep');
+const prisma = require('../../src/core/services/prismaClient');
+const { getStripe, handlePaymentSucceeded } = require('../../src/core/services/stripeHelpers');
+const { enqueueNotification, enqueueEmail } = require('../../src/core/services/queue');
+const { notifyAdmin } = require('../../src/core/services/adminNotificationService');
+const { notifyDiscord } = require('../../src/core/services/discordNotifier');
+const { chargePayLaterBookings } = require('../../src/core/services/payLaterSweep');
 
 const dueBooking = (overrides = {}) => ({
   id: 'b-later-1',

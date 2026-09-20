@@ -1,4 +1,4 @@
-const { resolveBrand, hostnameOf } = require('../../utils/brandResolver');
+const { resolveBrand, hostnameOf } = require('../../src/core/services/brandResolver');
 
 describe('brandResolver', () => {
   describe('hostnameOf', () => {

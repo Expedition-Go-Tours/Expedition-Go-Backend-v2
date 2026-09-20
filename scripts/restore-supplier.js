@@ -1,7 +1,7 @@
 // Run: node scripts/restore-supplier.js
 // Restores Gideon Wilson's full profile to local DB
 
-const prisma = require('../utils/prismaClient');
+const prisma = require('../src/core/services/prismaClient');
 
 const CLOUD = process.env.CLOUDINARY_CLOUD_NAME || 'dfpagrtoy';
 const DEFAULT_LOGO = `https://res.cloudinary.com/${CLOUD}/image/upload/v1780670572/user-photos/vdrxzjwlzxhqs091mg5a.png`;

@@ -3,23 +3,23 @@
  * VALID NotificationType and emails both the customer and supplier — the two
  * channels operators rely on when a confirmed booking changes.
  */
-jest.mock('../../utils/queue', () => ({
+jest.mock('../../src/core/services/queue', () => ({
   enqueueEmail: jest.fn(() => Promise.resolve()),
   enqueueNotification: jest.fn(() => Promise.resolve()),
 }));
 
-jest.mock('../../utils/adminNotificationService', () => ({
+jest.mock('../../src/core/services/adminNotificationService', () => ({
   notifyAdmin: jest.fn(() => Promise.resolve({ success: true })),
 }));
 
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   booking: { findUnique: jest.fn() },
 }));
 
-const { notifyModificationApplied, buildChangeLabels } = require('../../utils/bookingModify');
-const { enqueueEmail, enqueueNotification } = require('../../utils/queue');
-const { notifyAdmin } = require('../../utils/adminNotificationService');
-const prisma = require('../../utils/prismaClient');
+const { notifyModificationApplied, buildChangeLabels } = require('../../src/core/services/bookingModify');
+const { enqueueEmail, enqueueNotification } = require('../../src/core/services/queue');
+const { notifyAdmin } = require('../../src/core/services/adminNotificationService');
+const prisma = require('../../src/core/services/prismaClient');
 
 describe('bookingModify supplier notification on apply', () => {
   beforeEach(() => {

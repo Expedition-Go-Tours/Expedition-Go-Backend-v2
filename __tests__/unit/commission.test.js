@@ -1,4 +1,4 @@
-const { normalizeCommissionRate, DEFAULT_COMMISSION_RATE } = require('../../utils/commission');
+const { normalizeCommissionRate, DEFAULT_COMMISSION_RATE } = require('../../src/core/services/commission');
 
 describe('normalizeCommissionRate', () => {
   it('returns a decimal-fraction input unchanged', () => {

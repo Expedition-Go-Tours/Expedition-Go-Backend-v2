@@ -14,7 +14,7 @@
  * the client) and BEFORE starting the server:
  *   node scripts/backfill-wishlist.js
  */
-const prisma = require('../utils/prismaClient');
+const prisma = require('../src/core/services/prismaClient');
 
 async function backfill() {
   const users = await prisma.user.findMany({

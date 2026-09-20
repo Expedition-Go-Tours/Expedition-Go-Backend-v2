@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   adminPermission: { findMany: jest.fn() },
   adminRole: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   adminRolePermission: { deleteMany: jest.fn(), createMany: jest.fn() },
@@ -6,8 +6,8 @@ jest.mock('../../utils/prismaClient', () => ({
   $transaction: jest.fn(),
 }));
 
-const prisma = require('../../utils/prismaClient');
-const controller = require('../../controllers/adminRoleController');
+const prisma = require('../../src/core/services/prismaClient');
+const controller = require('../../src/core/domain/adminRoleController');
 
 describe('adminRoleController', () => {
   let req, res, next;

@@ -1,0 +1,1348 @@
+/**
+ * Review Controller - Production Ready
+ * Handles tour reviews, ratings, and supplier responses
+ * 
+ * Features:
+ * - Customer reviews with photos
+ * - Supplier responses to reviews
+ * - Review moderation system
+ * - Rating calculations and analytics
+ * - Real-time notifications
+ * 
+ * @author Tour Platform Team
+ * @version 1.0.0
+ */
+
+const prisma = require('../services/prismaClient');
+const catchAsync = require('../services/catchAsync');
+const AppError = require('../services/appError');
+const { enqueueNotification } = require('../services/queue');
+const { notifyAdmin } = require('../services/adminNotificationService');
+const { logActivity } = require('../services/auditLogger');
+const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../services/cloudinaryHelper');
+const { addApprovedRating, removeApprovedRating, recalculateSupplierRating } = require('../services/ratingHelper');
+const cache = require('../services/cacheHelper');
+const crypto = require('crypto');
+const { enqueueEvent } = require('../services/queue');
+const logger = require('../services/logger');
+
+// ================================
+// CUSTOMER REVIEW ENDPOINTS
+// ================================
+
+/**
+ * Create review for completed booking
+ */
+exports.createReview = catchAsync(async (req, res, next) => {
+  const customerId = req.user.id;
+  const {
+    bookingId,
+    tourId: bodyTourId,
+    rating,
+    title,
+    comment,
+    valueForMoneyRating,
+    guideRating,
+    meetingRating,
+    travelMonth,
+    companions = []
+  } = req.body;
+
+  const photos = (req.files || []).map((f) => f.path || f.secure_url || f.url).filter(isValidCloudinaryUrl);
+
+  const parsedRating = parseInt(rating);
+  if (!parsedRating || parsedRating < 1 || parsedRating > 5) {
+    return next(new AppError('Rating must be between 1 and 5', 400));
+  }
+
+  if (comment && comment.trim().length < 20) {
+    return next(new AppError('Review comment must be at least 20 characters', 400));
+  }
+
+  let tourId;
+  let supplierId;
+  let tourTitle;
+  let verified = false;
+
+  if (bookingId) {
+    const booking = await prisma.booking.findFirst({
+      where: {
+        id: bookingId,
+        customerId,
+        status: 'COMPLETED',
+        paymentStatus: 'SUCCEEDED',
+        travelDate: { lte: new Date() }
+      },
+      include: {
+        tour: { include: { supplier: true } },
+        review: true
+      }
+    });
+
+    if (!booking) {
+      return next(new AppError('Booking not found or not eligible for review', 404));
+    }
+    if (booking.review) {
+      return next(new AppError('Review already exists for this booking', 400));
+    }
+
+    tourId = booking.tourId;
+    supplierId = booking.tour.supplierId;
+    tourTitle = booking.tour.title;
+    verified = true;
+  } else {
+    if (!bodyTourId) {
+      return next(new AppError('Either bookingId or tourId is required', 400));
+    }
+    const tour = await prisma.tour.findUnique({
+      where: { id: bodyTourId },
+      include: { supplier: { select: { id: true } } }
+    });
+    if (!tour) {
+      return next(new AppError('Tour not found', 404));
+    }
+    tourId = bodyTourId;
+    supplierId = tour.supplier.id;
+    tourTitle = tour.title;
+  }
+
+  const parsedCompanions = Array.isArray(companions)
+    ? companions
+    : typeof companions === 'string'
+      ? companions.split(',').map((c) => c.trim()).filter(Boolean)
+      : [];
+
+  const result = await prisma.$transaction(async (tx) => {
+    const review = await tx.review.create({
+      data: {
+        bookingId: bookingId || null,
+        customerId,
+        tourId,
+        rating: parsedRating,
+        title,
+        comment,
+        photos,
+        valueForMoneyRating: valueForMoneyRating ? parseInt(valueForMoneyRating) : null,
+        guideRating: guideRating ? parseInt(guideRating) : null,
+        meetingRating: meetingRating ? parseInt(meetingRating) : null,
+        travelMonth: travelMonth || null,
+        companions: parsedCompanions,
+        status: 'APPROVED',
+        verified
+      },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            photoURL: true
+          }
+        },
+        tour: {
+          select: {
+            id: true,
+            title: true
+          }
+        }
+      }
+    });
+
+    await addApprovedRating(tx, tourId, parsedRating);
+    await recalculateSupplierRating(tx, supplierId);
+
+    return review;
+  });
+
+  enqueueNotification({
+    userId: supplierId,
+    type: 'REVIEW_RECEIVED',
+    title: 'New Review Received',
+    message: `You received a ${parsedRating}-star review for "${tourTitle}"`,
+    data: {
+      reviewId: result.id,
+      tourId,
+      rating: parsedRating
+    },
+    sendEmail: true
+  }).catch((err) => console.error('[Notification] enqueueNotification (review) failed:', err.message));
+
+  await logActivity({
+    userId: customerId,
+    action: 'review.created',
+    resource: 'Review',
+    resourceId: result.id,
+    metadata: { tourId, rating: parsedRating, bookingId: bookingId || null }
+  });
+
+  enqueueEvent({
+    name: 'review.submitted',
+    userId: customerId,
+    req,
+    resource: 'Review',
+    resourceId: result.id,
+    properties: { tourId, rating: parsedRating, bookingId: bookingId || null, supplierId },
+  });
+
+  if (photos.length > 0) {
+    prisma.media.updateMany({
+      where: { url: { in: photos } },
+      data: { status: 'ATTACHED', entity: 'review', entityId: result.id },
+    }).catch(() => {});
+  }
+
+  res.status(201).json({
+    status: 'success',
+    data: { review: result }
+  });
+});
+
+/**
+ * Update customer's own review
+ */
+exports.updateReview = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const customerId = req.user.id;
+  const {
+    rating,
+    title,
+    comment,
+    valueForMoneyRating,
+    guideRating,
+    meetingRating,
+    travelMonth,
+    companions
+  } = req.body;
+
+  const newPhotoUploads = (req.files || []).length > 0
+    ? (req.files || []).map((f) => f.path || f.secure_url || f.url).filter(isValidCloudinaryUrl)
+    : undefined;
+
+  const existingReview = await prisma.review.findFirst({
+    where: { id, customerId },
+    include: { tour: { select: { supplierId: true } } }
+  });
+
+  if (!existingReview) {
+    return next(new AppError('Review not found or access denied', 404));
+  }
+
+  // Merged photo set = previously stored photos + any freshly uploaded ones.
+  // The customer edit UI only ever submits *new* files, so a plain replace
+  // would silently wipe existing photos (and delete them from Cloudinary).
+  const photos = newPhotoUploads
+    ? [...(Array.isArray(existingReview.photos) ? existingReview.photos : []), ...newPhotoUploads]
+    : undefined;
+
+  const parsedUpdateRating = rating !== undefined ? parseInt(rating) : undefined;
+  if (parsedUpdateRating !== undefined && (parsedUpdateRating < 1 || parsedUpdateRating > 5)) {
+    return next(new AppError('Rating must be between 1 and 5', 400));
+  }
+
+  if (comment !== undefined && comment !== null && comment.trim().length < 20) {
+    return next(new AppError('Review comment must be at least 20 characters', 400));
+  }
+
+  const updateData = {};
+  if (parsedUpdateRating !== undefined) updateData.rating = parsedUpdateRating;
+  if (title !== undefined) updateData.title = title;
+  if (comment !== undefined) updateData.comment = comment;
+  if (photos !== undefined) updateData.photos = photos;
+  if (valueForMoneyRating !== undefined) updateData.valueForMoneyRating = valueForMoneyRating ? parseInt(valueForMoneyRating) : null;
+  if (guideRating !== undefined) updateData.guideRating = guideRating ? parseInt(guideRating) : null;
+  if (meetingRating !== undefined) updateData.meetingRating = meetingRating ? parseInt(meetingRating) : null;
+  if (travelMonth !== undefined) updateData.travelMonth = travelMonth || null;
+  if (companions !== undefined) {
+    updateData.companions = Array.isArray(companions)
+      ? companions
+      : typeof companions === 'string'
+        ? companions.split(',').map((c) => c.trim()).filter(Boolean)
+        : [];
+  }
+
+  const ratingChanged = parsedUpdateRating !== undefined && parsedUpdateRating !== existingReview.rating;
+
+  if (ratingChanged && existingReview.status === 'APPROVED') {
+    updateData.status = 'PENDING';
+  }
+
+  const review = await prisma.$transaction(async (tx) => {
+    const updated = await tx.review.update({
+      where: { id },
+      data: updateData,
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            photoURL: true
+          }
+        },
+        tour: {
+          select: {
+            id: true,
+            title: true
+          }
+        }
+      }
+    });
+
+    if (existingReview.status === 'APPROVED' && ratingChanged) {
+      await removeApprovedRating(tx, existingReview.tourId, existingReview.rating);
+      await recalculateSupplierRating(tx, existingReview.tour.supplierId);
+    }
+
+    return updated;
+  });
+
+  if (existingReview.status === 'APPROVED' && ratingChanged) {
+    cache.invalidateReviewCaches(existingReview.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+    cache.invalidateTourCaches(existingReview.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+  }
+
+  await logActivity({
+    userId: customerId,
+    action: 'review.updated',
+    resource: 'Review',
+    resourceId: review.id,
+    oldValues: existingReview,
+    newValues: review
+  });
+
+  if (photos?.length > 0) {
+    prisma.media.updateMany({
+      where: { url: { in: photos } },
+      data: { status: 'ATTACHED', entity: 'review', entityId: review.id },
+    }).catch(() => {});
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: { review }
+  });
+});
+
+/**
+ * Delete customer's own review
+ */
+exports.deleteReview = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const customerId = req.user.id;
+
+  const review = await prisma.review.findFirst({
+    where: { id, customerId },
+    include: { tour: { select: { supplierId: true } } }
+  });
+
+  if (!review) {
+    return next(new AppError('Review not found or access denied', 404));
+  }
+
+  if (review.photos && review.photos.length > 0) {
+    for (const photoUrl of review.photos) {
+      await deleteCloudinaryImage(photoUrl, 3, { reviewId: id });
+    }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.review.delete({ where: { id } });
+
+    if (review.status === 'APPROVED') {
+      await removeApprovedRating(tx, review.tourId, review.rating);
+      await recalculateSupplierRating(tx, review.tour.supplierId);
+    }
+  });
+
+  cache.invalidateReviewCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+  cache.invalidateTourCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+
+  await logActivity({
+    userId: customerId,
+    action: 'review.deleted',
+    resource: 'Review',
+    resourceId: review.id,
+    metadata: {
+      tourId: review.tourId,
+      rating: review.rating
+    }
+  });
+
+  res.status(204).json({
+    status: 'success',
+    data: null
+  });
+});
+
+// ================================
+// PUBLIC REVIEW ENDPOINTS
+// ================================
+
+/**
+ * Get reviews for a tour
+ */
+exports.getTourReviews = catchAsync(async (req, res, next) => {
+  const { tourId } = req.params;
+  const {
+    page = 1,
+    limit = 10,
+    rating,
+    sortBy = 'createdAt',
+    sortOrder = 'desc'
+  } = req.query;
+
+  // Whitelist sortable Review columns — never interpolate a client-supplied
+  // value into orderBy (that previously produced `Unknown argument 'newest'` /
+  // invalid Prisma order keys when clients sent sort=newest).
+  const ALLOWED_REVIEW_SORTS = ['createdAt', 'rating', 'helpfulCount'];
+  const orderField = ALLOWED_REVIEW_SORTS.includes(sortBy) ? sortBy : 'createdAt';
+  const orderDir = sortOrder === 'asc' ? 'asc' : 'desc';
+
+  const cacheKey = 'reviews:tour:' + tourId + ':' + crypto.createHash('md5').update(JSON.stringify(req.query)).digest('hex');
+
+  const result = await cache.getOrSet(cacheKey, async () => {
+    const where = {
+      tourId,
+      status: 'APPROVED'
+    };
+
+    if (rating) {
+      where.rating = parseInt(rating);
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const [reviews, totalCount, ratingDistribution] = await Promise.all([
+      prisma.review.findMany({
+        where,
+        include: {
+          customer: {
+            select: {
+              id: true,
+              name: true,
+              photoURL: true
+            }
+          }
+        },
+        orderBy: {
+          [orderField]: orderDir
+        },
+        skip,
+        take: parseInt(limit)
+      }),
+      prisma.review.count({ where }),
+      prisma.review.groupBy({
+        by: ['rating'],
+        where: {
+          tourId,
+          status: 'APPROVED'
+        },
+        _count: true,
+        orderBy: {
+          rating: 'desc'
+        }
+      })
+    ]);
+
+    const totalPages = Math.ceil(totalCount / parseInt(limit));
+
+    const optimizedReviews = reviews.map((review) => ({
+      ...review,
+      photos: Array.isArray(review.photos)
+        ? review.photos
+        : review.photos,
+      customer: {
+        ...review.customer,
+        photoURL: review.customer.photoURL
+          ? review.customer.photoURL
+          : review.customer.photoURL,
+      },
+    }));
+
+    return {
+      status: 'success',
+      data: {
+        reviews: optimizedReviews,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages,
+          totalCount,
+          limit: parseInt(limit)
+        },
+        ratingDistribution
+      }
+    };
+  }, 300);
+
+  res.status(200).json(result);
+});
+
+/**
+ * Get single review details
+ */
+exports.getReview = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+
+  const review = await prisma.review.findFirst({
+    where: {
+      id,
+      status: 'APPROVED'
+    },
+    include: {
+      customer: {
+        select: {
+          id: true,
+          name: true,
+          photoURL: true
+        }
+      },
+      tour: {
+        select: {
+          id: true,
+          title: true,
+              supplier: {
+                select: {
+                  name: true,
+                  photoURL: true
+                }
+              }
+        }
+      }
+    }
+  });
+
+  if (!review) {
+    return next(new AppError('Review not found', 404));
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: { review }
+  });
+});
+
+// ================================
+// SUPPLIER RESPONSE ENDPOINTS
+// ================================
+
+/**
+ * Add supplier response to review
+ */
+exports.addSupplierResponse = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { response } = req.body;
+  const supplierId = req.supplierId;
+
+  if (!response || response.trim().length === 0) {
+    return next(new AppError('Response cannot be empty', 400));
+  }
+
+  // Verify review exists and belongs to supplier's tour
+  const review = await prisma.review.findFirst({
+    where: {
+      id,
+      tour: {
+        supplierId
+      },
+      status: 'APPROVED'
+    },
+    include: {
+      customer: true,
+      tour: true
+    }
+  });
+
+  if (!review) {
+    return next(new AppError('Review not found or access denied', 404));
+  }
+
+  if (review.supplierResponse) {
+    return next(new AppError('Response already exists for this review', 400));
+  }
+
+  const updatedReview = await prisma.review.update({
+    where: { id },
+    data: {
+      supplierResponse: response,
+      supplierResponseAt: new Date()
+    },
+    include: {
+      customer: {
+        select: {
+          id: true,
+          name: true,
+          photoURL: true
+        }
+      },
+      tour: {
+        select: {
+          id: true,
+          title: true
+        }
+      }
+    }
+  });
+
+  // Send notification to customer through the queue
+  enqueueNotification({
+    userId: review.customerId,
+    type: 'REVIEW_RECEIVED',
+    title: 'Supplier Responded to Your Review',
+    message: `The supplier responded to your review for "${review.tour.title}"`,
+    data: {
+      reviewId: review.id,
+      tourId: review.tourId
+    }
+  }).catch((err) => console.error('[Notification] enqueueNotification (review response) failed:', err.message));
+
+  // Email the customer the response (only when the review is tied to a booking
+  // so we can resolve the correct storefront origin + tour deep link).
+  if (review.bookingId) {
+    const { enqueueEmail } = require('../services/queue');
+    enqueueEmail({ type: 'supplier-review-response', bookingId: review.bookingId })
+      .catch((err) => console.error('[Email] supplier-review-response failed:', err.message));
+  }
+
+  // Log activity
+  await logActivity({
+    userId: supplierId,
+    action: 'review.response_added',
+    resource: 'Review',
+    resourceId: review.id,
+    metadata: {
+      tourId: review.tourId,
+      customerId: review.customerId
+    }
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { review: updatedReview }
+  });
+});
+
+/**
+ * Update supplier response
+ */
+exports.updateSupplierResponse = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { response } = req.body;
+  const supplierId = req.supplierId;
+
+  if (!response || response.trim().length === 0) {
+    return next(new AppError('Response cannot be empty', 400));
+  }
+
+  // Verify review exists and belongs to supplier's tour
+  const review = await prisma.review.findFirst({
+    where: {
+      id,
+      tour: {
+        supplierId
+      },
+      status: 'APPROVED'
+    }
+  });
+
+  if (!review) {
+    return next(new AppError('Review not found or access denied', 404));
+  }
+
+  if (!review.supplierResponse) {
+    return next(new AppError('No existing response to update', 404));
+  }
+
+  const updatedReview = await prisma.review.update({
+    where: { id },
+    data: {
+      supplierResponse: response,
+      supplierResponseAt: new Date()
+    },
+    include: {
+      customer: {
+        select: {
+          id: true,
+          name: true,
+          photoURL: true
+        }
+      },
+      tour: {
+        select: {
+          id: true,
+          title: true
+        }
+      }
+    }
+  });
+
+  // Log activity
+  await logActivity({
+    userId: supplierId,
+    action: 'review.response_updated',
+    resource: 'Review',
+    resourceId: review.id,
+    oldValues: { supplierResponse: review.supplierResponse },
+    newValues: { supplierResponse: response }
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { review: updatedReview }
+  });
+});
+
+/**
+ * Delete supplier response
+ */
+exports.deleteSupplierResponse = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const supplierId = req.supplierId;
+
+  // Verify review exists and belongs to supplier's tour
+  const review = await prisma.review.findFirst({
+    where: {
+      id,
+      tour: {
+        supplierId
+      }
+    }
+  });
+
+  if (!review) {
+    return next(new AppError('Review not found or access denied', 404));
+  }
+
+  if (!review.supplierResponse) {
+    return next(new AppError('No response to delete', 404));
+  }
+
+  const updatedReview = await prisma.review.update({
+    where: { id },
+    data: {
+      supplierResponse: null,
+      supplierResponseAt: null
+    }
+  });
+
+  // Log activity
+  await logActivity({
+    userId: supplierId,
+    action: 'review.response_deleted',
+    resource: 'Review',
+    resourceId: review.id
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { review: updatedReview }
+  });
+});
+
+// ================================
+// SUPPLIER REVIEW MANAGEMENT
+// ================================
+
+/**
+ * Get reviews for supplier's tours
+ */
+// ================================
+// SUPPLIER REVIEW FLAGGING
+// ================================
+
+const FLAG_REASONS = [
+  'Inappropriate content (abusive, hateful, or sexual)',
+  'Not appropriate or family-friendly',
+  'Spam or self-promotion',
+  'Off-topic / not about this tour',
+  'Reviewer did not take this tour / did not experience this business',
+  'Posted to the wrong business',
+  'Describes an experience from more than a year ago',
+  'Written by a competitor or their employee',
+  'Privacy violation',
+  'Contains false or misleading information',
+  'Duplicate review',
+  'Conflict of interest (incentivized or unverified)',
+];
+
+/**
+ * POST /reviews/:id/flag
+ * A supplier flags a review on one of their tours for admin review. The review
+ * is hidden from the public immediately (removed from the rating average) until
+ * an admin approves or deletes it.
+ */
+exports.flagReview = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  const { id } = req.params;
+  const { reason, comment } = req.body;
+
+  if (!reason || !FLAG_REASONS.includes(reason)) {
+    return next(new AppError('A valid flag reason is required', 400));
+  }
+  if (comment && String(comment).length > 2000) {
+    return next(new AppError('Flag comment must be 2000 characters or fewer', 400));
+  }
+
+  const review = await prisma.review.findUnique({
+    where: { id },
+    include: { tour: { select: { supplierId: true } } },
+  });
+
+  if (!review) {
+    return next(new AppError('Review not found', 404));
+  }
+  if (review.tour.supplierId !== supplierId) {
+    return next(new AppError('You can only flag reviews on your own tours', 403));
+  }
+  if (review.status === 'FLAGGED') {
+    return next(new AppError('This review has already been flagged', 409));
+  }
+  if (review.status === 'REJECTED') {
+    return next(new AppError('This review is no longer visible', 400));
+  }
+
+  const [updatedReview] = await prisma.$transaction(async (tx) => {
+    const updated = await tx.review.update({
+      where: { id },
+      data: {
+        status: 'FLAGGED',
+        flagReason: reason,
+        flagComment: comment ? String(comment).trim() : null,
+        flaggedBy: supplierId,
+        flaggedAt: new Date(),
+        reportCount: { increment: 1 },
+      },
+    });
+
+    // If it was counting toward the rating average, remove it until the admin
+    // decides — a disputed review must not influence ratings while pending.
+    if (review.status === 'APPROVED') {
+      await removeApprovedRating(tx, review.tourId, review.rating);
+      await recalculateSupplierRating(tx, supplierId);
+    }
+
+    return [updated];
+  });
+
+  cache.invalidateReviewCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+  cache.invalidateTourCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+
+  await notifyAdmin({
+    type: 'REVIEW_NEEDS_MODERATION',
+    title: 'Review flagged by supplier',
+    message: `Supplier flagged review #${review.id.slice(0, 8)} — ${reason}`,
+    data: {
+      reviewId: review.id,
+      reason,
+      comment: comment || null,
+      supplierId,
+      tourId: review.tourId,
+      customerId: review.customerId,
+    },
+  });
+
+  await logActivity({
+    userId: supplierId,
+    action: 'review.flag',
+    resource: 'Review',
+    resourceId: review.id,
+    metadata: { reason, comment: comment || null, tourId: review.tourId },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Review flagged for our team to review',
+    data: { review: updatedReview },
+  });
+});
+
+exports.getSupplierReviews = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  const {
+    tourId,
+    status,
+    page = 1,
+    limit = 10,
+    rating,
+    reviewId
+  } = req.query;
+
+  const where = {
+    tour: {
+      supplierId
+    }
+  };
+
+  // Optional deep-link resolution: return the exact review (if it belongs to
+  // one of this supplier's tours) so email CTAs always land, even for reviews
+  // older than the default first page.
+  if (reviewId) where.id = reviewId;
+
+  if (status) {
+    where.status = status;
+  } else {
+    // No status filter → show the supplier every review on their tours
+    // (approved, pending, flagged) except rejected ones, so they can reply
+    // to and flag their reviews without managing moderation states.
+    where.status = { not: 'REJECTED' };
+  }
+  if (tourId) where.tourId = tourId;
+  if (rating) where.rating = parseInt(rating);
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+
+  const [reviews, totalCount] = await Promise.all([
+    prisma.review.findMany({
+      where,
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            photoURL: true
+          }
+        },
+        tour: {
+          select: {
+            id: true,
+            title: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: parseInt(limit)
+    }),
+    prisma.review.count({ where })
+  ]);
+
+  const totalPages = Math.ceil(totalCount / parseInt(limit));
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      reviews,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages,
+        totalCount,
+        limit: parseInt(limit)
+      }
+    }
+  });
+});
+
+// ================================
+// ADMIN MODERATION ENDPOINTS
+// ================================
+
+/**
+ * Get reviews pending moderation (admin only)
+ */
+exports.getPendingReviews = catchAsync(async (req, res, next) => {
+  const { page = 1, limit = 20, status } = req.query;
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  const statusFilter = status && status !== 'ALL' ? status : undefined;
+
+  const [reviews, filteredCount, pendingCount, flaggedCount, moderatedTodayCount] = await Promise.all([
+    prisma.review.findMany({
+      where: { ...(statusFilter && { status: statusFilter }) },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            photoURL: true
+          }
+        },
+        tour: {
+          select: {
+            id: true,
+            title: true,
+            coverPhoto: true,
+            supplier: {
+              select: {
+                id: true,
+                name: true,
+                photoURL: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: parseInt(limit)
+    }),
+    prisma.review.count({ where: { ...(statusFilter && { status: statusFilter }) } }),
+    prisma.review.count({ where: { status: 'PENDING' } }),
+    prisma.review.count({ where: { status: 'FLAGGED' } }),
+    prisma.review.count({ where: { moderatedAt: { gte: todayStart } } }),
+  ]);
+
+  const totalPages = Math.ceil(filteredCount / parseInt(limit));
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      reviews,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages,
+        totalCount: filteredCount,
+        limit: parseInt(limit)
+      },
+      counts: {
+        pending: pendingCount,
+        flagged: flaggedCount,
+        moderatedToday: moderatedTodayCount,
+      }
+    }
+  });
+});
+
+/**
+ * Moderate review (admin only)
+ */
+exports.moderateReview = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { action, reason } = req.body;
+  const adminId = req.user.id;
+
+  if (!['approve', 'reject', 'flag'].includes(action)) {
+    return next(new AppError('Invalid moderation action', 400));
+  }
+
+  const review = await prisma.review.findUnique({
+    where: { id },
+    include: { tour: { select: { supplierId: true } } }
+  });
+
+  if (!review) {
+    return next(new AppError('Review not found', 404));
+  }
+
+  const statusMap = {
+    approve: 'APPROVED',
+    reject: 'REJECTED',
+    flag: 'FLAGGED'
+  };
+
+  const [updatedReview] = await prisma.$transaction(async (tx) => {
+    const updated = await tx.review.update({
+      where: { id },
+      data: {
+        status: statusMap[action],
+        moderatedBy: adminId,
+        moderatedAt: new Date(),
+        // Flag = record the reason. Approve/reject resolve the flag, so clear
+        // the supplier flag trail.
+        flagReason: action === 'flag' ? reason : null,
+        flagComment: action === 'flag' ? review.flagComment : null,
+        ...(action === 'flag' ? {} : { flaggedBy: null, flaggedAt: null }),
+      }
+    });
+
+    if (action === 'approve' && review.status !== 'APPROVED') {
+      await addApprovedRating(tx, review.tourId, review.rating);
+      await recalculateSupplierRating(tx, review.tour.supplierId);
+    } else if (action !== 'approve' && review.status === 'APPROVED') {
+      await removeApprovedRating(tx, review.tourId, review.rating);
+      await recalculateSupplierRating(tx, review.tour.supplierId);
+    }
+
+    return [updated];
+  });
+
+  cache.invalidateReviewCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+  cache.invalidateTourCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+
+  const notificationMessages = {
+    approve: 'Your review has been approved and is now visible',
+    reject: 'Your review was not approved',
+    flag: 'Your review has been flagged for review'
+  };
+
+  enqueueNotification({
+    userId: review.customerId,
+    type: 'REVIEW_RECEIVED',
+    title: 'Review Status Update',
+    message: notificationMessages[action],
+    data: {
+      reviewId: review.id,
+      action,
+      reason
+    }
+  }).catch((err) => console.error('[Notification] enqueueNotification (review moderation) failed:', err.message));
+
+  await notifyAdmin({
+    type: 'REVIEW_NEEDS_MODERATION',
+    title: `Review ${action === 'approve' ? 'Approved' : action === 'reject' ? 'Rejected' : 'Flagged'}`,
+    message: `Review #${review.id.slice(0, 8)} by customer ${review.customerId.slice(0, 8)} was ${action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'flagged'}${reason ? ` — ${reason}` : ''}`,
+    data: { reviewId: review.id, action, reason, customerId: review.customerId, tourId: review.tourId },
+  });
+
+  // Close the loop: tell the supplier who flagged it how the admin resolved it.
+  if (review.flaggedBy && action !== 'flag') {
+    enqueueNotification({
+      userId: review.flaggedBy,
+      type: 'REVIEW_RECEIVED',
+      title: 'Flag resolved',
+      message: action === 'approve'
+        ? 'Your flag was reviewed — this review was kept and is back on your tour page.'
+        : 'Your flag was reviewed — this review was removed from your tour page.',
+      data: { reviewId: review.id, action, reason },
+    }).catch((err) => console.error('[Notification] enqueueNotification (flag resolution) failed:', err.message));
+  }
+
+  await logActivity({
+    userId: adminId,
+    action: `review.${action}`,
+    resource: 'Review',
+    resourceId: review.id,
+    metadata: {
+      reason,
+      customerId: review.customerId,
+      tourId: review.tourId
+    }
+  });
+
+  enqueueEvent({
+    name: `review.${action}`,
+    userId: adminId,
+    req,
+    resource: 'Review',
+    resourceId: review.id,
+    properties: { reason, customerId: review.customerId, tourId: review.tourId, rating: review.rating },
+    source: 'web',
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { review: updatedReview }
+  });
+});
+
+// ================================
+// ADMIN REVIEW MANAGEMENT
+// ================================
+
+/**
+ * Admin: update any review content
+ */
+exports.adminUpdateReview = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const adminId = req.user.id;
+  const { rating, title, comment, photos } = req.body;
+
+  const review = await prisma.review.findUnique({
+    where: { id },
+    include: { tour: { select: { supplierId: true } } }
+  });
+
+  if (!review) {
+    return next(new AppError('Review not found', 404));
+  }
+
+  const parsedAdminRating = rating !== undefined ? parseInt(rating) : undefined;
+  if (parsedAdminRating !== undefined && (parsedAdminRating < 1 || parsedAdminRating > 5)) {
+    return next(new AppError('Rating must be between 1 and 5', 400));
+  }
+
+  const updateData = {};
+  if (parsedAdminRating !== undefined) updateData.rating = parsedAdminRating;
+  if (title !== undefined) updateData.title = title;
+  if (comment !== undefined) updateData.comment = comment;
+  if (photos !== undefined) updateData.photos = Array.isArray(photos) ? photos.filter(isValidCloudinaryUrl) : [];
+
+  const ratingChanged = parsedAdminRating !== undefined && parsedAdminRating !== review.rating;
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const result = await tx.review.update({
+      where: { id },
+      data: updateData,
+      include: {
+        customer: { select: { id: true, name: true, photoURL: true } },
+        tour: { select: { id: true, title: true } }
+      }
+    });
+
+    if (review.status === 'APPROVED' && ratingChanged) {
+      await removeApprovedRating(tx, review.tourId, review.rating);
+      await addApprovedRating(tx, review.tourId, parsedAdminRating);
+      await recalculateSupplierRating(tx, review.tour.supplierId);
+    }
+
+    return result;
+  });
+
+  if (review.status === 'APPROVED' && ratingChanged) {
+    cache.invalidateReviewCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+    cache.invalidateTourCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+  }
+
+  await logActivity({
+    userId: adminId,
+    action: 'review.admin_updated',
+    resource: 'Review',
+    resourceId: review.id,
+    oldValues: { rating: review.rating, title: review.title, comment: review.comment },
+    newValues: updateData,
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { review: updated }
+  });
+});
+
+/**
+ * Admin: delete any review
+ */
+exports.adminDeleteReview = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const adminId = req.user.id;
+
+  const review = await prisma.review.findUnique({
+    where: { id },
+    include: { tour: { select: { supplierId: true } } }
+  });
+
+  if (!review) {
+    return next(new AppError('Review not found', 404));
+  }
+
+  if (review.photos && review.photos.length > 0) {
+    for (const photoUrl of review.photos) {
+      await deleteCloudinaryImage(photoUrl, 3, { reviewId: id });
+    }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.review.delete({ where: { id } });
+
+    if (review.status === 'APPROVED') {
+      await removeApprovedRating(tx, review.tourId, review.rating);
+      await recalculateSupplierRating(tx, review.tour.supplierId);
+    }
+  });
+
+  cache.invalidateReviewCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+  cache.invalidateTourCaches(review.tourId).catch((err) => logger.warn('[cache] invalidation failed:', err?.message));
+
+  await logActivity({
+    userId: adminId,
+    action: 'review.admin_deleted',
+    resource: 'Review',
+    resourceId: review.id,
+    metadata: {
+      tourId: review.tourId,
+      rating: review.rating,
+      customerId: review.customerId,
+    },
+  });
+
+  // Close the loop: tell the supplier who flagged it that the review was removed.
+  if (review.flaggedBy) {
+    enqueueNotification({
+      userId: review.flaggedBy,
+      type: 'REVIEW_RECEIVED',
+      title: 'Flag resolved',
+      message: 'Your flag was reviewed — this review was removed from your tour page.',
+      data: { reviewId: review.id, action: 'delete' },
+    }).catch((err) => console.error('[Notification] enqueueNotification (flag resolution) failed:', err.message));
+  }
+
+  res.status(204).json({ status: 'success', data: null });
+});
+
+/**
+ * Admin: update any supplier response
+ */
+exports.adminUpdateSupplierResponse = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { response } = req.body;
+  const adminId = req.user.id;
+
+  if (!response || response.trim().length === 0) {
+    return next(new AppError('Response cannot be empty', 400));
+  }
+
+  const review = await prisma.review.findUnique({ where: { id } });
+
+  if (!review) {
+    return next(new AppError('Review not found', 404));
+  }
+
+  const updated = await prisma.review.update({
+    where: { id },
+    data: {
+      supplierResponse: response,
+      supplierResponseAt: new Date(),
+    },
+    include: {
+      customer: { select: { id: true, name: true, photoURL: true } },
+      tour: { select: { id: true, title: true } },
+    },
+  });
+
+  await logActivity({
+    userId: adminId,
+    action: 'review.admin_response_updated',
+    resource: 'Review',
+    resourceId: review.id,
+    oldValues: { supplierResponse: review.supplierResponse },
+    newValues: { supplierResponse: response },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { review: updated },
+  });
+});
+
+/**
+ * Admin: delete any supplier response
+ */
+exports.adminDeleteSupplierResponse = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const adminId = req.user.id;
+
+  const review = await prisma.review.findUnique({ where: { id } });
+
+  if (!review) {
+    return next(new AppError('Review not found', 404));
+  }
+
+  if (!review.supplierResponse) {
+    return next(new AppError('No response to delete', 404));
+  }
+
+  const updated = await prisma.review.update({
+    where: { id },
+    data: {
+      supplierResponse: null,
+      supplierResponseAt: null,
+    },
+    include: {
+      customer: { select: { id: true, name: true, photoURL: true } },
+      tour: { select: { id: true, title: true } },
+    },
+  });
+
+  await logActivity({
+    userId: adminId,
+    action: 'review.admin_response_deleted',
+    resource: 'Review',
+    resourceId: review.id,
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { review: updated },
+  });
+});
+
+module.exports = exports;

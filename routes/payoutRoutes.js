@@ -2,7 +2,7 @@ const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
-const payoutController = require('../controllers/payoutController');
+const payoutController = require('../src/core/domain/payoutController');
 
 const router = express.Router();
 

@@ -3,7 +3,7 @@ const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
 const { uploadChatImage } = require('../middleware/uploadMiddleware');
-const chatController = require('../controllers/chatController');
+const chatController = require('../src/core/domain/chatController');
 
 router.use(protect);
 

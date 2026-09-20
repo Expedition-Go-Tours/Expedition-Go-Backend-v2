@@ -9,7 +9,7 @@
  * Usage: node scripts/backfill-pay-later-status.js
  */
 
-const prisma = require('../utils/prismaClient');
+const prisma = require('../src/core/services/prismaClient');
 
 async function main() {
   const result = await prisma.$executeRaw`

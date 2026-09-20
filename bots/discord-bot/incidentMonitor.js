@@ -38,7 +38,7 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const tls = require('tls');
-const { notifyDiscord } = require('../../utils/discordNotifier');
+const { notifyDiscord } = require('../../src/core/services/discordNotifier');
 
 const DEFAULT_INTERVAL_MS = 30 * 1000;
 const LOCAL_TIMEOUT_MS = 8000;

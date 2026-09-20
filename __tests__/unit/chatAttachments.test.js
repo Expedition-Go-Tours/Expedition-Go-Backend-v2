@@ -2,7 +2,7 @@
  * Inbound email attachment helpers.
  */
 
-const { classify, isAllowed } = require('../../utils/chatAttachments');
+const { classify, isAllowed } = require('../../src/core/services/chatAttachments');
 
 describe('chatAttachments', () => {
   it('classifies images as image and everything else as document', () => {

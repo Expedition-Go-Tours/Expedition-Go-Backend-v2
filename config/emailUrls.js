@@ -15,7 +15,7 @@
  * bookings that predate origin tracking.
  */
 
-const { normalizeOrigin, getAllowedClientOrigins } = require('../utils/clientOrigin');
+const { normalizeOrigin, getAllowedClientOrigins } = require('../src/core/services/clientOrigin');
 
 const CLIENT_URL = (process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/$/, '');
 const DASHBOARD_URL = (process.env.SUPPLIER_DASHBOARD_URL || process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/$/, '');

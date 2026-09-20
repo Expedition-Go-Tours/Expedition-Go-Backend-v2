@@ -11,12 +11,12 @@
  * admins, audit-log) are NOT here — they live in the existing admin
  * controllers and are proxied by the route layer.
  */
-const prisma = require('../../utils/prismaClient');
-const AppError = require('../../utils/appError');
-const catchAsync = require('../../utils/catchAsync');
-const cache = require('../../utils/cacheHelper');
-const { logActivity } = require('../../utils/auditLogger');
-const adminController = require('../../controllers/adminController');
+const prisma = require('./services/prismaClient');
+const AppError = require('./services/appError');
+const catchAsync = require('./services/catchAsync');
+const cache = require('./services/cacheHelper');
+const { logActivity } = require('./services/auditLogger');
+const adminController = require('./domain/adminController');
 const { getBrand } = require('../../config/brands');
 
 function makeAdminController(brandKey) {
@@ -1739,7 +1739,7 @@ controller.getAiStatus = catchAsync(async (req, res, next) => {
     FROM "Attraction"
   `;
 
-  const { getAiCronStatus } = require('../../utils/aiCronFallback');
+  const { getAiCronStatus } = require('./services/aiCronFallback');
   const cronStatus = getAiCronStatus();
 
   const lastProcessed = await prisma.tour.findFirst({

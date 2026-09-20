@@ -1,5 +1,5 @@
-const prisma = require('../utils/prismaClient');
-const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
+const prisma = require('../src/core/services/prismaClient');
+const { deleteCloudinaryImage } = require('../src/core/services/cloudinaryHelper');
 
 async function cleanupOrphanedMedia() {
   console.log('[Media Cleanup] Starting...');

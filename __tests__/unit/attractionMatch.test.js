@@ -3,7 +3,7 @@ const {
   variantsFor,
   buildAttractionIndex,
   canonicalFor,
-} = require('../../utils/attractionMatch');
+} = require('../../src/core/services/attractionMatch');
 
 describe('attractionMatch', () => {
   describe('normalizeName', () => {

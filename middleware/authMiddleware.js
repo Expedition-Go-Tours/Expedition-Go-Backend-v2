@@ -1,8 +1,8 @@
-const prisma = require('../utils/prismaClient');
-const catchAsync = require('../utils/catchAsync');
-const AppError = require('../utils/appError');
+const prisma = require('../src/core/services/prismaClient');
+const catchAsync = require('../src/core/services/catchAsync');
+const AppError = require('../src/core/services/appError');
 const { verifyAccessToken } = require('../config/jwt');
-const cache = require('../utils/cacheHelper');
+const cache = require('../src/core/services/cacheHelper');
 
 const USER_CACHE_TTL = 30;
 

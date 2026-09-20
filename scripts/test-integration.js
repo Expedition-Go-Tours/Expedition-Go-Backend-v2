@@ -1,8 +1,8 @@
 /**
  * Integration simulation: BM25 search → XGBoost re-ranking
  */
-const bm25 = require('../utils/bm25Index');
-const xgboost = require('../utils/xgboostService');
+const bm25 = require('../src/core/services/bm25Index');
+const xgboost = require('../src/core/services/xgboostService');
 
 const tours = [
   { id: '1', title: 'Cape Coast Castle Tour', description: 'Historic slave castle tour', tags: ['history', 'culture'], category: 'Cultural', city: 'Cape Coast', country: 'Ghana', attractions: ['Cape Coast Castle'], aiMoodTags: ['historic'], aiPrimaryCategory: 'culture_heritage', averageRating: 4.8, reviewCount: 120, totalBookings: 350, durationMinutes: 480, difficulty: 'Easy', createdAt: '2026-01-15', latitude: 5.105, longitude: -1.247, specialOfferTargets: [] },

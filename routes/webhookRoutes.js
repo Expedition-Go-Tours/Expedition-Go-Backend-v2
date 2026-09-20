@@ -7,8 +7,8 @@
  */
 
 const express = require('express');
-const webhookController = require('../controllers/webhookController');
-const discordApprovalController = require('../controllers/discordApprovalController');
+const webhookController = require('../src/core/domain/webhookController');
+const discordApprovalController = require('../src/core/domain/discordApprovalController');
 
 const router = express.Router();
 

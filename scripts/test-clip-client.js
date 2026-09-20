@@ -2,7 +2,7 @@
  * Simulation: Test CLIP client (Node.js side)
  * Tests the client interface — actual CLIP service must be running on Hetzner.
  */
-const clip = require('../utils/clipClient');
+const clip = require('../src/core/services/clipClient');
 
 console.log('=== CLIP Client Simulation ===\n');
 

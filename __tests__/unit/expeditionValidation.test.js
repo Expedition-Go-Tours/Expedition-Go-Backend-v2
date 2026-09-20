@@ -1,4 +1,4 @@
-const { confirmBookingSchema, calculateCheckoutSchema } = require('../../utils/expeditionValidation');
+const { confirmBookingSchema, calculateCheckoutSchema } = require('../../src/core/services/expeditionValidation');
 
 const basePayload = {
   body: {

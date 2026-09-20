@@ -13,9 +13,9 @@
  *   node scripts/backfill-attraction-coords.js --apply --limit=25
  */
 
-const prisma = require('../utils/prismaClient');
-const locationService = require('../utils/locationService');
-const { getCatalogCountries } = require('../utils/placeResolver');
+const prisma = require('../src/core/services/prismaClient');
+const locationService = require('../src/core/services/locationService');
+const { getCatalogCountries } = require('../src/core/services/placeResolver');
 
 const args = process.argv.slice(2);
 const APPLY = args.includes('--apply');

@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   user: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn() },
   booking: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn(), count: jest.fn(), delete: jest.fn(), aggregate: jest.fn() },
   cartItem: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), upsert: jest.fn(), update: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
@@ -14,18 +14,18 @@ jest.mock('../../utils/prismaClient', () => ({
   $disconnect: jest.fn(),
 }));
 
-const prisma = require('../../utils/prismaClient');
-const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../../utils/queue');
-const { createPaymentIntent, calculateCommission, createRefund } = require('../../utils/stripeHelpers');
-jest.mock('../../utils/queue', () => ({
+const prisma = require('../../src/core/services/prismaClient');
+const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../../src/core/services/queue');
+const { createPaymentIntent, calculateCommission, createRefund } = require('../../src/core/services/stripeHelpers');
+jest.mock('../../src/core/services/queue', () => ({
   enqueueNotification: jest.fn(() => Promise.resolve()),
   enqueueEmail: jest.fn(() => Promise.resolve()),
   enqueueEvent: jest.fn(() => Promise.resolve()),
 }));
-jest.mock('../../utils/eventEmitter', () => ({
+jest.mock('../../src/core/services/eventEmitter', () => ({
   emit: jest.fn(),
 }));
-jest.mock('../../utils/stripeHelpers', () => ({
+jest.mock('../../src/core/services/stripeHelpers', () => ({
   createPaymentIntent: jest.fn(),
   createRefund: jest.fn(),
   calculateCommission: jest.fn(),
@@ -38,7 +38,7 @@ jest.mock('../../utils/stripeHelpers', () => ({
     },
   })),
 }));
-jest.mock('../../utils/bookingHelpers', () => ({
+jest.mock('../../src/core/services/bookingHelpers', () => ({
   generateBookingNumber: jest.fn(() => 'BK-TEST-001'),
   validateTravelerInfo: jest.fn(() => ({ isValid: true, errors: [] })),
   evaluateCancellationPolicy: jest.fn((booking) => ({
@@ -49,7 +49,7 @@ jest.mock('../../utils/bookingHelpers', () => ({
     windowHours: 24,
   })),
 }));
-jest.mock('../../utils/getConfig', () => {
+jest.mock('../../src/core/services/getConfig', () => {
   const fn = jest.fn();
   fn.mockImplementation((key, defaultValue) => {
     const values = {
@@ -61,7 +61,7 @@ jest.mock('../../utils/getConfig', () => {
   });
   return fn;
 });
-jest.mock('../../utils/auditLogger', () => ({
+jest.mock('../../src/core/services/auditLogger', () => ({
   logActivity: jest.fn(() => Promise.resolve()),
 }));
 
@@ -71,17 +71,17 @@ jest.mock('stripe', () => {
     paymentIntents: { create: jest.fn(), update: jest.fn().mockResolvedValue({}) },
   }));
 });
-jest.mock('../../utils/emailService', () => ({
+jest.mock('../../src/core/services/emailService', () => ({
   generatePrintableTicketHtml: jest.fn(() => '<html>ticket</html>'),
 }));
-jest.mock('../../utils/tourHelpers', () => ({
+jest.mock('../../src/core/services/tourHelpers', () => ({
   checkTourAvailability: jest.fn(),
   calculateTourPrice: jest.fn(),
 }));
 
-const bookingHelpers = require('../../utils/bookingHelpers');
-const { checkTourAvailability, calculateTourPrice } = require('../../utils/tourHelpers');
-const bookingController = require('../../controllers/bookingController');
+const bookingHelpers = require('../../src/core/services/bookingHelpers');
+const { checkTourAvailability, calculateTourPrice } = require('../../src/core/services/tourHelpers');
+const bookingController = require('../../src/core/domain/bookingController');
 
 const mockReq = (overrides = {}) => ({
   user: { id: 'customer-1', roles: ['customer'], stripeCustomerId: 'cus_123' },

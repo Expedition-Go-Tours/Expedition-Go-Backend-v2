@@ -16,7 +16,7 @@
 const dotenv = require('dotenv');
 dotenv.config({ path: './.env' });
 
-const prisma = require('../utils/prismaClient');
+const prisma = require('../src/core/services/prismaClient');
 
 const DRY_RUN = process.argv.includes('--dry-run');
 

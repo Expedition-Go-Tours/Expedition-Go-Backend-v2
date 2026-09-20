@@ -15,14 +15,14 @@ const { resolveSupplier, requireTeamRole, requireTeamPermission } = require('../
 const ghanaSupplier = require('./supplierController');
 
 // Shared controllers for proxied endpoints
-const supplierSettingsController = require('../../../controllers/supplierSettingsController');
-const cancellationController = require('../../../controllers/cancellationController');
-const teamController = require('../../../controllers/teamController');
-const bookingController = require('../../../controllers/bookingController');
-const financeController = require('../../../controllers/financeController');
-const payoutMethodController = require('../../../controllers/payoutMethodController');
-const specialOfferController = require('../../../controllers/specialOfferController');
-const notificationController = require('../../../controllers/notificationController');
+const supplierSettingsController = require('../../core/domain/supplierSettingsController');
+const cancellationController = require('../../core/domain/cancellationController');
+const teamController = require('../../core/domain/teamController');
+const bookingController = require('../../core/domain/bookingController');
+const financeController = require('../../core/domain/financeController');
+const payoutMethodController = require('../../core/domain/payoutMethodController');
+const specialOfferController = require('../../core/domain/specialOfferController');
+const notificationController = require('../../core/domain/notificationController');
 
 const router = express.Router();
 

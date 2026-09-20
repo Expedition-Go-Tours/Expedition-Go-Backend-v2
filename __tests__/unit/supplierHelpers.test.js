@@ -1,12 +1,12 @@
-jest.mock('../../utils/getConfig', () => jest.fn().mockResolvedValue('0.15'));
+jest.mock('../../src/core/services/getConfig', () => jest.fn().mockResolvedValue('0.15'));
 
-const getConfig = require('../../utils/getConfig');
+const getConfig = require('../../src/core/services/getConfig');
 const {
   validateSupplierData,
   generateVerificationChecklist,
   getSupplierTier,
   calculateSupplierMetrics,
-} = require('../../utils/supplierHelpers');
+} = require('../../src/core/services/supplierHelpers');
 
 beforeEach(() => {
   jest.clearAllMocks();

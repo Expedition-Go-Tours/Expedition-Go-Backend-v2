@@ -1,10 +1,10 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   event: { create: jest.fn() },
   $transaction: jest.fn(),
 }));
 
-const prisma = require('../../utils/prismaClient');
-const emitter = require('../../utils/eventEmitter');
+const prisma = require('../../src/core/services/prismaClient');
+const emitter = require('../../src/core/services/eventEmitter');
 
 describe('eventEmitter', () => {
   beforeEach(() => {

@@ -13,7 +13,7 @@ module.exports = async () => {
   try {
     // Lazy require inside the probe: if the generated client or DB is ever
     // unavailable, degrade to "no DB" instead of crashing the bootstrap.
-    prisma = require('./utils/prismaClient');
+    prisma = require('./src/core/services/prismaClient');
     await prisma.$connect();
     available = true;
   } catch (err) {

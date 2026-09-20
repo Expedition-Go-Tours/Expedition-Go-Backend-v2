@@ -1,9 +1,9 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   $queryRawUnsafe: jest.fn(),
 }));
 
-const prisma = require('../../utils/prismaClient');
-const fts = require('../../utils/fullTextSearch');
+const prisma = require('../../src/core/services/prismaClient');
+const fts = require('../../src/core/services/fullTextSearch');
 
 describe('fullTextSearch', () => {
   beforeEach(() => {

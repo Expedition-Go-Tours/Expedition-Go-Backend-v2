@@ -4,12 +4,12 @@ const {
   destinationCityFromPatch,
   listMajorCities,
   normalizePlace,
-} = require('../../utils/destinationCities');
+} = require('../../src/core/services/destinationCities');
 const {
   capitalForRegion,
   canonicalGhanaRegion,
   regionForCapital,
-} = require('../../utils/ghanaRegions');
+} = require('../../src/core/services/ghanaRegions');
 
 /** Minimal index mirroring buildMajorCityIndex() output. */
 function makeIndex() {

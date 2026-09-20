@@ -54,16 +54,16 @@ jest.mock('@prisma/client', () => ({
   PrismaClient: jest.fn(() => mockPrisma),
 }));
 
-jest.mock('../../utils/discordNotifier', () => ({
+jest.mock('../../src/core/services/discordNotifier', () => ({
   notifyDiscord: jest.fn(() => Promise.resolve()),
 }));
 
-jest.mock('../../utils/mimoClient', () => ({
+jest.mock('../../src/core/services/mimoClient', () => ({
   callMimo: jest.fn(() => Promise.resolve('FACT: bookings low\nINFERENCE: review sources')),
 }));
 
 const { execSync } = require('child_process');
-const { callMimo } = require('../../utils/mimoClient');
+const { callMimo } = require('../../src/core/services/mimoClient');
 
 const {
   collectDigest,

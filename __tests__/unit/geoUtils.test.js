@@ -10,7 +10,7 @@ const {
   pickupStatus,
   isPickupIncomplete,
   normalizePickupSnapshot,
-} = require('../../utils/geoUtils');
+} = require('../../src/core/services/geoUtils');
 
 // A simple square around (lat 5.60, lng -0.20): [lat, lng] vertices.
 const SQUARE = [

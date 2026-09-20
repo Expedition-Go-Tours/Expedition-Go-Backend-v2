@@ -8,7 +8,7 @@
 
 const express = require('express');
 const router = express.Router();
-const specialOfferController = require('../controllers/specialOfferController');
+const specialOfferController = require('../src/core/domain/specialOfferController');
 const { protect } = require('../middleware/authMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 

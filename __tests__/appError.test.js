@@ -1,4 +1,4 @@
-const AppError = require('../utils/appError');
+const AppError = require('../src/core/services/appError');
 
 describe('AppError', () => {
   test('creates error with 404 status code', () => {

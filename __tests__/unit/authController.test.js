@@ -1,13 +1,13 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   user: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
 }));
 
-jest.mock('../../utils/queue', () => ({
+jest.mock('../../src/core/services/queue', () => ({
   enqueueEvent: jest.fn(() => Promise.resolve()),
   enqueueCreateStripeCustomer: jest.fn(() => Promise.resolve()),
 }));
 
-jest.mock('../../utils/refreshTokenHelper', () => ({
+jest.mock('../../src/core/services/refreshTokenHelper', () => ({
   storeRefreshToken: jest.fn(() => Promise.resolve()),
   rotateRefreshToken: jest.fn(),
   clearRefreshToken: jest.fn(() => Promise.resolve()),
@@ -42,15 +42,15 @@ jest.mock('passport', () => ({
   authenticate: jest.fn(),
 }));
 
-jest.mock('../../utils/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));
 
 const bcrypt = require('bcrypt');
 const passport = require('passport');
-const prisma = require('../../utils/prismaClient');
-const { enqueueEvent, enqueueCreateStripeCustomer } = require('../../utils/queue');
-const { storeRefreshToken, rotateRefreshToken, clearRefreshToken } = require('../../utils/refreshTokenHelper');
+const prisma = require('../../src/core/services/prismaClient');
+const { enqueueEvent, enqueueCreateStripeCustomer } = require('../../src/core/services/queue');
+const { storeRefreshToken, rotateRefreshToken, clearRefreshToken } = require('../../src/core/services/refreshTokenHelper');
 
-const controller = require('../../controllers/authController');
+const controller = require('../../src/core/domain/authController');
 
 const mockUser = {
   id: 'user-1',
@@ -465,7 +465,7 @@ describe('forgotPassword', () => {
   });
 
   it('sends email and returns 200 on success', async () => {
-    const { sendEmail } = require('../../utils/emailService');
+    const { sendEmail } = require('../../src/core/services/emailService');
     sendEmail.mockResolvedValue();
 
     prisma.user.findUnique.mockResolvedValue(mockUser);
@@ -484,7 +484,7 @@ describe('forgotPassword', () => {
   });
 
   it('returns 200 when email send fails', async () => {
-    const { sendEmail } = require('../../utils/emailService');
+    const { sendEmail } = require('../../src/core/services/emailService');
     sendEmail.mockRejectedValue(new Error('email error'));
 
     prisma.user.findUnique.mockResolvedValue(mockUser);

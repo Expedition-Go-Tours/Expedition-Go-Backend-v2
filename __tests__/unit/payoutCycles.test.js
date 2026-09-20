@@ -1,11 +1,11 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   booking: { updateMany: jest.fn() },
 }));
 
-jest.mock('../../utils/getConfig');
+jest.mock('../../src/core/services/getConfig');
 
-const prisma = require('../../utils/prismaClient');
-const getConfig = require('../../utils/getConfig');
+const prisma = require('../../src/core/services/prismaClient');
+const getConfig = require('../../src/core/services/getConfig');
 const {
   getCurrentCycle,
   getPreviousCycle,
@@ -13,7 +13,7 @@ const {
   getClearanceBufferDays,
   sweepEarningsEligibility,
   formatCycleLabel,
-} = require('../../utils/payoutCycles');
+} = require('../../src/core/services/payoutCycles');
 
 describe('formatCycleLabel', () => {
   it('formats a within-month range', () => {

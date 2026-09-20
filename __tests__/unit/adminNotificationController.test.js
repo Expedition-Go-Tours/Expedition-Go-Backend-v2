@@ -1,12 +1,12 @@
-jest.mock('../../utils/adminNotificationService', () => ({
+jest.mock('../../src/core/services/adminNotificationService', () => ({
   getNotifications: jest.fn(),
   acknowledgeNotification: jest.fn(),
   acknowledgeAll: jest.fn(),
   getStats: jest.fn(),
 }));
 
-const adminNotifService = require('../../utils/adminNotificationService');
-const controller = require('../../controllers/adminNotificationController');
+const adminNotifService = require('../../src/core/services/adminNotificationService');
+const controller = require('../../src/core/domain/adminNotificationController');
 
 describe('adminNotificationController', () => {
   let req, res, next;

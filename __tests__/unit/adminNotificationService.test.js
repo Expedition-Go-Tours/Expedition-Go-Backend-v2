@@ -1,17 +1,17 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   adminNotification: { create: jest.fn(), findMany: jest.fn(), count: jest.fn(), updateMany: jest.fn(), groupBy: jest.fn() },
 }));
 
 jest.mock('../../app', () => ({ get: jest.fn() }));
 
-jest.mock('../../utils/discordNotifier', () => ({
+jest.mock('../../src/core/services/discordNotifier', () => ({
   notifyDiscord: jest.fn(() => Promise.resolve()),
 }));
 
-const prisma = require('../../utils/prismaClient');
+const prisma = require('../../src/core/services/prismaClient');
 const app = require('../../app');
-const { notifyDiscord } = require('../../utils/discordNotifier');
-const service = require('../../utils/adminNotificationService');
+const { notifyDiscord } = require('../../src/core/services/discordNotifier');
+const service = require('../../src/core/services/adminNotificationService');
 
 describe('adminNotificationService', () => {
   let mockIo;

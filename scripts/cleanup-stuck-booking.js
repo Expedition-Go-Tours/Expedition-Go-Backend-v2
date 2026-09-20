@@ -18,9 +18,9 @@
      $env:DATABASE_URL='postgresql://<remote-connection-url>?sslmode=require'
      node scripts/cleanup-stuck-booking.js
 */
-const { getStripe } = require('../utils/stripeHelpers');
-const { expireBooking } = require('../utils/bookingCleanup');
-const prisma = require('../utils/prismaClient');
+const { getStripe } = require('../src/core/services/stripeHelpers');
+const { expireBooking } = require('../src/core/services/bookingCleanup');
+const prisma = require('../src/core/services/prismaClient');
 
 const BOOKING_ID = 'cmt1aex1m0003wq8cmsxj4x7s';
 const REASON = 'Payment was never completed (one-off cleanup of abandoned Checkout)';

@@ -1,4 +1,4 @@
-const { sanitizeBookingPaymentInternals, STRIP_KEYS } = require('../../utils/sanitizeBookings');
+const { sanitizeBookingPaymentInternals, STRIP_KEYS } = require('../../src/core/services/sanitizeBookings');
 
 describe('sanitizeBookingPaymentInternals', () => {
   it('strips payment-internal ids from a single booking', () => {

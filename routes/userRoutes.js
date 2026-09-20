@@ -1,7 +1,7 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
-const userController = require('../controllers/userController');
+const userController = require('../src/core/domain/userController');
 const { uploadUserPhoto } = require('../middleware/uploadMiddleware');
 
 const router = express.Router();

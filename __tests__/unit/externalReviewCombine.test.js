@@ -1,4 +1,4 @@
-const { combineExternalStats, combineTourStats, COUNTED_SOURCES } = require('../../utils/externalReviewCombine');
+const { combineExternalStats, combineTourStats, COUNTED_SOURCES } = require('../../src/core/services/externalReviewCombine');
 
 describe('externalReviewCombine', () => {
   describe('COUNTED_SOURCES', () => {

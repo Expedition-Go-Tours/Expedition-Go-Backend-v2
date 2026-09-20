@@ -1,19 +1,19 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   user: { findUnique: jest.fn(), update: jest.fn(), create: jest.fn(), delete: jest.fn() },
   tour: { findUnique: jest.fn(), findMany: jest.fn(), findFirst: jest.fn() },
   wishlistItem: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
   media: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
 }));
 
-jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
-jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
+jest.mock('../../src/core/services/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn() }));
+jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
 jest.mock('../../middleware/authMiddleware', () => ({ invalidateUserCache: jest.fn() }));
-const prisma = require('../../utils/prismaClient');
-const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
-const { logActivity } = require('../../utils/auditLogger');
-const { cloudinaryUrl } = require('../../utils/imageOptimizer');
-const controller = require('../../controllers/userController');
+const prisma = require('../../src/core/services/prismaClient');
+const { deleteCloudinaryImage } = require('../../src/core/services/cloudinaryHelper');
+const { logActivity } = require('../../src/core/services/auditLogger');
+const { cloudinaryUrl } = require('../../src/core/services/imageOptimizer');
+const controller = require('../../src/core/domain/userController');
 
 describe('userController', () => {
   let req, res, next;

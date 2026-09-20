@@ -12,7 +12,7 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { requirePermission, requireSuperAdmin } = require('../middleware/permissionMiddleware');
-const roleController = require('../controllers/adminRoleController');
+const roleController = require('../src/core/domain/adminRoleController');
 
 const router = express.Router();
 

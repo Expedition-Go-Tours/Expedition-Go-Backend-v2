@@ -4,7 +4,7 @@
  * eligibility, policy gating); the Stripe/webhook flows are covered by the
  * expedition integration tests and the policy suite in bookingHelpers.test.js.
  */
-const { buildTarget, mergeTravelers, assertModifyEligible } = require('../../utils/bookingModify');
+const { buildTarget, mergeTravelers, assertModifyEligible } = require('../../src/core/services/bookingModify');
 
 function baseBooking(overrides = {}) {
   return {

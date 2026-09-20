@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   expeditionTour: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
   tour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn() },
   user: { findUnique: jest.fn(), update: jest.fn() },
@@ -23,37 +23,37 @@ jest.mock('../../utils/prismaClient', () => ({
   $queryRawUnsafe: jest.fn(),
 }));
 
-jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
+jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
 
-jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn(), emitBatch: jest.fn() }));
+jest.mock('../../src/core/services/eventEmitter', () => ({ emit: jest.fn(), emitBatch: jest.fn() }));
 
-jest.mock('../../utils/cacheHelper', () => ({
+jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
   invalidateKeys: jest.fn(() => Promise.resolve()),
 }));
 
-jest.mock('../../utils/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));
 
-jest.mock('../../utils/queue', () => ({
+jest.mock('../../src/core/services/queue', () => ({
   enqueueEvent: jest.fn(() => Promise.resolve()),
   enqueueEmail: jest.fn(() => Promise.resolve()),
   enqueueNotification: jest.fn(() => Promise.resolve()),
 }));
 
-jest.mock('../../utils/bookingHelpers', () => ({
+jest.mock('../../src/core/services/bookingHelpers', () => ({
   validateTravelerInfo: jest.fn(),
   generateBookingNumber: jest.fn(),
   evaluateCancellationPolicy: jest.fn(() => ({ allowed: true, refundAmount: 105, refundPercentage: 100, reason: 'Full refund available', windowHours: 24 })),
   evaluateModifyPolicy: jest.fn(() => ({ allowed: true, reason: null, cutoffHours: 24, deadline: null })),
 }));
 
-jest.mock('../../utils/tourHelpers', () => ({
+jest.mock('../../src/core/services/tourHelpers', () => ({
   checkTourAvailability: jest.fn(),
   calculateTourPrice: jest.fn(),
   cheapestRetailPrice: jest.fn(),
 }));
 
-jest.mock('../../utils/stripeHelpers', () => {
+jest.mock('../../src/core/services/stripeHelpers', () => {
   let stripeInstance = null;
   return {
     createPaymentIntent: jest.fn(),
@@ -76,29 +76,29 @@ jest.mock('../../utils/stripeHelpers', () => {
   };
 });
 
-jest.mock('../../utils/getConfig', () => jest.fn((key, def) => Promise.resolve(def)));
+jest.mock('../../src/core/services/getConfig', () => jest.fn((key, def) => Promise.resolve(def)));
 
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
 
-jest.mock('../../utils/checkoutHold', () => ({
+jest.mock('../../src/core/services/checkoutHold', () => ({
   acquireHold: jest.fn(),
   releaseHold: jest.fn(),
   HOLD_MINUTES: 30,
 }));
 
-jest.mock('../../utils/availabilityCalendar', () => ({
+jest.mock('../../src/core/services/availabilityCalendar', () => ({
   buildAvailabilityCalendar: jest.fn(() => Promise.resolve([])),
 }));
 
-const prisma = require('../../utils/prismaClient');
-const cache = require('../../utils/cacheHelper');
-const { sendEmail } = require('../../utils/emailService');
-const { enqueueEvent, enqueueNotification, enqueueEmail } = require('../../utils/queue');
-const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy } = require('../../utils/bookingHelpers');
-const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../../utils/tourHelpers');
-const { createPaymentIntent, createCheckoutSession, calculateCommission, createRefund, getStripe } = require('../../utils/stripeHelpers');
-const { acquireHold, releaseHold } = require('../../utils/checkoutHold');
-const { logActivity } = require('../../utils/auditLogger');
+const prisma = require('../../src/core/services/prismaClient');
+const cache = require('../../src/core/services/cacheHelper');
+const { sendEmail } = require('../../src/core/services/emailService');
+const { enqueueEvent, enqueueNotification, enqueueEmail } = require('../../src/core/services/queue');
+const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy } = require('../../src/core/services/bookingHelpers');
+const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../../src/core/services/tourHelpers');
+const { createPaymentIntent, createCheckoutSession, calculateCommission, createRefund, getStripe } = require('../../src/core/services/stripeHelpers');
+const { acquireHold, releaseHold } = require('../../src/core/services/checkoutHold');
+const { logActivity } = require('../../src/core/services/auditLogger');
 
 const controller = require('../../src/brands/expedition/controller');
 

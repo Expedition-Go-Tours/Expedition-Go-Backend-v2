@@ -1,6 +1,6 @@
 process.env.NODE_ENV = 'test';
 
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   expeditionTour: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), count: jest.fn() },
   tour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
   user: { findUnique: jest.fn(), update: jest.fn() },
@@ -9,15 +9,15 @@ jest.mock('../../utils/prismaClient', () => ({
   $queryRawUnsafe: jest.fn(),
 }));
 
-jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
-jest.mock('../../utils/cacheHelper', () => ({
+jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
+jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
   invalidateKeys: jest.fn(),
 }));
 
 const controller = require('../../src/brands/expedition/controller');
-const prisma = require('../../utils/prismaClient');
-const cache = require('../../utils/cacheHelper');
+const prisma = require('../../src/core/services/prismaClient');
+const cache = require('../../src/core/services/cacheHelper');
 
 const mockTour = {
   id: 'tour-1', title: 'Test Tour', slug: 'test-tour',

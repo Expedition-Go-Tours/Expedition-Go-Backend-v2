@@ -12,14 +12,14 @@ const mockIoRedisInstance = {
 
 jest.mock('ioredis', () => jest.fn(() => mockIoRedisInstance));
 
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   booking: { findUnique: jest.fn() },
   cartItem: { findMany: jest.fn(), deleteMany: jest.fn() },
   event: { deleteMany: jest.fn() },
   specialOffer: { findMany: jest.fn(), updateMany: jest.fn() },
 }));
 
-jest.mock('../../utils/emailService', () => ({
+jest.mock('../../src/core/services/emailService', () => ({
   sendBookingConfirmationEmail: jest.fn(),
   sendBookingCancellationEmail: jest.fn(),
   sendSupplierBookingNotification: jest.fn(),
@@ -27,25 +27,25 @@ jest.mock('../../utils/emailService', () => ({
   sendEmail: jest.fn(),
 }));
 
-jest.mock('../../utils/notificationService', () => ({
+jest.mock('../../src/core/services/notificationService', () => ({
   sendNotification: jest.fn(),
   cleanupOldNotifications: jest.fn(),
 }));
 
-jest.mock('../../utils/auditLogger', () => ({
+jest.mock('../../src/core/services/auditLogger', () => ({
   cleanupOldLogs: jest.fn(),
 }));
 
-jest.mock('../../utils/tourPurge', () => ({
+jest.mock('../../src/core/services/tourPurge', () => ({
   purgeArchivedTours: jest.fn(() => Promise.resolve({ scanned: 0, purged: 0, skipped: 0, failed: 0 })),
 }));
 
-jest.mock('../../utils/cacheHelper', () => ({
+jest.mock('../../src/core/services/cacheHelper', () => ({
   invalidateKeys: jest.fn(),
   TOUR_POPULAR_KEY: 'tour:popular',
 }));
 
-jest.mock('../../utils/eventEmitter', () => ({
+jest.mock('../../src/core/services/eventEmitter', () => ({
   emit: jest.fn(),
 }));
 
@@ -53,13 +53,13 @@ process.env.REDIS_URL = 'redis://localhost:6379';
 
 const { Queue, Worker } = require('bullmq');
 const IORedis = require('ioredis');
-const prisma = require('../../utils/prismaClient');
-const emailService = require('../../utils/emailService');
-const notificationService = require('../../utils/notificationService');
-const auditLogger = require('../../utils/auditLogger');
-const cacheHelper = require('../../utils/cacheHelper');
-const eventEmitter = require('../../utils/eventEmitter');
-const queue = require('../../utils/queue');
+const prisma = require('../../src/core/services/prismaClient');
+const emailService = require('../../src/core/services/emailService');
+const notificationService = require('../../src/core/services/notificationService');
+const auditLogger = require('../../src/core/services/auditLogger');
+const cacheHelper = require('../../src/core/services/cacheHelper');
+const eventEmitter = require('../../src/core/services/eventEmitter');
+const queue = require('../../src/core/services/queue');
 
 describe('queue', () => {
   let mockQueueInstance;
@@ -304,7 +304,7 @@ describe('queue', () => {
     it('cleanup worker handles purge-archived-tours', async () => {
       queue.registerWorkers();
       const workerCallback = Worker.mock.calls.find(c => c[0] === 'system-cleanup')[1];
-      const { purgeArchivedTours } = require('../../utils/tourPurge');
+      const { purgeArchivedTours } = require('../../src/core/services/tourPurge');
 
       await workerCallback({ name: 'purge-archived-tours' });
 

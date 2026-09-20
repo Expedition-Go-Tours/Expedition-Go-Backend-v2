@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => {
+jest.mock('../../src/core/services/prismaClient', () => {
   const tour = { findMany: jest.fn(), delete: jest.fn() };
   const booking = { findFirst: jest.fn(), deleteMany: jest.fn() };
   const review = { deleteMany: jest.fn() };
@@ -12,18 +12,18 @@ jest.mock('../../utils/prismaClient', () => {
   };
 });
 
-jest.mock('../../utils/cloudinaryHelper', () => ({
+jest.mock('../../src/core/services/cloudinaryHelper', () => ({
   deleteCloudinaryImage: jest.fn(() => Promise.resolve()),
 }));
 
-jest.mock('../../utils/cacheHelper', () => ({
+jest.mock('../../src/core/services/cacheHelper', () => ({
   invalidateTourCaches: jest.fn(() => Promise.resolve()),
 }));
 
-const prisma = require('../../utils/prismaClient');
-const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
-const { invalidateTourCaches } = require('../../utils/cacheHelper');
-const { purgeArchivedTours } = require('../../utils/tourPurge');
+const prisma = require('../../src/core/services/prismaClient');
+const { deleteCloudinaryImage } = require('../../src/core/services/cloudinaryHelper');
+const { invalidateTourCaches } = require('../../src/core/services/cacheHelper');
+const { purgeArchivedTours } = require('../../src/core/services/tourPurge');
 
 const archivedTour = (overrides = {}) => ({
   id: 't1',

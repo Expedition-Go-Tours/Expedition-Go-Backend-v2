@@ -15,12 +15,12 @@
 
 const fs = require('fs');
 const path = require('path');
-const prisma = require('../utils/prismaClient');
-const logger = require('../utils/logger');
+const prisma = require('../src/core/services/prismaClient');
+const logger = require('../src/core/services/logger');
 const {
   syncExternalReviewStats,
   recomputeCombinedStatsForTours,
-} = require('../utils/externalReviewStats');
+} = require('../src/core/services/externalReviewStats');
 
 const DEFAULT_PATHS = [
   process.env.EXTERNAL_REVIEWS_FILE,

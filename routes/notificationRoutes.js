@@ -8,7 +8,7 @@
 
 const express = require('express');
 const { protect } = require('../middleware/authMiddleware');
-const notificationController = require('../controllers/notificationController');
+const notificationController = require('../src/core/domain/notificationController');
 
 const router = express.Router();
 

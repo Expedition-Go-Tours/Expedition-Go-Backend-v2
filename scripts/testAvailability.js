@@ -18,10 +18,10 @@
  * Exits non-zero if any assertion fails.
  */
 
-const prisma = require('../utils/prismaClient');
-const { checkTourAvailability } = require('../utils/tourHelpers');
-const { buildAvailabilityCalendar } = require('../utils/availabilityCalendar');
-const { evaluateBookingAvailability } = require('../utils/availabilityCore');
+const prisma = require('../src/core/services/prismaClient');
+const { checkTourAvailability } = require('../src/core/services/tourHelpers');
+const { buildAvailabilityCalendar } = require('../src/core/services/availabilityCalendar');
+const { evaluateBookingAvailability } = require('../src/core/services/availabilityCore');
 
 // ---------------------------------------------------------------------------
 // Harness

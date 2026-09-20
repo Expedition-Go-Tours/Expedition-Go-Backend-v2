@@ -13,9 +13,9 @@
  * the alias keys directly and cannot reproduce the shadowing).
  */
 
-jest.mock('../../utils/prismaClient', () => ({ $disconnect: jest.fn() }));
+jest.mock('../../src/core/services/prismaClient', () => ({ $disconnect: jest.fn() }));
 
-const { applyFlatToBlobMapping, mergeDraftContent, buildTourDiff, computeChangesSummary } = require('../../utils/tourDraft');
+const { applyFlatToBlobMapping, mergeDraftContent, buildTourDiff, computeChangesSummary } = require('../../src/core/services/tourDraft');
 
 const liveTour = {
   title: 'Live Safari',

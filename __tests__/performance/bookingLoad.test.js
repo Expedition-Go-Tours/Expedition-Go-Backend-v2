@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   user: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn() },
   booking: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn(), count: jest.fn(), delete: jest.fn() },
   cartItem: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), upsert: jest.fn(), update: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
@@ -14,36 +14,36 @@ jest.mock('../../utils/prismaClient', () => ({
   $disconnect: jest.fn(),
 }));
 
-jest.mock('../../utils/queue', () => ({
+jest.mock('../../src/core/services/queue', () => ({
   enqueueNotification: jest.fn(() => Promise.resolve()),
   enqueueEmail: jest.fn(() => Promise.resolve()),
 }));
 
-jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
+jest.mock('../../src/core/services/eventEmitter', () => ({ emit: jest.fn() }));
 
-jest.mock('../../utils/stripeHelpers', () => ({
+jest.mock('../../src/core/services/stripeHelpers', () => ({
   createPaymentIntent: jest.fn(),
   calculateCommission: jest.fn(),
 }));
 
-jest.mock('../../utils/bookingHelpers', () => ({
+jest.mock('../../src/core/services/bookingHelpers', () => ({
   generateBookingNumber: jest.fn(() => 'BK-LOAD-001'),
   validateTravelerInfo: jest.fn(() => ({ isValid: true, errors: [] })),
 }));
 
-jest.mock('../../utils/auditLogger', () => ({
+jest.mock('../../src/core/services/auditLogger', () => ({
   logActivity: jest.fn(() => Promise.resolve()),
 }));
 
-jest.mock('../../utils/emailService', () => ({
+jest.mock('../../src/core/services/emailService', () => ({
   generatePrintableTicketHtml: jest.fn(() => '<html>ticket</html>'),
 }));
 
-const prisma = require('../../utils/prismaClient');
-const { createPaymentIntent, calculateCommission } = require('../../utils/stripeHelpers');
+const prisma = require('../../src/core/services/prismaClient');
+const { createPaymentIntent, calculateCommission } = require('../../src/core/services/stripeHelpers');
 const { LoadTest, runLoadTestScenarios } = require('./loadTest');
 
-const bookingController = require('../../controllers/bookingController');
+const bookingController = require('../../src/core/domain/bookingController');
 
 const tourTemplate = {
   id: 'tour-1',

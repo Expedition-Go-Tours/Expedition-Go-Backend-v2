@@ -6,7 +6,7 @@
      $env:CLIENT_URL='http://localhost:5173'
      node scripts/verify-checkout-e2e.js
 */
-const { getStripe, createCheckoutSession } = require('../utils/stripeHelpers');
+const { getStripe, createCheckoutSession } = require('../src/core/services/stripeHelpers');
 
 (async () => {
   const bookingId = 'verify-checkout-e2e';

@@ -1,12 +1,12 @@
-jest.mock('../../utils/notificationService', () => ({
+jest.mock('../../src/core/services/notificationService', () => ({
   getUserNotifications: jest.fn(),
   markNotificationAsRead: jest.fn(),
   markAllNotificationsAsRead: jest.fn(),
   deleteNotification: jest.fn(),
 }));
 
-const notifService = require('../../utils/notificationService');
-const controller = require('../../controllers/notificationController');
+const notifService = require('../../src/core/services/notificationService');
+const controller = require('../../src/core/domain/notificationController');
 
 describe('notificationController', () => {
   let req, res, next;

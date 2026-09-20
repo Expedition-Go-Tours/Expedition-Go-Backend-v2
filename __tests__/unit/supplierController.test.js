@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => {
+jest.mock('../../src/core/services/prismaClient', () => {
   const mock = {
     supplierProfile: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), findMany: jest.fn(), count: jest.fn() },
     user: { update: jest.fn(), findUnique: jest.fn() },
@@ -16,25 +16,25 @@ jest.mock('../../utils/prismaClient', () => {
   return mock;
 });
 
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
-jest.mock('../../utils/emailService', () => ({ sendSupplierStatusEmail: jest.fn() }));
-jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn() }));
-jest.mock('../../utils/queue', () => ({ enqueueNotification: jest.fn() }));
-jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
-jest.mock('../../utils/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
-jest.mock('../../utils/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()), invalidateTourCaches: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn() }));
+jest.mock('../../src/core/services/emailService', () => ({ sendSupplierStatusEmail: jest.fn() }));
+jest.mock('../../src/core/services/adminNotificationService', () => ({ notifyAdmin: jest.fn() }));
+jest.mock('../../src/core/services/queue', () => ({ enqueueNotification: jest.fn() }));
+jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
+jest.mock('../../src/core/services/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
+jest.mock('../../src/core/services/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()), invalidateTourCaches: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../config/firebaseAdmin', () => ({ auth: () => ({ getUser: jest.fn() }) }));
 
-const prisma = require('../../utils/prismaClient');
-const { logActivity } = require('../../utils/auditLogger');
-const { sendSupplierStatusEmail } = require('../../utils/emailService');
-const { notifyAdmin } = require('../../utils/adminNotificationService');
-const { enqueueNotification } = require('../../utils/queue');
-const { cloudinaryUrl } = require('../../utils/imageOptimizer');
-const { deleteCloudinaryImage } = require('../../utils/cloudinaryHelper');
+const prisma = require('../../src/core/services/prismaClient');
+const { logActivity } = require('../../src/core/services/auditLogger');
+const { sendSupplierStatusEmail } = require('../../src/core/services/emailService');
+const { notifyAdmin } = require('../../src/core/services/adminNotificationService');
+const { enqueueNotification } = require('../../src/core/services/queue');
+const { cloudinaryUrl } = require('../../src/core/services/imageOptimizer');
+const { deleteCloudinaryImage } = require('../../src/core/services/cloudinaryHelper');
 const admin = require('../../config/firebaseAdmin');
-const cache = require('../../utils/cacheHelper');
-const controller = require('../../controllers/supplierController');
+const cache = require('../../src/core/services/cacheHelper');
+const controller = require('../../src/core/domain/supplierController');
 
 describe('supplierController', () => {
   let req, res, next;

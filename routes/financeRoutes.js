@@ -1,7 +1,7 @@
 const express = require('express');
 const { protect } = require('../middleware/authMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
-const financeController = require('../controllers/financeController');
+const financeController = require('../src/core/domain/financeController');
 
 const router = express.Router();
 

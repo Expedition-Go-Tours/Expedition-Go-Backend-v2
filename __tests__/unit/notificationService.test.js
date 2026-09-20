@@ -1,9 +1,9 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   notification: { create: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), update: jest.fn(), updateMany: jest.fn(), deleteMany: jest.fn() },
   user: { findUnique: jest.fn() },
 }));
 
-jest.mock('../../utils/emailService', () => ({ sendEmail: jest.fn() }));
+jest.mock('../../src/core/services/emailService', () => ({ sendEmail: jest.fn() }));
 
 let mockIo;
 jest.mock('../../app', () => {
@@ -11,8 +11,8 @@ jest.mock('../../app', () => {
   return { get: jest.fn(() => mockIo) };
 });
 
-const prisma = require('../../utils/prismaClient');
-const { sendEmail } = require('../../utils/emailService');
+const prisma = require('../../src/core/services/prismaClient');
+const { sendEmail } = require('../../src/core/services/emailService');
 const app = require('../../app');
 
 const {
@@ -25,7 +25,7 @@ const {
   sendBulkNotifications,
   cleanupOldNotifications,
   getNotificationStats,
-} = require('../../utils/notificationService');
+} = require('../../src/core/services/notificationService');
 
 beforeEach(() => {
   jest.clearAllMocks();

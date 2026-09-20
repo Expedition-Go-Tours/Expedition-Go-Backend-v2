@@ -4,8 +4,8 @@
  * singular `meetingPoint`.
  */
 
-const { firstMeetingPoint } = require('../../utils/productToTour');
-const { validateTourForReview } = require('../../controllers/tourController');
+const { firstMeetingPoint } = require('../../src/core/services/productToTour');
+const { validateTourForReview } = require('../../src/core/domain/tourController');
 
 const validPoint = { name: 'Tamale Airport, Airport Road', address: 'Tamale Airport, Airport Road, Yilonayili, Ghana' };
 

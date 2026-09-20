@@ -9,7 +9,7 @@ const {
   computeDayEntry,
   pricingScheduleIndexesFor,
   hasPricingScheduleForDate,
-} = require('../../utils/availabilityCore');
+} = require('../../src/core/services/availabilityCore');
 
 // Dates are anchored to "now" rather than hardcoded: a fixed Monday that is in
 // the future when the suite is written becomes a PAST date later, and

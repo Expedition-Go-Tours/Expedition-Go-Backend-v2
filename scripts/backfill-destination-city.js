@@ -8,9 +8,9 @@
  *   node scripts/backfill-destination-city.js [--dry-run]
  */
 
-const prisma = require('../utils/prismaClient');
-const logger = require('../utils/logger');
-const { buildMajorCityIndex, destinationCityFor } = require('../utils/destinationCities');
+const prisma = require('../src/core/services/prismaClient');
+const logger = require('../src/core/services/logger');
+const { buildMajorCityIndex, destinationCityFor } = require('../src/core/services/destinationCities');
 
 async function main() {
   const dryRun = process.argv.includes('--dry-run');

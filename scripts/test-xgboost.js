@@ -1,7 +1,7 @@
 /**
  * Simulation: Test XGBoost ranking service
  */
-const xgboost = require('../utils/xgboostService');
+const xgboost = require('../src/core/services/xgboostService');
 
 // Simulate tour data with various characteristics
 const tours = [

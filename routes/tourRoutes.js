@@ -9,8 +9,8 @@
 const express = require('express');
 const { protect } = require('../middleware/authMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
-const tourController = require('../controllers/tourController');
-const availabilityController = require('../controllers/availabilityController');
+const tourController = require('../src/core/domain/tourController');
+const availabilityController = require('../src/core/domain/availabilityController');
 const { uploadTourPhotos } = require('../middleware/uploadMiddleware');
 
 const router = express.Router();

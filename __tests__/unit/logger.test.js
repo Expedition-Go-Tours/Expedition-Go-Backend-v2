@@ -25,7 +25,7 @@ describe('logger', () => {
   describe('without Logtail token', () => {
     beforeEach(() => {
       delete process.env.LOGTAIL_TOKEN;
-      logger = require('../../utils/logger');
+      logger = require('../../src/core/services/logger');
     });
 
     it('info falls back to console.log', () => {
@@ -66,7 +66,7 @@ describe('logger', () => {
 
     beforeEach(() => {
       process.env.LOGTAIL_TOKEN = 'test-token';
-      logger = require('../../utils/logger');
+      logger = require('../../src/core/services/logger');
       const { Logtail } = require('@logtail/node');
       mockLogtail = new Logtail();
     });

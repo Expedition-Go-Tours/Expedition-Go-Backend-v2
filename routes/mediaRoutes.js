@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const mediaController = require('../controllers/mediaController');
+const mediaController = require('../src/core/domain/mediaController');
 const { protect } = require('../middleware/authMiddleware');
 
 router.delete('/cleanup', protect, mediaController.cleanupPending);

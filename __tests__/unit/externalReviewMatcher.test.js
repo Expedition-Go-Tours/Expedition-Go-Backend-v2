@@ -1,4 +1,4 @@
-const { matchTourForTitle, normalizeTitle } = require('../../utils/externalReviewMatcher');
+const { matchTourForTitle, normalizeTitle } = require('../../src/core/services/externalReviewMatcher');
 
 const TOURS = [
   { id: 't1', title: 'Cape Coast Castle, Elmina Castle & Kakum National Park Day Tour', location: 'Accra, Ghana' },

@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   user: { findFirst: jest.fn(), findUnique: jest.fn() },
   conversation: { findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   conversationParticipant: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
@@ -9,13 +9,13 @@ jest.mock('../../utils/prismaClient', () => ({
   systemConfig: { findUnique: jest.fn() },
 }));
 
-jest.mock('../../utils/queue', () => ({ enqueueNotification: jest.fn() }));
-jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn() }));
+jest.mock('../../src/core/services/queue', () => ({ enqueueNotification: jest.fn() }));
+jest.mock('../../src/core/services/adminNotificationService', () => ({ notifyAdmin: jest.fn() }));
 
-const prisma = require('../../utils/prismaClient');
-const { enqueueNotification } = require('../../utils/queue');
-const { notifyAdmin } = require('../../utils/adminNotificationService');
-const chatService = require('../../utils/chatService');
+const prisma = require('../../src/core/services/prismaClient');
+const { enqueueNotification } = require('../../src/core/services/queue');
+const { notifyAdmin } = require('../../src/core/services/adminNotificationService');
+const chatService = require('../../src/core/services/chatService');
 
 describe('chatService', () => {
   const mockUser = { id: 'u-1', name: 'User', photoURL: 'p.jpg', lastLoginAt: new Date(), roles: ['supplier'], firebaseUid: 'fb-1' };

@@ -1,4 +1,4 @@
-jest.mock('../../utils/getConfig', () =>
+jest.mock('../../src/core/services/getConfig', () =>
   jest.fn(async (key) => {
     if (key === 'availability.limited_ratio') return '0.7';
     if (key === 'availability.full_ratio') return '1';
@@ -6,17 +6,17 @@ jest.mock('../../utils/getConfig', () =>
   })
 );
 
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   tour: { findUnique: jest.fn() },
   tourDateOverride: { findFirst: jest.fn(), findMany: jest.fn() },
   booking: { findMany: jest.fn() },
   $queryRawUnsafe: jest.fn(),
 }));
 
-const prisma = require('../../utils/prismaClient');
-const core = require('../../utils/availabilityCore');
-const { checkTourAvailability } = require('../../utils/tourHelpers');
-const { buildAvailabilityCalendar } = require('../../utils/availabilityCalendar');
+const prisma = require('../../src/core/services/prismaClient');
+const core = require('../../src/core/services/availabilityCore');
+const { checkTourAvailability } = require('../../src/core/services/tourHelpers');
+const { buildAvailabilityCalendar } = require('../../src/core/services/availabilityCalendar');
 
 // 2026-06-15 is a Monday.
 const MONDAY = '2026-06-15';

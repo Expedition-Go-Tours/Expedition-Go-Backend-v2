@@ -14,8 +14,8 @@
  *   node prisma/backfillTourPrices.js --dry-run  # preview only
  */
 require('dotenv').config();
-const prisma = require('../utils/prismaClient');
-const { rebuildSchedulePrices } = require('../utils/tourHelpers');
+const prisma = require('../src/core/services/prismaClient');
+const { rebuildSchedulePrices } = require('../src/core/services/tourHelpers');
 
 const dryRun = process.argv.includes('--dry-run');
 const TOWER_ID = 'cmrypuex70001117qmysomznp';

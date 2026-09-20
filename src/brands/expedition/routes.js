@@ -3,10 +3,10 @@ const { createLimiter } = require('../../../middleware/dynamicRateLimiter');
 const { protect } = require('../../../middleware/authMiddleware');
 const { restrictTo } = require('../../../middleware/authMiddleware');
 const expeditionController = require('./controller');
-const reviewController = require('../../../controllers/reviewController');
+const reviewController = require('../../core/domain/reviewController');
 const { uploadReviewPhotos } = require('../../../middleware/uploadMiddleware');
-const expeditionAnalyticsController = require('../../../controllers/expeditionAnalyticsController');
-const payLaterPaymentController = require('../../../controllers/payLaterPaymentController');
+const expeditionAnalyticsController = require('../../core/domain/expeditionAnalyticsController');
+const payLaterPaymentController = require('../../core/domain/payLaterPaymentController');
 const validate = require('../../../middleware/validate');
 const {
   getToursSchema,
@@ -38,7 +38,7 @@ const {
   analyticsRevenueTrendSchema,
   analyticsFunnelSchema,
   supplierToursSchema,
-} = require('../../../utils/expeditionValidation');
+} = require('../../core/services/expeditionValidation');
 
 const router = express.Router();
 

@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   travioGhanaTour: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
   tour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn() },
   user: { findUnique: jest.fn(), update: jest.fn() },
@@ -17,31 +17,31 @@ jest.mock('../../utils/prismaClient', () => ({
   $queryRawUnsafe: jest.fn(),
 }));
 
-jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
-jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn(), emitBatch: jest.fn() }));
-jest.mock('../../utils/cacheHelper', () => ({
+jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
+jest.mock('../../src/core/services/eventEmitter', () => ({ emit: jest.fn(), emitBatch: jest.fn() }));
+jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
   invalidateKeys: jest.fn(() => Promise.resolve()),
 }));
-jest.mock('../../utils/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/queue', () => ({
+jest.mock('../../src/core/services/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/queue', () => ({
   enqueueEvent: jest.fn(() => Promise.resolve()),
   enqueueEmail: jest.fn(() => Promise.resolve()),
   enqueueNotification: jest.fn(() => Promise.resolve()),
 }));
-jest.mock('../../utils/bookingHelpers', () => ({
+jest.mock('../../src/core/services/bookingHelpers', () => ({
   validateTravelerInfo: jest.fn(),
   generateBookingNumber: jest.fn(),
   evaluateCancellationPolicy: jest.fn(() => ({ allowed: true, refundAmount: 105, refundPercentage: 100, reason: 'Full refund available', windowHours: 24 })),
   evaluateModifyPolicy: jest.fn(() => ({ allowed: true, reason: null, cutoffHours: 24, deadline: null })),
   isValidEmail: jest.fn(() => true),
 }));
-jest.mock('../../utils/tourHelpers', () => ({
+jest.mock('../../src/core/services/tourHelpers', () => ({
   checkTourAvailability: jest.fn(),
   calculateTourPrice: jest.fn(),
   cheapestRetailPrice: jest.fn(() => 50),
 }));
-jest.mock('../../utils/stripeHelpers', () => ({
+jest.mock('../../src/core/services/stripeHelpers', () => ({
   createPaymentIntent: jest.fn(),
   createCheckoutSession: jest.fn(),
   createCustomCheckoutPaymentIntent: jest.fn(),
@@ -51,12 +51,12 @@ jest.mock('../../utils/stripeHelpers', () => ({
   ensureStripeCustomer: jest.fn(async (user) => user?.stripeCustomerId || null),
   getStripe: jest.fn(() => ({ paymentIntents: { confirm: jest.fn(), retrieve: jest.fn(), update: jest.fn(() => Promise.resolve({})) }, checkout: { sessions: { create: jest.fn(), retrieve: jest.fn() } }, refunds: { create: jest.fn() } })),
 }));
-jest.mock('../../utils/getConfig', () => jest.fn((key, def) => Promise.resolve(def)));
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/checkoutHold', () => ({ acquireHold: jest.fn(), releaseHold: jest.fn(), HOLD_MINUTES: 30 }));
-jest.mock('../../utils/availabilityCalendar', () => ({ buildAvailabilityCalendar: jest.fn(() => Promise.resolve([])) }));
+jest.mock('../../src/core/services/getConfig', () => jest.fn((key, def) => Promise.resolve(def)));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/checkoutHold', () => ({ acquireHold: jest.fn(), releaseHold: jest.fn(), HOLD_MINUTES: 30 }));
+jest.mock('../../src/core/services/availabilityCalendar', () => ({ buildAvailabilityCalendar: jest.fn(() => Promise.resolve([])) }));
 
-const prisma = require('../../utils/prismaClient');
+const prisma = require('../../src/core/services/prismaClient');
 const controller = require('../../src/brands/ghana/controller');
 
 const mockTour = {

@@ -12,7 +12,7 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 
-const email = require('../utils/emailService');
+const email = require('../src/core/services/emailService');
 
 const TO = process.env.EMAIL_SIM_TO || 'kwarteon08@gmail.com';
 

@@ -26,14 +26,14 @@ const hpp = require('hpp');
 const morgan = require('morgan');
 const compression = require('compression');
 const crypto = require('crypto');
-const logger = require('./utils/logger');
+const logger = require('./src/core/services/logger');
 
 
 const passport = require('./config/passport');
 const globalErrorHandler = require('./middleware/errorMiddleware');
-const AppError = require('./utils/appError');
-const prisma = require('./utils/prismaClient');
-const { isRedisAvailable } = require('./utils/queue');
+const AppError = require('./src/core/services/appError');
+const prisma = require('./src/core/services/prismaClient');
+const { isRedisAvailable } = require('./src/core/services/queue');
 
 const app = express();
 
@@ -228,7 +228,7 @@ app.get('/health', async (req, res) => {
   // go red during a transient Redis blip.
   if (redisOk) {
     try {
-      const { getSchedulerHealth } = require('./utils/queue');
+      const { getSchedulerHealth } = require('./src/core/services/queue');
       body.scheduler = await getSchedulerHealth();
     } catch {
       body.scheduler = { status: 'unknown' };
@@ -367,7 +367,7 @@ app.use('/api/analytics', analyticsRoutes);
 
 // SEO prerender — serves pre-rendered HTML with meta tags + JSON-LD to bots.
 // The Vercel Edge Middleware proxies bot requests to /api/prerender?url=...
-const { prerender } = require('./controllers/prerenderController');
+const { prerender } = require('./src/core/domain/prerenderController');
 app.get('/api/prerender', prerender);
 
 if (swaggerSpec && process.env.NODE_ENV !== 'production') {

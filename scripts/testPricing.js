@@ -12,8 +12,8 @@
  * Exits non-zero if any assertion fails.
  */
 
-const prisma = require('../utils/prismaClient');
-const { calculateTourPrice } = require('../utils/tourHelpers');
+const prisma = require('../src/core/services/prismaClient');
+const { calculateTourPrice } = require('../src/core/services/tourHelpers');
 
 // ---------------------------------------------------------------------------
 // Harness

@@ -13,10 +13,10 @@
  * scope is added to the ranking engine.
  */
 
-const catchAsync = require('../../../utils/catchAsync');
-const prisma = require('../../../utils/prismaClient');
-const cache = require('../../../utils/cacheHelper');
-const ranking = require('../../../utils/homepageRanking');
+const catchAsync = require('../../core/services/catchAsync');
+const prisma = require('../../core/services/prismaClient');
+const cache = require('../../core/services/cacheHelper');
+const ranking = require('../../core/services/homepageRanking');
 
 // ── Helpers ────────────────────────────────────────────────────────────
 

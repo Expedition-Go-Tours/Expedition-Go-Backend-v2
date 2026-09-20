@@ -11,7 +11,7 @@
  *   node scripts/backfill-meeting-points.js --apply
  */
 
-const prisma = require('../utils/prismaClient');
+const prisma = require('../src/core/services/prismaClient');
 
 const APPLY = process.argv.includes('--apply');
 

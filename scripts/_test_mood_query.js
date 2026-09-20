@@ -1,5 +1,5 @@
 ﻿const { PrismaClient } = require("@prisma/client");
-const { KEYWORD_CATEGORIES } = require("../utils/homepageRanking");
+const { KEYWORD_CATEGORIES } = require("../src/core/services/homepageRanking");
 const p = new PrismaClient({
   datasources: {
     db: { url: "postgresql://neondb_owner:npg_n9JNuzCdwTW2@ep-patient-thunder-a6rit4fo.us-west-2.aws.neon.tech/neondb?sslmode=require" }

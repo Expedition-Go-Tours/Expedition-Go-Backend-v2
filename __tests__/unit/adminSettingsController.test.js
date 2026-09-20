@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   systemConfig: { findMany: jest.fn(), findUnique: jest.fn(), upsert: jest.fn() },
   auditLog: { create: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), findFirst: jest.fn() },
   user: { findMany: jest.fn() },
@@ -7,9 +7,9 @@ jest.mock('../../utils/prismaClient', () => ({
 
 jest.mock('../../middleware/maintenanceMode', () => ({ clearCache: jest.fn() }));
 
-const prisma = require('../../utils/prismaClient');
+const prisma = require('../../src/core/services/prismaClient');
 const { clearCache: clearMaintCache } = require('../../middleware/maintenanceMode');
-const controller = require('../../controllers/adminSettingsController');
+const controller = require('../../src/core/domain/adminSettingsController');
 
 describe('adminSettingsController', () => {
   let req, res, next;

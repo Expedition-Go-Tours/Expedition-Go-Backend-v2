@@ -1,8 +1,8 @@
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
 
 const errorHandler = require('../../middleware/errorMiddleware');
-const AppError = require('../../utils/appError');
-const { logActivity } = require('../../utils/auditLogger');
+const AppError = require('../../src/core/services/appError');
+const { logActivity } = require('../../src/core/services/auditLogger');
 
 const { classifyApiError } = errorHandler;
 

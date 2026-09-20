@@ -1,6 +1,6 @@
 const { imageUpload, documentUpload } = require('../config/cloudinary');
-const prisma = require('../utils/prismaClient');
-const { extractPublicIdFromUrl } = require('../utils/cloudinaryHelper');
+const prisma = require('../src/core/services/prismaClient');
+const { extractPublicIdFromUrl } = require('../src/core/services/cloudinaryHelper');
 
 function wrapMulter(middleware) {
   return (req, res, next) => {

@@ -1,7 +1,7 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
-const adminFinanceController = require('../controllers/adminFinanceController');
+const adminFinanceController = require('../src/core/domain/adminFinanceController');
 
 const router = express.Router();
 

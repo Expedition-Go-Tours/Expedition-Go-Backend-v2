@@ -2,7 +2,7 @@ const {
   buildTourFilters,
   buildSortOptions,
   validateFilterParams,
-} = require('../../utils/tourFilterBuilder');
+} = require('../../src/core/services/tourFilterBuilder');
 
 // ---------------------------------------------------------------------------
 // buildTourFilters

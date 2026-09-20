@@ -3,7 +3,7 @@ const dotenv = fs.readFileSync('.env', 'utf8');
 const key = dotenv.match(/^STRIPE_SECRET_KEY=(.+)$/m)[1].trim();
 process.env.STRIPE_SECRET_KEY = key;
 process.env.CLIENT_URL = 'http://localhost:5173';
-const { createPaymentIntent } = require('../utils/stripeHelpers');
+const { createPaymentIntent } = require('../src/core/services/stripeHelpers');
 
 (async () => {
   const result = await createPaymentIntent({

@@ -10,7 +10,7 @@ const express = require('express');
 const { protect } = require('../middleware/authMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 const { createUserLimiter } = require('../middleware/dynamicRateLimiter');
-const bookingController = require('../controllers/bookingController');
+const bookingController = require('../src/core/domain/bookingController');
 
 const router = express.Router();
 

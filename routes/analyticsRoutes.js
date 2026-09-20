@@ -9,7 +9,7 @@
 
 const express = require('express');
 const router = express.Router();
-const analyticsController = require('../controllers/analyticsController');
+const analyticsController = require('../src/core/domain/analyticsController');
 const { optionalAuth } = require('../middleware/authMiddleware');
 
 router.post('/event', optionalAuth, analyticsController.trackEvent);

@@ -9,8 +9,8 @@ const {
   popularityScore,
   rankByPlace,
   normalizeRegion,
-} = require('../../utils/placeResolver');
-const { normalizeQuery } = require('../../utils/placeResolver');
+} = require('../../src/core/services/placeResolver');
+const { normalizeQuery } = require('../../src/core/services/placeResolver');
 
 describe('normalizeRegion', () => {
   it('appends " Region" to bare region names (Attraction table format)', () => {

@@ -1,7 +1,7 @@
 // Run: node scripts/grant-admin.js <email>
 // Grants admin role to a user by email
 
-const prisma = require('../utils/prismaClient');
+const prisma = require('../src/core/services/prismaClient');
 
 async function main() {
   const email = process.argv[2];

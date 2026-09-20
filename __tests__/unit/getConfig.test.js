@@ -1,9 +1,9 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   systemConfig: { findUnique: jest.fn() },
 }));
 
-const prisma = require('../../utils/prismaClient');
-const getConfig = require('../../utils/getConfig');
+const prisma = require('../../src/core/services/prismaClient');
+const getConfig = require('../../src/core/services/getConfig');
 
 describe('getConfig', () => {
   beforeEach(() => {

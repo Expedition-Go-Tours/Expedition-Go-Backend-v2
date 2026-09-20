@@ -1,7 +1,7 @@
 const express = require('express');
 const { protect } = require('../middleware/authMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
-const disputeController = require('../controllers/disputeController');
+const disputeController = require('../src/core/domain/disputeController');
 
 const router = express.Router();
 

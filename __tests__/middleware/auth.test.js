@@ -3,7 +3,7 @@ jest.mock('../../config/jwt', () => ({
   verifyAccessToken: (...args) => mockVerifyAccessToken(...args),
 }));
 
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   user: {
     findUnique: jest.fn(),
     findFirst: jest.fn(),
@@ -37,11 +37,11 @@ const mockUser = {
 
 beforeEach(() => {
   mockVerifyAccessToken.mockClear();
-  const p = require('../../utils/prismaClient');
+  const p = require('../../src/core/services/prismaClient');
   p.user.findUnique.mockClear();
   p.user.findFirst.mockClear();
   p.user.create.mockClear();
-  const cache = require('../../utils/cacheHelper');
+  const cache = require('../../src/core/services/cacheHelper');
   cache._clearMemory();
   cache.invalidateKeys(['auth:user:user-1']).catch(() => {});
 });
@@ -57,7 +57,7 @@ describe('JWT verification', () => {
   });
 
   it('passes with valid token', async () => {
-    const prisma = require('../../utils/prismaClient');
+    const prisma = require('../../src/core/services/prismaClient');
     mockVerifyAccessToken.mockReturnValue({ userId: 'user-1' });
     prisma.user.findUnique.mockResolvedValue(mockUser);
 
@@ -82,7 +82,7 @@ describe('JWT verification', () => {
   });
 
   it('returns 404 if user not found', async () => {
-    const prisma = require('../../utils/prismaClient');
+    const prisma = require('../../src/core/services/prismaClient');
     mockVerifyAccessToken.mockReturnValue({ userId: 'unknown' });
     prisma.user.findUnique.mockResolvedValue(null);
 
@@ -94,7 +94,7 @@ describe('JWT verification', () => {
   });
 
   it('returns 403 if user deactivated', async () => {
-    const prisma = require('../../utils/prismaClient');
+    const prisma = require('../../src/core/services/prismaClient');
     mockVerifyAccessToken.mockReturnValue({ userId: 'user-1' });
     prisma.user.findUnique.mockResolvedValue({ ...mockUser, active: false });
 

@@ -3,8 +3,8 @@
  * Pure logic — no DB or network — so it stays fast and focused.
  */
 
-const { assertClaimable, CLAIM_WINDOW_DAYS } = require('../../controllers/refundClaimController');
-const AppError = require('../../utils/appError');
+const { assertClaimable, CLAIM_WINDOW_DAYS } = require('../../src/core/domain/refundClaimController');
+const AppError = require('../../src/core/services/appError');
 
 const CLAIM_WINDOW_MS = CLAIM_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 

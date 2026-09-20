@@ -10,9 +10,9 @@
  *   node scripts/recompute-attraction-tour-counts.js [--dry-run]
  */
 
-const prisma = require('../utils/prismaClient');
-const logger = require('../utils/logger');
-const { normalizeName, variantsFor } = require('../utils/attractionMatch');
+const prisma = require('../src/core/services/prismaClient');
+const logger = require('../src/core/services/logger');
+const { normalizeName, variantsFor } = require('../src/core/services/attractionMatch');
 
 async function main() {
   const dryRun = process.argv.includes('--dry-run');

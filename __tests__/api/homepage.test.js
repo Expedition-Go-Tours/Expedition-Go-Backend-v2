@@ -1,6 +1,6 @@
-jest.mock('../../utils/redisClient');
-jest.mock('../../utils/homepageRanking');
-jest.mock('../../utils/homepagePrecompute', () => ({
+jest.mock('../../src/core/services/redisClient');
+jest.mock('../../src/core/services/homepageRanking');
+jest.mock('../../src/core/services/homepagePrecompute', () => ({
   SECTION_KEYS: {
     sellOut: 'hp:sections:sell-out',
     topRated: 'hp:sections:top-rated',
@@ -16,15 +16,15 @@ jest.mock('../../utils/homepagePrecompute', () => ({
     new: 600, attractions: 600, mood: 300, destinations: 3600,
   },
 }));
-jest.mock('../../utils/queue', () => ({
+jest.mock('../../src/core/services/queue', () => ({
   enqueueHomepagePrecompute: jest.fn().mockResolvedValue(),
 }));
 
 const request = require('supertest');
 const app = require('../../app');
-const redis = require('../../utils/redisClient');
-const ranking = require('../../utils/homepageRanking');
-const { enqueueHomepagePrecompute } = require('../../utils/queue');
+const redis = require('../../src/core/services/redisClient');
+const ranking = require('../../src/core/services/homepageRanking');
+const { enqueueHomepagePrecompute } = require('../../src/core/services/queue');
 
 describe('Homepage API', () => {
   beforeEach(() => {

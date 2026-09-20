@@ -2,8 +2,8 @@ const express = require('express');
 const { createLimiter } = require('../middleware/dynamicRateLimiter');
 const { optionalAuth } = require('../middleware/authMiddleware');
 const validate = require('../middleware/validate');
-const consentController = require('../controllers/consentController');
-const { consentSchema } = require('../utils/consentValidation');
+const consentController = require('../src/core/domain/consentController');
+const { consentSchema } = require('../src/core/services/consentValidation');
 
 const router = express.Router();
 

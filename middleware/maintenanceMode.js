@@ -1,4 +1,4 @@
-const prisma = require('../utils/prismaClient');
+const prisma = require('../src/core/services/prismaClient');
 
 let cachedValue = null;
 let cacheTime = 0;

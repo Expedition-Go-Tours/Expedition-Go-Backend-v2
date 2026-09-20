@@ -1,7 +1,7 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
-const refundClaimController = require('../controllers/refundClaimController');
+const refundClaimController = require('../src/core/domain/refundClaimController');
 
 const router = express.Router();
 

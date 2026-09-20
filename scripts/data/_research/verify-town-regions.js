@@ -32,9 +32,9 @@
 
 const fs = require('fs');
 const path = require('path');
-const prisma = require('../../../utils/prismaClient');
-const locationService = require('../../../utils/locationService');
-const { canonicalRegion } = require('../../../utils/placeResolver');
+const prisma = require('../../../src/core/services/prismaClient');
+const locationService = require('../../../src/core/services/locationService');
+const { canonicalRegion } = require('../../../src/core/services/placeResolver');
 
 const OUT = path.resolve(__dirname, 'town-region-verify.json');
 const numArg = (name, fallback) => {

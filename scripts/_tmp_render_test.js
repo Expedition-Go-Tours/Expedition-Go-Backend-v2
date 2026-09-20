@@ -1,5 +1,5 @@
-const email = require('../utils/emailService');
-const { render } = require('../utils/emailRenderer');
+const email = require('../src/core/services/emailService');
+const { render } = require('../src/core/services/emailRenderer');
 
 const base = {
   customerName: 'Kwarteon',

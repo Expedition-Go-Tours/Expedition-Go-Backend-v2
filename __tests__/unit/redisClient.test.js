@@ -32,11 +32,11 @@ describe('redisClient', () => {
   function loadRedis() {
     jest.resetModules();
     createMockRedis();
-    return require('../../utils/redisClient');
+    return require('../../src/core/services/redisClient');
   }
 
   afterAll(async () => {
-    const r = require('../../utils/redisClient');
+    const r = require('../../src/core/services/redisClient');
     await r.quit().catch(() => {});
   });
 

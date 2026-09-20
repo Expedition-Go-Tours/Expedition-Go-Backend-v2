@@ -3,12 +3,12 @@
 const dotenv = require('dotenv');
 const http = require('http');
 const { Server } = require('socket.io');
-const prisma = require('./utils/prismaClient');
-const { setIO, setupPrismaMiddleware } = require('./utils/dataChangeEmitter');
-const { registerWorkers, closeAll, registerSchedules, verifySchedules, enqueueNotification, enqueueEvent, startResumeMonitor } = require('./utils/queue');
-const { startAiCronFallback } = require('./utils/aiCronFallback');
-const redisClient = require('./utils/redisClient');
-const logger = require('./utils/logger');
+const prisma = require('./src/core/services/prismaClient');
+const { setIO, setupPrismaMiddleware } = require('./src/core/services/dataChangeEmitter');
+const { registerWorkers, closeAll, registerSchedules, verifySchedules, enqueueNotification, enqueueEvent, startResumeMonitor } = require('./src/core/services/queue');
+const { startAiCronFallback } = require('./src/core/services/aiCronFallback');
+const redisClient = require('./src/core/services/redisClient');
+const logger = require('./src/core/services/logger');
 
 // PM2 cluster worker index. Scheduling is owned entirely by BullMQ Job
 // Schedulers (utils/queue.js registerSchedules) — no in-process timers or
@@ -34,7 +34,7 @@ const shutdown = async (reason, err) => {
 
   // 1) Stop the AI cron fallback worker.
   try {
-    const { stopAiCronFallback } = require('./utils/aiCronFallback');
+    const { stopAiCronFallback } = require('./src/core/services/aiCronFallback');
     stopAiCronFallback();
   } catch (err) {
     logger.warn('[shutdown] stopAiCronFallback failed:', err?.message);
@@ -155,7 +155,7 @@ server.listen(port, '0.0.0.0', () => {
 // Inbound chat email poller — independent of Resend webhooks so replies are
 // ingested even if a webhook is delayed/dropped. Deduped by Message-ID.
 if (process.env.RESEND_API_KEY) {
-  const { pollReceivedEmails } = require('./utils/chatEmailIngest');
+  const { pollReceivedEmails } = require('./src/core/services/chatEmailIngest');
   const runPoll = () => pollReceivedEmails().catch((err) => console.error(`[ChatEmailIngest] poll error: ${err.message}`));
   runPoll();
   setInterval(runPoll, 15_000);
@@ -200,8 +200,8 @@ setupSocketIO();
 })();
 
 async function buildBm25Index() {
-  const bm25 = require('./utils/bm25Index');
-  const prisma = require('./utils/prismaClient');
+  const bm25 = require('./src/core/services/bm25Index');
+  const prisma = require('./src/core/services/prismaClient');
   const tours = await prisma.tour.findMany({
     where: { status: 'ACTIVE' },
     select: {
@@ -271,11 +271,11 @@ async function setupQueueWorkers(redisOk = true) {
 
   // Backfill: publish all existing Ghana suppliers' tours on boot (one-shot;
   // the 30-min reconcile is owned by the scheduled reconcile-ghana job).
-  const { reconcileGhanaPublish } = require('./utils/autoPublishGhana');
+  const { reconcileGhanaPublish } = require('./src/core/services/autoPublishGhana');
   reconcileGhanaPublish().catch((err) => logger.warn('[scheduler] startup ghana-publish reconcile failed:', err?.message));
 
   // Backfill: publish all existing non-Ghana African suppliers' tours on boot
-  const { reconcileTravioAfricaPublish } = require('./utils/autoPublishTravioAfrica');
+  const { reconcileTravioAfricaPublish } = require('./src/core/services/autoPublishTravioAfrica');
   reconcileTravioAfricaPublish().catch((err) => logger.warn('[scheduler] startup travioafrica-publish reconcile failed:', err?.message));
 
   // NOTE: low-risk cleanup/aggregation jobs no longer get a boot catch-up —
@@ -283,7 +283,7 @@ async function setupQueueWorkers(redisOk = true) {
   // no interval replay). Homepage precompute stays (first-request latency).
 
   // Pre-compute homepage sections so the first user request is served instantly
-  const { enqueueHomepagePrecompute } = require('./utils/queue');
+  const { enqueueHomepagePrecompute } = require('./src/core/services/queue');
   enqueueHomepagePrecompute().catch((err) => logger.warn('[scheduler] startup homepage-precompute failed:', err?.message));
 }
 
@@ -405,7 +405,7 @@ function setupSocketIO() {
 
     if (socket.userRoles.includes('admin')) {
       socket.join('admin-room');
-      const chatService = require('./utils/chatService');
+      const chatService = require('./src/core/services/chatService');
       chatService.getSharedAdminId().then(sharedId => {
         if (sharedId) socket.join(`user:${sharedId}`);
       });
@@ -413,7 +413,7 @@ function setupSocketIO() {
 
     if (socket.userRoles.includes('expedition')) {
       socket.join('expedition-room');
-      const chatService = require('./utils/chatService');
+      const chatService = require('./src/core/services/chatService');
       chatService.getSharedExpeditionId().then(sharedId => {
         if (sharedId) socket.join(`user:${sharedId}`);
       });
@@ -495,7 +495,7 @@ function setupSocketIO() {
       }
     });
 
-    const chatService = require('./utils/chatService');
+    const chatService = require('./src/core/services/chatService');
 
     socket.on('chat:join', async (payload, ack) => {
       try {

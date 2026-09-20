@@ -15,8 +15,8 @@
  *   node prisma/backfillDurationMinutes.js --dry-run  # preview only
  */
 require('dotenv').config();
-const prisma = require('../utils/prismaClient');
-const { durationToMinutes } = require('../utils/tourHelpers');
+const prisma = require('../src/core/services/prismaClient');
+const { durationToMinutes } = require('../src/core/services/tourHelpers');
 
 const dryRun = process.argv.includes('--dry-run');
 const PAUSE_TOURS = ['cms92wn6o002rzhyk6uol6hh0']; // Heights — content not production-ready

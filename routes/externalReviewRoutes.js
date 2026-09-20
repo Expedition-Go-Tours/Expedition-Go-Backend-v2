@@ -1,7 +1,7 @@
 const express = require('express');
 const { requireServiceToken } = require('../middleware/serviceToken');
 const { createLimiter } = require('../middleware/dynamicRateLimiter');
-const { syncExternalReviews } = require('../controllers/externalReviewController');
+const { syncExternalReviews } = require('../src/core/domain/externalReviewController');
 
 const router = express.Router();
 

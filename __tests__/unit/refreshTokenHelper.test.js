@@ -1,15 +1,15 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   user: { findUnique: jest.fn(), update: jest.fn() },
 }));
 
-const prisma = require('../../utils/prismaClient');
+const prisma = require('../../src/core/services/prismaClient');
 const crypto = require('crypto');
 const {
   storeRefreshToken,
   validateRefreshToken,
   rotateRefreshToken,
   clearRefreshToken,
-} = require('../../utils/refreshTokenHelper');
+} = require('../../src/core/services/refreshTokenHelper');
 
 function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');

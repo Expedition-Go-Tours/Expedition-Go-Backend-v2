@@ -23,7 +23,7 @@
  * same three calls the controller makes.
  */
 
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   tour: {
     findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(),
     count: jest.fn(), create: jest.fn(), update: jest.fn(),
@@ -35,7 +35,7 @@ jest.mock('../../utils/prismaClient', () => ({
   $transaction: jest.fn(),
 }));
 
-jest.mock('../../utils/cacheHelper', () => ({
+jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
   invalidateTourCaches: jest.fn(() => Promise.resolve()),
   invalidateKeys: jest.fn(() => Promise.resolve()),
@@ -46,25 +46,25 @@ jest.mock('../../utils/cacheHelper', () => ({
   REVIEWS_TOUR_PREFIX: (tourId) => `reviews:tour:${tourId}:*`,
 }));
 
-jest.mock('../../utils/cloudinaryHelper', () => ({
+jest.mock('../../src/core/services/cloudinaryHelper', () => ({
   deleteCloudinaryImage: jest.fn(() => Promise.resolve()),
   isValidCloudinaryUrl: jest.fn((u) => typeof u === 'string' && u.startsWith('https://res.cloudinary.com/')),
 }));
-jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((u) => u) }));
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/eventEmitter', () => ({ emit: jest.fn() }));
-jest.mock('../../utils/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()), enqueueNotification: jest.fn(() => Promise.resolve()), enqueueAiScoring: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn(() => Promise.resolve()), emitToRoom: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../utils/tourFilterBuilder', () => ({
+jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((u) => u) }));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/eventEmitter', () => ({ emit: jest.fn() }));
+jest.mock('../../src/core/services/queue', () => ({ enqueueEvent: jest.fn(() => Promise.resolve()), enqueueNotification: jest.fn(() => Promise.resolve()), enqueueAiScoring: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/adminNotificationService', () => ({ notifyAdmin: jest.fn(() => Promise.resolve()), emitToRoom: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/tourFilterBuilder', () => ({
   buildTourFilters: jest.fn(), buildSortOptions: jest.fn(), getAvailableFilterOptions: jest.fn(),
   validateFilterParams: jest.fn(), findNearbyTourIds: jest.fn(), getTourDistances: jest.fn(),
 }));
-jest.mock('../../utils/popularityScorer', () => ({ getPopularByCategory: jest.fn() }));
-jest.mock('../../utils/fullTextSearch', () => ({ rankTourIdsBySearch: jest.fn() }));
+jest.mock('../../src/core/services/popularityScorer', () => ({ getPopularByCategory: jest.fn() }));
+jest.mock('../../src/core/services/fullTextSearch', () => ({ rankTourIdsBySearch: jest.fn() }));
 // Use the REAL helpers for availability/pricing logic so the payload is exercised
 // end-to-end. Stub only the slug + duration + validation helpers.
-jest.mock('../../utils/tourHelpers', () => {
-  const actual = jest.requireActual('../../utils/tourHelpers');
+jest.mock('../../src/core/services/tourHelpers', () => {
+  const actual = jest.requireActual('../../src/core/services/tourHelpers');
   return {
     ...actual,
     createSlug: jest.fn(() => Promise.resolve('tower-fix')),
@@ -78,7 +78,7 @@ jest.mock('../../utils/tourHelpers', () => {
     validateTourData: jest.fn(() => ({ isValid: true, errors: [] })),
   };
 });
-jest.mock('../../utils/appError', () => {
+jest.mock('../../src/core/services/appError', () => {
   class AppError extends Error {
     constructor(msg, code) { super(msg); this.statusCode = code; this.status = code; }
   }
@@ -90,8 +90,8 @@ const {
   reconcileAvailability,
   validateStoredPricing,
   validateTourData,
-} = require('../../utils/tourHelpers');
-const { mergeDraftContent, buildLiveUpdateData, buildTourDiff } = require('../../utils/tourDraft');
+} = require('../../src/core/services/tourHelpers');
+const { mergeDraftContent, buildLiveUpdateData, buildTourDiff } = require('../../src/core/services/tourDraft');
 
 // Replicates tourController.buildDraftFromBody's payload handling (photos are
 // irrelevant to availability, so omitted). This is the exact three-step sequence
@@ -357,7 +357,7 @@ describe('Tour payload lifecycle', () => {
 });
 
 const { prisma } = (() => {
-  const p = require('../../utils/prismaClient');
+  const p = require('../../src/core/services/prismaClient');
   return { prisma: p };
 })();
 

@@ -2,13 +2,13 @@ const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
-const payoutMethodController = require('../controllers/payoutMethodController');
+const payoutMethodController = require('../src/core/domain/payoutMethodController');
 const validate = require('../middleware/validate');
 const {
   payoutMethodInputSchema,
   payoutMethodPatchSchema,
   verifyPayoutMethodSchema,
-} = require('../utils/payoutMethodValidation');
+} = require('../src/core/services/payoutMethodValidation');
 
 const router = express.Router();
 

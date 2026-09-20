@@ -10,9 +10,9 @@
  *    green without weakening the assertion.
  */
 
-const { normalizeRegion, regionForQuery, resolvePlace } = require('../../utils/placeResolver');
-const { placeTourIds, regionTourIds } = require('../../utils/placeListing');
-const prisma = require('../../utils/prismaClient');
+const { normalizeRegion, regionForQuery, resolvePlace } = require('../../src/core/services/placeResolver');
+const { placeTourIds, regionTourIds } = require('../../src/core/services/placeListing');
+const prisma = require('../../src/core/services/prismaClient');
 
 const dbAvailable = process.env.TEST_DB_AVAILABLE === 'true';
 const describeDb = dbAvailable ? describe : describe.skip;
@@ -90,7 +90,7 @@ describeDb('itinerary place matching (needs catalog)', () => {
     });
     if (seeded === 0) return;
 
-    const { getLocationTourIds } = require('../../utils/homepageRanking');
+    const { getLocationTourIds } = require('../../src/core/services/homepageRanking');
     const ids = await getLocationTourIds('Volta Region', false, true);
     expect(ids.length).toBeGreaterThan(0);
 

@@ -2,7 +2,7 @@ jest.mock('cloudinary', () => ({
   v2: { uploader: { destroy: jest.fn() } },
 }));
 
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   tour: { findFirst: jest.fn() },
   user: { findFirst: jest.fn() },
   review: { findFirst: jest.fn() },
@@ -11,8 +11,8 @@ jest.mock('../../utils/prismaClient', () => ({
 }));
 
 const cloudinary = require('cloudinary').v2;
-const helper = require('../../utils/cloudinaryHelper');
-const prisma = require('../../utils/prismaClient');
+const helper = require('../../src/core/services/cloudinaryHelper');
+const prisma = require('../../src/core/services/prismaClient');
 
 describe('cloudinaryHelper', () => {
   beforeEach(() => {

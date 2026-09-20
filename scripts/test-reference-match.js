@@ -1,7 +1,7 @@
 /**
  * Test: Reference-based CLIP matching for attractions
  */
-const { findBestMatch } = require('../utils/referenceImageMatcher');
+const { findBestMatch } = require('../src/core/services/referenceImageMatcher');
 
 async function test() {
   // Simulate: Cape Coast Castle tour has photos of both castles

@@ -1,7 +1,7 @@
 /**
  * Simulation: Test BM25 search index
  */
-const bm25 = require('../utils/bm25Index');
+const bm25 = require('../src/core/services/bm25Index');
 
 // Simulate tour data
 const tours = [

@@ -7,7 +7,7 @@ process.env.RESEND_INBOUND_WEBHOOK_SECRET = 'test-webhook-secret';
 process.env.RESEND_RECEIVING_DOMAIN = 'messages.example.com';
 
 const crypto = require('crypto');
-const chatInbound = require('../../utils/chatInbound');
+const chatInbound = require('../../src/core/services/chatInbound');
 
 describe('chatInbound tokens', () => {
   it('generates stable tokens per conversation and canonical c-<hex> form', () => {

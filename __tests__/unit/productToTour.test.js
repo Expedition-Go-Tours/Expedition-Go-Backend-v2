@@ -7,7 +7,7 @@
  * region can surface a tour that merely visits it.
  */
 
-const { productToTour } = require('../../utils/productToTour');
+const { productToTour } = require('../../src/core/services/productToTour');
 
 describe('productToTour itinerary derivation', () => {
   const flat = {

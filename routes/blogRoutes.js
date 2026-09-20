@@ -2,7 +2,7 @@ const express = require('express');
 const { createLimiter } = require('../middleware/dynamicRateLimiter');
 const { protect } = require('../middleware/authMiddleware');
 const { restrictTo } = require('../middleware/authMiddleware');
-const blogController = require('../controllers/blogController');
+const blogController = require('../src/core/domain/blogController');
 const validate = require('../middleware/validate');
 const {
   getArticlesSchema,
@@ -14,7 +14,7 @@ const {
   deleteArticleSchema,
   sanityWebhookSchema,
   refreshCacheSchema,
-} = require('../utils/blogValidation');
+} = require('../src/core/services/blogValidation');
 const { uploadBlogImage } = require('../middleware/uploadMiddleware');
 
 const router = express.Router();

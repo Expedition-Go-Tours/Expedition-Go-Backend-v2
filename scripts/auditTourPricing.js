@@ -17,8 +17,8 @@
  *   node scripts/auditTourPricing.js [--fix] [--tour=<tourId>]
  */
 
-const prisma = require('../utils/prismaClient');
-const { MAX_PRICE, isValidCurrencyCode, normalizeCurrency } = require('../utils/currencyCodes');
+const prisma = require('../src/core/services/prismaClient');
+const { MAX_PRICE, isValidCurrencyCode, normalizeCurrency } = require('../src/core/services/currencyCodes');
 
 const FIX = process.argv.includes('--fix');
 const ONLY_TOUR = process.argv.find((a) => a.startsWith('--tour='))?.split('=')[1] || null;

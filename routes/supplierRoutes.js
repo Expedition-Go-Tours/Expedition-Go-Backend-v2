@@ -10,8 +10,8 @@ const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { resolveSupplier } = require('../middleware/teamRoleMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
-const supplierController = require('../controllers/supplierController');
-const verificationController = require('../controllers/supplierVerificationController');
+const supplierController = require('../src/core/domain/supplierController');
+const verificationController = require('../src/core/domain/supplierVerificationController');
 const { uploadSupplierDocuments, uploadSupplierDocument, uploadSupplierLogo } = require('../middleware/uploadMiddleware');
 
 const router = express.Router();
@@ -493,7 +493,7 @@ router.get('/monthly-revenue', resolveSupplier, supplierController.getMonthlyRev
 // SUPPLIER CANCELLATION RATE
 // ================================
 
-const cancellationController = require('../controllers/cancellationController');
+const cancellationController = require('../src/core/domain/cancellationController');
 
 /**
  * @swagger

@@ -24,7 +24,7 @@
  * @version 1.1.0
  */
 
-const { validateReadOnly } = require('../../utils/sqlGuard');
+const { validateReadOnly } = require('../../src/core/services/sqlGuard');
 const { buildActivityReport } = require('./activityEngine');
 
 // Symbols the ops assistant is allowed to use. Emoji and pictographs that

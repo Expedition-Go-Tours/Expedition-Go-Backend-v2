@@ -1,19 +1,19 @@
-jest.mock('../../utils/redisClient', () => ({
+jest.mock('../../src/core/services/redisClient', () => ({
   setnx: jest.fn(),
 }));
-jest.mock('../../utils/cacheHelper', () => ({
+jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
 }));
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   supplierProfile: { findFirst: jest.fn() },
 }));
 
-const redis = require('../../utils/redisClient');
-const prisma = require('../../utils/prismaClient');
+const redis = require('../../src/core/services/redisClient');
+const prisma = require('../../src/core/services/prismaClient');
 const {
   shouldCountTourView,
   isInternalViewer,
-} = require('../../utils/viewTracking');
+} = require('../../src/core/services/viewTracking');
 
 const buildReq = (overrides = {}) => ({
   user: null,

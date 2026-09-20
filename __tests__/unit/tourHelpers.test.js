@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   tour: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn() },
   $disconnect: jest.fn(),
 }));
@@ -6,7 +6,7 @@ jest.mock('../../utils/prismaClient', () => ({
 // calculateTourPrice delegates the discount decision to the special-offer
 // engine; its own behavior is covered by specialOfferEngine.test.js. A
 // zero-discount default keeps pricing tests focused on base pricing.
-jest.mock('../../utils/specialOfferEngine', () => ({
+jest.mock('../../src/core/services/specialOfferEngine', () => ({
   findApplicableOffers: jest.fn(async () => []),
   findBestDiscount: jest.fn(async ({ basePrice }) => ({
     discountAmount: 0,
@@ -16,7 +16,7 @@ jest.mock('../../utils/specialOfferEngine', () => ({
   })),
 }));
 
-const prisma = require('../../utils/prismaClient');
+const prisma = require('../../src/core/services/prismaClient');
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -33,7 +33,7 @@ const {
   durationToMinutes,
   cheapestRetailPrice,
   calculateTourPrice,
-} = require('../../utils/tourHelpers');
+} = require('../../src/core/services/tourHelpers');
 
 // ---------------------------------------------------------------------------
 // parseJsonFields
@@ -1121,7 +1121,7 @@ describe('calculateTourPrice', () => {
   });
 
   it('threads the promo code into the special-offer engine', async () => {
-    const { findBestDiscount } = require('../../utils/specialOfferEngine');
+    const { findBestDiscount } = require('../../src/core/services/specialOfferEngine');
     findBestDiscount.mockClear();
 
     await calculateTourPrice(baseTour, { adult: 1, child: 0 }, '2026-06-15', null, null, null, 'SAVE20');
@@ -1130,7 +1130,7 @@ describe('calculateTourPrice', () => {
   });
 
   it('does not send a promo code when none was provided', async () => {
-    const { findBestDiscount } = require('../../utils/specialOfferEngine');
+    const { findBestDiscount } = require('../../src/core/services/specialOfferEngine');
     findBestDiscount.mockClear();
 
     await calculateTourPrice(baseTour, { adult: 1 }, '2026-06-15');
@@ -1139,7 +1139,7 @@ describe('calculateTourPrice', () => {
   });
 
   it('applies the special-offer engine discount to the total', async () => {
-    const { findBestDiscount } = require('../../utils/specialOfferEngine');
+    const { findBestDiscount } = require('../../src/core/services/specialOfferEngine');
     findBestDiscount.mockResolvedValue({
       discountAmount: 25,
       finalPrice: 75,
@@ -1156,7 +1156,7 @@ describe('calculateTourPrice', () => {
   });
 
   it('fails loud when the special-offer engine throws', async () => {
-    const { findBestDiscount } = require('../../utils/specialOfferEngine');
+    const { findBestDiscount } = require('../../src/core/services/specialOfferEngine');
     findBestDiscount.mockRejectedValue(new Error('engine down'));
 
     const result = await calculateTourPrice(baseTour, { adult: 1 }, '2026-06-15');
@@ -1168,7 +1168,7 @@ describe('calculateTourPrice', () => {
   });
 
   it('discounts the tier-adjusted subtotal, not the base category price', async () => {
-    const { findBestDiscount } = require('../../utils/specialOfferEngine');
+    const { findBestDiscount } = require('../../src/core/services/specialOfferEngine');
     // The previous test leaves a mockRejectedValue behind and clearAllMocks
     // only clears usage data — restore the zero-discount default explicitly.
     findBestDiscount.mockClear();

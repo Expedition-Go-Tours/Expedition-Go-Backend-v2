@@ -1,4 +1,4 @@
-const { callMimo, parseJson } = require('../../utils/mimoClient');
+const { callMimo, parseJson } = require('../../src/core/services/mimoClient');
 
 beforeEach(() => {
   process.env.MIMO_API_KEY = 'test-key';

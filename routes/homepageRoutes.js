@@ -10,7 +10,7 @@
 
 const express = require('express');
 const router = express.Router();
-const homepageController = require('../controllers/homepageController');
+const homepageController = require('../src/core/domain/homepageController');
 const { optionalAuth } = require('../middleware/authMiddleware');
 
 // All routes use optionalAuth — authenticated users get personalized results,

@@ -129,7 +129,7 @@ function addDays(days) {
   });
   check('session payment intent confirmed (succeeded)', pi.status === 'succeeded', pi.status);
 
-  const { processStripeWebhook } = require('../utils/stripeHelpers');
+  const { processStripeWebhook } = require('../src/core/services/stripeHelpers');
   const completedEvent = {
     id: `evt_e2e_${Date.now()}`,
     type: 'checkout.session.completed',

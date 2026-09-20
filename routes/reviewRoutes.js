@@ -10,7 +10,7 @@ const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
-const reviewController = require('../controllers/reviewController');
+const reviewController = require('../src/core/domain/reviewController');
 const { uploadReviewPhotos } = require('../middleware/uploadMiddleware');
 
 const router = express.Router();

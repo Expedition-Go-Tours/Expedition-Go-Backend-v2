@@ -1,6 +1,6 @@
 const express = require('express');
 const { createLimiter } = require('../middleware/dynamicRateLimiter');
-const locationController = require('../controllers/locationController');
+const locationController = require('../src/core/domain/locationController');
 
 const router = express.Router();
 

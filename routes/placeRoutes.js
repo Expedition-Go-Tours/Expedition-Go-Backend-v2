@@ -1,5 +1,5 @@
 const express = require('express');
-const placeController = require('../controllers/placeController');
+const placeController = require('../src/core/domain/placeController');
 
 const router = express.Router();
 

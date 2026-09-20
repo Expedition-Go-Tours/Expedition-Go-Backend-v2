@@ -1,19 +1,19 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   payoutMethod: { findMany: jest.fn(), count: jest.fn(), create: jest.fn(), findFirst: jest.fn(), update: jest.fn(), updateMany: jest.fn(), delete: jest.fn(), findUnique: jest.fn() },
   user: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn() },
 }));
 
-jest.mock('../../utils/adminNotificationService', () => ({ notifyAdmin: jest.fn() }));
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn() }));
-jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
+jest.mock('../../src/core/services/adminNotificationService', () => ({ notifyAdmin: jest.fn() }));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn() }));
+jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
 jest.mock('../../config/firebaseAdmin', () => ({ auth: () => ({ getUser: jest.fn() }) }));
 
-const prisma = require('../../utils/prismaClient');
-const { notifyAdmin } = require('../../utils/adminNotificationService');
-const { logActivity } = require('../../utils/auditLogger');
-const { cloudinaryUrl } = require('../../utils/imageOptimizer');
+const prisma = require('../../src/core/services/prismaClient');
+const { notifyAdmin } = require('../../src/core/services/adminNotificationService');
+const { logActivity } = require('../../src/core/services/auditLogger');
+const { cloudinaryUrl } = require('../../src/core/services/imageOptimizer');
 const admin = require('../../config/firebaseAdmin');
-const controller = require('../../controllers/payoutMethodController');
+const controller = require('../../src/core/domain/payoutMethodController');
 
 describe('payoutMethodController', () => {
   let req, res, next;

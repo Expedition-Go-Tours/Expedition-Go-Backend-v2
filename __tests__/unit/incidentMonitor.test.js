@@ -4,11 +4,11 @@ jest.mock('child_process', () => ({
   }),
 }));
 
-jest.mock('../../utils/discordNotifier', () => ({
+jest.mock('../../src/core/services/discordNotifier', () => ({
   notifyDiscord: jest.fn(() => Promise.resolve()),
 }));
 
-const { notifyDiscord } = require('../../utils/discordNotifier');
+const { notifyDiscord } = require('../../src/core/services/discordNotifier');
 const {
   buildEmbed,
   collectDiagnostics,

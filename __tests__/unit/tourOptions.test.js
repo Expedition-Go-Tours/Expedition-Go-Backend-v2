@@ -7,7 +7,7 @@ const {
   optionSummaries,
   optionScopeFor,
   applyOption,
-} = require('../../utils/tourOptions');
+} = require('../../src/core/services/tourOptions');
 
 const optionBase = {
   id: 'opt-1',

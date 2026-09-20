@@ -10,7 +10,7 @@
 const express = require('express');
 const { protect } = require('../middleware/authMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
-const availabilityController = require('../controllers/availabilityController');
+const availabilityController = require('../src/core/domain/availabilityController');
 
 const router = express.Router();
 

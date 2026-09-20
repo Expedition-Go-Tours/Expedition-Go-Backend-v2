@@ -6,7 +6,7 @@ jest.mock('resend', () => {
   };
 });
 
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   user: { findUnique: jest.fn() },
   tour: { findUnique: jest.fn() },
   booking: { findUnique: jest.fn() },
@@ -14,7 +14,7 @@ jest.mock('../../utils/prismaClient', () => ({
 }));
 
 const { Resend, __send } = require('resend');
-const prisma = require('../../utils/prismaClient');
+const prisma = require('../../src/core/services/prismaClient');
 
 beforeAll(() => {
   process.env.RESEND_API_KEY = 're_testkey';
@@ -45,7 +45,7 @@ const {
   sendSupplierProductSubmittedEmail,
   sendSupplierProductUpdateSubmittedEmail,
   generatePrintableTicketHtml,
-} = require('../../utils/emailService');
+} = require('../../src/core/services/emailService');
 
 // ---------------------------------------------------------------------------
 // sendEmail — core send function

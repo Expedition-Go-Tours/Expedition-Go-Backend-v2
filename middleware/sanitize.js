@@ -1,4 +1,4 @@
-const logger = require('../utils/logger');
+const logger = require('../src/core/services/logger');
 
 function sanitizeValue(value) {
   if (typeof value === 'string') {

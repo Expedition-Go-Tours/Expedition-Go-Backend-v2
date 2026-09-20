@@ -1,4 +1,4 @@
-const { addApprovedRating, removeApprovedRating, updateApprovedRating, recalculateSupplierRating } = require('../../utils/ratingHelper');
+const { addApprovedRating, removeApprovedRating, updateApprovedRating, recalculateSupplierRating } = require('../../src/core/services/ratingHelper');
 
 describe('ratingHelper', () => {
   const tourId = 'tour-1';

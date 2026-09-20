@@ -1,4 +1,4 @@
-const { bookingRefundState } = require('../../utils/bookingRefundState');
+const { bookingRefundState } = require('../../src/core/services/bookingRefundState');
 
 describe('bookingRefundState', () => {
   it('returns null when there is no refund lifecycle', () => {

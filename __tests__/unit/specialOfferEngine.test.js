@@ -1,10 +1,10 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   specialOffer: { findMany: jest.fn() },
   booking: { count: jest.fn() },
 }));
 
-const prisma = require('../../utils/prismaClient');
-const { findApplicableOffers, findBestDiscount } = require('../../utils/specialOfferEngine');
+const prisma = require('../../src/core/services/prismaClient');
+const { findApplicableOffers, findBestDiscount } = require('../../src/core/services/specialOfferEngine');
 
 // Simulate Prisma semantics: include.targets.where narrows each offer's
 // returned targets to the requested scope, so offers left with zero matching

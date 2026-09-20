@@ -13,8 +13,8 @@
  *   node scripts/backfill-tour-coords.js --apply --limit=50
  */
 
-const prisma = require('../utils/prismaClient');
-const locationService = require('../utils/locationService');
+const prisma = require('../src/core/services/prismaClient');
+const locationService = require('../src/core/services/locationService');
 
 const args = process.argv.slice(2);
 const APPLY = args.includes('--apply');

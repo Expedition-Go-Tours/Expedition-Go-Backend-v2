@@ -11,8 +11,8 @@
  * Run with MIMO_API_KEY set in .env
  */
 
-const prisma = require('../utils/prismaClient');
-const { processTourAI, upsertAttraction } = require('../utils/aiContentAnalyzer');
+const prisma = require('../src/core/services/prismaClient');
+const { processTourAI, upsertAttraction } = require('../src/core/services/aiContentAnalyzer');
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');

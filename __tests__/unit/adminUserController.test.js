@@ -1,16 +1,16 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   user: { findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
   adminRole: { findUnique: jest.fn() },
   auditLog: { create: jest.fn(), findFirst: jest.fn() },
   $transaction: jest.fn(),
 }));
 
-jest.mock('../../utils/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
+jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
 jest.mock('../../middleware/authMiddleware', () => ({ invalidateUserCache: jest.fn() }));
 
-const prisma = require('../../utils/prismaClient');
-const { cloudinaryUrl } = require('../../utils/imageOptimizer');
-const controller = require('../../controllers/adminUserController');
+const prisma = require('../../src/core/services/prismaClient');
+const { cloudinaryUrl } = require('../../src/core/services/imageOptimizer');
+const controller = require('../../src/core/domain/adminUserController');
 
 describe('adminUserController', () => {
   let req, res, next;

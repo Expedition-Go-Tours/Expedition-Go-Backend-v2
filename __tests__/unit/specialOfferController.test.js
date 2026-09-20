@@ -1,4 +1,4 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   tour: { findMany: jest.fn() },
   specialOffer: {
     findMany: jest.fn(),
@@ -13,7 +13,7 @@ jest.mock('../../utils/prismaClient', () => ({
 
 let mockTx;
 
-jest.mock('../../utils/cacheHelper', () => {
+jest.mock('../../src/core/services/cacheHelper', () => {
   const invalidateTourCaches = jest.fn(async () => {});
   const invalidateKey = jest.fn(async () => {});
   return {
@@ -23,11 +23,11 @@ jest.mock('../../utils/cacheHelper', () => {
   };
 });
 
-jest.mock('../../utils/auditLogger', () => ({ logActivity: jest.fn(async () => {}) }));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(async () => {}) }));
 
-const prisma = require('../../utils/prismaClient');
-const cacheHelper = require('../../utils/cacheHelper');
-const { createOffer, updateOffer } = require('../../controllers/specialOfferController');
+const prisma = require('../../src/core/services/prismaClient');
+const cacheHelper = require('../../src/core/services/cacheHelper');
+const { createOffer, updateOffer } = require('../../src/core/domain/specialOfferController');
 
 const VALID_BODY = {
   name: 'Summer Sale',

@@ -1,4 +1,4 @@
-const { purgeArchivedTours } = require('../utils/tourPurge');
+const { purgeArchivedTours } = require('../src/core/services/tourPurge');
 
 async function main() {
   console.log('[TourPurge] Starting...');

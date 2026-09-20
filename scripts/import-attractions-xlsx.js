@@ -42,7 +42,7 @@ const REGION_PRIORITY = {
 };
 
 /** Region capitals for auto-assigning placeType (shared with the homepage). */
-const { GHANA_REGION_CAPITALS: REGION_CAPITALS } = require('../utils/ghanaRegions');
+const { GHANA_REGION_CAPITALS: REGION_CAPITALS } = require('../src/core/services/ghanaRegions');
 
 function slugify(name) {
   return String(name || '')
@@ -134,7 +134,7 @@ async function main() {
   console.log('');
 
   // Import Prisma client
-  const prisma = require('../utils/prismaClient');
+  const prisma = require('../src/core/services/prismaClient');
 
   let created = 0;
   let updated = 0;

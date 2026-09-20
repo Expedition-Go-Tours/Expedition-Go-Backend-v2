@@ -2,8 +2,8 @@ const express = require('express');
 const { createLimiter } = require('../middleware/dynamicRateLimiter');
 const { protect } = require('../middleware/authMiddleware');
 const { requireTeamRole, resolveSupplier } = require('../middleware/teamRoleMiddleware');
-const teamController = require('../controllers/teamController');
-const settingsController = require('../controllers/supplierSettingsController');
+const teamController = require('../src/core/domain/teamController');
+const settingsController = require('../src/core/domain/supplierSettingsController');
 
 const router = express.Router();
 

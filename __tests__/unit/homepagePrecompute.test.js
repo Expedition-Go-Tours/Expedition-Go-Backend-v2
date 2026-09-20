@@ -1,7 +1,7 @@
-jest.mock('../../utils/redisClient');
-jest.mock('../../utils/homepageRanking');
-jest.mock('../../utils/cacheHelper', () => {
-  const actual = jest.requireActual('../../utils/cacheHelper');
+jest.mock('../../src/core/services/redisClient');
+jest.mock('../../src/core/services/homepageRanking');
+jest.mock('../../src/core/services/cacheHelper', () => {
+  const actual = jest.requireActual('../../src/core/services/cacheHelper');
   return {
     ...actual,
     invalidateKeys: jest.fn().mockResolvedValue(),
@@ -9,18 +9,18 @@ jest.mock('../../utils/cacheHelper', () => {
     _clearMemory: jest.fn(),
   };
 });
-jest.mock('../../utils/queue', () => ({
+jest.mock('../../src/core/services/queue', () => ({
   enqueueHomepagePrecompute: jest.fn().mockResolvedValue(),
 }));
 
-const redis = require('../../utils/redisClient');
-const cache = require('../../utils/cacheHelper');
-const ranking = require('../../utils/homepageRanking');
+const redis = require('../../src/core/services/redisClient');
+const cache = require('../../src/core/services/cacheHelper');
+const ranking = require('../../src/core/services/homepageRanking');
 const {
   precomputeHomepageSections,
   SECTION_KEYS,
   SECTION_TTLS,
-} = require('../../utils/homepagePrecompute');
+} = require('../../src/core/services/homepagePrecompute');
 
 describe('homepagePrecompute', () => {
   beforeEach(() => {

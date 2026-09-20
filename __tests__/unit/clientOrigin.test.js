@@ -2,7 +2,7 @@ const {
   normalizeOrigin,
   getAllowedClientOrigins,
   resolveAllowedClientUrl,
-} = require('../../utils/clientOrigin');
+} = require('../../src/core/services/clientOrigin');
 
 describe('clientOrigin', () => {
   afterEach(() => {

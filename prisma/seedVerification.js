@@ -15,7 +15,7 @@
  */
 
 const bcrypt = require('bcrypt');
-const prisma = require('../utils/prismaClient');
+const prisma = require('../src/core/services/prismaClient');
 
 const LOGIN_PASSWORD = 'VerifTest123!';
 const DOC_URL = (n) => `https://res.cloudinary.com/demo/image/upload/v1/supplier-docs/${n}.jpg`;

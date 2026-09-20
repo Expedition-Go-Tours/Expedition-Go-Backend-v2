@@ -1,7 +1,7 @@
-const prisma = require('../utils/prismaClient');
-const catchAsync = require('../utils/catchAsync');
-const AppError = require('../utils/appError');
-const cache = require('../utils/cacheHelper');
+const prisma = require('../src/core/services/prismaClient');
+const catchAsync = require('../src/core/services/catchAsync');
+const AppError = require('../src/core/services/appError');
+const cache = require('../src/core/services/cacheHelper');
 const { hasTeamPermission } = require('../config/teamPermissions');
 
 const SUPPLIER_CACHE_TTL = 30;

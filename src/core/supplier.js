@@ -10,10 +10,10 @@
  * No modifications to shared code.
  */
 
-const prisma = require('../../utils/prismaClient');
-const AppError = require('../../utils/appError');
-const catchAsync = require('../../utils/catchAsync');
-const cache = require('../../utils/cacheHelper');
+const prisma = require('./services/prismaClient');
+const AppError = require('./services/appError');
+const catchAsync = require('./services/catchAsync');
+const cache = require('./services/cacheHelper');
 const { getBrand } = require('../../config/brands');
 
 

@@ -17,19 +17,19 @@ const { requirePermission } = require('../../../middleware/permissionMiddleware'
 const { createLimiter } = require('../../../middleware/dynamicRateLimiter');
 
 const africa = require('./adminController');
-const adminController = require('../../../controllers/adminController');
-const adminAiController = require('../../../controllers/adminAiController');
-const verificationController = require('../../../controllers/supplierVerificationController');
+const adminController = require('../../core/domain/adminController');
+const adminAiController = require('../../core/domain/adminAiController');
+const verificationController = require('../../core/domain/supplierVerificationController');
 
 // Shared platform controllers (proxied — same data, same permissions)
-const adminSettingsController = require('../../../controllers/adminSettingsController');
-const adminFinanceController = require('../../../controllers/adminFinanceController');
-const adminRoleController = require('../../../controllers/adminRoleController');
-const adminUserController = require('../../../controllers/adminUserController');
-const payoutController = require('../../../controllers/payoutController');
-const payoutMethodController = require('../../../controllers/payoutMethodController');
-const supplierController = require('../../../controllers/supplierController');
-const reviewController = require('../../../controllers/reviewController');
+const adminSettingsController = require('../../core/domain/adminSettingsController');
+const adminFinanceController = require('../../core/domain/adminFinanceController');
+const adminRoleController = require('../../core/domain/adminRoleController');
+const adminUserController = require('../../core/domain/adminUserController');
+const payoutController = require('../../core/domain/payoutController');
+const payoutMethodController = require('../../core/domain/payoutMethodController');
+const supplierController = require('../../core/domain/supplierController');
+const reviewController = require('../../core/domain/reviewController');
 
 const router = express.Router();
 
@@ -118,7 +118,7 @@ router.patch('/notifications/:id/acknowledge', africa.acknowledgeNotification);
 router.patch('/notifications/acknowledge-all', africa.acknowledgeAllNotifications);
 
 // CHAT — proxied to shared chat controller
-const chatController = require('../../../controllers/chatController');
+const chatController = require('../../core/domain/chatController');
 router.get('/chat/conversations', chatController.getConversations);
 router.post('/chat/conversations', chatController.getOrCreateConversation);
 router.get('/chat/conversations/unread-count', chatController.getUnreadCount);

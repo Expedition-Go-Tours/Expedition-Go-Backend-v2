@@ -51,7 +51,7 @@ async function main() {
   console.log(`Regions: ${Object.keys(GHANA_PLACES).length}   Places: ${total}`);
   console.log('');
 
-  const prisma = require('../utils/prismaClient');
+  const prisma = require('../src/core/services/prismaClient');
 
   let created = 0;
   let updated = 0;

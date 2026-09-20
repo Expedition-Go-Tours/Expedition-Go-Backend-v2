@@ -3,7 +3,7 @@
  * Pure logic + getLocationTourIds query shape (prisma/cache mocked).
  */
 
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   $queryRaw: jest.fn(),
   tour: { findMany: jest.fn() },
   booking: { groupBy: jest.fn() },
@@ -12,8 +12,8 @@ jest.mock('../../utils/prismaClient', () => ({
   wishlistItem: { groupBy: jest.fn() },
 }));
 
-jest.mock('../../utils/cacheHelper', () => {
-  const actual = jest.requireActual('../../utils/cacheHelper');
+jest.mock('../../src/core/services/cacheHelper', () => {
+  const actual = jest.requireActual('../../src/core/services/cacheHelper');
   return {
     ...actual,
     // Execute the fetcher directly (no Redis/memory) so tests hit prisma mocks.
@@ -23,9 +23,9 @@ jest.mock('../../utils/cacheHelper', () => {
   };
 });
 
-const prisma = require('../../utils/prismaClient');
-const cache = require('../../utils/cacheHelper');
-const ranking = require('../../utils/homepageRanking');
+const prisma = require('../../src/core/services/prismaClient');
+const cache = require('../../src/core/services/cacheHelper');
+const ranking = require('../../src/core/services/homepageRanking');
 
 const { escapeLike, locationTier, mergeLocationFirst, getLocationTourIds } = ranking;
 

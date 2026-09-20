@@ -14,10 +14,10 @@
  * Manually-curated attractions (manualOverride) are never touched.
  */
 
-const prisma = require('../utils/prismaClient');
-const logger = require('../utils/logger');
-const { selectHeroImage } = require('../utils/aiContentAnalyzer');
-const { variantsFor } = require('../utils/attractionMatch');
+const prisma = require('../src/core/services/prismaClient');
+const logger = require('../src/core/services/logger');
+const { selectHeroImage } = require('../src/core/services/aiContentAnalyzer');
+const { variantsFor } = require('../src/core/services/attractionMatch');
 
 async function main() {
   const all = process.argv.includes('--all');

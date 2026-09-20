@@ -1,4 +1,4 @@
-const { productSchema, productSchemaPartial } = require('../../utils/productSchema');
+const { productSchema, productSchemaPartial } = require('../../src/core/services/productSchema');
 
 describe('productSchema — meeting/pickup description limits', () => {
   it('rejects pickupDescription over 200 characters (partial)', () => {

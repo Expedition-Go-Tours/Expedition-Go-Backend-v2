@@ -1,13 +1,13 @@
-jest.mock('../../utils/chatService');
-jest.mock('../../utils/cloudinaryHelper', () => ({ isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/chatService');
+jest.mock('../../src/core/services/cloudinaryHelper', () => ({ isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
+jest.mock('../../src/core/services/prismaClient', () => ({
   user: { findUnique: jest.fn() },
   conversationParticipant: { findFirst: jest.fn(), findMany: jest.fn() },
 }));
 
-const chatService = require('../../utils/chatService');
-const prisma = require('../../utils/prismaClient');
-const controller = require('../../controllers/chatController');
+const chatService = require('../../src/core/services/chatService');
+const prisma = require('../../src/core/services/prismaClient');
+const controller = require('../../src/core/domain/chatController');
 
 describe('chatController', () => {
   let req, res, next, mockIo;

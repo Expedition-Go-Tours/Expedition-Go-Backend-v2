@@ -1,4 +1,4 @@
-const { computeFeatures } = require('../../utils/xgboostService');
+const { computeFeatures } = require('../../src/core/services/xgboostService');
 
 describe('xgboostService.computeFeatures — brand-scoped review stats', () => {
   // Feature [0] is the Bayesian rating normalized to 0–1.

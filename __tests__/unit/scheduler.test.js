@@ -22,7 +22,7 @@ jest.mock('bullmq', () => {
   return { Queue, Worker, __setMockSchedulers: (list) => { mockSchedulers = list; } };
 });
 
-jest.mock('../../utils/redisClient', () => ({
+jest.mock('../../src/core/services/redisClient', () => ({
   getConnection: jest.fn(() => ({ status: 'ready' })),
   isRedisAvailable: jest.fn().mockResolvedValue(true),
   isReady: jest.fn(() => true),
@@ -32,7 +32,7 @@ jest.mock('../../utils/redisClient', () => ({
 
 const bullmq = require('bullmq');
 const { __setMockSchedulers } = bullmq;
-const queue = require('../../utils/queue');
+const queue = require('../../src/core/services/queue');
 
 beforeEach(() => {
   jest.clearAllMocks();

@@ -5,7 +5,7 @@ const data = JSON.stringify({});
 
 // First, we need to get a JWT token for the user. Let's check the auth flow.
 // Actually, let's just test via direct DB query to confirm the booking shows up
-const p = require('./utils/prismaClient');
+const p = require('./src/core/services/prismaClient');
 
 (async () => {
   // The expedition getMyBookings query:

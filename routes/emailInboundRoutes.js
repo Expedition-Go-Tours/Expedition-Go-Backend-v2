@@ -1,5 +1,5 @@
 const express = require('express');
-const emailInboundController = require('../controllers/emailInboundController');
+const emailInboundController = require('../src/core/domain/emailInboundController');
 
 const router = express.Router();
 

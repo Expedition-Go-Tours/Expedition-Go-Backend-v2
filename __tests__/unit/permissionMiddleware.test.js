@@ -1,13 +1,13 @@
-jest.mock('../../utils/prismaClient', () => ({
+jest.mock('../../src/core/services/prismaClient', () => ({
   adminRole: { findUnique: jest.fn() },
 }));
 
-jest.mock('../../utils/cacheHelper', () => ({
+jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
   _clearMemory: jest.fn(),
 }));
 
-const prisma = require('../../utils/prismaClient');
+const prisma = require('../../src/core/services/prismaClient');
 const middleware = require('../../middleware/permissionMiddleware');
 
 describe('permissionMiddleware', () => {
