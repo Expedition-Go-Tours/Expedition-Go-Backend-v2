@@ -520,38 +520,58 @@ controller.getFunnel = catchAsync(async (req, res, next) => {
     // bookingController emits `booking.status_<status>`, never `booking.completed`.
     // The shared route emits `tour.viewed`; the brand storefront emits
     // `<brand>.tour_viewed`. Count both for the first step.
-    const step = (name) => ({
-      name,
-      createdAt: { gte: startDate },
-      userId: { not: null },
-      properties: { path: ['source'], equals: BRAND.key },
-    });
-    const viewNames = ['tour.viewed', `${BRAND.key}.tour_viewed`];
+    const brandKey = BRAND.key;
+    const viewNames = ['tour.viewed', `${brandKey}.tour_viewed`];
 
-    const [viewed, cartAdded, checkoutStarted, completed, stepData] = await Promise.all([
-      prisma.event.groupBy({ by: ['userId'], where: step({ in: viewNames }), _count: true }),
-      prisma.event.groupBy({ by: ['userId'], where: step('cart.added'), _count: true }),
-      prisma.event.groupBy({ by: ['userId'], where: step('booking.initiated'), _count: true }),
-      prisma.event.groupBy({ by: ['userId'], where: step('booking.status_completed'), _count: true }),
+    // Count distinct PEOPLE per step, not distinct logged-in users: most tour
+    // views are anonymous (userId null), so an identity is the user when signed
+    // in and the session fingerprint otherwise.
+    const [stepRows, stepData] = await Promise.all([
+      prisma.$queryRaw`
+        SELECT step, COUNT(DISTINCT identity)::int AS users
+        FROM (
+          SELECT 'viewed' AS step, COALESCE("userId", "sessionId") AS identity
+          FROM "Event"
+          WHERE "name" IN ('tour.viewed', ${`${brandKey}.tour_viewed`}) AND "createdAt" >= ${startDate}
+            AND "properties"->>'source' = ${brandKey}
+          UNION ALL
+          SELECT 'cart_added', COALESCE("userId", "sessionId")
+          FROM "Event"
+          WHERE "name" = 'cart.added' AND "createdAt" >= ${startDate}
+            AND "properties"->>'source' = ${brandKey}
+          UNION ALL
+          SELECT 'checkout_started', COALESCE("userId", "sessionId")
+          FROM "Event"
+          WHERE "name" = 'booking.initiated' AND "createdAt" >= ${startDate}
+            AND "properties"->>'source' = ${brandKey}
+          UNION ALL
+          SELECT 'booking_completed', COALESCE("userId", "sessionId")
+          FROM "Event"
+          WHERE "name" = 'booking.status_completed' AND "createdAt" >= ${startDate}
+            AND "properties"->>'source' = ${brandKey}
+        ) s
+        WHERE identity IS NOT NULL
+        GROUP BY step
+      `,
       prisma.$queryRaw`
         SELECT
           name,
           DATE_TRUNC('day', "createdAt")::date AS day,
-          COUNT(DISTINCT "userId")::int AS users
+          COUNT(DISTINCT COALESCE("userId", "sessionId"))::int AS users
         FROM "Event"
         WHERE "createdAt" >= ${startDate}
-          AND "name" IN ('tour.viewed', ${`${BRAND.key}.tour_viewed`}, 'cart.added', 'booking.initiated', 'booking.status_completed')
-          AND "userId" IS NOT NULL
-          AND "properties"->>'source' = ${BRAND.key}
+          AND "name" IN ('tour.viewed', ${`${brandKey}.tour_viewed`}, 'cart.added', 'booking.initiated', 'booking.status_completed')
+          AND "properties"->>'source' = ${brandKey}
         GROUP BY name, DATE_TRUNC('day', "createdAt")
         ORDER BY day ASC
       `,
     ]);
 
-    const viewedUsers = viewed.length;
-    const cartUsers = cartAdded.length;
-    const checkoutUsers = checkoutStarted.length;
-    const completedUsers = completed.length;
+    const usersFor = (step) => Number(stepRows.find((r) => r.step === step)?.users || 0);
+    const viewedUsers = usersFor('viewed');
+    const cartUsers = usersFor('cart_added');
+    const checkoutUsers = usersFor('checkout_started');
+    const completedUsers = usersFor('booking_completed');
 
     const calcRate = (numerator, denominator) =>
       denominator > 0 ? parseFloat(((numerator / denominator) * 100).toFixed(1)) : 0;
