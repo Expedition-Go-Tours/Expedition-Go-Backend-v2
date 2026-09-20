@@ -250,6 +250,29 @@ function placeTypeFor(row) {
 const PLACE_TYPE_RANK = { city: 0, town: 1, attraction: 2 };
 
 /**
+ * Head segment of a town value, preserving casing. The XLSX town column mixes
+ * qualifiers ("Kakum / near Cape Coast", "Lakeside Estate, Accra"), so only the
+ * head segment identifies the town. Unlike `townHead` (index keying), this keeps
+ * the original casing for storage/display.
+ */
+function cleanTown(town) {
+  const head = String(town || '')
+    .split(/[,/]/)[0]
+    .replace(/^near\s+/i, '')
+    .trim();
+  return head || null;
+}
+
+/**
+ * The city/town to store for a picked place: cities and towns ARE the place
+ * (`name`), attractions resolve to their town.
+ */
+function cityForPlace(row, type) {
+  if (type === 'attraction') return cleanTown(row.town);
+  return row.name || null;
+}
+
+/**
  * Search the curated places catalog (cities, towns and attractions — the rows
  * imported from the attractions XLSX) for a supplier autocomplete.
  *
@@ -257,7 +280,7 @@ const PLACE_TYPE_RANK = { city: 0, town: 1, attraction: 2 };
  * then the most-booked places. A real query ranks exact name matches ahead of
  * name-prefix, name-substring, then town/alias matches, and prefers cities over
  * towns over attractions within a rank. The response is a flat, typed list:
- * `{ name, type, region, lat, lng }`.
+ * `{ name, type, city, region, lat, lng }`.
  */
 async function searchPlaces(query = '', limit = 25) {
   const q = normalizePlace(query);
@@ -286,13 +309,14 @@ async function searchPlaces(query = '', limit = 25) {
     const out = [];
     for (const c of capitals) {
       seen.add(normalizePlace(c.name));
-      out.push({ name: c.name, type: 'city', region: c.region || null, lat: c.lat ?? null, lng: c.lng ?? null });
+      out.push({ name: c.name, type: 'city', city: c.name, region: c.region || null, lat: c.lat ?? null, lng: c.lng ?? null });
     }
     for (const r of top) {
       const key = normalizePlace(r.name);
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ name: r.name, type: placeTypeFor(r), region: r.region || null, lat: r.latitude ?? null, lng: r.longitude ?? null });
+      const type = placeTypeFor(r);
+      out.push({ name: r.name, type, city: cityForPlace(r, type), region: r.region || null, lat: r.latitude ?? null, lng: r.longitude ?? null });
     }
     return out.slice(0, take);
   }
@@ -335,6 +359,7 @@ async function searchPlaces(query = '', limit = 25) {
   return ranked.slice(0, take).map(({ r, type }) => ({
     name: r.name,
     type,
+    city: cityForPlace(r, type),
     region: r.region || null,
     lat: r.latitude ?? null,
     lng: r.longitude ?? null,
