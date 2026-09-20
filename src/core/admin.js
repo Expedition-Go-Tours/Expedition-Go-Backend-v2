@@ -41,6 +41,44 @@ function brandBookingWhere(extra = {}) {
   };
 }
 
+/**
+ * Top suppliers ranked by paid earnings since `since`.
+ *
+ * Only suppliers with at least one paid booking in the window are returned, so
+ * a supplier that has never sold anything is never ranked as "top".
+ */
+function topSuppliersSince(since) {
+  return prisma.$queryRaw`
+    SELECT
+      u.id,
+      u.name,
+      u.email,
+      u."photoURL",
+      COALESCE(period.total_earnings, 0)::float AS "totalEarnings",
+      COALESCE(period.booking_count, 0)::int AS "totalBookings",
+      COALESCE(period.currency, 'USD') AS "currency",
+      sp."averageRating"
+    FROM "SupplierProfile" sp
+    JOIN "User" u ON u.id = sp."userId"
+    JOIN (
+      SELECT t."supplierId",
+             COUNT(*)::int AS booking_count,
+             SUM(bo."supplierPayout")::float AS total_earnings,
+             MODE() WITHIN GROUP (ORDER BY bo.currency) AS currency
+      FROM "Booking" bo
+      JOIN "Tour" t ON t.id = bo."tourId"
+      WHERE bo."paymentStatus" = 'SUCCEEDED' AND bo."paidAt" >= ${since}
+        AND (bo."source"::text = ${BRAND.source} OR EXISTS (
+          SELECT 1 FROM "User" _u WHERE _u.id = t."supplierId" AND ${BRAND.role} = ANY(_u."roles"::text[])
+        ))
+      GROUP BY t."supplierId"
+    ) period ON period."supplierId" = u.id
+    WHERE sp.status = 'ACTIVE' AND ${BRAND.role} = ANY(u."roles"::text[])
+    ORDER BY COALESCE(period.total_earnings, 0) DESC
+    LIMIT 10
+  `;
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // OVERVIEW / ANALYTICS
 // ══════════════════════════════════════════════════════════════════════════
@@ -81,7 +119,7 @@ controller.getOverview = catchAsync(async (req, res, next) => {
       userAgg,
       weeklyBookings,
       topTours,
-      topSuppliers,
+      _batchTopSuppliers,
       bookingStatusDist,
       recentEvents,
       recentAuditLogs,
@@ -207,36 +245,9 @@ controller.getOverview = catchAsync(async (req, res, next) => {
         LIMIT 10
       `,
 
-      // Top 10 Ghana suppliers by period earnings
-      prisma.$queryRaw`
-        SELECT
-          u.id,
-          u.name,
-          u.email,
-          u."photoURL",
-          COALESCE(period.total_earnings, 0)::float AS "totalEarnings",
-          COALESCE(period.booking_count, 0)::int AS "totalBookings",
-          COALESCE(period.currency, 'USD') AS "currency",
-          sp."averageRating"
-        FROM "SupplierProfile" sp
-        JOIN "User" u ON u.id = sp."userId"
-        JOIN (
-          SELECT t."supplierId",
-                 COUNT(*)::int AS booking_count,
-                 SUM(bo."supplierPayout")::float AS total_earnings,
-                 MODE() WITHIN GROUP (ORDER BY bo.currency) AS currency
-          FROM "Booking" bo
-          JOIN "Tour" t ON t.id = bo."tourId"
-          WHERE bo."paymentStatus" = 'SUCCEEDED' AND bo."paidAt" >= ${currentPeriodStart}
-            AND (bo."source"::text = ${BRAND.source} OR EXISTS (
-              SELECT 1 FROM "User" _u WHERE _u.id = t."supplierId" AND ${BRAND.role} = ANY(_u."roles"::text[])
-            ))
-          GROUP BY t."supplierId"
-        ) period ON period."supplierId" = u.id
-        WHERE sp.status = 'ACTIVE' AND ${BRAND.role} = ANY(u."roles"::text[])
-        ORDER BY COALESCE(period.total_earnings, 0) DESC
-        LIMIT 10
-      `,
+      // Top suppliers are computed after this batch (see topSuppliersSince):
+      // they need a period-first / all-time-fallback pass.
+      null,
 
       // Booking status distribution (Ghana only)
       prisma.$queryRaw`
@@ -281,6 +292,14 @@ controller.getOverview = catchAsync(async (req, res, next) => {
 
     const bAgg = bookingAgg[0] || {};
     const uAgg = userAgg[0] || {};
+
+    // Top suppliers for the selected period. On a quiet period (no paid sales)
+    // fall back to the all-time leaders so the card still shows who the top
+    // suppliers are instead of an empty state.
+    let topSuppliers = await topSuppliersSince(currentPeriodStart);
+    if (topSuppliers.length === 0) {
+      topSuppliers = await topSuppliersSince(new Date(0));
+    }
 
     const round2 = (v) => Math.round(parseFloat(v || 0) * 100) / 100;
     const fmt = (prefix) => ({
@@ -496,39 +515,25 @@ controller.getFunnel = catchAsync(async (req, res, next) => {
 
   const bucket = Math.floor(Date.now() / 300000);
   const data = await cache.getOrSet(`${BRAND.cachePrefix}admin:funnel:${bucket}:${days}`, async () => {
+    // Event names as actually emitted:
+    //   - views are brand-namespaced by the storefront (`<brand>.tour_viewed`)
+    //   - cart / checkout are shared (`cart.added`, `booking.initiated`)
+    //   - completion is `booking.status_completed` (bookingController emits
+    //     `booking.status_<status>`), NOT `booking.completed`
+    // There is no `properties.source` on these events, so brand scoping comes
+    // from the namespaced view event rather than a property filter.
+    const step = (names) => ({
+      name: { in: names },
+      createdAt: { gte: startDate },
+      userId: { not: null },
+    });
+    const viewNames = [`${BRAND.eventNamespace}.tour_viewed`, `${BRAND.eventNamespace}.tour.viewed`];
+
     const [viewed, cartAdded, checkoutStarted, completed] = await Promise.all([
-      prisma.event.groupBy({
-        by: ['userId'],
-        where: {
-          name: 'tour.viewed', createdAt: { gte: startDate }, userId: { not: null },
-          properties: { path: ['source'], equals: BRAND.eventNamespace },
-        },
-        _count: true,
-      }),
-      prisma.event.groupBy({
-        by: ['userId'],
-        where: {
-          name: 'cart.added', createdAt: { gte: startDate }, userId: { not: null },
-          properties: { path: ['source'], equals: BRAND.eventNamespace },
-        },
-        _count: true,
-      }),
-      prisma.event.groupBy({
-        by: ['userId'],
-        where: {
-          name: 'booking.initiated', createdAt: { gte: startDate }, userId: { not: null },
-          properties: { path: ['source'], equals: BRAND.eventNamespace },
-        },
-        _count: true,
-      }),
-      prisma.event.groupBy({
-        by: ['userId'],
-        where: {
-          name: 'booking.completed', createdAt: { gte: startDate }, userId: { not: null },
-          properties: { path: ['source'], equals: BRAND.eventNamespace },
-        },
-        _count: true,
-      }),
+      prisma.event.groupBy({ by: ['userId'], where: step(viewNames), _count: true }),
+      prisma.event.groupBy({ by: ['userId'], where: step(['cart.added']), _count: true }),
+      prisma.event.groupBy({ by: ['userId'], where: step(['booking.initiated']), _count: true }),
+      prisma.event.groupBy({ by: ['userId'], where: step(['booking.status_completed']), _count: true }),
     ]);
 
     return {
@@ -1280,7 +1285,7 @@ controller.getBookings = catchAsync(async (req, res, next) => {
       skip,
       take,
       include: {
-        customer: { select: { id: true, name: true, email: true } },
+        customer: { select: { id: true, name: true, email: true, photoURL: true } },
         tour: {
           select: {
             id: true, title: true, slug: true, coverPhoto: true,
@@ -1335,7 +1340,7 @@ controller.getTodayBookings = catchAsync(async (req, res, next) => {
   const bookings = await prisma.booking.findMany({
     where: brandBookingWhere({ createdAt: { gte: startOfDay, lt: endOfDay } }),
     include: {
-      customer: { select: { id: true, name: true, email: true } },
+      customer: { select: { id: true, name: true, email: true, photoURL: true } },
       tour: {
         select: {
           id: true, title: true,
@@ -1359,7 +1364,7 @@ controller.getBookingById = catchAsync(async (req, res, next) => {
   const booking = await prisma.booking.findFirst({
     where: brandBookingWhere({ id }),
     include: {
-      customer: { select: { id: true, name: true, email: true, phone: true } },
+      customer: { select: { id: true, name: true, email: true, phone: true, photoURL: true } },
       tour: {
         select: {
           id: true, title: true, slug: true, coverPhoto: true,
@@ -1402,7 +1407,7 @@ controller.confirmPayment = catchAsync(async (req, res, next) => {
     where: { id },
     data: { paymentStatus: 'SUCCEEDED', paidAt: new Date() },
     include: {
-      customer: { select: { id: true, name: true, email: true } },
+      customer: { select: { id: true, name: true, email: true, photoURL: true } },
       tour: { select: { id: true, title: true } },
     },
   });
@@ -1529,7 +1534,7 @@ controller.getSupplierDetail = catchAsync(async (req, res, next) => {
       select: {
         id: true, bookingNumber: true, status: true, grossAmount: true,
         currency: true, createdAt: true,
-        customer: { select: { name: true } },
+        customer: { select: { name: true, photoURL: true } },
         tour: { select: { title: true } },
       },
       orderBy: { createdAt: 'desc' },

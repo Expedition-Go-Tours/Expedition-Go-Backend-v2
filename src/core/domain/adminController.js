@@ -1296,7 +1296,7 @@ exports.getTodayBookings = catchAsync(async (req, res, next) => {
       createdAt: { gte: startOfDay, lt: endOfDay },
     },
     include: {
-      customer: { select: { id: true, name: true, email: true } },
+      customer: { select: { id: true, name: true, email: true, photoURL: true } },
       tour: {
         select: {
           id: true,
@@ -1808,7 +1808,7 @@ exports.chargePayLaterBooking = catchAsync(async (req, res, next) => {
       currency: true,
       stripePaymentIntentId: true,
       tour: { select: { id: true, title: true, supplierId: true } },
-      customer: { select: { id: true, email: true } },
+      customer: { select: { id: true, email: true, photoURL: true } },
     },
   });
 

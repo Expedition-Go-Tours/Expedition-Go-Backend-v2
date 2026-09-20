@@ -131,6 +131,19 @@ async function notifyAdmin({ type, title, message, data = {}, storefront = null 
     if (!resolvedStorefront && data?.source === 'ghana') {
       resolvedStorefront = 'ghana';
     }
+    // Chat notifications carry only a conversationId, so none of the signals
+    // above match and the storefront would default to null (i.e. "not Ghana" →
+    // the Africa inbox). Resolve it from the conversation's brand instead;
+    // Expedition conversations are branded 'ghana'.
+    if (!resolvedStorefront && data?.conversationId) {
+      try {
+        const conv = await prisma.conversation.findUnique({
+          where: { id: data.conversationId },
+          select: { brand: true },
+        });
+        if (conv?.brand === 'ghana') resolvedStorefront = 'ghana';
+      } catch (_) { /* best-effort */ }
+    }
 
     const notification = await prisma.adminNotification.create({
       data: { type, title, message, data, storefront: resolvedStorefront },
