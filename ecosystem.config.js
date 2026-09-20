@@ -36,5 +36,33 @@ module.exports = {
     // server.js drain grace (5s) so workers exit cleanly.
     listen_timeout: 10000,
     kill_timeout: 15000
+  }, {
+    name: 'clip-service',
+    script: 'utils/clipService.py',
+    interpreter: 'python3',
+    cwd: '/home/deploy/Expedition-Go-Backend-v2',
+    instances: 1,
+    exec_mode: 'fork',
+    // LEAK GUARD ONLY. The CLIP ViT-B/32 model is a fixed ~1 GB resident on CPU,
+    // so this must sit comfortably ABOVE that — set it lower and PM2 would kill
+    // and reload the model in a loop, burning CPU and never staying up.
+    max_memory_restart: '1600M',
+    error_file: '/home/deploy/.pm2/logs/clip-service-error.log',
+    out_file: '/home/deploy/.pm2/logs/clip-service-out.log',
+    log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+    merge_logs: true,
+    watch: false
+  }, {
+    name: 'discord-bot',
+    script: 'bots/discord-bot/index.js',
+    cwd: '/home/deploy/Expedition-Go-Backend-v2',
+    instances: 1,
+    exec_mode: 'fork',
+    max_memory_restart: '400M',
+    error_file: '/home/deploy/.pm2/logs/discord-bot-error.log',
+    out_file: '/home/deploy/.pm2/logs/discord-bot-out.log',
+    log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+    merge_logs: true,
+    watch: false
   }]
 };
