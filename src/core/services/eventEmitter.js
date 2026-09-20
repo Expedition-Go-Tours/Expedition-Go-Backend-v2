@@ -21,6 +21,18 @@
  */
 
 const prisma = require('./prismaClient');
+const { resolveEventBrand } = require('./eventBrand');
+
+/**
+ * Stamp the brand onto the event's properties so admin analytics can scope by
+ * it (`properties->>'source' = <brand>`). An explicit caller-provided source
+ * always wins.
+ */
+function withBrandSource(properties, req) {
+  if (properties && properties.source) return properties || {};
+  const brand = resolveEventBrand(req);
+  return brand ? { ...(properties || {}), source: brand } : (properties || {});
+}
 
 /**
  * Generate a stable anonymous session fingerprint from request headers.
@@ -78,7 +90,7 @@ async function emit({
         sessionId: resolvedSessionId,
         resource,
         resourceId,
-        properties,
+        properties: withBrandSource(properties, req),
         source: resolvedSource,
       },
       select: { id: true },
@@ -113,7 +125,7 @@ async function emitBatch(events) {
             sessionId: evt.sessionId || (evt.req ? deriveSessionId(evt.req) : null),
             resource: evt.resource,
             resourceId: evt.resourceId,
-            properties: evt.properties || {},
+            properties: withBrandSource(evt.properties, evt.req),
             source: evt.source || 'api',
           },
         })

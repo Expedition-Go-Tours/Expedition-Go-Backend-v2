@@ -544,7 +544,7 @@ const getTourBySlug = catchAsync(async (req, res, next) => {
       resourceId: tourData?.id,
       properties: {
         slug,
-        source: 'expedition',
+        source: 'ghana',
         category: tourData?.category || null,
         city: tourData?.city || null,
         country: tourData?.country || null,

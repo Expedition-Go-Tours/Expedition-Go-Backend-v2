@@ -673,7 +673,7 @@ exports.getFunnel = catchAsync(async (req, res, next) => {
 
       prisma.event.groupBy({
         by: ['userId'],
-        where: { name: 'booking.completed', createdAt: { gte: startDate }, userId: { not: null } },
+        where: { name: 'booking.status_completed', createdAt: { gte: startDate }, userId: { not: null } },
         _count: true,
       }),
 
@@ -684,7 +684,7 @@ exports.getFunnel = catchAsync(async (req, res, next) => {
           COUNT(DISTINCT "userId")::int AS users
         FROM "Event"
         WHERE "createdAt" >= ${startDate}
-          AND "name" IN ('tour.viewed', 'cart.added', 'booking.initiated', 'booking.completed')
+          AND "name" IN ('tour.viewed', 'cart.added', 'booking.initiated', 'booking.status_completed')
           AND "userId" IS NOT NULL
         GROUP BY name, DATE_TRUNC('day', "createdAt")
         ORDER BY day ASC
@@ -1015,7 +1015,7 @@ exports.getSearchAnalytics = catchAsync(async (req, res, next) => {
         SELECT DISTINCT e."userId"
         FROM "Event" e
         JOIN searchers s ON s."userId" = e."userId"
-        WHERE e."name" = 'booking.completed'
+        WHERE e."name" = 'booking.status_completed'
           AND e."createdAt" >= ${startDate}
       )
       SELECT
@@ -1103,7 +1103,7 @@ exports.getCartAbandonment = catchAsync(async (req, res, next) => {
         SELECT DISTINCT e."userId"
         FROM "Event" e
         JOIN cart_users c ON c."userId" = e."userId"
-        WHERE e."name" = 'booking.completed'
+        WHERE e."name" = 'booking.status_completed'
           AND e."createdAt" >= ${startDate}
       )
       SELECT
@@ -1133,7 +1133,7 @@ exports.getCartAbandonment = catchAsync(async (req, res, next) => {
       booked_tour AS (
         SELECT DISTINCT "userId", "properties"->>'tourId' AS tour_id
         FROM "Event"
-        WHERE "name" = 'booking.completed'
+        WHERE "name" = 'booking.status_completed'
           AND "createdAt" >= ${startDate}
       )
       SELECT
@@ -1164,7 +1164,7 @@ exports.getCartAbandonment = catchAsync(async (req, res, next) => {
           COUNT(DISTINCT e."userId")::int AS converted_users
         FROM "Event" e
         JOIN daily_carts dc ON dc.day = DATE_TRUNC('day', e."createdAt")
-        WHERE e."name" = 'booking.completed'
+        WHERE e."name" = 'booking.status_completed'
           AND e."createdAt" >= ${startDate}
         GROUP BY DATE_TRUNC('day', e."createdAt")
       )

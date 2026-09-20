@@ -515,25 +515,25 @@ controller.getFunnel = catchAsync(async (req, res, next) => {
 
   const bucket = Math.floor(Date.now() / 300000);
   const data = await cache.getOrSet(`${BRAND.cachePrefix}admin:funnel:${bucket}:${days}`, async () => {
-    // Event names as actually emitted:
-    //   - views are brand-namespaced by the storefront (`<brand>.tour_viewed`)
-    //   - cart / checkout are shared (`cart.added`, `booking.initiated`)
+    // Event names as actually emitted, scoped to this brand via the
+    // `properties.source` tag every event now carries (eventEmitter stamps it):
     //   - completion is `booking.status_completed` (bookingController emits
     //     `booking.status_<status>`), NOT `booking.completed`
-    // There is no `properties.source` on these events, so brand scoping comes
-    // from the namespaced view event rather than a property filter.
-    const step = (names) => ({
-      name: { in: names },
+    const step = (name) => ({
+      name,
       createdAt: { gte: startDate },
       userId: { not: null },
+      properties: { path: ['source'], equals: BRAND.key },
     });
-    const viewNames = [`${BRAND.eventNamespace}.tour_viewed`, `${BRAND.eventNamespace}.tour.viewed`];
+    // The shared route emits `tour.viewed`; the brand storefront emits
+    // `<brand>.tour_viewed`. Count both.
+    const viewWhere = step({ in: ['tour.viewed', `${BRAND.key}.tour_viewed`] });
 
     const [viewed, cartAdded, checkoutStarted, completed] = await Promise.all([
-      prisma.event.groupBy({ by: ['userId'], where: step(viewNames), _count: true }),
-      prisma.event.groupBy({ by: ['userId'], where: step(['cart.added']), _count: true }),
-      prisma.event.groupBy({ by: ['userId'], where: step(['booking.initiated']), _count: true }),
-      prisma.event.groupBy({ by: ['userId'], where: step(['booking.status_completed']), _count: true }),
+      prisma.event.groupBy({ by: ['userId'], where: viewWhere, _count: true }),
+      prisma.event.groupBy({ by: ['userId'], where: step('cart.added'), _count: true }),
+      prisma.event.groupBy({ by: ['userId'], where: step('booking.initiated'), _count: true }),
+      prisma.event.groupBy({ by: ['userId'], where: step('booking.status_completed'), _count: true }),
     ]);
 
     return {
@@ -685,7 +685,7 @@ controller.getSearchAnalytics = catchAsync(async (req, res, next) => {
       FROM "Event"
       WHERE "name" = 'search.executed'
         AND "createdAt" >= ${startDate}
-        AND "properties"->>'source' = ${BRAND.eventNamespace}
+        AND "properties"->>'source' = ${BRAND.key}
     `,
     prisma.$queryRaw`
       SELECT
@@ -695,7 +695,7 @@ controller.getSearchAnalytics = catchAsync(async (req, res, next) => {
       FROM "Event"
       WHERE "name" = 'search.executed'
         AND "createdAt" >= ${startDate}
-        AND "properties"->>'source' = ${BRAND.eventNamespace}
+        AND "properties"->>'source' = ${BRAND.key}
         AND "properties"->>'query' IS NOT NULL
       GROUP BY "properties"->>'query'
       ORDER BY searches DESC LIMIT 50
@@ -707,7 +707,7 @@ controller.getSearchAnalytics = catchAsync(async (req, res, next) => {
       FROM "Event"
       WHERE "name" = 'search.executed'
         AND "createdAt" >= ${startDate}
-        AND "properties"->>'source' = ${BRAND.eventNamespace}
+        AND "properties"->>'source' = ${BRAND.key}
         AND "properties"->>'resultCount' = '0'
       GROUP BY "properties"->>'query'
       ORDER BY searches DESC LIMIT 25
@@ -749,13 +749,13 @@ controller.getCartAbandonment = catchAsync(async (req, res, next) => {
         WITH cart_users AS (
           SELECT DISTINCT "userId" FROM "Event"
           WHERE "name" = 'cart.added' AND "createdAt" >= ${startDate}
-            AND "userId" IS NOT NULL AND "properties"->>'source' = ${BRAND.eventNamespace}
+            AND "userId" IS NOT NULL AND "properties"->>'source' = ${BRAND.key}
         ),
         booking_users AS (
           SELECT DISTINCT e."userId" FROM "Event" e
           JOIN cart_users c ON c."userId" = e."userId"
-          WHERE e."name" = 'booking.completed' AND e."createdAt" >= ${startDate}
-            AND e."properties"->>'source' = ${BRAND.eventNamespace}
+          WHERE e."name" = 'booking.status_completed' AND e."createdAt" >= ${startDate}
+            AND e."properties"->>'source' = ${BRAND.key}
         )
         SELECT
           (SELECT COUNT(*) FROM cart_users)::int AS "cartsCreated",
@@ -770,14 +770,14 @@ controller.getCartAbandonment = catchAsync(async (req, res, next) => {
           FROM "Event"
           WHERE "name" = 'cart.added' AND "createdAt" >= ${startDate}
             AND "userId" IS NOT NULL AND "resourceId" IS NOT NULL
-            AND "properties"->>'source' = ${BRAND.eventNamespace}
+            AND "properties"->>'source' = ${BRAND.key}
           ORDER BY "userId", "resourceId", "createdAt" DESC
         ),
         booked_tour AS (
           SELECT DISTINCT "userId", "properties"->>'tourId' AS tour_id
           FROM "Event"
-          WHERE "name" = 'booking.completed' AND "createdAt" >= ${startDate}
-            AND "properties"->>'source' = ${BRAND.eventNamespace}
+          WHERE "name" = 'booking.status_completed' AND "createdAt" >= ${startDate}
+            AND "properties"->>'source' = ${BRAND.key}
         )
         SELECT ct.tour_id AS "tourId", COUNT(*)::int AS "cartsAdded",
           COUNT(*) FILTER (WHERE bt."userId" IS NOT NULL)::int AS "converted"
@@ -791,7 +791,7 @@ controller.getCartAbandonment = catchAsync(async (req, res, next) => {
             COUNT(DISTINCT "userId")::int AS cart_users
           FROM "Event"
           WHERE "name" = 'cart.added' AND "createdAt" >= ${startDate}
-            AND "properties"->>'source' = ${BRAND.eventNamespace}
+            AND "properties"->>'source' = ${BRAND.key}
           GROUP BY DATE_TRUNC('day', "createdAt")
         ),
         daily_converted AS (
@@ -799,8 +799,8 @@ controller.getCartAbandonment = catchAsync(async (req, res, next) => {
             COUNT(DISTINCT e."userId")::int AS converted_users
           FROM "Event" e
           JOIN daily_carts dc ON dc.day = DATE_TRUNC('day', e."createdAt")
-          WHERE e."name" = 'booking.completed' AND e."createdAt" >= ${startDate}
-            AND e."properties"->>'source' = ${BRAND.eventNamespace}
+          WHERE e."name" = 'booking.status_completed' AND e."createdAt" >= ${startDate}
+            AND e."properties"->>'source' = ${BRAND.key}
           GROUP BY DATE_TRUNC('day', e."createdAt")
         )
         SELECT dc.day, dc.cart_users AS "cartsAdded",
