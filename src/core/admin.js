@@ -514,37 +514,67 @@ controller.getFunnel = catchAsync(async (req, res, next) => {
   startDate.setDate(startDate.getDate() - days);
 
   const bucket = Math.floor(Date.now() / 300000);
-  const data = await cache.getOrSet(`${BRAND.cachePrefix}admin:funnel:${bucket}:${days}`, async () => {
-    // Event names as actually emitted, scoped to this brand via the
-    // `properties.source` tag every event now carries (eventEmitter stamps it):
-    //   - completion is `booking.status_completed` (bookingController emits
-    //     `booking.status_<status>`), NOT `booking.completed`
+  const result = await cache.getOrSet(`${BRAND.cachePrefix}admin:funnel:${bucket}:${days}`, async () => {
+    // Brand-scoped: every event carries `properties.source = <brand>` (stamped
+    // by eventEmitter). Completion is `booking.status_completed` —
+    // bookingController emits `booking.status_<status>`, never `booking.completed`.
+    // The shared route emits `tour.viewed`; the brand storefront emits
+    // `<brand>.tour_viewed`. Count both for the first step.
     const step = (name) => ({
       name,
       createdAt: { gte: startDate },
       userId: { not: null },
       properties: { path: ['source'], equals: BRAND.key },
     });
-    // The shared route emits `tour.viewed`; the brand storefront emits
-    // `<brand>.tour_viewed`. Count both.
-    const viewWhere = step({ in: ['tour.viewed', `${BRAND.key}.tour_viewed`] });
+    const viewNames = ['tour.viewed', `${BRAND.key}.tour_viewed`];
 
-    const [viewed, cartAdded, checkoutStarted, completed] = await Promise.all([
-      prisma.event.groupBy({ by: ['userId'], where: viewWhere, _count: true }),
+    const [viewed, cartAdded, checkoutStarted, completed, stepData] = await Promise.all([
+      prisma.event.groupBy({ by: ['userId'], where: step({ in: viewNames }), _count: true }),
       prisma.event.groupBy({ by: ['userId'], where: step('cart.added'), _count: true }),
       prisma.event.groupBy({ by: ['userId'], where: step('booking.initiated'), _count: true }),
       prisma.event.groupBy({ by: ['userId'], where: step('booking.status_completed'), _count: true }),
+      prisma.$queryRaw`
+        SELECT
+          name,
+          DATE_TRUNC('day', "createdAt")::date AS day,
+          COUNT(DISTINCT "userId")::int AS users
+        FROM "Event"
+        WHERE "createdAt" >= ${startDate}
+          AND "name" IN ('tour.viewed', ${`${BRAND.key}.tour_viewed`}, 'cart.added', 'booking.initiated', 'booking.status_completed')
+          AND "userId" IS NOT NULL
+          AND "properties"->>'source' = ${BRAND.key}
+        GROUP BY name, DATE_TRUNC('day', "createdAt")
+        ORDER BY day ASC
+      `,
     ]);
 
+    const viewedUsers = viewed.length;
+    const cartUsers = cartAdded.length;
+    const checkoutUsers = checkoutStarted.length;
+    const completedUsers = completed.length;
+
+    const calcRate = (numerator, denominator) =>
+      denominator > 0 ? parseFloat(((numerator / denominator) * 100).toFixed(1)) : 0;
+
     return {
-      viewed: viewed.length,
-      cartAdded: cartAdded.length,
-      checkoutStarted: checkoutStarted.length,
-      completed: completed.length,
+      period: `${days}d`,
+      funnel: [
+        { step: 'viewed',           users: viewedUsers,    dropOff: null },
+        { step: 'cart_added',       users: cartUsers,      dropOff: `${(100 - calcRate(cartUsers, viewedUsers))}%` },
+        { step: 'checkout_started', users: checkoutUsers,  dropOff: `${(100 - calcRate(checkoutUsers, cartUsers))}%` },
+        { step: 'booking_completed',users: completedUsers, dropOff: `${(100 - calcRate(completedUsers, checkoutUsers))}%` },
+      ],
+      conversionRates: {
+        viewToCart: calcRate(cartUsers, viewedUsers),
+        cartToCheckout: calcRate(checkoutUsers, cartUsers),
+        checkoutToComplete: calcRate(completedUsers, checkoutUsers),
+        overall: calcRate(completedUsers, viewedUsers),
+      },
+      dailyTrend: stepData,
     };
   }, 300);
 
-  res.status(200).json({ status: 'success', data });
+  res.status(200).json({ status: 'success', data: result });
 });
 
 /**
