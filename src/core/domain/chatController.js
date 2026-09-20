@@ -3,6 +3,9 @@ const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
 const chatService = require('../services/chatService');
 const { isValidCloudinaryUrl } = require('../services/cloudinaryHelper');
+const { BRANDS } = require('../../../config/brands');
+
+const BRAND_KEYS = Object.keys(BRANDS);
 
 function canAccessType(user, type) {
   // Full dashboard access
@@ -58,7 +61,14 @@ exports.getExpeditionSupport = catchAsync(async (req, res) => {
 });
 
 exports.getConversations = catchAsync(async (req, res) => {
-  const conversations = await chatService.getConversations(req.user.id);
+  // Admins share one chat identity, so without a brand filter every admin
+  // inbox would show every platform's conversations. Customers/suppliers are
+  // already isolated by participation.
+  const isAdmin = Array.isArray(req.user.roles) && req.user.roles.includes('admin');
+  const brandKey = isAdmin
+    ? (req.brandKey || chatService.brandKeyFromRoles(req.user.roles))
+    : null;
+  const conversations = await chatService.getConversations(req.user.id, brandKey);
   const filtered = conversations.filter((c) => canAccessType(req.user, c.type));
   res.json({ status: 'success', data: { conversations: filtered } });
 });
@@ -102,7 +112,29 @@ exports.getOrCreateConversation = catchAsync(async (req, res) => {
     throw new AppError('You do not have permission for this conversation type', 403);
   }
 
+  // ── Brand resolution (per-platform isolation) ─────────────────────────
+  // Brand-scoped mounts (/api/travioghana/chat, /api/travioafrica/chat)
+  // carry the platform in the route, so the server trusts it. The legacy
+  // shared mount (/api/chat) has no brand context: supplier and expedition
+  // conversations stay resolvable server-side, but a brand-less USER_SUPPORT
+  // conversation would be un-routable — reject it rather than guess (a loud
+  // 409 beats a silently mis-filed support chat).
+  const routeBrand = req.brandKey || null;
+  const explicitBrand = typeof req.body.brand === 'string' ? req.body.brand : null;
+
+  if (explicitBrand && !BRAND_KEYS.includes(explicitBrand)) {
+    throw new AppError(`Unknown brand '${explicitBrand}'`, 400);
+  }
+  if (!routeBrand && type === 'USER_SUPPORT' && !explicitBrand) {
+    throw new AppError(
+      'Support chat must be started from a platform endpoint (missing brand)',
+      409,
+    );
+  }
+
   const ctx = {};
+  if (routeBrand) ctx.routeBrand = routeBrand;
+  if (explicitBrand) ctx.explicitBrand = explicitBrand;
   if (typeof req.body.bookingId === 'string' && req.body.bookingId) ctx.bookingId = req.body.bookingId;
   if (typeof req.body.bookingNumber === 'string' && req.body.bookingNumber) ctx.bookingNumber = req.body.bookingNumber;
   if (typeof req.body.tourTitle === 'string' && req.body.tourTitle) ctx.tourTitle = req.body.tourTitle;
@@ -162,7 +194,13 @@ exports.getUnreadCount = catchAsync(async (req, res) => {
   const types = typeof raw === 'string' && raw.trim()
     ? raw.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
     : null;
-  const result = await chatService.getUnreadCount(req.user.id, types);
+  // Same brand scoping as the conversation list, so the badge cannot count
+  // another platform's unread messages.
+  const isAdmin = Array.isArray(req.user.roles) && req.user.roles.includes('admin');
+  const brandKey = isAdmin
+    ? (req.brandKey || chatService.brandKeyFromRoles(req.user.roles))
+    : null;
+  const result = await chatService.getUnreadCount(req.user.id, types, brandKey);
   res.json({ status: 'success', data: result });
 });
 

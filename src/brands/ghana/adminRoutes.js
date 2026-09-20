@@ -16,6 +16,7 @@ const express = require('express');
 const { protect, restrictTo } = require('../../../middleware/authMiddleware');
 const { requirePermission } = require('../../../middleware/permissionMiddleware');
 const { createLimiter } = require('../../../middleware/dynamicRateLimiter');
+const { attachBrand } = require('../../../middleware/brandContext');
 
 const ghana = require('./adminController');
 const adminController = require('../../core/domain/adminController');
@@ -46,7 +47,8 @@ const adminLimiter = createLimiter({
 });
 
 // ── Global middleware for all Ghana admin routes ─────────────────────────
-router.use(protect, restrictTo('admin'), adminLimiter);
+// attachBrand scopes shared controllers (chat) to the Ghana platform.
+router.use(protect, restrictTo('admin'), adminLimiter, attachBrand('ghana'));
 
 // ══════════════════════════════════════════════════════════════════════════
 // SESSION

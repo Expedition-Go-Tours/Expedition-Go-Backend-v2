@@ -15,6 +15,7 @@ const express = require('express');
 const { protect, restrictTo } = require('../../../middleware/authMiddleware');
 const { requirePermission } = require('../../../middleware/permissionMiddleware');
 const { createLimiter } = require('../../../middleware/dynamicRateLimiter');
+const { attachBrand } = require('../../../middleware/brandContext');
 
 const africa = require('./adminController');
 const adminController = require('../../core/domain/adminController');
@@ -40,7 +41,8 @@ const adminLimiter = createLimiter({
   message: { status: 'fail', message: 'Too many requests from this IP, please try again later.' },
 });
 
-router.use(protect, restrictTo('admin'), adminLimiter);
+// attachBrand scopes shared controllers (chat) to the Africa platform.
+router.use(protect, restrictTo('admin'), adminLimiter, attachBrand('africa'));
 
 // SESSION
 router.get('/me', africa.getMe);

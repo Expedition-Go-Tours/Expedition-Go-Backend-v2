@@ -1,5 +1,5 @@
 jest.mock('../../src/core/services/prismaClient', () => ({
-  user: { findFirst: jest.fn(), findUnique: jest.fn() },
+  user: { findFirst: jest.fn(), findUnique: jest.fn(), findMany: jest.fn() },
   conversation: { findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   conversationParticipant: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
   message: { findMany: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), count: jest.fn() },
@@ -36,6 +36,7 @@ describe('chatService', () => {
 
     prisma.user.findFirst.mockResolvedValue(mockAdmin);
     prisma.user.findUnique.mockResolvedValue(mockUser);
+    prisma.user.findMany.mockResolvedValue([]);
     prisma.conversation.findFirst.mockResolvedValue(mockConversation);
     prisma.conversation.create.mockResolvedValue(mockConversation);
     prisma.conversation.update.mockResolvedValue(mockConversation);
@@ -428,6 +429,150 @@ describe('chatService', () => {
       const findManyArg = prisma.conversationParticipant.findMany.mock.calls[0][0];
       expect(findManyArg.where).toMatchObject({ userId: 'u-1' });
       expect(findManyArg.where.conversation).toBeUndefined();
+    });
+  });
+
+  describe('brand isolation', () => {
+    describe('resolveConversationBrand', () => {
+      it('stamps Expedition conversations as Ghana', async () => {
+        const brand = await chatService.resolveConversationBrand({
+          type: 'EXPEDITION_CUSTOMER',
+          participantIds: ['u-1', 'exp-1'],
+        });
+        expect(brand).toBe('ghana');
+      });
+
+      it('derives a supplier conversation brand from the supplier role', async () => {
+        prisma.user.findMany.mockResolvedValue([{ roles: ['supplier', 'ghana'] }]);
+        const brand = await chatService.resolveConversationBrand({
+          type: 'SUPPLIER_ADMIN',
+          participantIds: ['u-1', 'admin-1'],
+        });
+        expect(brand).toBe('ghana');
+      });
+
+      it('maps the travioafrica role to the africa brand key', async () => {
+        prisma.user.findMany.mockResolvedValue([{ roles: ['supplier', 'travioafrica'] }]);
+        const brand = await chatService.resolveConversationBrand({
+          type: 'SUPPLIER_CUSTOMER',
+          participantIds: ['u-1', 'cust-1'],
+        });
+        expect(brand).toBe('africa');
+      });
+
+      it('falls back to the route brand for support conversations', async () => {
+        const brand = await chatService.resolveConversationBrand({
+          type: 'USER_SUPPORT',
+          participantIds: ['cust-1', 'admin-1'],
+          routeBrand: 'africa',
+        });
+        expect(brand).toBe('africa');
+      });
+
+      it('accepts a validated explicit brand as a last resort', async () => {
+        const brand = await chatService.resolveConversationBrand({
+          type: 'USER_SUPPORT',
+          participantIds: ['cust-1', 'admin-1'],
+          explicitBrand: 'ghana',
+        });
+        expect(brand).toBe('ghana');
+      });
+
+      it('ignores an unknown explicit brand', async () => {
+        const brand = await chatService.resolveConversationBrand({
+          type: 'USER_SUPPORT',
+          participantIds: ['cust-1', 'admin-1'],
+          explicitBrand: 'nope',
+        });
+        expect(brand).toBeNull();
+      });
+
+      it('returns null when nothing can be resolved', async () => {
+        const brand = await chatService.resolveConversationBrand({
+          type: 'USER_SUPPORT',
+          participantIds: ['cust-1', 'admin-1'],
+        });
+        expect(brand).toBeNull();
+      });
+    });
+
+    describe('getConversations filtering', () => {
+      const withBrand = (id, brand) => ({
+        ...mockParticipant,
+        conversationId: id,
+        conversation: { ...mockConversation, id, brand },
+      });
+
+      it('shows only the requested brand to an admin', async () => {
+        prisma.conversationParticipant.findMany.mockResolvedValue([
+          withBrand('c-ghana', 'ghana'),
+          withBrand('c-africa', 'africa'),
+        ]);
+
+        const result = await chatService.getConversations('admin-1', 'ghana');
+
+        expect(result.map((c) => c.id)).toEqual(['c-ghana']);
+      });
+
+      it('does not leak Ghana conversations into Africa', async () => {
+        prisma.conversationParticipant.findMany.mockResolvedValue([
+          withBrand('c-ghana', 'ghana'),
+          withBrand('c-africa', 'africa'),
+        ]);
+
+        const result = await chatService.getConversations('admin-1', 'africa');
+
+        expect(result.map((c) => c.id)).toEqual(['c-africa']);
+      });
+
+      it('surfaces unassigned legacy rows on Ghana so nothing is orphaned', async () => {
+        prisma.conversationParticipant.findMany.mockResolvedValue([
+          withBrand('c-legacy', null),
+          withBrand('c-africa', 'africa'),
+        ]);
+
+        const result = await chatService.getConversations('admin-1', 'ghana');
+
+        expect(result.map((c) => c.id)).toEqual(['c-legacy']);
+      });
+
+      it('applies no brand filter when none is given', async () => {
+        prisma.conversationParticipant.findMany.mockResolvedValue([
+          withBrand('c-ghana', 'ghana'),
+          withBrand('c-africa', 'africa'),
+        ]);
+
+        const result = await chatService.getConversations('u-1');
+
+        expect(result).toHaveLength(2);
+      });
+    });
+
+    describe('getUnreadCount filtering', () => {
+      it('applies the brand filter to the count query', async () => {
+        prisma.message.count.mockResolvedValueOnce(2);
+        prisma.conversationParticipant.findMany.mockResolvedValue([
+          { conversationId: 'c-africa', lastReadAt: new Date(0) },
+        ]);
+
+        const result = await chatService.getUnreadCount('admin-1', null, 'africa');
+
+        const arg = prisma.conversationParticipant.findMany.mock.calls[0][0];
+        expect(arg.where.conversation).toMatchObject({ brand: 'africa' });
+        expect(result.unreadCount).toBe(2);
+      });
+
+      it('counts Ghana and unassigned rows for the Ghana brand', async () => {
+        prisma.message.count.mockResolvedValueOnce(1);
+        prisma.conversationParticipant.findMany.mockResolvedValue([
+          { conversationId: 'c-1', lastReadAt: new Date(0) },
+        ]);
+
+        await chatService.getUnreadCount('admin-1', null, 'ghana');
+
+        const arg = prisma.conversationParticipant.findMany.mock.calls[0][0];
+        expect(arg.where.conversation.OR).toEqual([{ brand: 'ghana' }, { brand: null }]);
+      });
     });
   });
 });

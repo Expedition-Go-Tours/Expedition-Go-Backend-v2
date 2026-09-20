@@ -318,6 +318,7 @@ const homepageRoutes = require('./routes/homepageRoutes');
 const consentRoutes = require('./routes/consentRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const maintenanceMode = require('./middleware/maintenanceMode');
+const { attachBrand } = require('./middleware/brandContext');
 
 app.use('/api', maintenanceMode);
 
@@ -346,6 +347,13 @@ app.use('/api/admin/roles', adminRoleRoutes);
 app.use('/api/admin/admins', adminUserRoutes);
 app.use('/api/tours', availabilityRoutes);
 app.use('/api/chat', chatRoutes);
+// Brand-scoped chat: the route carries the platform, so shared chat controllers
+// can stamp/scope conversations per brand. The shared /api/chat mount above
+// stays for suppliers and as the legacy fallback.
+app.use('/api/travioghana/chat', attachBrand('ghana'), chatRoutes);
+app.use('/api/travioafrica/chat', attachBrand('africa'), chatRoutes);
+// The Expedition storefront is Ghana's sub-store, so its chat is Ghana-scoped.
+app.use('/api/expedition/chat', attachBrand('ghana'), chatRoutes);
 app.use('/api/suppliers/settings', supplierSettingsRoutes);
 app.use('/api/suppliers/special-offers', specialOfferRoutes);
 app.use('/api/locations', locationRoutes);

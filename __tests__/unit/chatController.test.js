@@ -36,11 +36,32 @@ describe('chatController', () => {
 
       await controller.getConversations(req, res, next);
 
-      expect(chatService.getConversations).toHaveBeenCalledWith('u-1');
+      // Non-admins are isolated by participation, so no brand filter is passed.
+      expect(chatService.getConversations).toHaveBeenCalledWith('u-1', null);
       expect(res.json).toHaveBeenCalledWith({
         status: 'success',
         data: { conversations: [{ id: 'c-1', type: 'SUPPLIER_ADMIN', title: 'Support' }] },
       });
+    });
+
+    it('scopes an admin to the route brand', async () => {
+      req.user = { id: 'admin-1', roles: ['admin'], permissionKeys: ['dashboard.*'] };
+      req.brandKey = 'ghana';
+      chatService.getConversations.mockResolvedValue([]);
+
+      await controller.getConversations(req, res, next);
+
+      expect(chatService.getConversations).toHaveBeenCalledWith('admin-1', 'ghana');
+    });
+
+    it('falls back to the admin role brand when no route brand is set', async () => {
+      req.user = { id: 'admin-1', roles: ['admin', 'travioafrica'], permissionKeys: ['dashboard.*'] };
+      chatService.brandKeyFromRoles.mockReturnValueOnce('africa');
+      chatService.getConversations.mockResolvedValue([]);
+
+      await controller.getConversations(req, res, next);
+
+      expect(chatService.getConversations).toHaveBeenCalledWith('admin-1', 'africa');
     });
 
     it('filters out conversations user cannot access', async () => {
@@ -157,15 +178,52 @@ describe('chatController', () => {
       expect(chatService.findOrCreateConversation).toHaveBeenCalledWith('u-1', 'admin-1', 'SUPPLIER_ADMIN');
     });
 
-    it('auto-determines type USER_SUPPORT for other cases', async () => {
-      req.body = { recipientId: 'user-1' };
+    it('auto-determines USER_SUPPORT and forwards a validated explicit brand', async () => {
+      req.body = { recipientId: 'user-1', brand: 'ghana' };
       req.user = { id: 'u-1', roles: ['customer'] };
       prisma.user.findUnique.mockResolvedValue({ id: 'user-1', roles: ['customer'] });
       chatService.findOrCreateConversation.mockResolvedValue({ id: 'c-1' });
 
       await controller.getOrCreateConversation(req, res, next);
 
-      expect(chatService.findOrCreateConversation).toHaveBeenCalledWith('u-1', 'user-1', 'USER_SUPPORT');
+      expect(chatService.findOrCreateConversation).toHaveBeenCalledWith(
+        'u-1', 'user-1', 'USER_SUPPORT', { explicitBrand: 'ghana' },
+      );
+    });
+
+    it('rejects a brand-less USER_SUPPORT on the shared mount (fail closed)', async () => {
+      req.body = { recipientId: 'user-1' };
+      req.user = { id: 'u-1', roles: ['customer'] };
+      prisma.user.findUnique.mockResolvedValue({ id: 'user-1', roles: ['customer'] });
+
+      await controller.getOrCreateConversation(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 409 }));
+      expect(chatService.findOrCreateConversation).not.toHaveBeenCalled();
+    });
+
+    it('accepts USER_SUPPORT on a brand-scoped mount', async () => {
+      req.body = { recipientId: 'user-1' };
+      req.user = { id: 'u-1', roles: ['customer'] };
+      req.brandKey = 'africa';
+      prisma.user.findUnique.mockResolvedValue({ id: 'user-1', roles: ['customer'] });
+      chatService.findOrCreateConversation.mockResolvedValue({ id: 'c-1' });
+
+      await controller.getOrCreateConversation(req, res, next);
+
+      expect(chatService.findOrCreateConversation).toHaveBeenCalledWith(
+        'u-1', 'user-1', 'USER_SUPPORT', { routeBrand: 'africa' },
+      );
+    });
+
+    it('rejects an unknown explicit brand with 400', async () => {
+      req.body = { recipientId: 'user-1', brand: 'nope' };
+      req.user = { id: 'u-1', roles: ['customer'] };
+      prisma.user.findUnique.mockResolvedValue({ id: 'user-1', roles: ['customer'] });
+
+      await controller.getOrCreateConversation(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
 
     it('checks admin permissions for SUPPLIER_ADMIN type', async () => {
@@ -282,7 +340,7 @@ describe('chatController', () => {
 
       await controller.getUnreadCount(req, res, next);
 
-      expect(chatService.getUnreadCount).toHaveBeenCalledWith('u-1', null);
+      expect(chatService.getUnreadCount).toHaveBeenCalledWith('u-1', null, null);
       expect(res.json).toHaveBeenCalledWith({ status: 'success', data: { unreadCount: 3 } });
     });
 
@@ -292,7 +350,7 @@ describe('chatController', () => {
 
       await controller.getUnreadCount(req, res, next);
 
-      expect(chatService.getUnreadCount).toHaveBeenCalledWith('u-1', ['SUPPLIER_ADMIN']);
+      expect(chatService.getUnreadCount).toHaveBeenCalledWith('u-1', ['SUPPLIER_ADMIN'], null);
     });
 
     it('parses comma-separated type filters', async () => {
@@ -301,7 +359,17 @@ describe('chatController', () => {
 
       await controller.getUnreadCount(req, res, next);
 
-      expect(chatService.getUnreadCount).toHaveBeenCalledWith('u-1', ['SUPPLIER_ADMIN', 'USER_SUPPORT']);
+      expect(chatService.getUnreadCount).toHaveBeenCalledWith('u-1', ['SUPPLIER_ADMIN', 'USER_SUPPORT'], null);
+    });
+
+    it('brand-scopes the count for admins', async () => {
+      req.user = { id: 'admin-1', roles: ['admin'], permissionKeys: ['dashboard.*'] };
+      req.brandKey = 'ghana';
+      chatService.getUnreadCount.mockResolvedValue({ unreadCount: 0 });
+
+      await controller.getUnreadCount(req, res, next);
+
+      expect(chatService.getUnreadCount).toHaveBeenCalledWith('admin-1', null, 'ghana');
     });
   });
 

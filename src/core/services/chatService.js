@@ -5,6 +5,15 @@ const { deleteCloudinaryImage } = require('./cloudinaryHelper');
 const chatInbound = require('./chatInbound');
 const emailUrls = require('../../../config/emailUrls');
 const logger = require('./logger');
+const { getBrand } = require('../../../config/brands');
+
+// Conversations store the brand registry KEY ('ghana' | 'africa'). The Africa
+// brand's UserRole name is 'travioafrica', so map roles → keys explicitly.
+const BRAND_ROLE_TO_KEY = {
+  [getBrand('ghana').role]: 'ghana',
+  [getBrand('africa').role]: 'africa',
+};
+const BRAND_KEYS = Object.values(BRAND_ROLE_TO_KEY);
 
 let _sharedAdminId = null;
 
@@ -69,12 +78,68 @@ async function resolveChatUserId(userId) {
   return userId;
 }
 
+/**
+ * Map a user's brand role to its registry key. A user may hold at most one
+ * brand role in practice; if both are present Ghana wins (it is the platform
+ * home and owns the Expedition sub-store).
+ */
+function brandKeyFromRoles(roles) {
+  if (!Array.isArray(roles)) return null;
+  for (const [role, key] of Object.entries(BRAND_ROLE_TO_KEY)) {
+    if (roles.includes(role)) return key;
+  }
+  return null;
+}
+
+async function brandKeyOfUsers(userIds) {
+  const ids = (userIds || []).filter(Boolean);
+  if (ids.length === 0) return null;
+  const users = await prisma.user.findMany({
+    where: { id: { in: ids } },
+    select: { roles: true },
+  });
+  for (const u of users) {
+    const key = brandKeyFromRoles(u.roles);
+    if (key) return key;
+  }
+  return null;
+}
+
+/**
+ * Resolve the platform a conversation belongs to. Server-derived, in priority
+ * order:
+ *   1. EXPEDITION_CUSTOMER → 'ghana' (Expedition is Ghana's sub-store)
+ *   2. SUPPLIER_*          → the supplier participant's brand role
+ *   3. brand-scoped route  → server-controlled namespace (req.brandKey)
+ *   4. explicit brand      → legacy shared-mount escape hatch (validated)
+ * Returns null when nothing can be determined; the caller decides what to do.
+ */
+async function resolveConversationBrand({ type, participantIds = [], routeBrand = null, explicitBrand = null }) {
+  if (type === 'EXPEDITION_CUSTOMER') return 'ghana';
+
+  if (type === 'SUPPLIER_ADMIN' || type === 'SUPPLIER_CUSTOMER') {
+    const fromRole = await brandKeyOfUsers(participantIds);
+    if (fromRole) return fromRole;
+  }
+
+  if (routeBrand && BRAND_KEYS.includes(routeBrand)) return routeBrand;
+  if (explicitBrand && BRAND_KEYS.includes(explicitBrand)) return explicitBrand;
+  return null;
+}
+
 async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_ADMIN', context = {}) {
   const originalSenderId = senderId;
   const originalRecipientId = recipientId;
   senderId = await resolveChatUserId(senderId);
   recipientId = await resolveChatUserId(recipientId);
   console.log('[ChatService] findOrCreateConversation:', { originalSenderId, senderId, originalRecipientId, recipientId, type, context });
+
+  const brand = await resolveConversationBrand({
+    type,
+    participantIds: [senderId, recipientId],
+    routeBrand: context?.routeBrand ?? null,
+    explicitBrand: context?.explicitBrand ?? null,
+  });
 
   const existing = await prisma.conversation.findFirst({
     where: {
@@ -97,20 +162,21 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
   });
 
   if (existing) {
+    const patch = {};
     // Re-used conversation started from a booking: backfill any missing
     // booking context so messaging emails can show "About: <tour>" etc.
     if (context?.bookingNumber && !existing.bookingNumber) {
-      await prisma.conversation.update({
-        where: { id: existing.id },
-        data: {
-          bookingId: context.bookingId ?? null,
-          bookingNumber: context.bookingNumber,
-          tourTitle: context.tourTitle ?? null,
-        },
-      });
-      existing.bookingId = context.bookingId ?? null;
-      existing.bookingNumber = context.bookingNumber;
-      existing.tourTitle = context.tourTitle ?? null;
+      patch.bookingId = context.bookingId ?? null;
+      patch.bookingNumber = context.bookingNumber;
+      patch.tourTitle = context.tourTitle ?? null;
+    }
+    // Backfill the platform on conversations created before isolation.
+    if (!existing.brand && brand) {
+      patch.brand = brand;
+    }
+    if (Object.keys(patch).length > 0) {
+      await prisma.conversation.update({ where: { id: existing.id }, data: patch });
+      Object.assign(existing, patch);
     }
     console.log('[ChatService] findOrCreateConversation: FOUND EXISTING', { conversationId: existing.id, existingParticipantIds: existing.participants.map(p => p.userId) });
     return existing;
@@ -139,6 +205,7 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
     data: {
       type,
       title,
+      brand,
       bookingId: context?.bookingId ?? null,
       bookingNumber: context?.bookingNumber ?? null,
       tourTitle: context?.tourTitle ?? null,
@@ -164,7 +231,7 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
   return conversation;
 }
 
-async function getConversations(userId) {
+async function getConversations(userId, brandKey = null) {
   userId = await resolveChatUserId(userId);
 
   const participants = await prisma.conversationParticipant.findMany({
@@ -197,12 +264,20 @@ async function getConversations(userId) {
     )
   );
 
-  return participants.map((p, i) => ({
+  const results = participants.map((p, i) => ({
     ...p.conversation,
     unreadCount: unreadCounts[i],
     lastReadAt: p.lastReadAt,
     _participant: { id: p.id, lastReadAt: p.lastReadAt },
   }));
+
+  // Per-platform isolation: an admin only sees conversations tagged with their
+  // brand. Expedition conversations are stamped 'ghana'. Legacy rows with a
+  // null brand surface on Ghana (the platform home) so nothing is orphaned.
+  if (!brandKey || !BRAND_KEYS.includes(brandKey)) return results;
+  return results.filter(
+    (c) => c.brand === brandKey || (brandKey === 'ghana' && c.brand == null),
+  );
 }
 
 async function getMessages(conversationId, userId, cursor, limit = 50) {
@@ -513,14 +588,25 @@ async function deleteConversation(conversationId, userId) {
  * conversations are counted (backward compatible — the storefront relies on
  * this).
  */
-async function getUnreadCount(userId, types = null) {
+async function getUnreadCount(userId, types = null, brandKey = null) {
   userId = await resolveChatUserId(userId);
 
   const hasTypes = Array.isArray(types) && types.length > 0;
+  const conversationWhere = {};
+  if (hasTypes) conversationWhere.type = { in: types };
+  if (brandKey && BRAND_KEYS.includes(brandKey)) {
+    // Mirror getConversations: Ghana also counts unassigned legacy rows.
+    if (brandKey === 'ghana') {
+      conversationWhere.OR = [{ brand: 'ghana' }, { brand: null }];
+    } else {
+      conversationWhere.brand = brandKey;
+    }
+  }
+
   const participants = await prisma.conversationParticipant.findMany({
     where: {
       userId,
-      ...(hasTypes ? { conversation: { type: { in: types } } } : {}),
+      ...(Object.keys(conversationWhere).length > 0 ? { conversation: conversationWhere } : {}),
     },
     select: {
       conversationId: true,
@@ -640,6 +726,8 @@ module.exports = {
   markAsRead,
   getUnreadCount,
   resolveChatUserId,
+  resolveConversationBrand,
+  brandKeyFromRoles,
   getSharedAdminId,
   getSharedExpeditionId,
   updateMessage,

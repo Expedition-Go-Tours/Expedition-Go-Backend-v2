@@ -1351,11 +1351,18 @@ model Conversation {
   // routed back to this conversation. Backfilled lazily on first send.
   replyToken String? @unique
 
+  // Platform this conversation belongs to — a brand registry key
+  // ('ghana' | 'africa') — used to isolate each brand's admin inbox.
+  // Expedition conversations are 'ghana'. Null only for legacy rows the
+  // backfill could not resolve (surfaced on Ghana so nothing is orphaned).
+  brand String?
+
   participants ConversationParticipant[]
   messages     Message[]
 
   @@index([updatedAt])
   @@index([bookingId])
+  @@index([brand])
 }
 
 model ConversationParticipant {
