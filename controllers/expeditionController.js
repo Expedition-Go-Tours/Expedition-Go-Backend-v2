@@ -142,7 +142,7 @@ function transformForListing(tour, expeditionRecord, centroid = null, placeMatch
       : null,
     bookingFlow: expeditionRecord?.bookingFlow || null,
     externalUrl: expeditionRecord?.externalUrl || null,
-    ...(specialOffers ? { specialOffers } : {}),
+    ...(BRAND.policies.includesSpecialOffers && specialOffers ? { specialOffers } : {}),
   };
 }
 

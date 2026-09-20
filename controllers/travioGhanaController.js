@@ -6,7 +6,6 @@ const cache = require('../utils/cacheHelper');
 const { haversineKm, resolveCityCentroid } = require('../utils/locationGeo');
 const { placeTourIds } = require('../utils/placeListing');
 const { placeRankFor, normalizeRegion } = require('../utils/placeResolver');
-const { sendEmail } = require('../utils/emailService');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../utils/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, isValidEmail } = require('../utils/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../utils/tourHelpers');
@@ -15,7 +14,7 @@ const { resolvePickupSelection } = require('../utils/geoUtils');
 const { validatePassengerMix } = require('../utils/passengerMix');
 const { createPaymentIntent, createCheckoutSession, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../utils/stripeHelpers');
 const { resolveAllowedClientUrl } = require('../utils/clientOrigin');
-const { acquireHold, releaseHold, HOLD_MINUTES } = require('../utils/checkoutHold');
+const { acquireHold, releaseHold } = require('../utils/checkoutHold');
 const { notifyAdmin } = require('../utils/adminNotificationService');
 const getConfig = require('../utils/getConfig');
 const { detachBookingFromActiveRequests } = require('../utils/financeHelpers');
@@ -30,10 +29,7 @@ const BRAND = getBrand('ghana');
 
 const CACHE_PREFIX = BRAND.cachePrefix;
 const LIST_CACHE_KEY = `${CACHE_PREFIX}tours:list`;
-const FEATURED_CACHE_KEY = `${CACHE_PREFIX}tours:featured`;
 const DETAIL_CACHE_KEY = (slug) => `${CACHE_PREFIX}detail:${slug}`;
-const SITEMAP_CACHE_KEY = `${CACHE_PREFIX}sitemap`;
-const CHECKOUT_CACHE_TTL = 60;
 
 /**
  * Cheapest price a card can quote as "From $X" — the lowest price of the
@@ -141,18 +137,11 @@ function buildTourSchemaUrl(tour) {
   };
 }
 
-async function invalidateCaches(slug) {
-  await cache.invalidateKeys([LIST_CACHE_KEY, FEATURED_CACHE_KEY, SITEMAP_CACHE_KEY]);
-  if (slug) {
-    await cache.invalidateKeys([DETAIL_CACHE_KEY(slug)]);
-  }
-}
-
 // ================================
 // PUBLIC ENDPOINTS
 // ================================
 
-exports.getTours = catchAsync(async (req, res) => {
+const getTours = catchAsync(async (req, res) => {
   const { page = 1, limit = 12, search, category, city, country, minPrice, maxPrice, sortBy, mood, near, place, q } = req.query;
 
   const cacheKey = `${LIST_CACHE_KEY}:${crypto.createHash('md5').update(JSON.stringify(req.query)).digest('hex')}`;
@@ -371,53 +360,7 @@ exports.getTours = catchAsync(async (req, res) => {
   res.status(200).json(result);
 });
 
-exports.getFeaturedTours = catchAsync(async (req, res) => {
-  const result = await cache.getOrSet(FEATURED_CACHE_KEY, async () => {
-    const records = await prisma.travioGhanaTour.findMany({
-      where: { isActive: true, isFeatured: true, tour: { status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } } },
-      orderBy: { displayOrder: 'asc' },
-      take: 8,
-      include: {
-        tour: {
-          select: {
-            id: true, title: true, slug: true, description: true,
-            coverPhoto: true, photos: true, category: true,
-            durationMinutes: true, averageRating: true, reviewCount: true, viewCount: true,
-            city: true, country: true, schedulesAndPricing: true,
-            supplier: { select: { name: true, photoURL: true } },
-          },
-        },
-      },
-    });
-
-    return {
-      status: 'success',
-      data: {
-        tours: records.map((r) => ({
-          id: r.id,
-          displayOrder: r.displayOrder,
-          isFeatured: r.isFeatured,
-          bookingFlow: r.bookingFlow,
-          externalUrl: r.externalUrl,
-          tour: transformForListing(r.tour, r),
-        })),
-      },
-    };
-  }, 300);
-
-  res.status(200).json(result);
-});
-
-/**
- * GET /travioghana/tours/badges
- *
- * Lightweight endpoint returning only tour-card badge fields for
- * Ghana-published tours (languages, cancellation policy, pickup, meeting
- * mode, accommodation). Mirrors expeditionController.getTourBadges but
- * scoped to TravioGhanaTour — the storefront enriches cards with these
- * without fetching the full listing (~500KB → ~20KB).
- */
-exports.getTourBadges = catchAsync(async (req, res) => {
+const getTourBadges = catchAsync(async (req, res) => {
   const result = await cache.getOrSet('ghana:tour-badges', async () => {
     const tours = await prisma.tour.findMany({
       where: {
@@ -467,185 +410,7 @@ exports.getTourBadges = catchAsync(async (req, res) => {
   res.status(200).json(result);
 });
 
-exports.getTourReviews = catchAsync(async (req, res, next) => {
-  const { slug } = req.params;
-  const { page = 1, limit = 10, sortBy = 'newest' } = req.query;
-  const cacheKey = `${CACHE_PREFIX}reviews:${slug}:${page}:${limit}:${sortBy}`;
-
-  const result = await cache.getOrSet(cacheKey, async () => {
-    const expeditionTour = await prisma.travioGhanaTour.findFirst({
-      where: { tour: { slug }, isActive: true },
-      select: { tourId: true },
-    });
-
-    if (!expeditionTour) return null;
-
-    const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
-    const take = Math.min(parseInt(limit), 50);
-
-    const orderBy = sortBy === 'highest' ? { rating: 'desc' }
-      : sortBy === 'lowest' ? { rating: 'asc' }
-      : { createdAt: 'desc' };
-
-    const where = { tourId: expeditionTour.tourId, status: 'APPROVED' };
-
-    const [reviews, totalCount, aggregateRating] = await Promise.all([
-      prisma.review.findMany({
-        where,
-        orderBy,
-        skip,
-        take,
-        include: { customer: { select: { id: true, name: true, photoURL: true } } },
-      }),
-      prisma.review.count({ where }),
-      prisma.review.aggregate({ where, _avg: { rating: true } }),
-    ]);
-
-    const totalPages = Math.ceil(totalCount / take);
-
-    return {
-      status: 'success',
-      data: {
-        reviews,
-        averageRating: aggregateRating._avg.rating ? Math.round(aggregateRating._avg.rating * 10) / 10 : null,
-        totalCount,
-      },
-      pagination: { currentPage: parseInt(page), totalPages, totalCount, limit: take },
-    };
-  }, 300);
-
-  if (!result) return next(new AppError('Tour not found', 404));
-  res.status(200).json(result);
-});
-
-exports.getSimilarTours = catchAsync(async (req, res, next) => {
-  const { slug } = req.params;
-  const cacheKey = `${CACHE_PREFIX}similar:${slug}`;
-
-  const result = await cache.getOrSet(cacheKey, async () => {
-    const expeditionTour = await prisma.travioGhanaTour.findFirst({
-      where: { tour: { slug }, isActive: true },
-      include: {
-        tour: {
-          select: {
-            id: true, category: true, tags: true, city: true, country: true,
-            latitude: true, longitude: true, averageRating: true, totalBookings: true,
-            clipEmbedding: true, aiPrimaryCategory: true, aiMoodTags: true,
-            schedulesAndPricing: true,
-          },
-        },
-      },
-    });
-
-    if (!expeditionTour) return null;
-
-    const currentTour = expeditionTour.tour;
-
-    // Fetch candidates: same category OR same city OR same AI category
-    const candidates = await prisma.travioGhanaTour.findMany({
-      where: {
-        isActive: true,
-        tour: {
-          status: 'ACTIVE',
-          supplier: { supplierProfile: { status: 'ACTIVE' } },
-          id: { not: currentTour.id },
-          OR: [
-            { category: currentTour.category },
-            { city: currentTour.city },
-            { aiPrimaryCategory: currentTour.aiPrimaryCategory },
-          ],
-        },
-      },
-      take: 20, // over-fetch for ranking
-      include: {
-        tour: {
-          select: {
-            id: true, title: true, slug: true, coverPhoto: true, photos: true,
-            category: true, durationMinutes: true, averageRating: true,
-            reviewCount: true, city: true, country: true, tags: true,
-            latitude: true, longitude: true, totalBookings: true,
-            clipEmbedding: true, aiPrimaryCategory: true, aiMoodTags: true,
-            schedulesAndPricing: true,
-            supplier: { select: { name: true, photoURL: true } },
-          },
-        },
-      },
-    });
-
-    // Score each candidate using CLIP + XGBoost
-    const xgboost = require('../utils/xgboostService');
-    const currentTags = new Set([...(currentTour.tags || []), ...(currentTour.aiMoodTags || [])]);
-
-    // Parse current tour price for range similarity
-    let currentPrice = 0;
-    try {
-      const pricing = currentTour.schedulesAndPricing;
-      if (pricing?.pricingSchedules?.[0]?.price) {
-        currentPrice = parseFloat(pricing.pricingSchedules[0].price) || 0;
-      }
-    } catch {}
-
-    const scored = candidates.map(r => {
-      const t = r.tour;
-      let score = 0;
-
-      // 1. Category match (30%)
-      if (t.category === currentTour.category) score += 0.30;
-      else if (t.aiPrimaryCategory === currentTour.aiPrimaryCategory) score += 0.20;
-
-      // 2. Tag overlap (20%)
-      const candidateTags = new Set([...(t.tags || []), ...(t.aiMoodTags || [])]);
-      let tagOverlap = 0;
-      for (const tag of currentTags) {
-        if (candidateTags.has(tag)) tagOverlap++;
-      }
-      const tagScore = currentTags.size > 0 ? tagOverlap / currentTags.size : 0;
-      score += tagScore * 0.20;
-
-      // 3. CLIP embedding similarity (25%)
-      if (currentTour.clipEmbedding && t.clipEmbedding) {
-        const similarity = xgboost.cosineSimilarity(currentTour.clipEmbedding, t.clipEmbedding);
-        score += similarity * 0.25;
-      } else {
-        // No CLIP data — distribute weight to other signals
-        score += 0.125; // neutral
-      }
-
-      // 4. Location proximity (15%)
-      if (currentTour.latitude && currentTour.longitude && t.latitude && t.longitude) {
-        const dist = xgboost.haversineKm(currentTour.latitude, currentTour.longitude, t.latitude, t.longitude);
-        const proximityScore = Math.max(0, 1 - dist / 200); // 200km range
-        score += proximityScore * 0.15;
-      } else if (t.city === currentTour.city) {
-        score += 0.10; // same city bonus
-      }
-
-      // 5. Quality signal (10%)
-      const ratingScore = t.averageRating ? parseFloat(t.averageRating) / 5 : 0.5;
-      score += ratingScore * 0.10;
-
-      return { record: r, _score: score };
-    });
-
-    scored.sort((a, b) => b._score - a._score);
-    const topTours = scored.slice(0, 4);
-
-    return {
-      status: 'success',
-      data: {
-        tours: topTours.map(({ record: r }) => ({
-          id: r.id,
-          tour: transformForListing(r.tour),
-        })),
-      },
-    };
-  }, 600); // Cache for 10 minutes
-
-  if (!result) return next(new AppError('Tour not found', 404));
-  res.status(200).json(result);
-});
-
-exports.getTourBySlug = catchAsync(async (req, res, next) => {
+const getTourBySlug = catchAsync(async (req, res, next) => {
   const { slug } = req.params;
 
   const result = await cache.getOrSet(DETAIL_CACHE_KEY(slug), async () => {
@@ -797,560 +562,7 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
   res.status(200).json(result);
 });
 
-exports.getSitemap = catchAsync(async (req, res) => {
-  const result = await cache.getOrSet(SITEMAP_CACHE_KEY, async () => {
-    const records = await prisma.travioGhanaTour.findMany({
-      where: { isActive: true, tour: { status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } } },
-      orderBy: { displayOrder: 'asc' },
-      select: {
-        tour: { select: { slug: true } },
-        updatedAt: true,
-      },
-    });
-
-    return {
-      status: 'success',
-      data: {
-        urls: records.map((r) => ({
-          slug: r.tour.slug,
-          updatedAt: r.updatedAt.toISOString(),
-        })),
-      },
-    };
-  }, 3600);
-
-  res.status(200).json(result);
-});
-
-exports.submitContact = catchAsync(async (req, res, next) => {
-  const { name, email, phone, message, tourSlug } = req.body;
-
-  if (!name || !email || !message) {
-    return next(new AppError('name, email, and message are required', 400));
-  }
-
-  if (typeof name !== 'string' || name.trim().length < 2) {
-    return next(new AppError('Name must be at least 2 characters', 400));
-  }
-
-  if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return next(new AppError('Invalid email address', 400));
-  }
-
-  if (typeof message !== 'string' || message.trim().length < 10) {
-    return next(new AppError('Message must be at least 10 characters', 400));
-  }
-
-  const supportEmail = process.env.SUPPORT_EMAIL || BRAND.supportEmail;
-
-  const subject = `[Travio Ghana Inquiry] ${name} - ${email}`;
-  const messageBody = [
-    `Name: ${name}`,
-    `Email: ${email}`,
-    phone ? `Phone: ${phone}` : null,
-    tourSlug ? `Tour: ${BRAND.storefrontUrl}/tour/${tourSlug}` : null,
-    '',
-    'Message:',
-    message,
-  ]
-    .filter(Boolean)
-    .join('\n');
-
-  await sendEmail({
-    to: supportEmail,
-    subject,
-    template: 'generic-notification',
-    data: {
-      subject,
-      header: `Travio Ghana Contact — ${name}`,
-      messageBody,
-      name,
-      email,
-      phone: phone || 'Not provided',
-      inquiryType: 'Travio Ghana Contact Form',
-    },
-  });
-
-  enqueueEvent({
-    name: 'ghana.contact_submitted',
-    userId: req.user?.id,
-    req,
-    properties: { email, tourSlug: tourSlug || null, source: 'expedition' },
-  });
-
-  res.status(200).json({
-    status: 'success',
-    message: 'Your message has been sent. We will get back to you shortly.',
-  });
-});
-
-exports.trackClick = catchAsync(async (req, res) => {
-  const { tourId, tourSlug } = req.body;
-
-  enqueueEvent({
-    name: 'ghana.outbound_click',
-    userId: req.user?.id,
-    req,
-    resource: 'Tour',
-    resourceId: tourId || null,
-    properties: {
-      tourId: tourId || null,
-      tourSlug: tourSlug || null,
-      destination: BRAND.storefrontDomain,
-      source: 'ghana',
-    },
-  });
-
-  res.status(204).send();
-});
-
-// ================================
-// ADMIN ENDPOINTS
-// ================================
-
-exports.searchTours = catchAsync(async (req, res) => {
-  const {
-    q,
-    category,
-    city,
-    country,
-    page = 1,
-    limit = 20,
-  } = req.query;
-
-  const where = { status: 'ACTIVE' };
-
-  // Exclude tours already curated
-  const curatedIds = await prisma.travioGhanaTour.findMany({
-    select: { tourId: true },
-  });
-  const excludedIds = curatedIds.map((c) => c.tourId);
-  if (excludedIds.length > 0) {
-    where.id = { notIn: excludedIds };
-  }
-
-  const AND = [];
-  if (q && q.trim()) {
-    const search = q.trim();
-    AND.push({
-      OR: [
-        { title: { contains: search, mode: 'insensitive' } },
-        { city: { contains: search, mode: 'insensitive' } },
-        { country: { contains: search, mode: 'insensitive' } },
-        { slug: { contains: search, mode: 'insensitive' } },
-        { supplier: { name: { contains: search, mode: 'insensitive' } } },
-      ],
-    });
-  }
-  if (category) AND.push({ category });
-  if (city) AND.push({ city: { contains: city, mode: 'insensitive' } });
-  if (country) AND.push({ country: { contains: country, mode: 'insensitive' } });
-
-  if (AND.length > 0) where.AND = AND;
-
-  const skip = (parseInt(page) - 1) * parseInt(limit);
-  const take = Math.min(parseInt(limit), 100);
-
-  const [tours, totalCount] = await Promise.all([
-    prisma.tour.findMany({
-      where,
-      select: {
-        id: true,
-        title: true,
-        slug: true,
-        coverPhoto: true,
-        category: true,
-        city: true,
-        country: true,
-        schedulesAndPricing: true,
-        status: true,
-        createdAt: true,
-        supplier: { select: { name: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take,
-    }),
-    prisma.tour.count({ where }),
-  ]);
-
-  const totalPages = Math.ceil(totalCount / take);
-
-  res.status(200).json({
-    status: 'success',
-    data: {
-      tours: tours.map((t) => ({
-        id: t.id,
-        title: t.title,
-        slug: t.slug,
-        coverPhoto: t.coverPhoto || null,
-        category: t.category,
-        city: t.city,
-        country: t.country,
-        startingPrice: extractStartingPrice(t.schedulesAndPricing),
-        currency: extractCurrency(t.schedulesAndPricing),
-        status: t.status,
-        supplierName: t.supplier?.name || null,
-        createdAt: t.createdAt,
-      })),
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages,
-        totalCount,
-        limit: take,
-      },
-    },
-  });
-});
-
-exports.getAdminTours = catchAsync(async (req, res) => {
-  const records = await prisma.travioGhanaTour.findMany({
-    orderBy: { displayOrder: 'asc' },
-    include: {
-      addedBy: { select: { id: true, name: true, email: true } },
-      tour: {
-        select: {
-          id: true, title: true, slug: true, status: true,
-          coverPhoto: true, category: true, city: true, country: true,
-          createdAt: true,
-          supplier: { select: { name: true } },
-        },
-      },
-    },
-  });
-
-  res.status(200).json({
-    status: 'success',
-    data: {
-      tours: records.map((r) => ({
-        id: r.id,
-        tourId: r.tourId,
-        displayOrder: r.displayOrder,
-        isFeatured: r.isFeatured,
-        isActive: r.isActive,
-        addedBy: r.addedBy
-          ? { id: r.addedBy.id, name: r.addedBy.name, email: r.addedBy.email }
-          : null,
-        createdAt: r.createdAt,
-        updatedAt: r.updatedAt,
-        tour: {
-          id: r.tour.id,
-          title: r.tour.title,
-          slug: r.tour.slug,
-          status: r.tour.status,
-          coverPhoto: r.tour.coverPhoto
-            ? r.tour.coverPhoto
-            : null,
-          category: r.tour.category,
-          city: r.tour.city,
-          country: r.tour.country,
-          supplierName: r.tour.supplier?.name || null,
-          createdAt: r.tour.createdAt,
-        },
-      })),
-    },
-  });
-});
-
-exports.addTour = catchAsync(async (req, res, next) => {
-  const { tourId, displayOrder, isFeatured } = req.body;
-
-  if (!tourId) {
-    return next(new AppError('tourId is required', 400));
-  }
-
-  const tour = await prisma.tour.findUnique({
-    where: { id: tourId },
-    select: { id: true, status: true, title: true },
-  });
-
-  if (!tour) {
-    return next(new AppError('Tour not found', 404));
-  }
-
-  const existing = await prisma.travioGhanaTour.findUnique({
-    where: { tourId },
-  });
-
-  if (existing) {
-    return next(new AppError('Tour is already in the Travio Ghana list', 409));
-  }
-
-  const maxOrder = await prisma.travioGhanaTour.aggregate({
-    _max: { displayOrder: true },
-  });
-
-  const record = await prisma.travioGhanaTour.create({
-    data: {
-      tourId,
-      displayOrder: displayOrder ?? (maxOrder._max.displayOrder ?? 0) + 1,
-      isFeatured: isFeatured ?? false,
-      isActive: true,
-      addedById: req.user.id,
-    },
-  });
-
-  await invalidateCaches();
-
-  res.status(201).json({ status: 'success', data: { tour: record } });
-});
-
-exports.updateTour = catchAsync(async (req, res, next) => {
-  const { id } = req.params;
-  const { displayOrder, isFeatured, isActive } = req.body;
-
-  const existing = await prisma.travioGhanaTour.findUnique({ where: { id } });
-  if (!existing) {
-    return next(new AppError('Travio Ghana tour not found', 404));
-  }
-
-  const record = await prisma.travioGhanaTour.update({
-    where: { id },
-    data: {
-      ...(displayOrder !== undefined && { displayOrder }),
-      ...(isFeatured !== undefined && { isFeatured }),
-      ...(isActive !== undefined && { isActive }),
-    },
-  });
-
-  await invalidateCaches();
-
-  res.status(200).json({ status: 'success', data: { tour: record } });
-});
-
-exports.removeTour = catchAsync(async (req, res, next) => {
-  const { id } = req.params;
-
-  const existing = await prisma.travioGhanaTour.findUnique({ where: { id } });
-  if (!existing) {
-    return next(new AppError('Travio Ghana tour not found', 404));
-  }
-
-  await prisma.travioGhanaTour.delete({ where: { id } });
-
-  await invalidateCaches();
-
-  res.status(204).json({ status: 'success', data: null });
-});
-
-exports.refreshCache = catchAsync(async (req, res, next) => {
-  const { tourId } = req.params;
-
-  if (tourId && tourId !== 'all') {
-    const record = await prisma.travioGhanaTour.findUnique({
-      where: { id: tourId },
-      select: { id: true },
-    });
-    if (!record) {
-      return next(new AppError('Travio Ghana tour not found', 404));
-    }
-  }
-
-  await invalidateCaches();
-
-  res.status(200).json({
-    status: 'success',
-    message: tourId && tourId !== 'all'
-      ? `Cache cleared for Travio Ghana tour ${tourId}`
-      : 'All Travio Ghana caches cleared',
-  });
-});
-
-// ================================
-// NEWSLETTER & AVAILABILITY
-// ================================
-
-const { buildAvailabilityCalendar } = require('../utils/availabilityCalendar');
-
-exports.subscribe = catchAsync(async (req, res, next) => {
-  const { email, name } = req.body;
-
-  const existing = await prisma.newsletterSubscriber.findUnique({ where: { email } });
-  if (existing) {
-    if (!existing.subscribed) {
-      await prisma.newsletterSubscriber.update({
-        where: { email },
-        data: { subscribed: true, name: name || existing.name },
-      });
-    }
-    return res.status(200).json({
-      status: 'success',
-      message: 'You are already subscribed!',
-    });
-  }
-
-  await prisma.newsletterSubscriber.create({
-    data: { email, name: name || null, source: 'GHANA' },
-  });
-
-  enqueueEvent({
-    name: 'ghana.newsletter_subscribed',
-    properties: { email, name: name || null, source: 'expedition' },
-  });
-
-  res.status(200).json({
-    status: 'success',
-    message: 'Thank you for subscribing!',
-  });
-});
-
-exports.getTourAvailability = catchAsync(async (req, res, next) => {
-  const { slug } = req.params;
-  const { startDate, endDate, option } = req.query;
-
-  const expeditionTour = await prisma.travioGhanaTour.findFirst({
-    where: { tour: { slug }, isActive: true },
-    select: { tourId: true },
-  });
-
-  if (!expeditionTour) return next(new AppError('Tour not found', 404));
-
-  const tour = await prisma.tour.findUnique({
-    where: { id: expeditionTour.tourId },
-    select: { id: true, title: true, schedulesAndPricing: true, bookingAndTickets: true, productContent: true },
-  });
-
-  if (!tour) return next(new AppError('Tour not found', 404));
-
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-    return next(new AppError('Invalid date format', 400));
-  }
-
-  if (end < start) return next(new AppError('endDate must be after startDate', 400));
-
-  const maxPublicDays = parseInt(await getConfig('availability.public_max_days', '31'), 10) || 31;
-  const daysInRange = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
-  if (daysInRange > maxPublicDays) {
-    return next(new AppError(`Date range cannot exceed ${maxPublicDays} days`, 400));
-  }
-
-  // Optional per-option availability (mirror of the Expedition endpoint).
-  const applied = option ? require('../utils/tourOptions').applyOption(tour, String(option)) : null;
-  const sp = applied ? applied.tour.schedulesAndPricing : tour.schedulesAndPricing;
-  const cacheKeyExtra = applied ? `:opt:${applied.optionId}` : ':default';
-
-  const calendar = await cache.getOrSet(
-    `availability:cal:${tour.id}${cacheKeyExtra}:${toDateKey(start)}:${toDateKey(end)}`,
-    () => buildAvailabilityCalendar(
-      tour.id,
-      sp,
-      start,
-      end,
-      undefined,
-      applied ? applied.tour.bookingAndTickets : undefined,
-      applied ? applied.optionScope : null
-    ),
-    30
-  );
-
-  res.status(200).json({
-    status: 'success',
-    data: {
-      tour: { id: tour.id, title: tour.title },
-      ...(applied ? { option: { id: applied.optionId, title: applied.optionTitle } } : {}),
-      startDate: startDate,
-      endDate: endDate,
-      calendar,
-    },
-  });
-});
-
-// ================================
-// CHECKOUT ENDPOINTS
-// ================================
-
-exports.calculateCheckout = catchAsync(async (req, res, next) => {
-  const { tourId, travelDate, travelers, promoCode, optionId } = req.body;
-
-  if (!tourId || !travelDate || !travelers) {
-    return next(new AppError('tourId, travelDate, and travelers are required', 400));
-  }
-
-  const cacheKey = `${CACHE_PREFIX}checkout:${crypto.createHash('md5').update(JSON.stringify({ tourId, travelDate, travelers, promoCode: promoCode || null, optionId: optionId || null })).digest('hex')}`;
-
-  const result = await cache.getOrSet(cacheKey, async () => {
-    let tour = await prisma.tour.findFirst({
-      where: { id: tourId, status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } },
-      include: { supplier: { include: { supplierProfile: true } } },
-    });
-
-    if (!tour) {
-      throw new AppError('Tour not found or not available for booking', 404);
-    }
-
-    const expTourCalc = await prisma.travioGhanaTour.findUnique({
-      where: { tourId },
-      select: { isActive: true },
-    });
-    if (!expTourCalc?.isActive) {
-      throw new AppError('Tour is not available on Travio Ghana', 400);
-    }
-
-    // Multi-option: quote against the chosen option's projection + scope.
-    let optionScopeCalc = null;
-    let optionKeyCalc = null;
-    if (optionId) {
-      const appliedCalc = require('../utils/tourOptions').applyOption(tour, String(optionId));
-      if (appliedCalc.optionScope) {
-        tour = { ...appliedCalc.tour, supplier: tour.supplier };
-        optionScopeCalc = appliedCalc.optionScope;
-        optionKeyCalc = appliedCalc.optionId;
-      }
-    }
-
-    // Enforce supplier passenger-mix rules (min/max, disallowed categories,
-    // requires-adult supervision) before pricing.
-    const mixResult = validatePassengerMix(parseBlob(tour.schedulesAndPricing), travelers);
-    if (!mixResult.ok) {
-      throw new AppError(mixResult.errors[0], 400);
-    }
-
-    const availability = await checkTourAvailability(tourId, travelDate, null, optionScopeCalc ? { optionScope: optionScopeCalc } : {});
-    if (!availability.available) {
-      throw new AppError(availability.reason || 'Tour is not available on the selected date', 400);
-    }
-
-    const totalTravelers = travelerCount(travelers);
-    if (totalTravelers > availability.availableSpots) {
-      throw new AppError(`Only ${availability.availableSpots} spots available, but ${totalTravelers} travelers requested`, 400);
-    }
-
-    const pricing = await calculateTourPrice(tour, travelers, travelDate, null, optionKeyCalc, req.user?.id, promoCode || null)
-      .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
-
-    if (!pricing.success) {
-      throw new AppError(pricing.error, 400);
-    }
-
-    return {
-      status: 'success',
-      data: {
-        available: true,
-        availableSpots: availability.availableSpots,
-        pricing: {
-          currency: pricing.currency,
-          subtotal: pricing.subtotal,
-          fees: pricing.fees || 0,
-          discounts: pricing.discount || 0,
-          total: pricing.total,
-        },
-        travelerSummary: {
-          adults: travelers.adults || 0,
-          children: travelers.children || 0,
-          infants: travelers.infants || 0,
-          total: totalTravelers,
-        },
-      },
-    };
-  }, CHECKOUT_CACHE_TTL);
-
-  res.status(200).json(result);
-});
-
-exports.confirmBooking = catchAsync(async (req, res, next) => {
+const confirmBooking = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
   const {
     tourId,
@@ -1828,104 +1040,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
   });
 });
 
-// ================================
-// WISHLIST ENDPOINTS
-// ================================
-
-// Fields transformForListing() reads when shaping a wishlist tour.
-const WISHLIST_TOUR_SELECT = {
-  id: true,
-  title: true,
-  slug: true,
-  description: true,
-  status: true,
-  coverPhoto: true,
-  photos: true,
-  category: true,
-  durationMinutes: true,
-  schedulesAndPricing: true,
-  averageRating: true,
-  reviewCount: true,
-  viewCount: true,
-  city: true,
-  country: true,
-  supplier: { select: { name: true, photoURL: true } },
-};
-
-exports.getWishlist = catchAsync(async (req, res, next) => {
-  const items = await prisma.wishlistItem.findMany({
-    where: {
-      userId: req.user.id,
-      tour: {
-        status: { not: 'DRAFT' },
-        travioGhanaTour: { isActive: true },
-      },
-    },
-    orderBy: { addedAt: 'desc' },
-    include: { tour: { select: WISHLIST_TOUR_SELECT } },
-  });
-
-  const tours = items
-    .filter((i) => i.tour)
-    .map((i) => ({ ...transformForListing(i.tour), addedAt: i.addedAt }));
-
-  res.status(200).json({
-    status: 'success',
-    results: tours.length,
-    data: { tours },
-  });
-});
-
-exports.toggleWishlist = catchAsync(async (req, res, next) => {
-  const { tourId } = req.params;
-
-  const expeditionTour = await prisma.travioGhanaTour.findFirst({
-    where: { tourId, isActive: true },
-    select: { id: true },
-  });
-  if (!expeditionTour) {
-    return next(new AppError('Tour not available on Travio Ghana', 404));
-  }
-
-  const existing = await prisma.wishlistItem.findUnique({
-    where: { userId_tourId: { userId: req.user.id, tourId } },
-    select: { id: true },
-  });
-
-  if (existing) {
-    await prisma.wishlistItem.delete({ where: { id: existing.id } });
-
-    await logActivity({
-      userId: req.user.id,
-      action: 'user.wishlist_removed',
-      resource: 'User',
-      resourceId: req.user.id,
-      metadata: { tourId, source: 'expedition' },
-    });
-
-    return res.status(200).json({
-      status: 'success',
-      data: { isWishlisted: false },
-    });
-  }
-
-  await prisma.wishlistItem.create({ data: { userId: req.user.id, tourId } });
-
-  await logActivity({
-    userId: req.user.id,
-    action: 'user.wishlist_added',
-    resource: 'User',
-    resourceId: req.user.id,
-    metadata: { tourId, source: 'expedition' },
-  });
-
-  res.status(200).json({
-    status: 'success',
-    data: { isWishlisted: true },
-  });
-});
-
-exports.getMyBookings = catchAsync(async (req, res, next) => {
+const getMyBookings = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
   const { status, page = 1, limit = 10 } = req.query;
 
@@ -1984,7 +1099,7 @@ exports.getMyBookings = catchAsync(async (req, res, next) => {
   });
 });
 
-exports.getBooking = catchAsync(async (req, res, next) => {
+const getBooking = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const customerId = req.user.id;
 
@@ -2019,7 +1134,7 @@ exports.getBooking = catchAsync(async (req, res, next) => {
  *  - { status: 'EXPIRED' }                          — abandoned / swept
  *  - { status: 'REFUNDED' }                         — capacity lost, money returned
  */
-exports.getBookingBySession = catchAsync(async (req, res, next) => {
+const getBookingBySession = catchAsync(async (req, res, next) => {
   const { sessionId } = req.params;
   const customerId = req.user.id;
 
@@ -2064,7 +1179,7 @@ exports.getBookingBySession = catchAsync(async (req, res, next) => {
   });
 });
 
-exports.cancelBooking = catchAsync(async (req, res, next) => {
+const cancelBooking = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { reason } = req.body;
   const customerId = req.user.id;
@@ -2158,64 +1273,7 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
 // REVIEWS
 // ================================
 
-exports.createReview = catchAsync(async (req, res, next) => {
-  const customerId = req.user.id;
-  const { bookingId, rating, title, comment } = req.body;
-
-  const booking = await prisma.booking.findFirst({
-    where: { id: bookingId, customerId, source: 'GHANA' },
-    select: { id: true, tourId: true, status: true, paymentStatus: true, review: { select: { id: true } } },
-  });
-
-  if (!booking) {
-    return next(new AppError('Booking not found or not yours', 404));
-  }
-
-  if (booking.status !== 'COMPLETED') {
-    return next(new AppError('You can only review completed bookings', 400));
-  }
-
-  if (booking.review) {
-    return next(new AppError('You have already reviewed this booking', 409));
-  }
-
-  const review = await prisma.review.create({
-    data: {
-      bookingId: booking.id,
-      tourId: booking.tourId,
-      customerId,
-      rating,
-      title: title || null,
-      comment,
-      source: 'GHANA',
-      isApproved: false,
-    },
-    include: {
-      tour: { select: { id: true, title: true, slug: true } },
-    },
-  });
-
-  enqueueEvent({
-    name: 'ghana.review_created',
-    userId: customerId,
-    req,
-    resource: 'Review',
-    resourceId: review.id,
-    properties: { tourId: booking.tourId, rating, source: 'expedition' },
-  });
-
-  res.status(201).json({
-    status: 'success',
-    data: { review },
-    message: 'Review submitted and pending approval.',
-  });
-});
-
-// ================================
-// SUPPLIER BOOKING MANAGEMENT
-// ================================
-
-exports.getSupplierBookings = catchAsync(async (req, res, next) => {
+const getSupplierBookings = catchAsync(async (req, res, next) => {
   const supplierId = req.user.id;
   const { status, customerId, page = 1, limit = 10 } = req.query;
 
@@ -2289,7 +1347,7 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
   });
 });
 
-exports.updateBookingStatus = catchAsync(async (req, res, next) => {
+const updateBookingStatus = catchAsync(async (req, res, next) => {
   const supplierId = req.user.id;
   const { id } = req.params;
   const { status, reason } = req.body;
@@ -2366,3 +1424,20 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
     data: { booking: updated },
   });
 });
+
+
+const { makeStorefrontController } = require('./expeditionController');
+
+module.exports = {
+  ...makeStorefrontController('ghana'),
+  getTours,
+  getTourBadges,
+  getTourBySlug,
+  confirmBooking,
+  getMyBookings,
+  getBooking,
+  getBookingBySession,
+  cancelBooking,
+  getSupplierBookings,
+  updateBookingStatus,
+};
