@@ -30,6 +30,7 @@ const BRANDS = {
     cachePrefix: 'expedition:',
     eventNamespace: 'expedition',
     listingModel: 'expeditionTour', // Prisma model (camelCase)
+    listingTableName: 'ExpeditionTour', // DB table name (raw SQL)
     placeScope: 'expeditionOnly', // placeTourIds() scope flag
     googleOAuth: {
       strategy: 'google-expedition',
@@ -58,6 +59,7 @@ const BRANDS = {
     cachePrefix: 'ghana:',
     eventNamespace: 'ghana',
     listingModel: 'travioGhanaTour', // Prisma model (camelCase)
+    listingTableName: 'TravioGhanaTour', // DB table name (raw SQL)
     placeScope: 'ghanaOnly', // placeTourIds() scope flag
     // Ghana suppliers' tours can also be published to the Expedition sub-store;
     // getSupplierTours/getSupplierReviews query these extra listing models too.
@@ -90,6 +92,7 @@ const BRANDS = {
     cachePrefix: 'travioafrica:',
     eventNamespace: 'travioafrica',
     listingModel: 'travioAfricaTour', // Prisma model (camelCase)
+    listingTableName: 'TravioAfricaTour', // DB table name (raw SQL)
     placeScope: null, // Africa storefront not built yet
     googleOAuth: {
       strategy: 'google',

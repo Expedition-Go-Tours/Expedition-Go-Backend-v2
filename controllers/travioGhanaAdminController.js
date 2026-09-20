@@ -17,12 +17,11 @@ const catchAsync = require('../utils/catchAsync');
 const cache = require('../utils/cacheHelper');
 const { logActivity } = require('../utils/auditLogger');
 const adminController = require('./adminController');
-
-// ── Ghana-scoped constants ──────────────────────────────────────────────
-const GHANA_SOURCE = 'GHANA';
 const { getBrand } = require('../config/brands');
 
-const GHANA_ROLE = getBrand('ghana').role;
+function makeAdminController(brandKey) {
+  const BRAND = getBrand(brandKey);
+  const controller = {};
 
 /**
  * Prisma filter: bookings belonging to Ghana suppliers.
@@ -31,11 +30,11 @@ const GHANA_ROLE = getBrand('ghana').role;
  * the 'ghana' role.  This ensures bookings made through the Expedition
  * storefront by a Ghana-based supplier appear in the Ghana admin dashboard.
  */
-function ghanaBookingWhere(extra = {}) {
+function brandBookingWhere(extra = {}) {
   return {
     OR: [
-      { source: GHANA_SOURCE },
-      { tour: { supplier: { roles: { has: GHANA_ROLE } } } },
+      { source: BRAND.source },
+      { tour: { supplier: { roles: { has: BRAND.role } } } },
     ],
     ...extra,
   };
@@ -50,7 +49,7 @@ function ghanaBookingWhere(extra = {}) {
  *
  * Ghana-specific dashboard snapshot: revenue, bookings, users, tours.
  */
-exports.getOverview = catchAsync(async (req, res, next) => {
+controller.getOverview = catchAsync(async (req, res, next) => {
   const period = req.query.period || 'today';
   const periodMap = { today: 0, last_week: 7, last_month: 30, last_quarter: 90 };
   const periodDays = periodMap[period] ?? 7;
@@ -110,9 +109,9 @@ exports.getOverview = catchAsync(async (req, res, next) => {
           COUNT(*) FILTER (WHERE "createdAt" >= ${monthStart})::int AS "monthBookings",
           COUNT(*) FILTER (WHERE "createdAt" >= ${yearStart})::int AS "ytdBookings"
         FROM "Booking"
-        WHERE ("source"::text = ${GHANA_SOURCE} OR EXISTS (
+        WHERE ("source"::text = ${BRAND.source} OR EXISTS (
           SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
-          WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+          WHERE _t.id = "Booking"."tourId" AND ${BRAND.role} = ANY(_u."roles"::text[])
         ))
           AND ("createdAt" >= ${scanStart} OR "paidAt" >= ${scanStart})
       `,
@@ -127,9 +126,9 @@ exports.getOverview = catchAsync(async (req, res, next) => {
           COUNT(*) FILTER (WHERE "createdAt" >= ${yearStart})::int AS "signupsYtd",
           COUNT(*) FILTER (WHERE "lastLoginAt" >= ${currentPeriodStart} AND "active" = true)::int AS "activeToday",
           COUNT(*) FILTER (WHERE "lastLoginAt" >= ${previousPeriodStart} AND "lastLoginAt" < ${currentPeriodStart} AND "active" = true)::int AS "activePrevious",
-          (SELECT COUNT(*) FROM "Event" e JOIN "User" u ON u.id = e."userId" WHERE ${GHANA_ROLE} = ANY(u."roles"::text[]))::int AS "totalEvents"
+          (SELECT COUNT(*) FROM "Event" e JOIN "User" u ON u.id = e."userId" WHERE ${BRAND.role} = ANY(u."roles"::text[]))::int AS "totalEvents"
         FROM "User"
-        WHERE ${GHANA_ROLE} = ANY("roles"::text[])
+        WHERE ${BRAND.role} = ANY("roles"::text[])
           AND ("createdAt" >= ${scanStart} OR "lastLoginAt" >= ${scanStart})
       `,
 
@@ -147,9 +146,9 @@ exports.getOverview = catchAsync(async (req, res, next) => {
             LEFT JOIN (
               SELECT "createdAt"::date AS date, COUNT(*)::int AS count
               FROM "Booking"
-              WHERE ("source"::text = ${GHANA_SOURCE} OR EXISTS (
+              WHERE ("source"::text = ${BRAND.source} OR EXISTS (
                 SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
-                WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+                WHERE _t.id = "Booking"."tourId" AND ${BRAND.role} = ANY(_u."roles"::text[])
               ))
                 AND "createdAt" >= CURRENT_DATE - (${periodDays - 1} || ' days')::interval
               GROUP BY "createdAt"::date
@@ -168,9 +167,9 @@ exports.getOverview = catchAsync(async (req, res, next) => {
             LEFT JOIN (
               SELECT "createdAt"::date AS date, COUNT(*)::int AS count
               FROM "Booking"
-              WHERE ("source"::text = ${GHANA_SOURCE} OR EXISTS (
+              WHERE ("source"::text = ${BRAND.source} OR EXISTS (
                 SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
-                WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+                WHERE _t.id = "Booking"."tourId" AND ${BRAND.role} = ANY(_u."roles"::text[])
               ))
                 AND "createdAt" >= CURRENT_DATE - (${Math.min(periodDays || 7, 30) - 1} || ' days')::interval
               GROUP BY "createdAt"::date
@@ -190,7 +189,7 @@ exports.getOverview = catchAsync(async (req, res, next) => {
           COALESCE(r.review_count, 0)::int AS "reviewCount",
           COALESCE((t."schedulesAndPricing"->>'currency'), 'USD') AS "currency"
         FROM "Tour" t
-        JOIN "TravioGhanaTour" g ON g."tourId" = t.id
+        JOIN "${BRAND.listingTableName}" g ON g."tourId" = t.id
         LEFT JOIN (
           SELECT "tourId", COUNT(*)::int AS booking_count, SUM(total)::float AS total_revenue
           FROM "Booking"
@@ -228,12 +227,12 @@ exports.getOverview = catchAsync(async (req, res, next) => {
           FROM "Booking" bo
           JOIN "Tour" t ON t.id = bo."tourId"
           WHERE bo."paymentStatus" = 'SUCCEEDED' AND bo."paidAt" >= ${currentPeriodStart}
-            AND (bo."source"::text = ${GHANA_SOURCE} OR EXISTS (
-              SELECT 1 FROM "User" _u WHERE _u.id = t."supplierId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+            AND (bo."source"::text = ${BRAND.source} OR EXISTS (
+              SELECT 1 FROM "User" _u WHERE _u.id = t."supplierId" AND ${BRAND.role} = ANY(_u."roles"::text[])
             ))
           GROUP BY t."supplierId"
         ) period ON period."supplierId" = u.id
-        WHERE sp.status = 'ACTIVE' AND ${GHANA_ROLE} = ANY(u."roles"::text[])
+        WHERE sp.status = 'ACTIVE' AND ${BRAND.role} = ANY(u."roles"::text[])
         ORDER BY COALESCE(period.total_earnings, 0) DESC
         LIMIT 10
       `,
@@ -242,9 +241,9 @@ exports.getOverview = catchAsync(async (req, res, next) => {
       prisma.$queryRaw`
         SELECT status, COUNT(*)::int AS count
         FROM "Booking"
-        WHERE ("source"::text = ${GHANA_SOURCE} OR EXISTS (
+        WHERE ("source"::text = ${BRAND.source} OR EXISTS (
           SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
-          WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+          WHERE _t.id = "Booking"."tourId" AND ${BRAND.role} = ANY(_u."roles"::text[])
         ))
         GROUP BY status
       `,
@@ -276,7 +275,7 @@ exports.getOverview = catchAsync(async (req, res, next) => {
           select: { id: true, name: true, roles: true },
         })
       : [];
-    const ghanaUserIds = new Set(allUsers.filter((u) => u.roles.includes(GHANA_ROLE)).map((u) => u.id));
+    const ghanaUserIds = new Set(allUsers.filter((u) => u.roles.includes(BRAND.role)).map((u) => u.id));
     const ghanaEvents = recentEvents.filter((e) => ghanaUserIds.has(e.userId));
 
     const bAgg = bookingAgg[0] || {};
@@ -354,7 +353,7 @@ exports.getOverview = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/analytics/revenue-trend
  * Monthly revenue for Ghana bookings (last 24 months).
  */
-exports.getRevenueTrend = catchAsync(async (req, res, next) => {
+controller.getRevenueTrend = catchAsync(async (req, res, next) => {
   const bucket = Math.floor(Date.now() / 300000);
   const months = await cache.getOrSet(`ghana:admin:revenueTrend:${bucket}`, async () => {
     return prisma.$queryRaw`
@@ -365,9 +364,9 @@ exports.getRevenueTrend = catchAsync(async (req, res, next) => {
         ROUND(SUM("commissionAmount")::numeric, 2) AS commission,
         ROUND(SUM("supplierPayout")::numeric, 2)   AS "supplierPayout"
       FROM "Booking"
-      WHERE ("source"::text = ${GHANA_SOURCE} OR EXISTS (
+      WHERE ("source"::text = ${BRAND.source} OR EXISTS (
         SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
-        WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+        WHERE _t.id = "Booking"."tourId" AND ${BRAND.role} = ANY(_u."roles"::text[])
       ))
         AND "paidAt" >= NOW() - INTERVAL '24 months'
         AND "paymentStatus" = 'SUCCEEDED'
@@ -383,7 +382,7 @@ exports.getRevenueTrend = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/analytics/tour-performance
  * Ghana tour performance (paginated, filterable).
  */
-exports.getTourPerformance = catchAsync(async (req, res, next) => {
+controller.getTourPerformance = catchAsync(async (req, res, next) => {
   const {
     status, category, search, page = 1, limit = 20,
     sortBy = 'totalRevenue', sortOrder = 'desc',
@@ -416,7 +415,7 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
   const [records, totalCount] = await Promise.all([
-    prisma.travioGhanaTour.findMany({
+    prisma[BRAND.listingModel].findMany({
       where: ghanaTourWhere,
       orderBy: { tour: { [field]: order } },
       skip,
@@ -434,7 +433,7 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
         },
       },
     }),
-    prisma.travioGhanaTour.count({ where: ghanaTourWhere }),
+    prisma[BRAND.listingModel].count({ where: ghanaTourWhere }),
   ]);
 
   res.status(200).json({
@@ -462,7 +461,7 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/analytics/user-growth
  * Ghana user signups per month (last 24 months).
  */
-exports.getUserGrowth = catchAsync(async (req, res, next) => {
+controller.getUserGrowth = catchAsync(async (req, res, next) => {
   // period: 30d | 90d | 1y — default 24 months (backward compat).
   const periodMonths = { '30d': 1, '90d': 3, '1y': 12 }[req.query.period] || 24;
   const bucket = Math.floor(Date.now() / 300000);
@@ -474,7 +473,7 @@ exports.getUserGrowth = catchAsync(async (req, res, next) => {
         COUNT(*) FILTER (WHERE 'customer' = ANY("roles"::text[]))::int AS customers,
         COUNT(*) FILTER (WHERE 'supplier' = ANY("roles"::text[]))::int AS suppliers
       FROM "User"
-      WHERE ${GHANA_ROLE} = ANY("roles"::text[])
+      WHERE ${BRAND.role} = ANY("roles"::text[])
         AND "createdAt" >= NOW() - (${periodMonths} || ' months')::interval
       GROUP BY DATE_TRUNC('month', "createdAt")
       ORDER BY month ASC
@@ -488,7 +487,7 @@ exports.getUserGrowth = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/analytics/funnel
  * Ghana booking conversion funnel.
  */
-exports.getFunnel = catchAsync(async (req, res, next) => {
+controller.getFunnel = catchAsync(async (req, res, next) => {
   const periodMap = { '7d': 7, '30d': 30, '90d': 90, '1y': 365 };
   const days = periodMap[req.query.period] || 30;
   const startDate = new Date();
@@ -501,7 +500,7 @@ exports.getFunnel = catchAsync(async (req, res, next) => {
         by: ['userId'],
         where: {
           name: 'tour.viewed', createdAt: { gte: startDate }, userId: { not: null },
-          properties: { path: ['source'], equals: 'ghana' },
+          properties: { path: ['source'], equals: BRAND.eventNamespace },
         },
         _count: true,
       }),
@@ -509,7 +508,7 @@ exports.getFunnel = catchAsync(async (req, res, next) => {
         by: ['userId'],
         where: {
           name: 'cart.added', createdAt: { gte: startDate }, userId: { not: null },
-          properties: { path: ['source'], equals: 'ghana' },
+          properties: { path: ['source'], equals: BRAND.eventNamespace },
         },
         _count: true,
       }),
@@ -517,7 +516,7 @@ exports.getFunnel = catchAsync(async (req, res, next) => {
         by: ['userId'],
         where: {
           name: 'booking.initiated', createdAt: { gte: startDate }, userId: { not: null },
-          properties: { path: ['source'], equals: 'ghana' },
+          properties: { path: ['source'], equals: BRAND.eventNamespace },
         },
         _count: true,
       }),
@@ -525,7 +524,7 @@ exports.getFunnel = catchAsync(async (req, res, next) => {
         by: ['userId'],
         where: {
           name: 'booking.completed', createdAt: { gte: startDate }, userId: { not: null },
-          properties: { path: ['source'], equals: 'ghana' },
+          properties: { path: ['source'], equals: BRAND.eventNamespace },
         },
         _count: true,
       }),
@@ -546,7 +545,7 @@ exports.getFunnel = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/analytics/clv
  * Ghana customer lifetime value.
  */
-exports.getCLV = catchAsync(async (req, res, next) => {
+controller.getCLV = catchAsync(async (req, res, next) => {
   const bucket = Math.floor(Date.now() / 300000);
   const data = await cache.getOrSet(`ghana:admin:clv:${bucket}`, async () => {
     const [basicStats, repeatRate, bookingDistribution, topCustomers] = await Promise.all([
@@ -557,9 +556,9 @@ exports.getCLV = catchAsync(async (req, res, next) => {
           ROUND(AVG(b."total")::numeric, 2) AS "avgBookingValue",
           ROUND(SUM(b."total")::numeric, 2) AS "totalRevenue"
         FROM "Booking" b
-        WHERE b."paymentStatus" = 'SUCCEEDED' AND (b."source"::text = ${GHANA_SOURCE} OR EXISTS (
+        WHERE b."paymentStatus" = 'SUCCEEDED' AND (b."source"::text = ${BRAND.source} OR EXISTS (
           SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
-          WHERE _t.id = b."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+          WHERE _t.id = b."tourId" AND ${BRAND.role} = ANY(_u."roles"::text[])
         ))
       `,
       prisma.$queryRaw`
@@ -572,9 +571,9 @@ exports.getCLV = catchAsync(async (req, res, next) => {
         FROM (
           SELECT "customerId", COUNT(*) AS "bookingCount"
           FROM "Booking"
-          WHERE "paymentStatus" = 'SUCCEEDED' AND ("source"::text = ${GHANA_SOURCE} OR EXISTS (
+          WHERE "paymentStatus" = 'SUCCEEDED' AND ("source"::text = ${BRAND.source} OR EXISTS (
             SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
-            WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+            WHERE _t.id = "Booking"."tourId" AND ${BRAND.role} = ANY(_u."roles"::text[])
           ))
           GROUP BY "customerId"
         ) sub
@@ -593,9 +592,9 @@ exports.getCLV = catchAsync(async (req, res, next) => {
         FROM (
           SELECT "customerId", COUNT(*) AS booking_count
           FROM "Booking"
-          WHERE "paymentStatus" = 'SUCCEEDED' AND ("source"::text = ${GHANA_SOURCE} OR EXISTS (
+          WHERE "paymentStatus" = 'SUCCEEDED' AND ("source"::text = ${BRAND.source} OR EXISTS (
             SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
-            WHERE _t.id = "Booking"."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+            WHERE _t.id = "Booking"."tourId" AND ${BRAND.role} = ANY(_u."roles"::text[])
           ))
           GROUP BY "customerId"
         ) sub
@@ -617,9 +616,9 @@ exports.getCLV = catchAsync(async (req, res, next) => {
           MAX(b."paidAt") AS "lastBookingDate"
         FROM "Booking" b
         JOIN "User" u ON u.id = b."customerId"
-        WHERE b."paymentStatus" = 'SUCCEEDED' AND (b."source"::text = ${GHANA_SOURCE} OR EXISTS (
+        WHERE b."paymentStatus" = 'SUCCEEDED' AND (b."source"::text = ${BRAND.source} OR EXISTS (
           SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
-          WHERE _t.id = b."tourId" AND ${GHANA_ROLE} = ANY(_u."roles"::text[])
+          WHERE _t.id = b."tourId" AND ${BRAND.role} = ANY(_u."roles"::text[])
         ))
         GROUP BY u.id, u.name, u.email
         ORDER BY "totalSpent" DESC
@@ -665,7 +664,7 @@ exports.getCLV = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/analytics/search
  * Ghana search analytics.
  */
-exports.getSearchAnalytics = catchAsync(async (req, res, next) => {
+controller.getSearchAnalytics = catchAsync(async (req, res, next) => {
   const periodMap = { '7d': 7, '30d': 30, '90d': 90, '1y': 365 };
   const days = periodMap[req.query.period] || 30;
   const startDate = new Date();
@@ -680,7 +679,7 @@ exports.getSearchAnalytics = catchAsync(async (req, res, next) => {
       FROM "Event"
       WHERE "name" = 'search.executed'
         AND "createdAt" >= ${startDate}
-        AND "properties"->>'source' = 'ghana'
+        AND "properties"->>'source' = ${BRAND.eventNamespace}
     `,
     prisma.$queryRaw`
       SELECT
@@ -690,7 +689,7 @@ exports.getSearchAnalytics = catchAsync(async (req, res, next) => {
       FROM "Event"
       WHERE "name" = 'search.executed'
         AND "createdAt" >= ${startDate}
-        AND "properties"->>'source' = 'ghana'
+        AND "properties"->>'source' = ${BRAND.eventNamespace}
         AND "properties"->>'query' IS NOT NULL
       GROUP BY "properties"->>'query'
       ORDER BY searches DESC LIMIT 50
@@ -702,7 +701,7 @@ exports.getSearchAnalytics = catchAsync(async (req, res, next) => {
       FROM "Event"
       WHERE "name" = 'search.executed'
         AND "createdAt" >= ${startDate}
-        AND "properties"->>'source' = 'ghana'
+        AND "properties"->>'source' = ${BRAND.eventNamespace}
         AND "properties"->>'resultCount' = '0'
       GROUP BY "properties"->>'query'
       ORDER BY searches DESC LIMIT 25
@@ -731,7 +730,7 @@ exports.getSearchAnalytics = catchAsync(async (req, res, next) => {
 /**
  * GET /api/travioghana/admin/analytics/cart-abandonment
  */
-exports.getCartAbandonment = catchAsync(async (req, res, next) => {
+controller.getCartAbandonment = catchAsync(async (req, res, next) => {
   const periodMap = { '7d': 7, '30d': 30, '90d': 90, '1y': 365 };
   const days = periodMap[req.query.period] || 30;
   const startDate = new Date();
@@ -744,13 +743,13 @@ exports.getCartAbandonment = catchAsync(async (req, res, next) => {
         WITH cart_users AS (
           SELECT DISTINCT "userId" FROM "Event"
           WHERE "name" = 'cart.added' AND "createdAt" >= ${startDate}
-            AND "userId" IS NOT NULL AND "properties"->>'source' = 'ghana'
+            AND "userId" IS NOT NULL AND "properties"->>'source' = ${BRAND.eventNamespace}
         ),
         booking_users AS (
           SELECT DISTINCT e."userId" FROM "Event" e
           JOIN cart_users c ON c."userId" = e."userId"
           WHERE e."name" = 'booking.completed' AND e."createdAt" >= ${startDate}
-            AND e."properties"->>'source' = 'ghana'
+            AND e."properties"->>'source' = ${BRAND.eventNamespace}
         )
         SELECT
           (SELECT COUNT(*) FROM cart_users)::int AS "cartsCreated",
@@ -765,14 +764,14 @@ exports.getCartAbandonment = catchAsync(async (req, res, next) => {
           FROM "Event"
           WHERE "name" = 'cart.added' AND "createdAt" >= ${startDate}
             AND "userId" IS NOT NULL AND "resourceId" IS NOT NULL
-            AND "properties"->>'source' = 'ghana'
+            AND "properties"->>'source' = ${BRAND.eventNamespace}
           ORDER BY "userId", "resourceId", "createdAt" DESC
         ),
         booked_tour AS (
           SELECT DISTINCT "userId", "properties"->>'tourId' AS tour_id
           FROM "Event"
           WHERE "name" = 'booking.completed' AND "createdAt" >= ${startDate}
-            AND "properties"->>'source' = 'ghana'
+            AND "properties"->>'source' = ${BRAND.eventNamespace}
         )
         SELECT ct.tour_id AS "tourId", COUNT(*)::int AS "cartsAdded",
           COUNT(*) FILTER (WHERE bt."userId" IS NOT NULL)::int AS "converted"
@@ -786,7 +785,7 @@ exports.getCartAbandonment = catchAsync(async (req, res, next) => {
             COUNT(DISTINCT "userId")::int AS cart_users
           FROM "Event"
           WHERE "name" = 'cart.added' AND "createdAt" >= ${startDate}
-            AND "properties"->>'source' = 'ghana'
+            AND "properties"->>'source' = ${BRAND.eventNamespace}
           GROUP BY DATE_TRUNC('day', "createdAt")
         ),
         daily_converted AS (
@@ -795,7 +794,7 @@ exports.getCartAbandonment = catchAsync(async (req, res, next) => {
           FROM "Event" e
           JOIN daily_carts dc ON dc.day = DATE_TRUNC('day', e."createdAt")
           WHERE e."name" = 'booking.completed' AND e."createdAt" >= ${startDate}
-            AND e."properties"->>'source' = 'ghana'
+            AND e."properties"->>'source' = ${BRAND.eventNamespace}
           GROUP BY DATE_TRUNC('day', e."createdAt")
         )
         SELECT dc.day, dc.cart_users AS "cartsAdded",
@@ -812,7 +811,7 @@ exports.getCartAbandonment = catchAsync(async (req, res, next) => {
     const tourIds = cartByTour.map((c) => c.tourId).filter(Boolean);
     let tourMap = {};
     if (tourIds.length > 0) {
-      const records = await prisma.travioGhanaTour.findMany({
+      const records = await prisma[BRAND.listingModel].findMany({
         where: { tourId: { in: tourIds } },
         select: { tourId: true, tour: { select: { title: true } } },
       });
@@ -850,7 +849,7 @@ exports.getCartAbandonment = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/tours
  * List all Ghana tours (TravioGhanaTour records) with parent tour data.
  */
-exports.getTours = catchAsync(async (req, res, next) => {
+controller.getTours = catchAsync(async (req, res, next) => {
   const { page = 1, limit = 20, status, category, search } = req.query;
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const take = Math.min(parseInt(limit), 100);
@@ -875,7 +874,7 @@ exports.getTours = catchAsync(async (req, res, next) => {
   }
 
   const [records, totalCount] = await Promise.all([
-    prisma.travioGhanaTour.findMany({
+    prisma[BRAND.listingModel].findMany({
       where,
       orderBy: { displayOrder: 'asc' },
       skip,
@@ -899,7 +898,7 @@ exports.getTours = catchAsync(async (req, res, next) => {
         },
       },
     }),
-    prisma.travioGhanaTour.count({ where }),
+    prisma[BRAND.listingModel].count({ where }),
   ]);
 
   res.status(200).json({
@@ -930,10 +929,10 @@ exports.getTours = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/tours/:id
  * Single Ghana tour detail.
  */
-exports.getTourDetail = catchAsync(async (req, res, next) => {
+controller.getTourDetail = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
-  const record = await prisma.travioGhanaTour.findFirst({
+  const record = await prisma[BRAND.listingModel].findFirst({
     where: { OR: [{ id }, { tourId: id }] },
     include: {
       addedBy: { select: { id: true, name: true, email: true } },
@@ -961,7 +960,7 @@ exports.getTourDetail = catchAsync(async (req, res, next) => {
   const { tour, ...listing } = record;
   res.status(200).json({
     status: 'success',
-    data: { tour: { ...listing, ...tour, travioGhanaTour: listing } },
+    data: { tour: { ...listing, ...tour, [BRAND.listingModel]: listing } },
   });
 });
 
@@ -969,16 +968,16 @@ exports.getTourDetail = catchAsync(async (req, res, next) => {
  * PATCH /api/travioghana/admin/tours/:id
  * Update Ghana tour (displayOrder, isFeatured, isActive).
  */
-exports.updateTour = catchAsync(async (req, res, next) => {
+controller.updateTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { displayOrder, isFeatured, isActive } = req.body;
 
-  const existing = await prisma.travioGhanaTour.findFirst({ where: { OR: [{ id }, { tourId: id }] } });
+  const existing = await prisma[BRAND.listingModel].findFirst({ where: { OR: [{ id }, { tourId: id }] } });
   if (!existing) {
     return next(new AppError('Ghana tour not found', 404));
   }
 
-  const record = await prisma.travioGhanaTour.update({
+  const record = await prisma[BRAND.listingModel].update({
     where: { id: existing.id },
     data: {
       ...(displayOrder !== undefined && { displayOrder }),
@@ -989,7 +988,7 @@ exports.updateTour = catchAsync(async (req, res, next) => {
 
   await logActivity({
     action: 'tour.updated',
-    entityType: 'TravioGhanaTour',
+    entityType: BRAND.listingTableName,
     entityId: id,
     userId: req.user.id,
     metadata: { changes: req.body },
@@ -1002,19 +1001,19 @@ exports.updateTour = catchAsync(async (req, res, next) => {
  * DELETE /api/travioghana/admin/tours/:id
  * Remove a Ghana tour.
  */
-exports.deleteTour = catchAsync(async (req, res, next) => {
+controller.deleteTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
-  const existing = await prisma.travioGhanaTour.findFirst({ where: { OR: [{ id }, { tourId: id }] } });
+  const existing = await prisma[BRAND.listingModel].findFirst({ where: { OR: [{ id }, { tourId: id }] } });
   if (!existing) {
     return next(new AppError('Ghana tour not found', 404));
   }
 
-  await prisma.travioGhanaTour.delete({ where: { id: existing.id } });
+  await prisma[BRAND.listingModel].delete({ where: { id: existing.id } });
 
   await logActivity({
     action: 'tour.deleted',
-    entityType: 'TravioGhanaTour',
+    entityType: BRAND.listingTableName,
     entityId: id,
     userId: req.user.id,
   });
@@ -1026,11 +1025,11 @@ exports.deleteTour = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/tours/review
  * Ghana tour moderation queue.
  */
-exports.getTourReviewQueue = catchAsync(async (req, res, next) => {
+controller.getTourReviewQueue = catchAsync(async (req, res, next) => {
   const { status, page = 1, limit = 20, search } = req.query;
 
   // Ghana scope: only tours that have a TravioGhanaTour listing.
-  const ghanaScope = { travioGhanaTour: { isNot: null } };
+  const ghanaScope = { [BRAND.listingModel]: { isNot: null } };
 
   const requestedStatus = typeof status === 'string' ? status.trim() : '';
   const validStatuses = ['PENDING_APPROVAL', 'REJECTED', 'ACTIVE', 'PENDING_EDITS'];
@@ -1078,7 +1077,7 @@ exports.getTourReviewQueue = catchAsync(async (req, res, next) => {
         supplier: {
           select: { id: true, name: true, email: true, photoURL: true },
         },
-        travioGhanaTour: {
+        [BRAND.listingModel]: {
           select: { id: true, isActive: true, isFeatured: true, displayOrder: true },
         },
         _count: {
@@ -1111,7 +1110,7 @@ exports.getTourReviewQueue = catchAsync(async (req, res, next) => {
  * PATCH /api/travioghana/admin/tours/:id/review
  * Approve/reject a Ghana tour.
  */
-exports.reviewTour = catchAsync(async (req, res, next) => {
+controller.reviewTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { action, status, reason } = req.body || {};
 
@@ -1133,7 +1132,7 @@ exports.reviewTour = catchAsync(async (req, res, next) => {
     newStatus = status;
   }
 
-  const record = await prisma.travioGhanaTour.findFirst({
+  const record = await prisma[BRAND.listingModel].findFirst({
     where: { OR: [{ id }, { tourId: id }] },
     include: { tour: { select: { id: true, title: true } } },
   });
@@ -1149,7 +1148,7 @@ exports.reviewTour = catchAsync(async (req, res, next) => {
 
   await logActivity({
     action: newStatus === 'ACTIVE' ? 'tour.approved' : 'tour.rejected',
-    entityType: 'TravioGhanaTour',
+    entityType: BRAND.listingTableName,
     entityId: id,
     userId: req.user.id,
     metadata: { reason: reason || null },
@@ -1165,13 +1164,13 @@ exports.reviewTour = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/search/tours
  * Search tours for Ghana curation (excludes already-added).
  */
-exports.searchTours = catchAsync(async (req, res, next) => {
+controller.searchTours = catchAsync(async (req, res, next) => {
   const { q, category, city, country, page = 1, limit = 20 } = req.query;
 
   const where = { status: 'ACTIVE' };
 
   // Exclude tours already curated for Ghana
-  const curatedIds = await prisma.travioGhanaTour.findMany({ select: { tourId: true } });
+  const curatedIds = await prisma[BRAND.listingModel].findMany({ select: { tourId: true } });
   const excludedIds = curatedIds.map((c) => c.tourId);
   if (excludedIds.length > 0) {
     where.id = { notIn: excludedIds };
@@ -1239,7 +1238,7 @@ exports.searchTours = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/bookings
  * Ghana bookings list (paginated, filterable).
  */
-exports.getBookings = catchAsync(async (req, res, next) => {
+controller.getBookings = catchAsync(async (req, res, next) => {
   const {
     page = 1, limit = 20, status, paymentStatus,
     startDate, endDate, search, sortBy = 'createdAt', sortOrder = 'desc',
@@ -1268,7 +1267,7 @@ exports.getBookings = catchAsync(async (req, res, next) => {
       { tour: { title: { contains: term, mode: 'insensitive' } } },
     ];
   }
-  const where = ghanaBookingWhere(extra);
+  const where = brandBookingWhere(extra);
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const take = Math.min(parseInt(limit), 100);
@@ -1299,10 +1298,10 @@ exports.getBookings = catchAsync(async (req, res, next) => {
     prisma.booking.count({ where }),
     prisma.booking.groupBy({
       by: ['status'],
-      where: ghanaBookingWhere(),
+      where: brandBookingWhere(),
       _count: { _all: true },
     }),
-    prisma.booking.count({ where: ghanaBookingWhere() }),
+    prisma.booking.count({ where: brandBookingWhere() }),
   ]);
 
   const countsObj = { total: ghanaTotal, PENDING: 0, CONFIRMED: 0, COMPLETED: 0, CANCELLED: 0 };
@@ -1327,13 +1326,13 @@ exports.getBookings = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/bookings/today
  * Today's Ghana bookings.
  */
-exports.getTodayBookings = catchAsync(async (req, res, next) => {
+controller.getTodayBookings = catchAsync(async (req, res, next) => {
   const now = new Date();
   const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
 
   const bookings = await prisma.booking.findMany({
-    where: ghanaBookingWhere({ createdAt: { gte: startOfDay, lt: endOfDay } }),
+    where: brandBookingWhere({ createdAt: { gte: startOfDay, lt: endOfDay } }),
     include: {
       customer: { select: { id: true, name: true, email: true } },
       tour: {
@@ -1353,11 +1352,11 @@ exports.getTodayBookings = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/bookings/:id
  * Single Ghana booking detail.
  */
-exports.getBookingById = catchAsync(async (req, res, next) => {
+controller.getBookingById = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
   const booking = await prisma.booking.findFirst({
-    where: ghanaBookingWhere({ id }),
+    where: brandBookingWhere({ id }),
     include: {
       customer: { select: { id: true, name: true, email: true, phone: true } },
       tour: {
@@ -1387,11 +1386,11 @@ exports.getBookingById = catchAsync(async (req, res, next) => {
 /**
  * PATCH /api/travioghana/admin/bookings/:id/confirm-payment
  */
-exports.confirmPayment = catchAsync(async (req, res, next) => {
+controller.confirmPayment = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
   const booking = await prisma.booking.findFirst({
-    where: ghanaBookingWhere({ id }),
+    where: brandBookingWhere({ id }),
   });
 
   if (!booking) {
@@ -1426,10 +1425,10 @@ exports.confirmPayment = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/suppliers
  * Ghana suppliers list.
  */
-exports.getSuppliers = catchAsync(async (req, res, next) => {
+controller.getSuppliers = catchAsync(async (req, res, next) => {
   const { page = 1, limit = 20, status, search } = req.query;
 
-  const where = { roles: { has: GHANA_ROLE } };
+  const where = { roles: { has: BRAND.role } };
   if (status) {
     where.supplierProfile = { status: status.toUpperCase() };
   }
@@ -1483,11 +1482,11 @@ exports.getSuppliers = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/suppliers/:id
  * Single Ghana supplier detail.
  */
-exports.getSupplierDetail = catchAsync(async (req, res, next) => {
+controller.getSupplierDetail = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
   const user = await prisma.user.findFirst({
-    where: { id, roles: { has: GHANA_ROLE } },
+    where: { id, roles: { has: BRAND.role } },
     select: {
       id: true, name: true, email: true, phone: true, photoURL: true,
       roles: true, active: true, createdAt: true, lastLoginAt: true,
@@ -1511,7 +1510,7 @@ exports.getSupplierDetail = catchAsync(async (req, res, next) => {
   const supplier = { ...user, ...(profile || {}) };
 
   const [tours, recentBookings] = await Promise.all([
-    prisma.travioGhanaTour.findMany({
+    prisma[BRAND.listingModel].findMany({
       where: { tour: { supplierId: user.id } },
       include: {
         tour: {
@@ -1525,7 +1524,7 @@ exports.getSupplierDetail = catchAsync(async (req, res, next) => {
       take: 10,
     }),
     prisma.booking.findMany({
-      where: ghanaBookingWhere({ tour: { supplierId: user.id } }),
+      where: brandBookingWhere({ tour: { supplierId: user.id } }),
       select: {
         id: true, bookingNumber: true, status: true, grossAmount: true,
         currency: true, createdAt: true,
@@ -1546,11 +1545,11 @@ exports.getSupplierDetail = catchAsync(async (req, res, next) => {
 /**
  * PATCH /api/travioghana/admin/suppliers/:id/suspend
  */
-exports.suspendSupplier = catchAsync(async (req, res, next) => {
+controller.suspendSupplier = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
   const supplier = await prisma.user.findFirst({
-    where: { id, roles: { has: GHANA_ROLE } },
+    where: { id, roles: { has: BRAND.role } },
   });
 
   if (!supplier) {
@@ -1576,11 +1575,11 @@ exports.suspendSupplier = catchAsync(async (req, res, next) => {
 /**
  * PATCH /api/travioghana/admin/suppliers/:id/activate
  */
-exports.activateSupplier = catchAsync(async (req, res, next) => {
+controller.activateSupplier = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
   const supplier = await prisma.user.findFirst({
-    where: { id, roles: { has: GHANA_ROLE } },
+    where: { id, roles: { has: BRAND.role } },
   });
 
   if (!supplier) {
@@ -1611,13 +1610,13 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/users/active
  * Recently active Ghana users.
  */
-exports.getActiveUsers = catchAsync(async (req, res, next) => {
+controller.getActiveUsers = catchAsync(async (req, res, next) => {
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
   const users = await prisma.user.findMany({
     where: {
-      roles: { has: GHANA_ROLE },
+      roles: { has: BRAND.role },
       lastLoginAt: { gte: thirtyDaysAgo },
       active: true,
     },
@@ -1635,7 +1634,7 @@ exports.getActiveUsers = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/users/new-signups
  * Today's Ghana signups.
  */
-exports.getRecentSignups = catchAsync(async (req, res, next) => {
+controller.getRecentSignups = catchAsync(async (req, res, next) => {
   // The UserGrowth drill-down dialog sends ?period=30d|90d|1y&role=...
   // (plus the Overview "new signups" card which calls without a period —
   // that defaults to today).
@@ -1643,14 +1642,14 @@ exports.getRecentSignups = catchAsync(async (req, res, next) => {
   const days = req.query.period ? periodMap[req.query.period] : null;
   const { role } = req.query;
 
-  const where = { roles: { has: GHANA_ROLE } };
+  const where = { roles: { has: BRAND.role } };
   if (days) {
     where.createdAt = { gte: new Date(Date.now() - days * 24 * 60 * 60 * 1000) };
   } else {
     const now = new Date();
     where.createdAt = { gte: new Date(now.getFullYear(), now.getMonth(), now.getDate()) };
   }
-  if (role) where.roles = { hasEvery: [GHANA_ROLE, role] };
+  if (role) where.roles = { hasEvery: [BRAND.role, role] };
 
   const users = await prisma.user.findMany({
     where,
@@ -1668,11 +1667,11 @@ exports.getRecentSignups = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/users/search
  * Search Ghana users.
  */
-exports.searchUsers = catchAsync(async (req, res, next) => {
+controller.searchUsers = catchAsync(async (req, res, next) => {
   const { q = '', role } = req.query;
 
   const where = {
-    roles: { has: GHANA_ROLE },
+    roles: { has: BRAND.role },
     OR: [
       { name: { contains: q, mode: 'insensitive' } },
       { email: { contains: q, mode: 'insensitive' } },
@@ -1680,7 +1679,7 @@ exports.searchUsers = catchAsync(async (req, res, next) => {
   };
 
   if (role) {
-    where.roles = { hasEvery: [GHANA_ROLE, role] };
+    where.roles = { hasEvery: [BRAND.role, role] };
   }
 
   const users = await prisma.user.findMany({
@@ -1700,12 +1699,12 @@ exports.searchUsers = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/ai/status
  * AI processing status for Ghana tours.
  */
-exports.getAiStatus = catchAsync(async (req, res, next) => {
+controller.getAiStatus = catchAsync(async (req, res, next) => {
   // Ghana-scoped mirror of the shared admin AI status (same response shape).
   const statusCounts = await prisma.$queryRaw`
     SELECT t."aiProcessingStatus", COUNT(*)::int AS count
     FROM "Tour" t
-    JOIN "TravioGhanaTour" g ON g."tourId" = t.id
+    JOIN "${BRAND.listingTableName}" g ON g."tourId" = t.id
     WHERE t.status = 'ACTIVE'
     GROUP BY t."aiProcessingStatus"
   `;
@@ -1719,7 +1718,7 @@ exports.getAiStatus = catchAsync(async (req, res, next) => {
 
   const imageStats = await prisma.tourImageAnalysis.groupBy({
     by: ['aiStatus'],
-    where: { tour: { travioGhanaTour: { isNot: null } } },
+    where: { tour: { [BRAND.listingModel]: { isNot: null } } },
     _count: { id: true },
   });
 
@@ -1744,7 +1743,7 @@ exports.getAiStatus = catchAsync(async (req, res, next) => {
   const cronStatus = getAiCronStatus();
 
   const lastProcessed = await prisma.tour.findFirst({
-    where: { aiProcessingStatus: 'COMPLETED', travioGhanaTour: { isNot: null } },
+    where: { aiProcessingStatus: 'COMPLETED', [BRAND.listingModel]: { isNot: null } },
     orderBy: { aiScoredAt: 'desc' },
     select: { aiScoredAt: true, title: true },
   });
@@ -1767,14 +1766,14 @@ exports.getAiStatus = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/ai/failed
  * Ghana tours with failed AI processing.
  */
-exports.getFailedTours = catchAsync(async (req, res, next) => {
+controller.getFailedTours = catchAsync(async (req, res, next) => {
   const limit = Math.min(parseInt(req.query.limit) || 50, 200);
 
   const tours = await prisma.tour.findMany({
     where: {
       aiProcessingStatus: 'FAILED',
       status: 'ACTIVE',
-      travioGhanaTour: { isNot: null },
+      [BRAND.listingModel]: { isNot: null },
     },
     select: {
       id: true,
@@ -1789,7 +1788,7 @@ exports.getFailedTours = catchAsync(async (req, res, next) => {
   });
 
   const failedImages = await prisma.tourImageAnalysis.findMany({
-    where: { aiStatus: 'FAILED', tour: { travioGhanaTour: { isNot: null } } },
+    where: { aiStatus: 'FAILED', tour: { [BRAND.listingModel]: { isNot: null } } },
     select: {
       id: true,
       tourId: true,
@@ -1820,13 +1819,13 @@ exports.getFailedTours = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/reviews/pending
  * Pending reviews on Ghana tours.
  */
-exports.getPendingReviews = catchAsync(async (req, res, next) => {
+controller.getPendingReviews = catchAsync(async (req, res, next) => {
   const { page = 1, limit = 20 } = req.query;
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const take = Math.min(parseInt(limit), 100);
 
   // Get tour IDs that belong to Ghana
-  const ghanaTourIds = await prisma.travioGhanaTour.findMany({
+  const ghanaTourIds = await prisma[BRAND.listingModel].findMany({
     select: { tourId: true },
   });
   const tourIds = ghanaTourIds.map((r) => r.tourId);
@@ -1888,7 +1887,7 @@ exports.getPendingReviews = catchAsync(async (req, res, next) => {
  * PATCH /api/travioghana/admin/reviews/:id/moderate
  * Approve/reject a review on a Ghana tour.
  */
-exports.moderateReview = catchAsync(async (req, res, next) => {
+controller.moderateReview = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { action, status } = req.body || {};
 
@@ -1913,7 +1912,7 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
   }
 
   // Verify this review belongs to a Ghana tour
-  const isGhanaTour = await prisma.travioGhanaTour.findFirst({
+  const isGhanaTour = await prisma[BRAND.listingModel].findFirst({
     where: { tourId: review.tourId },
   });
   if (!isGhanaTour) {
@@ -1939,7 +1938,7 @@ exports.moderateReview = catchAsync(async (req, res, next) => {
  * GET /api/travioghana/admin/me
  * Current admin user profile.
  */
-exports.getMe = catchAsync(async (req, res, next) => {
+controller.getMe = catchAsync(async (req, res, next) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user.id },
     select: {
@@ -1993,7 +1992,7 @@ exports.getMe = catchAsync(async (req, res, next) => {
  * Filters by: booking source = GHANA, tour has TravioGhanaTour record,
  * or notification type is platform-agnostic (system alerts, payouts).
  */
-exports.getNotifications = catchAsync(async (req, res) => {
+controller.getNotifications = catchAsync(async (req, res) => {
   const { page = 1, limit = 20, unacknowledgedOnly = false } = req.query;
   const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
   const take = Math.min(parseInt(limit), 50);
@@ -2022,7 +2021,7 @@ exports.getNotifications = catchAsync(async (req, res) => {
     // Booking notifications: check if booking is Ghana-sourced
     if (['BOOKING_CREATED', 'BOOKING_CONFIRMED', 'BOOKING_CANCELLED'].includes(n.type)) {
       // If data has source field, filter by it
-      if (data.source) return data.source === GHANA_SOURCE;
+      if (data.source) return data.source === BRAND.source;
       // If data has bookingId, we can't easily check source without extra query
       // Show it if no source info (better to show than hide)
       return true;
@@ -2030,7 +2029,7 @@ exports.getNotifications = catchAsync(async (req, res) => {
 
     // Tour notifications: check if tour is Ghana-curated
     if (['TOUR_SUBMITTED_FOR_REVIEW', 'TOUR_UPDATE_PENDING'].includes(n.type)) {
-      if (data.source) return data.source === 'ghana' || data.source === GHANA_SOURCE;
+      if (data.source) return data.source === BRAND.eventNamespace || data.source === BRAND.source;
       return true;
     }
 
@@ -2051,7 +2050,7 @@ exports.getNotifications = catchAsync(async (req, res) => {
 /**
  * GET /api/travioghana/admin/notifications/unread-count
  */
-exports.getUnreadCount = catchAsync(async (req, res) => {
+controller.getUnreadCount = catchAsync(async (req, res) => {
   const count = await prisma.notification.count({
     where: { userId: req.user.id, readAt: null },
   });
@@ -2061,7 +2060,7 @@ exports.getUnreadCount = catchAsync(async (req, res) => {
 /**
  * GET /api/travioghana/admin/notifications/stats
  */
-exports.getNotificationStats = catchAsync(async (req, res) => {
+controller.getNotificationStats = catchAsync(async (req, res) => {
   const [total, unacknowledged, byType, recent] = await Promise.all([
     prisma.notification.count({ where: { userId: req.user.id } }),
     prisma.notification.count({ where: { userId: req.user.id, readAt: null } }),
@@ -2094,7 +2093,7 @@ exports.getNotificationStats = catchAsync(async (req, res) => {
 /**
  * PATCH /api/travioghana/admin/notifications/:id/acknowledge
  */
-exports.acknowledgeNotification = catchAsync(async (req, res) => {
+controller.acknowledgeNotification = catchAsync(async (req, res) => {
   const { id } = req.params;
   const notification = await prisma.notification.update({
     where: { id, userId: req.user.id },
@@ -2106,10 +2105,17 @@ exports.acknowledgeNotification = catchAsync(async (req, res) => {
 /**
  * PATCH /api/travioghana/admin/notifications/acknowledge-all
  */
-exports.acknowledgeAllNotifications = catchAsync(async (req, res) => {
+controller.acknowledgeAllNotifications = catchAsync(async (req, res) => {
   await prisma.notification.updateMany({
     where: { userId: req.user.id, readAt: null },
     data: { read: true, readAt: new Date() },
   });
   res.json({ status: 'success', message: 'All notifications acknowledged' });
 });
+
+
+  return controller;
+}
+
+module.exports = makeAdminController('ghana');
+module.exports.makeAdminController = makeAdminController;
