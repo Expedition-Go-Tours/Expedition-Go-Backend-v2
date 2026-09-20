@@ -30,6 +30,7 @@ const BRANDS = {
     cachePrefix: 'expedition:',
     eventNamespace: 'expedition',
     listingModel: 'expeditionTour', // Prisma model (camelCase)
+    placeScope: 'expeditionOnly', // placeTourIds() scope flag
     googleOAuth: {
       strategy: 'google-expedition',
       idVar: 'GOOGLE_CLIENT_ID_EXPEDITION',
@@ -57,6 +58,7 @@ const BRANDS = {
     cachePrefix: 'ghana:',
     eventNamespace: 'ghana',
     listingModel: 'travioGhanaTour', // Prisma model (camelCase)
+    placeScope: 'ghanaOnly', // placeTourIds() scope flag
     googleOAuth: {
       strategy: 'google-ghana',
       idVar: 'GOOGLE_CLIENT_ID_GHANA',
@@ -85,6 +87,7 @@ const BRANDS = {
     cachePrefix: 'travioafrica:',
     eventNamespace: 'travioafrica',
     listingModel: 'travioAfricaTour', // Prisma model (camelCase)
+    placeScope: null, // Africa storefront not built yet
     googleOAuth: {
       strategy: 'google',
       idVar: 'GOOGLE_CLIENT_ID',

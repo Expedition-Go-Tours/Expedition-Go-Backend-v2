@@ -34,9 +34,12 @@ const { sanitizeBookingPaymentInternals } = require('../utils/sanitizeBookings')
 const { bookingRefundState } = require('../utils/bookingRefundState');
 
 const { getBrand } = require('../config/brands');
-const BRAND = getBrand('expedition');
+function makeStorefrontController(brandKey) {
+  const BRAND = getBrand(brandKey);
 
-const CACHE_PREFIX = BRAND.cachePrefix;
+  const CACHE_PREFIX = BRAND.cachePrefix;
+
+  const controller = {};
 const LIST_CACHE_KEY = `${CACHE_PREFIX}tours:list`;
 const FEATURED_CACHE_KEY = `${CACHE_PREFIX}tours:featured`;
 const DETAIL_CACHE_KEY = (slug) => `${CACHE_PREFIX}detail:${slug}`;
@@ -182,7 +185,7 @@ async function invalidateCaches(slug) {
 // PUBLIC ENDPOINTS
 // ================================
 
-exports.getTours = catchAsync(async (req, res) => {
+controller.getTours = catchAsync(async (req, res) => {
   const { page = 1, limit = 12, search, category, city, country, minPrice, maxPrice, sortBy, mood, near, place, q } = req.query;
 
   const cacheKey = `${LIST_CACHE_KEY}:${crypto.createHash('md5').update(JSON.stringify(req.query)).digest('hex')}`;
@@ -213,7 +216,7 @@ exports.getTours = catchAsync(async (req, res) => {
     let effectiveSearch = search;
     const placeQuery = place || q;
     if (placeQuery) {
-      const { resolved, ids, localIds, nearIds, regionFallback } = await placeTourIds(placeQuery, { expeditionOnly: true });
+      const { resolved, ids, localIds, nearIds, regionFallback } = await placeTourIds(placeQuery, { [BRAND.placeScope]: true });
       if (resolved && ids) {
         // Region fallback: the place itself has no tours, so widen to its
         // region (never the whole catalogue). These tours are not "in" the
@@ -429,7 +432,7 @@ exports.getTours = catchAsync(async (req, res) => {
   res.status(200).json(result);
 });
 
-exports.getFeaturedTours = catchAsync(async (req, res) => {
+controller.getFeaturedTours = catchAsync(async (req, res) => {
   const result = await cache.getOrSet(FEATURED_CACHE_KEY, async () => {
     const records = await prisma.expeditionTour.findMany({
       where: { isActive: true, isFeatured: true, tour: { status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } } },
@@ -473,8 +476,8 @@ exports.getFeaturedTours = catchAsync(async (req, res) => {
  * Used by the frontend to enrich tour cards with "Pickup included",
  * "Free cancellation", "English Guide" badges without fetching full tour data.
  */
-exports.getTourBadges = catchAsync(async (req, res) => {
-  const result = await cache.getOrSet('expedition:badges', async () => {
+controller.getTourBadges = catchAsync(async (req, res) => {
+  const result = await cache.getOrSet(`${BRAND.cachePrefix}badges`, async () => {
     const tours = await prisma.tour.findMany({
       where: {
         status: 'ACTIVE',
@@ -516,10 +519,10 @@ exports.getTourBadges = catchAsync(async (req, res) => {
   res.status(200).json(result);
 });
 
-exports.getTourReviews = catchAsync(async (req, res, next) => {
+controller.getTourReviews = catchAsync(async (req, res, next) => {
   const { slug } = req.params;
   const { page = 1, limit = 10, sortBy = 'newest' } = req.query;
-  const cacheKey = `expedition:reviews:${slug}:${page}:${limit}:${sortBy}`;
+  const cacheKey = `${CACHE_PREFIX}reviews:${slug}:${page}:${limit}:${sortBy}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
     const expeditionTour = await prisma.expeditionTour.findFirst({
@@ -567,9 +570,9 @@ exports.getTourReviews = catchAsync(async (req, res, next) => {
   res.status(200).json(result);
 });
 
-exports.getSimilarTours = catchAsync(async (req, res, next) => {
+controller.getSimilarTours = catchAsync(async (req, res, next) => {
   const { slug } = req.params;
-  const cacheKey = `expedition:similar:${slug}`;
+  const cacheKey = `${CACHE_PREFIX}similar:${slug}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
     const expeditionTour = await prisma.expeditionTour.findFirst({
@@ -708,12 +711,12 @@ exports.getSimilarTours = catchAsync(async (req, res, next) => {
  *   - limit (1-12, default 6)
  *   - exclude (tourId to exclude, defaults to the source tour)
  */
-exports.getRecommendedTours = catchAsync(async (req, res, next) => {
+controller.getRecommendedTours = catchAsync(async (req, res, next) => {
   const { tourId } = req.query;
   if (!tourId) return next(new AppError('tourId is required', 400));
 
   const limit = Math.min(parseInt(req.query.limit) || 6, 12);
-  const cacheKey = `expedition:recommended:${tourId}:${limit}`;
+  const cacheKey = `${CACHE_PREFIX}recommended:${tourId}:${limit}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
     // 1. Look up the source tour to get its location
@@ -859,12 +862,12 @@ exports.getRecommendedTours = catchAsync(async (req, res, next) => {
   res.status(200).json(result);
 });
 
-exports.getSupplierTours = catchAsync(async (req, res, next) => {
+controller.getSupplierTours = catchAsync(async (req, res, next) => {
   const { supplierId } = req.params;
   const excludeTourId = req.query.exclude || null;
   const limit = Math.min(parseInt(req.query.limit) || 8, 20);
 
-  const cacheKey = `expedition:supplier-tours:${supplierId}:${excludeTourId || 'none'}:${limit}`;
+  const cacheKey = `${CACHE_PREFIX}supplier-tours:${supplierId}:${excludeTourId || 'none'}:${limit}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
     const tours = await prisma.expeditionTour.findMany({
@@ -903,7 +906,7 @@ exports.getSupplierTours = catchAsync(async (req, res, next) => {
   res.status(200).json(result);
 });
 
-exports.getTourBySlug = catchAsync(async (req, res, next) => {
+controller.getTourBySlug = catchAsync(async (req, res, next) => {
   const { slug } = req.params;
 
   const result = await cache.getOrSet(DETAIL_CACHE_KEY(slug), async () => {
@@ -1024,7 +1027,7 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
     req,
     tourSupplierId: tourSupId,
     tourId: result.data?.tour?.tour?.id,
-    prefix: 'expedition:view',
+    prefix: `${BRAND.cachePrefix}view`,
   });
   if (viewCounted) {
     prisma.tour
@@ -1036,14 +1039,14 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
 
     const tourData = result.data?.tour?.tour;
     eventEmitter.emit({
-      name: 'expedition.tour_viewed',
+      name: `${BRAND.eventNamespace}.tour_viewed`,
       userId: req.user?.id,
       req,
       resource: 'Tour',
       resourceId: tourData?.id,
       properties: {
         slug,
-        source: 'expedition',
+        source: BRAND.eventNamespace,
         category: tourData?.category || null,
         city: tourData?.city || null,
         country: tourData?.country || null,
@@ -1061,7 +1064,7 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
   res.status(200).json(result);
 });
 
-exports.getSitemap = catchAsync(async (req, res) => {
+controller.getSitemap = catchAsync(async (req, res) => {
   const result = await cache.getOrSet(SITEMAP_CACHE_KEY, async () => {
     const records = await prisma.expeditionTour.findMany({
       where: { isActive: true, tour: { status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } } },
@@ -1086,7 +1089,7 @@ exports.getSitemap = catchAsync(async (req, res) => {
   res.status(200).json(result);
 });
 
-exports.submitContact = catchAsync(async (req, res, next) => {
+controller.submitContact = catchAsync(async (req, res, next) => {
   const { name, email, phone, message, tourSlug } = req.body;
 
   if (!name || !email || !message) {
@@ -1107,7 +1110,7 @@ exports.submitContact = catchAsync(async (req, res, next) => {
 
   const supportEmail = process.env.SUPPORT_EMAIL || BRAND.supportEmail;
 
-  const subject = `[Expedition Inquiry] ${name} - ${email}`;
+  const subject = `[${BRAND.brandName} Inquiry] ${name} - ${email}`;
   const messageBody = [
     `Name: ${name}`,
     `Email: ${email}`,
@@ -1130,15 +1133,15 @@ exports.submitContact = catchAsync(async (req, res, next) => {
       name,
       email,
       phone: phone || 'Not provided',
-      inquiryType: 'Expedition Contact Form',
+      inquiryType: `${BRAND.brandName} Contact Form`,
     },
   });
 
   enqueueEvent({
-    name: 'expedition.contact_submitted',
+    name: `${BRAND.eventNamespace}.contact_submitted`,
     userId: req.user?.id,
     req,
-    properties: { email, tourSlug: tourSlug || null, source: 'expedition' },
+    properties: { email, tourSlug: tourSlug || null, source: BRAND.eventNamespace },
   });
 
   res.status(200).json({
@@ -1147,11 +1150,11 @@ exports.submitContact = catchAsync(async (req, res, next) => {
   });
 });
 
-exports.trackClick = catchAsync(async (req, res) => {
+controller.trackClick = catchAsync(async (req, res) => {
   const { tourId, tourSlug } = req.body;
 
   enqueueEvent({
-    name: 'expedition.outbound_click',
+    name: `${BRAND.eventNamespace}.outbound_click`,
     userId: req.user?.id,
     req,
     resource: 'Tour',
@@ -1160,7 +1163,7 @@ exports.trackClick = catchAsync(async (req, res) => {
       tourId: tourId || null,
       tourSlug: tourSlug || null,
       destination: BRAND.storefrontDomain,
-      source: 'expedition',
+      source: BRAND.eventNamespace,
     },
   });
 
@@ -1171,7 +1174,7 @@ exports.trackClick = catchAsync(async (req, res) => {
 // ADMIN ENDPOINTS
 // ================================
 
-exports.searchTours = catchAsync(async (req, res) => {
+controller.searchTours = catchAsync(async (req, res) => {
   const {
     q,
     category,
@@ -1266,7 +1269,7 @@ exports.searchTours = catchAsync(async (req, res) => {
   });
 });
 
-exports.getAdminTours = catchAsync(async (req, res) => {
+controller.getAdminTours = catchAsync(async (req, res) => {
   const records = await prisma.expeditionTour.findMany({
     orderBy: { displayOrder: 'asc' },
     include: {
@@ -1315,7 +1318,7 @@ exports.getAdminTours = catchAsync(async (req, res) => {
   });
 });
 
-exports.addTour = catchAsync(async (req, res, next) => {
+controller.addTour = catchAsync(async (req, res, next) => {
   const { tourId, displayOrder, isFeatured } = req.body;
 
   if (!tourId) {
@@ -1336,7 +1339,7 @@ exports.addTour = catchAsync(async (req, res, next) => {
   });
 
   if (existing) {
-    return next(new AppError('Tour is already in the expedition list', 409));
+    return next(new AppError(`Tour is already in the ${BRAND.brandName.toLowerCase()} list`, 409));
   }
 
   const maxOrder = await prisma.expeditionTour.aggregate({
@@ -1358,13 +1361,13 @@ exports.addTour = catchAsync(async (req, res, next) => {
   res.status(201).json({ status: 'success', data: { tour: record } });
 });
 
-exports.updateTour = catchAsync(async (req, res, next) => {
+controller.updateTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { displayOrder, isFeatured, isActive } = req.body;
 
   const existing = await prisma.expeditionTour.findUnique({ where: { id } });
   if (!existing) {
-    return next(new AppError('Expedition tour not found', 404));
+    return next(new AppError(`${BRAND.brandName} tour not found`, 404));
   }
 
   const record = await prisma.expeditionTour.update({
@@ -1381,12 +1384,12 @@ exports.updateTour = catchAsync(async (req, res, next) => {
   res.status(200).json({ status: 'success', data: { tour: record } });
 });
 
-exports.removeTour = catchAsync(async (req, res, next) => {
+controller.removeTour = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
   const existing = await prisma.expeditionTour.findUnique({ where: { id } });
   if (!existing) {
-    return next(new AppError('Expedition tour not found', 404));
+    return next(new AppError(`${BRAND.brandName} tour not found`, 404));
   }
 
   await prisma.expeditionTour.delete({ where: { id } });
@@ -1396,7 +1399,7 @@ exports.removeTour = catchAsync(async (req, res, next) => {
   res.status(204).json({ status: 'success', data: null });
 });
 
-exports.refreshCache = catchAsync(async (req, res, next) => {
+controller.refreshCache = catchAsync(async (req, res, next) => {
   const { tourId } = req.params;
 
   if (tourId && tourId !== 'all') {
@@ -1405,7 +1408,7 @@ exports.refreshCache = catchAsync(async (req, res, next) => {
       select: { id: true },
     });
     if (!record) {
-      return next(new AppError('Expedition tour not found', 404));
+      return next(new AppError(`${BRAND.brandName} tour not found`, 404));
     }
   }
 
@@ -1414,8 +1417,8 @@ exports.refreshCache = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     message: tourId && tourId !== 'all'
-      ? `Cache cleared for expedition tour ${tourId}`
-      : 'All expedition caches cleared',
+      ? `Cache cleared for ${BRAND.brandName.toLowerCase()} tour ${tourId}`
+      : `All ${BRAND.brandName.toLowerCase()} caches cleared`,
   });
 });
 
@@ -1425,7 +1428,7 @@ exports.refreshCache = catchAsync(async (req, res, next) => {
 
 const { buildAvailabilityCalendar } = require('../utils/availabilityCalendar');
 
-exports.subscribe = catchAsync(async (req, res, next) => {
+controller.subscribe = catchAsync(async (req, res, next) => {
   const { email, name } = req.body;
 
   const existing = await prisma.newsletterSubscriber.findUnique({ where: { email } });
@@ -1443,12 +1446,12 @@ exports.subscribe = catchAsync(async (req, res, next) => {
   }
 
   await prisma.newsletterSubscriber.create({
-    data: { email, name: name || null, source: 'EXPEDITION' },
+    data: { email, name: name || null, source: BRAND.source },
   });
 
   enqueueEvent({
-    name: 'expedition.newsletter_subscribed',
-    properties: { email, name: name || null, source: 'expedition' },
+    name: `${BRAND.eventNamespace}.newsletter_subscribed`,
+    properties: { email, name: name || null, source: BRAND.eventNamespace },
   });
 
   res.status(200).json({
@@ -1457,7 +1460,7 @@ exports.subscribe = catchAsync(async (req, res, next) => {
   });
 });
 
-exports.getTourAvailability = catchAsync(async (req, res, next) => {
+controller.getTourAvailability = catchAsync(async (req, res, next) => {
   const { slug } = req.params;
   const { startDate, endDate, option } = req.query;
 
@@ -1530,7 +1533,7 @@ exports.getTourAvailability = catchAsync(async (req, res, next) => {
 // CHECKOUT ENDPOINTS
 // ================================
 
-exports.calculateCheckout = catchAsync(async (req, res, next) => {
+controller.calculateCheckout = catchAsync(async (req, res, next) => {
   const { tourId, travelDate, travelers, promoCode, optionId } = req.body;
 
   if (!tourId || !travelDate || !travelers) {
@@ -1554,7 +1557,7 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
       select: { isActive: true },
     });
     if (!expTourCalc?.isActive) {
-      throw new AppError('Tour is not available on Expedition', 400);
+      throw new AppError(`Tour is not available on ${BRAND.brandName}`, 400);
     }
 
     // Multi-option: quote against the chosen option's projection + scope.
@@ -1618,7 +1621,7 @@ exports.calculateCheckout = catchAsync(async (req, res, next) => {
   res.status(200).json(result);
 });
 
-exports.confirmBooking = catchAsync(async (req, res, next) => {
+controller.confirmBooking = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
   const {
     tourId,
@@ -1671,7 +1674,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     select: { isActive: true },
   });
   if (!expTour?.isActive) {
-    return next(new AppError('Tour is not available on Expedition', 400));
+    return next(new AppError(`Tour is not available on ${BRAND.brandName}`, 400));
   }
 
   if (tour.supplier.supplierProfile.status !== 'ACTIVE') {
@@ -1824,7 +1827,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       const piMetadata = {
         customerId,
         tourId,
-        source: 'expedition',
+        source: BRAND.eventNamespace,
         paymentTiming: 'later',
         // Selected date/time are part of the idempotency-relevant request so
         // rebooking the same tour on a different date creates a fresh PI
@@ -1897,7 +1900,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
       throw new Error(evalResult.reason);
     }
 
-    const bookingNumber = await generateBookingNumber('EXP');
+    const bookingNumber = await generateBookingNumber(BRAND.bookingPrefix);
     const commission = await calculateCommission(pricing.total, tour.supplier.supplierProfile);
 
     const booking = await tx.booking.create({
@@ -1905,7 +1908,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         bookingNumber,
         customerId,
         tourId,
-        source: 'EXPEDITION',
+        source: BRAND.source,
         ...(optionRef ? { optionId: optionRef.optionId, optionTitle: optionRef.optionTitle } : {}),
         clientOrigin: resolveAllowedClientUrl(req),
         travelDate: new Date(travelDate),
@@ -1956,7 +1959,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     // Attach booking ID to PI metadata so a later settlement can find it
     try {
       await getStripe().paymentIntents.update(paymentIntent.id, {
-        metadata: { bookingIds: result.id, source: 'expedition', paymentTiming: 'later' },
+        metadata: { bookingIds: result.id, source: BRAND.eventNamespace, paymentTiming: 'later' },
       });
     } catch (err) {
       console.error('[Expedition] Failed to update PI metadata:', err.message);
@@ -1972,22 +1975,22 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     enqueueNotification({
       userId: tour.supplierId,
       type: 'BOOKING_CONFIRMED',
-      title: 'New Expedition Booking',
+      title: `New ${BRAND.brandName} Booking`,
       message: `A new reserve-now-pay-later booking (${result.bookingNumber}) was made through Expedition Go Tours for "${tour.title}"`,
-      data: { bookingId: result.id, source: 'expedition' },
+      data: { bookingId: result.id, source: BRAND.eventNamespace },
     });
 
     notifyAdmin({
       type: 'BOOKING_CREATED',
-      title: 'New Expedition Booking (Reserve now, pay later)',
+      title: `New ${BRAND.brandName} Booking (Reserve now, pay later)`,
       message: `Booking #${result.bookingNumber} — $${parseFloat(pricing.total).toFixed(2)} for "${tour.title}" — reserved, payment pending (charges on ${travelDate})`,
-      data: { bookingId: result.id, tourTitle: tour.title, total: pricing.total, travelDate, source: 'expedition' },
+      data: { bookingId: result.id, tourTitle: tour.title, total: pricing.total, travelDate, source: BRAND.eventNamespace },
     }).catch(() => {});
 
     enqueueEmail({
       type: 'reserve-later-confirmed',
       bookingId: result.id,
-      brandName: 'Expedition',
+      brandName: BRAND.brandName,
     }).catch((err) => console.error('[Expedition] Reserve-later confirmation email failed:', err.message));
 
     if (pickupSnapshot) {
@@ -1996,7 +1999,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
     }
 
     enqueueEvent({
-      name: 'expedition.booking_reserved',
+      name: `${BRAND.eventNamespace}.booking_reserved`,
       userId: customerId,
       req,
       resource: 'Booking',
@@ -2082,7 +2085,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
         currency: pricing.currency,
         customerId,
         draftId: holdResult.draftId,
-        source: 'expedition',
+        source: BRAND.eventNamespace,
         user: req.user,
       });
     } catch (err) {
@@ -2176,7 +2179,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
  * client secret (retrieved from Stripe) so a hard refresh mid-checkout can
  * still mount Elements. Amounts always come from the frozen draft pricing.
  */
-exports.getCheckoutDraft = catchAsync(async (req, res, next) => {
+controller.getCheckoutDraft = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const draft = await prisma.checkoutDraft.findFirst({
     where: { id, customerId: req.user.id, status: 'HOLDING' },
@@ -2281,7 +2284,7 @@ exports.getCheckoutDraft = catchAsync(async (req, res, next) => {
  * best-effort cancel the unconfirmed PaymentIntent (the sweep would otherwise
  * reconcile it on expiry anyway).
  */
-exports.releaseCheckoutDraft = catchAsync(async (req, res, next) => {
+controller.releaseCheckoutDraft = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const draft = await prisma.checkoutDraft.findFirst({
     where: { id, customerId: req.user.id, status: 'HOLDING' },
@@ -2331,7 +2334,7 @@ const EXPEDITION_WISHLIST_TOUR_SELECT = {
   supplier: { select: { name: true, photoURL: true } },
 };
 
-exports.getExpeditionWishlist = catchAsync(async (req, res, next) => {
+controller.getExpeditionWishlist = catchAsync(async (req, res, next) => {
   const items = await prisma.wishlistItem.findMany({
     where: {
       userId: req.user.id,
@@ -2355,7 +2358,7 @@ exports.getExpeditionWishlist = catchAsync(async (req, res, next) => {
   });
 });
 
-exports.toggleExpeditionWishlist = catchAsync(async (req, res, next) => {
+controller.toggleExpeditionWishlist = catchAsync(async (req, res, next) => {
   const { tourId } = req.params;
 
   const expeditionTour = await prisma.expeditionTour.findFirst({
@@ -2363,7 +2366,7 @@ exports.toggleExpeditionWishlist = catchAsync(async (req, res, next) => {
     select: { id: true },
   });
   if (!expeditionTour) {
-    return next(new AppError('Tour not available on Expedition', 404));
+    return next(new AppError(`Tour not available on ${BRAND.brandName}`, 404));
   }
 
   const existing = await prisma.wishlistItem.findUnique({
@@ -2379,7 +2382,7 @@ exports.toggleExpeditionWishlist = catchAsync(async (req, res, next) => {
       action: 'user.wishlist_removed',
       resource: 'User',
       resourceId: req.user.id,
-      metadata: { tourId, source: 'expedition' },
+      metadata: { tourId, source: BRAND.eventNamespace },
     });
 
     return res.status(200).json({
@@ -2395,7 +2398,7 @@ exports.toggleExpeditionWishlist = catchAsync(async (req, res, next) => {
     action: 'user.wishlist_added',
     resource: 'User',
     resourceId: req.user.id,
-    metadata: { tourId, source: 'expedition' },
+    metadata: { tourId, source: BRAND.eventNamespace },
   });
 
   res.status(200).json({
@@ -2404,11 +2407,11 @@ exports.toggleExpeditionWishlist = catchAsync(async (req, res, next) => {
   });
 });
 
-exports.getMyBookings = catchAsync(async (req, res, next) => {
+controller.getMyBookings = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
   const { status, page = 1, limit = 10 } = req.query;
 
-  const where = { customerId, source: 'EXPEDITION', isSimulated: false };
+  const where = { customerId, source: BRAND.source, isSimulated: false };
   // Accept a single status or a comma-separated list (e.g. status=CONFIRMED,PENDING)
   // so the navbar counter can include reserve-now-pay-later bookings, which are
   // PENDING until the deferred charge settles.
@@ -2468,12 +2471,12 @@ exports.getMyBookings = catchAsync(async (req, res, next) => {
   });
 });
 
-exports.getBooking = catchAsync(async (req, res, next) => {
+controller.getBooking = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const customerId = req.user.id;
 
   const booking = await prisma.booking.findFirst({
-    where: { id, customerId, source: 'EXPEDITION' },
+    where: { id, customerId, source: BRAND.source },
     include: {
       tour: {
         include: {
@@ -2537,7 +2540,7 @@ exports.getBooking = catchAsync(async (req, res, next) => {
  *  - { status: 'EXPIRED' }                          — abandoned / swept
  *  - { status: 'REFUNDED' }                         — capacity lost, money returned
  */
-exports.getBookingBySession = catchAsync(async (req, res, next) => {
+controller.getBookingBySession = catchAsync(async (req, res, next) => {
   const { sessionId } = req.params;
   const customerId = req.user.id;
 
@@ -2582,13 +2585,13 @@ exports.getBookingBySession = catchAsync(async (req, res, next) => {
   });
 });
 
-exports.cancelBooking = catchAsync(async (req, res, next) => {
+controller.cancelBooking = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { reason } = req.body;
   const customerId = req.user.id;
 
   const booking = await prisma.booking.findFirst({
-    where: { id, customerId, source: 'EXPEDITION', status: { in: ['PENDING', 'CONFIRMED'] } },
+    where: { id, customerId, source: BRAND.source, status: { in: ['PENDING', 'CONFIRMED'] } },
     include: { tour: { include: { supplier: true } } },
   });
 
@@ -2677,7 +2680,7 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     type: 'booking-cancellation',
     bookingId: booking.id,
     refundAmount: refundSucceeded ? refundAmount : 0,
-    brandName: 'Expedition',
+    brandName: BRAND.brandName,
   }).catch((err) => console.error('[Expedition] Cancellation email failed:', err.message));
 
   logActivity({
@@ -2685,7 +2688,7 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     action: 'booking.cancelled',
     resource: 'Booking',
     resourceId: booking.id,
-    metadata: { reason, refundAmount: refundSucceeded ? refundAmount : 0, refundSucceeded, source: 'expedition' },
+    metadata: { reason, refundAmount: refundSucceeded ? refundAmount : 0, refundSucceeded, source: BRAND.eventNamespace },
   }).catch(() => {});
 
   res.status(200).json({ status: 'success', data: { booking: result } });
@@ -2699,12 +2702,12 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
  * POST /expedition/bookings/:id/modify/quote
  * Read-only re-quote for the modify page — never mutates the booking.
  */
-exports.quoteModifyBooking = catchAsync(async (req, res, next) => {
+controller.quoteModifyBooking = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const data = await quoteBookingModification({
     bookingId: id,
     customerId: req.user.id,
-    source: 'EXPEDITION',
+    source: BRAND.source,
     body: req.body || {},
   });
   res.status(200).json({ status: 'success', data });
@@ -2719,12 +2722,12 @@ exports.quoteModifyBooking = catchAsync(async (req, res, next) => {
  *    change + a server-minted PaymentIntent for the delta; the webhook applies
  *    the change after the payment succeeds.
  */
-exports.modifyBooking = catchAsync(async (req, res, next) => {
+controller.modifyBooking = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const data = await applyBookingModification({
     bookingId: id,
     customerId: req.user.id,
-    source: 'EXPEDITION',
+    source: BRAND.source,
     body: req.body || {},
     user: req.user,
   });
@@ -2735,7 +2738,7 @@ exports.modifyBooking = catchAsync(async (req, res, next) => {
  * POST /expedition/bookings/:id/modify/:changeId/discard
  * Cancel a parked top-up the customer no longer wants to pay.
  */
-exports.discardModifyChange = catchAsync(async (req, res, next) => {
+controller.discardModifyChange = catchAsync(async (req, res, next) => {
   const { changeId } = req.params;
   const data = await discardParkedChange({ changeId, customerId: req.user.id });
   res.status(200).json({ status: 'success', data });
@@ -2745,12 +2748,12 @@ exports.discardModifyChange = catchAsync(async (req, res, next) => {
 // REVIEWS
 // ================================
 
-exports.createReview = catchAsync(async (req, res, next) => {
+controller.createReview = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
   const { bookingId, rating, title, comment } = req.body;
 
   const booking = await prisma.booking.findFirst({
-    where: { id: bookingId, customerId, source: 'EXPEDITION' },
+    where: { id: bookingId, customerId, source: BRAND.source },
     select: { id: true, tourId: true, status: true, paymentStatus: true, review: { select: { id: true } } },
   });
 
@@ -2774,7 +2777,7 @@ exports.createReview = catchAsync(async (req, res, next) => {
       rating,
       title: title || null,
       comment,
-      source: 'EXPEDITION',
+      source: BRAND.source,
       isApproved: false,
     },
     include: {
@@ -2783,12 +2786,12 @@ exports.createReview = catchAsync(async (req, res, next) => {
   });
 
   enqueueEvent({
-    name: 'expedition.review_created',
+    name: `${BRAND.eventNamespace}.review_created`,
     userId: customerId,
     req,
     resource: 'Review',
     resourceId: review.id,
-    properties: { tourId: booking.tourId, rating, source: 'expedition' },
+    properties: { tourId: booking.tourId, rating, source: BRAND.eventNamespace },
   });
 
   res.status(201).json({
@@ -2802,7 +2805,7 @@ exports.createReview = catchAsync(async (req, res, next) => {
 // SUPPLIER BOOKING MANAGEMENT
 // ================================
 
-exports.getSupplierBookings = catchAsync(async (req, res, next) => {
+controller.getSupplierBookings = catchAsync(async (req, res, next) => {
   const supplierId = req.user.id;
   const { status, page = 1, limit = 10 } = req.query;
 
@@ -2811,7 +2814,7 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
 
   const where = {
     tour: { supplierId },
-    source: 'EXPEDITION',
+    source: BRAND.source,
     isSimulated: false,
   };
   if (status) where.status = status;
@@ -2858,7 +2861,7 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
   });
 });
 
-exports.updateBookingStatus = catchAsync(async (req, res, next) => {
+controller.updateBookingStatus = catchAsync(async (req, res, next) => {
   const supplierId = req.user.id;
   const { id } = req.params;
   const { status, reason } = req.body;
@@ -2866,7 +2869,7 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
   const booking = await prisma.booking.findFirst({
     where: {
       id,
-      source: 'EXPEDITION',
+      source: BRAND.source,
       tour: { supplierId },
     },
     include: { tour: { select: { id: true, title: true } } },
@@ -2911,7 +2914,7 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
     type: 'BOOKING_STATUS_UPDATED',
     title: 'Booking Status Updated',
     message: `Your booking "${booking.tour.title}" is now ${status}.`,
-    data: { bookingId: id, status, source: 'expedition' },
+    data: { bookingId: id, status, source: BRAND.eventNamespace },
   });
 
   // Completed + paid → nudge the customer to write a review.
@@ -2921,12 +2924,12 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
   }
 
   enqueueEvent({
-    name: 'expedition.booking_status_updated',
+    name: `${BRAND.eventNamespace}.booking_status_updated`,
     userId: supplierId,
     req,
     resource: 'Booking',
     resourceId: id,
-    properties: { from: booking.status, to: status, source: 'expedition' },
+    properties: { from: booking.status, to: status, source: BRAND.eventNamespace },
   });
 
   res.status(200).json({
@@ -2949,13 +2952,13 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
  *
  * Body: { pickup: { skipValidation: true } | { mode, areaName?, address? } }
  */
-exports.updateMyPickup = catchAsync(async (req, res, next) => {
+controller.updateMyPickup = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
   const { id } = req.params;
   const { pickup } = req.body;
 
   const booking = await prisma.booking.findFirst({
-    where: { id, customerId, source: 'EXPEDITION' },
+    where: { id, customerId, source: BRAND.source },
     include: {
       tour: { select: { id: true, title: true, bookingAndTickets: true, supplierId: true } },
     },
@@ -3010,7 +3013,7 @@ exports.updateMyPickup = catchAsync(async (req, res, next) => {
     type: 'PICKUP_UPDATED',
     title: 'Customer updated pickup details',
     message: `Customer updated pickup for booking "${booking.tour.title}"`,
-    data: { bookingId: booking.id, pickup: true, source: 'expedition' },
+    data: { bookingId: booking.id, pickup: true, source: BRAND.eventNamespace },
   }).catch((err) => console.error('[Expedition] enqueueNotification (customer pickup update) failed:', err.message));
 
   enqueueEmail({
@@ -3025,8 +3028,14 @@ exports.updateMyPickup = catchAsync(async (req, res, next) => {
     action: 'booking.pickup_updated',
     resource: 'Booking',
     resourceId: id,
-    metadata: { by: 'customer', source: 'expedition' },
+    metadata: { by: 'customer', source: BRAND.eventNamespace },
   }).catch((err) => console.warn('[Expedition] logActivity (customer pickup update) failed:', err?.message));
 
   res.status(200).json({ status: 'success', data: { pickup: snapshot } });
 });
+
+
+  return controller;
+}
+
+module.exports = makeStorefrontController('expedition');
