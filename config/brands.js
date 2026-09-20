@@ -59,6 +59,9 @@ const BRANDS = {
     eventNamespace: 'ghana',
     listingModel: 'travioGhanaTour', // Prisma model (camelCase)
     placeScope: 'ghanaOnly', // placeTourIds() scope flag
+    // Ghana suppliers' tours can also be published to the Expedition sub-store;
+    // getSupplierTours/getSupplierReviews query these extra listing models too.
+    secondaryListingModels: ['expeditionTour'],
     googleOAuth: {
       strategy: 'google-ghana',
       idVar: 'GOOGLE_CLIENT_ID_GHANA',
