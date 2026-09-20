@@ -549,6 +549,14 @@ controller.getFunnel = catchAsync(async (req, res, next) => {
           FROM "Event"
           WHERE "name" = 'booking.status_completed' AND "createdAt" >= ${startDate}
             AND "properties"->>'source' = ${brandKey}
+          UNION ALL
+          -- Current checkout flow: confirming a booking emits
+          -- brand.booking_reserved (the legacy cart.added / booking.initiated
+          -- pair only fires on the retired cart flow).
+          SELECT 'booking_completed', COALESCE("userId", "sessionId")
+          FROM "Event"
+          WHERE "name" = ${`${brandKey}.booking_reserved`} AND "createdAt" >= ${startDate}
+            AND "properties"->>'source' = ${brandKey}
         ) s
         WHERE identity IS NOT NULL
         GROUP BY step
