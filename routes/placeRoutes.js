@@ -55,4 +55,25 @@ router.get('/resolve', placeController.resolve);
  */
 router.get('/cities', placeController.cities);
 
+/**
+ * @swagger
+ * /places/search:
+ *   get:
+ *     summary: Searchable places autocomplete (cities, towns, attractions)
+ *     tags: [Places]
+ *     parameters:
+ *       - name: q
+ *         in: query
+ *         schema:
+ *           type: string
+ *       - name: limit
+ *         in: query
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Places retrieved successfully
+ */
+router.get('/search', placeController.search);
+
 module.exports = router;

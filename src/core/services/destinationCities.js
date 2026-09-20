@@ -241,6 +241,106 @@ async function listMajorCities(index = null) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Categorise a curated Attraction row as a city, town, or attraction. */
+function placeTypeFor(row) {
+  if (row.category !== 'City / Town') return 'attraction';
+  return /major city|regional capital/i.test(String(row.placeType || '')) ? 'city' : 'town';
+}
+
+const PLACE_TYPE_RANK = { city: 0, town: 1, attraction: 2 };
+
+/**
+ * Search the curated places catalog (cities, towns and attractions — the rows
+ * imported from the attractions XLSX) for a supplier autocomplete.
+ *
+ * Empty/short queries return a sensible default: the 16 major cities first,
+ * then the most-booked places. A real query ranks exact name matches ahead of
+ * name-prefix, name-substring, then town/alias matches, and prefers cities over
+ * towns over attractions within a rank. The response is a flat, typed list:
+ * `{ name, type, region, lat, lng }`.
+ */
+async function searchPlaces(query = '', limit = 25) {
+  const q = normalizePlace(query);
+  const take = Math.min(Math.max(Number(limit) || 25, 1), 100);
+  const select = {
+    name: true,
+    town: true,
+    region: true,
+    category: true,
+    placeType: true,
+    latitude: true,
+    longitude: true,
+    tourCount: true,
+  };
+
+  // Default list — no usable query yet.
+  if (q.length < 2) {
+    const capitals = await listMajorCities();
+    const top = await prisma.attraction.findMany({
+      where: { status: 'ACTIVE' },
+      select,
+      orderBy: [{ tourCount: 'desc' }, { name: 'asc' }],
+      take: 60,
+    });
+    const seen = new Set();
+    const out = [];
+    for (const c of capitals) {
+      seen.add(normalizePlace(c.name));
+      out.push({ name: c.name, type: 'city', region: c.region || null, lat: c.lat ?? null, lng: c.lng ?? null });
+    }
+    for (const r of top) {
+      const key = normalizePlace(r.name);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ name: r.name, type: placeTypeFor(r), region: r.region || null, lat: r.latitude ?? null, lng: r.longitude ?? null });
+    }
+    return out.slice(0, take);
+  }
+
+  const candidates = await prisma.attraction.findMany({
+    where: {
+      status: 'ACTIVE',
+      OR: [
+        { name: { contains: q, mode: 'insensitive' } },
+        { town: { contains: q, mode: 'insensitive' } },
+        { aliases: { contains: q, mode: 'insensitive' } },
+      ],
+    },
+    select,
+    orderBy: [{ tourCount: 'desc' }, { name: 'asc' }],
+    take: 300,
+  });
+
+  const ranked = candidates
+    .map((r) => {
+      const nameN = normalizePlace(r.name);
+      const townN = normalizePlace(r.town);
+      const aliases = String(r.aliases || '').split(';').map(normalizePlace);
+      let score;
+      if (nameN === q) score = 0;
+      else if (nameN.startsWith(q)) score = 1;
+      else if (nameN.includes(q)) score = 2;
+      else if (townN === q || townN.startsWith(q) || aliases.some((a) => a === q || a.startsWith(q))) score = 3;
+      else score = 4;
+      return { r, score, type: placeTypeFor(r) };
+    })
+    .sort((a, b) => {
+      if (a.score !== b.score) return a.score - b.score;
+      const ta = PLACE_TYPE_RANK[a.type];
+      const tb = PLACE_TYPE_RANK[b.type];
+      if (ta !== tb) return ta - tb;
+      return (b.r.tourCount || 0) - (a.r.tourCount || 0);
+    });
+
+  return ranked.slice(0, take).map(({ r, type }) => ({
+    name: r.name,
+    type,
+    region: r.region || null,
+    lat: r.latitude ?? null,
+    lng: r.longitude ?? null,
+  }));
+}
+
 module.exports = {
   buildMajorCityIndex,
   majorCityForTour,
@@ -248,6 +348,7 @@ module.exports = {
   destinationCityFromPatch,
   enrichDestinationCity,
   listMajorCities,
+  searchPlaces,
   normalizePlace,
   NEAREST_CITY_MAX_KM,
 };

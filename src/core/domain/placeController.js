@@ -12,7 +12,7 @@ const prisma = require('../services/prismaClient');
 const cache = require('../services/cacheHelper');
 const catchAsync = require('../services/catchAsync');
 const { resolvePlace } = require('../services/placeResolver');
-const { listMajorCities } = require('../services/destinationCities');
+const { listMajorCities, searchPlaces } = require('../services/destinationCities');
 
 /** Map the `scope` query param to a resolver scope. */
 function parseScope(req) {
@@ -51,6 +51,22 @@ exports.resolve = catchAsync(async (req, res) => {
 exports.cities = catchAsync(async (req, res) => {
   const cities = await cache.getOrSet('hp:place:cities', () => listMajorCities(), 3600);
   res.json({ status: 'success', data: { cities } });
+});
+
+/**
+ * GET /api/places/search?q=&limit=
+ *
+ * Flat, typed autocomplete over the curated places catalog (cities, towns and
+ * attractions — the XLSX import). Used by the supplier product builder's
+ * location modal to replace the 16-capital picklist with a searchable field.
+ * Cached per query; empty `q` returns major cities + top places.
+ */
+exports.search = catchAsync(async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const limit = Math.min(Math.max(parseInt(req.query.limit) || 25, 1), 100);
+  const key = `hp:place:search:${crypto.createHash('md5').update(`${q.toLowerCase()}:${limit}`).digest('hex')}`;
+  const places = await cache.getOrSet(key, () => searchPlaces(q, limit), 3600);
+  res.json({ status: 'success', data: { places } });
 });
 
 exports.suggest = catchAsync(async (req, res) => {
