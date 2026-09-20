@@ -142,7 +142,7 @@ enum BookingSource {
 
 enum BookingFlow {
   DIRECT // Booked on Expedition Go (EG's own supplier tours)
-  EXTERNAL // Redirected to TravioAfrica (other suppliers)
+  EXTERNAL // Redirected to Travio Ghana (other suppliers)
 }
 
 enum BookingStatus {

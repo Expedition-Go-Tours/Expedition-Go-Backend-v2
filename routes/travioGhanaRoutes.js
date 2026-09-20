@@ -708,7 +708,7 @@ router.post('/checkout/confirm', confirmLimiter, protect, restrictTo('customer')
  *       401:
  *         description: Authentication required
  */
-router.get('/wishlist', protect, restrictTo('customer'), travioGhanaController.getExpeditionWishlist);
+router.get('/wishlist', protect, restrictTo('customer'), travioGhanaController.getWishlist);
 
 /**
  * @swagger
@@ -755,7 +755,7 @@ router.get('/wishlist', protect, restrictTo('customer'), travioGhanaController.g
  *       404:
  *         description: Tour not available on Travio Ghana
  */
-router.patch('/wishlist/:tourId', protect, restrictTo('customer'), validate(tourIdParamSchema), travioGhanaController.toggleExpeditionWishlist);
+router.patch('/wishlist/:tourId', protect, restrictTo('customer'), validate(tourIdParamSchema), travioGhanaController.toggleWishlist);
 
 /**
  * @swagger

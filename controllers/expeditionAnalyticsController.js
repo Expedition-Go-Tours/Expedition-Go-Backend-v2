@@ -3,7 +3,9 @@ const catchAsync = require('../utils/catchAsync');
 
 const CACHE_PREFIX = 'expedition:analytics:';
 const cache = require('../utils/cacheHelper');
-const GHANA_ROLE = 'ghana';
+const { getBrand } = require('../config/brands');
+
+const GHANA_ROLE = getBrand('ghana').role;
 
 /**
  * Prisma booking where clause: Expedition bookings excluding Ghana suppliers.

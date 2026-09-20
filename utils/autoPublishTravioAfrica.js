@@ -14,7 +14,9 @@ const prisma = require('./prismaClient');
 const logger = require('./logger');
 const { isGhanaSupplier } = require('./supplierCountry');
 
-const AFRICA_ROLE = 'travioafrica';
+const { getBrand } = require('../config/brands');
+
+const AFRICA_ROLE = getBrand('africa').role;
 
 /**
  * Publish a single tour to TravioAfrica if its supplier is a non-Ghana

@@ -25,7 +25,10 @@ const eventEmitter = require('../utils/eventEmitter');
 const { sanitizeBookingPaymentInternals } = require('../utils/sanitizeBookings');
 const { bookingRefundState } = require('../utils/bookingRefundState');
 
-const CACHE_PREFIX = 'ghana:';
+const { getBrand } = require('../config/brands');
+const BRAND = getBrand('ghana');
+
+const CACHE_PREFIX = BRAND.cachePrefix;
 const LIST_CACHE_KEY = `${CACHE_PREFIX}tours:list`;
 const FEATURED_CACHE_KEY = `${CACHE_PREFIX}tours:featured`;
 const DETAIL_CACHE_KEY = (slug) => `${CACHE_PREFIX}detail:${slug}`;
@@ -124,7 +127,7 @@ function buildTourSchemaUrl(tour) {
       price: tour.startingPrice ?? undefined,
       priceCurrency: tour.currency ?? 'USD',
       availability: 'https://schema.org/InStock',
-      url: `https://travioafrica.com/tour/${tour.slug}`,
+      url: `${BRAND.storefrontUrl}/tour/${tour.slug}`,
     },
     ...(tour.averageRating
       ? {
@@ -467,7 +470,7 @@ exports.getTourBadges = catchAsync(async (req, res) => {
 exports.getTourReviews = catchAsync(async (req, res, next) => {
   const { slug } = req.params;
   const { page = 1, limit = 10, sortBy = 'newest' } = req.query;
-  const cacheKey = `expedition:reviews:${slug}:${page}:${limit}:${sortBy}`;
+  const cacheKey = `${CACHE_PREFIX}reviews:${slug}:${page}:${limit}:${sortBy}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
     const expeditionTour = await prisma.travioGhanaTour.findFirst({
@@ -517,7 +520,7 @@ exports.getTourReviews = catchAsync(async (req, res, next) => {
 
 exports.getSimilarTours = catchAsync(async (req, res, next) => {
   const { slug } = req.params;
-  const cacheKey = `expedition:similar:${slug}`;
+  const cacheKey = `${CACHE_PREFIX}similar:${slug}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
     const expeditionTour = await prisma.travioGhanaTour.findFirst({
@@ -757,7 +760,7 @@ exports.getTourBySlug = catchAsync(async (req, res, next) => {
     req,
     tourSupplierId: tourSupId,
     tourId: result.data?.tour?.tour?.id,
-    prefix: 'expedition:view',
+    prefix: `${CACHE_PREFIX}view`,
   });
   if (viewCounted) {
     prisma.tour
@@ -838,14 +841,14 @@ exports.submitContact = catchAsync(async (req, res, next) => {
     return next(new AppError('Message must be at least 10 characters', 400));
   }
 
-  const supportEmail = process.env.SUPPORT_EMAIL || 'support@travioGhana.com';
+  const supportEmail = process.env.SUPPORT_EMAIL || BRAND.supportEmail;
 
   const subject = `[Travio Ghana Inquiry] ${name} - ${email}`;
   const messageBody = [
     `Name: ${name}`,
     `Email: ${email}`,
     phone ? `Phone: ${phone}` : null,
-    tourSlug ? `Tour: https://travioafrica.com/tour/${tourSlug}` : null,
+    tourSlug ? `Tour: ${BRAND.storefrontUrl}/tour/${tourSlug}` : null,
     '',
     'Message:',
     message,
@@ -893,8 +896,8 @@ exports.trackClick = catchAsync(async (req, res) => {
     properties: {
       tourId: tourId || null,
       tourSlug: tourSlug || null,
-      destination: 'travioafrica.com',
-      source: 'expedition',
+      destination: BRAND.storefrontDomain,
+      source: 'ghana',
     },
   });
 
@@ -1830,7 +1833,7 @@ exports.confirmBooking = catchAsync(async (req, res, next) => {
 // ================================
 
 // Fields transformForListing() reads when shaping a wishlist tour.
-const EXPEDITION_WISHLIST_TOUR_SELECT = {
+const WISHLIST_TOUR_SELECT = {
   id: true,
   title: true,
   slug: true,
@@ -1849,7 +1852,7 @@ const EXPEDITION_WISHLIST_TOUR_SELECT = {
   supplier: { select: { name: true, photoURL: true } },
 };
 
-exports.getExpeditionWishlist = catchAsync(async (req, res, next) => {
+exports.getWishlist = catchAsync(async (req, res, next) => {
   const items = await prisma.wishlistItem.findMany({
     where: {
       userId: req.user.id,
@@ -1859,7 +1862,7 @@ exports.getExpeditionWishlist = catchAsync(async (req, res, next) => {
       },
     },
     orderBy: { addedAt: 'desc' },
-    include: { tour: { select: EXPEDITION_WISHLIST_TOUR_SELECT } },
+    include: { tour: { select: WISHLIST_TOUR_SELECT } },
   });
 
   const tours = items
@@ -1873,7 +1876,7 @@ exports.getExpeditionWishlist = catchAsync(async (req, res, next) => {
   });
 });
 
-exports.toggleExpeditionWishlist = catchAsync(async (req, res, next) => {
+exports.toggleWishlist = catchAsync(async (req, res, next) => {
   const { tourId } = req.params;
 
   const expeditionTour = await prisma.travioGhanaTour.findFirst({

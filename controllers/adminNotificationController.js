@@ -2,7 +2,9 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const adminNotifService = require('../utils/adminNotificationService');
 
-const GHANA_ROLE = 'ghana';
+const { getBrand } = require('../config/brands');
+
+const GHANA_ROLE = getBrand('ghana').role;
 
 /**
  * Exclude notifications related to Ghana suppliers.

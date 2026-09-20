@@ -11,11 +11,14 @@
  * single-brand behaviour.
  */
 
+const { BRANDS } = require('../config/brands');
+
 // A brand matches a domain exactly or any subdomain of it. Listing the apex is
 // enough — `supplier.travioghana.com` is covered by `travioghana.com`.
+// Sourced from config/brands.js (single source of truth for brand domains).
 const BRAND_DOMAINS = {
-  ghana: ['travioghana.com'],
-  expedition: ['expeditiongotours.com'],
+  ghana: [BRANDS.ghana.storefrontDomain],
+  expedition: [BRANDS.expedition.storefrontDomain],
 };
 
 /**

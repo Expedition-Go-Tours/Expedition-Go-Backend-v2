@@ -16,7 +16,9 @@ const prisma = require('./prismaClient');
 const logger = require('./logger');
 const { isGhanaSupplier } = require('./supplierCountry');
 
-const GHANA_ROLE = 'ghana';
+const { getBrand } = require('../config/brands');
+
+const GHANA_ROLE = getBrand('ghana').role;
 
 /**
  * Publish a single tour to TravioGhana if its supplier is Ghana-based.

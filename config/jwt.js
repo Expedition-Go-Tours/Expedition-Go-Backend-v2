@@ -31,12 +31,18 @@ function verifyRefreshToken(token) {
 
 const isProduction = process.env.NODE_ENV === 'production';
 
+// Auth cookie domain. Auth is Bearer-first (frontends store the token in
+// localStorage and send the Authorization header), so cookies are secondary;
+// keep the domain config-driven rather than hardcoded to one brand. Defaults
+// to the Travio Africa apex for backward compatibility.
+const COOKIE_DOMAIN = process.env.AUTH_COOKIE_DOMAIN || '.travioafrica.com';
+
 const COOKIE_OPTIONS = Object.freeze({
   accessToken: {
     httpOnly: true,
     secure: isProduction,
     sameSite: isProduction ? 'none' : 'lax',
-    domain: isProduction ? '.travioafrica.com' : undefined,
+    domain: isProduction ? COOKIE_DOMAIN : undefined,
     path: '/',
     maxAge: 60 * 60 * 1000,
   },
@@ -44,7 +50,7 @@ const COOKIE_OPTIONS = Object.freeze({
     httpOnly: true,
     secure: isProduction,
     sameSite: isProduction ? 'none' : 'lax',
-    domain: isProduction ? '.travioafrica.com' : undefined,
+    domain: isProduction ? COOKIE_DOMAIN : undefined,
     path: '/api/auth',
     maxAge: 7 * 24 * 60 * 60 * 1000,
   },

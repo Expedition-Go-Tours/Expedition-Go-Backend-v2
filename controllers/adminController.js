@@ -23,8 +23,10 @@ const { logActivity } = require('../utils/auditLogger');
 const { enqueueNotification } = require('../utils/queue');
 const { buildTourDiff, computeChangesSummary, mergeDraftContent, buildLiveUpdateData } = require('../utils/tourDraft');
 const { deleteCloudinaryImage } = require('../utils/cloudinaryHelper');
+const { getBrand } = require('../config/brands');
 
-const GHANA_ROLE = 'ghana';
+const GHANA_ROLE = getBrand('ghana').role;
+const GHANA_STOREFRONT_URL = getBrand('ghana').storefrontUrl;
 
 /**
  * Prisma filter: exclude bookings from Ghana-based suppliers.
@@ -2089,7 +2091,7 @@ exports.toggleExpeditionPublish = catchAsync(async (req, res, next) => {
     data.bookingFlow = hasExpeditionRole ? 'DIRECT' : 'EXTERNAL';
     data.externalUrl = hasExpeditionRole
       ? null
-      : `https://travioafrica.com/tour/${tour.slug}?ref=expedition`;
+      : `${GHANA_STOREFRONT_URL}/tour/${tour.slug}?ref=expedition`;
 
     data.publishedById = adminId;
     data.publishedAt = new Date();
@@ -2205,7 +2207,7 @@ exports.bulkExpeditionPublish = catchAsync(async (req, res, next) => {
             bookingFlow: hasExpeditionRole ? 'DIRECT' : 'EXTERNAL',
             externalUrl: hasExpeditionRole
               ? null
-              : `https://travioafrica.com/tour/${tour.slug}?ref=expedition`,
+              : `${GHANA_STOREFRONT_URL}/tour/${tour.slug}?ref=expedition`,
             publishedById: adminId,
             publishedAt: new Date(),
           },
@@ -2214,7 +2216,7 @@ exports.bulkExpeditionPublish = catchAsync(async (req, res, next) => {
             bookingFlow: hasExpeditionRole ? 'DIRECT' : 'EXTERNAL',
             externalUrl: hasExpeditionRole
               ? null
-              : `https://travioafrica.com/tour/${tour.slug}?ref=expedition`,
+              : `${GHANA_STOREFRONT_URL}/tour/${tour.slug}?ref=expedition`,
             publishedById: adminId,
             publishedAt: new Date(),
             unpublishedById: null,

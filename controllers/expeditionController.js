@@ -33,7 +33,10 @@ const eventEmitter = require('../utils/eventEmitter');
 const { sanitizeBookingPaymentInternals } = require('../utils/sanitizeBookings');
 const { bookingRefundState } = require('../utils/bookingRefundState');
 
-const CACHE_PREFIX = 'expedition:';
+const { getBrand } = require('../config/brands');
+const BRAND = getBrand('expedition');
+
+const CACHE_PREFIX = BRAND.cachePrefix;
 const LIST_CACHE_KEY = `${CACHE_PREFIX}tours:list`;
 const FEATURED_CACHE_KEY = `${CACHE_PREFIX}tours:featured`;
 const DETAIL_CACHE_KEY = (slug) => `${CACHE_PREFIX}detail:${slug}`;
@@ -152,7 +155,7 @@ function buildTourSchemaUrl(tour) {
       price: tour.startingPrice ?? undefined,
       priceCurrency: tour.currency ?? 'USD',
       availability: 'https://schema.org/InStock',
-      url: `https://travioafrica.com/tour/${tour.slug}`,
+      url: `${BRAND.storefrontUrl}/tour/${tour.slug}`,
     },
     // Structured data must report the same standing customers see (in-app +
     // external), falling back to the internal stats when combined is absent.
@@ -1102,14 +1105,14 @@ exports.submitContact = catchAsync(async (req, res, next) => {
     return next(new AppError('Message must be at least 10 characters', 400));
   }
 
-  const supportEmail = process.env.SUPPORT_EMAIL || 'support@expeditiongo.com';
+  const supportEmail = process.env.SUPPORT_EMAIL || BRAND.supportEmail;
 
   const subject = `[Expedition Inquiry] ${name} - ${email}`;
   const messageBody = [
     `Name: ${name}`,
     `Email: ${email}`,
     phone ? `Phone: ${phone}` : null,
-    tourSlug ? `Tour: https://travioafrica.com/tour/${tourSlug}` : null,
+    tourSlug ? `Tour: ${BRAND.storefrontUrl}/tour/${tourSlug}` : null,
     '',
     'Message:',
     message,
@@ -1156,7 +1159,7 @@ exports.trackClick = catchAsync(async (req, res) => {
     properties: {
       tourId: tourId || null,
       tourSlug: tourSlug || null,
-      destination: 'travioafrica.com',
+      destination: BRAND.storefrontDomain,
       source: 'expedition',
     },
   });

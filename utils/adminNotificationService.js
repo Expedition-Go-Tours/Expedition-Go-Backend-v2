@@ -3,7 +3,9 @@ const { notifyDiscord, sendViaBot } = require('./discordNotifier');
 const channelEmbeds = require('./channelEmbeds');
 const { isGhanaSupplier } = require('./supplierCountry');
 
-const GHANA_ROLE = 'ghana';
+const { getBrand } = require('../config/brands');
+
+const GHANA_ROLE = getBrand('ghana').role;
 
 /**
  * Types that get mirrored to Discord. Types with richer explicit embeds

@@ -7,28 +7,13 @@
  * the default (TravioAfrica) client, preserving single-brand behaviour.
  */
 
+const { BRANDS } = require('./brands');
+
+// Keys used by auth: 'default' (TravioAfrica legacy), 'ghana', 'expedition'.
 const BRAND_GOOGLE_ENV = {
-  default: {
-    strategy: 'google',
-    idVar: 'GOOGLE_CLIENT_ID',
-    secretVar: 'GOOGLE_CLIENT_SECRET',
-    callbackVar: 'GOOGLE_CALLBACK_URL',
-    callbackFallback: 'http://localhost:5000/api/auth/google/callback',
-  },
-  ghana: {
-    strategy: 'google-ghana',
-    idVar: 'GOOGLE_CLIENT_ID_GHANA',
-    secretVar: 'GOOGLE_CLIENT_SECRET_GHANA',
-    callbackVar: 'GOOGLE_CALLBACK_URL_GHANA',
-    callbackFallback: 'https://api.travioghana.com/api/auth/google/callback',
-  },
-  expedition: {
-    strategy: 'google-expedition',
-    idVar: 'GOOGLE_CLIENT_ID_EXPEDITION',
-    secretVar: 'GOOGLE_CLIENT_SECRET_EXPEDITION',
-    callbackVar: 'GOOGLE_CALLBACK_URL_EXPEDITION',
-    callbackFallback: 'https://api.expeditiongotours.com/api/auth/google/callback',
-  },
+  default: BRANDS.africa.googleOAuth,
+  ghana: BRANDS.ghana.googleOAuth,
+  expedition: BRANDS.expedition.googleOAuth,
 };
 
 /** Resolve the Google client config for a brand (never throws). */

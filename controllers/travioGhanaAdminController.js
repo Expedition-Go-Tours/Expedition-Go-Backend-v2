@@ -20,7 +20,9 @@ const adminController = require('./adminController');
 
 // ── Ghana-scoped constants ──────────────────────────────────────────────
 const GHANA_SOURCE = 'GHANA';
-const GHANA_ROLE = 'ghana';
+const { getBrand } = require('../config/brands');
+
+const GHANA_ROLE = getBrand('ghana').role;
 
 /**
  * Prisma filter: bookings belonging to Ghana suppliers.
