@@ -1,13 +1,13 @@
 const express = require('express');
-const { createLimiter } = require('../middleware/dynamicRateLimiter');
-const { protect } = require('../middleware/authMiddleware');
-const { restrictTo } = require('../middleware/authMiddleware');
-const travioGhanaController = require('../controllers/travioGhanaController');
-const payLaterPaymentController = require('../controllers/payLaterPaymentController');
-const reviewController = require('../controllers/reviewController');
-const { uploadReviewPhotos } = require('../middleware/uploadMiddleware');
-const travioGhanaHomepageController = require('../controllers/travioGhanaHomepageController');
-const validate = require('../middleware/validate');
+const { createLimiter } = require('../../../middleware/dynamicRateLimiter');
+const { protect } = require('../../../middleware/authMiddleware');
+const { restrictTo } = require('../../../middleware/authMiddleware');
+const travioGhanaController = require('../../../controllers/travioGhanaController');
+const payLaterPaymentController = require('../../../controllers/payLaterPaymentController');
+const reviewController = require('../../../controllers/reviewController');
+const { uploadReviewPhotos } = require('../../../middleware/uploadMiddleware');
+const travioGhanaHomepageController = require('../../../controllers/travioGhanaHomepageController');
+const validate = require('../../../middleware/validate');
 const {
   getToursSchema,
   contactSchema,
@@ -33,7 +33,7 @@ const {
   analyticsOverviewSchema,
   analyticsRevenueTrendSchema,
   analyticsFunnelSchema,
-} = require('../utils/travioGhanaValidation');
+} = require('../../../utils/travioGhanaValidation');
 
 const router = express.Router();
 

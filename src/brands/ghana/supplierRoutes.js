@@ -1,50 +1,51 @@
 /**
- * TravioAfrica Supplier Routes — Africa-Scoped Supplier Dashboard
+ * TravioGhana Supplier Routes — Ghana-Scoped Supplier Dashboard
  *
- * Mounted at /api/travioafrica/supplier/*
+ * Mounted at /api/travioghana/supplier/*
  * Every route requires: protect + restrictTo('supplier')
  *
- * Africa-specific endpoints use travioAfricaSupplierController.
- * Shared features (team, cancellation, settings sub-routes, finance, payouts)
- * proxy to the shared controllers — no code duplication (same as Ghana).
+ * Ghana-specific endpoints use travioGhanaSupplierController.
+ * Shared features (team, cancellation, settings sub-routes) proxy to
+ * the shared controllers — no code duplication.
  */
 
 const express = require('express');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
-const { resolveSupplier, requireTeamRole, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
-const africaSupplier = require('../controllers/travioAfricaSupplierController');
+const { protect, restrictTo } = require('../../../middleware/authMiddleware');
+const { resolveSupplier, requireTeamRole, requireTeamPermission } = require('../../../middleware/teamRoleMiddleware');
+const ghanaSupplier = require('../../../controllers/travioGhanaSupplierController');
 
 // Shared controllers for proxied endpoints
-const supplierSettingsController = require('../controllers/supplierSettingsController');
-const cancellationController = require('../controllers/cancellationController');
-const teamController = require('../controllers/teamController');
-const bookingController = require('../controllers/bookingController');
-const financeController = require('../controllers/financeController');
-const payoutMethodController = require('../controllers/payoutMethodController');
-const specialOfferController = require('../controllers/specialOfferController');
-const notificationController = require('../controllers/notificationController');
+const supplierSettingsController = require('../../../controllers/supplierSettingsController');
+const cancellationController = require('../../../controllers/cancellationController');
+const teamController = require('../../../controllers/teamController');
+const bookingController = require('../../../controllers/bookingController');
+const financeController = require('../../../controllers/financeController');
+const payoutMethodController = require('../../../controllers/payoutMethodController');
+const specialOfferController = require('../../../controllers/specialOfferController');
+const notificationController = require('../../../controllers/notificationController');
 
 const router = express.Router();
 
+// All supplier routes require authentication + supplier role
 router.use(protect, restrictTo('supplier'));
 
 // Dashboard
-router.get('/dashboard', africaSupplier.getDashboard);
-router.get('/monthly-revenue', africaSupplier.getMonthlyRevenue);
+router.get('/dashboard', ghanaSupplier.getDashboard);
+router.get('/monthly-revenue', ghanaSupplier.getMonthlyRevenue);
 
 // Tours
-router.get('/tours', africaSupplier.getSupplierTours);
+router.get('/tours', ghanaSupplier.getSupplierTours);
 
 // Reviews
-router.get('/reviews', africaSupplier.getSupplierReviews);
+router.get('/reviews', ghanaSupplier.getSupplierReviews);
 
 // Availability
-router.get('/availability/:tourId', africaSupplier.getAvailability);
-router.post('/availability/:tourId', africaSupplier.setAvailability);
+router.get('/availability/:tourId', ghanaSupplier.getAvailability);
+router.post('/availability/:tourId', ghanaSupplier.setAvailability);
 
-// Settings (Africa-scoped)
-router.get('/settings', africaSupplier.getSettings);
-router.patch('/settings', africaSupplier.updateSettings);
+// Settings (Ghana-scoped)
+router.get('/settings', ghanaSupplier.getSettings);
+router.patch('/settings', ghanaSupplier.updateSettings);
 
 // Settings sub-routes (proxied to shared controllers)
 router.get('/settings/business-profile', resolveSupplier, supplierSettingsController.getBusinessProfile);
@@ -68,8 +69,9 @@ router.post('/settings/team/direct-add', resolveSupplier, requireTeamRole('admin
 router.patch('/settings/team/members/:id/role', resolveSupplier, requireTeamRole('admin'), teamController.updateMemberRole);
 router.delete('/settings/team/members/:id', resolveSupplier, requireTeamRole('admin'), teamController.removeMember);
 
-// Special Offers (GET is Africa-scoped; CRUD proxies to shared controller)
-router.get('/special-offers', africaSupplier.getSpecialOffers);
+// Special Offers (GET is Ghana-scoped; CRUD proxies to shared controller —
+// the frontend rewrites /suppliers/special-offers/* to this namespace)
+router.get('/special-offers', ghanaSupplier.getSpecialOffers);
 router.get('/special-offers/:id', resolveSupplier, requireTeamPermission('products.update'), specialOfferController.getOffer);
 router.post('/special-offers', resolveSupplier, requireTeamPermission('products.update'), specialOfferController.createOffer);
 router.put('/special-offers/:id', resolveSupplier, requireTeamPermission('products.update'), specialOfferController.updateOffer);
@@ -81,27 +83,30 @@ router.get('/cancellation/summary', resolveSupplier, cancellationController.getC
 router.get('/cancellation/records', resolveSupplier, cancellationController.getCancellationRecords);
 router.get('/products/list', resolveSupplier, cancellationController.getCancellationProducts);
 
-// Pickup planner (proxied to shared bookingController)
+// Pickup planner (proxied to shared bookingController — the frontend rewrites
+// /bookings/supplier/pickup-planner to this Ghana namespace)
 router.get('/pickup-planner', resolveSupplier, requireTeamPermission('bookings.view'), bookingController.getPickupPlanner);
 router.patch('/pickup-planner/:id', resolveSupplier, requireTeamPermission('bookings.manage'), bookingController.updateBookingPickup);
 
-// Finance (proxied to shared controller)
+// Finance (all proxied to shared controller — matches the finance page's
+// expected response shapes; the old Ghana-specific summary returned a flat
+// shape the frontend couldn't read, so everything showed $0)
 router.get('/finance/summary', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getFinanceSummary);
 router.get('/finance/earnings', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getEarnings);
 router.get('/finance/payouts/requests', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getPayoutRequests);
 router.post('/finance/payout/request', resolveSupplier, requireTeamPermission('payouts.request'), financeController.createPayoutRequest);
 router.patch('/finance/payouts/requests/:id/cancel', resolveSupplier, requireTeamPermission('payouts.request'), financeController.cancelPayoutRequest);
 router.get('/finance/disputes', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getDisputes);
-router.get('/payouts', africaSupplier.getPayouts);
+router.get('/payouts', ghanaSupplier.getPayouts);
 
-// Payout methods (proxied to shared controller)
+// Payout methods (proxied to shared controller — frontend rewrites /payout-methods/* here)
 router.get('/payout-methods', resolveSupplier, requireTeamPermission('payout-methods.view'), payoutMethodController.getMyMethods);
 router.post('/payout-methods', resolveSupplier, requireTeamPermission('payout-methods.manage'), payoutMethodController.addMethod);
 router.patch('/payout-methods/:id', resolveSupplier, requireTeamPermission('payout-methods.manage'), payoutMethodController.updateMethod);
 router.delete('/payout-methods/:id', resolveSupplier, requireTeamPermission('payout-methods.manage'), payoutMethodController.deleteMethod);
 
-// Notifications (GET is Africa-scoped; read/delete proxy to shared controller)
-router.get('/notifications', africaSupplier.getNotifications);
+// Notifications (GET is Ghana-scoped; read/delete proxy to shared controller)
+router.get('/notifications', ghanaSupplier.getNotifications);
 router.patch('/notifications/:id/read', notificationController.markAsRead);
 router.patch('/notifications/mark-all-read', notificationController.markAllAsRead);
 router.delete('/notifications/:id', notificationController.deleteNotification);

@@ -1,13 +1,13 @@
 const express = require('express');
-const { createLimiter } = require('../middleware/dynamicRateLimiter');
-const { protect } = require('../middleware/authMiddleware');
-const { restrictTo } = require('../middleware/authMiddleware');
-const expeditionController = require('../controllers/expeditionController');
-const reviewController = require('../controllers/reviewController');
-const { uploadReviewPhotos } = require('../middleware/uploadMiddleware');
-const expeditionAnalyticsController = require('../controllers/expeditionAnalyticsController');
-const payLaterPaymentController = require('../controllers/payLaterPaymentController');
-const validate = require('../middleware/validate');
+const { createLimiter } = require('../../../middleware/dynamicRateLimiter');
+const { protect } = require('../../../middleware/authMiddleware');
+const { restrictTo } = require('../../../middleware/authMiddleware');
+const expeditionController = require('../../../controllers/expeditionController');
+const reviewController = require('../../../controllers/reviewController');
+const { uploadReviewPhotos } = require('../../../middleware/uploadMiddleware');
+const expeditionAnalyticsController = require('../../../controllers/expeditionAnalyticsController');
+const payLaterPaymentController = require('../../../controllers/payLaterPaymentController');
+const validate = require('../../../middleware/validate');
 const {
   getToursSchema,
   contactSchema,
@@ -38,7 +38,7 @@ const {
   analyticsRevenueTrendSchema,
   analyticsFunnelSchema,
   supplierToursSchema,
-} = require('../utils/expeditionValidation');
+} = require('../../../utils/expeditionValidation');
 
 const router = express.Router();
 

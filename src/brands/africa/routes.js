@@ -16,14 +16,14 @@
  */
 
 const express = require('express');
-const { createLimiter } = require('../middleware/dynamicRateLimiter');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
-const travioAfricaController = require('../controllers/travioAfricaController');
-const payLaterPaymentController = require('../controllers/payLaterPaymentController');
-const reviewController = require('../controllers/reviewController');
-const { uploadReviewPhotos } = require('../middleware/uploadMiddleware');
-const travioAfricaHomepageController = require('../controllers/travioAfricaHomepageController');
-const validate = require('../middleware/validate');
+const { createLimiter } = require('../../../middleware/dynamicRateLimiter');
+const { protect, restrictTo } = require('../../../middleware/authMiddleware');
+const travioAfricaController = require('../../../controllers/travioAfricaController');
+const payLaterPaymentController = require('../../../controllers/payLaterPaymentController');
+const reviewController = require('../../../controllers/reviewController');
+const { uploadReviewPhotos } = require('../../../middleware/uploadMiddleware');
+const travioAfricaHomepageController = require('../../../controllers/travioAfricaHomepageController');
+const validate = require('../../../middleware/validate');
 const {
   getToursSchema,
   contactSchema,
@@ -40,7 +40,7 @@ const {
   cancelBookingSchema,
   getSupplierBookingsSchema,
   updateBookingStatusSchema,
-} = require('../utils/travioGhanaValidation');
+} = require('../../../utils/travioGhanaValidation');
 
 const router = express.Router();
 

@@ -1,6 +1,6 @@
 const prisma = require('../utils/prismaClient');
 const catchAsync = require('../utils/catchAsync');
-const { makeSupplierController } = require('../src/core/supplier');
+const makeSupplierController = require('../src/core/supplier');
 
 
 const getSupplierTours = catchAsync(async (req, res) => {
