@@ -104,6 +104,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   delete process.env.SUPPLIER_CANCEL_REQUIRES_APPROVAL;
   delete process.env.ADMIN_OPS_EMAIL;
+  delete process.env.SUPPORT_EMAIL;
   mockPrisma.cancellationRequest.findMany.mockResolvedValue([]);
   mockPrisma.cancellationRequest.count.mockResolvedValue(0);
   mockPrisma.booking.updateMany.mockResolvedValue({ count: 0 });
@@ -187,7 +188,25 @@ describe('createCancellationRequest (nothing executes)', () => {
     ).rejects.toThrow(/already awaiting approval/);
   });
 
-  it('skips the ops email (with a warning) when ADMIN_OPS_EMAIL is unset', async () => {
+  it('falls back to SUPPORT_EMAIL when ADMIN_OPS_EMAIL is unset', async () => {
+    mockPrisma.booking.findUnique.mockResolvedValue(BOOKING);
+    mockPrisma.cancellationRequest.findFirst.mockResolvedValue(null);
+    mockPrisma.cancellationRequest.create.mockResolvedValue({ id: 'r1', ...serializedRow() });
+    mockPrisma.cancellationRequest.findUnique.mockResolvedValueOnce(serializedRow());
+    process.env.SUPPORT_EMAIL = 'support@example.com';
+
+    try {
+      await service.createCancellationRequest({ booking: BOOKING, payload: VALID_PAYLOAD, supplierId: 's1', req: REQ });
+      expect(mockSendEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ to: ['support@example.com'], template: 'admin-cancellation-request' }),
+      );
+    } finally {
+      delete process.env.SUPPORT_EMAIL;
+    }
+  });
+
+  it('skips the ops email (with a warning) when no mailbox is configured', async () => {
+    delete process.env.SUPPORT_EMAIL;
     mockPrisma.booking.findUnique.mockResolvedValue(BOOKING);
     mockPrisma.cancellationRequest.findFirst.mockResolvedValue(null);
     mockPrisma.cancellationRequest.create.mockResolvedValue({ id: 'r1', ...serializedRow() });
@@ -197,7 +216,7 @@ describe('createCancellationRequest (nothing executes)', () => {
     await service.createCancellationRequest({ booking: BOOKING, payload: VALID_PAYLOAD, supplierId: 's1', req: REQ });
 
     expect(mockSendEmail).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('ADMIN_OPS_EMAIL not set'), 'r1');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no ops mailbox'), 'r1');
     warn.mockRestore();
   });
 });

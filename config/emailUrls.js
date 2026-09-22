@@ -25,7 +25,15 @@ const GHANA_DASHBOARD_URL = (process.env.GHANA_SUPPLIER_DASHBOARD_URL || 'https:
 // (e.g. confirming a notification email address).
 const API_URL = (process.env.API_URL || 'http://localhost:5000').replace(/\/$/, '');
 // Admin apps origin — deep links from ops emails into the cancellation queue.
-const ADMIN_URL = (process.env.ADMIN_URL || API_URL).replace(/\/$/, '');
+// ADMIN_URL wins; ADMIN_DASHBOARD_URL is the origin already configured on the
+// production server, so ops emails deep-link correctly without new config.
+const ADMIN_URL = (process.env.ADMIN_URL || process.env.ADMIN_DASHBOARD_URL || API_URL).replace(/\/$/, '');
+// Ghana runs its own admin app; Ghana-scoped requests must link there.
+const GHANA_ADMIN_URL = (process.env.GHANA_ADMIN_DASHBOARD_URL || ADMIN_URL).replace(/\/$/, '');
+
+function adminBaseForRoles(roles) {
+  return Array.isArray(roles) && roles.includes('ghana') ? GHANA_ADMIN_URL : ADMIN_URL;
+}
 
 /**
  * Resolve the supplier dashboard base URL for a user. Suppliers with the
@@ -169,7 +177,10 @@ module.exports = {
   supplierNotificationSettings: (user) => `${dashboardBaseForUser(user)}/settings?tab=notifications`,
 
   // ── Admin (ops) — approval queue deep link ─────────────────────────────
-  adminCancellationRequests: (requestId) =>
-    `${ADMIN_URL}/cancellations${requestId ? `?request=${encodeURIComponent(requestId)}` : ''}`,
-  adminBooking: (bookingId) => `${ADMIN_URL}/bookings?booking=${encodeURIComponent(bookingId)}`,
+  // `roles` (the requesting supplier's roles) routes Ghana requests to the
+  // Ghana admin app; everything else uses the main admin origin.
+  adminCancellationRequests: (requestId, roles) =>
+    `${adminBaseForRoles(roles)}/cancellations${requestId ? `?request=${encodeURIComponent(requestId)}` : ''}`,
+  adminBooking: (bookingId, roles) =>
+    `${adminBaseForRoles(roles)}/bookings?booking=${encodeURIComponent(bookingId)}`,
 };

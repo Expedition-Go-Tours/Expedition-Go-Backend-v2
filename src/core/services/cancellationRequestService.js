@@ -44,12 +44,14 @@ function requiresApproval() {
   return TRUE_VALUES.has(String(process.env.SUPPLIER_CANCEL_REQUIRES_APPROVAL || '').trim().toLowerCase());
 }
 
-/** Comma-separated ops mailbox; empty → warn and skip (documented plan decision 5). */
+/** Comma-separated ops mailbox. Falls back to the platform SUPPORT_EMAIL so
+ *  approval alerts work out of the box; ADMIN_OPS_EMAIL overrides it. */
 function opsEmailTargets() {
-  return String(process.env.ADMIN_OPS_EMAIL || '')
+  const configured = String(process.env.ADMIN_OPS_EMAIL || process.env.SUPPORT_EMAIL || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+  return configured;
 }
 
 function money(amount, currency) {
@@ -189,7 +191,7 @@ function serializeCancellationRequest(r) {
 }
 
 // ── Admin awareness: feed + Discord (inside notifyAdmin) + ops email ─────
-async function alertAdminsOnRequest(request, { booking, tour, supplierName, batchCount = 0 }) {
+async function alertAdminsOnRequest(request, { booking, tour, supplierName, supplierRoles = [], batchCount = 0 }) {
   const targets = opsEmailTargets();
   const refund = (request.preview && request.preview.refund) || { amount: 0 };
   const fee = (request.preview && request.preview.fee) || 0;
@@ -214,7 +216,7 @@ async function alertAdminsOnRequest(request, { booking, tour, supplierName, batc
   }).catch(() => {});
 
   if (!targets.length) {
-    console.warn('[CancellationRequest] ADMIN_OPS_EMAIL not set — skipping ops email for', request.id);
+    console.warn('[CancellationRequest] no ops mailbox (ADMIN_OPS_EMAIL/SUPPORT_EMAIL) — skipping ops email for', request.id);
     return;
   }
   sendEmail({
@@ -232,7 +234,7 @@ async function alertAdminsOnRequest(request, { booking, tour, supplierName, batc
       categoryLabel: (request.payload && request.payload.cancellationCategory) || '—',
       reasonLabel: (request.payload && (request.payload.explanation || request.payload.cancellationCode)) || '—',
       requestedAt: new Date(request.createdAt).toISOString().replace('T', ' ').slice(0, 16) + ' UTC',
-      reviewUrl: emailUrls.adminCancellationRequests(request.id),
+      reviewUrl: emailUrls.adminCancellationRequests(request.id, supplierRoles),
       scopeLabel: batchCount > 1 ? `${batchCount} bookings (bulk)` : 'Single booking',
     },
   }).catch((err) => console.error('[CancellationRequest] ops email failed:', err.message));
@@ -358,13 +360,14 @@ async function createCancellationRequest({ booking, payload, supplierId, req }) 
   });
 
   const supplierUser = supplierId
-    ? await prisma.user.findUnique({ where: { id: supplierId }, select: { name: true } })
+    ? await prisma.user.findUnique({ where: { id: supplierId }, select: { name: true, roles: true } })
     : null;
 
   await alertAdminsOnRequest(request, {
     booking,
     tour,
     supplierName: supplierUser ? supplierUser.name : null,
+    supplierRoles: (supplierUser && supplierUser.roles) || [],
   });
 
   logActivity({
@@ -463,12 +466,13 @@ async function submitCancellationRequests({ supplierId, payload, filters, req })
   if (created.length > 0) {
     const first = created[0];
     const supplierUser = supplierId
-      ? await prisma.user.findUnique({ where: { id: supplierId }, select: { name: true } })
+      ? await prisma.user.findUnique({ where: { id: supplierId }, select: { name: true, roles: true } })
       : null;
     await alertAdminsOnRequest(first.request, {
       booking: first.booking,
       tour,
       supplierName: supplierUser ? supplierUser.name : null,
+      supplierRoles: (supplierUser && supplierUser.roles) || [],
       batchCount: created.length,
     });
     logActivity({
