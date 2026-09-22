@@ -328,6 +328,11 @@ app.use('/api/users', userRoutes);
 app.use('/api/tours', tourRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/reviews', reviewRoutes);
+// Mount the more specific settings router BEFORE the general /api/suppliers
+// router. supplierRoutes applies `protect` globally, which would otherwise
+// shadow the public (token-authenticated) endpoints under /settings — the
+// notification-email confirmation link and the team-invite lookup.
+app.use('/api/suppliers/settings', supplierSettingsRoutes);
 app.use('/api/suppliers', supplierRoutes);
 app.use('/api/payouts', payoutRoutes);
 app.use('/api/payout-methods', payoutMethodRoutes);
@@ -357,7 +362,6 @@ app.use('/api/travioghana/chat', attachBrand('ghana'), chatRoutes);
 app.use('/api/travioafrica/chat', attachBrand('africa'), chatRoutes);
 // The Expedition storefront is Ghana's sub-store, so its chat is Ghana-scoped.
 app.use('/api/expedition/chat', attachBrand('ghana'), chatRoutes);
-app.use('/api/suppliers/settings', supplierSettingsRoutes);
 app.use('/api/suppliers/special-offers', specialOfferRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/places', placeRoutes);
