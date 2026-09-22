@@ -1,9 +1,9 @@
 /**
  * Standalone result pages for the supplier notification-email links.
  *
- * These are served by the API and rendered server-side so the recipient — who
- * is not a dashboard user — never hits a login screen. Self-contained HTML with
- * inline CSS, no external assets except the brand logo.
+ * Served by the API and rendered server-side so the recipient — who is not a
+ * dashboard user — never hits a login screen. Self-contained HTML, inline CSS,
+ * no external assets other than the brand logo.
  */
 
 const ICONS = {
@@ -16,6 +16,7 @@ const STATES = {
   verified: {
     title: 'Email confirmed',
     accent: '#0E9F6E',
+    buttonLabel: 'Manage notification emails',
     iconBg: '#ECFDF5',
     icon: ICONS.check,
     message: "You're all set. This address will now receive the notifications selected for it.",
@@ -24,25 +25,28 @@ const STATES = {
   unsubscribed: {
     title: "You're unsubscribed",
     accent: '#0E9F6E',
+    buttonLabel: 'Manage notification emails',
     iconBg: '#ECFDF5',
     icon: ICONS.check,
-    message: 'This address will no longer receive notifications. The account owner can turn it back on at any time from their notification settings.',
+    message: 'This address will no longer receive notifications. The account owner can turn it back on at any time.',
     showRecipient: true,
   },
   expired: {
     title: 'This link has expired',
-    accent: '#D97706',
+    accent: '#B45309',
+    buttonLabel: 'Open notification settings',
     iconBg: '#FEF3C7',
     icon: ICONS.clock,
-    message: 'This confirmation link is no longer valid. Ask the account owner to send a new confirmation from Settings → Notifications.',
-    showRecipient: false,
+    message: 'Confirmation links expire after 7 days. Send a new one from Settings → Notifications.',
+    showRecipient: true,
   },
   invalid: {
     title: "This link isn't valid",
     accent: '#DC2626',
+    buttonLabel: null,
     iconBg: '#FEE2E2',
     icon: ICONS.alert,
-    message: "We couldn't find that confirmation link. It may have been used already, or the link may be incomplete. Ask the account owner to send a new one from Settings → Notifications.",
+    message: "We couldn't match this confirmation link. It may have already been used or the link may be incomplete. You can send a fresh one from Settings → Notifications.",
     showRecipient: false,
   },
 };
@@ -64,28 +68,35 @@ function renderNotificationRecipientPage({
   recipientEmail = '',
   supplierName = '',
   dashboardUrl = '',
+  types = [],
 }) {
   const meta = STATES[state] || STATES.invalid;
   const brand = escapeHtml(brandName);
 
-  const detailRows = [];
+  const details = [];
   if (meta.showRecipient && recipientEmail) {
-    detailRows.push(`<div><span style="color:#94A3B8;">Email</span><br><b>${escapeHtml(recipientEmail)}</b></div>`);
+    details.push(`<div><span class="lbl">Email</span><span class="val">${escapeHtml(recipientEmail)}</span></div>`);
   }
   if (meta.showRecipient && supplierName) {
-    detailRows.push(`<div style="margin-top:10px;"><span style="color:#94A3B8;">Account</span><br><b>${escapeHtml(supplierName)}</b></div>`);
+    details.push(`<div><span class="lbl">Account</span><span class="val">${escapeHtml(supplierName)}</span></div>`);
   }
-  const detail = detailRows.length
-    ? `<div style="margin:22px 0 0;padding:14px 16px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;font-size:13.5px;color:#334155;text-align:left;word-break:break-word;">${detailRows.join('')}</div>`
+  const detailBox = details.length
+    ? `<div class="detail">${details.join('')}</div>`
     : '';
 
-  const button = (state === 'verified' || state === 'unsubscribed') && dashboardUrl
-    ? `<a href="${escapeHtml(dashboardUrl)}" style="display:inline-block;margin-top:24px;padding:13px 26px;border-radius:11px;background:${meta.accent};color:#ffffff;font-weight:700;font-size:14.5px;text-decoration:none;">Manage notification emails</a>`
+  const typeList = Array.isArray(types) && types.length
+    ? `<div class="types"><p class="types-title">Emails this address will receive</p><ul>${types
+        .map((t) => `<li>${escapeHtml(t)}</li>`)
+        .join('')}</ul></div>`
+    : '';
+
+  const button = meta.buttonLabel && dashboardUrl
+    ? `<a class="btn" href="${escapeHtml(dashboardUrl)}" style="background:${meta.accent};">${escapeHtml(meta.buttonLabel)}</a>`
     : '';
 
   const logo = logoUrl
-    ? `<img src="${escapeHtml(logoUrl)}" alt="${brand}" style="height:38px;max-width:190px;margin:0 auto 24px;display:block;">`
-    : `<p style="margin:0 0 24px;font-size:16px;font-weight:800;color:#0F172A;">${brand}</p>`;
+    ? `<img src="${escapeHtml(logoUrl)}" alt="${brand}" class="logo">`
+    : `<p class="brand">${brand}</p>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -93,31 +104,44 @@ function renderNotificationRecipientPage({
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light">
 <title>${escapeHtml(meta.title)} · ${brand}</title>
 <style>
   *{box-sizing:border-box}
-  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#F1F5F9;color:#0F172A;padding:24px;
-       font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
-  .card{width:100%;max-width:460px;background:#fff;border:1px solid #E2E8F0;border-radius:18px;overflow:hidden;
-        box-shadow:0 18px 40px -22px rgba(15,23,42,.35)}
-  .bar{height:6px}
-  .inner{padding:40px 32px 8px;text-align:center}
-  .icon{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}
-  h1{margin:0 0 10px;font-size:22px;font-weight:800;letter-spacing:-.01em}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#EEF2F6;color:#0F172A;padding:28px 20px;
+       font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  .card{width:100%;max-width:470px;background:#fff;border:1px solid #E2E8F0;border-radius:18px;overflow:hidden;
+        box-shadow:0 24px 48px -28px rgba(15,23,42,.4)}
+  .inner{padding:40px 34px 8px;text-align:center}
+  .logo{height:40px;max-width:200px;margin:0 auto 26px;display:block}
+  .brand{margin:0 0 26px;font-size:17px;font-weight:800;letter-spacing:-.01em}
+  .icon{width:66px;height:66px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 22px}
+  h1{margin:0 0 10px;font-size:22px;font-weight:800;letter-spacing:-.01em;line-height:1.25}
   p.msg{margin:0;font-size:15px;line-height:1.65;color:#475569}
-  .foot{padding:22px 32px 30px;text-align:center;font-size:12px;color:#94A3B8}
-  .foot a{color:#0E9F6E;text-decoration:none}
+  .detail{margin:22px 0 0;padding:4px 18px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;text-align:left}
+  .detail>div{display:flex;justify-content:space-between;gap:16px;padding:11px 0;border-bottom:1px solid #EEF2F6;font-size:13.5px}
+  .detail>div:last-child{border-bottom:0}
+  .lbl{color:#64748B}
+  .val{color:#0F172A;font-weight:600;text-align:right;word-break:break-word}
+  .types{margin:20px 0 0;padding:16px 18px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;text-align:left}
+  .types-title{margin:0 0 8px;font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;color:#64748B;font-weight:700}
+  .types ul{margin:0;padding:0;list-style:none}
+  .types li{position:relative;padding:4px 0 4px 22px;font-size:14px;color:#334155}
+  .types li:before{content:"";position:absolute;left:2px;top:9px;width:9px;height:5px;border-left:2px solid #0E9F6E;border-bottom:2px solid #0E9F6E;transform:rotate(-45deg)}
+  .btn{display:inline-block;margin-top:26px;padding:13px 28px;border-radius:11px;color:#fff;font-weight:700;font-size:14.5px;text-decoration:none}
+  .foot{padding:24px 34px 30px;text-align:center;font-size:12px;color:#64748B}
+  .foot a{color:#0E9F6E;text-decoration:none;font-weight:600}
 </style>
 </head>
 <body>
   <main class="card" role="main">
-    <div class="bar" style="background:${meta.accent};"></div>
     <div class="inner">
       ${logo}
       <div class="icon" style="background:${meta.iconBg};color:${meta.accent};">${meta.icon}</div>
       <h1>${escapeHtml(meta.title)}</h1>
       <p class="msg">${escapeHtml(meta.message)}</p>
-      ${detail}
+      ${detailBox}
+      ${typeList}
       ${button}
     </div>
     <div class="foot">

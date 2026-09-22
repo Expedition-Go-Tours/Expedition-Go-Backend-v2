@@ -22,7 +22,18 @@ describe('notificationRecipientPage', () => {
     expect(html).not.toContain('<script');
   });
 
-  it('renders expired and invalid states without a CTA', () => {
+  it('lists the confirmed email types on the success page', () => {
+    const html = renderNotificationRecipientPage({
+      state: 'verified',
+      recipientEmail: 'finance@acme.com',
+      types: ['Bookings & operations', 'Payments & payouts'],
+    });
+    expect(html).toContain('Emails this address will receive');
+    expect(html).toContain('Bookings &amp; operations');
+    expect(html).toContain('Payments &amp; payouts');
+  });
+
+  it('renders expired and invalid states without the manage CTA', () => {
     const expired = renderNotificationRecipientPage({ state: 'expired', brandName: 'Travio Africa' });
     expect(expired).toContain('This link has expired');
     expect(expired).not.toContain('Manage notification emails');
@@ -30,6 +41,17 @@ describe('notificationRecipientPage', () => {
     const invalid = renderNotificationRecipientPage({ state: 'invalid' });
     expect(invalid).toContain('This link');
     expect(invalid).not.toContain('Manage notification emails');
+  });
+
+  it('gives the expired state a way back to settings when the account is known', () => {
+    const html = renderNotificationRecipientPage({
+      state: 'expired',
+      recipientEmail: 'finance@acme.com',
+      dashboardUrl: 'https://supplier.travioghana.com/settings?tab=notifications',
+    });
+    expect(html).toContain('Open notification settings');
+    expect(html).toContain('https://supplier.travioghana.com/settings?tab=notifications');
+    expect(html).toContain('finance@acme.com');
   });
 
   it('falls back to the invalid state for an unknown state', () => {

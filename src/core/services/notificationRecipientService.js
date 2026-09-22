@@ -228,6 +228,29 @@ async function verifyByToken(rawToken) {
   return publicRecipient(record);
 }
 
+/**
+ * Look up a recipient by its raw verification token WITHOUT consuming it.
+ * Lets the public result page show account context (and a helpful next step)
+ * for expired links too. Returns null for an unknown token.
+ */
+async function findByRawToken(rawToken) {
+  const token = String(rawToken || '');
+  if (!token) return null;
+  const row = await prisma.supplierNotificationRecipient.findUnique({
+    where: { verifyTokenHash: sha256(token) },
+  });
+  if (!row) return null;
+  return {
+    id: row.id,
+    supplierId: row.supplierId,
+    email: row.email,
+    name: row.name,
+    status: row.status,
+    preferences: row.preferences || {},
+    tokenExpiresAt: row.tokenExpiresAt,
+  };
+}
+
 async function updateRecipient(supplierId, id, { name, preferences }) {
   const row = await getRecipient(supplierId, id);
   const data = {};
@@ -346,6 +369,7 @@ module.exports = {
   addRecipient,
   resendVerification,
   verifyByToken,
+  findByRawToken,
   updateRecipient,
   removeRecipient,
   disableByEmail,

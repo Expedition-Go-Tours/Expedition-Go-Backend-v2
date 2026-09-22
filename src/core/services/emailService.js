@@ -1565,10 +1565,10 @@ function generateNotificationRecipientVerifyEmail(data) {
   const confirmUrl = esc(data.confirmUrl || '#');
 
   return {
-    html: `<div style="font-family:'Plus Jakarta Sans',Arial,sans-serif;background:#F1F5F9;padding:40px 16px;">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center">
+    html: `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light"><title>Confirm your email address</title><style>body{margin:0;background:#F1F5F9;}</style></head><body style="margin:0;background:#F1F5F9;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F1F5F9" style="background:#F1F5F9;">
+      <tr><td align="center" style="padding:40px 16px;font-family:'Plus Jakarta Sans',Arial,sans-serif;">
       <table role="presentation" width="100%" style="max-width:600px;background:#ffffff;border:1px solid #E2E8F0;border-radius:16px;overflow:hidden;" cellspacing="0" cellpadding="0" border="0">
-        <tr><td height="6" style="background:#0E9F6E;line-height:6px;font-size:0;">&nbsp;</td></tr>
         <tr><td align="center" style="padding:36px 40px 8px 40px;"><img src="{{logoUrl}}" alt="{{brandName}}" width="170" style="display:block;max-width:170px;height:auto;"></td></tr>
         <tr><td align="center" style="padding:16px 40px 0 40px;">
           <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td align="center" style="width:56px;height:56px;background:#ECFDF5;border-radius:28px;font-size:26px;line-height:56px;color:#0E9F6E;">&#9993;</td></tr></table>
@@ -1577,17 +1577,21 @@ function generateNotificationRecipientVerifyEmail(data) {
         <tr><td style="padding:14px 40px 0 40px;"><p style="margin:0;font-size:15px;line-height:1.7;color:#475569;text-align:center;">You're being added to receive <strong style="color:#0F172A;">{{brandName}}</strong> notifications for <strong style="color:#0F172A;">${esc(data.supplierName || 'this supplier')}</strong>. Confirm this address to start receiving:</p></td></tr>
         <tr><td style="padding:22px 40px 0 40px;">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;"><tr><td style="padding:18px 22px;">
-            <p style="margin:0 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#94A3B8;font-family:'Plus Jakarta Sans',Arial,sans-serif;">Emails this address will receive</p>
+            <p style="margin:0 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#64748B;font-family:'Plus Jakarta Sans',Arial,sans-serif;">Emails this address will receive</p>
             ${typesHtml}
           </td></tr></table>
         </td></tr>
         <tr><td align="center" style="padding:26px 40px 6px 40px;"><a href="${confirmUrl}" style="display:inline-block;background:#0E9F6E;color:#ffffff;font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:16px;font-weight:700;text-decoration:none;border-radius:12px;padding:15px 40px;">Confirm email address</a></td></tr>
-        <tr><td style="padding:18px 40px 0 40px;"><p style="margin:0;font-size:12px;line-height:1.6;color:#94A3B8;text-align:center;word-break:break-all;">Button not working? Paste this link into your browser:<br><a href="${confirmUrl}" style="color:#0E9F6E;">${confirmUrl}</a></p></td></tr>
+        <tr><td style="padding:18px 40px 0 40px;"><p style="margin:0;font-size:12px;line-height:1.6;color:#64748B;text-align:center;word-break:break-all;">Button not working? Paste this link into your browser:<br><a href="${confirmUrl}" style="color:#0E9F6E;">${confirmUrl}</a></p></td></tr>
         <tr><td style="padding:22px 40px 32px 40px;"><p style="margin:0;font-size:13px;line-height:1.7;color:#64748B;text-align:center;">This link expires in ${Number(data.expiresInDays) || 7} days. If you weren't expecting this, you can safely ignore this email — nothing will be sent to ${esc(data.recipientEmail || 'this address')} unless you confirm.</p></td></tr>
-        <tr><td bgcolor="#0F172A" style="padding:22px 40px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:12px;color:#94A3B8;">Questions? <a href="mailto:{{supportEmail}}" style="color:#34D399;text-decoration:none;">{{supportEmail}}</a></td><td align="right" style="font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:12px;color:#94A3B8;">{{brandName}} Team</td></tr></table></td></tr>
+        <tr><td bgcolor="#0F172A" style="padding:24px 40px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+            <tr><td style="font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:12px;color:#94A3B8;">Questions? <a href="mailto:{{supportEmail}}" style="color:#34D399;text-decoration:none;">{{supportEmail}}</a></td><td align="right" style="font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:12px;color:#94A3B8;">{{brandName}} Team</td></tr>
+            <tr><td colspan="2" style="padding-top:10px;font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:11px;color:#94A3B8;">&copy; {{year}} {{brandName}}. All rights reserved.</td></tr>
+          </table>
+        </td></tr>
       </table>
-      <p style="margin:20px 0 0;text-align:center;font-size:11px;color:#94A3B8;font-family:'Plus Jakarta Sans',Arial,sans-serif;">&copy; {{year}} {{brandName}}. All rights reserved.</p>
-      </td></tr></table></div>`,
+      </td></tr></table></body></html>`,
     text: `Confirm your email address\n\nYou're being added to receive ${data.brandName || ''} notifications for ${data.supplierName || ''}.${types.length ? `\n\nEmails this address will receive:\n${types.map((t) => `- ${t}`).join('\n')}` : ''}\n\nConfirm: ${confirmUrl}\n\nThis link expires in ${data.expiresInDays || 7} days. If you weren't expecting this, ignore this email.`,
   };
 }

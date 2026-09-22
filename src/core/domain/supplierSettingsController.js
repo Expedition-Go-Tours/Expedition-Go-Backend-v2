@@ -338,19 +338,35 @@ exports.removeNotificationRecipient = catchAsync(async (req, res) => {
 // page; the recipient is not a dashboard user, so we never send them to a login.
 exports.verifyNotificationRecipient = catchAsync(async (req, res) => {
   const token = String(req.query.token || '');
+  const known = await notificationRecipientService.findByRawToken(token);
+
   let state = 'invalid';
-  let recipient = null;
-  try {
-    recipient = await notificationRecipientService.verifyByToken(token);
-    state = 'verified';
-  } catch (err) {
-    state = err?.statusCode === 410 ? 'expired' : 'invalid';
+  let recipient = known;
+  if (known) {
+    const expired = known.tokenExpiresAt && new Date(known.tokenExpiresAt).getTime() < Date.now();
+    if (known.status === 'VERIFIED') {
+      state = 'verified';
+    } else if (expired) {
+      state = 'expired';
+    } else {
+      try {
+        recipient = await notificationRecipientService.verifyByToken(token);
+        state = 'verified';
+      } catch (err) {
+        state = err?.statusCode === 410 ? 'expired' : 'invalid';
+      }
+    }
   }
+
   const ctx = await resultPageContext(recipient?.supplierId);
+  const types = state === 'verified'
+    ? notificationRecipientService.enabledTypeLabels(recipient?.preferences)
+    : [];
   const html = renderNotificationRecipientPage({
     state,
     ...ctx,
     recipientEmail: recipient?.email || '',
+    types,
   });
   res.status(200).type('html').send(html);
 });
