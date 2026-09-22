@@ -46,6 +46,11 @@ async function expireBooking(booking, reason) {
       paymentStatus: 'FAILED',
       cancellationReason: reason,
       cancelledAt: new Date(),
+      // Platform auto-cancel: never counted against the supplier's rate.
+      cancellationOrigin: 'SYSTEM',
+      cancellationCode: 'PAYMENT_NOT_COMPLETED',
+      countsTowardRate: false,
+      refundStatus: 'NOT_APPLICABLE',
     },
   });
 
@@ -293,6 +298,11 @@ async function cancelStalePendingAfterTravelDate() {
           cancellationReason: 'Activity date passed without supplier confirmation',
           cancelledAt: new Date(),
           payoutStatus: 'CANCELLED',
+          // Platform auto-cancel: never counted against the supplier's rate.
+          cancellationOrigin: 'SYSTEM',
+          cancellationCode: 'ACTIVITY_DATE_PASSED',
+          countsTowardRate: false,
+          refundStatus: booking.paymentStatus === 'SUCCEEDED' ? 'PENDING' : 'NOT_APPLICABLE',
           updatedAt: new Date(),
         };
 
@@ -309,9 +319,22 @@ async function cancelStalePendingAfterTravelDate() {
               updateData.paymentStatus = 'REFUNDED';
               updateData.refundAmount = refundAmount;
               updateData.refundedAt = new Date();
+              updateData.refundStatus = 'SUCCEEDED';
             } catch (err) {
               console.error('[BookingCleanup] Refund failed for stale PENDING', booking.id, err.message);
+              // RefundStatus is the source of truth — a failed Stripe refund
+              // must never be stamped REFUNDED (alert admin for manual retry).
+              updateData.refundStatus = 'FAILED';
+              const { notifyAdmin } = require('./adminNotificationService');
+              notifyAdmin({
+                type: 'REFUND_NEEDS_ATTENTION',
+                title: 'Auto-cancel refund failed',
+                message: `Refund for booking ${booking.bookingNumber} failed during the stale-PENDING sweep and needs a manual retry.`,
+                data: { bookingId: booking.id },
+              }).catch(() => {});
             }
+          } else {
+            updateData.refundStatus = 'NOT_APPLICABLE';
           }
         }
 

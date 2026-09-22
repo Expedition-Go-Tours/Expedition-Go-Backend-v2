@@ -23,6 +23,9 @@ router.use(protect);
  */
 router.get('/summary', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getFinanceSummary);
 
+// Cancellation-fee ledger (open fees are netted off the next payout request)
+router.get('/charges', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getSupplierCharges);
+
 /**
  * @swagger
  * /finance/earnings:

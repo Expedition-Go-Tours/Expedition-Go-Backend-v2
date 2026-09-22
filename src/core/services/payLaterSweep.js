@@ -261,6 +261,11 @@ async function finalizeBooking(booking, reason) {
       paymentStatus: 'FAILED',
       cancellationReason: reason,
       cancelledAt: new Date(),
+      // Platform auto-cancel: never counted against the supplier's rate.
+      cancellationOrigin: 'SYSTEM',
+      cancellationCode: 'PAYMENT_NOT_COLLECTED',
+      countsTowardRate: false,
+      refundStatus: 'NOT_APPLICABLE',
     },
   });
   if (updated.count === 0) return;

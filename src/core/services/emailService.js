@@ -828,15 +828,70 @@ async function sendSupplierChangedBookingEmail(booking, { changes = [], changeRe
 async function sendSupplierCancelledBookingEmail(booking, { reason, refundAmount } = {}) {
   const b = await resolveBookingContext(booking);
   const base = await buildBookingBase(b);
+  const origin = emailUrls.bookingClientOrigin(b);
+
+  // Refund state is the authoritative label — never a hardcoded "Processing".
+  const refundStatusLabel = {
+    PENDING: 'Processing',
+    PROCESSING: 'Processing',
+    SUCCEEDED: 'Completed',
+    FAILED: 'Failed — our team has been alerted and will retry',
+    NOT_APPLICABLE: 'No refund due (booking was unpaid)',
+  }[b.refundStatus] || (b.refundStatus ? b.refundStatus : 'Processing');
+
+  // Supplier-caused cancels open the reschedule-or-refund window.
+  const openChoice =
+    b.status === 'CANCELLED' &&
+    b.cancellationOrigin === 'SUPPLIER' &&
+    b.cancellationChoiceDeadline &&
+    !b.customerChoice;
+
   const data = {
     ...base,
     cancellationReason: reason || b.cancellationReason || '',
     refundAmountLabel: fmt.formatCurrency(refundAmount ?? b.refundAmount ?? b.grossAmount, b.currency),
+    refundStatusLabel,
+    ...(openChoice
+      ? {
+          choiceUrl: emailUrls.cancellationChoice(
+            require('./cancellationReasons').signChoiceToken(b.id, b.cancellationChoiceDeadline),
+            origin
+          ),
+          choiceDeadlineLabel: fmt.formatDateTime(b.cancellationChoiceDeadline),
+        }
+      : {}),
   };
   return sendRendered({
     to: base.customerEmail,
     subject: 'Important: Your booking has been cancelled',
     key: 'supplier-cancelled-booking',
+    data,
+  });
+}
+
+/**
+ * To the SUPPLIER: the 25%-of-retail cancellation fee created by an
+ * operational cancel, and the reminder that it nets off their next payout.
+ */
+async function sendSupplierCancellationFeeEmail(booking, { feeAmount } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = await buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const fee = feeAmount ?? (b.cancellationFee != null ? Number(b.cancellationFee) : 0);
+  const feePct = process.env.SUPPLIER_CANCELLATION_FEE_PCT || '25';
+  const data = {
+    ...base,
+    feeAmountLabel: fmt.formatCurrency(fee, b.currency),
+    feePctLabel: `${feePct}%`,
+    grossAmountLabel: fmt.formatCurrency(b.grossAmount, b.currency),
+    refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.grossAmount, b.currency),
+    payoutsUrl: emailUrls.supplierEarnings(),
+    reasonLabel: b.cancellationReason || '',
+  };
+  return sendRendered({
+    to: supplier.email,
+    subject: `Cancellation fee applied — booking ${b.bookingNumber}`,
+    key: 'supplier-cancellation-fee',
     data,
   });
 }
@@ -1654,6 +1709,7 @@ module.exports = {
   sendRefundCompletedEmail,
   sendSupplierChangedBookingEmail,
   sendSupplierCancelledBookingEmail,
+  sendSupplierCancellationFeeEmail,
   sendReviewRequestEmail,
   sendSupplierResponseEmail,
 

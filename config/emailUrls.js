@@ -127,6 +127,9 @@ module.exports = {
   },
   viewRefund: (bookingId, origin) => brandPath(origin, 'refund', bookingId),
   viewCancellation: (bookingId, origin) => brandPath(origin, 'cancel', bookingId),
+  // Reschedule-or-refund decision page (signed token, no login required).
+  cancellationChoice: (token, origin) =>
+    `${baseUrl(origin)}/cancellation-choice?token=${encodeURIComponent(token)}`,
   browseExperiences: (origin) => `${baseUrl(origin)}/tours`,
   contactSupport: (origin) => brandPath(origin, 'support'),
   getDirections: (location) => mapsDirectionsUrl(location),

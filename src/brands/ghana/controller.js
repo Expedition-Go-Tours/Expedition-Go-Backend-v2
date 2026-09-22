@@ -8,6 +8,7 @@ const { placeTourIds } = require('../../core/services/placeListing');
 const { placeRankFor, normalizeRegion } = require('../../core/services/placeResolver');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../../core/services/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, isValidEmail } = require('../../core/services/bookingHelpers');
+const { withChoiceToken } = require('../../core/services/cancellationReasons');
 const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../../core/services/tourHelpers');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../../core/services/availabilityCore');
 const { resolvePickupSelection } = require('../../core/services/geoUtils');
@@ -1085,7 +1086,9 @@ const getMyBookings = catchAsync(async (req, res, next) => {
 
   const totalPages = Math.ceil(totalCount / take);
 
-  const decorated = bookings.map((b) => ({ ...b, refundState: bookingRefundState(b) }));
+  const decorated = bookings.map((b) =>
+    withChoiceToken({ ...b, refundState: bookingRefundState(b) }),
+  );
 
   res.status(200).json({
     status: 'success',
@@ -1118,7 +1121,7 @@ const getBooking = catchAsync(async (req, res, next) => {
 
   if (!booking) return next(new AppError('Booking not found', 404));
 
-  const decorated = { ...booking, refundState: bookingRefundState(booking) };
+  const decorated = withChoiceToken({ ...booking, refundState: bookingRefundState(booking) });
   res.status(200).json({ status: 'success', data: { booking: sanitizeBookingPaymentInternals(decorated) } });
 });
 
@@ -1204,7 +1207,19 @@ const cancelBooking = catchAsync(async (req, res, next) => {
   const result = await prisma.$transaction(async (tx) => {
     const updated = await tx.booking.update({
       where: { id },
-      data: { status: 'CANCELLED', cancellationReason: reason || null, cancelledAt: new Date(), payoutStatus: 'CANCELLED' },
+      data: {
+        status: 'CANCELLED',
+        cancellationReason: reason || null,
+        cancelledAt: new Date(),
+        payoutStatus: 'CANCELLED',
+        // Customer-initiated (storefront self-cancel): structured so the
+        // supplier's cancellation rate is never hit by the customer's own act.
+        cancellationOrigin: 'CUSTOMER',
+        cancellationCategory: 'CUSTOMER_REQUESTED',
+        cancellationCode: 'CUSTOMER_REQUESTED_CANCEL',
+        countsTowardRate: false,
+        refundStatus: needsRefund ? 'PENDING' : 'NOT_APPLICABLE',
+      },
     });
 
     // A cancelled booking must never pay the supplier — close any payout
@@ -1242,12 +1257,23 @@ const cancelBooking = catchAsync(async (req, res, next) => {
       refundSucceeded = true;
       await prisma.booking.update({
         where: { id },
-        data: { paymentStatus: 'REFUNDED', refundAmount, refundedAt: new Date() },
+        data: { paymentStatus: 'REFUNDED', refundAmount, refundedAt: new Date(), refundStatus: 'SUCCEEDED' },
       });
     } catch (refundErr) {
       console.error(`[Travio Ghana] Stripe refund failed for booking ${id}:`, refundErr.message);
       // Booking is already CANCELLED but paymentStatus stays SUCCEEDED so
       // the refund can be retried manually from the admin dashboard.
+      await prisma.booking.update({
+        where: { id },
+        data: { refundStatus: 'FAILED' },
+      }).catch(() => {});
+      const { notifyAdmin } = require('../../core/services/adminNotificationService');
+      notifyAdmin({
+        type: 'REFUND_NEEDS_ATTENTION',
+        title: 'Customer-cancel refund failed',
+        message: `Refund for booking ${booking.bookingNumber} failed at Stripe and needs a manual retry.`,
+        data: { bookingId: booking.id },
+      }).catch(() => {});
     }
   }
 
@@ -1350,7 +1376,7 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
 const updateBookingStatus = catchAsync(async (req, res, next) => {
   const supplierId = req.user.id;
   const { id } = req.params;
-  const { status, reason } = req.body;
+  const { status, supplierNotes } = req.body;
 
   const booking = await prisma.booking.findFirst({
     where: {
@@ -1381,15 +1407,48 @@ const updateBookingStatus = catchAsync(async (req, res, next) => {
     return next(new AppError(`Cannot transition from ${booking.status} to ${status}`, 400));
   }
 
-  const updateData = { status };
+  // ── Supplier cancellation → the shared GetYourGuide-style structured flow ──
+  // Same money rules as core: mandatory taxonomy reason + T&C ack (zod rejects
+  // anything else at the route), ALWAYS-full customer refund, 25% fee for
+  // operational reasons, and the customer's 48h reschedule-or-refund window.
   if (status === 'CANCELLED') {
-    updateData.cancellationReason = reason || null;
-    updateData.cancelledAt = new Date();
+    const { cancelBySupplier } = require('../../core/services/supplierCancellation');
+    const result = await cancelBySupplier({ booking, payload: req.body, supplierId, req });
+
+    // Persist wizard notes alongside (cancelBySupplier owns the money fields),
+    // then re-read with the includes this endpoint has always returned.
+    const include = {
+      tour: { select: { id: true, title: true, slug: true } },
+      customer: { select: { id: true, name: true, email: true } },
+    };
+    const updated =
+      supplierNotes !== undefined && supplierNotes !== null
+        ? await prisma.booking.update({
+            where: { id },
+            data: { supplierNotes, updatedAt: new Date() },
+            include,
+          })
+        : await prisma.booking.findUnique({ where: { id }, include });
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        booking: updated,
+        cancellation: {
+          refundStatus: result.refundStatus,
+          refundAmount: result.refundAmount,
+          refundExecuted: result.refundExecuted,
+          fee: result.fee,
+          countsTowardRate: result.countsTowardRate,
+          choiceDeadline: result.choiceDeadline ? result.choiceDeadline.toISOString() : null,
+        },
+      },
+    });
   }
 
   const updated = await prisma.booking.update({
     where: { id },
-    data: updateData,
+    data: { status },
     include: {
       tour: { select: { id: true, title: true, slug: true } },
       customer: { select: { id: true, name: true, email: true } },

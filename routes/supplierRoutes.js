@@ -501,12 +501,16 @@ const cancellationController = require('../src/core/domain/cancellationControlle
  *   get:
  *     summary: Get supplier cancellation summary
  *     description: |
- *       Returns a summary of the supplier's cancellation rate over the last 90 days.
- *       Only supplier-caused cancellations are counted (excludes weather, force majeure,
- *       and customer-requested cancellations). The status is calculated as:
- *       - **Excellent**: cancellation rate < 2%
- *       - **Warning**: cancellation rate 2–5%
- *       - **Poor**: cancellation rate > 5%
+ *       Returns a summary of the supplier's cancellation rate over the last 90 days
+ *       (configurable via ?days=). Only supplier-caused cancellations are counted —
+ *       customer/system cancels and excluded categories (force majeure,
+ *       customer-requested) never count. The status follows the GetYourGuide
+ *       Performance Quality Standards thresholds:
+ *       - **Building performance record**: fewer than 10 eligible bookings (rating waived)
+ *       - **Excellent**: cancellation rate ≤ 1%
+ *       - **Good**: cancellation rate ≤ 2%
+ *       - **Needs attention**: cancellation rate ≤ 5%
+ *       - **High**: cancellation rate > 5% (warn-only — never auto-delist)
  *     tags: [Suppliers]
  *     security:
  *       - bearerAuth: []
@@ -517,6 +521,13 @@ const cancellationController = require('../src/core/domain/cancellationControlle
  *           type: string
  *         description: Filter by specific tour/product ID
  *         example: tour_abc123
+ *       - name: days
+ *         in: query
+ *         schema:
+ *           type: integer
+ *           default: 90
+ *         description: Rolling window in days
+ *         example: 90
  *     responses:
  *       200:
  *         description: Cancellation summary retrieved
@@ -537,9 +548,34 @@ const cancellationController = require('../src/core/domain/cancellationControlle
  *                       example: 3.2
  *                     status:
  *                       type: string
- *                       enum: [Excellent, Warning, Poor]
- *                       description: Severity level based on cancellation rate
- *                       example: Warning
+ *                       enum: [Building performance record, Excellent, Good, Needs attention, High]
+ *                       description: Severity level based on cancellation rate (GYG thresholds)
+ *                       example: Needs attention
+ *                     confirmed:
+ *                       type: integer
+ *                       description: Confirmed bookings in the window
+ *                       example: 150
+ *                     cancelled:
+ *                       type: integer
+ *                       description: Supplier-caused cancellations in the window
+ *                       example: 5
+ *                     completed:
+ *                       type: integer
+ *                       example: 120
+ *                     noShow:
+ *                       type: integer
+ *                       example: 1
+ *                     noShowRate:
+ *                       type: number
+ *                       description: No-show percentage (target ≤ 0.2%)
+ *                       example: 0.67
+ *                     eligibleBookings:
+ *                       type: integer
+ *                       description: Bookings eligible for the rating (confirmed + cancelled)
+ *                       example: 155
+ *                     completionRate:
+ *                       type: number
+ *                       example: 96.8
  *                     bookingValueLost:
  *                       type: number
  *                       description: Total monetary value of cancelled bookings
@@ -549,6 +585,9 @@ const cancellationController = require('../src/core/domain/cancellationControlle
  *                       nullable: true
  *                       description: Most frequent cancellation reason (null if no cancellations)
  *                       example: Guide unavailable
+ *                     days:
+ *                       type: integer
+ *                       example: 90
  */
 router.get('/cancellation/summary', resolveSupplier, cancellationController.getCancellationSummary);
 

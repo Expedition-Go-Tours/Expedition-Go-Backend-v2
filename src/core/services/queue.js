@@ -105,6 +105,7 @@ const SCHEDULES = [
   { jobName: 'expire-checkout-holds',       queue: 'cleanup',      everyMs: 5 * 60 * 1000 },
   { jobName: 'expire-modify-topups',        queue: 'cleanup',      everyMs: 5 * 60 * 1000 },
   { jobName: 'charge-pay-later-bookings',   queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
+  { jobName: 'resolve-cancellation-choices', queue: 'cleanup',     everyMs: 5 * 60 * 1000 },
   { jobName: 'earnings-eligibility-sweep',  queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
   { jobName: 'plan-booking-reminders',      queue: 'cleanup',      everyMs: 3600 * 1000 },
   { jobName: 'dispatch-booking-reminders',  queue: 'cleanup',      everyMs: 15 * 60 * 1000 },
@@ -373,6 +374,7 @@ const EMAIL_JOB_DISPATCH = {
   'refund-completed': ['sendRefundCompletedEmail', true],
   'supplier-changed-booking': ['sendSupplierChangedBookingEmail', true],
   'supplier-cancelled-booking': ['sendSupplierCancelledBookingEmail', true],
+  'supplier-cancellation-fee': ['sendSupplierCancellationFeeEmail', true],
   'review-request': ['sendReviewRequestEmail', true],
   'supplier-review-response': ['sendSupplierResponseEmail', true],
   'chat-new-message': ['sendChatMessageEmail', false],
@@ -989,6 +991,13 @@ function registerWorkers() {
         case 'charge-pay-later-bookings': {
           const { chargePayLaterBookings } = require('./payLaterSweep');
           await chargePayLaterBookings();
+          break;
+        }
+        case 'resolve-cancellation-choices': {
+          // GYG closing move: expire 48h choice windows (auto-refund) +
+          // execute chosen refunds + alert on stuck refunds.
+          const { resolveCancellationChoices } = require('./supplierCancellation');
+          await resolveCancellationChoices();
           break;
         }
         case 'plan-booking-reminders': {

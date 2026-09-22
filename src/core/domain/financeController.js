@@ -173,6 +173,54 @@ exports.getEarnings = catchAsync(async (req, res) => {
 });
 
 /**
+ * GET /finance/charges
+ * The supplier's cancellation-fee ledger (open fees will be netted off their
+ * next payout request; settled ones show which request collected them).
+ */
+exports.getSupplierCharges = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  if (!supplierId) return next(new AppError('Not authorized', 401));
+
+  const charges = await prisma.supplierCharge.findMany({
+    where: { supplierId },
+    orderBy: { createdAt: 'desc' },
+    take: 100,
+    include: {
+      booking: { select: { id: true, bookingNumber: true, travelDate: true, status: true } },
+      payoutRequest: { select: { id: true, requestNumber: true, status: true } },
+    },
+  });
+
+  const openTotals = {};
+  for (const c of charges) {
+    if (c.status !== 'OPEN') continue;
+    openTotals[c.currency] = Math.round(((openTotals[c.currency] || 0) + toNumber(c.amount)) * 100) / 100;
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      openTotals,
+      charges: charges.map((c) => ({
+        id: c.id,
+        amount: toNumber(c.amount),
+        currency: c.currency,
+        reason: c.reason,
+        status: c.status,
+        notes: c.notes,
+        createdAt: c.createdAt,
+        settledAt: c.settledAt,
+        bookingId: c.bookingId,
+        bookingNumber: c.booking?.bookingNumber || null,
+        travelDate: c.booking?.travelDate || null,
+        payoutRequestId: c.payoutRequestId,
+        payoutRequestNumber: c.payoutRequest?.requestNumber || null,
+      })),
+    },
+  });
+});
+
+/**
  * POST /finance/payout/request
  * Body: { bookingIds?: string[], payoutMethodId?: string, notes?: string }
  * - Omitting bookingIds selects ALL eligible bookings.
@@ -236,13 +284,31 @@ exports.createPayoutRequest = catchAsync(async (req, res, next) => {
     const created = [];
     for (const [currency, group] of Object.entries(byCurrency)) {
       const amount = group.reduce((s, b) => s + toNumber(b.supplierPayout), 0);
+
+      // ── Cancellation fees are netted off first (GYG-style) ──
+      // Open 25%-of-retail fees from supplier cancels can't be withdrawn —
+      // they reduce this request. If they meet or exceed it, block with a
+      // clear message rather than creating a zero/negative payout.
+      const openCharges = await tx.supplierCharge.findMany({
+        where: { supplierId, status: 'OPEN', currency },
+        orderBy: { createdAt: 'asc' },
+      });
+      const feeTotal = openCharges.reduce((s, c) => s + toNumber(c.amount), 0);
+      if (feeTotal > 0 && feeTotal >= amount) {
+        throw new AppError(
+          `Your open cancellation fees (${feeTotal.toFixed(2)} ${currency}) are equal to or greater than this payout amount (${amount.toFixed(2)} ${currency}). The fees will be settled against a larger payout, or contact support to resolve them.`,
+          400
+        );
+      }
+      const netAmount = Math.round((amount - feeTotal) * 100) / 100;
+
       const ts = Date.now().toString().slice(-6);
       const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
       const request = await tx.payoutRequest.create({
         data: {
           requestNumber: `PR-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${ts}${rand}`,
           supplierId,
-          amount,
+          amount: netAmount,
           currency,
           bookingCount: group.length,
           status: 'PROCESSING',
@@ -250,7 +316,10 @@ exports.createPayoutRequest = catchAsync(async (req, res, next) => {
           cycleEndDate: window.cycle.end,
           cycleLabel: window.cycle.label,
           payoutMethodId: method.id,
-          notes: notes || null,
+          notes:
+            feeTotal > 0
+              ? `${notes ? `${notes} · ` : ''}Includes ${feeTotal.toFixed(2)} ${currency} cancellation fees`
+              : notes || null,
           items: {
             create: group.map((b) => ({
               bookingId: b.id,
@@ -264,30 +333,45 @@ exports.createPayoutRequest = catchAsync(async (req, res, next) => {
         include: { items: true },
       });
 
+      // Settle the fees against this request so they're only ever deducted once.
+      if (feeTotal > 0) {
+        await tx.supplierCharge.updateMany({
+          where: { id: { in: openCharges.map((c) => c.id) }, status: 'OPEN' },
+          data: { status: 'SETTLED', payoutRequestId: request.id, settledAt: new Date() },
+        });
+      }
+
       await tx.booking.updateMany({
         where: { id: { in: group.map((b) => b.id) } },
         data: { payoutStatus: 'REQUESTED' },
       });
 
-      created.push(request);
+      created.push({ ...request, feesDeducted: feeTotal });
     }
     return created;
   });
+
+  const totalFeesDeducted = requests.reduce((s, r) => s + (r.feesDeducted || 0), 0);
 
   await logActivity({
     userId: req.user.id,
     action: 'payout_request.created',
     resource: 'PayoutRequest',
     resourceId: requests[0].id,
-    metadata: { requests: requests.map((r) => ({ id: r.id, currency: r.currency, amount: toNumber(r.amount), bookings: r.bookingCount })) },
+    metadata: {
+      requests: requests.map((r) => ({ id: r.id, currency: r.currency, amount: toNumber(r.amount), bookings: r.bookingCount })),
+      feesDeducted: Math.round(totalFeesDeducted * 100) / 100,
+    },
   });
 
   enqueueNotification({
     userId: supplierId,
     type: 'PAYOUT_REQUEST_SUBMITTED',
     title: 'Payout Request Submitted',
-    message: `Your payout request for ${requests.reduce((s, r) => s + toNumber(r.amount), 0).toFixed(2)} ${requests[0].currency} (${requests.reduce((s, r) => s + r.bookingCount, 0)} bookings) is being processed.`,
-    data: { payoutRequestId: requests[0].id },
+    message: totalFeesDeducted > 0
+      ? `Your payout request for ${requests.reduce((s, r) => s + toNumber(r.amount), 0).toFixed(2)} ${requests[0].currency} (${requests.reduce((s, r) => s + r.bookingCount, 0)} bookings) is being processed. ${totalFeesDeducted.toFixed(2)} ${requests[0].currency} in cancellation fees was deducted.`
+      : `Your payout request for ${requests.reduce((s, r) => s + toNumber(r.amount), 0).toFixed(2)} ${requests[0].currency} (${requests.reduce((s, r) => s + r.bookingCount, 0)} bookings) is being processed.`,
+    data: { payoutRequestId: requests[0].id, feesDeducted: totalFeesDeducted },
   }).catch(() => {});
 
   notifyAdmin({

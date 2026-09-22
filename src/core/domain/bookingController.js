@@ -31,6 +31,8 @@ const { generatePrintableTicketHtml } = require('../services/emailService');
 const { logActivity } = require('../services/auditLogger');
 const logger = require('../services/logger');
 const { sanitizeBookingPaymentInternals } = require('../services/sanitizeBookings');
+const { cancelBySupplier, cancelBatchBySupplier, applyCustomerChoice, CHOICE_WINDOW_HOURS } = require('../services/supplierCancellation');
+const { verifyChoiceToken, withChoiceToken } = require('../services/cancellationReasons');
 
 // ================================
 // CART MANAGEMENT
@@ -793,7 +795,7 @@ exports.getMyBookings = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: {
-      bookings: sanitizeBookingPaymentInternals(bookings),
+      bookings: sanitizeBookingPaymentInternals(bookings.map(withChoiceToken)),
       pagination: {
         currentPage: parseInt(page),
         totalPages,
@@ -840,7 +842,7 @@ exports.getBooking = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: { booking: sanitizeBookingPaymentInternals(booking) }
+    data: { booking: sanitizeBookingPaymentInternals(withChoiceToken(booking)) }
   });
 });
 
@@ -1016,17 +1018,23 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
         status: 'CANCELLED',
         cancellationReason: reason,
         cancelledAt: new Date(),
-        payoutStatus: 'CANCELLED'
+        payoutStatus: 'CANCELLED',
+        // Customer-initiated: structured so the supplier's cancellation rate
+        // can never be hit by a customer's own cancel (origin drives the flag).
+        cancellationOrigin: 'CUSTOMER',
+        cancellationCategory: 'CUSTOMER_REQUESTED',
+        cancellationCode: 'CUSTOMER_REQUESTED_CANCEL',
+        countsTowardRate: false,
+        refundStatus: needsRefund ? 'PENDING' : 'NOT_APPLICABLE',
       }
     });
 
-    // Close any payout that was queued when the payment succeeded.
-    if (needsRefund) {
-      await tx.payout.updateMany({
-        where: { bookingId: id, status: 'PENDING' },
-        data: { status: 'CANCELLED', processedAt: new Date() },
-      });
-    }
+    // Close any payout that was queued when the payment succeeded — a
+    // cancelled booking must never pay the supplier, paid or not.
+    await tx.payout.updateMany({
+      where: { bookingId: id, status: 'PENDING' },
+      data: { status: 'CANCELLED', processedAt: new Date() },
+    });
 
     // Finance v2: detach from any active payout request so the supplier's
     // pending request total no longer includes this booking.
@@ -1057,13 +1065,26 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
         data: {
           paymentStatus: 'REFUNDED',
           refundAmount: cancellationCheck.refundAmount,
-          refundedAt: new Date()
+          refundedAt: new Date(),
+          refundStatus: 'SUCCEEDED',
         }
       });
     } catch (refundErr) {
       console.error(` Stripe refund failed for booking ${id}:`, refundErr.message);
       // Booking is already CANCELLED but paymentStatus stays SUCCEEDED so
-      // the refund can be retried manually from the admin dashboard.
+      // the refund can be retried manually from the admin dashboard —
+      // refundStatus FAILED records the attempt honestly + alerts admin.
+      await prisma.booking.update({
+        where: { id },
+        data: { refundStatus: 'FAILED' },
+      }).catch(() => {});
+      const { notifyAdmin } = require('../services/adminNotificationService');
+      notifyAdmin({
+        type: 'REFUND_NEEDS_ATTENTION',
+        title: 'Customer-cancel refund failed',
+        message: `Refund for booking ${booking.bookingNumber} failed at Stripe and needs a manual retry.`,
+        data: { bookingId: booking.id },
+      }).catch(() => {});
     }
   }
 
@@ -1427,102 +1448,40 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
     }
   }
 
-  // ── Supplier-initiated cancellation ──
+  // ── Supplier-initiated cancellation (GetYourGuide-style structured flow) ──
+  // All money rules live in supplierCancellation.cancelBySupplier:
+  // mandatory structured reason + T&C ack (zod rejects anything else at the
+  // route), ALWAYS-full refund for supplier-caused cancels, 25% fee for
+  // operational reasons, and the customer's 48h reschedule-or-refund window.
   if (status === 'CANCELLED') {
-    const result = await prisma.$transaction(async (tx) => {
-      const updateData = {
-        status: 'CANCELLED',
-        cancellationReason: reason || null,
-        cancelledAt: new Date(),
-        payoutStatus: 'CANCELLED',
-        supplierNotes,
-        updatedAt: new Date(),
-      };
-
-      // Process refund if payment was successful
-      let refundAmount = 0;
-      if (booking.paymentStatus === 'SUCCEEDED') {
-        const cancellationCheck = evaluateCancellationPolicy(booking, booking.tour);
-        refundAmount = cancellationCheck.refundAmount;
-
-        if (refundAmount > 0) {
-          try {
-            const refundAmountCents = Math.round(refundAmount * 100);
-            await createRefund(booking.stripePaymentIntentId, refundAmountCents);
-          } catch (refundErr) {
-            console.error(`[Booking] Stripe refund failed for booking ${id}:`, refundErr.message);
-          }
-
-          updateData.paymentStatus = 'REFUNDED';
-          updateData.refundAmount = refundAmount;
-          updateData.refundedAt = new Date();
-
-          // Cancel pending payout rows
-          await tx.payout.updateMany({
-            where: { bookingId: id, status: 'PENDING' },
-            data: { status: 'CANCELLED', processedAt: new Date() },
-          });
-        }
-      }
-
-      const updatedBooking = await tx.booking.update({
-        where: { id },
-        data: updateData,
-      });
-
-      // Finance v2: detach from any active payout request
-      await detachBookingFromActiveRequests(tx, id);
-
-      // Decrement spotsSold for applied special offer
-      if (booking.appliedOfferId) {
-        const travelerCountValue = travelerCount(booking.travelers);
-        await tx.specialOffer.update({
-          where: { id: booking.appliedOfferId },
-          data: { spotsSold: { decrement: travelerCountValue } },
-        });
-      }
-
-      return { updatedBooking, refundAmount };
-    });
-
-    // Send supplier-cancelled-booking email to customer (fire-and-forget)
-    enqueueEmail({
-      type: 'supplier-cancelled-booking',
-      bookingId: booking.id,
-      reason,
-      refundAmount: result.refundAmount,
-    }).catch((err) => console.error('[Email] supplier-cancelled-booking failed:', err.message));
-
-    // Notify customer in-app
-    enqueueNotification({
-      userId: booking.customerId,
-      type: 'BOOKING_CANCELLED',
-      title: 'Booking Cancelled',
-      message: `Your booking "${booking.tour.title}" has been cancelled by the supplier`,
-      data: { bookingId: booking.id }
-    }).catch((err) => console.error('[Notification] enqueueNotification (supplier cancel) failed:', err.message));
-
-    // Log activity
-    logActivity({
-      userId: supplierId,
-      action: 'booking.cancelled',
-      resource: 'Booking',
-      resourceId: booking.id,
-      metadata: { reason, refundAmount: result.refundAmount }
-    }).catch((err) => logger.warn('[booking] logActivity failed:', err?.message));
-
-    enqueueEvent({
-      name: 'booking.cancelled',
-      userId: supplierId,
+    const result = await cancelBySupplier({
+      booking,
+      payload: req.body,
+      supplierId,
       req,
-      resource: 'Booking',
-      resourceId: booking.id,
-      properties: { reason, refundAmount: result.refundAmount, tourId: booking.tourId },
     });
+
+    // supplierNotes are written by the wizard too — persist them alongside.
+    if (supplierNotes !== undefined && supplierNotes !== null) {
+      result.booking = await prisma.booking.update({
+        where: { id },
+        data: { supplierNotes, updatedAt: new Date() },
+      });
+    }
 
     return res.status(200).json({
       status: 'success',
-      data: { booking: result.updatedBooking }
+      data: {
+        booking: result.booking,
+        cancellation: {
+          refundStatus: result.refundStatus,
+          refundAmount: result.refundAmount,
+          refundExecuted: result.refundExecuted,
+          fee: result.fee,
+          countsTowardRate: result.countsTowardRate,
+          choiceDeadline: result.choiceDeadline ? result.choiceDeadline.toISOString() : null,
+        },
+      },
     });
   }
 
@@ -1599,6 +1558,104 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
 // ================================
 // HELPER FUNCTIONS
 // ================================
+
+/**
+ * POST /bookings/supplier/cancel-batch — the bulk cancellation wizard.
+ * One tour, one date range, one structured reason. Optionally blocks the
+ * dates ("stop accepting bookings") so nobody keeps selling them.
+ */
+exports.cancelBookingsBatch = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  const { tourId, dateFrom, dateTo, selectedTime, stopAcceptingBookings, ...payload } = req.body;
+
+  const result = await cancelBatchBySupplier({
+    supplierId,
+    payload,
+    filters: { tourId, dateFrom, dateTo, selectedTime, stopAcceptingBookings },
+    req,
+  });
+
+  res.status(200).json({ status: 'success', data: result });
+});
+
+/**
+ * GET /bookings/cancellation-reasons — the reason taxonomy the wizard
+ * renders (single source of truth: backend owns the categories/codes, the
+ * dashboards just display them).
+ */
+exports.getCancellationReasons = catchAsync(async (req, res) => {
+  const { getReasonsByCategory, REASONS, SYSTEM_CODES, CATEGORIES, cancellationFeePct } =
+    require('../services/cancellationReasons');
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      categories: Object.values(CATEGORIES),
+      reasons: REASONS,
+      byCategory: getReasonsByCategory(),
+      systemCodes: SYSTEM_CODES,
+      feePct: cancellationFeePct(),
+      choiceWindowHours: CHOICE_WINDOW_HOURS,
+    },
+  });
+});
+
+/**
+ * GET /bookings/cancellation-choice/:token (PUBLIC)
+ * Storefront page preview: what the customer is deciding on (tour, date,
+ * deadline, current state) before they click reschedule-or-refund.
+ */
+exports.getCancellationChoice = catchAsync(async (req, res, next) => {
+  const parsed = verifyChoiceToken(req.params.token);
+  if (!parsed) return next(new AppError('This link is invalid or has expired', 400));
+
+  const booking = await prisma.booking.findUnique({
+    where: { id: parsed.bookingId },
+    include: {
+      tour: { select: { id: true, title: true, slug: true, coverPhoto: true, timeZone: true } },
+    },
+  });
+  if (!booking || booking.cancellationOrigin !== 'SUPPLIER') {
+    return next(new AppError('This link is invalid or has expired', 400));
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      token: req.params.token,
+      bookingNumber: booking.bookingNumber,
+      tourTitle: booking.tour.title,
+      tourSlug: booking.tour.slug,
+      coverPhoto: booking.tour.coverPhoto,
+      travelDate: booking.travelDate,
+      selectedTime: booking.selectedTime,
+      refundAmount: booking.refundAmount != null ? Number(booking.refundAmount) : Number(booking.grossAmount),
+      currency: booking.currency,
+      choiceDeadline: booking.cancellationChoiceDeadline
+        ? booking.cancellationChoiceDeadline.toISOString()
+        : parsed.deadline.toISOString(),
+      resolvedStatus: booking.status === 'CANCELLED' ? null : 'RESCHEDULED',
+      customerChoice: booking.customerChoice,
+      refundStatus: booking.refundStatus,
+      choiceWindowHours: CHOICE_WINDOW_HOURS,
+    },
+  });
+});
+
+/**
+ * POST /bookings/cancellation-choice (PUBLIC)
+ * The customer's decision from the emailed signed link:
+ *   choice = 'REFUND'      → full refund executed now
+ *   choice = 'RESCHEDULE'  → booking restored on newTravelDate (availability-checked)
+ */
+exports.resolveCancellationChoice = catchAsync(async (req, res, next) => {
+  const { token, choice, newTravelDate } = req.body || {};
+  if (!token || typeof token !== 'string') return next(new AppError('token is required', 400));
+
+  const result = await applyCustomerChoice({ token, choice, newTravelDate });
+
+  res.status(200).json({ status: 'success', data: result });
+});
 
 module.exports = exports;
 

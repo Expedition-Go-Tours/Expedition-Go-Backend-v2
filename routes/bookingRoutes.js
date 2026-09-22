@@ -10,9 +10,19 @@ const express = require('express');
 const { protect } = require('../middleware/authMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 const { createUserLimiter } = require('../middleware/dynamicRateLimiter');
+const validate = require('../middleware/validate');
+const { updateBookingStatusSchema, bulkCancelSchema } = require('../src/core/services/cancellationSchemas');
 const bookingController = require('../src/core/domain/bookingController');
 
 const router = express.Router();
+
+// ── Cancellation choice (public — BEFORE `protect` below) ─────────────────
+// The customer's "new date OR full refund" decision arrives from an emailed
+// HMAC-signed link: the token IS the authentication, so no login is required.
+// Registered ahead of protect so an unauthenticated visitor with a valid
+// token can read and resolve their choice.
+router.get('/cancellation-choice/:token', bookingController.getCancellationChoice);
+router.post('/cancellation-choice', bookingController.resolveCancellationChoice);
 
 // All routes require authentication
 router.use(protect);
@@ -333,6 +343,10 @@ router.post('/', bookingCreateLimiter, bookingController.createBooking);
  */
 router.get('/my-bookings', bookingController.getMyBookings);
 
+// Reason taxonomy for the supplier cancel wizard — registered above `/:id`
+// so "cancellation-reasons" is never swallowed as a booking id.
+router.get('/cancellation-reasons', bookingController.getCancellationReasons);
+
 /**
  * @swagger
  * /bookings/{id}/ticket:
@@ -633,6 +647,11 @@ router.patch('/supplier/pickup-planner/:id', resolveSupplier, requireTeamPermiss
  *       - CONFIRMED: Confirm a pending booking
  *       - COMPLETED: Mark booking as completed after tour ends
  *       - NO_SHOW: Mark when customer doesn't show up
+ *       - CANCELLED: Supplier-initiated cancellation. GetYourGuide-style structured
+ *         flow — a taxonomy reason code, the T&C checkbox and category-conditional
+ *         fields are REQUIRED (400 otherwise). Always issues a full refund to the
+ *         customer; adds a 25%-of-retail cancellation fee for OPERATIONAL reasons;
+ *         opens a 48h reschedule-or-refund choice window for supplier-caused cancels.
  *     tags: [Bookings, Supplier]
  *     security:
  *       - bearerAuth: []
@@ -655,14 +674,34 @@ router.patch('/supplier/pickup-planner/:id', resolveSupplier, requireTeamPermiss
  *             properties:
  *               status:
  *                 type: string
- *                 enum: [CONFIRMED, COMPLETED, NO_SHOW]
+ *                 enum: [CONFIRMED, COMPLETED, NO_SHOW, CANCELLED]
  *                 description: New booking status
  *                 example: COMPLETED
  *               supplierNotes:
  *                 type: string
  *                 description: Optional notes about the status change
- *                 maxLength: 1000
+ *                 maxLength: 2000
  *                 example: Tour completed successfully. All guests enjoyed the experience.
+ *               cancellationCode:
+ *                 type: string
+ *                 description: Mandatory when status=CANCELLED — reason code from GET /bookings/cancellation-reasons
+ *                 example: VEHICLE_BREAKDOWN
+ *               agreedToTerms:
+ *                 type: boolean
+ *                 description: Mandatory when status=CANCELLED — the supplier accepted the cancellation T&C
+ *                 example: true
+ *               explanation:
+ *                 type: string
+ *                 description: Required for OPERATIONAL (≥10 chars) and FORCE_MAJEURE (≥20 chars) reasons
+ *                 example: The minibus broke down and no replacement vehicle was available.
+ *               evidenceUrl:
+ *                 type: string
+ *                 description: Required for FORCE_MAJEURE — http(s) link to a weather report / notice / article
+ *                 example: https://weather.example/storm-report
+ *               customerRefundAgreed:
+ *                 type: boolean
+ *                 description: Required for CUSTOMER_REQUESTED — whether the supplier agrees to refund the customer
+ *                 example: true
  *           examples:
  *             markCompleted:
  *               summary: Mark booking as completed
@@ -674,6 +713,14 @@ router.patch('/supplier/pickup-planner/:id', resolveSupplier, requireTeamPermiss
  *               value:
  *                 status: NO_SHOW
  *                 supplierNotes: Customer did not arrive at meeting point. Waited 15 minutes past scheduled time.
+ *             cancelOperational:
+ *               summary: Cancel — operational reason (25% fee, full customer refund, 48h choice window)
+ *               value:
+ *                 status: CANCELLED
+ *                 cancellationCode: VEHICLE_BREAKDOWN
+ *                 agreedToTerms: true
+ *                 explanation: The minibus broke down and no replacement vehicle was available.
+ *                 supplierNotes: Customer notified by phone as well.
  *     responses:
  *       200:
  *         description: Booking status updated successfully
@@ -709,6 +756,12 @@ router.patch('/supplier/pickup-planner/:id', resolveSupplier, requireTeamPermiss
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.patch('/:id/status', resolveSupplier, requireTeamPermission('bookings.manage'), bookingController.updateBookingStatus);
+// Structured cancellation validation: a supplier cancel without a taxonomy
+// code + T&C acceptance is rejected with a clear 400 before touching the DB.
+router.patch('/:id/status', resolveSupplier, requireTeamPermission('bookings.manage'), validate(updateBookingStatusSchema), bookingController.updateBookingStatus);
+
+// Bulk cancellation wizard (GYG-style): cancel every matching booking on a
+// tour/date range with one structured reason + optionally stop selling.
+router.post('/supplier/cancel-batch', resolveSupplier, requireTeamPermission('bookings.manage'), validate(bulkCancelSchema), bookingController.cancelBookingsBatch);
 
 module.exports = router;

@@ -33,12 +33,15 @@ const {
   modifyBookingSchema,
   discardModifySchema,
   getSupplierBookingsSchema,
-  updateBookingStatusSchema,
   analyticsOverviewSchema,
   analyticsRevenueTrendSchema,
   analyticsFunnelSchema,
   supplierToursSchema,
 } = require('../../core/services/expeditionValidation');
+// Structured GetYourGuide-style cancellation validation (shared with core) —
+// replaces the brand-local loose schema so a supplier cancel can never skip
+// the taxonomy / T&C / refund rules.
+const { updateBookingStatusSchema } = require('../../core/services/cancellationSchemas');
 
 const router = express.Router();
 

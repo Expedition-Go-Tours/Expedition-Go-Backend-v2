@@ -465,17 +465,51 @@ const supplierCancelledBooking = {
   build() {
     return B.shell('Important: Your booking has been cancelled', `
       ${B.hero({ heading: 'We\u2019re sorry\u2014your experience has been cancelled', badgeText: 'Cancelled', badgeColor: 'danger' })}
-      ${B.paragraph('Unfortunately, the supplier can no longer operate your experience.')}
+      {{#if choiceUrl}}
+      ${B.paragraph('You can choose a new date for this experience, or take a full refund \u2014 no questions asked. If we don\u2019t hear from you, a full refund is issued automatically.')}
+      {{else}}
+      ${B.paragraph('Unfortunately, the supplier can no longer operate your experience. Your refund is on its way back to your original payment method.')}
+      {{/if}}
       ${B.detailRows([
         { label: 'Experience', value: '{{tourTitle}}' },
         { label: 'Original date', value: '{{dateLabel}}' },
         { label: 'Reason', value: '{{cancellationReason}}', if: '{{cancellationReason}}' },
         { label: 'Refund amount', value: '{{refundAmountLabel}}' },
-        { label: 'Refund status', value: 'Processing' },
+        { label: 'Refund status', value: '{{refundStatusLabel}}' },
+        { label: 'Decide by', value: '{{choiceDeadlineLabel}}', if: '{{choiceDeadlineLabel}}' },
       ])}
+      {{#if choiceUrl}}
+      ${B.buttons([
+        { label: 'Choose a new date', href: '{{choiceUrl}}' },
+        { label: 'Get a full refund', href: '{{choiceUrl}}', kind: 'secondary' },
+      ])}
+      {{/if}}
       ${B.buttons([
         { label: 'Find another experience', href: '{{browseUrl}}' },
         { label: 'View refund', href: '{{refundUrl}}', kind: 'secondary' },
+        { label: 'Contact support', href: '{{supportUrl}}', kind: 'secondary' },
+      ])}
+    `);
+  },
+};
+
+const supplierCancellationFee = {
+  key: 'supplier-cancellation-fee',
+  name: 'Supplier · Cancellation fee applied',
+  build() {
+    return B.shell('Cancellation fee applied', `
+      ${B.hero({ heading: 'A cancellation fee has been applied to your account', badgeText: 'Fee', badgeColor: 'danger' })}
+      ${B.paragraph('Because this cancellation was for an operational reason within your control, a {{feePctLabel}} cancellation fee (of the booking\u2019s retail price) applies. The customer has been fully refunded \u2014 the fee will be deducted automatically from your next payout.')}
+      ${B.detailRows([
+        { label: 'Booking reference', value: '{{bookingNumber}}' },
+        { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Date', value: '{{dateLabel}}' },
+        { label: 'Booking retail price', value: '{{grossAmountLabel}}' },
+        { label: 'Refund to customer', value: '{{refundAmountLabel}}' },
+        { label: 'Cancellation fee ({{feePctLabel}})', value: '{{feeAmountLabel}}' },
+      ])}
+      ${B.buttons([
+        { label: 'View earnings', href: '{{payoutsUrl}}' },
         { label: 'Contact support', href: '{{supportUrl}}', kind: 'secondary' },
       ])}
     `);
@@ -866,6 +900,7 @@ const TEMPLATE_DEFS = [
   refundCompleted,
   supplierChangedBooking,
   supplierCancelledBooking,
+  supplierCancellationFee,
   reviewRequest,
   supplierNewBooking,
   supplierPayLaterCharged,

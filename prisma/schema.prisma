@@ -198,6 +198,8 @@ enum NotificationType {
   REFUND_ISSUED
   REFUND_CLAIM
   TEAM_INVITE_ACCEPTED
+  CANCELLATION_RATE_ALERT // Supplier breached a cancellation-rate threshold
+  CANCELLATION_CHOICE_REQUIRED // Customer must pick reschedule-or-refund (48h window)
 }
 
 // Lifecycle of an additional notification email address. PENDING until the
@@ -372,6 +374,7 @@ model User {
   payouts                      Payout[]
   payoutMethods                PayoutMethod[]
   payoutRequests               PayoutRequest[]
+  supplierCharges              SupplierCharge[] // Cancellation fees charged to this supplier
   disputesOpened               Dispute[]                 @relation("DisputeOpener")
   disputesAgainst              Dispute[]                 @relation("DisputeSupplier")
   disputesResolved             Dispute[]                 @relation("DisputeResolver")
@@ -939,6 +942,37 @@ model Booking {
   refundAmount       Decimal?  @db.Decimal(10, 2)
   refundedAt         DateTime?
 
+  // ── Structured supplier-cancellation fields (GetYourGuide-style flow) ──
+  // Sub-reason code from cancellationReasons.js (e.g. VEHICLE_BREAKDOWN).
+  cancellationCode String?
+  // OPERATIONAL | FORCE_MAJEURE | CUSTOMER_REQUESTED (GYG's 3 categories).
+  cancellationCategory String?
+  // Who actually pulled the trigger: SUPPLIER | CUSTOMER | SYSTEM (auto-cancel sweeps).
+  cancellationOrigin String?
+  // Structured cancellation-rate flag: true = counts toward the supplier's
+  // rate, false = excluded (force majeure / customer-requested / platform
+  // auto-cancels). Null = legacy row awaiting
+  // scripts/backfillCancellationFields.js — the query falls back to the old
+  // heuristic until then.
+  countsTowardRate Boolean?
+  // 25% of retail cancellation fee (operational supplier cancels only) —
+  // collected as an OPEN SupplierCharge, netted off the next payout request.
+  cancellationFee Decimal? @db.Decimal(10, 2)
+  // NOT_APPLICABLE | PENDING | SUCCEEDED | FAILED — the authoritative refund
+  // state. paymentStatus=REFUNDED is only ever set when this is SUCCEEDED.
+  refundStatus String?
+  // Audit trail: when the supplier ticked the T&C box + the evidence link
+  // they supplied for a force-majeure claim.
+  cancellationAgreedAt   DateTime?
+  cancellationEvidenceUrl String?
+  // ── Customer choice window (GYG closing move) ──
+  // After a supplier cancel the customer has 48h to pick a new date or a
+  // full refund; silence past the deadline auto-refunds (resolveCancellationChoices sweep).
+  cancellationChoiceDeadline DateTime?
+  customerChoice       String? // REFUND | RESCHEDULE
+  customerChoiceAt     DateTime?
+  proposedTravelDate   DateTime? // chosen date when customerChoice = RESCHEDULE
+
   // Communication
   specialRequests String?
   supplierNotes   String?
@@ -967,6 +1001,7 @@ model Booking {
   review             Review?
   payouts            Payout[]
   payoutRequestItems PayoutRequestItem[]
+  supplierCharges    SupplierCharge[]
   disputes           Dispute[]
   refundClaims       RefundClaim[]
   reminders          BookingReminder[]
@@ -987,6 +1022,8 @@ model Booking {
   @@index([status, travelDate]) // Admin/supplier date-range queries
   @@index([payoutStatus]) // Finance eligibility sweeps + KPI queries
   @@index([optionId]) // Per-option capacity + availability lookups
+  @@index([cancellationChoiceDeadline]) // Choice-window expiry sweep
+  @@index([refundStatus]) // Stuck-refund retry/alert sweep
 }
 
 model BookingReminder {
@@ -1171,6 +1208,9 @@ model PayoutRequest {
 
   items PayoutRequestItem[]
 
+  // Cancellation fees netted off this request when it settles
+  charges SupplierCharge[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1197,6 +1237,43 @@ model PayoutRequestItem {
 
   createdAt DateTime @default(now())
 
+  @@index([payoutRequestId])
+}
+
+// ── Finance: supplier cancellation fees (GetYourGuide-style 25% of retail) ──
+// Created when a supplier cancels for an OPERATIONAL reason. OPEN charges are
+// netted off the supplier's next payout request (financeController
+// .createPayoutRequest) — the request is blocked while open fees exceed the
+// withdrawable amount. FORCE_MAJEURE and CUSTOMER_REQUESTED cancels never
+// create a charge.
+model SupplierCharge {
+  id         String  @id @default(cuid())
+  supplierId String
+  supplier   User    @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  bookingId  String
+  booking    Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  amount   Decimal @db.Decimal(10, 2)
+  currency String  @default("USD")
+
+  reason String @default("SUPPLIER_CANCELLATION_FEE")
+  // OPEN (awaiting deduction) | SETTLED (netted off a payout request) | WAIVED
+  status String @default("OPEN")
+
+  // Set when the charge is collected via a payout request
+  payoutRequestId String?
+  payoutRequest   PayoutRequest? @relation(fields: [payoutRequestId], references: [id], onDelete: SetNull)
+
+  settledAt DateTime?
+  notes     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([supplierId])
+  @@index([status])
+  @@index([supplierId, status])
+  @@index([bookingId])
   @@index([payoutRequestId])
 }
 
