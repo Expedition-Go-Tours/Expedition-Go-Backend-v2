@@ -21,6 +21,10 @@ const DISCORD_MAP = {
   TOUR_SUBMITTED_FOR_REVIEW: { channel: 'verification', color: 0x3498db },
   SUPPLIER_STATUS_CHANGE:    { channel: 'verification', color: 0x3498db },
   SYSTEM_ALERT:              { channel: 'incidents', color: 0xff4444 },
+  // Admin-approval gate: new supplier cancellation requests and their
+  // decisions land in #incidents so ops sees them without opening the admin.
+  SUPPLIER_CANCELLATION_REQUEST: { channel: 'incidents', color: 0xffa500 },
+  SUPPLIER_CANCELLATION_DECIDED:  { channel: 'incidents', color: 0x00c853 },
 };
 
 // Human-friendly field labels for common keys, in display order.

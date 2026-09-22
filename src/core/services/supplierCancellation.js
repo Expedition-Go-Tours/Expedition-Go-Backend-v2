@@ -651,7 +651,14 @@ async function resolveCancellationChoices() {
  *
  * @returns {{ matched, cancelled, failed, totalRefunded, totalFees, results, blockedDates }}
  */
-async function cancelBatchBySupplier({ supplierId, payload, filters, req }) {
+/**
+ * Shared front-half of the bulk cancellation: validate the wizard payload,
+ * resolve the supplier's tour, and fetch the bookings matching the range.
+ * Used by both this executor and the admin-approval gate
+ * (cancellationRequestService) so the two can never disagree about WHICH
+ * bookings are affected.
+ */
+async function matchPreview({ supplierId, payload, filters }) {
   const validation = validateCancellationPayload(payload);
   if (!validation.ok) throw new AppError(validation.errors.join('; '), 400);
 
@@ -684,15 +691,26 @@ async function cancelBatchBySupplier({ supplierId, payload, filters, req }) {
   };
   if (selectedTime) where.selectedTime = selectedTime;
 
-  const matched = await prisma.booking.findMany({
+  const rows = await prisma.booking.findMany({
     where,
     include: { tour: { include: { supplier: true } } },
     orderBy: { travelDate: 'asc' },
     take: BATCH_MAX + 1,
   });
 
-  const overflow = matched.length > BATCH_MAX;
-  const batch = matched.slice(0, BATCH_MAX);
+  return {
+    validation,
+    tour,
+    start,
+    end,
+    matched: rows.slice(0, BATCH_MAX),
+    overflow: rows.length > BATCH_MAX,
+  };
+}
+
+async function cancelBatchBySupplier({ supplierId, payload, filters, req }) {
+  const { validation, tour, start, end, matched, overflow } = await matchPreview({ supplierId, payload, filters });
+  const batch = matched;
 
   const results = [];
   let totalRefunded = 0;
@@ -779,4 +797,5 @@ module.exports = {
   resolveChoiceReschedule,
   resolveCancellationChoices,
   cancelBatchBySupplier,
+  matchPreview,
 };

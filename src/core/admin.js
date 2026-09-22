@@ -1362,6 +1362,11 @@ controller.getBookings = catchAsync(async (req, res, next) => {
           },
           orderBy: { createdAt: 'desc' },
         },
+        cancellationRequests: {
+          where: { status: { in: ['PENDING_APPROVAL', 'APPROVING'] } },
+          select: { id: true, status: true, createdAt: true, payload: true, preview: true, stopSellingApplied: true },
+          take: 1,
+        },
       },
     }),
     prisma.booking.count({ where }),
@@ -1376,10 +1381,19 @@ controller.getBookings = catchAsync(async (req, res, next) => {
   const countsObj = { total: ghanaTotal, PENDING: 0, CONFIRMED: 0, COMPLETED: 0, CANCELLED: 0 };
   for (const c of counts) countsObj[c.status] = c._count._all;
 
+  // Admin-approval gate: expose the open request as `pendingCancellation`.
+  const rows = bookings.map((b) => {
+    const { cancellationRequests, ...rest } = b;
+    return {
+      ...rest,
+      pendingCancellation: cancellationRequests && cancellationRequests[0] ? cancellationRequests[0] : null,
+    };
+  });
+
   res.status(200).json({
     status: 'success',
     data: {
-      bookings,
+      bookings: rows,
       counts: countsObj,
       pagination: {
         currentPage: parseInt(page),
@@ -1441,6 +1455,11 @@ controller.getBookingById = catchAsync(async (req, res, next) => {
         },
         orderBy: { createdAt: 'desc' },
       },
+      cancellationRequests: {
+        where: { status: { in: ['PENDING_APPROVAL', 'APPROVING'] } },
+        select: { id: true, status: true, createdAt: true, payload: true, preview: true, stopSellingApplied: true },
+        take: 1,
+      },
     },
   });
 
@@ -1448,8 +1467,16 @@ controller.getBookingById = catchAsync(async (req, res, next) => {
     return next(new AppError('Ghana booking not found', 404));
   }
 
+  const { cancellationRequests, ...bookingRest } = booking;
+
   // Frontend (BookingDetailPanel) reads data.data as the booking itself.
-  res.status(200).json({ status: 'success', data: booking });
+  res.status(200).json({
+    status: 'success',
+    data: {
+      ...bookingRest,
+      pendingCancellation: cancellationRequests && cancellationRequests[0] ? cancellationRequests[0] : null,
+    },
+  });
 });
 
 /**

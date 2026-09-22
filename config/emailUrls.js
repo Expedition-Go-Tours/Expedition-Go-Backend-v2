@@ -24,6 +24,8 @@ const GHANA_DASHBOARD_URL = (process.env.GHANA_SUPPLIER_DASHBOARD_URL || 'https:
 // Public API origin — used for links that must work without a dashboard login
 // (e.g. confirming a notification email address).
 const API_URL = (process.env.API_URL || 'http://localhost:5000').replace(/\/$/, '');
+// Admin apps origin — deep links from ops emails into the cancellation queue.
+const ADMIN_URL = (process.env.ADMIN_URL || API_URL).replace(/\/$/, '');
 
 /**
  * Resolve the supplier dashboard base URL for a user. Suppliers with the
@@ -147,6 +149,8 @@ module.exports = {
   supplierProductForUser: (tourId, user) => `${dashboardBaseForUser(user)}/products/build/${encodeURIComponent(tourId)}/type`,
   supplierReview: (reviewId) => `${DASHBOARD_URL}/reviews?reviewId=${encodeURIComponent(reviewId)}`,
   supplierReplyReview: (reviewId) => `${DASHBOARD_URL}/reviews?reviewId=${encodeURIComponent(reviewId)}&reply=1`,
+  // Brand-aware bookings link (Ghana suppliers → Ghana dashboard).
+  supplierBookingsForUser: (user) => `${dashboardBaseForUser(user)}/bookings`,
 
   // ── Supplier notification recipients ───────────────────────────────
   // Confirm/unsubscribe links must resolve without a dashboard session, so
@@ -163,4 +167,9 @@ module.exports = {
   supplierNotificationRecipientUnsubscribeForUser: (user, id, token) =>
     `${dashboardBaseForUser(user)}/unsubscribe/${encodeURIComponent(id)}/${encodeURIComponent(token)}`,
   supplierNotificationSettings: (user) => `${dashboardBaseForUser(user)}/settings?tab=notifications`,
+
+  // ── Admin (ops) — approval queue deep link ─────────────────────────────
+  adminCancellationRequests: (requestId) =>
+    `${ADMIN_URL}/cancellations${requestId ? `?request=${encodeURIComponent(requestId)}` : ''}`,
+  adminBooking: (bookingId) => `${ADMIN_URL}/bookings?booking=${encodeURIComponent(bookingId)}`,
 };

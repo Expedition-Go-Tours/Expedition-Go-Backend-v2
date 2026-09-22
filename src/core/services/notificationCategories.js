@@ -22,6 +22,8 @@ const CATEGORY_BY_TYPE = {
   NEW_MESSAGE: 'bookings',
   DISPUTE_OPENED: 'bookings',
   DISPUTE_RESOLVED: 'bookings',
+  CANCELLATION_REQUEST_APPROVED: 'bookings',
+  CANCELLATION_REQUEST_REJECTED: 'bookings',
 
   // Reviews
   REVIEW_RECEIVED: 'reviews',

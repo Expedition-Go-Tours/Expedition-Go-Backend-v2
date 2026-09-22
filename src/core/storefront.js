@@ -2905,6 +2905,14 @@ controller.updateBookingStatus = catchAsync(async (req, res, next) => {
   // anything else at the route), ALWAYS-full customer refund, 25% fee for
   // operational reasons, and the customer's 48h reschedule-or-refund window.
   if (status === 'CANCELLED') {
+    // Admin-approval gate: park the request instead of executing.
+    const { requiresApproval, createCancellationRequest } =
+      require('./services/cancellationRequestService');
+    if (requiresApproval()) {
+      const created = await createCancellationRequest({ booking, payload: req.body, supplierId, req });
+      return res.status(200).json({ status: 'success', data: created });
+    }
+
     const { cancelBySupplier } = require('./services/supplierCancellation');
     const result = await cancelBySupplier({ booking, payload: req.body, supplierId, req });
 
@@ -2947,6 +2955,12 @@ controller.updateBookingStatus = catchAsync(async (req, res, next) => {
       customer: { select: { id: true, name: true, email: true } },
     },
   });
+
+  // A pending cancellation request cannot survive a conflicting transition.
+  if (!['PENDING', 'PROCESSING', 'CONFIRMED'].includes(status)) {
+    const { supersedePendingRequests } = require('../../core/services/cancellationRequestService');
+    await supersedePendingRequests(id, `Booking moved to ${status}`);
+  }
 
   enqueueNotification({
     userId: booking.customerId,

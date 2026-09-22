@@ -1536,6 +1536,16 @@ exports.getBookings = catchAsync(async (req, res) => {
         travelers: true,
         specialRequests: true,
         cancellationReason: true,
+        cancellationCode: true,
+        cancellationCategory: true,
+        cancellationOrigin: true,
+        countsTowardRate: true,
+        cancellationFee: true,
+        refundStatus: true,
+        refundAmount: true,
+        cancelledAt: true,
+        cancellationChoiceDeadline: true,
+        customerChoice: true,
         paidAt: true,
         createdAt: true,
         updatedAt: true,
@@ -1574,6 +1584,11 @@ exports.getBookings = catchAsync(async (req, res) => {
         payouts: {
           select: { id: true, amount: true, currency: true, status: true, paidAt: true, createdAt: true },
         },
+        cancellationRequests: {
+          where: { status: { in: ['PENDING_APPROVAL', 'APPROVING'] } },
+          select: { id: true, status: true, createdAt: true, payload: true, preview: true, stopSellingApplied: true },
+          take: 1,
+        },
       },
       orderBy: { createdAt: 'desc' },
       skip,
@@ -1590,21 +1605,26 @@ exports.getBookings = catchAsync(async (req, res) => {
   const countsMap = { total: totalCount };
   counts.forEach((c) => { countsMap[c.status] = c._count.id; });
 
-  const optimized = bookings.map((b) => ({
-    ...b,
-    grossAmount: Number(b.grossAmount),
-    subtotal: Number(b.subtotal),
-    taxes: Number(b.taxes),
-    fees: Number(b.fees),
-    discounts: Number(b.discounts),
-    platformCommission: Number(b.platformCommission),
-    supplierPayout: Number(b.supplierPayout),
-    customer: {
-      ...b.customer,
-      photoURL: b.customer.photoURL || null,
-    },
-    payouts: b.payouts.map((p) => ({ ...p, amount: Number(p.amount) })),
-  }));
+  const optimized = bookings.map((b) => {
+    const { cancellationRequests, ...rest } = b;
+    return {
+      ...rest,
+      grossAmount: Number(rest.grossAmount),
+      subtotal: Number(rest.subtotal),
+      taxes: Number(rest.taxes),
+      fees: Number(rest.fees),
+      discounts: Number(rest.discounts),
+      platformCommission: Number(rest.platformCommission),
+      supplierPayout: Number(rest.supplierPayout),
+      customer: {
+        ...rest.customer,
+        photoURL: rest.customer.photoURL || null,
+      },
+      payouts: rest.payouts.map((p) => ({ ...p, amount: Number(p.amount) })),
+      // Admin-approval gate: the open request rides along for the queue UI.
+      pendingCancellation: cancellationRequests && cancellationRequests[0] ? cancellationRequests[0] : null,
+    };
+  });
 
   res.status(200).json({
     status: 'success',
@@ -1650,6 +1670,16 @@ exports.getBookingById = catchAsync(async (req, res, next) => {
       travelers: true,
       specialRequests: true,
       cancellationReason: true,
+      cancellationCode: true,
+      cancellationCategory: true,
+      cancellationOrigin: true,
+      countsTowardRate: true,
+      cancellationFee: true,
+      refundStatus: true,
+      refundAmount: true,
+      cancelledAt: true,
+      cancellationChoiceDeadline: true,
+      customerChoice: true,
       paidAt: true,
       createdAt: true,
       updatedAt: true,
@@ -1688,6 +1718,11 @@ exports.getBookingById = catchAsync(async (req, res, next) => {
       payouts: {
         select: { id: true, amount: true, currency: true, status: true, paidAt: true, createdAt: true },
       },
+      cancellationRequests: {
+        where: { status: { in: ['PENDING_APPROVAL', 'APPROVING'] } },
+        select: { id: true, status: true, createdAt: true, payload: true, preview: true, stopSellingApplied: true },
+        take: 1,
+      },
     },
   });
 
@@ -1695,22 +1730,26 @@ exports.getBookingById = catchAsync(async (req, res, next) => {
     return next(new AppError('Booking not found', 404));
   }
 
+  const { cancellationRequests, ...bookingRest } = booking;
+
   res.status(200).json({
     status: 'success',
     data: {
-      ...booking,
-      grossAmount: Number(booking.grossAmount),
-      subtotal: Number(booking.subtotal),
-      taxes: Number(booking.taxes),
-      fees: Number(booking.fees),
-      discounts: Number(booking.discounts),
-      platformCommission: Number(booking.platformCommission),
-      supplierPayout: Number(booking.supplierPayout),
+      ...bookingRest,
+      grossAmount: Number(bookingRest.grossAmount),
+      subtotal: Number(bookingRest.subtotal),
+      taxes: Number(bookingRest.taxes),
+      fees: Number(bookingRest.fees),
+      discounts: Number(bookingRest.discounts),
+      platformCommission: Number(bookingRest.platformCommission),
+      supplierPayout: Number(bookingRest.supplierPayout),
       customer: {
-        ...booking.customer,
-        photoURL: booking.customer.photoURL || null,
+        ...bookingRest.customer,
+        photoURL: bookingRest.customer.photoURL || null,
       },
-      payouts: booking.payouts.map((p) => ({ ...p, amount: Number(p.amount) })),
+      payouts: bookingRest.payouts.map((p) => ({ ...p, amount: Number(p.amount) })),
+      // Admin-approval gate: the open request (if any) drives the decision UI.
+      pendingCancellation: cancellationRequests && cancellationRequests[0] ? cancellationRequests[0] : null,
     },
   });
 });

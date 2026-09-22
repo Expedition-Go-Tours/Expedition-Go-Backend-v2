@@ -13,6 +13,7 @@ const { createUserLimiter } = require('../middleware/dynamicRateLimiter');
 const validate = require('../middleware/validate');
 const { updateBookingStatusSchema, bulkCancelSchema } = require('../src/core/services/cancellationSchemas');
 const bookingController = require('../src/core/domain/bookingController');
+const cancellationRequestController = require('../src/core/domain/cancellationRequestController');
 
 const router = express.Router();
 
@@ -763,5 +764,60 @@ router.patch('/:id/status', resolveSupplier, requireTeamPermission('bookings.man
 // Bulk cancellation wizard (GYG-style): cancel every matching booking on a
 // tour/date range with one structured reason + optionally stop selling.
 router.post('/supplier/cancel-batch', resolveSupplier, requireTeamPermission('bookings.manage'), validate(bulkCancelSchema), bookingController.cancelBookingsBatch);
+
+/**
+ * @swagger
+ * /bookings/supplier/cancellation-requests:
+ *   get:
+ *     summary: This supplier's cancellation requests (pending + decided)
+ *     description: |
+ *       With the admin-approval gate on, supplier cancels are requests: this
+ *       lists them so the dashboard can show a "Pending review" section and
+ *       offer Withdraw on anything still PENDING_APPROVAL.
+ *     tags: [Bookings, Supplier]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: status
+ *         in: query
+ *         schema:
+ *           type: string
+ *           enum: [PENDING_APPROVAL, APPROVED, REJECTED, WITHDRAWN, SUPERSEDED, ALL]
+ *       - name: page
+ *         in: query
+ *         schema: { type: integer, default: 1 }
+ *       - name: limit
+ *         in: query
+ *         schema: { type: integer, default: 20 }
+ *     responses:
+ *       200:
+ *         description: Requests + pagination
+ */
+router.get('/supplier/cancellation-requests', resolveSupplier, requireTeamPermission('bookings.view'), cancellationRequestController.listSupplier);
+
+/**
+ * @swagger
+ * /bookings/supplier/cancellation-requests/{id}/withdraw:
+ *   post:
+ *     summary: Withdraw a pending cancellation request
+ *     description: |
+ *       Only your own PENDING_APPROVAL requests. Stop-selling applied by the
+ *       request (bulk) is reverted — rows that still carry the request's
+ *       marker are re-opened; manually changed dates are left alone.
+ *     tags: [Bookings, Supplier]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Withdrawn request + number of re-opened dates
+ *       404:
+ *         description: Not found, not yours, or no longer pending
+ */
+router.post('/supplier/cancellation-requests/:id/withdraw', resolveSupplier, requireTeamPermission('bookings.manage'), cancellationRequestController.withdraw);
 
 module.exports = router;

@@ -1201,10 +1201,16 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
 
   const totalPages = Math.ceil(totalCount / parseInt(limit));
 
+  // Open cancellation requests (admin-approval gate) ride along as chips.
+  const { pendingRequestsForBookingIds } = require('../services/cancellationRequestService');
+  const pendingMap = await pendingRequestsForBookingIds(bookings.map((b) => b.id));
+
   res.status(200).json({
     status: 'success',
     data: {
-      bookings: sanitizeBookingPaymentInternals(bookings),
+      bookings: sanitizeBookingPaymentInternals(
+        bookings.map((b) => ({ ...b, pendingCancellation: pendingMap.get(b.id) || null })),
+      ),
       summary: {
         totalRevenue: Number(aggregates._sum.grossAmount || 0),
         totalSupplierPayout: Number(aggregates._sum.supplierPayout || 0),
@@ -1454,6 +1460,15 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
   // route), ALWAYS-full refund for supplier-caused cancels, 25% fee for
   // operational reasons, and the customer's 48h reschedule-or-refund window.
   if (status === 'CANCELLED') {
+    // Admin-approval gate: park the request instead of executing — nothing
+    // on the booking/money/customer side runs until an admin approves.
+    const { requiresApproval, createCancellationRequest } =
+      require('../services/cancellationRequestService');
+    if (requiresApproval()) {
+      const created = await createCancellationRequest({ booking, payload: req.body, supplierId, req });
+      return res.status(200).json({ status: 'success', data: created });
+    }
+
     const result = await cancelBySupplier({
       booking,
       payload: req.body,
@@ -1494,6 +1509,12 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
       updatedAt: new Date()
     }
   });
+
+  // A pending cancellation request cannot survive a conflicting transition.
+  if (!['PENDING', 'PROCESSING', 'CONFIRMED'].includes(status)) {
+    const { supersedePendingRequests } = require('../services/cancellationRequestService');
+    await supersedePendingRequests(id, `Booking moved to ${status}`);
+  }
 
   // Send notification to customer
   const statusMessages = {
@@ -1567,13 +1588,15 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
 exports.cancelBookingsBatch = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
   const { tourId, dateFrom, dateTo, selectedTime, stopAcceptingBookings, ...payload } = req.body;
+  const filters = { tourId, dateFrom, dateTo, selectedTime, stopAcceptingBookings };
 
-  const result = await cancelBatchBySupplier({
-    supplierId,
-    payload,
-    filters: { tourId, dateFrom, dateTo, selectedTime, stopAcceptingBookings },
-    req,
-  });
+  // Admin-approval gate: submit requests instead of executing. Stop-selling
+  // still applies immediately (snapshot-reverted on reject/withdraw).
+  const { requiresApproval, submitCancellationRequests } =
+    require('../services/cancellationRequestService');
+  const result = requiresApproval()
+    ? await submitCancellationRequests({ supplierId, payload, filters, req })
+    : await cancelBatchBySupplier({ supplierId, payload, filters, req });
 
   res.status(200).json({ status: 'success', data: result });
 });

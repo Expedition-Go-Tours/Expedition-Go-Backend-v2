@@ -106,6 +106,7 @@ const SCHEDULES = [
   { jobName: 'expire-modify-topups',        queue: 'cleanup',      everyMs: 5 * 60 * 1000 },
   { jobName: 'charge-pay-later-bookings',   queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
   { jobName: 'resolve-cancellation-choices', queue: 'cleanup',     everyMs: 5 * 60 * 1000 },
+  { jobName: 'cancellation-request-reminder', queue: 'cleanup',    everyMs: 60 * 60 * 1000 },
   { jobName: 'earnings-eligibility-sweep',  queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
   { jobName: 'plan-booking-reminders',      queue: 'cleanup',      everyMs: 3600 * 1000 },
   { jobName: 'dispatch-booking-reminders',  queue: 'cleanup',      everyMs: 15 * 60 * 1000 },
@@ -998,6 +999,13 @@ function registerWorkers() {
           // execute chosen refunds + alert on stuck refunds.
           const { resolveCancellationChoices } = require('./supplierCancellation');
           await resolveCancellationChoices();
+          break;
+        }
+        case 'cancellation-request-reminder': {
+          // Admin-approval gate: escalate requests pending >24h to the admin
+          // feed. Reminds forever (daily); NEVER auto-approves.
+          const { remindPendingCancellationRequests } = require('./cancellationRequestService');
+          await remindPendingCancellationRequests();
           break;
         }
         case 'plan-booking-reminders': {

@@ -56,6 +56,10 @@ async function expireBooking(booking, reason) {
 
   if (updated.count === 0) return 0;
 
+  // A pending supplier cancellation request dies with the payment window.
+  const { supersedePendingRequests } = require('./cancellationRequestService');
+  await supersedePendingRequests(booking.id, 'Payment expired (system cancel)');
+
   enqueueNotification({
     userId: booking.customerId,
     type: 'BOOKING_CANCELLED',
@@ -244,6 +248,9 @@ async function autoCompleteBookings() {
 
     if (updated.count > 0) {
       console.log(`[BookingCleanup] Auto-completed ${updated.count} past booking(s) → COMPLETED`);
+      // Completion kills any pending supplier cancellation request.
+      const { supersedePendingRequests } = require('./cancellationRequestService');
+      await supersedePendingRequests(rows.map((r) => r.id), 'Booking completed');
     }
     return { completed: updated.count };
   }
@@ -366,6 +373,10 @@ async function cancelStalePendingAfterTravelDate() {
         bookingId: booking.id,
         reason: 'Activity date passed without supplier confirmation',
       }).catch((err) => console.error('[BookingCleanup] Auto-cancel email failed:', err.message));
+
+      // The system cancel supersedes any pending supplier request for it.
+      const { supersedePendingRequests } = require('./cancellationRequestService');
+      await supersedePendingRequests(booking.id, 'System cancel: activity date passed');
 
       // Notify supplier
       enqueueNotification({

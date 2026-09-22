@@ -200,6 +200,8 @@ enum NotificationType {
   TEAM_INVITE_ACCEPTED
   CANCELLATION_RATE_ALERT // Supplier breached a cancellation-rate threshold
   CANCELLATION_CHOICE_REQUIRED // Customer must pick reschedule-or-refund (48h window)
+  CANCELLATION_REQUEST_APPROVED // Admin approved the supplier's cancellation request
+  CANCELLATION_REQUEST_REJECTED // Admin rejected the supplier's cancellation request
 }
 
 // Lifecycle of an additional notification email address. PENDING until the
@@ -231,6 +233,8 @@ enum AdminNotificationType {
   REFUND_NEEDS_ATTENTION
   REFUND_CLAIM
   BOOKING_MODIFIED
+  SUPPLIER_CANCELLATION_REQUEST // Supplier submitted a cancellation request awaiting approval
+  SUPPLIER_CANCELLATION_DECIDED // Admin approved/rejected a supplier cancellation request
 }
 
 enum ReviewStatus {
@@ -1006,6 +1010,7 @@ model Booking {
   refundClaims       RefundClaim[]
   reminders          BookingReminder[]
   changes            BookingChange[]
+  cancellationRequests CancellationRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1238,6 +1243,56 @@ model PayoutRequestItem {
   createdAt DateTime @default(now())
 
   @@index([payoutRequestId])
+}
+
+// ── Supplier cancellation requests (admin-approval gate) ──────────────────
+// When SUPPLIER_CANCEL_REQUIRES_APPROVAL is on, a supplier's cancel (single
+// or bulk) is parked here as PENDING_APPROVAL: no booking state, no money,
+// no customer email until an admin approves. APPROVING is a short-lived
+// atomic claim (approve endpoint: PENDING_APPROVAL → APPROVING, revert on
+// failure) so two admins can never double-execute a refund. SUPERSEDED =
+// the booking changed status underneath the request.
+enum CancellationRequestStatus {
+  PENDING_APPROVAL
+  APPROVING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+  SUPERSEDED
+}
+
+model CancellationRequest {
+  id         String                    @id @default(cuid())
+  bookingId  String
+  booking    Booking                   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  supplierId String? // requesting supplier (user id); null = platform-submitted
+  batchId    String? // groups requests created by one bulk-cancel submission
+  status     CancellationRequestStatus @default(PENDING_APPROVAL)
+
+  // The exact validated payload cancelBySupplier will run on approval.
+  payload            Json
+  // Request-time preview (plannedRefund, feePct, fee, countsTowardRate) —
+  // recomputed against the fresh booking at approval time.
+  preview            Json?
+  // stopAcceptingBookings takes effect at request time (plan decision 3).
+  stopSellingApplied Boolean @default(false)
+
+  // Decision audit trail
+  decidedBy    String?
+  decidedAt    DateTime?
+  decisionNote String? // required for REJECTED
+
+  // 24h escalation reminder bookkeeping (never auto-approves)
+  reminderSentAt DateTime?
+  reminderCount  Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt]) // admin queue ordering
+  @@index([bookingId, status]) // one-pending-per-booking dedupe + chips
+  @@index([supplierId, createdAt]) // supplier's own requests
+  @@index([batchId])
 }
 
 // ── Finance: supplier cancellation fees (GetYourGuide-style 25% of retail) ──

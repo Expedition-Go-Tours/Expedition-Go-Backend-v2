@@ -493,6 +493,54 @@ const supplierCancelledBooking = {
   },
 };
 
+const adminCancellationRequest = {
+  key: 'admin-cancellation-request',
+  name: 'Admin · Supplier cancellation request (approval needed)',
+  build() {
+    return B.shell('Action needed: supplier cancellation request', `
+      ${B.hero({ heading: 'A supplier has requested a cancellation', badgeText: 'Approval needed', badgeColor: 'warning' })}
+      ${B.paragraph('No money has moved and the customer has not been notified. Review the request in the admin Cancellations queue, then approve or reject it.')}
+      ${B.detailRows([
+        { label: 'Booking', value: '{{bookingNumber}}' },
+        { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Supplier', value: '{{supplierName}}' },
+        { label: 'Activity date', value: '{{travelDateLabel}}' },
+        { label: 'Refund to customer', value: '{{refundLabel}}' },
+        { label: 'Cancellation fee', value: '{{feeLabel}}' },
+        { label: 'Counts toward rate', value: '{{rateLabel}}' },
+        { label: 'Category', value: '{{categoryLabel}}' },
+        { label: 'Reason', value: '{{reasonLabel}}' },
+        { label: 'Requested', value: '{{requestedAt}}' },
+        { label: 'Scope', value: '{{scopeLabel}}' },
+      ])}
+      ${B.buttonPrimary('Review in admin', '{{reviewUrl}}')}
+    `);
+  },
+};
+
+const supplierCancellationDecision = {
+  key: 'supplier-cancellation-decision',
+  name: 'Supplier · Cancellation request decision',
+  build() {
+    return B.shell('Your cancellation request has been reviewed', `
+      {{#if approved}}
+      ${B.hero({ heading: 'Cancellation approved', badgeText: '&#10003;&nbsp;&nbsp;Approved', badgeColor: 'accent' })}
+      ${B.paragraph('Your cancellation request was approved. The customer has been notified and their refund is on its way; any applicable cancellation fee will be netted off your next payout.')}
+      {{else}}
+      ${B.hero({ heading: 'Cancellation request rejected', badgeText: 'Rejected', badgeColor: 'danger' })}
+      ${B.paragraph('Your cancellation request was reviewed and rejected. The booking remains confirmed \u2014 the experience is still expected to run as scheduled.')}
+      {{/if}}
+      ${B.detailRows([
+        { label: 'Booking', value: '{{bookingNumber}}' },
+        { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Decision', value: '{{decisionLabel}}' },
+        { label: 'Note from our team', value: '{{note}}', if: '{{note}}' },
+      ])}
+      ${B.buttonPrimary('Open your bookings', '{{bookingUrl}}')}
+    `);
+  },
+};
+
 const supplierCancellationFee = {
   key: 'supplier-cancellation-fee',
   name: 'Supplier · Cancellation fee applied',
@@ -913,6 +961,8 @@ const TEMPLATE_DEFS = [
   supplierCustomerCancelledLate,
   supplierPlatformCancelled,
   supplierCancellationRecorded,
+  adminCancellationRequest,
+  supplierCancellationDecision,
   supplierPayoutScheduled,
   supplierPayoutCompleted,
   supplierPayoutFailed,

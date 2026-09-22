@@ -123,7 +123,7 @@ describe('renderTemplate', () => {
     const path = require('path');
     const dir = path.join(__dirname, '..', '..', 'sendgrid-templates', 'generated');
     const files = fs.readdirSync(dir).filter((f) => f.endsWith('.html'));
-    expect(files.length).toBe(36);
+    expect(files.length).toBe(38);
 
     for (const file of files) {
       const key = file.replace(/\.html$/, '');

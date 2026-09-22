@@ -155,7 +155,9 @@ async function sendNotificationEmail(user, { type, title, message, data, templat
     SUPPLIER_REJECTED: { subject: 'Supplier Application Update' },
     PAYMENT_RECEIVED: { subject: 'Payment Received' },
     PAYOUT_PROCESSED: { subject: 'Payout Processed' },
-    PAYOUT_APPROVED: { subject: 'Payout Approved' }
+    PAYOUT_APPROVED: { subject: 'Payout Approved' },
+    CANCELLATION_REQUEST_APPROVED: { subject: 'Cancellation Request Approved' },
+    CANCELLATION_REQUEST_REJECTED: { subject: 'Cancellation Request Needs Changes' },
   };
 
   const emailConfig = emailTemplates[type] || {

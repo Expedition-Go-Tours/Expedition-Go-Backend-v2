@@ -16,6 +16,7 @@ const PERMISSIONS = [
   { key: 'suppliers.suspend', name: 'Suspend Suppliers', description: 'Suspend or activate supplier accounts', category: 'Suppliers' },
   { key: 'bookings.view', name: 'View Bookings', description: 'View booking list and details', category: 'Bookings' },
   { key: 'bookings.confirm-payment', name: 'Confirm Payment', description: 'Manually confirm payment for a booking', category: 'Bookings' },
+  { key: 'cancellations.approve', name: 'Approve Cancellations', description: 'Approve or reject supplier cancellation requests', category: 'Bookings' },
   { key: 'reviews.view', name: 'View Reviews', description: 'View pending reviews for moderation', category: 'Reviews' },
   { key: 'reviews.moderate', name: 'Moderate Reviews', description: 'Approve or reject customer reviews', category: 'Reviews' },
   { key: 'payouts.view', name: 'View Payouts', description: 'View payout list and summary', category: 'Finance' },
@@ -50,7 +51,7 @@ const ROLE_DEFINITIONS = [
     permissionKeys: [
       'dashboard.*', 'dashboard.bookings', 'dashboard.revenue', 'analytics.view',
       'suppliers.view', 'suppliers.approve', 'suppliers.suspend', 'tours.view',
-      'tours.approve', 'bookings.view', 'bookings.confirm-payment', 'reviews.view', 'reviews.moderate',
+      'tours.approve', 'bookings.view', 'bookings.confirm-payment', 'cancellations.approve', 'reviews.view', 'reviews.moderate',
       'chat.suppliers', 'chat.customers', 'chat.expedition', 'notifications.view',
     ],
   },

@@ -17,6 +17,7 @@ const { requirePermission } = require('../middleware/permissionMiddleware');
 const adminController = require('../src/core/domain/adminController');
 const adminNotifController = require('../src/core/domain/adminNotificationController');
 const adminSettingsController = require('../src/core/domain/adminSettingsController');
+const cancellationRequestController = require('../src/core/domain/cancellationRequestController');
 
 const router = express.Router();
 
@@ -844,6 +845,127 @@ router.patch('/bookings/:id/confirm-payment', requirePermission('bookings.confir
  *         description: Booking not found
  */
 router.post('/bookings/:id/charge-now', requirePermission('bookings.confirm-payment', 'dashboard.*'), adminController.chargePayLaterBooking);
+
+// ══════════════════════════════════════════════════════════════════════════
+// CANCELLATION REQUESTS — supplier cancels awaiting admin approval
+//
+// When SUPPLIER_CANCEL_REQUIRES_APPROVAL is on, nothing touches a booking,
+// money, or the customer until an admin decides here. Viewing the queue needs
+// `bookings.view`; deciding needs `cancellations.approve`.
+// ══════════════════════════════════════════════════════════════════════════
+
+/**
+ * @swagger
+ * /admin/cancellation-requests:
+ *   get:
+ *     summary: Supplier cancellation requests awaiting (or after) admin decision
+ *     tags: [Admin, Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: status
+ *         in: query
+ *         schema:
+ *           type: string
+ *           enum: [PENDING_APPROVAL, APPROVED, REJECTED, WITHDRAWN, SUPERSEDED, ALL]
+ *           default: PENDING_APPROVAL
+ *       - name: search
+ *         in: query
+ *         schema: { type: string }
+ *         description: Booking number, customer name, or tour title
+ *       - name: page
+ *         in: query
+ *         schema: { type: integer, default: 1 }
+ *       - name: limit
+ *         in: query
+ *         schema: { type: integer, default: 20 }
+ *     responses:
+ *       200:
+ *         description: Queue page + total pending count for the nav badge
+ */
+router.get('/cancellation-requests', requirePermission('bookings.view', 'dashboard.*'), cancellationRequestController.listAdmin);
+
+/**
+ * @swagger
+ * /admin/cancellation-requests/batch-approve:
+ *   post:
+ *     summary: Approve up to 100 pending requests (per-request results)
+ *     tags: [Admin, Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [ids]
+ *             properties:
+ *               ids:
+ *                 type: array
+ *                 items: { type: string }
+ *               note: { type: string }
+ *     responses:
+ *       200:
+ *         description: Per-request outcome list (one failure never blocks the rest)
+ */
+router.post('/cancellation-requests/batch-approve', requirePermission('cancellations.approve'), cancellationRequestController.batchApprove);
+
+router.get('/cancellation-requests/:id', requirePermission('bookings.view', 'dashboard.*'), cancellationRequestController.getAdminOne);
+
+/**
+ * @swagger
+ * /admin/cancellation-requests/{id}/approve:
+ *   post:
+ *     summary: Approve a request — executes refund, fee, and customer emails
+ *     description: |
+ *       The only path that runs the money: revalidates the fresh booking,
+ *       executes the stored cancellation, refunds the customer in full,
+ *       applies the operational 25% fee where applicable, opens the 48h
+ *       reschedule-or-refund window, and notifies the supplier.
+ *     tags: [Admin, Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Booking (cancelled) + cancellation outcome + request
+ *       409:
+ *         description: Already decided, in progress, or superseded
+ */
+router.post('/cancellation-requests/:id/approve', requirePermission('cancellations.approve'), cancellationRequestController.approve);
+
+/**
+ * @swagger
+ * /admin/cancellation-requests/{id}/reject:
+ *   post:
+ *     summary: Reject a request — booking untouched, stop-selling reverted
+ *     tags: [Admin, Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [note]
+ *             properties:
+ *               note: { type: string, minLength: 3 }
+ *     responses:
+ *       200:
+ *         description: Rejected request (supplier notified in-app + email)
+ */
+router.post('/cancellation-requests/:id/reject', requirePermission('cancellations.approve'), cancellationRequestController.reject);
 
 /**
  * @swagger

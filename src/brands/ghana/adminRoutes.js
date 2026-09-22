@@ -20,6 +20,7 @@ const { attachBrand } = require('../../../middleware/brandContext');
 
 const ghana = require('./adminController');
 const adminController = require('../../core/domain/adminController');
+const cancellationRequestController = require('../../core/domain/cancellationRequestController');
 const adminAiController = require('../../core/domain/adminAiController');
 const verificationController = require('../../core/domain/supplierVerificationController');
 
@@ -157,6 +158,31 @@ router.patch('/bookings/:id/confirm-payment',
 router.post('/bookings/:id/charge-now',
   requirePermission('bookings.confirm-payment', 'dashboard.*'),
   adminController.chargePayLaterBooking,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// CANCELLATION REQUESTS — supplier cancels awaiting admin approval
+// (brand-scoped by attachBrand → req.brandKey; same shared controller)
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/cancellation-requests',
+  requirePermission('bookings.view', 'dashboard.*'),
+  cancellationRequestController.listAdmin,
+);
+router.post('/cancellation-requests/batch-approve',
+  requirePermission('cancellations.approve'),
+  cancellationRequestController.batchApprove,
+);
+router.get('/cancellation-requests/:id',
+  requirePermission('bookings.view', 'dashboard.*'),
+  cancellationRequestController.getAdminOne,
+);
+router.post('/cancellation-requests/:id/approve',
+  requirePermission('cancellations.approve'),
+  cancellationRequestController.approve,
+);
+router.post('/cancellation-requests/:id/reject',
+  requirePermission('cancellations.approve'),
+  cancellationRequestController.reject,
 );
 
 // ══════════════════════════════════════════════════════════════════════════

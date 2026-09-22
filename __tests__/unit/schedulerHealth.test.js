@@ -10,6 +10,7 @@ jest.mock('bullmq', () => ({
         'cancel-stale-pending-bookings', 'cleanup-stale-bookings',
         'expire-checkout-holds', 'expire-modify-topups', 'charge-pay-later-bookings',
         'resolve-cancellation-choices',
+        'cancellation-request-reminder',
         'earnings-eligibility-sweep', 'plan-booking-reminders',
         'dispatch-booking-reminders', 'reconcile-ghana', 'reconcile-travioafrica',
         'refresh-popularity', 'cleanup-events', 'aggregate-daily-views',
