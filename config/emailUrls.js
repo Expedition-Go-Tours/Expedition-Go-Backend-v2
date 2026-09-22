@@ -155,5 +155,12 @@ module.exports = {
     `${API_URL}/api/suppliers/settings/notification-recipients/verify?token=${encodeURIComponent(token)}`,
   supplierNotificationRecipientUnsubscribe: (id, token) =>
     `${API_URL}/api/suppliers/settings/notification-recipients/unsubscribe?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}`,
+  // Branded links (preferred): the recipient opens a link on the brand's own
+  // dashboard domain, which proxies to the API result page. Keeps the email
+  // link on a domain the recipient recognises.
+  supplierNotificationRecipientVerifyForUser: (user, token) =>
+    `${dashboardBaseForUser(user)}/confirm/${encodeURIComponent(token)}`,
+  supplierNotificationRecipientUnsubscribeForUser: (user, id, token) =>
+    `${dashboardBaseForUser(user)}/unsubscribe/${encodeURIComponent(id)}/${encodeURIComponent(token)}`,
   supplierNotificationSettings: (user) => `${dashboardBaseForUser(user)}/settings?tab=notifications`,
 };

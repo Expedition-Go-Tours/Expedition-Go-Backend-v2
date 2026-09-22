@@ -263,14 +263,14 @@ exports.addNotificationRecipient = catchAsync(async (req, res) => {
 
   const supplier = await prisma.user.findUnique({
     where: { id: req.supplierId },
-    select: { name: true },
+    select: { name: true, roles: true },
   });
 
   try {
     await sendNotificationRecipientVerificationEmail({
       to: record.email,
       supplierName: supplier?.name || 'your supplier account',
-      verifyUrl: emailUrls.supplierNotificationRecipientVerify(rawToken),
+      verifyUrl: emailUrls.supplierNotificationRecipientVerifyForUser(supplier, rawToken),
       types: notificationRecipientService.enabledTypeLabels(record.preferences),
     });
   } catch (err) {
@@ -307,13 +307,13 @@ exports.resendNotificationRecipient = catchAsync(async (req, res) => {
 
   const supplier = await prisma.user.findUnique({
     where: { id: req.supplierId },
-    select: { name: true },
+    select: { name: true, roles: true },
   });
 
   await sendNotificationRecipientVerificationEmail({
     to: record.email,
     supplierName: supplier?.name || 'your supplier account',
-    verifyUrl: emailUrls.supplierNotificationRecipientVerify(rawToken),
+    verifyUrl: emailUrls.supplierNotificationRecipientVerifyForUser(supplier, rawToken),
     types: notificationRecipientService.enabledTypeLabels(record.preferences),
   });
 
