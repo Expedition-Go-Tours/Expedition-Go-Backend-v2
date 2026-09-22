@@ -52,6 +52,13 @@ router.get('/settings/business-profile', resolveSupplier, supplierSettingsContro
 router.patch('/settings/business-profile', resolveSupplier, requireTeamRole('admin', 'editor'), supplierSettingsController.updateBusinessProfile);
 router.get('/settings/notification-preferences', resolveSupplier, supplierSettingsController.getNotificationPreferences);
 router.put('/settings/notification-preferences', resolveSupplier, requireTeamRole('admin'), supplierSettingsController.updateNotificationPreferences);
+
+// Additional notification email addresses (email delivery only — not logins)
+router.get('/settings/notification-recipients', resolveSupplier, supplierSettingsController.listNotificationRecipients);
+router.post('/settings/notification-recipients', resolveSupplier, requireTeamRole('admin'), supplierSettingsController.addNotificationRecipient);
+router.post('/settings/notification-recipients/:id/resend', resolveSupplier, requireTeamRole('admin'), supplierSettingsController.resendNotificationRecipient);
+router.patch('/settings/notification-recipients/:id', resolveSupplier, requireTeamRole('admin'), supplierSettingsController.updateNotificationRecipient);
+router.delete('/settings/notification-recipients/:id', resolveSupplier, requireTeamRole('admin'), supplierSettingsController.removeNotificationRecipient);
 router.get('/settings/tax-info', resolveSupplier, supplierSettingsController.getTaxInfo);
 router.patch('/settings/tax-info', resolveSupplier, requireTeamRole('admin', 'finance'), supplierSettingsController.updateTaxInfo);
 router.get('/settings/booking-rules', resolveSupplier, supplierSettingsController.getBookingRules);

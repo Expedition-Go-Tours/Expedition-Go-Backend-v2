@@ -27,6 +27,16 @@ const inviteLookupLimiter = createLimiter({
   },
 });
 
+const recipientWriteLimiter = createLimiter({
+  name: 'notification_recipient_write',
+  defaultMax: 20,
+  defaultWindowMs: 60 * 60 * 1000,
+  message: {
+    status: 'fail',
+    message: 'Too many notification email attempts, please try again later.',
+  },
+});
+
 // Public — no auth required
 /**
  * @swagger
@@ -81,6 +91,10 @@ const inviteLookupLimiter = createLimiter({
  *         description: Invitation has already been accepted
  */
 router.get('/team/invite/:token', inviteLookupLimiter, teamController.getInviteDetails);
+
+// Public — token-authenticated from the email link (no session required).
+router.get('/notification-recipients/verify', settingsController.verifyNotificationRecipient);
+router.post('/notification-recipients/unsubscribe', settingsController.unsubscribeNotificationRecipient);
 
 // Auth required
 router.use(protect);
@@ -244,6 +258,14 @@ router.post('/team/invite/:token/decline', teamController.declineInvite);
 
 // Supplier access (owner or invited team member)
 router.use(resolveSupplier);
+
+// Additional notification email addresses. Managers (admin) add/remove;
+// any team member may read the list.
+router.get('/notification-recipients', settingsController.listNotificationRecipients);
+router.post('/notification-recipients', requireTeamRole('admin'), recipientWriteLimiter, settingsController.addNotificationRecipient);
+router.post('/notification-recipients/:id/resend', requireTeamRole('admin'), recipientWriteLimiter, settingsController.resendNotificationRecipient);
+router.patch('/notification-recipients/:id', requireTeamRole('admin'), settingsController.updateNotificationRecipient);
+router.delete('/notification-recipients/:id', requireTeamRole('admin'), settingsController.removeNotificationRecipient);
 
 /**
  * @swagger

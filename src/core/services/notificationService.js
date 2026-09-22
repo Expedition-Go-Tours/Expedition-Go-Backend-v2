@@ -14,6 +14,8 @@
 
 const prisma = require('./prismaClient');
 const { sendEmail } = require('./emailService');
+const { categoryForType } = require('./notificationCategories');
+const { resolveRecipients } = require('./notificationRecipientService');
 const emailUrls = require('../../../config/emailUrls');
 
 /**
@@ -72,12 +74,15 @@ async function sendNotification({
     // Send email notification if requested
     if (shouldSendEmail && user.email) {
       try {
+        const category = categoryForType(type);
+        const recipients = await resolveRecipients(userId, category);
         await sendNotificationEmail(user, {
           type,
           title,
           message,
           data,
-          template: emailTemplate
+          template: emailTemplate,
+          recipients,
         });
 
         // Update notification as email sent
@@ -89,7 +94,7 @@ async function sendNotification({
           }
         });
 
-        console.log(`📧 Email notification sent to ${user.email}`);
+        console.log(`📧 Email notification sent to ${recipients.map((r) => r.email).join(', ')}`);
       } catch (emailError) {
         console.error('❌ Email notification failed:', emailError);
       }
@@ -130,7 +135,18 @@ async function sendWebSocketNotification(userId, notificationData) {
 /**
  * Send email notification
  */
-async function sendNotificationEmail(user, { type, title, message, data, template }) {
+async function sendNotificationEmail(user, { type, title, message, data, template, recipients }) {
+  const audience = Array.isArray(recipients) && recipients.length
+    ? recipients
+    : [{ email: user.email, recipientId: null }];
+  const to = audience.map((r) => r.email);
+  const tagsByRecipient = {};
+  for (const r of audience) {
+    if (r.recipientId) {
+      tagsByRecipient[r.email] = [{ name: 'notification_recipient', value: r.recipientId }];
+    }
+  }
+
   const emailTemplates = {
     BOOKING_CONFIRMED: { subject: 'Booking Confirmation' },
     BOOKING_CANCELLED: { subject: 'Booking Cancelled' },
@@ -166,7 +182,8 @@ async function sendNotificationEmail(user, { type, title, message, data, templat
       const message = `${customerName} left a ${rating}-star review${tourTitle ? ` of "${tourTitle}"` : ''}${snippet ? `: "${snippet}"` : ''}.`;
 
       return sendEmail({
-        to: user.email,
+        to,
+        tagsByRecipient,
         subject: `New ${rating}-Star Review Received`,
         template: 'generic-notification',
         data: {
@@ -188,7 +205,8 @@ async function sendNotificationEmail(user, { type, title, message, data, templat
   // emailService). This generic path renders the inline "generic-notification"
   // document — guaranteed to resolve, unlike the legacy SendGrid names.
   await sendEmail({
-    to: user.email,
+    to,
+    tagsByRecipient,
     subject: emailConfig.subject,
     template: template || 'generic-notification',
     data: {

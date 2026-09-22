@@ -21,6 +21,9 @@ const CLIENT_URL = (process.env.CLIENT_URL || 'http://localhost:5173').replace(/
 const DASHBOARD_URL = (process.env.SUPPLIER_DASHBOARD_URL || process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/$/, '');
 // Ghana suppliers sign in on a separate dashboard from the TravioAfrica one.
 const GHANA_DASHBOARD_URL = (process.env.GHANA_SUPPLIER_DASHBOARD_URL || 'https://supplier.travioghana.com').replace(/\/$/, '');
+// Public API origin — used for links that must work without a dashboard login
+// (e.g. confirming a notification email address).
+const API_URL = (process.env.API_URL || 'http://localhost:5000').replace(/\/$/, '');
 
 /**
  * Resolve the supplier dashboard base URL for a user. Suppliers with the
@@ -141,4 +144,13 @@ module.exports = {
   supplierProductForUser: (tourId, user) => `${dashboardBaseForUser(user)}/products/build/${encodeURIComponent(tourId)}/type`,
   supplierReview: (reviewId) => `${DASHBOARD_URL}/reviews?reviewId=${encodeURIComponent(reviewId)}`,
   supplierReplyReview: (reviewId) => `${DASHBOARD_URL}/reviews?reviewId=${encodeURIComponent(reviewId)}&reply=1`,
+
+  // ── Supplier notification recipients ───────────────────────────────
+  // Confirm/unsubscribe links must resolve without a dashboard session, so
+  // they point at the API and redirect back to the dashboard afterwards.
+  supplierNotificationRecipientVerify: (token) =>
+    `${API_URL}/api/suppliers/settings/notification-recipients/verify?token=${encodeURIComponent(token)}`,
+  supplierNotificationRecipientUnsubscribe: (id, token) =>
+    `${API_URL}/api/suppliers/settings/notification-recipients/unsubscribe?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}`,
+  supplierNotificationSettings: (user) => `${dashboardBaseForUser(user)}/settings?tab=notifications`,
 };

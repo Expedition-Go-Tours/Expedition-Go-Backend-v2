@@ -22,6 +22,7 @@ const getConfig = require('./getConfig');
 const { render } = require('./emailRenderer');
 const fmt = require('./emailFormatting');
 const emailUrls = require('../../../config/emailUrls');
+const { resolveRecipients } = require('./notificationRecipientService');
 
 const GENERATED_DIR = path.join(__dirname, '..', '..', '..', 'sendgrid-templates', 'generated');
 
@@ -156,7 +157,38 @@ function normalizeAttachments(attachments = []) {
 /**
  * Core delivery — render a compiled template and send via Resend.
  */
-async function sendHtml({ to, subject, html, text = '', attachments = [], replyTo, inReplyTo, brandKey = null }) {
+/**
+ * Normalise a Resend tag list. Accepts [{ name, value }] and drops incomplete
+ * entries so a malformed tag can never fail the send.
+ */
+function normalizeTags(tags) {
+  if (!Array.isArray(tags)) return [];
+  return tags
+    .filter((t) => t && t.name != null && t.value != null)
+    .slice(0, 50)
+    .map((t) => ({ name: String(t.name), value: String(t.value) }));
+}
+
+async function sendHtml({ to, subject, html, text = '', attachments = [], replyTo, inReplyTo, brandKey = null, tags, tagsByRecipient, unsubscribeUrl }) {
+  // Multi-recipient fan-out: one provider call per address so each send carries
+  // its own id/tags (per-recipient bounce tracking) and recipients never see
+  // each other's addresses. A failure on one address never blocks the others.
+  if (Array.isArray(to)) {
+    const results = await Promise.allSettled(
+      to.map((addr) => sendHtml({
+        to: addr, subject, html, text, attachments, replyTo, inReplyTo, brandKey,
+        tags: (tagsByRecipient && tagsByRecipient[addr]) || tags,
+        unsubscribeUrl,
+      })),
+    );
+    results.forEach((r, i) => {
+      if (r.status === 'rejected') {
+        console.error(`[Email] Fan-out failed to ${to[i]}: ${r.reason?.message || r.reason}`);
+      }
+    });
+    return { success: results.some((r) => r.status === 'fulfilled'), results };
+  }
+
   const client = getResend();
 
   if (!client) {
@@ -170,6 +202,8 @@ async function sendHtml({ to, subject, html, text = '', attachments = [], replyT
     const extraHeaders = {};
     if (replyToValue) extraHeaders['Reply-To'] = replyToValue;
     if (inReplyTo) extraHeaders['In-Reply-To'] = inReplyTo;
+    if (unsubscribeUrl) extraHeaders['List-Unsubscribe'] = `<${unsubscribeUrl}>`;
+    const tagList = normalizeTags(tags);
 
     // Use Resend's REST API directly for plain sends. The SDK version of this
     // request silently drops Reply-To/headers (verified against delivered raw
@@ -185,6 +219,7 @@ async function sendHtml({ to, subject, html, text = '', attachments = [], replyT
         ...(text ? { text } : {}),
         ...(replyToValue ? { reply_to: replyToValue } : {}),
         ...(Object.keys(extraHeaders).length ? { headers: extraHeaders } : {}),
+        ...(tagList.length ? { tags: tagList } : {}),
       };
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
@@ -208,6 +243,7 @@ async function sendHtml({ to, subject, html, text = '', attachments = [], replyT
       ...(text ? { text } : {}),
       ...(replyToValue ? { reply_to: replyToValue } : {}),
       ...(Object.keys(extraHeaders).length ? { headers: extraHeaders } : {}),
+      ...(tagList.length ? { tags: tagList } : {}),
       ...(attachments.length ? { attachments: normalizeAttachments(attachments) } : {}),
     });
 
@@ -221,10 +257,16 @@ async function sendHtml({ to, subject, html, text = '', attachments = [], replyT
   }
 }
 
-async function sendRendered({ to, subject, key, data = {}, attachments = [], opts = {} }) {
+async function sendRendered({ to, subject, key, data = {}, attachments = [], opts = {}, tags, tagsByRecipient, unsubscribeUrl }) {
   const brandKey = opts.brandKey || data.brandKey || null;
   const html = await renderTemplate(key, data, { ...opts, brandKey });
-    return sendHtml({ to, subject, html, text: opts.text || '', attachments, replyTo: opts.replyTo, inReplyTo: opts.inReplyTo, brandKey });
+  return sendHtml({
+    to, subject, html, text: opts.text || '', attachments,
+    replyTo: opts.replyTo, inReplyTo: opts.inReplyTo, brandKey,
+    tags: tags || opts.tags,
+    tagsByRecipient: tagsByRecipient || opts.tagsByRecipient,
+    unsubscribeUrl: unsubscribeUrl || opts.unsubscribeUrl,
+  });
 }
 
 /**
@@ -233,9 +275,9 @@ async function sendRendered({ to, subject, key, data = {}, attachments = [], opt
  * account/status emails (team invites, supplier status, notifications) keep
  * working without cloud templates.
  */
-async function sendEmail({ to, subject, template, data = {}, attachments = [], opts = {} }) {
+async function sendEmail({ to, subject, template, data = {}, attachments = [], opts = {}, tags, tagsByRecipient, unsubscribeUrl }) {
   if (template && loadTemplate(template)) {
-    return sendRendered({ to, subject, key: template, data, attachments, opts });
+    return sendRendered({ to, subject, key: template, data, attachments, opts, tags, tagsByRecipient, unsubscribeUrl });
   }
   // Legacy / inline path
   const content = generateEmailContent(template, data);
@@ -246,9 +288,60 @@ async function sendEmail({ to, subject, template, data = {}, attachments = [], o
     for (const [k, v] of Object.entries(merged)) {
       html = html.split(`{{${k}}}`).join(v == null ? '' : String(v));
     }
-    return sendHtml({ to, subject, html, text: content.text || '', attachments, replyTo: opts?.replyTo, inReplyTo: opts?.inReplyTo, brandKey: opts?.brandKey || null });
+    return sendHtml({
+      to, subject, html, text: content.text || '', attachments,
+      replyTo: opts?.replyTo, inReplyTo: opts?.inReplyTo, brandKey: opts?.brandKey || null,
+      tags: tags || opts?.tags,
+      tagsByRecipient: tagsByRecipient || opts?.tagsByRecipient,
+      unsubscribeUrl: unsubscribeUrl || opts?.unsubscribeUrl,
+    });
   }
   throw new Error(`[Email] No template or inline generator for: ${template}`);
+}
+
+/**
+ * Resolve the audience for a supplier email.
+ *
+ * Returns { to, tagsByRecipient } ready to spread into sendRendered/sendEmail.
+ * `supplierOrId` may be a supplier object (with `id`) or a supplier/user id.
+ * When no id is available it degrades to the single supplier email, matching
+ * the pre-existing behaviour.
+ */
+async function supplierRecipientList(supplierOrId, category) {
+  const supplierId = typeof supplierOrId === 'string' ? supplierOrId : supplierOrId?.id;
+  if (!supplierId) {
+    const email = typeof supplierOrId === 'object' ? supplierOrId?.email : null;
+    const normalized = email ? String(email).trim().toLowerCase() : null;
+    return { to: normalized ? [normalized] : [], tagsByRecipient: {} };
+  }
+  const recipients = await resolveRecipients(supplierId, category);
+  const tagsByRecipient = {};
+  for (const r of recipients) {
+    if (r.recipientId) {
+      tagsByRecipient[r.email] = [{ name: 'notification_recipient', value: r.recipientId }];
+    }
+  }
+  return { to: recipients.map((r) => r.email), tagsByRecipient };
+}
+
+/**
+ * Double opt-in confirmation for an additional supplier notification address.
+ * Sent directly to the address (never through supplierRecipientList).
+ */
+async function sendNotificationRecipientVerificationEmail({ to, supplierName, verifyUrl }) {
+  return sendEmail({
+    to,
+    subject: 'Confirm this email for supplier notifications',
+    template: 'generic-notification',
+    data: {
+      userName: supplierName || 'there',
+      header: 'Confirm your notification email',
+      message: `You're being added to receive notifications for ${supplierName || 'this supplier'}. Confirm this address to start receiving them. If you weren't expecting this, you can safely ignore this email.`,
+      buttonText: 'Confirm email',
+      buttonUrl: verifyUrl,
+      supplierName: supplierName || '',
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -813,7 +906,7 @@ async function sendSupplierNewBookingEmail(booking) {
     payoutAmountLabel: base.payoutAmountLabel,
   };
   return sendRendered({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "bookings"),
     subject: `New confirmed booking — ${base.tourTitle} (Ref: ${base.bookingNumber})`,
     key: 'supplier-new-booking',
     data,
@@ -836,7 +929,7 @@ async function sendSupplierPayLaterChargedEmail(booking, { paymentReference, cha
     chargedAtLabel: fmt.formatLongDate(chargedAt || b.paidAt || new Date()),
   };
   return sendRendered({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "bookings"),
     subject: `Reservation payment collected — booking confirmed (Ref: ${base.bookingNumber})`,
     key: 'supplier-pay-later-charged',
     data,
@@ -856,7 +949,7 @@ async function sendSupplierBookingChangedEmail(booking, { changes = [], previous
     payoutAdjustmentLabel: fmt.formatCurrency(payoutAdjustment ?? 0, currency),
   };
   return sendRendered({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "bookings"),
     subject: 'A confirmed booking has been updated',
     key: 'supplier-booking-changed',
     data,
@@ -874,7 +967,7 @@ async function sendSupplierContactUpdatedEmail(booking, { customerPhone, custome
     emergencyContact: emergencyContact || '',
   };
   return sendRendered({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "bookings"),
     subject: 'Traveller details have changed',
     key: 'supplier-customer-contact-updated',
     data,
@@ -890,7 +983,7 @@ async function sendSupplierPickupUpdatedEmail(booking, { previousPickupLocation 
     previousPickupLocation,
   };
   return sendRendered({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "bookings"),
     subject: 'Customer pickup location updated',
     key: 'supplier-pickup-updated',
     data,
@@ -908,7 +1001,7 @@ async function sendSupplierPickupRequiredEmail(booking, { deadline } = {}) {
     pickupUrl: emailUrls.addPickupLocation(b.id, origin),
   };
   return sendRendered({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "bookings"),
     subject: `Action required: Confirm pickup for booking ${base.bookingNumber}`,
     key: 'supplier-pickup-required',
     data,
@@ -923,7 +1016,7 @@ async function sendSupplierBookingReminderEmail(booking) {
     ...base,
   };
   return sendRendered({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "bookings"),
     subject: `Upcoming booking: ${base.tourTitle} (${fmt.formatShortDate(b.travelDate)})`,
     key: 'supplier-booking-reminder',
     data,
@@ -939,7 +1032,7 @@ async function sendSupplierCustomerCancelledFreeEmail(booking, { cancelledAt } =
     cancelledAtLabel: fmt.formatDateTime(cancelledAt || b.cancelledAt || new Date()),
   };
   return sendRendered({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "bookings"),
     subject: 'Booking cancelled — do not operate',
     key: 'supplier-customer-cancelled-free',
     data,
@@ -957,7 +1050,7 @@ async function sendSupplierCustomerCancelledLateEmail(booking, { cancelledAt } =
     cancellationDeadlineLabel: fmt.formatDateTime(deadline),
   };
   return sendRendered({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "bookings"),
     subject: 'Late customer cancellation',
     key: 'supplier-customer-cancelled-late',
     data,
@@ -974,7 +1067,7 @@ async function sendSupplierPlatformCancelledEmail(booking, { reason, compensatio
     compensationLabel: fmt.formatCurrency(compensation ?? 0, b.currency),
   };
   return sendRendered({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "bookings"),
     subject: `Booking cancelled by ${data.brandName || 'Travio Africa'}`,
     key: 'supplier-platform-cancelled',
     data,
@@ -991,7 +1084,7 @@ async function sendSupplierCancellationRecordedEmail(booking, { reason } = {}) {
     refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.grossAmount, b.currency),
   };
   return sendRendered({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "bookings"),
     subject: 'Supplier cancellation confirmed',
     key: 'supplier-cancellation-recorded',
     data,
@@ -1012,7 +1105,7 @@ async function sendSupplierPayoutScheduledEmail({ booking, payout, payoutDate } 
     statusLabel: 'Scheduled',
   };
   return sendRendered({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "payments"),
     subject: 'Your payout is scheduled',
     key: 'supplier-payout-scheduled',
     data,
@@ -1033,7 +1126,7 @@ async function sendSupplierPayoutCompletedEmail({ booking, payout, payoutDate } 
     statusLabel: 'Completed',
   };
   return sendRendered({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "payments"),
     subject: 'Your payout has been sent',
     key: 'supplier-payout-completed',
     data,
@@ -1051,7 +1144,7 @@ async function sendSupplierPayoutFailedEmail({ booking, payout, reason } = {}) {
     payoutReason: reason || payout?.failureReason || '',
   };
   return sendRendered({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "payments"),
     subject: 'Action required: Payout unsuccessful',
     key: 'supplier-payout-failed',
     data,
@@ -1068,11 +1161,12 @@ async function sendSupplierPayoutFailedEmail({ booking, payout, reason } = {}) {
  */
 async function sendSupplierProductSubmittedEmail(tour) {
   const supplier = tour?.supplier || {};
-  const to = supplier.email;
-  if (!to) return { success: false, reason: 'no-recipient' };
+  const { to, tagsByRecipient } = await supplierRecipientList(supplier, 'systemAlerts');
+  if (!to.length) return { success: false, reason: 'no-recipient' };
 
   return sendRendered({
     to,
+    tagsByRecipient,
     subject: 'Your product has been submitted for review',
     key: 'supplier-product-submitted',
     data: {
@@ -1089,11 +1183,12 @@ async function sendSupplierProductSubmittedEmail(tour) {
  */
 async function sendSupplierProductUpdateSubmittedEmail(tour) {
   const supplier = tour?.supplier || {};
-  const to = supplier.email;
-  if (!to) return { success: false, reason: 'no-recipient' };
+  const { to, tagsByRecipient } = await supplierRecipientList(supplier, 'systemAlerts');
+  if (!to.length) return { success: false, reason: 'no-recipient' };
 
   return sendRendered({
     to,
+    tagsByRecipient,
     subject: 'Your product update is under review',
     key: 'supplier-product-update-submitted',
     data: {
@@ -1131,7 +1226,7 @@ async function sendFinancePayoutRequestEmail(eventType, request) {
   if (!config) throw new Error(`Unknown finance email event: ${eventType}`);
 
   return sendEmail({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "payments"),
     subject: config.subject,
     template: 'generic-notification',
     data: {
@@ -1147,7 +1242,7 @@ async function sendDisputeOpenedEmail(dispute) {
   const tour = booking.tour || {};
   const supplier = dispute.supplier || {};
   return sendEmail({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "bookings"),
     subject: `Refund request received - ${dispute.disputeNumber}`,
     template: 'generic-notification',
     data: {
@@ -1223,7 +1318,7 @@ async function sendReviewNotificationEmail(review) {
   ]);
 
   return sendEmail({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "reviews"),
     subject: `New ${review.rating}-Star Review Received`,
     template: 'generic-notification',
     data: {
@@ -1300,7 +1395,7 @@ async function sendPayoutNotificationEmail(supplierId, payoutData) {
 
   const currency = payoutData.currency || 'USD';
   return sendEmail({
-    to: supplier.email,
+    ...await supplierRecipientList(supplier, "payments"),
     subject: 'Payout Processed',
     template: 'generic-notification',
     data: {
@@ -1594,6 +1689,8 @@ module.exports = {
   sendSupplierBookingNotification,
   sendTeamInviteEmail,
   sendTeamInviteRevokedEmail,
+  supplierRecipientList,
+  sendNotificationRecipientVerificationEmail,
   generatePrintableTicketHtml,
   generateEmailContent,
 };

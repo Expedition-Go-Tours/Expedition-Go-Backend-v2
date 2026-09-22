@@ -198,6 +198,7 @@ app.use(require('cookie-parser')());
   // body was already consumed.
   app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }));
   app.use('/api/email/inbound', express.raw({ type: 'application/json' }));
+  app.use('/api/email/webhook', express.raw({ type: 'application/json' }));
   app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -293,6 +294,7 @@ const adminFinanceRoutes = require('./routes/adminFinanceRoutes');
 const disputeRoutes = require('./routes/disputeRoutes');
 const refundClaimRoutes = require('./routes/refundClaimRoutes');
 const emailInboundRoutes = require('./routes/emailInboundRoutes');
+const emailWebhookRoutes = require('./routes/emailWebhookRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 const availabilityRoutes = require('./routes/availabilityRoutes');
 const adminSettingsRoutes = require('./routes/adminSettingsRoutes');
@@ -334,6 +336,7 @@ app.use('/api/admin/finance', adminFinanceRoutes);
 app.use('/api/disputes', disputeRoutes);
 app.use('/api/refund-claims', refundClaimRoutes);
 app.use('/api/email/inbound', emailInboundRoutes);
+app.use('/api/email/webhook', emailWebhookRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/auth', authRoutes);

@@ -1,6 +1,10 @@
 const prisma = require('../services/prismaClient');
 const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
+const notificationRecipientService = require('../services/notificationRecipientService');
+const { sendNotificationRecipientVerificationEmail } = require('../services/emailService');
+const { logActivity } = require('../services/auditLogger');
+const emailUrls = require('../../../config/emailUrls');
 
 exports.getBusinessProfile = catchAsync(async (req, res) => {
   const profile = await prisma.supplierProfile.findUnique({
@@ -204,4 +208,121 @@ exports.updateBookingRules = catchAsync(async (req, res, next) => {
     status: 'success',
     data: updated.operatingInfo?.bookingRules || {},
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Additional notification email addresses
+// ─────────────────────────────────────────────────────────────────────────────
+
+exports.listNotificationRecipients = catchAsync(async (req, res) => {
+  const recipients = await notificationRecipientService.listRecipients(req.supplierId);
+  res.status(200).json({ status: 'success', data: { recipients } });
+});
+
+exports.addNotificationRecipient = catchAsync(async (req, res) => {
+  const { email, name } = req.body;
+  const { record, rawToken } = await notificationRecipientService.addRecipient(
+    req.supplierId,
+    { email, name },
+    req.user?.id,
+  );
+
+  const supplier = await prisma.user.findUnique({
+    where: { id: req.supplierId },
+    select: { name: true },
+  });
+
+  try {
+    await sendNotificationRecipientVerificationEmail({
+      to: record.email,
+      supplierName: supplier?.name || 'your supplier account',
+      verifyUrl: emailUrls.supplierNotificationRecipientVerify(rawToken),
+    });
+  } catch (err) {
+    // Keep the row (the admin can resend) but surface the delivery failure.
+    console.error('[NotificationRecipient] verification email failed:', err.message);
+  }
+
+  logActivity({
+    userId: req.user?.id,
+    action: 'notification_recipient.added',
+    resource: 'SupplierNotificationRecipient',
+    resourceId: record.id,
+    metadata: { supplierId: req.supplierId, email: record.email },
+  }).catch(() => {});
+
+  res.status(201).json({ status: 'success', data: { recipient: record } });
+});
+
+exports.updateNotificationRecipient = catchAsync(async (req, res) => {
+  const { name, preferences } = req.body;
+  const recipient = await notificationRecipientService.updateRecipient(
+    req.supplierId,
+    req.params.id,
+    { name, preferences },
+  );
+  res.status(200).json({ status: 'success', data: { recipient } });
+});
+
+exports.resendNotificationRecipient = catchAsync(async (req, res) => {
+  const { record, rawToken } = await notificationRecipientService.resendVerification(
+    req.supplierId,
+    req.params.id,
+  );
+
+  const supplier = await prisma.user.findUnique({
+    where: { id: req.supplierId },
+    select: { name: true },
+  });
+
+  await sendNotificationRecipientVerificationEmail({
+    to: record.email,
+    supplierName: supplier?.name || 'your supplier account',
+    verifyUrl: emailUrls.supplierNotificationRecipientVerify(rawToken),
+  });
+
+  res.status(200).json({ status: 'success', data: { recipient: record } });
+});
+
+exports.removeNotificationRecipient = catchAsync(async (req, res) => {
+  const removed = await notificationRecipientService.removeRecipient(req.supplierId, req.params.id);
+
+  logActivity({
+    userId: req.user?.id,
+    action: 'notification_recipient.removed',
+    resource: 'SupplierNotificationRecipient',
+    resourceId: removed.id,
+    metadata: { supplierId: req.supplierId },
+  }).catch(() => {});
+
+  res.status(200).json({ status: 'success' });
+});
+
+// Public — the emailed token is the credential. Redirects back to the supplier
+// dashboard so the owner sees the result in context.
+exports.verifyNotificationRecipient = catchAsync(async (req, res) => {
+  const token = req.query.token;
+  try {
+    const recipient = await notificationRecipientService.verifyByToken(token);
+    const supplier = await prisma.user.findUnique({
+      where: { id: recipient.supplierId },
+      select: { roles: true, email: true },
+    });
+    const target = emailUrls.supplierNotificationSettings(supplier || {});
+    return res.redirect(302, `${target}&recipient=verified`);
+  } catch (err) {
+    const reason = err?.statusCode === 410 ? 'expired' : 'invalid';
+    return res.redirect(302, `${emailUrls.DASHBOARD_URL}/settings?tab=notifications&recipient=${reason}`);
+  }
+});
+
+// Public — signed token opts a single address out of every category.
+exports.unsubscribeNotificationRecipient = catchAsync(async (req, res) => {
+  const { id, token } = req.query;
+  const valid = id && notificationRecipientService.verifyUnsubscribeToken(id, token);
+  if (!valid) {
+    return res.status(400).json({ status: 'fail', message: 'This unsubscribe link is not valid' });
+  }
+  await notificationRecipientService.unsubscribeById(id);
+  res.status(200).json({ status: 'success', message: 'You have been unsubscribed' });
 });

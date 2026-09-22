@@ -200,6 +200,15 @@ enum NotificationType {
   TEAM_INVITE_ACCEPTED
 }
 
+// Lifecycle of an additional notification email address. PENDING until the
+// owner clicks the verification link, VERIFIED once it can receive mail, and
+// DISABLED after a hard bounce/complaint or a manual block.
+enum NotificationRecipientStatus {
+  PENDING
+  VERIFIED
+  DISABLED
+}
+
 enum AdminNotificationType {
   NEW_SUPPLIER_APPLICATION
   SUPPLIER_STATUS_CHANGE
@@ -371,6 +380,8 @@ model User {
   cartItems                    CartItem[]
   teamMembers                  TeamMember[]              @relation("SupplierTeam")
   teamInvitations              TeamMember[]              @relation("TeamInviter")
+  notificationRecipients        SupplierNotificationRecipient[] @relation("SupplierNotificationRecipients")
+  invitedNotificationRecipients SupplierNotificationRecipient[] @relation("NotificationRecipientInviter")
   chatParticipants             ConversationParticipant[]
   messages                     Message[]
   specialOffers                SpecialOffer[]
@@ -1599,6 +1610,38 @@ model TeamMember {
   @@index([supplierId])
   @@index([email])
   @@index([inviteToken])
+}
+
+// Additional email addresses that receive a supplier's email notifications.
+// Deliberately separate from TeamMember (logins) and from User.email (the
+// always-on primary recipient and login identity). Verification is double
+// opt-in; per-category preferences let each address opt out individually.
+// Resolved at send time by notificationRecipientService.resolveRecipients().
+model SupplierNotificationRecipient {
+  id         String @id @default(cuid())
+  supplierId String
+  supplier   User   @relation("SupplierNotificationRecipients", fields: [supplierId], references: [id], onDelete: Cascade)
+
+  email  String // stored normalized (trimmed + lowercased)
+  name   String?
+  status NotificationRecipientStatus @default(PENDING)
+
+  verifyTokenHash String?   @unique // sha256 of the emailed token — the raw token is never stored
+  tokenExpiresAt  DateTime?
+  verifiedAt      DateTime?
+  disabledAt      DateTime?
+  disableReason   String? // 'hard_bounce' | 'complaint' | 'manual'
+
+  preferences Json @default("{}") // { bookings, reviews, payments, systemAlerts }
+
+  invitedById String?
+  invitedBy   User?   @relation("NotificationRecipientInviter", fields: [invitedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([supplierId, email])
+  @@index([supplierId, status])
 }
 
 // ================================
