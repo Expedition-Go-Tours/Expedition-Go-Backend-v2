@@ -23,6 +23,9 @@ const MAX_RECIPIENTS = parseInt(process.env.NOTIFICATION_RECIPIENTS_MAX, 10) || 
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CATEGORIES = ['bookings', 'reviews', 'payments', 'systemAlerts'];
 
+// A recipient receives every category unless it explicitly opts out.
+const DEFAULT_PREFERENCES = { bookings: true, reviews: true, payments: true, systemAlerts: true };
+
 // Rollout gate. With extras disabled the resolver returns only the primary, so
 // deploying the code is a no-op until the flag is switched on.
 function recipientsEnabled() {
@@ -73,7 +76,7 @@ function publicRecipient(record) {
     email: record.email,
     name: record.name,
     status: record.status,
-    preferences: record.preferences || {},
+    preferences: { ...DEFAULT_PREFERENCES, ...(record.preferences || {}) },
     verifiedAt: record.verifiedAt,
     disabledAt: record.disabledAt,
     createdAt: record.createdAt,
@@ -101,7 +104,7 @@ async function getRecipient(supplierId, id) {
  * Create (or re-invite) an additional recipient. Returns the record plus the
  * raw token that must be emailed — it is never persisted.
  */
-async function addRecipient(supplierId, { email, name }, invitedById) {
+async function addRecipient(supplierId, { email, name, preferences }, invitedById) {
   const normalized = normalizeEmail(email);
   if (!isValidEmail(normalized)) {
     throw new AppError('Enter a valid email address', 400);
@@ -128,6 +131,7 @@ async function addRecipient(supplierId, { email, name }, invitedById) {
   }
 
   const rawToken = newToken();
+  const prefs = sanitizePreferences(preferences);
   const data = {
     email: normalized,
     name: name ? String(name).trim().slice(0, 120) : null,
@@ -140,8 +144,19 @@ async function addRecipient(supplierId, { email, name }, invitedById) {
   };
 
   const record = existing
-    ? await prisma.supplierNotificationRecipient.update({ where: { id: existing.id }, data })
-    : await prisma.supplierNotificationRecipient.create({ data: { supplierId, ...data } });
+    ? await prisma.supplierNotificationRecipient.update({
+        where: { id: existing.id },
+        data: {
+          ...data,
+          // Preserve already-chosen types on re-invite unless new ones are sent.
+          ...(Object.keys(prefs).length
+            ? { preferences: { ...(existing.preferences || {}), ...prefs } }
+            : {}),
+        },
+      })
+    : await prisma.supplierNotificationRecipient.create({
+        data: { supplierId, ...data, ...(Object.keys(prefs).length ? { preferences: prefs } : {}) },
+      });
 
   return { record: publicRecipient(record), rawToken };
 }
@@ -303,6 +318,7 @@ async function unsubscribeById(id) {
 
 module.exports = {
   CATEGORIES,
+  DEFAULT_PREFERENCES,
   MAX_RECIPIENTS,
   recipientsEnabled,
   normalizeEmail,

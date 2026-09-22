@@ -220,10 +220,10 @@ exports.listNotificationRecipients = catchAsync(async (req, res) => {
 });
 
 exports.addNotificationRecipient = catchAsync(async (req, res) => {
-  const { email, name } = req.body;
+  const { email, name, preferences } = req.body;
   const { record, rawToken } = await notificationRecipientService.addRecipient(
     req.supplierId,
-    { email, name },
+    { email, name, preferences },
     req.user?.id,
   );
 

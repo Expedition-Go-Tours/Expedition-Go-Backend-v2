@@ -100,6 +100,20 @@ describe('notificationRecipientService', () => {
       expect(saved.email).toBe('second@example.com');
     });
 
+    it('stores the chosen email types and returns normalized preferences', async () => {
+      prisma.supplierNotificationRecipient.create.mockImplementation(({ data }) =>
+        Promise.resolve(recipient({ ...data, id: 'new-2' })));
+
+      const { record } = await service.addRecipient(SUPPLIER, {
+        email: 'types@example.com',
+        preferences: { bookings: false, bogus: true },
+      });
+
+      const saved = prisma.supplierNotificationRecipient.create.mock.calls[0][0].data;
+      expect(saved.preferences).toEqual({ bookings: false });
+      expect(record.preferences).toEqual({ bookings: false, reviews: true, payments: true, systemAlerts: true });
+    });
+
     it('re-invites an existing address with a fresh token instead of duplicating', async () => {
       prisma.supplierNotificationRecipient.findUnique.mockResolvedValue(recipient({ status: 'DISABLED' }));
       prisma.supplierNotificationRecipient.update.mockImplementation(({ data }) =>
