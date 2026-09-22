@@ -2,9 +2,43 @@ const prisma = require('../services/prismaClient');
 const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
 const notificationRecipientService = require('../services/notificationRecipientService');
+const { renderNotificationRecipientPage } = require('../services/notificationRecipientPage');
 const { sendNotificationRecipientVerificationEmail } = require('../services/emailService');
 const { logActivity } = require('../services/auditLogger');
+const { getBrandEmail } = require('../../../config/brands');
 const emailUrls = require('../../../config/emailUrls');
+
+/**
+ * Brand context for the public result page. The recipient is not a dashboard
+ * user, so the page is branded from the supplier's account.
+ */
+async function resultPageContext(supplierId) {
+  const fallbackEmail = getBrandEmail('africa');
+  const fallback = {
+    brandName: fallbackEmail.brandName,
+    logoUrl: fallbackEmail.logoUrl,
+    supportEmail: fallbackEmail.supportEmail,
+    supplierName: '',
+    dashboardUrl: '',
+  };
+  if (!supplierId) return fallback;
+
+  const user = await prisma.user.findUnique({
+    where: { id: supplierId },
+    select: { name: true, roles: true },
+  });
+  if (!user) return fallback;
+
+  const roles = Array.isArray(user.roles) ? user.roles : [];
+  const emailBrand = getBrandEmail(roles.includes('ghana') ? 'ghana' : 'africa');
+  return {
+    brandName: emailBrand.brandName,
+    logoUrl: emailBrand.logoUrl,
+    supportEmail: emailBrand.supportEmail,
+    supplierName: user.name || '',
+    dashboardUrl: emailUrls.supplierNotificationSettings(user),
+  };
+}
 
 exports.getBusinessProfile = catchAsync(async (req, res) => {
   const profile = await prisma.supplierProfile.findUnique({
@@ -237,6 +271,7 @@ exports.addNotificationRecipient = catchAsync(async (req, res) => {
       to: record.email,
       supplierName: supplier?.name || 'your supplier account',
       verifyUrl: emailUrls.supplierNotificationRecipientVerify(rawToken),
+      types: notificationRecipientService.enabledTypeLabels(record.preferences),
     });
   } catch (err) {
     // Keep the row (the admin can resend) but surface the delivery failure.
@@ -279,6 +314,7 @@ exports.resendNotificationRecipient = catchAsync(async (req, res) => {
     to: record.email,
     supplierName: supplier?.name || 'your supplier account',
     verifyUrl: emailUrls.supplierNotificationRecipientVerify(rawToken),
+    types: notificationRecipientService.enabledTypeLabels(record.preferences),
   });
 
   res.status(200).json({ status: 'success', data: { recipient: record } });
@@ -298,31 +334,45 @@ exports.removeNotificationRecipient = catchAsync(async (req, res) => {
   res.status(200).json({ status: 'success' });
 });
 
-// Public — the emailed token is the credential. Redirects back to the supplier
-// dashboard so the owner sees the result in context.
+// Public — the emailed token is the credential. Renders a standalone result
+// page; the recipient is not a dashboard user, so we never send them to a login.
 exports.verifyNotificationRecipient = catchAsync(async (req, res) => {
-  const token = req.query.token;
+  const token = String(req.query.token || '');
+  let state = 'invalid';
+  let recipient = null;
   try {
-    const recipient = await notificationRecipientService.verifyByToken(token);
-    const supplier = await prisma.user.findUnique({
-      where: { id: recipient.supplierId },
-      select: { roles: true, email: true },
-    });
-    const target = emailUrls.supplierNotificationSettings(supplier || {});
-    return res.redirect(302, `${target}&recipient=verified`);
+    recipient = await notificationRecipientService.verifyByToken(token);
+    state = 'verified';
   } catch (err) {
-    const reason = err?.statusCode === 410 ? 'expired' : 'invalid';
-    return res.redirect(302, `${emailUrls.DASHBOARD_URL}/settings?tab=notifications&recipient=${reason}`);
+    state = err?.statusCode === 410 ? 'expired' : 'invalid';
   }
+  const ctx = await resultPageContext(recipient?.supplierId);
+  const html = renderNotificationRecipientPage({
+    state,
+    ...ctx,
+    recipientEmail: recipient?.email || '',
+  });
+  res.status(200).type('html').send(html);
 });
 
 // Public — signed token opts a single address out of every category.
 exports.unsubscribeNotificationRecipient = catchAsync(async (req, res) => {
   const { id, token } = req.query;
-  const valid = id && notificationRecipientService.verifyUnsubscribeToken(id, token);
-  if (!valid) {
-    return res.status(400).json({ status: 'fail', message: 'This unsubscribe link is not valid' });
+  let state = 'invalid';
+  let recipient = null;
+  if (id && notificationRecipientService.verifyUnsubscribeToken(id, token)) {
+    try {
+      recipient = await notificationRecipientService.unsubscribeById(id);
+      state = 'unsubscribed';
+    } catch {
+      state = 'invalid';
+    }
   }
-  await notificationRecipientService.unsubscribeById(id);
-  res.status(200).json({ status: 'success', message: 'You have been unsubscribed' });
+  const ctx = await resultPageContext(recipient?.supplierId);
+  const html = renderNotificationRecipientPage({
+    state,
+    ...ctx,
+    recipientEmail: recipient?.email || '',
+  });
+  res.status(200).type('html').send(html);
 });

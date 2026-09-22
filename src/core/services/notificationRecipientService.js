@@ -26,6 +26,20 @@ const CATEGORIES = ['bookings', 'reviews', 'payments', 'systemAlerts'];
 // A recipient receives every category unless it explicitly opts out.
 const DEFAULT_PREFERENCES = { bookings: true, reviews: true, payments: true, systemAlerts: true };
 
+// Human labels for the email types — used in the confirmation email body.
+const CATEGORY_LABELS = {
+  bookings: 'Bookings & operations',
+  reviews: 'Reviews & ratings',
+  payments: 'Payments & payouts',
+  systemAlerts: 'Account & system alerts',
+};
+
+// Labels of the types a recipient will actually receive, in display order.
+function enabledTypeLabels(preferences) {
+  const prefs = { ...DEFAULT_PREFERENCES, ...(preferences || {}) };
+  return CATEGORIES.filter((c) => prefs[c] !== false).map((c) => CATEGORY_LABELS[c]);
+}
+
 // Rollout gate. With extras disabled the resolver returns only the primary, so
 // deploying the code is a no-op until the flag is switched on.
 function recipientsEnabled() {
@@ -318,8 +332,10 @@ async function unsubscribeById(id) {
 
 module.exports = {
   CATEGORIES,
+  CATEGORY_LABELS,
   DEFAULT_PREFERENCES,
   MAX_RECIPIENTS,
+  enabledTypeLabels,
   recipientsEnabled,
   normalizeEmail,
   isValidEmail,
