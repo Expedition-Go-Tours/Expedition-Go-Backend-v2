@@ -374,6 +374,20 @@ function deepClone(value) {
   return value;
 }
 
+// Key-order-insensitive serialization for diffing. Postgres jsonb returns
+// object keys in its own canonical order (sorted by length then bytes), while
+// freshly rebuilt in-memory blobs keep insertion order (e.g. normalizeWeeklySchedule
+// builds Monday..Sunday first). Plain JSON.stringify would therefore report a
+// phantom "weeklySchedule changed" diff between identical content. Sorting keys
+// recursively (arrays keep their order — slot sequences are meaningful) makes
+// the comparison a true value comparison.
+function stableStringify(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(',')}}`;
+}
+
 // Operating hours are stored twice: explicitly AND inside weeklySchedule.
 // The editor rebuilds the explicit values FROM the daily schedule, so a
 // stale explicit pair (09:00–17:00) next to a schedule that says 08:00–18:00
@@ -527,7 +541,14 @@ function buildTourDiff(live, draft, maxDepth = 4) {
         return;
       }
       if (depth >= maxDepth) {
-        if (JSON.stringify(a) !== JSON.stringify(b)) record(path, 'changed', truncate(a), truncate(b));
+        // Order-insensitive comparison: jsonb returns object keys in its own
+        // canonical order, while freshly rebuilt blobs (reconcileAvailability →
+        // normalizeWeeklySchedule etc.) carry insertion order. Comparing with
+        // plain JSON.stringify would invent a phantom "weeklySchedule changed"
+        // diff for identical content (live tour submits queued as 0-change
+        // drafts). Sort keys recursively so only real value changes survive;
+        // arrays (slot sequences) keep their order.
+        if (stableStringify(a) !== stableStringify(b)) record(path, 'changed', truncate(a), truncate(b));
         return;
       }
       const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
