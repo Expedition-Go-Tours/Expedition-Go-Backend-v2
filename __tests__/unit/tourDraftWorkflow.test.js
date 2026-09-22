@@ -541,6 +541,34 @@ describe('submitTourForReview (live tour with draft)', () => {
     );
   });
 
+  it('treats an identical FIRST submission of a live tour as a no-op (no 0-change draft queued)', async () => {
+    // A live tour with no prior submission (draftSubmittedAt null) that re-sends
+    // content identical to the live listing must not enter the moderation queue
+    // as a "Pending Edits (0 changes)" draft.
+    prisma.tour.findFirst.mockResolvedValue({
+      ...liveRow,
+      coverPhoto: liveRow.photos[0],
+      draftSubmittedAt: null,
+      supplier: { id: 'supplier-1', name: 'Supplier', photoURL: null },
+    });
+    req.body = {
+      title: liveRow.title,
+      description: liveRow.description,
+      photos: liveRow.photos,
+      coverPhoto: liveRow.photos[0],
+    };
+
+    await tourController.submitTourForReview(req, res, next);
+
+    expect(prisma.tour.update).not.toHaveBeenCalled();
+    expect(notifyAdmin).not.toHaveBeenCalled();
+    expect(logActivity).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ noChanges: true }) })
+    );
+  });
+
   it('treats an identical re-submission of a previously-submitted new tour as a no-op', async () => {
     prisma.tour.findFirst.mockResolvedValue({
       ...liveRow,

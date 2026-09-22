@@ -1567,7 +1567,12 @@ expect(prisma.booking.updateMany).toHaveBeenCalledWith(
     });
 
     it('resubmits an already-live tour for review without unpublishing it (ACTIVE + draft path)', async () => {
-      prisma.tour.findFirst.mockResolvedValue({ ...completeTour, status: 'ACTIVE' });
+      prisma.tour.findFirst.mockResolvedValue({
+        ...completeTour,
+        status: 'ACTIVE',
+        draftContent: { ...completeTour, title: 'Complete Tour 2', status: 'ACTIVE' },
+        draftSubmittedAt: new Date(),
+      });
 
       await controller.submitTourForReview(req, res, next);
 

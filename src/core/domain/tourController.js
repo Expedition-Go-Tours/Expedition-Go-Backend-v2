@@ -2079,16 +2079,19 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
     // stored for an already-submitted new tour), re-queuing it would only
     // re-notify admins and churn the review pool. First submissions of a new
     // tour (never submittedAt) are exempt â€” the supplier may send their stored
-    // builder state as-is. buildTourDiff canonicalizes empty/absence
-    // differences exactly like the admin approve path, so a clean diff here is
-    // genuinely "no changes".
+    // builder state as-is. A first submission of a LIVE tour with an empty diff
+    // is NOT exempt: the supplier re-sent content that is identical to the live
+    // listing, so queuing it would put a "Pending Edits (0 changes)" draft in
+    // front of admins with nothing to review. buildTourDiff canonicalizes
+    // empty/absence differences exactly like the admin approve path, so a clean
+    // diff here is genuinely "no changes".
     const hasLiveOrDraftSubmission =
       isLiveTour ? Boolean(tour.draftSubmittedAt) : Boolean(tour.submittedAt);
     // One canonical diff serves both the no-op guard and the admin changes
     // summary â€” `submitted` is exactly what gets persisted as the draft, so the
     // notifier's merge-based diff would recompute identical trees.
     const contentDiff = buildTourDiff(tour, submitted);
-    const noChanges = hasLiveOrDraftSubmission && contentDiff.length === 0;
+    const noChanges = contentDiff.length === 0 && (isLiveTour || hasLiveOrDraftSubmission);
     if (noChanges) {
       return { noChanges, tour, updated: null, submitted: null };
     }
