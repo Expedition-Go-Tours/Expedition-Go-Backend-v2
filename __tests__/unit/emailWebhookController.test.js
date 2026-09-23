@@ -117,4 +117,25 @@ describe('emailWebhookController', () => {
     expect(res.status).toHaveBeenCalledWith(200);
     expect(notificationRecipientService.disableById).toHaveBeenCalledWith('r3', 'hard_bounce');
   });
+
+  it('accepts a signature made with the dedicated inbound signing secret', async () => {
+    process.env.RESEND_INBOUND_SIGNING_SECRET = 'whsec_inbound_signing';
+    try {
+      const event = {
+        type: 'email.bounced',
+        data: { to: 'x@y.com', tags: [{ name: 'notification_recipient', value: 'r4' }], bounce: { type: 'hard' } },
+      };
+      const body = JSON.stringify(event);
+      const id = 'msg_4';
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const signature = crypto.createHmac('sha256', 'whsec_inbound_signing').update(`${id}.${timestamp}.${body}`).digest('base64');
+      const req = { body: Buffer.from(body), headers: { 'svix-id': id, 'svix-timestamp': timestamp, 'svix-signature': `v1,${signature}` } };
+      const res = resMock();
+      await controller.receive(req, res);
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(notificationRecipientService.disableById).toHaveBeenCalledWith('r4', 'hard_bounce');
+    } finally {
+      delete process.env.RESEND_INBOUND_SIGNING_SECRET;
+    }
+  });
 });

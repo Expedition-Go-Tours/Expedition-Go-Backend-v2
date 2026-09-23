@@ -106,6 +106,31 @@ describe('chatInbound Svix verification', () => {
       })
     ).not.toThrow();
   });
+
+  it('accepts the dedicated inbound signing secret without moving reply-token HMACs', () => {
+    const tokenBefore = chatInbound.tokenFor('conv-signing');
+    process.env.RESEND_INBOUND_SIGNING_SECRET = 'whsec_inbound_signing';
+    try {
+      // The verify-only secret must not change reply-address derivation —
+      // tokenFor() rewriting would rotate stored conversation replyTokens
+      // and break replies to in-flight email threads.
+      expect(chatInbound.tokenFor('conv-signing')).toBe(tokenBefore);
+
+      const body = '{"type":"email.received"}';
+      const id = 'msg_s';
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const sig = crypto.createHmac('sha256', 'whsec_inbound_signing').update(`${id}.${timestamp}.${body}`).digest('base64');
+      expect(() =>
+        chatInbound.verifyWebhookSignature(body, {
+          'svix-id': id,
+          'svix-timestamp': timestamp,
+          'svix-signature': `v1,${sig}`,
+        })
+      ).not.toThrow();
+    } finally {
+      delete process.env.RESEND_INBOUND_SIGNING_SECRET;
+    }
+  });
 });
 
 describe('chatInbound reply text stripping', () => {

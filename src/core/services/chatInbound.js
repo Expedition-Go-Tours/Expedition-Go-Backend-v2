@@ -100,10 +100,13 @@ function tokensFromRecipients(toList, domains = receivingDomains()) {
  * Throws when the signature is invalid/expired.
  */
 function verifyWebhookSignature(rawBody, headers) {
-  // Accept either configured Resend secret × any v1 signature in the header
-  // (rotation sends several; dashboard misroutes happen). tokenFor() keeps
-  // using the inbound secret alone — reply-address HMACs must not move.
-  const secrets = [SECRET, process.env.RESEND_WEBHOOK_SECRET].filter(Boolean);
+  // Accept any configured Resend secret × any v1 signature in the header
+  // (rotation sends several; dashboard misroutes happen).
+  // RESEND_INBOUND_SIGNING_SECRET is the dashboard endpoint's whsec_ value
+  // (verify-only). SECRET / RESEND_INBOUND_WEBHOOK_SECRET backs reply-address
+  // HMACs and is kept only as a fallback signer — tokenFor() must never move,
+  // or stored conversation replyTokens would stop matching new addresses.
+  const secrets = [SECRET, process.env.RESEND_WEBHOOK_SECRET, process.env.RESEND_INBOUND_SIGNING_SECRET].filter(Boolean);
   if (!secrets.length) throw new Error('RESEND_INBOUND_WEBHOOK_SECRET is not configured');
   const id = headers['svix-id'] || headers['Svix-Id'];
   const timestamp = headers['svix-timestamp'] || headers['Svix-Timestamp'];

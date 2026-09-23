@@ -88,7 +88,11 @@ async function disableTarget(event, reason) {
 exports.receive = async (req, res) => {
   const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body || '');
   const headers = lowerHeaders(req.headers || {});
-  const secrets = [process.env.RESEND_WEBHOOK_SECRET, process.env.RESEND_INBOUND_WEBHOOK_SECRET].filter(Boolean);
+  const secrets = [
+    process.env.RESEND_WEBHOOK_SECRET,
+    process.env.RESEND_INBOUND_WEBHOOK_SECRET,
+    process.env.RESEND_INBOUND_SIGNING_SECRET,
+  ].filter(Boolean);
 
   try {
     verifySvix(raw, headers, secrets);
