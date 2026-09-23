@@ -16,6 +16,7 @@ const AppError = require('./services/appError');
 const catchAsync = require('./services/catchAsync');
 const cache = require('./services/cacheHelper');
 const { logActivity } = require('./services/auditLogger');
+const { enqueueNotification } = require('./services/queue');
 const adminController = require('./domain/adminController');
 const { getBrand } = require('../../config/brands');
 const { Prisma } = require('@prisma/client');
@@ -1203,29 +1204,50 @@ controller.reviewTour = catchAsync(async (req, res, next) => {
 
   const record = await prisma[BRAND.listingModel].findFirst({
     where: { OR: [{ id }, { tourId: id }] },
-    include: { tour: { select: { id: true, title: true } } },
+    include: { tour: { select: { id: true, title: true, slug: true, supplierId: true } } },
   });
 
   if (!record) {
     return next(new AppError('Ghana tour not found', 404));
   }
 
-  await prisma.tour.update({
+  const isApprove = newStatus === 'ACTIVE';
+
+  const updated = await prisma.tour.update({
     where: { id: record.tourId },
-    data: { status: newStatus },
+    data: isApprove
+      ? { status: 'ACTIVE', reviewedBy: req.user.id, reviewedAt: new Date(), reviewNote: null }
+      : { status: 'REJECTED', reviewedBy: req.user.id, reviewedAt: new Date(), reviewNote: String(reason || '').trim() },
   });
 
+  // Invalidate with the slug so the public storefront reflects the approval
+  // immediately (mirrors the shared admin controller).
+  cache.invalidateTourCaches(updated.id, updated.slug)
+    .catch((err) => console.warn('[Admin] invalidateTourCaches failed:', err?.message));
+
   await logActivity({
-    action: newStatus === 'ACTIVE' ? 'tour.approved' : 'tour.rejected',
+    action: isApprove ? 'tour.approved' : 'tour.rejected',
     entityType: BRAND.listingTableName,
     entityId: id,
     userId: req.user.id,
     metadata: { reason: reason || null },
   });
 
+  // Notify the supplier (in-app bell + realtime socket) — without this the
+  // supplier never learns their submission was approved/flagged.
+  enqueueNotification({
+    userId: record.tour.supplierId,
+    type: isApprove ? 'TOUR_APPROVED' : 'TOUR_FLAGGED',
+    title: isApprove ? 'Tour Approved' : 'Tour Needs Changes',
+    message: isApprove
+      ? `"${record.tour.title}" has been approved and is now live on the platform.`
+      : `"${record.tour.title}" was flagged for changes: ${String(reason || '').trim()}`,
+    data: { tourId: record.tour.id, status: newStatus, reason: isApprove ? null : reason },
+  }).catch((err) => console.warn('[Admin] Supplier notification failed:', err?.message));
+
   res.status(200).json({
     status: 'success',
-    message: `Tour ${newStatus === 'ACTIVE' ? 'approved' : 'rejected'}`,
+    message: `Tour ${isApprove ? 'approved' : 'rejected'}`,
   });
 });
 
