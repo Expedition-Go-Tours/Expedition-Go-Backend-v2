@@ -72,6 +72,40 @@ describe('chatInbound Svix verification', () => {
       })
     ).toThrow(/out of window/i);
   });
+
+  it('accepts a signature made with the other configured secret', () => {
+    process.env.RESEND_WEBHOOK_SECRET = 'secondary-webhook-secret';
+    try {
+      const body = '{"type":"email.received"}';
+      const id = 'msg_x';
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const sig = crypto.createHmac('sha256', 'secondary-webhook-secret').update(`${id}.${timestamp}.${body}`).digest('base64');
+      expect(() =>
+        chatInbound.verifyWebhookSignature(body, {
+          'svix-id': id,
+          'svix-timestamp': timestamp,
+          'svix-signature': `v1,${sig}`,
+        })
+      ).not.toThrow();
+    } finally {
+      delete process.env.RESEND_WEBHOOK_SECRET;
+    }
+  });
+
+  it('accepts when the valid signature is not first in the header (rotation)', () => {
+    const body = '{"type":"email.received"}';
+    const id = 'msg_y';
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const good = crypto.createHmac('sha256', 'test-webhook-secret').update(`${id}.${timestamp}.${body}`).digest('base64');
+    const other = crypto.createHmac('sha256', 'some-old-secret').update(`${id}.${timestamp}.${body}`).digest('base64');
+    expect(() =>
+      chatInbound.verifyWebhookSignature(body, {
+        'svix-id': id,
+        'svix-timestamp': timestamp,
+        'svix-signature': `v1,${other} v1,${good}`,
+      })
+    ).not.toThrow();
+  });
 });
 
 describe('chatInbound reply text stripping', () => {

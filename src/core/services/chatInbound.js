@@ -100,7 +100,11 @@ function tokensFromRecipients(toList, domains = receivingDomains()) {
  * Throws when the signature is invalid/expired.
  */
 function verifyWebhookSignature(rawBody, headers) {
-  if (!SECRET) throw new Error('RESEND_INBOUND_WEBHOOK_SECRET is not configured');
+  // Accept either configured Resend secret × any v1 signature in the header
+  // (rotation sends several; dashboard misroutes happen). tokenFor() keeps
+  // using the inbound secret alone — reply-address HMACs must not move.
+  const secrets = [SECRET, process.env.RESEND_WEBHOOK_SECRET].filter(Boolean);
+  if (!secrets.length) throw new Error('RESEND_INBOUND_WEBHOOK_SECRET is not configured');
   const id = headers['svix-id'] || headers['Svix-Id'];
   const timestamp = headers['svix-timestamp'] || headers['Svix-Timestamp'];
   const signatureHeader = headers['svix-signature'] || headers['Svix-Signature'];
@@ -109,21 +113,25 @@ function verifyWebhookSignature(rawBody, headers) {
   const age = Math.abs(Date.now() / 1000 - Number(timestamp));
   if (!Number.isFinite(age) || age > 5 * 60) throw new Error('Webhook timestamp out of window');
 
-  const expected = crypto
-    .createHmac('sha256', SECRET)
-    .update(`${id}.${timestamp}.${rawBody}`)
-    .digest('base64');
-
-  const supplied = String(signatureHeader)
+  const candidates = String(signatureHeader)
     .split(' ')
     .map((s) => s.trim())
-    .find((s) => s.startsWith('v1,'))
-    ?.split(',')[1];
+    .filter((s) => s.startsWith('v1,'))
+    .map((s) => s.slice(3));
+  if (!candidates.length) throw new Error('No valid Svix signature present');
 
-  if (!supplied) throw new Error('No valid Svix signature present');
-  const a = Buffer.from(expected);
-  const b = Buffer.from(supplied);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw new Error('Webhook signature mismatch');
+  const ok = secrets.some((secret) =>
+    candidates.some((supplied) => {
+      const expected = crypto
+        .createHmac('sha256', secret)
+        .update(`${id}.${timestamp}.${rawBody}`)
+        .digest('base64');
+      const a = Buffer.from(expected);
+      const b = Buffer.from(supplied);
+      return a.length === b.length && crypto.timingSafeEqual(a, b);
+    })
+  );
+  if (!ok) throw new Error('Webhook signature mismatch');
 }
 
 /** Strip quoted reply history + signatures from plaintext so only the new text stays. */

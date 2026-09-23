@@ -74,8 +74,47 @@ describe('emailWebhookController', () => {
     const req = signedReq({ type: 'email.delivered', data: { to: 'a@b.com' } });
     const res = resMock();
     await controller.receive(req, res);
+    expect(res.status).toHaveBeenCalledWith(200);
 
     expect(res.json).toHaveBeenCalledWith({ status: 'ignored' });
     expect(notificationRecipientService.disableByEmail).not.toHaveBeenCalled();
+  });
+
+  it('accepts a signature made with the secondary (inbound) secret', async () => {
+    process.env.RESEND_INBOUND_WEBHOOK_SECRET = 'whsec_secondary';
+    try {
+      const event = {
+        type: 'email.bounced',
+        data: { to: 'x@y.com', tags: [{ name: 'notification_recipient', value: 'r2' }], bounce: { type: 'hard' } },
+      };
+      const body = JSON.stringify(event);
+      const id = 'msg_2';
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const signature = crypto.createHmac('sha256', 'whsec_secondary').update(`${id}.${timestamp}.${body}`).digest('base64');
+      const req = { body: Buffer.from(body), headers: { 'svix-id': id, 'svix-timestamp': timestamp, 'svix-signature': `v1,${signature}` } };
+      const res = resMock();
+      await controller.receive(req, res);
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(notificationRecipientService.disableById).toHaveBeenCalledWith('r2', 'hard_bounce');
+    } finally {
+      delete process.env.RESEND_INBOUND_WEBHOOK_SECRET;
+    }
+  });
+
+  it('accepts when the valid signature is not first in the header (rotation)', async () => {
+    const event = {
+      type: 'email.bounced',
+      data: { to: 'x@y.com', tags: [{ name: 'notification_recipient', value: 'r3' }], bounce: { type: 'hard' } },
+    };
+    const body = JSON.stringify(event);
+    const id = 'msg_3';
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const good = crypto.createHmac('sha256', SECRET).update(`${id}.${timestamp}.${body}`).digest('base64');
+    const other = crypto.createHmac('sha256', 'whsec_rotated_old').update(`${id}.${timestamp}.${body}`).digest('base64');
+    const req = { body: Buffer.from(body), headers: { 'svix-id': id, 'svix-timestamp': timestamp, 'svix-signature': `v1,${other} v1,${good}` } };
+    const res = resMock();
+    await controller.receive(req, res);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(notificationRecipientService.disableById).toHaveBeenCalledWith('r3', 'hard_bounce');
   });
 });

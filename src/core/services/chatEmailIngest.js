@@ -22,6 +22,24 @@ const { notifyAdmin } = require('./adminNotificationService');
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const RESEND_RECEIVING_API = 'https://api.resend.com/emails/receiving';
 
+// Negative cache for inbound emails we decided to ignore (no matching
+// conversation, non-participant sender, empty content). Without it the 15s
+// poller re-fetched the same unmatched email forever — one stuck id produced
+// ~91k futile Resend fetches + DB lookups and tens of thousands of log lines.
+// Only 'ignored' outcomes are cached; transient failures (fetch/DB) must keep
+// retrying. In-memory: a restart re-evaluates old ids once.
+const IGNORED_LIMIT = 5000;
+const ignoredInbound = new Set();
+function isIgnoredInbound(id) {
+  return Boolean(id) && ignoredInbound.has(String(id));
+}
+function markIgnoredInbound(...ids) {
+  for (const id of ids) if (id) ignoredInbound.add(String(id));
+  // Safety valve: if it ever fills, drop everything — the worst case is one
+  // re-evaluation pass, identical to pre-cache behaviour.
+  if (ignoredInbound.size > IGNORED_LIMIT) ignoredInbound.clear();
+}
+
 async function resendGet(path) {
   const res = await fetch(`${RESEND_RECEIVING_API}${path}`, {
     headers: { Authorization: `Bearer ${RESEND_API_KEY}` },
@@ -83,6 +101,7 @@ function keepAttachments(email) {
  */
 async function ingestReceivedEmail(emailId) {
   if (!emailId) return 'ignored';
+  if (isIgnoredInbound(emailId)) return 'ignored';
 
   let email;
   try {
@@ -92,6 +111,7 @@ async function ingestReceivedEmail(emailId) {
     return 'fetch_failed';
   }
 
+  const messageId = email?.message_id || null;
   const toList = Array.isArray(email?.to) ? email.to : [];
   const tokens = chatInbound.tokensFromRecipients(toList);
   let conversation = null;
@@ -101,11 +121,15 @@ async function ingestReceivedEmail(emailId) {
   }
   if (!conversation || !chatService.EMAIL_ENABLED_TYPES.includes(conversation.type)) {
     console.log(`[ChatEmailIngest] no matching conversation for ${emailId} — ignoring`);
+    markIgnoredInbound(emailId, messageId);
     return 'ignored';
   }
 
   const senderEmail = chatInbound.parseEmail(email?.from || '');
-  if (!senderEmail) return 'ignored';
+  if (!senderEmail) {
+    markIgnoredInbound(emailId, messageId);
+    return 'ignored';
+  }
 
   const author = await prisma.conversationParticipant.findFirst({
     where: {
@@ -116,15 +140,17 @@ async function ingestReceivedEmail(emailId) {
   });
   if (!author) {
     console.log(`[ChatEmailIngest] sender ${senderEmail} is not a participant — ignoring`);
+    markIgnoredInbound(emailId, messageId);
     return 'ignored';
   }
 
   const text = chatInbound.extractReplyContent(email);
   const attachments = keepAttachments(email);
 
-  if (!text && attachments.length === 0) return 'ignored';
-
-  const messageId = email?.message_id || null;
+  if (!text && attachments.length === 0) {
+    markIgnoredInbound(emailId, messageId);
+    return 'ignored';
+  }
 
   // Dedupe by Message-ID before inserting the batch.
   if (messageId) {
@@ -269,6 +295,7 @@ async function pollReceivedEmails() {
   for (const item of items) {
     const mid = item?.message_id;
     if (!mid) continue;
+    if (isIgnoredInbound(mid) || isIgnoredInbound(item.id)) continue;
     const existing = await prisma.message.findUnique({ where: { inboundMessageId: mid } }).catch(() => null);
     if (existing) continue;
     try {
@@ -279,4 +306,11 @@ async function pollReceivedEmails() {
   }
 }
 
-module.exports = { ingestReceivedEmail, pollReceivedEmails, fetchReceivedEmail };
+module.exports = {
+  ingestReceivedEmail,
+  pollReceivedEmails,
+  fetchReceivedEmail,
+  // Test hooks for the negative cache.
+  __isIgnoredInbound: isIgnoredInbound,
+  __clearIgnoredInbound: () => ignoredInbound.clear(),
+};
