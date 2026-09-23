@@ -35,7 +35,7 @@ const mockUser = {
   active: true,
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   mockVerifyAccessToken.mockClear();
   const p = require('../../src/core/services/prismaClient');
   p.user.findUnique.mockClear();
@@ -43,7 +43,10 @@ beforeEach(() => {
   p.user.create.mockClear();
   const cache = require('../../src/core/services/cacheHelper');
   cache._clearMemory();
-  cache.invalidateKeys(['auth:user:user-1']).catch(() => {});
+  // Await the Redis-side invalidation: delPattern is scan-based (several I/O
+  // round trips), so a fire-and-forget call races the test's own redis.get and
+  // can leave a stale positive hit — especially with a shared local Redis.
+  await cache.invalidateKeys(['auth:user:user-1', 'auth:user:user-deactivated']).catch(() => {});
 });
 
 describe('JWT verification', () => {
@@ -95,7 +98,7 @@ describe('JWT verification', () => {
 
   it('returns 403 if user deactivated', async () => {
     const prisma = require('../../src/core/services/prismaClient');
-    mockVerifyAccessToken.mockReturnValue({ userId: 'user-1' });
+    mockVerifyAccessToken.mockReturnValue({ userId: 'user-deactivated' });
     prisma.user.findUnique.mockResolvedValue({ ...mockUser, active: false });
 
     const req = mockReq({ headers: { authorization: 'Bearer tok' } });
