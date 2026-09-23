@@ -25,6 +25,7 @@ const crypto = require('crypto');
 const prisma = require('../services/prismaClient');
 const cache = require('../services/cacheHelper');
 const { placeTourCount } = require('../services/placeListing');
+const { findTourIdsByItinerary } = require('../services/tourFilterBuilder');
 const catchAsync = require('../services/catchAsync');
 
 /* ── Ghana regions ──────────────────────────────────────────────────────── */
@@ -536,6 +537,16 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
         tourOrConditions.push({ tags: { has: token } });
       }
 
+      // Itinerary stops (names / cities / regions) are extracted arrays that
+      // Prisma can't substring-match — resolve them to IDs with raw SQL and OR
+      // them in, so a stop name ("Cedi bead Factory Akosombo") finds the tour
+      // that visits it. Short terms are excluded by the helper.
+      const itineraryTourIds = await findTourIdsByItinerary(prisma, q);
+      if (itineraryTourIds.length > 0) {
+        tourOrConditions.push({ id: { in: itineraryTourIds } });
+      }
+      const itineraryIdSet = new Set(itineraryTourIds);
+
       // Collect all attraction names/aliases found in section 1 to match against tour attractions array
       const attractionNames = scored
         .filter(r => r.kind === 'attraction')
@@ -557,6 +568,7 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
           id: true, title: true, slug: true, city: true, country: true, region: true,
           coverPhoto: true, averageRating: true, reviewCount: true,
           totalBookings: true, description: true, attractions: true,
+          itineraryCities: true, itineraryRegions: true,
         },
         orderBy: [{ reviewCount: 'desc' }, { totalBookings: 'desc' }],
         take: 20,
@@ -567,7 +579,14 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
           name: t.title,
           region: normaliseRegion(t.region),
           city: t.city || '',
-          aliases: '',
+          // Only itinerary-matched tours score against their stops. Doing it for
+          // every tour would turn a destination search ("Accra") into a wall of
+          // tour suggestions, since most tours pass through a few big cities.
+          aliases: itineraryIdSet.has(t.id)
+            ? [...(t.attractions || []), ...(t.itineraryCities || []), ...(t.itineraryRegions || [])]
+                .filter(Boolean)
+                .join('; ')
+            : '',
         };
         const score = scoreRecord('tour', item, nq, cq);
         // Attraction-visit boost, but ONLY for a tour that actually lists one of

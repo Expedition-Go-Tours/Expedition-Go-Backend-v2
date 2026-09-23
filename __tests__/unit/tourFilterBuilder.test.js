@@ -2,6 +2,7 @@ const {
   buildTourFilters,
   buildSortOptions,
   validateFilterParams,
+  findTourIdsByItinerary,
 } = require('../../src/core/services/tourFilterBuilder');
 
 // ---------------------------------------------------------------------------
@@ -97,6 +98,29 @@ describe('buildTourFilters', () => {
 
   it('filters by search text', () => {
     const result = buildTourFilters({ search: 'beach' });
+    expect(result.AND).toContainEqual({
+      OR: [
+        { title: { contains: 'beach', mode: 'insensitive' } },
+        { description: { contains: 'beach', mode: 'insensitive' } },
+        { tags: { has: 'beach' } },
+      ],
+    });
+  });
+
+  it('ORs itinerary-matched tour ids into the search clause', () => {
+    const result = buildTourFilters({ search: 'Cedi bead' }, { itineraryTourIds: ['t1', 't2'] });
+    expect(result.AND).toContainEqual({
+      OR: [
+        { title: { contains: 'Cedi bead', mode: 'insensitive' } },
+        { description: { contains: 'Cedi bead', mode: 'insensitive' } },
+        { tags: { has: 'Cedi bead' } },
+        { id: { in: ['t1', 't2'] } },
+      ],
+    });
+  });
+
+  it('omits the itinerary clause when nothing matched the itinerary', () => {
+    const result = buildTourFilters({ search: 'beach' }, { itineraryTourIds: [] });
     expect(result.AND).toContainEqual({
       OR: [
         { title: { contains: 'beach', mode: 'insensitive' } },
@@ -262,5 +286,39 @@ describe('validateFilterParams', () => {
       .toContain('sortOrder must be either "asc" or "desc"');
     expect(validateFilterParams({ sortOrder: 'asc' }).isValid).toBe(true);
     expect(validateFilterParams({ sortOrder: 'desc' }).isValid).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findTourIdsByItinerary
+// ---------------------------------------------------------------------------
+describe('findTourIdsByItinerary', () => {
+  it('matches stop names, stop cities and stop regions by substring', async () => {
+    const prisma = { $queryRawUnsafe: jest.fn().mockResolvedValue([{ id: 't1' }, { id: 't2' }]) };
+
+    const ids = await findTourIdsByItinerary(prisma, 'Cedi bead');
+
+    expect(ids).toEqual(['t1', 't2']);
+    const [sql, term] = prisma.$queryRawUnsafe.mock.calls[0];
+    expect(sql).toContain('unnest("attractions")');
+    expect(sql).toContain('unnest("itineraryCities")');
+    expect(sql).toContain('unnest("itineraryRegions")');
+    expect(sql).toContain("status = 'ACTIVE'");
+    expect(term).toBe('%Cedi bead%');
+  });
+
+  it('skips the query for terms shorter than 2 characters', async () => {
+    const prisma = { $queryRawUnsafe: jest.fn() };
+
+    expect(await findTourIdsByItinerary(prisma, 'a')).toEqual([]);
+    expect(await findTourIdsByItinerary(prisma, '   ')).toEqual([]);
+    expect(await findTourIdsByItinerary(prisma, null)).toEqual([]);
+    expect(prisma.$queryRawUnsafe).not.toHaveBeenCalled();
+  });
+
+  it('degrades to no matches when the raw query fails', async () => {
+    const prisma = { $queryRawUnsafe: jest.fn().mockRejectedValue(new Error('relation does not exist')) };
+
+    await expect(findTourIdsByItinerary(prisma, 'akosombo')).resolves.toEqual([]);
   });
 });

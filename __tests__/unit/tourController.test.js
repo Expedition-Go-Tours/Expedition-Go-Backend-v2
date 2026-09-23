@@ -34,7 +34,7 @@ jest.mock('../../src/core/services/tourHelpers', () => ({ createSlug: jest.fn(),
 jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn() }));
 jest.mock('../../src/core/services/stripeHelpers', () => ({ cancelPaymentIntent: jest.fn() }));
 jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn() }));
-jest.mock('../../src/core/services/tourFilterBuilder', () => ({ buildTourFilters: jest.fn(), buildSortOptions: jest.fn(), getAvailableFilterOptions: jest.fn(), validateFilterParams: jest.fn(), findNearbyTourIds: jest.fn(), getTourDistances: jest.fn() }));
+jest.mock('../../src/core/services/tourFilterBuilder', () => ({ buildTourFilters: jest.fn(), buildSortOptions: jest.fn(), getAvailableFilterOptions: jest.fn(), validateFilterParams: jest.fn(), findNearbyTourIds: jest.fn(), getTourDistances: jest.fn(), findTourIdsByItinerary: jest.fn().mockResolvedValue([]) }));
 jest.mock('../../src/core/services/popularityScorer', () => ({ getPopularByCategory: jest.fn() }));
 jest.mock('../../src/core/services/fullTextSearch', () => ({ rankTourIdsBySearch: jest.fn() }));
 jest.mock('../../config/jwt', () => ({ verifyAccessToken: jest.fn() }));
@@ -56,6 +56,7 @@ const {
   validateFilterParams,
   findNearbyTourIds,
   getTourDistances,
+  findTourIdsByItinerary,
 } = require('../../src/core/services/tourFilterBuilder');
 const { getPopularByCategory } = require('../../src/core/services/popularityScorer');
 const { rankTourIdsBySearch } = require('../../src/core/services/fullTextSearch');
@@ -237,6 +238,24 @@ describe('tourController', () => {
       await controller.getAllTours(req, res, next);
 
       expect(buildSortOptions).toHaveBeenCalledWith('relevance', 'desc');
+    });
+
+    it('resolves itinerary matches and ORs them into the search filter', async () => {
+      req.query = { search: 'Cedi bead Factory Akosombo' };
+      findTourIdsByItinerary.mockResolvedValue(['tour-9']);
+
+      await controller.getAllTours(req, res, next);
+
+      expect(findTourIdsByItinerary).toHaveBeenCalledWith(prisma, 'Cedi bead Factory Akosombo');
+      expect(buildTourFilters).toHaveBeenCalledWith(req.query, { itineraryTourIds: ['tour-9'] });
+    });
+
+    it('skips the itinerary lookup when there is no search term', async () => {
+      req.query = { category: 'Cultural' };
+
+      await controller.getAllTours(req, res, next);
+
+      expect(findTourIdsByItinerary).not.toHaveBeenCalled();
     });
 
     it('emits search event when search param is present', async () => {

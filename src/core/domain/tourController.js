@@ -27,7 +27,8 @@ const {
   getAvailableFilterOptions,
   validateFilterParams,
   findNearbyTourIds,
-  getTourDistances
+  getTourDistances,
+  findTourIdsByItinerary
 } = require('../services/tourFilterBuilder');
 const { shouldCountTourView } = require('../services/viewTracking');
 const { haversineKm, resolveCityCentroid, findNearbyCities } = require('../services/locationGeo');
@@ -85,9 +86,12 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
   const cacheKey = 'tours:list:' + crypto.createHash('md5').update(JSON.stringify(req.query)).digest('hex');
 
   const result = await cache.getOrSet(cacheKey, async () => {
-    const where = buildTourFilters(req.query);
+    // Stop names / stop cities / stop regions live in extracted arrays that
+    // Prisma can't substring-match, so resolve them to IDs first and OR them
+    // into the search clause.
+    const itineraryTourIds = search ? await findTourIdsByItinerary(prisma, search) : [];
+    const where = buildTourFilters(req.query, { itineraryTourIds });
     const skip = (parseInt(page) - 1) * parseInt(limit);
-
     // Collect ID constraints from filters that cannot be expressed as Prisma queries
     const idFilters = [];
 

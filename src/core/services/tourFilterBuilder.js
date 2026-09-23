@@ -17,9 +17,12 @@
 /**
  * Build comprehensive tour filters from query parameters
  * @param {Object} queryParams - Request query parameters
+ * @param {Object} [options] - Resolved constraints the caller had to compute
+ * @param {string[]} [options.itineraryTourIds] - Tours whose itinerary matches
+ *   the search term (see findTourIdsByItinerary); OR-ed into the search clause.
  * @returns {Object} Prisma where clause
  */
-function buildTourFilters(queryParams) {
+function buildTourFilters(queryParams, options = {}) {
   const {
     // Category & Theme
     category,
@@ -255,13 +258,18 @@ function buildTourFilters(queryParams) {
   // ================================
   
   if (search) {
-    andConditions.push({
-      OR: [
-        { title: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-        { tags: { has: search } }
-      ]
-    });
+    const searchOr = [
+      { title: { contains: search, mode: 'insensitive' } },
+      { description: { contains: search, mode: 'insensitive' } },
+      { tags: { has: search } },
+    ];
+    // Itinerary matches arrive as resolved IDs: Prisma's array filters only
+    // match whole elements, so "stop name contains <term>" has to be computed
+    // by the caller (findTourIdsByItinerary) and OR-ed back in here.
+    if (Array.isArray(options.itineraryTourIds) && options.itineraryTourIds.length > 0) {
+      searchOr.push({ id: { in: options.itineraryTourIds } });
+    }
+    andConditions.push({ OR: searchOr });
   }
   
   if (tags) {
@@ -496,11 +504,46 @@ async function getTourDistances(prisma, lat, lng, tourIds) {
   }
 }
 
+/**
+ * Tour IDs whose itinerary text contains `search` — a stop name (`attractions`),
+ * a stop's city (`itineraryCities`) or a stop's region (`itineraryRegions`).
+ *
+ * These are extracted arrays, and Prisma's array filters only match whole
+ * elements, so a substring search ("cedi bead" against "Cedi bead Factory
+ * Akosombo") needs unnest + ILIKE. Returning [] on failure degrades the search
+ * to title/description/tags rather than erroring.
+ *
+ * @param {Object} prisma - Prisma client
+ * @param {string} search - Raw search term
+ * @returns {Promise<string[]>} Matching tour IDs (ACTIVE only)
+ */
+async function findTourIdsByItinerary(prisma, search) {
+  const term = String(search || '').trim();
+  // Single characters match nearly every stop — not worth the scan.
+  if (term.length < 2) return [];
+  try {
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT id FROM "Tour"
+       WHERE status = 'ACTIVE'
+         AND (
+           EXISTS (SELECT 1 FROM unnest("attractions") AS a WHERE a ILIKE $1)
+           OR EXISTS (SELECT 1 FROM unnest("itineraryCities") AS c WHERE c ILIKE $1)
+           OR EXISTS (SELECT 1 FROM unnest("itineraryRegions") AS r WHERE r ILIKE $1)
+         )`,
+      `%${term}%`,
+    );
+    return rows.map((r) => r.id);
+  } catch {
+    return [];
+  }
+}
+
 module.exports = {
   buildTourFilters,
   buildSortOptions,
   getAvailableFilterOptions,
   validateFilterParams,
   findNearbyTourIds,
-  getTourDistances
+  getTourDistances,
+  findTourIdsByItinerary,
 };
