@@ -1,4 +1,5 @@
 const { imageUpload, documentUpload } = require('../config/cloudinary');
+const { SUPPLIER_DOCUMENT_FIELDS } = require('../config/supplierUploadFields');
 const prisma = require('../src/core/services/prismaClient');
 const { extractPublicIdFromUrl } = require('../src/core/services/cloudinaryHelper');
 
@@ -74,18 +75,7 @@ exports.uploadTourPhotos = wrapWithRecord(imageUpload.array('photos', 20));
 
 exports.uploadReviewPhotos = wrapWithRecord(imageUpload.array('photos', 10));
 
-exports.uploadSupplierDocuments = wrapWithRecord(documentUpload.fields([
-  // Legacy named fields (kept for backward compatibility with existing clients)
-  { name: 'registrationDocument', maxCount: 1 },
-  { name: 'taxDocument', maxCount: 1 },
-  { name: 'proofOfAddress', maxCount: 1 },
-  { name: 'idDocument', maxCount: 1 },
-  { name: 'licenses', maxCount: 5 },
-  // Generic per-type document upload (paired with `documentMeta` in the body)
-  { name: 'documents', maxCount: 30 },
-  // Vehicle photos (paired with `vehiclePhotoMeta` — NOT verification documents)
-  { name: 'vehiclePhotos', maxCount: 30 },
-]));
+exports.uploadSupplierDocuments = wrapWithRecord(documentUpload.fields(SUPPLIER_DOCUMENT_FIELDS));
 
 // Single-document replacement upload (supplier re-submits one file).
 exports.uploadSupplierDocument = wrapWithRecord(documentUpload.single('document'));

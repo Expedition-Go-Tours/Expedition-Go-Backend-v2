@@ -67,6 +67,7 @@ function buildImageUpload() {
 function buildDocumentUpload() {
   const multer = require('multer');
   const { CloudinaryStorage } = require('multer-storage-cloudinary');
+  const { MAX_SUPPLIER_DOCUMENT_FILES } = require('./supplierUploadFields');
 
   const storage = new CloudinaryStorage({
     cloudinary,
@@ -80,7 +81,10 @@ function buildDocumentUpload() {
   return multer({
     storage,
     fileFilter: documentFileFilter,
-    limits: { fileSize: 10 * 1024 * 1024, files: 9 },
+    // Derived from the field maxCounts (see config/supplierUploadFields.js), not
+    // a flat number — a hard-coded cap here is what blocked vehicle-based
+    // supplier types from submitting.
+    limits: { fileSize: 10 * 1024 * 1024, files: MAX_SUPPLIER_DOCUMENT_FILES },
   });
 }
 
