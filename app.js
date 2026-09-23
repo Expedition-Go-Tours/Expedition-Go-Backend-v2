@@ -197,8 +197,11 @@ app.use(require('cookie-parser')());
   // consumes the stream. `express.json()` will then skip this path because the
   // body was already consumed.
   app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }));
-  app.use('/api/email/inbound', express.raw({ type: 'application/json' }));
-  app.use('/api/email/webhook', express.raw({ type: 'application/json' }));
+  // Match ANY content-type so the raw bytes are always preserved — a
+  // parsed-then-stringified body breaks Svix HMAC verification, and senders
+  // are not guaranteed to use application/json (Resend docs warn about this).
+  app.use('/api/email/inbound', express.raw({ type: '*/*' }));
+  app.use('/api/email/webhook', express.raw({ type: '*/*' }));
   app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 

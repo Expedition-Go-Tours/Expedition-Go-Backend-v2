@@ -11,6 +11,7 @@
 
 const crypto = require('crypto');
 const notificationRecipientService = require('../services/notificationRecipientService');
+const { hmacKeysFor } = require('../services/webhookSecrets');
 
 function lowerHeaders(headers = {}) {
   const out = {};
@@ -40,16 +41,21 @@ function verifySvix(rawBody, headers, secrets) {
     .map((s) => s.slice(3));
   if (!candidates.length) throw new Error('No valid Svix signature present');
 
+  // Try every key derivation of each secret (Svix signs with the portion
+  // after whsec_; other senders have used the full string) × every v1
+  // signature in the header.
   const ok = secrets.some((secret) =>
-    candidates.some((supplied) => {
-      const expected = crypto
-        .createHmac('sha256', secret)
-        .update(`${id}.${timestamp}.${rawBody}`)
-        .digest('base64');
-      const a = Buffer.from(expected);
-      const b = Buffer.from(supplied);
-      return a.length === b.length && crypto.timingSafeEqual(a, b);
-    })
+    hmacKeysFor(secret).some((key) =>
+      candidates.some((supplied) => {
+        const expected = crypto
+          .createHmac('sha256', key)
+          .update(`${id}.${timestamp}.${rawBody}`)
+          .digest('base64');
+        const a = Buffer.from(expected);
+        const b = Buffer.from(supplied);
+        return a.length === b.length && crypto.timingSafeEqual(a, b);
+      })
+    )
   );
   if (!ok) throw new Error('Webhook signature mismatch');
 }

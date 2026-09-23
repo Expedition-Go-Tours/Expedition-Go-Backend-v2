@@ -131,6 +131,38 @@ describe('chatInbound Svix verification', () => {
       delete process.env.RESEND_INBOUND_SIGNING_SECRET;
     }
   });
+
+  it('verifies both Svix key derivations (prefix-stripped string and decoded bytes)', () => {
+    const raw = Buffer.alloc(24, 7);
+    const secret = 'whsec_' + raw.toString('base64');
+    process.env.RESEND_INBOUND_SIGNING_SECRET = secret;
+    try {
+      const body = '{"type":"email.received"}';
+      const id = 'msg_k';
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const signed = `${id}.${timestamp}.${body}`;
+
+      const stripped = crypto.createHmac('sha256', secret.slice(6)).update(signed).digest('base64');
+      expect(() =>
+        chatInbound.verifyWebhookSignature(body, {
+          'svix-id': id,
+          'svix-timestamp': timestamp,
+          'svix-signature': `v1,${stripped}`,
+        })
+      ).not.toThrow();
+
+      const decoded = crypto.createHmac('sha256', raw).update(signed).digest('base64');
+      expect(() =>
+        chatInbound.verifyWebhookSignature(body, {
+          'svix-id': id,
+          'svix-timestamp': timestamp,
+          'svix-signature': `v1,${decoded}`,
+        })
+      ).not.toThrow();
+    } finally {
+      delete process.env.RESEND_INBOUND_SIGNING_SECRET;
+    }
+  });
 });
 
 describe('chatInbound reply text stripping', () => {

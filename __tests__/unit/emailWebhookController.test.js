@@ -138,4 +138,28 @@ describe('emailWebhookController', () => {
       delete process.env.RESEND_INBOUND_SIGNING_SECRET;
     }
   });
+
+  it('verifies the Svix docs key derivation (key = portion after whsec_)', async () => {
+    const raw = Buffer.alloc(24, 7);
+    const secret = 'whsec_' + raw.toString('base64');
+    process.env.RESEND_INBOUND_SIGNING_SECRET = secret;
+    try {
+      const event = {
+        type: 'email.bounced',
+        data: { to: 'x@y.com', tags: [{ name: 'notification_recipient', value: 'r5' }], bounce: { type: 'hard' } },
+      };
+      const body = JSON.stringify(event);
+      const id = 'msg_5';
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      // signed exactly as the Svix docs specify: HMAC key = string after whsec_
+      const signature = crypto.createHmac('sha256', secret.slice(6)).update(`${id}.${timestamp}.${body}`).digest('base64');
+      const req = { body: Buffer.from(body), headers: { 'svix-id': id, 'svix-timestamp': timestamp, 'svix-signature': `v1,${signature}` } };
+      const res = resMock();
+      await controller.receive(req, res);
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(notificationRecipientService.disableById).toHaveBeenCalledWith('r5', 'hard_bounce');
+    } finally {
+      delete process.env.RESEND_INBOUND_SIGNING_SECRET;
+    }
+  });
 });
