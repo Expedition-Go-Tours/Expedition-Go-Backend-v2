@@ -2855,9 +2855,17 @@ controller.getSupplierBookings = catchAsync(async (req, res, next) => {
     prisma.booking.count({ where }),
   ]);
 
+  // Admin-approval gate: open cancellation requests ride along as chips.
+  const { pendingRequestsForBookingIds } = require('./services/cancellationRequestService');
+  const pendingMap = await pendingRequestsForBookingIds(bookings.map((b) => b.id));
+
   res.status(200).json({
     status: 'success',
-    data: { bookings: sanitizeBookingPaymentInternals(bookings) },
+    data: {
+      bookings: sanitizeBookingPaymentInternals(
+        bookings.map((b) => ({ ...b, pendingCancellation: pendingMap.get(b.id) || null })),
+      ),
+    },
     pagination: {
       currentPage: parseInt(page),
       totalPages: Math.ceil(totalCount / take),
