@@ -62,6 +62,10 @@ send-all-emails.js
 setup-rls.js
 setup-rls-policies.sql
 
+# Bulk supplier onboarding (contains a shared password + real emails)
+scripts/createBulkSuppliers.js
+scripts/rollbackBulkSuppliers.js
+
 # Local backup / scratch files
 .env.supabase.backup
 vision_server.py
