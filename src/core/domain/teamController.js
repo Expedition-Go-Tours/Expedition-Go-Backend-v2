@@ -2,7 +2,8 @@ const prisma = require('../services/prismaClient');
 const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
 const crypto = require('crypto');
-const { sendTeamInviteEmail, sendTeamInviteRevokedEmail } = require('../services/emailService');
+const { sendTeamInviteEmail, sendTeamInviteRevokedEmail, resolveEmailBrand } = require('../services/emailService');
+const emailUrls = require('../../../config/emailUrls');
 const { enqueueNotification } = require('../services/queue');
 const { logActivity } = require('../services/auditLogger');
 const logger = require('../services/logger');
@@ -237,8 +238,9 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     });
   }
 
-  const frontendUrl = process.env.SUPPLIER_DASHBOARD_URL || process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5173';
-  const inviteUrl = `${frontendUrl}/team/invite?token=${member.inviteToken}`;
+  // Brand-aware invite link: Ghana suppliers' team members accept on the
+  // Ghana dashboard, everyone else on the default one.
+  const inviteUrl = `${emailUrls.dashboardBaseForUser(req.user)}/team/invite?token=${member.inviteToken}`;
 
   const supplier = await prisma.user.findUnique({
     where: { id: req.user.id },
@@ -251,6 +253,7 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     role: role || 'editor',
     inviteUrl,
     invitedBy: req.user.name || 'Your supplier',
+    brandKey: resolveEmailBrand({ user: req.user }),
   });
 
   await logActivity({
@@ -469,8 +472,7 @@ exports.resendInvite = catchAsync(async (req, res, next) => {
     },
   });
 
-  const frontendUrl = process.env.SUPPLIER_DASHBOARD_URL || process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5173';
-  const inviteUrl = `${frontendUrl}/team/invite?token=${token}`;
+  const inviteUrl = `${emailUrls.dashboardBaseForUser(req.user)}/team/invite?token=${token}`;
 
   await sendTeamInviteEmail({
     to: email,
@@ -478,6 +480,7 @@ exports.resendInvite = catchAsync(async (req, res, next) => {
     role: existing.role,
     inviteUrl,
     invitedBy: req.user.name || 'Your supplier',
+    brandKey: resolveEmailBrand({ user: req.user }),
   });
 
   await logActivity({
@@ -529,6 +532,7 @@ exports.revokeInvite = catchAsync(async (req, res, next) => {
     supplierName: supplier?.name || 'A supplier',
     role: member.role,
     invitedBy: req.user.name || 'Your supplier',
+    brandKey: resolveEmailBrand({ user: req.user }),
   }).catch((err) => logger.warn('[team] sendTeamInviteRevokedEmail failed:', err?.message));
 
   await logActivity({

@@ -608,7 +608,7 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
 
   const supplierProfile = await prisma.supplierProfile.findUnique({
     where: { id },
-    include: { user: { select: { id: true, name: true, email: true } } },
+    include: { user: { select: { id: true, name: true, email: true, roles: true } } },
   });
 
   if (!supplierProfile) {
@@ -636,6 +636,7 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
     await sendSupplierStatusEmail(supplierProfile.user.email, statusMap[action], {
       name: supplierProfile.user.name,
       notes,
+      roles: supplierProfile.user.roles,
     });
   } catch (err) {
     console.error('Supplier status email failed:', err.message);
@@ -751,7 +752,7 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
 
   const supplierProfile = await prisma.supplierProfile.findUnique({
     where: { id },
-    include: { user: { select: { id: true, name: true, email: true } } },
+    include: { user: { select: { id: true, name: true, email: true, roles: true } } },
   });
 
   if (!supplierProfile) {
@@ -771,6 +772,7 @@ exports.activateSupplier = catchAsync(async (req, res, next) => {
   try {
     await sendSupplierStatusEmail(supplierProfile.user.email, 'ACTIVE', {
       name: supplierProfile.user.name,
+      roles: supplierProfile.user.roles,
     });
   } catch (err) {
     console.error('Supplier activation email failed:', err.message);
@@ -923,7 +925,7 @@ exports.restoreSupplier = catchAsync(async (req, res, next) => {
 
   const supplierProfile = await prisma.supplierProfile.findUnique({
     where: { id },
-    include: { user: { select: { id: true, name: true, email: true, active: true } } },
+    include: { user: { select: { id: true, name: true, email: true, active: true, roles: true } } },
   });
 
   if (!supplierProfile) {
@@ -974,6 +976,7 @@ exports.restoreSupplier = catchAsync(async (req, res, next) => {
   try {
     await sendSupplierStatusEmail(supplierProfile.user.email, 'ACTIVE', {
       name: supplierProfile.user.name,
+      roles: supplierProfile.user.roles,
     });
   } catch (err) {
     console.error('Supplier restore email failed:', err.message);

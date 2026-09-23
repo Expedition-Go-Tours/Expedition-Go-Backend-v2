@@ -20,7 +20,7 @@
 const BRANDS = {
   expedition: {
     key: 'expedition',
-    brandName: 'Expedition Go',
+    brandName: 'Expedition-Go Tours',
     source: 'EXPEDITION', // BookingSource enum
     role: 'expedition', // UserRole enum
     bookingPrefix: 'EXP',
@@ -28,14 +28,15 @@ const BRANDS = {
     storefrontUrl: 'https://expeditiongotours.com',
     supportEmail: 'support@expeditiongo.com',
     // Email identity. Expedition is Ghana's sub-store: it deliberately shares
-    // Ghana's template, logo and support inbox, distinguished only by the
-    // `poweredByLabel` badge in the header.
+    // Ghana's template, logo and support inbox, so the email says
+    // "Expedition-Go Tours" as the badge under the logo and as the
+    // body/footer name. The From: header stays on the shared Ghana sender.
     email: {
       logoUrl: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1789926536/TravioG_csfsyl.png',
-      brandName: 'Travio Ghana',
+      brandName: 'Expedition-Go Tours',
       supportEmail: 'support@travioghana.com',
       from: 'Travio Ghana <notifications@travioghana.com>',
-      poweredByLabel: 'by Expedition Go',
+      poweredByLabel: 'Expedition-Go Tours',
       receivingDomain: 'travioghana.com',
     },
     cachePrefix: 'expedition:',

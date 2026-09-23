@@ -235,14 +235,22 @@ exports.forgotPassword = catchAsync(async (req, res, next) => {
 
   const resetToken = signPasswordResetToken({ userId: user.id });
 
-  const resetUrl = `${process.env.CLIENT_URL || 'http://localhost:8080'}/reset-password?token=${resetToken}`;
+  const { sendEmail, resolveEmailBrand } = require('../services/emailService');
+  const { getBrand, getBrandEmail } = require('../../../config/brands');
+  // Branded identity: the sender, logo, footer, subject AND the reset-link
+  // origin follow the user's brand (Ghana / Expedition / TravioAfrica)
+  // instead of always pointing at the default CLIENT_URL storefront.
+  const brandKey = resolveEmailBrand({ user });
+  const brand = getBrand(brandKey);
+  const resetOrigin = (brand?.storefrontUrl || process.env.CLIENT_URL || 'http://localhost:8080').replace(/\/+$/, '');
+  const resetUrl = `${resetOrigin}/reset-password?token=${resetToken}`;
 
   try {
-    const { sendEmail } = require('../services/emailService');
     await sendEmail({
       to: user.email,
-      subject: 'Password Reset - Travio Africa',
+      subject: `Password Reset - ${getBrandEmail(brandKey).brandName}`,
       template: 'generic-notification',
+      opts: { brandKey },
       data: {
         header: 'Password Reset',
         message: 'Click the button below to reset your password. This link expires in 15 minutes.',

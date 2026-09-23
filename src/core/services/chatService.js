@@ -5,7 +5,7 @@ const { deleteCloudinaryImage } = require('./cloudinaryHelper');
 const chatInbound = require('./chatInbound');
 const emailUrls = require('../../../config/emailUrls');
 const logger = require('./logger');
-const { getBrand } = require('../../../config/brands');
+const { getBrand, getBrandEmail } = require('../../../config/brands');
 
 // Conversations store the brand registry KEY ('ghana' | 'africa'). The Africa
 // brand's UserRole name is 'travioafrica', so map roles → keys explicitly.
@@ -640,17 +640,17 @@ function customerStorefrontBase() {
 function chatLinkFor(recipientRoles, conversationId) {
   const q = `?conversation=${encodeURIComponent(conversationId)}`;
   const roles = Array.isArray(recipientRoles) ? recipientRoles : [];
-  if (roles.includes('supplier')) return `${emailUrls.supplierDashboard()}/chat${q}`;
+  if (roles.includes('supplier')) return `${emailUrls.supplierDashboardForUser({ roles })}/chat${q}`;
   const adminBase = process.env.ADMIN_DASHBOARD_URL || emailUrls.DASHBOARD_URL;
   if (roles.includes('admin') || roles.includes('expedition')) return `${adminBase}/chat${q}`;
   return `${customerStorefrontBase()}/dashboard/chat${q}`;
 }
 
-function senderRoleLabel(type, roles) {
+function senderRoleLabel(type, roles, brandName = 'Travio Africa') {
   const r = Array.isArray(roles) ? roles : [];
   if (r.includes('supplier')) return 'Tour operator';
   if (r.includes('admin') || r.includes('expedition')) {
-    return type === 'EXPEDITION_CUSTOMER' ? 'Travio Africa' : 'Travio Africa support';
+    return type === 'EXPEDITION_CUSTOMER' ? brandName : `${brandName} support`;
   }
   return 'Traveller';
 }
@@ -675,6 +675,7 @@ async function notifyConversationByEmail({ conversationId, type, senderId, sende
     }),
   ]);
   const effectiveType = conversation?.type || type;
+  const brandName = getBrandEmail(conversation?.brand).brandName;
 
   const participants = await prisma.conversationParticipant.findMany({
     where: { conversationId, userId: { not: senderId } },
@@ -704,7 +705,7 @@ async function notifyConversationByEmail({ conversationId, type, senderId, sende
         senderName: displayName,
         senderAvatarUrl: sender?.photoURL || null,
         senderInitials: displayName.split(/\s+/).map((w) => w[0] || '').filter(Boolean).slice(0, 2).join('').toUpperCase() || '?',
-        senderRoleLabel: senderRoleLabel(effectiveType, sender?.roles),
+        senderRoleLabel: senderRoleLabel(effectiveType, sender?.roles, brandName),
         senderMessageHtml: (String(content || '').trim() || 'Sent an attachment'),
         attachmentThumbUrl,
         attachmentDocLabel,
@@ -715,6 +716,8 @@ async function notifyConversationByEmail({ conversationId, type, senderId, sende
         conversationId,
         replyTo,
         link: chatLinkFor(user.roles, conversationId),
+        // Conversation brand drives the email's shell/From: (Ghana/Africa/…).
+        brandKey: conversation?.brand || null,
       },
     }).catch((err) => console.error('[ChatService] chat email enqueue failed:', err.message));
   }

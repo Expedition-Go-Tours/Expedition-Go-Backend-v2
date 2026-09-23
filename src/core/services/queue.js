@@ -447,7 +447,7 @@ async function processEmailJob(job) {
   if (['payout-request-submitted', 'payout-request-approved', 'payout-completed'].includes(job.type)) {
     const request = await prisma.payoutRequest.findUnique({
       where: { id: job.payoutRequestId },
-      include: { supplier: { select: { name: true, email: true } } },
+      include: { supplier: { select: { name: true, email: true, roles: true } } },
     });
     if (!request) throw new Error(`PayoutRequest ${job.payoutRequestId} not found`);
     await emailService.sendFinancePayoutRequestEmail(job.type, request);
@@ -457,7 +457,7 @@ async function processEmailJob(job) {
     const dispute = await prisma.dispute.findUnique({
       where: { id: job.disputeId },
       include: {
-        supplier: { select: { name: true, email: true } },
+        supplier: { select: { name: true, email: true, roles: true } },
         booking: { select: { bookingNumber: true, tour: { select: { title: true } } } },
       },
     });
@@ -523,7 +523,13 @@ async function processEmailJob(job) {
 
     default: {
       const { to, subject, template, data, attachments } = job;
-      await emailService.sendEmail({ to, subject, template, data, attachments });
+      // Forward brandKey explicitly so raw queued emails render with the
+      // producer's brand (data.brandKey also flows through after the inline
+      // path hardening — belt and braces for jobs enqueued before it).
+      await emailService.sendEmail({
+        to, subject, template, data, attachments,
+        opts: { brandKey: (data && data.brandKey) || null },
+      });
     }
   }
 }

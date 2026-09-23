@@ -3,7 +3,7 @@ const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
 const notificationRecipientService = require('../services/notificationRecipientService');
 const { renderNotificationRecipientPage } = require('../services/notificationRecipientPage');
-const { sendNotificationRecipientVerificationEmail } = require('../services/emailService');
+const { sendNotificationRecipientVerificationEmail, resolveEmailBrand } = require('../services/emailService');
 const { logActivity } = require('../services/auditLogger');
 const { getBrandEmail } = require('../../../config/brands');
 const emailUrls = require('../../../config/emailUrls');
@@ -272,6 +272,7 @@ exports.addNotificationRecipient = catchAsync(async (req, res) => {
       supplierName: supplier?.name || 'your supplier account',
       verifyUrl: emailUrls.supplierNotificationRecipientVerifyForUser(supplier, rawToken),
       types: notificationRecipientService.enabledTypeLabels(record.preferences),
+      brandKey: resolveEmailBrand({ user: supplier }),
     });
   } catch (err) {
     // Keep the row (the admin can resend) but surface the delivery failure.
@@ -315,6 +316,7 @@ exports.resendNotificationRecipient = catchAsync(async (req, res) => {
     supplierName: supplier?.name || 'your supplier account',
     verifyUrl: emailUrls.supplierNotificationRecipientVerifyForUser(supplier, rawToken),
     types: notificationRecipientService.enabledTypeLabels(record.preferences),
+    brandKey: resolveEmailBrand({ user: supplier }),
   });
 
   res.status(200).json({ status: 'success', data: { recipient: record } });

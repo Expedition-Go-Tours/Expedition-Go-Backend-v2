@@ -7,7 +7,7 @@
 
 const prisma = require('./prismaClient');
 const cache = require('./cacheHelper');
-const { sendEmail } = require('./emailService');
+const { sendEmail, resolveEmailBrand } = require('./emailService');
 const { notifyAdmin } = require('./adminNotificationService');
 const { enqueueNotification } = require('./queue');
 const logger = require('./logger');
@@ -87,6 +87,7 @@ async function expireExpiredDocuments() {
         to: user.email,
         subject: 'A required document has expired',
         template: 'generic-notification',
+        opts: { brandKey: resolveEmailBrand({ user }) },
         data: {
           header: 'Document expired — account on hold',
           message: 'A required licence or certificate on your supplier account has expired. Your listings are temporarily hidden. Upload a renewed copy to restore your account.',
@@ -144,6 +145,7 @@ async function planDocumentExpiryReminders() {
           to: user.email,
           subject: `Reminder: document expires in ${days} days`,
           template: 'generic-notification',
+          opts: { brandKey: resolveEmailBrand({ user }) },
           data: {
             header: `A document expires in ${days} days`,
             message: `One of your verified documents (${doc.type.replace(/_/g, ' ')}) expires soon. Renew it before the expiry date to avoid your listings being hidden.`,

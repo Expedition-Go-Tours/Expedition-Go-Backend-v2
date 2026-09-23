@@ -567,3 +567,259 @@ describe('sendSupplierBookingNotification', () => {
     expect(payload.html).toContain('Guest');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Brand identity — Expedition config + brandKey threading through senders
+// ---------------------------------------------------------------------------
+const {
+  resolveEmailBrand,
+  sendNotificationRecipientVerificationEmail,
+  sendSupplierResponseEmail,
+  sendTeamInviteEmail,
+  sendChatMessageEmail,
+} = require('../../src/core/services/emailService');
+const { getBrandEmail } = require('../../config/brands');
+const emailUrls = require('../../config/emailUrls');
+
+describe('Expedition email identity', () => {
+  it('says Expedition-Go Tours in the badge, body and footer', () => {
+    const brand = getBrandEmail('expedition');
+    expect(brand.brandName).toBe('Expedition-Go Tours');
+    expect(brand.poweredByLabel).toBe('Expedition-Go Tours');
+    // From: header deliberately stays on the shared Ghana sender.
+    expect(brand.from).toBe('Travio Ghana <notifications@travioghana.com>');
+    expect(brand.supportEmail).toBe('support@travioghana.com');
+  });
+
+  it('renders an expedition-branded inline email end-to-end', async () => {
+    await sendEmail({
+      to: 'traveller@test.com',
+      subject: 'Trip update',
+      template: 'generic-notification',
+      opts: { brandKey: 'expedition' },
+      data: { header: 'Hello', message: 'Body' },
+    });
+    const payload = __send.mock.calls[0][0];
+    expect(payload.from).toBe('Travio Ghana <notifications@travioghana.com>');
+    expect(payload.html).toContain('Expedition-Go Tours');
+    expect(payload.html).not.toContain('Travio Africa');
+  });
+});
+
+describe('resolveEmailBrand', () => {
+  it('keeps Ghana for suppliers that also carry the expedition role', () => {
+    const roles = ['supplier', 'ghana', 'expedition'];
+    expect(resolveEmailBrand({ user: { roles } })).toBe('ghana');
+    expect(resolveEmailBrand({ supplier: { roles } })).toBe('ghana');
+  });
+
+  it('maps expedition-only users to the Expedition brand', () => {
+    expect(resolveEmailBrand({ user: { roles: ['customer', 'expedition'] } })).toBe('expedition');
+  });
+
+  it('prefers booking.source over roles and falls back to the default brand', () => {
+    expect(resolveEmailBrand({ booking: { source: 'GHANA' } })).toBe('ghana');
+    expect(resolveEmailBrand({ booking: { source: 'EXPEDITION' }, user: { roles: ['travioafrica'] } })).toBe('expedition');
+    expect(resolveEmailBrand({})).toBe('africa');
+    expect(resolveEmailBrand({ user: {} })).toBe('africa');
+  });
+});
+
+describe('brandKey threading (inline hardening)', () => {
+  it('resolves shell + From: from data.brandKey on the inline path', async () => {
+    // Mirrors what the email queue forwards (data only, no opts).
+    await sendEmail({
+      to: 'supplier@test.com',
+      subject: 'Queued',
+      template: 'generic-notification',
+      data: { header: 'Hi', message: 'Body', brandKey: 'ghana' },
+    });
+    const payload = __send.mock.calls[0][0];
+    expect(payload.from).toBe('Travio Ghana <notifications@travioghana.com>');
+    expect(payload.html).toContain('Travio Ghana');
+  });
+
+  it('brands the supplier approval email from the supplier roles', async () => {
+    await sendSupplierStatusEmail('supplier@test.com', 'APPROVED', {
+      name: 'Accra Tours',
+      roles: ['supplier', 'ghana'],
+    });
+    const payload = __send.mock.calls[0][0];
+    expect(payload.html).toContain('Welcome to Travio Ghana');
+    expect(payload.from).toBe('Travio Ghana <notifications@travioghana.com>');
+    expect(payload.html).toContain('https://supplier.travioghana.com/dashboard');
+  });
+
+  it('brands expedition-scoped recipients Expedition-Go Tours', async () => {
+    await sendSupplierStatusEmail('ops@test.com', 'APPROVED', {
+      name: 'Expedition Ops',
+      roles: ['expedition'],
+    });
+    const payload = __send.mock.calls[0][0];
+    expect(payload.html).toContain('Welcome to Expedition-Go Tours');
+  });
+
+  it('keeps the Travio Africa default when no brand signal exists', async () => {
+    await sendSupplierStatusEmail('supplier@test.com', 'APPROVED', { name: 'Plain Co' });
+    const payload = __send.mock.calls[0][0];
+    expect(payload.html).toContain('Welcome to Travio Africa');
+  });
+
+  it('threads brandKey into the notification-recipient verification email', async () => {
+    await sendNotificationRecipientVerificationEmail({
+      to: 'extra@test.com',
+      supplierName: 'Accra Tours',
+      verifyUrl: 'https://example.com/verify',
+      types: ['Bookings'],
+      brandKey: 'ghana',
+    });
+    const payload = __send.mock.calls[0][0];
+    expect(payload.from).toBe('Travio Ghana <notifications@travioghana.com>');
+    expect(payload.html).toContain('TravioG_csfsyl.png'); // brand logo filled by the shell
+    expect(payload.html).not.toContain('src=""');
+    expect(payload.html).toContain('support@travioghana.com');
+  });
+
+  it('brands the review-response email from the booking source', async () => {
+    await sendSupplierResponseEmail({
+      id: 'b-9',
+      source: 'EXPEDITION',
+      customer: { email: 'traveller@test.com', name: 'Cara' },
+      tour: {
+        title: 'Cape Coast Castle Tour',
+        slug: 'cape-coast-castle-tour',
+        supplier: { id: 's-1', name: 'Accra Tours', email: 'supplier@test.com' },
+      },
+      review: { supplierResponse: 'Thanks for coming!' },
+    });
+    const payload = __send.mock.calls[0][0];
+    expect(payload.to).toBe('traveller@test.com');
+    expect(payload.from).toBe('Travio Ghana <notifications@travioghana.com>');
+    expect(payload.html).toContain('Expedition-Go Tours');
+  });
+
+  it('carries the conversation brand through the chat email', async () => {
+    await sendChatMessageEmail(null, {
+      to: 'supplier@test.com',
+      conversationId: 'conv-1',
+      senderName: 'Kofi',
+      senderMessageHtml: 'Hello there',
+      link: 'https://supplier.travioghana.com/dashboard/chat?conversation=conv-1',
+      brandKey: 'ghana',
+    });
+    const payload = __send.mock.calls[0][0];
+    expect(payload.from).toBe('Travio Ghana <notifications@travioghana.com>');
+    expect(payload.html).toContain('Travio Ghana');
+    expect(payload.html).toContain('TravioG_csfsyl.png');
+  });
+
+  it('renders the brand logo + support inbox in team invites', async () => {
+    await sendTeamInviteEmail({
+      to: 'new@team.com',
+      supplierName: 'Accra Tours',
+      role: 'editor',
+      inviteUrl: 'https://supplier.travioghana.com/team/invite?token=t0k',
+      invitedBy: 'Ops Lead',
+      brandKey: 'ghana',
+    });
+    const payload = __send.mock.calls[0][0];
+    expect(payload.from).toBe('Travio Ghana <notifications@travioghana.com>');
+    expect(payload.html).toContain('TravioG_csfsyl.png');
+    expect(payload.html).not.toContain('src=""');
+    expect(payload.html).toContain('support@travioghana.com');
+  });
+});
+
+describe('brand-aware email links (ForUser variants)', () => {
+  it('routes Ghana suppliers to the Ghana dashboard', () => {
+    expect(emailUrls.supplierDashboardForUser({ roles: ['supplier', 'ghana'] }))
+      .toBe('https://supplier.travioghana.com/dashboard');
+    expect(emailUrls.supplierEarningsForUser({ roles: ['ghana'] }))
+      .toBe('https://supplier.travioghana.com/earnings');
+    expect(emailUrls.supplierReviewForUser('r1', { roles: ['ghana'] }))
+      .toBe('https://supplier.travioghana.com/reviews?reviewId=r1');
+    expect(emailUrls.supplierReplyReviewForUser('r1', { roles: ['ghana'] }))
+      .toBe('https://supplier.travioghana.com/reviews?reviewId=r1&reply=1');
+  });
+
+  it('keeps the default dashboard for everyone else', () => {
+    expect(emailUrls.supplierDashboardForUser({ roles: ['supplier'] })).toBe(emailUrls.supplierDashboard());
+    expect(emailUrls.supplierDashboardForUser(undefined)).toBe(emailUrls.supplierDashboard());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Contact form — inline generator (previously `template: null` threw a 500)
+// ---------------------------------------------------------------------------
+describe('contact-form template', () => {
+  it('renders the visitor message in the brand shell and sends', async () => {
+    await sendEmail({
+      to: 'support@travioghana.com',
+      subject: '[Travio Ghana Inquiry] Jane Doe - jane@test.com',
+      template: 'contact-form',
+      opts: { brandKey: 'ghana' },
+      data: {
+        subject: '[Travio Ghana Inquiry] Jane Doe - jane@test.com',
+        messageBody: 'Name: Jane Doe\nEmail: jane@test.com\n\nMessage:\nDo you run private hikes?',
+        name: 'Jane Doe',
+        email: 'jane@test.com',
+        phone: 'Not provided',
+        inquiryType: 'Travio Ghana Contact Form',
+      },
+    });
+
+    const payload = __send.mock.calls[0][0];
+    expect(payload.from).toBe('Travio Ghana <notifications@travioghana.com>');
+    expect(payload.html).toContain('Jane Doe');
+    expect(payload.html).toContain('Do you run private hikes?');
+    // Brand shell slots merged (logo alt + footer).
+    expect(payload.html).toContain('Travio Ghana');
+    expect(payload.html).not.toContain('{{brandName}}');
+    expect(payload.text).toContain('Do you run private hikes?');
+  });
+
+  it('skips the "Not provided" phone row', async () => {
+    await sendEmail({
+      to: 'support@travioghana.com',
+      subject: 'Contact',
+      template: 'contact-form',
+      opts: { brandKey: 'ghana' },
+      data: { messageBody: 'Hello there team', name: 'A', email: 'a@b.com', phone: 'Not provided' },
+    });
+    const payload = __send.mock.calls[0][0];
+    expect(payload.html).not.toContain('Phone');
+    expect(payload.html).toContain('Hello there team');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Brand-scoped Reply-To (prod had one global override for every brand)
+// ---------------------------------------------------------------------------
+describe('brand-scoped Reply-To', () => {
+  const base = { to: 'someone@test.com', subject: 'S', template: 'generic-notification', data: { header: 'H', message: 'M body' } };
+
+  it('ghana falls back to its own support inbox, not the default override', async () => {
+    await sendEmail({ ...base, opts: { brandKey: 'ghana' } });
+    expect(__send.mock.calls[0][0].reply_to).toBe('support@travioghana.com');
+  });
+
+  it('expedition falls back to its shared support inbox', async () => {
+    await sendEmail({ ...base, opts: { brandKey: 'expedition' } });
+    expect(__send.mock.calls[0][0].reply_to).toBe('support@travioghana.com');
+  });
+
+  it('per-brand EMAIL_REPLY_TO_GHANA env wins for Ghana', async () => {
+    process.env.EMAIL_REPLY_TO_GHANA = 'ghana-reply@example.com';
+    try {
+      await sendEmail({ ...base, opts: { brandKey: 'ghana' } });
+      expect(__send.mock.calls[0][0].reply_to).toBe('ghana-reply@example.com');
+    } finally {
+      delete process.env.EMAIL_REPLY_TO_GHANA;
+    }
+  });
+
+  it('an explicit opts.replyTo beats env and brand fallbacks', async () => {
+    await sendEmail({ ...base, opts: { brandKey: 'ghana', replyTo: 'explicit@example.com' } });
+    expect(__send.mock.calls[0][0].reply_to).toBe('explicit@example.com');
+  });
+});

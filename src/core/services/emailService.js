@@ -198,7 +198,14 @@ async function sendHtml({ to, subject, html, text = '', attachments = [], replyT
 
   try {
     const fromInfo = parseFrom(brandKey);
-    const replyToValue = replyTo || process.env.EMAIL_REPLY_TO;
+    // Brand-scoped Reply-To, mirroring parseFrom's EMAIL_FROM pattern:
+    // EMAIL_REPLY_TO_<BRAND> wins per brand, the legacy EMAIL_REPLY_TO stays
+    // the default (TravioAfrica) override, and every other brand falls back
+    // to its own support inbox instead of inheriting the default's override.
+    const replyBrand = getBrandEmail(brandKey);
+    const replySuffix = replyBrand.key && replyBrand.key !== 'africa' ? `_${replyBrand.key.toUpperCase()}` : '';
+    const envReplyTo = process.env[`EMAIL_REPLY_TO${replySuffix}`] || (replySuffix ? null : process.env.EMAIL_REPLY_TO);
+    const replyToValue = replyTo || envReplyTo || replyBrand.supportEmail || null;
     const extraHeaders = {};
     if (replyToValue) extraHeaders['Reply-To'] = replyToValue;
     if (inReplyTo) extraHeaders['In-Reply-To'] = inReplyTo;
@@ -282,7 +289,11 @@ async function sendEmail({ to, subject, template, data = {}, attachments = [], o
   // Legacy / inline path
   const content = generateEmailContent(template, data);
   if (content && content.html) {
-    const shell = await getShellVars(opts?.brandKey || null);
+    // brandKey resolves from opts first, then the payload — mirrors
+    // renderTemplate so a queued email carrying data.brandKey renders (and
+    // sends From:) with the same identity as a direct call with opts.
+    const brandKey = opts?.brandKey || data?.brandKey || null;
+    const shell = await getShellVars(brandKey);
     const merged = { ...shell, year: shell.year, ...data };
     let html = content.html;
     for (const [k, v] of Object.entries(merged)) {
@@ -290,7 +301,7 @@ async function sendEmail({ to, subject, template, data = {}, attachments = [], o
     }
     return sendHtml({
       to, subject, html, text: content.text || '', attachments,
-      replyTo: opts?.replyTo, inReplyTo: opts?.inReplyTo, brandKey: opts?.brandKey || null,
+      replyTo: opts?.replyTo, inReplyTo: opts?.inReplyTo, brandKey,
       tags: tags || opts?.tags,
       tagsByRecipient: tagsByRecipient || opts?.tagsByRecipient,
       unsubscribeUrl: unsubscribeUrl || opts?.unsubscribeUrl,
@@ -328,12 +339,13 @@ async function supplierRecipientList(supplierOrId, category) {
  * Double opt-in confirmation for an additional supplier notification address.
  * Sent directly to the address (never through supplierRecipientList).
  */
-async function sendNotificationRecipientVerificationEmail({ to, supplierName, verifyUrl, types, expiresInDays = 7 }) {
+async function sendNotificationRecipientVerificationEmail({ to, supplierName, verifyUrl, types, expiresInDays = 7, brandKey = null }) {
   const name = supplierName || 'this supplier';
   return sendEmail({
     to,
     subject: `Confirm your email to receive ${name} notifications`,
     template: 'notification-recipient-verify',
+    opts: { brandKey },
     data: {
       supplierName: name,
       confirmUrl: verifyUrl,
@@ -415,8 +427,13 @@ function resolveEmailBrand({ brandKey, booking, supplier, user, conversation } =
   const rec = supplier && supplier.supplier ? supplier.supplier : supplier;
   const roles = (user && user.roles) || (rec && rec.roles) || (conversation && conversation.brand ? [] : null);
   if (Array.isArray(roles)) {
+    // Suppliers enabled on the Expedition sub-store carry both `ghana` and
+    // `expedition` — Ghana wins so supplier mail keeps the Travio Ghana
+    // supplier-dashboard identity. Expedition-only users (storefront
+    // customers / ops) resolve to the Expedition brand instead of the default.
     if (roles.includes('ghana')) return 'ghana';
     if (roles.includes('travioafrica')) return 'africa';
+    if (roles.includes('expedition')) return 'expedition';
   }
 
   if (conversation && conversation.brand) return resolveBrandKey(conversation.brand);
@@ -926,11 +943,13 @@ async function sendSupplierResponseEmail(booking) {
   const slug = b.tour?.slug || b.tour?.id || '';
   const tourUrl = `${origin}/tour/${encodeURIComponent(slug)}#reviews`;
   const reply = (review.supplierResponse || '').trim();
+  const brandKey = resolveEmailBrand({ booking: b, supplier: b.tour?.supplier });
 
   return sendEmail({
     to: b.customer?.email,
     subject: `An operator responded to your review of "${tourTitle}"`,
     template: 'generic-notification',
+    opts: { brandKey },
     data: {
       header: `The operator responded to your review of "${tourTitle}"`,
       message: reply
@@ -1219,11 +1238,14 @@ async function sendSupplierProductSubmittedEmail(tour) {
   const { to, tagsByRecipient } = await supplierRecipientList(supplier, 'systemAlerts');
   if (!to.length) return { success: false, reason: 'no-recipient' };
 
+  const brandKey = resolveEmailBrand({ supplier });
+
   return sendRendered({
     to,
     tagsByRecipient,
     subject: 'Your product has been submitted for review',
     key: 'supplier-product-submitted',
+    opts: { brandKey },
     data: {
       supplierName: supplier.name || 'Supplier',
       tourTitle: tour.title || 'your product',
@@ -1241,11 +1263,14 @@ async function sendSupplierProductUpdateSubmittedEmail(tour) {
   const { to, tagsByRecipient } = await supplierRecipientList(supplier, 'systemAlerts');
   if (!to.length) return { success: false, reason: 'no-recipient' };
 
+  const brandKey = resolveEmailBrand({ supplier });
+
   return sendRendered({
     to,
     tagsByRecipient,
     subject: 'Your product update is under review',
     key: 'supplier-product-update-submitted',
+    opts: { brandKey },
     data: {
       supplierName: supplier.name || 'Supplier',
       tourTitle: tour.title || 'your product',
@@ -1280,10 +1305,13 @@ async function sendFinancePayoutRequestEmail(eventType, request) {
   }[eventType];
   if (!config) throw new Error(`Unknown finance email event: ${eventType}`);
 
+  const brandKey = resolveEmailBrand({ supplier });
+
   return sendEmail({
     ...await supplierRecipientList(supplier, "payments"),
     subject: config.subject,
     template: 'generic-notification',
+    opts: { brandKey },
     data: {
       header: config.heading,
       message: config.message,
@@ -1296,10 +1324,12 @@ async function sendDisputeOpenedEmail(dispute) {
   const booking = dispute.booking || {};
   const tour = booking.tour || {};
   const supplier = dispute.supplier || {};
+  const brandKey = resolveEmailBrand({ supplier });
   return sendEmail({
     ...await supplierRecipientList(supplier, "bookings"),
     subject: `Refund request received - ${dispute.disputeNumber}`,
     template: 'generic-notification',
+    opts: { brandKey },
     data: {
       header: 'Refund Request Submitted',
       message: `Your refund request ${dispute.disputeNumber} (reason: ${(dispute.reason || '').replace(/_/g, ' ').toLowerCase()}) for booking ${booking.bookingNumber || ''} - "${tour.title || ''}" has been submitted for review. Payouts for this booking are on hold until a decision is made. We will notify you as soon as it is resolved.`,
@@ -1332,8 +1362,16 @@ async function sendBookingCancellationEmail(booking, refundAmount = null) {
 }
 
 async function sendSupplierStatusEmail(email, status, data = {}) {
+  // Callers pass the supplier's `roles` (or an explicit `brandKey`) so the
+  // shell, From: header, welcome heading and dashboard link all match the
+  // supplier's brand instead of defaulting to TravioAfrica.
+  const brandKey = data.brandKey
+    || (Array.isArray(data.roles) ? resolveEmailBrand({ user: { roles: data.roles } }) : null);
+  const brandName = getBrandEmail(brandKey).brandName;
+  const dashboardUrl = emailUrls.supplierDashboardForUser({ roles: data.roles });
+
   const statusConfig = {
-    APPROVED: { subject: 'Supplier Application Approved - Welcome!', heading: 'Welcome to Travio Africa' },
+    APPROVED: { subject: 'Supplier Application Approved - Welcome!', heading: `Welcome to ${brandName}` },
     REJECTED: { subject: 'Supplier Application Update', heading: 'Application Update' },
     UNDER_REVIEW: { subject: 'Additional Information Required', heading: 'Action Required' },
     ACTIVE: { subject: 'Supplier Account Activated', heading: 'Your account is active' },
@@ -1346,17 +1384,19 @@ async function sendSupplierStatusEmail(email, status, data = {}) {
     to: email,
     subject: config.subject,
     template: 'generic-notification',
+    opts: { brandKey },
     data: {
       ...data,
+      brandKey,
       header: config.heading,
       message: data.message || `Your supplier account status has changed to ${status}.`,
       buttonText: 'Open dashboard',
-      buttonUrl: emailUrls.supplierDashboard(),
+      buttonUrl: dashboardUrl,
       userName: data.name || 'Supplier',
       supplierBusinessName: data.name,
       approvalDate: new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
-      dashboardUrl: emailUrls.supplierDashboard(),
-    brandSubtext: `by ${data.brandName || 'Travio Africa'}`,
+      dashboardUrl,
+      brandSubtext: `by ${data.brandName || brandName}`,
     },
   });
 }
@@ -1372,21 +1412,24 @@ async function sendReviewNotificationEmail(review) {
     prisma.user.findUnique({ where: { id: review.customerId } }),
   ]);
 
+  const brandKey = resolveEmailBrand({ supplier });
+
   return sendEmail({
     ...await supplierRecipientList(supplier, "reviews"),
     subject: `New ${review.rating}-Star Review Received`,
     template: 'generic-notification',
+    opts: { brandKey },
     data: {
       header: `New ${review.rating}-Star Review`,
       message: `${customer?.name || 'A traveller'} reviewed "${tour.title}": "${review.comment || review.title || ''}".`,
       buttonText: 'View review',
-      buttonUrl: emailUrls.supplierReview(review.id),
+      buttonUrl: emailUrls.supplierReviewForUser(review.id, supplier),
       secondaryButtonText: 'Reply to this review',
-      secondaryButtonUrl: emailUrls.supplierReplyReview(review.id),
+      secondaryButtonUrl: emailUrls.supplierReplyReviewForUser(review.id, supplier),
       userName: supplier.name,
       supplierName: supplier.name,
       tourTitle: tour.title,
-      reviewUrl: emailUrls.supplierReview(review.id),
+      reviewUrl: emailUrls.supplierReviewForUser(review.id, supplier),
       reviewDate: new Date(review.createdAt).toLocaleDateString(),
     },
   });
@@ -1435,6 +1478,7 @@ async function sendChatMessageEmail(booking, data = {}) {
       ...(data.tourTitle ? { tourTitle: htmlEscape(String(data.tourTitle)) } : {}),
       ...(data.bookingNumber ? { bookingNumber: htmlEscape(String(data.bookingNumber)) } : {}),
       chatUrl,
+      brandKey: data.brandKey || null,
     },
     opts: {
       replyTo: data.replyTo,
@@ -1449,22 +1493,24 @@ async function sendPayoutNotificationEmail(supplierId, payoutData) {
   if (!supplier?.email) throw new Error(`Supplier ${supplierId} has no email`);
 
   const currency = payoutData.currency || 'USD';
+  const brandKey = resolveEmailBrand({ supplier });
   return sendEmail({
     ...await supplierRecipientList(supplier, "payments"),
     subject: 'Payout Processed',
     template: 'generic-notification',
+    opts: { brandKey },
     data: {
       header: 'Payout Processed',
       message: `Your payout of ${fmt.formatCurrency(payoutData.amount, currency)} has been ${payoutData.statusLabel ? payoutData.statusLabel.toLowerCase() : 'processed'}.`,
       buttonText: 'View earnings',
-      buttonUrl: emailUrls.supplierEarnings(),
+      buttonUrl: emailUrls.supplierEarningsForUser(supplier),
       userName: supplier.name,
       supplierName: supplier.name,
       payoutAmount: payoutData.amount,
       currency,
       payoutDate: new Date(payoutData.date).toLocaleDateString(),
       payoutId: payoutData.id,
-      dashboardUrl: emailUrls.supplierEarnings(),
+      dashboardUrl: emailUrls.supplierEarningsForUser(supplier),
     },
   });
 }
@@ -1477,12 +1523,13 @@ async function sendSupplierBookingNotification(booking) {
   }
 }
 
-async function sendTeamInviteEmail({ to, supplierName, role, inviteUrl, invitedBy }) {
+async function sendTeamInviteEmail({ to, supplierName, role, inviteUrl, invitedBy, brandKey = null }) {
   try {
     return await sendEmail({
       to,
       subject: `You've been invited to join ${supplierName}'s team`,
       template: 'team-invite',
+      opts: { brandKey },
       data: { brandName: supplierName, role, inviteLink: inviteUrl, invitedBy },
     });
   } catch (error) {
@@ -1491,12 +1538,13 @@ async function sendTeamInviteEmail({ to, supplierName, role, inviteUrl, invitedB
   }
 }
 
-async function sendTeamInviteRevokedEmail({ to, supplierName, role, invitedBy }) {
+async function sendTeamInviteRevokedEmail({ to, supplierName, role, invitedBy, brandKey = null }) {
   try {
     return await sendEmail({
       to,
       subject: `Invitation to join ${supplierName}'s team has been revoked`,
       template: 'team-invite-revoked',
+      opts: { brandKey },
       data: { brandName: supplierName, role, invitedBy },
     });
   } catch (error) {
@@ -1514,10 +1562,65 @@ function generateEmailContent(template, data) {
     'team-invite-revoked': generateTeamInviteRevokedEmail,
     'generic-notification': generateGenericNotificationEmail,
     'notification-recipient-verify': generateNotificationRecipientVerifyEmail,
+    'contact-form': generateContactFormEmail,
   };
   const fn = templates[template];
   if (!fn) return { html: '', text: '' };
   return fn(data);
+}
+
+/**
+ * Contact-form submission routed to the brand support inbox. Support-facing:
+ * renders the visitor's details + message inside the brand shell, so the
+ * receiving team sees which storefront the enquiry came from.
+ *
+ * data: { subject, messageBody, name, email, phone, inquiryType }
+ */
+function generateContactFormEmail(data) {
+  const meta = [
+    ['Name', data.name],
+    ['Email', data.email],
+    ['Phone', data.phone && data.phone !== 'Not provided' ? data.phone : null],
+    ['Inquiry', data.inquiryType],
+  ].filter(([, v]) => v);
+  const metaHtml = meta
+    .map(
+      ([k, v]) =>
+        `<p style="margin:3px 0;font-size:13px;color:#64748B;font-family:'Plus Jakarta Sans',Arial,sans-serif;"><span style="color:#0F172A;font-weight:700;">${htmlEscape(k)}:</span> ${htmlEscape(v)}</p>`
+    )
+    .join('');
+
+  const messageText = String(data.messageBody || data.message || '');
+  const messageHtml = htmlEscape(messageText).replace(/\n/g, '<br>');
+  const heading = htmlEscape(data.subject || 'New contact form message');
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${heading}</title></head>
+<body style="margin:0;padding:0;background-color:#F1F5F9;font-family:'Plus Jakarta Sans',Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#F1F5F9;padding:32px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#FFFFFF;border-radius:16px;overflow:hidden;border:1px solid #E2E8F0;">
+        <tr><td style="padding:24px 32px 6px 32px;text-align:center;">
+          <img src="{{logoUrl}}" alt="{{brandName}}" style="max-height:44px;max-width:200px;display:block;margin:0 auto;">
+        </td></tr>
+        <tr><td style="padding:6px 32px 0 32px;">
+          <h1 style="margin:0;font-size:18px;font-weight:800;color:#0F172A;text-align:center;">${heading}</h1>
+        </td></tr>
+        <tr><td style="padding:14px 32px 2px 32px;">${metaHtml}</td></tr>
+        <tr><td style="padding:12px 32px 6px 32px;">
+          <div style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;padding:16px 18px;font-size:14px;line-height:1.7;color:#334155;">${messageHtml}</div>
+        </td></tr>
+        <tr><td style="padding:14px 32px 26px 32px;text-align:center;font-size:12px;color:#94A3B8;">
+          {{year}} &copy; {{brandName}} &middot; {{supportEmail}}
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  return { html, text: messageText };
 }
 
 function generateGenericNotificationEmail(data) {
@@ -1600,14 +1703,15 @@ function generateTeamInviteEmail(data) {
   const templatePath = path.join(__dirname, '..', '..', '..', 'sendgrid-templates', 'team-invite.html');
   let html = fs.readFileSync(templatePath, 'utf-8');
 
+  // Only template-specific slots are replaced here. Brand identity slots
+  // ({{logoUrl}}, {{supportEmail}}, {{year}}) are left for the shell merge in
+  // sendEmail, which resolves them from the brand registry via brandKey —
+  // pre-replacing {{logoUrl}} with '' is what hid the logo from team invites.
   const replacements = {
-    '{{logoUrl}}': data.logoUrl || '',
     '{{brandName}}': data.brandName || 'Travio Africa',
     '{{invitedBy}}': data.invitedBy || 'A team member',
     '{{role}}': data.role || 'member',
     '{{inviteLink}}': data.inviteLink || '#',
-    '{{supportEmail}}': data.supportEmail || 'support@travioafrica.com',
-    '{{year}}': data.year || new Date().getFullYear().toString(),
   };
 
   for (const [key, value] of Object.entries(replacements)) {

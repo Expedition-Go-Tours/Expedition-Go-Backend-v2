@@ -24,7 +24,7 @@ const AppError = require('../services/appError');
 const { enqueueNotification } = require('../services/queue');
 const { notifyAdmin } = require('../services/adminNotificationService');
 const { createRefund } = require('../services/stripeHelpers');
-const { sendEmail } = require('../services/emailService');
+const { sendEmail, resolveEmailBrand } = require('../services/emailService');
 const emailUrls = require('../../../config/emailUrls');
 
 const CLAIM_WINDOW_DAYS = 30;
@@ -66,12 +66,13 @@ async function createClaimWithRetry(model, data, attempts = 3) {
   throw new Error('Could not allocate a claim number');
 }
 
-async function sendClaimEmail({ to, subject, heading, message, buttonText, buttonUrl }) {
+async function sendClaimEmail({ to, subject, heading, message, buttonText, buttonUrl, brandKey = null }) {
   try {
     await sendEmail({
       to,
       subject,
       template: 'generic-notification',
+      opts: { brandKey },
       data: {
         header: heading,
         message,
@@ -195,7 +196,7 @@ exports.submitRefundClaim = catchAsync(async (req, res, next) => {
   });
 
   const [supplierUser, customerUser] = await Promise.all([
-    prisma.user.findUnique({ where: { id: claim.supplierId }, select: { email: true, name: true } }),
+    prisma.user.findUnique({ where: { id: claim.supplierId }, select: { email: true, name: true, roles: true } }),
     prisma.user.findUnique({ where: { id: customerId }, select: { email: true } }),
   ]);
   const tourTitle = claim.booking?.tour?.title || (await prisma.booking.findUnique({ where: { id: claim.bookingId }, select: { tour: { select: { title: true } } } }))?.tour?.title || 'your tour';
@@ -222,14 +223,15 @@ exports.submitRefundClaim = catchAsync(async (req, res, next) => {
       heading: 'A customer requested a refund',
       message: `A customer has requested a ${claimType.toLowerCase()} refund for "${tourTitle}" (${claim.claimNumber}). Review it and approve so our team can release the money, or decline with a note.`,
       buttonText: 'Review request',
-      buttonUrl: `${emailUrls.supplierDashboard()}/finance?tab=claims&claimId=${claim.id}`,
+      buttonUrl: `${emailUrls.supplierDashboardForUser(supplierUser)}/finance?tab=claims&claimId=${claim.id}`,
+      brandKey: resolveEmailBrand({ user: supplierUser }),
     }).catch((err) => console.error('[RefundClaim] notify/email failed:', err && err.message));
   }
 
   if (customerUser?.email) {
     const booking = await prisma.booking.findUnique({
       where: { id: claim.bookingId },
-      select: { id: true, clientOrigin: true },
+      select: { id: true, clientOrigin: true, source: true },
     });
     sendClaimEmail({
       to: customerUser.email,
@@ -238,6 +240,7 @@ exports.submitRefundClaim = catchAsync(async (req, res, next) => {
       message: `Your ${claimType.toLowerCase()} refund request for "${tourTitle}" has been submitted. The provider will review it, and if approved our team will release the refund to your original payment method.`,
       buttonText: 'View booking',
       buttonUrl: customerBookingUrl({ id: booking?.id || claim.bookingId, clientOrigin: booking?.clientOrigin }),
+      brandKey: resolveEmailBrand({ booking }),
     }).catch((err) => console.error('[RefundClaim] notify/email failed:', err && err.message));
   }
 
@@ -289,7 +292,7 @@ async function loadOwnedClaim(id, supplierId) {
     where: { id, supplierId },
     include: {
       booking: {
-        select: { id: true, customerId: true, clientOrigin: true, bookingNumber: true, grossAmount: true, currency: true, tour: { select: { title: true } } },
+        select: { id: true, customerId: true, clientOrigin: true, source: true, bookingNumber: true, grossAmount: true, currency: true, tour: { select: { title: true } } },
       },
     },
   });
@@ -339,6 +342,7 @@ exports.supplierApprove = catchAsync(async (req, res, next) => {
       message: 'The provider approved your refund request. Our team will now release the refund to your original payment method — this usually takes a few business days.',
       buttonText: 'View booking',
       buttonUrl: customerBookingUrl(claim.booking),
+      brandKey: resolveEmailBrand({ booking: claim.booking }),
     }).catch((err) => console.error('[RefundClaim] notify/email failed:', err && err.message));
   }
 
@@ -370,6 +374,9 @@ exports.supplierDecline = catchAsync(async (req, res, next) => {
       subject: `Update on your refund request (${tourTitle})`,
       heading: 'Your refund request was not approved',
       message: `The provider declined your refund request with this note: "${note}"`,
+      buttonText: 'View booking',
+      buttonUrl: customerBookingUrl(claim.booking),
+      brandKey: resolveEmailBrand({ booking: claim.booking }),
     }).catch((err) => console.error('[RefundClaim] notify/email failed:', err && err.message));
   }
 
@@ -412,6 +419,7 @@ async function loadClaimForAdmin(id) {
           id: true,
           customerId: true,
           clientOrigin: true,
+          source: true,
           grossAmount: true,
           currency: true,
           refundedAt: true,
@@ -506,6 +514,7 @@ exports.adminRelease = catchAsync(async (req, res, next) => {
       message: `The refund of ${claim.booking?.currency || 'USD'} ${releasedAmount.toFixed(2)} for your trip "${claim.booking?.tour?.title || ''}" is on its way to your original payment method.`,
       buttonText: 'View booking',
       buttonUrl: customerBookingUrl(claim.booking),
+      brandKey: resolveEmailBrand({ booking: claim.booking }),
     }).catch((err) => console.error('[RefundClaim] notify/email failed:', err && err.message));
   }
 
@@ -534,6 +543,9 @@ exports.adminDecline = catchAsync(async (req, res, next) => {
       subject: `Update on your refund request (${tourTitle})`,
       heading: 'Your refund request was not approved',
       message: `We could not release your refund: "${note}". If you have questions, contact support.`,
+      buttonText: 'View booking',
+      buttonUrl: customerBookingUrl(claim.booking),
+      brandKey: resolveEmailBrand({ booking: claim.booking }),
     }).catch((err) => console.error('[RefundClaim] notify/email failed:', err && err.message));
   }
 

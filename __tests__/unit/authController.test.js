@@ -42,7 +42,10 @@ jest.mock('passport', () => ({
   authenticate: jest.fn(),
 }));
 
-jest.mock('../../src/core/services/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/emailService', () => ({
+  sendEmail: jest.fn(() => Promise.resolve()),
+  resolveEmailBrand: jest.fn(() => 'africa'),
+}));
 
 const bcrypt = require('bcrypt');
 const passport = require('passport');
@@ -499,6 +502,43 @@ describe('forgotPassword', () => {
     expect(sendEmail).toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ status: 'success' }));
+  });
+
+  it('points the reset link at the brand storefront origin (Ghana)', async () => {
+    const { sendEmail, resolveEmailBrand } = require('../../src/core/services/emailService');
+    sendEmail.mockResolvedValue();
+    resolveEmailBrand.mockReturnValue('ghana');
+    prisma.user.findUnique.mockResolvedValue(mockUser);
+    mockSignPasswordResetToken.mockReturnValue('reset-token');
+
+    const req = mockReq({ body: { email: 'john@test.com' } });
+    const res = mockRes();
+    const next = mockNext();
+
+    await controller.forgotPassword(req, res, next);
+
+    expect(sendEmail.mock.calls[0][0].data.buttonUrl).toBe(
+      'https://travioghana.com/reset-password?token=reset-token'
+    );
+    // Restore the factory default for subsequent tests.
+    resolveEmailBrand.mockReturnValue('africa');
+  });
+
+  it('defaults the reset link to the TravioAfrica storefront origin', async () => {
+    const { sendEmail } = require('../../src/core/services/emailService');
+    sendEmail.mockResolvedValue();
+    prisma.user.findUnique.mockResolvedValue(mockUser);
+    mockSignPasswordResetToken.mockReturnValue('reset-token');
+
+    const req = mockReq({ body: { email: 'john@test.com' } });
+    const res = mockRes();
+    const next = mockNext();
+
+    await controller.forgotPassword(req, res, next);
+
+    expect(sendEmail.mock.calls[0][0].data.buttonUrl).toBe(
+      'https://travioafrica.com/reset-password?token=reset-token'
+    );
   });
 });
 

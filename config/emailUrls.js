@@ -159,6 +159,17 @@ module.exports = {
   supplierReplyReview: (reviewId) => `${DASHBOARD_URL}/reviews?reviewId=${encodeURIComponent(reviewId)}&reply=1`,
   // Brand-aware bookings link (Ghana suppliers → Ghana dashboard).
   supplierBookingsForUser: (user) => `${dashboardBaseForUser(user)}/bookings`,
+  // Brand-aware home/earnings/review links — the bare variants above always
+  // point at the TravioAfrica dashboard, which is the wrong home for Ghana
+  // suppliers opening a branded email.
+  supplierDashboardForUser: (user) => `${dashboardBaseForUser(user)}/dashboard`,
+  supplierEarningsForUser: (user) => `${dashboardBaseForUser(user)}/earnings`,
+  supplierReviewForUser: (reviewId, user) =>
+    `${dashboardBaseForUser(user)}/reviews?reviewId=${encodeURIComponent(reviewId)}`,
+  supplierReplyReviewForUser: (reviewId, user) =>
+    `${dashboardBaseForUser(user)}/reviews?reviewId=${encodeURIComponent(reviewId)}&reply=1`,
+  // Raw helper — used by chat deep-links and team-invite URLs too.
+  dashboardBaseForUser,
 
   // ── Supplier notification recipients ───────────────────────────────
   // Confirm/unsubscribe links must resolve without a dashboard session, so

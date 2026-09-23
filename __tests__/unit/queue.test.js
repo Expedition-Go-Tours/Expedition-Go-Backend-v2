@@ -183,7 +183,10 @@ describe('queue', () => {
 
       await queue.processEmailJob({ to: 'u@t.com', subject: 'Hello', template: 'generic', data: {} });
 
-      expect(emailService.sendEmail).toHaveBeenCalledWith({ to: 'u@t.com', subject: 'Hello', template: 'generic', data: {}, attachments: undefined });
+      expect(emailService.sendEmail).toHaveBeenCalledWith({
+        to: 'u@t.com', subject: 'Hello', template: 'generic', data: {}, attachments: undefined,
+        opts: { brandKey: null },
+      });
     });
   });
 

@@ -1109,7 +1109,9 @@ controller.submitContact = catchAsync(async (req, res, next) => {
     return next(new AppError('Message must be at least 10 characters', 400));
   }
 
-  const supportEmail = process.env.SUPPORT_EMAIL || BRAND.supportEmail;
+  // Brand inbox first: the global SUPPORT_EMAIL env is a single shared value
+  // and must not reroute other brands' contact forms to it.
+  const supportEmail = BRAND.supportEmail || process.env.SUPPORT_EMAIL;
 
   const subject = `[${BRAND.brandName} Inquiry] ${name} - ${email}`;
   const messageBody = [
@@ -1127,7 +1129,8 @@ controller.submitContact = catchAsync(async (req, res, next) => {
   await sendEmail({
     to: supportEmail,
     subject,
-    template: null,
+    template: 'contact-form',
+    opts: { brandKey: BRAND.key },
     data: {
       subject,
       messageBody,

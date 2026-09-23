@@ -3,7 +3,10 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   user: { findUnique: jest.fn() },
 }));
 
-jest.mock('../../src/core/services/emailService', () => ({ sendEmail: jest.fn() }));
+jest.mock('../../src/core/services/emailService', () => ({
+  sendEmail: jest.fn(),
+  resolveEmailBrand: jest.fn(() => 'africa'),
+}));
 
 let mockIo;
 jest.mock('../../app', () => {

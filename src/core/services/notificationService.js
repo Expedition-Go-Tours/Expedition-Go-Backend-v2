@@ -13,7 +13,7 @@
  */
 
 const prisma = require('./prismaClient');
-const { sendEmail } = require('./emailService');
+const { sendEmail, resolveEmailBrand } = require('./emailService');
 const { categoryForType } = require('./notificationCategories');
 const { resolveRecipients } = require('./notificationRecipientService');
 const emailUrls = require('../../../config/emailUrls');
@@ -52,7 +52,8 @@ async function sendNotification({
         id: true,
         name: true,
         email: true,
-        language: true
+        language: true,
+        roles: true
       }
     });
 
@@ -136,6 +137,10 @@ async function sendWebSocketNotification(userId, notificationData) {
  * Send email notification
  */
 async function sendNotificationEmail(user, { type, title, message, data, template, recipients }) {
+  // Brand identity for shell + From: — resolves from the recipient's roles
+  // (Ghana / Expedition / TravioAfrica) so notification emails never fall
+  // back to the default brand.
+  const brandKey = resolveEmailBrand({ user });
   const audience = Array.isArray(recipients) && recipients.length
     ? recipients
     : [{ email: user.email, recipientId: null }];
@@ -188,15 +193,16 @@ async function sendNotificationEmail(user, { type, title, message, data, templat
         tagsByRecipient,
         subject: `New ${rating}-Star Review Received`,
         template: 'generic-notification',
+        opts: { brandKey },
         data: {
           userName: user.name,
           header: `New ${rating}-Star Review`,
           message,
           reviewDate: new Date(review.createdAt).toLocaleDateString(),
           buttonText: 'View review',
-          buttonUrl: emailUrls.supplierReview(review.id),
+          buttonUrl: emailUrls.supplierReviewForUser(review.id, user),
           secondaryButtonText: 'Reply to this review',
-          secondaryButtonUrl: emailUrls.supplierReplyReview(review.id),
+          secondaryButtonUrl: emailUrls.supplierReplyReviewForUser(review.id, user),
           ...data,
         },
       });
@@ -211,6 +217,7 @@ async function sendNotificationEmail(user, { type, title, message, data, templat
     tagsByRecipient,
     subject: emailConfig.subject,
     template: template || 'generic-notification',
+    opts: { brandKey },
     data: {
       userName: user.name,
       title,
