@@ -598,8 +598,14 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
           && Array.isArray(t.attractions)
           && t.attractions.some(a => attractionNameSet.has(normaliseSearch(a)));
         const attractionBoost = (score === 0 && visitsMatchedAttraction) ? 15 : 0;
-        if (score > 0 || attractionBoost > 0) {
-          scored.push(buildSuggestion('tour', { ...item, slug: t.slug, coverPhoto: t.coverPhoto }, score + 12 + attractionBoost));
+        // Itinerary substring matches are intentionally not word-anchored — a
+        // search for "komfo" must find "Okomfo Anokye Sword Site" — so the
+        // tiered scorer (which is word-anchored) can return 0 for them. Keep
+        // such tours in the result set at a modest score instead of dropping
+        // them. Gated at 3+ characters to match the scorer's partial threshold.
+        const itineraryBoost = (score === 0 && nq.length >= 3 && itineraryIdSet.has(t.id)) ? 15 : 0;
+        if (score > 0 || attractionBoost > 0 || itineraryBoost > 0) {
+          scored.push(buildSuggestion('tour', { ...item, slug: t.slug, coverPhoto: t.coverPhoto }, score + 12 + attractionBoost + itineraryBoost));
         }
       }
     } catch {}
