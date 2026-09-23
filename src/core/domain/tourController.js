@@ -2159,6 +2159,10 @@ exports.submitTourForReview = catchAsync(async (req, res, next) => {
       submittedAt: hasDraft ? updated.draftSubmittedAt : updated.submittedAt,
       isResubmission: hasDraft,
       changesSummary: hasDraft ? computeChangesSummary(contentDiff) : undefined,
+      // The actual diff (path / kind / before → after) so the Discord update
+      // embed can list the real changes rather than just a count. Bounded to
+      // keep the stored notification and the Discord field within limits.
+      changes: hasDraft ? contentDiff.slice(0, 25) : undefined,
     },
   });
 

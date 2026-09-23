@@ -79,13 +79,22 @@ function mirrorToDiscord(type, title, message, data) {
 
   // Dedicated rich embeds with buttons for actionable notifications
   if (type === 'TOUR_SUBMITTED_FOR_REVIEW') {
-    const { content, opts } = channelEmbeds.verificationTourUpdateSubmitted({
-      tourTitle: data?.tourTitle,
-      tourId: data?.tourId,
-      supplierName: data?.supplierName,
-      changesSummary: data?.changesSummary,
-      isResubmission: data?.isResubmission,
-    });
+    // A brand-new tour is a submission, not an update. Pick the matching embed
+    // so new tours aren't announced as "updates" with an empty Changes field.
+    const { content, opts } = data?.isResubmission
+      ? channelEmbeds.verificationTourUpdateSubmitted({
+          tourTitle: data?.tourTitle,
+          tourId: data?.tourId,
+          supplierName: data?.supplierName,
+          changesSummary: data?.changesSummary,
+          changes: data?.changes,
+          isResubmission: true,
+        })
+      : channelEmbeds.verificationTourSubmitted({
+          tourTitle: data?.tourTitle,
+          tourId: data?.tourId,
+          supplierName: data?.supplierName,
+        });
     const payload = {};
     if (opts.title || (opts.fields && opts.fields.length)) {
       payload.embeds = [{

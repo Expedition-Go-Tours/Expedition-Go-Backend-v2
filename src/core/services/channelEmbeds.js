@@ -190,19 +190,79 @@ function verificationTourSubmitted({ tourTitle, tourId, supplierName }) {
       fields: [
         { name: 'Tour', value: tourTitle || '—', inline: true },
         { name: 'Supplier', value: supplierName || '—', inline: true },
+        ...(url ? [{ name: 'Review', value: `[Open Dashboard](${url})`, inline: false }] : []),
       ],
       cooldownKey: tourId,
+      components: [
+        {
+          type: 1,
+          components: [
+            { type: 2, style: 3, label: 'Approve', custom_id: `tour:approve:${tourId}` },
+            { type: 2, style: 4, label: 'Reject', custom_id: `tour:reject:${tourId}` },
+          ],
+        },
+      ],
     },
   };
 }
 
-function verificationTourUpdateSubmitted({ tourTitle, tourId, supplierName, changesSummary, isResubmission }) {
+// Friendly section names for diff paths (first path segment → label).
+const SECTION_LABELS = {
+  productContent: 'Content',
+  bookingAndTickets: 'Booking & tickets',
+  schedulesAndPricing: 'Pricing & availability',
+  categorization: 'Categorization',
+  photos: 'Photos',
+  title: 'Title',
+  description: 'Description',
+  tags: 'Tags',
+  metaTitle: 'Meta title',
+  metaDescription: 'Meta description',
+  coverPhoto: 'Cover photo',
+};
+
+function prettyChangePath(path) {
+  const raw = String(path || '');
+  const [head, ...rest] = raw.split('.');
+  const label = SECTION_LABELS[head] || (head ? head.charAt(0).toUpperCase() + head.slice(1) : 'Field');
+  return rest.length ? `${label} › ${rest.join('.')}` : label;
+}
+
+function clipValue(value, max = 80) {
+  const s = value === undefined || value === null || value === '' ? '—' : String(value);
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+// Render the raw diff as readable "field: old → new" lines, within Discord's
+// 1024-char field limit.
+function formatChangeLines(changes, { maxLines = 12, maxChars = 1000 } = {}) {
+  if (!Array.isArray(changes) || changes.length === 0) return null;
+  const lines = [];
+  for (const c of changes) {
+    const label = prettyChangePath(c.path);
+    if (c.kind === 'added') lines.push(`• ${label}: added “${clipValue(c.after)}”`);
+    else if (c.kind === 'removed') lines.push(`• ${label}: removed “${clipValue(c.before)}”`);
+    else lines.push(`• ${label}: “${clipValue(c.before)}” → “${clipValue(c.after)}”`);
+    if (lines.length >= maxLines) break;
+  }
+  const remaining = changes.length - Math.min(changes.length, maxLines);
+  if (remaining > 0) lines.push(`…and ${remaining} more`);
+  let text = lines.join('\n');
+  if (text.length > maxChars) text = `${text.slice(0, maxChars - 1)}…`;
+  return text;
+}
+
+function verificationTourUpdateSubmitted({ tourTitle, tourId, supplierName, changesSummary, isResubmission, changes }) {
   const url = dashboardUrl(`tours/${tourId}`);
   const resubmit = isResubmission ? ' (resubmission)' : '';
-  let changesText = '—';
-  if (changesSummary && typeof changesSummary === 'object' && changesSummary.count != null) {
-    const sectionNames = (changesSummary.sections || []).map(s => s.section).join(', ');
-    changesText = `${changesSummary.count} change${changesSummary.count === 1 ? '' : 's'} across ${sectionNames || 'multiple fields'}`;
+  // Prefer the concrete diff; fall back to the section summary.
+  let changesText = formatChangeLines(changes);
+  if (!changesText) {
+    changesText = '—';
+    if (changesSummary && typeof changesSummary === 'object' && changesSummary.count != null) {
+      const sectionNames = (changesSummary.sections || []).map(s => s.section).join(', ');
+      changesText = `${changesSummary.count} change${changesSummary.count === 1 ? '' : 's'} across ${sectionNames || 'multiple fields'}`;
+    }
   }
   return {
     content: `${tourTitle || 'A tour'} has a pending update submitted for review${resubmit}.`,

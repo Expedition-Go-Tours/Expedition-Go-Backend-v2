@@ -7,6 +7,7 @@ const {
   verificationDocumentEvent,
   verificationStatusChange,
   verificationTourSubmitted,
+  verificationTourUpdateSubmitted,
   approvalPayoutRequest,
   approvalPayoutResult,
   approvalRefundRequest,
@@ -68,9 +69,50 @@ describe('channelEmbeds — verification', () => {
     expect(r.opts.fields.find((f) => f.name === 'To').value).toBe('ACTIVE');
   });
 
-  it('verificationTourSubmitted has tour title', () => {
-    const r = verificationTourSubmitted({ tourTitle: 'Beach Day', tourId: 't1' });
+  it('verificationTourSubmitted has tour title, review buttons and no Changes field', () => {
+    const r = verificationTourSubmitted({ tourTitle: 'Beach Day', tourId: 't1', supplierName: 'Acme' });
     expect(r.content).toContain('Beach Day');
+    expect(r.opts.title).toBe('Tour Submitted for Review');
+    expect(r.opts.fields.find((f) => f.name === 'Changes')).toBeUndefined();
+    const ids = r.opts.components[0].components.map((c) => c.custom_id);
+    expect(ids).toEqual(['tour:approve:t1', 'tour:reject:t1']);
+  });
+
+  it('verificationTourUpdateSubmitted renders the actual diff (old → new)', () => {
+    const r = verificationTourUpdateSubmitted({
+      tourTitle: 'Beach Day',
+      tourId: 't1',
+      supplierName: 'Acme',
+      isResubmission: true,
+      changes: [
+        { path: 'bookingAndTickets.cutoffMinutes', kind: 'changed', before: 24, after: 48 },
+        { path: 'photos', kind: 'changed', before: '1 removed', after: '1 added' },
+      ],
+    });
+    const changes = r.opts.fields.find((f) => f.name === 'Changes').value;
+    expect(changes).toContain('Booking & tickets › cutoffMinutes');
+    expect(changes).toContain('24');
+    expect(changes).toContain('48');
+    expect(changes).toContain('→');
+    expect(changes).toContain('1 added');
+    const ids = r.opts.components[0].components.map((c) => c.custom_id);
+    expect(ids).toEqual(['tour:approve:t1', 'tour:reject:t1']);
+  });
+
+  it('verificationTourUpdateSubmitted falls back to the summary without a diff', () => {
+    const r = verificationTourUpdateSubmitted({
+      tourTitle: 'T',
+      tourId: 't1',
+      isResubmission: true,
+      changesSummary: { count: 2, sections: [{ section: 'photos' }] },
+    });
+    expect(r.opts.fields.find((f) => f.name === 'Changes').value).toContain('2 changes across');
+  });
+
+  it('verificationTourUpdateSubmitted caps long diffs with "…and N more"', () => {
+    const many = Array.from({ length: 20 }, (_, i) => ({ path: `productContent.locations[${i}].name`, kind: 'changed', before: 'a', after: 'b' }));
+    const r = verificationTourUpdateSubmitted({ tourTitle: 'T', tourId: 't1', isResubmission: true, changes: many });
+    expect(r.opts.fields.find((f) => f.name === 'Changes').value).toContain('…and 8 more');
   });
 });
 
