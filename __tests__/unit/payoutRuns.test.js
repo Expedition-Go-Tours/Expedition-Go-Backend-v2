@@ -6,10 +6,11 @@ jest.mock('../../src/core/services/prismaClient', () => {
   };
   return {
     supplierProfile: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
-    payoutMethod: { findFirst: jest.fn() },
+    payoutMethod: { findFirst: jest.fn(), count: jest.fn() },
     booking: { findMany: jest.fn(), aggregate: jest.fn() },
     payoutRequest: { create: jest.fn() },
     supplierCharge: { findMany: jest.fn(), updateMany: jest.fn() },
+    notification: { findFirst: jest.fn() },
     $transaction: jest.fn((fn) => fn(tx)),
     __tx: tx,
   };
@@ -30,6 +31,7 @@ jest.mock('../../src/core/services/channelEmbeds', () => ({
 const prisma = require('../../src/core/services/prismaClient');
 const getConfig = require('../../src/core/services/getConfig');
 const { logActivity } = require('../../src/core/services/auditLogger');
+const { enqueueNotification } = require('../../src/core/services/queue');
 const {
   isRunDate,
   nextRunAt,
@@ -288,6 +290,41 @@ describe('generateDuePayoutRuns', () => {
     expect(report.generated).toBe(0);
     expect(report.skippedBlocked).toBe(1);
     expect(prisma.__tx.payoutRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('only targets payable suppliers (approved or active)', async () => {
+    happyPath();
+    await generateDuePayoutRuns(new Date(2026, 9, 1, 1));
+
+    // findMany[0] is the plan-promotion read; findMany[1] is the run sweep.
+    const where = prisma.supplierProfile.findMany.mock.calls[1][0].where;
+    expect(where.status).toEqual({ in: ['APPROVED', 'ACTIVE'] });
+  });
+
+  it('nudges a supplier whose payouts cannot be generated without a method', async () => {
+    prisma.supplierProfile.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: 'sp1', userId: 'sup1', payoutCycle: 'MONTHLY', user: { id: 'sup1' } }]);
+    prisma.payoutMethod.findFirst.mockResolvedValue(null);
+    prisma.notification.findFirst.mockResolvedValue(null);
+
+    const report = await generateDuePayoutRuns(new Date(2026, 9, 1, 1));
+
+    expect(report.skippedNoMethod).toBe(1);
+    expect(enqueueNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not repeat the nudge when one was already sent today', async () => {
+    prisma.supplierProfile.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: 'sp1', userId: 'sup1', payoutCycle: 'MONTHLY', user: { id: 'sup1' } }]);
+    prisma.payoutMethod.findFirst.mockResolvedValue(null);
+    prisma.notification.findFirst.mockResolvedValue({ id: 'n1' });
+
+    const report = await generateDuePayoutRuns(new Date(2026, 9, 1, 1));
+
+    expect(report.skippedNoMethod).toBe(1);
+    expect(enqueueNotification).not.toHaveBeenCalled();
   });
 
   it('keeps going when one supplier is blocked by open fees', async () => {

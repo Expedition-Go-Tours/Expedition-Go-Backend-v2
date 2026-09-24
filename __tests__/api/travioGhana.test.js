@@ -20,6 +20,7 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   adminNotification: { findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), updateMany: jest.fn(), update: jest.fn(), create: jest.fn() },
   payout: { findMany: jest.fn(), findFirst: jest.fn(), aggregate: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
   payoutRequest: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
+  payoutMethod: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn() },
   dispute: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn() },
   chatConversation: { findMany: jest.fn(), count: jest.fn() },
   cancellationRecord: { findMany: jest.fn(), count: jest.fn() },

@@ -33,7 +33,10 @@ async function main() {
   }
 
   const candidates = await prisma.supplierProfile.findMany({
-    where: { status: 'APPROVED', payoutCycle: null },
+    // APPROVED (admin-approved) and ACTIVE (fully verified, can receive
+    // payouts) are the payable states. Suspended/rejected/expired suppliers are
+    // deliberately never enrolled.
+    where: { status: { in: ['APPROVED', 'ACTIVE'] }, payoutCycle: null },
     select: {
       id: true,
       userId: true,
@@ -50,7 +53,7 @@ async function main() {
   console.log(
     `Payout schedule backfill ${DRY_RUN ? '(DRY RUN — no writes)' : ''}\n` +
       `  cadence: ${cycle}\n` +
-      `  approved suppliers without a schedule: ${candidates.length}\n` +
+      `  payable suppliers without a schedule: ${candidates.length}\n` +
       `  to enrol: ${targets.length}${ALL ? ' (--all)' : ' (Ghana-based only)'}`
   );
 
