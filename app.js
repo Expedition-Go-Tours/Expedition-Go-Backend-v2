@@ -93,6 +93,21 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // Global rate limit: 500 requests per hour per IP (configurable via ratelimit.global)
+// Bots crawl every storefront URL from a small shared IP pool, so the prerender
+// endpoint gets its own generous budget — otherwise Googlebot is handed JSON 429
+// halfway through a crawl and the sitemap entries behind it stay unindexed.
+// Build-time sitemap reads are one-shots per deploy and are skipped here too.
+const prerenderLimiter = createLimiter({
+  name: 'prerender',
+  defaultMax: 3000,
+  defaultWindowMs: 60 * 60 * 1000,
+  message: {
+    status: 'fail',
+    message: 'Too many prerender requests from this IP, please try again later.',
+  },
+});
+app.use('/api/prerender', prerenderLimiter);
+
 app.use(
   '/api',
   createLimiter({
@@ -103,6 +118,11 @@ app.use(
       status: 'fail',
       message: 'Too many requests from this IP, please try again later.',
     },
+    // req.path is relative to the /api mount point.
+    skip: (req) =>
+      req.method === 'OPTIONS' ||
+      req.path === '/prerender' ||
+      req.path.endsWith('/sitemap'),
   }),
 );
 
