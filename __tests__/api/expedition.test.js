@@ -23,6 +23,11 @@ jest.mock('../../src/core/services/stripeHelpers', () => ({ createPaymentIntent:
 jest.mock('../../src/core/services/getConfig', () => jest.fn((key, def) => Promise.resolve(def)));
 jest.mock('../../src/core/services/availabilityCalendar', () => ({ buildAvailabilityCalendar: jest.fn(() => Promise.resolve([])) }));
 jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/viewTracking', () => ({
+  shouldCountTourView: jest.fn(async () => ({ counted: false, geo: null })),
+  isInternalViewer: jest.fn(async () => false),
+  getViewerGeo: jest.fn(() => null),
+}));
 
 const app = require('../../app');
 const prisma = require('../../src/core/services/prismaClient');
@@ -91,6 +96,39 @@ describe('Expedition API — public endpoints', () => {
       const res = await request(app).get('/api/expedition/tours/featured');
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('success');
+    });
+  });
+
+  describe('GET /api/expedition/tours/:slug', () => {
+    it('returns 200 for a slug lookup', async () => {
+      const res = await request(app).get('/api/expedition/tours/test-tour');
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('success');
+    });
+
+    it('returns 200 for a tour id lookup (legacy id URLs)', async () => {
+      const res = await request(app).get('/api/expedition/tours/cmuefjdhj008gr44h8flybaj7');
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('success');
+    });
+
+    it('looks the tour up by slug OR id', async () => {
+      await request(app).get('/api/expedition/tours/test-tour');
+      expect(prisma.expeditionTour.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            tour: expect.objectContaining({
+              OR: [{ slug: 'test-tour' }, { id: 'test-tour' }],
+            }),
+          }),
+        })
+      );
+    });
+
+    it('returns 404 when the tour does not resolve', async () => {
+      prisma.expeditionTour.findFirst.mockResolvedValueOnce(null);
+      const res = await request(app).get('/api/expedition/tours/does-not-exist');
+      expect(res.status).toBe(404);
     });
   });
 
