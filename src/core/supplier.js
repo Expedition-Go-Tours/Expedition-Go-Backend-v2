@@ -138,33 +138,49 @@ controller.getDashboard = catchAsync(async (req, res) => {
 /**
  * GET /api/travioghana/supplier/monthly-revenue
  *
- * Monthly revenue chart data for the supplier's Ghana tours.
+ * Monthly revenue chart data for the supplier's tours: a continuous window of
+ * whole calendar months ending with the current one, so a quiet month shows as
+ * an empty slot instead of being silently skipped (which made the trend look
+ * continuous across gaps). Demo/seed bookings are excluded so the chart agrees
+ * with the revenue totals the dashboard endpoint reports for the same page.
  */
 controller.getMonthlyRevenue = catchAsync(async (req, res) => {
   const supplierId = req.user.id;
-  const months = parseInt(req.query.months) || 12;
+  const months = Math.max(1, Math.min(36, parseInt(req.query.months, 10) || 12));
 
-  const cutoff = new Date();
-  cutoff.setMonth(cutoff.getMonth() - months);
+  // Bucket in UTC (the platform's storefront timezone is Accra = UTC+0) so the
+  // window never shifts with the server's local timezone.
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (months - 1), 1));
 
   const bookings = await prisma.booking.findMany({
     where: {
       tour: { supplierId },
+      isSimulated: false,
       paymentStatus: 'SUCCEEDED',
-      paidAt: { gte: cutoff },
+      paidAt: { gte: start },
     },
     select: { grossAmount: true, paidAt: true },
   });
 
-  const monthly = {};
-  for (const b of bookings) {
-    const key = b.paidAt.toISOString().slice(0, 7); // YYYY-MM
-    monthly[key] = (monthly[key] || 0) + parseFloat(b.grossAmount || 0);
+  const monthKey = (d) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+
+  // Seed every month in the window with 0, ascending.
+  const monthly = new Map();
+  for (let i = 0; i < months; i += 1) {
+    monthly.set(monthKey(new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + i, 1))), 0);
   }
 
-  const data = Object.entries(monthly)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([month, revenue]) => ({ month, revenue: Math.round(revenue * 100) / 100 }));
+  for (const b of bookings) {
+    if (!b.paidAt) continue;
+    const key = monthKey(new Date(b.paidAt));
+    if (monthly.has(key)) monthly.set(key, monthly.get(key) + parseFloat(b.grossAmount || 0));
+  }
+
+  const data = [...monthly.entries()].map(([month, revenue]) => ({
+    month,
+    revenue: Math.round(revenue * 100) / 100,
+  }));
 
   res.json({ status: 'success', data: { months: data } });
 });

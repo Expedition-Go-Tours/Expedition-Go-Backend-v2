@@ -303,11 +303,30 @@ describe('TravioGhana API — supplier endpoints', () => {
     expect(res.body.status).toBe('success');
   });
 
-  it('GET /monthly-revenue returns 200', async () => {
-    prisma.travioGhanaTour.findMany.mockResolvedValue([{ tourId: 'tour-1' }]);
-    prisma.booking.groupBy.mockResolvedValue([]);
-    const res = await request(app).get('/api/travioghana/supplier/monthly-revenue').set(auth(supplierToken));
+  it('GET /monthly-revenue returns a continuous month window', async () => {
+    prisma.booking.findMany.mockResolvedValue([]);
+    const res = await request(app).get('/api/travioghana/supplier/monthly-revenue?months=3').set(auth(supplierToken));
     expect(res.status).toBe(200);
+    expect(res.body.status).toBe('success');
+
+    const months = res.body.data.months;
+    expect(months).toHaveLength(3);
+    expect(months[0].month).toMatch(/^\d{4}-\d{2}$/);
+    // Ascending, and quiet months are present as zeros rather than skipped.
+    expect(months.map((m) => m.month)).toEqual([...months.map((m) => m.month)].sort());
+    expect(months.every((m) => m.revenue === 0)).toBe(true);
+  });
+
+  it('GET /monthly-revenue buckets paid revenue and ignores demo bookings', async () => {
+    prisma.booking.findMany.mockResolvedValue([{ grossAmount: '120.50', paidAt: new Date() }]);
+    const res = await request(app).get('/api/travioghana/supplier/monthly-revenue').set(auth(supplierToken));
+
+    expect(prisma.booking.findMany.mock.calls[0][0].where).toMatchObject({
+      isSimulated: false,
+      paymentStatus: 'SUCCEEDED',
+    });
+    expect(res.body.data.months).toHaveLength(12);
+    expect(res.body.data.months.at(-1).revenue).toBe(120.5);
   });
 
   it('GET /tours returns 200', async () => {
