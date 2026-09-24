@@ -301,6 +301,16 @@ describe('generateDuePayoutRuns', () => {
     expect(where.status).toEqual({ in: ['APPROVED', 'ACTIVE'] });
   });
 
+  it('never pays out demo/seed bookings', async () => {
+    happyPath();
+    await generateDuePayoutRuns(new Date(2026, 9, 1, 1));
+
+    expect(prisma.booking.findMany.mock.calls[0][0].where).toMatchObject({
+      isSimulated: false,
+      payoutStatus: 'ELIGIBLE',
+    });
+  });
+
   it('nudges a supplier whose payouts cannot be generated without a method', async () => {
     prisma.supplierProfile.findMany
       .mockResolvedValueOnce([])

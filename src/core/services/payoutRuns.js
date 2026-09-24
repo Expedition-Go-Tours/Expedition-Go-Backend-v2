@@ -387,6 +387,11 @@ async function promoteDueCycles(now = new Date()) {
 async function selectEligibleBookings({ supplierId, bookingIds = null }) {
   const where = {
     tour: { supplierId },
+    // Demo/seed bookings must never be paid out. Every other money view on the
+    // platform (finance summary, admin dashboards, analytics) excludes them, so
+    // including them here would pay out test data that the supplier's own
+    // balance card does not even show.
+    isSimulated: false,
     payoutStatus: 'ELIGIBLE',
     paymentStatus: 'SUCCEEDED',
     status: { in: ['CONFIRMED', 'COMPLETED'] },
