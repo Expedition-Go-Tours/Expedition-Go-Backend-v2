@@ -11,7 +11,7 @@ jest.mock('bullmq', () => ({
         'expire-checkout-holds', 'expire-modify-topups', 'charge-pay-later-bookings',
         'resolve-cancellation-choices',
         'cancellation-request-reminder',
-        'earnings-eligibility-sweep', 'plan-booking-reminders',
+        'earnings-eligibility-sweep', 'generate-payout-runs', 'plan-booking-reminders',
         'dispatch-booking-reminders', 'reconcile-ghana', 'reconcile-travioafrica',
         'refresh-popularity', 'cleanup-events', 'aggregate-daily-views',
       ].map((jobName) => ({ key: `sched:${jobName}` }))

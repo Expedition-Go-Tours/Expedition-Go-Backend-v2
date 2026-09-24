@@ -105,6 +105,8 @@ router.get('/finance/payouts/requests', resolveSupplier, requireTeamPermission('
 router.post('/finance/payout/request', resolveSupplier, requireTeamPermission('payouts.request'), financeController.createPayoutRequest);
 router.patch('/finance/payouts/requests/:id/cancel', resolveSupplier, requireTeamPermission('payouts.request'), financeController.cancelPayoutRequest);
 router.get('/finance/disputes', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getDisputes);
+router.get('/finance/payout-settings', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getPayoutSettings);
+router.patch('/finance/payout-settings', resolveSupplier, requireTeamPermission('payouts.view'), financeController.updatePayoutSettings);
 router.get('/payouts', ghanaSupplier.getPayouts);
 
 // Payout methods (proxied to shared controller — frontend rewrites /payout-methods/* here)

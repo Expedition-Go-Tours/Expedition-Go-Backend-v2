@@ -167,4 +167,50 @@ router.patch('/payouts/requests/:id/cancel', resolveSupplier, requireTeamPermiss
  */
 router.get('/disputes', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getDisputes);
 
+/**
+ * @swagger
+ * /finance/payout-settings:
+ *   get:
+ *     summary: The supplier's automated payout schedule
+ *     description: >
+ *       Current cadence, next run date and any change scheduled for the 1st of
+ *       next month. `autoManaged: false` means the legacy manual withdrawal
+ *       window still applies.
+ *     tags: [Finance]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Payout plan for the authenticated supplier
+ */
+router.get('/payout-settings', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getPayoutSettings);
+
+/**
+ * @swagger
+ * /finance/payout-settings:
+ *   patch:
+ *     summary: Choose the payout cadence (weekly / twice a month / monthly)
+ *     description: >
+ *       Changes take effect on the 1st of the following month; a first
+ *       enrolment applies immediately.
+ *     tags: [Finance]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [cycle]
+ *             properties:
+ *               cycle: { type: string, enum: [WEEKLY, TWICE_MONTHLY, MONTHLY] }
+ *     responses:
+ *       200:
+ *         description: Updated payout plan
+ *       400:
+ *         description: Invalid cycle
+ */
+router.patch('/payout-settings', resolveSupplier, requireTeamPermission('payouts.view'), financeController.updatePayoutSettings);
+
 module.exports = router;

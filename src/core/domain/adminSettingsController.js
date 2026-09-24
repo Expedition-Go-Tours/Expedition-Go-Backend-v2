@@ -21,7 +21,10 @@ const NUMERIC_KEYS = [
 ];
 
 // Settings keys that must be a boolean string.
-const BOOLEAN_KEYS = ['system.maintenance_mode'];
+const BOOLEAN_KEYS = ['system.maintenance_mode', 'payout.auto_generate_enabled'];
+
+// Valid automated payout cadences (GetYourGuide-style schedules).
+const PAYOUT_CYCLES = ['WEEKLY', 'TWICE_MONTHLY', 'MONTHLY'];
 
 /**
  * Validate/normalize a single setting value before it is persisted.
@@ -55,6 +58,14 @@ function sanitizeSetting(key, value) {
       throw new AppError(`Setting "${key}" must be true or false`, 400);
     }
     return normalized;
+  }
+
+  if (key === 'payout.default_cycle') {
+    const cycle = String(value || '').toUpperCase().replace(/[\s-]+/g, '_');
+    if (!PAYOUT_CYCLES.includes(cycle)) {
+      throw new AppError(`payout.default_cycle must be one of ${PAYOUT_CYCLES.join(', ')}`, 400);
+    }
+    return cycle;
   }
 
   // Unknown/other keys pass through unchanged.

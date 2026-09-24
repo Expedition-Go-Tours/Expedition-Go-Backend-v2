@@ -5,6 +5,16 @@ const { logActivity } = require('../services/auditLogger');
 const { enqueueNotification, enqueueEmail } = require('../services/queue');
 const { detachBookingFromActiveRequests, unfreezeBookingAfterDispute } = require('../services/financeHelpers');
 const { notifyDiscord } = require('../services/discordNotifier');
+const {
+  buildPayoutPlan,
+  getDefaultCycle,
+  autoRunsEnabled,
+  updateSupplierPayoutPlan,
+  resolveEffectiveCycle,
+  nextRunAt,
+  VALID_CYCLES,
+  CYCLE_META,
+} = require('../services/payoutRuns');
 
 // ── Finance v2 — admin processing of supplier payout requests + disputes ──
 // Mounted at /admin/finance (see routes/adminFinanceRoutes.js).
@@ -596,4 +606,213 @@ exports.resolveDispute = catchAsync(async (req, res, next) => {
   }
 
   res.status(200).json({ status: 'success', data: { dispute: { id: dispute.id, status: statusMap[outcome], stripeRefundId } } });
+});
+
+// ── Payout schedules (automated runs) ──────────────────────────────────────
+// Admin visibility + override for the GetYourGuide-style supplier payout
+// cadences. A supplier with a payoutCycle is enrolled and paid automatically on
+// their run dates; these endpoints let finance see who is enrolled, when their
+// next run lands, and force a plan change when support needs to.
+
+const PROFILE_PLAN_SELECT = {
+  id: true,
+  userId: true,
+  status: true,
+  payoutCycle: true,
+  payoutCycleEffectiveAt: true,
+  payoutCyclePending: true,
+  payoutCyclePendingAt: true,
+  user: { select: { id: true, name: true, email: true } },
+};
+
+/**
+ * GET /admin/finance/payout-schedules?page=&limit=&search=&cycle=
+ * Every enrolled supplier with their cadence, next run date and eligible
+ * balance (so finance can see what each upcoming run will pay).
+ */
+exports.getPayoutSchedules = catchAsync(async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+
+  const where = { payoutCycle: { not: null } };
+  const cycleFilter = String(req.query.cycle || '').toUpperCase();
+  if (VALID_CYCLES.includes(cycleFilter)) where.payoutCycle = cycleFilter;
+
+  const term = String(req.query.search || '').trim();
+  const searchWhere = term
+    ? {
+        OR: [
+          { user: { name: { contains: term, mode: 'insensitive' } } },
+          { user: { email: { contains: term, mode: 'insensitive' } } },
+        ],
+      }
+    : {};
+
+  const [defaultCycle, autoRuns, profiles, totalCount, byCycleRaw, pendingCount, missingMethodCount, planRows] = await Promise.all([
+    getDefaultCycle(),
+    autoRunsEnabled(),
+    prisma.supplierProfile.findMany({
+      where: { ...where, ...searchWhere },
+      select: PROFILE_PLAN_SELECT,
+      orderBy: { updatedAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.supplierProfile.count({ where: { ...where, ...searchWhere } }),
+    prisma.supplierProfile.groupBy({
+      by: ['payoutCycle'],
+      where: { payoutCycle: { not: null } },
+      _count: { _all: true },
+    }),
+    prisma.supplierProfile.count({ where: { payoutCyclePending: { not: null } } }),
+    prisma.supplierProfile.count({
+      where: { payoutCycle: { not: null }, user: { payoutMethods: { none: { verified: true } } } },
+    }),
+    prisma.supplierProfile.findMany({
+      where: { payoutCycle: { not: null } },
+      select: { payoutCycle: true, payoutCycleEffectiveAt: true, payoutCyclePending: true, payoutCyclePendingAt: true },
+    }),
+  ]);
+
+  const now = new Date();
+  const byCycle = {};
+  for (const g of byCycleRaw) byCycle[g.payoutCycle] = g._count._all;
+
+  // How many runs land in the next 7 days (so finance can staff the queue).
+  const horizon = new Date(now.getTime() + 7 * 24 * 3600 * 1000);
+  let runsNext7Days = 0;
+  for (const p of planRows) {
+    const cycle = resolveEffectiveCycle(p, now);
+    if (!cycle) continue;
+    const next = nextRunAt(cycle, now);
+    if (next && next <= horizon) runsNext7Days += 1;
+  }
+
+  const supplierIds = profiles.map((p) => p.userId);
+  const verifiedMethods = supplierIds.length
+    ? await prisma.payoutMethod.findMany({
+        where: { supplierId: { in: supplierIds }, verified: true },
+        select: { supplierId: true },
+      })
+    : [];
+  const hasMethod = new Set(verifiedMethods.map((m) => m.supplierId));
+
+  const schedules = [];
+  for (const p of profiles) {
+    const eligible = await prisma.booking.aggregate({
+      where: {
+        tour: { supplierId: p.userId },
+        isSimulated: false,
+        payoutStatus: 'ELIGIBLE',
+        paymentStatus: 'SUCCEEDED',
+        status: { in: ['CONFIRMED', 'COMPLETED'] },
+      },
+      _sum: { supplierPayout: true },
+      _count: true,
+    });
+
+    schedules.push({
+      supplierId: p.userId,
+      name: p.user?.name || null,
+      email: p.user?.email || null,
+      status: p.status,
+      plan: buildPayoutPlan(p, { now, defaultCycle, autoRuns }),
+      eligibleBalance: {
+        amount: toNumber(eligible._sum.supplierPayout),
+        bookingCount: eligible._count,
+        currency: 'USD',
+      },
+      hasVerifiedMethod: hasMethod.has(p.userId),
+    });
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      schedules,
+      pagination: { currentPage: page, limit, totalCount, totalPages: Math.ceil(totalCount / limit) },
+      cycles: VALID_CYCLES.map((c) => ({ value: c, ...CYCLE_META[c] })),
+      summary: {
+        enrolled: Object.values(byCycle).reduce((s, n) => s + n, 0),
+        byCycle,
+        pendingChanges: pendingCount,
+        missingVerifiedMethod: missingMethodCount,
+        runsNext7Days,
+      },
+      autoRunsEnabled: autoRuns,
+      defaultCycle,
+    },
+  });
+});
+
+/**
+ * GET /admin/finance/payout-schedules/:supplierId
+ */
+exports.getSupplierPayoutSchedule = catchAsync(async (req, res, next) => {
+  const profile = await prisma.supplierProfile.findUnique({
+    where: { userId: req.params.supplierId },
+    select: PROFILE_PLAN_SELECT,
+  });
+  if (!profile) return next(new AppError('Supplier not found', 404));
+
+  const [defaultCycle, autoRuns, eligible, verifiedMethodCount] = await Promise.all([
+    getDefaultCycle(),
+    autoRunsEnabled(),
+    prisma.booking.aggregate({
+      where: {
+        tour: { supplierId: profile.userId },
+        isSimulated: false,
+        payoutStatus: 'ELIGIBLE',
+        paymentStatus: 'SUCCEEDED',
+        status: { in: ['CONFIRMED', 'COMPLETED'] },
+      },
+      _sum: { supplierPayout: true },
+      _count: true,
+    }),
+    prisma.payoutMethod.count({ where: { supplierId: profile.userId, verified: true } }),
+  ]);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      supplierId: profile.userId,
+      name: profile.user?.name || null,
+      email: profile.user?.email || null,
+      status: profile.status,
+      plan: buildPayoutPlan(profile, { defaultCycle, autoRuns }),
+      eligibleBalance: { amount: toNumber(eligible._sum.supplierPayout), bookingCount: eligible._count, currency: 'USD' },
+      hasVerifiedMethod: verifiedMethodCount > 0,
+      cycles: VALID_CYCLES.map((c) => ({ value: c, ...CYCLE_META[c] })),
+      autoRunsEnabled: autoRuns,
+      defaultCycle,
+    },
+  });
+});
+
+/**
+ * PATCH /admin/finance/payout-schedules/:supplierId
+ * Body: { cycle, immediate?, note? }
+ * `immediate: false` (default) honours the 1st-of-next-month rule; passing
+ * `immediate: true` forces the change onto the next run date regardless.
+ */
+exports.updateSupplierPayoutSchedule = catchAsync(async (req, res, next) => {
+  const { cycle, immediate = false, note } = req.body || {};
+  if (!cycle) return next(new AppError('A payout cycle is required', 400));
+
+  const profile = await prisma.supplierProfile.findUnique({
+    where: { userId: req.params.supplierId },
+    select: { id: true },
+  });
+  if (!profile) return next(new AppError('Supplier not found', 404));
+
+  const plan = await updateSupplierPayoutPlan({
+    supplierId: req.params.supplierId,
+    cycle: String(cycle).toUpperCase(),
+    immediate: immediate === true || immediate === 'true',
+    actorUserId: req.user?.id || null,
+    actorEmail: req.user?.email || null,
+    note: note || null,
+  });
+
+  res.status(200).json({ status: 'success', data: plan });
 });

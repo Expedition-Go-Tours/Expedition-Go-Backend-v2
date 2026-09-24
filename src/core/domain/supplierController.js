@@ -659,9 +659,23 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Non-Ghana African suppliers get their tours auto-published to TravioAfrica
-  if (action === 'approve' && supplierProfile.businessInfo?.country && !isGhanaSupplier(supplierProfile.businessInfo.country)) {
+  // Ghana suppliers join the automated payout schedule (weekly / twice a month
+  // / monthly — default twice a month). Non-Ghana suppliers keep the legacy
+  // manual withdrawal windows, so TravioAfrica is unaffected.
+  if (action === 'approve' && isGhanaSupplier(supplierProfile.businessInfo?.country) && !supplierProfile.payoutCycle) {
     try {
+      const { getDefaultCycle } = require('../services/payoutRuns');
+      await prisma.supplierProfile.update({
+        where: { id },
+        data: { payoutCycle: await getDefaultCycle(), payoutCycleEffectiveAt: new Date() },
+      });
+    } catch (err) {
+      console.warn('[Finance] Payout schedule enrolment failed:', err.message);
+    }
+  }
+
+  // Non-Ghana African suppliers get their tours auto-published to TravioAfrica
+  if (action === 'approve' && supplierProfile.businessInfo?.country && !isGhanaSupplier(supplierProfile.businessInfo.country)) {    try {
       const { enqueueTravioAfricaPublish } = require('../services/queue');
       const tours = await prisma.tour.findMany({
         where: { supplierId: supplierProfile.userId, status: 'ACTIVE' },

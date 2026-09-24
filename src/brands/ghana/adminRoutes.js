@@ -488,6 +488,22 @@ router.patch('/finance/disputes/:id/resolve',
 );
 
 // ══════════════════════════════════════════════════════════════════════════
+// PAYOUT SCHEDULES — automated payout cadences (proxied)
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/finance/payout-schedules',
+  requirePermission('payouts.view', 'dashboard.*'),
+  adminFinanceController.getPayoutSchedules,
+);
+router.get('/finance/payout-schedules/:supplierId',
+  requirePermission('payouts.view', 'dashboard.*'),
+  adminFinanceController.getSupplierPayoutSchedule,
+);
+router.patch('/finance/payout-schedules/:supplierId',
+  requirePermission('payouts.approve'),
+  adminFinanceController.updateSupplierPayoutSchedule,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
 // PAYOUTS — shared platform endpoints (proxied)
 // ══════════════════════════════════════════════════════════════════════════
 router.get('/payouts',

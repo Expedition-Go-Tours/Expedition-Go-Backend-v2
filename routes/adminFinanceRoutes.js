@@ -208,4 +208,74 @@ router.get('/disputes/:id', requirePermission('disputes.view'), adminFinanceCont
  */
 router.patch('/disputes/:id/resolve', requirePermission('disputes.resolve'), adminFinanceController.resolveDispute);
 
+// ── Payout schedules (automated runs) ──
+
+/**
+ * @swagger
+ * /admin/finance/payout-schedules:
+ *   get:
+ *     summary: Enrolled suppliers with their payout cadence and next run
+ *     tags: [Admin Finance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: search
+ *         schema: { type: string }
+ *       - in: query
+ *         name: cycle
+ *         schema: { type: string, enum: [WEEKLY, TWICE_MONTHLY, MONTHLY] }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer }
+ *     responses:
+ *       200:
+ *         description: Payout schedules + eligible balances
+ */
+router.get('/payout-schedules', requirePermission('payouts.view'), adminFinanceController.getPayoutSchedules);
+
+/**
+ * @swagger
+ * /admin/finance/payout-schedules/{supplierId}:
+ *   get:
+ *     summary: One supplier's payout schedule
+ *     tags: [Admin Finance]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Payout plan + eligible balance
+ *       404:
+ *         description: Supplier not found
+ */
+router.get('/payout-schedules/:supplierId', requirePermission('payouts.view'), adminFinanceController.getSupplierPayoutSchedule);
+
+/**
+ * @swagger
+ * /admin/finance/payout-schedules/{supplierId}:
+ *   patch:
+ *     summary: Change (or override) a supplier's payout cadence
+ *     tags: [Admin Finance]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [cycle]
+ *             properties:
+ *               cycle: { type: string, enum: [WEEKLY, TWICE_MONTHLY, MONTHLY] }
+ *               immediate: { type: boolean, description: Force the change on the next run date instead of the 1st of next month }
+ *               note: { type: string }
+ *     responses:
+ *       200:
+ *         description: Updated payout plan
+ */
+router.patch('/payout-schedules/:supplierId', requirePermission('payouts.approve'), adminFinanceController.updateSupplierPayoutSchedule);
+
 module.exports = router;

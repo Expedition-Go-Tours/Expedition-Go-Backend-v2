@@ -108,6 +108,10 @@ const SCHEDULES = [
   { jobName: 'resolve-cancellation-choices', queue: 'cleanup',     everyMs: 5 * 60 * 1000 },
   { jobName: 'cancellation-request-reminder', queue: 'cleanup',    everyMs: 60 * 60 * 1000 },
   { jobName: 'earnings-eligibility-sweep',  queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
+  // Automated supplier payout runs (weekly / twice-monthly / monthly plans).
+  // Hourly + idempotent (runKey guard) so a run lands shortly after midnight
+  // on its cadence date regardless of which cluster worker picks it up.
+  { jobName: 'generate-payout-runs',        queue: 'cleanup',      everyMs: 60 * 60 * 1000 },
   { jobName: 'plan-booking-reminders',      queue: 'cleanup',      everyMs: 3600 * 1000 },
   { jobName: 'dispatch-booking-reminders',  queue: 'cleanup',      everyMs: 15 * 60 * 1000 },
   // CLEANUP — reconciles
@@ -993,6 +997,15 @@ function registerWorkers() {
         case 'earnings-eligibility-sweep': {
           const { sweepEarningsEligibility } = require('./payoutCycles');
           await sweepEarningsEligibility();
+          break;
+        }
+        case 'generate-payout-runs': {
+          // Ensure freshly-travelled bookings are ELIGIBLE before we decide
+          // what each supplier's run pays out.
+          const { sweepEarningsEligibility } = require('./payoutCycles');
+          await sweepEarningsEligibility();
+          const { generateDuePayoutRuns } = require('./payoutRuns');
+          await generateDuePayoutRuns();
           break;
         }
         case 'charge-pay-later-bookings': {

@@ -2,10 +2,18 @@ const prisma = require('../services/prismaClient');
 const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
 const { getRequestWindow, getCurrentCycle, getClearanceBufferDays } = require('../services/payoutCycles');
+const {
+  getSupplierPayoutPlan,
+  updateSupplierPayoutPlan,
+  selectEligibleBookings,
+  resolvePayoutMethod,
+  createRequestsForBookings,
+  notifyPayoutRequestsCreated,
+  cyclePeriodFor,
+  lastRunAt,
+  withLabel,
+} = require('../services/payoutRuns');
 const { logActivity } = require('../services/auditLogger');
-const { enqueueNotification, enqueueEmail } = require('../services/queue');
-const { notifyAdmin } = require('../services/adminNotificationService');
-const { notifyDiscord } = require('../services/discordNotifier');
 
 // ── Finance v2 — supplier-facing payout cycle endpoints ──
 // Mounted at /finance (see routes/financeRoutes.js). All routes resolve the
@@ -35,7 +43,7 @@ function serializeRequest(request) {
 exports.getFinanceSummary = catchAsync(async (req, res) => {
   const supplierId = req.supplierId;
 
-  const [eligible, pendingClearance, activeRequests, paidOut, window, cycle, bufferDays] = await Promise.all([
+  const [eligible, pendingClearance, activeRequests, paidOut, window, cycle, bufferDays, payoutPlan] = await Promise.all([
     prisma.booking.aggregate({
       where: { tour: { supplierId }, isSimulated: false, payoutStatus: 'ELIGIBLE', paymentStatus: 'SUCCEEDED', status: { in: ['CONFIRMED', 'COMPLETED'] } },
       _sum: { supplierPayout: true },
@@ -57,6 +65,7 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
     getRequestWindow(),
     getCurrentCycle(),
     getClearanceBufferDays(),
+    getSupplierPayoutPlan(supplierId),
   ]);
 
   // Group active request totals by currency
@@ -88,12 +97,17 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
         total: toNumber(paidOut._sum.amount),
       },
       currentCycle: { start: cycle.start, end: cycle.end, label: cycle.label },
-      withdrawalWindow: {
-        open: window.open,
-        opensAt: window.start,
-        closesAt: window.end,
-        cycleLabel: window.label,
-      },
+      // The supplier's payout schedule (auto-generated runs). `autoManaged`
+      // false means the legacy window-based manual flow below still applies.
+      payoutPlan,
+      withdrawalWindow: payoutPlan.autoManaged
+        ? null
+        : {
+            open: window.open,
+            opensAt: window.start,
+            closesAt: window.end,
+            cycleLabel: window.label,
+          },
     },
   });
 });
@@ -230,42 +244,47 @@ exports.createPayoutRequest = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
   const { bookingIds, payoutMethodId, notes } = req.body || {};
 
-  const window = await getRequestWindow();
-  if (!window.open) {
+  // Enrolled suppliers are paid automatically — they never request manually.
+  // (If the scheduler is switched off they can fall back to a manual request so
+  // funds are never stranded.)
+  const plan = await getSupplierPayoutPlan(supplierId);
+  if (plan.autoManaged && plan.autoRunsEnabled) {
+    const next = plan.nextRunAt ? plan.nextRunAt.toISOString().slice(0, 10) : null;
     return next(new AppError(
-      `The withdrawal window is closed. It opens ${window.start.toISOString().slice(0, 10)} for the "${window.label}" cycle.`,
-      400
+      `Payouts on your account are generated automatically (${plan.scheduleLabel}).${next ? ` Your next payout is scheduled for ${next}.` : ''}`,
+      409
     ));
   }
 
-  // Validate payout method ownership + verification when provided
-  let method = null;
-  if (payoutMethodId) {
-    method = await prisma.payoutMethod.findFirst({ where: { id: payoutMethodId, supplierId } });
-    if (!method) return next(new AppError('Payout method not found', 404));
-    if (!method.verified) return next(new AppError('The selected payout method is not verified yet', 400));
+  let cycleWindow;
+  if (plan.autoManaged) {
+    // Emergency manual request while the scheduler is paused — label it with
+    // the run period the funds were accumulating in.
+    cycleWindow = withLabel(cyclePeriodFor(plan.cycle, lastRunAt(plan.cycle, new Date()) || new Date()));
   } else {
-    method = await prisma.payoutMethod.findFirst({
-      where: { supplierId, verified: true },
-      orderBy: { isDefault: 'desc' },
-    });
-    if (!method) {
-      return next(new AppError('Add and verify a payout method before requesting a payout', 400));
+    const window = await getRequestWindow();
+    if (!window.open) {
+      return next(new AppError(
+        `The withdrawal window is closed. It opens ${window.start.toISOString().slice(0, 10)} for the "${window.label}" cycle.`,
+        400
+      ));
     }
+    cycleWindow = { start: window.cycle.start, end: window.cycle.end, label: window.cycle.label };
+  }
+
+  // Validate payout method ownership + verification when provided
+  let method;
+  try {
+    method = await resolvePayoutMethod({ supplierId, payoutMethodId });
+  } catch (err) {
+    return next(err);
+  }
+  if (!method) {
+    return next(new AppError('Add and verify a payout method before requesting a payout', 400));
   }
 
   // Resolve candidate bookings
-  const where = {
-    tour: { supplierId },
-    payoutStatus: 'ELIGIBLE',
-    paymentStatus: 'SUCCEEDED',
-    status: { in: ['CONFIRMED', 'COMPLETED'] },
-  };
-  if (Array.isArray(bookingIds) && bookingIds.length > 0) {
-    where.id = { in: bookingIds };
-  }
-
-  const candidates = await prisma.booking.findMany({ where });
+  const candidates = await selectEligibleBookings({ supplierId, bookingIds });
 
   if (candidates.length === 0) {
     return next(new AppError('No eligible bookings found for a payout request', 400));
@@ -274,84 +293,22 @@ exports.createPayoutRequest = catchAsync(async (req, res, next) => {
     return next(new AppError('Some selected bookings are not eligible (already requested, disputed, or still clearing)', 400));
   }
 
-  // Group by currency — one request per currency
-  const byCurrency = {};
-  for (const b of candidates) {
-    (byCurrency[b.currency] = byCurrency[b.currency] || []).push(b);
+  let requests;
+  let totalFeesDeducted;
+  try {
+    const result = await createRequestsForBookings({
+      supplierId,
+      bookings: candidates,
+      method,
+      cycleWindow,
+      notes: notes || null,
+      autoGenerated: false,
+    });
+    requests = result.requests;
+    totalFeesDeducted = result.feesDeducted;
+  } catch (err) {
+    return next(err);
   }
-
-  const requests = await prisma.$transaction(async (tx) => {
-    const created = [];
-    for (const [currency, group] of Object.entries(byCurrency)) {
-      const amount = group.reduce((s, b) => s + toNumber(b.supplierPayout), 0);
-
-      // ── Cancellation fees are netted off first (GYG-style) ──
-      // Open 25%-of-retail fees from supplier cancels can't be withdrawn —
-      // they reduce this request. If they meet or exceed it, block with a
-      // clear message rather than creating a zero/negative payout.
-      const openCharges = await tx.supplierCharge.findMany({
-        where: { supplierId, status: 'OPEN', currency },
-        orderBy: { createdAt: 'asc' },
-      });
-      const feeTotal = openCharges.reduce((s, c) => s + toNumber(c.amount), 0);
-      if (feeTotal > 0 && feeTotal >= amount) {
-        throw new AppError(
-          `Your open cancellation fees (${feeTotal.toFixed(2)} ${currency}) are equal to or greater than this payout amount (${amount.toFixed(2)} ${currency}). The fees will be settled against a larger payout, or contact support to resolve them.`,
-          400
-        );
-      }
-      const netAmount = Math.round((amount - feeTotal) * 100) / 100;
-
-      const ts = Date.now().toString().slice(-6);
-      const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
-      const request = await tx.payoutRequest.create({
-        data: {
-          requestNumber: `PR-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${ts}${rand}`,
-          supplierId,
-          amount: netAmount,
-          currency,
-          bookingCount: group.length,
-          status: 'PROCESSING',
-          cycleStartDate: window.cycle.start,
-          cycleEndDate: window.cycle.end,
-          cycleLabel: window.cycle.label,
-          payoutMethodId: method.id,
-          notes:
-            feeTotal > 0
-              ? `${notes ? `${notes} · ` : ''}Includes ${feeTotal.toFixed(2)} ${currency} cancellation fees`
-              : notes || null,
-          items: {
-            create: group.map((b) => ({
-              bookingId: b.id,
-              grossAmount: b.grossAmount,
-              platformCommission: b.platformCommission,
-              supplierPayout: b.supplierPayout,
-              currency: b.currency,
-            })),
-          },
-        },
-        include: { items: true },
-      });
-
-      // Settle the fees against this request so they're only ever deducted once.
-      if (feeTotal > 0) {
-        await tx.supplierCharge.updateMany({
-          where: { id: { in: openCharges.map((c) => c.id) }, status: 'OPEN' },
-          data: { status: 'SETTLED', payoutRequestId: request.id, settledAt: new Date() },
-        });
-      }
-
-      await tx.booking.updateMany({
-        where: { id: { in: group.map((b) => b.id) } },
-        data: { payoutStatus: 'REQUESTED' },
-      });
-
-      created.push({ ...request, feesDeducted: feeTotal });
-    }
-    return created;
-  });
-
-  const totalFeesDeducted = requests.reduce((s, r) => s + (r.feesDeducted || 0), 0);
 
   await logActivity({
     userId: req.user.id,
@@ -364,35 +321,8 @@ exports.createPayoutRequest = catchAsync(async (req, res, next) => {
     },
   });
 
-  enqueueNotification({
-    userId: supplierId,
-    type: 'PAYOUT_REQUEST_SUBMITTED',
-    title: 'Payout Request Submitted',
-    message: totalFeesDeducted > 0
-      ? `Your payout request for ${requests.reduce((s, r) => s + toNumber(r.amount), 0).toFixed(2)} ${requests[0].currency} (${requests.reduce((s, r) => s + r.bookingCount, 0)} bookings) is being processed. ${totalFeesDeducted.toFixed(2)} ${requests[0].currency} in cancellation fees was deducted.`
-      : `Your payout request for ${requests.reduce((s, r) => s + toNumber(r.amount), 0).toFixed(2)} ${requests[0].currency} (${requests.reduce((s, r) => s + r.bookingCount, 0)} bookings) is being processed.`,
-    data: { payoutRequestId: requests[0].id, feesDeducted: totalFeesDeducted },
-  }).catch(() => {});
-
-  notifyAdmin({
-    type: 'PAYOUT_NEEDS_APPROVAL',
-    title: 'New Payout Request',
-    message: `Supplier submitted a payout request for ${requests.reduce((s, r) => s + toNumber(r.amount), 0).toFixed(2)} ${requests[0].currency} (${requests.reduce((s, r) => s + r.bookingCount, 0)} bookings).`,
-    data: { payoutRequestId: requests[0].id, supplierId },
-  }).catch(() => {});
-
-  const { approvalPayoutRequest } = require('../services/channelEmbeds');
-  const payoutEmbed = approvalPayoutRequest({
-    requestNumber: requests[0].requestNumber,
-    amount: requests.reduce((s, r) => s + toNumber(r.amount), 0),
-    currency: requests[0].currency,
-    bookingCount: requests.reduce((s, r) => s + r.bookingCount, 0),
-    requestId: requests[0].id,
-  });
-  notifyDiscord('approvals', payoutEmbed.content, payoutEmbed.opts);
-
-  enqueueEmail({ type: 'payout-request-submitted', payoutRequestId: requests[0].id }).catch((err) =>
-    console.error('[Finance] Payout request email failed:', err.message)
+  await notifyPayoutRequestsCreated({ requests, supplierId, autoGenerated: false }).catch((err) =>
+    console.error('[Finance] Payout notification failed:', err.message)
   );
 
   res.status(201).json({
@@ -523,4 +453,55 @@ exports.getDisputes = catchAsync(async (req, res) => {
       pagination: { currentPage: page, limit, totalCount, totalPages: Math.ceil(totalCount / limit) },
     },
   });
+});
+
+/**
+ * GET /finance/payout-settings
+ * The supplier's automated payout schedule: current cadence, next run date,
+ * and any change scheduled for the 1st of next month.
+ */
+exports.getPayoutSettings = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  if (!supplierId) return next(new AppError('Not authorized', 401));
+
+  const plan = await getSupplierPayoutPlan(supplierId);
+  res.status(200).json({ status: 'success', data: plan });
+});
+
+/**
+ * PATCH /finance/payout-settings
+ * Body: { cycle: 'WEEKLY' | 'TWICE_MONTHLY' | 'MONTHLY' }
+ *
+ * Changes take effect on the 1st of the following month (GetYourGuide rule) so
+ * a supplier can never switch mid-cycle; a first enrolment applies immediately
+ * so they are never left unmanaged.
+ */
+exports.updatePayoutSettings = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  if (!supplierId) return next(new AppError('Not authorized', 401));
+
+  const { cycle } = req.body || {};
+  if (!cycle) return next(new AppError('A payout cycle is required', 400));
+
+  const plan = await updateSupplierPayoutPlan({
+    supplierId,
+    cycle: String(cycle).toUpperCase(),
+    actorUserId: req.user?.id || null,
+    actorEmail: req.user?.email || null,
+  });
+
+  const { enqueueNotification } = require('../services/queue');
+  const labelFor = (value) => (plan.options.find((o) => o.value === value) || {}).label || value;
+
+  enqueueNotification({
+    userId: supplierId,
+    type: 'PAYOUT_SCHEDULE_UPDATED',
+    title: 'Payout schedule updated',
+    message: plan.pendingCycle
+      ? `Your payout schedule will switch to "${labelFor(plan.pendingCycle)}" on ${new Date(plan.pendingEffectiveAt).toISOString().slice(0, 10)}.`
+      : `Your payout schedule is now "${labelFor(plan.cycle)}".${plan.nextRunAt ? ` Your next payout is ${new Date(plan.nextRunAt).toISOString().slice(0, 10)}.` : ''}`,
+    data: { cycle: plan.cycle, pendingCycle: plan.pendingCycle, nextRunAt: plan.nextRunAt },
+  }).catch(() => {});
+
+  res.status(200).json({ status: 'success', data: plan });
 });
