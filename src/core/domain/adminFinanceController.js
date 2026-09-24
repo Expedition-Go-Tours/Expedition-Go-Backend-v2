@@ -12,6 +12,7 @@ const {
   updateSupplierPayoutPlan,
   resolveEffectiveCycle,
   nextRunAt,
+  compareSchedulesForTriage,
   VALID_CYCLES,
   CYCLE_META,
 } = require('../services/payoutRuns');
@@ -648,17 +649,15 @@ exports.getPayoutSchedules = catchAsync(async (req, res) => {
       }
     : {};
 
-  const [defaultCycle, autoRuns, profiles, totalCount, byCycleRaw, pendingCount, missingMethodCount, planRows] = await Promise.all([
+  const [defaultCycle, autoRuns, profiles, byCycleRaw, pendingCount, missingMethodCount, planRows] = await Promise.all([
     getDefaultCycle(),
     autoRunsEnabled(),
+    // No orderBy/skip/take: the triage order is derived (next run date), so we
+    // project every match and page in memory below.
     prisma.supplierProfile.findMany({
       where: { ...where, ...searchWhere },
       select: PROFILE_PLAN_SELECT,
-      orderBy: { updatedAt: 'desc' },
-      skip: (page - 1) * limit,
-      take: limit,
     }),
-    prisma.supplierProfile.count({ where: { ...where, ...searchWhere } }),
     prisma.supplierProfile.groupBy({
       by: ['payoutCycle'],
       where: { payoutCycle: { not: null } },
@@ -688,7 +687,16 @@ exports.getPayoutSchedules = catchAsync(async (req, res) => {
     if (next && next <= horizon) runsNext7Days += 1;
   }
 
-  const supplierIds = profiles.map((p) => p.userId);
+  // Triage order — whoever's run is due soonest first (see
+  // compareSchedulesForTriage). Project every match, sort, then page, so the
+  // ordering holds across pages instead of only within one.
+  const projected = profiles
+    .map((p) => ({ profile: p, plan: buildPayoutPlan(p, { now, defaultCycle, autoRuns }) }))
+    .sort(compareSchedulesForTriage);
+
+  const paged = projected.slice((page - 1) * limit, (page - 1) * limit + limit);
+
+  const supplierIds = paged.map(({ profile }) => profile.userId);
   const verifiedMethods = supplierIds.length
     ? await prisma.payoutMethod.findMany({
         where: { supplierId: { in: supplierIds }, verified: true },
@@ -698,7 +706,7 @@ exports.getPayoutSchedules = catchAsync(async (req, res) => {
   const hasMethod = new Set(verifiedMethods.map((m) => m.supplierId));
 
   const schedules = [];
-  for (const p of profiles) {
+  for (const { profile: p, plan } of paged) {
     const eligible = await prisma.booking.aggregate({
       where: {
         tour: { supplierId: p.userId },
@@ -716,7 +724,7 @@ exports.getPayoutSchedules = catchAsync(async (req, res) => {
       name: p.user?.name || null,
       email: p.user?.email || null,
       status: p.status,
-      plan: buildPayoutPlan(p, { now, defaultCycle, autoRuns }),
+      plan,
       eligibleBalance: {
         amount: toNumber(eligible._sum.supplierPayout),
         bookingCount: eligible._count,
@@ -730,7 +738,7 @@ exports.getPayoutSchedules = catchAsync(async (req, res) => {
     status: 'success',
     data: {
       schedules,
-      pagination: { currentPage: page, limit, totalCount, totalPages: Math.ceil(totalCount / limit) },
+      pagination: { currentPage: page, limit, totalCount: projected.length, totalPages: Math.ceil(projected.length / limit) },
       cycles: VALID_CYCLES.map((c) => ({ value: c, ...CYCLE_META[c] })),
       summary: {
         enrolled: Object.values(byCycle).reduce((s, n) => s + n, 0),

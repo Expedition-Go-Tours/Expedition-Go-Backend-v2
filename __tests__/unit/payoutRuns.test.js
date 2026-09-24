@@ -43,6 +43,7 @@ const {
   getDefaultCycle,
   autoRunsEnabled,
   updateSupplierPayoutPlan,
+  compareSchedulesForTriage,
   generateDuePayoutRuns,
 } = require('../../src/core/services/payoutRuns');
 
@@ -180,6 +181,37 @@ describe('updateSupplierPayoutPlan', () => {
 
   it('rejects an unknown cadence', async () => {
     await expect(updateSupplierPayoutPlan({ supplierId: 'sup1', cycle: 'DAILY' })).rejects.toThrow(/Invalid payout plan/);
+  });
+});
+
+describe('compareSchedulesForTriage', () => {
+  const run = (day) => new Date(2026, 9, day).toISOString();
+
+  it('puts the soonest run first, then orders by name', () => {
+    const rows = [
+      { name: 'Zeta', plan: { nextRunAt: run(20) } },
+      { name: 'Alpha', plan: { nextRunAt: run(5) } },
+      { name: 'Beta', plan: { nextRunAt: run(5) } },
+    ];
+    expect([...rows].sort(compareSchedulesForTriage).map((r) => r.name))
+      .toEqual(['Alpha', 'Beta', 'Zeta']);
+  });
+
+  it('sorts rows with no scheduled run last', () => {
+    const rows = [
+      { name: 'None', plan: { nextRunAt: null } },
+      { name: 'Soon', plan: { nextRunAt: run(5) } },
+    ];
+    expect([...rows].sort(compareSchedulesForTriage).map((r) => r.name)).toEqual(['Soon', 'None']);
+  });
+
+  it('tolerates { profile, plan } rows and bare plans', () => {
+    const rows = [
+      { profile: { user: { name: 'Bee' } }, plan: { nextRunAt: run(6) } },
+      { profile: { user: { name: 'Ay' } }, plan: { nextRunAt: run(6) } },
+    ];
+    expect([...rows].sort(compareSchedulesForTriage).map((r) => r.profile.user.name)).toEqual(['Ay', 'Bee']);
+    expect(compareSchedulesForTriage({ nextRunAt: run(5) }, { nextRunAt: run(6) })).toBeLessThan(0);
   });
 });
 

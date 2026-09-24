@@ -154,6 +154,33 @@ function withLabel(period) {
   return { ...period, label: formatCycleLabel(period.start, period.end) };
 }
 
+/**
+ * Triage order for the admin schedule list: whoever's payout run is due
+ * soonest comes first, then by supplier name/email so the order is stable.
+ *
+ * The next-run date is derived (3 cadences, and a pending plan switch only
+ * takes effect on the 1st), so it can't be ordered in SQL — the enrolled set
+ * is small and already filtered, so the caller projects, sorts, then pages.
+ * Accepts either { plan } or a bare plan; rows with no run sort last.
+ */
+function compareSchedulesForTriage(a, b) {
+  const key = (row) => {
+    const plan = row?.plan || row;
+    const when = plan?.nextRunAt ? new Date(plan.nextRunAt).getTime() : Infinity;
+    const label = String(
+      row?.name || row?.email || row?.profile?.user?.name || row?.profile?.user?.email || ''
+    ).toLowerCase();
+    return { when, label };
+  };
+
+  const ka = key(a);
+  const kb = key(b);
+  if (ka.when !== kb.when) return ka.when - kb.when;
+  if (ka.label < kb.label) return -1;
+  if (ka.label > kb.label) return 1;
+  return 0;
+}
+
 // ── Plan resolution ─────────────────────────────────────────────────────────
 
 /** 1st of next month at 00:00 — when a plan switch takes effect. */
@@ -707,6 +734,7 @@ module.exports = {
   lastRunAt,
   cyclePeriodFor,
   withLabel,
+  compareSchedulesForTriage,
   nextEffectiveDate,
   resolveEffectiveCycle,
   buildPayoutPlan,
