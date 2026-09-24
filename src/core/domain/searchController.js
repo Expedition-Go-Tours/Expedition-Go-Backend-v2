@@ -605,7 +605,7 @@ exports.unifiedSearch = catchAsync(async (req, res) => {
         // them. Gated at 3+ characters to match the scorer's partial threshold.
         const itineraryBoost = (score === 0 && nq.length >= 3 && itineraryIdSet.has(t.id)) ? 15 : 0;
         if (score > 0 || attractionBoost > 0 || itineraryBoost > 0) {
-          scored.push(buildSuggestion('tour', { ...item, slug: t.slug, coverPhoto: t.coverPhoto }, score + 12 + attractionBoost + itineraryBoost));
+          scored.push(buildSuggestion('tour', { ...item, id: t.id, slug: t.slug, coverPhoto: t.coverPhoto }, score + 12 + attractionBoost + itineraryBoost));
         }
       }
     } catch {}

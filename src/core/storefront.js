@@ -167,7 +167,9 @@ function buildTourSchemaUrl(tour) {
       price: tour.startingPrice ?? undefined,
       priceCurrency: tour.currency ?? 'USD',
       availability: 'https://schema.org/InStock',
-      url: `${BRAND.storefrontUrl}/tour/${tour.slug}`,
+      url: tour.id
+      ? `${BRAND.storefrontUrl}/tour/${tour.id}/${tour.slug}`
+      : `${BRAND.storefrontUrl}/tour/${tour.slug}`,
     },
     // Structured data must report the same standing customers see (in-app +
     // external), falling back to the internal stats when combined is absent.
@@ -1086,7 +1088,7 @@ controller.getSitemap = catchAsync(async (req, res) => {
       where: { isActive: true, tour: { status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } } },
       orderBy: { displayOrder: 'asc' },
       select: {
-        tour: { select: { slug: true } },
+        tour: { select: { id: true, slug: true } },
         updatedAt: true,
       },
     });
@@ -1095,6 +1097,7 @@ controller.getSitemap = catchAsync(async (req, res) => {
       status: 'success',
       data: {
         urls: records.map((r) => ({
+          id: r.tour.id,
           slug: r.tour.slug,
           updatedAt: r.updatedAt.toISOString(),
         })),
