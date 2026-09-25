@@ -930,6 +930,124 @@ const chatNewMessage = {
 // Registry + build
 // ────────────────────────────────────────────────────────────────────────────
 
+
+// ────────────────────────────────────────────────────────────────────────────
+// Team invitations
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Who invited them, rendered as a person rather than a logo — invite emails
+ * convert on the human connection, and it is the strongest phishing signal
+ * ("this is the colleague who mentioned it").
+ */
+function inviterBlock() {
+  return `
+  <tr><td class="pad" style="padding:20px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;">
+      <tr>
+        <td width="56" valign="middle" style="padding:14px 0 14px 16px;">
+          <div style="width:40px;height:40px;border-radius:999px;background-color:{{accentColor}};color:#ffffff;font-family:${B.FONT};font-size:14px;font-weight:700;text-align:center;line-height:40px;letter-spacing:0.5px;">{{inviterInitials}}</div>
+        </td>
+        <td valign="middle" style="padding:14px 16px 14px 8px;">
+          <p style="margin:0;font-family:${B.FONT};font-size:14px;font-weight:700;color:#001F3F;line-height:1.4;" class="dm-text">{{inviterName}}</p>
+          <p style="margin:2px 0 0 0;font-family:${B.FONT};font-size:12px;color:#64748B;line-height:1.5;" class="dm-muted">{{#if inviterEmail}}{{inviterEmail}} &middot; {{/if}}invited you to join {{supplierName}}</p>
+        </td>
+      </tr>
+    </table>
+  </td></tr>`;
+}
+
+/**
+ * The access being granted, spelled out: a chip per role plus what each role
+ * can actually do. Members can hold two roles, so this is a list.
+ */
+function roleAccessBlock() {
+  return `
+  <tr><td class="pad" style="padding:24px 40px 0 40px;">
+    <p style="margin:0 0 10px 0;font-family:${B.FONT};font-size:11px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:#94A3B8;">Your access</p>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;">
+      <tr><td style="padding:16px 18px;">
+        <div style="margin:0 0 12px 0;">
+          {{#each roles}}<span style="display:inline-block;background-color:{{bg}};color:{{fg}};font-family:${B.FONT};font-size:12px;font-weight:700;border-radius:999px;padding:5px 12px;margin:0 6px 6px 0;">{{label}}</span>{{/each}}
+        </div>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+          {{#each roles}}
+          <tr>
+            <td valign="top" style="width:18px;padding:3px 0;font-family:${B.FONT};font-size:13px;line-height:1.6;color:{{accentDark}};">&#10003;</td>
+            <td style="padding:3px 0;font-family:${B.FONT};font-size:13px;line-height:1.6;color:#334155;" class="dm-text"><strong>{{label}}</strong> &mdash; {{summary}}</td>
+          </tr>
+          {{/each}}
+        </table>
+      </td></tr>
+    </table>
+  </td></tr>`;
+}
+
+/** Fallback link for clients that strip buttons. */
+function fallbackLinkBlock() {
+  return `
+  <tr><td class="pad" style="padding:4px 40px 0 40px;">
+    <p style="margin:0;font-family:${B.FONT};font-size:12px;color:#94A3B8;line-height:1.6;word-break:break-all;" class="dm-muted">
+      Button not working? Paste this link into your browser:<br>
+      <a href="{{inviteUrl}}" style="color:{{accentColor}};text-decoration:underline;">{{inviteUrl}}</a>
+    </p>
+  </td></tr>`;
+}
+
+const teamInvite = {
+  key: 'team-invite',
+  name: 'Team invitation',
+  build() {
+    const body = [
+      B.hero({
+        heading: "You're invited to join {{supplierName}}",
+        subtitle: 'A teammate has given you access to their supplier dashboard.',
+        badgeText: 'Team invitation',
+      }),
+      inviterBlock(),
+      roleAccessBlock(),
+      B.buttonPrimary('Accept invitation', '{{inviteUrl}}', { color: '{{accentColor}}' }),
+      B.paragraph(
+        'This secure link only works for <strong>{{inviteeEmail}}</strong> and expires in {{expiresInHours}} hours. No password needed — sign in with that address and you are in.',
+        { center: true, muted: true, small: true },
+      ),
+      fallbackLinkBlock(),
+      B.callout(
+        "You're receiving this because {{inviterName}} added you to {{supplierName}}. If you weren't expecting this invitation, you can safely ignore this email — nothing changes on your account until you accept.",
+        'info',
+      ),
+    ].join('\n');
+    return B.shell("You're invited to join {{supplierName}}", body);
+  },
+};
+
+const teamInviteRevoked = {
+  key: 'team-invite-revoked',
+  name: 'Team invitation revoked',
+  build() {
+    const body = [
+      B.hero({
+        heading: 'Your invitation was cancelled',
+        subtitle: 'The team invitation for {{inviteeEmail}} is no longer active.',
+        badgeText: 'Invitation revoked',
+        badgeColor: 'danger',
+      }),
+      B.paragraph(
+        '{{inviterName}} cancelled the invitation to join {{supplierName}} as <strong>{{rolesText}}</strong>. The link in the original email no longer works, so no action is needed from you.',
+      ),
+      B.callout(
+        'Still need access? Ask {{inviterName}} to send a new invitation — it only takes a moment.',
+        'warning',
+      ),
+      B.paragraph(
+        'If you were not expecting this email, you can ignore it or contact support.',
+        { muted: true, small: true },
+      ),
+    ].join('\n');
+    return B.shell('Your invitation was cancelled', body);
+  },
+};
+
 const TEMPLATE_DEFS = [
   customerBookingConfirmed,
   reserveLaterConfirmed,
@@ -969,6 +1087,8 @@ const TEMPLATE_DEFS = [
   supplierProductSubmitted,
   supplierProductUpdateSubmitted,
   chatNewMessage,
+  teamInvite,
+  teamInviteRevoked,
 ];
 
 function buildAll() {

@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="x-apple-disable-message-reformatting">
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
 <title>Payment received — awaiting confirmation</title>
 <style>
   body { margin:0; padding:0; width:100% !important; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; background-color:#F8FAFC; }
@@ -24,10 +26,16 @@
     .body-lg { font-size:16px !important; }
     .hide-mobile { display:none !important; }
   }
+  @media (prefers-color-scheme: dark) {
+    .dm-bg { background-color:#0B1220 !important; }
+    .dm-card { background-color:#111827 !important; border-color:#1F2937 !important; }
+    .dm-text { color:#E5E7EB !important; }
+    .dm-muted { color:#9CA3AF !important; }
+  }
 </style>
 </head>
-<body style="margin:0;padding:0;background-color:#F8FAFC;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC">
+<body class="dm-bg" style="margin:0;padding:0;background-color:#F8FAFC;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC" class="dm-bg">
     <tr>
       <td align="center" style="padding:32px 16px;" class="pad">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="container" style="max-width:640px;">
@@ -44,7 +52,7 @@
           </tr>
           <!-- Card -->
           <tr>
-            <td style="background-color:#FFFFFF;border:1px solid #E2E8F0;border-radius:16px;padding:0;">
+            <td class="dm-card" style="background-color:#FFFFFF;border:1px solid #E2E8F0;border-radius:16px;padding:0;">
               
       
   <tr><td class="pad" style="padding:36px 40px 4px 40px;">

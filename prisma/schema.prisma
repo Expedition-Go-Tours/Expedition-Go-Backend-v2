@@ -1768,6 +1768,10 @@ model TeamMember {
   supplierId     String
   supplier       User      @relation("SupplierTeam", fields: [supplierId], references: [id], onDelete: Cascade)
   email          String
+  // A member may hold up to two roles (see MAX_TEAM_ROLES); permissions are the
+  // union of them. `role` is the deprecated single-role mirror kept in sync with
+  // roles[0] so an older deploy can still read it during a rollback.
+  roles          String[]  @default(["editor"])
   role           String    @default("editor")
   status         String    @default("PENDING")
   invitedById    String?

@@ -2,9 +2,19 @@ const prisma = require('../src/core/services/prismaClient');
 const catchAsync = require('../src/core/services/catchAsync');
 const AppError = require('../src/core/services/appError');
 const cache = require('../src/core/services/cacheHelper');
-const { hasTeamPermission } = require('../config/teamPermissions');
+const { hasTeamPermission, toRoleArray } = require('../config/teamPermissions');
 
 const SUPPLIER_CACHE_TTL = 30;
+
+/**
+ * A member's roles as an array. `roles` is the source of truth; `role` is the
+ * deprecated mirror kept for older rows/deploys.
+ */
+function memberRolesOf(teamMember) {
+  const roles = toRoleArray(teamMember?.roles);
+  if (roles.length) return roles;
+  return toRoleArray(teamMember?.role);
+}
 
 exports.requireTeamRole = (...allowedRoles) => {
   return catchAsync(async (req, res, next) => {
@@ -24,6 +34,7 @@ exports.requireTeamRole = (...allowedRoles) => {
     }, SUPPLIER_CACHE_TTL);
 
     if (supplierProfile) {
+      req.teamRoles = ['admin'];
       req.teamRole = 'admin';
       req.teamSupplierId = supplierProfile.id;
       req.isOwner = true;
@@ -36,7 +47,7 @@ exports.requireTeamRole = (...allowedRoles) => {
           email: req.user.email,
           status: 'ACCEPTED',
         },
-        select: { role: true, supplierId: true },
+        select: { roles: true, role: true, supplierId: true },
       });
     }, SUPPLIER_CACHE_TTL);
 
@@ -44,10 +55,13 @@ exports.requireTeamRole = (...allowedRoles) => {
       return next(new AppError('You are not a team member', 403));
     }
 
-    req.teamRole = teamMember.role;
+    // Members can hold up to two roles; any one of them can satisfy the route.
+    const memberRoles = memberRolesOf(teamMember);
+    req.teamRoles = memberRoles;
+    req.teamRole = memberRoles[0] || null;
     req.teamSupplierId = teamMember.supplierId;
 
-    if (allowedRoles.length > 0 && !allowedRoles.includes(teamMember.role)) {
+    if (allowedRoles.length > 0 && !memberRoles.some((role) => allowedRoles.includes(role))) {
       return next(new AppError('You do not have permission for this action', 403));
     }
 
@@ -73,6 +87,7 @@ exports.requireTeamPermission = (...permissionKeys) => {
     }, SUPPLIER_CACHE_TTL);
 
     if (supplierProfile) {
+      req.teamRoles = ['admin'];
       req.teamRole = 'admin';
       req.teamSupplierId = supplierProfile.id;
       req.isOwner = true;
@@ -85,7 +100,7 @@ exports.requireTeamPermission = (...permissionKeys) => {
           email: req.user.email,
           status: 'ACCEPTED',
         },
-        select: { role: true, supplierId: true },
+        select: { roles: true, role: true, supplierId: true },
       });
     }, SUPPLIER_CACHE_TTL);
 
@@ -93,11 +108,13 @@ exports.requireTeamPermission = (...permissionKeys) => {
       return next(new AppError('You are not a team member', 403));
     }
 
-    req.teamRole = teamMember.role;
+    const memberRoles = memberRolesOf(teamMember);
+    req.teamRoles = memberRoles;
+    req.teamRole = memberRoles[0] || null;
     req.teamSupplierId = teamMember.supplierId;
 
     const hasPermission = permissionKeys.some((key) =>
-      hasTeamPermission(teamMember.role, key)
+      hasTeamPermission(memberRoles, key)
     );
 
     if (!hasPermission) {

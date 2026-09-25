@@ -38,6 +38,10 @@ const BRANDS = {
       from: 'Travio Ghana <notifications@travioghana.com>',
       poweredByLabel: 'Expedition-Go Tours',
       receivingDomain: 'travioghana.com',
+      // Accent used by brand-aware email bodies (team invites, alerts).
+      accentColor: '#065F46',
+      accentDark: '#044B3B',
+      accentSoft: '#E7F5EF',
     },
     cachePrefix: 'expedition:',
     eventNamespace: 'expedition',
@@ -75,6 +79,10 @@ const BRANDS = {
       from: 'Travio Ghana <notifications@travioghana.com>',
       poweredByLabel: null,
       receivingDomain: 'travioghana.com',
+      // Accent used by brand-aware email bodies (team invites, alerts).
+      accentColor: '#065F46',
+      accentDark: '#044B3B',
+      accentSoft: '#E7F5EF',
     },
     cachePrefix: 'ghana:',
     eventNamespace: 'ghana',
@@ -118,6 +126,10 @@ const BRANDS = {
       // Africa keeps its dedicated receiving subdomain: existing in-flight
       // reply addresses were minted against it and must keep resolving.
       receivingDomain: 'messages.travioafrica.com',
+      // Accent used by brand-aware email bodies (team invites, alerts).
+      accentColor: '#0E9F6E',
+      accentDark: '#0B7A55',
+      accentSoft: '#E6F6F0',
     },
     cachePrefix: 'travioafrica:',
     eventNamespace: 'travioafrica',
@@ -176,6 +188,10 @@ function getBrandEmail(key) {
     from: e.from || `${brandName} <notifications@travioafrica.com>`,
     poweredByLabel: e.poweredByLabel || null,
     receivingDomain: e.receivingDomain || 'messages.travioafrica.com',
+    // Brand-aware accents used by email bodies (team invites, alerts).
+    accentColor: e.accentColor || '#00A669',
+    accentDark: e.accentDark || '#007A4D',
+    accentSoft: e.accentSoft || '#E6F6F0',
   };
 }
 

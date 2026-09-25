@@ -94,7 +94,7 @@ const future = new Date(Date.now() + 48 * 60 * 60 * 1000);
 const past = new Date(Date.now() - 60 * 60 * 1000);
 
 const pendingInvite = {
-  id: 'tm-1', supplierId: 'owner-1', email: 'invitee@test.com', role: 'editor',
+  id: 'tm-1', supplierId: 'owner-1', email: 'invitee@test.com', role: 'editor', roles: ['editor'],
   status: 'PENDING', inviteToken: 'tok-pending', tokenExpiresAt: future, acceptedAt: null,
   createdAt: new Date(), updatedAt: new Date(),
   supplier: { name: 'Expedition-Go Tours', email: 'owner@test.com' },
@@ -236,7 +236,7 @@ describe('team invite — link states', () => {
 
 describe('team member — data scoping', () => {
   const acceptedMember = {
-    id: 'tm-2', supplierId: 'owner-1', email: 'member@test.com', role: 'editor',
+    id: 'tm-2', supplierId: 'owner-1', email: 'member@test.com', role: 'editor', roles: ['editor'],
     status: 'ACCEPTED', inviteToken: null, tokenExpiresAt: null, acceptedAt: new Date(),
   };
 
@@ -278,7 +278,7 @@ describe('team member — data scoping', () => {
   });
 
   it('blocks a support member from writing availability', async () => {
-    prisma.teamMember.findFirst.mockResolvedValue({ ...acceptedMember, role: 'support' });
+    prisma.teamMember.findFirst.mockResolvedValue({ ...acceptedMember, role: 'support', roles: ['support'] });
     const res = await request(app)
       .post('/api/travioghana/supplier/availability/tour-1')
       .set(auth(EDITOR_MEMBER))
@@ -358,6 +358,125 @@ describe('team invite — owner side', () => {
     expect(res.body.message).toMatch(/revoked/i);
     expect(prisma.teamMember.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'REVOKED' }) }),
+    );
+  });
+});
+
+
+describe('team roles — a member can hold two', () => {
+  const twoRoleMember = {
+    id: 'tm-3', supplierId: 'owner-1', email: 'member@test.com', role: 'editor',
+    roles: ['editor', 'finance'], status: 'ACCEPTED', inviteToken: null, tokenExpiresAt: null,
+    acceptedAt: new Date(),
+  };
+
+  it('invites with two roles and mirrors the legacy column', async () => {
+    prisma.teamMember.create.mockResolvedValue({
+      id: 'tm-20', email: 'both@test.com', role: 'editor', roles: ['editor', 'finance'],
+      status: 'PENDING', createdAt: new Date(), updatedAt: new Date(),
+    });
+
+    const res = await request(app)
+      .post(`${GHANA}/invite`)
+      .set(auth(OWNER))
+      .send({ email: 'both@test.com', roles: ['editor', 'finance'] });
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.member.roles).toEqual(['editor', 'finance']);
+    expect(res.body.data.member.role).toBe('editor');
+
+    const created = prisma.teamMember.create.mock.calls[0][0].data;
+    expect(created.roles).toEqual(['editor', 'finance']);
+    expect(created.role).toBe('editor');
+
+    // The email is told about both roles.
+    expect(mockSendTeamInviteEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ roles: ['editor', 'finance'] }),
+    );
+  });
+
+  it('rejects more than two roles', async () => {
+    const res = await request(app)
+      .post(`${GHANA}/invite`)
+      .set(auth(OWNER))
+      .send({ email: 'three@test.com', roles: ['editor', 'finance', 'support'] });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/at most 2 roles/i);
+  });
+
+  it('rejects admin combined with another role', async () => {
+    const res = await request(app)
+      .post(`${GHANA}/invite`)
+      .set(auth(OWNER))
+      .send({ email: 'admin-plus@test.com', roles: ['admin', 'editor'] });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/admin already includes/i);
+  });
+
+  it('rejects an empty role selection and unknown roles', async () => {
+    const empty = await request(app).post(`${GHANA}/invite`).set(auth(OWNER)).send({ email: 'x@test.com', roles: [] });
+    expect(empty.status).toBe(400);
+
+    const bogus = await request(app).post(`${GHANA}/invite`).set(auth(OWNER)).send({ email: 'x@test.com', roles: ['editor', 'wizard'] });
+    expect(bogus.status).toBe(400);
+  });
+
+  it('still accepts the legacy single-role payload', async () => {
+    prisma.teamMember.create.mockResolvedValue({
+      id: 'tm-21', email: 'legacy@test.com', role: 'finance', roles: ['finance'],
+      status: 'PENDING', createdAt: new Date(), updatedAt: new Date(),
+    });
+
+    const res = await request(app)
+      .post(`${GHANA}/invite`)
+      .set(auth(OWNER))
+      .send({ email: 'legacy@test.com', role: 'finance' });
+
+    expect(res.status).toBe(201);
+    expect(prisma.teamMember.create.mock.calls[0][0].data.roles).toEqual(['finance']);
+  });
+
+  it('reports both roles and the union of their permissions in my-role', async () => {
+    prisma.teamMember.findFirst.mockResolvedValue(twoRoleMember);
+    const res = await request(app).get(`${GHANA}/my-role`).set(auth(EDITOR_MEMBER));
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.roles).toEqual(['editor', 'finance']);
+    expect(res.body.data.role).toBe('editor');
+    expect(res.body.data.permissions).toEqual(expect.arrayContaining(['tours.update', 'payouts.view']));
+  });
+
+  it('grants both roles\' capabilities on real endpoints', async () => {
+    prisma.teamMember.findFirst.mockResolvedValue(twoRoleMember);
+    // The booking controller verifies the owner's supplier profile is ACTIVE.
+    prisma.supplierProfile.findUnique.mockResolvedValue({ id: 'profile-1', userId: 'owner-1', status: 'ACTIVE' });
+    prisma.booking.findMany.mockResolvedValue([]);
+    prisma.payout.aggregate.mockResolvedValue({ _sum: {}, _count: 0 });
+    prisma.booking.aggregate.mockResolvedValue({ _sum: {} });
+
+    // editor → bookings.view, finance → payouts.view
+    const planner = await request(app).get('/api/travioghana/supplier/pickup-planner').set(auth(EDITOR_MEMBER));
+    const finance = await request(app).get('/api/travioghana/supplier/finance/summary').set(auth(EDITOR_MEMBER));
+
+    expect(planner.status).toBe(200);
+    expect(finance.status).toBe(200);
+  });
+
+  it('updates the whole role set and keeps the mirror in sync', async () => {
+    prisma.teamMember.findFirst.mockResolvedValue({ ...twoRoleMember, email: 'other@test.com' });
+    prisma.teamMember.update.mockResolvedValue({ ...twoRoleMember, email: 'other@test.com', role: 'support', roles: ['support'] });
+
+    const res = await request(app)
+      .patch(`${GHANA}/members/tm-3/role`)
+      .set(auth(OWNER))
+      .send({ roles: ['support'] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.member.roles).toEqual(['support']);
+    expect(prisma.teamMember.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { roles: ['support'], role: 'support' } }),
     );
   });
 });

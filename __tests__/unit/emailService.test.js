@@ -118,12 +118,12 @@ describe('renderTemplate', () => {
     await expect(renderTemplate('does-not-exist', {})).rejects.toThrow('Template not found');
   });
 
-  it('renders all 36 compiled templates with no leftover braces', async () => {
+  it('renders all 40 compiled templates with no leftover braces', async () => {
     const fs = require('fs');
     const path = require('path');
     const dir = path.join(__dirname, '..', '..', 'sendgrid-templates', 'generated');
     const files = fs.readdirSync(dir).filter((f) => f.endsWith('.html'));
-    expect(files.length).toBe(38);
+    expect(files.length).toBe(40);
 
     for (const file of files) {
       const key = file.replace(/\.html$/, '');

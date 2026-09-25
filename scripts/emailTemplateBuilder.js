@@ -54,6 +54,12 @@ const BASE_CSS = `
     .body-lg { font-size:16px !important; }
     .hide-mobile { display:none !important; }
   }
+  @media (prefers-color-scheme: dark) {
+    .dm-bg { background-color:#0B1220 !important; }
+    .dm-card { background-color:#111827 !important; border-color:#1F2937 !important; }
+    .dm-text { color:#E5E7EB !important; }
+    .dm-muted { color:#9CA3AF !important; }
+  }
 `;
 
 const HEAD_META = `
@@ -61,6 +67,8 @@ const HEAD_META = `
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="x-apple-disable-message-reformatting">
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
 `;
 
 /** Outlook conditional wrapper for spacing quirks. */
@@ -81,8 +89,8 @@ function shell(title, bodyHtml) {
 <head>${HEAD_META}<title>${title}</title>
 <style>${BASE_CSS}</style>
 </head>
-<body style="margin:0;padding:0;background-color:${COLORS.bg};">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="${COLORS.bg}">
+<body class="dm-bg" style="margin:0;padding:0;background-color:${COLORS.bg};">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="${COLORS.bg}" class="dm-bg">
     <tr>
       <td align="center" style="padding:32px 16px;" class="pad">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="container" style="max-width:640px;">
@@ -99,7 +107,7 @@ function shell(title, bodyHtml) {
           </tr>
           <!-- Card -->
           <tr>
-            <td style="background-color:${COLORS.card};border:1px solid ${COLORS.border};border-radius:16px;padding:0;">
+            <td class="dm-card" style="background-color:${COLORS.card};border:1px solid ${COLORS.border};border-radius:16px;padding:0;">
               ${bodyHtml}
             </td>
           </tr>
@@ -323,13 +331,13 @@ function buttons(items) {
  * A single prominent CTA button with full-width option.
  */
 function buttonPrimary(label, href, options = {}) {
-  const { fullWidth = false } = options;
+  const { fullWidth = false, color = COLORS.accent } = options;
   return `
   <tr><td class="pad" style="padding:28px 40px 8px 40px;">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
       <tr>
         <td align="center">
-          <a href="${href}" class="btn" style="display:inline-block;background-color:${COLORS.accent};color:#ffffff;font-family:${FONT};font-size:15px;font-weight:700;text-decoration:none;border-radius:10px;padding:14px 34px;line-height:1.2;">${label}</a>
+          <a href="${href}" class="btn" style="display:inline-block;background-color:${color};color:#ffffff;font-family:${FONT};font-size:15px;font-weight:700;text-decoration:none;border-radius:10px;padding:14px 34px;line-height:1.2;">${label}</a>
         </td>
       </tr>
     </table>

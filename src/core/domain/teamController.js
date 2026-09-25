@@ -9,10 +9,17 @@ const emailUrls = require('../../../config/emailUrls');
 const { enqueueNotification } = require('../services/queue');
 const { logActivity } = require('../services/auditLogger');
 const logger = require('../services/logger');
-const { VALID_TEAM_ROLES, TEAM_ROLE_PERMISSIONS } = require('../../../config/teamPermissions');
+const {
+  MAX_TEAM_ROLES,
+  normalizeTeamRoles,
+  permissionsForRoles,
+  describeRoles,
+  toRoleArray,
+} = require('../../../config/teamPermissions');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_TEAM_SIZE = parseInt(process.env.MAX_TEAM_SIZE, 10) || 50;
+const INVITE_TTL_HOURS = 48;
 
 // Brand roles a team member inherits from the supplier they join, so brand
 // context (chat, email identity, dashboard links) matches the owner's.
@@ -64,6 +71,33 @@ async function revokeMemberRoles({ userId, email }) {
 }
 
 /**
+ * A member's roles as an array. `roles` is the source of truth; `role` is the
+ * deprecated single-role mirror kept for older rows and rollbacks.
+ */
+function rolesOf(member) {
+  const roles = toRoleArray(member?.roles);
+  return roles.length ? roles : toRoleArray(member?.role);
+}
+
+/**
+ * The member shape every endpoint returns. `role` stays for older clients that
+ * have not shipped multi-role support yet; `roles` is what new code reads.
+ */
+function memberPayload(member) {
+  const roles = rolesOf(member);
+  return {
+    id: member.id,
+    email: member.email,
+    role: roles[0] || null,
+    roles,
+    status: member.status,
+    acceptedAt: member.acceptedAt ?? null,
+    createdAt: member.createdAt,
+    updatedAt: member.updatedAt,
+  };
+}
+
+/**
  * Distinct account states for an invitation. Kept in one place so the invite
  * endpoints report the same thing whether the link is opened before or after
  * the expiry cleanup ran (which nulls the token).
@@ -110,6 +144,7 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
       status: 'success',
       data: {
         role: 'admin',
+        roles: ['admin'],
         permissions: ['*'],
         isOwner: true,
       },
@@ -126,6 +161,7 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
       status: 'success',
       data: {
         role: 'admin',
+        roles: ['admin'],
         permissions: ['*'],
         isOwner: true,
         supplierId: supplier.id,
@@ -139,7 +175,7 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
       status: 'ACCEPTED',
     },
     orderBy: { createdAt: 'desc' },
-    select: { role: true, supplierId: true },
+    select: { roles: true, role: true, supplierId: true },
   });
 
   if (!teamMember) {
@@ -153,13 +189,14 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
     });
   }
 
-  const roleConfig = TEAM_ROLE_PERMISSIONS[teamMember.role] || { permissions: [] };
+  const roles = rolesOf(teamMember);
 
   res.status(200).json({
     status: 'success',
     data: {
-      role: teamMember.role,
-      permissions: roleConfig.permissions,
+      role: roles[0] || null,
+      roles,
+      permissions: permissionsForRoles(roles),
       isOwner: false,
       supplierId: teamMember.supplierId,
     },
@@ -185,6 +222,7 @@ exports.getMembers = catchAsync(async (req, res) => {
         id: true,
         email: true,
         role: true,
+        roles: true,
         status: true,
         invitedById: true,
         acceptedAt: true,
@@ -211,7 +249,7 @@ exports.getMembers = catchAsync(async (req, res) => {
 });
 
 exports.inviteMember = catchAsync(async (req, res, next) => {
-  const { email, role, directAdd } = req.body;
+  const { email, directAdd } = req.body;
 
   // Legacy alias for POST /settings/team/direct-add — keep one implementation.
   if (directAdd) {
@@ -226,8 +264,9 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     return next(new AppError('Please provide a valid email address', 400));
   }
 
-  if (role && !VALID_TEAM_ROLES.includes(role)) {
-    return next(new AppError(`Invalid role. Must be one of: ${VALID_TEAM_ROLES.join(', ')}`, 400));
+  const { roles, error: rolesError } = normalizeTeamRoles(req.body);
+  if (rolesError) {
+    return next(new AppError(rolesError, 400));
   }
 
   const member = await prisma.$transaction(async (tx) => {
@@ -259,7 +298,8 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
       const memberData = {
         supplierId: req.supplierId,
         email,
-        role: role || 'editor',
+        roles,
+        role: roles[0],
         status: 'ACCEPTED',
         acceptedAt: new Date(),
         invitedById: req.user.id,
@@ -280,7 +320,8 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
       return tx.teamMember.update({
         where: { id: existing.id },
         data: {
-          role: role || 'editor',
+          roles,
+          role: roles[0],
           status: 'PENDING',
           invitedById: req.user.id,
           inviteToken: token,
@@ -293,7 +334,8 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
       data: {
         supplierId: req.supplierId,
         email,
-        role: role || 'editor',
+        roles,
+        role: roles[0],
         invitedById: req.user.id,
         inviteToken: token,
         tokenExpiresAt: expiresAt,
@@ -307,14 +349,14 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
       action: 'team.member_added',
       resource: 'TeamMember',
       resourceId: member.id,
-      metadata: { email, role: member.role, method: 'direct_add' },
+      metadata: { email, roles: rolesOf(member), method: 'direct_add' },
       source: 'web',
     });
 
     return res.status(201).json({
       status: 'success',
       message: `${email} added as a team member`,
-      data: { member: { id: member.id, email: member.email, role: member.role, status: member.status, acceptedAt: member.acceptedAt, createdAt: member.createdAt, updatedAt: member.updatedAt } },
+      data: { member: memberPayload(member) },
     });
   }
 
@@ -335,9 +377,11 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     await sendTeamInviteEmail({
       to: email,
       supplierName: supplier?.name || 'A supplier',
-      role: role || 'editor',
+      roles: rolesOf(member),
       inviteUrl,
       invitedBy: req.user.name || 'Your supplier',
+      invitedByEmail: req.user.email,
+      expiresInHours: INVITE_TTL_HOURS,
       brandKey: resolveEmailBrand({ user: req.user }),
     });
   } catch (error) {
@@ -350,7 +394,7 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     action: 'team.invite_sent',
     resource: 'TeamMember',
     resourceId: member.id,
-    metadata: { email, role: member.role, emailSent },
+    metadata: { email, roles: rolesOf(member), emailSent },
     source: 'web',
   });
 
@@ -361,7 +405,7 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
       : `Invitation created for ${email}, but the email could not be sent. Use Resend to try again.`,
     data: {
       emailSent,
-      member: { id: member.id, email: member.email, role: member.role, status: member.status, createdAt: member.createdAt, updatedAt: member.updatedAt },
+      member: memberPayload(member),
     },
   });
 });
@@ -389,7 +433,9 @@ exports.getInviteDetails = catchAsync(async (req, res, next) => {
     status: 'success',
     data: {
       supplierName: member.supplier.name,
-      role: member.role,
+      // `role` is the legacy single value; `roles` is the full set.
+      role: rolesOf(member)[0] || null,
+      roles: rolesOf(member),
       invitedEmail: member.email,
       status: member.status,
     },
@@ -437,8 +483,8 @@ exports.acceptInvite = catchAsync(async (req, res, next) => {
     userId: member.supplierId,
     type: 'TEAM_INVITE_ACCEPTED',
     title: 'Team Invitation Accepted',
-    message: `${req.user.email} has accepted their invitation as ${member.role}`,
-    data: { memberId: member.id, email: req.user.email, role: member.role },
+    message: `${req.user.email} has accepted their invitation as ${describeRoles(rolesOf(member))}`,
+    data: { memberId: member.id, email: req.user.email, roles: rolesOf(member) },
   }).catch((err) => logger.warn('[team] enqueueNotification failed:', err?.message));
 
   await logActivity({
@@ -446,14 +492,14 @@ exports.acceptInvite = catchAsync(async (req, res, next) => {
     action: 'team.invite_accepted',
     resource: 'TeamMember',
     resourceId: member.id,
-    metadata: { email: member.email, role: member.role },
+    metadata: { email: member.email, roles: rolesOf(member) },
     source: 'web',
   });
 
   res.status(200).json({
     status: 'success',
     message: 'Invitation accepted successfully',
-    data: { member: { id: updated.id, email: updated.email, role: updated.role, status: updated.status, acceptedAt: updated.acceptedAt, createdAt: updated.createdAt, updatedAt: updated.updatedAt } },
+    data: { member: memberPayload(updated) },
   });
 });
 
@@ -490,7 +536,7 @@ exports.declineInvite = catchAsync(async (req, res, next) => {
     action: 'team.invite_declined',
     resource: 'TeamMember',
     resourceId: member.id,
-    metadata: { email: member.email, role: member.role },
+    metadata: { email: member.email, roles: rolesOf(member) },
     source: 'web',
   });
 
@@ -553,9 +599,11 @@ exports.resendInvite = catchAsync(async (req, res, next) => {
     await sendTeamInviteEmail({
       to: email,
       supplierName: existing.supplier.name || 'A supplier',
-      role: existing.role,
+      roles: rolesOf(existing),
       inviteUrl,
       invitedBy: req.user.name || 'Your supplier',
+      invitedByEmail: req.user.email,
+      expiresInHours: INVITE_TTL_HOURS,
       brandKey: resolveEmailBrand({ user: req.user }),
     });
   } catch (error) {
@@ -568,7 +616,7 @@ exports.resendInvite = catchAsync(async (req, res, next) => {
     action: 'team.invite_resend',
     resource: 'TeamMember',
     resourceId: existing.id,
-    metadata: { email, role: existing.role, emailSent },
+    metadata: { email, roles: rolesOf(existing), emailSent },
     source: 'web',
   });
 
@@ -613,7 +661,7 @@ exports.revokeInvite = catchAsync(async (req, res, next) => {
   sendTeamInviteRevokedEmail({
     to: member.email,
     supplierName: supplier?.name || 'A supplier',
-    role: member.role,
+    roles: rolesOf(member),
     invitedBy: req.user.name || 'Your supplier',
     brandKey: resolveEmailBrand({ user: req.user }),
   }).catch((err) => logger.warn('[team] sendTeamInviteRevokedEmail failed:', err?.message));
@@ -623,7 +671,7 @@ exports.revokeInvite = catchAsync(async (req, res, next) => {
     action: 'team.invite_revoked',
     resource: 'TeamMember',
     resourceId: member.id,
-    metadata: { email: member.email, role: member.role },
+    metadata: { email: member.email, roles: rolesOf(member) },
     source: 'web',
   });
 
@@ -634,7 +682,7 @@ exports.revokeInvite = catchAsync(async (req, res, next) => {
 });
 
 exports.directAddMember = catchAsync(async (req, res, next) => {
-  const { email, role } = req.body;
+  const { email } = req.body;
 
   if (!email) {
     return next(new AppError('Email is required', 400));
@@ -643,8 +691,9 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
   if (!EMAIL_REGEX.test(email)) {
     return next(new AppError('Please provide a valid email address', 400));
   }
-  if (!role || !VALID_TEAM_ROLES.includes(role)) {
-    return next(new AppError(`Invalid role. Must be one of: ${VALID_TEAM_ROLES.join(', ')}`, 400));
+  const { roles, error: rolesError } = normalizeTeamRoles(req.body);
+  if (rolesError) {
+    return next(new AppError(rolesError, 400));
   }
 
   // Direct add bypasses the accept step, so it only makes sense for someone who
@@ -682,7 +731,8 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
       return tx.teamMember.update({
         where: { id: existing.id },
         data: {
-          role,
+          roles,
+          role: roles[0],
           status: 'ACCEPTED',
           acceptedAt: new Date(),
           invitedById: req.user.id,
@@ -696,7 +746,8 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
       data: {
         supplierId: req.supplierId,
         email,
-        role,
+        roles,
+        role: roles[0],
         status: 'ACCEPTED',
         acceptedAt: new Date(),
         invitedById: req.user.id,
@@ -712,14 +763,14 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
     action: 'team.member_added',
     resource: 'TeamMember',
     resourceId: member.id,
-    metadata: { email, role, method: 'direct_add' },
+    metadata: { email, roles, method: 'direct_add' },
     source: 'web',
   });
 
   res.status(201).json({
     status: 'success',
     message: `${email} added as a team member`,
-    data: { member: { id: member.id, email: member.email, role: member.role, status: member.status, acceptedAt: member.acceptedAt, createdAt: member.createdAt, updatedAt: member.updatedAt } },
+    data: { member: memberPayload(member) },
   });
 });
 
@@ -749,7 +800,7 @@ exports.removeMember = catchAsync(async (req, res, next) => {
     action: 'team.member_removed',
     resource: 'TeamMember',
     resourceId: id,
-    metadata: { email: member.email, role: member.role },
+    metadata: { email: member.email, roles: rolesOf(member) },
     source: 'web',
   });
 
@@ -761,10 +812,10 @@ exports.removeMember = catchAsync(async (req, res, next) => {
 
 exports.updateMemberRole = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const { role } = req.body;
 
-  if (!role || !VALID_TEAM_ROLES.includes(role)) {
-    return next(new AppError(`Invalid role. Must be one of: ${VALID_TEAM_ROLES.join(', ')}`, 400));
+  const { roles, error: rolesError } = normalizeTeamRoles(req.body);
+  if (rolesError) {
+    return next(new AppError(rolesError, 400));
   }
 
   const member = await prisma.teamMember.findFirst({
@@ -776,13 +827,13 @@ exports.updateMemberRole = catchAsync(async (req, res, next) => {
   }
 
   if (member.email === req.user.email) {
-    return next(new AppError('You cannot change your own role', 403));
+    return next(new AppError('You cannot change your own roles', 403));
   }
 
-  const previousRole = member.role;
+  const previousRoles = rolesOf(member);
   const updated = await prisma.teamMember.update({
     where: { id },
-    data: { role },
+    data: { roles, role: roles[0] },
   });
 
   // requireTeamRole/requireTeamPermission cache the member row per email.
@@ -793,13 +844,13 @@ exports.updateMemberRole = catchAsync(async (req, res, next) => {
     action: 'team.role_changed',
     resource: 'TeamMember',
     resourceId: id,
-    metadata: { email: member.email, previousRole, newRole: role },
+    metadata: { email: member.email, previousRoles, newRoles: roles },
     source: 'web',
   });
 
   res.status(200).json({
     status: 'success',
-    data: { member: { id: updated.id, email: updated.email, role: updated.role, status: updated.status, acceptedAt: updated.acceptedAt, createdAt: updated.createdAt, updatedAt: updated.updatedAt } },
+    data: { member: memberPayload(updated) },
   });
 });
 
@@ -812,6 +863,7 @@ exports.getMemberById = catchAsync(async (req, res, next) => {
       id: true,
       email: true,
       role: true,
+      roles: true,
       status: true,
       invitedById: true,
       acceptedAt: true,
@@ -826,6 +878,6 @@ exports.getMemberById = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: { member },
+    data: { member: { ...member, roles: rolesOf(member) } },
   });
 });

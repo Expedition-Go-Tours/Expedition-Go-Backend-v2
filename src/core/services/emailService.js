@@ -55,6 +55,11 @@ const { getBrandEmail, BRANDS, DEFAULT_BRAND, resolveBrandKey } = require('../..
 const shellCache = new Map();
 const shellPromises = new Map();
 
+// Fallbacks when a brand has no accent configured (matches the legacy look).
+const DEFAULT_ACCENT = '#00A669';
+const DEFAULT_ACCENT_DARK = '#007A4D';
+const DEFAULT_ACCENT_SOFT = '#E6F6F0';
+
 async function resolveShellVars(brandKey) {
   const brand = getBrandEmail(brandKey);
   try {
@@ -68,6 +73,10 @@ async function resolveShellVars(brandKey) {
       supportEmail: brand.supportEmail || cfgSupport || process.env.SUPPORT_EMAIL || 'support@travioafrica.com',
       logoUrl: brand.logoUrl || cfgLogo || process.env.LOGO_URL || '',
       poweredByLabel: brand.poweredByLabel || '',
+      // Brand-aware accent so a Ghana invite looks Ghana-green, Africa its own.
+      accentColor: brand.accentColor || DEFAULT_ACCENT,
+      accentDark: brand.accentDark || DEFAULT_ACCENT_DARK,
+      accentSoft: brand.accentSoft || DEFAULT_ACCENT_SOFT,
       year: new Date().getFullYear(),
     };
   } catch {
@@ -76,6 +85,9 @@ async function resolveShellVars(brandKey) {
       supportEmail: brand.supportEmail || process.env.SUPPORT_EMAIL || 'support@travioafrica.com',
       logoUrl: brand.logoUrl || process.env.LOGO_URL || '',
       poweredByLabel: brand.poweredByLabel || '',
+      accentColor: brand.accentColor || DEFAULT_ACCENT,
+      accentDark: brand.accentDark || DEFAULT_ACCENT_DARK,
+      accentSoft: brand.accentSoft || DEFAULT_ACCENT_SOFT,
       year: new Date().getFullYear(),
     };
   }
@@ -1523,14 +1535,96 @@ async function sendSupplierBookingNotification(booking) {
   }
 }
 
-async function sendTeamInviteEmail({ to, supplierName, role, inviteUrl, invitedBy, brandKey = null }) {
+// Chip colours per team role — mirrors TEAM_ROLE_COLORS in the dashboards so
+// the email and the settings page describe the same access.
+const TEAM_ROLE_CHIP = {
+  admin: { bg: '#F3E8FF', fg: '#6B21A8' },
+  editor: { bg: '#DBEAFE', fg: '#1D4ED8' },
+  finance: { bg: '#DCFCE7', fg: '#15803D' },
+  support: { bg: '#FFEDD5', fg: '#C2410C' },
+};
+
+/** "EB" from "Expedition-Go Tours" — used for the inviter avatar. */
+function initialsOf(name) {
+  return String(name || '')
+    .split(/[\s-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0].toUpperCase())
+    .join('') || 'T';
+}
+
+/** Role data the invite template renders as chips + capability lines. */
+function teamRoleView(roles) {
+  const { toRoleArray, TEAM_ROLE_LABELS, TEAM_ROLE_SUMMARIES } = require('../../../config/teamPermissions');
+  const list = toRoleArray(roles);
+  return list.map((role) => ({
+    key: role,
+    label: TEAM_ROLE_LABELS[role] || role,
+    summary: TEAM_ROLE_SUMMARIES[role] || '',
+    bg: (TEAM_ROLE_CHIP[role] || TEAM_ROLE_CHIP.editor).bg,
+    fg: (TEAM_ROLE_CHIP[role] || TEAM_ROLE_CHIP.editor).fg,
+  }));
+}
+
+/**
+ * Team invitation email.
+ *
+ * Built for how invites are actually read: the inviter's name leads, the
+ * supplier and the exact access they get are stated plainly, there is one
+ * button, and the security context (expiry, who invited them, "didn't expect
+ * this") is spelled out. `roles` is an array (a member can hold two).
+ */
+async function sendTeamInviteEmail({
+  to,
+  supplierName,
+  roles,
+  role,
+  inviteUrl,
+  invitedBy,
+  invitedByEmail = '',
+  expiresInHours = 48,
+  brandKey = null,
+}) {
+  const roleView = teamRoleView(roles && roles.length ? roles : role);
+  const roleNames = roleView.map((r) => r.label).join(' + ') || 'team member';
+  const safeSupplier = htmlEscape(supplierName || 'this supplier');
+  const safeInviter = htmlEscape(invitedBy || 'Your supplier');
+  const shell = await getShellVars(brandKey);
+  const brandName = shell.brandName || 'Travio';
+
+  // Plain-text alternative: helps deliverability and clients that strip HTML.
+  const text = [
+    `${invitedBy || 'Your supplier'} invited you to join ${supplierName || 'this supplier'} on ${brandName}.`,
+    '',
+    `Access: ${roleNames}`,
+    ...roleView.map((r) => `  - ${r.label}: ${r.summary}`),
+    '',
+    `Accept the invitation: ${inviteUrl}`,
+    '',
+    `This link expires in ${expiresInHours} hours and only works for ${to}.`,
+    `If you weren't expecting this invitation you can safely ignore it.`,
+    `Questions? ${shell.supportEmail}`,
+  ].join('\n');
+
   try {
     return await sendEmail({
       to,
-      subject: `You've been invited to join ${supplierName}'s team`,
+      subject: `${invitedBy || 'A teammate'} invited you to join ${supplierName}'s team on ${brandName}`,
       template: 'team-invite',
-      opts: { brandKey },
-      data: { brandName: supplierName, role, inviteLink: inviteUrl, invitedBy },
+      opts: { brandKey, text, preheader: `${roleNames} access to ${supplierName} — accept in one click.` },
+      data: {
+        supplierName: safeSupplier,
+        roles: roleView,
+        rolesText: htmlEscape(roleNames),
+        inviterName: safeInviter,
+        inviterEmail: htmlEscape(invitedByEmail),
+        inviterInitials: initialsOf(invitedBy),
+        inviteUrl,
+        inviteeEmail: htmlEscape(to),
+        expiresInHours,
+        brandName,
+      },
     });
   } catch (error) {
     console.error('Team invite email failed:', error);
@@ -1538,14 +1632,21 @@ async function sendTeamInviteEmail({ to, supplierName, role, inviteUrl, invitedB
   }
 }
 
-async function sendTeamInviteRevokedEmail({ to, supplierName, role, invitedBy, brandKey = null }) {
+async function sendTeamInviteRevokedEmail({ to, supplierName, roles, role, invitedBy, brandKey = null }) {
+  const roleView = teamRoleView(roles && roles.length ? roles : role);
   try {
     return await sendEmail({
       to,
-      subject: `Invitation to join ${supplierName}'s team has been revoked`,
+      subject: `Your invitation to join ${supplierName}'s team was revoked`,
       template: 'team-invite-revoked',
-      opts: { brandKey },
-      data: { brandName: supplierName, role, invitedBy },
+      opts: { brandKey, preheader: `The invitation to ${supplierName} is no longer active.` },
+      data: {
+        supplierName: htmlEscape(supplierName || 'this supplier'),
+        roles: roleView,
+        rolesText: htmlEscape(roleView.map((r) => r.label).join(' + ')),
+        inviterName: htmlEscape(invitedBy || 'Your supplier'),
+        inviteeEmail: htmlEscape(to),
+      },
     });
   } catch (error) {
     console.error('Team invite revoked email failed:', error);
@@ -1558,8 +1659,6 @@ async function sendTeamInviteRevokedEmail({ to, supplierName, role, invitedBy, b
 
 function generateEmailContent(template, data) {
   const templates = {
-    'team-invite': generateTeamInviteEmail,
-    'team-invite-revoked': generateTeamInviteRevokedEmail,
     'generic-notification': generateGenericNotificationEmail,
     'notification-recipient-verify': generateNotificationRecipientVerifyEmail,
     'contact-form': generateContactFormEmail,
@@ -1699,53 +1798,6 @@ function generateNotificationRecipientVerifyEmail(data) {
   };
 }
 
-function generateTeamInviteEmail(data) {
-  const templatePath = path.join(__dirname, '..', '..', '..', 'sendgrid-templates', 'team-invite.html');
-  let html = fs.readFileSync(templatePath, 'utf-8');
-
-  // Only template-specific slots are replaced here. Brand identity slots
-  // ({{logoUrl}}, {{supportEmail}}, {{year}}) are left for the shell merge in
-  // sendEmail, which resolves them from the brand registry via brandKey —
-  // pre-replacing {{logoUrl}} with '' is what hid the logo from team invites.
-  const replacements = {
-    '{{brandName}}': data.brandName || 'Travio Africa',
-    '{{invitedBy}}': data.invitedBy || 'A team member',
-    '{{role}}': data.role || 'member',
-    '{{inviteLink}}': data.inviteLink || '#',
-  };
-
-  for (const [key, value] of Object.entries(replacements)) {
-    html = html.split(key).join(value);
-  }
-
-  html = html.replace(/\{\{#if companyName\}\}.*?\{\{\/if\}\}/gs, '');
-
-  return { html, text: `You've been invited to join as ${data.role}. Accept: ${data.inviteLink}` };
-}
-
-function generateTeamInviteRevokedEmail(data) {
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Invitation Revoked</title>
-<style>body{margin:0;padding:0;background-color:#F8FAFC;font-family:'Plus Jakarta Sans','Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}</style>
-</head>
-<body>
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC"><tr><td align="center" style="padding:40px 16px">
-<table role="presentation" width="100%" style="max-width:640px;background:#fff;border:1px solid #E2E8F0;border-radius:16px" cellspacing="0" cellpadding="0" border="0">
-<tr><td style="padding:40px 40px 32px;text-align:center">
-<h1 style="margin:0 0 16px;font-size:28px;font-weight:800;color:#001F3F;line-height:1.2">Invitation Revoked</h1>
-<p style="margin:0;font-size:15px;color:#334155;line-height:1.4">${data.invitedBy || 'A team member'} has revoked your invitation to join <strong>${data.brandName || 'their team'}</strong> as <strong>${data.role || 'member'}</strong>.</p>
-</td></tr>
-<tr><td style="padding:0 40px 40px" align="center"><span style="font-size:13px;color:#64748B">If you have any questions, please contact the supplier directly.</span></td></tr>
-<tr><td bgcolor="#001F3F" style="padding:32px 40px;text-align:center"><span style="color:#94A3B8;font-size:13px">${data.brandName || 'Travio Africa'} Team</span></td></tr>
-</table>
-<p style="margin:24px 0 0;text-align:center;font-size:11px;color:#94A3B8">&copy; ${data.year || new Date().getFullYear()} ${data.brandName || 'Travio Africa'}. All rights reserved.</p>
-</td></tr></table>
-</body>
-</html>`;
-
-  return { html, text: `${data.invitedBy || 'A team member'} has revoked your invitation to join ${data.brandName || 'their team'} as ${data.role || 'member'}.` };
-}
 
 // ---------------------------------------------------------------------------
 // Printable ticket (unchanged — used by the ticket endpoint)
