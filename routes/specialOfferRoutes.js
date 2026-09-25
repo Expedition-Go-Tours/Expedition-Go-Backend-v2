@@ -1,7 +1,9 @@
 /**
  * Special Offer Routes - Supplier Special Offer Management
  * Handles CRUD and status toggle operations for supplier special offers.
- * All routes require authentication, supplier resolution, and 'tours.manage' permission.
+ * All routes require authentication, supplier resolution, and the
+ * 'products.update' permission — a special offer IS a product edit, and this is
+ * the key the dashboards gate the Special Offers page on.
  *
  * @module routes/specialOfferRoutes
  */
@@ -13,7 +15,7 @@ const { protect } = require('../middleware/authMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 
 // All special offer routes require authentication + supplier team management permission
-router.use(protect, resolveSupplier, requireTeamPermission('tours.manage'));
+router.use(protect, resolveSupplier, requireTeamPermission('products.update'));
 
 /**
  * @swagger

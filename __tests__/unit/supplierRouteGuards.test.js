@@ -18,6 +18,9 @@ const path = require('path');
 
 const ROUTE_FILES = [
   'routes/supplierRoutes.js',
+  'routes/specialOfferRoutes.js',
+  'routes/refundClaimRoutes.js',
+  'routes/disputeRoutes.js',
   'src/brands/ghana/supplierRoutes.js',
   'src/brands/africa/supplierRoutes.js',
 ];
@@ -78,11 +81,33 @@ const MONEY_WRITES = [
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 
+/** Every permission key a role can actually hold, straight from the model. */
+const grantedKeys = (() => {
+  const { TEAM_ROLE_PERMISSIONS } = require('../../config/teamPermissions');
+  return new Set(Object.values(TEAM_ROLE_PERMISSIONS).flatMap((role) => role.permissions));
+})();
+
+/**
+ * A `router.use(...)` guard protects every route in its file, and a statement
+ * scan cannot see it. Two shapes exist in this codebase: authentication only
+ * (`protect`, `router.use(protect)`) and an authorisation chain
+ * (`protect, resolveSupplier, requireTeamPermission('x')`). Only the second is
+ * accepted as a guard — authentication is not authorisation, which is exactly why
+ * `POST /logo` used to be reachable by any member.
+ */
+function fileGuard(source) {
+  const use = source.match(/^router\.use\((.*)\);?\s*$/m);
+  if (!use) return null;
+  const permission = use[1].match(/requireTeamPermission\('([^']+)'\)/);
+  return permission ? permission[1] : null;
+}
+
 /** Every `router.<method>('<path>', …)` statement, in file order. */
 function routeStatements(file) {
   const source = fs.readFileSync(path.join(REPO_ROOT, file), 'utf8');
   const lines = source.split('\n');
   const statements = [];
+  const guard = fileGuard(source);
 
   lines.forEach((line, index) => {
     const match = line.match(/^router\.(get|post|patch|put|delete)\(\s*'([^']+)'/);
@@ -102,6 +127,7 @@ function routeStatements(file) {
       method: match[1].toUpperCase(),
       path: match[2],
       statement,
+      fileGuard: guard,
     });
   });
 
@@ -132,6 +158,7 @@ describe('supplier route guards', () => {
     const unguarded = ALL_STATEMENTS
       .filter((s) => s.method !== 'GET')
       .filter((s) => guardsOn(s).length === 0)
+      .filter((s) => !s.fileGuard)
       .filter((s) => !ALLOWED_WITHOUT_GUARD.some((a) => a.path === s.path));
 
     expect(unguarded.map((s) => `${s.file}:${s.line} ${s.method} ${s.path}`)).toEqual([]);
@@ -155,6 +182,18 @@ describe('supplier route guards', () => {
     if (!statement) return;
 
     expectGuard(statement, `requireTeamPermission('${key}')`);
+  });
+
+  it('never gates a whole router on a key no role grants', () => {
+    // The Special Offers API was mounted behind requireTeamPermission
+    // ('tours.manage') — a key no role has, so the page was unreachable for every
+    // member while the dashboards listed it for editors.
+    const bogus = ROUTE_FILES
+      .map((file) => ({ file, guard: fileGuard(fs.readFileSync(path.join(REPO_ROOT, file), 'utf8')) }))
+      .filter(({ guard }) => guard && guard !== '*' && !grantedKeys.has(guard))
+      .map(({ file, guard }) => `${file} gates every route on '${guard}', which no role grants`);
+
+    expect(bogus).toEqual([]);
   });
 
   it('never guards a money write with the read key', () => {
