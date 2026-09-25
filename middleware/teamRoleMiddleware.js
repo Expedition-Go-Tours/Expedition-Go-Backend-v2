@@ -16,6 +16,25 @@ function memberRolesOf(teamMember) {
   return toRoleArray(teamMember?.role);
 }
 
+/**
+ * Accepted team membership for an email.
+ *
+ * ALL middleware reads membership through here so the shared cache entry always
+ * carries the same fields. Caching a narrower select under this key made a
+ * member's permissions depend on which middleware ran first on a route —
+ * `resolveSupplier` cached { supplierId } and the role checks then saw no roles.
+ */
+const TEAM_MEMBER_SELECT = { roles: true, role: true, supplierId: true };
+
+function lookupTeamMember(email) {
+  return cache.getOrSet(`team:member:email:${email}`, async () => {
+    return prisma.teamMember.findFirst({
+      where: { email, status: 'ACCEPTED' },
+      select: TEAM_MEMBER_SELECT,
+    });
+  }, SUPPLIER_CACHE_TTL);
+}
+
 exports.requireTeamRole = (...allowedRoles) => {
   return catchAsync(async (req, res, next) => {
     if (!req.user) {
@@ -41,15 +60,7 @@ exports.requireTeamRole = (...allowedRoles) => {
       return next();
     }
 
-    const teamMember = await cache.getOrSet(`team:member:email:${req.user.email}`, async () => {
-      return prisma.teamMember.findFirst({
-        where: {
-          email: req.user.email,
-          status: 'ACCEPTED',
-        },
-        select: { roles: true, role: true, supplierId: true },
-      });
-    }, SUPPLIER_CACHE_TTL);
+    const teamMember = await lookupTeamMember(req.user.email);
 
     if (!teamMember) {
       return next(new AppError('You are not a team member', 403));
@@ -94,15 +105,7 @@ exports.requireTeamPermission = (...permissionKeys) => {
       return next();
     }
 
-    const teamMember = await cache.getOrSet(`team:member:email:${req.user.email}`, async () => {
-      return prisma.teamMember.findFirst({
-        where: {
-          email: req.user.email,
-          status: 'ACCEPTED',
-        },
-        select: { roles: true, role: true, supplierId: true },
-      });
-    }, SUPPLIER_CACHE_TTL);
+    const teamMember = await lookupTeamMember(req.user.email);
 
     if (!teamMember) {
       return next(new AppError('You are not a team member', 403));
@@ -179,12 +182,7 @@ exports.resolveSupplier = catchAsync(async (req, res, next) => {
     return next();
   }
 
-  const member = await cache.getOrSet(`team:member:email:${req.user.email}`, async () => {
-    return prisma.teamMember.findFirst({
-      where: { email: req.user.email, status: 'ACCEPTED' },
-      select: { supplierId: true },
-    });
-  }, SUPPLIER_CACHE_TTL);
+  const member = await lookupTeamMember(req.user.email);
 
   if (!member) {
     return next(new AppError('Supplier access required', 403));
