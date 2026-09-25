@@ -428,15 +428,24 @@ function setupSocketIO() {
     // the owner's user room — otherwise support agents only ever see messages
     // that arrive after a manual refresh. Resolved best-effort: a failure here
     // only costs real-time updates, never the request/response APIs.
-    const { resolveSupplierIdForUser } = require('./middleware/teamRoleMiddleware');
-    resolveSupplierIdForUser({ id: socket.userId, roles: socket.userRoles, email: socket.userEmail })
-      .then((supplierId) => {
+    const { resolveChatAccessForUser } = require('./middleware/teamRoleMiddleware');
+    resolveChatAccessForUser({ id: socket.userId, roles: socket.userRoles, email: socket.userEmail })
+      .then(({ supplierId, viaMembership, canChat }) => {
         if (supplierId && supplierId !== socket.userId) {
           socket.supplierId = supplierId;
           socket.join(`user:${supplierId}`);
         }
+        // A member without `chat.view` (i.e. not admin/support) is refused the
+        // chat events below, exactly as the HTTP routes refuse them — joining a
+        // conversation room would otherwise stream the inbox to them.
+        if (viaMembership) socket.chatAllowed = canChat;
       })
-      .catch((err) => console.warn('[socket] supplier identity lookup failed:', err?.message));
+      .catch((err) => {
+        console.warn('[socket] supplier identity lookup failed:', err?.message);
+        // Unknown rights means no chat for a member; the lookup failing for the
+        // owner or a customer changes nothing, since they are never restricted.
+        socket.chatAllowed = socket.chatAllowed ?? true;
+      });
 
     socket.on('review:respond', async (payload, ack) => {
       try {
@@ -528,8 +537,15 @@ function setupSocketIO() {
         : (socket.supplierId || socket.userId)
     );
 
+    // Set from `resolveChatAccessForUser` at connect. A member without chat.view
+    // is refused here; undefined means the lookup has not landed yet, and only a
+    // member can ever be refused, so treat it as allowed until proven otherwise.
+    const chatAllowed = () => socket.chatAllowed !== false;
+    const chatDenied = (ack) => ack?.({ status: 'error', message: 'Access denied' });
+
     socket.on('chat:join', async (payload, ack) => {
       try {
+        if (!chatAllowed()) return chatDenied(ack);
         const { conversationId } = payload || {};
         if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
 
@@ -551,6 +567,7 @@ function setupSocketIO() {
 
     socket.on('chat:leave', async (payload, ack) => {
       try {
+        if (!chatAllowed()) return chatDenied(ack);
         const { conversationId } = payload || {};
         if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
 
@@ -572,6 +589,7 @@ function setupSocketIO() {
 
     socket.on('chat:message', async (payload, ack) => {
       try {
+        if (!chatAllowed()) return chatDenied(ack);
         const { conversationId, content, attachmentUrl, attachmentType } = payload || {};
 
         if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
@@ -620,6 +638,7 @@ function setupSocketIO() {
 
     socket.on('chat:typing', async (payload) => {
       try {
+        if (!chatAllowed()) return;
         const { conversationId, isTyping } = payload || {};
         if (!conversationId) return;
 
@@ -659,6 +678,7 @@ function setupSocketIO() {
 
     socket.on('chat:mark-read', async (payload, ack) => {
       try {
+        if (!chatAllowed()) return chatDenied(ack);
         const { conversationId } = payload || {};
         if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
 
@@ -687,6 +707,7 @@ function setupSocketIO() {
 
     socket.on('chat:delivered', async (payload) => {
       try {
+        if (!chatAllowed()) return;
         const { conversationId, messageIds } = payload || {};
         if (!conversationId || !messageIds?.length) return;
 

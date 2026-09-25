@@ -169,6 +169,31 @@ async function resolveSupplierIdForUser(user) {
 
 exports.resolveSupplierIdForUser = resolveSupplierIdForUser;
 
+/**
+ * What a realtime chat connection may do, resolved once at connect time.
+ *
+ * The HTTP chat routes refuse a member without `chat.view` (routes/chatRoutes.js),
+ * so the socket has to agree or it becomes a way around that gate: `chat:join`
+ * subscribes to a conversation room and every message in it is pushed there.
+ *
+ * Only someone acting THROUGH a membership is restricted. Customers, the owner
+ * and platform admins are themselves and keep full access.
+ */
+async function resolveChatAccessForUser(user) {
+  const supplierId = await resolveSupplierIdForUser(user);
+  const viaMembership = Boolean(supplierId) && supplierId !== user?.id;
+  if (!viaMembership) return { supplierId, viaMembership: false, canChat: true };
+
+  const member = await lookupTeamMember(user?.email);
+  return {
+    supplierId,
+    viaMembership: true,
+    canChat: Boolean(member) && hasTeamPermission(memberRolesOf(member), 'chat.view'),
+  };
+}
+
+exports.resolveChatAccessForUser = resolveChatAccessForUser;
+
 exports.isSupplierOwner = catchAsync(async (req, res, next) => {
   if (!req.user) {
     return next(new AppError('Not authenticated', 401));

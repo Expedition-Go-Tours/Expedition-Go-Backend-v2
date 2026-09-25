@@ -3,7 +3,7 @@ const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
 const { uploadChatImage } = require('../middleware/uploadMiddleware');
-const { resolveSupplierIdForUser } = require('../middleware/teamRoleMiddleware');
+const { resolveSupplierIdForUser, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 const logger = require('../src/core/services/logger');
 const chatController = require('../src/core/domain/chatController');
 
@@ -23,6 +23,11 @@ async function attachSupplierIdentity(req, res, next) {
   try {
     const supplierId = await resolveSupplierIdForUser(req.user);
     if (supplierId) req.supplierId = supplierId;
+    // An access id that is NOT the caller's own means they are acting through an
+    // accepted membership. The owner and a platform admin resolve to themselves,
+    // so this is exactly "team member", and it is what the permission gate below
+    // keys on.
+    req.supplierViaMembership = Boolean(supplierId) && supplierId !== req.user.id;
   } catch (err) {
     // Identity is an enhancement here, never a gate: fall through and let the
     // handler's own participant check answer with a 404/403.
@@ -71,7 +76,26 @@ router.use(attachSupplierIdentity);
 router.get('/admin-support', chatController.getAdminSupport);
 router.get('/expedition-support', chatController.getExpeditionSupport);
 
-router.use(requirePermission('chat.suppliers', 'chat.customers', 'chat.expedition'));
+/**
+ * Reading the business's conversations is `chat.view` — admin and support, the
+ * same key the dashboard's Customers page is gated on. The blanket
+ * `requirePermission` above cannot do this job: chat is reachable by customers
+ * too, and that middleware deliberately lets every non-admin through.
+ *
+ * So the rule is narrower: it applies only to someone acting THROUGH a
+ * membership. Customers, the owner and platform admins keep their own access.
+ * Without it, `GET /chat/conversations` handed an editor or a finance member the
+ * supplier's entire customer inbox while the sidebar hid the page from them.
+ */
+const requireChatViewForMembers = (req, res, next) => {
+  if (!req.supplierViaMembership) return next();
+  return requireTeamPermission('chat.view')(req, res, next);
+};
+
+router.use(
+  requirePermission('chat.suppliers', 'chat.customers', 'chat.expedition'),
+  requireChatViewForMembers,
+);
 
 /**
  * @swagger

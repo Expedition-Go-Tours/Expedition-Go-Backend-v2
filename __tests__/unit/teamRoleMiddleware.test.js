@@ -31,6 +31,7 @@ const {
   requireTeamRole,
   requireTeamPermission,
   resolveSupplierIdForUser,
+  resolveChatAccessForUser,
 } = require('../../middleware/teamRoleMiddleware');
 
 const MEMBER = {
@@ -120,6 +121,58 @@ describe('resolveSupplierIdForUser', () => {
     await run(resolveSupplier, req);
 
     await expect(resolveSupplierIdForUser({ ...MEMBER })).resolves.toBe(req.supplierId);
+  });
+});
+
+describe('resolveChatAccessForUser', () => {
+  it('lets the owner chat — they act as themselves, never as a member', async () => {
+    prisma.supplierProfile.findFirst.mockResolvedValue({ id: 'profile-1' });
+
+    const access = await resolveChatAccessForUser({ id: 'owner-1', email: 'owner@test.com', roles: ['supplier'] });
+
+    expect(access).toEqual({ supplierId: 'owner-1', viaMembership: false, canChat: true });
+  });
+
+  it('lets a customer chat — the route is theirs too', async () => {
+    // No membership and no profile: the traveller resolves to nobody.
+    prisma.teamMember.findFirst.mockResolvedValue(null);
+    prisma.supplierProfile.findFirst.mockResolvedValue(null);
+
+    const access = await resolveChatAccessForUser({ id: 'customer-1', email: 'traveller@test.com', roles: ['customer'] });
+
+    expect(access).toEqual({ supplierId: null, viaMembership: false, canChat: true });
+  });
+
+  it('lets a support member chat, on the owner\'s account', async () => {
+    mockMembership({ supplierId: 'owner-1', roles: ['support'], role: 'support' });
+
+    const access = await resolveChatAccessForUser({ id: 'member-1', email: MEMBER.email, roles: ['customer'] });
+
+    expect(access).toEqual({ supplierId: 'owner-1', viaMembership: true, canChat: true });
+  });
+
+  it('refuses a member whose roles do not include chat.view', async () => {
+    mockMembership({ supplierId: 'owner-1', roles: ['finance'], role: 'finance' });
+
+    const access = await resolveChatAccessForUser({ id: 'member-1', email: MEMBER.email, roles: ['customer'] });
+
+    expect(access).toEqual({ supplierId: 'owner-1', viaMembership: true, canChat: false });
+  });
+
+  it('refuses a multi-role member that has neither admin nor support', async () => {
+    mockMembership({ supplierId: 'owner-1', roles: ['editor', 'finance'], role: 'editor' });
+
+    const access = await resolveChatAccessForUser({ id: 'member-1', email: MEMBER.email, roles: ['customer'] });
+
+    expect(access.canChat).toBe(false);
+  });
+
+  it('allows an admin-role member, whose `*` covers chat.view', async () => {
+    mockMembership({ supplierId: 'owner-1', roles: ['admin'], role: 'admin' });
+
+    const access = await resolveChatAccessForUser({ id: 'member-1', email: MEMBER.email, roles: ['customer'] });
+
+    expect(access.canChat).toBe(true);
   });
 });
 
