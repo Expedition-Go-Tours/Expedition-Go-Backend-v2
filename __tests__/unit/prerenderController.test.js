@@ -273,6 +273,53 @@ describe('failure modes are crawler-safe', () => {
     expect(res.body).toContain('https://www.travioghana.com/tours');
   });
 
+  it('loads the homepage with popular tours, destinations and FAQ markup', async () => {
+    nextResponse = {
+      statusCode: 200,
+      payload: {
+        status: 'success',
+        data: {
+          tours: [
+            { id: 't1', slug: 'accra-city-tour', title: 'Accra City Tour', city: 'Accra', region: 'Greater Accra', price: { amount: 35, currency: 'USD' }, averageRating: 4.7, reviewCount: 12 },
+            { id: 't2', slug: 'cape-coast-castles', title: 'Cape Coast Castles', city: 'Cape Coast', region: 'Central' },
+          ],
+        },
+      },
+    };
+
+    const res = await render('/', { host: GHANA_HOST });
+
+    expect(res.statusCode).toBe(200);
+    // Internal links into the money pages (the previous homepage had none).
+    expect(res.body).toContain('https://www.travioghana.com/tour/t1/accra-city-tour');
+    expect(res.body).toContain('https://www.travioghana.com/tour/t2/cape-coast-castles');
+    expect(res.body).toContain('Popular Ghana tours &amp; experiences');
+    expect(res.body).toContain('Browse all 2 tours');
+    // Destination listings use the prerendered /tours?place= surface.
+    expect(res.body).toContain('https://www.travioghana.com/tours?place=Accra');
+    expect(res.body).toContain('Explore Ghana by destination');
+    // FAQPage + ItemList structured data.
+    expect(res.body).toContain('"@type":"FAQPage"');
+    expect(res.body).toContain('"@type":"ItemList"');
+    expect(res.body).toContain('Frequently asked questions');
+    // Dated copy stays out of the crawler HTML.
+    expect(res.body).not.toContain('undefined');
+  });
+
+  it('still serves a complete homepage when the catalogue API is down', async () => {
+    nextResponse = { statusCode: 500, payload: { status: 'error' } };
+
+    const res = await render('/', { host: GHANA_HOST });
+
+    // The brand homepage must never 503 or ship a half-built page.
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['X-Prerender']).toBe('true');
+    expect(res.body).toContain('<link rel="canonical" href="https://www.travioghana.com/">');
+    expect(res.body).toContain('"@type":"FAQPage"');
+    expect(res.body).toContain('Why book with Travio Ghana');
+    expect(res.body).not.toContain('Popular Ghana tours');
+  });
+
   it('answers branded 503 HTML (never JSON) when the catalogue API fails', async () => {
     nextResponse = { statusCode: 500, payload: { status: 'error' } };
     const res = await render('/tours', { host: GHANA_HOST });

@@ -504,7 +504,143 @@ async function handleListingsPage(site, place) {
   });
 }
 
-function handleHomePage(site) {
+/**
+ * Customer-facing FAQs shown on the crawler homepage (and emitted as FAQPage
+ * structured data). Copy is deliberately brand-neutral and policy-free beyond
+ * what every brand guarantees, so one table serves all storefronts.
+ */
+const HOME_FAQS = [
+  {
+    q: 'How do I book a tour in Ghana?',
+    a: 'Choose an experience, pick your date and group size, and pay online. You receive instant confirmation plus a booking voucher by email.',
+  },
+  {
+    q: 'Who operates the tours listed here?',
+    a: 'Vetted local tour operators, licensed guides and transport partners across Ghana. Every listing is reviewed by our team before it goes live.',
+  },
+  {
+    q: 'Can I change or cancel my booking?',
+    a: 'Each tour page shows its own change and cancellation policy before you pay, so you always know the terms that apply to your date.',
+  },
+  {
+    q: 'Do tours include hotel or airport pickup?',
+    a: 'Many experiences in Accra and the coastal towns offer pickup. The tour page and your confirmation email state the meeting or pickup details.',
+  },
+  {
+    q: 'How do I get help with a booking?',
+    a: 'Contact our support team and quote your booking reference — the contact link is in the footer of every page.',
+  },
+];
+
+function buildFaqSchema(faqs) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: faqs.map((f) => ({
+      '@type': 'Question',
+      name: f.q,
+      acceptedAnswer: { '@type': 'Answer', text: f.a },
+    })),
+  };
+}
+
+/**
+ * Crawler homepage.
+ *
+ * Used to be a title + one paragraph, which gave Google a thin page to rank
+ * for the brand's own name ("Ghana tours" is impossible without content and
+ * internal links). It now carries the real catalogue: popular tours, the
+ * destination listings, trust points and FAQs (with FAQPage markup).
+ *
+ * A failing catalogue fetch must never take the homepage down or serve a
+ * half-built page — it degrades to the previous static version.
+ */
+async function handleHomePage(site) {
+  let tours = [];
+  try {
+    const api = apiBase();
+    const data = await fetchJson(`${api}/api/${site.apiBrand}/tours?limit=50`);
+    tours = ((data && data.data && data.data.tours) || [])
+      .map((l) => l.tour || l)
+      .filter((t) => t && t.title);
+  } catch (err) {
+    console.error(`[prerender] homepage catalogue fetch failed for ${site.host}: ${err.message}`);
+  }
+
+  const featured = tours.slice(0, 6);
+  const destinations = [];
+  for (const t of tours) {
+    for (const place of [t.city, t.region]) {
+      if (place && !destinations.includes(place)) destinations.push(place);
+    }
+  }
+  const topDestinations = destinations.slice(0, 10);
+
+  const sections = [];
+
+  if (featured.length > 0) {
+    const items = featured
+      .map((t) => {
+        const price = t.price ? ` &mdash; from ${escapeHtml(String(t.price.currency || 'USD'))} ${escapeHtml(String(t.price.amount))}` : '';
+        const rating = t.averageRating
+          ? ` &middot; rated ${escapeHtml(String(Number(t.averageRating).toFixed(1)))}/5${t.reviewCount ? ` (${escapeHtml(String(t.reviewCount))} reviews)` : ''}`
+          : '';
+        return `          <li><a href="${escapeHtml(tourUrl(site, t))}">${escapeHtml(t.title)}</a>${price}${rating}</li>`;
+      })
+      .join('\n');
+    sections.push(`<section aria-label="Popular tours">
+        <h2>Popular Ghana tours &amp; experiences</h2>
+        <ul>
+${items}
+        </ul>
+        <p><a href="${site.url}/tours">Browse all ${tours.length} tours</a></p>
+      </section>`);
+  }
+
+  if (topDestinations.length > 0) {
+    const items = topDestinations
+      .map((p) => `          <li><a href="${site.url}/tours?place=${encodeURIComponent(p)}">Tours in ${escapeHtml(p)}</a></li>`)
+      .join('\n');
+    sections.push(`<section aria-label="Destinations">
+        <h2>Explore Ghana by destination</h2>
+        <ul>
+${items}
+        </ul>
+      </section>`);
+  }
+
+  sections.push(`<section aria-label="Why book with us">
+        <h2>Why book with ${escapeHtml(site.name)}</h2>
+        <ul>
+          <li>Book authentic Ghana tours, activities and transport in one place</li>
+          <li>Instant confirmation and free cancellation on eligible experiences</li>
+          <li>Vetted local operators and licensed guides</li>
+          <li>Secure online payment and clear pricing in USD or GHS</li>
+        </ul>
+      </section>`);
+
+  sections.push(`<section aria-label="Frequently asked questions">
+        <h2>Frequently asked questions</h2>
+        <dl>
+${HOME_FAQS.map((f) => `          <dt>${escapeHtml(f.q)}</dt>\n          <dd>${escapeHtml(f.a)}</dd>`).join('\n')}
+        </dl>
+      </section>`);
+
+  const jsonLd = [buildOrganizationSchema(site), buildWebSiteSchema(site), buildFaqSchema(HOME_FAQS)];
+  if (featured.length > 0) {
+    jsonLd.push({
+      '@context': 'https://schema.org',
+      '@type': 'ItemList',
+      name: `Popular tours on ${site.name}`,
+      itemListElement: featured.map((t, i) => ({
+        '@type': 'ListItem',
+        position: i + 1,
+        url: tourUrl(site, t),
+        name: t.title,
+      })),
+    });
+  }
+
   return buildHtml(site, {
     title: 'Ghana Tours & Experiences | Book Authentic African Adventures',
     description: 'Discover authentic Ghana tours and experiences. Book cultural tours, wildlife safaris, food tours, and adventure activities across Accra, Cape Coast, Volta Region, and more. Free cancellation, best prices guaranteed.',
@@ -512,7 +648,8 @@ function handleHomePage(site) {
     image: site.defaultImage.url,
     url: `${site.url}/`,
     canonical: `${site.url}/`,
-    jsonLd: [buildOrganizationSchema(site), buildWebSiteSchema(site)],
+    jsonLd,
+    bodyHtml: sections.join('\n      '),
   });
 }
 
@@ -695,7 +832,7 @@ exports.prerender = async (req, res) => {
 
     // Route to the right handler
     if (path === '/') {
-      html = handleHomePage(site);
+      html = await handleHomePage(site);
     } else if (path.startsWith('/tour/')) {
       // Both forms the storefront can address arrive here:
       // /tour/<id>/<slug> (canonical — what the SPA links and the sitemap lists)
