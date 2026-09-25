@@ -44,6 +44,22 @@ function canAccessType(user, type) {
   return false;
 }
 
+/**
+ * Who may act on the conversation, and who is actually acting.
+ *
+ * `chatRoutes` runs a non-blocking supplier resolver before the chat handlers:
+ * for an accepted team member it sets `req.supplierId` to the OWNER's user id
+ * (their own id for owners, absent for customers). Chat access checks run
+ * against that id so a support agent works the supplier's inbox, while
+ * authorship stays with the member who typed. For owners and customers the two
+ * ids are identical, so behaviour is unchanged.
+ */
+function chatIdentity(req) {
+  const actorId = req.user.id;
+  const accessId = req.supplierId || actorId;
+  return { actorId, accessId, isTeamMember: accessId !== actorId };
+}
+
 exports.getAdminSupport = catchAsync(async (req, res) => {
   const adminId = await chatService.getSharedAdminId();
   if (!adminId) {
@@ -68,7 +84,8 @@ exports.getConversations = catchAsync(async (req, res) => {
   const brandKey = isAdmin
     ? (req.brandKey || chatService.brandKeyFromRoles(req.user.roles))
     : null;
-  const conversations = await chatService.getConversations(req.user.id, brandKey);
+  const { accessId } = chatIdentity(req);
+  const conversations = await chatService.getConversations(accessId, brandKey);
   const filtered = conversations.filter((c) => canAccessType(req.user, c.type));
   res.json({ status: 'success', data: { conversations: filtered } });
 });
@@ -79,7 +96,11 @@ exports.getOrCreateConversation = catchAsync(async (req, res) => {
     throw new AppError('recipientId is required', 400);
   }
 
-  if (recipientId === req.user.id) {
+  const { actorId, accessId } = chatIdentity(req);
+
+  // A member would otherwise be able to open a conversation with their own
+  // supplier account; the conversation belongs to the account, not the person.
+  if (recipientId === accessId) {
     throw new AppError('Cannot create conversation with yourself', 400);
   }
 
@@ -138,7 +159,7 @@ exports.getOrCreateConversation = catchAsync(async (req, res) => {
   if (typeof req.body.bookingId === 'string' && req.body.bookingId) ctx.bookingId = req.body.bookingId;
   if (typeof req.body.bookingNumber === 'string' && req.body.bookingNumber) ctx.bookingNumber = req.body.bookingNumber;
   if (typeof req.body.tourTitle === 'string' && req.body.tourTitle) ctx.tourTitle = req.body.tourTitle;
-  const args = [req.user.id, recipientId, type];
+  const args = [accessId, recipientId, type];
   if (Object.keys(ctx).length > 0) args.push(ctx);
   const conversation = await chatService.findOrCreateConversation(...args);
 
@@ -149,7 +170,14 @@ exports.getMessages = catchAsync(async (req, res) => {
   const { id } = req.params;
   const { cursor, limit = 50 } = req.query;
 
-  const result = await chatService.getMessages(id, req.user.id, cursor, Math.min(parseInt(limit), 100));
+  const { actorId, accessId } = chatIdentity(req);
+  const result = await chatService.getMessages(
+    id,
+    accessId,
+    cursor,
+    Math.min(parseInt(limit), 100),
+    actorId,
+  );
 
   res.json({ status: 'success', data: result });
 });
@@ -170,7 +198,8 @@ exports.sendMessage = catchAsync(async (req, res) => {
     throw new AppError('Invalid attachment URL', 400);
   }
 
-  const message = await chatService.sendMessage(id, req.user.id, content || '', {
+  const { actorId, accessId } = chatIdentity(req);
+  const message = await chatService.sendMessage(id, accessId, actorId, content || '', {
     url: attachmentUrl,
     type: attachmentType,
   });
@@ -181,7 +210,8 @@ exports.sendMessage = catchAsync(async (req, res) => {
 exports.markAsRead = catchAsync(async (req, res) => {
   const { id } = req.params;
 
-  const result = await chatService.markAsRead(id, req.user.id);
+  const { accessId } = chatIdentity(req);
+  const result = await chatService.markAsRead(id, accessId);
 
   res.json({ status: 'success', data: result });
 });
@@ -200,7 +230,8 @@ exports.getUnreadCount = catchAsync(async (req, res) => {
   const brandKey = isAdmin
     ? (req.brandKey || chatService.brandKeyFromRoles(req.user.roles))
     : null;
-  const result = await chatService.getUnreadCount(req.user.id, types, brandKey);
+  const { accessId } = chatIdentity(req);
+  const result = await chatService.getUnreadCount(accessId, types, brandKey);
   res.json({ status: 'success', data: result });
 });
 
@@ -212,7 +243,8 @@ exports.updateMessage = catchAsync(async (req, res) => {
     throw new AppError('Message content is required', 400);
   }
 
-  const message = await chatService.updateMessage(id, messageId, req.user.id, content);
+  const { actorId, accessId } = chatIdentity(req);
+  const message = await chatService.updateMessage(id, messageId, accessId, actorId, content);
 
   const io = req.app.get('io');
   if (io) {
@@ -230,7 +262,8 @@ exports.updateMessage = catchAsync(async (req, res) => {
 exports.deleteMessage = catchAsync(async (req, res) => {
   const { id, messageId } = req.params;
 
-  await chatService.deleteMessage(id, messageId, req.user.id);
+  const { actorId, accessId } = chatIdentity(req);
+  await chatService.deleteMessage(id, messageId, accessId, actorId);
 
   const io = req.app.get('io');
   if (io) {
@@ -249,7 +282,8 @@ exports.deleteMessage = catchAsync(async (req, res) => {
 exports.hideMessageForMe = catchAsync(async (req, res) => {
   const { id, messageId } = req.params;
 
-  const resolvedUserId = await chatService.hideMessageForMe(id, messageId, req.user.id);
+  const { actorId, accessId } = chatIdentity(req);
+  const resolvedUserId = await chatService.hideMessageForMe(id, messageId, accessId, actorId);
 
   const io = req.app.get('io');
   if (io) {
@@ -270,12 +304,18 @@ exports.deleteConversation = catchAsync(async (req, res) => {
     select: { userId: true }
   });
 
-  await chatService.deleteConversation(id, req.user.id);
+  const { actorId, accessId, isTeamMember } = chatIdentity(req);
+  await chatService.deleteConversation(id, accessId);
 
   const io = req.app.get('io');
   if (io) {
     for (const p of participants) {
       io.to(`user:${p.userId}`).emit('chat:conversation-deleted', { conversationId: id });
+    }
+    // A member deletes the supplier's conversation, so the owner needs the
+    // same real-time notice the participant loop above would have given them.
+    if (isTeamMember) {
+      io.to(`user:${accessId}`).emit('chat:conversation-deleted', { conversationId: id });
     }
   }
 

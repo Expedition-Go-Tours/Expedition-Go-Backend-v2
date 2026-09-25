@@ -375,7 +375,7 @@ function setupSocketIO() {
 
       const user = await prisma.user.findUnique({
         where: { id: decoded.userId },
-        select: { id: true, roles: true, active: true, name: true },
+        select: { id: true, roles: true, active: true, name: true, email: true },
       });
 
       if (!user || !user.active) {
@@ -385,6 +385,8 @@ function setupSocketIO() {
       socket.userId = user.id;
       socket.userRoles = user.roles;
       socket.userName = user.name || 'Unknown';
+      // Needed to resolve the supplier account behind a team member.
+      socket.userEmail = user.email;
 
       const ttl = decoded.exp * 1000 - Date.now();
       if (ttl > 0) {
@@ -420,6 +422,21 @@ function setupSocketIO() {
     }
 
     socket.join(`user:${socket.userId}`);
+
+    // An accepted team member is a separate socket (their own account) but the
+    // conversations they work belong to the supplier account, so they also join
+    // the owner's user room — otherwise support agents only ever see messages
+    // that arrive after a manual refresh. Resolved best-effort: a failure here
+    // only costs real-time updates, never the request/response APIs.
+    const { resolveSupplierIdForUser } = require('./middleware/teamRoleMiddleware');
+    resolveSupplierIdForUser({ id: socket.userId, roles: socket.userRoles, email: socket.userEmail })
+      .then((supplierId) => {
+        if (supplierId && supplierId !== socket.userId) {
+          socket.supplierId = supplierId;
+          socket.join(`user:${supplierId}`);
+        }
+      })
+      .catch((err) => console.warn('[socket] supplier identity lookup failed:', err?.message));
 
     socket.on('review:respond', async (payload, ack) => {
       try {
@@ -497,14 +514,26 @@ function setupSocketIO() {
 
     const chatService = require('./src/core/services/chatService');
 
+    /**
+     * The identity every chat socket event runs its participant check against.
+     *
+     * Admins share one chat identity. A team member is a socket of their own but
+     * the conversations they work belong to the supplier account, resolved once
+     * at connect time into `socket.supplierId`. Owners and customers are simply
+     * themselves.
+     */
+    const chatAccessId = async () => (
+      socket.userRoles.includes('admin')
+        ? (await chatService.getSharedAdminId()) || socket.userId
+        : (socket.supplierId || socket.userId)
+    );
+
     socket.on('chat:join', async (payload, ack) => {
       try {
         const { conversationId } = payload || {};
         if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
 
-        const effectiveUserId = socket.userRoles.includes('admin')
-          ? (await chatService.getSharedAdminId()) || socket.userId
-          : socket.userId;
+        const effectiveUserId = await chatAccessId();
 
         const participant = await prisma.conversationParticipant.findUnique({
           where: { conversationId_userId: { conversationId, userId: effectiveUserId } }
@@ -525,9 +554,7 @@ function setupSocketIO() {
         const { conversationId } = payload || {};
         if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
 
-        const effectiveUserId = socket.userRoles.includes('admin')
-          ? (await chatService.getSharedAdminId()) || socket.userId
-          : socket.userId;
+        const effectiveUserId = await chatAccessId();
 
         const participant = await prisma.conversationParticipant.findUnique({
           where: { conversationId_userId: { conversationId, userId: effectiveUserId } }
@@ -551,17 +578,17 @@ function setupSocketIO() {
         if (!content && !attachmentUrl) return ack?.({ status: 'error', message: 'content or attachment required' });
         if (content && content.length > 5000) return ack?.({ status: 'error', message: 'Message too long (max 5000 characters)' });
 
-        const effectiveUserId = socket.userRoles.includes('admin')
-          ? (await chatService.getSharedAdminId()) || socket.userId
-          : socket.userId;
+        const accessId = await chatAccessId();
 
         const participant = await prisma.conversationParticipant.findUnique({
-          where: { conversationId_userId: { conversationId, userId: effectiveUserId } }
+          where: { conversationId_userId: { conversationId, userId: accessId } }
         });
 
         if (!participant) return ack?.({ status: 'error', message: 'Access denied' });
 
-        const message = await chatService.sendMessage(conversationId, effectiveUserId, content || '', {
+        // `accessId` owns the conversation; `socket.userId` is recorded as the
+        // author, so a support reply is attributed to the agent who wrote it.
+        const message = await chatService.sendMessage(conversationId, accessId, socket.userId, content || '', {
           url: attachmentUrl,
           type: attachmentType,
         });
@@ -571,8 +598,10 @@ function setupSocketIO() {
           message,
         });
 
+        // The counterpart is never a team member, so it is never the supplier
+        // account either — one lookup, keyed on the account that spoke.
         const recipient = await prisma.conversationParticipant.findFirst({
-          where: { conversationId, userId: { not: effectiveUserId } },
+          where: { conversationId, userId: { not: accessId } },
           select: { userId: true }
         });
         if (recipient) {
@@ -594,9 +623,7 @@ function setupSocketIO() {
         const { conversationId, isTyping } = payload || {};
         if (!conversationId) return;
 
-        const effectiveUserId = socket.userRoles.includes('admin')
-          ? (await chatService.getSharedAdminId()) || socket.userId
-          : socket.userId;
+        const effectiveUserId = await chatAccessId();
 
         const participant = await prisma.conversationParticipant.findUnique({
           where: { conversationId_userId: { conversationId, userId: effectiveUserId } }
@@ -635,9 +662,7 @@ function setupSocketIO() {
         const { conversationId } = payload || {};
         if (!conversationId) return ack?.({ status: 'error', message: 'conversationId required' });
 
-        const effectiveUserId = socket.userRoles.includes('admin')
-          ? (await chatService.getSharedAdminId()) || socket.userId
-          : socket.userId;
+        const effectiveUserId = await chatAccessId();
 
         const participant = await prisma.conversationParticipant.findUnique({
           where: { conversationId_userId: { conversationId, userId: effectiveUserId } }
@@ -665,10 +690,7 @@ function setupSocketIO() {
         const { conversationId, messageIds } = payload || {};
         if (!conversationId || !messageIds?.length) return;
 
-        let effectiveUserId = socket.userId;
-        if (socket.userRoles.includes('admin')) {
-          effectiveUserId = (await chatService.getSharedAdminId()) || socket.userId;
-        }
+        const effectiveUserId = await chatAccessId();
 
         const participant = await prisma.conversationParticipant.findUnique({
           where: { conversationId_userId: { conversationId, userId: effectiveUserId } }

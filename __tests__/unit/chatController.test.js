@@ -244,7 +244,7 @@ describe('chatController', () => {
 
       await controller.getMessages(req, res, next);
 
-      expect(chatService.getMessages).toHaveBeenCalledWith('c-1', 'u-1', undefined, 50);
+      expect(chatService.getMessages).toHaveBeenCalledWith('c-1', 'u-1', undefined, 50, 'u-1');
       expect(res.json).toHaveBeenCalledWith({ status: 'success', data: expect.any(Object) });
     });
 
@@ -255,7 +255,7 @@ describe('chatController', () => {
 
       await controller.getMessages(req, res, next);
 
-      expect(chatService.getMessages).toHaveBeenCalledWith('c-1', 'u-1', '2026-06-01T00:00:00.000Z', 20);
+      expect(chatService.getMessages).toHaveBeenCalledWith('c-1', 'u-1', '2026-06-01T00:00:00.000Z', 20, 'u-1');
     });
 
     it('caps limit at 100', async () => {
@@ -265,7 +265,7 @@ describe('chatController', () => {
 
       await controller.getMessages(req, res, next);
 
-      expect(chatService.getMessages).toHaveBeenCalledWith('c-1', 'u-1', undefined, 100);
+      expect(chatService.getMessages).toHaveBeenCalledWith('c-1', 'u-1', undefined, 100, 'u-1');
     });
   });
 
@@ -277,7 +277,7 @@ describe('chatController', () => {
 
       await controller.sendMessage(req, res, next);
 
-      expect(chatService.sendMessage).toHaveBeenCalledWith('c-1', 'u-1', 'Hello', { url: undefined, type: undefined });
+      expect(chatService.sendMessage).toHaveBeenCalledWith('c-1', 'u-1', 'u-1', 'Hello', { url: undefined, type: undefined });
       expect(res.status).toHaveBeenCalledWith(201);
       expect(res.json).toHaveBeenCalledWith({ status: 'success', data: { message: { id: 'm-1', content: 'Hello' } } });
     });
@@ -297,7 +297,7 @@ describe('chatController', () => {
 
       await controller.sendMessage(req, res, next);
 
-      expect(chatService.sendMessage).toHaveBeenCalledWith('c-1', 'u-1', '', { url: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/chat-attachments/img.jpg', type: 'image' });
+      expect(chatService.sendMessage).toHaveBeenCalledWith('c-1', 'u-1', 'u-1', '', { url: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/chat-attachments/img.jpg', type: 'image' });
     });
 
     it('handles no io gracefully', async () => {
@@ -331,6 +331,99 @@ describe('chatController', () => {
 
       await controller.markAsRead(req, res, next);
       expect(res.json).toHaveBeenCalled();
+    });
+  });
+
+  // A team member is a separate account from the business they work for, so
+  // every chat call carries BOTH ids: the supplier account (access) and the
+  // member (authorship). Owners/customers simply pass the same id twice.
+  describe('team member identity (req.supplierId from the chat route guard)', () => {
+    beforeEach(() => {
+      req.user = { id: 'member-1', roles: ['supplier'], permissionKeys: ['chat.suppliers'] };
+      req.supplierId = 'owner-1';
+    });
+
+    it('lists the supplier account conversations', async () => {
+      chatService.getConversations.mockResolvedValue([]);
+
+      await controller.getConversations(req, res, next);
+
+      expect(chatService.getConversations).toHaveBeenCalledWith('owner-1', null);
+    });
+
+    it('counts the supplier account unread messages', async () => {
+      chatService.getUnreadCount.mockResolvedValue({ unreadCount: 2 });
+
+      await controller.getUnreadCount(req, res, next);
+
+      expect(chatService.getUnreadCount).toHaveBeenCalledWith('owner-1', null, null);
+    });
+
+    it('reads and hides per the member while accessing the supplier account', async () => {
+      req.params = { id: 'c-1', messageId: 'm-1' };
+      chatService.getMessages.mockResolvedValue({ messages: [], hasMore: false, nextCursor: null });
+      chatService.hideMessageForMe.mockResolvedValue('member-1');
+
+      await controller.getMessages(req, res, next);
+      expect(chatService.getMessages).toHaveBeenCalledWith('c-1', 'owner-1', undefined, 50, 'member-1');
+
+      await controller.hideMessageForMe(req, res, next);
+      expect(chatService.hideMessageForMe).toHaveBeenCalledWith('c-1', 'm-1', 'owner-1', 'member-1');
+      expect(mockIo.to).toHaveBeenCalledWith('user:member-1');
+    });
+
+    it('sends through the supplier account but records the member as author', async () => {
+      req.params = { id: 'c-1' };
+      req.body = { content: 'Hello' };
+      chatService.sendMessage.mockResolvedValue({ id: 'm-2' });
+
+      await controller.sendMessage(req, res, next);
+
+      expect(chatService.sendMessage).toHaveBeenCalledWith('c-1', 'owner-1', 'member-1', 'Hello', {
+        url: undefined,
+        type: undefined,
+      });
+    });
+
+    it('marks the supplier account conversation read', async () => {
+      req.params = { id: 'c-1' };
+      chatService.markAsRead.mockResolvedValue({ lastReadAt: new Date() });
+
+      await controller.markAsRead(req, res, next);
+
+      expect(chatService.markAsRead).toHaveBeenCalledWith('c-1', 'owner-1');
+    });
+
+    it('refuses to open a conversation with their own supplier account', async () => {
+      req.body = { recipientId: 'owner-1' };
+      prisma.user.findUnique.mockResolvedValue({ id: 'owner-1', roles: ['customer'] });
+
+      await controller.getOrCreateConversation(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(chatService.findOrCreateConversation).not.toHaveBeenCalled();
+    });
+
+    it('opens the conversation on the supplier account', async () => {
+      req.body = { recipientId: 'admin-1' };
+      prisma.user.findUnique.mockResolvedValue({ id: 'admin-1', roles: ['admin'] });
+      chatService.findOrCreateConversation.mockResolvedValue({ id: 'c-2' });
+
+      await controller.getOrCreateConversation(req, res, next);
+
+      expect(chatService.findOrCreateConversation).toHaveBeenCalledWith('owner-1', 'admin-1', 'SUPPLIER_ADMIN');
+    });
+
+    it('notifies the owner room too when a member deletes a conversation', async () => {
+      req.params = { id: 'c-1' };
+      prisma.conversationParticipant.findMany.mockResolvedValue([{ userId: 'admin-1' }]);
+      chatService.deleteConversation.mockResolvedValue(undefined);
+
+      await controller.deleteConversation(req, res, next);
+
+      expect(chatService.deleteConversation).toHaveBeenCalledWith('c-1', 'owner-1');
+      const rooms = mockIo.to.mock.calls.map(([room]) => room);
+      expect(rooms).toContain('user:owner-1');
     });
   });
 
@@ -381,7 +474,7 @@ describe('chatController', () => {
 
       await controller.updateMessage(req, res, next);
 
-      expect(chatService.updateMessage).toHaveBeenCalledWith('c-1', 'm-1', 'u-1', 'Updated');
+      expect(chatService.updateMessage).toHaveBeenCalledWith('c-1', 'm-1', 'u-1', 'u-1', 'Updated');
       expect(mockIo.to).toHaveBeenCalledWith('conversation:c-1');
     });
 
@@ -409,7 +502,7 @@ describe('chatController', () => {
 
       await controller.deleteMessage(req, res, next);
 
-      expect(chatService.deleteMessage).toHaveBeenCalledWith('c-1', 'm-1', 'u-1');
+      expect(chatService.deleteMessage).toHaveBeenCalledWith('c-1', 'm-1', 'u-1', 'u-1');
       expect(mockIo.to).toHaveBeenCalledWith('conversation:c-1');
       expect(res.json).toHaveBeenCalledWith({ status: 'success', data: null });
     });
@@ -430,7 +523,7 @@ describe('chatController', () => {
 
       await controller.hideMessageForMe(req, res, next);
 
-      expect(chatService.hideMessageForMe).toHaveBeenCalledWith('c-1', 'm-1', 'u-1');
+      expect(chatService.hideMessageForMe).toHaveBeenCalledWith('c-1', 'm-1', 'u-1', 'u-1');
       expect(mockIo.to).toHaveBeenCalledWith('user:u-1');
       expect(mockIo.to).not.toHaveBeenCalledWith('conversation:c-1');
       expect(res.json).toHaveBeenCalledWith({ status: 'success', data: null });

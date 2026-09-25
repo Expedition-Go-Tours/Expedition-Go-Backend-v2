@@ -206,7 +206,7 @@ describe('chatService', () => {
       enqueueNotification.mockResolvedValue();
       notifyAdmin.mockResolvedValue();
 
-      const result = await chatService.sendMessage('c-1', 'u-1', 'Hello');
+      const result = await chatService.sendMessage('c-1', 'u-1', 'u-1', 'Hello');
 
       expect(prisma.message.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ content: 'Hello', conversationId: 'c-1' }) })
@@ -222,7 +222,7 @@ describe('chatService', () => {
       prisma.conversationParticipant.findUnique.mockResolvedValue(null);
       prisma.conversationParticipant.findMany.mockResolvedValue([]);
 
-      await expect(chatService.sendMessage('c-1', 'u-1', 'Hello')).rejects.toThrow('Conversation not found');
+      await expect(chatService.sendMessage('c-1', 'u-1', 'u-1', 'Hello')).rejects.toThrow('Conversation not found');
     });
 
     it('truncates long message content for notification', async () => {
@@ -233,7 +233,7 @@ describe('chatService', () => {
       prisma.user.findUnique.mockResolvedValue({ roles: ['supplier'], name: 'Supplier' });
       const longContent = 'x'.repeat(200);
 
-      await chatService.sendMessage('c-1', 'u-1', longContent);
+      await chatService.sendMessage('c-1', 'u-1', 'u-1', longContent);
 
       expect(enqueueNotification).toHaveBeenCalledWith(
         expect.objectContaining({ message: 'x'.repeat(100) + '...' })
@@ -247,7 +247,7 @@ describe('chatService', () => {
       });
       prisma.user.findUnique.mockResolvedValue({ roles: ['supplier'], name: 'Supplier' });
 
-      await chatService.sendMessage('c-1', 'u-1', 'Check', { url: 'https://img.jpg', type: 'image' });
+      await chatService.sendMessage('c-1', 'u-1', 'u-1', 'Check', { url: 'https://img.jpg', type: 'image' });
 
       expect(prisma.message.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -268,7 +268,7 @@ describe('chatService', () => {
       prisma.user.findUnique.mockResolvedValue({ roles: ['supplier'], name: 'Supplier' });
       enqueueNotification.mockResolvedValue();
 
-      await chatService.sendMessage('c-1', 'u-1', 'Hello');
+      await chatService.sendMessage('c-1', 'u-1', 'u-1', 'Hello');
 
       const calls = enqueueNotification.mock.calls;
       const customerCalls = calls.filter(c => c[0].userId === 'customer-1');
@@ -313,7 +313,7 @@ describe('chatService', () => {
 
   describe('updateMessage', () => {
     it('updates message content', async () => {
-      const result = await chatService.updateMessage('c-1', 'm-1', 'u-1', 'Updated');
+      const result = await chatService.updateMessage('c-1', 'm-1', 'u-1', 'u-1', 'Updated');
       expect(prisma.message.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'm-1' }, data: expect.objectContaining({ content: 'Updated' }) })
       );
@@ -322,35 +322,35 @@ describe('chatService', () => {
 
     it('throws when message not found', async () => {
       prisma.message.findFirst.mockResolvedValue(null);
-      await expect(chatService.updateMessage('c-1', 'nonexistent', 'u-1', 'test')).rejects.toThrow('Message not found');
+      await expect(chatService.updateMessage('c-1', 'nonexistent', 'u-1', 'u-1', 'test')).rejects.toThrow('Message not found');
     });
 
-    it('throws when sender does not match', async () => {
+    it('throws when a team member tries to edit another person\'s message', async () => {
       prisma.message.findFirst.mockResolvedValue({ ...mockMessage, senderId: 'other-user' });
-      await expect(chatService.updateMessage('c-1', 'm-1', 'u-1', 'test')).rejects.toThrow('You can only edit your own messages');
+      await expect(chatService.updateMessage('c-1', 'm-1', 'u-1', 'member-1', 'test')).rejects.toThrow('You can only edit your own messages');
     });
   });
 
   describe('deleteMessage', () => {
     it('deletes own message', async () => {
-      await chatService.deleteMessage('c-1', 'm-1', 'u-1');
+      await chatService.deleteMessage('c-1', 'm-1', 'u-1', 'u-1');
       expect(prisma.message.delete).toHaveBeenCalledWith({ where: { id: 'm-1' } });
     });
 
     it('throws when message not found', async () => {
       prisma.message.findFirst.mockResolvedValue(null);
-      await expect(chatService.deleteMessage('c-1', 'nonexistent', 'u-1')).rejects.toThrow('Message not found');
+      await expect(chatService.deleteMessage('c-1', 'nonexistent', 'u-1', 'u-1')).rejects.toThrow('Message not found');
     });
 
-    it('throws when sender does not match', async () => {
+    it('throws when a team member tries to delete another person\'s message', async () => {
       prisma.message.findFirst.mockResolvedValue({ ...mockMessage, senderId: 'other-user' });
-      await expect(chatService.deleteMessage('c-1', 'm-1', 'u-1')).rejects.toThrow('You can only delete your own messages');
+      await expect(chatService.deleteMessage('c-1', 'm-1', 'u-1', 'member-1')).rejects.toThrow('You can only delete your own messages');
     });
   });
 
   describe('hideMessageForMe', () => {
     it('hides own message via idempotent upsert and returns resolved userId', async () => {
-      const result = await chatService.hideMessageForMe('c-1', 'm-1', 'u-1');
+      const result = await chatService.hideMessageForMe('c-1', 'm-1', 'u-1', 'u-1');
       expect(result).toBe('u-1');
       expect(prisma.chatMessageHide.upsert).toHaveBeenCalledWith({
         where: { messageId_userId: { messageId: 'm-1', userId: 'u-1' } },
@@ -361,18 +361,113 @@ describe('chatService', () => {
 
     it('throws when message not found', async () => {
       prisma.message.findFirst.mockResolvedValue(null);
-      await expect(chatService.hideMessageForMe('c-1', 'nonexistent', 'u-1')).rejects.toThrow('Message not found');
+      await expect(chatService.hideMessageForMe('c-1', 'nonexistent', 'u-1', 'u-1')).rejects.toThrow('Message not found');
     });
 
     it('throws when a recipient tries to hide someone else message', async () => {
       prisma.message.findFirst.mockResolvedValue({ ...mockMessage, senderId: 'other-user' });
-      await expect(chatService.hideMessageForMe('c-1', 'm-1', 'u-1')).rejects.toThrow('You can only delete your own messages');
+      await expect(chatService.hideMessageForMe('c-1', 'm-1', 'u-1', 'u-1')).rejects.toThrow('You can only delete your own messages');
       expect(prisma.chatMessageHide.upsert).not.toHaveBeenCalled();
     });
 
     it('does not delete the message row or attachment', async () => {
-      await chatService.hideMessageForMe('c-1', 'm-1', 'u-1');
+      await chatService.hideMessageForMe('c-1', 'm-1', 'u-1', 'u-1');
       expect(prisma.message.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('team members (acting on the supplier account)', () => {
+    const memberParticipant = {
+      conversation: { id: 'c-1', type: 'SUPPLIER_ADMIN', participants: [{ userId: 'admin-1' }] },
+    };
+
+    it('checks participation against the owner while attributing the reply to the member', async () => {
+      prisma.conversationParticipant.findUnique.mockResolvedValue(memberParticipant);
+      prisma.user.findUnique.mockResolvedValue({ roles: ['supplier'], name: 'Support Agent' });
+      enqueueNotification.mockResolvedValue();
+      notifyAdmin.mockResolvedValue();
+
+      await chatService.sendMessage('c-1', 'owner-1', 'member-1', 'Hello from support');
+
+      // Access is the supplier account...
+      expect(prisma.conversationParticipant.findUnique).toHaveBeenCalledWith({
+        where: { conversationId_userId: { conversationId: 'c-1', userId: 'owner-1' } },
+        include: expect.any(Object),
+      });
+      // ...authorship is the member.
+      expect(prisma.message.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ senderId: 'member-1' }) })
+      );
+      // The counterpart (admin) is notified once — the member is not a participant.
+      const notified = enqueueNotification.mock.calls.map(([arg]) => arg.userId);
+      expect(notified).toEqual(['admin-1']);
+      // The owner is the one whose read state moves.
+      expect(prisma.conversationParticipant.update).toHaveBeenCalledWith({
+        where: { conversationId_userId: { conversationId: 'c-1', userId: 'owner-1' } },
+        data: { lastReadAt: expect.any(Date) },
+      });
+    });
+
+    it('refuses a member who is not on the supplier account conversation', async () => {
+      prisma.conversationParticipant.findUnique.mockResolvedValue(null);
+      prisma.conversationParticipant.findMany.mockResolvedValue([{ userId: 'owner-1' }]);
+
+      await expect(chatService.sendMessage('c-1', 'owner-1', 'member-1', 'Hello')).rejects.toThrow(
+        'Conversation not found'
+      );
+      expect(prisma.message.create).not.toHaveBeenCalled();
+    });
+
+    it('lets a member edit and delete only their own messages', async () => {
+      prisma.message.findFirst.mockResolvedValue({ ...mockMessage, senderId: 'member-1' });
+
+      await chatService.updateMessage('c-1', 'm-1', 'owner-1', 'member-1', 'Fixing my typo');
+      expect(prisma.message.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ content: 'Fixing my typo' }) })
+      );
+
+      await chatService.deleteMessage('c-1', 'm-1', 'owner-1', 'member-1');
+      expect(prisma.message.delete).toHaveBeenCalledWith({ where: { id: 'm-1' } });
+    });
+
+    it('refuses a member editing another member\'s message, but lets the owner moderate it', async () => {
+      prisma.message.findFirst.mockResolvedValue({ ...mockMessage, senderId: 'other-member' });
+
+      await expect(
+        chatService.updateMessage('c-1', 'm-1', 'owner-1', 'member-1', 'nope')
+      ).rejects.toThrow('You can only edit your own messages');
+
+      // The owner acts on their own account (access === actor) and may moderate.
+      await chatService.updateMessage('c-1', 'm-1', 'owner-1', 'owner-1', 'removed by owner');
+      expect(prisma.message.update).toHaveBeenCalled();
+    });
+
+    it('hides messages for the member viewing, not for the owner account', async () => {
+      prisma.message.findFirst.mockResolvedValue({ ...mockMessage, senderId: 'member-1' });
+
+      const result = await chatService.hideMessageForMe('c-1', 'm-1', 'owner-1', 'member-1');
+
+      expect(result).toBe('member-1');
+      expect(prisma.chatMessageHide.upsert).toHaveBeenCalledWith({
+        where: { messageId_userId: { messageId: 'm-1', userId: 'member-1' } },
+        create: { messageId: 'm-1', userId: 'member-1' },
+        update: {},
+      });
+    });
+
+    it('lists the supplier conversations for a member while hiding per viewer', async () => {
+      prisma.message.findMany.mockResolvedValue([{ id: 'm-1', createdAt: new Date('2026-06-01') }]);
+
+      await chatService.getMessages('c-1', 'owner-1', null, 50, 'member-1');
+
+      expect(prisma.conversationParticipant.findUnique).toHaveBeenCalledWith({
+        where: { conversationId_userId: { conversationId: 'c-1', userId: 'owner-1' } }
+      });
+      expect(prisma.message.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ hiddenFor: { none: { userId: 'member-1' } } }),
+        })
+      );
     });
   });
 

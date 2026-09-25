@@ -27,6 +27,11 @@ function memberRolesOf(teamMember) {
 const TEAM_MEMBER_SELECT = { roles: true, role: true, supplierId: true };
 
 function lookupTeamMember(email) {
+  // Membership is keyed by email. Prisma drops `undefined` from a where-clause,
+  // so an email-less lookup would match the FIRST accepted member in the table —
+  // never fall through to the query without an address to match on.
+  if (!email || typeof email !== 'string') return Promise.resolve(null);
+
   return cache.getOrSet(`team:member:email:${email}`, async () => {
     return prisma.teamMember.findFirst({
       where: { email, status: 'ACCEPTED' },
@@ -128,6 +133,42 @@ exports.requireTeamPermission = (...permissionKeys) => {
   });
 };
 
+/**
+ * The supplier account id behind a user: their own id when they own a supplier
+ * profile (or are an admin operating one), the owner's id when they are an
+ * accepted team member, and `null` for everyone else (customers, unlinked
+ * users). Best-effort and cached, so it is safe to call from non-blocking
+ * middleware — `resolveSupplier` turns a `null` into the 403 the guarded
+ * routes expect.
+ */
+async function resolveSupplierIdForUser(user) {
+  if (!user) return null;
+
+  const roles = Array.isArray(user.roles) ? user.roles : [];
+
+  if (roles.includes('admin')) {
+    const adminProfile = await prisma.supplierProfile.findFirst({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+    return adminProfile ? user.id : null;
+  }
+
+  const profile = await cache.getOrSet(`supplier:profile:userId:${user.id}`, async () => {
+    return prisma.supplierProfile.findFirst({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+  }, SUPPLIER_CACHE_TTL);
+
+  if (profile) return user.id;
+
+  const member = await lookupTeamMember(user.email);
+  return member ? member.supplierId : null;
+}
+
+exports.resolveSupplierIdForUser = resolveSupplierIdForUser;
+
 exports.isSupplierOwner = catchAsync(async (req, res, next) => {
   if (!req.user) {
     return next(new AppError('Not authenticated', 401));
@@ -158,36 +199,15 @@ exports.resolveSupplier = catchAsync(async (req, res, next) => {
     return next(new AppError('Not authenticated', 401));
   }
 
-  if (req.user.roles.includes('admin')) {
-    const profile = await prisma.supplierProfile.findFirst({
-      where: { userId: req.user.id },
-      select: { id: true },
-    });
-    if (!profile) {
+  const supplierId = await resolveSupplierIdForUser(req.user);
+
+  if (!supplierId) {
+    if (req.user.roles.includes('admin')) {
       return next(new AppError('No supplier profile linked to this admin account', 403));
     }
-    req.supplierId = req.user.id;
-    return next();
-  }
-
-  const profile = await cache.getOrSet(`supplier:profile:userId:${req.user.id}`, async () => {
-    return prisma.supplierProfile.findFirst({
-      where: { userId: req.user.id },
-      select: { id: true },
-    });
-  }, SUPPLIER_CACHE_TTL);
-
-  if (profile) {
-    req.supplierId = req.user.id;
-    return next();
-  }
-
-  const member = await lookupTeamMember(req.user.email);
-
-  if (!member) {
     return next(new AppError('Supplier access required', 403));
   }
 
-  req.supplierId = member.supplierId;
+  req.supplierId = supplierId;
   next();
 });

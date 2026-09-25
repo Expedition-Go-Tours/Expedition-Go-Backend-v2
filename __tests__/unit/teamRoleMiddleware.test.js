@@ -30,6 +30,7 @@ const {
   resolveSupplier,
   requireTeamRole,
   requireTeamPermission,
+  resolveSupplierIdForUser,
 } = require('../../middleware/teamRoleMiddleware');
 
 const MEMBER = {
@@ -64,6 +65,62 @@ beforeEach(() => {
   jest.clearAllMocks();
   // The member has no supplier profile of their own.
   prisma.supplierProfile.findFirst.mockResolvedValue(null);
+});
+
+describe('resolveSupplierIdForUser', () => {
+  beforeEach(() => {
+    prisma.supplierProfile.findFirst.mockResolvedValue(null);
+    prisma.teamMember.findFirst.mockResolvedValue(null);
+  });
+
+  it('returns the owner id for a supplier that owns its profile', async () => {
+    prisma.supplierProfile.findFirst.mockResolvedValue({ id: 'profile-1' });
+
+    await expect(resolveSupplierIdForUser({ id: 'owner-1', roles: ['supplier'], email: 'owner@test.com' }))
+      .resolves.toBe('owner-1');
+  });
+
+  it("returns the OWNER's id for an accepted team member", async () => {
+    mockMembership({ roles: ['support'], role: 'support', supplierId: 'owner-1' });
+
+    await expect(resolveSupplierIdForUser({ ...MEMBER })).resolves.toBe('owner-1');
+  });
+
+  it('returns null for a customer with no membership (chat must not 403 them)', async () => {
+    await expect(resolveSupplierIdForUser({ id: 'cust-1', roles: ['customer'], email: 'c@test.com' }))
+      .resolves.toBeNull();
+  });
+
+  it('returns null for an admin who is not linked to a supplier profile', async () => {
+    await expect(resolveSupplierIdForUser({ id: 'admin-1', roles: ['admin'], email: 'a@test.com' }))
+      .resolves.toBeNull();
+  });
+
+  it('returns the admin id when the admin does operate a supplier profile', async () => {
+    prisma.supplierProfile.findFirst.mockResolvedValue({ id: 'profile-1' });
+
+    await expect(resolveSupplierIdForUser({ id: 'admin-1', roles: ['admin'], email: 'a@test.com' }))
+      .resolves.toBe('admin-1');
+  });
+
+  it('never queries membership without an email (Prisma would match the first member)', async () => {
+    prisma.teamMember.findFirst.mockResolvedValue({ roles: ['admin'], role: 'admin', supplierId: 'someone-else' });
+
+    // No user, or a user object with no email: resolving must not invent a match.
+    await expect(resolveSupplierIdForUser(null)).resolves.toBeNull();
+    await expect(resolveSupplierIdForUser({ id: 'x', roles: ['supplier'] })).resolves.toBeNull();
+
+    expect(prisma.teamMember.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('agrees with resolveSupplier, so the two paths cannot drift', async () => {
+    mockMembership({ roles: ['editor'], role: 'editor', supplierId: 'owner-1' });
+
+    const req = request();
+    await run(resolveSupplier, req);
+
+    await expect(resolveSupplierIdForUser({ ...MEMBER })).resolves.toBe(req.supplierId);
+  });
 });
 
 describe('membership lookups', () => {

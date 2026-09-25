@@ -3,9 +3,35 @@ const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
 const { uploadChatImage } = require('../middleware/uploadMiddleware');
+const { resolveSupplierIdForUser } = require('../middleware/teamRoleMiddleware');
+const logger = require('../src/core/services/logger');
 const chatController = require('../src/core/domain/chatController');
 
 router.use(protect);
+
+/**
+ * Attach the supplier account behind the caller, without ever rejecting.
+ *
+ * `chatRoutes` serves customers AND suppliers, so it cannot use the blocking
+ * `resolveSupplier` guard. Instead it records `req.supplierId` for suppliers and
+ * their accepted team members; the chat handlers then check participation
+ * against that account while attributing messages to the signed-in person. A
+ * customer (or any unlinked user) simply has no `req.supplierId` and keeps using
+ * their own identity, exactly as before.
+ */
+async function attachSupplierIdentity(req, res, next) {
+  try {
+    const supplierId = await resolveSupplierIdForUser(req.user);
+    if (supplierId) req.supplierId = supplierId;
+  } catch (err) {
+    // Identity is an enhancement here, never a gate: fall through and let the
+    // handler's own participant check answer with a 404/403.
+    logger.warn('[chat] supplier identity lookup failed:', err?.message);
+  }
+  next();
+}
+
+router.use(attachSupplierIdentity);
 
 /**
  * @swagger

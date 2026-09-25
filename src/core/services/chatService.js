@@ -127,6 +127,37 @@ async function resolveConversationBrand({ type, participantIds = [], routeBrand 
   return null;
 }
 
+/**
+ * Team-aware access helpers.
+ *
+ * A supplier's accepted team members (support/editor/…) act ON the supplier
+ * account, so every access check and participant row is resolved against the
+ * OWNER's id (`accessId`), while the row that records who did the talking keeps
+ * the member who actually acted (`actorId`). Owners and customers have the two
+ * ids equal, so nothing changes for them.
+ */
+async function assertConversationParticipant(conversationId, accessId) {
+  const accessUserId = await resolveChatUserId(accessId);
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId: accessUserId } },
+  });
+
+  if (!participant) throw Object.assign(new Error('Conversation not found'), { statusCode: 404 });
+
+  return accessUserId;
+}
+
+/**
+ * Authors may always manage their own messages. The supplier account OWNER may
+ * also moderate anything inside their own conversations, so the business can
+ * remove a team member's message. Everyone else is refused.
+ */
+function assertMessageAuthor(message, actorUserId, { allowOwnerModeration, verb }) {
+  if (message.senderId === actorUserId) return;
+  if (allowOwnerModeration) return;
+  throw Object.assign(new Error(`You can only ${verb} your own messages`), { statusCode: 403 });
+}
+
 async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_ADMIN', context = {}) {
   const originalSenderId = senderId;
   const originalRecipientId = recipientId;
@@ -280,11 +311,14 @@ async function getConversations(userId, brandKey = null) {
   );
 }
 
-async function getMessages(conversationId, userId, cursor, limit = 50) {
-    userId = await resolveChatUserId(userId);
+async function getMessages(conversationId, accessId, cursor, limit = 50, viewerId = null) {
+    const accessUserId = await resolveChatUserId(accessId);
+    // "Delete for me" is per-person: the viewer (the member reading) decides
+    // what is hidden, not the supplier account they browse through.
+    const hideUserId = await resolveChatUserId(viewerId || accessId);
   
     const participant = await prisma.conversationParticipant.findUnique({
-      where: { conversationId_userId: { conversationId, userId } }
+      where: { conversationId_userId: { conversationId, userId: accessUserId } }
     });
   
     if (!participant) throw Object.assign(new Error('Conversation not found'), { statusCode: 404 });
@@ -299,7 +333,7 @@ async function getMessages(conversationId, userId, cursor, limit = 50) {
         ...where,
         // "Delete for me": hide messages this user has hidden from their own
         // view only (the row is kept for the other participant).
-        hiddenFor: { none: { userId } },
+        hiddenFor: { none: { userId: hideUserId } },
       },
       orderBy: { createdAt: 'desc' },
       take: limit + 1,
@@ -318,19 +352,21 @@ async function getMessages(conversationId, userId, cursor, limit = 50) {
     };
   }
 
-async function sendMessage(conversationId, senderId, content, attachment = null) {
-  const originalSenderId = senderId;
-  senderId = await resolveChatUserId(senderId);
+async function sendMessage(conversationId, accessId, actorId, content, attachment = null) {
+  // `accessId` owns the conversation (the supplier account a team member acts
+  // through); `actorId` is the person actually typing and is stored as author.
+  const accessUserId = await resolveChatUserId(accessId);
+  const senderId = await resolveChatUserId(actorId || accessId);
 
   const participant = await prisma.conversationParticipant.findUnique({
-    where: { conversationId_userId: { conversationId, userId: senderId } },
+    where: { conversationId_userId: { conversationId, userId: accessUserId } },
     include: {
       conversation: {
         select: {
           id: true,
           type: true,
           participants: {
-            where: { userId: { not: senderId } },
+            where: { userId: { not: accessUserId } },
             select: { userId: true }
           }
         }
@@ -343,7 +379,7 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
       where: { conversationId },
       select: { userId: true }
     });
-    console.error('[ChatService] Participant not found:', { conversationId, userId: senderId, resolvedSenderId: senderId, originalSenderId, existingParticipants: existingParticipants.map(p => p.userId) });
+    console.error('[ChatService] Participant not found:', { conversationId, accessUserId, senderId, existingParticipants: existingParticipants.map(p => p.userId) });
     throw Object.assign(new Error('Conversation not found'), { statusCode: 404 });
   }
 
@@ -365,14 +401,15 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
     data: { updatedAt: new Date() }
   });
 
+  // Read state lives on the participant row, so it is the account's.
   await prisma.conversationParticipant.update({
-    where: { conversationId_userId: { conversationId, userId: senderId } },
+    where: { conversationId_userId: { conversationId, userId: accessUserId } },
     data: { lastReadAt: new Date() }
   });
 
   const recipientIds = participant.conversation.participants
     .map(p => p.userId)
-    .filter(id => id !== senderId);
+    .filter(id => id !== accessUserId);
   for (const recipientId of recipientIds) {
     enqueueNotification({
       userId: recipientId,
@@ -396,7 +433,7 @@ async function sendMessage(conversationId, senderId, content, attachment = null)
   }).catch((err) => console.error('[ChatService] chat email notification failed:', err));
 
   const sender = await prisma.user.findUnique({
-    where: { id: originalSenderId },
+    where: { id: senderId },
     select: { roles: true, name: true }
   });
 
@@ -493,15 +530,19 @@ async function markAsRead(conversationId, userId) {
   return { lastReadAt: new Date() };
 }
 
-async function updateMessage(conversationId, messageId, userId, content) {
-  const resolvedUserId = await resolveChatUserId(userId);
+async function updateMessage(conversationId, messageId, accessId, actorId, content) {
+  const accessUserId = await assertConversationParticipant(conversationId, accessId);
+  const actorUserId = await resolveChatUserId(actorId || accessId);
 
   const message = await prisma.message.findFirst({
     where: { id: messageId, conversationId },
   });
 
   if (!message) throw Object.assign(new Error('Message not found'), { statusCode: 404 });
-  if (message.senderId !== resolvedUserId) throw Object.assign(new Error('You can only edit your own messages'), { statusCode: 403 });
+  assertMessageAuthor(message, actorUserId, {
+    allowOwnerModeration: accessUserId === actorUserId,
+    verb: 'edit',
+  });
 
   const updated = await prisma.message.update({
     where: { id: messageId },
@@ -514,15 +555,19 @@ async function updateMessage(conversationId, messageId, userId, content) {
   return updated;
 }
 
-async function deleteMessage(conversationId, messageId, userId) {
-  const resolvedUserId = await resolveChatUserId(userId);
+async function deleteMessage(conversationId, messageId, accessId, actorId) {
+  const accessUserId = await assertConversationParticipant(conversationId, accessId);
+  const actorUserId = await resolveChatUserId(actorId || accessId);
 
   const message = await prisma.message.findFirst({
     where: { id: messageId, conversationId },
   });
 
   if (!message) throw Object.assign(new Error('Message not found'), { statusCode: 404 });
-  if (message.senderId !== resolvedUserId) throw Object.assign(new Error('You can only delete your own messages'), { statusCode: 403 });
+  assertMessageAuthor(message, actorUserId, {
+    allowOwnerModeration: accessUserId === actorUserId,
+    verb: 'delete',
+  });
 
   if (message.attachmentUrl) {
     deleteCloudinaryImage(message.attachmentUrl).catch((err) => logger.warn('[chat] deleteCloudinaryImage failed:', err?.message));
@@ -536,9 +581,13 @@ async function deleteMessage(conversationId, messageId, userId) {
  * The row and any attachment are kept — the other participant still sees the
  * message. Only the sender may hide their own message (recipients cannot hide
  * anyone's messages). Re-hiding is idempotent via the composite PK.
+ *
+ * The conversation itself is reached through the supplier account, but the
+ * hidden-for row belongs to the member who is looking at it.
  */
-async function hideMessageForMe(conversationId, messageId, userId) {
-  const resolvedUserId = await resolveChatUserId(userId);
+async function hideMessageForMe(conversationId, messageId, accessId, actorId) {
+  await assertConversationParticipant(conversationId, accessId);
+  const resolvedUserId = await resolveChatUserId(actorId || accessId);
 
   const message = await prisma.message.findFirst({
     where: { id: messageId, conversationId },
