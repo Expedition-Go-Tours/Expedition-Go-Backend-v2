@@ -2830,7 +2830,7 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
       properties: {
         id: { type: 'string' },
         supplierId: { type: 'string' },
-        type: { type: 'string', enum: ['BANK_TRANSFER', 'PAYPAL'] },
+        type: { type: 'string', enum: ['BANK_TRANSFER', 'MOBILE_MONEY', 'PAYPAL'] },
         isDefault: { type: 'boolean' },
         currency: { type: 'string', example: 'USD' },
         bankName: { type: 'string' },
@@ -2869,7 +2869,7 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
           nullable: true,
           properties: {
             id: { type: 'string' },
-            type: { type: 'string', enum: ['BANK_TRANSFER', 'PAYPAL'] },
+            type: { type: 'string', enum: ['BANK_TRANSFER', 'MOBILE_MONEY', 'PAYPAL'] },
             verified: { type: 'boolean' },
             bankName: { type: 'string' },
             accountName: { type: 'string' },
@@ -2894,13 +2894,13 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
       description: 'Add/update a payout method',
       required: ['type'],
       properties: {
-        type: { type: 'string', enum: ['BANK_TRANSFER', 'PAYPAL'], description: 'Payout method type' },
+        type: { type: 'string', enum: ['BANK_TRANSFER', 'MOBILE_MONEY', 'PAYPAL'], description: 'Payout method type' },
         isDefault: { type: 'boolean', description: 'Set as default method' },
         currency: { type: 'string', example: 'USD' },
         bankName: { type: 'string', description: 'Bank name (required for BANK_TRANSFER)' },
         bankAddress: { type: 'string' },
         bankCountry: { type: 'string', description: 'ISO 3166-1 alpha-2 country code (e.g. GH, NG, US). Required when IBAN or SWIFT is provided.' },
-        accountName: { type: 'string', description: 'Account holder name (required for BANK_TRANSFER)' },
+        accountName: { type: 'string', description: 'Account holder name (required for BANK_TRANSFER; the wallet holder for MOBILE_MONEY)' },
         accountNumber: { type: 'string', description: 'Account number: 6–32 digits (spaces/dashes allowed, required unless IBAN provided)' },
         sortCode: { type: 'string', description: 'Sort code (6 digits after removing dashes/spaces)' },
         branchCode: { type: 'string', description: 'Branch/bank code (Nigeria, etc.)' },
@@ -2908,6 +2908,8 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
         routingNumber: { type: 'string', description: 'ABA routing number: 8–11 digits' },
         swiftCode: { type: 'string', description: 'SWIFT/BIC code: 8 or 11 chars (e.g. DEUTDEFF)' },
         iban: { type: 'string', description: 'IBAN, validated with mod-97 (e.g. GB29NWBK60161331926819)' },
+        mobileProvider: { type: 'string', description: 'Mobile money provider, e.g. "MTN Mobile Money" (required for MOBILE_MONEY)' },
+        mobileNumber: { type: 'string', description: 'Mobile money wallet number: 9-15 digits (required for MOBILE_MONEY)' },
         paypalEmail: { type: 'string', format: 'email', description: 'PayPal email (required for PAYPAL)' }
       }
     },
@@ -2916,7 +2918,7 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
       description: 'Release a payout — confirms payment was sent',
       properties: {
         payoutMethodId: { type: 'string', description: 'Specific payout method to use (defaults to default verified method)' },
-        reference: { type: 'string', description: 'Transaction ID or receipt from bank/PayPal' },
+        reference: { type: 'string', description: 'Transaction ID or receipt from the bank, PayPal or mobile money provider' },
         notes: { type: 'string', description: 'Admin notes' }
       }
     },

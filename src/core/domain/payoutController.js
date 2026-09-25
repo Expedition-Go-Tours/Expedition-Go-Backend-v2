@@ -39,6 +39,8 @@ exports.getMyPayouts = catchAsync(async (req, res, next) => {
             sortCode: true,
             branchCode: true,
             swiftCode: true,
+            mobileProvider: true,
+            mobileNumber: true,
             paypalEmail: true
           }
         }
@@ -155,6 +157,8 @@ exports.getAllPayouts = catchAsync(async (req, res, next) => {
             sortCode: true,
             branchCode: true,
             swiftCode: true,
+            mobileProvider: true,
+            mobileNumber: true,
             paypalEmail: true
           }
         }
@@ -746,7 +750,7 @@ exports.exportPayouts = catchAsync(async (req, res, next) => {
         }
       },
       payoutMethod: {
-        select: { type: true, bankName: true, paypalEmail: true }
+        select: { type: true, bankName: true, paypalEmail: true, mobileProvider: true, mobileNumber: true }
       }
     },
     orderBy: { createdAt: 'desc' }
@@ -764,6 +768,9 @@ exports.exportPayouts = catchAsync(async (req, res, next) => {
     if (p.payoutMethod) {
       if (p.payoutMethod.type === 'BANK_TRANSFER') methodDetail = p.payoutMethod.bankName || '';
       else if (p.payoutMethod.type === 'PAYPAL') methodDetail = p.payoutMethod.paypalEmail || '';
+      else if (p.payoutMethod.type === 'MOBILE_MONEY') {
+        methodDetail = [p.payoutMethod.mobileProvider, p.payoutMethod.mobileNumber].filter(Boolean).join(' ');
+      }
     }
 
     return [

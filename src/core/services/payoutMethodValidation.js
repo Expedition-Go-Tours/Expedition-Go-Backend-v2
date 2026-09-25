@@ -78,6 +78,17 @@ function sortCodeIsValid(value) {
   return DIGITS_REGEX.test(digits) && digits.length === 6;
 }
 
+/**
+ * Mobile money wallet number: 9–15 digits after stripping separators.
+ * Ghana MoMo numbers are 10 digits (e.g. 0244000000); the wider range keeps
+ * other African markets working without pretending to validate the operator.
+ */
+function mobileNumberIsValid(value) {
+  if (typeof value !== 'string') return false;
+  const digits = value.replace(/[\s-()]/g, '').replace(/^\+/, '');
+  return DIGITS_REGEX.test(digits) && digits.length >= 9 && digits.length <= 15;
+}
+
 // ─────────────────────────────────────────────────────────────
 // Reusable field helpers
 // ─────────────────────────────────────────────────────────────
@@ -123,8 +134,8 @@ const requiredForBank = ['accountName', 'accountNumber'];
 const payoutMethodInputSchema = z.object({
   body: z
     .object({
-      type: z.enum(['BANK_TRANSFER', 'PAYPAL'], {
-        errorMap: () => ({ message: 'type must be BANK_TRANSFER or PAYPAL' }),
+      type: z.enum(['BANK_TRANSFER', 'MOBILE_MONEY', 'PAYPAL'], {
+        errorMap: () => ({ message: 'type must be BANK_TRANSFER, MOBILE_MONEY or PAYPAL' }),
       }),
       isDefault: z.boolean().optional(),
       currency: z.preprocess(
@@ -174,6 +185,13 @@ const payoutMethodInputSchema = z.object({
       branchCode: optString(20, 'Branch code'),
       branchName: optString(100, 'Branch name'),
 
+      // Mobile money
+      mobileProvider: optString(60, 'Mobile money provider'),
+      mobileNumber: optString(20, 'Mobile money number').refine(
+        (v) => v === undefined || mobileNumberIsValid(v),
+        { message: 'mobile money number must be 9–15 digits (spaces and dashes allowed)' }
+      ),
+
       // PayPal
       paypalEmail: optString(254, 'PayPal email').refine(
         (v) => v === undefined || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),
@@ -209,6 +227,29 @@ const payoutMethodInputSchema = z.object({
             code: z.ZodIssueCode.custom,
             path: ['accountName'],
             message: 'accountName is required for BANK_TRANSFER',
+          });
+        }
+      }
+      if (val.type === 'MOBILE_MONEY') {
+        if (!val.mobileProvider) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['mobileProvider'],
+            message: 'mobileProvider is required for MOBILE_MONEY (e.g. "MTN Mobile Money")',
+          });
+        }
+        if (!val.mobileNumber) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['mobileNumber'],
+            message: 'mobileNumber is required for MOBILE_MONEY',
+          });
+        }
+        if (!val.accountName) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['accountName'],
+            message: 'accountName (the wallet holder) is required for MOBILE_MONEY',
           });
         }
       }
@@ -276,6 +317,11 @@ const payoutMethodPatchSchema = z.object({
       ),
       branchCode: optString(20, 'Branch code'),
       branchName: optString(100, 'Branch name'),
+      mobileProvider: optString(60, 'Mobile money provider'),
+      mobileNumber: optString(20, 'Mobile money number').refine(
+        (v) => v === undefined || mobileNumberIsValid(v),
+        { message: 'mobile money number must be 9–15 digits (spaces and dashes allowed)' }
+      ),
       paypalEmail: optString(254, 'PayPal email').refine(
         (v) => v === undefined || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),
         { message: 'invalid PayPal email address' }
@@ -315,6 +361,7 @@ module.exports = {
   accountNumberIsValid,
   routingNumberIsValid,
   sortCodeIsValid,
+  mobileNumberIsValid,
   BANK_TRANSFER_FIELDS,
   requiredForBank,
 };

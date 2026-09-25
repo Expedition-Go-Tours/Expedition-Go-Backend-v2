@@ -6,6 +6,7 @@ const {
   accountNumberIsValid,
   routingNumberIsValid,
   sortCodeIsValid,
+  mobileNumberIsValid,
   BIC_REGEX,
 } = require('../../src/core/services/payoutMethodValidation');
 
@@ -101,6 +102,48 @@ describe('payoutMethodInputSchema (POST)', () => {
     });
     expect(result.success).toBe(true);
     expect(result.data.body.currency).toBe('USD');
+  });
+
+  it('accepts a valid MOBILE_MONEY method', () => {
+    const result = payoutMethodInputSchema.safeParse({
+      body: {
+        type: 'MOBILE_MONEY',
+        currency: 'GHS',
+        mobileProvider: 'MTN Mobile Money',
+        mobileNumber: '024 400 0000',
+        accountName: 'Gideon Kwarteng',
+      },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data.body.mobileNumber).toBe('024 400 0000');
+  });
+
+  it('requires provider, number and wallet holder for MOBILE_MONEY', () => {
+    const result = payoutMethodInputSchema.safeParse({ body: { type: 'MOBILE_MONEY' } });
+    expect(result.success).toBe(false);
+    const paths = result.error.issues.map((issue) => issue.path.join('.'));
+    expect(paths).toEqual(
+      expect.arrayContaining(['body.mobileProvider', 'body.mobileNumber', 'body.accountName'])
+    );
+  });
+
+  it('rejects a mobile number that is too short or not numeric', () => {
+    for (const mobileNumber of ['12345', 'abc-def-ghi']) {
+      const result = payoutMethodInputSchema.safeParse({
+        body: { type: 'MOBILE_MONEY', mobileProvider: 'MTN Mobile Money', mobileNumber, accountName: 'A' },
+      });
+      expect(result.success).toBe(false);
+      expect(result.error.issues[0].path).toEqual(['body', 'mobileNumber']);
+    }
+  });
+
+  it('validates mobile wallet numbers by digit count', () => {
+    expect(mobileNumberIsValid('0244000000')).toBe(true);
+    expect(mobileNumberIsValid('+233 24 400 0000')).toBe(true);
+    expect(mobileNumberIsValid('024-400-0000')).toBe(true);
+    expect(mobileNumberIsValid('02440000')).toBe(false); // 8 digits
+    expect(mobileNumberIsValid('abc')).toBe(false);
+    expect(mobileNumberIsValid(undefined)).toBe(false);
   });
 
   it('rejects an unsupported type', () => {

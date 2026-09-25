@@ -130,6 +130,7 @@ enum DisputeStatus {
 
 enum PayoutMethodType {
   BANK_TRANSFER
+  MOBILE_MONEY
   PAYPAL
 }
 
@@ -613,6 +614,10 @@ model PayoutMethod {
   sortCode      String? // Sort code (UK, Ghana, etc.)
   branchCode    String? // Branch/bank code (Nigeria, etc.)
   branchName    String? // Bank branch name, e.g. Oxford Circus
+
+  // Mobile money fields (Ghana MoMo: MTN, Telecel, AT)
+  mobileProvider String? // e.g. "MTN Mobile Money"
+  mobileNumber   String? // wallet number the payout is sent to (accountName holds the wallet holder)
 
   // PayPal fields
   paypalEmail String?
@@ -1182,7 +1187,7 @@ model Payout {
   payoutMethod   PayoutMethod? @relation(fields: [payoutMethodId], references: [id])
 
   // Payment details
-  paymentMethod String? // "bank_transfer", "paypal"
+  paymentMethod String? // "BANK_TRANSFER", "MOBILE_MONEY" or "PAYPAL" (mirrors PayoutMethod.type)
   reference     String? // Transaction reference from payment provider
   notes         String? // Admin notes
 

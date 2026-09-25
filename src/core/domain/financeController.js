@@ -349,7 +349,7 @@ exports.getPayoutRequests = catchAsync(async (req, res) => {
       where,
       include: {
         items: { include: { booking: { select: { bookingNumber: true, travelDate: true, tour: { select: { title: true } } } } } },
-        payoutMethod: { select: { id: true, type: true, bankName: true, paypalEmail: true, accountName: true } },
+        payoutMethod: { select: { id: true, type: true, bankName: true, paypalEmail: true, accountName: true, mobileProvider: true, mobileNumber: true } },
       },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * limit,

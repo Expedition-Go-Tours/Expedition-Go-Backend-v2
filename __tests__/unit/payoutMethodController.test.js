@@ -125,6 +125,38 @@ describe('payoutMethodController', () => {
       expect(res.status).toHaveBeenCalledWith(201);
     });
 
+    it('returns 400 for MOBILE_MONEY without provider/number/holder', async () => {
+      req.body = { type: 'MOBILE_MONEY', mobileProvider: 'MTN Mobile Money' };
+      await controller.addMethod(req, res, next);
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 400, message: expect.stringContaining('Mobile money requires') })
+      );
+    });
+
+    it('creates MOBILE_MONEY method', async () => {
+      req.body = {
+        type: 'MOBILE_MONEY',
+        currency: 'GHS',
+        mobileProvider: 'MTN Mobile Money',
+        mobileNumber: '0244000000',
+        accountName: 'Gideon Kwarteng',
+      };
+
+      await controller.addMethod(req, res, next);
+
+      expect(prisma.payoutMethod.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            type: 'MOBILE_MONEY',
+            mobileProvider: 'MTN Mobile Money',
+            mobileNumber: '0244000000',
+            accountName: 'Gideon Kwarteng',
+          }),
+        })
+      );
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
     it('creates PAYPAL method', async () => {
       req.body = { type: 'PAYPAL', paypalEmail: 'supplier@paypal.com' };
 
@@ -401,6 +433,7 @@ describe('payoutMethodController', () => {
         { id: 's-2', name: 'B', email: 'b@t.com', payoutMethods: [{ id: 'm2', type: 'PAYPAL', verified: false, isDefault: false }, { id: 'm3', type: 'PAYPAL', verified: true, isDefault: true }] },
         { id: 's-3', name: 'C', email: 'c@t.com', payoutMethods: [] },
         { id: 's-4', name: 'D', email: 'd@t.com', payoutMethods: [{ id: 'm4', type: 'BANK_TRANSFER', verified: true, isDefault: true }] },
+        { id: 's-5', name: 'E', email: 'e@t.com', payoutMethods: [{ id: 'm5', type: 'MOBILE_MONEY', verified: false, isDefault: true }] },
       ];
       prisma.user.findMany.mockResolvedValue(suppliers);
 
@@ -408,13 +441,14 @@ describe('payoutMethodController', () => {
 
       const body = res.json.mock.calls[0][0];
       expect(res.status).toHaveBeenCalledWith(200);
-      expect(body.data.totalSuppliers).toBe(4);
-      expect(body.data.withMethod).toBe(3);
+      expect(body.data.totalSuppliers).toBe(5);
+      expect(body.data.withMethod).toBe(4);
       expect(body.data.needSetup).toBe(1);
-      expect(body.data.unverified).toBe(1);
-      expect(body.data.hasDefault).toBe(3);
+      expect(body.data.unverified).toBe(2);
+      expect(body.data.hasDefault).toBe(4);
       expect(body.data.typeMix).toEqual({
         BANK_TRANSFER: { total: 2, verified: 2 },
+        MOBILE_MONEY: { total: 1, verified: 0 },
         PAYPAL: { total: 2, verified: 1 },
       });
     });

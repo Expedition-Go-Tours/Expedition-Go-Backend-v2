@@ -57,6 +57,9 @@ exports.addMethod = catchAsync(async (req, res, next) => {
     sortCode,
     branchCode,
     branchName,
+    // Mobile money
+    mobileProvider,
+    mobileNumber,
     // PayPal
     paypalEmail,
   } = req.body;
@@ -65,13 +68,18 @@ exports.addMethod = catchAsync(async (req, res, next) => {
     return next(new AppError('Payout method type is required', 400));
   }
 
-  if (!['BANK_TRANSFER', 'PAYPAL'].includes(type)) {
+  if (!['BANK_TRANSFER', 'MOBILE_MONEY', 'PAYPAL'].includes(type)) {
     return next(new AppError('Unsupported payout method type', 400));
   }
 
   // Validate required fields per type
   if (type === 'BANK_TRANSFER' && (!accountName || !accountNumber)) {
     return next(new AppError('Bank transfer requires accountName and accountNumber', 400));
+  }
+  if (type === 'MOBILE_MONEY' && (!mobileProvider || !mobileNumber || !accountName)) {
+    return next(
+      new AppError('Mobile money requires mobileProvider, mobileNumber and accountName', 400)
+    );
   }
   if (type === 'PAYPAL' && !paypalEmail) {
     return next(new AppError('PayPal requires paypalEmail', 400));
@@ -98,6 +106,8 @@ exports.addMethod = catchAsync(async (req, res, next) => {
       sortCode,
       branchCode,
       branchName,
+      mobileProvider,
+      mobileNumber,
       paypalEmail,
     },
     include: {
@@ -160,6 +170,8 @@ exports.updateMethod = catchAsync(async (req, res, next) => {
     sortCode,
     branchCode,
     branchName,
+    mobileProvider,
+    mobileNumber,
     paypalEmail,
     isDefault,
   } = req.body;
@@ -187,6 +199,8 @@ exports.updateMethod = catchAsync(async (req, res, next) => {
       ...(sortCode !== undefined && { sortCode }),
       ...(branchCode !== undefined && { branchCode }),
       ...(branchName !== undefined && { branchName }),
+      ...(mobileProvider !== undefined && { mobileProvider }),
+      ...(mobileNumber !== undefined && { mobileNumber }),
       ...(paypalEmail !== undefined && { paypalEmail }),
       ...(isDefault !== undefined && { isDefault }),
       // Reset verification when details change
@@ -397,7 +411,7 @@ exports.getPayoutMethodSummary = catchAsync(async (req, res) => {
     });
   });
 
-  const typeOrder = ['BANK_TRANSFER', 'PAYPAL'];
+  const typeOrder = ['BANK_TRANSFER', 'MOBILE_MONEY', 'PAYPAL'];
   const mix = typeOrder.reduce((acc, t) => {
     if (typeMix[t]) acc[t] = { total: typeMix[t], verified: verifiedMix[t] || 0 };
     return acc;
