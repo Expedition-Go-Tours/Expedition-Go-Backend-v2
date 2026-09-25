@@ -4,7 +4,6 @@ const {
   salesPaymentFailed,
   salesRefundIssued,
   verificationSupplierApplication,
-  verificationDocumentEvent,
   verificationStatusChange,
   verificationTourSubmitted,
   verificationTourUpdateSubmitted,

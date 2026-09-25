@@ -12,6 +12,7 @@ const { processStripeWebhook, verifyWebhookSignature } = require('../services/st
 const { enqueueWebhookRetry } = require('../services/queue');
 const { logActivity } = require('../services/auditLogger');
 const { notifyDiscord } = require('../services/discordNotifier');
+const prisma = require('../services/prismaClient');
 
 /**
  * Handle Stripe webhooks
@@ -84,9 +85,12 @@ exports.handleStripeWebhook = catchAsync(async (req, res, next) => {
         const recoverable = ['card_declined', 'authentication_required', 'payment_intent_authentication_failure'].includes(err.code)
           || err.type === 'card_error';
         try {
-          const redis = require('../services/redisClient');
-          const client = await redis.getClient();
-          await client.setEx(`hp:payfail:${pi.id}`, 1800, JSON.stringify({ amount: pi.amount, currency: pi.currency, email, at: Date.now() }));
+          // Use the module's safe helpers (they ensure a ready connection and
+          // no-op while Redis is degraded) — the low-level getClient() returns
+          // null outside a connected state, which made the marker vanish and
+          // the recovery notice below never post.
+          const { set } = require('../services/redisClient');
+          await set(`hp:payfail:${pi.id}`, { amount: pi.amount, currency: pi.currency, email, at: Date.now() }, 1800);
         } catch { /* best effort */ }
         // The PaymentIntent error only says "payment attempt failed"; fetch the
         // Charge to report what the issuer actually did (issuer_declined /
@@ -117,17 +121,33 @@ exports.handleStripeWebhook = catchAsync(async (req, res, next) => {
         // channel reflects the final state (e.g. a 3-D Secure retry).
         const pi = event.data.object || {};
         try {
-          const redis = require('../services/redisClient');
-          const client = await redis.getClient();
-          const prior = await client.get(`hp:payfail:${pi.id}`);
+          const { get, del } = require('../services/redisClient');
+          let prior = await get(`hp:payfail:${pi.id}`);
           if (prior) {
-            await client.del(`hp:payfail:${pi.id}`);
-            const info = JSON.parse(prior);
+            await del(`hp:payfail:${pi.id}`);
+          } else {
+            // Redis marks the decline as a 30-minute best effort, so it can be
+            // missing (degraded Redis, a restart, a worker that never wrote it) —
+            // and then a successful retry left the channel showing a scary
+            // "Payment Declined" with no counter-notice. Every Stripe event is
+            // also persisted, so fall back to that record, which cannot be lost.
+            const since = new Date(Date.now() - 30 * 60 * 1000);
+            const failedEvent = await prisma.stripeEvent.findFirst({
+              where: {
+                eventType: 'payment_intent.payment_failed',
+                createdAt: { gte: since },
+                data: { path: ['data', 'object', 'id'], equals: pi.id },
+              },
+              orderBy: { createdAt: 'desc' },
+            });
+            if (failedEvent) prior = { email: pi.receipt_email || null };
+          }
+          if (prior) {
             const recovered = salesPaymentRecovered({
               amount: (pi.amount || 0) / 100,
               currency: pi.currency || 'USD',
               paymentIntentId: pi.id,
-              email: info.email || pi.receipt_email || null,
+              email: prior.email || pi.receipt_email || null,
             });
             notifyDiscord('sales', recovered.content, recovered.opts);
           }
