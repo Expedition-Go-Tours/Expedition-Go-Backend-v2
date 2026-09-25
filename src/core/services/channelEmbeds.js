@@ -75,6 +75,21 @@ function salesBookingCancelled({ bookingNumber, tour, amount, currency, reason }
   };
 }
 
+/**
+ * Human-readable decline reason for a failed payment.
+ *
+ * `payment_intent.last_payment_error` usually only carries the generic code
+ * ("payment_intent_payment_attempt_failed"), which tells nobody anything — the
+ * merchant-facing detail (issuer_declined / generic_decline plus the bank's own
+ * message) lives on the Charge's `outcome`. Callers pass whichever they have;
+ * a charge outcome always wins because it is strictly more specific.
+ */
+function formatDeclineReason(error = {}, outcome = {}) {
+  const label = [outcome.type, outcome.reason].filter(Boolean).join(' / ');
+  if (label) return outcome.seller_message ? `${label} — ${outcome.seller_message}` : label;
+  return error.decline_code || error.code || error.message || null;
+}
+
 function salesPaymentFailed({ amount, currency, paymentIntentId, bookingNumber, email, reason, recoverable }) {
   const fields = [
     { name: 'Amount', value: money(amount, currency), inline: true },
@@ -405,6 +420,7 @@ function send(builder, channelOverride) {
 
 module.exports = {
   COLORS,
+  formatDeclineReason,
   money,
   dashboardUrl,
   send,

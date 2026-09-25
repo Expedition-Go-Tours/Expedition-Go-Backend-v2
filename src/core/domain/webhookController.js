@@ -73,7 +73,7 @@ exports.handleStripeWebhook = catchAsync(async (req, res, next) => {
       console.log(`✅ Webhook processed successfully: ${result.message}`);
 
       // Discord: payment events (fire-and-forget, never affects webhook handling)
-      const { salesPaymentFailed, salesPaymentRecovered, salesRefundIssued } = require('../services/channelEmbeds');
+      const { salesPaymentFailed, salesPaymentRecovered, salesRefundIssued, formatDeclineReason } = require('../services/channelEmbeds');
       if (event.type === 'payment_intent.payment_failed') {
         const pi = event.data.object || {};
         const err = pi.last_payment_error || {};
@@ -88,12 +88,27 @@ exports.handleStripeWebhook = catchAsync(async (req, res, next) => {
           const client = await redis.getClient();
           await client.setEx(`hp:payfail:${pi.id}`, 1800, JSON.stringify({ amount: pi.amount, currency: pi.currency, email, at: Date.now() }));
         } catch { /* best effort */ }
+        // The PaymentIntent error only says "payment attempt failed"; fetch the
+        // Charge to report what the issuer actually did (issuer_declined /
+        // generic_decline, plus the bank's message) so the alert is actionable
+        // without opening the Stripe dashboard.
+        let chargeOutcome = {};
+        if (err.charge) {
+          try {
+            const { getStripe } = require('../services/stripeHelpers');
+            const charge = await getStripe().charges.retrieve(err.charge);
+            chargeOutcome = charge.outcome || {};
+          } catch (lookupErr) {
+            console.warn('[Stripe] decline-detail lookup failed:', lookupErr.message);
+          }
+        }
+
         const failed = salesPaymentFailed({
           amount: (pi.amount || 0) / 100,
           currency: pi.currency || 'USD',
           paymentIntentId: pi.id,
           email,
-          reason: err.decline_code || err.code || err.message || null,
+          reason: formatDeclineReason(err, chargeOutcome),
           recoverable,
         });
         notifyDiscord('sales', failed.content, failed.opts);

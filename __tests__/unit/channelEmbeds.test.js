@@ -13,7 +13,38 @@ const {
   approvalRefundRequest,
   approvalRefundResult,
   money,
+  formatDeclineReason,
 } = require('../../src/core/services/channelEmbeds');
+
+describe('channelEmbeds — decline reason', () => {
+  it('prefers the charge outcome over the generic PaymentIntent code', () => {
+    // The exact pair from pi_3UJiFyCgYMgEuT2o1IgLU8Id (25 Sept 2026): the
+    // PaymentIntent only says "payment attempt failed", the bank's decline is
+    // on the charge.
+    expect(
+      formatDeclineReason(
+        { code: 'payment_intent_payment_attempt_failed', message: 'The payment failed.' },
+        {
+          type: 'issuer_declined',
+          reason: 'generic_decline',
+          network_status: 'declined_by_network',
+          seller_message: 'The bank did not return any further details with this decline.',
+        }
+      )
+    ).toBe('issuer_declined / generic_decline — The bank did not return any further details with this decline.');
+  });
+
+  it('falls back to the PaymentIntent error when there is no charge outcome', () => {
+    expect(formatDeclineReason({ decline_code: 'insufficient_funds' })).toBe('insufficient_funds');
+    expect(formatDeclineReason({ code: 'authentication_required' })).toBe('authentication_required');
+    expect(formatDeclineReason({ message: 'Your card was declined.' })).toBe('Your card was declined.');
+    expect(formatDeclineReason({}, {})).toBeNull();
+  });
+
+  it('reports a bare outcome type when Stripe gives no reason text', () => {
+    expect(formatDeclineReason({}, { type: 'blocked' })).toBe('blocked');
+  });
+});
 
 describe('channelEmbeds — sales', () => {
   it('salesBookingConfirmed includes customer + commission', () => {
