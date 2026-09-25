@@ -28,9 +28,14 @@ exports.getMe = catchAsync(async (req, res, next) => {
     return next(new AppError('User not found', 404));
   }
 
+  // Never send the password hash to clients — they only need to know whether a
+  // password exists (so social-login accounts can be offered "set password").
+  const { passwordHash, ...safeUser } = req.user;
+
   // Optimize user photo
   const optimizedUser = {
-    ...req.user,
+    ...safeUser,
+    hasPassword: Boolean(passwordHash),
     photoURL: req.user.photoURL
       ? req.user.photoURL
       : req.user.photoURL,

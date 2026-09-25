@@ -3,6 +3,7 @@ const prisma = require('../services/prismaClient');
 const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
 const { signAccessToken, signRefreshToken, signPasswordResetToken, verifyPasswordResetToken, setAuthCookies, clearAuthCookies } = require('../../../config/jwt');
+const { invalidateUserCache } = require('../../../middleware/authMiddleware');
 const { storeRefreshToken, rotateRefreshToken, clearRefreshToken } = require('../services/refreshTokenHelper');
 const { enqueueEvent, enqueueCreateStripeCustomer } = require('../services/queue');
 const { logAuthEvent } = require('../services/auditLogger');
@@ -73,7 +74,7 @@ exports.login = catchAsync(async (req, res, next) => {
     res.status(200).json({
       status: 'success',
       data: {
-        user: { id: user.id, name: user.name, email: user.email, photoURL: user.photoURL, roles: user.roles },
+        user: { id: user.id, name: user.name, email: user.email, photoURL: user.photoURL, roles: user.roles, hasPassword: Boolean(user.passwordHash) },
         accessToken,
         refreshToken,
       },
@@ -130,7 +131,7 @@ exports.register = catchAsync(async (req, res, next) => {
   res.status(201).json({
     status: 'success',
     data: {
-      user: { id: user.id, name: user.name, email: user.email, photoURL: user.photoURL, roles: user.roles },
+      user: { id: user.id, name: user.name, email: user.email, photoURL: user.photoURL, roles: user.roles, hasPassword: true },
       accessToken,
       refreshToken,
     },
@@ -372,6 +373,75 @@ exports.changePassword = catchAsync(async (req, res, next) => {
   });
 });
 
+/**
+ * Set the authenticated user's password.
+ *
+ * Social-login accounts (Google) are created without a passwordHash, so they
+ * have no "current password" to prove. This endpoint lets them opt in to
+ * email/password sign-in from inside the app:
+ *   - no existing password  → `newPassword` alone is enough
+ *   - existing password     → `currentPassword` is required (same rules as
+ *                             PATCH /auth/change-password)
+ * Setting `passwordHash` is all the local strategy needs; `authProvider` keeps
+ * recording how the account was originally created.
+ */
+exports.setPassword = catchAsync(async (req, res, next) => {
+  const { newPassword, currentPassword } = req.body;
+
+  if (!newPassword) {
+    return next(new AppError('Please provide a new password', 400));
+  }
+
+  if (newPassword.length < 8) {
+    return next(new AppError('Password must be at least 8 characters', 400));
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+
+  if (!user) {
+    return next(new AppError('User not found', 404));
+  }
+
+  if (user.passwordHash) {
+    if (!currentPassword) {
+      return next(new AppError('Please provide your current password', 400));
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!isMatch) {
+      return next(new AppError('Current password is incorrect', 401));
+    }
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { passwordHash },
+  });
+
+  // protect() caches the user row, so drop it before any response can serve a
+  // stale hasPassword flag.
+  invalidateUserCache(user.id);
+
+  logAuthEvent({
+    userId: user.id,
+    userEmail: user.email,
+    ipAddress: req.ip,
+    userAgent: req.headers['user-agent'],
+    event: 'password_set',
+    success: true,
+    details: { hadPassword: Boolean(user.passwordHash) },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Password set successfully',
+    data: {
+      user: { id: user.id, name: user.name, email: user.email, photoURL: user.photoURL, roles: user.roles, hasPassword: true },
+    },
+  });
+});
+
 function getClientOrigin(req) {
   const raw = req.headers.origin || req.headers.referer || process.env.CLIENT_URL || 'http://localhost:8080';
   try {
@@ -557,7 +627,7 @@ exports.googleOneTap = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: {
-      user: { id: user.id, name: user.name, email: user.email, photoURL: user.photoURL, roles: user.roles },
+      user: { id: user.id, name: user.name, email: user.email, photoURL: user.photoURL, roles: user.roles, hasPassword: Boolean(user.passwordHash) },
       accessToken,
       refreshToken,
     },

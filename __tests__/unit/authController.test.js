@@ -689,6 +689,109 @@ describe('changePassword', () => {
 });
 
 // ================================
+// SET PASSWORD
+// ================================
+describe('setPassword', () => {
+  it('returns 400 when newPassword missing', async () => {
+    const req = mockReq({ user: { id: 'user-1' }, body: {} });
+    const res = mockRes();
+    const next = mockNext();
+
+    await controller.setPassword(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+  });
+
+  it('returns 400 when newPassword is too short', async () => {
+    const req = mockReq({ user: { id: 'user-1' }, body: { newPassword: 'short' } });
+    const res = mockRes();
+    const next = mockNext();
+
+    await controller.setPassword(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({ statusCode: 400, message: 'Password must be at least 8 characters' }),
+    );
+  });
+
+  it('sets a password without currentPassword for social-login accounts', async () => {
+    prisma.user.findUnique.mockResolvedValue({ ...mockUser, passwordHash: null, authProvider: 'google' });
+    bcrypt.hash.mockResolvedValue('social-hashed');
+    prisma.user.update.mockResolvedValue(mockUser);
+
+    const req = mockReq({ user: { id: 'user-1' }, body: { newPassword: 'brandnew123' } });
+    const res = mockRes();
+    const next = mockNext();
+
+    await controller.setPassword(req, res, next);
+
+    expect(bcrypt.compare).not.toHaveBeenCalled();
+    expect(bcrypt.hash).toHaveBeenCalledWith('brandnew123', 10);
+    expect(prisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'user-1' }, data: { passwordHash: 'social-hashed' } }),
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'success',
+        message: 'Password set successfully',
+        data: expect.objectContaining({ user: expect.objectContaining({ hasPassword: true }) }),
+      }),
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('requires currentPassword when one already exists', async () => {
+    prisma.user.findUnique.mockResolvedValue(mockUser);
+    const req = mockReq({ user: { id: 'user-1' }, body: { newPassword: 'brandnew123' } });
+    const res = mockRes();
+    const next = mockNext();
+
+    await controller.setPassword(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('returns 401 when the existing current password is wrong', async () => {
+    prisma.user.findUnique.mockResolvedValue(mockUser);
+    bcrypt.compare.mockResolvedValue(false);
+    const req = mockReq({
+      user: { id: 'user-1' },
+      body: { newPassword: 'brandnew123', currentPassword: 'wrong' },
+    });
+    const res = mockRes();
+    const next = mockNext();
+
+    await controller.setPassword(req, res, next);
+
+    expect(bcrypt.compare).toHaveBeenCalledWith('wrong', 'hashed-current');
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 401 }));
+  });
+
+  it('replaces an existing password when currentPassword matches', async () => {
+    prisma.user.findUnique.mockResolvedValue(mockUser);
+    bcrypt.compare.mockResolvedValue(true);
+    bcrypt.hash.mockResolvedValue('replaced-hash');
+    prisma.user.update.mockResolvedValue(mockUser);
+
+    const req = mockReq({
+      user: { id: 'user-1' },
+      body: { newPassword: 'brandnew123', currentPassword: 'correct' },
+    });
+    const res = mockRes();
+    const next = mockNext();
+
+    await controller.setPassword(req, res, next);
+
+    expect(prisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'user-1' }, data: { passwordHash: 'replaced-hash' } }),
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+});
+
+// ================================
 // GOOGLE AUTH
 // ================================
 describe('googleAuth', () => {

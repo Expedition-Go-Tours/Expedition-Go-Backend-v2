@@ -463,4 +463,54 @@ router.post('/logout', protect, authController.logout);
  */
 router.patch('/change-password', protect, authController.changePassword);
 
+/**
+ * @swagger
+ * /api/auth/set-password:
+ *   post:
+ *     summary: Set a password
+ *     description: Sets a password for the authenticated user. Social-login (Google) accounts have no password yet, so only `newPassword` is required. If a password already exists, `currentPassword` must be supplied and match.
+ *     tags: [Authentication]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - newPassword
+ *             properties:
+ *               newPassword:
+ *                 type: string
+ *                 format: password
+ *                 description: New password (minimum 8 characters)
+ *                 minLength: 8
+ *                 example: myNewSecureP@ss456
+ *               currentPassword:
+ *                 type: string
+ *                 format: password
+ *                 description: Required only when the account already has a password
+ *                 example: myOldP@ss123
+ *     responses:
+ *       200:
+ *         description: Password set successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 message:
+ *                   type: string
+ *                   example: Password set successfully
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
+ *       401:
+ *         $ref: '#/components/responses/UnauthorizedError'
+ */
+router.post('/set-password', protect, authController.setPassword);
+
 module.exports = router;
