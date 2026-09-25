@@ -32,7 +32,7 @@ function makeSupplierController(brandKey) {
   const controller = {};
 
 controller.getDashboard = catchAsync(async (req, res) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId || req.user.id;
   const cacheKey = `${BRAND.cachePrefix}supplier:dashboard:${supplierId}`;
   const ttl = 60;
 
@@ -145,7 +145,7 @@ controller.getDashboard = catchAsync(async (req, res) => {
  * with the revenue totals the dashboard endpoint reports for the same page.
  */
 controller.getMonthlyRevenue = catchAsync(async (req, res) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId || req.user.id;
   const months = Math.max(1, Math.min(36, parseInt(req.query.months, 10) || 12));
 
   // Bucket in UTC (the platform's storefront timezone is Accra = UTC+0) so the
@@ -197,7 +197,7 @@ controller.getAvailability = catchAsync(async (req, res, next) => {
   const { startDate, endDate } = req.query;
 
   const tour = await prisma.tour.findFirst({
-    where: { id: tourId, supplierId: req.user.id },
+    where: { id: tourId, supplierId: req.supplierId || req.user.id },
     select: { id: true, schedulesAndPricing: true },
   });
   if (!tour) return next(new AppError('Tour not found', 404));
@@ -221,7 +221,7 @@ controller.setAvailability = catchAsync(async (req, res, next) => {
   const { date, available, maxBookings, note } = req.body;
 
   const tour = await prisma.tour.findFirst({
-    where: { id: tourId, supplierId: req.user.id },
+    where: { id: tourId, supplierId: req.supplierId || req.user.id },
     select: { id: true },
   });
   if (!tour) return next(new AppError('Tour not found', 404));
@@ -244,7 +244,7 @@ controller.setAvailability = catchAsync(async (req, res, next) => {
  */
 controller.getSettings = catchAsync(async (req, res) => {
   const supplier = await prisma.user.findUnique({
-    where: { id: req.user.id },
+    where: { id: req.supplierId || req.user.id },
     select: {
       id: true, name: true, email: true, photoURL: true,
       notificationPreferences: true,
@@ -271,7 +271,7 @@ controller.updateSettings = catchAsync(async (req, res) => {
 
   if (businessName !== undefined || description !== undefined || phone !== undefined || website !== undefined) {
     const existing = await prisma.supplierProfile.findUnique({
-      where: { userId: req.user.id },
+      where: { userId: req.supplierId || req.user.id },
       select: { businessInfo: true },
     });
     if (existing) {
@@ -283,7 +283,7 @@ controller.updateSettings = catchAsync(async (req, res) => {
         ...(website !== undefined && { website }),
       };
       updates.push(prisma.supplierProfile.update({
-        where: { userId: req.user.id },
+        where: { userId: req.supplierId || req.user.id },
         data: { businessInfo },
       }));
     }
@@ -291,11 +291,11 @@ controller.updateSettings = catchAsync(async (req, res) => {
 
   if (notificationPreferences !== undefined || bookingRules !== undefined) {
     const existing = await prisma.user.findUnique({
-      where: { id: req.user.id },
+      where: { id: req.supplierId || req.user.id },
       select: { notificationPreferences: true },
     });
     updates.push(prisma.user.update({
-      where: { id: req.user.id },
+      where: { id: req.supplierId || req.user.id },
       data: {
         ...(notificationPreferences !== undefined && {
           notificationPreferences: {
@@ -326,7 +326,7 @@ controller.updateSettings = catchAsync(async (req, res) => {
  * GET /api/travioghana/supplier/special-offers
  */
 controller.getSpecialOffers = catchAsync(async (req, res) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId || req.user.id;
 
   const offers = await prisma.specialOffer.findMany({
     where: { supplierId },
@@ -369,7 +369,7 @@ controller.getSpecialOffers = catchAsync(async (req, res) => {
  * GET /api/travioghana/supplier/finance/summary
  */
 controller.getFinanceSummary = catchAsync(async (req, res) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId || req.user.id;
 
   const [totalEarnings, pendingPayouts, completedPayouts] = await Promise.all([
     prisma.booking.aggregate({
@@ -404,7 +404,7 @@ controller.getFinanceSummary = catchAsync(async (req, res) => {
  * GET /api/travioghana/supplier/payouts
  */
 controller.getPayouts = catchAsync(async (req, res) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId || req.user.id;
   const { page = 1, limit = 20, status } = req.query;
   const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
   const take = Math.min(parseInt(limit), 50);

@@ -4,7 +4,7 @@ const makeSupplierController = require('../../core/supplier');
 
 
 const getSupplierTours = catchAsync(async (req, res) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId || req.user.id;
   const { page = 1, limit = 20, status } = req.query;
   const MAX_LIMIT = 200;
   const take = Math.min(parseInt(limit), MAX_LIMIT);
@@ -108,7 +108,7 @@ const getSupplierTours = catchAsync(async (req, res) => {
  * Reviews on the supplier's Ghana tours.
  */
 const getSupplierReviews = catchAsync(async (req, res) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId || req.user.id;
   const { page = 1, limit = 20 } = req.query;
   const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
   const take = Math.min(parseInt(limit), 50);

@@ -37,7 +37,7 @@ const TOUR_SELECT = {
 
 // GET /api/travioafrica/supplier/tours
 const getSupplierTours = catchAsync(async (req, res) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId || req.user.id;
   const { page = 1, limit = 20, status } = req.query;
   const take = Math.min(parseInt(limit), 200);
   const skip = (parseInt(page) - 1) * take;
@@ -74,7 +74,7 @@ const getSupplierTours = catchAsync(async (req, res) => {
 
 // GET /api/travioafrica/supplier/reviews
 const getSupplierReviews = catchAsync(async (req, res) => {
-  const supplierId = req.user.id;
+  const supplierId = req.supplierId || req.user.id;
   const { page = 1, limit = 20 } = req.query;
   const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
   const take = Math.min(parseInt(limit), 50);

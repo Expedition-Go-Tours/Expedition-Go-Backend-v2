@@ -2,6 +2,8 @@ const prisma = require('../services/prismaClient');
 const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
 const crypto = require('crypto');
+const cache = require('../services/cacheHelper');
+const { invalidateUserCache } = require('../../../middleware/authMiddleware');
 const { sendTeamInviteEmail, sendTeamInviteRevokedEmail, resolveEmailBrand } = require('../services/emailService');
 const emailUrls = require('../../../config/emailUrls');
 const { enqueueNotification } = require('../services/queue');
@@ -11,6 +13,76 @@ const { VALID_TEAM_ROLES, TEAM_ROLE_PERMISSIONS } = require('../../../config/tea
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_TEAM_SIZE = parseInt(process.env.MAX_TEAM_SIZE, 10) || 50;
+
+// Brand roles a team member inherits from the supplier they join, so brand
+// context (chat, email identity, dashboard links) matches the owner's.
+const BRAND_ROLES = ['ghana', 'africa'];
+
+/**
+ * Team members accept with a plain account (`roles: ['customer']` is the signup
+ * default), so membership must not depend on already holding `supplier`. On
+ * accept we mirror the owner's roles onto them. The auth cache is invalidated
+ * because the SPA loads the dashboard immediately after accepting.
+ */
+async function grantMemberRoles({ userId, supplierId, email }) {
+  const [owner, user] = await Promise.all([
+    prisma.user.findUnique({ where: { id: supplierId }, select: { roles: true } }),
+    prisma.user.findUnique({ where: { id: userId }, select: { roles: true } }),
+  ]);
+
+  const inherited = ['supplier', ...((owner?.roles || []).filter((role) => BRAND_ROLES.includes(role)))];
+  const nextRoles = Array.from(new Set([...(user?.roles || []), ...inherited]));
+
+  const changed = nextRoles.length !== (user?.roles || []).length;
+  if (changed) {
+    await prisma.user.update({ where: { id: userId }, data: { roles: nextRoles } });
+    invalidateUserCache(userId);
+  }
+
+  // The member lookup is cached per email (teamRoleMiddleware); a stale "no
+  // member" entry would keep them locked out for the cache TTL.
+  await cache.invalidateKey(`team:member:email:${email}`).catch(() => {});
+
+  return { roles: nextRoles, changed };
+}
+
+/** Drop `supplier`/brand roles a removed member inherited, when they are not
+ *  a supplier in their own right. */
+async function revokeMemberRoles({ userId, email }) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { roles: true, supplierProfile: { select: { id: true } } },
+  });
+  if (!user || user.supplierProfile) return;
+
+  const nextRoles = (user.roles || []).filter((role) => role !== 'supplier' && !BRAND_ROLES.includes(role));
+  if (nextRoles.length === (user.roles || []).length) return;
+
+  await prisma.user.update({ where: { id: userId }, data: { roles: nextRoles } });
+  invalidateUserCache(userId);
+  await cache.invalidateKey(`team:member:email:${email}`).catch(() => {});
+}
+
+/**
+ * Distinct account states for an invitation. Kept in one place so the invite
+ * endpoints report the same thing whether the link is opened before or after
+ * the expiry cleanup ran (which nulls the token).
+ */
+function inviteStateError(member) {
+  if (member.status === 'EXPIRED') {
+    return new AppError('Invitation has expired', 410);
+  }
+  if (member.tokenExpiresAt && member.tokenExpiresAt < new Date()) {
+    return new AppError('Invitation has expired', 410);
+  }
+  if (member.status === 'ACCEPTED') {
+    return new AppError('Invitation has already been accepted', 409);
+  }
+  if (member.status === 'REVOKED') {
+    return new AppError('Invitation has been revoked', 410);
+  }
+  return null;
+}
 
 exports.cleanupExpiredInvites = catchAsync(async (req, res) => {
   const { count } = await prisma.teamMember.updateMany({
@@ -95,18 +167,20 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
 });
 
 exports.getMembers = catchAsync(async (req, res) => {
-  const { status, page = 1, limit = 50 } = req.query;
+  const { status } = req.query;
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 50), 200);
   const where = { supplierId: req.supplierId };
   if (status) where.status = status;
 
-  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const skip = (page - 1) * limit;
 
   const [members, totalCount] = await Promise.all([
     prisma.teamMember.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       skip,
-      take: parseInt(limit),
+      take: limit,
       select: {
         id: true,
         email: true,
@@ -127,10 +201,10 @@ exports.getMembers = catchAsync(async (req, res) => {
     data: {
       members,
       pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(totalCount / parseInt(limit)),
+        currentPage: page,
+        totalPages: Math.ceil(totalCount / limit),
         totalCount,
-        limit: parseInt(limit),
+        limit,
       },
     },
   });
@@ -138,6 +212,11 @@ exports.getMembers = catchAsync(async (req, res) => {
 
 exports.inviteMember = catchAsync(async (req, res, next) => {
   const { email, role, directAdd } = req.body;
+
+  // Legacy alias for POST /settings/team/direct-add — keep one implementation.
+  if (directAdd) {
+    return exports.directAddMember(req, res, next);
+  }
 
   if (!email) {
     return next(new AppError('Email is required', 400));
@@ -152,12 +231,13 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
   }
 
   const member = await prisma.$transaction(async (tx) => {
-    const acceptedCount = await tx.teamMember.count({
-      where: { supplierId: req.supplierId, status: 'ACCEPTED' },
-    });
+    const [acceptedCount, pendingCount] = await Promise.all([
+      tx.teamMember.count({ where: { supplierId: req.supplierId, status: 'ACCEPTED' } }),
+      tx.teamMember.count({ where: { supplierId: req.supplierId, status: 'PENDING' } }),
+    ]);
 
-    if (acceptedCount >= MAX_TEAM_SIZE) {
-      throw new AppError(`Team size limit of ${MAX_TEAM_SIZE} reached`, 400);
+    if (acceptedCount + pendingCount >= MAX_TEAM_SIZE) {
+      throw new AppError(`Team size limit of ${MAX_TEAM_SIZE} reached (including pending invitations)`, 400);
     }
 
     const existing = await tx.teamMember.findUnique({
@@ -247,28 +327,42 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     select: { name: true },
   });
 
-  await sendTeamInviteEmail({
-    to: email,
-    supplierName: supplier?.name || 'A supplier',
-    role: role || 'editor',
-    inviteUrl,
-    invitedBy: req.user.name || 'Your supplier',
-    brandKey: resolveEmailBrand({ user: req.user }),
-  });
+  // The invitation row already exists, so a mail failure must not 500 the
+  // request (which would leave the owner retrying an "already sent" invite).
+  // Report it instead and let Resend re-issue a fresh token.
+  let emailSent = true;
+  try {
+    await sendTeamInviteEmail({
+      to: email,
+      supplierName: supplier?.name || 'A supplier',
+      role: role || 'editor',
+      inviteUrl,
+      invitedBy: req.user.name || 'Your supplier',
+      brandKey: resolveEmailBrand({ user: req.user }),
+    });
+  } catch (error) {
+    emailSent = false;
+    logger.error(`[team] invite email failed for ${email}:`, error?.message);
+  }
 
   await logActivity({
     userId: req.user.id,
     action: 'team.invite_sent',
     resource: 'TeamMember',
     resourceId: member.id,
-    metadata: { email, role: member.role },
+    metadata: { email, role: member.role, emailSent },
     source: 'web',
   });
 
   res.status(201).json({
     status: 'success',
-    message: `Invitation sent to ${email}`,
-    data: { member: { id: member.id, email: member.email, role: member.role, status: member.status, createdAt: member.createdAt, updatedAt: member.updatedAt } },
+    message: emailSent
+      ? `Invitation sent to ${email}`
+      : `Invitation created for ${email}, but the email could not be sent. Use Resend to try again.`,
+    data: {
+      emailSent,
+      member: { id: member.id, email: member.email, role: member.role, status: member.status, createdAt: member.createdAt, updatedAt: member.updatedAt },
+    },
   });
 });
 
@@ -288,17 +382,8 @@ exports.getInviteDetails = catchAsync(async (req, res, next) => {
     return next(new AppError('Invitation not found', 404));
   }
 
-  if (member.tokenExpiresAt && member.tokenExpiresAt < new Date()) {
-    return next(new AppError('Invitation has expired', 410));
-  }
-
-  if (member.status === 'ACCEPTED') {
-    return next(new AppError('Invitation has already been accepted', 409));
-  }
-
-  if (member.status === 'REVOKED') {
-    return next(new AppError('Invitation has been revoked', 410));
-  }
+  const stateError = inviteStateError(member);
+  if (stateError) return next(stateError);
 
   res.status(200).json({
     status: 'success',
@@ -322,17 +407,8 @@ exports.acceptInvite = catchAsync(async (req, res, next) => {
     return next(new AppError('Invitation not found', 404));
   }
 
-  if (member.tokenExpiresAt && member.tokenExpiresAt < new Date()) {
-    return next(new AppError('Invitation has expired', 410));
-  }
-
-  if (member.status === 'ACCEPTED') {
-    return next(new AppError('Invitation has already been accepted', 409));
-  }
-
-  if (member.status === 'REVOKED') {
-    return next(new AppError('Invitation has been revoked', 410));
-  }
+  const stateError = inviteStateError(member);
+  if (stateError) return next(stateError);
 
   if (req.user.email !== member.email) {
     return next(new AppError(`This invitation was sent to ${member.email}. Please sign in with that email address.`, 403));
@@ -348,18 +424,14 @@ exports.acceptInvite = catchAsync(async (req, res, next) => {
     },
   });
 
-  const acceptedUser = await prisma.user.findUnique({
-    where: { id: req.user.id },
-    select: { roles: true },
+  // Accepting is what makes the member real, so the roles they need to open the
+  // dashboard are granted here (for every role, not just admin) and the auth
+  // cache is invalidated — the SPA loads the dashboard immediately after.
+  await grantMemberRoles({
+    userId: req.user.id,
+    supplierId: member.supplierId,
+    email: member.email,
   });
-
-  if (acceptedUser && member.role === 'admin' && !acceptedUser.roles.includes('supplier')) {
-    acceptedUser.roles.push('supplier');
-    await prisma.user.update({
-      where: { id: req.user.id },
-      data: { roles: acceptedUser.roles },
-    });
-  }
 
   enqueueNotification({
     userId: member.supplierId,
@@ -474,27 +546,38 @@ exports.resendInvite = catchAsync(async (req, res, next) => {
 
   const inviteUrl = `${emailUrls.dashboardBaseForUser(req.user)}/team/invite?token=${token}`;
 
-  await sendTeamInviteEmail({
-    to: email,
-    supplierName: existing.supplier.name || 'A supplier',
-    role: existing.role,
-    inviteUrl,
-    invitedBy: req.user.name || 'Your supplier',
-    brandKey: resolveEmailBrand({ user: req.user }),
-  });
+  // Same contract as the initial send: the token is already rotated, so a mail
+  // failure is reported instead of 500-ing (which would strand the new link).
+  let emailSent = true;
+  try {
+    await sendTeamInviteEmail({
+      to: email,
+      supplierName: existing.supplier.name || 'A supplier',
+      role: existing.role,
+      inviteUrl,
+      invitedBy: req.user.name || 'Your supplier',
+      brandKey: resolveEmailBrand({ user: req.user }),
+    });
+  } catch (error) {
+    emailSent = false;
+    logger.error(`[team] invite resend failed for ${email}:`, error?.message);
+  }
 
   await logActivity({
     userId: req.user.id,
     action: 'team.invite_resend',
     resource: 'TeamMember',
     resourceId: existing.id,
-    metadata: { email, role: existing.role },
+    metadata: { email, role: existing.role, emailSent },
     source: 'web',
   });
 
   res.status(200).json({
     status: 'success',
-    message: `Invitation resent to ${email}`,
+    message: emailSent
+      ? `Invitation resent to ${email}`
+      : `A new invitation link was created for ${email}, but the email could not be sent.`,
+    data: { emailSent },
   });
 });
 
@@ -564,6 +647,18 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
     return next(new AppError(`Invalid role. Must be one of: ${VALID_TEAM_ROLES.join(', ')}`, 400));
   }
 
+  // Direct add bypasses the accept step, so it only makes sense for someone who
+  // already has an account. Without this check the owner could create an
+  // "Active" member that has no login and therefore no access to anything.
+  const user = await prisma.user.findFirst({
+    where: { email },
+    select: { id: true },
+  });
+
+  if (!user) {
+    return next(new AppError('No account exists for that email address yet. Send an invitation instead — they can join once they have signed up.', 400));
+  }
+
   const member = await prisma.$transaction(async (tx) => {
     const acceptedCount = await tx.teamMember.count({
       where: { supplierId: req.supplierId, status: 'ACCEPTED' },
@@ -578,15 +673,6 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
         supplierId_email: { supplierId: req.supplierId, email },
       },
     });
-
-    if (existing && existing.status === 'PENDING') {
-      const acceptedCountNow = await tx.teamMember.count({
-        where: { supplierId: req.supplierId, status: 'ACCEPTED' },
-      });
-      if (acceptedCountNow >= MAX_TEAM_SIZE) {
-        throw new AppError(`Team size limit of ${MAX_TEAM_SIZE} reached`, 400);
-      }
-    }
 
     if (existing) {
       if (existing.status === 'ACCEPTED') {
@@ -618,6 +704,9 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
     });
   });
 
+  // They skipped the accept step, so grant the dashboard roles here.
+  await grantMemberRoles({ userId: user.id, supplierId: req.supplierId, email });
+
   await logActivity({
     userId: req.user.id,
     action: 'team.member_added',
@@ -646,6 +735,14 @@ exports.removeMember = catchAsync(async (req, res, next) => {
   }
 
   await prisma.teamMember.delete({ where: { id } });
+
+  // A removed member must lose the roles they inherited, and both the auth and
+  // membership caches have to go or they keep access for the cache TTL.
+  const removedUser = await prisma.user.findFirst({ where: { email: member.email }, select: { id: true } });
+  if (removedUser) {
+    await revokeMemberRoles({ userId: removedUser.id, email: member.email });
+  }
+  await cache.invalidateKey(`team:member:email:${member.email}`).catch(() => {});
 
   await logActivity({
     userId: req.user.id,
@@ -687,6 +784,9 @@ exports.updateMemberRole = catchAsync(async (req, res, next) => {
     where: { id },
     data: { role },
   });
+
+  // requireTeamRole/requireTeamPermission cache the member row per email.
+  await cache.invalidateKey(`team:member:email:${member.email}`).catch(() => {});
 
   await logActivity({
     userId: req.user.id,

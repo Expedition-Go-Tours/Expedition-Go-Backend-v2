@@ -2,7 +2,10 @@
  * TravioGhana Supplier Routes — Ghana-Scoped Supplier Dashboard
  *
  * Mounted at /api/travioghana/supplier/*
- * Every route requires: protect + restrictTo('supplier')
+ * Every route requires: protect + supplier access (owner OR accepted team
+ * member — see resolveSupplier). Team invitations are the exception: an invitee
+ * is still a plain account until they accept, so those routes only need
+ * `protect`.
  *
  * Ghana-specific endpoints use travioGhanaSupplierController.
  * Shared features (team, cancellation, settings sub-routes) proxy to
@@ -10,7 +13,7 @@
  */
 
 const express = require('express');
-const { protect, restrictTo } = require('../../../middleware/authMiddleware');
+const { protect } = require('../../../middleware/authMiddleware');
 const { resolveSupplier, requireTeamRole, requireTeamPermission } = require('../../../middleware/teamRoleMiddleware');
 const ghanaSupplier = require('./supplierController');
 
@@ -26,8 +29,25 @@ const notificationController = require('../../core/domain/notificationController
 
 const router = express.Router();
 
-// All supplier routes require authentication + supplier role
-router.use(protect, restrictTo('supplier'));
+// ── Team invitations (pre-membership) ───────────────────────────────────────
+// An invitee holds `roles: ['customer']` (the signup default) until they
+// accept, when acceptInvite grants supplier access. These four must therefore
+// sit BEFORE the supplier-access guard below — behind `restrictTo('supplier')`
+// every invite failed with 403 and the team feature could never complete.
+// `protect` is enough: the token is the secret, and the controller enforces
+// that the signed-in email matches the invited one.
+router.get('/settings/team/invite/:token', protect, teamController.getInviteDetails);
+router.post('/settings/team/invite/:token/accept', protect, teamController.acceptInvite);
+router.post('/settings/team/invite/:token/decline', protect, teamController.declineInvite);
+// Membership discovery: owner → admin, member → their role, stranger → null.
+router.get('/settings/team/my-role', protect, teamController.getMyTeamRole);
+
+// ── Everything below is supplier-scoped ────────────────────────────────────
+// resolveSupplier accepts the owner or an accepted team member and sets
+// req.supplierId to the owning supplier, so member calls read/write the
+// supplier's data instead of their own (previously req.user.id was assumed to
+// be the supplier, which made every member-scoped query return nothing).
+router.use(protect, resolveSupplier);
 
 // Dashboard
 router.get('/dashboard', ghanaSupplier.getDashboard);
@@ -41,11 +61,11 @@ router.get('/reviews', ghanaSupplier.getSupplierReviews);
 
 // Availability
 router.get('/availability/:tourId', ghanaSupplier.getAvailability);
-router.post('/availability/:tourId', ghanaSupplier.setAvailability);
+router.post('/availability/:tourId', requireTeamPermission('tours.update'), ghanaSupplier.setAvailability);
 
 // Settings (Ghana-scoped)
 router.get('/settings', ghanaSupplier.getSettings);
-router.patch('/settings', ghanaSupplier.updateSettings);
+router.patch('/settings', requireTeamRole('admin'), ghanaSupplier.updateSettings);
 
 // Settings sub-routes (proxied to shared controllers)
 router.get('/settings/business-profile', resolveSupplier, supplierSettingsController.getBusinessProfile);
@@ -64,17 +84,15 @@ router.patch('/settings/tax-info', resolveSupplier, requireTeamRole('admin', 'fi
 router.get('/settings/booking-rules', resolveSupplier, supplierSettingsController.getBookingRules);
 router.put('/settings/booking-rules', resolveSupplier, requireTeamRole('admin', 'editor'), supplierSettingsController.updateBookingRules);
 
-// Team (proxied to shared controller)
-router.get('/settings/team/invite/:token', teamController.getInviteDetails);
-router.get('/settings/team/my-role', resolveSupplier, teamController.getMyTeamRole);
-router.get('/settings/team/members', resolveSupplier, requireTeamRole('admin'), teamController.getMembers);
-router.post('/settings/team/invite', resolveSupplier, requireTeamRole('admin'), teamController.inviteMember);
-router.post('/settings/team/invite/resend', resolveSupplier, requireTeamRole('admin'), teamController.resendInvite);
-router.post('/settings/team/invite/:token/accept', teamController.acceptInvite);
-router.post('/settings/team/invite/:token/decline', teamController.declineInvite);
-router.post('/settings/team/direct-add', resolveSupplier, requireTeamRole('admin'), teamController.directAddMember);
-router.patch('/settings/team/members/:id/role', resolveSupplier, requireTeamRole('admin'), teamController.updateMemberRole);
-router.delete('/settings/team/members/:id', resolveSupplier, requireTeamRole('admin'), teamController.removeMember);
+// Team (proxied to shared controller). Invite accept/decline/details and
+// my-role are declared above the supplier-access guard.
+router.get('/settings/team/members', requireTeamRole('admin'), teamController.getMembers);
+router.post('/settings/team/invite', requireTeamRole('admin'), teamController.inviteMember);
+router.post('/settings/team/invite/resend', requireTeamRole('admin'), teamController.resendInvite);
+router.post('/settings/team/direct-add', requireTeamRole('admin'), teamController.directAddMember);
+router.patch('/settings/team/members/:id/role', requireTeamRole('admin'), teamController.updateMemberRole);
+router.delete('/settings/team/members/:id', requireTeamRole('admin'), teamController.removeMember);
+router.delete('/settings/team/invite/:memberId', requireTeamRole('admin'), teamController.revokeInvite);
 
 // Special Offers (GET is Ghana-scoped; CRUD proxies to shared controller —
 // the frontend rewrites /suppliers/special-offers/* to this namespace)

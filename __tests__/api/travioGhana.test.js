@@ -131,7 +131,12 @@ beforeEach(() => {
   prisma.tour.findUnique.mockResolvedValue(mockTour);
   prisma.travioGhanaTour.findUnique.mockResolvedValue({ isActive: true });
   prisma.travioGhanaTour.findFirst.mockResolvedValue(mockGhanaTour);
-  prisma.supplierProfile.findFirst.mockResolvedValue({ id: 'profile-1' });
+  // Only the supplier owns a profile: supplier routes are gated by supplier
+  // access (owner or accepted team member) via resolveSupplier, not by the
+  // `supplier` role string — an accepted teammate holds `customer`.
+  prisma.supplierProfile.findFirst.mockImplementation(({ where }) => (
+    Promise.resolve(where?.userId === 'supplier-1' ? { id: 'profile-1' } : null)
+  ));
   prisma.supplierProfile.findUnique.mockResolvedValue(mockSupplierProfile);
   prisma.teamMember.findFirst.mockResolvedValue(null);
   prisma.tourDateOverride.findMany.mockResolvedValue([]);
