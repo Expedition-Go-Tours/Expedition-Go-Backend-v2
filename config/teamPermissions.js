@@ -6,6 +6,16 @@
  * see payouts). `admin` already implies every permission, so combining it with
  * anything else is rejected rather than silently redundant.
  *
+ * Permission families:
+ *   tours.*, bookings.*, products.*  the catalogue and the bookings
+ *   chat.*, reviews.*                 customer conversations and feedback
+ *   earnings.*, payouts.*, payout-methods.*  money
+ *   analytics.view                    business performance reporting
+ *   settings.business                 business profile + logo (admin, editor)
+ *   settings.tax                      tax information (admin, finance)
+ *   settings.manage                   team, notification routing and KYC
+ *                                    documents (admin only)
+ *
  * This module is the single source of truth: the middleware, the controllers,
  * the invite email and the dashboards all read from here.
  */
@@ -32,6 +42,8 @@ const TEAM_ROLE_PERMISSIONS = {
       'products.create',
       'products.update',
       'products.delete',
+      'analytics.view',
+      'settings.business',
     ],
   },
   finance: {
@@ -44,6 +56,8 @@ const TEAM_ROLE_PERMISSIONS = {
       'payouts.request',
       'payout-methods.view',
       'payout-methods.manage',
+      'analytics.view',
+      'settings.tax',
     ],
   },
   support: {

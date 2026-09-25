@@ -815,7 +815,9 @@ describe('reviewController', () => {
           data: expect.objectContaining({
             status: 'FLAGGED',
             flagReason: 'Spam or self-promotion',
-            flaggedBy: 's1',
+            // The flag is attributed to the member who pressed the button, not
+            // to the supplier account the review belongs to.
+            flaggedBy: 'user-1',
           }),
         }),
       );

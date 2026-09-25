@@ -181,18 +181,34 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
  * handling.
  */
 exports.getApplicationStatus = catchAsync(async (req, res, next) => {
-  const supplierProfile = await prisma.supplierProfile.findUnique({
-    where: { userId: req.user.id },
-    include: {
-      documents: { orderBy: { createdAt: 'asc' } },
-      vehicles: { orderBy: { createdAt: 'asc' } },
-      guides: { orderBy: { createdAt: 'asc' } },
-    },
-  });
+  // Team members must see the OWNER's profile: the dashboards use it for the
+  // business identity (sidebar name/logo/verification), not their own account.
+  const supplierId = req.supplierId || req.user.id;
+
+  const [supplierProfile, owner] = await Promise.all([
+    prisma.supplierProfile.findUnique({
+      where: { userId: supplierId },
+      include: {
+        documents: { orderBy: { createdAt: 'asc' } },
+        vehicles: { orderBy: { createdAt: 'asc' } },
+        guides: { orderBy: { createdAt: 'asc' } },
+      },
+    }),
+    prisma.user.findUnique({
+      where: { id: supplierId },
+      select: { logoUrl: true, name: true, createdAt: true },
+    }),
+  ]);
 
   res.status(200).json({
     status: 'success',
-    data: { supplierProfile: supplierProfile || null },
+    data: {
+      supplierProfile: supplierProfile || null,
+      // Business identity for the shell (sidebar card) — the owner's, not the viewer's.
+      logoUrl: owner?.logoUrl || null,
+      businessName: owner?.name || null,
+      supplierSince: owner?.createdAt || null,
+    },
   });
 });
 
@@ -202,7 +218,7 @@ exports.getApplicationStatus = catchAsync(async (req, res, next) => {
  */
 exports.updateApplication = catchAsync(async (req, res, next) => {
   const supplierProfile = await prisma.supplierProfile.findUnique({
-    where: { userId: req.user.id },
+    where: { userId: req.supplierId || req.user.id },
   });
 
   if (!supplierProfile) {
@@ -268,7 +284,7 @@ exports.updateApplication = catchAsync(async (req, res, next) => {
   let updated;
   await prisma.$transaction(async (tx) => {
     updated = await tx.supplierProfile.update({
-      where: { userId: req.user.id },
+      where: { userId: req.supplierId || req.user.id },
       data: updateData,
     });
 
@@ -1463,13 +1479,15 @@ exports.uploadLogo = catchAsync(async (req, res, next) => {
     return next(new AppError('Upload failed: invalid image URL', 400));
   }
 
-  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+  // The business logo belongs to the supplier account, whoever uploaded it.
+  const supplierId = req.supplierId || req.user.id;
+  const user = await prisma.user.findUnique({ where: { id: supplierId } });
   if (user?.logoUrl) {
-    await deleteCloudinaryImage(user.logoUrl, 3, { userId: req.user.id });
+    await deleteCloudinaryImage(user.logoUrl, 3, { userId: supplierId });
   }
 
   const updatedUser = await prisma.user.update({
-    where: { id: req.user.id },
+    where: { id: supplierId },
     data: { logoUrl: req.file.path },
   });
 

@@ -34,9 +34,9 @@ router.post('/bookings/:bookingId/claim', restrictTo('customer'), claimRateLimit
 router.get('/my', restrictTo('customer'), refundClaimController.getMyClaims);
 
 // ── Supplier ─────────────────────────────────────────────────────────────
-router.get('/supplier', resolveSupplier, requireTeamPermission('bookings.manage'), refundClaimController.getSupplierClaims);
-router.patch('/supplier/:id/approve', resolveSupplier, requireTeamPermission('bookings.manage'), refundClaimController.supplierApprove);
-router.patch('/supplier/:id/decline', resolveSupplier, requireTeamPermission('bookings.manage'), refundClaimController.supplierDecline);
+router.get('/supplier', resolveSupplier, requireTeamPermission('payouts.view'), refundClaimController.getSupplierClaims);
+router.patch('/supplier/:id/approve', resolveSupplier, requireTeamPermission('payouts.request'), refundClaimController.supplierApprove);
+router.patch('/supplier/:id/decline', resolveSupplier, requireTeamPermission('payouts.request'), refundClaimController.supplierDecline);
 
 // ── Admin ────────────────────────────────────────────────────────────────
 router.get('/admin', restrictTo('admin'), refundClaimController.getAdminClaims);

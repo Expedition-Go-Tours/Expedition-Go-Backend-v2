@@ -8,7 +8,7 @@
 
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
-const { resolveSupplier } = require('../middleware/teamRoleMiddleware');
+const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 const { requirePermission } = require('../middleware/permissionMiddleware');
 const supplierController = require('../src/core/domain/supplierController');
 const verificationController = require('../src/core/domain/supplierVerificationController');
@@ -195,7 +195,7 @@ router.post('/apply', uploadSupplierDocuments, supplierController.applyToBeSuppl
  *                   type: string
  *                   example: No file uploaded
  */
-router.post('/logo', uploadSupplierLogo, supplierController.uploadLogo);
+router.post('/logo', resolveSupplier, requireTeamPermission('settings.business'), uploadSupplierLogo, supplierController.uploadLogo);
 
 /**
  * @swagger
@@ -226,7 +226,7 @@ router.post('/logo', uploadSupplierLogo, supplierController.uploadLogo);
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.get('/application/status', supplierController.getApplicationStatus);
+router.get('/application/status', resolveSupplier, supplierController.getApplicationStatus);
 
 /**
  * @swagger
@@ -341,7 +341,7 @@ router.get('/application/status', supplierController.getApplicationStatus);
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.patch('/application', uploadSupplierDocuments, supplierController.updateApplication);
+router.patch('/application', resolveSupplier, requireTeamPermission('settings.business'), uploadSupplierDocuments, supplierController.updateApplication);
 
 // ================================
 // SUPPLIER VERIFICATION (owner-scoped)
@@ -354,20 +354,20 @@ router.patch('/application', uploadSupplierDocuments, supplierController.updateA
  */
 
 // Upload an additional document for review
-router.post('/documents', resolveSupplier, uploadSupplierDocument, verificationController.addDocument);
+router.post('/documents', resolveSupplier, requireTeamPermission('settings.manage'), uploadSupplierDocument, verificationController.addDocument);
 
 // Re-upload a rejected / replacement-requested / expired document
-router.post('/documents/:docId/replace', resolveSupplier, uploadSupplierDocument, verificationController.replaceDocument);
+router.post('/documents/:docId/replace', resolveSupplier, requireTeamPermission('settings.manage'), uploadSupplierDocument, verificationController.replaceDocument);
 
 // Vehicles
-router.post('/vehicles', resolveSupplier, uploadSupplierDocuments, verificationController.addVehicle);
-router.patch('/vehicles/:vehicleId', resolveSupplier, verificationController.updateVehicle);
-router.delete('/vehicles/:vehicleId', resolveSupplier, verificationController.deleteVehicle);
+router.post('/vehicles', resolveSupplier, requireTeamPermission('settings.manage'), uploadSupplierDocuments, verificationController.addVehicle);
+router.patch('/vehicles/:vehicleId', resolveSupplier, requireTeamPermission('settings.manage'), verificationController.updateVehicle);
+router.delete('/vehicles/:vehicleId', resolveSupplier, requireTeamPermission('settings.manage'), verificationController.deleteVehicle);
 
 // Guides
-router.post('/guides', resolveSupplier, verificationController.addGuide);
-router.patch('/guides/:guideId', resolveSupplier, verificationController.updateGuide);
-router.delete('/guides/:guideId', resolveSupplier, verificationController.deleteGuide);
+router.post('/guides', resolveSupplier, requireTeamPermission('settings.manage'), verificationController.addGuide);
+router.patch('/guides/:guideId', resolveSupplier, requireTeamPermission('settings.manage'), verificationController.updateGuide);
+router.delete('/guides/:guideId', resolveSupplier, requireTeamPermission('settings.manage'), verificationController.deleteGuide);
 
 // ================================
 // SUPPLIER DASHBOARD
@@ -845,8 +845,10 @@ router.get('/products/list', resolveSupplier, cancellationController.getCancella
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.get('/earnings', resolveSupplier, supplierController.getEarnings);
-router.get('/payouts', resolveSupplier, supplierController.getPayouts);
+// Money reads belong to the roles that do money (admin, finance) — a support
+// or editor member has no business reading another account's earnings.
+router.get('/earnings', resolveSupplier, requireTeamPermission('payouts.view'), supplierController.getEarnings);
+router.get('/payouts', resolveSupplier, requireTeamPermission('payouts.view'), supplierController.getPayouts);
 
 // ================================
 // ADMIN SUPPLIER MANAGEMENT

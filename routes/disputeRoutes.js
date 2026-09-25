@@ -62,7 +62,7 @@ router.post('/', resolveSupplier, requireTeamPermission('payouts.request'), disp
  *       200:
  *         description: My refund requests with booking context
  */
-router.get('/mine', disputeController.getMyDisputes);
+router.get('/mine', resolveSupplier, requireTeamPermission('payouts.view'), disputeController.getMyDisputes);
 
 /**
  * @swagger
@@ -81,6 +81,6 @@ router.get('/mine', disputeController.getMyDisputes);
  *       200:
  *         description: Request withdrawn; funds unfrozen
  */
-router.patch('/:id/withdraw', disputeController.withdrawDispute);
+router.patch('/:id/withdraw', resolveSupplier, requireTeamPermission('payouts.request'), disputeController.withdrawDispute);
 
 module.exports = router;

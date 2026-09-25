@@ -69,18 +69,18 @@ router.patch('/settings', requireTeamRole('admin'), ghanaSupplier.updateSettings
 
 // Settings sub-routes (proxied to shared controllers)
 router.get('/settings/business-profile', resolveSupplier, supplierSettingsController.getBusinessProfile);
-router.patch('/settings/business-profile', resolveSupplier, requireTeamRole('admin', 'editor'), supplierSettingsController.updateBusinessProfile);
+router.patch('/settings/business-profile', resolveSupplier, requireTeamPermission('settings.business'), supplierSettingsController.updateBusinessProfile);
 router.get('/settings/notification-preferences', resolveSupplier, supplierSettingsController.getNotificationPreferences);
-router.put('/settings/notification-preferences', resolveSupplier, requireTeamRole('admin'), supplierSettingsController.updateNotificationPreferences);
+router.put('/settings/notification-preferences', resolveSupplier, requireTeamPermission('settings.manage'), supplierSettingsController.updateNotificationPreferences);
 
 // Additional notification email addresses (email delivery only — not logins)
 router.get('/settings/notification-recipients', resolveSupplier, supplierSettingsController.listNotificationRecipients);
-router.post('/settings/notification-recipients', resolveSupplier, requireTeamRole('admin'), supplierSettingsController.addNotificationRecipient);
-router.post('/settings/notification-recipients/:id/resend', resolveSupplier, requireTeamRole('admin'), supplierSettingsController.resendNotificationRecipient);
-router.patch('/settings/notification-recipients/:id', resolveSupplier, requireTeamRole('admin'), supplierSettingsController.updateNotificationRecipient);
-router.delete('/settings/notification-recipients/:id', resolveSupplier, requireTeamRole('admin'), supplierSettingsController.removeNotificationRecipient);
+router.post('/settings/notification-recipients', resolveSupplier, requireTeamPermission('settings.manage'), supplierSettingsController.addNotificationRecipient);
+router.post('/settings/notification-recipients/:id/resend', resolveSupplier, requireTeamPermission('settings.manage'), supplierSettingsController.resendNotificationRecipient);
+router.patch('/settings/notification-recipients/:id', resolveSupplier, requireTeamPermission('settings.manage'), supplierSettingsController.updateNotificationRecipient);
+router.delete('/settings/notification-recipients/:id', resolveSupplier, requireTeamPermission('settings.manage'), supplierSettingsController.removeNotificationRecipient);
 router.get('/settings/tax-info', resolveSupplier, supplierSettingsController.getTaxInfo);
-router.patch('/settings/tax-info', resolveSupplier, requireTeamRole('admin', 'finance'), supplierSettingsController.updateTaxInfo);
+router.patch('/settings/tax-info', resolveSupplier, requireTeamPermission('settings.tax'), supplierSettingsController.updateTaxInfo);
 router.get('/settings/booking-rules', resolveSupplier, supplierSettingsController.getBookingRules);
 router.put('/settings/booking-rules', resolveSupplier, requireTeamRole('admin', 'editor'), supplierSettingsController.updateBookingRules);
 
@@ -124,8 +124,8 @@ router.post('/finance/payout/request', resolveSupplier, requireTeamPermission('p
 router.patch('/finance/payouts/requests/:id/cancel', resolveSupplier, requireTeamPermission('payouts.request'), financeController.cancelPayoutRequest);
 router.get('/finance/disputes', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getDisputes);
 router.get('/finance/payout-settings', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getPayoutSettings);
-router.patch('/finance/payout-settings', resolveSupplier, requireTeamPermission('payouts.view'), financeController.updatePayoutSettings);
-router.get('/payouts', ghanaSupplier.getPayouts);
+router.patch('/finance/payout-settings', resolveSupplier, requireTeamPermission('payouts.request'), financeController.updatePayoutSettings);
+router.get('/payouts', requireTeamPermission('payouts.view'), ghanaSupplier.getPayouts);
 
 // Payout methods (proxied to shared controller — frontend rewrites /payout-methods/* here)
 router.get('/payout-methods', resolveSupplier, requireTeamPermission('payout-methods.view'), payoutMethodController.getMyMethods);

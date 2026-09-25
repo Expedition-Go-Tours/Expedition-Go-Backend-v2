@@ -199,7 +199,9 @@ exports.getMyDisputes = catchAsync(async (req, res) => {
 
   const [disputes, totalCount] = await Promise.all([
     prisma.dispute.findMany({
-      where: { openedById: req.user.id },
+      // Every member sees the supplier's refund requests (the owner filed some
+      // of them); openedById stays for display/attribution.
+      where: { supplierId: req.supplierId },
       include: {
         booking: { select: { bookingNumber: true, travelDate: true, grossAmount: true, currency: true, tour: { select: { title: true, coverPhoto: true } } } },
       },
@@ -207,7 +209,7 @@ exports.getMyDisputes = catchAsync(async (req, res) => {
       skip: (page - 1) * limit,
       take: limit,
     }),
-    prisma.dispute.count({ where: { openedById: req.user.id } }),
+    prisma.dispute.count({ where: { supplierId: req.supplierId } }),
   ]);
 
   res.status(200).json({
@@ -229,7 +231,7 @@ exports.getMyDisputes = catchAsync(async (req, res) => {
  */
 exports.withdrawDispute = catchAsync(async (req, res, next) => {
   const dispute = await prisma.dispute.findFirst({
-    where: { id: req.params.id, openedById: req.user.id, status: { in: ['OPEN', 'UNDER_REVIEW'] } },
+    where: { id: req.params.id, supplierId: req.supplierId, status: { in: ['OPEN', 'UNDER_REVIEW'] } },
   });
   if (!dispute) return next(new AppError('Refund request not found or can no longer be withdrawn', 404));
 

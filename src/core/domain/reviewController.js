@@ -603,7 +603,7 @@ exports.addSupplierResponse = catchAsync(async (req, res, next) => {
 
   // Log activity
   await logActivity({
-    userId: supplierId,
+    userId: req.user.id,
     action: 'review.response_added',
     resource: 'Review',
     resourceId: review.id,
@@ -675,7 +675,7 @@ exports.updateSupplierResponse = catchAsync(async (req, res, next) => {
 
   // Log activity
   await logActivity({
-    userId: supplierId,
+    userId: req.user.id,
     action: 'review.response_updated',
     resource: 'Review',
     resourceId: review.id,
@@ -724,7 +724,7 @@ exports.deleteSupplierResponse = catchAsync(async (req, res, next) => {
 
   // Log activity
   await logActivity({
-    userId: supplierId,
+    userId: req.user.id,
     action: 'review.response_deleted',
     resource: 'Review',
     resourceId: review.id
@@ -805,7 +805,7 @@ exports.flagReview = catchAsync(async (req, res, next) => {
         status: 'FLAGGED',
         flagReason: reason,
         flagComment: comment ? String(comment).trim() : null,
-        flaggedBy: supplierId,
+        flaggedBy: req.user.id,
         flaggedAt: new Date(),
         reportCount: { increment: 1 },
       },
@@ -839,7 +839,7 @@ exports.flagReview = catchAsync(async (req, res, next) => {
   });
 
   await logActivity({
-    userId: supplierId,
+    userId: req.user.id,
     action: 'review.flag',
     resource: 'Review',
     resourceId: review.id,
