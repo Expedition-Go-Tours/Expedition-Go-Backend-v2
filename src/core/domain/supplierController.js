@@ -23,6 +23,11 @@ const {
   parseGuides,
   upsertVerificationRecords,
 } = require('../services/supplierVerification');
+const {
+  parseSection,
+  requestedPayoutCycle,
+  validateSupplierApplication,
+} = require('../services/supplierApplicationPayload');
 const admin = require('../../../config/firebaseAdmin');
 const logger = require('../services/logger');
 const { notifyDiscord } = require('../services/discordNotifier');
@@ -56,13 +61,20 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
     return next(new AppError('businessInfo, operatingInfo, representativeInfo, and payoutInfo are required', 400));
   }
 
-  // Parse JSON strings if sent as multipart form data
-  const parse = (val) => {
-    if (typeof val === 'string') {
-      try { return JSON.parse(val); } catch { return val; }
-    }
-    return val;
+  const sections = {
+    businessInfo: parseSection(businessInfo),
+    operatingInfo: parseSection(operatingInfo),
+    representativeInfo: parseSection(representativeInfo),
+    payoutInfo: parseSection(payoutInfo),
+    compliance: parseSection(compliance),
   };
+
+  // Reject malformed sections up front: they used to be stored verbatim (or
+  // blow up inside Prisma for an unknown supplierType).
+  const validation = validateSupplierApplication({ ...sections, supplierType: req.body.supplierType });
+  if (validation.errors.length > 0) {
+    return next(new AppError(`Invalid supplier application: ${validation.errors.join('; ')}`, 400));
+  }
 
   // Collect uploaded document URLs
   const businessDocuments = {};
@@ -83,9 +95,7 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
     }
   });
 
-  const supplierType = req.body.supplierType
-    ? String(req.body.supplierType).toUpperCase()
-    : 'TOUR_COMPANY';
+  const supplierType = validation.supplierType;
 
   const documents = parseDocuments(req);
   const vehiclePhotos = parseVehiclePhotos(req);
@@ -98,12 +108,12 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
         userId,
         status: 'PENDING',
         supplierType,
-        businessInfo: parse(businessInfo),
-        operatingInfo: parse(operatingInfo),
-        representativeInfo: parse(representativeInfo),
-        payoutInfo: parse(payoutInfo),
+        businessInfo: sections.businessInfo,
+        operatingInfo: sections.operatingInfo,
+        representativeInfo: sections.representativeInfo,
+        payoutInfo: sections.payoutInfo,
         businessDocuments,
-        compliance: parse(compliance) || { termsAccepted: false },
+        compliance: sections.compliance || { termsAccepted: false },
       },
     });
 
@@ -203,18 +213,25 @@ exports.updateApplication = catchAsync(async (req, res, next) => {
     return next(new AppError(`Application cannot be modified in ${supplierProfile.status} status`, 400));
   }
 
-  const parse = (val) => {
-    if (typeof val === 'string') {
-      try { return JSON.parse(val); } catch { return val; }
-    }
-    return val;
+  const sections = {
+    businessInfo: req.body.businessInfo ? parseSection(req.body.businessInfo) : undefined,
+    operatingInfo: req.body.operatingInfo ? parseSection(req.body.operatingInfo) : undefined,
+    representativeInfo: req.body.representativeInfo ? parseSection(req.body.representativeInfo) : undefined,
+    payoutInfo: req.body.payoutInfo ? parseSection(req.body.payoutInfo) : undefined,
   };
 
+  const validation = validateSupplierApplication(
+    { ...sections, supplierType: req.body.supplierType },
+    { partial: true }
+  );
+  if (validation.errors.length > 0) {
+    return next(new AppError(`Invalid supplier application: ${validation.errors.join('; ')}`, 400));
+  }
+
   const updateData = {};
-  if (req.body.businessInfo) updateData.businessInfo = parse(req.body.businessInfo);
-  if (req.body.operatingInfo) updateData.operatingInfo = parse(req.body.operatingInfo);
-  if (req.body.representativeInfo) updateData.representativeInfo = parse(req.body.representativeInfo);
-  if (req.body.payoutInfo) updateData.payoutInfo = parse(req.body.payoutInfo);
+  for (const [key, value] of Object.entries(sections)) {
+    if (value !== undefined) updateData[key] = value;
+  }
 
   if (req.files) {
     const oldDocs = supplierProfile.businessDocuments || {};
@@ -240,7 +257,7 @@ exports.updateApplication = catchAsync(async (req, res, next) => {
   }
 
   if (req.body.supplierType) {
-    updateData.supplierType = String(req.body.supplierType).toUpperCase();
+    updateData.supplierType = validation.supplierType;
   }
 
   const documents = parseDocuments(req);
@@ -660,14 +677,20 @@ exports.reviewApplication = catchAsync(async (req, res, next) => {
   }
 
   // Ghana suppliers join the automated payout schedule (weekly / twice a month
-  // / monthly — default twice a month). Non-Ghana suppliers keep the legacy
-  // manual withdrawal windows, so TravioAfrica is unaffected.
+  // / monthly). The cadence the supplier chose during onboarding is honoured
+  // when it is a valid cycle; otherwise the platform default applies.
+  // Non-Ghana suppliers keep the legacy manual withdrawal windows, so
+  // TravioAfrica is unaffected.
   if (action === 'approve' && isGhanaSupplier(supplierProfile.businessInfo?.country) && !supplierProfile.payoutCycle) {
     try {
       const { getDefaultCycle } = require('../services/payoutRuns');
+      const requestedCycle = requestedPayoutCycle(supplierProfile.payoutInfo);
       await prisma.supplierProfile.update({
         where: { id },
-        data: { payoutCycle: await getDefaultCycle(), payoutCycleEffectiveAt: new Date() },
+        data: {
+          payoutCycle: requestedCycle || (await getDefaultCycle()),
+          payoutCycleEffectiveAt: new Date(),
+        },
       });
     } catch (err) {
       console.warn('[Finance] Payout schedule enrolment failed:', err.message);

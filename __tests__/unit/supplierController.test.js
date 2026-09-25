@@ -24,6 +24,9 @@ jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest
 jest.mock('../../src/core/services/cloudinaryHelper', () => ({ deleteCloudinaryImage: jest.fn(), isValidCloudinaryUrl: jest.fn((url) => typeof url === 'string' && url.startsWith('https://res.cloudinary.com/')) }));
 jest.mock('../../src/core/services/cacheHelper', () => ({ getOrSet: jest.fn((key, fn) => fn()), invalidateKeys: jest.fn(() => Promise.resolve()), invalidateTourCaches: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../config/firebaseAdmin', () => ({ auth: () => ({ getUser: jest.fn() }) }));
+jest.mock('../../src/core/services/payoutRuns', () => ({
+  getDefaultCycle: jest.fn(async () => 'TWICE_MONTHLY'),
+}));
 
 const prisma = require('../../src/core/services/prismaClient');
 const { logActivity } = require('../../src/core/services/auditLogger');
@@ -34,6 +37,7 @@ const { cloudinaryUrl } = require('../../src/core/services/imageOptimizer');
 const { deleteCloudinaryImage } = require('../../src/core/services/cloudinaryHelper');
 const admin = require('../../config/firebaseAdmin');
 const cache = require('../../src/core/services/cacheHelper');
+const { getDefaultCycle } = require('../../src/core/services/payoutRuns');
 const controller = require('../../src/core/domain/supplierController');
 
 describe('supplierController', () => {
@@ -126,6 +130,55 @@ describe('supplierController', () => {
       await controller.applyToBeSupplier(req, res, next);
 
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400, message: expect.stringContaining('businessInfo') }));
+    });
+
+    it('rejects an unknown supplierType with 400 instead of failing inside Prisma', async () => {
+      req.body = {
+        supplierType: 'TOUR_OPERATOR',
+        businessInfo: { legalBusinessName: 'Acme' },
+        operatingInfo: { regions: ['Greater Accra'] },
+        representativeInfo: { fullName: 'John' },
+        payoutInfo: { bankAccountName: 'A' },
+      };
+
+      await controller.applyToBeSupplier(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 400, message: expect.stringContaining('supplierType must be one of') })
+      );
+      expect(prisma.supplierProfile.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects malformed sections with 400 and stores nothing', async () => {
+      req.body = {
+        businessInfo: 'not-json',
+        operatingInfo: { regions: [] },
+        representativeInfo: { fullName: 'John' },
+        payoutInfo: {},
+      };
+
+      await controller.applyToBeSupplier(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 400, message: expect.stringContaining('businessInfo must be an object') })
+      );
+      expect(prisma.supplierProfile.create).not.toHaveBeenCalled();
+    });
+
+    it('normalises the supplierType casing before storing', async () => {
+      req.body = {
+        supplierType: 'vehicle_operator',
+        businessInfo: { legalBusinessName: 'Acme' },
+        operatingInfo: { regions: ['Greater Accra'] },
+        representativeInfo: { fullName: 'John' },
+        payoutInfo: { schedule: 'MONTHLY' },
+      };
+
+      await controller.applyToBeSupplier(req, res, next);
+
+      expect(prisma.supplierProfile.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ supplierType: 'VEHICLE_OPERATOR' }) })
+      );
     });
 
     it('creates supplier profile and returns 201', async () => {
@@ -625,6 +678,42 @@ describe('supplierController', () => {
       expect(sendSupplierStatusEmail).toHaveBeenCalled();
       expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'supplier.approve' }));
       expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('enrols a Ghana supplier on the payout cadence they chose', async () => {
+      req.params = { id: 'sp-1' };
+      req.body = { action: 'approve', notes: 'Looks good' };
+      prisma.supplierProfile.findUnique.mockResolvedValue({
+        ...mockProfile,
+        businessInfo: { legalBusinessName: 'Acme', country: 'GH' },
+        payoutInfo: { schedule: 'MONTHLY' },
+        payoutCycle: null,
+      });
+
+      await controller.reviewApplication(req, res, next);
+
+      expect(prisma.supplierProfile.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'sp-1' }, data: expect.objectContaining({ payoutCycle: 'MONTHLY' }) })
+      );
+      expect(getDefaultCycle).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the platform default cadence when no valid choice was made', async () => {
+      req.params = { id: 'sp-1' };
+      req.body = { action: 'approve', notes: 'Looks good' };
+      prisma.supplierProfile.findUnique.mockResolvedValue({
+        ...mockProfile,
+        businessInfo: { legalBusinessName: 'Acme', country: 'GH' },
+        payoutInfo: { schedule: 'daily' },
+        payoutCycle: null,
+      });
+
+      await controller.reviewApplication(req, res, next);
+
+      expect(getDefaultCycle).toHaveBeenCalled();
+      expect(prisma.supplierProfile.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ payoutCycle: 'TWICE_MONTHLY' }) })
+      );
     });
 
     it('rejects application', async () => {

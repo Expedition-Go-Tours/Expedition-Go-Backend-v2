@@ -8,6 +8,10 @@
  */
 
 const { isValidCloudinaryUrl } = require('./cloudinaryHelper');
+const { DocumentType } = require('@prisma/client');
+
+/** Valid `DocumentType` values — anything else must not reach Prisma. */
+const DOCUMENT_TYPES = new Set(Object.values(DocumentType));
 
 /** Parse a JSON string/array field from a multipart body. */
 function parseJson(value) {
@@ -42,7 +46,10 @@ function parseDocuments(req) {
       const m = meta[i] || {};
       const url = file.path;
       if (!url || !isValidCloudinaryUrl(url)) return null;
-      const type = m.type ? String(m.type) : 'OTHER';
+      // Unknown types would make Prisma throw inside the application
+      // transaction (500) — store them as OTHER, like a missing type.
+      const rawType = m.type ? String(m.type).trim().toUpperCase() : 'OTHER';
+      const type = DOCUMENT_TYPES.has(rawType) ? rawType : 'OTHER';
       const ownerType = m.ownerType === 'VEHICLE' || m.ownerType === 'GUIDE' ? m.ownerType : 'SUPPLIER';
       return {
         url,
