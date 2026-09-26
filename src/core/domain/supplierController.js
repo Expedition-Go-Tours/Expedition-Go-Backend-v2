@@ -472,6 +472,60 @@ exports.getEarnings = catchAsync(async (req, res) => {
  * GET /suppliers/monthly-revenue
  * Returns monthly revenue breakdown for charts (gross amount per month).
  */
+/**
+ * GET /suppliers/analytics/products
+ *
+ * Per-product performance for the Analytics page: booking count, gross revenue
+ * and the supplier's cut, grouped by tour.
+ *
+ * The Analytics page used to build these charts from the supplier's BOOKINGS
+ * LIST (`GET /bookings/supplier/bookings`, `bookings.view` — admin + editor),
+ * which meant a finance member, who may open Analytics but not the Bookings page,
+ * got a permission error instead of the charts. Aggregating here keeps the page
+ * on the key it is gated by (`analytics.view`) and, as a bonus, ranks every
+ * booking rather than the 50 most recent ones the page used to walk.
+ */
+exports.getProductAnalytics = catchAsync(async (req, res) => {
+  const supplierId = req.supplierId;
+  const bucket = Math.floor(Date.now() / 60000); // 1-minute buckets, as the dashboard
+
+  const result = await cache.getOrSet(`supplier:analytics:products:${supplierId}:${bucket}`, async () => {
+    const rows = await prisma.booking.groupBy({
+      by: ['tourId'],
+      where: { tour: { supplierId }, isSimulated: false },
+      _count: { _all: true },
+      _sum: { grossAmount: true, supplierPayout: true },
+      orderBy: { _sum: { grossAmount: 'desc' } },
+      take: 20,
+    });
+
+    if (!rows.length) return [];
+
+    // The titles and photos live on the tour, not the booking: one query, keyed by
+    // the ids the grouping produced.
+    const tours = await prisma.tour.findMany({
+      where: { id: { in: rows.map((r) => r.tourId) } },
+      select: { id: true, title: true, coverPhoto: true, averageRating: true },
+    });
+    const tourById = new Map(tours.map((t) => [t.id, t]));
+
+    return rows.map((r) => {
+      const tour = tourById.get(r.tourId);
+      return {
+        tourId: r.tourId,
+        name: tour?.title || 'Unknown product',
+        photo: tour?.coverPhoto || null,
+        rating: Number(tour?.averageRating || 0),
+        bookings: r._count?._all ?? 0,
+        revenue: Number(r._sum?.grossAmount || 0),
+        payout: Number(r._sum?.supplierPayout || 0),
+      };
+    });
+  }, 60);
+
+  res.json({ status: 'success', data: { products: result } });
+});
+
 exports.getMonthlyRevenue = catchAsync(async (req, res) => {
   const supplierId = req.supplierId;
   const months = Math.min(24, Math.max(1, parseInt(req.query.months, 10) || 12));

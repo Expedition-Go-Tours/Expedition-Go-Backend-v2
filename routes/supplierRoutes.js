@@ -489,6 +489,26 @@ router.get('/dashboard', resolveSupplier, supplierController.getDashboard);
  */
 router.get('/monthly-revenue', resolveSupplier, supplierController.getMonthlyRevenue);
 
+/**
+ * @swagger
+ * /suppliers/analytics/products:
+ *   get:
+ *     summary: Per-product performance for the Analytics page
+ *     description: |
+ *       Booking count, gross revenue and the supplier's cut per tour, ranked by
+ *       revenue. Keyed on `analytics.view` (admin + editor + finance) so the page
+ *       never has to reach into the Bookings list, which is `bookings.view`.
+ *     tags: [Supplier]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Per-product aggregates
+ *       403:
+ *         description: Role cannot view analytics
+ */
+router.get('/analytics/products', resolveSupplier, requireTeamPermission('analytics.view'), supplierController.getProductAnalytics);
+
 // ================================
 // SUPPLIER CANCELLATION RATE
 // ================================
