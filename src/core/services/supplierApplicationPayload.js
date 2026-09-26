@@ -158,6 +158,64 @@ function requestedPayoutCycle(payoutInfo) {
   return PAYOUT_CYCLE_VALUES.includes(requested) ? requested : null;
 }
 
+/**
+ * Turn the application's `payoutInfo` into the fields of the supplier's first
+ * `PayoutMethod` row.
+ *
+ * TravioGhana admits suppliers immediately, so the details they typed at
+ * sign-up have to exist in the dashboard already — otherwise they land on an
+ * empty payout settings page and retype everything. Returns null when the
+ * applicant did not provide enough for the chosen method.
+ */
+function payoutMethodFromApplication(payoutInfo) {
+  if (!isPlainObject(payoutInfo)) return null;
+  const clean = (value) => {
+    const text = String(value == null ? '' : value).trim();
+    return text || undefined;
+  };
+  const currency = clean(payoutInfo.payoutCurrency);
+  const method = String(payoutInfo.method || '').trim().toLowerCase();
+  const type = {
+    bank: 'BANK_TRANSFER',
+    bank_transfer: 'BANK_TRANSFER',
+    paypal: 'PAYPAL',
+    momo: 'MOBILE_MONEY',
+    mobile_money: 'MOBILE_MONEY',
+  }[method];
+  if (!type) return null;
+
+  if (type === 'BANK_TRANSFER') {
+    const accountName = clean(payoutInfo.bankAccountName);
+    const accountNumber = clean(payoutInfo.bankAccountNumber);
+    if (!accountName && !accountNumber) return null;
+    return {
+      type,
+      currency: currency || 'GHS',
+      bankName: clean(payoutInfo.bankName),
+      bankCountry: clean(payoutInfo.bankCountry),
+      accountName,
+      accountNumber,
+    };
+  }
+
+  if (type === 'PAYPAL') {
+    const paypalEmail = clean(payoutInfo.paypalEmail);
+    if (!paypalEmail) return null;
+    return { type, currency: currency || 'USD', paypalEmail, accountName: clean(payoutInfo.paypalAccountName) };
+  }
+
+  const mobileNumber = clean(payoutInfo.momoNumber);
+  const mobileProvider = clean(payoutInfo.momoNetwork);
+  if (!mobileNumber && !mobileProvider) return null;
+  return {
+    type,
+    currency: currency || 'GHS',
+    accountName: clean(payoutInfo.momoAccountName),
+    mobileProvider,
+    mobileNumber,
+  };
+}
+
 module.exports = {
   BUSINESS_TYPE_VALUES,
   PAYOUT_METHOD_VALUES,
@@ -165,6 +223,7 @@ module.exports = {
   SUPPLIER_TYPE_VALUES,
   normalizeSupplierType,
   parseSection,
+  payoutMethodFromApplication,
   requestedPayoutCycle,
   validateSupplierApplication,
 };

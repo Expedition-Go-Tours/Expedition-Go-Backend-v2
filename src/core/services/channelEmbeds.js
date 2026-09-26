@@ -158,17 +158,22 @@ function salesRefundIssued({ amount, currency, chargeId, bookingNumber }) {
 
 // ── Verification channel ───────────────────────────────────────────
 
-function verificationSupplierApplication({ user, supplierId, supplierType }) {
+function verificationSupplierApplication({ user, supplierId, supplierType, autoApproved }) {
   const url = dashboardUrl(`suppliers/${supplierId}`);
   return {
-    content: 'New supplier application submitted.',
+    content: autoApproved
+      ? 'New supplier joined — auto-approved on submission (ID document to verify).'
+      : 'New supplier application submitted.',
     opts: {
-      title: 'New Supplier Application',
-      color: COLORS.blue,
+      title: autoApproved ? 'New Supplier Joined (auto-approved)' : 'New Supplier Application',
+      color: autoApproved ? COLORS.green : COLORS.blue,
       url: url || undefined,
       fields: [
         { name: 'Applicant', value: `${user?.name || 'Unknown'} (${user?.email || supplierId})`, inline: true },
         { name: 'Type', value: supplierType || 'Not specified', inline: true },
+        ...(autoApproved
+          ? [{ name: 'Status', value: 'ACTIVE — ID document awaiting verification', inline: false }]
+          : []),
         ...(url ? [{ name: 'Review', value: `[Open Dashboard](${url})`, inline: false }] : []),
       ],
       cooldownKey: supplierId,

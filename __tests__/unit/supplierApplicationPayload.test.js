@@ -5,6 +5,7 @@
  */
 const {
   normalizeSupplierType,
+  payoutMethodFromApplication,
   parseSection,
   requestedPayoutCycle,
   validateSupplierApplication,
@@ -130,6 +131,47 @@ describe('supplierApplicationPayload', () => {
     expect(parseSection('{"legalBusinessName":"Acme"}')).toEqual({ legalBusinessName: 'Acme' });
     expect(parseSection({ already: 'parsed' })).toEqual({ already: 'parsed' });
     expect(parseSection('not-json')).toBe('not-json');
+  });
+
+  it('maps the application payout details onto a PayoutMethod row', () => {
+    expect(
+      payoutMethodFromApplication({
+        method: 'momo',
+        payoutCurrency: 'GHS',
+        momoAccountName: 'Ama Boateng',
+        momoNetwork: 'MTN Mobile Money',
+        momoNumber: '0244000000',
+      })
+    ).toEqual({
+      type: 'MOBILE_MONEY',
+      currency: 'GHS',
+      accountName: 'Ama Boateng',
+      mobileProvider: 'MTN Mobile Money',
+      mobileNumber: '0244000000',
+    });
+
+    expect(
+      payoutMethodFromApplication({
+        method: 'bank_transfer',
+        payoutCurrency: 'GHS',
+        bankAccountName: 'Ama Boateng',
+        bankAccountNumber: '1234567890',
+        bankName: 'Ecobank Ghana',
+        bankCountry: 'GH',
+      })
+    ).toMatchObject({ type: 'BANK_TRANSFER', accountName: 'Ama Boateng', accountNumber: '1234567890', bankName: 'Ecobank Ghana' });
+
+    expect(
+      payoutMethodFromApplication({ method: 'paypal', paypalEmail: 'ama@example.com', paypalAccountName: 'Ama' })
+    ).toEqual({ type: 'PAYPAL', currency: 'USD', paypalEmail: 'ama@example.com', accountName: 'Ama' });
+  });
+
+  it('returns null when the application did not provide enough for a method', () => {
+    expect(payoutMethodFromApplication({ method: 'momo' })).toBeNull(); // no network/number
+    expect(payoutMethodFromApplication({ method: 'bank' })).toBeNull(); // no account
+    expect(payoutMethodFromApplication({ method: 'paypal' })).toBeNull(); // no email
+    expect(payoutMethodFromApplication({})).toBeNull();
+    expect(payoutMethodFromApplication(null)).toBeNull();
   });
 
   it('maps the supplier payout choice onto a valid PayoutCycle', () => {

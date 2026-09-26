@@ -25,6 +25,7 @@ const {
 } = require('../services/supplierVerification');
 const {
   parseSection,
+  payoutMethodFromApplication,
   requestedPayoutCycle,
   validateSupplierApplication,
 } = require('../services/supplierApplicationPayload');
@@ -102,20 +103,58 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
   const vehicles = parseVehicles(req.body);
   const guides = parseGuides(req.body);
 
+  // ── Auto-accept ────────────────────────────────────────────────────────
+  // TravioGhana admits suppliers on submission: the account is activated
+  // straight away so the supplier can sign into the dashboard and publish,
+  // and the ID document is verified in the background by the team.
+  //
+  // `ACTIVE` (not `APPROVED`) is required — the supplier portal only admits
+  // ACTIVE accounts and every customer-facing tour query filters on
+  // `supplierProfile.status: 'ACTIVE'`. An application without a document is
+  // not activated: it stays PENDING for an admin to pick up.
+  const canAutoActivate = documents.length > 0;
+  const business = sections.businessInfo || {};
+  const ghanaSupplier = isGhanaSupplier(business.country);
+  const requestedCycle = requestedPayoutCycle(sections.payoutInfo);
+  const applicationPayoutMethod = payoutMethodFromApplication(sections.payoutInfo);
+  const taxInfo = {
+    taxId: business.tin || '',
+    taxCountry: business.country || 'GH',
+    legalBusinessName: business.legalBusinessName || business.displayName || '',
+    businessType: business.businessType || 'individual',
+  };
+  const { getDefaultCycle } = require('../services/payoutRuns');
+  const payoutCycle = canAutoActivate && ghanaSupplier
+    ? requestedCycle || (await getDefaultCycle())
+    : null;
+
   const supplierProfile = await prisma.$transaction(async (tx) => {
     const profile = await tx.supplierProfile.create({
       data: {
         userId,
-        status: 'PENDING',
+        status: canAutoActivate ? 'ACTIVE' : 'PENDING',
+        ...(canAutoActivate
+          ? { reviewedAt: new Date(), adminNotes: 'Auto-approved on submission — ID document awaiting verification' }
+          : {}),
+        ...(payoutCycle ? { payoutCycle, payoutCycleEffectiveAt: new Date() } : {}),
         supplierType,
         businessInfo: sections.businessInfo,
         operatingInfo: sections.operatingInfo,
         representativeInfo: sections.representativeInfo,
         payoutInfo: sections.payoutInfo,
         businessDocuments,
-        compliance: sections.compliance || { termsAccepted: false },
+        compliance: { ...(sections.compliance || { termsAccepted: false }), taxInfo },
       },
     });
+
+    // The payout details from the application become the account's first payout
+    // method so the dashboard is prefilled. Still unverified: money only moves
+    // once an admin checks it.
+    if (applicationPayoutMethod) {
+      await tx.payoutMethod.create({
+        data: { supplierId: userId, isDefault: true, verified: false, ...applicationPayoutMethod },
+      });
+    }
 
     await upsertVerificationRecords(tx, {
       profileId: profile.id,
@@ -135,11 +174,34 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
     data: { roles: { push: 'supplier' } },
   });
 
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { name: true, email: true, roles: true },
+  });
+
+  if (canAutoActivate) {
+    // Welcome email + in-app notice: the account is already live, so there is
+    // nothing to "review" as far as the supplier is concerned.
+    try {
+      await sendSupplierStatusEmail(user?.email, 'ACTIVE', { name: user?.name, roles: user?.roles });
+    } catch (err) {
+      console.error('Supplier welcome email failed:', err.message);
+    }
+    enqueueNotification({
+      userId,
+      type: 'SUPPLIER_APPROVED',
+      title: 'Account Activated',
+      message: 'Your supplier account is active. Head to your dashboard to create your first listing.',
+      data: { supplierId: supplierProfile.id, status: 'ACTIVE' },
+    }).catch((err) => console.error('[Notification] enqueueNotification (auto-activate) failed:', err.message));
+  }
+
   notifyAdmin({
     type: 'NEW_SUPPLIER_APPLICATION',
-    title: 'New Supplier Application',
-    message: `${user?.name || 'A user'} (${user?.email || userId}) has submitted a supplier application.`,
+    title: canAutoActivate ? 'New Supplier Joined (auto-approved)' : 'New Supplier Application',
+    message: canAutoActivate
+      ? `${user?.name || 'A user'} (${user?.email || userId}) is now an active supplier — ID document awaiting verification.`
+      : `${user?.name || 'A user'} (${user?.email || userId}) has submitted a supplier application.`,
     data: { supplierId: supplierProfile.id, userId, applicantName: user?.name, applicantEmail: user?.email },
   }).catch((err) => console.error('[Notification] notifyAdmin (new supplier) failed:', err.message));
 
@@ -150,6 +212,7 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
     user: { name: user?.name, email: user?.email },
     supplierId: supplierProfile.id,
     supplierType,
+    autoApproved: canAutoActivate,
   });
   notifyDiscord(
     'verification',

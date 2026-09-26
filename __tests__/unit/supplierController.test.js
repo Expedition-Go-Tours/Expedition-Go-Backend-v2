@@ -7,6 +7,7 @@ jest.mock('../../src/core/services/prismaClient', () => {
     review: { findMany: jest.fn(), aggregate: jest.fn(), count: jest.fn() },
     payout: { findMany: jest.fn(), count: jest.fn() },
     media: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    payoutMethod: { create: jest.fn().mockResolvedValue({}) },
     supplierDocument: { create: jest.fn().mockResolvedValue({}) },
     vehicle: { create: jest.fn().mockResolvedValue({}) },
     guide: { create: jest.fn().mockResolvedValue({}) },
@@ -130,6 +131,88 @@ describe('supplierController', () => {
       await controller.applyToBeSupplier(req, res, next);
 
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400, message: expect.stringContaining('businessInfo') }));
+    });
+
+    it('activates the supplier on submission and seeds their payout method', async () => {
+      req.body = {
+        supplierType: 'vehicle_operator',
+        businessInfo: JSON.stringify({
+          legalBusinessName: 'Solo Transports',
+          displayName: 'Solo',
+          businessType: 'company',
+          country: 'GH',
+          tin: 'C0012345678',
+          phoneNumber: '+233244000000',
+        }),
+        operatingInfo: JSON.stringify({ regions: ['Greater Accra'] }),
+        representativeInfo: JSON.stringify({ fullName: 'Ama Boateng', email: 'ama@example.com' }),
+        payoutInfo: JSON.stringify({
+          method: 'momo',
+          schedule: 'MONTHLY',
+          payoutCurrency: 'GHS',
+          momoAccountName: 'Ama Boateng',
+          momoNetwork: 'MTN Mobile Money',
+          momoNumber: '0244000000',
+        }),
+      };
+      // The applicant uploaded their ID, so there is something to activate on.
+      req.files = {
+        documents: [{ path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1/supplier-documents/id.png', originalname: 'id.png' }],
+      };
+      prisma.user.findUnique.mockResolvedValue({ name: 'Ama Boateng', email: 'ama@example.com', roles: ['customer', 'supplier'] });
+
+      await controller.applyToBeSupplier(req, res, next);
+
+      const created = prisma.supplierProfile.create.mock.calls[0][0].data;
+      // ACTIVE, not APPROVED: the portal and every tour query accept only ACTIVE.
+      expect(created.status).toBe('ACTIVE');
+      expect(created.adminNotes).toContain('Auto-approved');
+      expect(created.reviewedAt).toBeInstanceOf(Date);
+      expect(created.payoutCycle).toBe('MONTHLY'); // the cadence they picked
+      expect(created.compliance.taxInfo).toMatchObject({
+        taxId: 'C0012345678',
+        legalBusinessName: 'Solo Transports',
+        businessType: 'company',
+        taxCountry: 'GH',
+      });
+      expect(prisma.payoutMethod.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            supplierId: 'u-1',
+            type: 'MOBILE_MONEY',
+            mobileProvider: 'MTN Mobile Money',
+            mobileNumber: '0244000000',
+            accountName: 'Ama Boateng',
+            isDefault: true,
+            verified: false,
+          }),
+        })
+      );
+      expect(sendSupplierStatusEmail).toHaveBeenCalledWith('ama@example.com', 'ACTIVE', expect.objectContaining({ name: 'Ama Boateng' }));
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    it('leaves an application with no document pending for an admin', async () => {
+      req.body = {
+        supplierType: 'tour_guide',
+        businessInfo: JSON.stringify({ legalBusinessName: 'Ama Walks', country: 'GH' }),
+        operatingInfo: JSON.stringify({ regions: ['Ashanti'] }),
+        representativeInfo: JSON.stringify({ fullName: 'Ama Boateng', email: 'ama@example.com' }),
+        payoutInfo: JSON.stringify({ method: 'momo', momoNetwork: 'MTN Mobile Money', momoNumber: '0244000000' }),
+      };
+      req.files = undefined;
+
+      await controller.applyToBeSupplier(req, res, next);
+
+      const created = prisma.supplierProfile.create.mock.calls[0][0].data;
+      expect(created.status).toBe('PENDING'); // the only remaining integrity check
+      expect(created.adminNotes).toBeUndefined();
+      expect(created.payoutCycle).toBeUndefined();
+      expect(sendSupplierStatusEmail).not.toHaveBeenCalled();
+      // Their payout details are still recorded for later.
+      expect(prisma.payoutMethod.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ type: 'MOBILE_MONEY', verified: false }) })
+      );
     });
 
     it('rejects an unknown supplierType with 400 instead of failing inside Prisma', async () => {
@@ -273,7 +356,8 @@ describe('supplierController', () => {
       expect(prisma.supplierProfile.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            compliance: { termsAccepted: true },
+            // The application's tax details are seeded alongside the flags.
+            compliance: expect.objectContaining({ termsAccepted: true }),
           }),
         })
       );
@@ -292,7 +376,7 @@ describe('supplierController', () => {
       expect(prisma.supplierProfile.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            compliance: { termsAccepted: false },
+            compliance: expect.objectContaining({ termsAccepted: false }),
           }),
         })
       );

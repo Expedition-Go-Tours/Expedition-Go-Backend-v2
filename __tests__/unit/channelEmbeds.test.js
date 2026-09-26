@@ -91,6 +91,19 @@ describe('channelEmbeds — verification', () => {
     expect(r.opts.cooldownKey).toBe('s1');
   });
 
+  it('verificationSupplierApplication flags an auto-approved supplier', () => {
+    const r = verificationSupplierApplication({
+      user: { name: 'A', email: 'a@b.c' },
+      supplierId: 's1',
+      supplierType: 'TOUR_COMPANY',
+      autoApproved: true,
+    });
+    expect(r.content).toContain('auto-approved');
+    expect(r.opts.title).toBe('New Supplier Joined (auto-approved)');
+    expect(r.opts.color).toBe(0x00c853);
+    expect(r.opts.fields.find((f) => f.name === 'Status').value).toContain('ACTIVE');
+  });
+
   it('verificationStatusChange shows from → to', () => {
     const r = verificationStatusChange({ supplierName: 'Acme', from: 'APPROVED', to: 'ACTIVE', supplierId: 's1' });
     expect(r.content).toContain('APPROVED');

@@ -135,13 +135,24 @@ exports.updateNotificationPreferences = catchAsync(async (req, res, next) => {
 exports.getTaxInfo = catchAsync(async (req, res) => {
   const profile = await prisma.supplierProfile.findUnique({
     where: { userId: req.supplierId },
-    select: { businessDocuments: true, compliance: true },
+    select: { businessDocuments: true, compliance: true, businessInfo: true },
   });
+
+  // The application already states the legal name, business type, tax id and
+  // country, so this tab must not read empty until the supplier saves it again.
+  // Saved tax details always win over the application's.
+  const stored = profile?.compliance?.taxInfo || {};
+  const business = profile?.businessInfo || {};
 
   res.status(200).json({
     status: 'success',
     data: {
-      taxInfo: profile?.compliance?.taxInfo || {},
+      taxInfo: {
+        taxId: stored.taxId || business.tin || '',
+        taxCountry: stored.taxCountry || business.country || '',
+        legalBusinessName: stored.legalBusinessName || business.legalBusinessName || business.displayName || '',
+        businessType: stored.businessType || business.businessType || 'individual',
+      },
       documents: profile?.businessDocuments || {},
     },
   });
