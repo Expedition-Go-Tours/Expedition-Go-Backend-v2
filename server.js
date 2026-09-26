@@ -433,7 +433,12 @@ function setupSocketIO() {
       .then(({ supplierId, viaMembership, canChat }) => {
         if (supplierId && supplierId !== socket.userId) {
           socket.supplierId = supplierId;
-          socket.join(`user:${supplierId}`);
+          // That room carries the account's live customer messages
+          // (chat:message / chat:typing / chat:delivered), so a member may only
+          // join it when they may read the inbox. Refusing the events below is
+          // not enough on its own: a room join is a subscription, and a
+          // subscription delivers without asking.
+          if (canChat) socket.join(`user:${supplierId}`);
         }
         // A member without `chat.view` (i.e. not admin/support) is refused the
         // chat events below, exactly as the HTTP routes refuse them — joining a
