@@ -1499,25 +1499,32 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, gha
     // ── Fast path: Attraction table (AI-curated) ──
     const attractionCount = await prisma.attraction.count({ where: { status: 'ACTIVE' } });
 
-    // When a city is provided, derive attraction names from the location-
-    // relevant tours (tours based in the city AND tours that visit it).
-    let cityAttractionNames = null;
-    if (city) {
-      const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
-      cityAttractionNames = new Set();
-      if (locIds.length) {
-        const cityTours = await prisma.tour.findMany({
-          where: { id: { in: locIds }, status: 'ACTIVE', attractions: { isEmpty: false } },
-          select: { attractions: true },
-        });
-        for (const t of cityTours) {
-          for (const n of (t.attractions || [])) {
-            if (n && typeof n === 'string' && n.trim()) cityAttractionNames.add(canonicalName(n));
-          }
+    // When a place is searched, match the ATTRACTION's own location — its
+    // `region`/`town` — rather than the tours that mention or visit it.
+    //
+    // The old tour-derived set made Kakum (Central) and Aburi (Eastern) lead
+    // "Top Attractions Nearby in Ashanti Region": a multi-day tour that visits
+    // Ashanti also stops at Kakum, so every stop of that tour counted as local
+    // and Ashanti and Kumasi produced identical lists. An attraction is local
+    // only when it is actually in the searched place.
+    const placeTarget = city ? city.trim().toLowerCase().replace(/\s+region$/, '') : null;
+    const placeTier = (attraction) => {
+      if (!placeTarget) return 99;
+      const town = (attraction.town || '').trim().toLowerCase();
+      if (town && town === placeTarget) return 1; // in the searched town
+      const region = (attraction.region || '').trim().toLowerCase().replace(/\s+region$/, '');
+      if (region && region === placeTarget) return 2; // in the searched region
+      return 99; // not local
+    };
+    const localWhere = placeTarget
+      ? {
+          OR: [
+            { town: { equals: placeTarget, mode: 'insensitive' } },
+            { region: { equals: placeTarget, mode: 'insensitive' } },
+            { region: { equals: `${placeTarget} Region`, mode: 'insensitive' } },
+          ],
         }
-      }
-      // No early return — fall through so the section can backfill globally.
-    }
+      : null;
 
     if (attractionCount > 0) {
       const baseWhere = {
@@ -1533,22 +1540,16 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, gha
         { avgRating: 'desc' },
       ];
 
-      // City-matched attractions first, then a global pool for backfill.
+      // Place-matched attractions first, then a global pool for backfill.
       let attractions = [];
-      if (cityAttractionNames && cityAttractionNames.size) {
-        const cityNames = [...cityAttractionNames];
+      if (localWhere) {
         attractions = await prisma.attraction.findMany({
-          where: {
-            ...baseWhere,
-            // `in` is case-sensitive in Postgres; match each canonical name
-            // case-insensitively so city scoping actually applies.
-            OR: cityNames.map((n) => ({ name: { equals: n, mode: 'insensitive' } })),
-          },
+          where: { ...baseWhere, ...localWhere },
           orderBy: attractionOrder,
           take: limit * 3,
         });
       }
-      if (!cityAttractionNames || attractions.length < limit) {
+      if (!localWhere || attractions.length < limit) {
         const global = await prisma.attraction.findMany({
           where: baseWhere,
           orderBy: attractionOrder,
@@ -1578,7 +1579,6 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, gha
 
       // XGBoost rank attractions
       const xgboost = require('./xgboostService');
-      const localNameSet = cityAttractionNames || new Set();
 
       const ranked = filtered.map(a => {
         const tourCountScore = Math.log10((a.tourCount || 0) + 1) / 2;
@@ -1593,15 +1593,14 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, gha
           distanceScore = Math.max(0, 1 - dist / NEARBY_RADIUS_KM);
         }
 
-        // Attractions tied to the searched city rank ahead of the global backfill.
-        const localBoost = localNameSet.has((a.name || '').trim().toLowerCase()) ? 10 : 0;
-
         const score = (tourCountScore * 0.20) + (bookingsScore * 0.25) + (ratingScore * 0.25) +
-                      (featuredScore) + (hasImageScore) + (distanceScore * 0.15) + localBoost;
-        return { ...a, _score: score };
+                      (featuredScore) + (hasImageScore) + (distanceScore * 0.15);
+        return { ...a, _score: score, _placeTier: placeTier(a) };
       });
 
-      ranked.sort((a, b) => b._score - a._score);
+      // Attractions in the searched place lead — the town itself before the
+      // wider region — and only then does the section score decide.
+      ranked.sort((a, b) => (a._placeTier - b._placeTier) || (b._score - a._score));
 
       let results = ranked.map(a => ({
         name: a.name,
@@ -1650,6 +1649,31 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, gha
         }
       } else {
         results = results.slice(0, limit);
+      }
+
+      // Curated rows can be missing a hero image (Manhyia Palace Museum and
+      // Bonwire Kente Weaving Village do), which rendered blank tiles in a
+      // section that is mostly thumbnails. Fall back to the cover photo of a
+      // tour that includes the attraction.
+      const missingImages = results.filter((r) => !r.heroImage).map((r) => r.name);
+      if (missingImages.length > 0) {
+        // Match in JS through the alias index rather than SQL: tours spell a
+        // stop loosely ("Manhyia Palace " with a trailing space, "Prempeh II
+        // Museum"), and `canonicalFor` is the only thing that resolves those to
+        // the curated name.
+        const imageTours = await prisma.tour.findMany({
+          where: { status: 'ACTIVE', coverPhoto: { not: null }, attractions: { isEmpty: false } },
+          select: { attractions: true, coverPhoto: true },
+          take: 400,
+        });
+        const imageByName = new Map();
+        for (const t of imageTours) {
+          for (const raw of t.attractions || []) {
+            const key = canonicalName(raw);
+            if (t.coverPhoto && !imageByName.has(key)) imageByName.set(key, t.coverPhoto);
+          }
+        }
+        results = results.map((r) => (r.heroImage ? r : { ...r, heroImage: imageByName.get(canonicalName(r.name)) || null }));
       }
 
       return results;

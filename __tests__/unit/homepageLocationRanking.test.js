@@ -226,6 +226,67 @@ describe('getTopRated city-scoped contract', () => {
   });
 });
 
+describe('getAttractions place scoping', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  // Kakum is the highest scoring attraction, but it is in Central: it must not
+  // lead an Ashanti row (a multi-day tour that visits Ashanti also stops there).
+  const ATTRACTIONS = [
+    { id: 'a1', name: 'Kakum National Park', town: 'Cape Coast', region: 'Central', aliases: '', tourCount: 9, avgRating: 4.9, totalBookings: 40, isFeatured: true, heroImage: 'kakum.jpg', latitude: null, longitude: null, category: 'Nature & Wildlife' },
+    { id: 'a2', name: 'Manhyia Palace Museum', town: 'Kumasi', region: 'Ashanti', aliases: 'Manhyia Palace; Manhyia Museum', tourCount: 1, avgRating: 4.6, totalBookings: 2, isFeatured: false, heroImage: null, latitude: null, longitude: null, category: 'Heritage & History' },
+    { id: 'a3', name: 'Kejetia Market', town: 'Kumasi', region: 'Ashanti', aliases: 'Kejetia', tourCount: 1, avgRating: 4.4, totalBookings: 1, isFeatured: false, heroImage: 'kejetia.jpg', latitude: null, longitude: null, category: 'Culture' },
+  ];
+
+  function mockPrisma() {
+    prisma.attraction.count.mockResolvedValue(ATTRACTIONS.length);
+    prisma.attraction.findMany.mockImplementation(({ where } = {}) => {
+      const or = where?.OR || [];
+      const wantsAshanti = or.some((c) => String(c.town?.equals || '').toLowerCase() === 'ashanti'
+        || String(c.region?.equals || '').toLowerCase().startsWith('ashanti'));
+      if (wantsAshanti) {
+        return Promise.resolve(ATTRACTIONS.filter((a) => a.region === 'Ashanti'));
+      }
+      return Promise.resolve(ATTRACTIONS);
+    });
+    prisma.tour.findMany.mockImplementation(({ where } = {}) => {
+      // Platform scope: every attraction these curated tours list (matches prod).
+      if (where?.travioGhanaTour || where?.expeditionTour) {
+        return Promise.resolve([
+          { attractions: ['Kakum National Park'] },
+          { attractions: ['Manhyia Palace '] },
+          { attractions: ['Kejetia Market'] },
+        ]);
+      }
+      if (where?.attractions?.isEmpty === false) return Promise.resolve([{ attractions: ['Manhyia Palace '], coverPhoto: 'fallback.jpg' }]);
+      return Promise.resolve([]);
+    });
+  }
+
+  it('leads with attractions actually in the searched region', async () => {
+    mockPrisma();
+
+    const results = await ranking.getAttractions(10, null, null, true, false, 'Ashanti');
+    const names = results.map((a) => a.name);
+
+    // Both Ashanti attractions lead (their order inside the tier is by score),
+    // and the Central-region top scorer follows.
+    expect(names.slice(0, 2).sort()).toEqual(['Kejetia Market', 'Manhyia Palace Museum']);
+    expect(names.indexOf('Kakum National Park')).toBeGreaterThan(1);
+  });
+
+  it('fills a missing thumbnail from a tour that includes the attraction', async () => {
+    mockPrisma();
+
+    const results = await ranking.getAttractions(10, null, null, true, false, 'Ashanti');
+    const manhyia = results.find((a) => a.name === 'Manhyia Palace Museum');
+
+    // The tour spells it "Manhyia Palace " — the alias index has to resolve it.
+    expect(manhyia.heroImage).toBe('fallback.jpg');
+  });
+});
+
 describe('getLocationTourIds', () => {
   beforeEach(() => {
     jest.clearAllMocks();
