@@ -184,6 +184,31 @@ exports.updateMethod = catchAsync(async (req, res, next) => {
     });
   }
 
+  // Fields that identify *where the money goes*. If any of these change, the
+  // destination is no longer the one an admin looked at, so verification has to
+  // start again. `isDefault` is a display preference, not a destination, and
+  // must not cost a supplier their verified status.
+  const DESTINATION_FIELDS = [
+    'currency',
+    'bankName',
+    'bankAddress',
+    'bankCountry',
+    'accountName',
+    'accountNumber',
+    'routingNumber',
+    'swiftCode',
+    'iban',
+    'sortCode',
+    'branchCode',
+    'branchName',
+    'mobileProvider',
+    'mobileNumber',
+    'paypalEmail',
+  ];
+  const destinationChanged = DESTINATION_FIELDS.some(
+    (field) => req.body[field] !== undefined && req.body[field] !== existing[field]
+  );
+
   const method = await prisma.payoutMethod.update({
     where: { id },
     data: {
@@ -203,8 +228,8 @@ exports.updateMethod = catchAsync(async (req, res, next) => {
       ...(mobileNumber !== undefined && { mobileNumber }),
       ...(paypalEmail !== undefined && { paypalEmail }),
       ...(isDefault !== undefined && { isDefault }),
-      // Reset verification when details change
-      verified: false,
+      // Reset verification only when the destination actually moved.
+      ...(destinationChanged && { verified: false }),
     },
   });
 

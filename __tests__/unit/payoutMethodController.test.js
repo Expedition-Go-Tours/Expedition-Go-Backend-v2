@@ -246,6 +246,58 @@ describe('payoutMethodController', () => {
       );
       expect(res.status).toHaveBeenCalledWith(200);
     });
+
+    it('keeps verified when only the default flag changes', async () => {
+      prisma.payoutMethod.findFirst.mockResolvedValue({ ...mockMethod, verified: true, isDefault: false });
+      req.params = { id: 'pm-1' };
+      req.body = { isDefault: true };
+
+      await controller.updateMethod(req, res, next);
+
+      const { data } = prisma.payoutMethod.update.mock.calls[0][0];
+      expect(data.isDefault).toBe(true);
+      // Marking a verified account as the default must not send it back to
+      // pending — the destination has not moved.
+      expect(data).not.toHaveProperty('verified');
+    });
+
+    it('keeps verified when a destination field is re-sent unchanged', async () => {
+      // The sheet resubmits the whole form on save. If nothing actually moved,
+      // there is no reason to make the supplier wait for re-verification.
+      prisma.payoutMethod.findFirst.mockResolvedValue({ ...mockMethod, verified: true });
+      req.params = { id: 'pm-1' };
+      req.body = { accountNumber: mockMethod.accountNumber, bankName: mockMethod.bankName };
+
+      await controller.updateMethod(req, res, next);
+
+      expect(prisma.payoutMethod.update.mock.calls[0][0].data).not.toHaveProperty('verified');
+    });
+
+    it('resets verified when the payout currency changes', async () => {
+      // Same bank, same account, but the money now goes out in a different
+      // currency — enough to send it back to pending.
+      prisma.payoutMethod.findFirst.mockResolvedValue({ ...mockMethod, verified: true });
+      req.params = { id: 'pm-1' };
+      req.body = { currency: 'EUR' };
+
+      await controller.updateMethod(req, res, next);
+
+      expect(prisma.payoutMethod.update.mock.calls[0][0].data.verified).toBe(false);
+    });
+
+    it('resets verified when the IBAN on a saved method is replaced', async () => {
+      prisma.payoutMethod.findFirst.mockResolvedValue({
+        ...mockMethod,
+        verified: true,
+        iban: 'DE89370400440532013000',
+      });
+      req.params = { id: 'pm-1' };
+      req.body = { iban: 'GB29NWBK60161331926819' };
+
+      await controller.updateMethod(req, res, next);
+
+      expect(prisma.payoutMethod.update.mock.calls[0][0].data.verified).toBe(false);
+    });
   });
 
   // ============================
