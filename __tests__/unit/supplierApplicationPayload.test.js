@@ -8,6 +8,7 @@ const {
   payoutMethodFromApplication,
   parseSection,
   requestedPayoutCycle,
+  requiredSupplierDocumentTypes,
   validateSupplierApplication,
 } = require('../../src/core/services/supplierApplicationPayload');
 
@@ -172,6 +173,20 @@ describe('supplierApplicationPayload', () => {
     expect(payoutMethodFromApplication({ method: 'paypal' })).toBeNull(); // no email
     expect(payoutMethodFromApplication({})).toBeNull();
     expect(payoutMethodFromApplication(null)).toBeNull();
+  });
+
+  it('requires an ID for everyone and a certificate for business types', () => {
+    // Business types (registered company, sole proprietor, transport company,
+    // accommodation) must attach the certificate alongside the ID.
+    expect(requiredSupplierDocumentTypes('tour_company', 'GH')).toEqual(['GHANA_CARD', 'BUSINESS_CERTIFICATE']);
+    expect(requiredSupplierDocumentTypes('TRANSPORTATION_PROVIDER', 'GH')).toEqual(['GHANA_CARD', 'BUSINESS_CERTIFICATE']);
+    expect(requiredSupplierDocumentTypes('ACCOMMODATION_PROVIDER', 'GH')).toEqual(['GHANA_CARD', 'BUSINESS_CERTIFICATE']);
+    // Individual types only need the ID.
+    expect(requiredSupplierDocumentTypes('tour_guide', 'GH')).toEqual(['GHANA_CARD']);
+    expect(requiredSupplierDocumentTypes('vehicle_operator', 'GH')).toEqual(['GHANA_CARD']);
+    expect(requiredSupplierDocumentTypes('other_service_provider', 'GH')).toEqual(['GHANA_CARD']);
+    // Non-Ghana suppliers use the generic national ID.
+    expect(requiredSupplierDocumentTypes('tour_guide', 'US')).toEqual(['NATIONAL_ID']);
   });
 
   it('maps the supplier payout choice onto a valid PayoutCycle', () => {

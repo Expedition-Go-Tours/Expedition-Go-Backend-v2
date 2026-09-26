@@ -27,6 +27,7 @@ const {
   parseSection,
   payoutMethodFromApplication,
   requestedPayoutCycle,
+  requiredSupplierDocumentTypes,
   validateSupplierApplication,
 } = require('../services/supplierApplicationPayload');
 const admin = require('../../../config/firebaseAdmin');
@@ -102,6 +103,29 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
   const vehiclePhotos = parseVehiclePhotos(req);
   const vehicles = parseVehicles(req.body);
   const guides = parseGuides(req.body);
+
+  // Required documents per supplier type: an ID for everyone, plus a business
+  // registration certificate for business types. The storefront enforces the
+  // same set, so a crafted request cannot skip a document. The legacy named
+  // upload fields still satisfy the requirement for older clients.
+  const suppliedDocumentTypes = new Set([
+    ...documents.filter((doc) => doc.ownerType === 'SUPPLIER').map((doc) => doc.type),
+    ...(req.files?.idDocument?.[0] ? ['GHANA_CARD', 'NATIONAL_ID'] : []),
+    ...(req.files?.registrationDocument?.[0] ? ['BUSINESS_CERTIFICATE'] : []),
+  ]);
+  // A Ghana Card and a national ID are both "the ID" — accept either for the
+  // identity requirement (the country only decides which one we ask for).
+  const hasDocumentType = (type) =>
+    type === 'GHANA_CARD' || type === 'NATIONAL_ID'
+      ? suppliedDocumentTypes.has('GHANA_CARD') || suppliedDocumentTypes.has('NATIONAL_ID')
+      : suppliedDocumentTypes.has(type);
+  const missingDocumentTypes = requiredSupplierDocumentTypes(
+    supplierType,
+    sections.businessInfo?.country
+  ).filter((type) => !hasDocumentType(type));
+  if (missingDocumentTypes.length > 0) {
+    return next(new AppError(`Missing required documents: ${missingDocumentTypes.join(', ')}`, 400));
+  }
 
   // ── Auto-accept ────────────────────────────────────────────────────────
   // TravioGhana admits suppliers on submission: the account is activated

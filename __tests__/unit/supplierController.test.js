@@ -41,6 +41,24 @@ const cache = require('../../src/core/services/cacheHelper');
 const { getDefaultCycle } = require('../../src/core/services/payoutRuns');
 const controller = require('../../src/core/domain/supplierController');
 
+/**
+ * Attach the documents a real storefront submission sends (multipart `documents`
+ * files paired with `documentMeta` by index).
+ */
+function attachSupplierDocuments(req, types = ['GHANA_CARD']) {
+  req.files = {
+    ...(req.files || {}),
+    documents: types.map((type, index) => ({
+      path: `https://res.cloudinary.com/dfpagrtoy/image/upload/v1/supplier-documents/${type.toLowerCase()}-${index}.png`,
+      originalname: `${type.toLowerCase()}.png`,
+    })),
+  };
+  req.body = {
+    ...req.body,
+    documentMeta: JSON.stringify(types.map((type) => ({ type, ownerType: 'SUPPLIER' }))),
+  };
+}
+
 describe('supplierController', () => {
   let req, res, next;
 
@@ -156,9 +174,7 @@ describe('supplierController', () => {
         }),
       };
       // The applicant uploaded their ID, so there is something to activate on.
-      req.files = {
-        documents: [{ path: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1/supplier-documents/id.png', originalname: 'id.png' }],
-      };
+      attachSupplierDocuments(req, ['GHANA_CARD']);
       prisma.user.findUnique.mockResolvedValue({ name: 'Ama Boateng', email: 'ama@example.com', roles: ['customer', 'supplier'] });
 
       await controller.applyToBeSupplier(req, res, next);
@@ -192,7 +208,7 @@ describe('supplierController', () => {
       expect(res.status).toHaveBeenCalledWith(201);
     });
 
-    it('leaves an application with no document pending for an admin', async () => {
+    it('rejects an application that is missing the required ID', async () => {
       req.body = {
         supplierType: 'tour_guide',
         businessInfo: JSON.stringify({ legalBusinessName: 'Ama Walks', country: 'GH' }),
@@ -204,15 +220,30 @@ describe('supplierController', () => {
 
       await controller.applyToBeSupplier(req, res, next);
 
-      const created = prisma.supplierProfile.create.mock.calls[0][0].data;
-      expect(created.status).toBe('PENDING'); // the only remaining integrity check
-      expect(created.adminNotes).toBeUndefined();
-      expect(created.payoutCycle).toBeUndefined();
-      expect(sendSupplierStatusEmail).not.toHaveBeenCalled();
-      // Their payout details are still recorded for later.
-      expect(prisma.payoutMethod.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ type: 'MOBILE_MONEY', verified: false }) })
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 400, message: 'Missing required documents: GHANA_CARD' })
       );
+      expect(prisma.supplierProfile.create).not.toHaveBeenCalled();
+      expect(sendSupplierStatusEmail).not.toHaveBeenCalled();
+    });
+
+    it('rejects a business application that is missing the certificate', async () => {
+      req.body = {
+        supplierType: 'tour_company',
+        businessInfo: JSON.stringify({ legalBusinessName: 'Acme Tours Ltd', country: 'GH' }),
+        operatingInfo: JSON.stringify({ regions: ['Greater Accra'] }),
+        representativeInfo: JSON.stringify({ fullName: 'Ama Boateng', email: 'ama@example.com' }),
+        payoutInfo: JSON.stringify({ method: 'momo', momoNetwork: 'MTN Mobile Money', momoNumber: '0244000000' }),
+      };
+      // Only the ID — the business certificate is required for a company.
+      attachSupplierDocuments(req, ['GHANA_CARD']);
+
+      await controller.applyToBeSupplier(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 400, message: 'Missing required documents: BUSINESS_CERTIFICATE' })
+      );
+      expect(prisma.supplierProfile.create).not.toHaveBeenCalled();
     });
 
     it('rejects an unknown supplierType with 400 instead of failing inside Prisma', async () => {
@@ -256,6 +287,7 @@ describe('supplierController', () => {
         representativeInfo: { fullName: 'John' },
         payoutInfo: { schedule: 'MONTHLY' },
       };
+      attachSupplierDocuments(req, ['GHANA_CARD']);
 
       await controller.applyToBeSupplier(req, res, next);
 
@@ -271,6 +303,7 @@ describe('supplierController', () => {
         representativeInfo: { fullName: 'John' },
         payoutInfo: { bankAccountName: 'A' },
       };
+      attachSupplierDocuments(req, ['GHANA_CARD', 'BUSINESS_CERTIFICATE']);
 
       await controller.applyToBeSupplier(req, res, next);
 
@@ -278,7 +311,7 @@ describe('supplierController', () => {
         expect.objectContaining({
           data: expect.objectContaining({
             userId: 'u-1',
-            status: 'PENDING',
+            status: 'ACTIVE',
           }),
         })
       );
@@ -297,6 +330,7 @@ describe('supplierController', () => {
         representativeInfo: '{"fullName":"John"}',
         payoutInfo: '{"bankAccountName":"A"}',
       };
+      attachSupplierDocuments(req, ['GHANA_CARD', 'BUSINESS_CERTIFICATE']);
 
       await controller.applyToBeSupplier(req, res, next);
 
@@ -350,6 +384,7 @@ describe('supplierController', () => {
         payoutInfo: { bankAccountName: 'A' },
         compliance: '{"termsAccepted":true}',
       };
+      attachSupplierDocuments(req, ['GHANA_CARD', 'BUSINESS_CERTIFICATE']);
 
       await controller.applyToBeSupplier(req, res, next);
 
@@ -370,6 +405,7 @@ describe('supplierController', () => {
         representativeInfo: { fullName: 'John' },
         payoutInfo: { bankAccountName: 'A' },
       };
+      attachSupplierDocuments(req, ['GHANA_CARD', 'BUSINESS_CERTIFICATE']);
 
       await controller.applyToBeSupplier(req, res, next);
 
