@@ -204,9 +204,16 @@ function escapeLike(str) {
  * Resolve a searched city to the set of tour IDs whose location is relevant.
  *
  * A tour is relevant when:
- *   - its `city` matches (case-insensitive), OR
+ *   - its `city` or `destinationCity` matches (case-insensitive), OR
+ *   - its `region` matches the term (with or without the " Region" suffix), OR
  *   - one of its `attractions` word-matches the city, OR
- *   - one of its `tags` word-matches the city.
+ *   - one of its `tags` word-matches the city, OR
+ *   - one of its `itineraryCities` / `itineraryRegions` word-matches it.
+ *
+ * Title/description mentions are deliberately NOT matched: a passing mention is
+ * not a location, and matching it put tours from other regions at the top of a
+ * scoped section (a Greater-Accra quad-bike tour led "Top Rated in Ashanti
+ * Region" purely because its copy mentions Ashanti).
  *
  * "Word-matches" means equal, or the city appears as a whole word inside the
  * value — so searching "Cape Coast" matches the attraction "Cape Coast Castle"
@@ -254,12 +261,6 @@ async function getLocationTourIds(city, ghanaOnly = false, expeditionOnly = fals
           OR LOWER(t."destinationCity") = ${lower}
           OR LOWER(t.region) = ${lower}
           OR LOWER(t.region) LIKE ${regionWithSuffix} ESCAPE '\\'
-          OR LOWER(t.title) LIKE ${likeStarts} ESCAPE '\\'
-          OR LOWER(t.title) LIKE ${likeEnds} ESCAPE '\\'
-          OR LOWER(t.title) LIKE ${likeWord} ESCAPE '\\'
-          OR LOWER(t.description) LIKE ${likeStarts} ESCAPE '\\'
-          OR LOWER(t.description) LIKE ${likeEnds} ESCAPE '\\'
-          OR LOWER(t.description) LIKE ${likeWord} ESCAPE '\\'
           OR EXISTS (
             SELECT 1 FROM unnest(t.attractions) AS a(val)
             WHERE LOWER(val) = ${lower}
@@ -312,6 +313,8 @@ function locationTier(tour, city) {
   if (!target) return null;
 
   if (tour.city && tour.city.toLowerCase() === target) return 1;
+  // destinationCity is a base-location field too (the SQL prefilter matches it).
+  if (tour.destinationCity && tour.destinationCity.toLowerCase() === target) return 1;
 
   // Region match — DB stores "Ashanti Region", input is "ashanti"
   if (tour.region) {
@@ -370,6 +373,83 @@ function mergeLocationFirst(local, backfill, limit) {
   backfill.sort(byScore);
 
   return [...local, ...backfill].slice(0, limit);
+}
+
+/**
+ * Scoped ordering: strongest location tier first (base city/region, then
+ * itinerary, then attraction, then tag), then the section's own score.
+ *
+ * The scoped path used to sort by score with the tier as a mere tie-breaker,
+ * which let a tour that only *visits* a region outrank the tours based there —
+ * the reason "Top Rated in Ashanti Region" led with Cape Coast and Accra
+ * experiences while the region's own tour sat third.
+ */
+function byTierThenScore(a, b) {
+  const tier = (a._locationTier ?? 99) - (b._locationTier ?? 99);
+  if (tier !== 0) return tier;
+  return (b._score ?? 0) - (a._score ?? 0);
+}
+
+/** Minimum rail size, so a sparse region still shows a few nearby options. */
+const RAIL_MIN = 4;
+
+/**
+ * How many nearby/global tours may pad a scoped section.
+ *
+ * Filler never leads and never exceeds half the row, so a region with little
+ * supply cannot look like it is full of local experiences. A region with no
+ * local tours at all gets the labelled rail only.
+ */
+function railBudget(limit, localCount) {
+  if (localCount <= 0) return limit;
+  return Math.max(RAIL_MIN, Math.floor(limit / 2));
+}
+
+/**
+ * Assemble a location-scoped section: local results first, then a capped rail
+ * of nearby/global tours carrying `backfill.label` for the UI divider.
+ *
+ * `tours` deliberately EXCLUDES the rail — the storefront appends
+ * `backfill.tours` itself, so including them here (as it used to) rendered
+ * every backfill card twice.
+ */
+function assembleScopedSection({ local, backfill, limit, city, section }) {
+  const tours = local.slice(0, limit);
+  const budget = Math.min(railBudget(limit, tours.length), Math.max(0, limit - tours.length));
+  const railTours = budget > 0 && backfill && Array.isArray(backfill.tours)
+    ? backfill.tours.slice(0, budget)
+    : [];
+  const rail = railTours.length > 0
+    ? { label: backfill.label || `More experiences near ${city}`, tours: railTours }
+    : null;
+
+  // Thin regional supply is a recruiting signal, not just a ranking detail.
+  if (rail && tours.length < RAIL_MIN) {
+    console.warn(
+      `[Homepage] thin regional supply: "${city}" ${section} — ${tours.length} local, ${rail.tours.length} nearby`
+    );
+  }
+
+  return { tours, backfill: rail };
+}
+
+/**
+ * City-scoped result for the sections that share "local matches + generic
+ * backfill": tier-ordered local rows, then the capped nearby rail.
+ */
+async function scopedSectionResult({ localTours, scope, city, limit, scoreTours, section }) {
+  const local = scoreTours(localTours).sort(byTierThenScore);
+  const budget = railBudget(limit, Math.min(local.length, limit));
+  if (budget <= 0) return { tours: local.slice(0, limit), backfill: null };
+
+  const { backfill } = await getBackfillTours(
+    scope,
+    local.slice(0, limit).map((t) => t.id),
+    budget,
+    city,
+    scoreTours
+  );
+  return assembleScopedSection({ local, backfill, limit, city, section });
 }
 
 /**
@@ -695,25 +775,13 @@ async function getLikelySellOut(limit = DEFAULT_LIMIT, userId = null, ghanaOnly 
         .sort(byScore);
     };
 
-    // City-scoped: location-relevant tours, backfill from nearby if short.
+    // City-scoped: local (tier-ordered) tours, then a capped nearby rail.
     if (city) {
       const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
       const localTours = locIds.length
         ? await prisma.tour.findMany({ where: { ...scope, id: { in: locIds } }, select: TOUR_SELECT })
         : [];
-      const scoredLocal = scoreTours(localTours).slice(0, limit);
-
-      if (scoredLocal.length >= limit) {
-        return { tours: scoredLocal, backfill: null };
-      }
-
-      // Backfill: nearby → global
-      const localIds = scoredLocal.map(t => t.id);
-      const { backfill } = await getBackfillTours(scope, localIds, limit - scoredLocal.length, city, scoreTours);
-      return {
-        tours: [...scoredLocal, ...(backfill ? backfill.tours : [])],
-        backfill,
-      };
+      return scopedSectionResult({ localTours, scope, city, limit, scoreTours, section: 'sellOut' });
     }
 
     // Global: velocity leaders, then most-booked fill.
@@ -835,30 +903,16 @@ async function getTopRated(limit = DEFAULT_LIMIT, userId = null, ghanaOnly = fal
         .sort(byScore);
     };
 
-    // City-scoped: location-relevant tours, backfill from nearby if short.
+    // City-scoped: local (tier-ordered) tours, then a capped nearby rail.
     if (city) {
       const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
       const localTours = locIds.length
         ? await prisma.tour.findMany({
             where: { ...scope, id: { in: locIds } },
             select: TOUR_SELECT,
-            orderBy,
-            take: Math.max(limit, locIds.length),
           })
         : [];
-      const scoredLocal = scoreTours(localTours).slice(0, limit);
-
-      if (scoredLocal.length >= limit) {
-        return { tours: scoredLocal, backfill: null };
-      }
-
-      // Backfill: nearby → global
-      const localIds = scoredLocal.map(t => t.id);
-      const { backfill } = await getBackfillTours(scope, localIds, limit - scoredLocal.length, city, scoreTours);
-      return {
-        tours: [...scoredLocal, ...(backfill ? backfill.tours : [])],
-        backfill,
-      };
+      return scopedSectionResult({ localTours, scope, city, limit, scoreTours, section: 'topRated' });
     }
 
     const tours = await prisma.tour.findMany({
@@ -987,7 +1041,7 @@ async function getTrending(limit = DEFAULT_LIMIT, ghanaOnly = false, expeditionO
       };
     });
 
-    // City-scoped: location-relevant trending tours, backfill from nearby if short.
+    // City-scoped: local (tier-ordered) trending tours, then a capped nearby rail.
     if (city) {
       const locIds = await getLocationTourIds(city, ghanaOnly, expeditionOnly);
       const locIdSet = new Set(locIds);
@@ -996,44 +1050,34 @@ async function getTrending(limit = DEFAULT_LIMIT, ghanaOnly = false, expeditionO
       const localTours = localIds.length
         ? await prisma.tour.findMany({ where: { ...scope, id: { in: localIds } }, select: TOUR_SELECT })
         : [];
-      const scoredLocal = scoreTours(localTours).sort((a, b) => b._score - a._score).slice(0, limit);
+      const local = scoreTours(localTours).sort(byTierThenScore);
+      const budget = railBudget(limit, Math.min(local.length, limit));
 
-      if (scoredLocal.length >= limit) {
-        return { tours: scoredLocal, backfill: null };
+      if (budget <= 0) {
+        return assembleScopedSection({ local, backfill: null, limit, city, section: 'trending' });
       }
 
-      // Backfill: nearby → global (use scored tours from qualifiedIds, not raw DB)
-      const localIdSet = new Set(scoredLocal.map(t => t.id));
+      // Rail: other trending-qualified tours first, then the global pool.
+      const localIdSet = new Set(local.slice(0, limit).map(t => t.id));
       const nearbyQualified = qualifiedIds.filter(id => !localIdSet.has(id));
       const nearbyTours = nearbyQualified.length > 0
         ? await prisma.tour.findMany({ where: { ...scope, id: { in: nearbyQualified } }, select: TOUR_SELECT })
         : [];
-      const scoredNearby = scoreTours(nearbyTours).sort((a, b) => b._score - a._score);
+      const railTours = scoreTours(nearbyTours).sort((a, b) => b._score - a._score);
 
-      const allBackfill = scoredLocal.length + scoredNearby.length >= limit
-        ? scoredNearby.slice(0, limit - scoredLocal.length)
-        : scoredNearby;
-
-      if (allBackfill.length >= limit - scoredLocal.length) {
-        // Enough from nearby qualified tours
-        const backfillTours = allBackfill.slice(0, limit - scoredLocal.length);
-        return {
-          tours: [...scoredLocal, ...backfillTours],
-          backfill: backfillTours.length > 0 ? { label: `More experiences near ${city}`, tours: backfillTours } : null,
-        };
+      if (railTours.length < budget) {
+        const globalPool = await prisma.tour.findMany({ where: scope, select: TOUR_SELECT, orderBy: { totalBookings: 'desc' }, take: limit * 2 });
+        const usedIds = new Set([...localIdSet, ...railTours.map(t => t.id)]);
+        railTours.push(...scoreTours(globalPool.filter(t => !usedIds.has(t.id))));
       }
 
-      // Still short — fill with global tours from the global pool
-      const globalPool = await prisma.tour.findMany({ where: scope, select: TOUR_SELECT, orderBy: { totalBookings: 'desc' }, take: limit * 2 });
-      const usedIds = new Set([...localIdSet, ...scoredLocal.map(t => t.id), ...scoredNearby.map(t => t.id)]);
-      const globalRemaining = globalPool.filter(t => !usedIds.has(t.id));
-      const scoredGlobal = scoreTours(globalRemaining);
-
-      const backfillTours = [...scoredNearby, ...scoredGlobal].slice(0, limit - scoredLocal.length);
-      return {
-        tours: [...scoredLocal, ...backfillTours],
-        backfill: backfillTours.length > 0 ? { label: `More experiences near ${city}`, tours: backfillTours } : null,
-      };
+      return assembleScopedSection({
+        local,
+        backfill: { label: `More experiences near ${city}`, tours: railTours },
+        limit,
+        city,
+        section: 'trending',
+      });
     }
 
     const tours = await prisma.tour.findMany({
@@ -1211,27 +1255,20 @@ async function getRecommended(userId, lat, lng, limit = DEFAULT_LIMIT, ghanaOnly
               id: { in: locIds, ...(viewedArr.length ? { notIn: viewedArr } : {}) },
             },
             select: TOUR_SELECT,
-            orderBy,
-            take: Math.max(limit * 3, locIds.length),
           })
         : [];
-      const scoredLocal = applyDiversity(buildScored(localTours), limit).slice(0, limit);
-
-      if (scoredLocal.length >= limit) {
-        return { tours: scoredLocal, backfill: null };
-      }
-
-      // Backfill: nearby → global
-      const localIds = scoredLocal.map(t => t.id);
+      // Diversity first, then location tier — the tier must win, so a tour based
+      // in the searched place always precedes one that merely visits it.
+      const local = applyDiversity(buildScored(localTours), limit).sort(byTierThenScore);
       const backfillScope = {
         ...scope,
         ...(viewedArr.length ? { id: { notIn: viewedArr } } : {}),
       };
-      const { backfill } = await getBackfillTours(backfillScope, localIds, limit - scoredLocal.length, city, buildScored);
-      return {
-        tours: [...scoredLocal, ...(backfill ? backfill.tours : [])],
-        backfill,
-      };
+      const budget = railBudget(limit, Math.min(local.length, limit));
+      const { backfill } = budget > 0
+        ? await getBackfillTours(backfillScope, local.slice(0, limit).map(t => t.id), budget, city, buildScored)
+        : { backfill: null };
+      return assembleScopedSection({ local, backfill, limit, city, section: 'recommended' });
     }
 
     let tours = await prisma.tour.findMany({
@@ -1359,27 +1396,32 @@ async function getNewExperiences(limit = DEFAULT_LIMIT, ghanaOnly = false, exped
           if (uniqueTours.length >= limit) break;
         }
       }
-      const scoredLocal = toCards(uniqueTours.slice(0, limit));
+      // Newest first within the strongest location tier.
+      uniqueTours.sort((a, b) => (locationTier(a, city) ?? 99) - (locationTier(b, city) ?? 99));
+      const local = toCards(uniqueTours.slice(0, limit));
+      const budget = railBudget(limit, Math.min(local.length, limit));
 
-      if (scoredLocal.length >= limit) {
-        return { tours: scoredLocal, backfill: null };
+      if (budget <= 0) {
+        return assembleScopedSection({ local, backfill: null, limit, city, section: 'new' });
       }
 
-      // Backfill: recent tours from nearby → global
-      const localIdSet = new Set(uniqueTours.map(t => t.id));
+      // Rail: the most recent other tours.
+      const localIdSet = new Set(uniqueTours.slice(0, limit).map(t => t.id));
       const backfillTours = await prisma.tour.findMany({
         where: { ...scope, id: { notIn: [...localIdSet] } },
         select,
         orderBy: { createdAt: 'desc' },
-        take: limit - scoredLocal.length,
+        take: budget,
       });
-      const backfillDeduped = dedupe(backfillTours, seenPhotos);
-      const scoredBackfill = toCards(backfillDeduped.slice(0, limit - scoredLocal.length));
+      const scoredBackfill = toCards(dedupe(backfillTours, seenPhotos));
 
-      return {
-        tours: [...scoredLocal, ...scoredBackfill],
-        backfill: scoredBackfill.length > 0 ? { label: `More experiences near ${city}`, tours: scoredBackfill } : null,
-      };
+      return assembleScopedSection({
+        local,
+        backfill: { label: `More experiences near ${city}`, tours: scoredBackfill },
+        limit,
+        city,
+        section: 'new',
+      });
     }
 
     const tours = await prisma.tour.findMany({
@@ -2573,6 +2615,10 @@ module.exports = {
   getLocationTourIds,
   locationTier,
   mergeLocationFirst,
+  byTierThenScore,
+  railBudget,
+  assembleScopedSection,
+  scopedSectionResult,
   getBackfillTours,
   escapeLike,
   extractStartingPrice,

@@ -27,7 +27,15 @@ const prisma = require('../../src/core/services/prismaClient');
 const cache = require('../../src/core/services/cacheHelper');
 const ranking = require('../../src/core/services/homepageRanking');
 
-const { escapeLike, locationTier, mergeLocationFirst, getLocationTourIds } = ranking;
+const {
+  escapeLike,
+  locationTier,
+  mergeLocationFirst,
+  getLocationTourIds,
+  byTierThenScore,
+  railBudget,
+  assembleScopedSection,
+} = ranking;
 
 describe('escapeLike', () => {
   it('escapes backslash, percent and underscore', () => {
@@ -99,6 +107,122 @@ describe('mergeLocationFirst', () => {
     ];
     const result = mergeLocationFirst(local, [], 2);
     expect(result.map(t => t.id)).toEqual(['city', 'tag']);
+  });
+});
+
+describe('city-scoped assembly', () => {
+  it('orders by location tier before the section score', () => {
+    const rows = [
+      { id: 'visits', _score: 0.9, _locationTier: 2 },
+      { id: 'based', _score: 0.4, _locationTier: 1 },
+      { id: 'tagged', _score: 0.95, _locationTier: 3 },
+      { id: 'backfill', _score: 5, _locationTier: null },
+    ];
+    expect([...rows].sort(byTierThenScore).map((r) => r.id)).toEqual([
+      'based',
+      'visits',
+      'tagged',
+      'backfill',
+    ]);
+  });
+
+  it('caps the nearby rail at half the row and keeps it out of `tours`', () => {
+    const local = [{ id: 'l1', _score: 1, _locationTier: 1 }];
+    const rail = Array.from({ length: 10 }, (_, i) => ({ id: `r${i}`, _score: 1, _locationTier: null }));
+
+    const { tours, backfill } = assembleScopedSection({
+      local,
+      backfill: { label: 'More experiences near Ashanti', tours: rail },
+      limit: 12,
+      city: 'Ashanti',
+      section: 'test',
+    });
+
+    expect(tours.map((t) => t.id)).toEqual(['l1']);
+    expect(backfill.tours).toHaveLength(6); // never more than half the row
+    expect(backfill.label).toBe('More experiences near Ashanti');
+    // The rail must never repeat a card the section already shows.
+    expect(tours.filter((t) => backfill.tours.some((r) => r.id === t.id))).toEqual([]);
+  });
+
+  it('fills the row from the rail when the region has no local tours', () => {
+    const rail = Array.from({ length: 20 }, (_, i) => ({ id: `r${i}` }));
+    const { tours, backfill } = assembleScopedSection({
+      local: [],
+      backfill: { tours: rail },
+      limit: 12,
+      city: 'Ashanti',
+      section: 'test',
+    });
+
+    expect(tours).toEqual([]);
+    expect(backfill.tours).toHaveLength(12);
+    expect(backfill.label).toBe('More experiences near Ashanti');
+  });
+
+  it('drops the rail when local supply fills the row', () => {
+    const local = Array.from({ length: 12 }, (_, i) => ({ id: `l${i}` }));
+    const { tours, backfill } = assembleScopedSection({
+      local,
+      backfill: { tours: [{ id: 'r1' }] },
+      limit: 12,
+      city: 'Accra',
+      section: 'test',
+    });
+
+    expect(tours).toHaveLength(12);
+    expect(backfill).toBeNull();
+  });
+
+  it('railBudget: whole row with no local supply, otherwise at least 4 and at most half', () => {
+    expect(railBudget(12, 0)).toBe(12);
+    expect(railBudget(12, 1)).toBe(6);
+    expect(railBudget(6, 3)).toBe(4);
+  });
+});
+
+describe('getTopRated city-scoped contract', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  const ROWS = [
+    {
+      id: 'ashanti', title: 'Kumasi Cultural and Heritage Day Tour', city: 'Bonwire', region: 'Ashanti Region',
+      averageRating: 4.5, reviewCount: 5, totalBookings: 1, schedulesAndPricing: {}, itineraryRegions: [],
+    },
+    {
+      id: 'accra-visit', title: 'Greater Accra quad-bike tour', city: 'Dedenya', region: 'Greater Accra Region',
+      averageRating: 5, reviewCount: 40, totalBookings: 9, schedulesAndPricing: {}, itineraryRegions: ['Ashanti Region'],
+    },
+    {
+      id: 'elsewhere', title: 'Cape Coast castles', city: 'Cape Coast', region: 'Central Region',
+      averageRating: 4.9, reviewCount: 30, totalBookings: 5, schedulesAndPricing: {}, itineraryRegions: [],
+    },
+  ];
+
+  it('leads with the region tour, and never lists a rail tour inside `tours`', async () => {
+    prisma.$queryRaw.mockResolvedValue([{ id: 'ashanti' }, { id: 'accra-visit' }]);
+    // Model the DB's id filters so the rail can be asserted properly.
+    prisma.tour.findMany.mockImplementation(({ where } = {}) => {
+      const inIds = where?.id?.in;
+      const notIn = where?.id?.notIn;
+      let rows = ROWS;
+      if (Array.isArray(inIds)) rows = rows.filter((r) => inIds.includes(r.id));
+      if (Array.isArray(notIn)) rows = rows.filter((r) => !notIn.includes(r.id));
+      return Promise.resolve(rows);
+    });
+
+    const result = await ranking.getTopRated(12, null, true, false, 'Ashanti');
+    const tours = result.tours.map((t) => t.id);
+    const railIds = (result.backfill?.tours || []).map((t) => t.id);
+
+    // Tier 1 (based in Ashanti) leads, even though the Greater-Accra tour visits
+    // Ashanti and scores far higher.
+    expect(tours[0]).toBe('ashanti');
+    expect(tours).toContain('accra-visit');
+    // No card appears in both the section and its rail.
+    expect(tours.filter((id) => railIds.includes(id))).toEqual([]);
   });
 });
 
