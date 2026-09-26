@@ -1227,12 +1227,19 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
 });
 
 /**
+ * Optional safety cap on the pickup-planner range fetch. A supplier's pickup
+ * bookings inside any sane date window are far below this; the cap only exists
+ * so a pathological range cannot exhaust memory.
+ */
+const MAX_PICKUP_PLANNER_ROWS = 2000;
+
+/**
  * Get supplier's upcoming bookings that carry a pickup selection
  * (GetYourGuide-style pickup planner).
  */
 exports.getPickupPlanner = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
-  const { from, to, status, page = 1, limit = 50, tourId } = req.query;
+  const { from, to, status, page = 1, limit = 50, tourId, pickupState = 'all', pickedUp } = req.query;
 
   // Verify supplier status
   const supplierProfile = await prisma.supplierProfile.findUnique({
@@ -1263,66 +1270,147 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
     ...(tourId ? { tourId } : {}),
   };
 
-  const skip = (parseInt(page) - 1) * parseInt(limit);
-
-  const [bookings, totalCount] = await Promise.all([
-    prisma.booking.findMany({
-      where,
-      include: {
-        customer: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phone: true,
-            photoURL: true
-          }
-        },
-        tour: {
-          select: {
-            id: true,
-            title: true,
-            photos: true,
-            // Pickup zones / points so the supplier dashboard's edit modal can
-            // show and re-confirm the exact zone/location the customer chose.
-            bookingAndTickets: true
-          }
+  // The pickup state lives inside a JSON snapshot, so it cannot be pushed into
+  // SQL cleanly. A supplier's pickup window holds at most a few hundred rows,
+  // so we load the range, derive state, then filter / sort / paginate here —
+  // which keeps the counts and the pagination exact.
+  const rows = await prisma.booking.findMany({
+    where,
+    include: {
+      customer: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          photoURL: true
         }
       },
-      orderBy: [{ travelDate: 'asc' }, { selectedTime: 'asc' }],
-      skip,
-      take: parseInt(limit)
-    }),
-    prisma.booking.count({ where })
-  ]);
+      tour: {
+        select: {
+          id: true,
+          title: true,
+          photos: true,
+          // Pickup zones / points so the supplier dashboard's edit modal can
+          // show and re-confirm the exact zone/location the customer chose.
+          bookingAndTickets: true
+        }
+      }
+    },
+    orderBy: [{ travelDate: 'asc' }, { selectedTime: 'asc' }],
+    take: MAX_PICKUP_PLANNER_ROWS
+  });
 
-  // Flag bookings where the customer deferred pickup selection so the
-  // supplier dashboard can display a clear "pending" indicator instead
-  // of blank pickup fields. Server-computed state (pickupStatus /
-  // pickupDeferred / isIncomplete) is the single source of truth for the
-  // planner — the dashboard no longer re-infers from field presence.
-  const enriched = bookings.map((b) => {
+  // Derive the canonical pickup state (+ flags) for every booking. Server
+  // computation is the single source of truth — the dashboard never re-infers
+  // from field presence. `pickupState` is what the planner's filters use.
+  const enriched = rows.map((b) => {
     const p = b.pickup && typeof b.pickup === 'object' ? b.pickup : null;
+    const status = pickupStatus(p);
+    const incomplete = isPickupIncomplete(p);
+    const state = status === 'deferred' ? 'deferred' : incomplete ? 'incomplete' : 'confirmed';
     return {
       ...sanitizeBookingPaymentInternals(b),
-      pickupStatus: pickupStatus(p),
-      pickupDeferred: !!(p && (p.pickupLater || p.skipValidation || pickupStatus(p) === 'deferred')),
-      isIncomplete: isPickupIncomplete(p),
+      pickupStatus: status,
+      pickupDeferred: !!(p && (p.pickupLater || p.skipValidation || status === 'deferred')),
+      isIncomplete: incomplete,
+      pickupState: state,
     };
   });
+
+  // Counts across the whole range (before the state filter) so the KPI strip
+  // and filter chips reflect the range, not just the current page.
+  const counts = {
+    all: enriched.length,
+    deferred: enriched.filter((b) => b.pickupState === 'deferred').length,
+    incomplete: enriched.filter((b) => b.pickupState === 'incomplete').length,
+    confirmed: enriched.filter((b) => b.pickupState === 'confirmed').length,
+    pickedUp: enriched.filter((b) => !!b.pickedUpAt).length,
+  };
+
+  let filtered = enriched;
+  const stateFilter = String(pickupState || 'all').toLowerCase();
+  if (stateFilter !== 'all') {
+    filtered = filtered.filter((b) => b.pickupState === stateFilter);
+  }
+  if (pickedUp === 'true') filtered = filtered.filter((b) => !!b.pickedUpAt);
+  else if (pickedUp === 'false') filtered = filtered.filter((b) => !b.pickedUpAt);
+
+  // The supplier's drag-to-reorder stop order within a day wins; otherwise the
+  // pickup time decides.
+  const sorted = [...filtered].sort((a, b) => {
+    const dayA = a.travelDate ? new Date(a.travelDate).getTime() : 0;
+    const dayB = b.travelDate ? new Date(b.travelDate).getTime() : 0;
+    if (dayA !== dayB) return dayA - dayB;
+    const orderA = a.pickupOrder == null ? Number.POSITIVE_INFINITY : a.pickupOrder;
+    const orderB = b.pickupOrder == null ? Number.POSITIVE_INFINITY : b.pickupOrder;
+    if (orderA !== orderB) return orderA - orderB;
+    return String(a.selectedTime || '').localeCompare(String(b.selectedTime || ''));
+  });
+
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const pageSize = Math.max(1, Math.min(200, parseInt(limit, 10) || 50));
+  const totalCount = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const bookings = sorted.slice((pageNum - 1) * pageSize, pageNum * pageSize);
 
   res.status(200).json({
     status: 'success',
     data: {
-      bookings: enriched,
+      bookings,
+      counts,
       pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(totalCount / parseInt(limit)),
+        currentPage: pageNum,
+        totalPages,
         totalCount,
-        limit: parseInt(limit)
+        limit: pageSize
       }
     }
   });
+});
+
+/**
+ * Persist the supplier's stop order for one service day.
+ * Body: { date: 'YYYY-MM-DD', order: [bookingId, ...] } — index becomes the
+ * stop position, so the planner can list the run in the order it is driven.
+ */
+exports.reorderPickupStops = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  const { date, order } = req.body || {};
+
+  if (!date || !Array.isArray(order) || order.length === 0) {
+    return next(new AppError('date and a non-empty order array are required', 400));
+  }
+
+  const dayStart = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(dayStart.getTime())) {
+    return next(new AppError('Invalid date', 400));
+  }
+  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+
+  const found = await prisma.booking.findMany({
+    where: { id: { in: order }, tour: { supplierId }, travelDate: { gte: dayStart, lte: dayEnd } },
+    select: { id: true },
+  });
+  if (found.length !== order.length) {
+    return next(new AppError('One or more bookings were not found for that day', 400));
+  }
+
+  await prisma.$transaction(
+    order.map((bookingId, index) =>
+      prisma.booking.update({ where: { id: bookingId }, data: { pickupOrder: index } })
+    )
+  );
+
+  logActivity({
+    userId: supplierId,
+    action: 'booking.pickup_reordered',
+    resource: 'Booking',
+    resourceId: order[0],
+    metadata: { date, count: order.length },
+  }).catch((err) => logger.warn('[booking] logActivity failed:', err?.message));
+
+  res.status(200).json({ status: 'success', data: { order } });
 });
 
 /**
@@ -1331,7 +1419,7 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
 exports.updateBookingPickup = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
   const { id } = req.params;
-  const { pickupTime, pickupPlace, instructions, locationName, areaName, lat, lng } = req.body;
+  const { pickupTime, pickupPlace, instructions, locationName, areaName, lat, lng, pickedUp } = req.body;
 
   const booking = await prisma.booking.findFirst({
     where: { id, tour: { supplierId } },
@@ -1342,59 +1430,75 @@ exports.updateBookingPickup = catchAsync(async (req, res, next) => {
     return next(new AppError('Booking not found or access denied', 404));
   }
 
-const current = typeof booking.pickup === 'string'
-  ? (() => { try { return JSON.parse(booking.pickup); } catch { return null; } })()
-  : booking.pickup || {};
+  const current = typeof booking.pickup === 'string'
+    ? (() => { try { return JSON.parse(booking.pickup); } catch { return null; } })()
+    : booking.pickup || {};
 
-// Capture the pre-update location so the customer email can show the old
-// pickup (struck through) next to the new one.
-const previousPickupLocation = pickupAddressLabel(current);
+  // Capture the pre-update location so the customer email can show the old
+  // pickup (struck through) next to the new one.
+  const previousPickupLocation = pickupAddressLabel(current);
 
-  const updatedPickup = {
-    ...current,
-    ...(pickupTime !== undefined ? { time: String(pickupTime) } : {}),
-    ...(pickupPlace !== undefined ? { place: String(pickupPlace) } : {}),
-    ...(instructions !== undefined ? { instructions: String(instructions) } : {}),
-    ...(locationName !== undefined ? { locationName: String(locationName) } : {}),
-    ...(areaName !== undefined ? { areaName: String(areaName) } : {}),
-    ...(lat !== undefined ? { lat: lat !== null ? Number(lat) : null } : {}),
-    ...(lng !== undefined ? { lng: lng !== null ? Number(lng) : null } : {}),
-    // Supplier confirmation: normalizes the snapshot to a clean 'confirmed'
-    // state (drops any leftover pickupLater/skipValidation markers).
-    pickupLater: false,
-    status: 'confirmed',
-    updatedBy: req.user.id,
-    updatedAt: new Date().toISOString(),
-  };
-  delete updatedPickup.skipValidation;
+  const pickupFieldsProvided = [pickupTime, pickupPlace, instructions, locationName, areaName, lat, lng]
+    .some((value) => value !== undefined);
 
-  const updatedBooking = await prisma.booking.update({
-    where: { id },
-    data: { pickup: updatedPickup }
-  });
+  const data = {};
+  if (pickupFieldsProvided) {
+    const updatedPickup = {
+      ...current,
+      ...(pickupTime !== undefined ? { time: String(pickupTime) } : {}),
+      ...(pickupPlace !== undefined ? { place: String(pickupPlace) } : {}),
+      ...(instructions !== undefined ? { instructions: String(instructions) } : {}),
+      ...(locationName !== undefined ? { locationName: String(locationName) } : {}),
+      ...(areaName !== undefined ? { areaName: String(areaName) } : {}),
+      ...(lat !== undefined ? { lat: lat !== null ? Number(lat) : null } : {}),
+      ...(lng !== undefined ? { lng: lng !== null ? Number(lng) : null } : {}),
+      // Supplier confirmation: normalizes the snapshot to a clean 'confirmed'
+      // state (drops any leftover pickupLater/skipValidation markers).
+      pickupLater: false,
+      status: 'confirmed',
+      updatedBy: req.user.id,
+      updatedAt: new Date().toISOString(),
+    };
+    delete updatedPickup.skipValidation;
+    data.pickup = updatedPickup;
+  }
 
-  // Notify the customer (in-app + email).
-  enqueueNotification({
-    userId: booking.customerId,
-    type: 'PICKUP_UPDATED',
-    title: 'Pickup details updated',
-    message: 'Your pickup details have been updated by the supplier. Please check your booking.',
-    data: { bookingId: booking.id, pickup: true }
-  }).catch((err) => console.error('[Notification] enqueueNotification (pickup update) failed:', err.message));
+  // Marking a stop picked up (or un-marking it) is a run action, not a pickup
+  // detail change, so it never emails/notifies the customer.
+  if (pickedUp !== undefined) {
+    data.pickedUpAt = pickedUp ? new Date() : null;
+  }
 
-  enqueueEmail({
-    type: 'pickup-details-updated',
-    bookingId: booking.id,
-    data: { previousPickupLocation },
-  })
-  .catch((err) => console.error('[Email] pickup-details-updated failed:', err.message));
+  if (Object.keys(data).length === 0) {
+    return next(new AppError('No pickup changes provided', 400));
+  }
+
+  const updatedBooking = await prisma.booking.update({ where: { id }, data });
+
+  // Notify the customer (in-app + email) only when the pickup details changed.
+  if (pickupFieldsProvided) {
+    enqueueNotification({
+      userId: booking.customerId,
+      type: 'PICKUP_UPDATED',
+      title: 'Pickup details updated',
+      message: 'Your pickup details have been updated by the supplier. Please check your booking.',
+      data: { bookingId: booking.id, pickup: true }
+    }).catch((err) => console.error('[Notification] enqueueNotification (pickup update) failed:', err.message));
+
+    enqueueEmail({
+      type: 'pickup-details-updated',
+      bookingId: booking.id,
+      data: { previousPickupLocation },
+    })
+    .catch((err) => console.error('[Email] pickup-details-updated failed:', err.message));
+  }
 
   logActivity({
     userId: supplierId,
     action: 'booking.pickup_updated',
     resource: 'Booking',
     resourceId: id,
-    metadata: { hadPickup: !!booking.pickup }
+    metadata: { hadPickup: !!booking.pickup, pickedUp: pickedUp !== undefined ? !!pickedUp : undefined }
   }).catch((err) => logger.warn('[booking] logActivity failed:', err?.message));
 
   res.status(200).json({

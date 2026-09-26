@@ -111,6 +111,7 @@ router.get('/products/list', resolveSupplier, cancellationController.getCancella
 // Pickup planner (proxied to shared bookingController — the frontend rewrites
 // /bookings/supplier/pickup-planner to this Ghana namespace)
 router.get('/pickup-planner', resolveSupplier, requireTeamPermission('bookings.view'), bookingController.getPickupPlanner);
+router.patch('/pickup-planner/reorder', resolveSupplier, requireTeamPermission('bookings.manage'), bookingController.reorderPickupStops);
 router.patch('/pickup-planner/:id', resolveSupplier, requireTeamPermission('bookings.manage'), bookingController.updateBookingPickup);
 
 // Finance (all proxied to shared controller — matches the finance page's

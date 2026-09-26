@@ -1022,6 +1022,11 @@ model Booking {
   // Null when the tour has no pickup service.
   pickup Json?
 
+  // Supplier pickup-run ordering within a service day (lower = earlier stop).
+  pickupOrder Int?
+  // Set when the supplier marks the pickup as completed on the day.
+  pickedUpAt DateTime?
+
   // Applied special offer (if any)
   appliedOfferId String?
   appliedOffer   SpecialOffer? @relation(fields: [appliedOfferId], references: [id], onDelete: SetNull)

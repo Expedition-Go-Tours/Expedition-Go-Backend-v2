@@ -594,6 +594,7 @@ router.get('/supplier/bookings', resolveSupplier, requireTeamPermission('booking
  *         description: Access denied
  */
 router.get('/supplier/pickup-planner', resolveSupplier, requireTeamPermission('bookings.view'), bookingController.getPickupPlanner);
+router.patch('/supplier/pickup-planner/reorder', resolveSupplier, requireTeamPermission('bookings.manage'), bookingController.reorderPickupStops);
 
 /**
  * @swagger
