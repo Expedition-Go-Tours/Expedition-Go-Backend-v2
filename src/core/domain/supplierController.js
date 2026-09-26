@@ -30,6 +30,7 @@ const {
   requiredSupplierDocumentTypes,
   validateSupplierApplication,
 } = require('../services/supplierApplicationPayload');
+const { requirementsFor } = require('../services/supplierVerificationRequirements');
 const admin = require('../../../config/firebaseAdmin');
 const logger = require('../services/logger');
 const { notifyDiscord } = require('../services/discordNotifier');
@@ -291,6 +292,16 @@ exports.getApplicationStatus = catchAsync(async (req, res, next) => {
     status: 'success',
     data: {
       supplierProfile: supplierProfile || null,
+      // Per-operator verification checklist for the dashboard (documents to
+      // provide, plus whether vehicles/guides apply).
+      verificationRequirements: supplierProfile
+        ? requirementsFor({
+            supplierType: supplierProfile.supplierType,
+            businessType: supplierProfile.businessInfo?.businessType,
+            services: supplierProfile.operatingInfo?.services,
+            country: supplierProfile.businessInfo?.country,
+          })
+        : null,
       // Business identity for the shell (sidebar card) — the owner's, not the viewer's.
       logoUrl: owner?.logoUrl || null,
       businessName: owner?.name || null,

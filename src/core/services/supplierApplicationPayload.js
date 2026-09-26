@@ -13,6 +13,7 @@
  * @see config/supplierUploadFields.js (upload fields + limits)
  */
 const { SupplierType, PayoutCycle } = require('@prisma/client');
+const { upfrontSupplierDocumentTypes } = require('./supplierVerificationRequirements');
 
 const SUPPLIER_TYPE_VALUES = Object.values(SupplierType);
 const PAYOUT_CYCLE_VALUES = Object.values(PayoutCycle);
@@ -158,29 +159,13 @@ function requestedPayoutCycle(payoutInfo) {
   return PAYOUT_CYCLE_VALUES.includes(requested) ? requested : null;
 }
 
-/** Supplier types that must attach a business registration certificate. */
-const BUSINESS_SUPPLIER_TYPES = new Set([
-  'TOUR_COMPANY',
-  'TRANSPORTATION_PROVIDER',
-  'ACCOMMODATION_PROVIDER',
-]);
-
 /**
  * Document types a supplier must attach on submission, per supplier type.
- *
- * Every supplier uploads a photo of a government-issued ID. Registered
- * companies, sole proprietors / businesses, transport companies and
- * accommodation providers must also attach their business registration
- * certificate; the individual types (tour guide, experience host, independent
- * driver) do not. Kept in lockstep with the storefront's
- * `requiredSupplierDocuments` so a crafted request cannot skip a document.
+ * Derived from the shared verification requirements so the enforced up-front
+ * set and the dashboard checklist cannot drift.
  */
 function requiredSupplierDocumentTypes(supplierType, country) {
-  const normalized = normalizeSupplierType(supplierType);
-  const isGhana = String(country || '').trim().toUpperCase() === 'GH';
-  const required = [isGhana ? 'GHANA_CARD' : 'NATIONAL_ID'];
-  if (BUSINESS_SUPPLIER_TYPES.has(normalized)) required.push('BUSINESS_CERTIFICATE');
-  return required;
+  return upfrontSupplierDocumentTypes(normalizeSupplierType(supplierType), country);
 }
 
 /**

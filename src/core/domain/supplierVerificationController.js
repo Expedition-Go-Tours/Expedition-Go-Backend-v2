@@ -15,6 +15,7 @@ const { enqueueNotification } = require('../services/queue');
 const { notifyAdmin } = require('../services/adminNotificationService');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../services/cloudinaryHelper');
 const { parseDocuments, parseVehiclePhotos, parseVehicles } = require('../services/supplierVerification');
+const { requirementsFor } = require('../services/supplierVerificationRequirements');
 const logger = require('../services/logger');
 
 const DOCUMENT_REPLACEABLE = ['REJECTED', 'REPLACEMENT_REQUESTED', 'EXPIRED'];
@@ -187,7 +188,9 @@ exports.replaceDocument = catchAsync(async (req, res, next) => {
 exports.addVehicle = catchAsync(async (req, res, next) => {
   const profile = await resolveProfileByUserId(req.supplierId || req.user.id);
   if (!profile) return next(new AppError('No supplier application found', 404));
-  if (!['PENDING', 'UNDER_REVIEW'].includes(profile.status)) {
+  // Auto-accepted suppliers are ACTIVE from the start, so vehicles must be
+  // addable then too — only blocked statuses (suspended/expired/rejected) can't.
+  if (!['PENDING', 'UNDER_REVIEW', 'APPROVED', 'ACTIVE'].includes(profile.status)) {
     return next(new AppError(`Vehicles cannot be added in ${profile.status} status`, 400));
   }
 
@@ -366,6 +369,12 @@ exports.getSupplierVerification = catchAsync(async (req, res, next) => {
     status: 'success',
     data: {
       supplierType: profile.supplierType,
+      requirements: requirementsFor({
+        supplierType: profile.supplierType,
+        businessType: profile.businessInfo?.businessType,
+        services: profile.operatingInfo?.services,
+        country: profile.businessInfo?.country,
+      }),
       documents: profile.documents,
       vehicles: profile.vehicles,
       guides: profile.guides,

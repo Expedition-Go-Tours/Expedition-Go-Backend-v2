@@ -442,7 +442,18 @@ describe('supplierController', () => {
 
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({ status: 'success', data: expect.objectContaining({ supplierProfile: mockProfile }) })
+        expect.objectContaining({
+          status: 'success',
+          data: expect.objectContaining({
+            supplierProfile: mockProfile,
+            // The dashboard renders its checklist from this.
+            verificationRequirements: expect.objectContaining({
+              documents: expect.any(Array),
+              vehicles: expect.any(String),
+              guides: expect.any(String),
+            }),
+          }),
+        })
       );
     });
   });
