@@ -251,16 +251,16 @@ describe('getAttractions place scoping', () => {
       return Promise.resolve(ATTRACTIONS);
     });
     prisma.tour.findMany.mockImplementation(({ where } = {}) => {
-      // Platform scope: every attraction these curated tours list (matches prod).
-      if (where?.travioGhanaTour || where?.expeditionTour) {
-        return Promise.resolve([
-          { attractions: ['Kakum National Park'] },
-          { attractions: ['Manhyia Palace '] },
-          { attractions: ['Kejetia Market'] },
-        ]);
+      // The thumbnail pool is the query that filters on `attractions`.
+      if (where?.attractions?.isEmpty === false) {
+        return Promise.resolve([{ attractions: ['Manhyia Palace '], coverPhoto: 'fallback.jpg', photos: [] }]);
       }
-      if (where?.attractions?.isEmpty === false) return Promise.resolve([{ attractions: ['Manhyia Palace '], coverPhoto: 'fallback.jpg' }]);
-      return Promise.resolve([]);
+      // Platform scope: every attraction these curated tours list (matches prod).
+      return Promise.resolve([
+        { attractions: ['Kakum National Park'] },
+        { attractions: ['Manhyia Palace '] },
+        { attractions: ['Kejetia Market'] },
+      ]);
     });
   }
 
@@ -274,6 +274,43 @@ describe('getAttractions place scoping', () => {
     // and the Central-region top scorer follows.
     expect(names.slice(0, 2).sort()).toEqual(['Kejetia Market', 'Manhyia Palace Museum']);
     expect(names.indexOf('Kakum National Park')).toBeGreaterThan(1);
+  });
+
+  it('never shows the same thumbnail twice in one row', async () => {
+    // One tour lists all three attractions (so its cover photo is the only
+    // candidate for two of them) and a second tour adds a distinct photo for
+    // Bonwire — which must be the one Bonwire shows.
+    const rows = [
+      { id: 'p', name: 'Prempeh II Jubilee Museum', town: 'Kumasi', region: 'Ashanti', aliases: 'Prempeh II Museum', tourCount: 2, avgRating: 4.8, totalBookings: 5, isFeatured: false, heroImage: null, category: 'Heritage & History' },
+      { id: 'm', name: 'Manhyia Palace Museum', town: 'Kumasi', region: 'Ashanti', aliases: 'Manhyia Palace', tourCount: 1, avgRating: 4.6, totalBookings: 2, isFeatured: false, heroImage: 'curated-manhyia.jpg', category: 'Heritage & History' },
+      { id: 'b', name: 'Bonwire Kente Weaving Village', town: 'Bonwire', region: 'Ashanti', aliases: 'Bonwire Kente Weaving Center', tourCount: 1, avgRating: 4.5, totalBookings: 1, isFeatured: false, heroImage: null, category: 'Culture' },
+    ];
+
+    prisma.attraction.count.mockResolvedValue(rows.length);
+    prisma.attraction.findMany.mockImplementation(() => Promise.resolve(rows));
+    prisma.tour.findMany.mockImplementation(({ where } = {}) => {
+      // The thumbnail-pool query is the one that asks for a cover photo.
+      if (where?.attractions?.isEmpty === false) {
+        return Promise.resolve([
+          { attractions: ['Prempeh II Museum', 'Manhyia Palace ', 'Bonwire Kente Weaving Center'], coverPhoto: 'shared.jpg', photos: ['gallery-1.jpg', 'gallery-2.jpg'], averageRating: 4.9 },
+          { attractions: ['Bonwire Kente Weaving Center'], coverPhoto: 'distinct.jpg', photos: [], averageRating: 4.5 },
+        ]);
+      }
+      return Promise.resolve([{ attractions: ['Prempeh II Museum', 'Manhyia Palace ', 'Bonwire Kente Weaving Center'] }]);
+    });
+
+    const results = await ranking.getAttractions(10, null, null, true, false, 'Ashanti');
+    const byName = Object.fromEntries(results.map((a) => [a.name, a.heroImage]));
+
+    // Three attractions that share a single tour still get three different
+    // pictures: its cover plus its gallery.
+    const images = results.map((a) => a.heroImage);
+    expect(new Set(images).size).toBe(images.length);
+    expect(images.filter(Boolean)).toHaveLength(3);
+    expect(images.every((url) => ['shared.jpg', 'gallery-1.jpg', 'gallery-2.jpg', 'distinct.jpg', 'curated-manhyia.jpg'].includes(url))).toBe(true);
+    // Bonwire may take the top tour's gallery instead of the second tour's cover —
+    // both are pictures of the same place; the rule under test is variety.
+    expect(byName['Bonwire Kente Weaving Village']).toBeTruthy();
   });
 
   it('fills a missing thumbnail from a tour that includes the attraction', async () => {

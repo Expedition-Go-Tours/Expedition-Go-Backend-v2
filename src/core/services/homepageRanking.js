@@ -1606,6 +1606,7 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, gha
         name: a.name,
         tourCount: a.tourCount,
         heroImage: a.heroImage,
+        manualOverride: a.manualOverride,
         avgRating: a.avgRating,
         totalBookings: a.totalBookings,
         startingPrice: a.startingPrice,
@@ -1651,29 +1652,62 @@ async function getAttractions(limit = DEFAULT_LIMIT, lat = null, lng = null, gha
         results = results.slice(0, limit);
       }
 
-      // Curated rows can be missing a hero image (Manhyia Palace Museum and
-      // Bonwire Kente Weaving Village do), which rendered blank tiles in a
-      // section that is mostly thumbnails. Fall back to the cover photo of a
-      // tour that includes the attraction.
-      const missingImages = results.filter((r) => !r.heroImage).map((r) => r.name);
-      if (missingImages.length > 0) {
-        // Match in JS through the alias index rather than SQL: tours spell a
-        // stop loosely ("Manhyia Palace " with a trailing space, "Prempeh II
-        // Museum"), and `canonicalFor` is the only thing that resolves those to
-        // the curated name.
-        const imageTours = await prisma.tour.findMany({
-          where: { status: 'ACTIVE', coverPhoto: { not: null }, attractions: { isEmpty: false } },
-          select: { attractions: true, coverPhoto: true },
+      // ── Thumbnails: a tour cover photo per attraction, never repeated ──────
+      // Every tile shows the cover photo of a tour that actually includes the
+      // attraction, and the pick is made so one picture cannot illustrate two
+      // attractions (Manhyia Palace Museum, Bonwire Kente Weaving Village and
+      // Prempeh II Jubilee Museum all used to show the same image). Tours are
+      // ranked best-first, so the strongest tour's photo leads. An admin's own
+      // image (manualOverride) wins for its attraction and is then withheld from
+      // the pool so nothing can duplicate it.
+      {
+        const nameKey = (n) => canonicalName(n);
+        const resultNames = new Set(results.map((r) => nameKey(r.name)));
+        const usedImages = new Set(results.filter((r) => r.manualOverride && r.heroImage).map((r) => r.heroImage));
+
+        const candidateTours = await prisma.tour.findMany({
+          where: {
+            status: 'ACTIVE',
+            attractions: { isEmpty: false },
+            OR: [{ coverPhoto: { not: null } }, { photos: { isEmpty: false } }],
+            ...ghanaScope(ghanaOnly),
+            ...expeditionScope(expeditionOnly),
+          },
+          select: { attractions: true, coverPhoto: true, photos: true, averageRating: true, totalBookings: true },
+          orderBy: [{ averageRating: 'desc' }, { totalBookings: 'desc' }],
           take: 400,
         });
-        const imageByName = new Map();
-        for (const t of imageTours) {
+
+        const poolByAttraction = new Map();
+        for (const t of candidateTours) {
+          // The cover first, then the tour's own gallery: five attractions that
+          // share one tour need five different pictures, and a tour usually
+          // carries several.
+          const images = [t.coverPhoto, ...(t.photos || [])].filter(Boolean);
+          if (images.length === 0) continue;
           for (const raw of t.attractions || []) {
-            const key = canonicalName(raw);
-            if (t.coverPhoto && !imageByName.has(key)) imageByName.set(key, t.coverPhoto);
+            const key = nameKey(raw); // alias index resolves loose tour spellings
+            if (!resultNames.has(key)) continue;
+            const list = poolByAttraction.get(key) || [];
+            for (const url of images) {
+              if (!list.includes(url)) list.push(url);
+            }
+            poolByAttraction.set(key, list);
           }
         }
-        results = results.map((r) => (r.heroImage ? r : { ...r, heroImage: imageByName.get(canonicalName(r.name)) || null }));
+
+        results = results.map((r) => {
+          if (r.manualOverride && r.heroImage) return r;
+          const pool = poolByAttraction.get(nameKey(r.name)) || [];
+          const pick = pool.find((url) => !usedImages.has(url))
+            || (r.heroImage && !usedImages.has(r.heroImage) ? r.heroImage : null)
+            // Last resort: repeat a picture rather than ship a blank tile.
+            || pool[0]
+            || r.heroImage
+            || null;
+          if (pick) usedImages.add(pick);
+          return { ...r, heroImage: pick };
+        });
       }
 
       return results;
