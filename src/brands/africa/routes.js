@@ -18,6 +18,12 @@
 const express = require('express');
 const { createLimiter } = require('../../../middleware/dynamicRateLimiter');
 const { protect, restrictTo } = require('../../../middleware/authMiddleware');
+// Supplier-scoped routes resolve the supplier through the team membership
+// (`resolveSupplier`), not through `restrictTo('supplier')`: a team member's own
+// account carries `roles: ['customer']` — the supplier they work for is reached
+// through the membership, not through their roles — so a role check on the
+// caller's own roles refused every member the page they are allowed to open.
+const { resolveSupplier, requireTeamPermission } = require('../../../middleware/teamRoleMiddleware');
 const travioAfricaController = require('./controller');
 const payLaterPaymentController = require('../../core/domain/payLaterPaymentController');
 const reviewController = require('../../core/domain/reviewController');
@@ -111,7 +117,7 @@ router.post('/bookings/:id/pay-now', protect, restrictTo('customer'), payLaterPa
 router.post('/reviews', protect, restrictTo('customer'), uploadReviewPhotos, reviewController.createReview);
 
 // ── Supplier bookings (protected) ────────────────────────────────────
-router.get('/supplier/bookings', protect, restrictTo('supplier'), validate(getSupplierBookingsSchema), travioAfricaController.getSupplierBookings);
-router.patch('/supplier/bookings/:id/status', protect, restrictTo('supplier'), validate(updateBookingStatusSchema), travioAfricaController.updateBookingStatus);
+router.get('/supplier/bookings', protect, resolveSupplier, requireTeamPermission('bookings.view'), validate(getSupplierBookingsSchema), travioAfricaController.getSupplierBookings);
+router.patch('/supplier/bookings/:id/status', protect, resolveSupplier, requireTeamPermission('bookings.manage'), validate(updateBookingStatusSchema), travioAfricaController.updateBookingStatus);
 
 module.exports = router;

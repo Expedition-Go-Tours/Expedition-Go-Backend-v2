@@ -1,6 +1,12 @@
 const express = require('express');
 const { createLimiter } = require('../../../middleware/dynamicRateLimiter');
 const { protect } = require('../../../middleware/authMiddleware');
+// Supplier-scoped routes resolve the supplier through the team membership
+// (`resolveSupplier`), not through `restrictTo('supplier')`: a team member's own
+// account carries `roles: ['customer']` — the supplier they work for is reached
+// through the membership, not through their roles — so a role check on the
+// caller's own roles refused every member the page they are allowed to open.
+const { resolveSupplier, requireTeamPermission } = require('../../../middleware/teamRoleMiddleware');
 const { restrictTo } = require('../../../middleware/authMiddleware');
 const travioGhanaController = require('./controller');
 const payLaterPaymentController = require('../../core/domain/payLaterPaymentController');
@@ -1006,7 +1012,7 @@ router.post('/reviews', protect, restrictTo('customer'), uploadReviewPhotos, rev
  *       404:
  *         description: Supplier profile not found
  */
-router.get('/supplier/bookings', protect, restrictTo('supplier'), validate(getSupplierBookingsSchema), travioGhanaController.getSupplierBookings);
+router.get('/supplier/bookings', protect, resolveSupplier, requireTeamPermission('bookings.view'), validate(getSupplierBookingsSchema), travioGhanaController.getSupplierBookings);
 
 /**
  * @swagger
@@ -1048,7 +1054,7 @@ router.get('/supplier/bookings', protect, restrictTo('supplier'), validate(getSu
  *       404:
  *         description: Booking not found
  */
-router.patch('/supplier/bookings/:id/status', protect, restrictTo('supplier'), validate(updateBookingStatusSchema), travioGhanaController.updateBookingStatus);
+router.patch('/supplier/bookings/:id/status', protect, resolveSupplier, requireTeamPermission('bookings.manage'), validate(updateBookingStatusSchema), travioGhanaController.updateBookingStatus);
 
 // ================================
 // ADMIN ROUTES → moved to travioGhanaAdminRoutes.js

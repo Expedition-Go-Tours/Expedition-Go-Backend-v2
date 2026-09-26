@@ -1300,7 +1300,11 @@ const cancelBooking = catchAsync(async (req, res, next) => {
 // ================================
 
 const getSupplierBookings = catchAsync(async (req, res, next) => {
-  const supplierId = req.user.id;
+  // The supplier is whoever the caller acts FOR: their own account when they
+  // are the owner, the owner of the team they belong to when they are a member
+  // (`resolveSupplier`). A member's own account id owns no tours, so scoping by
+  // it found nothing — the page was reachable and empty, with a 404 underneath.
+  const supplierId = req.supplierId;
   const { status, customerId, page = 1, limit = 10 } = req.query;
 
   const supplierProfile = await prisma.supplierProfile.findUnique({ where: { userId: supplierId } });
@@ -1380,7 +1384,11 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
 });
 
 const updateBookingStatus = catchAsync(async (req, res, next) => {
-  const supplierId = req.user.id;
+  // The supplier is whoever the caller acts FOR: their own account when they
+  // are the owner, the owner of the team they belong to when they are a member
+  // (`resolveSupplier`). A member's own account id owns no tours, so scoping by
+  // it found nothing — the page was reachable and empty, with a 404 underneath.
+  const supplierId = req.supplierId;
   const { id } = req.params;
   const { status, supplierNotes } = req.body;
 

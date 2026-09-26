@@ -16,7 +16,11 @@ const path = require('path');
  * who may change it.
  */
 
-const ROUTE_FILES = [
+/**
+ * The supplier route tables: every route in these files acts on one supplier
+ * account, so the write rule below covers all of them.
+ */
+const SUPPLIER_ROUTE_FILES = [
   'routes/supplierRoutes.js',
   'routes/specialOfferRoutes.js',
   'routes/refundClaimRoutes.js',
@@ -24,6 +28,22 @@ const ROUTE_FILES = [
   'src/brands/ghana/supplierRoutes.js',
   'src/brands/africa/supplierRoutes.js',
 ];
+
+/**
+ * The storefront routers are mostly PUBLIC (contact form, newsletter, checkout
+ * maths) and mostly the CUSTOMER's own account, so the write rule does not apply
+ * to them. They are audited for the supplier-scoped rules instead, because they
+ * also carry the supplier's bookings endpoints: both dashboards rewrite
+ * /bookings/supplier/* into a brand namespace, so these are the routes the
+ * Bookings page actually calls.
+ */
+const STOREFRONT_ROUTE_FILES = [
+  'src/brands/ghana/routes.js',
+  'src/brands/africa/routes.js',
+  'src/brands/expedition/routes.js',
+];
+
+const ROUTE_FILES = [...SUPPLIER_ROUTE_FILES, ...STOREFRONT_ROUTE_FILES];
 
 const GUARDS = [
   'requireTeamPermission',
@@ -102,12 +122,25 @@ function fileGuard(source) {
   return permission ? permission[1] : null;
 }
 
+/**
+ * Whether the file resolves the supplier for every route in it, via a
+ * file-level `router.use(protect, resolveSupplier)`. The supplier's identity is
+ * the OWNER's account — a member's own account owns nothing — so a controller
+ * that scopes by `req.supplierId` is correct and one that scopes by
+ * `req.user.id` sees an empty business.
+ */
+function fileResolvesSupplier(source) {
+  const use = source.match(/^router\.use\((.*)\);?\s*$/m);
+  return Boolean(use && use[1].includes('resolveSupplier'));
+}
+
 /** Every `router.<method>('<path>', …)` statement, in file order. */
 function routeStatements(file) {
   const source = fs.readFileSync(path.join(REPO_ROOT, file), 'utf8');
   const lines = source.split('\n');
   const statements = [];
   const guard = fileGuard(source);
+  const supplierIsFileLevel = fileResolvesSupplier(source);
 
   lines.forEach((line, index) => {
     const match = line.match(/^router\.(get|post|patch|put|delete)\(\s*'([^']+)'/);
@@ -128,6 +161,8 @@ function routeStatements(file) {
       path: match[2],
       statement,
       fileGuard: guard,
+      supplierIsFileLevel,
+      isSupplierRouter: SUPPLIER_ROUTE_FILES.includes(file),
     });
   });
 
@@ -156,6 +191,7 @@ describe('supplier route guards', () => {
 
   it('guards every write, unless the statement is on the allowlist', () => {
     const unguarded = ALL_STATEMENTS
+      .filter((s) => s.isSupplierRouter)
       .filter((s) => s.method !== 'GET')
       .filter((s) => guardsOn(s).length === 0)
       .filter((s) => !s.fileGuard)
@@ -182,6 +218,49 @@ describe('supplier route guards', () => {
     if (!statement) return;
 
     expectGuard(statement, `requireTeamPermission('${key}')`);
+  });
+
+  it('never authorises a supplier route by the caller\'s own roles', () => {
+    // `restrictTo('supplier')` reads req.user.roles, and a team member's own
+    // account carries ['customer'] — the supplier they work for is reached
+    // through the membership, not through their roles. The Bookings page is
+    // rewritten into these brand namespaces by BOTH dashboards, so this made the
+    // page an empty screen with a "You do not have permission" toast, for every
+    // member, on both brands: indistinguishable from "this supplier has no
+    // bookings", which is how it survived a full role audit.
+    const offenders = ALL_STATEMENTS
+      .filter((s) => /restrictTo\(\s*'supplier'/.test(s.statement))
+      .map((s) => `${s.file}:${s.line} ${s.method} ${s.path}`);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('resolves the supplier through the membership on every supplier-scoped route', () => {
+    // Without this the route answers 200/404 against the CALLER's own account,
+    // which owns no tours: an empty page rather than an error.
+    const unresolved = ALL_STATEMENTS
+      .filter((s) => /^\/supplier(\/|$)/.test(s.path))
+      .filter((s) => !s.supplierIsFileLevel)
+      .filter((s) => !/\bresolveSupplier\b/.test(s.statement))
+      .map((s) => `${s.file}:${s.line} ${s.method} ${s.path}`);
+
+    expect(unresolved).toEqual([]);
+  });
+
+  it.each([
+    ['/supplier/bookings', 'GET', 'bookings.view'],
+    ['/supplier/bookings/:id/status', 'PATCH', 'bookings.manage'],
+  ])('serves %s %s under %s in every brand storefront', (routePath, method, key) => {
+    // All three brands serve the supplier's bookings, so a guard that only
+    // exists in one of them is a live bug on the other two.
+    const statements = ALL_STATEMENTS.filter((s) => s.path === routePath && s.method === method);
+
+    expect(statements.map((s) => s.file).sort()).toEqual([
+      'src/brands/africa/routes.js',
+      'src/brands/expedition/routes.js',
+      'src/brands/ghana/routes.js',
+    ]);
+    statements.forEach((statement) => expectGuard(statement, `requireTeamPermission('${key}')`));
   });
 
   it('never gates a whole router on a key no role grants', () => {
