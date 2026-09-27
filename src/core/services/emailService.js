@@ -557,9 +557,6 @@ async function buildBookingBase(booking, opts = {}) {
     supplierBookingUrl: `${emailUrls.dashboardBaseForBrand(brandKey)}/bookings/${encodeURIComponent(booking.id)}`,
     supplierPayoutUrl: `${emailUrls.dashboardBaseForBrand(brandKey)}/earnings/payouts`,
     dashboardUrl: `${emailUrls.dashboardBaseForBrand(brandKey)}/dashboard`,
-    // Exposed so callers can build their own brand-aware URLs without
-    // re-resolving the brand. Templates never reference it.
-    brandKey,
   };
 
   return base;
