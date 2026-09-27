@@ -1,4 +1,9 @@
 process.env.CLIENT_URL = 'https://travioafrica.com';
+// The supplier dashboards resolve from dedicated env vars, not CLIENT_URL.
+// Pin them here so these assertions are hermetic: CI runs without a .env
+// file, and without this the default dashboard would collapse to CLIENT_URL.
+process.env.SUPPLIER_DASHBOARD_URL = 'https://supplier.travioafrica.com';
+process.env.GHANA_SUPPLIER_DASHBOARD_URL = 'https://supplier.travioghana.com';
 process.env.ALLOWED_ORIGINS = 'https://expeditiongotours.vercel.app';
 
 const emailUrls = require('../../config/emailUrls');
