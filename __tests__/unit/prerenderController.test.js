@@ -137,6 +137,21 @@ describe('static page copy', () => {
     expect(res.body).toContain('Partner with Expedition-Go Tours');
     expect(res.body).not.toContain('{brand}');
   });
+
+  // The foundation page was the one hardcoded to a different brand's name,
+  // which contradicted the live <h1> and made the two versions of the page
+  // disagree. This endpoint is now only a fallback for routes the frontend
+  // prerenders, but it must not contradict the app when it does answer.
+  it('names the foundation for the requesting brand, not another one', async () => {
+    const ghana = await render('/foundation', { host: GHANA_HOST });
+    expect(ghana.body).toContain('Every Journey Makes a Difference');
+    expect(ghana.body).toContain('Travio Ghana Foundation');
+    expect(ghana.body).not.toContain('Expedition-Go Foundation');
+
+    const fallback = await render('/foundation');
+    expect(fallback.body).not.toContain('Travio Ghana Foundation');
+    expect(fallback.body).toContain('Expedition-Go Tours Foundation');
+  });
 });
 
 describe('structured data', () => {
@@ -261,6 +276,126 @@ describe('destination listings', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('<meta name="robots" content="noindex, follow"');
     expect(res.body).toContain('<link rel="canonical" href="https://www.travioghana.com/tours?place=NowherevilleZZ">');
+  });
+});
+
+/**
+ * Thin-content regression guard.
+ *
+ * The whole reason this endpoint existed was to give crawlers real page
+ * content, and it silently stopped doing that for the listings: the catalogue
+ * was fetched to build ItemList markup, but the fifty tours were never written
+ * into the body, so a crawler read a ~27-word page. The pages were crawled and
+ * never indexed. Counting words in <main> is crude, but it is the exact
+ * measure that failed, and a cheap floor catches any future handler that
+ * forgets to render the data it already fetched.
+ */
+describe('listings carry real body content', () => {
+  const listingWith = (tours) => ({ statusCode: 200, payload: { status: 'success', data: { tours } } });
+
+  const catalogue = Array.from({ length: 12 }, (_, i) => ({
+    tour: {
+      id: `t${i}`,
+      slug: `experience-${i}`,
+      title: `Ghana Experience Number ${i + 1}`,
+      city: i % 2 ? 'Accra' : 'Cape Coast',
+      region: i % 2 ? 'Greater Accra' : 'Central',
+      price: { amount: 40 + i, currency: 'USD' },
+      averageRating: 4.5,
+      reviewCount: 8,
+    },
+  }));
+
+  /** Words a crawler can actually read inside <main>. */
+  const mainWords = (html) => {
+    const main = /<main[^>]*>([\s\S]*?)<\/main>/.exec(html);
+    if (!main) return 0;
+    return main[1]
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&[a-z]+;/g, ' ')
+      .split(/\s+/)
+      .filter((w) => /[a-z0-9]/i.test(w)).length;
+  };
+
+  it('renders every fetched tour into the /tours body', async () => {
+    nextResponse = listingWith(catalogue);
+    const res = await render('/tours', { host: GHANA_HOST });
+
+    expect(mainWords(res.body)).toBeGreaterThan(120);
+    for (const { tour } of catalogue) {
+      expect(res.body).toContain(`>${tour.title}</a>`);
+      expect(res.body).toContain(`https://www.travioghana.com/tour/${tour.id}/${tour.slug}`);
+    }
+  });
+
+  it('links every destination so /tours?place= pages are reachable from the site', async () => {
+    nextResponse = listingWith(catalogue);
+    const res = await render('/tours', { host: GHANA_HOST });
+
+    for (const place of ['Accra', 'Cape Coast', 'Greater Accra', 'Central']) {
+      expect(res.body).toContain(`/tours?place=${encodeURIComponent(place)}`);
+    }
+  });
+
+  it('stays substantive on a destination page and shows prices and ratings', async () => {
+    nextResponse = listingWith(catalogue.filter((l) => l.tour.city === 'Accra'));
+    const res = await render('/tours?place=Accra', { host: GHANA_HOST });
+
+    expect(mainWords(res.body)).toBeGreaterThan(60);
+    // Only the six Accra tours — Cape Coast must not leak into this page.
+    expect(res.body).toContain('Ghana Experience Number 2</a> &mdash; from USD 41');
+    expect(res.body).toContain('rated 4.5/5 (8 reviews)');
+    expect(res.body).not.toContain('Ghana Experience Number 1<');
+    // A destination page is a leaf, not a directory listing of other leaves.
+    expect(res.body).not.toContain('Explore Ghana by destination');
+  });
+
+  it('declares a ListItem count equal to the listings it emits', async () => {
+    nextResponse = listingWith(catalogue);
+    const res = await render('/tours', { host: GHANA_HOST });
+
+    const list = JSON.parse(/<script type="application\/ld\+json">(\{"@context":"https:\/\/schema\.org","@type":"ItemList"[\s\S]*?)<\/script>/.exec(res.body)[1]);
+    expect(list.numberOfItems).toBe(catalogue.length);
+    expect(list.itemListElement).toHaveLength(catalogue.length);
+  });
+
+  it('still explains itself on an empty destination, without inventing listings', async () => {
+    nextResponse = listingWith([]);
+    const res = await render('/tours?place=NowherevilleZZ', { host: GHANA_HOST });
+
+    expect(res.body).toContain('No experiences listed for NowherevilleZZ yet');
+    expect(res.body).toContain('/contact-us');
+    expect(res.body).toContain('"numberOfItems":0');
+  });
+
+  it('escapes a hostile place parameter instead of reflecting it as markup', async () => {
+    nextResponse = listingWith([]);
+    const res = await render('/tours?place=%3Cscript%3Ealert(1)%3C/script%3E', { host: GHANA_HOST });
+
+    // HTML body and every meta tag are escaped.
+    expect(res.body).not.toContain('<script>alert(1)</script>');
+    expect(res.body).toContain('&lt;script&gt;');
+  });
+
+  // The JSON-LD block is a second reflection surface, and HTML-escaping would
+  // have made the JSON invalid. JSON.stringify does not escape `/`, so an
+  // unescaped `</script>` in a schema string closed the script element early
+  // and turned the rest of the structured data into live markup.
+  it('cannot be broken out of the JSON-LD block', async () => {
+    nextResponse = listingWith([]);
+    const res = await render('/tours?place=%3C/script%3E%3Cscript%3Ealert(1)%3C/script%3E', { host: GHANA_HOST });
+
+    const blocks = res.body.match(/<script type="application\/ld\+json">/g) || [];
+    expect(blocks.length).toBeGreaterThan(0);
+    // Nothing between the opening and closing tag may contain a raw `</script>`.
+    for (const block of res.body.split('<script type="application/ld+json">').slice(1)) {
+      const body = block.slice(0, block.indexOf('</script>'));
+      expect(body).not.toContain('</script>');
+      expect(body).not.toContain('<');
+      // Still valid JSON after unescaping — the escape must be lossless.
+      const parsed = JSON.parse(body.replace(/\\u003c/g, '<'));
+      expect(parsed).toBeTruthy();
+    }
   });
 });
 

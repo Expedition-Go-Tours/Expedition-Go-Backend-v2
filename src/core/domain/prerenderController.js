@@ -153,6 +153,22 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+/**
+ * JSON-LD for a <script> block.
+ *
+ * HTML-escaping is wrong here (it would corrupt the JSON) and JSON.stringify
+ * alone is unsafe: it does not escape `/`, so a `</script>` anywhere in a
+ * schema string — a tour title, a destination taken from `?place=` — closes
+ * the script element early. Everything after it is then parsed as live markup,
+ * which is both a parsing hazard and a way to smuggle content past the
+ * structured-data block. Escaping `<` alone is enough: it cannot appear
+ * unescaped inside valid JSON, and `\u003c` is the same character to a
+ * consumer.
+ */
+function serializeJsonLd(schema) {
+  return JSON.stringify(schema).replace(/</g, '\\u003c');
+}
+
 function metaTag(name, content) {
   if (!content) return '';
   return `<meta name="${name}" content="${escapeHtml(content)}">`;
@@ -238,7 +254,7 @@ function buildHtml(site, { title, description, keywords, image, url, canonical, 
   <meta name="twitter:description" content="${escapeHtml(description)}">
   <meta name="twitter:image" content="${escapeHtml(ogImage)}">
   <title>${escapeHtml(fullTitle)}</title>
-  ${jsonLd ? jsonLd.map((s) => `<script type="application/ld+json">${JSON.stringify(s)}</script>`).join('\n  ') : ''}
+  ${jsonLd ? jsonLd.map((s) => `<script type="application/ld+json">${serializeJsonLd(s)}</script>`).join('\n  ') : ''}
 </head>
 <body>
   <header>
@@ -332,6 +348,104 @@ function tourUrl(site, tour) {
   const slug = tour && tour.slug ? encodeURIComponent(tour.slug) : '';
   if (id && slug) return `${site.url}/tour/${id}/${slug}`;
   return `${site.url}/tour/${id || slug}`;
+}
+
+/** Money as the listing API reports it, tolerating both field spellings. */
+function priceLabel(tour) {
+  const amount = tour.startingPrice ?? (tour.price && tour.price.amount);
+  if (amount === undefined || amount === null || amount === '') return '';
+  const currency = tour.currency || (tour.price && tour.price.currency) || 'USD';
+  return ` &mdash; from ${escapeHtml(String(currency))} ${escapeHtml(String(amount))}`;
+}
+
+/** Traveller rating for a listing, when the catalogue carries one. */
+function ratingLabel(tour) {
+  if (!tour.averageRating) return '';
+  const score = Number(Number(tour.averageRating).toFixed(1));
+  if (!Number.isFinite(score)) return '';
+  return ` &middot; rated ${score}/5${tour.reviewCount ? ` (${escapeHtml(String(tour.reviewCount))} reviews)` : ''}`;
+}
+
+/**
+ * Crawler body for the tour listings — `/tours` and every `/tours?place=`.
+ *
+ * This handler already fetched the catalogue to build its ItemList structured
+ * data, but emitted no body at all, so a crawler saw a page whose entire
+ * content was a heading, a restated meta description and a breadcrumb: about
+ * 30 words, and 27 on /tours. The fifty tours were in hand and simply never
+ * rendered, so the structured data advertised listings the page did not show.
+ * Listing them here closes that gap from the same fetched rows, which is why
+ * the visible text and the JSON-LD cannot disagree.
+ */
+function buildListingsBody(site, tours, place) {
+  const sections = [];
+
+  sections.push(`<section aria-label="${place ? `Tours in ${escapeHtml(place)}` : 'All Ghana tours'}">
+        <h2>${place ? `Tours and experiences in ${escapeHtml(place)}` : 'All Ghana tours and experiences'}</h2>
+        <p>${
+          place
+            ? `Every experience below is available in ${escapeHtml(place)}. Book with free cancellation and instant confirmation.`
+            : `Browse every experience currently bookable on ${escapeHtml(site.name)}. Each listing shows its price, rating and destination.`
+        }</p>
+      </section>`);
+
+  if (tours.length) {
+    const items = tours
+      .map((t) => {
+        const meta = [t.city, t.region, t.category]
+          .filter(Boolean)
+          .map(escapeHtml)
+          .join(' &middot; ');
+        return `          <li><a href="${tourUrl(site, t)}">${escapeHtml(t.title)}</a>${priceLabel(t)}${ratingLabel(t)}${meta ? ` &mdash; ${meta}` : ''}</li>`;
+      })
+      .join('\n');
+    sections.push(`<section aria-label="Tour listings">
+        <h2>${tours.length} ${tours.length === 1 ? 'experience' : 'experiences'} available</h2>
+        <ul>
+${items}
+        </ul>
+      </section>`);
+  } else {
+    sections.push(`<section aria-label="No tours found">
+        <h2>No experiences listed for ${escapeHtml(place || 'this destination')} yet</h2>
+        <p>Nothing is currently bookable here. <a href="${site.url}/tours">Browse all Ghana tours</a>, or <a href="${site.url}/contact-us">contact us</a> and we will help you find the right trip.</p>
+      </section>`);
+  }
+
+  if (!place) {
+    // Destination links. Without these the /tours?place= pages are reachable
+    // only from the sitemap — the one place a crawler is told to stop.
+    const places = [];
+    for (const t of tours) {
+      for (const p of [t.city, t.region]) {
+        if (p && !places.includes(p)) places.push(p);
+      }
+    }
+    if (places.length) {
+      const links = places
+        .slice(0, 24)
+        .map((p) => `          <li><a href="${site.url}/tours?place=${encodeURIComponent(p)}">Tours in ${escapeHtml(p)}</a></li>`)
+        .join('\n');
+      sections.push(`<section aria-label="Destinations">
+        <h2>Explore Ghana by destination</h2>
+        <ul>
+${links}
+        </ul>
+      </section>`);
+    }
+  }
+
+  sections.push(`<section aria-label="Why book with us">
+        <h2>Why book with ${escapeHtml(site.name)}</h2>
+        <ul>
+          <li>Vetted local operators and licensed guides</li>
+          <li>Instant confirmation, and free cancellation on eligible experiences</li>
+          <li>Secure online payment with clear pricing</li>
+        </ul>
+        <p><a href="${site.url}/about-us">About ${escapeHtml(site.name)}</a> &middot; <a href="${site.url}/faq">Frequently asked questions</a> &middot; <a href="${site.url}/contact-us">Contact us</a></p>
+      </section>`);
+
+  return sections.join('\n      ');
 }
 
 function buildProductSchema(site, tour) {
@@ -483,6 +597,7 @@ async function handleListingsPage(site, place) {
     image: (tours[0] && tours[0].coverPhoto) || site.defaultImage.url,
     url: place ? `${site.url}/tours?place=${encodeURIComponent(place)}` : `${site.url}/tours`,
     canonical: place ? `${site.url}/tours?place=${encodeURIComponent(place)}` : `${site.url}/tours`,
+    bodyHtml: buildListingsBody(site, tours, place),
     jsonLd: [
       buildBreadcrumbSchema([
         { name: 'Home', url: `${site.url}/` },
@@ -492,8 +607,11 @@ async function handleListingsPage(site, place) {
       {
         '@context': 'https://schema.org',
         '@type': 'ItemList',
-        numberOfItems: count,
-        itemListElement: tours.slice(0, 20).map((t, i) => ({
+        // numberOfItems has to equal the number of ListItems that follow —
+        // declaring 50 and listing 20 is a structured-data error, and the whole
+        // point of listing them is that the markup now matches the page.
+        numberOfItems: tours.length,
+        itemListElement: tours.map((t, i) => ({
           '@type': 'ListItem',
           position: i + 1,
           name: t.title,
@@ -748,9 +866,14 @@ function handleStaticPage(site, path) {
       keywords: 'Ghana tours refund policy, cancellation policy Ghana tours',
     },
     '/foundation': {
-      title: 'Expedition-Go Foundation',
-      description: 'The Expedition-Go Foundation supports community, conservation, and education projects across Ghana.',
-      keywords: 'Expedition-Go Foundation, Ghana community tourism, responsible travel Ghana',
+      // Was hardcoded to 'Expedition-Go Foundation', which is a different brand
+      // and contradicted the live page's own <h1> ('Every journey can make a
+      // difference.'). The frontend's SEO component is the source of truth for
+      // this page; this fallback now matches it.
+      title: 'Every Journey Makes a Difference',
+      description:
+        'The {brand} Foundation supports community, conservation and education projects across Ghana, so every booking helps fund grassroots work.',
+      keywords: '{brand} Foundation, Ghana community tourism, responsible travel Ghana',
     },
     '/supplier-terms': {
       title: 'Supplier Terms',
