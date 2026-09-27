@@ -43,10 +43,15 @@ const BRANDS = {
     // hero it replaces was404, so every non-tour page shared a dead card.
     defaultImage: { url: 'https://www.travioghana.com/og-default.png', width: 1200, height: 630 },
     sameAs: [
+      // Shared with the Expedition-Go brand under a different slug; unconfirmed,
+      // so it stays put rather than being asserted as a Travio Ghana profile.
       'https://www.facebook.com/p/Travio%20Ghana-Tours-LTD-61567042001418/',
-      'https://www.instagram.com/travioGhanatours',
-      'https://www.tiktok.com/@expeditiongotours',
-      'https://www.youtube.com/c/ExpeditionGoTravelandToursLTD',
+      // These three were the Expedition-Go brand's accounts, and the Instagram
+      // one was a fourth handle nobody controlled. Keep in step with the
+      // storefront's src/lib/brandSocial.ts.
+      'https://www.instagram.com/travioghana',
+      'https://www.tiktok.com/@travio.ghana',
+      'https://www.youtube.com/@TravioGhana',
     ],
   },
   expedition: {

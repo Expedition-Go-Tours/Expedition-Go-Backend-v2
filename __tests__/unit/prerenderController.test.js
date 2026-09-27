@@ -181,6 +181,63 @@ describe('structured data', () => {
   });
 });
 
+/**
+ * `sameAs` is how a crawler connects this storefront to the brand's other
+ * profiles. Travio Ghana's list named the Expedition-Go brand's Instagram,
+ * TikTok and YouTube accounts, plus a fourth Instagram handle nobody
+ * controlled — the same "borrow another brand's account" mistake the
+ * `twitter:site` rule above exists to prevent, three lines away.
+ *
+ * The storefront declares the same list in `src/lib/brandSocial.ts`; these
+ * expectations and that module have to agree, or the two disagree about who
+ * this brand is.
+ */
+describe('sameAs names the brand that is being rendered', () => {
+  const TRAVIO_GHANA_SAME_AS = [
+    'https://www.instagram.com/travioghana',
+    'https://www.tiktok.com/@travio.ghana',
+    'https://www.youtube.com/@TravioGhana',
+  ];
+
+  /** Pulls the Organization `sameAs` array back out of the rendered page. */
+  function sameAsOf(body) {
+    const match = /"sameAs":\[([^\]]*)\]/.exec(body);
+    expect(match).not.toBeNull();
+    return JSON.parse(`[${match[1]}]`);
+  }
+
+  it('declares the real Travio Ghana accounts', async () => {
+    const res = await render('/', { host: GHANA_HOST });
+    expect(sameAsOf(res.body)).toEqual(expect.arrayContaining(TRAVIO_GHANA_SAME_AS));
+  });
+
+  it('does not hand the brand another brand\u2019s accounts', async () => {
+    const res = await render('/', { host: GHANA_HOST });
+    // The exact strings that were wrong, so a paste-back is caught.
+    expect(res.body).not.toContain('expeditiongotours');
+    expect(res.body).not.toContain('ExpeditionGoTravelandToursLTD');
+    expect(res.body).not.toContain('travioGhanatours');
+  });
+
+  it('has no duplicates, which would waste a slot in the entity', async () => {
+    const urls = sameAsOf((await render('/', { host: GHANA_HOST })).body);
+    expect(new Set(urls).size).toBe(urls.length);
+  });
+
+  it('leaves the Expedition-Go storefront pointing at its own profiles', async () => {
+    // This service backs two brands; fixing one must not retarget the other.
+    const res = await render('/');
+    expect(res.body).toContain('"https://www.instagram.com/expeditiongo"');
+    expect(res.body).not.toContain('https://www.instagram.com/travioghana');
+  });
+
+  it('never serves one brand\u2019s profiles under the other\u2019s domain', async () => {
+    const ghana = await render('/', { host: GHANA_HOST });
+    expect(ghana.body).not.toContain('expeditiongotours.com');
+    expect(ghana.body).not.toContain('@ExpeditionGo');
+  });
+});
+
 describe('tour pages', () => {
   const tour = {
     id: 'tour-1',
