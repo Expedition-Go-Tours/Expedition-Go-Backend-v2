@@ -44,3 +44,26 @@ describe('emailUrls brand-aware deep links', () => {
     expect(emailUrls.downloadVoucher('b1', `${expedition}/`)).toBe(`${expedition}/dashboard/bookings?booking=b1`);
   });
 });
+
+describe('dashboardBaseForBrand — brand-key dashboard resolution', () => {
+  const GHANA = 'https://supplier.travioghana.com';
+  const AFRICA = expect.stringMatching(/supplier\.travioafrica\.com/);
+
+  it('routes ghana to the Ghana dashboard', () => {
+    expect(emailUrls.dashboardBaseForBrand('ghana')).toBe(GHANA);
+  });
+
+  it('routes expedition to the Ghana dashboard (sub-store shares Ghana)', () => {
+    expect(emailUrls.dashboardBaseForBrand('expedition')).toBe(GHANA);
+  });
+
+  it('routes africa to the default dashboard', () => {
+    expect(emailUrls.dashboardBaseForBrand('africa')).toEqual(AFRICA);
+  });
+
+  it('falls back to the default dashboard for unknown or null keys', () => {
+    expect(emailUrls.dashboardBaseForBrand(null)).toEqual(AFRICA);
+    expect(emailUrls.dashboardBaseForBrand(undefined)).toEqual(AFRICA);
+    expect(emailUrls.dashboardBaseForBrand('unknown')).toEqual(AFRICA);
+  });
+});

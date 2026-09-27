@@ -77,7 +77,7 @@ async function sendClaimEmail({ to, subject, heading, message, buttonText, butto
         header: heading,
         message,
         buttonText: buttonText || 'View details',
-        buttonUrl: buttonUrl || emailUrls.supplierDashboard(),
+        buttonUrl: buttonUrl || `${emailUrls.dashboardBaseForBrand(brandKey)}/dashboard`,
         userName: '',
       },
     });

@@ -168,8 +168,16 @@ module.exports = {
     `${dashboardBaseForUser(user)}/reviews?reviewId=${encodeURIComponent(reviewId)}`,
   supplierReplyReviewForUser: (reviewId, user) =>
     `${dashboardBaseForUser(user)}/reviews?reviewId=${encodeURIComponent(reviewId)}&reply=1`,
-  // Raw helper — used by chat deep-links and team-invite URLs too.
+  // Raw helpers — used by chat deep-links, team-invite URLs, and email
+  // builder code that already knows the brand key.
   dashboardBaseForUser,
+  // Resolve a dashboard base from the brand registry key (not a user object).
+  // Expedition is Ghana's sub-store and has no supplierDashboardUrl of its
+  // own — it shares Ghana's supplier dashboard.
+  dashboardBaseForBrand: (brandKey) => {
+    if (brandKey === 'ghana' || brandKey === 'expedition') return GHANA_DASHBOARD_URL;
+    return DASHBOARD_URL;
+  },
 
   // ── Supplier notification recipients ───────────────────────────────
   // Confirm/unsubscribe links must resolve without a dashboard session, so

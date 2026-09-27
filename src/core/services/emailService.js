@@ -552,10 +552,14 @@ async function buildBookingBase(booking, opts = {}) {
     browseUrl: emailUrls.browseExperiences(clientOrigin),
     supportUrl: emailUrls.contactSupport(clientOrigin),
 
-    // supplier URLs
-    supplierBookingUrl: emailUrls.supplierViewBooking(booking.id),
-    supplierPayoutUrl: emailUrls.supplierPayouts(),
-    dashboardUrl: emailUrls.supplierDashboard(),
+    // supplier URLs — brand-aware so Ghana/Expedition bookings point at the
+    // Ghana dashboard instead of always falling through to TravioAfrica.
+    supplierBookingUrl: `${emailUrls.dashboardBaseForBrand(brandKey)}/bookings/${encodeURIComponent(booking.id)}`,
+    supplierPayoutUrl: `${emailUrls.dashboardBaseForBrand(brandKey)}/earnings/payouts`,
+    dashboardUrl: `${emailUrls.dashboardBaseForBrand(brandKey)}/dashboard`,
+    // Exposed so callers can build their own brand-aware URLs without
+    // re-resolving the brand. Templates never reference it.
+    brandKey,
   };
 
   return base;
@@ -914,7 +918,7 @@ async function sendSupplierCancellationFeeEmail(booking, { feeAmount } = {}) {
     feePctLabel: `${feePct}%`,
     grossAmountLabel: fmt.formatCurrency(b.grossAmount, b.currency),
     refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.grossAmount, b.currency),
-    payoutsUrl: emailUrls.supplierEarnings(),
+    payoutsUrl: `${emailUrls.dashboardBaseForBrand(base.brandKey)}/earnings`,
     reasonLabel: b.cancellationReason || '',
   };
   return sendRendered({
@@ -1472,7 +1476,7 @@ async function sendChatMessageEmail(booking, data = {}) {
   const senderMessageHtml = htmlEscape(messagePlain).replace(/\n/g, '<br/>');
   const preheader = htmlEscape((String(data.preheader || messagePlain) || 'New message').slice(0, 140));
   const subject = `New message from ${senderName}`;
-  const chatUrl = data.link || emailUrls.supplierDashboard();
+  const chatUrl = data.link || `${emailUrls.dashboardBaseForBrand(data.brandKey || null)}/dashboard`;
 
   return sendEmail({
     to: data.to,
