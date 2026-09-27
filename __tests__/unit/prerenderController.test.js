@@ -15,6 +15,14 @@ const { prerender, _internal } = require('../../src/core/domain/prerenderControl
 
 const GHANA_HOST = 'www.travioghana.com';
 
+/** The brand's real accounts. Keep in step with the storefront's
+ *  `src/lib/brandSocial.ts` — the two ends of a brand must agree. */
+const TRAVIO_GHANA_SAME_AS = [
+  'https://www.instagram.com/travioghana',
+  'https://www.tiktok.com/@travio.ghana',
+  'https://www.youtube.com/@TravioGhana',
+];
+
 let requested;
 /** How the mocked HTTP layer should answer: statusCode + payload. */
 let nextResponse;
@@ -193,12 +201,6 @@ describe('structured data', () => {
  * this brand is.
  */
 describe('sameAs names the brand that is being rendered', () => {
-  const TRAVIO_GHANA_SAME_AS = [
-    'https://www.instagram.com/travioghana',
-    'https://www.tiktok.com/@travio.ghana',
-    'https://www.youtube.com/@TravioGhana',
-  ];
-
   /** Pulls the Organization `sameAs` array back out of the rendered page. */
   function sameAsOf(body) {
     const match = /"sameAs":\[([^\]]*)\]/.exec(body);
@@ -235,6 +237,63 @@ describe('sameAs names the brand that is being rendered', () => {
     const ghana = await render('/', { host: GHANA_HOST });
     expect(ghana.body).not.toContain('expeditiongotours.com');
     expect(ghana.body).not.toContain('@ExpeditionGo');
+  });
+});
+
+/**
+ * Tour pages carry no top-level Organization — only Product and BreadcrumbList
+ * — so the brand entity is the nested `brand` (and the offer's `seller`). Those
+ * were a bare name, which left the 32 tour pages, the most numerous on the
+ * site, declaring who sells the tour but no social identity to connect that
+ * name to anything else.
+ */
+describe('tour pages identify the brand', () => {
+  const tour = {
+    id: 'tour-1',
+    slug: 'kakum-canopy-walk',
+    title: 'Kakum Canopy Walk',
+    city: 'Cape Coast',
+    startingPrice: 45,
+    currency: 'USD',
+    averageRating: 4.8,
+    reviewCount: 12,
+  };
+
+  /** The rendered Product schema, parsed back out of the page. */
+  async function productOf(opts) {
+    nextResponse = { statusCode: 200, payload: { status: 'success', data: { tour: { tour } } } };
+    const res = await render('/tour/kakum-canopy-walk', opts);
+    const blocks = [...res.body.matchAll(/<script[^>]*application\/ld\+json[^>]*>(.*?)<\/script>/gs)]
+      .map((m) => JSON.parse(m[1]));
+    const product = blocks.find((b) => b['@type'] === 'Product');
+    expect(product).toBeDefined();
+    return product;
+  }
+
+  it('gives the product brand the same profiles as the site', async () => {
+    const product = await productOf({ host: GHANA_HOST });
+    expect(product.brand.sameAs).toEqual(expect.arrayContaining(TRAVIO_GHANA_SAME_AS));
+  });
+
+  it('gives the offer seller them too, so both references resolve', async () => {
+    const product = await productOf({ host: GHANA_HOST });
+    expect(product.offers.seller.sameAs).toEqual(expect.arrayContaining(TRAVIO_GHANA_SAME_AS));
+    expect(product.brand.name).toBe('Travio Ghana');
+  });
+
+  it('does not put another brand\u2019s accounts on a tour page', async () => {
+    const product = await productOf({ host: GHANA_HOST });
+    expect(JSON.stringify(product)).not.toMatch(/expeditiongo/i);
+    expect(JSON.stringify(product)).not.toMatch(/travioGhanatours/i);
+  });
+
+  it('resolves the profiles per requesting brand', async () => {
+    // Same service, two storefronts: a tour page for the default brand must not
+    // advertise Travio Ghana's profiles.
+    const product = await productOf();
+    expect(product.brand.name).toBe('Expedition-Go Tours');
+    expect(product.brand.sameAs).toContain('https://www.instagram.com/expeditiongo');
+    expect(JSON.stringify(product)).not.toMatch(/travioghana/i);
   });
 });
 

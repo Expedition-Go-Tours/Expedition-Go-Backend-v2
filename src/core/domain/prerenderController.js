@@ -453,6 +453,21 @@ ${links}
   return sections.join('\n      ');
 }
 
+/**
+ * The brand entity, with the social profiles that tie a page to the brand.
+ *
+ * Tour, listing and destination pages carry no top-level Organization — only
+ * Product and BreadcrumbList — so this nested node is the only place a crawler
+ * can learn who sells the thing. Without `sameAs` it was a bare name, and the
+ * 32 tour pages (the most numerous on the site) declared no social identity at
+ * all. Fresh object per call so `brand` and `seller` can't alias each other.
+ */
+function brandOrganization(site) {
+  const org = { '@type': 'Organization', name: site.name };
+  if (Array.isArray(site.sameAs) && site.sameAs.length) org.sameAs = [...site.sameAs];
+  return org;
+}
+
 function buildProductSchema(site, tour) {
   const schema = {
     '@context': 'https://schema.org',
@@ -461,13 +476,13 @@ function buildProductSchema(site, tour) {
     description: (tour.description || tour.title || '').slice(0, 500),
     image: tour.coverPhoto || (tour.photos && tour.photos[0]) || site.defaultImage.url,
     url: tourUrl(site, tour),
-    brand: { '@type': 'Organization', name: site.name },
+    brand: brandOrganization(site),
     offers: {
       '@type': 'Offer',
       price: tour.startingPrice || 0,
       priceCurrency: tour.currency || 'USD',
       availability: 'https://schema.org/InStock',
-      seller: { '@type': 'Organization', name: site.name },
+      seller: brandOrganization(site),
     },
   };
   // Report the combined (in-app + external) standing when the API provides it,
