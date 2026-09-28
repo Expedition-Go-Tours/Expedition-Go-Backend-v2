@@ -23,6 +23,14 @@ const TRAVIO_GHANA_SAME_AS = [
   'https://www.youtube.com/@TravioGhana',
 ];
 
+/** The full list as declared, Facebook first: that page is shared with the
+ *  Expedition-Go brand under an unconfirmed slug, so it sits ahead of the
+ *  three verified accounts rather than being asserted as a brand profile. */
+const TRAVIO_GHANA_SAME_AS_FULL = [
+  'https://www.facebook.com/p/Travio%20Ghana-Tours-LTD-61567042001418/',
+  ...TRAVIO_GHANA_SAME_AS,
+];
+
 let requested;
 /** How the mocked HTTP layer should answer: statusCode + payload. */
 let nextResponse;
@@ -392,6 +400,89 @@ describe('destination listings', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('<meta name="robots" content="noindex, follow"');
     expect(res.body).toContain('<link rel="canonical" href="https://www.travioghana.com/tours?place=NowherevilleZZ">');
+  });
+});
+
+/**
+ * Listing pages are the last page type that named no brand.
+ *
+ * `sameAs` only exists on Organization/Person/WebSite, so a list of tours had
+ * nowhere to carry the brand's profiles — the homepage, the 20 marketing pages
+ * and the 32 tour pages all asserted the entity, and /tours plus its 16
+ * `?place=` variants (17 of the 76 sitemapped URLs) did not. `publisher` is the
+ * correct slot: ItemList inherits from CreativeWork, and a publisher is a
+ * CreativeWork's Organization.
+ */
+describe('listing pages name their publisher', () => {
+  const listingWith = (tours) => ({ statusCode: 200, payload: { status: 'success', data: { tours } } });
+  const tours = [
+    { tour: { id: 'accra-1', title: 'Accra City Tour', slug: 'accra-city-tour' } },
+    { tour: { id: 'accra-2', title: 'Kwame Nkrumah Tour', slug: 'kwame-nkrumah-tour' } },
+  ];
+
+  /** The rendered ItemList schema, parsed back out of the page. */
+  async function itemListOf(target, opts) {
+    nextResponse = listingWith(tours);
+    const res = await render(target, opts);
+    const blocks = [...res.body.matchAll(/<script[^>]*application\/ld\+json[^>]*>(.*?)<\/script>/gs)]
+      .map((m) => JSON.parse(m[1]));
+    const list = blocks.find((b) => b['@type'] === 'ItemList');
+    expect(list).toBeDefined();
+    return list;
+  }
+
+  it('publishes the destination list under the brand', async () => {
+    const list = await itemListOf('/tours?place=Accra', { host: GHANA_HOST });
+    expect(list.publisher).toEqual({
+      '@type': 'Organization',
+      name: 'Travio Ghana',
+      sameAs: TRAVIO_GHANA_SAME_AS_FULL,
+    });
+  });
+
+  it('publishes the unfiltered list too, not just ?place=', async () => {
+    const list = await itemListOf('/tours', { host: GHANA_HOST });
+    expect(list.publisher.name).toBe('Travio Ghana');
+    expect(list.publisher.sameAs).toEqual(expect.arrayContaining(TRAVIO_GHANA_SAME_AS));
+  });
+
+  it('does not put another brand\u2019s accounts on a listing page', async () => {
+    const list = await itemListOf('/tours?place=Accra', { host: GHANA_HOST });
+    expect(JSON.stringify(list.publisher)).not.toMatch(/expeditiongo/i);
+  });
+
+  it('resolves the publisher per requesting brand', async () => {
+    const list = await itemListOf('/tours', {});
+    expect(list.publisher.name).toBe('Expedition-Go Tours');
+    expect(list.publisher.sameAs).toContain('https://www.instagram.com/expeditiongo');
+    expect(JSON.stringify(list.publisher)).not.toMatch(/travioghana/i);
+  });
+
+  it('leaves the list itself untouched', async () => {
+    // The publisher must not disturb the count/entries pairing that the
+    // structured-data validator checks.
+    const list = await itemListOf('/tours?place=Accra', { host: GHANA_HOST });
+    expect(list.numberOfItems).toBe(2);
+    expect(list.itemListElement).toHaveLength(2);
+    expect(list.itemListElement[0]).toEqual({
+      '@type': 'ListItem',
+      position: 1,
+      name: 'Accra City Tour',
+      url: 'https://www.travioghana.com/tour/accra-1/accra-city-tour',
+    });
+  });
+
+  it('omits the publisher on the homepage list, which has a sibling Organization', async () => {
+    nextResponse = { statusCode: 200, payload: { status: 'success', data: { tours } } };
+    const res = await render('/', { host: GHANA_HOST });
+    const blocks = [...res.body.matchAll(/<script[^>]*application\/ld\+json[^>]*>(.*?)<\/script>/gs)]
+      .map((m) => JSON.parse(m[1]));
+
+    // The brand is asserted by a top-level Organization in the same array, so a
+    // second copy on the list would be noise.
+    expect(blocks.some((b) => b['@type'] === 'Organization' && b.sameAs)).toBe(true);
+    const list = blocks.find((b) => b['@type'] === 'ItemList');
+    if (list) expect(list.publisher).toBeUndefined();
   });
 });
 

@@ -631,6 +631,17 @@ async function handleListingsPage(site, place) {
         // declaring 50 and listing 20 is a structured-data error, and the whole
         // point of listing them is that the markup now matches the page.
         numberOfItems: tours.length,
+        // `sameAs` only exists on Organization/Person/WebSite, so the brand's
+        // profiles have nowhere to live on a list. Without this, /tours and
+        // every /tours?place= page — 17 of the 76 sitemapped URLs, and the only
+        // page type left that named no brand — asserted who was selling nothing
+        // and had no link to the entity the other 53 pages describe.
+        //
+        // ItemList inherits from CreativeWork, whose `publisher` is the correct
+        // slot for it. The homepage's ItemList is deliberately left without
+        // this: it ships as a sibling of a top-level Organization, so the brand
+        // is already in the same array and a second copy adds nothing.
+        publisher: brandOrganization(site),
         itemListElement: tours.map((t, i) => ({
           '@type': 'ListItem',
           position: i + 1,
