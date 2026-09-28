@@ -43,12 +43,34 @@ const BRANDS = {
     // hero it replaces was404, so every non-tour page shared a dead card.
     defaultImage: { url: 'https://www.travioghana.com/og-default.png', width: 1200, height: 630 },
     sameAs: [
-      // Shared with the Expedition-Go brand under a different slug; unconfirmed,
-      // so it stays put rather than being asserted as a Travio Ghana profile.
-      'https://www.facebook.com/p/Travio%20Ghana-Tours-LTD-61567042001418/',
-      // These three were the Expedition-Go brand's accounts, and the Instagram
-      // one was a fourth handle nobody controlled. Keep in step with the
-      // storefront's src/lib/brandSocial.ts.
+      // No Facebook. This brand has no Facebook page of its own, and the URL
+      // that was here was not a near-miss — it was another brand's page.
+      //
+      // Facebook's /p/ form is `name-slug-<numeric page id>`; the id is
+      // authoritative and the name is cosmetic. Both slugs in circulation,
+      // /p/Travio Ghana-Tours-LTD-61567042001418/ and
+      // /p/Expedition-Go-Tours-LTD-61567042001418/, carry the same id and
+      // both serve the page titled "Expedition Go Tours LTD | Accra".
+      //
+      // So `sameAs` was asserting that Travio Ghana and Expedition Go Tours
+      // LTD are the same entity — the exact failure these lists were rebuilt
+      // to fix, where the site named the Expedition-Go Instagram handle in
+      // three places. Unlike the Instagram handle this one is settled rather
+      // than taken on trust: Facebook server-renders the real page title, so
+      // it was checked rather than assumed.
+      //
+      // A wrong sameAs is worse than a missing one. An absent profile is an
+      // absence; this is a falsehood in the one field a knowledge panel acts
+      // on, which risks merging the two brands. The storefront still links the
+      // page in its footer, which is honest — a link to a page the business
+      // controls is not a claim of ownership.
+      //
+      // To restore it, create a real Travio Ghana page and add it to both this
+      // list and src/lib/brandSocial.ts. The two ends drift otherwise.
+      //
+      // The Expedition-Go brand below does keep a Facebook URL, and that one
+      // verifies: facebook.com/expeditiongo resolves to its own page, titled
+      // "Expedition Go", distinct from the Tours LTD page.
       'https://www.instagram.com/travioghana',
       'https://www.tiktok.com/@travio.ghana',
       'https://www.youtube.com/@TravioGhana',

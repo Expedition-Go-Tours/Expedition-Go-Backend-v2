@@ -23,13 +23,11 @@ const TRAVIO_GHANA_SAME_AS = [
   'https://www.youtube.com/@TravioGhana',
 ];
 
-/** The full list as declared, Facebook first: that page is shared with the
- *  Expedition-Go brand under an unconfirmed slug, so it sits ahead of the
- *  three verified accounts rather than being asserted as a brand profile. */
-const TRAVIO_GHANA_SAME_AS_FULL = [
-  'https://www.facebook.com/p/Travio%20Ghana-Tours-LTD-61567042001418/',
-  ...TRAVIO_GHANA_SAME_AS,
-];
+/** The full list as declared. Facebook is absent, and that is deliberate: both
+ *  slugs in circulation carried page id 61567042001418 and served the page
+ *  titled "Expedition Go Tours LTD | Accra", so naming it claimed the two
+ *  brands were one entity. */
+const TRAVIO_GHANA_SAME_AS_FULL = [...TRAVIO_GHANA_SAME_AS];
 
 let requested;
 /** How the mocked HTTP layer should answer: statusCode + payload. */
@@ -400,6 +398,73 @@ describe('destination listings', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('<meta name="robots" content="noindex, follow"');
     expect(res.body).toContain('<link rel="canonical" href="https://www.travioghana.com/tours?place=NowherevilleZZ">');
+  });
+});
+
+/**
+ * `sameAs` may only name a profile the brand actually owns.
+ *
+ * Facebook is the case that made this a rule. Facebook's `/p/` form is
+ * `name-slug-<numeric page id>`: the id is authoritative, the name is cosmetic.
+ * Two different slugs — one reading "Travio Ghana", one "Expedition Go" —
+ * carried the same id, 61567042001418, and both served the page titled
+ * "Expedition Go Tours LTD | Accra". So the Travio Ghana list was asserting
+ * that the two brands are the same entity, which is the exact failure these
+ * lists were rebuilt to fix.
+ *
+ * Unlike the Instagram handle, this was checked rather than taken on trust:
+ * Facebook server-renders the real page title, so the answer is definitive.
+ */
+describe('sameAs names only profiles the brand owns', () => {
+  const listingWith = (tours) => ({ statusCode: 200, payload: { status: 'success', data: { tours } } });
+  const tours = [{ tour: { id: 'a-1', title: 'Accra City Tour', slug: 'accra-city-tour' } }];
+
+  /**
+   * Every `sameAs` on the page, wherever it is nested. Listings carry it under
+   * the ItemList's publisher and tour pages under Product.brand and
+   * offers.seller, so reading only the top level finds nothing.
+   */
+  async function sameAsOf(target, opts) {
+    nextResponse = listingWith(tours);
+    const res = await render(target, opts);
+    const blocks = [...res.body.matchAll(/<script[^>]*application\/ld\+json[^>]*>(.*?)<\/script>/gs)]
+      .map((m) => JSON.parse(m[1]));
+    return blocks.flatMap((b) => [
+      ...(Array.isArray(b.sameAs) ? b.sameAs : []),
+      ...(Array.isArray(b.publisher?.sameAs) ? b.publisher.sameAs : []),
+      ...(Array.isArray(b.brand?.sameAs) ? b.brand.sameAs : []),
+      ...(Array.isArray(b.offers?.seller?.sameAs) ? b.offers.seller.sameAs : []),
+    ]);
+  }
+
+  it('keeps the parent company\u2019s Facebook page out of Travio Ghana', async () => {
+    const urls = await sameAsOf('/tours', { host: GHANA_HOST });
+    // The exact list, not a filter: a filter over an empty array passes
+    // vacuously, and would have passed with the publisher node removed too.
+    expect(urls).toEqual(TRAVIO_GHANA_SAME_AS);
+    expect(urls.filter((u) => /facebook\.com/i.test(u))).toEqual([]);
+  });
+
+  it('keeps it out of the tour pages too, not just the listings', async () => {
+    nextResponse = { statusCode: 200, payload: { status: 'success', data: { tour: tours[0].tour } } };
+    const res = await render('/tour/a-1/accra-city-tour', { host: GHANA_HOST });
+    expect(res.body).not.toContain('61567042001418');
+  });
+
+  it('still gives the Expedition-Go brand its own Facebook page', async () => {
+    // The point is to remove a misattributed URL, not to purge Facebook. This
+    // one verifies — facebook.com/expeditiongo serves its own page, titled
+    // "Expedition Go", distinct from the Tours LTD page — and deleting it
+    // would cost a real brand a real profile.
+    const urls = await sameAsOf('/tours', {});
+    expect(urls).toContain('https://www.facebook.com/expeditiongo');
+  });
+
+  it('resolves the rule per brand, so neither list names the other\u2019s', async () => {
+    const travio = await sameAsOf('/tours', { host: GHANA_HOST });
+    const expedition = await sameAsOf('/tours', {});
+    expect(travio).not.toContain('https://www.facebook.com/expeditiongo');
+    expect(expedition).not.toContain('https://www.instagram.com/travioghana');
   });
 });
 
