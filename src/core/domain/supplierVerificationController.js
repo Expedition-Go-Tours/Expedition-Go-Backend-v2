@@ -15,10 +15,19 @@ const { enqueueNotification } = require('../services/queue');
 const { notifyAdmin } = require('../services/adminNotificationService');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../services/cloudinaryHelper');
 const { parseDocuments, parseVehiclePhotos, parseVehicles } = require('../services/supplierVerification');
-const { requirementsFor } = require('../services/supplierVerificationRequirements');
+const { DOCUMENT_LABELS, requirementsFor, isEnforcedSetSatisfied, documentationDeadlineAfter } = require('../services/supplierVerificationRequirements');
 const logger = require('../services/logger');
 
 const DOCUMENT_REPLACEABLE = ['REJECTED', 'REPLACEMENT_REQUESTED', 'EXPIRED'];
+
+/**
+ * Valid `DocumentType` values for supplier uploads, derived from the
+ * requirements engine's label map so the checklist, the additional-documents
+ * picker and this validator can never disagree about what a type is called or
+ * that it exists. `Object.values(DocumentType)` from Prisma would also work
+ * but derives from the generated client rather than the rule that names docs.
+ */
+const KNOWN_DOCUMENT_TYPES = Object.keys(DOCUMENT_LABELS);
 
 async function resolveProfileByUserId(userId) {
   return prisma.supplierProfile.findUnique({ where: { userId } });
@@ -38,10 +47,65 @@ function recordEvent({ supplierProfileId, entityType, entityId, action, actorId 
   });
 }
 
+/**
+ * The 30-day documentation window starts ONCE the enforced set is on file: a
+ * government ID, plus the business registration certificate for businesses.
+ * `applyToBeSupplier` starts it at go-live automatically, but a profile created
+ * without documents stays PENDING and can complete the set later from the
+ * dashboard — uploading the last required document is what makes the account
+ * live and starts the clock.
+ */
+async function maybeStartDocumentationWindow(supplierProfileId, actorId) {
+  const profile = await prisma.supplierProfile.findUnique({ where: { id: supplierProfileId } });
+  if (!profile || profile.documentationDeadline) return null;
+
+  const requirements = requirementsFor({
+    supplierChoice: profile.businessInfo?.supplierChoice,
+    supplierType: profile.supplierType,
+    businessType: profile.businessInfo?.businessType,
+    services: profile.operatingInfo?.services,
+    country: profile.businessInfo?.country,
+  });
+  const uploaded = await prisma.supplierDocument.findMany({
+    where: { supplierId: profile.id, ownerType: 'SUPPLIER' },
+    select: { type: true },
+  });
+  if (!isEnforcedSetSatisfied({ requirements, uploadedTypes: uploaded.map((d) => d.type) })) {
+    return null;
+  }
+
+  const wasPending = profile.status === 'PENDING';
+  const updated = await prisma.supplierProfile.update({
+    where: { id: profile.id },
+    data: {
+      ...(wasPending ? { status: 'ACTIVE' } : {}),
+      documentationDeadline: documentationDeadlineAfter(),
+    },
+  });
+  await recordEvent({
+    supplierProfileId: profile.id,
+    entityType: 'SUPPLIER',
+    entityId: profile.id,
+    action: 'DOCUMENTATION_WINDOW_STARTED',
+    actorId,
+    note: 'Required documents on file — 30-day window for the remaining documents started',
+  });
+  if (wasPending) {
+    await enqueueNotification({
+      userId: profile.userId,
+      type: 'SUPPLIER_APPROVED',
+      title: 'Your account is now active',
+      message:
+        'Your required documents are on file. You have 30 days to provide the remaining documents from your dashboard.',
+      data: { supplierId: profile.id },
+    }).catch(() => {});
+  }
+  return updated;
+}
+
 /** Bring an EXPIRED supplier back to ACTIVE when no approved docs are expired. */
 async function maybeRestoreExpiredSupplier(supplierProfileId, actorId) {
   const profile = await prisma.supplierProfile.findUnique({ where: { id: supplierProfileId } });
-  if (!profile || profile.status !== 'EXPIRED') return null;
 
   const expiredCount = await prisma.supplierDocument.count({
     where: { supplierId: supplierProfileId, status: 'EXPIRED' },
@@ -76,16 +140,15 @@ async function maybeRestoreExpiredSupplier(supplierProfileId, actorId) {
 // SUPPLIER-FACING (owner-scoped)
 // ================================
 
-const KNOWN_DOCUMENT_TYPES = [
-  'GHANA_CARD', 'NATIONAL_ID', 'TOUR_GUIDE_LICENCE', 'DRIVERS_LICENCE',
-  'BUSINESS_CERTIFICATE', 'GTA_CERTIFICATE', 'PROOF_OF_ADDRESS', 'PROFILE_PHOTO',
-  'PASSENGER_TRANSPORT_LICENCE', 'VEHICLE_REGISTRATION', 'VEHICLE_OWNERSHIP',
-  'VEHICLE_ROADWORTHINESS', 'VEHICLE_INSURANCE', 'OTHER',
-];
-
 /**
  * POST /suppliers/documents
  * Supplier uploads an additional document for review (not a replacement).
+ *
+ * The common case is a SUPPLIER-level document for the checklist or the
+ * "additional documents" list. Passing `ownerType` + `ownerId` (VEHICLE/GUIDE)
+ * attaches the file to an existing vehicle or guide — the repair path for an
+ * entity that was created without a required document, so a supplier never has
+ * to delete a vehicle (and lose its photos) to add missing insurance.
  */
 exports.addDocument = catchAsync(async (req, res, next) => {
   const profile = await resolveProfileByUserId(req.supplierId || req.user.id);
@@ -100,11 +163,52 @@ exports.addDocument = catchAsync(async (req, res, next) => {
     return next(new AppError('A valid document type is required', 400));
   }
 
+  const rawOwnerType = String(req.body?.ownerType || 'SUPPLIER').toUpperCase();
+  const ownerType = rawOwnerType === 'VEHICLE' || rawOwnerType === 'GUIDE' ? rawOwnerType : 'SUPPLIER';
+  const ownerLabel = ownerType === 'VEHICLE' ? 'vehicle' : ownerType === 'GUIDE' ? 'guide' : 'supplier';
+
+  // Resolve (and thereby own-scope) the target entity when one is given, so a
+  // supplier can only attach documents to their own vehicles / guides.
+  let ownerId = profile.id;
+  if (ownerType === 'VEHICLE') {
+    const vehicle = await prisma.vehicle.findFirst({
+      where: { id: String(req.body?.ownerId || ''), supplierId: profile.id },
+    });
+    if (!vehicle) return next(new AppError('Vehicle not found', 404));
+    ownerId = vehicle.id;
+  } else if (ownerType === 'GUIDE') {
+    const guide = await prisma.guide.findFirst({
+      where: { id: String(req.body?.ownerId || ''), supplierId: profile.id },
+    });
+    if (!guide) return next(new AppError('Guide not found', 404));
+    ownerId = guide.id;
+  }
+
+  // Do not stack duplicates on one entity: only a rejected / expired /
+  // replacement-requested file can be re-uploaded (via /replace), so a pending
+  // or approved file for the same (entity, type) leaves nothing to repair.
+  if (ownerType !== 'SUPPLIER') {
+    const duplicate = await prisma.supplierDocument.findFirst({
+      where: {
+        supplierId: profile.id,
+        ownerType,
+        ownerId,
+        type,
+        status: { in: ['PENDING', 'APPROVED'] },
+      },
+    });
+    if (duplicate) {
+      return next(
+        new AppError(`A ${type} document is already on file for this ${ownerLabel}`, 400)
+      );
+    }
+  }
+
   const doc = await prisma.supplierDocument.create({
     data: {
       supplierId: profile.id,
-      ownerType: 'SUPPLIER',
-      ownerId: profile.id,
+      ownerType,
+      ownerId,
       type,
       url: file.path,
       filename: file.originalname || null,
@@ -115,8 +219,8 @@ exports.addDocument = catchAsync(async (req, res, next) => {
 
   await recordEvent({
     supplierProfileId: profile.id,
-    entityType: 'SUPPLIER',
-    entityId: doc.id,
+    entityType: ownerType,
+    entityId: ownerType === 'SUPPLIER' ? doc.id : ownerId,
     action: 'APPLICATION_UPDATED',
     actorId: req.user.id,
   });
@@ -124,9 +228,21 @@ exports.addDocument = catchAsync(async (req, res, next) => {
   await notifyAdmin({
     type: 'NEW_SUPPLIER_APPLICATION',
     title: 'New document uploaded',
-    message: `A supplier added "${type}" for review.`,
-    data: { supplierId: profile.id, documentId: doc.id, documentType: type },
+    message: `A supplier added "${type}"${ownerType === 'SUPPLIER' ? '' : ` for a ${ownerLabel}`} for review.`,
+    data: { supplierId: profile.id, documentId: doc.id, documentType: type, ownerType, ownerId },
   }).catch(() => {});
+
+  // Completing the required set (ID + business certificate, if a business) is
+  // what makes the account live — start the 30-day documentation window. Not
+  // fatal: the upload itself succeeded regardless.
+  try {
+    await maybeStartDocumentationWindow(profile.id, req.user.id);
+  } catch (err) {
+    logger.error('Could not start documentation window after upload', {
+      error: err.message,
+      supplierId: profile.id,
+    });
+  }
 
   res.status(201).json({ status: 'success', data: { document: doc } });
 });

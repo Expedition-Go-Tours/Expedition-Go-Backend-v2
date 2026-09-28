@@ -228,6 +228,12 @@ router.post('/logo', resolveSupplier, requireTeamPermission('settings.business')
  */
 router.get('/application/status', resolveSupplier, supplierController.getApplicationStatus);
 
+// Per-operator requirements for a PROPOSED choice + services. Placed under the
+// shared `protect` guard (like everything else on this router) but deliberately
+// NOT behind resolveSupplier: the storefront wizard calls it before a profile
+// exists. It only returns the requirements matrix — no profile data, no PII.
+router.get('/requirements', supplierController.getRequirements);
+
 /**
  * @swagger
  * /suppliers/application:

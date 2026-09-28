@@ -58,6 +58,7 @@ enum DocumentType {
   VEHICLE_OWNERSHIP
   VEHICLE_ROADWORTHINESS
   VEHICLE_INSURANCE
+  PUBLIC_LIABILITY_INSURANCE
   OTHER
 }
 
@@ -455,6 +456,12 @@ model SupplierProfile {
   // Status & Verification
   status       SupplierStatus @default(PENDING)
   supplierType SupplierType   @default(TOUR_COMPANY)
+
+  // The 30-day documentation window. Set ONCE, when the account goes live
+  // (government ID uploaded, plus the business certificate for business
+  // accounts): the supplier has until this date to provide the non-required
+  // ("later") documents from the dashboard. Null until the window starts.
+  documentationDeadline DateTime?
 
   // Business Information
   businessInfo       Json // Structured business details

@@ -30,7 +30,7 @@ const {
   requiredSupplierDocumentTypes,
   validateSupplierApplication,
 } = require('../services/supplierApplicationPayload');
-const { requirementsFor } = require('../services/supplierVerificationRequirements');
+const { requirementsFor, SUPPLIER_CHOICES, SUPPLIER_CHOICE_IDS, documentationDeadlineAfter } = require('../services/supplierVerificationRequirements');
 const admin = require('../../../config/firebaseAdmin');
 const logger = require('../services/logger');
 const { notifyDiscord } = require('../services/discordNotifier');
@@ -72,11 +72,35 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
     compliance: parseSection(compliance),
   };
 
+  // The wizard's six-way choice is more specific than the SupplierType enum
+  // (a registered company and a sole proprietor are both TOUR_COMPANY), so it
+  // is persisted so "later" requirements can be re-derived losslessly for the
+  // dashboard. businessInfo is a Json column, so no migration is needed.
+  const supplierChoice = req.body?.supplierChoice ? String(req.body.supplierChoice).trim() : null;
+  if (supplierChoice) {
+    if (!SUPPLIER_CHOICE_IDS.includes(supplierChoice)) {
+      return next(new AppError(`Unknown supplierChoice "${supplierChoice}"`, 400));
+    }
+    sections.businessInfo = { ...(sections.businessInfo || {}), supplierChoice };
+  }
+
   // Reject malformed sections up front: they used to be stored verbatim (or
   // blow up inside Prisma for an unknown supplierType).
   const validation = validateSupplierApplication({ ...sections, supplierType: req.body.supplierType });
   if (validation.errors.length > 0) {
     return next(new AppError(`Invalid supplier application: ${validation.errors.join('; ')}`, 400));
+  }
+
+  // A persisted choice whose implied type contradicts the enum would make the
+  // dashboard's re-derived checklist disagree with the stored profile — refuse
+  // the mismatch instead of storing it.
+  if (supplierChoice && validation.supplierType !== SUPPLIER_CHOICES[supplierChoice].supplierType) {
+    return next(
+      new AppError(
+        `supplierChoice "${supplierChoice}" does not match supplierType "${validation.supplierType}"`,
+        400
+      )
+    );
   }
 
   // Collect uploaded document URLs
@@ -158,6 +182,10 @@ exports.applyToBeSupplier = catchAsync(async (req, res, next) => {
       data: {
         userId,
         status: canAutoActivate ? 'ACTIVE' : 'PENDING',
+        // The 30-day documentation window starts the moment the account goes
+        // live: the required documents are all on file at this point, and the
+        // supplier has until the deadline to provide the non-required set.
+        ...(canAutoActivate ? { documentationDeadline: documentationDeadlineAfter() } : {}),
         ...(canAutoActivate
           ? { reviewedAt: new Date(), adminNotes: 'Auto-approved on submission — ID document awaiting verification' }
           : {}),
@@ -293,19 +321,59 @@ exports.getApplicationStatus = catchAsync(async (req, res, next) => {
     data: {
       supplierProfile: supplierProfile || null,
       // Per-operator verification checklist for the dashboard (documents to
-      // provide, plus whether vehicles/guides apply).
+      // provide, plus whether vehicles/guides apply and the 30-day deadline
+      // for the non-required set — the window starts when the account goes
+      // live, i.e. when the required documents are all on file).
       verificationRequirements: supplierProfile
-        ? requirementsFor({
-            supplierType: supplierProfile.supplierType,
-            businessType: supplierProfile.businessInfo?.businessType,
-            services: supplierProfile.operatingInfo?.services,
-            country: supplierProfile.businessInfo?.country,
-          })
+        ? {
+            ...requirementsFor({
+              supplierChoice: supplierProfile.businessInfo?.supplierChoice,
+              supplierType: supplierProfile.supplierType,
+              businessType: supplierProfile.businessInfo?.businessType,
+              services: supplierProfile.operatingInfo?.services,
+              country: supplierProfile.businessInfo?.country,
+            }),
+            documentationDeadline: supplierProfile.documentationDeadline || null,
+          }
         : null,
       // Business identity for the shell (sidebar card) — the owner's, not the viewer's.
       logoUrl: owner?.logoUrl || null,
       businessName: owner?.name || null,
       supplierSince: owner?.createdAt || null,
+    },
+  });
+});
+
+/**
+ * GET /suppliers/requirements
+ * The per-operator verification matrix, computed on demand from a PROPOSED
+ * supplier choice + services (no profile required — the storefront wizard
+ * calls this on step 5, before the application exists). This endpoint is the
+ * single way the wizard learns what it must ask for and what it should tell
+ * the applicant about "later" documents, so the promise made at signup and the
+ * checklist the dashboard later shows are the same rule.
+ *
+ * Query params: supplierChoice (the six-way card id), supplierType, businessType,
+ * services (comma- or multi-param list of service labels/ids), country (ISO).
+ */
+exports.getRequirements = catchAsync(async (req, res, next) => {
+  const { supplierChoice, supplierType, businessType, country } = req.query;
+  const services = []
+    .concat(req.query.services ?? [])
+    .flatMap((entry) => String(entry).split(','))
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      requirements: requirementsFor({
+        supplierChoice,
+        supplierType,
+        businessType,
+        services,
+        country: country || 'GH',
+      }),
     },
   });
 });
