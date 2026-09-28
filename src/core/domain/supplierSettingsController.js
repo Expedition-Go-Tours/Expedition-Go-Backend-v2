@@ -43,7 +43,17 @@ async function resultPageContext(supplierId) {
 exports.getBusinessProfile = catchAsync(async (req, res) => {
   const profile = await prisma.supplierProfile.findUnique({
     where: { userId: req.supplierId },
-    select: { businessInfo: true, operatingInfo: true }
+    select: {
+      businessInfo: true,
+      operatingInfo: true,
+      // Identity details submitted in the application plus the supplier type
+      // drive the settings page: individual guides (TOUR_GUIDE/VEHICLE_OPERATOR/
+      // OTHER_SERVICE_PROVIDER) get a "Public profile" instead of a Business
+      // Profile, and the ID details are shown read-only from the application.
+      representativeInfo: true,
+      supplierType: true,
+      status: true,
+    },
   });
 
   res.status(200).json({
@@ -51,6 +61,9 @@ exports.getBusinessProfile = catchAsync(async (req, res) => {
     data: {
       businessInfo: profile?.businessInfo || {},
       operatingInfo: profile?.operatingInfo || {},
+      representativeInfo: profile?.representativeInfo || {},
+      supplierType: profile?.supplierType || null,
+      status: profile?.status || null,
     },
   });
 });

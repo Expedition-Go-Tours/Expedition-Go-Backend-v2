@@ -95,3 +95,137 @@ describe('getTaxInfo', () => {
     );
   });
 });
+
+describe('getBusinessProfile', () => {
+  let req;
+  let res;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    req = { supplierId: 'u-1', user: { id: 'u-1' } };
+    res = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn().mockReturnThis(),
+    };
+  });
+
+  it("returns the application identity and supplier type alongside the profile", async () => {
+    prisma.supplierProfile.findUnique.mockResolvedValue({
+      businessInfo: { displayName: 'Kofi Solo Tours', supplierChoice: 'individual_guide', businessType: 'individual' },
+      operatingInfo: { regions: ['Greater Accra', 'Central'], services: ['tours'] },
+      representativeInfo: {
+        fullName: 'Kofi Mensah',
+        email: 'kofi@example.com',
+        dateOfBirth: '1990-01-01',
+        idType: 'national_id',
+        idNumber: 'GA-123456789',
+      },
+      supplierType: 'TOUR_GUIDE',
+      status: 'ACTIVE',
+    });
+
+    await controller.getBusinessProfile(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          supplierType: 'TOUR_GUIDE',
+          status: 'ACTIVE',
+          representativeInfo: expect.objectContaining({
+            fullName: 'Kofi Mensah',
+            dateOfBirth: '1990-01-01',
+            idType: 'national_id',
+            idNumber: 'GA-123456789',
+          }),
+          operatingInfo: expect.objectContaining({ regions: ['Greater Accra', 'Central'] }),
+        }),
+      })
+    );
+  });
+
+  it('degrades to empty objects when no profile exists yet', async () => {
+    prisma.supplierProfile.findUnique.mockResolvedValue(null);
+
+    await controller.getBusinessProfile(req, res);
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          businessInfo: {},
+          operatingInfo: {},
+          representativeInfo: {},
+          supplierType: null,
+          status: null,
+        },
+      })
+    );
+  });
+});
+
+describe('updateBusinessProfile', () => {
+  let req;
+  let res;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    req = { supplierId: 'u-1', user: { id: 'u-1' }, body: {} };
+    res = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn().mockReturnThis(),
+    };
+  });
+
+  it("merges a nested address object and operating regions without losing existing keys", async () => {
+    prisma.supplierProfile.findUnique.mockResolvedValue({
+      businessInfo: {
+        displayName: 'Existing brand',
+        address: { line1: 'Legacy address' },
+        supplierChoice: 'individual_guide',
+      },
+      operatingInfo: { regions: ['Ashanti'], services: ['tours'], tourCategories: ['Cultural'] },
+    });
+    prisma.supplierProfile.update.mockResolvedValue({
+      businessInfo: {},
+      operatingInfo: {},
+    });
+
+    req.body = {
+      businessInfo: {
+        displayName: 'New brand',
+        address: { line1: '1 Independence Ave', line2: '', city: 'Accra', state: 'Greater Accra', postalCode: 'GA-123' },
+      },
+      operatingInfo: { regions: ['Greater Accra', 'Central'] },
+    };
+
+    await controller.updateBusinessProfile(req, res);
+
+    expect(prisma.supplierProfile.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          businessInfo: expect.objectContaining({
+            // pre-existing keys survive the shallow merge
+            supplierChoice: 'individual_guide',
+            displayName: 'New brand',
+            address: { line1: '1 Independence Ave', line2: '', city: 'Accra', state: 'Greater Accra', postalCode: 'GA-123' },
+          }),
+          operatingInfo: expect.objectContaining({
+            regions: ['Greater Accra', 'Central'],
+            services: ['tours'],
+            tourCategories: ['Cultural'],
+          }),
+        }),
+      })
+    );
+  });
+
+  it('returns 404 when the supplier has no profile', async () => {
+    prisma.supplierProfile.findUnique.mockResolvedValue(null);
+    const next = jest.fn();
+
+    await controller.updateBusinessProfile(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
+    expect(prisma.supplierProfile.update).not.toHaveBeenCalled();
+  });
+});
