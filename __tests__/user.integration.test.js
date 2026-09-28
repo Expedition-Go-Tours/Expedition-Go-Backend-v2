@@ -50,6 +50,11 @@ describeDb('User model', () => {
       },
     });
 
+    // Assert on the Prisma error code rather than `.rejects.toThrow()`:
+    // Jest's `toThrow` only inspects values that pass `instanceof Error`, and
+    // across Jest's vm boundary a PrismaClientKnownRequestError can fail that
+    // check even though its prototype chain is correct, making the assertion
+    // flaky depending on the runner. The error code is the stable contract.
     await expect(
       prisma.user.create({
         data: {
@@ -58,6 +63,6 @@ describeDb('User model', () => {
           roles: ['customer'],
         },
       }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: 'P2002' });
   });
 });
