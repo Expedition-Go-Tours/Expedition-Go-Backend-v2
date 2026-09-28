@@ -97,6 +97,7 @@ const SCHEDULES = [
   { jobName: 'expire-special-offers',      queue: 'cleanup',      everyMs: 24 * 3600 * 1000 },
   { jobName: 'expire-supplier-documents',  queue: 'cleanup',      everyMs: 24 * 3600 * 1000 },
   { jobName: 'plan-doc-expiry-reminders',  queue: 'cleanup',      everyMs: 24 * 3600 * 1000 },
+  { jobName: 'plan-doc-window-reminders',  queue: 'cleanup',      everyMs: 24 * 3600 * 1000 },
   { jobName: 'purge-stale-stripe-events',  queue: 'cleanup',      everyMs: 24 * 3600 * 1000 },
   // CLEANUP — lifecycle / money / reminders
   { jobName: 'auto-complete-bookings',      queue: 'cleanup',      everyMs: 15 * 60 * 1000 },
@@ -1122,6 +1123,11 @@ function registerWorkers() {
       case 'plan-doc-expiry-reminders': {
         const { planDocumentExpiryReminders } = require('./documentExpiry');
         await planDocumentExpiryReminders();
+        break;
+      }
+      case 'plan-doc-window-reminders': {
+        const { planDocumentationWindowReminders } = require('./documentationWindow');
+        await planDocumentationWindowReminders();
         break;
       }
       case 'purge-stale-stripe-events': {
