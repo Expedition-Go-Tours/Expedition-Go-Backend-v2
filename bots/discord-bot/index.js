@@ -383,6 +383,21 @@ async function handleModal(interaction) {
   }
 }
 
+// ── Deterministic business-facts gates ─────────────────────────────────────
+// Printed once at boot so an operator can tell from the log which fact paths
+// are live in THIS process, without having to guess from a `.env` file that a
+// different code path may or may not have read.
+//
+// This runs at module load, which is after `require('dotenv').config()` on line
+// 3, so what is printed is exactly what answerQuestion will use for every
+// question. The gates themselves read process.env per question (not at
+// require-time), so a later edit to .env still needs a restart to show up here.
+const { factsEnabled, factsCacheEnabled, factsTemplateEnabled } = require('./factRouter');
+console.log(
+  `[facts] enabled=${factsEnabled()} cache=${factsCacheEnabled()} template=${factsTemplateEnabled()} ` +
+    '(AI_FACTS_ENABLED / AI_FACTS_CACHE_ENABLED / AI_FACTS_TEMPLATE_ENABLED)',
+);
+
 // ── Dedicated AI channel (messageCreate) ─────────────────────────────
 if (AI_CHANNEL_ID) {
   console.log(`[bot] plain-text questions enabled in channel ${AI_CHANNEL_ID}`);
