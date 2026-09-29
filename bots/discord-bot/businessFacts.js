@@ -16,11 +16,21 @@
  * internally cannot depend on which filter the model happened to pick.
  *
  * ── Contract ─────────────────────────────────────────────────────────────
- *   answerBusinessFact() is the whole pipeline: route → query → currency gate
- *   → integrity gate → narrate. It returns
- *     { ok: true,  answer, fact, sql, facts, route, sqlMs, narrMs, totalMs }
+ *   answerBusinessFact() is the whole pipeline: route → cache lookup → query →
+ *   currency gate → integrity gate → narrate (→ reviewed template if the model
+ *   call fails). It returns
+ *     { ok: true,  answer, fact, sql, facts, route, sqlMs, narrMs, totalMs,
+ *       cacheHit, narrFallback }
  *     { ok: false, stage, reason }  — a refusal the caller MUST honour by
  *                                    falling through to the SQL agent.
+ *
+ *   Two later additions, both Phase 3, both designed so that neither can turn
+ *   a wrong number into a confident one:
+ *     - a shared in-process cache (below), which can only ever replay a result
+ *       that already passed every gate; and
+ *     - renderReviewedTemplate(), used ONLY when the narration call fails.
+ *       MiMo writes the prose for every routed question; the template is the
+ *       fallback for the one case where it could not.
  *   A refusal is never an error to be swallowed into a wrong answer. The
  *   currency gate below is the important case: all bookings are USD today, so a
  *   flat total would look right until a second currency made it wrong. Rather
@@ -48,7 +58,7 @@ const {
   describeWindow,
   money,
 } = require('../../src/core/services/metricDefinitions');
-const { routeToFact } = require('./factRouter');
+const { routeToFact, factsCacheEnabled, factsTemplateEnabled } = require('./factRouter');
 
 /**
  * Constrained narration contract for MiMo. Mirrors ACTIVITY_NARRATE_SYSTEM in
@@ -577,50 +587,313 @@ function buildNarrationPayload(question, result) {
 /** Narration is a short rewrite of a small JSON report. Matches FINAL_MAX_TOKENS. */
 const NARRATE_MAX_TOKENS = 1400;
 
-/**
- * Answer one question end to end through the facts layer: route, compute, gate,
- * narrate.
- *
- * This is the ONLY implementation of the pipeline. bots/discord-bot/queryAgent.js
- * calls it from answerQuestion (behind factsEnabled()), and scripts/replayBot.js
- * calls the same function for its measurements. Keeping one copy is the point:
- * a replay that measures a parallel implementation of the fact path reports
- * numbers for code that never runs in production.
- *
- * ── Gate order, and why it is this order ───────────────────────────────────
- *   1. route   — a false negative here is harmless (the SQL agent answers).
- *   2. query   — a DB failure must refuse, never degrade to a zero.
- *   3. currency— answering "revenue in gbp" with USD data is a confident wrong
- *                answer, which is the one outcome worse than not answering.
- *   4. integrity — a malformed fact must never reach the narration.
- *   5. narrate— the model writes the prose. A failure or an empty string is a
- *                refusal too, so the caller falls back to the SQL agent rather
- *                than posting nothing.
- *
- * @param {object} opts
- * @param {string} opts.question
- * @param {object} opts.pg       a pg-like client (only .query is used)
- * @param {Function} opts.callMimo  async ({messages, maxTokens, temperature,
- *        reasoningEffort}) => string
- * @param {Date}   [opts.now]     injectable clock, for deterministic tests
- * @param {number} [opts.maxTokens]
- * @returns {Promise<object>} `{ ok: false, stage, reason }` on any refusal — the
- *   caller MUST fall through. `{ ok: true, stage: 'answered', answer }` on
- *   success. Never throws.
- */
-async function answerBusinessFact({ question, pg, callMimo, now = null, maxTokens = NARRATE_MAX_TOKENS }) {
-  const t0 = Date.now();
-  const route = routeToFact(question, now ? { now } : {});
-  if (!route) {
-    return {
-      ok: false,
-      stage: 'route',
-      reason: 'router declined (falls through to the SQL agent)',
-      route: null,
-      totalMs: Date.now() - t0,
-    };
-  }
+// ── Shared answer cache (Phase 3) ──────────────────────────────────────────
+//
+// Measured in the Phase 2 replay: SQL is 0.016% of fact-path wall clock (30ms
+// of 189.6s across the 15 routed questions) and every routed question costs
+// exactly ONE model call — the narration — which is the entire remaining
+// latency (median 7.1s). The numbers are deterministic and effectively free,
+// so a repeat of the same question should cost neither a query nor a
+// round-trip.
+//
+// The key is the ROUTE, not the question text. Two questions that route
+// identically ask for the same thing: "whats the revenue for the past month"
+// and "show revenue by currency for the past month" both resolve to revenue +
+// rolling 30 days + no currency filter. routeToFact only ever claims
+// self-contained single-metric questions (its CONTEXTUAL_MARKERS decline "in
+// usd" and anything that needs an earlier turn), so a route genuinely is an
+// equivalence class of questions. Keying on wording would make this cache
+// per-question rather than shared, and would leave the existing per-user Redis
+// cache in index.js as the only reuse — one user asking the same thing twice.
+//
+// Deliberately in-process: the bot runs as a single PM2 process (instances:1),
+// so a Map in this module is already shared by every user in every channel.
+// Redis would add serialization plus a silent no-op whenever Redis is down, for
+// an entry that lives a minute. The per-user Redis cache in index.js is
+// untouched and still sits in front as a second layer.
+//
+// Freshness is a TTL rather than invalidation, because a rolling window's end
+// moves with the clock and a booking can land at any moment. 60s matches
+// ANSWER_CACHE_TTL_SEC in index.js.
+const FACT_CACHE_TTL_MS = 60 * 1000;
+/** Longest an in-flight narration may be shared before a later caller retries. */
+const FACT_CACHE_PENDING_MS = 2 * 60 * 1000;
+const FACT_CACHE_MAX = 200;
 
+/**
+ * key → `{ value }` for a settled success, or `{ promise }` for an in-flight
+ * one. The promise is single-flight: two operators asking the same question a
+ * second apart share ONE model call instead of racing two 19-second calls.
+ * Refusals are never stored, so a transient failure is retried rather than
+ * pinned for a minute.
+ */
+const factCache = new Map();
+
+/**
+ * Cache identity for a route.
+ *
+ * Everything getBusinessFacts() reads is in here — metric, window, status,
+ * windowed-count, currency, role, date column and top-N limit — so two routes
+ * with the same key necessarily produce the same SQL and the same facts.
+ * `window.from`/`to` are deliberately NOT in the key: they move every
+ * millisecond for a rolling window, which would make every rolling entry
+ * uncacheable. The TTL is the freshness bound instead, and it also covers the
+ * calendar case (a booking landing mid-day).
+ *
+ * @param {object|null} route
+ * @returns {string|null}
+ */
+function factCacheKey(route) {
+  if (!route) return null;
+  const w = route.window || {};
+  return [
+    route.metric || '',
+    w.label || '',
+    w.isAllTime ? 'all' : 'win',
+    route.statusFilter || '',
+    route.windowedCount ? 'wc' : '',
+    route.currencyFilter || '',
+    route.customerRole || '',
+    route.topToursDateColumn || '',
+    route.topToursLimit == null ? '' : String(route.topToursLimit),
+  ].join('|');
+}
+
+function factCacheGet(key) {
+  const entry = factCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    factCache.delete(key);
+    return null;
+  }
+  // Re-insert to mark recency: a Map iterates in insertion order, so the first
+  // key is always the least recently used.
+  factCache.delete(key);
+  factCache.set(key, entry);
+  return entry;
+}
+
+function factCacheSet(key, entry) {
+  factCache.delete(key);
+  factCache.set(key, entry);
+  while (factCache.size > FACT_CACHE_MAX) {
+    const oldest = factCache.keys().next().value;
+    if (oldest === key) break; // never evict what was just written
+    factCache.delete(oldest);
+  }
+}
+
+/** Tests and any future invalidation hook. */
+function clearFactCache() {
+  factCache.clear();
+}
+
+// ── Reviewed template (Phase 3) ────────────────────────────────────────────
+
+/**
+ * Render a reviewed, deterministic answer from facts the gates already proved.
+ *
+ * This is the FALLBACK for a failed narration call and nothing else. MiMo
+ * writes the prose for every routed question under FACT_NARRATE_SYSTEM; this
+ * runs only when that call throws or comes back empty, where the choice is
+ * between a reviewed rendering of numbers we have already validated, and
+ * falling through to the SQL agent — the nondeterministic path that answered
+ * "revenue for the past month" as $4,833.14 on one run and $5,733.14 on
+ * another. Deterministic prose beats a dice roll, but only if it prints what it
+ * was given.
+ *
+ * Rules it must keep:
+ *   - Print ONLY fields present in `facts`. Anything missing, null or not a
+ *     finite number makes it return null, which the caller turns back into a
+ *     refusal — so an unrecognised fact shape degrades to today's behaviour
+ *     (fall through to the SQL agent) rather than to a guess. This is why the
+ *     switch has a `default: return null`.
+ *   - Never sum across currencies; list one currency per clause.
+ *   - Always lead with the window, as FACT_NARRATE_SYSTEM requires.
+ *   - Never round. Trailing zeros are removed from an average because they
+ *     carry no value; the digits themselves are never shortened.
+ *
+ * @param {object} route
+ * @param {object} fact a getBusinessFacts() result
+ * @returns {string|null} null means "cannot render this — refuse"
+ */
+function renderReviewedTemplate(route, fact) {
+  if (!fact || fact.ok === false || !fact.facts) return null;
+  const f = fact.facts;
+  const metric = fact.metric || (route && route.metric) || '';
+  const win = String(fact.window || 'All time');
+  const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+  const qty = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+  // money() returns null when the value was never there, which is a refusal.
+  // The USD suffix is not decoration: money() renders USD as a bare "$", and an
+  // operator reading "$4995.14" beside a second currency cannot tell which is
+  // which — the exact ambiguity the currency-grouping rule exists to prevent.
+  const cash = (amount, currency) => {
+    if (typeof currency !== 'string' || !currency) return null;
+    const m = money(amount, currency);
+    if (m === null) return null;
+    return currency === 'USD' ? `${m} USD` : m;
+  };
+
+  const body = (text) => {
+    const d = String(fact.definition || '').replace(/\.$/, '');
+    return d ? `${text}\nDefinition: ${d}.` : text;
+  };
+
+  switch (metric) {
+    case 'revenue': {
+      const rows = f.byCurrency;
+      if (!Array.isArray(rows)) return null;
+      if (rows.length === 0) return body(`${win}: there were no qualifying bookings.`);
+      const parts = [];
+      for (const r of rows) {
+        if (!r || !isNum(r.bookings)) return null;
+        const m = cash(r.gross, r.currency);
+        if (m === null) return null;
+        parts.push(`${m} from ${qty(r.bookings, 'booking', 'bookings')}`);
+      }
+      return body(`${win}: revenue was ${parts.join('; ')}.`);
+    }
+
+    case 'bookings': {
+      const rows = f.rows;
+      if (!Array.isArray(rows)) return null;
+      if (rows.length === 0) return body(`${win}: there were no matching bookings.`);
+      const parts = [];
+      for (const r of rows) {
+        if (!r || !isNum(r.n) || typeof r.status !== 'string') return null;
+        const m = cash(r.gross, r.currency);
+        if (m === null) return null;
+        parts.push(`${r.status} (${r.currency}): ${qty(r.n, 'booking', 'bookings')}, ${m}`);
+      }
+      return body(`${win}: bookings by status — ${parts.join('; ')}.`);
+    }
+
+    // Three metrics share one shape: a status-filtered count, a windowed
+    // created-count, or a by-status breakdown.
+    case 'tours':
+    case 'suppliers':
+    case 'disputes': {
+      const nouns = {
+        tours: ['tour', 'tours'],
+        suppliers: ['supplier profile', 'supplier profiles'],
+        disputes: ['dispute', 'disputes'],
+      }[metric];
+      if (isNum(f.n) && typeof f.status === 'string') {
+        return body(`${win}: ${qty(f.n, nouns[0], nouns[1])} with status ${f.status}.`);
+      }
+      if (isNum(f.created)) {
+        return body(`${win}: ${qty(f.created, nouns[0], nouns[1])} ${f.created === 1 ? 'was' : 'were'} created.`);
+      }
+      if (Array.isArray(f.rows)) {
+        if (f.rows.length === 0) return body(`${win}: there were no ${nouns[1]}.`);
+        const parts = [];
+        for (const r of f.rows) {
+          if (!r || !isNum(r.n) || typeof r.status !== 'string') return null;
+          parts.push(`${r.status}: ${r.n}`);
+        }
+        return body(`${win}: ${nouns[1]} by status — ${parts.join('; ')}.`);
+      }
+      return null;
+    }
+
+    case 'signups': {
+      if (!isNum(f.newUsers)) return null;
+      return body(
+        `${win}: ${qty(f.newUsers, 'new user account', 'new user accounts')} ` +
+          `${f.newUsers === 1 ? 'was' : 'were'} created.`,
+      );
+    }
+
+    // The three populations are 52 / 26 / 91 and are never interchangeable, so
+    // the template always spells out which one it counted — that substitution
+    // was one of the Phase 0 defects.
+    case 'customers':
+    case 'bookingCustomers':
+    case 'users': {
+      if (!isNum(f.n)) return null;
+      if (typeof f.population !== 'string' || !f.population) return null;
+      return body(`${win}: ${f.n} (${f.population}).`);
+    }
+
+    case 'refunds': {
+      const rows = f.byCurrency;
+      if (!Array.isArray(rows)) return null;
+      if (rows.length === 0) return body(`${win}: there were no refunds.`);
+      const parts = [];
+      for (const r of rows) {
+        if (!r || !isNum(r.n)) return null;
+        const m = cash(r.amount, r.currency);
+        if (m === null) return null;
+        parts.push(`${qty(r.n, 'refund', 'refunds')} totalling ${m}`);
+      }
+      return body(`${win}: ${parts.join('; ')}.`);
+    }
+
+    case 'payouts': {
+      const rows = f.rows;
+      if (!Array.isArray(rows)) return null;
+      if (rows.length === 0) return body(`${win}: there were no payout requests.`);
+      const parts = [];
+      for (const r of rows) {
+        if (!r || !isNum(r.n) || typeof r.status !== 'string') return null;
+        const m = cash(r.amount, r.currency);
+        if (m === null) return null;
+        parts.push(`${r.status} (${r.currency}): ${qty(r.n, 'payout', 'payouts')}, ${m}`);
+      }
+      return body(`${win}: payout requests — ${parts.join('; ')}.`);
+    }
+
+    case 'reviews': {
+      if (!isNum(f.count)) return null;
+      if (f.count === 0) return body(`${win}: there were no reviews.`);
+      // A non-zero count with no average cannot be rendered — inventing one is
+      // exactly what this layer exists to prevent.
+      if (!isNum(f.avg)) return null;
+      // String() of a JS number is the shortest representation that round-trips,
+      // so the "4.5000000000000000" padding of AVG(... )::text is already gone —
+      // num() normalized it when the row was read. Printing it verbatim means
+      // the figure is never rounded, which FACT_NARRATE_SYSTEM forbids.
+      return body(`${win}: average rating ${String(f.avg)} from ${qty(f.count, 'review', 'reviews')}.`);
+    }
+
+    case 'topTours': {
+      const rows = f.rows;
+      if (!Array.isArray(rows)) return null;
+      if (rows.length === 0) return body(`${win}: no tour had any qualifying revenue in that window.`);
+      const lines = [];
+      for (let i = 0; i < rows.length; i += 1) {
+        const r = rows[i];
+        if (!r || typeof r.title !== 'string' || !isNum(r.bookings)) return null;
+        const m = cash(r.gross, r.currency);
+        if (m === null) return null;
+        const where = typeof r.city === 'string' && r.city ? ` (${r.city})` : '';
+        lines.push(`${i + 1}. ${r.title}${where} — ${m} from ${qty(r.bookings, 'booking', 'bookings')}`);
+      }
+      return body(`${win}: top ${lines.length} tours by revenue.\n${lines.join('\n')}`);
+    }
+
+    default:
+      // An unknown metric has no reviewed wording. Refusing is the safe
+      // direction: the SQL agent answers it exactly as it did before Phase 3.
+      return null;
+  }
+}
+
+/**
+ * The uncached pipeline: query → currency gate → integrity gate → narrate,
+ * with the reviewed template as the narration fallback.
+ *
+ * Never throws. Every refusal carries a `stage` the caller reports on.
+ *
+ * @param {object} args see answerBusinessFact
+ * @param {object} args.route a resolved route (already known non-null)
+ * @param {number} args.t0 pipeline start, for timing
+ * @param {Function|null} args.renderTemplate injectable so tests (and an
+ *        operator wanting today's behaviour back) can disable the fallback.
+ */
+async function runFactPipeline({ question, route, pg, callMimo, maxTokens, t0, renderTemplate }) {
   const sqlMs0 = Date.now();
   const fact = await getBusinessFacts(route.metric, {
     window: route.window,
@@ -634,7 +907,16 @@ async function answerBusinessFact({ question, pg, callMimo, now = null, maxToken
     pg,
   });
   const sqlMs = Date.now() - sqlMs0;
-  const base = { route, fact, sql: fact.sql || '', facts: fact.facts, sqlMs };
+  const base = {
+    route,
+    fact,
+    sql: fact.sql || '',
+    facts: fact.facts,
+    sqlMs,
+    // Set false here; the wrapper marks a served-from-cache result.
+    cacheHit: false,
+    narrFallback: null,
+  };
 
   if (!fact.ok) {
     return { ...base, ok: false, stage: 'query', reason: fact.reason, totalMs: Date.now() - t0 };
@@ -655,7 +937,8 @@ async function answerBusinessFact({ question, pg, callMimo, now = null, maxToken
 
   // Narration by the model — the fact layer supplies the numbers, MiMo supplies
   // the prose. This is a hard requirement: the facts path must not collapse into
-  // a template-only responder.
+  // a template-only responder, which is why the template below is unreachable
+  // while this call succeeds.
   const tNarr = Date.now();
   let answer = null;
   let narrError = null;
@@ -675,31 +958,203 @@ async function answerBusinessFact({ question, pg, callMimo, now = null, maxToken
   }
   const narrMs = Date.now() - tNarr;
 
-  // An empty answer is a refusal, not a success. The caller has an
-  // UNANSWERABLE_MESSAGE fallback and the SQL agent; posting "" is neither.
-  if (narrError || !answer) {
+  if (!narrError && answer) {
     return {
       ...base,
-      ok: false,
-      stage: 'narrate',
-      reason: narrError || 'narration returned an empty answer',
-      answer: null,
-      narrError,
+      ok: true,
+      stage: 'answered',
+      reason: null,
+      answer,
+      narrError: null,
       narrMs,
+      totalMs: Date.now() - t0,
+    };
+  }
+
+  // The narration call failed or came back empty. Posting nothing is not an
+  // option (the caller would fall through to the SQL agent, the one path that
+  // produced four different answers for the same question), so render the
+  // reviewed template from facts that already cleared every gate. If that
+  // cannot render the shape either, refuse — same behaviour as before Phase 3.
+  //
+  // Gated by AI_FACTS_TEMPLATE_ENABLED: with the flag off this line cannot run
+  // at all, and a narration failure behaves exactly as it did in Phase 2.
+  const render = renderTemplate || (factsTemplateEnabled() ? renderReviewedTemplate : null);
+  let rendered = null;
+  if (render) {
+    try {
+      rendered = render(route, fact);
+    } catch (e) {
+      // A template bug must degrade to a refusal, never to an exception that
+      // escapes a pipeline documented as never throwing — and never to a
+      // rejected promise, which would strand every single-flight waiter.
+      rendered = null;
+      console.warn(`[facts] template renderer threw for metric=${fact.metric}: ${e.message}`);
+    }
+  }
+  if (rendered && String(rendered).trim()) {
+    return {
+      ...base,
+      ok: true,
+      stage: 'answered',
+      reason: null,
+      answer: String(rendered).trim(),
+      narrError: narrError || 'narration returned an empty answer',
+      narrMs,
+      narrFallback: 'template',
       totalMs: Date.now() - t0,
     };
   }
 
   return {
     ...base,
-    ok: true,
-    stage: 'answered',
-    reason: null,
-    answer,
-    narrError: null,
+    ok: false,
+    stage: 'narrate',
+    reason: narrError || 'narration returned an empty answer',
+    answer: null,
+    narrError,
     narrMs,
     totalMs: Date.now() - t0,
   };
+}
+
+/**
+ * A result served from the shared cache: same object, but this call did no
+ * work, so its timings are its own (0) rather than the original author's.
+ */
+function cacheHitResult(stored, t0) {
+  return {
+    ...stored,
+    cacheHit: true,
+    sqlMs: 0,
+    narrMs: 0,
+    totalMs: Date.now() - t0,
+  };
+}
+
+/**
+ * Answer one question end to end through the facts layer: route, compute, gate,
+ * narrate — behind a shared cache.
+ *
+ * This is the ONLY implementation of the pipeline. bots/discord-bot/queryAgent.js
+ * calls it from answerQuestion (behind factsEnabled()), and scripts/replayBot.js
+ * calls the same function for its measurements. Keeping one copy is the point:
+ * a replay that measures a parallel implementation of the fact path reports
+ * numbers for code that never runs in production.
+ *
+ * ── Gate order, and why it is this order ───────────────────────────────────
+ *   0. cache  — can only replay a result that already cleared gates 1–5.
+ *   1. route   — a false negative here is harmless (the SQL agent answers).
+ *   2. query   — a DB failure must refuse, never degrade to a zero.
+ *   3. currency— answering "revenue in gbp" with USD data is a confident wrong
+ *                answer, which is the one outcome worse than not answering.
+ *   4. integrity — a malformed fact must never reach the narration.
+ *   5. narrate— the model writes the prose. A failure falls back to the
+ *                reviewed template; if that cannot render the shape either,
+ *                it is a refusal and the caller uses the SQL agent rather
+ *                than posting nothing.
+ *
+ * @param {object} opts
+ * @param {string} opts.question
+ * @param {object} opts.pg       a pg-like client (only .query is used)
+ * @param {Function} opts.callMimo  async ({messages, maxTokens, temperature,
+ *        reasoningEffort}) => string
+ * @param {Date}   [opts.now]     injectable clock, for deterministic tests
+ * @param {number} [opts.maxTokens]
+ * @param {boolean|null} [opts.cache] null (the default) defers to the
+ *        AI_FACTS_CACHE_ENABLED gate. Pass false — as scripts/replayBot.js does
+ *        — to measure the cold path, or true to force a cache test.
+ * @param {number} [opts.cacheTtlMs]
+ * @param {Function|null} [opts.renderTemplate] null (the default) defers to the
+ *        AI_FACTS_TEMPLATE_ENABLED gate; pass a function to force the fallback
+ *        on in a test, or `() => null` to force it off.
+ * @returns {Promise<object>} `{ ok: false, stage, reason }` on any refusal — the
+ *   caller MUST fall through. `{ ok: true, stage: 'answered', answer }` on
+ *   success. Never throws.
+ */
+async function answerBusinessFact({
+  question,
+  pg,
+  callMimo,
+  now = null,
+  maxTokens = NARRATE_MAX_TOKENS,
+  cache = null,
+  cacheTtlMs = FACT_CACHE_TTL_MS,
+  renderTemplate = null,
+}) {
+  const useCache = cache === null ? factsCacheEnabled() : Boolean(cache);
+  const t0 = Date.now();
+  const route = routeToFact(question, now ? { now } : {});
+  if (!route) {
+    return {
+      ok: false,
+      stage: 'route',
+      reason: 'router declined (falls through to the SQL agent)',
+      route: null,
+      cacheHit: false,
+      narrFallback: null,
+      totalMs: Date.now() - t0,
+    };
+  }
+
+  const args = { question, route, pg, callMimo, maxTokens, t0, renderTemplate };
+
+  if (!useCache) {
+    const fresh = await runFactPipeline(args);
+    return { ...fresh, cacheHit: false };
+  }
+
+  const key = factCacheKey(route);
+  const entry = factCacheGet(key);
+  if (entry) {
+    if (entry.value) return cacheHitResult(entry.value, t0);
+    if (entry.promise) {
+      // Single-flight: wait for the caller who is already paying for this
+      // narration instead of issuing a second model call for the same numbers.
+      const settled = await entry.promise;
+      return settled.ok ? cacheHitResult(settled, t0) : { ...settled, cacheHit: false, totalMs: Date.now() - t0 };
+    }
+  }
+
+  // Only a SUCCESS is written back. A refusal is deleted, so a failed query or
+  // a declined currency is retried on the next ask rather than pinned for a
+  // minute — and no in-flight promise outlives a TTL of its own.
+  const promise = runFactPipeline(args)
+    .then((result) => {
+      if (result.ok) {
+        factCacheSet(key, { value: result, expiresAt: Date.now() + cacheTtlMs });
+      } else {
+        factCache.delete(key);
+      }
+      return result;
+    })
+    .catch((e) => {
+      // Defence in depth. A rejection would otherwise escape to the caller —
+      // the pipeline is documented as never throwing — and would leave this key
+      // holding a promise nobody can settle, blocking every later single-flight
+      // waiter. Convert it to the same refusal shape every other failure gives.
+      factCache.delete(key);
+      const reason = `unexpected fact pipeline error: ${String(e.message || e)}`;
+      console.warn(`[facts] ${reason} metric=${route.metric}`);
+      return {
+        route,
+        fact: {},
+        sql: '',
+        facts: undefined,
+        sqlMs: 0,
+        narrMs: 0,
+        cacheHit: false,
+        narrFallback: null,
+        ok: false,
+        stage: 'query',
+        reason,
+        totalMs: Date.now() - t0,
+      };
+    });
+  factCacheSet(key, { promise, expiresAt: Date.now() + FACT_CACHE_PENDING_MS });
+
+  const fresh = await promise;
+  return { ...fresh, cacheHit: false, totalMs: Date.now() - t0 };
 }
 
 module.exports = {
@@ -708,6 +1163,13 @@ module.exports = {
   currencyIsSatisfied,
   buildNarrationPayload,
   factIntegrity,
+  renderReviewedTemplate,
+  // Shared-cache surface: exported for unit tests and for any future
+  // invalidation hook. Nothing outside this module should reach into the Map.
+  factCacheKey,
+  clearFactCache,
+  FACT_CACHE_TTL_MS,
+  FACT_CACHE_MAX,
   FACT_NARRATE_SYSTEM,
   NARRATE_MAX_TOKENS,
   LIMITS,

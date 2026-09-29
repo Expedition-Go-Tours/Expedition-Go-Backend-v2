@@ -202,6 +202,35 @@ function factsEnabled(env = process.env) {
   return String(env.AI_FACTS_ENABLED || '').toLowerCase() === 'true';
 }
 
+/**
+ * Phase 3 gate 1: the shared in-process answer cache. DEFAULT OFF.
+ *
+ * Off means every routed question pays for its own query and its own
+ * narration, exactly as in Phase 2 — so turning this on is the only thing that
+ * changes, and turning it off restores Phase 2 behaviour without a deploy.
+ *
+ * Evaluated per question rather than at require-time, so it can be flipped
+ * (and tested) without reloading the module.
+ */
+function factsCacheEnabled(env = process.env) {
+  return String(env.AI_FACTS_CACHE_ENABLED || '').toLowerCase() === 'true';
+}
+
+/**
+ * Phase 3 gate 2: the reviewed template as a narration fallback. DEFAULT OFF.
+ *
+ * Off, a failed narration call is a refusal and the question falls through to
+ * the SQL agent — the behaviour Phase 2 shipped with. On, a reviewed
+ * deterministic rendering of already-validated facts answers instead.
+ *
+ * Kept separate from factsCacheEnabled: caching a wrong answer and answering
+ * when the model is down are different risks with different blast radii, so an
+ * operator must be able to turn one off without losing the other.
+ */
+function factsTemplateEnabled(env = process.env) {
+  return String(env.AI_FACTS_TEMPLATE_ENABLED || '').toLowerCase() === 'true';
+}
+
 /** Longest phrase first, so "top tours" is not captured as bare "tours". */
 function matchSpecific(q) {
   const hit = SPECIFIC_RULES.find((r) => r.kw.some((k) => q.includes(k))) || null;
@@ -341,6 +370,8 @@ function routeToFact(question, opts = {}) {
 module.exports = {
   routeToFact,
   factsEnabled,
+  factsCacheEnabled,
+  factsTemplateEnabled,
   // exported for tests and for documenting the supported surface
   SPECIFIC_RULES,
   GENERAL_RULES,

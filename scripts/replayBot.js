@@ -95,6 +95,10 @@ const flag = (name) => argv.includes(name);
 const ONLY = argOf('--only') ? argOf('--only').split(',').map((s) => s.trim()) : null;
 const LIMIT = argOf('--limit') ? Number(argOf('--limit')) : null;
 const SKIP_CURRENT = flag('--skip-current');
+// Measure the Phase 3 shared cache instead of the cold path. Off by default:
+// the headline table must stay comparable with the Phase 2 runs, where every
+// question paid for its own query and narration.
+const FACT_CACHE = flag('--fact-cache');
 const OUT = argOf('--out') || path.join(os.tmpdir(), `replay-${Date.now()}.json`);
 
 const say = (s = '') => fs.writeSync(1, `${s}\n`);
@@ -191,7 +195,12 @@ async function runCurrent(q, pg) {
  */
 async function runFact(q, pg, opts = {}) {
   const callMimo = instrumentMimo(opts.callMimo || realCallMimo);
-  const r = await answerBusinessFact({ question: q.question, pg, callMimo });
+  // Cold by default. Phase 3's shared cache would let a second question with
+  // the same route cost 0ms and 0 model calls, which would make the fact path
+  // look faster than it is on a first ask — so the headline table stays cold
+  // and comparable with the Phase 2 runs. Pass --fact-cache to measure the
+  // warm path instead.
+  const r = await answerBusinessFact({ question: q.question, pg, callMimo, cache: FACT_CACHE });
 
   if (!r.route) {
     return { routed: false, reason: r.reason, totalMs: r.totalMs };
@@ -236,6 +245,12 @@ async function runFact(q, pg, opts = {}) {
     facts: r.facts,
     narrMs: r.narrMs,
     totalMs: r.totalMs,
+    // 'template' would mean the narration call failed and the reviewed fallback
+    // wrote the answer. On a healthy run this is null for every question.
+    narrFallback: r.narrFallback || null,
+    // True only under --fact-cache, and only for a question whose route was
+    // already answered earlier in the same run.
+    cacheHit: !!r.cacheHit,
     answer: r.answer,
     narrError: r.narrError,
   };

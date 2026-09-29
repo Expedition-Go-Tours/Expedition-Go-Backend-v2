@@ -11,13 +11,16 @@
  *     right one.
  */
 
-const { routeToFact, factsEnabled } = require('../../bots/discord-bot/factRouter');
+const { routeToFact, factsEnabled, factsCacheEnabled, factsTemplateEnabled } = require('../../bots/discord-bot/factRouter');
 const {
   getBusinessFacts,
   answerBusinessFact,
   currencyIsSatisfied,
   buildNarrationPayload,
   factIntegrity,
+  renderReviewedTemplate,
+  factCacheKey,
+  clearFactCache,
   FACT_NARRATE_SYSTEM,
   NARRATE_MAX_TOKENS,
 } = require('../../bots/discord-bot/businessFacts');
@@ -845,5 +848,419 @@ describe('answerBusinessFact — refusals, and the one success shape', () => {
 
   it('never throws, whatever the inputs are', async () => {
     await expect(answerBusinessFact({ question: '', pg: makePg([]), callMimo: noModel })).resolves.toMatchObject({ ok: false, stage: 'route' });
+  });
+});
+
+// ── Phase 3 ────────────────────────────────────────────────────────────────
+//
+// The shared cache and the reviewed template ship on SEPARATE gates because
+// they are separate risks: serving a stale number and answering when the model
+// is down have different blast radii, and an operator must be able to turn
+// one off without losing the other. Both default OFF, so the first two tests
+// in each block below pin the shipped behaviour — Phase 2, unchanged.
+
+describe('Phase 3 — shared answer cache (AI_FACTS_CACHE_ENABLED)', () => {
+  const revenueRows = [{ currency: 'USD', bookings: 4, gross: '604.00' }];
+  const countedModel = () => {
+    let calls = 0;
+    return {
+      get calls() { return calls; },
+      callMimo: async () => { calls += 1; return 'narrated'; },
+    };
+  };
+
+  beforeEach(() => clearFactCache());
+
+  it('is off unless the flag is exactly "true"', () => {
+    // A typo can only disable the cache, never enable it.
+    expect(factsCacheEnabled({})).toBe(false);
+    expect(factsCacheEnabled({ AI_FACTS_CACHE_ENABLED: '' })).toBe(false);
+    expect(factsCacheEnabled({ AI_FACTS_CACHE_ENABLED: 'false' })).toBe(false);
+    expect(factsCacheEnabled({ AI_FACTS_CACHE_ENABLED: '1' })).toBe(false);
+    expect(factsCacheEnabled({ AI_FACTS_CACHE_ENABLED: 'yes' })).toBe(false);
+    expect(factsCacheEnabled({ AI_FACTS_CACHE_ENABLED: 'true' })).toBe(true);
+    expect(factsCacheEnabled({ AI_FACTS_CACHE_ENABLED: 'TRUE' })).toBe(true);
+  });
+
+  it('does not cache at all when the flag is unset (the shipped default)', async () => {
+    const m = countedModel();
+    await answerBusinessFact({ question: 'total revenue this week', pg: makePg(revenueRows), now: NOW, callMimo: m.callMimo });
+    const pg = makePg(revenueRows);
+    const again = await answerBusinessFact({ question: 'total revenue this week', pg, now: NOW, callMimo: m.callMimo });
+    expect(m.calls).toBe(2);
+    expect(pg.queries).toHaveLength(1);
+    expect(again.cacheHit).toBe(false);
+  });
+
+  it('keys on the ROUTE, not on the wording of the question', () => {
+    const k = (q) => factCacheKey(routeToFact(q, { now: NOW }));
+    // Same metric + window + filters, different wording → one entry.
+    expect(k('whats the revenue for the past month')).toBe(k('show revenue by currency for the past month'));
+    // Anything that changes the numbers changes the key.
+    expect(k('revenue in gbp for the past month')).not.toBe(k('whats the revenue for the past month'));
+    expect(k('top 3 tours by revenue this month')).not.toBe(k('top tours by revenue this month'));
+    expect(k('total revenue this week')).not.toBe(k('total revenue this month'));
+    expect(k('total revenue this week')).not.toBe(k('total revenue last month'));
+    expect(k('how many customers do we have in total')).not.toBe(k('total revenue this week'));
+    expect(factCacheKey(routeToFact('why did bookings drop last week', { now: NOW }))).toBeNull();
+  });
+
+  it('answers a differently worded question with the same route from cache, doing no work', async () => {
+    const m = countedModel();
+    const first = await answerBusinessFact({
+      question: 'whats the revenue for the past month',
+      pg: makePg(revenueRows),
+      now: NOW,
+      callMimo: m.callMimo,
+      cache: true,
+    });
+    expect(first.ok).toBe(true);
+    expect(first.cacheHit).toBe(false);
+    expect(m.calls).toBe(1);
+
+    const pg = makePg(revenueRows);
+    const second = await answerBusinessFact({
+      question: 'show revenue by currency for the past month',
+      pg,
+      now: NOW,
+      callMimo: m.callMimo,
+      cache: true,
+    });
+    expect(second.ok).toBe(true);
+    expect(second.cacheHit).toBe(true);
+    expect(m.calls).toBe(1);              // no second narration
+    expect(pg.queries).toHaveLength(0);   // no second query
+    expect(second.answer).toBe(first.answer);
+    // The audit trail survives a hit: the SQL that produced it is still there.
+    expect(second.sql).toBe(first.sql);
+    expect(second.facts).toEqual(first.facts);
+    expect(second.narrMs).toBe(0);
+    expect(second.sqlMs).toBe(0);
+  });
+
+  it('never shares an answer across routes whose numbers differ', async () => {
+    const m = countedModel();
+    await answerBusinessFact({ question: 'total revenue this week', pg: makePg(revenueRows), now: NOW, callMimo: m.callMimo, cache: true });
+    await answerBusinessFact({ question: 'total revenue this month', pg: makePg(revenueRows), now: NOW, callMimo: m.callMimo, cache: true });
+    await answerBusinessFact({ question: 'how many customers do we have in total', pg: makePg([{ n: 52 }]), now: NOW, callMimo: m.callMimo, cache: true });
+
+    // "revenue in gbp" against USD data must still reach the currency gate —
+    // a cached USD entry must never answer it.
+    const gbp = await answerBusinessFact({ question: 'revenue in gbp for the past month', pg: makePg(revenueRows), now: NOW, callMimo: m.callMimo, cache: true });
+    expect(gbp.ok).toBe(false);
+    expect(gbp.stage).toBe('currency');
+
+    expect(m.calls).toBe(3); // three distinct routes narrated, one refused
+  });
+
+  it('never caches a refusal, so the next ask retries instead of pinning a failure', async () => {
+    const m = countedModel();
+    const refused = await answerBusinessFact({ question: 'revenue in gbp for the past month', pg: makePg(revenueRows), now: NOW, callMimo: m.callMimo, cache: true });
+    expect(refused.ok).toBe(false);
+    expect(refused.stage).toBe('currency');
+
+    // The data now HAS gbp. If the refusal had been stored this would answer
+    // from it and still say "no gbp data".
+    const pg = makePg([{ currency: 'GBP', bookings: 2, gross: '100.00' }]);
+    const retried = await answerBusinessFact({ question: 'revenue in gbp for the past month', pg, now: NOW, callMimo: m.callMimo, cache: true });
+    expect(pg.queries.length).toBeGreaterThan(0);
+    expect(retried.ok).toBe(true);
+    expect(retried.cacheHit).toBe(false);
+    expect(m.calls).toBe(1);
+  });
+
+  it('shares ONE in-flight narration between two simultaneous askers', async () => {
+    const pg = makePg(revenueRows);
+    let calls = 0;
+    const callMimo = async () => {
+      calls += 1;
+      await new Promise((r) => setTimeout(r, 30));
+      return 'narrated';
+    };
+
+    const [a, b] = await Promise.all([
+      answerBusinessFact({ question: 'total revenue this week', pg, now: NOW, callMimo, cache: true }),
+      answerBusinessFact({ question: 'total revenue this week', pg, now: NOW, callMimo, cache: true }),
+    ]);
+
+    expect(calls).toBe(1);
+    expect(pg.queries).toHaveLength(1);
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(true);
+    expect(a.answer).toBe(b.answer);
+    // Exactly one of them did the work; the other waited on it.
+    expect([a.cacheHit, b.cacheHit].filter(Boolean)).toHaveLength(1);
+  });
+
+  it('expires an entry instead of serving it forever', async () => {
+    const m = countedModel();
+    await answerBusinessFact({ question: 'total revenue this week', pg: makePg(revenueRows), now: NOW, callMimo: m.callMimo, cache: true, cacheTtlMs: -1 });
+    const pg = makePg(revenueRows);
+    const again = await answerBusinessFact({ question: 'total revenue this week', pg, now: NOW, callMimo: m.callMimo, cache: true });
+    expect(again.cacheHit).toBe(false);
+    expect(pg.queries.length).toBeGreaterThan(0);
+    expect(m.calls).toBe(2);
+  });
+
+  it('honours the env flag when the caller passes no override', async () => {
+    const prev = process.env.AI_FACTS_CACHE_ENABLED;
+    process.env.AI_FACTS_CACHE_ENABLED = 'true';
+    clearFactCache();
+    try {
+      const m = countedModel();
+      await answerBusinessFact({ question: 'total revenue this week', pg: makePg(revenueRows), now: NOW, callMimo: m.callMimo });
+      const again = await answerBusinessFact({ question: 'total revenue this week', pg: makePg(revenueRows), now: NOW, callMimo: m.callMimo });
+      expect(m.calls).toBe(1);
+      expect(again.cacheHit).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.AI_FACTS_CACHE_ENABLED;
+      else process.env.AI_FACTS_CACHE_ENABLED = prev;
+      clearFactCache();
+    }
+  });
+});
+
+describe('Phase 3 — reviewed template fallback (AI_FACTS_TEMPLATE_ENABLED)', () => {
+  const revenueRows = [{ currency: 'USD', bookings: 4, gross: '604.00' }];
+
+  it('is off unless the flag is exactly "true"', () => {
+    expect(factsTemplateEnabled({})).toBe(false);
+    expect(factsTemplateEnabled({ AI_FACTS_TEMPLATE_ENABLED: 'false' })).toBe(false);
+    expect(factsTemplateEnabled({ AI_FACTS_TEMPLATE_ENABLED: 'yes' })).toBe(false);
+    expect(factsTemplateEnabled({ AI_FACTS_TEMPLATE_ENABLED: 'true' })).toBe(true);
+  });
+
+  it('keeps Phase 2 behaviour when off: a failed narration still falls through', async () => {
+    const r = await answerBusinessFact({
+      question: 'total revenue this week',
+      pg: makePg(revenueRows),
+      now: NOW,
+      callMimo: async () => { throw new Error('model unavailable'); },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.stage).toBe('narrate');
+    expect(r.answer).toBeNull();
+    expect(r.narrFallback).toBeNull();
+  });
+
+  it('answers from the reviewed template when the narration call fails', async () => {
+    const r = await answerBusinessFact({
+      question: 'total revenue this week',
+      pg: makePg(revenueRows),
+      now: NOW,
+      callMimo: async () => { throw new Error('model unavailable'); },
+      renderTemplate: renderReviewedTemplate,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.stage).toBe('answered');
+    expect(r.narrFallback).toBe('template');
+    expect(r.narrError).toMatch(/model unavailable/);
+    expect(r.answer).toMatch(/\$604\.00 USD/);
+    expect(r.answer).toMatch(/4 bookings/);
+    expect(r.answer).toMatch(/This week/);
+    expect(r.answer).toMatch(/Definition: revenue/);
+  });
+
+  it('answers from the template when the narration comes back empty', async () => {
+    const r = await answerBusinessFact({
+      question: 'total revenue this week',
+      pg: makePg(revenueRows),
+      now: NOW,
+      callMimo: async () => '   ',
+      renderTemplate: renderReviewedTemplate,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.narrFallback).toBe('template');
+    expect(r.narrError).toMatch(/empty/);
+  });
+
+  it('never replaces a successful narration with template text', async () => {
+    const r = await answerBusinessFact({
+      question: 'total revenue this week',
+      pg: makePg(revenueRows),
+      now: NOW,
+      callMimo: async () => 'MiMo wrote this sentence.',
+      renderTemplate: renderReviewedTemplate,
+    });
+    expect(r.answer).toBe('MiMo wrote this sentence.');
+    expect(r.narrFallback).toBeNull();
+    expect(r.narrError).toBeNull();
+  });
+
+  it('still refuses when the template cannot render the fact shape', async () => {
+    // The template is a fallback, never a second guess: an unrecognised shape
+    // degrades to exactly the behaviour Phase 2 shipped with.
+    const r = await answerBusinessFact({
+      question: 'total revenue this week',
+      pg: makePg(revenueRows),
+      now: NOW,
+      callMimo: async () => { throw new Error('model unavailable'); },
+      renderTemplate: () => null,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.stage).toBe('narrate');
+    expect(r.answer).toBeNull();
+  });
+
+  it('treats a throwing renderer as a refusal, not as an exception', async () => {
+    // The pipeline is documented as never throwing, and a rejected promise
+    // would strand every single-flight waiter behind it.
+    const r = await answerBusinessFact({
+      question: 'total revenue this week',
+      pg: makePg(revenueRows),
+      now: NOW,
+      callMimo: async () => { throw new Error('model unavailable'); },
+      renderTemplate: () => { throw new Error('renderer bug'); },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.stage).toBe('narrate');
+    expect(r.reason).toMatch(/model unavailable/);
+  });
+
+  it('honours the env flag when the caller passes no override', async () => {
+    const prev = process.env.AI_FACTS_TEMPLATE_ENABLED;
+    process.env.AI_FACTS_TEMPLATE_ENABLED = 'true';
+    try {
+      const r = await answerBusinessFact({
+        question: 'total revenue this week',
+        pg: makePg(revenueRows),
+        now: NOW,
+        callMimo: async () => { throw new Error('model unavailable'); },
+      });
+      expect(r.ok).toBe(true);
+      expect(r.narrFallback).toBe('template');
+    } finally {
+      if (prev === undefined) delete process.env.AI_FACTS_TEMPLATE_ENABLED;
+      else process.env.AI_FACTS_TEMPLATE_ENABLED = prev;
+    }
+  });
+});
+
+describe('renderReviewedTemplate — prints only what it was given', () => {
+  const revFact = (facts) => ({
+    ok: true,
+    metric: 'revenue',
+    window: 'The past month (rolling 30 days)',
+    definition: 'revenue = status IN (CONFIRMED, COMPLETED) and isSimulated = false',
+    facts,
+  });
+
+  it('states the window, keeps currencies apart and never invents a number', () => {
+    const out = renderReviewedTemplate(null, revFact({
+      currencyCount: 2,
+      byCurrency: [
+        { currency: 'USD', bookings: 28, gross: 4995.14 },
+        { currency: 'GHS', bookings: 1, gross: 50 },
+      ],
+    }));
+    expect(out).toContain('The past month (rolling 30 days)');
+    expect(out).toContain('$4995.14 USD from 28 bookings');
+    expect(out).toContain('GHS 50.00 from 1 booking');
+    expect(out).toContain('Definition: revenue = status IN (CONFIRMED, COMPLETED) and isSimulated = false.');
+    // 4995.14 + 50 = 5045.14 — summing across currencies is the one thing the
+    // currency-grouping rule exists to prevent.
+    expect(out).not.toContain('5045.14');
+  });
+
+  it('renders an empty result as an empty result, not as a figure', () => {
+    const out = renderReviewedTemplate(null, revFact({ currencyCount: 0, byCurrency: [] }));
+    expect(out).toContain('there were no qualifying bookings');
+    expect(out).not.toMatch(/\$\d/);
+  });
+
+  it('refuses when a figure is missing rather than printing a guess', () => {
+    // No gross at all — what a SELECT that forgot its AS alias produces.
+    expect(renderReviewedTemplate(null, revFact({
+      currencyCount: 1, byCurrency: [{ currency: 'USD', bookings: 4 }],
+    }))).toBeNull();
+    // No currency: must not let money() default to "$".
+    expect(renderReviewedTemplate(null, revFact({
+      byCurrency: [{ bookings: 4, gross: 10 }],
+    }))).toBeNull();
+    expect(renderReviewedTemplate(null, revFact({ byCurrency: 'not-an-array' }))).toBeNull();
+    expect(renderReviewedTemplate(null, { ok: true, metric: 'revenue', window: 'All time' })).toBeNull();
+    expect(renderReviewedTemplate(null, null)).toBeNull();
+  });
+
+  it('refuses an unknown metric instead of guessing at its wording', () => {
+    expect(renderReviewedTemplate(
+      { metric: 'brandNewMetric' },
+      { ok: true, metric: 'brandNewMetric', window: 'All time', facts: { n: 3 } },
+    )).toBeNull();
+  });
+
+  it('spells out which customer population it counted (52 vs 26 vs 91)', () => {
+    const pop = (metric, n, population) => renderReviewedTemplate(null, {
+      ok: true, metric, window: 'Current snapshot', facts: { n, population },
+    });
+    expect(pop('customers', 52, "users with the 'customer' role")).toContain("52 (users with the 'customer' role)");
+    expect(pop('bookingCustomers', 26, 'distinct booking customers')).toContain('26 (distinct booking customers)');
+    expect(pop('users', 91, 'all users')).toContain('91 (all users)');
+  });
+
+  it('renders an average without rounding it', () => {
+    const reviews = (count, avg) => renderReviewedTemplate(null, {
+      ok: true, metric: 'reviews', window: 'This week', facts: { count, avg },
+    });
+    // num() normalized AVG(... )::text to a JS number when the row was read, so
+    // the padded "4.5000000000000000" arrives as 4.5 and prints as "4.5".
+    expect(reviews(7, 4.5)).toContain('average rating 4.5 from 7 reviews');
+    // A JS number prints shortest-round-trip, so nothing here is rounded to
+    // 4.67 or 4.7 — FACT_NARRATE_SYSTEM forbids it.
+    expect(reviews(7, 4.666666666666667)).toContain('average rating 4.666666666666667');
+    expect(reviews(7, 4)).toContain('average rating 4 from 7 reviews');
+    expect(reviews(0, null)).toContain('there were no reviews');
+    // A non-zero count with no average cannot be rendered at all.
+    expect(reviews(7, null)).toBeNull();
+    // A raw string means the column was never normalized — refuse rather than
+    // print whatever a mis-aliased column happened to hold.
+    expect(reviews(7, '4.5')).toBeNull();
+  });
+
+  it('ranks tours in the order given, and says so when there are none', () => {
+    const out = renderReviewedTemplate(null, {
+      ok: true,
+      metric: 'topTours',
+      window: 'This month',
+      definition: 'top tours by revenue using paidAt (when payment was taken)',
+      facts: {
+        dateColumn: 'paidAt',
+        limit: 3,
+        rows: [
+          { title: 'Cape Coast Day Trip', city: 'Cape Coast', currency: 'USD', bookings: 9, gross: 1335.6 },
+          { title: 'Kakum Walk', city: 'Accra', currency: 'USD', bookings: 4, gross: 392 },
+        ],
+      },
+    });
+    expect(out).toContain('top 2 tours by revenue');
+    expect(out.indexOf('Cape Coast Day Trip')).toBeLessThan(out.indexOf('Kakum Walk'));
+    expect(out).toContain('1. Cape Coast Day Trip (Cape Coast) — $1335.60 USD from 9 bookings');
+    expect(out).toContain('paidAt');
+    expect(renderReviewedTemplate(null, {
+      ok: true, metric: 'topTours', window: 'This month', facts: { rows: [] },
+    })).toContain('no tour had any qualifying revenue');
+  });
+
+  it('renders the three-shape metrics (tours/suppliers/disputes) by shape', () => {
+    const three = (metric, facts) => renderReviewedTemplate(null, {
+      ok: true, metric, window: 'Current snapshot', facts,
+    });
+    expect(three('tours', { n: 32, status: 'ACTIVE' })).toContain('32 tours with status ACTIVE');
+    expect(three('suppliers', { n: 42, status: 'ACTIVE' })).toContain('42 supplier profiles with status ACTIVE');
+    expect(three('disputes', { rows: [{ status: 'OPEN', n: 2 }, { status: 'WON', n: 1 }] }))
+      .toContain('OPEN: 2; WON: 1');
+    expect(three('tours', { created: 3 })).toContain('3 tours were created');
+    expect(three('tours', { created: 1 })).toContain('1 tour was created');
+    expect(three('tours', { unexpected: true })).toBeNull();
+  });
+
+  it('renders a scalar count, singular and plural, and refuses a non-number', () => {
+    const signups = (facts) => renderReviewedTemplate(null, {
+      ok: true, metric: 'signups', window: 'This week', facts,
+    });
+    expect(signups({ newUsers: 4 })).toContain('4 new user accounts were created');
+    expect(signups({ newUsers: 1 })).toContain('1 new user account was created');
+    expect(signups({ newUsers: 'four' })).toBeNull();
+    expect(signups({})).toBeNull();
   });
 });

@@ -105,12 +105,14 @@ function money(n, currency = 'USD') {
 
 // ── Time windows ───────────────────────────────────────────────────────────
 // Two semantics, chosen by how the operator words the window (approved):
-//   - NAMED periods ("this week", "last month", "this quarter", "yesterday")
-//     are CALENDAR-ALIGNED to UTC midnight, matching dailyDigest.js's
-//     utcDayStart(), so a figure reported today can be re-derived tomorrow.
-//   - EXPLICIT counts ("the past 7 days", "last 3 weeks") are ROLLING: N×24h
-//     ending now. "the last 30 days" is a duration, not a calendar month, and an
-//     operator saying it means a moving 30-day window.
+//   - NAMED periods ("this week", "last month", "this quarter", "yesterday",
+//     and any "last X") are CALENDAR-ALIGNED to UTC midnight, matching
+//     dailyDigest.js's utcDayStart(), so a figure reported today can be
+//     re-derived tomorrow.
+//   - DURATION phrases ("past month", "past 7 days", "last 3 weeks") are
+//     ROLLING and end at the reference instant: "past month" is the last 30
+//     days, not the previous calendar month. Splitting bare "past" from "last"
+//     (decision 2) is what stopped them being one regex.
 // Mixing the two is what produced "$4,995.14 for the past 30 days" next to
 // "$12,072.28 for the past month" in the Phase 1 review.
 

@@ -1060,8 +1060,19 @@ async function answerQuestion({ question, userId = '?', historyText = '', histor
           console.log(
             `[answer:${userId}] fact_path metric=${facts.route.metric} ` +
             `window="${(facts.route.window || {}).label || '-'}" ` +
-            `sql=${facts.sqlMs}ms narr=${facts.narrMs}ms total=${facts.totalMs}ms`,
+            `sql=${facts.sqlMs}ms narr=${facts.narrMs}ms total=${facts.totalMs}ms ` +
+            `cache=${facts.cacheHit ? 1 : 0}`,
           );
+          // Loud on purpose. `narrFallback=template` means the model call
+          // failed and a reviewed template answered instead — correct, but a
+          // RUN of these is a model outage and should be visible as one, not
+          // buried in per-question timings.
+          if (facts.narrFallback === 'template') {
+            console.warn(
+              `[answer:${userId}] fact_narrate_fallback metric=${facts.route.metric} ` +
+              `reason="${facts.narrError || 'empty narration'}"`,
+            );
+          }
           if (key) {
             try {
               await cache.set(key, final, cacheTtlSec);
