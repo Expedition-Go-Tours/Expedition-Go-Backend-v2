@@ -1,0 +1,328 @@
+{
+  "_comment": "Phase 0 replay corpus. Sourced from /home/deploy/.pm2/logs/discord-bot-out*.log (real) plus synthetic coverage. Read-only fixture; the harness never posts to Discord or writes to the database.",
+  "_fields": {
+    "id": "stable identifier",
+    "question": "the message text, verbatim",
+    "origin": "real = replayed from production logs | synthetic = written for coverage",
+    "selfContained": "true only if the question is fully answerable without conversation history. Governs cache sharing and fact routing.",
+    "expectRoute": "metric the deterministic router is expected to CLAIM (null = must not claim it)",
+    "expectMustNotRoute": "reason the question must NOT be answered by a deterministic fact, or null",
+    "history": "prior turns as [{role, content}] — reproduces real conversational context",
+    "expectOutcome": "answer | decline | fallthrough — what the fact layer should do. \"decline\" means the router claimed it but the fact layer must refuse (e.g. currency not present)."
+  },
+  "questions": [
+    {
+      "id": "real-01",
+      "question": "what is the new update",
+      "origin": "real",
+      "selfContained": true,
+      "expectRoute": null,
+      "expectMustNotRoute": "conversational/vague; needs platform narrative, not a metric",
+      "history": [],
+      "note": "production answer used no SQL (sql=[]), took 11.4s",
+      "expectOutcome": "fallthrough"
+    },
+    {
+      "id": "real-02",
+      "question": "whats the revenue for the past month",
+      "origin": "real",
+      "selfContained": true,
+      "expectRoute": "revenue",
+      "expectMustNotRoute": null,
+      "history": [],
+      "note": "production SQL filtered paymentStatus=SUCCEEDED only; 47.2s",
+      "expectOutcome": "answer"
+    },
+    {
+      "id": "real-03",
+      "question": "In usd",
+      "origin": "real",
+      "selfContained": false,
+      "expectRoute": null,
+      "expectMustNotRoute": "context-dependent fragment: 'USD' modifies the previous revenue answer",
+      "history": [
+        {
+          "role": "user",
+          "content": "whats the revenue for the past month"
+        },
+        {
+          "role": "assistant",
+          "content": "Revenue for the past month is $4,833.14 across 27 bookings."
+        }
+      ],
+      "note": "production answered with no SQL in 2.9s; MUST NOT be cached or routed on its own",
+      "expectOutcome": "fallthrough"
+    },
+    {
+      "id": "real-04",
+      "question": "total revenue in usd",
+      "origin": "real",
+      "selfContained": true,
+      "expectRoute": "revenue",
+      "expectMustNotRoute": null,
+      "history": [],
+      "note": "production SQL had NO date filter -> all-time; 17.5s",
+      "expectOutcome": "answer"
+    },
+    {
+      "id": "real-05",
+      "question": "how about the total revenue for the past week",
+      "origin": "real",
+      "selfContained": true,
+      "expectRoute": "revenue",
+      "expectMustNotRoute": null,
+      "history": [
+        {
+          "role": "user",
+          "content": "total revenue in usd"
+        },
+        {
+          "role": "assistant",
+          "content": "Total confirmed revenue is $5,733.14."
+        }
+      ],
+      "note": "44.5s; production SQL grouped by currency",
+      "expectOutcome": "answer"
+    },
+    {
+      "id": "real-06",
+      "question": "I want details on the 4 bookings",
+      "origin": "real",
+      "selfContained": false,
+      "expectRoute": null,
+      "expectMustNotRoute": "the count '4' comes from prior conversation; no filter is expressible from this text alone",
+      "history": [
+        {
+          "role": "user",
+          "content": "how about the total revenue for the past week"
+        },
+        {
+          "role": "assistant",
+          "content": "Revenue for the past week is $604.00 across 4 confirmed bookings."
+        }
+      ],
+      "note": "77.1s — the worst observed. Returns PII (names + emails).",
+      "expectOutcome": "fallthrough"
+    },
+    {
+      "id": "cov-tours-live",
+      "question": "how many tours are live right now",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": "tours",
+      "expectMustNotRoute": null,
+      "history": [],
+      "expectOutcome": "answer"
+    },
+    {
+      "id": "cov-bookings-confirmed",
+      "question": "how many bookings were confirmed yesterday",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": "bookings",
+      "expectMustNotRoute": null,
+      "history": [],
+      "expectOutcome": "answer"
+    },
+    {
+      "id": "cov-signups-week",
+      "question": "how many new signups this week",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": "signups",
+      "expectMustNotRoute": null,
+      "history": [],
+      "expectOutcome": "answer"
+    },
+    {
+      "id": "cov-active-suppliers",
+      "question": "how many active suppliers do we have",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": "suppliers",
+      "expectMustNotRoute": null,
+      "history": [],
+      "expectOutcome": "answer"
+    },
+    {
+      "id": "cov-new-suppliers",
+      "question": "how many new suppliers signed up this month",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": "suppliers",
+      "expectMustNotRoute": null,
+      "history": [],
+      "expectOutcome": "answer"
+    },
+    {
+      "id": "cov-top-tours",
+      "question": "what are the top tours by revenue this month",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": "topTours",
+      "expectMustNotRoute": null,
+      "history": [],
+      "expectOutcome": "answer"
+    },
+    {
+      "id": "cov-refunds",
+      "question": "how many refunds did we issue this week",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": "refunds",
+      "expectMustNotRoute": null,
+      "history": [],
+      "expectOutcome": "answer"
+    },
+    {
+      "id": "cov-disputes",
+      "question": "how many disputes are open right now",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": "disputes",
+      "expectMustNotRoute": null,
+      "history": [],
+      "expectOutcome": "answer"
+    },
+    {
+      "id": "cov-payouts",
+      "question": "how many payouts are pending this week",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": "payouts",
+      "expectMustNotRoute": null,
+      "history": [],
+      "expectOutcome": "answer"
+    },
+    {
+      "id": "cov-reviews",
+      "question": "what is the average review rating this week",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": "reviews",
+      "expectMustNotRoute": null,
+      "history": [],
+      "expectOutcome": "answer"
+    },
+    {
+      "id": "cov-customers",
+      "question": "how many customers do we have in total",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": "customers",
+      "expectMustNotRoute": null,
+      "history": [],
+      "expectOutcome": "answer"
+    },
+    {
+      "id": "edge-currency-gbp",
+      "question": "what is the revenue in gbp",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": "revenue",
+      "expectMustNotRoute": "non-USD currency: only USD exists in the data, so the fact layer must decline rather than silently answer with USD",
+      "history": [],
+      "expectOutcome": "decline"
+    },
+    {
+      "id": "edge-revenue-by-currency",
+      "question": "show revenue by currency for the past month",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": "revenue",
+      "expectMustNotRoute": null,
+      "history": [],
+      "note": "forces currency grouping to be exercised",
+      "expectOutcome": "answer"
+    },
+    {
+      "id": "edge-analytical-why",
+      "question": "why did bookings drop last week",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": null,
+      "expectMustNotRoute": "causal/analytical — a deterministic count cannot answer this",
+      "history": [],
+      "expectOutcome": "fallthrough"
+    },
+    {
+      "id": "edge-analytical-compare",
+      "question": "compare revenue this week to last week and explain the difference",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": null,
+      "expectMustNotRoute": "multi-period comparison plus explanation; needs the reasoning agent",
+      "history": [],
+      "expectOutcome": "fallthrough"
+    },
+    {
+      "id": "edge-supplier-ranking",
+      "question": "which supplier made the most money and why",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": null,
+      "expectMustNotRoute": "ranking with causal follow-up",
+      "history": [],
+      "expectOutcome": "fallthrough"
+    },
+    {
+      "id": "edge-place-semantics",
+      "question": "how many tours are in Accra",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": null,
+      "expectMustNotRoute": "city-vs-region semantics are a documented special case with tuned prompt rules; the deterministic tour count is NOT location-filtered",
+      "history": [],
+      "expectOutcome": "fallthrough"
+    },
+    {
+      "id": "edge-multi-period",
+      "question": "show me revenue by month for the last 6 months",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": null,
+      "expectMustNotRoute": "multi-period aggregation, not a single metric",
+      "history": [],
+      "expectOutcome": "fallthrough"
+    },
+    {
+      "id": "edge-contextual-those",
+      "question": "what about those bookings",
+      "origin": "synthetic",
+      "selfContained": false,
+      "expectRoute": null,
+      "expectMustNotRoute": "context-dependent; must never be served from a shared cache",
+      "history": [
+        {
+          "role": "user",
+          "content": "show me the latest bookings"
+        },
+        {
+          "role": "assistant",
+          "content": "Here are the 4 most recent bookings..."
+        }
+      ],
+      "expectOutcome": "fallthrough"
+    },
+    {
+      "id": "edge-greeting",
+      "question": "hi",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": null,
+      "expectMustNotRoute": "small talk",
+      "history": [],
+      "expectOutcome": "fallthrough"
+    },
+    {
+      "id": "edge-who-are-you",
+      "question": "who are you",
+      "origin": "synthetic",
+      "selfContained": true,
+      "expectRoute": null,
+      "expectMustNotRoute": "identity question",
+      "history": [],
+      "expectOutcome": "fallthrough"
+    }
+  ]
+}

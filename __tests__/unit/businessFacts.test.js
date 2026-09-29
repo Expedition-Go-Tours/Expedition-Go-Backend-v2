@@ -1,0 +1,533 @@
+/**
+ * Unit tests for the deterministic business-facts layer.
+ *
+ * These pin the APPROVED business definitions (metricDefinitions.js) and the
+ * safety behaviour of the fact layer. Two rules matter most:
+ *
+ *  1. A refusal must be a refusal. The currency gate in particular must never
+ *     let a question about GBP be answered with USD numbers.
+ *  2. A malformed fact must fail loudly. Empty/undefined fields once produced
+ *     a confident "no data is available", which is a wrong answer dressed as a
+ *     right one.
+ */
+
+const { routeToFact, factsEnabled } = require('../../bots/discord-bot/factRouter');
+const {
+  getBusinessFacts,
+  currencyIsSatisfied,
+  buildNarrationPayload,
+  factIntegrity,
+  FACT_NARRATE_SYSTEM,
+} = require('../../bots/discord-bot/businessFacts');
+const {
+  REVENUE_STATUSES,
+  TOP_TOURS_DATE_COLUMN,
+  CUSTOMER_ROLE,
+  resolveWindow,
+  money,
+  describeWindow,
+  revenueClauses,
+  utcWeekStart,
+  utcMonthStart,
+  utcDayStart,
+} = require('../../src/core/services/metricDefinitions');
+
+// ── helpers ────────────────────────────────────────────────────────────────
+
+/** Records every query and replies with the supplied rows. */
+function makePg(rows = []) {
+  const queries = [];
+  return {
+    queries,
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rows };
+    },
+  };
+}
+
+/**
+ * Models Postgres' real rule: an unreferenced $N has no inferable type and the
+ * whole statement fails. Guards against the placeholder-numbering bug.
+ */
+function makeStrictPg(rows = []) {
+  const queries = [];
+  return {
+    queries,
+    async query(sql, params) {
+      queries.push({ sql, params: params || [] });
+      if (params && params.length) {
+        const used = new Set([...String(sql).matchAll(/\$(\d+)/g)].map((m) => Number(m[1])));
+        for (let i = 1; i <= params.length; i++) {
+          if (!used.has(i)) throw new Error(`could not determine data type of parameter $${i}`);
+        }
+      }
+      return { rows };
+    },
+  };
+}
+
+const NOW = new Date('2026-09-29T12:00:00Z');
+const win = (question) => resolveWindow(question, NOW);
+
+const lastSql = (pg) => pg.queries[pg.queries.length - 1].sql;
+
+// ── metric definitions ─────────────────────────────────────────────────────
+
+describe('metricDefinitions — approved revenue semantics', () => {
+  it('counts CONFIRMED and COMPLETED as revenue', () => {
+    expect(REVENUE_STATUSES).toEqual(['CONFIRMED', 'COMPLETED']);
+  });
+
+  it('excludes simulated bookings from all-time revenue only', () => {
+    const allTime = resolveWindow('total revenue', NOW);
+    const period = resolveWindow('revenue this week', NOW);
+
+    const a = revenueClauses(allTime);
+    const p = revenueClauses(period);
+
+    // The status filter is present in both windows, as the first clause.
+    expect(a.clauses[0]).toMatch(/status" IN \('CONFIRMED','COMPLETED'\)/);
+    expect(p.clauses[0]).toMatch(/status" IN \('CONFIRMED','COMPLETED'\)/);
+
+    // Simulated seed bookings are dropped only from the all-time figure.
+    expect(a.clauses.join(' ')).toMatch(/isSimulated" = false/);
+    // A period window must NOT apply the simulated filter as part of the
+    // approved definition, and must not silently gain it either.
+    expect(p.clauses.join(' ')).not.toMatch(/isSimulated/);
+  });
+
+  it('never uses the digest revenue definition (which drops COMPLETED)', () => {
+    const { clauses } = revenueClauses(resolveWindow('revenue this month', NOW));
+    // dailyDigest filters status = 'CONFIRMED' alone, which made completed
+    // revenue vanish from period totals. That must not reappear here.
+    expect(clauses.join(' ')).not.toMatch(/status" = 'CONFIRMED' AND/);
+    expect(clauses.join(' ')).toContain("'COMPLETED'");
+  });
+
+  it('reads top tours by paidAt, never createdAt', () => {
+    expect(TOP_TOURS_DATE_COLUMN).toBe('paidAt');
+  });
+
+  it('defines customers as customer-role users', () => {
+    expect(CUSTOMER_ROLE).toBe('customer');
+  });
+});
+
+describe('metricDefinitions — window resolution', () => {
+  it('defaults a question with no window to all time', () => {
+    const w = resolveWindow('total revenue in usd', NOW);
+    expect(w.isAllTime).toBe(true);
+    expect(w.from).toBeNull();
+    expect(describeWindow(w)).toBe('All time');
+  });
+
+  it('aligns calendar windows to UTC midnight', () => {
+    expect(resolveWindow('yesterday', NOW).from).toEqual(utcDayStart(-1));
+    expect(resolveWindow('this week', NOW).from).toEqual(utcWeekStart(NOW));
+    expect(resolveWindow('this month', NOW).from).toEqual(utcMonthStart(NOW));
+  });
+
+  it('uses an exclusive end boundary', () => {
+    const w = resolveWindow('yesterday', NOW);
+    expect(w.to.getTime()).toBeGreaterThan(w.from.getTime());
+    expect(w.to.getTime() - w.from.getTime()).toBe(24 * 60 * 60 * 1000);
+  });
+
+  // The Phase 0 prototype resolved windows against a rolling
+  // NOW() - INTERVAL '7 days'. That boundary moves continuously, so the same
+  // words produced different totals on different runs. Every window here is
+  // anchored to a UTC calendar boundary, so a quoted figure can be re-derived.
+  it('reads "the past 7 days" as 7 calendar days, not a rolling window', () => {
+    const w = resolveWindow('revenue for the past 7 days', NOW);
+    expect(w.isAllTime).toBe(false);
+    // 6 days back through tomorrow's exclusive end = 7 whole calendar days.
+    expect(w.to.getTime() - w.from.getTime()).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it('resolves "this week" to the calendar week, and "last week" to the one before', () => {
+    // NOW is Tuesday 2026-09-29, so this week starts Monday 2026-09-28.
+    const thisWeek = resolveWindow('revenue this week', NOW);
+    expect(thisWeek.from.toISOString()).toBe('2026-09-28T00:00:00.000Z');
+    expect(thisWeek.to.toISOString()).toBe('2026-09-30T00:00:00.000Z');
+
+    const lastWeek = resolveWindow('revenue last week', NOW);
+    expect(lastWeek.from.toISOString()).toBe('2026-09-21T00:00:00.000Z');
+    expect(lastWeek.to.toISOString()).toBe('2026-09-28T00:00:00.000Z');
+    expect(lastWeek.label).toBe('the previous week');
+  });
+
+  it('resolves calendar months, quarters and years', () => {
+    expect(resolveWindow('revenue this month', NOW).from.toISOString()).toBe('2026-09-01T00:00:00.000Z');
+    expect(resolveWindow('revenue last month', NOW).from.toISOString()).toBe('2026-08-01T00:00:00.000Z');
+    expect(resolveWindow('revenue last month', NOW).to.toISOString()).toBe('2026-09-01T00:00:00.000Z');
+    expect(resolveWindow('revenue this quarter', NOW).from.toISOString()).toBe('2026-07-01T00:00:00.000Z');
+    expect(resolveWindow('revenue this year', NOW).from.toISOString()).toBe('2026-01-01T00:00:00.000Z');
+    expect(resolveWindow('revenue last year', NOW).from.toISOString()).toBe('2025-01-01T00:00:00.000Z');
+  });
+
+  it('honours the injected reference date rather than the wall clock', () => {
+    // Guards the bug where resolveWindow accepted `now` and ignored it, so
+    // every window silently resolved against the real current date.
+    const w = resolveWindow('revenue today', new Date('2020-03-15T23:00:00Z'));
+    expect(w.from.toISOString()).toBe('2020-03-15T00:00:00.000Z');
+    expect(w.to.toISOString()).toBe('2020-03-16T00:00:00.000Z');
+  });
+
+  it('formats money, and does not label a non-USD total as dollars', () => {
+    expect(money(1234.5)).toBe('$1234.50');
+    expect(money(null)).toBe('$0.00');
+    expect(money(50, 'GHS')).toBe('GHS 50.00');
+  });
+});
+
+// ── fact router ────────────────────────────────────────────────────────────
+
+describe('factRouter — claims only what it can answer correctly', () => {
+  it('routes common business questions', () => {
+    const cases = [
+      ['whats the revenue for the past month', 'revenue'],
+      ['total revenue in usd', 'revenue'],
+      ['how many tours are live right now', 'tours'],
+      ['how many new signups this week', 'signups'],
+      ['how many active suppliers do we have', 'suppliers'],
+      ['how many new suppliers signed up this month', 'suppliers'],
+      ['what are the top tours by revenue this month', 'topTours'],
+      ['how many refunds did we issue this week', 'refunds'],
+      ['how many disputes are open right now', 'disputes'],
+      ['how many payouts are pending this week', 'payouts'],
+      ['what is the average review rating this week', 'reviews'],
+      ['how many customers do we have in total', 'customers'],
+      ['how many users do we have', 'users'],
+      ['how many customers have booked', 'bookingCustomers'],
+    ];
+    for (const [q, want] of cases) {
+      const r = routeToFact(q, { now: NOW });
+      expect(r ? r.metric : null).toBe(want);
+    }
+  });
+
+  it('declines context-dependent questions', () => {
+    // These are the two real conversational questions from production logs.
+    expect(routeToFact('In usd', { now: NOW })).toBeNull();
+    expect(routeToFact('I want details on the 4 bookings', { now: NOW })).toBeNull();
+    expect(routeToFact('what about those bookings', { now: NOW })).toBeNull();
+    expect(routeToFact('show me those tours again', { now: NOW })).toBeNull();
+  });
+
+  it('declines analytical questions even with a metric keyword', () => {
+    expect(routeToFact('why did bookings drop last week', { now: NOW })).toBeNull();
+    expect(routeToFact('compare revenue this week to last week and explain the difference', { now: NOW })).toBeNull();
+    expect(routeToFact('which supplier made the most money and why', { now: NOW })).toBeNull();
+  });
+
+  it('declines place-qualified questions (city vs region is not modelled)', () => {
+    // Routing this to a global tour count would answer a different question.
+    expect(routeToFact('how many tours are in Accra', { now: NOW })).toBeNull();
+    expect(routeToFact('revenue in Ghana', { now: NOW })).toBeNull();
+  });
+
+  it('does not confuse a lowercase qualifier with a place', () => {
+    // "in usd" is a currency, not a city.
+    expect(routeToFact('total revenue in usd', { now: NOW }).metric).toBe('revenue');
+    expect(routeToFact('bookings in the past 7 days', { now: NOW }).metric).toBe('bookings');
+  });
+
+  it('declines multi-metric and time-series questions', () => {
+    expect(routeToFact('show me revenue and bookings for this week', { now: NOW })).toBeNull();
+    expect(routeToFact('show me revenue by month for the last 6 months', { now: NOW })).toBeNull();
+  });
+
+  it('declines small talk and identity questions', () => {
+    expect(routeToFact('hi', { now: NOW })).toBeNull();
+    expect(routeToFact('who are you', { now: NOW })).toBeNull();
+    expect(routeToFact('what is the new update', { now: NOW })).toBeNull();
+  });
+
+  it('extracts status filters deterministically', () => {
+    expect(routeToFact('how many tours are live right now', { now: NOW }).statusFilter).toBe('ACTIVE');
+    expect(routeToFact('how many active suppliers do we have', { now: NOW }).statusFilter).toBe('ACTIVE');
+    expect(routeToFact('how many disputes are open right now', { now: NOW }).statusFilter).toBe('OPEN');
+  });
+
+  it('treats "new X" as a created-in-window count, not a status count', () => {
+    const r = routeToFact('how many new signups this week', { now: NOW });
+    expect(r.metric).toBe('signups');
+    expect(r.windowedCount).toBe(true);
+    expect(r.statusFilter).toBeNull();
+  });
+
+  it('keeps the three customer populations distinct', () => {
+    const customers = routeToFact('how many customers do we have in total', { now: NOW });
+    expect(customers.metric).toBe('customers');
+    expect(customers.customerRole).toBe(CUSTOMER_ROLE);
+
+    expect(routeToFact('how many users do we have', { now: NOW }).metric).toBe('users');
+    expect(routeToFact('how many customers have booked', { now: NOW }).metric).toBe('bookingCustomers');
+  });
+
+  it('normalises currency words to ISO codes', () => {
+    expect(routeToFact('total revenue in usd', { now: NOW }).currencyFilter).toBe('USD');
+    expect(routeToFact('what is the revenue in gbp', { now: NOW }).currencyFilter).toBe('GBP');
+    expect(routeToFact('revenue in ghana cedis', { now: NOW }).currencyFilter).toBe('GHS');
+  });
+
+  it('marks every routed question self-contained', () => {
+    for (const q of ['total revenue in usd', 'how many tours are live', 'how many disputes are open right now']) {
+      expect(routeToFact(q, { now: NOW }).selfContained).toBe(true);
+    }
+  });
+});
+
+describe('factRouter — feature gate defaults to OFF', () => {
+  it('is off when AI_FACTS_ENABLED is unset', () => {
+    expect(factsEnabled({})).toBe(false);
+  });
+
+  it('is off for every value that is not exactly "true"', () => {
+    // A typo must only ever disable the new path, never enable it.
+    for (const v of ['', 'false', '0', 'no', 'on', 'TRUE ', 'yes', '1']) {
+      expect(factsEnabled({ AI_FACTS_ENABLED: v })).toBe(false);
+    }
+  });
+
+  it('is on only for exactly "true" (case-insensitive)', () => {
+    expect(factsEnabled({ AI_FACTS_ENABLED: 'true' })).toBe(true);
+    expect(factsEnabled({ AI_FACTS_ENABLED: 'TRUE' })).toBe(true);
+    expect(factsEnabled({ AI_FACTS_ENABLED: 'True' })).toBe(true);
+  });
+});
+
+// ── fact queries ───────────────────────────────────────────────────────────
+
+describe('businessFacts — revenue', () => {
+  it('groups by currency and never sums across currencies', async () => {
+    const pg = makePg([
+      { currency: 'USD', bookings: 4, gross: '604.00' },
+      { currency: 'GHS', bookings: 2, gross: '1200.00' },
+    ]);
+    const res = await getBusinessFacts('revenue', { window: win('revenue this week'), pg });
+    expect(res.ok).toBe(true);
+    expect(res.sql).toMatch(/GROUP BY "b"\."currency"/);
+    expect(res.facts.currencyCount).toBe(2);
+    // Two currencies stay two separate figures.
+    expect(res.facts.byCurrency[0].grossFormatted).toBe('$604.00');
+    expect(res.facts.byCurrency[1].grossFormatted).toBe('GHS 1200.00');
+  });
+
+  it('applies the approved statuses and reports the definition it used', async () => {
+    const pg = makePg([]);
+    const res = await getBusinessFacts('revenue', { window: win('revenue this week'), pg });
+    expect(res.sql).toContain("'CONFIRMED','COMPLETED'");
+    expect(res.definition).toMatch(/CONFIRMED, COMPLETED/);
+  });
+
+  it('excludes simulated bookings for an all-time question', async () => {
+    const pg = makePg([]);
+    await getBusinessFacts('revenue', { window: win('total revenue in usd'), pg });
+    expect(lastSql(pg)).toMatch(/isSimulated" = false/);
+  });
+
+  it('does not add the simulated filter to a period window', async () => {
+    const pg = makePg([]);
+    await getBusinessFacts('revenue', { window: win('revenue this week'), pg });
+    expect(lastSql(pg)).not.toMatch(/isSimulated/);
+  });
+
+  it('applies no date bound for an all-time question', async () => {
+    const pg = makePg([]);
+    await getBusinessFacts('revenue', { window: win('total revenue in usd'), pg });
+    expect(lastSql(pg)).not.toMatch(/createdAt" >= \$1/);
+  });
+});
+
+describe('businessFacts — customers populations stay separate', () => {
+  it('counts customer-role users for the customers metric', async () => {
+    const pg = makePg([{ n: 52 }]);
+    const res = await getBusinessFacts('customers', { window: win('how many customers do we have in total'), customerRole: CUSTOMER_ROLE, pg });
+    expect(res.ok).toBe(true);
+    expect(res.sql).toMatch(/"roles"/);
+    expect(res.sql).toMatch(/customer/);
+    expect(res.facts.n).toBe(52);
+    expect(res.facts.population).toMatch(/customer/);
+  });
+
+  it('refuses the customers metric without an explicit role', async () => {
+    const res = await getBusinessFacts('customers', { window: win('how many customers'), pg: makePg([]) });
+    expect(res.ok).toBe(false);
+    expect(res.reason).toMatch(/customer role/);
+  });
+
+  it('counts distinct booking customers for bookingCustomers', async () => {
+    const pg = makePg([{ n: 26 }]);
+    const res = await getBusinessFacts('bookingCustomers', { window: win('how many customers have booked'), pg });
+    expect(res.sql).toMatch(/COUNT\(DISTINCT "customerId"\)/);
+    expect(res.facts.n).toBe(26);
+  });
+
+  it('counts every row for the users metric', async () => {
+    const pg = makePg([{ n: 91 }]);
+    const res = await getBusinessFacts('users', { window: win('how many users do we have'), pg });
+    expect(res.sql).toMatch(/COUNT\(\*\)::int AS n FROM "User"/);
+    expect(res.facts.n).toBe(91);
+  });
+});
+
+describe('businessFacts — top tours', () => {
+  it('ranks by paidAt and never by createdAt', async () => {
+    const pg = makePg([]);
+    const res = await getBusinessFacts('topTours', { window: win('top tours by revenue this month'), pg });
+    expect(res.sql).toMatch(/"b"\."paidAt"/);
+    expect(res.sql).not.toMatch(/"b"\."createdAt"/);
+    expect(res.definition).toMatch(/paidAt/);
+  });
+
+  it('uses the approved revenue statuses', async () => {
+    const pg = makePg([]);
+    const res = await getBusinessFacts('topTours', { window: win('top tours by revenue'), pg });
+    expect(res.sql).toContain("'CONFIRMED','COMPLETED'");
+  });
+});
+
+describe('businessFacts — window and status handling', () => {
+  it('applies the status filter in SQL rather than leaving it to narration', async () => {
+    const pg = makePg([{ n: 32 }]);
+    const res = await getBusinessFacts('tours', { window: win('how many tours are live right now'), statusFilter: 'ACTIVE', pg });
+    expect(res.sql).toMatch(/"status"::text = \$1/);
+    expect(res.facts.n).toBe(32);
+  });
+
+  it('counts rows created in the window for a "new X" question', async () => {
+    const pg = makePg([{ n: 43 }]);
+    const res = await getBusinessFacts('signups', { window: win('how many new signups this week'), windowedCount: true, pg });
+    expect(res.sql).toMatch(/"createdAt" >= \$1/);
+    expect(res.facts.newUsers).toBe(43);
+  });
+
+  it('returns an empty result set honestly when there is no data', async () => {
+    const pg = makePg([]);
+    const res = await getBusinessFacts('refunds', { window: win('how many refunds this week'), pg });
+    expect(res.ok).toBe(true);
+    expect(res.facts.byCurrency).toEqual([]);
+  });
+
+  it('reports a query error as a refusal, never as zero', async () => {
+    const pg = {
+      queries: [],
+      async query() {
+        throw new Error('relation "Booking" does not exist');
+      },
+    };
+    const res = await getBusinessFacts('revenue', { window: win('revenue this week'), pg });
+    expect(res.ok).toBe(false);
+    expect(res.reason).toMatch(/does not exist/);
+  });
+});
+
+describe('businessFacts — parameter numbering', () => {
+  it('numbers every placeholder distinctly (Postgres rejects $1,$1)', async () => {
+    const metrics = [
+      ['revenue', 'revenue this week', { currencyFilter: 'USD' }],
+      ['bookings', 'bookings this week', { statusFilter: 'CONFIRMED' }],
+      ['tours', 'tours this week', { windowedCount: true }],
+      ['suppliers', 'suppliers this month', { windowedCount: true }],
+      ['signups', 'signups this week', {}],
+      ['refunds', 'refunds this week', {}],
+      ['disputes', 'disputes today', { statusFilter: 'OPEN' }],
+      ['payouts', 'payouts this week', { statusFilter: 'PENDING' }],
+      ['reviews', 'reviews this week', {}],
+      ['topTours', 'top tours this month', { currencyFilter: 'USD' }],
+    ];
+    for (const [metric, question, extra] of metrics) {
+      const pg = makeStrictPg([]);
+      const res = await getBusinessFacts(metric, { window: win(question), pg, ...extra });
+      // If a placeholder were unreferenced, makeStrictPg would have thrown and
+      // the result would be a refusal.
+      expect(res.ok).toBe(true);
+      const q = pg.queries[0];
+      const used = [...q.sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1]));
+
+      // Postgres requires placeholders to be $1..$N with no gaps and no
+      // repeats. A repeat ($1,$1) is unreferenced-parameter territory; a gap
+      // means a bound value has no placeholder at all. Both fail at runtime.
+      const expected = Array.from({ length: q.params.length }, (_, i) => i + 1);
+      expect(used).toEqual(expected);
+    }
+  });
+});
+
+describe('businessFacts — currency gate', () => {
+  it('refuses a question about a currency the data does not contain', async () => {
+    const question = 'what is the revenue in gbp';
+    const route = routeToFact(question, { now: NOW });
+    const pg = makePg([{ currency: 'USD', bookings: 4, gross: '604.00' }]);
+    const res = await getBusinessFacts(route.metric, { window: route.window, currencyFilter: route.currencyFilter, pg });
+    const gate = currencyIsSatisfied(route, res);
+    // The whole point: do NOT answer a GBP question with USD numbers.
+    expect(gate.ok).toBe(false);
+    expect(gate.reason).toMatch(/GBP/);
+  });
+
+  it('passes the gate when the requested currency is present', async () => {
+    const route = routeToFact('total revenue in usd', { now: NOW });
+    const pg = makePg([{ currency: 'USD', bookings: 116, gross: '17067.42' }]);
+    const res = await getBusinessFacts(route.metric, { window: route.window, currencyFilter: route.currencyFilter, pg });
+    expect(currencyIsSatisfied(route, res).ok).toBe(true);
+  });
+
+  it('refuses when the query returned nothing in any currency', async () => {
+    const route = routeToFact('what is the revenue in gbp', { now: NOW });
+    const res = await getBusinessFacts(route.metric, { window: route.window, currencyFilter: route.currencyFilter, pg: makePg([]) });
+    expect(currencyIsSatisfied(route, res).ok).toBe(false);
+  });
+
+  it('is a no-op when the question named no currency', async () => {
+    const route = routeToFact('revenue this week', { now: NOW });
+    const res = await getBusinessFacts('revenue', { window: route.window, pg: makePg([]) });
+    expect(currencyIsSatisfied(route, res).ok).toBe(true);
+  });
+});
+
+// ── narration contract ─────────────────────────────────────────────────────
+
+describe('businessFacts — narration payload', () => {
+  it('hands the model the window, definition and facts, and nothing to invent from', async () => {
+    const pg = makePg([{ currency: 'USD', bookings: 4, gross: '604.00' }]);
+    const res = await getBusinessFacts('revenue', { window: win('revenue this week'), pg });
+    const payload = buildNarrationPayload('revenue this week', res);
+    expect(payload.window).toBe('This week');
+    expect(payload.definition).toMatch(/CONFIRMED, COMPLETED/);
+    expect(payload.facts.byCurrency[0].gross).toBe(604);
+  });
+
+  it('requires the narration to state the window explicitly', () => {
+    expect(FACT_NARRATE_SYSTEM).toMatch(/name the time window/i);
+    expect(FACT_NARRATE_SYSTEM).toMatch(/All time/);
+  });
+
+  it('forbids inventing numbers and summing across currencies', () => {
+    expect(FACT_NARRATE_SYSTEM).toMatch(/Never invent/);
+    expect(FACT_NARRATE_SYSTEM).toMatch(/NEVER sum across currencies/);
+  });
+});
+
+describe('factIntegrity', () => {
+  it('accepts a well-formed payload', () => {
+    expect(factIntegrity({ byCurrency: [{ currency: 'USD', bookings: 1, gross: 2 }] })).toEqual([]);
+  });
+
+  it('flags an empty row object (the Phase 0 silent-wrong-answer bug)', () => {
+    const problems = factIntegrity({ rows: [{}] });
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems[0]).toMatch(/empty object/);
+  });
+
+  it('flags an explicitly undefined field', () => {
+    const problems = factIntegrity({ n: undefined });
+    expect(problems[0]).toMatch(/undefined/);
+  });
+
+  it('allows an empty array — genuinely no rows is valid', () => {
+    expect(factIntegrity({ byCurrency: [] })).toEqual([]);
+  });
+});
