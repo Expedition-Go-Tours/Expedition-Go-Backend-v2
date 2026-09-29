@@ -75,7 +75,12 @@ const TOP_TOURS_DATE_COLUMN = 'paidAt';
 
 /** Format a monetary amount the same way the daily digest does. */
 function money(n, currency = 'USD') {
-  const amount = Number(n || 0).toFixed(2);
+  // undefined or a non-numeric value means the figure was never there (a
+  // missing or mis-aliased column). It must not be formatted as "$0.00".
+  if (n === undefined) return null;
+  const value = Number(n);
+  if (!Number.isFinite(value)) return null;
+  const amount = value.toFixed(2);
   // USD is the default and the only currency in use; anything else is prefixed
   // rather than assumed, so a non-USD total can never read as dollars.
   return currency && currency !== 'USD' ? `${currency} ${amount}` : `$${amount}`;

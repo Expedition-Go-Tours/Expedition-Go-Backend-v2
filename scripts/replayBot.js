@@ -38,7 +38,13 @@ const path = require('path');
 const REPO_ROOT = process.env.REPLAY_REPO_ROOT
   ? path.resolve(process.env.REPLAY_REPO_ROOT)
   : path.resolve(__dirname, '..');
-require(path.join(REPO_ROOT, 'node_modules/dotenv')).config({ path: path.join(REPO_ROOT, '.env') });
+// dotenv is optional: env may already be in the process, and its absence must
+// not stop the harness from loading.
+try {
+  require(path.join(REPO_ROOT, 'node_modules/dotenv')).config({ path: path.join(REPO_ROOT, '.env') });
+} catch {
+  /* no dotenv available — rely on the ambient environment */
+}
 
 // The corpus lives next to the repo by default, but may be supplied separately
 // (e.g. when the harness runs from /tmp). Only the corpus is a fixture now — the
@@ -46,7 +52,6 @@ require(path.join(REPO_ROOT, 'node_modules/dotenv')).config({ path: path.join(RE
 // describes the code that would actually ship.
 const FIXTURES = process.env.REPLAY_FIXTURES || path.join(REPO_ROOT, '__tests__/replay');
 
-const { Client } = require(path.join(REPO_ROOT, 'bots/discord-bot/node_modules/pg'));
 const { callMimo: realCallMimo } = require(path.join(REPO_ROOT, 'src/core/services/mimoClient'));
 const { answerQuestion } = require(path.join(REPO_ROOT, 'bots/discord-bot/queryAgent'));
 const { routeToFact, factsEnabled } = require(path.join(REPO_ROOT, 'bots/discord-bot/factRouter'));
@@ -58,6 +63,33 @@ const {
   FACT_NARRATE_SYSTEM,
 } = require(path.join(REPO_ROOT, 'bots/discord-bot/businessFacts'));
 const { resolveWindow, REVENUE_STATUSES } = require(path.join(REPO_ROOT, 'src/core/services/metricDefinitions'));
+
+/**
+ * pg is loaded lazily, only when a connection is actually opened.
+ *
+ * It is installed under bots/discord-bot/node_modules on the server but is not a
+ * root dependency, so requiring it here would make the whole module (including
+ * the exported helpers) unimportable anywhere pg is absent. Keeping it inside
+ * this function means the fact-path helpers can be unit-tested with an injected
+ * stub client and no driver at all.
+ */
+function loadPgClient() {
+  const candidates = [
+    path.join(REPO_ROOT, 'bots/discord-bot/node_modules/pg'),
+    path.join(REPO_ROOT, 'node_modules/pg'),
+    'pg',
+  ];
+  for (const c of candidates) {
+    try {
+      return require(c).Client;
+    } catch (e) {
+      if (e.code !== 'MODULE_NOT_FOUND') throw e;
+    }
+  }
+  throw new Error(
+    'pg is not installed. The bot carries its own copy at bots/discord-bot/node_modules/pg; run the harness from a checkout that has it.'
+  );
+}
 
 // ── args ───────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -156,7 +188,13 @@ async function runCurrent(q, pg) {
 // production module so the harness and production cannot drift apart.
 
 // ── path: FACT (deterministic fact layer + MiMo narration) ─────────────────
-async function runFact(q, pg) {
+/**
+ * @param {object} q a corpus entry
+ * @param {object} pg a pg-like client
+ * @param {{callMimo?: Function}} [opts] injected so tests can run with no model
+ */
+async function runFact(q, pg, opts = {}) {
+  const model = opts.callMimo || realCallMimo;
   const t0 = Date.now();
   const route = routeToFact(q.question);
   if (!route) {
@@ -197,7 +235,7 @@ async function runFact(q, pg) {
   // Narration by the model — the fact layer supplies numbers, MiMo supplies the
   // prose. This is a hard requirement: the facts path must not become a
   // template-only responder.
-  const callMimo = instrumentMimo(realCallMimo);
+  const callMimo = instrumentMimo(model);
   const tNarr = Date.now();
   let answer = null;
   let narrError = null;
@@ -319,12 +357,13 @@ async function currencyAudit(pg) {
 }
 
 // ── main ───────────────────────────────────────────────────────────────────
-(async () => {
+async function main() {
   const corpus = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'questions.json'), 'utf8')).questions;
   let questions = corpus;
   if (ONLY) questions = questions.filter((q) => ONLY.includes(q.id));
   if (LIMIT) questions = questions.slice(0, LIMIT);
 
+  const Client = loadPgClient();
   const pg = new Client({ connectionString: process.env.DATABASE_URL });
   await pg.connect();
 
@@ -527,8 +566,19 @@ async function currencyAudit(pg) {
 
   fs.writeFileSync(OUT, JSON.stringify({ generatedAt: new Date().toISOString(), currencyAudit: cur, revenueAudit: revAudit, results }, null, 2));
   say(`\nJSON artifact: ${OUT}`);
-  process.exit(0);
-})().catch((e) => {
-  fs.writeSync(1, `\nFATAL: ${e && e.stack ? e.stack : e}\n`);
-  process.exit(1);
-});
+  return results;
+}
+
+// Exported so the harness's own logic can be regression-tested without a
+// database or a model (see __tests__/unit/replayHarness.test.js). The script
+// only runs its main flow when executed directly.
+module.exports = { runFact, runCurrent, revenueDefinitionAudit, currencyAudit, REVENUE_AUDIT_DEFINITIONS };
+
+if (require.main === module) {
+  main()
+    .then(() => process.exit(0))
+    .catch((e) => {
+      fs.writeSync(1, `\nFATAL: ${e && e.stack ? e.stack : e}\n`);
+      process.exit(1);
+    });
+}

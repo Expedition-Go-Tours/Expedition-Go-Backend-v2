@@ -101,7 +101,26 @@ function where() {
   };
 }
 
-const num = (x) => (x === null || x === undefined ? null : Number(x));
+/**
+ * Normalise a SQL numeric to a JS number, WITHOUT turning a missing value into
+ * a zero.
+ *
+ * pg returns rows keyed by column NAME, so a SELECT that forgets an alias (or
+ * aliases it differently) yields `undefined` for that field rather than
+ * throwing. Collapsing `undefined` to `null` here would let that row through as
+ * "no value" and the narration would report $0.00 with full confidence — the
+ * same silent failure that previously emptied the compact schema. `undefined`
+ * and non-numeric input are therefore passed through as `undefined`, which
+ * factIntegrity() reports as a malformed fact before anything is narrated.
+ *
+ * A genuine SQL NULL (AVG over zero rows, for instance) stays `null`.
+ */
+const num = (x) => {
+  if (x === undefined) return undefined;
+  if (x === null) return null;
+  const n = Number(x);
+  return Number.isFinite(n) ? n : undefined;
+};
 
 /**
  * First row of a scalar aggregate, or an empty object.

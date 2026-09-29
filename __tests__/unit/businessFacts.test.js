@@ -531,3 +531,36 @@ describe('factIntegrity', () => {
     expect(factIntegrity({ byCurrency: [] })).toEqual([]);
   });
 });
+
+describe('businessFacts — a missing column must never read as a zero', () => {
+  // pg returns rows keyed by column NAME. A SELECT with no alias (or a wrong
+  // one) yields `undefined` for that field rather than throwing, so the danger
+  // is not a crash — it is a confident "$0.00" / "no revenue". These pin the
+  // conversion that stands between a mis-aliased column and the narration.
+  it('surfaces an unaliased gross as undefined, which factIntegrity rejects', async () => {
+    // The row has no `gross` key at all, as if the SQL said SUM("total") with
+    // no AS alias.
+    const pg = { async query() { return { rows: [{ currency: 'USD', bookings: 4 }] }; } };
+    const res = await getBusinessFacts('revenue', { window: resolveWindow('total revenue', NOW), pg });
+    expect(res.ok).toBe(true);
+    expect(res.facts.byCurrency[0].gross).toBeUndefined();
+    expect(res.facts.byCurrency[0].grossFormatted).toBeNull();
+    expect(factIntegrity(res.facts).length).toBeGreaterThan(0);
+  });
+
+  it('still treats a genuine SQL NULL as null, not as a refusal', async () => {
+    const pg = { async query() { return { rows: [{ currency: 'USD', bookings: 0, gross: null }] }; } };
+    const res = await getBusinessFacts('revenue', { window: resolveWindow('total revenue', NOW), pg });
+    expect(res.facts.byCurrency[0].gross).toBeNull();
+    expect(res.facts.byCurrency[0].grossFormatted).toBe('$0.00');
+    expect(factIntegrity(res.facts)).toEqual([]);
+  });
+
+  it('never formats an undefined amount as dollars', () => {
+    expect(money(undefined)).toBeNull();
+    expect(money(NaN)).toBeNull();
+    // A real zero is still a zero.
+    expect(money(0)).toBe('$0.00');
+    expect(money('604.00')).toBe('$604.00');
+  });
+});
