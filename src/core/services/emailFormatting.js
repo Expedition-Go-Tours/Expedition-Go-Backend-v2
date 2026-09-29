@@ -90,8 +90,11 @@ function formatTime(time) {
 
 /**
  * Break down a travelers payload into counts + a human label.
- * Handles object {adults, children, infants}, array-of-details, and the
- * numeric parts of a mixed shape — mirrors formatTravelers in the dashboard.
+ *
+ * Reads in precedence order: explicit {adults, children,infants} counts, then
+ * array-of-details, then any numeric parts of a mixed shape. The counts are
+ * authoritative because they match what the dashboard displays; `details` is a
+ * list of named travellers, not a headcount.
  *
  * Returns { adults, children, infants, total, label }.
  */
@@ -111,19 +114,22 @@ function formatTravelers(travelers) {
 
   const asObj = travelers;
 
-  if (asObj.details && Array.isArray(asObj.details)) {
+  // Explicit counts win. `details` lists only the travellers somebody actually
+  // named, which on a shared tour is usually just the lead booker — so a party
+  // of 2 with one name would report "1 adult" here while the dashboard sums the
+  // counts and reports 2 (storefront.js / ghana controller). Read `details` only
+  // when the booking carries no counts at all.
+  out.adults = num(asObj.adults);
+  out.children = num(asObj.children);
+  out.infants = num(asObj.infants);
+
+  if (out.adults === 0 && out.children === 0 && out.infants === 0 && Array.isArray(asObj.details)) {
     for (const d of asObj.details) {
       const group = d?.ageGroup || d?.type;
       if (group === 'adult' || group === 'Adult') out.adults += num(d?.count ?? d?.qty ?? 1);
       else if (group === 'child' || group === 'Child') out.children += num(d?.count ?? d?.qty ?? 1);
       else if (group === 'infant' || group === 'Infant') out.infants += num(d?.count ?? d?.qty ?? 1);
     }
-  }
-
-  if (out.adults === 0 && out.children === 0 && out.infants === 0) {
-    out.adults = num(asObj.adults);
-    out.children = num(asObj.children);
-    out.infants = num(asObj.infants);
   }
 
   if (out.adults === 0 && out.children === 0 && out.infants === 0) {
