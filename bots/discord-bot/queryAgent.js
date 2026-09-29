@@ -1047,6 +1047,10 @@ async function answerQuestion({ question, userId = '?', historyText = '', histor
   // declines.
   if (factsEnabled()) {
     try {
+      // historyText is deliberately NOT passed. The router only claims questions
+      // it can answer from the text alone (its own CONTEXTUAL_MARKERS decline
+      // "in usd" and "details on the 4 bookings"), because a shared-cache answer
+      // to a question whose real subject lives in an earlier turn would be wrong.
       const facts = await answerBusinessFact({ question, pg, callMimo });
       if (facts.ok) {
         const final = stripEmojis(stripFences(facts.answer));
