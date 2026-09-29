@@ -190,10 +190,9 @@ const MULTI_PERIOD_BUCKETS = /\bby\s+(month|week|day|hour|quarter|year|day of we
 /**
  * Feature gate for the deterministic facts path. DEFAULT OFF.
  *
- * Nothing calls this yet — the wiring into answerQuestion is Phase 2, and it
- * must only be enabled after the Phase 1 replay has been reviewed. The gate
- * exists now so the switch is a single, reversible env change rather than a code
- * edit at rollout time.
+ * Read once per question by answerQuestion in queryAgent.js, which is the only
+ * production caller of answerBusinessFact(). With the flag unset this module is
+ * inert and the bot behaves exactly as it did before the layer existed.
  *
  * Unset, empty, "false", "0" and anything else that is not exactly "true" all
  * mean OFF. That direction is deliberate: a typo or a missing variable can only

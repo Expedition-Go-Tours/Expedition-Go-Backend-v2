@@ -26,6 +26,8 @@
 
 const { validateReadOnly } = require('../../src/core/services/sqlGuard');
 const { buildActivityReport } = require('./activityEngine');
+const { factsEnabled } = require('./factRouter');
+const { answerBusinessFact } = require('./businessFacts');
 
 // Symbols the ops assistant is allowed to use. Emoji and pictographs that
 // ARE NOT in this list are stripped deterministically from every answer, so
@@ -988,8 +990,11 @@ async function answerActivity({ question, userId = '?', pg, callMimo }) {
 }
 
 /**
- * Production entry point: fast path first, ReAct escalation as a fallback,
- * deterministic no-emoji cleanup on whatever text comes back.
+ * Production entry point: activity log → deterministic facts (flag-gated) →
+ * fast path → ReAct escalation, then deterministic no-emoji cleanup.
+ *
+ * The facts path is opt-in via AI_FACTS_ENABLED (see factsEnabled()). With the
+ * flag unset this function behaves exactly as it did before that layer existed.
  *
  * Accepts the same options as runQueryAgent. Optionally `cache = { get, set }`
  * (Redis-backed) keyed by userId + normalized question; `cacheTtlSec` applies
@@ -1028,6 +1033,56 @@ async function answerQuestion({ question, userId = '?', historyText = '', histor
       return result;
     } catch (e) {
       console.log(`[answer:${userId}] activity engine failed → fall through: ${e.message}`);
+    }
+  }
+
+  // ── Deterministic business facts (flag-gated) ─────────────────────────
+  // A rule-based router picks a metric, SQL produces the number, MiMo narrates
+  // it under the constrained FACT_NARRATE_SYSTEM prompt. This is the latency
+  // win: one model round-trip instead of the fast path's two or more.
+  //
+  // Every exit other than a narrated answer falls through to the SQL agent
+  // below. That direction is deliberate — a wrong number is far worse than a
+  // slow one, and the SQL agent remains able to answer everything this layer
+  // declines.
+  if (factsEnabled()) {
+    try {
+      const facts = await answerBusinessFact({ question, pg, callMimo });
+      if (facts.ok) {
+        const final = stripEmojis(stripFences(facts.answer));
+        // Never post an empty or placeholder narration: the SQL path below has
+        // UNANSWERABLE_MESSAGE and the escalation loop behind it.
+        if (final && !isTemplateEcho(final)) {
+          console.log(
+            `[answer:${userId}] fact_path metric=${facts.route.metric} ` +
+            `window="${(facts.route.window || {}).label || '-'}" ` +
+            `sql=${facts.sqlMs}ms narr=${facts.narrMs}ms total=${facts.totalMs}ms`,
+          );
+          if (key) {
+            try {
+              await cache.set(key, final, cacheTtlSec);
+            } catch {
+              // ignore cache write failures
+            }
+          }
+          return {
+            final,
+            // The generated SQL is logged so the audit trail shows exactly which
+            // query produced the number, same as the SQL path.
+            sqlLogs: facts.sql ? [facts.sql] : [],
+            rowCount: 0,
+            factPath: true,
+            factMetric: facts.route.metric,
+          };
+        }
+        console.log(`[answer:${userId}] fact_path unusable narration → fall through`);
+      } else {
+        console.log(`[answer:${userId}] fact_path declined (${facts.stage}: ${facts.reason}) → fall through`);
+      }
+    } catch (e) {
+      // Belt and braces: answerBusinessFact does not throw, but a bug here must
+      // degrade to the old behaviour, never to an error message.
+      console.log(`[answer:${userId}] fact_path failed → fall through: ${e.message}`);
     }
   }
 

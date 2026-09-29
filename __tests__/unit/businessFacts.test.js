@@ -14,10 +14,12 @@
 const { routeToFact, factsEnabled } = require('../../bots/discord-bot/factRouter');
 const {
   getBusinessFacts,
+  answerBusinessFact,
   currencyIsSatisfied,
   buildNarrationPayload,
   factIntegrity,
   FACT_NARRATE_SYSTEM,
+  NARRATE_MAX_TOKENS,
 } = require('../../bots/discord-bot/businessFacts');
 const {
   REVENUE_STATUSES,
@@ -633,5 +635,145 @@ describe('businessFacts — a missing column must never read as a zero', () => {
     // A real zero is still a zero.
     expect(money(0)).toBe('$0.00');
     expect(money('604.00')).toBe('$604.00');
+  });
+});
+
+// ── answerBusinessFact: the one pipeline production and the replay share ───
+//
+// This function is what queryAgent.answerQuestion calls and what
+// scripts/replayBot.js measures. Its refusals are the safety property of the
+// whole layer, so each gate is pinned here rather than only at the SQL step.
+
+describe('answerBusinessFact — refusals, and the one success shape', () => {
+  const revenueRows = [{ currency: 'USD', bookings: 4, gross: '604.00' }];
+  const noModel = () => {
+    throw new Error('the model must not be called');
+  };
+
+  it('declines without touching the database when the router does not claim', async () => {
+    const pg = makePg(revenueRows);
+    const r = await answerBusinessFact({ question: 'why did bookings drop last week', pg, callMimo: noModel });
+    expect(r.ok).toBe(false);
+    expect(r.stage).toBe('route');
+    expect(r.route).toBeNull();
+    expect(pg.queries).toHaveLength(0);
+  });
+
+  it('answers with the narrated text, the SQL and the facts', async () => {
+    const pg = makePg(revenueRows);
+    const r = await answerBusinessFact({
+      question: 'total revenue this week',
+      pg,
+      now: NOW,
+      callMimo: async () => 'Revenue this week was **$604.00** across 4 bookings.',
+    });
+    expect(r.ok).toBe(true);
+    expect(r.stage).toBe('answered');
+    expect(r.route.metric).toBe('revenue');
+    expect(r.answer).toMatch(/\$604\.00/);
+    expect(r.sql).toMatch(/FROM "Booking"/);
+    expect(r.facts.byCurrency[0].gross).toBe(604);
+    expect(r.sqlMs).toBeGreaterThanOrEqual(0);
+    expect(r.narrMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('narrates under the constrained prompt with the definition attached', async () => {
+    let seen = null;
+    await answerBusinessFact({
+      question: 'total revenue this week',
+      pg: makePg(revenueRows),
+      now: NOW,
+      callMimo: async (opts) => {
+        seen = opts;
+        return 'ok';
+      },
+    });
+    expect(seen.messages[0].content).toBe(FACT_NARRATE_SYSTEM);
+    expect(seen.maxTokens).toBe(NARRATE_MAX_TOKENS);
+    // The narration payload must carry the filter definition, so the model
+    // cannot restate "revenue" differently from the way it was computed.
+    const payload = JSON.parse(seen.messages[1].content);
+    expect(payload.definition).toMatch(/CONFIRMED/);
+    expect(payload.window).toBeTruthy();
+    expect(payload.facts.byCurrency[0].gross).toBe(604);
+  });
+
+  it('honours the injectable clock', async () => {
+    const pg = makePg(revenueRows);
+    const r = await answerBusinessFact({
+      question: 'revenue in the past 7 days',
+      pg,
+      now: NOW,
+      callMimo: async () => 'ok',
+    });
+    // Rolling window ends at the reference instant, not at wall-clock now.
+    expect(r.sql).toMatch(/\$1/);
+    expect(r.route.window.to.toISOString()).toBe(NOW.toISOString());
+  });
+
+  it('refuses a currency the data does not contain', async () => {
+    const r = await answerBusinessFact({
+      question: 'what is the revenue in gbp',
+      pg: makePg(revenueRows),
+      now: NOW,
+      callMimo: noModel,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.stage).toBe('currency');
+    expect(r.reason).toMatch(/GBP/);
+  });
+
+  it('refuses to narrate a fact with an undefined field', async () => {
+    // No `gross` key at all — what a SELECT missing its AS alias produces.
+    const pg = makePg([{ currency: 'USD', bookings: 4 }]);
+    const r = await answerBusinessFact({ question: 'total revenue this week', pg, now: NOW, callMimo: noModel });
+    expect(r.ok).toBe(false);
+    expect(r.stage).toBe('integrity');
+    expect(r.integrity.problems.length).toBeGreaterThan(0);
+  });
+
+  it('maps a query error to a refusal, not to zero revenue', async () => {
+    const pg = { async query() { throw new Error('relation "Booking" does not exist'); } };
+    const r = await answerBusinessFact({ question: 'total revenue this week', pg, now: NOW, callMimo: noModel });
+    expect(r.ok).toBe(false);
+    expect(r.stage).toBe('query');
+    expect(r.reason).toMatch(/does not exist/);
+  });
+
+  it('refuses when the model fails, so the caller falls back to the SQL agent', async () => {
+    const r = await answerBusinessFact({
+      question: 'total revenue this week',
+      pg: makePg(revenueRows),
+      now: NOW,
+      callMimo: async () => { throw new Error('model unavailable'); },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.stage).toBe('narrate');
+    expect(r.answer).toBeNull();
+    expect(r.reason).toMatch(/model unavailable/);
+  });
+
+  it('refuses an empty narration instead of reporting an answered question', async () => {
+    const r = await answerBusinessFact({ question: 'total revenue this week', pg: makePg(revenueRows), now: NOW, callMimo: async () => '   ' });
+    expect(r.ok).toBe(false);
+    expect(r.stage).toBe('narrate');
+    expect(r.reason).toMatch(/empty/);
+  });
+
+  it('passes an explicit top-N count through to the ranking query', async () => {
+    const pg = makePg([]);
+    const r = await answerBusinessFact({
+      question: 'top 3 tours by revenue',
+      pg,
+      now: NOW,
+      callMimo: async () => 'ok',
+    });
+    expect(r.ok).toBe(true);
+    expect(r.route.topToursLimit).toBe(3);
+    expect(r.sql).toMatch(/LIMIT 3\b/);
+  });
+
+  it('never throws, whatever the inputs are', async () => {
+    await expect(answerBusinessFact({ question: '', pg: makePg([]), callMimo: noModel })).resolves.toMatchObject({ ok: false, stage: 'route' });
   });
 });

@@ -16,14 +16,19 @@
  * internally cannot depend on which filter the model happened to pick.
  *
  * ── Contract ─────────────────────────────────────────────────────────────
- *   getBusinessFacts() returns either:
- *     { ok: true,  metric, window, definition, currencyGrouping, sql, facts }
- *     { ok: false, reason }  — a refusal the caller MUST honour by falling
- *                             through to the SQL agent.
+ *   answerBusinessFact() is the whole pipeline: route → query → currency gate
+ *   → integrity gate → narrate. It returns
+ *     { ok: true,  answer, fact, sql, facts, route, sqlMs, narrMs, totalMs }
+ *     { ok: false, stage, reason }  — a refusal the caller MUST honour by
+ *                                    falling through to the SQL agent.
  *   A refusal is never an error to be swallowed into a wrong answer. The
  *   currency gate below is the important case: all bookings are USD today, so a
  *   flat total would look right until a second currency made it wrong. Rather
  *   than substitute USD for a question that asked for GBP, it refuses.
+ *
+ *   getBusinessFacts() is the single-metric step underneath it, exported because
+ *   the fact SQL is unit-tested directly and because the revenue-definition
+ *   audit needs the raw query.
  *
  * Every SELECT carries explicit AS aliases. Positional row access (x[0])
  * silently yields undefined, because pg keys rows by column NAME; that
@@ -43,6 +48,7 @@ const {
   describeWindow,
   money,
 } = require('../../src/core/services/metricDefinitions');
+const { routeToFact } = require('./factRouter');
 
 /**
  * Constrained narration contract for MiMo. Mirrors ACTIVITY_NARRATE_SYSTEM in
@@ -568,11 +574,141 @@ function buildNarrationPayload(question, result) {
   };
 }
 
+/** Narration is a short rewrite of a small JSON report. Matches FINAL_MAX_TOKENS. */
+const NARRATE_MAX_TOKENS = 1400;
+
+/**
+ * Answer one question end to end through the facts layer: route, compute, gate,
+ * narrate.
+ *
+ * This is the ONLY implementation of the pipeline. bots/discord-bot/queryAgent.js
+ * calls it from answerQuestion (behind factsEnabled()), and scripts/replayBot.js
+ * calls the same function for its measurements. Keeping one copy is the point:
+ * a replay that measures a parallel implementation of the fact path reports
+ * numbers for code that never runs in production.
+ *
+ * ── Gate order, and why it is this order ───────────────────────────────────
+ *   1. route   — a false negative here is harmless (the SQL agent answers).
+ *   2. query   — a DB failure must refuse, never degrade to a zero.
+ *   3. currency— answering "revenue in gbp" with USD data is a confident wrong
+ *                answer, which is the one outcome worse than not answering.
+ *   4. integrity — a malformed fact must never reach the narration.
+ *   5. narrate— the model writes the prose. A failure or an empty string is a
+ *                refusal too, so the caller falls back to the SQL agent rather
+ *                than posting nothing.
+ *
+ * @param {object} opts
+ * @param {string} opts.question
+ * @param {object} opts.pg       a pg-like client (only .query is used)
+ * @param {Function} opts.callMimo  async ({messages, maxTokens, temperature,
+ *        reasoningEffort}) => string
+ * @param {Date}   [opts.now]     injectable clock, for deterministic tests
+ * @param {number} [opts.maxTokens]
+ * @returns {Promise<object>} `{ ok: false, stage, reason }` on any refusal — the
+ *   caller MUST fall through. `{ ok: true, stage: 'answered', answer }` on
+ *   success. Never throws.
+ */
+async function answerBusinessFact({ question, pg, callMimo, now = null, maxTokens = NARRATE_MAX_TOKENS }) {
+  const t0 = Date.now();
+  const route = routeToFact(question, now ? { now } : {});
+  if (!route) {
+    return {
+      ok: false,
+      stage: 'route',
+      reason: 'router declined (falls through to the SQL agent)',
+      route: null,
+      totalMs: Date.now() - t0,
+    };
+  }
+
+  const sqlMs0 = Date.now();
+  const fact = await getBusinessFacts(route.metric, {
+    window: route.window,
+    statusFilter: route.statusFilter,
+    windowedCount: route.windowedCount,
+    currencyFilter: route.currencyFilter,
+    customerRole: route.customerRole,
+    // "top 3 tours" must return three rows. Dropping this silently answered the
+    // default five, which is how the harness and the router disagreed.
+    topToursLimit: route.topToursLimit,
+    pg,
+  });
+  const sqlMs = Date.now() - sqlMs0;
+  const base = { route, fact, sql: fact.sql || '', facts: fact.facts, sqlMs };
+
+  if (!fact.ok) {
+    return { ...base, ok: false, stage: 'query', reason: fact.reason, totalMs: Date.now() - t0 };
+  }
+
+  const currencyGate = currencyIsSatisfied(route, fact);
+  if (!currencyGate.ok) {
+    return { ...base, ok: false, stage: 'currency', reason: currencyGate.reason, currencyGate, totalMs: Date.now() - t0 };
+  }
+
+  const problems = factIntegrity(fact.facts);
+  if (problems.length) {
+    return {
+      ...base, ok: false, stage: 'integrity', reason: problems[0],
+      integrity: { ok: false, problems }, totalMs: Date.now() - t0,
+    };
+  }
+
+  // Narration by the model — the fact layer supplies the numbers, MiMo supplies
+  // the prose. This is a hard requirement: the facts path must not collapse into
+  // a template-only responder.
+  const tNarr = Date.now();
+  let answer = null;
+  let narrError = null;
+  try {
+    const raw = await callMimo({
+      messages: [
+        { role: 'system', content: FACT_NARRATE_SYSTEM },
+        { role: 'user', content: JSON.stringify(buildNarrationPayload(question, fact), null, 1) },
+      ],
+      maxTokens,
+      temperature: 0.1,
+      reasoningEffort: 'low',
+    });
+    answer = String(raw || '').trim();
+  } catch (e) {
+    narrError = String(e.message || e);
+  }
+  const narrMs = Date.now() - tNarr;
+
+  // An empty answer is a refusal, not a success. The caller has an
+  // UNANSWERABLE_MESSAGE fallback and the SQL agent; posting "" is neither.
+  if (narrError || !answer) {
+    return {
+      ...base,
+      ok: false,
+      stage: 'narrate',
+      reason: narrError || 'narration returned an empty answer',
+      answer: null,
+      narrError,
+      narrMs,
+      totalMs: Date.now() - t0,
+    };
+  }
+
+  return {
+    ...base,
+    ok: true,
+    stage: 'answered',
+    reason: null,
+    answer,
+    narrError: null,
+    narrMs,
+    totalMs: Date.now() - t0,
+  };
+}
+
 module.exports = {
   getBusinessFacts,
+  answerBusinessFact,
   currencyIsSatisfied,
   buildNarrationPayload,
   factIntegrity,
   FACT_NARRATE_SYSTEM,
+  NARRATE_MAX_TOKENS,
   LIMITS,
 };

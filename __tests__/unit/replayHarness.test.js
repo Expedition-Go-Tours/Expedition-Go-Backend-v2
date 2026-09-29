@@ -92,9 +92,10 @@ describe('replayBot runFact — wiring', () => {
     // One row with a missing amount: the narration would otherwise call this
     // "no revenue" with full confidence.
     const pg = makePg([{ contains: 'FROM "Booking"', rows: [{ currency: 'USD', bookings: 2, gross: null }] }]);
-    const rec = await runFact({ question: 'revenue this week' }, pg, { callMimo: noModel });
+    const rec = await runFact({ question: 'revenue this week' }, pg, { callMimo: async () => 'Revenue this week was $0.00.' });
     // gross: null is a legitimate zero, so this must still narrate...
     expect(rec.declined).toBe(false);
+    expect(rec.integrity).toBeUndefined();
 
     // ...but an absent field must not be narrated as a real value.
     const bad = makePg([{ contains: 'FROM "Booking"', rows: [{ currency: 'USD', bookings: 2 }] }]);
@@ -125,6 +126,19 @@ describe('replayBot runFact — wiring', () => {
     });
     expect(rec.answer).toBeNull();
     expect(rec.narrError).toMatch(/model unavailable/);
+    // The facts were sound; only the narration round-trip failed. The record
+    // must still read as "not answered", because the production caller falls
+    // through to the SQL agent on exactly this path.
+    expect(rec.declines).toBe(true);
+    expect(rec.stage).toBe('narrate');
+  });
+
+  it('refuses an empty narration rather than reporting an answered question', async () => {
+    const pg = makePg([{ contains: 'FROM "Booking"', rows: [USD_ROW] }]);
+    const rec = await runFact({ question: 'revenue this week' }, pg, { callMimo: async () => '   ' });
+    expect(rec.declines).toBe(true);
+    expect(rec.stage).toBe('narrate');
+    expect(rec.error).toMatch(/empty/);
   });
 
   it('records the generated SQL so the report can show it', async () => {

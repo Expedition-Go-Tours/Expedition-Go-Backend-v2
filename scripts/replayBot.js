@@ -54,14 +54,8 @@ const FIXTURES = process.env.REPLAY_FIXTURES || path.join(REPO_ROOT, '__tests__/
 
 const { callMimo: realCallMimo } = require(path.join(REPO_ROOT, 'src/core/services/mimoClient'));
 const { answerQuestion } = require(path.join(REPO_ROOT, 'bots/discord-bot/queryAgent'));
-const { routeToFact, factsEnabled } = require(path.join(REPO_ROOT, 'bots/discord-bot/factRouter'));
-const {
-  getBusinessFacts,
-  currencyIsSatisfied,
-  buildNarrationPayload,
-  factIntegrity,
-  FACT_NARRATE_SYSTEM,
-} = require(path.join(REPO_ROOT, 'bots/discord-bot/businessFacts'));
+const { factsEnabled } = require(path.join(REPO_ROOT, 'bots/discord-bot/factRouter'));
+const { answerBusinessFact } = require(path.join(REPO_ROOT, 'bots/discord-bot/businessFacts'));
 const { resolveWindow, REVENUE_STATUSES } = require(path.join(REPO_ROOT, 'src/core/services/metricDefinitions'));
 
 /**
@@ -180,95 +174,70 @@ async function runCurrent(q, pg) {
   };
 }
 
-// ── fact integrity ─────────────────────────────────────────────────────────
-// A fact layer that returns rows of `undefined` is WORSE than no fact layer:
-// the narration then confidently says "no data is available". The first
-// harness run scored exactly that as a pass, so this check is mandatory — a
-// malformed fact is a FAILURE, not a success. The gate is imported from the
-// production module so the harness and production cannot drift apart.
-
 // ── path: FACT (deterministic fact layer + MiMo narration) ─────────────────
 /**
+ * Measure the fact path by running the PRODUCTION pipeline.
+ *
+ * This used to re-implement route → getBusinessFacts → currency gate →
+ * integrity gate → narrate locally, which meant the replay measured code that
+ * never ran in the bot — it even disagreed with it (the local copy dropped
+ * route.topToursLimit, so "top 3 tours" was measured at five rows). It now
+ * delegates to answerBusinessFact() and only reshapes the result into the record
+ * shape the report below consumes.
+ *
  * @param {object} q a corpus entry
  * @param {object} pg a pg-like client
  * @param {{callMimo?: Function}} [opts] injected so tests can run with no model
  */
 async function runFact(q, pg, opts = {}) {
-  const model = opts.callMimo || realCallMimo;
-  const t0 = Date.now();
-  const route = routeToFact(q.question);
-  if (!route) {
-    return { routed: false, reason: 'router declined (falls through to SQL agent)', totalMs: Date.now() - t0 };
+  const callMimo = instrumentMimo(opts.callMimo || realCallMimo);
+  const r = await answerBusinessFact({ question: q.question, pg, callMimo });
+
+  if (!r.route) {
+    return { routed: false, reason: r.reason, totalMs: r.totalMs };
   }
 
-  const sqlMs0 = Date.now();
-  const fact = await getBusinessFacts(route.metric, {
-    window: route.window,
-    currencyFilter: route.currencyFilter,
-    statusFilter: route.statusFilter,
-    windowedCount: route.windowedCount,
-    customerRole: route.customerRole,
-    pg,
-  });
-  const sqlMs = Date.now() - sqlMs0;
-  if (!fact.ok) {
-    return { routed: true, metric: route.metric, totalMs: Date.now() - t0, fact, error: fact.reason, declines: true };
-  }
-
-  const gate = currencyIsSatisfied(route, fact);
-  if (!gate.ok) {
-    return {
-      routed: true, metric: route.metric, totalMs: Date.now() - t0, sqlMs, fact,
-      declines: true, currencyGate: gate,
-    };
-  }
-
-  // Integrity gate — refuse to narrate a malformed fact.
-  const problems = factIntegrity(fact.facts);
-  if (problems.length) {
-    return {
-      routed: true, metric: route.metric, totalMs: Date.now() - t0, sqlMs, fact,
-      declines: true, integrity: { ok: false, problems },
-    };
-  }
-
-  // Narration by the model — the fact layer supplies numbers, MiMo supplies the
-  // prose. This is a hard requirement: the facts path must not become a
-  // template-only responder.
-  const callMimo = instrumentMimo(model);
-  const tNarr = Date.now();
-  let answer = null;
-  let narrError = null;
-  try {
-    const raw = await callMimo({
-      messages: [
-        { role: 'system', content: FACT_NARRATE_SYSTEM },
-        { role: 'user', content: JSON.stringify(buildNarrationPayload(q.question, fact), null, 1) },
-      ],
-      maxTokens: 1400,
-      temperature: 0.1,
-      reasoningEffort: 'low',
-    });
-    answer = String(raw || '').trim();
-  } catch (e) {
-    narrError = String(e.message || e);
-  }
-  const narrMs = Date.now() - tNarr;
-  return {
+  const modelCalls = callMimo.calls.length;
+  const modelMs = callMimo.calls.reduce((a, c) => a + c.ms, 0);
+  // The record used to spell this two ways — `declines: true` on refusals and
+  // `declined: false` on successes — so the report (which reads `.declines`) and
+  // the tests (which read `.declined`) could disagree about the same run. Both
+  // keys now carry one value on every branch.
+  const claimed = (declined) => ({
     routed: true,
-    metric: route.metric,
-    window: route.window.label,
-    definition: fact.definition || null,
-    sql: fact.sql,
-    sqlMs,
-    facts: fact.facts,
-    narrMs,
-    totalMs: Date.now() - t0,
-    modelCalls: callMimo.calls.length,
-    modelMs: callMimo.calls.reduce((a, c) => a + c.ms, 0),
-    answer,
-    narrError,
-    declined: false,
+    metric: r.route.metric,
+    window: r.route.window.label,
+    stage: r.stage,
+    modelCalls,
+    modelMs,
+    sqlMs: r.sqlMs,
+    fact: r.fact,
+    declines: declined,
+    declined,
+    // The reason a refusal happened, for the report's "claimed then declined"
+    // table. currencyGate and integrity keep their own fields too.
+    error: r.reason,
+  });
+
+  if (r.stage === 'query') {
+    return claimed(true);
+  }
+  if (r.stage === 'currency') {
+    return { ...claimed(true), currencyGate: r.currencyGate };
+  }
+  if (r.stage === 'integrity') {
+    return { ...claimed(true), integrity: r.integrity };
+  }
+
+  return {
+    ...claimed(!r.ok),
+    definition: r.fact.definition || null,
+    sql: r.sql,
+    facts: r.facts,
+    narrMs: r.narrMs,
+    totalMs: r.totalMs,
+    answer: r.answer,
+    narrError: r.narrError,
   };
 }
 
@@ -461,6 +430,10 @@ async function main() {
     const claimed = !!rec.fact.routed;
     const declined = !!(rec.fact.declines);
     const malformed = !!(rec.fact.integrity && !rec.fact.integrity.ok);
+    // A model failure is not a routing error: the facts were sound, the narration
+    // round-trip did not come back. Scoring it as UNSAFE would accuse the router
+    // of a false positive it did not commit.
+    const narrateFail = rec.fact.stage === 'narrate';
     const expected = q.expectOutcome || (q.expectRoute ? 'answer' : 'fallthrough');
     let verdict;
     if (malformed) {
@@ -469,6 +442,8 @@ async function main() {
       verdict = !claimed ? 'correct (falls through)' : 'UNSAFE (routed a question that must fall through)';
     } else if (expected === 'decline') {
       verdict = claimed && declined ? 'correct (claimed, then declined)' : !claimed ? 'MISS (never claimed; harmless)' : 'UNSAFE (claimed but answered)';
+    } else if (narrateFail) {
+      verdict = 'NARRATE_FAIL (facts were well-formed; the narration call failed — rerun)';
     } else {
       verdict = claimed && !declined ? 'correct (routed and answered)' : claimed ? 'UNSAFE (claimed but declined)' : 'MISS (not claimed; harmless)';
     }
@@ -526,10 +501,14 @@ async function main() {
   const miss = (r) => r.routingVerdict.startsWith('MISS');
   const unsafe = (r) => r.routingVerdict.startsWith('UNSAFE');
   const bad = (r) => r.routingVerdict.startsWith('MALFORMED');
+  const narrateFailed = (r) => r.routingVerdict.startsWith('NARRATE_FAIL');
   const missed = results.filter(miss);
   const unsafeRows = results.filter(unsafe);
   const malformedRows = results.filter(bad);
-  say(`  correct      : ${results.length - missed.length - unsafeRows.length - malformedRows.length}/${results.length}`);
+  const narrateFailRows = results.filter(narrateFailed);
+  const clean = results.length - missed.length - unsafeRows.length - malformedRows.length - narrateFailRows.length;
+  say(`  correct      : ${clean}/${results.length}`);
+  say(`  NARRATE_FAIL (facts fine, model call failed): ${narrateFailRows.length}${narrateFailRows.length ? ' → ' + narrateFailRows.map((r) => `${r.id} (${r.fact.error})`).join(', ') : ''}`);
   say(`  MISS (false negative — falls through to the SQL agent, harmless): ${missed.length}${missed.length ? ' → ' + missed.map((r) => r.id).join(', ') : ''}`);
   say(`  UNSAFE (false positive — a question that must fall through was claimed): ${unsafeRows.length}${unsafeRows.length ? '\n      → ' + unsafeRows.map((r) => `${r.id} "${r.question}" [expected ${r.expectOutcome || r.expectRoute}]`).join('\n      → ') : ''}`);
   say(`  MALFORMED (fact layer returned undefined fields — would answer wrongly): ${malformedRows.length}${malformedRows.length ? '\n      → ' + malformedRows.map((r) => `${r.id} "${r.question}" — ${r.fact.integrity.problems[0]}`).join('\n      → ') : ''}`);

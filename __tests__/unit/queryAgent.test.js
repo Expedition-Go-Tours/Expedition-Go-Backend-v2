@@ -805,3 +805,177 @@ describe('activity window routing (coarse windows must fall through)', () => {
     expect(res.final).toBe('**43** new signups this week.');
   });
 });
+
+// ── Phase 2: the deterministic facts layer, behind AI_FACTS_ENABLED ─────────
+//
+// The facts layer is the latency win and the determinism fix, but it is also the
+// first place the bot can post a confident WRONG number without the model ever
+// writing SQL. So these tests care about two things above all else: with the
+// flag OFF nothing changes at all, and with the flag ON every refusal reaches
+// the SQL agent instead of Discord.
+
+describe('answerQuestion — deterministic facts layer (AI_FACTS_ENABLED)', () => {
+  const USD_ROW = { currency: 'USD', bookings: 4, gross: '604.00' };
+  const REVENUE_ROWS = [USD_ROW];
+  let savedFlag;
+
+  beforeEach(() => {
+    savedFlag = process.env.AI_FACTS_ENABLED;
+    resetSchemaCache();
+  });
+
+  afterEach(() => {
+    if (savedFlag === undefined) delete process.env.AI_FACTS_ENABLED;
+    else process.env.AI_FACTS_ENABLED = savedFlag;
+  });
+
+  /** A model that answers the fact narration and the SQL fast path differently. */
+  function makeMimo(narration = 'Revenue this week was **$604.00** across 4 bookings.') {
+    const calls = [];
+    const fn = async ({ messages }) => {
+      const system = String((messages && messages[0] && messages[0].content) || '');
+      const isNarration = system.includes('You turn a pre-computed business-facts report');
+      calls.push({ isNarration, maxTokens: undefined, system });
+      return isNarration ? narration : '{"final":"SQL agent answer"}';
+    };
+    fn.calls = calls;
+    return fn;
+  }
+
+  const enable = () => { process.env.AI_FACTS_ENABLED = 'true'; };
+
+  it('is off by default, so the SQL agent answers a routable question', async () => {
+    delete process.env.AI_FACTS_ENABLED;
+    const pg = makePg({ sqlRows: REVENUE_ROWS });
+    const callMimo = makeMimo();
+    const r = await answerQuestion({ question: 'total revenue this week', pg, callMimo });
+
+    expect(r.final).toBe('SQL agent answer');
+    expect(r.factPath).toBeUndefined();
+    // The narration prompt must not have been used at all.
+    expect(callMimo.calls.some((c) => c.isNarration)).toBe(false);
+  });
+
+  it('answers a routable question from the fact layer when enabled', async () => {
+    enable();
+    const pg = makePg({ sqlRows: REVENUE_ROWS });
+    const callMimo = makeMimo();
+    const r = await answerQuestion({ question: 'total revenue this week', userId: 'u1', pg, callMimo });
+
+    expect(r.final).toBe('Revenue this week was **$604.00** across 4 bookings.');
+    expect(r.factPath).toBe(true);
+    expect(r.factMetric).toBe('revenue');
+    // The generated SQL is logged for the audit trail, exactly as on the SQL path.
+    expect(r.sqlLogs).toHaveLength(1);
+    expect(r.sqlLogs[0]).toMatch(/FROM "Booking"/);
+    // One model round-trip, and it is the constrained narration prompt: the
+    // facts layer supplies the number, MiMo still writes the sentence.
+    expect(callMimo.calls.filter((c) => c.isNarration)).toHaveLength(1);
+  });
+
+  it('strips emojis from the narration before it can be posted', async () => {
+    enable();
+    const pg = makePg({ sqlRows: REVENUE_ROWS });
+    const r = await answerQuestion({ question: 'total revenue this week', pg, callMimo: makeMimo('Revenue was $604.00 🎉') });
+    expect(r.final).toBe('Revenue was $604.00');
+  });
+
+  it('caches the fact answer for an identical repeat question', async () => {
+    enable();
+    const pg = makePg({ sqlRows: REVENUE_ROWS });
+    const store = {};
+    const cache = {
+      async get(k) { return store[k] || null; },
+      async set(k, v) { store[k] = v; },
+    };
+    const callMimo = makeMimo();
+    const first = await answerQuestion({ question: 'total revenue this week', userId: 'u1', pg, callMimo, cache });
+    expect(first.factPath).toBe(true);
+
+    const second = await answerQuestion({ question: 'total revenue this week', userId: 'u1', pg, callMimo, cache });
+    expect(second.final).toBe(first.final);
+    expect(second.cached).toBe(true);
+    // Still exactly one narration call: the second turn never reached the model.
+    expect(callMimo.calls.filter((c) => c.isNarration)).toHaveLength(1);
+  });
+
+  it('falls through to the SQL agent when the fact layer refuses a currency', async () => {
+    enable();
+    // Data is USD; the question asks for GBP.
+    const pg = makePg({ sqlRows: REVENUE_ROWS });
+    const callMimo = makeMimo();
+    const r = await answerQuestion({ question: 'what is the revenue in gbp', pg, callMimo });
+
+    expect(r.factPath).toBeUndefined();
+    expect(r.final).toBe('SQL agent answer');
+    // The refusal must happen BEFORE the narration call — otherwise the model
+    // would have been handed a GBP question with USD facts to improvise over.
+    expect(callMimo.calls.some((c) => c.isNarration)).toBe(false);
+  });
+
+  it('falls through when the fact SQL fails, rather than answering with a zero', async () => {
+    enable();
+    const pg = makePg({ sqlError: 'relation "Booking" does not exist' });
+    const callMimo = makeMimo();
+    const r = await answerQuestion({ question: 'total revenue this week', pg, callMimo });
+
+    expect(r.factPath).toBeUndefined();
+    expect(r.final).toBe('SQL agent answer');
+    expect(callMimo.calls.some((c) => c.isNarration)).toBe(false);
+  });
+
+  it('falls through when the narration model call fails', async () => {
+    enable();
+    const pg = makePg({ sqlRows: REVENUE_ROWS });
+    const callMimo = async ({ messages }) => {
+      const system = String((messages && messages[0] && messages[0].content) || '');
+      if (system.includes('You turn a pre-computed business-facts report')) throw new Error('model unavailable');
+      return '{"final":"SQL agent answer"}';
+    };
+    const r = await answerQuestion({ question: 'total revenue this week', pg, callMimo });
+    expect(r.factPath).toBeUndefined();
+    expect(r.final).toBe('SQL agent answer');
+  });
+
+  it('falls through when the narration is an unfilled placeholder', async () => {
+    enable();
+    const pg = makePg({ sqlRows: REVENUE_ROWS });
+    const r = await answerQuestion({ question: 'total revenue this week', pg, callMimo: makeMimo('<answer>') });
+    // Posting "<answer>" to Discord would be worse than being slow.
+    expect(r.factPath).toBeUndefined();
+    expect(r.final).toBe('SQL agent answer');
+  });
+
+  it('never writes a refused or unusable fact answer into the cache', async () => {
+    enable();
+    const pg = makePg({ sqlRows: REVENUE_ROWS });
+    const store = {};
+    const cache = {
+      async get() { return null; },
+      async set(k, v) { store[k] = v; },
+    };
+    const r = await answerQuestion({ question: 'what is the revenue in gbp', userId: 'u1', pg, callMimo: makeMimo(), cache });
+    expect(r.final).toBe('SQL agent answer');
+    expect(store[`ai:ans:u1:what is the revenue in gbp`]).toBe('SQL agent answer');
+  });
+
+  it('leaves the activity-log branch ahead of the facts layer', async () => {
+    // "logins in the last 3 hours" is a diagnostics question, not a business
+    // metric. The activity branch must keep winning; the facts router declines
+    // these anyway, but the ordering is the real guarantee.
+    enable();
+    const pg = makePg({ sqlRows: REVENUE_ROWS });
+    const answers = [
+      '{"logins":[],"errors":{"real":[],"auth":[],"business":[],"probes":[]}}', // buildActivityReport stub row
+    ];
+    const callMimo = async ({ messages }) => {
+      const system = String((messages && messages[0] && messages[0].content) || '');
+      if (system.includes('pre-computed business-facts')) return 'facts answer';
+      return 'No logins or errors in the last 3 hours.';
+    };
+    const r = await answerQuestion({ question: 'how many logins in the last 3 hours?', userId: 'u2', pg, callMimo });
+    expect(r.factPath).toBeUndefined();
+    expect(r.final).toMatch(/No logins or errors/);
+    expect(answers).toHaveLength(1);
+  });
+});
