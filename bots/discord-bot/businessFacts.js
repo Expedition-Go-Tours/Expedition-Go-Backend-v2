@@ -36,6 +36,7 @@
 
 const {
   REVENUE_STATUSES,
+  SIMULATED_BOOKING_CLAUSE,
   TOP_TOURS_DATE_COLUMN,
   revenueClauses,
   windowClause,
@@ -198,10 +199,11 @@ async function getBusinessFacts(metric, opts = {}) {
   try {
     switch (metric) {
       // ── REVENUE ────────────────────────────────────────────────────────
-      // Grouped by currency, always. Period windows use the approved status
-      // list; the all-time window additionally drops simulated seed bookings.
+      // Grouped by currency, always. Every window drops simulated seed
+      // bookings: a period figure that counted them contradicted the all-time
+      // figure and the rest of the platform. See metricDefinitions note 1.
       case 'revenue': {
-        const { clauses, note } = revenueClauses(win);
+        const { clauses, note } = revenueClauses();
         q.add(clauses.join(' AND '));
         const w = windowClause('"b"."createdAt"', win);
         if (w.clause) q.add(w.clause, w.params);
@@ -215,7 +217,7 @@ async function getBusinessFacts(metric, opts = {}) {
           ok: true,
           metric,
           window: wLabel,
-          definition: `revenue = ${note} (all-time also excludes simulated bookings)`,
+          definition: `revenue = ${note}`,
           currencyGrouping: 'by currency; never summed across currencies',
           sql,
           facts: {
@@ -231,7 +233,10 @@ async function getBusinessFacts(metric, opts = {}) {
       }
 
       // ── BOOKINGS ───────────────────────────────────────────────────────
+      // Simulated seed bookings are excluded here too: a count that included
+      // them next to a revenue total that did not would contradict itself.
       case 'bookings': {
+        q.add(SIMULATED_BOOKING_CLAUSE);
         if (statusFilter) q.add('"b"."status"::text = ?', [statusFilter]);
         const w = windowClause('"b"."createdAt"', win);
         if (w.clause) q.add(w.clause, w.params);
@@ -245,7 +250,7 @@ async function getBusinessFacts(metric, opts = {}) {
           ok: true,
           metric,
           window: wLabel,
-          definition: statusFilter ? `status = ${statusFilter}` : 'all booking statuses, grouped',
+          definition: (statusFilter ? `status = ${statusFilter}` : 'all booking statuses, grouped') + '; simulated excluded',
           currencyGrouping: 'by currency; never summed across currencies',
           sql,
           facts: {
@@ -350,11 +355,11 @@ async function getBusinessFacts(metric, opts = {}) {
 
       // ── BOOKING CUSTOMERS (distinct users who have booked) ─────────────
       case 'bookingCustomers': {
-        const sql = 'SELECT COUNT(DISTINCT "customerId")::int AS n FROM "Booking"';
+        const sql = `SELECT COUNT(DISTINCT "customerId")::int AS n FROM "Booking" b WHERE ${SIMULATED_BOOKING_CLAUSE}`;
         const rows = await run(sql, []);
         return {
           ok: true, metric, window: 'all time', sql,
-          definition: 'distinct users with at least one booking',
+          definition: 'distinct users with at least one real (non-simulated) booking',
           facts: { n: first(rows).n, population: 'distinct booking customers' },
         };
       }
@@ -469,6 +474,7 @@ async function getBusinessFacts(metric, opts = {}) {
         }
         const limit = Math.max(1, Math.min(requested, LIMITS.topToursMax));
         q.add(`"b"."status" IN (${revenueStatusList()})`);
+        q.add(SIMULATED_BOOKING_CLAUSE);
         if (currencyFilter) q.add('"b"."currency" = ?', [currencyFilter]);
         const dateCol = TOP_TOURS_DATE_COLUMN;
         const w = windowClause(`"b"."${dateCol}"`, win);
@@ -485,7 +491,7 @@ async function getBusinessFacts(metric, opts = {}) {
         const rows = await run(sql, q.params);
         return {
           ok: true, metric, window: wLabel, sql,
-          definition: `top tours by revenue using ${dateCol} (when payment was taken), status IN (${REVENUE_STATUSES.join(', ')})`,
+          definition: `top tours by revenue using ${dateCol} (when payment was taken), status IN (${REVENUE_STATUSES.join(', ')}); simulated excluded`,
           currencyGrouping: 'by currency; never summed across currencies',
           facts: {
             dateColumn: dateCol,

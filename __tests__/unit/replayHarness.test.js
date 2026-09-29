@@ -141,7 +141,12 @@ describe('replayBot revenueDefinitionAudit — reports all candidates', () => {
     const out = await revenueDefinitionAudit(pg);
 
     const windows = [...new Set(out.map((r) => r.window))];
-    expect(windows).toEqual(['the past 7 days', 'the past 30 days', 'all time']);
+    expect(windows).toEqual([
+      'the past 7 days (rolling)',
+      'the past 30 days (rolling)',
+      'the previous month (calendar)',
+      'all time',
+    ]);
     expect(Object.keys(REVENUE_AUDIT_DEFINITIONS)).toEqual(['approved', 'status-only', 'digest']);
 
     for (const w of windows) {
@@ -152,34 +157,34 @@ describe('replayBot revenueDefinitionAudit — reports all candidates', () => {
     expect(out.every((r) => r.ok && r.total === 604)).toBe(true);
   });
 
-  it('applies the simulated filter only to the all-time approved figure', async () => {
+  it('applies the simulated filter to the approved figure in EVERY window', async () => {
     const pg = makePg([{ contains: 'FROM "Booking"', rows: [USD_ROW] }]);
     await revenueDefinitionAudit(pg);
 
     const all = pg.queries.filter((q) => q.sql.includes('FROM "Booking"'));
-    // 3 candidate definitions x 3 windows.
-    expect(all).toHaveLength(9);
+    // 3 candidate definitions x 4 windows.
+    expect(all).toHaveLength(12);
 
     // The rejected digest definition is always identifiable by its single
     // status equality, and it always excludes simulated rows.
     const digest = all.filter((q) => q.sql.includes(`"status" = 'CONFIRMED'`));
-    expect(digest).toHaveLength(3);
+    expect(digest).toHaveLength(4);
     expect(digest.every((q) => q.sql.includes('isSimulated'))).toBe(true);
 
     // The approved and "status-only" candidates share the same status list, so
-    // between them there are 6 queries: 3 approved + 3 status-only.
+    // between them there are 8 queries: 4 approved + 4 status-only.
     const statusList = all.filter((q) => q.sql.includes(`"status" IN ('CONFIRMED','COMPLETED')`));
-    expect(statusList).toHaveLength(6);
+    expect(statusList).toHaveLength(8);
 
-    // Only the approved all-time query drops simulated rows. That is the whole
-    // point of auditing three candidates: it isolates the simulated seed data.
-    const approvedAllTime = statusList.filter((q) => q.sql.includes('isSimulated'));
-    expect(approvedAllTime).toHaveLength(1);
-    expect(approvedAllTime[0].sql).not.toContain('"createdAt"');
-    expect(approvedAllTime[0].params).toHaveLength(0);
+    // The approved definition drops simulated rows in EVERY window. Restricting
+    // that to all-time is what let the previous calendar month report a figure
+    // that was 99.2% seed data.
+    const approved = statusList.filter((q) => q.sql.includes('isSimulated'));
+    expect(approved).toHaveLength(4);
+    expect(approved.filter((q) => q.sql.includes('"createdAt"'))).toHaveLength(3);
 
-    // The other 5 are period queries that deliberately keep every simulated row.
-    expect(statusList.filter((q) => !q.sql.includes('isSimulated'))).toHaveLength(5);
+    // The status-only candidate keeps every simulated row, isolating the effect.
+    expect(statusList.filter((q) => !q.sql.includes('isSimulated'))).toHaveLength(4);
   });
 
   it('carries the window bounds as parameters for period windows only', async () => {

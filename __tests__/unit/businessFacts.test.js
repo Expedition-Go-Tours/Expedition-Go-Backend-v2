@@ -79,22 +79,13 @@ describe('metricDefinitions — approved revenue semantics', () => {
     expect(REVENUE_STATUSES).toEqual(['CONFIRMED', 'COMPLETED']);
   });
 
-  it('excludes simulated bookings from all-time revenue only', () => {
-    const allTime = resolveWindow('total revenue', NOW);
-    const period = resolveWindow('revenue this week', NOW);
-
-    const a = revenueClauses(allTime);
-    const p = revenueClauses(period);
-
-    // The status filter is present in both windows, as the first clause.
-    expect(a.clauses[0]).toMatch(/status" IN \('CONFIRMED','COMPLETED'\)/);
-    expect(p.clauses[0]).toMatch(/status" IN \('CONFIRMED','COMPLETED'\)/);
-
-    // Simulated seed bookings are dropped only from the all-time figure.
-    expect(a.clauses.join(' ')).toMatch(/isSimulated" = false/);
-    // A period window must NOT apply the simulated filter as part of the
-    // approved definition, and must not silently gain it either.
-    expect(p.clauses.join(' ')).not.toMatch(/isSimulated/);
+  it('excludes simulated bookings from every revenue window', () => {
+    // Seed bookings are excluded from EVERY window. Restricting it to all-time
+    // made "revenue for the past month" (which contains the 2026-08-26 seed day)
+    // report a figure that was 99.2% simulated while "past 30 days" did not.
+    const { clauses } = revenueClauses();
+    expect(clauses[0]).toMatch(/status" IN \('CONFIRMED','COMPLETED'\)/);
+    expect(clauses.join(' ')).toMatch(/isSimulated" = false/);
   });
 
   it('never uses the digest revenue definition (which drops COMPLETED)', () => {
@@ -134,15 +125,20 @@ describe('metricDefinitions — window resolution', () => {
     expect(w.to.getTime() - w.from.getTime()).toBe(24 * 60 * 60 * 1000);
   });
 
-  // The Phase 0 prototype resolved windows against a rolling
-  // NOW() - INTERVAL '7 days'. That boundary moves continuously, so the same
-  // words produced different totals on different runs. Every window here is
-  // anchored to a UTC calendar boundary, so a quoted figure can be re-derived.
-  it('reads "the past 7 days" as 7 calendar days, not a rolling window', () => {
+  // Approved window semantics are mixed: NAMED periods are calendar-anchored so
+  // a quoted figure can be re-derived, but an explicit count is a ROLLING
+  // duration ending now — "the last 30 days" is not a calendar month.
+  it('reads "the past 7 days" as a rolling 7x24h ending now', () => {
     const w = resolveWindow('revenue for the past 7 days', NOW);
     expect(w.isAllTime).toBe(false);
-    // 6 days back through tomorrow's exclusive end = 7 whole calendar days.
-    expect(w.to.getTime() - w.from.getTime()).toBe(7 * 24 * 60 * 60 * 1000);
+    expect(w.to.toISOString()).toBe(NOW.toISOString());
+    expect(w.from.toISOString()).toBe(new Date(NOW.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString());
+  });
+
+  it('reads "the past 2 weeks" as a rolling 14x24h', () => {
+    const w = resolveWindow('revenue for the past 2 weeks', NOW);
+    expect(w.to.toISOString()).toBe(NOW.toISOString());
+    expect(w.to.getTime() - w.from.getTime()).toBe(14 * 24 * 60 * 60 * 1000);
   });
 
   it('resolves "this week" to the calendar week, and "last week" to the one before', () => {
@@ -355,10 +351,26 @@ describe('businessFacts — revenue', () => {
     expect(lastSql(pg)).toMatch(/isSimulated" = false/);
   });
 
-  it('does not add the simulated filter to a period window', async () => {
+  it('excludes simulated bookings from a period question too', async () => {
     const pg = makePg([]);
     await getBusinessFacts('revenue', { window: win('revenue this week'), pg });
-    expect(lastSql(pg)).not.toMatch(/isSimulated/);
+    expect(lastSql(pg)).toMatch(/isSimulated" = false/);
+  });
+
+  it('excludes simulated bookings from every Booking-derived metric', async () => {
+    // A count that included seed rows beside a total that did not would be the
+    // same incoherence the all-time/period split caused, in a new place.
+    for (const [metric, question] of [
+      ['revenue', 'revenue this week'],
+      ['bookings', 'bookings this week'],
+      ['bookingCustomers', 'how many customers have booked'],
+      ['topTours', 'top tours by revenue this month'],
+    ]) {
+      const pg = makePg([]);
+      const res = await getBusinessFacts(metric, { window: win(question), pg });
+      expect(res.ok).toBe(true);
+      expect(pg.queries[0].sql).toMatch(/isSimulated" = false/);
+    }
   });
 
   it('applies no date bound for an all-time question', async () => {

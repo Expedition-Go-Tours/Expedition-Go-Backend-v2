@@ -283,10 +283,9 @@ async function runFact(q, pg, opts = {}) {
  */
 const REVENUE_AUDIT_DEFINITIONS = {
   approved: {
-    label: 'status IN (CONFIRMED,COMPLETED); all-time drops simulated',
-    where: (isAllTime) =>
-      `"status" IN (${REVENUE_STATUSES.map((s) => `'${s}'`).join(',')})` +
-      (isAllTime ? ' AND "isSimulated" = false' : ''),
+    label: 'status IN (CONFIRMED,COMPLETED) + isSimulated = false; EVERY window',
+    where: () =>
+      `"status" IN (${REVENUE_STATUSES.map((s) => `'${s}'`).join(',')}) AND "isSimulated" = false`,
   },
   'status-only': {
     label: 'status IN (CONFIRMED,COMPLETED); simulated INCLUDED',
@@ -300,8 +299,9 @@ const REVENUE_AUDIT_DEFINITIONS = {
 
 async function revenueDefinitionAudit(pg) {
   const WINDOWS = [
-    { phrase: 'revenue for the past 7 days', label: 'the past 7 days' },
-    { phrase: 'revenue for the past 30 days', label: 'the past 30 days' },
+    { phrase: 'revenue for the past 7 days', label: 'the past 7 days (rolling)' },
+    { phrase: 'revenue for the past 30 days', label: 'the past 30 days (rolling)' },
+    { phrase: 'revenue for the past month', label: 'the previous month (calendar)' },
     { phrase: 'total revenue', label: 'all time' },
   ];
   const out = [];
@@ -398,11 +398,13 @@ async function main() {
   const usd = (n) => (n === null || n === undefined ? 'ERROR' : `$${Number(n).toFixed(2)}`);
   for (const row of revAudit) {
     const cur0 = row.byCurrency ? row.byCurrency.map((c) => `${c.currency}:$${c.gross.toFixed(2)}(${c.bookings})`).join(' ') : `ERROR ${row.error}`;
-    say(`  ${row.window.padEnd(14)} ${row.definition.padEnd(12)} n=${String(row.bookings).padStart(3)} total=${usd(row.total).padStart(12)}   ${cur0}`);
+    say(`  ${row.window.padEnd(30)} ${row.definition.padEnd(12)} n=${String(row.bookings).padStart(3)} total=${usd(row.total).padStart(12)}   ${cur0}`);
   }
-  say('\n  approved     = status IN (CONFIRMED, COMPLETED); all-time additionally drops simulated');
+  say('\n  approved     = status IN (CONFIRMED, COMPLETED) AND isSimulated = false — in EVERY window');
   say('  status-only  = the same statuses with simulated INCLUDED (isolates the simulated effect)');
   say('  digest       = status = CONFIRMED AND isSimulated = false (dailyDigest.js)');
+  say('\n  Windows: named periods ("past month") are calendar-aligned; explicit counts');
+  say('  ("past 7 days", "past 30 days") are rolling and end now.');
 
   // Per-window comparison, grouped so adding a definition cannot mis-pair rows.
   for (const w of [...new Set(revAudit.map((r) => r.window))]) {

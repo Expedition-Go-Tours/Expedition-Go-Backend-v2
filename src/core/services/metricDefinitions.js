@@ -17,17 +17,26 @@
  * ── Approved definitions (do not re-derive) ──────────────────────────────
  *
  * 1. REVENUE
- *    Period revenue  = SUM(Booking.total) WHERE status IN ('CONFIRMED','COMPLETED')
- *    All-time revenue = the same, AND isSimulated = false
+ *    Revenue = SUM(Booking.total) WHERE status IN ('CONFIRMED','COMPLETED')
+ *              AND isSimulated = false      (EVERY window, period included)
  *    Rationale: 71% of all bookings (87 of 122, $11,981.39) are seed data from
- *    a single day (2026-08-26) and are flagged isSimulated. Including them makes
- *    the all-time figure meaningless. For period windows the filter is a no-op
- *    today (zero simulated bookings in the last 30 days) but is still applied so
- *    the rule holds if seed data is ever refreshed.
+ *    a single day (2026-08-26) and are flagged isSimulated. They are not real
+ *    demand and must never enter a business figure. Restricting the filter to
+ *    all-time made the SAME intent inconsistent across wording: "revenue for the
+ *    past month" (the previous calendar month, which contains the seed day)
+ *    reported $12,072.28 of which 99.2% was simulated, while "revenue for the
+ *    past 30 days" reported $4,995.14. Excluding simulated from every window
+ *    makes those agree, and matches how the rest of the platform already reads
+ *    Booking (financeController, adminController and the analytics controllers
+ *    all set isSimulated = false unconditionally).
  *    REJECTED: dailyDigest's `status = 'CONFIRMED' AND isSimulated = false`.
  *    That excludes COMPLETED bookings, so revenue disappears from a period
  *    total once a tour is fulfilled. Measured cost: it reports $105.00 for the
  *    last 30 days where the approved definition reports $4,995.14.
+ *
+ *    The same exclusion applies to every Booking-derived fact (revenue, top
+ *    tours, booking counts, booking customers): a count that includes seed rows
+ *    next to a total that does not would be the same incoherence in a new place.
  *
  * 2. CUSTOMERS
  *    customers         = users holding the `customer` role
@@ -61,8 +70,16 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** Booking statuses that count as recognised revenue. */
 const REVENUE_STATUSES = Object.freeze(['CONFIRMED', 'COMPLETED']);
 
-/** Seed bookings are excluded from all-time figures (see header note 1). */
-const EXCLUDE_SIMULATED_FROM_ALL_TIME = true;
+/** Seed bookings are excluded from every Booking-derived figure (note 1). */
+const EXCLUDE_SIMULATED = true;
+
+/**
+ * The WHERE fragment that drops seed bookings.
+ *
+ * Booking rows are always aliased `b` in the fact queries, so this fragment is
+ * reusable and cannot drift between metrics.
+ */
+const SIMULATED_BOOKING_CLAUSE = '"b"."isSimulated" = false';
 
 /** The `UserRole` value that makes a user a "customer". */
 const CUSTOMER_ROLE = 'customer';
@@ -87,11 +104,15 @@ function money(n, currency = 'USD') {
 }
 
 // ── Time windows ───────────────────────────────────────────────────────────
-// Windows are calendar-aligned to UTC midnight, matching dailyDigest.js's
-// utcDayStart(), so a figure reported today and re-checked tomorrow is
-// reproducible. A rolling `NOW() - INTERVAL '7 days'` is NOT equivalent: the
-// boundary moves continuously, and the Phase 0 replay showed the two producing
-// different totals for the same words.
+// Two semantics, chosen by how the operator words the window (approved):
+//   - NAMED periods ("this week", "last month", "this quarter", "yesterday")
+//     are CALENDAR-ALIGNED to UTC midnight, matching dailyDigest.js's
+//     utcDayStart(), so a figure reported today can be re-derived tomorrow.
+//   - EXPLICIT counts ("the past 7 days", "last 3 weeks") are ROLLING: N×24h
+//     ending now. "the last 30 days" is a duration, not a calendar month, and an
+//     operator saying it means a moving 30-day window.
+// Mixing the two is what produced "$4,995.14 for the past 30 days" next to
+// "$12,072.28 for the past month" in the Phase 1 review.
 
 /** Midnight UTC of the day offsetDays from today. */
 function utcDayStart(offsetDaysFromToday = 0) {
@@ -143,14 +164,10 @@ function utcYearStart(date = new Date()) {
  * The convention throughout:
  *   - "this X"  = the calendar period in progress, from its first day up to
  *                 and including today (exclusive end at tomorrow's midnight).
- *   - "last X" / "past X" = the immediately PRECEDING complete period, which is
- *                 what an operator comparing period-on-period means.
- *   - "past N days" = the N calendar days ending today, inclusive of today.
- *
- * Note on "past week"/"past month": the Phase 0 prototype used a rolling
- * NOW() - INTERVAL '7 days'. That boundary moves continuously, so the same
- * words yielded different totals on different runs. Calendar periods are
- * anchored, so a figure quoted today can be re-derived exactly.
+ *   - "last X" / "past X" (named) = the immediately PRECEDING complete calendar
+ *                 period, which is what an operator comparing period-on-period
+ *                 means. Anchored, so a quoted figure can be re-derived exactly.
+ *   - "past N days" / "past N weeks" = a ROLLING N×24h / N×7×24h ending now.
  *
  * Each factory receives (match, ref) where `ref` is the injected reference
  * date, so tests are deterministic.
@@ -159,12 +176,16 @@ const WINDOW_PHRASES = [
   // ── days ──
   [/\btoday\b/, (_m, ref) => ({ from: utcDayStartOf(ref, 0), to: utcDayStartOf(ref, 1), label: 'today' })],
   [/\byesterday\b/, (_m, ref) => ({ from: utcDayStartOf(ref, -1), to: utcDayStartOf(ref, 0), label: 'yesterday' })],
-  // "the past 3 days" = the 3 calendar days ending today (today included).
-  // Checked BEFORE the week/month entries so "the past 30 days" is not captured
-  // by "past month".
+  // "the past 3 days" is a ROLLING 3×24h ending now, not a calendar span.
+  // Ordered BEFORE the named week/month entries so "the past 30 days" is not
+  // captured by "past month".
   [/\b(?:past|last)\s+(\d+)\s*days?\b/, (m, ref) => {
     const n = Math.max(Number(m[1]), 1);
-    return { from: utcDayStartOf(ref, -(n - 1)), to: utcDayStartOf(ref, 1), label: `the past ${n} day${n === 1 ? '' : 's'}` };
+    return { from: new Date(ref.getTime() - n * DAY_MS), to: new Date(ref), label: `the past ${n} day${n === 1 ? '' : 's'}` };
+  }],
+  [/\b(?:past|last)\s+(\d+)\s*weeks?\b/, (m, ref) => {
+    const n = Math.max(Number(m[1]), 1);
+    return { from: new Date(ref.getTime() - n * 7 * DAY_MS), to: new Date(ref), label: `the past ${n} week${n === 1 ? '' : 's'}` };
   }],
 
   // ── weeks ──
@@ -240,16 +261,19 @@ function resolveWindow(question, now = new Date()) {
 }
 
 /**
- * The money-defining WHERE clause for a revenue fact.
+ * The money-defining WHERE clauses for a revenue fact.
  *
- * @param {{isAllTime: boolean}} window
+ * The simulated exclusion applies to EVERY window (see header note 1), so this
+ * helper needs no window argument: revenue's status semantics are currently
+ * window-independent.
+ *
  * @returns {{clauses: string[], note: string}}
  */
-function revenueClauses(window) {
+function revenueClauses() {
   const clauses = [`"b"."status" IN (${REVENUE_STATUSES.map((s) => `'${s}'`).join(',')})`];
   let note = `status IN (${REVENUE_STATUSES.join(', ')})`;
-  if (EXCLUDE_SIMULATED_FROM_ALL_TIME && window && window.isAllTime) {
-    clauses.push('"b"."isSimulated" = false');
+  if (EXCLUDE_SIMULATED) {
+    clauses.push(SIMULATED_BOOKING_CLAUSE);
     note += ' and isSimulated = false';
   }
   return { clauses, note };
@@ -289,7 +313,8 @@ function describeWindow(window) {
 module.exports = {
   DAY_MS,
   REVENUE_STATUSES,
-  EXCLUDE_SIMULATED_FROM_ALL_TIME,
+  EXCLUDE_SIMULATED,
+  SIMULATED_BOOKING_CLAUSE,
   CUSTOMER_ROLE,
   TOP_TOURS_DATE_COLUMN,
   money,
