@@ -385,13 +385,31 @@ async function handleModal(interaction) {
 
 // ── Dedicated AI channel (messageCreate) ─────────────────────────────
 if (AI_CHANNEL_ID) {
+  console.log(`[bot] plain-text questions enabled in channel ${AI_CHANNEL_ID}`);
+} else {
+  // Without this the bot looks broken: it logs in fine and registers its slash
+  // commands, but ignores every typed question. Make the cause obvious.
+  console.warn(
+    '[bot] DISCORD_AI_CHANNEL_ID is not set — plain-text questions are DISABLED. ' +
+      'Set it to the channel id to enable the conversational bot.'
+  );
+}
+
+if (AI_CHANNEL_ID) {
   client.on('messageCreate', async (message) => {
     // Only respond in the dedicated channel, ignore bots/self
     if (message.channel.id !== AI_CHANNEL_ID) return;
     if (message.author.bot) return;
 
     const member = await message.guild?.members.fetch(message.author.id).catch(() => null);
-    if (!(await isAllowed(member))) return;
+    if (!(await isAllowed(member))) {
+      // Say so instead of ignoring them, so a permission problem never looks
+      // like a broken bot.
+      await message
+        .reply('You need the Admin role (or be the server owner) to ask me questions.')
+        .catch(() => {});
+      return;
+    }
 
     const prompt = message.content.trim();
     if (!prompt) return;

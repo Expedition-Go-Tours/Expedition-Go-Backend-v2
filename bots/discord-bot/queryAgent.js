@@ -41,6 +41,12 @@ const SCHEMA_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const TOOL_MAX_TOKENS = 768;   // tool-proposal steps only need short JSON
 const FINAL_MAX_TOKENS = 1400; // roomier for the final business answer
 
+// Shown instead of an empty answer or a leaked template placeholder, so the
+// user is never told nothing and never sees raw prompt scaffolding.
+const UNANSWERABLE_MESSAGE =
+  'I could not turn that into an answer just now. Please rephrase, or ask about ' +
+  'something specific — for example: "how many tours are live?" or "bookings in the last 7 days".';
+
 // Tables whose schema is preloaded into the system prompt for speed.
 // Anything not listed here is discovered on demand via describe_table.
 const CRITICAL_TABLES = [
@@ -227,6 +233,56 @@ function parseAgentResponse(text) {
   return JSON.parse(raw);
 }
 
+/**
+ * True when a "final" answer is really just the prompt's own unfilled example.
+ *
+ * MiMo sometimes echoes the shape it was shown instead of filling it in —
+ * `{"final":"<concise answer>"}`, `{"final":"..."}`, a bare `<answer>`, or
+ * nothing at all. Posting that verbatim to Discord is worse than useless, so
+ * callers treat it as "the model has not answered yet".
+ *
+ * @param {*} text
+ * @returns {boolean}
+ */
+function isTemplateEcho(text) {
+  if (text === undefined || text === null) return true;
+  const t = String(text).trim();
+  if (!t) return true;
+
+  // If this is (or wraps) a JSON object, judge the answer it actually carries.
+  const asJson = extractFirstJsonObjectLenient(t);
+  if (asJson !== null) {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(asJson);
+    } catch {
+      parsed = null;
+    }
+    if (parsed && typeof parsed === 'object') {
+      // A tool call is not an answer either.
+      if (parsed.final === undefined) return true;
+      return isTemplateEcho(parsed.final);
+    }
+  }
+
+  // An unfilled placeholder: <answer>, <concise answer>, ...
+  if (/^<[^<>]*>$/.test(t)) return true;
+  if (/^\.{3}$/.test(t)) return true;
+  return false;
+}
+
+/**
+ * Like extractFirstJsonObject, but returns null instead of throwing.
+ * @returns {string|null}
+ */
+function extractFirstJsonObjectLenient(text) {
+  try {
+    return extractFirstJsonObject(text);
+  } catch {
+    return null;
+  }
+}
+
 function truncate(text, max) {
   if (text.length <= max) return text;
   return text.slice(0, max) + `\n...[truncated ${text.length - max} chars]`;
@@ -377,9 +433,9 @@ async function buildCompactSchema(pg) {
                FROM pg_type ty JOIN pg_enum e ON e.enumtypid = ty.oid
                WHERE ty.typname = c.udt_name) AS enum_values
        FROM information_schema.columns c
-       WHERE c.table_schema = 'public' AND c.table_name = ANY($${CRITICAL_TABLES.length + 1}::text[])
+       WHERE c.table_schema = 'public' AND c.table_name = ANY($1::text[])
        ORDER BY c.table_name, c.ordinal_position`,
-      [...CRITICAL_TABLES, CRITICAL_TABLES]
+      [CRITICAL_TABLES]
     );
 
     const byTable = {};
@@ -617,7 +673,21 @@ async function runQueryAgent({ question, userId = '?', historyText = '', history
     }
 
     if (parsed.final !== undefined) {
-      final = String(parsed.final);
+      const answer = String(parsed.final);
+      if (isTemplateEcho(answer)) {
+        // The model echoed the example object back instead of answering.
+        // Give it another turn rather than posting the placeholder to Discord.
+        console.log(`[agent:${userId}] step=${step + 1} total=${ms()} TEMPLATE_ECHO raw=${answer.slice(0, 120)}`);
+        messages.push({ role: 'assistant', content: out.slice(0, 800) });
+        messages.push({
+          role: 'user',
+          content:
+            'ERROR: you returned the template placeholder instead of an answer. ' +
+            'Put the real answer text inside the JSON string, e.g. {"final":"There are 32 live tours."}',
+        });
+        continue;
+      }
+      final = answer;
       console.log(`[agent:${userId}] final total=${ms()} final=${final.slice(0, 300)}`);
       break;
     }
@@ -667,7 +737,9 @@ async function runQueryAgent({ question, userId = '?', historyText = '', history
     try {
       const out = await callMimo({ messages, maxTokens: FINAL_MAX_TOKENS, temperature: 0.1, reasoningEffort: 'low' });
       const parsed = parseAgentResponse(out);
-      final = parsed.final !== undefined ? String(parsed.final) : null;
+      const forced = parsed.final !== undefined ? String(parsed.final) : null;
+      // Still a placeholder => treat as no answer so the caller says so plainly.
+      final = isTemplateEcho(forced) ? null : forced;
     } catch {
       final = null;
     }
@@ -714,6 +786,12 @@ async function runQueryFast({ question, userId = '?', historyText = '', pg, call
     try {
       parsed1 = parseAgentResponse(out1);
       console.log(`[fast:${userId}] round1 call=${callMs}ms total=${ms()} parsed=${JSON.stringify(parsed1).slice(0, 200)}`);
+      if (parsed1 && parsed1.final !== undefined && isTemplateEcho(parsed1.final)) {
+        // Echoed the example object back instead of answering; force the
+        // corrective retry rather than returning the placeholder.
+        console.log(`[fast:${userId}] round1 TEMPLATE_ECHO raw=${String(parsed1.final).slice(0, 120)}`);
+        parsed1 = null;
+      }
     } catch (e) {
       console.log(`[fast:${userId}] round1 call=${callMs}ms total=${ms()} PARSE_ERR=${e.message} raw=${out1.slice(0, 200)}`);
       parsed1 = null;
@@ -755,7 +833,7 @@ async function runQueryFast({ question, userId = '?', historyText = '', pg, call
       const out2 = await callMimo({ messages, maxTokens: TOOL_MAX_TOKENS, temperature: 0.1, reasoningEffort: 'low' });
       console.log(`[fast:${userId}] round1.retry call=${Date.now() - tRetry}ms total=${ms()}`);
       const parsed2 = parseAgentResponse(out2);
-      if (parsed2.final !== undefined) {
+      if (parsed2.final !== undefined && !isTemplateEcho(parsed2.final)) {
         const final = stripEmojis(String(parsed2.final));
         console.log(`[fast:${userId}] final total=${ms()}`);
         return { final, sqlLogs: [], rowCount: 0, escalated: false };
@@ -790,7 +868,8 @@ async function runQueryFast({ question, userId = '?', historyText = '', pg, call
   let final;
   try {
     const p3 = parseAgentResponse(out3);
-    final = String(p3.final !== undefined ? p3.final : out3);
+    const raw = p3.final !== undefined ? p3.final : out3;
+    final = isTemplateEcho(raw) ? stripFences(out3) : String(raw);
   } catch {
     final = stripFences(out3);
   }
@@ -891,7 +970,8 @@ async function answerQuestion({ question, userId = '?', historyText = '', histor
   if (cache && key) {
     try {
       const hit = await cache.get(key);
-      if (hit) {
+      // Never serve an empty/placeholder answer that a previous version cached.
+      if (hit && !isTemplateEcho(hit)) {
         console.log(`[answer:${userId}] cache_hit question="${question.slice(0, 80)}"`);
         return { final: hit, sqlLogs: [], rowCount: 0, cached: true };
       }
@@ -943,6 +1023,12 @@ async function answerQuestion({ question, userId = '?', historyText = '', histor
   }
 
   result.final = stripEmojis(result.final);
+  if (isTemplateEcho(result.final)) {
+    // Last line of defence: an empty answer or a leaked prompt placeholder is
+    // never posted to Discord.
+    console.log(`[answer:${userId}] unusable answer (empty or template echo) → plain fallback`);
+    result.final = UNANSWERABLE_MESSAGE;
+  }
   if (key && result.final && !/^AI error/.test(result.final)) {
     try {
       await cache.set(key, result.final, cacheTtlSec);
@@ -965,6 +1051,7 @@ module.exports = {
   runQueryFast,
   answerQuestion,
   parseAgentResponse,
+  isTemplateEcho,
   stripEmojis,
   normalizeQuestion,
   suggestColumns,

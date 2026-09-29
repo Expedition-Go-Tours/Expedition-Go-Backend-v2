@@ -3,6 +3,7 @@ const {
   runQueryFast,
   answerQuestion,
   parseAgentResponse,
+  isTemplateEcho,
   stripEmojis,
   normalizeQuestion,
   suggestColumns,
@@ -45,6 +46,26 @@ function makePg({ tables = ['Booking'], describeRows = [], sqlRows = [], sqlErro
   };
 }
 
+// Models how Postgres actually treats stray parameters: an unreferenced $N has
+// no inferable type, so the whole statement fails with
+// "could not determine data type of parameter $1" and returns nothing.
+// Sending the same values as one array against a single $1 is fine.
+function makeStrictPg({ schemaCols = [], schemaFks = [] } = {}) {
+  return {
+    async query(sql, params) {
+      if (params && params.length) {
+        const used = new Set([...String(sql).matchAll(/\$(\d+)/g)].map((m) => Number(m[1])));
+        for (let i = 1; i <= params.length; i++) {
+          if (!used.has(i)) throw new Error(`could not determine data type of parameter $${i}`);
+        }
+      }
+      if (/information_schema.columns/.test(sql) && /ANY\(/.test(sql)) return { rows: schemaCols };
+      if (/information_schema.table_constraints/.test(sql) && /ANY\(/.test(sql)) return { rows: schemaFks };
+      return { rows: [] };
+    },
+  };
+}
+
 describe('parseAgentResponse', () => {
   it('parses a plain JSON tool call', () => {
     expect(parseAgentResponse('{"tool":"list_tables"}')).toEqual({ tool: 'list_tables' });
@@ -78,6 +99,24 @@ describe('parseAgentResponse', () => {
 
   it('rejects when no JSON object exists', () => {
     expect(() => parseAgentResponse('no json here')).toThrow(/No JSON object/);
+  });
+});
+
+describe('isTemplateEcho', () => {
+  it('flags unfilled placeholders the model echoed back', () => {
+    expect(isTemplateEcho('<answer>')).toBe(true);
+    expect(isTemplateEcho('{"final":"<concise answer>"}')).toBe(true);
+    expect(isTemplateEcho('...')).toBe(true);
+    expect(isTemplateEcho('   ')).toBe(true);
+    expect(isTemplateEcho('')).toBe(true);
+    expect(isTemplateEcho(undefined)).toBe(true);
+    expect(isTemplateEcho('{"tool":"run_sql","sql":"SELECT 1"}')).toBe(true);
+  });
+
+  it('does not flag a real answer that merely contains angle brackets', () => {
+    expect(isTemplateEcho('There are 32 live tours.')).toBe(false);
+    expect(isTemplateEcho('Revenue rose from <10k to 20k')).toBe(false);
+    expect(isTemplateEcho('{"final":"There are 32 live tours."}')).toBe(false);
   });
 });
 
@@ -230,6 +269,34 @@ describe('runQueryAgent', () => {
     expect(systemPrompt).toContain('"Booking"');
     expect(systemPrompt).toContain('"status" enum(PENDING|CONFIRMED)');
     expect(systemPrompt).toContain('FK "customerId" -> "User"');
+  });
+
+  it('preloads the schema even when a query has unreferenced placeholders', async () => {
+    // Regression: the preload used to send CRITICAL_TABLES twice against a
+    // $13 placeholder. Postgres rejects unreferenced parameters ("could not
+    // determine data type of parameter $1"), the error was swallowed, and the
+    // model was left with no schema at all — so it refused to answer.
+    const pg = makeStrictPg({
+      schemaCols: [{ table_name: 'Tour', column_name: 'status', enum_values: 'ACTIVE|DRAFT' }],
+    });
+    let systemPrompt = '';
+    const callMimo = async ({ messages }) => {
+      systemPrompt = messages[0].content;
+      return '{"final":"ok"}';
+    };
+    await runQueryAgent({ question: 'how many tours?', pg, callMimo });
+    expect(systemPrompt).toContain('"status" enum(ACTIVE|DRAFT)');
+  });
+
+  it('re-asks instead of returning the placeholder when the model echoes the template', async () => {
+    // The bot used to post the literal string "<concise answer>" to Discord.
+    const pg = makePg();
+    const answers = ['{"final":"<concise answer>"}', '{"final":"There are 32 live tours."}'];
+    let call = 0;
+    const callMimo = async () => answers[call++];
+    const out = await runQueryAgent({ question: 'how many tours are live?', pg, callMimo });
+    expect(out.final).toBe('There are 32 live tours.');
+    expect(call).toBe(2);
   });
 
   it('caches the compact schema across calls', async () => {
@@ -436,6 +503,24 @@ describe('answerQuestion (production orchestrator)', () => {
     const callMimo = async () => '{"final":"done ✅ with emoji 😊"}';
     const r = await answerQuestion({ question: 'go', pg, callMimo });
     expect(r.final).toBe('done with emoji');
+  });
+
+  it('never returns a placeholder answer to the caller (re-asks, then reports plainly)', async () => {
+    // End-to-end guard on the text that would be posted to Discord.
+    const pg = makePg({});
+    const callMimo = async () => '{"final":"<concise answer>"}';
+    await expect(answerQuestion({ question: 'what is new?', pg, callMimo })).rejects.toThrow(
+      /maximum number of steps/
+    );
+  });
+
+  it('serves a real answer after a placeholder echo on the fast path', async () => {
+    const pg = makePg({});
+    const answers = ['{"final":"<answer>"}', '{"final":"There are 32 live tours."}'];
+    let call = 0;
+    const callMimo = async () => answers[call++];
+    const r = await answerQuestion({ question: 'how many tours are live?', pg, callMimo });
+    expect(r.final).toBe('There are 32 live tours.');
   });
 
   it('never writes AI errors into the cache', async () => {
