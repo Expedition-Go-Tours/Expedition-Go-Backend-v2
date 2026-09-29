@@ -30,6 +30,7 @@ const logger = require('./src/core/services/logger');
 
 
 const passport = require('./config/passport');
+const { httpOrigins, isAllowedOrigin } = require('./config/corsOrigins');
 const globalErrorHandler = require('./middleware/errorMiddleware');
 const AppError = require('./src/core/services/appError');
 const prisma = require('./src/core/services/prismaClient');
@@ -76,16 +77,9 @@ app.use((req, res, next) => {
 
 // CORS must be registered before rate limiter so that
 // rate-limited responses include proper CORS headers.
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
-  : ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5174', 'http://127.0.0.1:5174'];
-
 const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    callback(null, false);
+    callback(null, isAllowedOrigin(origin, httpOrigins()));
   },
   credentials: true,
 };

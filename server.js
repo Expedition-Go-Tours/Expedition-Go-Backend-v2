@@ -9,6 +9,7 @@ const { registerWorkers, closeAll, registerSchedules, verifySchedules, enqueueNo
 const { startAiCronFallback } = require('./src/core/services/aiCronFallback');
 const redisClient = require('./src/core/services/redisClient');
 const logger = require('./src/core/services/logger');
+const { socketOrigins, isAllowedOrigin } = require('./config/corsOrigins');
 
 // PM2 cluster worker index. Scheduling is owned entirely by BullMQ Job
 // Schedulers (utils/queue.js registerSchedules) — no in-process timers or
@@ -288,26 +289,10 @@ async function setupQueueWorkers(redisOk = true) {
 }
 
 function setupSocketIO() {
-  const allowedOrigins = [
-    ...new Set([
-      ...(process.env.ALLOWED_ORIGINS
-        ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
-        : []),
-      'http://localhost:5173',
-      'http://127.0.0.1:5173',
-      'http://localhost:5174',
-      'http://127.0.0.1:5174',
-    ]),
-  ];
-
   io = new Server(server, {
     cors: {
       origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) {
-          callback(null, true);
-        } else {
-          callback(null, false);
-        }
+        callback(null, isAllowedOrigin(origin, socketOrigins()));
       },
       credentials: true,
     },
