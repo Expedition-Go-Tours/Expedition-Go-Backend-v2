@@ -376,8 +376,9 @@ async function main() {
   say('\n  approved     = status IN (CONFIRMED, COMPLETED) AND isSimulated = false — in EVERY window');
   say('  status-only  = the same statuses with simulated INCLUDED (isolates the simulated effect)');
   say('  digest       = status = CONFIRMED AND isSimulated = false (dailyDigest.js)');
-  say('\n  Windows: named periods ("past month") are calendar-aligned; explicit counts');
-  say('  ("past 7 days", "past 30 days") are rolling and end now.');
+  say('\n  Windows: "past X" is ROLLING and ends at the reference instant ("past month"');
+  say('  = last 30 days); "last X" is a complete CALENDAR period; an explicit count');
+  say('  ("past 7 days") is rolling. The third row says "last month" for that reason.');
 
   // Per-window comparison, grouped so adding a definition cannot mis-pair rows.
   for (const w of [...new Set(revAudit.map((r) => r.window))]) {
