@@ -512,7 +512,7 @@ async function buildBookingBase(booking, opts = {}) {
     durationLabel: fmt.getDurationLabel(tour),
     travelersLabel: travelers.label,
     languageLabel: fmt.getLanguageLabel(tour),
-    bookingTypeLabel: fmt.getBookingTypeLabel(tour),
+    bookingTypeLabel: fmt.getBookingTypeLabel(tour, booking),
     specialRequirements: booking.specialRequests || '',
 
     // pickup / meeting

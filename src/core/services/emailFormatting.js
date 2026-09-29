@@ -260,13 +260,40 @@ function getLanguageLabel(tour = {}) {
 }
 
 /**
- * "Private" vs "Shared" from the tour's bookingAndTickets.
+ * "Private" vs "Shared" for a booking.
+ *
+ * The supplier dashboard's "Is this a private activity?" toggle writes
+ * `productContent.options[].isPrivate`, but this used to read
+ * `bookingAndTickets.privateTour` — a field nothing in the codebase writes —
+ * so it always fell through to the 'Shared' default and the toggle never
+ * reached an email.
+ *
+ * Reads in order: legacy fields, the option the customer actually booked, the
+ * single-option case (bookings frequently store optionId === null), then the
+ * product-level flag, then the safe 'Shared' default.
+ *
+ * `booking` is optional so callers without one still work.
  */
-function getBookingTypeLabel(tour = {}) {
+function getBookingTypeLabel(tour = {}, booking = null) {
   const ticket = tour.bookingAndTickets || {};
   if (ticket.privateTour === true) return 'Private';
   if (ticket.privateTour === false) return 'Shared';
-  return ticket.bookingType || 'Shared';
+  if (ticket.bookingType) return String(ticket.bookingType);
+
+  const pc = tour.productContent || {};
+  const options = Array.isArray(pc.options) ? pc.options : [];
+
+  const optId = booking && booking.optionId ? String(booking.optionId) : null;
+  if (optId) {
+    const opt = options.find((o) => o && String(o.id) === optId);
+    if (opt) return opt.isPrivate ? 'Private' : 'Shared';
+  }
+
+  if (options.length === 1 && options[0]) {
+    return options[0].isPrivate ? 'Private' : 'Shared';
+  }
+
+  return pc.isPrivateActivity ? 'Private' : 'Shared';
 }
 
 /**
