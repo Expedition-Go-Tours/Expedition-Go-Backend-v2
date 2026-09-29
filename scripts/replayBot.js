@@ -267,10 +267,14 @@ const REVENUE_AUDIT_DEFINITIONS = {
 };
 
 async function revenueDefinitionAudit(pg) {
+  // The third entry deliberately says "last month", not "past month": "past
+  // month" now means a rolling 30 days, which would duplicate the second row
+  // and lose the calendar-month comparison — the row where approved and
+  // status-only diverge most ($90.89 vs $12,072.28).
   const WINDOWS = [
     { phrase: 'revenue for the past 7 days', label: 'the past 7 days (rolling)' },
     { phrase: 'revenue for the past 30 days', label: 'the past 30 days (rolling)' },
-    { phrase: 'revenue for the past month', label: 'the previous month (calendar)' },
+    { phrase: 'revenue for the last month', label: 'the previous month (calendar)' },
     { phrase: 'total revenue', label: 'all time' },
   ];
   const out = [];

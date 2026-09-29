@@ -179,6 +179,76 @@ describe('metricDefinitions — window resolution', () => {
   });
 });
 
+// ── "past" is rolling, "last" is calendar ─────────────────────────────────
+//
+// These two were previously the SAME regex, so "whats the revenue for the past
+// month" — a real question from the production logs — resolved to the previous
+// calendar month and reported $90.89 where the operator meant the last 30 days
+// ($4,995.14). A 55x divergence from one word. Both reads are defensible; only
+// one matches how an operator speaks, so the split is pinned here.
+describe('metricDefinitions — "past" is rolling, "last" is calendar', () => {
+  it('reads the real production question "whats the revenue for the past month" as rolling 30 days', () => {
+    const w = resolveWindow('whats the revenue for the past month', NOW);
+    expect(w.isAllTime).toBe(false);
+    expect(w.to.toISOString()).toBe(NOW.toISOString());
+    expect(w.from.toISOString()).toBe(new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString());
+    // ...and crucially NOT the previous calendar month (2026-08-01).
+    expect(w.from.toISOString()).not.toBe('2026-08-01T00:00:00.000Z');
+    expect(w.label).toContain('rolling 30 days');
+  });
+
+  it('reads the real production question "how about the total revenue for the past week" as rolling 7 days', () => {
+    const w = resolveWindow('how about the total revenue for the past week', NOW);
+    expect(w.to.toISOString()).toBe(NOW.toISOString());
+    expect(w.from.toISOString()).toBe(new Date(NOW.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString());
+    // Not the previous calendar week (Mon 2026-09-21).
+    expect(w.from.toISOString()).not.toBe('2026-09-21T00:00:00.000Z');
+    expect(w.label).toContain('rolling 7 days');
+  });
+
+  it('reads past quarter and past year as rolling 90 and 365 days', () => {
+    const q = resolveWindow('revenue past quarter', NOW);
+    expect(q.to.toISOString()).toBe(NOW.toISOString());
+    expect(q.from.toISOString()).toBe(new Date(NOW.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString());
+
+    const y = resolveWindow('revenue past year', NOW);
+    expect(y.to.toISOString()).toBe(NOW.toISOString());
+    expect(y.from.toISOString()).toBe(new Date(NOW.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString());
+  });
+
+  it('keeps "last X" calendar-anchored to UTC midnight', () => {
+    expect(resolveWindow('revenue last week', NOW).from.toISOString()).toBe('2026-09-21T00:00:00.000Z');
+    expect(resolveWindow('revenue last month', NOW).from.toISOString()).toBe('2026-08-01T00:00:00.000Z');
+    expect(resolveWindow('revenue last quarter', NOW).from.toISOString()).toBe('2026-04-01T00:00:00.000Z');
+    expect(resolveWindow('revenue last year', NOW).from.toISOString()).toBe('2025-01-01T00:00:00.000Z');
+    // Calendar windows end at a midnight, never at the reference instant.
+    expect(resolveWindow('revenue last month', NOW).to.toISOString()).toBe('2026-09-01T00:00:00.000Z');
+  });
+
+  it('keeps "this X" as the calendar period in progress', () => {
+    expect(resolveWindow('revenue this month', NOW).from.toISOString()).toBe('2026-09-01T00:00:00.000Z');
+    expect(resolveWindow('revenue this quarter', NOW).from.toISOString()).toBe('2026-07-01T00:00:00.000Z');
+    expect(resolveWindow('revenue this week', NOW).from.toISOString()).toBe('2026-09-28T00:00:00.000Z');
+  });
+
+  it('still reads an explicit numeral as rolling, whichever preposition it carries', () => {
+    // "last 30 days" is an explicit count, not a calendar month.
+    expect(resolveWindow('revenue last 30 days', NOW).to.toISOString()).toBe(NOW.toISOString());
+    expect(resolveWindow('revenue last 30 days', NOW).from.toISOString())
+      .toBe(new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString());
+    expect(resolveWindow('revenue last 3 days', NOW).from.toISOString())
+      .toBe(new Date(NOW.getTime() - 3 * 24 * 60 * 60 * 1000).toISOString());
+    expect(resolveWindow('revenue last 2 weeks', NOW).from.toISOString())
+      .toBe(new Date(NOW.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString());
+  });
+
+  it('never lets a rolling window end at a value other than the reference instant', () => {
+    for (const phrase of ['past week', 'past month', 'past quarter', 'past year', 'past 7 days', 'past 30 days']) {
+      expect(resolveWindow(`revenue ${phrase}`, NOW).to.toISOString()).toBe(NOW.toISOString());
+    }
+  });
+});
+
 // ── fact router ────────────────────────────────────────────────────────────
 
 describe('factRouter — claims only what it can answer correctly', () => {

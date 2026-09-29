@@ -164,10 +164,21 @@ function utcYearStart(date = new Date()) {
  * The convention throughout:
  *   - "this X"  = the calendar period in progress, from its first day up to
  *                 and including today (exclusive end at tomorrow's midnight).
- *   - "last X" / "past X" (named) = the immediately PRECEDING complete calendar
- *                 period, which is what an operator comparing period-on-period
- *                 means. Anchored, so a quoted figure can be re-derived exactly.
+ *   - "last X"  = the immediately PRECEDING complete calendar period, which is
+ *                 what an operator comparing period-on-period means. Anchored,
+ *                 so a quoted figure can be re-derived exactly.
+ *   - "past X"  = a ROLLING period of the same nominal length ending NOW.
+ *                 "past month" is the last 30 days, not the previous calendar
+ *                 month — those two reads differed by 55x on real production
+ *                 data ($4,995.14 vs $90.89 for "whats the revenue for the past
+ *                 month"), because the operator said "past", not "last month".
  *   - "past N days" / "past N weeks" = a ROLLING N×24h / N×7×24h ending now.
+ *                 (Numeral forms take precedence, so "the past 30 days" is not
+ *                 captured by "past month".)
+ *
+ * Every rolling window's label names its length ("rolling 30 days"), so the
+ * narration states a range the operator can check rather than a bare "past
+ * month".
  *
  * Each factory receives (match, ref) where `ref` is the injected reference
  * date, so tests are deterministic.
@@ -190,34 +201,54 @@ const WINDOW_PHRASES = [
 
   // ── weeks ──
   [/\bthis\s+week\b/, (_m, ref) => ({ from: utcWeekStart(ref), to: utcDayStartOf(ref, 1), label: 'this week' })],
-  [/\b(?:past|last)\s+week\b/, (_m, ref) => ({
+  [/\blast\s+week\b/, (_m, ref) => ({
     from: utcWeekStart(utcDayStartOf(ref, -7)),
     to: utcWeekStart(ref),
     label: 'the previous week',
   })],
+  [/\bpast\s+week\b/, (_m, ref) => ({
+    from: new Date(ref.getTime() - 7 * DAY_MS),
+    to: new Date(ref),
+    label: 'the past week (rolling 7 days)',
+  })],
 
   // ── months ──
   [/\bthis\s+month\b/, (_m, ref) => ({ from: utcMonthStart(ref), to: utcDayStartOf(ref, 1), label: 'this month' })],
-  [/\b(?:past|last)\s+month\b/, (_m, ref) => ({
+  [/\blast\s+month\b/, (_m, ref) => ({
     from: utcMonthStart(utcMonthStart(ref) - 1),
     to: utcMonthStart(ref),
     label: 'the previous month',
   })],
+  [/\bpast\s+month\b/, (_m, ref) => ({
+    from: new Date(ref.getTime() - 30 * DAY_MS),
+    to: new Date(ref),
+    label: 'the past month (rolling 30 days)',
+  })],
 
   // ── quarters ──
   [/\bthis\s+quarter\b/, (_m, ref) => ({ from: utcQuarterStart(ref), to: utcDayStartOf(ref, 1), label: 'this quarter' })],
-  [/\b(?:past|last)\s+quarter\b/, (_m, ref) => ({
+  [/\blast\s+quarter\b/, (_m, ref) => ({
     from: utcQuarterStart(utcQuarterStart(ref) - 1),
     to: utcQuarterStart(ref),
     label: 'the previous quarter',
   })],
+  [/\bpast\s+quarter\b/, (_m, ref) => ({
+    from: new Date(ref.getTime() - 90 * DAY_MS),
+    to: new Date(ref),
+    label: 'the past quarter (rolling 90 days)',
+  })],
 
   // ── years ──
   [/\bthis\s+year\b/, (_m, ref) => ({ from: utcYearStart(ref), to: utcDayStartOf(ref, 1), label: 'this year' })],
-  [/\b(?:past|last)\s+year\b/, (_m, ref) => ({
+  [/\blast\s+year\b/, (_m, ref) => ({
     from: utcYearStart(new Date(Date.UTC(ref.getUTCFullYear() - 1, 0, 1))),
     to: utcYearStart(ref),
     label: 'the previous year',
+  })],
+  [/\bpast\s+year\b/, (_m, ref) => ({
+    from: new Date(ref.getTime() - 365 * DAY_MS),
+    to: new Date(ref),
+    label: 'the past year (rolling 365 days)',
   })],
 ];
 
