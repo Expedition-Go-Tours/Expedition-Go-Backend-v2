@@ -207,6 +207,33 @@ describe('factRouter — claims only what it can answer correctly', () => {
     }
   });
 
+  it('never answers a ranking with the underlying total or count', () => {
+    // "top 3 tours" otherwise matches only the generic `tours` rule and is
+    // answered with the platform-wide tour total — a confident wrong answer.
+    // All of these must fall through to the SQL agent, which can rank properly.
+    expect(routeToFact('show me the top 3 tours', { now: NOW })).toBeNull();
+    expect(routeToFact('which is our most booked experience', { now: NOW })).toBeNull();
+    expect(routeToFact('what is our top selling supplier this month', { now: NOW })).toBeNull();
+    expect(routeToFact('highest earning customer', { now: NOW })).toBeNull();
+    // Entity-agnostic "top selling" must not be ranked as tours either.
+    expect(routeToFact('who are our best selling partners', { now: NOW })).toBeNull();
+  });
+
+  it('routes an explicit-count revenue ranking of tours with that count', () => {
+    const ten = routeToFact('top 10 tours by revenue this month', { now: NOW });
+    expect(ten.metric).toBe('topTours');
+    expect(ten.topToursLimit).toBe(10);
+
+    const three = routeToFact('top 3 tours by revenue', { now: NOW });
+    expect(three.metric).toBe('topTours');
+    expect(three.topToursLimit).toBe(3);
+
+    // No stated count -> the layer's default, not a guess.
+    const dflt = routeToFact('what are the top tours by revenue this month', { now: NOW });
+    expect(dflt.metric).toBe('topTours');
+    expect(dflt.topToursLimit).toBeNull();
+  });
+
   it('declines context-dependent questions', () => {
     // These are the two real conversational questions from production logs.
     expect(routeToFact('In usd', { now: NOW })).toBeNull();
@@ -386,6 +413,38 @@ describe('businessFacts — top tours', () => {
     const pg = makePg([]);
     const res = await getBusinessFacts('topTours', { window: win('top tours by revenue'), pg });
     expect(res.sql).toContain("'CONFIRMED','COMPLETED'");
+  });
+
+  it('orders by the numeric sum, never the text alias', async () => {
+    // `gross` is COALESCE(...)::text. Ordering by that alias sorts
+    // lexicographically, so "60" outranked "475" and the real top tour
+    // ($1,335.60) was missing. The ordering key must be the numeric expression.
+    const pg = makePg([]);
+    const res = await getBusinessFacts('topTours', { window: win('top tours by revenue this month'), pg });
+    expect(res.sql).toMatch(/ORDER BY COALESCE\(SUM\("b"\."total"\),0\) DESC/);
+    expect(res.sql).not.toMatch(/ORDER BY gross/);
+  });
+
+  it('returns the default row count when no count is asked for', async () => {
+    const pg = makePg([]);
+    const res = await getBusinessFacts('topTours', { window: win('top tours by revenue this month'), pg });
+    expect(res.sql).toMatch(/LIMIT 5$/);
+    expect(res.facts.limit).toBe(5);
+  });
+
+  it('honours an explicit count up to the cap', async () => {
+    const pg = makePg([]);
+    const res = await getBusinessFacts('topTours', { window: win('top 10 tours by revenue'), topToursLimit: 10, pg });
+    expect(res.sql).toMatch(/LIMIT 10$/);
+    expect(res.facts.limit).toBe(10);
+  });
+
+  it('refuses a count it cannot serve instead of silently truncating it', async () => {
+    const pg = makePg([]);
+    const res = await getBusinessFacts('topTours', { window: win('top 15 tours by revenue'), topToursLimit: 15, pg });
+    expect(res.ok).toBe(false);
+    expect(res.reason).toMatch(/15/);
+    expect(pg.queries).toHaveLength(0);
   });
 });
 

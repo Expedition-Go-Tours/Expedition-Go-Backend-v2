@@ -30,7 +30,11 @@ const { resolveWindow, CUSTOMER_ROLE, TOP_TOURS_DATE_COLUMN } = require('../../s
  * ranking, not a revenue total).
  */
 const SPECIFIC_RULES = [
-  { metric: 'topTours', kw: ['top tour', 'best tour', 'top selling', 'best selling', 'best-selling', 'top 5 tour', 'top 10 tour', 'popular tour', 'leading tour', 'busiest tour'] },
+  // Every phrase names a TOUR. Entity-agnostic phrases ("top selling") are
+  // deliberately absent: "our top selling suppliers" would otherwise be ranked
+  // as tours. A ranking with an explicit count ("top 3 tours") is covered by
+  // TOP_N_TOURS in matchSpecific.
+  { metric: 'topTours', kw: ['top tour', 'best tour', 'top selling tour', 'best selling tour', 'top-selling tour', 'best-selling tour', 'popular tour', 'leading tour', 'busiest tour'] },
   { metric: 'refunds', kw: ['refund', 'money back', 'chargeback', 'given back'] },
   { metric: 'disputes', kw: ['dispute', 'complaint', 'chargeback case'] },
   { metric: 'payouts', kw: ['payout', 'paid out', 'supplier payment', 'owed to supplier'] },
@@ -125,6 +129,27 @@ const CONTEXTUAL_MARKERS = [
  */
 const BARE_COUNT_REFERENCE = /\b(?:on|for|of|about|with|to)\s+(?:the\s+)?\d+\b/i;
 
+/**
+ * A ranking with an explicit count: "top 3 tours", "best 10 tours".
+ * Captures the requested number so the fact layer can return that many rows.
+ */
+const TOP_N_TOURS = /\b(?:top|best)\s+(\d{1,3})\s+tours?\b/i;
+
+/** Wording that makes an explicit-count tour ranking a revenue ranking. */
+const TOUR_REVENUE_BASIS = /\b(?:revenue|sales|earning|earnings|money|gross|selling|sold|earned|income)\b/;
+
+/**
+ * A superlative/ranking word.
+ *
+ * A deterministic metric is a TOTAL or a COUNT, never a ranking. Without this
+ * guard "show me the top 3 tours" matches only the generic `tours` rule and is
+ * answered with the platform-wide tour TOTAL — a confident wrong answer, and
+ * precisely the false-positive class this router exists to prevent. `topTours`
+ * is the one ranking the layer actually models; every other ranking is declined
+ * to the SQL agent, which can rank by any basis.
+ */
+const RANKING_MARKERS = /\b(?:top|best|most|leading|popular|busiest|highest|greatest)\b/;
+
 /** Currency words an operator might ask about. */
 const CURRENCY_WORDS = /\b(usd|ghs|ghana cedis?|gbp|pounds?|euros?|eur|ngn|naira|zar|cad|aud)\b/;
 
@@ -185,6 +210,13 @@ function matchSpecific(q) {
   // actually about another entity. See SIGNUP_SUBJECT_EXCLUSIONS.
   if (hit && hit.metric === 'signups' && SIGNUP_SUBJECT_EXCLUSIONS.some((k) => q.includes(k))) {
     return null;
+  }
+  // "top 3 tours by revenue" names an explicit count, so it misses the
+  // "top 5 tour"/"top 10 tour" phrases. It is still a revenue ranking of tours,
+  // so claim it here; without a stated revenue basis it stays unclaimed and the
+  // RANKING_MARKERS guard below declines it.
+  if (!hit && TOP_N_TOURS.test(q) && TOUR_REVENUE_BASIS.test(q)) {
+    return { metric: 'topTours' };
   }
   return hit;
 }
@@ -271,6 +303,12 @@ function routeToFact(question, opts = {}) {
   if (metric === 'users' && !/users?\b/.test(q)) return null;
   if (metric === 'customers' && /\busers?\b/.test(q) && !/\bcustomers?\b/.test(q)) return null;
 
+  // A ranking word outside the one ranking we model (topTours) means the
+  // question asks for an ORDER, which a total/count metric cannot give. See
+  // RANKING_MARKERS: refusing here is the safe direction — the SQL agent
+  // answers the ranking, and the operator never receives the wrong total.
+  if (metric !== 'topTours' && RANKING_MARKERS.test(q)) return null;
+
   // ── 6. Qualifiers ─────────────────────────────────────────────────────
   const statusFilter = extractStatus(metric, q);
   const windowedCount = !statusFilter && NEW_ENTITY_MARKERS.some((k) => q.includes(k));
@@ -279,6 +317,8 @@ function routeToFact(question, opts = {}) {
   const currencyFilter = currencyMatch
     ? CURRENCY_CODES[currencyMatch[1]] || currencyMatch[1].toUpperCase()
     : null;
+
+  const topN = q.match(TOP_N_TOURS);
 
   return {
     metric,
@@ -292,6 +332,9 @@ function routeToFact(question, opts = {}) {
     // Top-tour revenue rankings always read when the money was taken.
     // See metricDefinitions header note 3.
     topToursDateColumn: metric === 'topTours' ? TOP_TOURS_DATE_COLUMN : null,
+    // "top 3 tours" asks for three rows, not the default five. The fact layer
+    // clamps this and refuses (rather than truncates) a count it cannot serve.
+    topToursLimit: metric === 'topTours' && topN ? Number(topN[1]) : null,
     selfContained: true,
   };
 }

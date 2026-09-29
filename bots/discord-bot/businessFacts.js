@@ -188,6 +188,7 @@ async function getBusinessFacts(metric, opts = {}) {
     windowedCount = false,
     currencyFilter = null,
     customerRole = null,
+    topToursLimit = null,
     pg,
   } = opts;
   const q = where();
@@ -454,17 +455,33 @@ async function getBusinessFacts(metric, opts = {}) {
       // Reads paidAt, never createdAt. A "tours created" ranking is a separate
       // metric and must not be derived from this one.
       case 'topTours': {
+        // The requested row count. A question that names a count we cannot serve
+        // ("top 15 tours") is REFUSED, not silently truncated to the cap: the
+        // caller falls through to the SQL agent, which can rank as many as asked.
+        const requested = Number.isInteger(topToursLimit) ? topToursLimit : LIMITS.topTours;
+        if (requested > LIMITS.topToursMax) {
+          return {
+            ok: false,
+            metric,
+            sql: '',
+            reason: `requested ${requested} top tours, more than the ${LIMITS.topToursMax} this layer returns`,
+          };
+        }
+        const limit = Math.max(1, Math.min(requested, LIMITS.topToursMax));
         q.add(`"b"."status" IN (${revenueStatusList()})`);
         if (currencyFilter) q.add('"b"."currency" = ?', [currencyFilter]);
         const dateCol = TOP_TOURS_DATE_COLUMN;
         const w = windowClause(`"b"."${dateCol}"`, win);
         if (w.clause) q.add(w.clause, w.params);
-        const limit = Math.min(LIMITS.topToursMax, LIMITS.topTours);
+        // ORDER BY the numeric expression, NOT the `gross` alias: `gross` is
+        // COALESCE(...)::text, so ordering by it sorts lexicographically and
+        // "60" outranks "475". That returned the wrong tours in the wrong order
+        // for every ranking question. `t."title"` breaks ties deterministically.
         const sql =
           'SELECT t."title" AS title, t."city" AS city, "b"."currency" AS currency, ' +
           'COUNT(*)::int AS bookings, COALESCE(SUM("b"."total"),0)::text AS gross ' +
           'FROM "Booking" b JOIN "Tour" t ON "b"."tourId" = t."id" ' +
-          `WHERE ${q.sql} GROUP BY 1,2,3 ORDER BY gross DESC NULLS LAST LIMIT ${limit}`;
+          `WHERE ${q.sql} GROUP BY 1,2,3 ORDER BY COALESCE(SUM("b"."total"),0) DESC, t."title" ASC LIMIT ${limit}`;
         const rows = await run(sql, q.params);
         return {
           ok: true, metric, window: wLabel, sql,
@@ -472,6 +489,7 @@ async function getBusinessFacts(metric, opts = {}) {
           currencyGrouping: 'by currency; never summed across currencies',
           facts: {
             dateColumn: dateCol,
+            limit,
             rows: rows.map((r) => ({
               title: r.title, city: r.city, currency: r.currency,
               bookings: r.bookings, gross: num(r.gross),
