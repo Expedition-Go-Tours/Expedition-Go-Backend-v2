@@ -8,6 +8,9 @@ const {
   normalizeQuestion,
   suggestColumns,
   suggestEnumValues,
+  detectActivityIntent,
+  detectHours,
+  ACTIVITY_MAX_HOURS,
   MAX_STEPS,
   resetSchemaCache,
 } = require('../../bots/discord-bot/queryAgent');
@@ -714,5 +717,91 @@ describe('location place semantics (city-first)', () => {
     // The example teaches the honest city-first + region-note answer.
     expect(systems[0]).toContain('7 in Accra (13 including the Greater Accra Region)');
     expect(systems[1]).toContain('7 in Accra (13 including the Greater Accra Region)');
+  });
+});
+
+describe('activity window routing (coarse windows must fall through)', () => {
+  // Regression: 'signups' and 'new signup' are activity keywords, and the old
+  // detectHours collapsed every unrecognised window to 2 hours. So "how many new
+  // signups this week" was answered from two hours of logs and reported
+  // "0 new signups" — a confidently wrong number. The activity report cannot
+  // represent a window coarser than 72h, so those questions must decline and
+  // reach the query agent.
+  it('declines coarse windows instead of silently using the 2h default', () => {
+    const coarse = [
+      'new signups this week',
+      'how many new signups this week',
+      'signups in the last 7 days',
+      'logins last month',
+      'errors over the past year',
+      'signups past 3 months',
+      'signups in the last 4 days',
+      'logins this week',
+    ];
+    for (const q of coarse) {
+      expect(detectHours(q)).toBeNull();
+      expect(detectActivityIntent(q)).toBeNull();
+    }
+  });
+
+  it('resolves day phrases to hours when they fit the 72h cap', () => {
+    // Previously all of these collapsed to 2 hours.
+    expect(detectHours('signups in the last 2 days')).toBe(48);
+    expect(detectHours('logins yesterday')).toBe(24);
+    expect(detectHours('errors in the last 3 days')).toBe(72);
+    // "past 4 days" is 96h and cannot be covered.
+    expect(detectHours('signups in the last 4 days')).toBeNull();
+  });
+
+  // Asserted through detectActivityIntent (the public, pre-existing export) so
+  // this is a genuine before/after guard rather than a test of a new symbol.
+  it('preserves existing servable behaviour exactly', () => {
+    const cases = [
+      ['recent errors', 2],
+      ['what happened', 2],
+      ['who logged in', 2],
+      ['logins today', 24],
+      ['errors in the last day', 24],
+      ['api errors in the last 24 hours', 24],
+      ['signups in the last 2 hours', 2],
+      ['logins in the last 6 hours', 6],
+    ];
+    for (const [q, want] of cases) {
+      expect(detectActivityIntent(q)).toEqual({ hours: want });
+    }
+  });
+
+  it('caps an explicit hour request at ACTIVITY_MAX_HOURS', () => {
+    expect(detectHours('logins in the last 500 hours')).toBe(ACTIVITY_MAX_HOURS);
+    expect(ACTIVITY_MAX_HOURS).toBe(72);
+  });
+
+  it('still declines non-activity questions', () => {
+    expect(detectActivityIntent('what is the revenue')).toBeNull();
+    expect(detectActivityIntent('how many tours are live')).toBeNull();
+    expect(detectActivityIntent('')).toBeNull();
+  });
+
+  it('routes a fixed-window signup question to the activity engine', () => {
+    expect(detectActivityIntent('how many signups in the last 24 hours')).toEqual({ hours: 24 });
+  });
+
+  it('answerQuestion no longer hijacks a coarse-window signup question', async () => {
+    // End-to-end through the orchestrator. Before the fix, detectActivityIntent
+    // claimed this and answerActivity reported a 2-hour window, so the bot said
+    // "0 new signups" for a question about a week. Now the question must reach
+    // the SQL path instead.
+    const pg = makePg({ tables: ['User'], sqlRows: [{ n: 43 }] });
+    const prompts = [];
+    const callMimo = async ({ messages }) => {
+      prompts.push(messages[0].content);
+      return '{"final":"**43** new signups this week."}';
+    };
+    const res = await answerQuestion({ question: 'how many new signups this week', userId: 't', pg, callMimo, cache: null });
+
+    // The activity report is the ONLY path that sends this system prompt.
+    const usedActivityReport = prompts.some((p) => /pre-computed app-activity report/i.test(p));
+    expect(usedActivityReport).toBe(false);
+    expect(res.final).toBe('**43** new signups this week.');
   });
 });

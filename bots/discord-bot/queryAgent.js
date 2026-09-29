@@ -901,26 +901,55 @@ const ACTIVITY_KEYWORDS = [
   'what changed',
 ];
 
-// Any simple duration ("2 hours", "1h", "past day", "today") -> hours.
+// The activity report is built from an hour-granularity window and is capped
+// at 72h. Anything coarser cannot be represented by it.
+const ACTIVITY_MAX_HOURS = 72;
+
+// A window named in weeks, months, quarters or years is always coarser than the
+// report can cover. Matched on the ORIGINAL phrase forms the bot is asked with
+// ("this week", "last 3 months", "past year").
+const COARSE_ACTIVITY_WINDOW = /\b(?:past|last|this|previous|over)\s+(?:\d+\s+)?(?:weeks?|months?|quarters?|years?)\b/;
+
+/**
+ * Resolve a question's activity window to hours.
+ *
+ * Returns null when the question names a window this report cannot represent.
+ * That case must fall through to the query agent: previously any unrecognised
+ * window collapsed to the 2-hour default, so "how many new signups this week"
+ * was answered from two hours of logs and reported "0 new signups".
+ *
+ * @returns {number|null}
+ */
 function detectHours(question) {
   const q = String(question || '').toLowerCase();
-  const m = q.match(/(\d+)\s*(hours?|hrs?|h)\b/);
-  if (m) return Math.min(Math.max(Number(m[1]), 1), 72);
-  if (/(past|last)\s+(day|24\s*hours?)/.test(q)) return 24;
-  if (/\b(today)\b/.test(q)) return 24;
+  const h = q.match(/(\d+)\s*(hours?|hrs?|h)\b/);
+  if (h) return Math.min(Math.max(Number(h[1]), 1), ACTIVITY_MAX_HOURS);
+  if (/(?:past|last)\s+day\b/.test(q)) return 24;
+  if (/\b(?:today|yesterday)\b/.test(q)) return 24;
+  // "past 3 days" is exactly 72h and is servable; "past 4 days" is not.
+  const d = q.match(/(?:past|last)\s+(\d+)\s*days?\b/);
+  if (d) {
+    const hours = Number(d[1]) * 24;
+    return hours <= ACTIVITY_MAX_HOURS ? Math.max(hours, 1) : null;
+  }
+  if (COARSE_ACTIVITY_WINDOW.test(q)) return null;
+  // No window stated — keep the documented short-window default.
   return 2;
 }
 
 /**
  * Rule-based (no LLM) detection of activity/audit questions.
- * @returns {{hours: number}|null}
+ * @returns {{hours: number}|null} null when the question is not an activity
+ *          question, or names a window the activity report cannot cover.
  */
 function detectActivityIntent(question) {
   const q = String(question || '').toLowerCase().trim();
   if (!q) return null;
   const hit = ACTIVITY_KEYWORDS.some((kw) => q.includes(kw));
   if (!hit) return null;
-  return { hours: detectHours(q) };
+  const hours = detectHours(q);
+  if (hours === null) return null;
+  return { hours };
 }
 
 const ACTIVITY_NARRATE_SYSTEM =
@@ -936,7 +965,9 @@ const ACTIVITY_NARRATE_SYSTEM =
 
 async function answerActivity({ question, userId = '?', pg, callMimo }) {
   const intent = detectActivityIntent(question);
-  const hours = intent ? intent.hours : detectHours(question);
+  // detectActivityIntent is the gate that routes here, so hours is always
+  // servable; the 2h fallback only guards a direct call to this function.
+  const hours = intent ? intent.hours : 2;
   const t0 = Date.now();
   const report = await buildActivityReport({ pg, hours });
   const out = await callMimo({
@@ -1057,6 +1088,8 @@ module.exports = {
   suggestColumns,
   suggestEnumValues,
   detectActivityIntent,
+  detectHours,
+  ACTIVITY_MAX_HOURS,
   answerActivity,
   MAX_STEPS,
   CRITICAL_TABLES,
