@@ -23,7 +23,22 @@ const INVITE_TTL_HOURS = 48;
 
 // Brand roles a team member inherits from the supplier they join, so brand
 // context (chat, email identity, dashboard links) matches the owner's.
+// 'expedition' is deliberately absent: it means "takes DIRECT bookings on
+// Expedition Go" (adminController.toggleSupplierExpeditionRole) and is not a
+// label a member should inherit.
 const BRAND_ROLES = ['ghana', 'africa'];
+
+// Which storefronts the business is live on, read from the OWNER's brand roles
+// (config/brands.js). Never a member's own roles — BRAND_ROLES above does not
+// carry 'expedition', so a member's array can say nothing about Expedition.
+// Order is the menu order: Travio Ghana first.
+const STOREFRONT_ROLE_MAP = { ghana: 'GHANA', expedition: 'EXPEDITION' };
+const storefrontsFor = (roles) =>
+  Array.isArray(roles)
+    ? Object.keys(STOREFRONT_ROLE_MAP)
+        .filter((role) => roles.includes(role))
+        .map((role) => STOREFRONT_ROLE_MAP[role])
+    : [];
 
 /**
  * Team members accept with a plain account (`roles: ['customer']` is the signup
@@ -147,6 +162,7 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
         roles: ['admin'],
         permissions: ['*'],
         isOwner: true,
+        storefronts: [],
       },
     });
   }
@@ -165,6 +181,9 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
         permissions: ['*'],
         isOwner: true,
         supplierId: supplier.id,
+        // This branch resolved SupplierProfile by userId: req.user IS the
+        // owner, so their own roles are the business's storefronts.
+        storefronts: storefrontsFor(req.user.roles),
       },
     });
   }
@@ -175,7 +194,15 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
       status: 'ACCEPTED',
     },
     orderBy: { createdAt: 'desc' },
-    select: { roles: true, role: true, supplierId: true },
+    // `supplier` resolves TeamMember.supplierId (a User id) to the OWNER, so
+    // their brand roles arrive in this same query — no second round trip, and
+    // no confusion with the owner branch's SupplierProfile id above.
+    select: {
+      roles: true,
+      role: true,
+      supplierId: true,
+      supplier: { select: { roles: true } },
+    },
   });
 
   if (!teamMember) {
@@ -185,6 +212,7 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
         role: null,
         permissions: [],
         isOwner: false,
+        storefronts: [],
       },
     });
   }
@@ -199,6 +227,7 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
       permissions: permissionsForRoles(roles),
       isOwner: false,
       supplierId: teamMember.supplierId,
+      storefronts: storefrontsFor(teamMember.supplier?.roles),
     },
   });
 });
