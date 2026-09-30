@@ -34,7 +34,7 @@ const {
   revenueClauses,
   utcWeekStart,
   utcMonthStart,
-  utcDayStart,
+  utcDayStartOf,
 } = require('../../src/core/services/metricDefinitions');
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -119,7 +119,10 @@ describe('metricDefinitions — window resolution', () => {
   });
 
   it('aligns calendar windows to UTC midnight', () => {
-    expect(resolveWindow('yesterday', NOW).from).toEqual(utcDayStart(-1));
+    // NOW is a fixed fixture, so the reference has to be NOW-relative:
+    // utcDayStart() measures from real today, which turned this assertion red
+    // the day after the fixture's date.
+    expect(resolveWindow('yesterday', NOW).from).toEqual(utcDayStartOf(NOW, -1));
     expect(resolveWindow('this week', NOW).from).toEqual(utcWeekStart(NOW));
     expect(resolveWindow('this month', NOW).from).toEqual(utcMonthStart(NOW));
   });
