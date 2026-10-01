@@ -505,6 +505,54 @@ function brandNode(site) {
   return brand;
 }
 
+/**
+ * The countries Travio Ghana's cancellation policy is offered in, as ISO
+ * 3166-1 alpha-2 — `applicableCountry` means "where the product is sold and
+ * will be returned from", which for an experience is the customer's own
+ * consumer-protection jurisdiction.
+ *
+ * Derived from where bookings and reviews actually come from rather than
+ * guessed: DailyTourStats.topCountry (GH, GB, US, BE, NG, IE, NL, AU) plus the
+ * stated origin on 295 of the 310 external reviews that carry one — 95% of
+ * them, across 24 of the 38 distinct origins. The cutoff is >= 2 reviews, which
+ * drops one-off travelogues while keeping every market with real volume.
+ * Google allows up to 50 entries; this is 24.
+ *
+ * Listed on every offer rather than only on Organization because Search
+ * Console's merchant-listing report validates the field against `offers` and
+ * reports "Missing field 'hasMerchantReturnPolicy' (in 'offers')".
+ */
+const RETURN_POLICY_COUNTRIES = [
+  'AE', 'AU', 'BE', 'CA', 'CH', 'DE', 'DK', 'FR', 'GB', 'GH', 'GR', 'IE',
+  'IT', 'KE', 'NG', 'NL', 'NO', 'PT', 'SE', 'TG', 'TN', 'UG', 'US', 'ZA',
+];
+
+/**
+ * The offer-level return policy, stated as the refund policy page actually
+ * words it: cancel at least 24 hours before the scheduled start and receive a
+ * full refund of the booking price.
+ *
+ * `MerchantReturnFiniteReturnWindow` + `merchantReturnDays: 1` is that 24-hour
+ * window. `merchantReturnLink` is deliberately NOT used — it is offered as
+ * "Option B" for Organization-level markup but appears nowhere in Google's
+ * merchant-listing documentation, so it cannot satisfy a field validated
+ * against `offers`.
+ *
+ * Omitted deliberately: `itemCondition` and `returnMethod`, both recommended
+ * rather than required, and both describing physical goods (New/Used,
+ * ReturnByMail/ReturnInStore) that do not apply to a booked tour.
+ */
+function returnPolicyNode() {
+  return {
+    '@type': 'MerchantReturnPolicy',
+    applicableCountry: [...RETURN_POLICY_COUNTRIES],
+    returnPolicyCategory: 'https://schema.org/MerchantReturnFiniteReturnWindow',
+    merchantReturnDays: 1,
+    returnFees: 'https://schema.org/FreeReturn',
+    refundType: 'https://schema.org/FullRefund',
+  };
+}
+
 function buildProductSchema(site, tour) {
   const schema = {
     '@context': 'https://schema.org',
@@ -520,6 +568,7 @@ function buildProductSchema(site, tour) {
       priceCurrency: tour.currency || 'USD',
       availability: 'https://schema.org/InStock',
       seller: brandOrganization(site),
+      hasMerchantReturnPolicy: returnPolicyNode(),
     },
   };
   // Report the combined (in-app + external) standing when the API provides it,

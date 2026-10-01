@@ -333,6 +333,100 @@ describe('tour pages identify the brand', () => {
   });
 });
 
+/**
+ * Search Console's merchant-listing report validates `hasMerchantReturnPolicy`
+ * against the OFFER, not the Product or the Organization: it reports
+ * "Missing field 'hasMerchantReturnPolicy' (in 'offers')". Google's
+ * Organization-level doc offers `merchantReturnLink` as a one-field shortcut,
+ * but that property appears nowhere in the merchant-listing documentation, so
+ * an offer-level policy has to carry the real object.
+ *
+ * Every value here is checked against the wording of
+ * https://www.travioghana.com/refund-policy — "cancel at least 24 hours before
+ * the scheduled start time: receive a full refund of the booking price" — so
+ * the markup describes an actual policy rather than filling a report.
+ */
+describe('offer return policy', () => {
+  const tour = {
+    id: 'tour-1',
+    slug: 'kakum-canopy-walk',
+    title: 'Kakum Canopy Walk',
+    city: 'Cape Coast',
+    startingPrice: 45,
+    currency: 'USD',
+    averageRating: 4.8,
+    reviewCount: 12,
+  };
+
+  /** The rendered Product schema, parsed back out of the page. */
+  async function productOf(opts) {
+    nextResponse = { statusCode: 200, payload: { status: 'success', data: { tour: { tour } } } };
+    const res = await render('/tour/kakum-canopy-walk', opts);
+    const blocks = [...res.body.matchAll(/<script[^>]*application\/ld\+json[^>]*>(.*?)<\/script>/gs)]
+      .map((m) => JSON.parse(m[1]));
+    const product = blocks.find((b) => b['@type'] === 'Product');
+    expect(product).toBeDefined();
+    return product;
+  }
+
+  it('publishes hasMerchantReturnPolicy on the offer, where the report looks', async () => {
+    const product = await productOf({ host: GHANA_HOST });
+    expect(product.offers.hasMerchantReturnPolicy).toBeDefined();
+    expect(product.offers.hasMerchantReturnPolicy['@type']).toBe('MerchantReturnPolicy');
+  });
+
+  it('carries both required properties, so the field cannot read as missing', async () => {
+    const policy = (await productOf({ host: GHANA_HOST })).offers.hasMerchantReturnPolicy;
+    expect(policy.applicableCountry).toBeDefined();
+    expect(policy.returnPolicyCategory).toBeDefined();
+  });
+
+  it('requires merchantReturnDays for a finite window, which Google mandates', async () => {
+    // A finite window without merchantReturnDays is itself an invalid policy.
+    const policy = (await productOf({ host: GHANA_HOST })).offers.hasMerchantReturnPolicy;
+    expect(policy.returnPolicyCategory).toBe('https://schema.org/MerchantReturnFiniteReturnWindow');
+    expect(policy.merchantReturnDays).toBeGreaterThan(0);
+  });
+
+  it('states the 24-hour window and full refund the policy page promises', async () => {
+    const policy = (await productOf({ host: GHANA_HOST })).offers.hasMerchantReturnPolicy;
+    expect(policy.merchantReturnDays).toBe(1);
+    expect(policy.refundType).toBe('https://schema.org/FullRefund');
+    expect(policy.returnFees).toBe('https://schema.org/FreeReturn');
+  });
+
+  it('stays within the 50 countries Google accepts', async () => {
+    const policy = (await productOf({ host: GHANA_HOST })).offers.hasMerchantReturnPolicy;
+    expect(policy.applicableCountry.length).toBeLessThanOrEqual(50);
+    expect(policy.applicableCountry.length).toBeGreaterThan(0);
+  });
+
+  it('uses two-letter ISO 3166-1 alpha-2 codes, not names', async () => {
+    const policy = (await productOf({ host: GHANA_HOST })).offers.hasMerchantReturnPolicy;
+    for (const code of policy.applicableCountry) {
+      expect(code).toMatch(/^[A-Z]{2}$/);
+    }
+  });
+
+  it('keeps every market that actually books or reviews, not just one region', async () => {
+    // Derived from DailyTourStats.topCountry and the stated origin on 95% of
+    // reviews: Ghana is the operating country, GB/US the largest review
+    // volumes, BE the strongest booking signal outside them.
+    const policy = (await productOf({ host: GHANA_HOST })).offers.hasMerchantReturnPolicy;
+    for (const code of ['GH', 'GB', 'US', 'BE']) {
+      expect(policy.applicableCountry).toContain(code);
+    }
+  });
+
+  it('returns a fresh object per render, so one page cannot mutate another', async () => {
+    const first = await productOf({ host: GHANA_HOST });
+    const second = await productOf({ host: GHANA_HOST });
+    expect(first.offers.hasMerchantReturnPolicy).not.toBe(second.offers.hasMerchantReturnPolicy);
+    first.offers.hasMerchantReturnPolicy.merchantReturnDays = 999;
+    expect(second.offers.hasMerchantReturnPolicy.merchantReturnDays).toBe(1);
+  });
+});
+
 describe('tour pages', () => {
   const tour = {
     id: 'tour-1',
