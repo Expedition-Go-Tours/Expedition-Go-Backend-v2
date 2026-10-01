@@ -281,6 +281,36 @@ describe('tour pages identify the brand', () => {
     expect(product.brand.sameAs).toEqual(expect.arrayContaining(TRAVIO_GHANA_SAME_AS));
   });
 
+  /**
+   * Google's merchant-listing report validates `Product.brand` against the
+   * `Brand` type and answers "Invalid object type for field 'brand'" for an
+   * Organization — which is what this node was. Every one of the 32 tour pages
+   * carried that error, and it is reported on the pages the brand query lands
+   * on.
+   */
+  it('types the product brand as Brand, the type the report validates', async () => {
+    const product = await productOf({ host: GHANA_HOST });
+    expect(product.brand['@type']).toBe('Brand');
+  });
+
+  /**
+   * The split matters as much as the type: `Offer.seller` is typed
+   * `Organization | Person`, so flipping *everything* to Brand would trade one
+   * invalid object for another.
+   */
+  it('leaves the offer seller an Organization, the type Offer.seller allows', async () => {
+    const product = await productOf({ host: GHANA_HOST });
+    expect(product.offers.seller['@type']).toBe('Organization');
+    expect(product.offers.seller.name).toBe('Travio Ghana');
+  });
+
+  it('keeps both nodes as separate objects, so one cannot alias the other', async () => {
+    const product = await productOf({ host: GHANA_HOST });
+    expect(product.brand).not.toBe(product.offers.seller);
+    product.brand.name = 'mutated';
+    expect(product.offers.seller.name).toBe('Travio Ghana');
+  });
+
   it('gives the offer seller them too, so both references resolve', async () => {
     const product = await productOf({ host: GHANA_HOST });
     expect(product.offers.seller.sameAs).toEqual(expect.arrayContaining(TRAVIO_GHANA_SAME_AS));
