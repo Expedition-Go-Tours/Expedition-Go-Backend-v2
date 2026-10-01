@@ -302,6 +302,7 @@ const supplierRoutes = require('./routes/supplierRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
 const authRoutes = require('./routes/authRoutes');
+const ssoRoutes = require('./routes/ssoRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const externalReviewRoutes = require('./routes/externalReviewRoutes');
 const payoutRoutes = require('./routes/payoutRoutes');
@@ -362,6 +363,23 @@ app.use('/api/email/webhook', emailWebhookRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/auth', authRoutes);
+// Cross-storefront handoff. Its own limiter rather than the /api/auth one:
+// minting happens during ordinary browsing (prefetch before a tour click), so
+// folding it into the credential-attempt budget would let normal use exhaust
+// the login allowance for everyone behind one IP.
+app.use(
+  '/api/sso',
+  createLimiter({
+    name: 'sso',
+    defaultMax: 120,
+    defaultWindowMs: 15 * 60 * 1000,
+    message: {
+      status: 'fail',
+      message: 'Too many sign-in handoffs, please try again shortly.',
+    },
+  }),
+  ssoRoutes,
+);
 // Machine-to-machine external-reviews sync — mounted BEFORE the admin router so
 // it is guarded by a service token, not the admin JWT/session middleware.
 app.use('/api/admin/external-reviews', externalReviewRoutes);

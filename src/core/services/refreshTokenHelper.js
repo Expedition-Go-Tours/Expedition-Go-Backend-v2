@@ -4,7 +4,18 @@ const prisma = require('./prismaClient');
 // Cap the number of concurrently-valid refresh tokens per user. Kept small so
 // an old leaked token expires quickly (the JWT itself is valid 7d and the list
 // is trimmed by the cap).
-const MAX_REFRESH_TOKENS = 5;
+//
+// Raised from 5 to 20 when the cross-storefront handoff landed: both
+// expeditiongotours.com and travioghana.com refresh independently (~every 55
+// minutes each) and every handoff mints another member, so five slots were
+// being churned through in a couple of hours. A user who left one storefront
+// idle longer than that came back to a silently-evicted session — the exact
+// "logged in on whichever site" behaviour the handoff exists to provide.
+//
+// The trade is that a stolen refresh token now survives longer inside the
+// family, but each JWT still expires at 7 days regardless, and logout clears
+// the whole family at once.
+const MAX_REFRESH_TOKENS = 20;
 
 function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');

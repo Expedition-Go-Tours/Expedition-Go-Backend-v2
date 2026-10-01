@@ -8,10 +8,19 @@ if (process.env.NODE_ENV === 'production') {
 const ACCESS_TOKEN_SECRET = process.env.JWT_SECRET || 'fallback-dev-secret';
 const REFRESH_TOKEN_SECRET = (process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || 'fallback-refresh-secret') + '_refresh';
 const PASSWORD_RESET_SECRET = process.env.JWT_PASSWORD_RESET_SECRET || (process.env.JWT_SECRET || 'fallback-reset-secret') + '_password_reset';
+// Cross-storefront handoff tickets. Derived from JWT_SECRET like the others, so
+// api.expeditiongotours.com and apiv1.travioafrica.com — which resolve to the
+// same deployment — sign and verify the same ticket.
+const SSO_TICKET_SECRET = process.env.JWT_SSO_SECRET || (process.env.JWT_SECRET || 'fallback-sso-secret') + '_sso';
 
 const ACCESS_TOKEN_EXPIRY = '1h';
 const REFRESH_TOKEN_EXPIRY = '7d';
 const PASSWORD_RESET_EXPIRY = '15m';
+// Short by design: the ticket exists only to cross an origin boundary, so it
+// should be dead before anyone can find it in a browser history entry.
+// Exported as seconds so the exchange can expire its single-use marker over
+// exactly the same window.
+const SSO_TICKET_EXPIRY_SECONDS = 120;
 
 function signAccessToken(payload) {
   return jwt.sign(payload, ACCESS_TOKEN_SECRET, { expiresIn: ACCESS_TOKEN_EXPIRY });
@@ -64,6 +73,22 @@ function verifyPasswordResetToken(token) {
   return jwt.verify(token, PASSWORD_RESET_SECRET);
 }
 
+/**
+ * A one-time credential that lets a signed-in user land on another storefront
+ * of ours already authenticated.
+ *
+ * The payload is `{ userId, jti, dest }`. `dest` binds the ticket to the site
+ * it was minted for, so a ticket captured on the way to travioghana.com cannot
+ * be replayed against any other origin; `jti` makes it single-use.
+ */
+function signSsoTicket(payload) {
+  return jwt.sign(payload, SSO_TICKET_SECRET, { expiresIn: SSO_TICKET_EXPIRY_SECONDS });
+}
+
+function verifySsoTicket(token) {
+  return jwt.verify(token, SSO_TICKET_SECRET);
+}
+
 function setAuthCookies(res, accessToken, refreshToken) {
   res.cookie('accessToken', accessToken, COOKIE_OPTIONS.accessToken);
   res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS.refreshToken);
@@ -80,9 +105,12 @@ module.exports = {
   signAccessToken,
   signRefreshToken,
   signPasswordResetToken,
+  signSsoTicket,
   verifyAccessToken,
   verifyRefreshToken,
   verifyPasswordResetToken,
+  verifySsoTicket,
+  SSO_TICKET_EXPIRY_SECONDS,
   setAuthCookies,
   clearAuthCookies,
 };

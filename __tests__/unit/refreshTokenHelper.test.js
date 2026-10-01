@@ -28,7 +28,7 @@ describe('refreshTokenHelper', () => {
       });
     });
 
-    it('keeps the most recent 5 tokens (capped family)', async () => {
+    it('appends without evicting while the family is under the cap', async () => {
       prisma.user.findUnique.mockResolvedValue({
         refreshToken: JSON.stringify(['a', 'b', 'c', 'd', 'e']),
       });
@@ -36,8 +36,30 @@ describe('refreshTokenHelper', () => {
       await storeRefreshToken('user-1', 'f');
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: 'user-1' },
-        data: { refreshToken: JSON.stringify([hashToken('f'), 'a', 'b', 'c', 'd']) },
+        data: { refreshToken: JSON.stringify([hashToken('f'), 'a', 'b', 'c', 'd', 'e']) },
       });
+    });
+
+    /**
+     * The cap is 20 rather than the original 5 because both storefronts now
+     * refresh the same family independently and every cross-site handoff adds
+     * a member — five slots were churned through in a couple of hours, which
+     * evicted a session the user was still using.
+     */
+    it('trims the family to 20, dropping the oldest', async () => {
+      const seeded = Array.from({ length: 25 }, (_, i) => `t${i}`);
+      prisma.user.findUnique.mockResolvedValue({
+        refreshToken: JSON.stringify(seeded),
+      });
+      prisma.user.update.mockResolvedValue();
+
+      await storeRefreshToken('user-1', 'newest');
+
+      const stored = JSON.parse(prisma.user.update.mock.calls[0][0].data.refreshToken);
+      expect(stored).toHaveLength(20);
+      expect(stored[0]).toBe(hashToken('newest'));
+      expect(stored).toContain('t0');
+      expect(stored).not.toContain('t24');
     });
 
     it('dedupes a token already present in the family', async () => {
