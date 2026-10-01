@@ -678,6 +678,16 @@ jobs:
             echo "=== Syncing to latest code (dirty-tree safe) ==="
             git fetch origin main
             git stash push -u -m "ci-deploy-auto-stash $(date -u +%F_%T)" 2>/dev/null || true
+            # These stashes are never popped: they exist only so `reset --hard`
+            # cannot destroy server-local edits. One was therefore added per
+            # deploy and the list grew without bound on this box. Keep the five
+            # newest for forensics and drop the rest. Re-read the list every
+            # iteration — dropping shifts every higher stash@{N} down by one, so
+            # a pre-computed index would delete the wrong entries.
+            while [ "$(git stash list 2>/dev/null | grep -c 'ci-deploy-auto-stash')" -gt 5 ]; do
+              oldest=$(git stash list | grep 'ci-deploy-auto-stash' | tail -n 1 | cut -d: -f1)
+              git stash drop "$oldest" >/dev/null 2>&1 || break
+            done
             git reset --hard origin/main
 
             echo "=== Installing dependencies ==="

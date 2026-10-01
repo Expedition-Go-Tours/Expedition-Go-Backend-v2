@@ -751,6 +751,8 @@ describe('answerBusinessFact — refusals, and the one success shape', () => {
     expect(r.facts.byCurrency[0].gross).toBe(604);
     expect(r.sqlMs).toBeGreaterThanOrEqual(0);
     expect(r.narrMs).toBeGreaterThanOrEqual(0);
+    // Rows behind the answer — one aggregate row for a scalar revenue figure.
+    expect(r.rowCount).toBe(1);
   });
 
   it('narrates under the constrained prompt with the definition attached', async () => {

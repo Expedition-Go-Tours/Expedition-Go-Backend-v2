@@ -207,9 +207,18 @@ async function getBusinessFacts(metric, opts = {}) {
     customerRole = null,
     topToursLimit = null,
     pg,
+    onRowCount = null,
   } = opts;
   const q = where();
-  const run = async (sql, params) => (await pg.query(sql, params)).rows;
+  // Single exit for every metric's query, which makes it the one place a row
+  // count can be observed without repeating it in all ~18 return statements.
+  // The answer query is always the last one a metric runs, so last-write-wins
+  // reports the rows the caller actually answered from.
+  const run = async (sql, params) => {
+    const rows = (await pg.query(sql, params)).rows;
+    if (onRowCount) onRowCount(rows.length);
+    return rows;
+  };
   const wLabel = describeWindow(win);
 
   try {
@@ -895,6 +904,9 @@ function renderReviewedTemplate(route, fact) {
  */
 async function runFactPipeline({ question, route, pg, callMimo, maxTokens, t0, renderTemplate }) {
   const sqlMs0 = Date.now();
+  // Captured via the callback rather than returned by each metric branch, so
+  // every path out of this function reports the rows behind the answer.
+  let factRowCount = 0;
   const fact = await getBusinessFacts(route.metric, {
     window: route.window,
     statusFilter: route.statusFilter,
@@ -905,6 +917,9 @@ async function runFactPipeline({ question, route, pg, callMimo, maxTokens, t0, r
     // default five, which is how the harness and the router disagreed.
     topToursLimit: route.topToursLimit,
     pg,
+    onRowCount: (n) => {
+      factRowCount = n;
+    },
   });
   const sqlMs = Date.now() - sqlMs0;
   const base = {
@@ -913,6 +928,10 @@ async function runFactPipeline({ question, route, pg, callMimo, maxTokens, t0, r
     sql: fact.sql || '',
     facts: fact.facts,
     sqlMs,
+    // Rows the generated SQL returned. The caller logs `sql=[...] rows=N`
+    // together, so leaving this at 0 reported every successful fact query as
+    // having matched nothing.
+    rowCount: factRowCount,
     // Set false here; the wrapper marks a served-from-cache result.
     cacheHit: false,
     narrFallback: null,

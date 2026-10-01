@@ -868,6 +868,11 @@ describe('answerQuestion — deterministic facts layer (AI_FACTS_ENABLED)', () =
     // The generated SQL is logged for the audit trail, exactly as on the SQL path.
     expect(r.sqlLogs).toHaveLength(1);
     expect(r.sqlLogs[0]).toMatch(/FROM "Booking"/);
+    // …and so is the row count: the caller prints `sql=[...] rows=N` on one
+    // line, so reporting 0 here made every successful fact query look like it
+    // had matched nothing.
+    expect(r.rowCount).toBe(REVENUE_ROWS.length);
+    expect(r.rowCount).not.toBe(0);
     // One model round-trip, and it is the constrained narration prompt: the
     // facts layer supplies the number, MiMo still writes the sentence.
     expect(callMimo.calls.filter((c) => c.isNarration)).toHaveLength(1);

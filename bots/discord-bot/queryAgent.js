@@ -1083,9 +1083,11 @@ async function answerQuestion({ question, userId = '?', historyText = '', histor
           return {
             final,
             // The generated SQL is logged so the audit trail shows exactly which
-            // query produced the number, same as the SQL path.
+            // query produced the number, same as the SQL path. `rowCount`
+            // travels with it for the same reason — reporting 0 next to a real
+            // statement read as "matched nothing" in the audit trail.
             sqlLogs: facts.sql ? [facts.sql] : [],
-            rowCount: 0,
+            rowCount: facts.rowCount ?? 0,
             factPath: true,
             factMetric: facts.route.metric,
           };
