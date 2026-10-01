@@ -367,9 +367,17 @@ async function validateTargetCapacity(tx, tour, target, bookingId, extra = {}) {
   return result;
 }
 
-async function loadOwnedBooking(bookingId, customerId, source) {
+/**
+ * The booking a customer may modify, if they own it.
+ *
+ * Deliberately not filtered by `source`: the customer owns the booking
+ * regardless of which storefront took it, and `source` remains attribution
+ * (payouts, revenue, admin all read it) rather than an access check. See
+ * SHARED_BOOKING_READS in storefront.js.
+ */
+async function loadOwnedBooking(bookingId, customerId) {
   return prisma.booking.findFirst({
-    where: { id: bookingId, customerId, source, status: { in: ['PENDING', 'CONFIRMED'] } },
+    where: { id: bookingId, customerId, status: { in: ['PENDING', 'CONFIRMED'] } },
     include: { tour: { include: { supplier: { include: { supplierProfile: true } } } } },
   });
 }
@@ -377,8 +385,8 @@ async function loadOwnedBooking(bookingId, customerId, source) {
 /**
  * Read-only quote for the modify page (and eligibility gating).
  */
-async function quoteBookingModification({ bookingId, customerId, source, body }) {
-  const booking = await loadOwnedBooking(bookingId, customerId, source);
+async function quoteBookingModification({ bookingId, customerId, body }) {
+  const booking = await loadOwnedBooking(bookingId, customerId);
   if (!booking) throw new AppError('Booking not found or cannot be modified', 404);
   const policy = assertModifyEligible(booking);
 
@@ -613,8 +621,8 @@ async function notifyModificationApplied(bookingId, payload) {
  *   - reserve-now-pay-later not yet charged (amount updates instead).
  * Runs under a tour row lock with an authoritative capacity re-check.
  */
-async function applyBookingModification({ bookingId, customerId, source, body, user }) {
-  const booking = await loadOwnedBooking(bookingId, customerId, source);
+async function applyBookingModification({ bookingId, customerId, body, user }) {
+  const booking = await loadOwnedBooking(bookingId, customerId);
   if (!booking) throw new AppError('Booking not found or cannot be modified', 404);
   assertModifyEligible(booking);
 
@@ -1053,6 +1061,37 @@ async function refundAcrossSources(booking, refundCents) {
   return remaining <= 0;
 }
 
+/**
+ * Refund a cancelled booking across every payment source it was paid through.
+ *
+ * A booking can be paid by more than one PaymentIntent — the primary charge
+ * plus a top-up created when a party or date change raised the total. Refunding
+ * only the primary leaves that top-up captured and the customer short by the
+ * difference.
+ *
+ * Both storefront cancels call this rather than inlining the choice, because
+ * cancellations are no longer scoped to the storefront that took the booking:
+ * whichever site the customer cancels on must handle the other site's top-ups
+ * correctly, and two copies of this decision would drift apart.
+ */
+async function refundCancelledBooking(booking, refundCents) {
+  let hasTopUpIntents = false;
+  try {
+    if (prisma.bookingChange) {
+      const topUp = await prisma.bookingChange.findFirst({
+        where: { bookingId: booking.id, status: 'APPLIED', paymentIntentId: { not: null } },
+        select: { id: true },
+      });
+      hasTopUpIntents = !!topUp;
+    }
+  } catch {
+    hasTopUpIntents = false;
+  }
+
+  if (hasTopUpIntents) return refundAcrossSources(booking, refundCents);
+  return createRefund(booking.stripePaymentIntentId, refundCents);
+}
+
 module.exports = {
   quoteBookingModification,
   applyBookingModification,
@@ -1063,6 +1102,7 @@ module.exports = {
   expireModifyTopUps,
   notifyModificationApplied,
   refundAcrossSources,
+  refundCancelledBooking,
   buildChangeLabels,
   paymentSourceIntents,
   assertModifyEligible,

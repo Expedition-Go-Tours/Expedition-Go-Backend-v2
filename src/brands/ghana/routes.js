@@ -39,6 +39,16 @@ const {
   analyticsRevenueTrendSchema,
   analyticsFunnelSchema,
 } = require('../../core/services/travioGhanaValidation');
+// Booking modification and pickup validation. Brand-agnostic — they check a
+// change to a booking, not a storefront — and they live in expeditionValidation
+// because Expedition shipped them first. Imported from there rather than
+// duplicated so both brands keep being held to the same payload rules.
+const {
+  modifyBookingQuoteSchema,
+  modifyBookingSchema,
+  discardModifySchema,
+  updateBookingPickupSchema,
+} = require('../../core/services/expeditionValidation');
 // Structured GetYourGuide-style cancellation validation (shared with core) —
 // replaces the brand-local loose schema so a supplier cancel can never skip
 // the taxonomy / T&C / refund rules.
@@ -932,6 +942,44 @@ router.patch('/bookings/:id/cancel', protect, restrictTo('customer'), validate(c
 
 router.get('/bookings/:id/payment-state', protect, restrictTo('customer'), payLaterPaymentController.getPaymentState);
 router.post('/bookings/:id/pay-now', protect, restrictTo('customer'), payLaterPaymentController.startPayNow);
+
+// Modify and pickup were never registered here, although both storefronts link
+// to them: TravioGhana's BookingWorkspace navigates to /booking/:id/pickup and
+// /dashboard/bookings/:id/modify, and its own hook POSTs
+// /travioghana/bookings/:id/modify/quote — every one of which answered 404.
+// The handlers are inherited from the shared storefront factory, so this is
+// wiring rather than new behaviour.
+router.post(
+  '/bookings/:id/modify/quote',
+  protect,
+  restrictTo('customer'),
+  validate(modifyBookingQuoteSchema),
+  travioGhanaController.quoteModifyBooking
+);
+
+router.patch(
+  '/bookings/:id/modify',
+  protect,
+  restrictTo('customer'),
+  validate(modifyBookingSchema),
+  travioGhanaController.modifyBooking
+);
+
+router.post(
+  '/bookings/:id/modify/:changeId/discard',
+  protect,
+  restrictTo('customer'),
+  validate(discardModifySchema),
+  travioGhanaController.discardModifyChange
+);
+
+router.patch(
+  '/bookings/:id/pickup',
+  protect,
+  restrictTo('customer'),
+  validate(updateBookingPickupSchema),
+  travioGhanaController.updateMyPickup
+);
 
 /**
  * @swagger

@@ -205,6 +205,26 @@ function getReceivingDomains() {
   return [...set];
 }
 
+/**
+ * Audit/event namespace for a booking's own `source`.
+ *
+ * An event about a booking should be labelled by where that booking was taken,
+ * not by whichever storefront happened to handle the request. Cancellations and
+ * pickup edits are no longer scoped to the site that sold the booking, so using
+ * the caller's namespace would mislabel them — Ghana's cancel used to log
+ * `source: 'expedition'` unconditionally.
+ */
+function eventNamespaceForSource(source) {
+  const raw = String(source || '');
+  if (!raw) return getDefaultBrand().eventNamespace;
+  const match = Object.values(BRANDS).find((brand) => brand.source === raw.toUpperCase());
+  if (match) return match.eventNamespace;
+  // Legacy rows carry BookingSource.TRAVIO, which no brand claims. Normalizing
+  // gives 'travio' — honest about what it is — rather than pinning every such
+  // booking to whichever brand happens to be the default today.
+  return raw.toLowerCase().replace(/_/g, '');
+}
+
 module.exports = {
   BRANDS,
   DEFAULT_BRAND,
@@ -214,4 +234,5 @@ module.exports = {
   getDefaultBrand,
   getBrandEmail,
   getReceivingDomains,
+  eventNamespaceForSource,
 };

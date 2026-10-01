@@ -968,7 +968,13 @@ describe('expeditionController', () => {
       },
     };
 
-    it('returns paginated bookings filtered by source EXPEDITION', async () => {
+    /**
+     * Bookings are shared across our storefronts: `source` records which site
+     * took the booking — it drives payouts, revenue and admin — and is not an
+     * access check. A booking made on travioghana.com must appear in this
+     * account's list here, because it is the same account on both.
+     */
+    it('scopes the list to the customer without filtering by source', async () => {
       req.query = { page: '1', limit: '10' };
       prisma.booking.findMany.mockResolvedValue([mockBooking]);
       prisma.booking.count.mockResolvedValue(1);
@@ -977,11 +983,12 @@ describe('expeditionController', () => {
 
       expect(prisma.booking.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ customerId: 'user-1', source: 'EXPEDITION' }),
+          where: expect.objectContaining({ customerId: 'user-1' }),
           skip: 0,
           take: 10,
         })
       );
+      expect(prisma.booking.findMany.mock.calls[0][0].where).not.toHaveProperty('source');
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1059,8 +1066,10 @@ describe('expeditionController', () => {
       await controller.getBooking(req, res, next);
 
       expect(prisma.booking.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'booking-1', customerId: 'user-1', source: 'EXPEDITION' } })
+        expect.objectContaining({ where: { id: 'booking-1', customerId: 'user-1' } })
       );
+      // Ownership, not storefront: see SHARED_BOOKING_READS.
+      expect(prisma.booking.findFirst.mock.calls[0][0].where).not.toHaveProperty('source');
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({

@@ -11,7 +11,7 @@ const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTou
 const { resolvePickupSelection, normalizePickupSnapshot } = require('./services/geoUtils');
 const { pickupAddressLabel } = require('./services/emailFormatting');
 const { validatePassengerMix } = require('./services/passengerMix');
-const { createPaymentIntent, createCheckoutSession, createCustomCheckoutPaymentIntent, createCustomerSession, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('./services/stripeHelpers');
+const { createPaymentIntent, createCheckoutSession, createCustomCheckoutPaymentIntent, createCustomerSession, calculateCommission, getStripe, ensureStripeCustomer } = require('./services/stripeHelpers');
 const { resolveAllowedClientUrl } = require('./services/clientOrigin');
 const { acquireHold, releaseHold, HOLD_MINUTES } = require('./services/checkoutHold');
 const { notifyAdmin } = require('./services/adminNotificationService');
@@ -25,7 +25,7 @@ const {
   quoteBookingModification,
   applyBookingModification,
   discardParkedChange,
-  refundAcrossSources,
+  refundCancelledBooking,
 } = require('./services/bookingModify');
 const { shouldCountTourView } = require('./services/viewTracking');
 const ranking = require('./services/homepageRanking');
@@ -34,7 +34,7 @@ const { sanitizeBookingPaymentInternals } = require('./services/sanitizeBookings
 const { withChoiceToken } = require('./services/cancellationReasons');
 const { bookingRefundState } = require('./services/bookingRefundState');
 
-const { getBrand } = require('../../config/brands');
+const { getBrand, eventNamespaceForSource } = require('../../config/brands');
 function makeStorefrontController(brandKey) {
   const BRAND = getBrand(brandKey);
 
@@ -2438,7 +2438,15 @@ controller.getMyBookings = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
   const { status, page = 1, limit = 10 } = req.query;
 
-  const where = { customerId, source: BRAND.source, isSimulated: false };
+  // Scoped to the customer alone, NOT to `source`.
+  //
+  // `source` records which storefront took the booking and it stays that way
+  // for writes, payouts, revenue reporting and admin. Using it as an access
+  // control too meant a booking made on travioghana.com was invisible from
+  // expeditiongotours.com even though both are the same account on the same
+  // backend — and with sessions now shared across the two, "see my bookings
+  // wherever I am logged in" is the promise. See SHARED_BOOKING_READS below.
+  const where = { customerId, isSimulated: false };
   // Accept a single status or a comma-separated list (e.g. status=CONFIRMED,PENDING)
   // so the navbar counter can include reserve-now-pay-later bookings, which are
   // PENDING until the deferred charge settles.
@@ -2503,7 +2511,7 @@ controller.getBooking = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
 
   const booking = await prisma.booking.findFirst({
-    where: { id, customerId, source: BRAND.source },
+    where: { id, customerId },
     include: {
       tour: {
         include: {
@@ -2618,7 +2626,10 @@ controller.cancelBooking = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
 
   const booking = await prisma.booking.findFirst({
-    where: { id, customerId, source: BRAND.source, status: { in: ['PENDING', 'CONFIRMED'] } },
+    // Not filtered by `source`: the customer owns this booking wherever it was
+    // taken. Everything downstream — policy, refund, payout, email — is derived
+    // from the booking row itself, not from the storefront making the request.
+    where: { id, customerId, status: { in: ['PENDING', 'CONFIRMED'] } },
     include: { tour: { include: { supplier: true } } },
   });
 
@@ -2637,7 +2648,22 @@ controller.cancelBooking = catchAsync(async (req, res, next) => {
   const result = await prisma.$transaction(async (tx) => {
     const updated = await tx.booking.update({
       where: { id },
-      data: { status: 'CANCELLED', cancellationReason: reason || null, cancelledAt: new Date(), payoutStatus: 'CANCELLED' },
+      data: {
+        status: 'CANCELLED',
+        cancellationReason: reason || null,
+        cancelledAt: new Date(),
+        payoutStatus: 'CANCELLED',
+        // Structured, for the same reason the other storefront writes them:
+        // cancellationController.isSupplierCaused falls back to a legacy
+        // keyword heuristic when these are NULL, and that heuristic reads a
+        // customer's free-text reason as supplier-caused — charging the
+        // supplier for the customer's own cancellation.
+        cancellationOrigin: 'CUSTOMER',
+        cancellationCategory: 'CUSTOMER_REQUESTED',
+        cancellationCode: 'CUSTOMER_REQUESTED_CANCEL',
+        countsTowardRate: false,
+        refundStatus: needsRefund ? 'PENDING' : 'NOT_APPLICABLE',
+      },
     });
 
     // A cancelled booking must never pay the supplier — close any payout
@@ -2675,22 +2701,10 @@ controller.cancelBooking = catchAsync(async (req, res, next) => {
       // PaymentIntents — spread the refund so the primary intent is never
       // over-refunded. Without any top-ups this behaves like the old single
       // full refund on the original intent.
-      let hasTopUpIntents = false;
-      try {
-        if (prisma.bookingChange) {
-          const topUp = await prisma.bookingChange.findFirst({
-            where: { bookingId: id, status: 'APPLIED', paymentIntentId: { not: null } },
-            select: { id: true },
-          });
-          hasTopUpIntents = !!topUp;
-        }
-      } catch { hasTopUpIntents = false; }
-
-      if (hasTopUpIntents) {
-        await refundAcrossSources(booking, refundCents);
-      } else {
-        await createRefund(booking.stripePaymentIntentId, refundCents);
-      }
+      // Shared with the other storefront's cancel — see refundCancelledBooking.
+      // A booking paid partly by a modification top-up has to be refunded
+      // across every intent it was paid with, whichever site cancels it.
+      await refundCancelledBooking(booking, refundCents);
       refundSucceeded = true;
       await prisma.booking.update({
         where: { id },
@@ -2715,7 +2729,7 @@ controller.cancelBooking = catchAsync(async (req, res, next) => {
     action: 'booking.cancelled',
     resource: 'Booking',
     resourceId: booking.id,
-    metadata: { reason, refundAmount: refundSucceeded ? refundAmount : 0, refundSucceeded, source: BRAND.eventNamespace },
+    metadata: { reason, refundAmount: refundSucceeded ? refundAmount : 0, refundSucceeded, source: eventNamespaceForSource(booking.source) },
   }).catch(() => {});
 
   res.status(200).json({ status: 'success', data: { booking: result } });
@@ -2734,7 +2748,6 @@ controller.quoteModifyBooking = catchAsync(async (req, res, next) => {
   const data = await quoteBookingModification({
     bookingId: id,
     customerId: req.user.id,
-    source: BRAND.source,
     body: req.body || {},
   });
   res.status(200).json({ status: 'success', data });
@@ -2754,7 +2767,6 @@ controller.modifyBooking = catchAsync(async (req, res, next) => {
   const data = await applyBookingModification({
     bookingId: id,
     customerId: req.user.id,
-    source: BRAND.source,
     body: req.body || {},
     user: req.user,
   });
@@ -2769,63 +2781,6 @@ controller.discardModifyChange = catchAsync(async (req, res, next) => {
   const { changeId } = req.params;
   const data = await discardParkedChange({ changeId, customerId: req.user.id });
   res.status(200).json({ status: 'success', data });
-});
-
-// ================================
-// REVIEWS
-// ================================
-
-controller.createReview = catchAsync(async (req, res, next) => {
-  const customerId = req.user.id;
-  const { bookingId, rating, title, comment } = req.body;
-
-  const booking = await prisma.booking.findFirst({
-    where: { id: bookingId, customerId, source: BRAND.source },
-    select: { id: true, tourId: true, status: true, paymentStatus: true, review: { select: { id: true } } },
-  });
-
-  if (!booking) {
-    return next(new AppError('Booking not found or not yours', 404));
-  }
-
-  if (booking.status !== 'COMPLETED') {
-    return next(new AppError('You can only review completed bookings', 400));
-  }
-
-  if (booking.review) {
-    return next(new AppError('You have already reviewed this booking', 409));
-  }
-
-  const review = await prisma.review.create({
-    data: {
-      bookingId: booking.id,
-      tourId: booking.tourId,
-      customerId,
-      rating,
-      title: title || null,
-      comment,
-      source: BRAND.source,
-      isApproved: false,
-    },
-    include: {
-      tour: { select: { id: true, title: true, slug: true } },
-    },
-  });
-
-  enqueueEvent({
-    name: `${BRAND.eventNamespace}.review_created`,
-    userId: customerId,
-    req,
-    resource: 'Review',
-    resourceId: review.id,
-    properties: { tourId: booking.tourId, rating, source: BRAND.eventNamespace },
-  });
-
-  res.status(201).json({
-    status: 'success',
-    data: { review },
-    message: 'Review submitted and pending approval.',
-  });
 });
 
 // ================================
@@ -2845,7 +2800,8 @@ controller.getSupplierBookings = catchAsync(async (req, res, next) => {
 
   const where = {
     tour: { supplierId },
-    source: BRAND.source,
+    // No source filter: a supplier owns their tours, so every booking on them
+    // belongs in their list regardless of which storefront took it.
     isSimulated: false,
   };
   if (status) where.status = status;
@@ -2912,7 +2868,7 @@ controller.updateBookingStatus = catchAsync(async (req, res, next) => {
   const booking = await prisma.booking.findFirst({
     where: {
       id,
-      source: BRAND.source,
+      // No source filter — see the supplier list above.
       tour: { supplierId },
     },
     include: { tour: { select: { id: true, title: true } } },
@@ -3048,7 +3004,7 @@ controller.updateMyPickup = catchAsync(async (req, res, next) => {
   const { pickup } = req.body;
 
   const booking = await prisma.booking.findFirst({
-    where: { id, customerId, source: BRAND.source },
+    where: { id, customerId },
     include: {
       tour: { select: { id: true, title: true, bookingAndTickets: true, supplierId: true } },
     },
@@ -3118,7 +3074,7 @@ controller.updateMyPickup = catchAsync(async (req, res, next) => {
     action: 'booking.pickup_updated',
     resource: 'Booking',
     resourceId: id,
-    metadata: { by: 'customer', source: BRAND.eventNamespace },
+    metadata: { by: 'customer', source: eventNamespaceForSource(booking.source) },
   }).catch((err) => console.warn('[Expedition] logActivity (customer pickup update) failed:', err?.message));
 
   res.status(200).json({ status: 'success', data: { pickup: snapshot } });

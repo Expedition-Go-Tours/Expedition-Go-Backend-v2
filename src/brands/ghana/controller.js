@@ -13,7 +13,8 @@ const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = requi
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../../core/services/availabilityCore');
 const { resolvePickupSelection } = require('../../core/services/geoUtils');
 const { validatePassengerMix } = require('../../core/services/passengerMix');
-const { createPaymentIntent, createCheckoutSession, calculateCommission, createRefund, getStripe, ensureStripeCustomer } = require('../../core/services/stripeHelpers');
+const { createPaymentIntent, createCheckoutSession, calculateCommission, getStripe, ensureStripeCustomer } = require('../../core/services/stripeHelpers');
+const { refundCancelledBooking } = require('../../core/services/bookingModify');
 const { resolveAllowedClientUrl } = require('../../core/services/clientOrigin');
 const { acquireHold, releaseHold } = require('../../core/services/checkoutHold');
 const { notifyAdmin } = require('../../core/services/adminNotificationService');
@@ -25,7 +26,7 @@ const eventEmitter = require('../../core/services/eventEmitter');
 const { sanitizeBookingPaymentInternals } = require('../../core/services/sanitizeBookings');
 const { bookingRefundState } = require('../../core/services/bookingRefundState');
 
-const { getBrand } = require('../../../config/brands');
+const { getBrand, eventNamespaceForSource } = require('../../../config/brands');
 const BRAND = getBrand('ghana');
 
 const CACHE_PREFIX = BRAND.cachePrefix;
@@ -1068,7 +1069,10 @@ const getMyBookings = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
   const { status, page = 1, limit = 10 } = req.query;
 
-  const where = { customerId, source: 'GHANA', isSimulated: false };
+  // Scoped to the customer alone, NOT to `source` — see SHARED_BOOKING_READS
+  // in core/storefront.js. A booking taken on expeditiongotours.com has to be
+  // visible here, because the account is the same one on both sites.
+  const where = { customerId, isSimulated: false };
   // Accept a single status or a comma-separated list (e.g. status=CONFIRMED,PENDING)
   // so the navbar counter can include reserve-now-pay-later bookings, which are
   // PENDING until the deferred charge settles.
@@ -1130,7 +1134,7 @@ const getBooking = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
 
   const booking = await prisma.booking.findFirst({
-    where: { id, customerId, source: 'GHANA' },
+    where: { id, customerId },
     include: {
       tour: {
         include: {
@@ -1211,7 +1215,9 @@ const cancelBooking = catchAsync(async (req, res, next) => {
   const customerId = req.user.id;
 
   const booking = await prisma.booking.findFirst({
-    where: { id, customerId, source: 'GHANA', status: { in: ['PENDING', 'CONFIRMED'] } },
+    // Not filtered by `source`: see SHARED_BOOKING_READS. Policy, refund,
+    // payout and email are all derived from the booking row itself.
+    where: { id, customerId, status: { in: ['PENDING', 'CONFIRMED'] } },
     include: { tour: { include: { supplier: true } } },
   });
 
@@ -1276,7 +1282,11 @@ const cancelBooking = catchAsync(async (req, res, next) => {
   if (needsRefund) {
     try {
       const refundCents = Math.round(refundAmount * 100);
-      await createRefund(booking.stripePaymentIntentId, refundCents);
+      // Shared with Expedition's cancel. A booking may have been paid by a
+      // modification top-up as well as the primary charge, and cancellations
+      // are no longer scoped to the storefront that took the booking — refunding
+      // only the primary would strand that capture.
+      await refundCancelledBooking(booking, refundCents);
       refundSucceeded = true;
       await prisma.booking.update({
         where: { id },
@@ -1312,7 +1322,7 @@ const cancelBooking = catchAsync(async (req, res, next) => {
     action: 'booking.cancelled',
     resource: 'Booking',
     resourceId: booking.id,
-    metadata: { reason, refundAmount: refundSucceeded ? refundAmount : 0, refundSucceeded, source: 'expedition' },
+    metadata: { reason, refundAmount: refundSucceeded ? refundAmount : 0, refundSucceeded, source: eventNamespaceForSource(booking.source) },
   }).catch(() => {});
 
   res.status(200).json({ status: 'success', data: { booking: result } });
