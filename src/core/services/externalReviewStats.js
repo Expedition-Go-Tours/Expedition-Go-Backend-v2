@@ -136,7 +136,15 @@ async function syncExternalReviewStats(payload = {}) {
     const source = String(product.source || '').trim().toUpperCase();
     if (!COUNTED_SOURCES.includes(source)) continue;
 
-    const title = product.tourTitle || product.title || '';
+    // `mappedTourTitle` is the curated listing→tour identity, stamped onto the
+    // dataset by the storefront sync. Prefer it: the dataset deliberately keeps
+    // the platform's own wording in `tourTitle` for display, and that wording
+    // is what the fuzzy matcher gets wrong — "From Accra: The Cape Coast Day
+    // Tour Guided Experience" scores highest against "Transport form Accra to
+    // Cape Coast", putting 211 reviews on a tour that has none. Any caller that
+    // sends the raw file (the backfill script, a hand-rolled POST) is correct
+    // the moment the field is present, without needing the storefront's map.
+    const title = product.mappedTourTitle || product.tourTitle || product.title || '';
     const match = matchTourForTitle(title, candidates);
     if (!match) {
       unmatched.push({ source, title, reason: 'no-tour-match' });

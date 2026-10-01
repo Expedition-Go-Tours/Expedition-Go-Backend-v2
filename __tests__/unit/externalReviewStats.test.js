@@ -156,6 +156,60 @@ describe('externalReviewStats', () => {
         data: { combinedRating: null, combinedReviewCount: 0 },
       });
     });
+
+    /**
+     * The dataset keeps the platform's own wording in `tourTitle` because that
+     * is what the storefront displays, and the backend's matcher gets that
+     * wording wrong: "From Accra: The Cape Coast Day Tour Guided Experience"
+     * scores highest against "Transport form Accra to Cape Coast" — putting 211
+     * reviews on a tour that has none. `mappedTourTitle` carries the curated
+     * identity instead, so a caller that posts the raw file (the backfill
+     * script) is correct without needing this repo's map.
+     */
+    it('attributes on mappedTourTitle, not the platform wording it displays', async () => {
+      const CAPE = { id: 't-cap', title: 'Cape Coast Castle, Elmina Castle & Kakum National Park Tour', city: 'Accra', country: 'Ghana', region: null };
+      const TRANSPORT = { id: 't-trn', title: 'Transport form Accra to Cape Coast', city: 'Accra', country: 'Ghana', region: null };
+
+      prisma.tour.findMany
+        .mockResolvedValueOnce([CAPE, TRANSPORT])
+        .mockResolvedValueOnce([{ id: 't-cap', averageRating: null, reviewCount: 0 }]);
+      prisma.tourExternalReviewStat.findMany.mockResolvedValue([]);
+
+      const summary = await syncExternalReviewStats({
+        products: [
+          {
+            id: 'getyourguide-from-accra-the-cape-coast-day-tour-guided-experience-t834942',
+            source: 'GETYOURGUIDE',
+            tourTitle: 'From Accra: The Cape Coast Day Tour Guided Experience', // displayed copy
+            mappedTourTitle: 'Cape Coast Castle, Elmina Castle & Kakum National Park Tour',
+            rating: 4.7,
+            reviewCount: 211,
+          },
+        ],
+      });
+
+      expect(summary.matched).toBe(1);
+      expect(prisma.tourExternalReviewStat.upsert).toHaveBeenCalledTimes(1);
+      const attribution = prisma.tourExternalReviewStat.upsert.mock.calls[0][0].where.tourId_source;
+      expect(attribution.tourId).toBe('t-cap');
+      expect(attribution.tourId).not.toBe('t-trn');
+    });
+
+    it('still matches on tourTitle when the curated field is absent', async () => {
+      // Older datasets predate mappedTourTitle, and dry-run clients may send
+      // only a title. Falling back keeps them working.
+      prisma.tour.findMany
+        .mockResolvedValueOnce([CAPE_TOUR])
+        .mockResolvedValueOnce([{ id: 't1', averageRating: null, reviewCount: 0 }]);
+      prisma.tourExternalReviewStat.findMany.mockResolvedValue([]);
+
+      const summary = await syncExternalReviewStats({
+        products: [{ id: 'p1', source: 'TRIPADVISOR', tourTitle: CAPE_TOUR.title, rating: 4.9, reviewCount: 595 }],
+      });
+
+      expect(summary.matched).toBe(1);
+      expect(prisma.tourExternalReviewStat.upsert.mock.calls[0][0].where.tourId_source.tourId).toBe('t1');
+    });
   });
 
   describe('recomputeCombinedStatsForTours', () => {

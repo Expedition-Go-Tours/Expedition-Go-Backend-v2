@@ -50,6 +50,23 @@ async function main() {
     return;
   }
 
+  // Without this field the payload carries only the platform's own wording,
+  // which the fuzzy matcher demonstrably misattributes — the Cape Coast
+  // listing (211 reviews) scores highest against "Transport form Accra to Cape
+  // Coast", and the Boti Falls listing against "Waterfalls Massage". This
+  // script used to do exactly that and quietly moved reviews onto tours that
+  // had none. Fail loudly instead of writing plausible-looking wrong rows.
+  const stamped = products.filter((p) => p && p.mappedTourTitle).length;
+  if (stamped === 0) {
+    logger.warn(
+      '[Backfill] No product carries `mappedTourTitle` — falling back to raw platform ' +
+        'wording, which the matcher can attach to the wrong tour. Regenerate the dataset ' +
+        'with the storefront sync (or pass a dataset newer than the field) before backfilling.'
+    );
+  } else {
+    logger.info(`[Backfill] ${stamped}/${products.length} products carry a curated tour title.`);
+  }
+
   const summary = await syncExternalReviewStats({ products });
   logger.info(
     `[Backfill] matched=${summary.matched} tours=${summary.tours} ` +
