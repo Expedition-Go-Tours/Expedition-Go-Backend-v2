@@ -116,6 +116,46 @@ describe('externalReviewStats', () => {
       expect(prisma.tour.update).not.toHaveBeenCalled();
       expect(cache.invalidateHomepageCaches).not.toHaveBeenCalled();
     });
+
+    it('resets the combined value of tours whose stale row is deleted', async () => {
+      // t2 has a stat row that this run does NOT refresh (its product no longer
+      // supplies totals), so the row is deleted. Its denormalized combined
+      // value must be recomputed too — otherwise it keeps reporting a rating
+      // backed by nothing, forever.
+      const ORPHAN_TOUR = { id: 't2', title: 'Transport form Accra to Cape Coast', city: 'Accra', country: 'Ghana', region: null };
+
+      prisma.tour.findMany
+        .mockResolvedValueOnce([CAPE_TOUR, ORPHAN_TOUR]) // candidates
+        .mockResolvedValueOnce([ // recompute pass
+          { id: 't1', averageRating: null, reviewCount: 0 },
+          { id: 't2', averageRating: null, reviewCount: 0 },
+        ]);
+      prisma.tourExternalReviewStat.findMany
+        .mockResolvedValueOnce([{ tourId: 't2' }]) // rows about to be deleted
+        .mockResolvedValueOnce([]); // surviving rows during recompute
+
+      const summary = await syncExternalReviewStats({
+        products: [
+          { id: 'p1', source: 'TRIPADVISOR', tourTitle: CAPE_TOUR.title, rating: 4.9, reviewCount: 595 },
+        ],
+      });
+
+      // The recompute pass must receive BOTH ids. Assert on the id list
+      // itself rather than on tour.findMany's return: a mock that ignores the
+      // `where` filter would make "which tours got updated" pass either way.
+      const recomputeCall = prisma.tour.findMany.mock.calls[1][0];
+      expect([...recomputeCall.where.id.in].sort()).toEqual(['t1', 't2']);
+
+      expect(summary.matched).toBe(1);
+      expect(prisma.tourExternalReviewStat.deleteMany).toHaveBeenCalledWith({
+        where: { source: { in: ['TRIPADVISOR'] }, syncedAt: { lt: expect.any(Date) } },
+      });
+      expect(summary.tours).toBe(2);
+      expect(prisma.tour.update).toHaveBeenCalledWith({
+        where: { id: 't2' },
+        data: { combinedRating: null, combinedReviewCount: 0 },
+      });
+    });
   });
 
   describe('recomputeCombinedStatsForTours', () => {

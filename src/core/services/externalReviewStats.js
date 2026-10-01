@@ -214,16 +214,29 @@ async function syncExternalReviewStats(payload = {}) {
 
   // Rows for the sources this run covers that were NOT refreshed are stale
   // (a product stopped matching, or the tour was unpublished).
+  //
+  // Their tour ids have to be collected before the delete: dropping the row
+  // leaves Tour.combinedRating / combinedReviewCount behind, and a tour whose
+  // product stops yielding totals can never re-enter `rows` below — so without
+  // this its stale headline value would stick forever. (TourExternalReviewStat
+  // for a listing with a dead total is exactly that case.)
+  const orphanedTourIds = [];
   if (touchedSources.size > 0) {
-    await prisma.tourExternalReviewStat.deleteMany({
-      where: { source: { in: [...touchedSources] }, syncedAt: { lt: syncStartedAt } },
+    const staleWhere = { source: { in: [...touchedSources] }, syncedAt: { lt: syncStartedAt } };
+    const stale = await prisma.tourExternalReviewStat.findMany({
+      where: staleWhere,
+      select: { tourId: true },
     });
+    await prisma.tourExternalReviewStat.deleteMany({ where: staleWhere });
+    orphanedTourIds.push(...stale.map((r) => r.tourId));
   }
 
-  // Recompute the denormalized combined value for every tour this run touched,
-  // so ranking picks the change up immediately.
+  // Recompute the denormalized combined value for every tour this run touched
+  // or orphaned, so ranking picks the change up immediately.
   const touchedTourIds = rows.map((r) => r.tourId);
-  const toursUpdated = await recomputeCombinedStatsForTours(touchedTourIds);
+  const toursUpdated = await recomputeCombinedStatsForTours([
+    ...new Set([...touchedTourIds, ...orphanedTourIds]),
+  ]);
 
   // Refresh every cache that reads the combined stats: the homepage sections
   // and the Expedition detail/list/featured/sitemap payloads (which now carry
