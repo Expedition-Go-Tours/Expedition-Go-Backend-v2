@@ -95,6 +95,13 @@ function transformForListing(tour, expeditionRecord, centroid = null, placeMatch
     currency: extractCurrency(tour.schedulesAndPricing),
     averageRating: tour.averageRating ? Number(tour.averageRating) : null,
     reviewCount: tour.reviewCount,
+    // Combined (in-app + external) stats — additive fields used for structured
+    // data / SEO, exactly as `core/storefront.js` emits them for the Expedition
+    // brand. The storefront still receives the internal numbers above and merges
+    // external ones client-side, so these extra fields do not double-count on
+    // the card; the prerenderer prefers them when publishing an AggregateRating.
+    combinedRating: tour.combinedRating != null ? Number(tour.combinedRating) : null,
+    combinedReviewCount: tour.combinedReviewCount || 0,
     viewCount: tour.viewCount,
     city: tour.city,
     country: tour.country,
@@ -126,12 +133,16 @@ function buildTourSchemaUrl(tour) {
       availability: 'https://schema.org/InStock',
       url: `${BRAND.storefrontUrl}/tour/${tour.slug}`,
     },
-    ...(tour.averageRating
+    // Structured data must report the same standing customers see (in-app +
+    // external), falling back to the internal stats when combined is absent —
+    // byte-for-byte the rule `core/storefront.js` applies to the Expedition
+    // brand, so the two brands publish identically.
+    ...((tour.combinedRating != null ? tour.combinedRating : tour.averageRating)
       ? {
           aggregateRating: {
             '@type': 'AggregateRating',
-            ratingValue: tour.averageRating,
-            reviewCount: tour.reviewCount || 0,
+            ratingValue: tour.combinedRating != null ? tour.combinedRating : tour.averageRating,
+            reviewCount: tour.combinedReviewCount != null ? tour.combinedReviewCount : (tour.reviewCount || 0),
           },
         }
       : {}),
@@ -300,6 +311,12 @@ const getTours = catchAsync(async (req, res) => {
             id: true, title: true, slug: true, description: true,
             coverPhoto: true, photos: true, category: true,
             durationMinutes: true, averageRating: true, reviewCount: true, viewCount: true,
+            // Combined (in-app + scraped) standing. The prerenderer publishes
+            // `combinedRating` in preference to `averageRating`, so leaving it
+            // out of the select is what stopped all 32 tour pages from emitting
+            // an AggregateRating at all. Additive: `averageRating` and
+            // `reviewCount` are still returned for callers that want them.
+            combinedRating: true, combinedReviewCount: true,
             city: true, region: true, country: true, attractions: true, tags: true,
             latitude: true, longitude: true, schedulesAndPricing: true,
             supplier: { select: { name: true, photoURL: true } },
@@ -459,6 +476,12 @@ const getTourBySlug = catchAsync(async (req, res, next) => {
       currency: extractCurrency(t.schedulesAndPricing),
       averageRating: t.averageRating ? Number(t.averageRating) : null,
       reviewCount: t._count?.reviews || 0,
+      // Combined (in-app + scraped) standing — additive, and the field the
+      // prerenderer reads first when it builds an AggregateRating. The detail
+      // query `include`s the whole Tour row, so both values are already here;
+      // they simply were never passed on.
+      combinedRating: t.combinedRating != null ? Number(t.combinedRating) : null,
+      combinedReviewCount: t.combinedReviewCount || 0,
       city: t.city,
       country: t.country,
       highlights: productContent.highlights || [],

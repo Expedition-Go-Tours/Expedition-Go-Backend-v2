@@ -119,4 +119,76 @@ describe('travioGhanaController (Phase 1b characterization)', () => {
     await controller.getSitemap(req, res);
     expect(prisma.travioGhanaTour.findMany).toHaveBeenCalled();
   });
+
+  /**
+   * `Tour.combinedRating` / `Tour.combinedReviewCount` exist, the nightly sync
+   * populates them, and `core/storefront.js` already emits them — but neither
+   * Ghana mapper read them, so the API answered `null/0` and the prerenderer's
+   * `if (ratingValue && reviewCountValue)` gate never fired. All 32 tour pages
+   * therefore published no AggregateRating at all, which is what Search Console
+   * was reporting. These pin the wiring at both ends: the query selects the
+   * columns, and the row hands them on.
+   */
+  describe('the combined standing reaches the API', () => {
+    // `getTourBySlug` increments the view count and sets a Cache-Control header
+    // after it builds the response; the shared harness stubs neither.
+    beforeEach(() => {
+      res.set = jest.fn().mockReturnThis();
+      prisma.tour.update.mockResolvedValue({});
+    });
+
+    it('selects combinedRating and combinedReviewCount on the list query', async () => {
+      await controller.getTours(req, res);
+      const select = prisma.travioGhanaTour.findMany.mock.calls[0][0].include.tour.select;
+      expect(select.combinedRating).toBe(true);
+      expect(select.combinedReviewCount).toBe(true);
+      // Additive, not a replacement: callers reading the internal standing must
+      // keep getting it, or the storefront would double-count.
+      expect(select.averageRating).toBe(true);
+      expect(select.reviewCount).toBe(true);
+    });
+
+    it('returns them on a list row beside the untouched internal standing', async () => {
+      prisma.travioGhanaTour.findMany.mockResolvedValue([
+        { ...mockGhanaTour, tour: { ...mockTour, combinedRating: 4.8, combinedReviewCount: 799 } },
+      ]);
+      await controller.getTours(req, res);
+      const row = res.json.mock.calls[res.json.mock.calls.length - 1][0].data.tours[0].tour;
+      expect(row.combinedRating).toBe(4.8);
+      expect(row.combinedReviewCount).toBe(799);
+      expect(row.averageRating).toBe(4.5);
+      expect(row.reviewCount).toBe(10);
+    });
+
+    it('reports null and 0 when the database holds no external standing', async () => {
+      await controller.getTours(req, res);
+      const row = res.json.mock.calls[res.json.mock.calls.length - 1][0].data.tours[0].tour;
+      expect(row.combinedRating).toBeNull();
+      expect(row.combinedReviewCount).toBe(0);
+    });
+
+    it('passes them on the detail the prerenderer reads', async () => {
+      req.params.slug = 'test-tour';
+      prisma.travioGhanaTour.findFirst.mockResolvedValue({
+        ...mockGhanaTour,
+        tour: { ...mockTour, combinedRating: 4.7, combinedReviewCount: 211, _count: { reviews: 0 } },
+      });
+      await controller.getTourBySlug(req, res);
+      const tour = res.json.mock.calls[res.json.mock.calls.length - 1][0].data.tour.tour;
+      expect(tour.combinedRating).toBe(4.7);
+      expect(tour.combinedReviewCount).toBe(211);
+    });
+
+    it('gives the tour schema the combined standing, not the internal one', async () => {
+      req.params.slug = 'test-tour';
+      prisma.travioGhanaTour.findFirst.mockResolvedValue({
+        ...mockGhanaTour,
+        tour: { ...mockTour, combinedRating: 4.7, combinedReviewCount: 211, _count: { reviews: 0 } },
+      });
+      await controller.getTourBySlug(req, res);
+      const schema = res.json.mock.calls[res.json.mock.calls.length - 1][0].data.tour.tourSchema;
+      expect(schema.aggregateRating.ratingValue).toBe(4.7);
+      expect(schema.aggregateRating.reviewCount).toBe(211);
+    });
+  });
 });
