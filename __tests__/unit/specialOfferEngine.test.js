@@ -82,6 +82,22 @@ describe('specialOfferEngine', () => {
       expect(result).toHaveLength(0);
     });
 
+    it('applies an offer through the whole of its inclusive end date', async () => {
+      const offer = makeOffer({ startDate: '2026-06-01T00:00:00.000Z', endDate: '2026-07-01T23:59:59.999Z' });
+      prisma.specialOffer.findMany.mockResolvedValue([offer]);
+
+      const result = await findApplicableOffers({ tourId: 'tour-1', travelDate: '2026-07-01' });
+      expect(result).toHaveLength(1);
+    });
+
+    it('stops applying the day after the inclusive end date', async () => {
+      const offer = makeOffer({ startDate: '2026-06-01T00:00:00.000Z', endDate: '2026-07-01T23:59:59.999Z' });
+      prisma.specialOffer.findMany.mockResolvedValue([offer]);
+
+      const result = await findApplicableOffers({ tourId: 'tour-1', travelDate: '2026-07-02' });
+      expect(result).toHaveLength(0);
+    });
+
     it('filters by specific weekdays', async () => {
       const offer = makeOffer({ timeSlotMode: 'SPECIFIC_WEEKDAYS', specificWeekdays: ['monday', 'tuesday'] });
       prisma.specialOffer.findMany.mockResolvedValue([offer]);

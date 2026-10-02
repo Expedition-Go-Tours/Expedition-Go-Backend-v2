@@ -21,6 +21,7 @@ const { cancelPaymentIntent } = require('../services/stripeHelpers');
 const { productToTour } = require('../services/productToTour');
 const { tourContentSnapshot, mergeDraftContent, buildTourDiff, computeChangesSummary, buildLiveUpdateData, applyFlatToBlobMapping } = require('../services/tourDraft');
 const { logActivity } = require('../services/auditLogger');
+const { endOfUtcDay } = require('../services/offerDates');
 const { 
   buildTourFilters, 
   buildSortOptions, 
@@ -3068,7 +3069,7 @@ async function upsertSpecialOffer(prisma, supplierId, tourId, offer) {
           discountPercentage: offer.discountPercentage ?? existing.discountPercentage,
           fixedDiscountValue: offer.fixedDiscountValue !== undefined ? offer.fixedDiscountValue : existing.fixedDiscountValue,
           startDate: offer.startDate ? new Date(offer.startDate) : existing.startDate,
-          endDate: offer.endDate ? new Date(offer.endDate) : existing.endDate,
+          endDate: offer.endDate ? endOfUtcDay(offer.endDate) : existing.endDate,
           isActive: offer.isActive !== undefined ? offer.isActive : existing.isActive,
           promoCode: offer.promoCode ?? existing.promoCode,
         },
@@ -3095,7 +3096,7 @@ async function upsertSpecialOffer(prisma, supplierId, tourId, offer) {
         discountPercentage: offer.discountPercentage || 10,
         fixedDiscountValue: offer.fixedDiscountValue || null,
         startDate: offer.startDate ? new Date(offer.startDate) : null,
-        endDate: offer.endDate ? new Date(offer.endDate) : null,
+        endDate: endOfUtcDay(offer.endDate),
         promoCode: null,
         isActive: offer.isActive !== false,
         targets: { create: [{ tourId }] },
@@ -3119,7 +3120,7 @@ async function upsertSpecialOffer(prisma, supplierId, tourId, offer) {
         discountPercentage: offer.discountPercentage ?? existing.discountPercentage,
         fixedDiscountValue: offer.fixedDiscountValue !== undefined ? offer.fixedDiscountValue : existing.fixedDiscountValue,
         startDate: offer.startDate ? new Date(offer.startDate) : existing.startDate,
-        endDate: offer.endDate ? new Date(offer.endDate) : existing.endDate,
+        endDate: offer.endDate ? endOfUtcDay(offer.endDate) : existing.endDate,
         isActive: offer.isActive !== undefined ? offer.isActive : existing.isActive,
       },
     });
@@ -3141,7 +3142,7 @@ async function upsertSpecialOffer(prisma, supplierId, tourId, offer) {
       discountPercentage: offer.discountPercentage || 10,
       fixedDiscountValue: offer.fixedDiscountValue || null,
       startDate: offer.startDate ? new Date(offer.startDate) : null,
-      endDate: offer.endDate ? new Date(offer.endDate) : null,
+      endDate: endOfUtcDay(offer.endDate),
       promoCode: offer.promoCode,
       isActive: offer.isActive !== false,
       targets: { create: [{ tourId }] },

@@ -3,6 +3,7 @@ const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
 const { logActivity } = require('../services/auditLogger');
 const cache = require('../services/cacheHelper');
+const { endOfUtcDay } = require('../services/offerDates');
 
 function computeStatus(offer) {
   const now = new Date();
@@ -98,17 +99,22 @@ exports.createOffer = catchAsync(async (req, res, next) => {
     promoCode, minQuantity, minSpendAmount, maxRedemptionsPerCustomer, stackable,
   } = req.body;
 
+  // Normalise BEFORE any validation so every invariant below, the overlap
+  // check, and the row that gets stored all see the same value. This also
+  // makes a same-day offer (start 00:00 → end 23:59:59.999) legal.
+  const endDateValue = endOfUtcDay(endDate);
+
   if (!name || !name.trim()) return next(new AppError('Offer name is required', 400));
   if (!offerType) return next(new AppError('Offer type is required', 400));
   if (offerType === 'LIMITED_TIME') {
-    if (!startDate || !endDate) return next(new AppError('Start and end dates are required', 400));
-    if (new Date(startDate) >= new Date(endDate)) return next(new AppError('Start date must be before end date', 400));
-  } else if (startDate && endDate && new Date(startDate) >= new Date(endDate)) {
+    if (!startDate || !endDateValue) return next(new AppError('Start and end dates are required', 400));
+    if (new Date(startDate) >= endDateValue) return next(new AppError('Start date must be before end date', 400));
+  } else if (startDate && endDateValue && new Date(startDate) >= endDateValue) {
     return next(new AppError('End date must be after start date', 400));
   }
   if (!targets || targets.length === 0) return next(new AppError('At least one target product is required', 400));
   await validateTargets(targets, supplierId);
-  await assertNoOverlap({ supplierId, targets, startDate, endDate });
+  await assertNoOverlap({ supplierId, targets, startDate, endDate: endDateValue });
 
   const dType = discountType || 'PERCENTAGE';
   if (dType === 'PERCENTAGE') {
@@ -144,7 +150,7 @@ exports.createOffer = catchAsync(async (req, res, next) => {
         discountPercentage: dType === 'PERCENTAGE' ? discountPercentage : 0,
         fixedDiscountValue: dType === 'FIXED_AMOUNT' ? fixedDiscountValue : null,
         startDate: startDate ? new Date(startDate) : null,
-        endDate: endDate ? new Date(endDate) : null,
+        endDate: endDateValue,
         isActive: isActive !== false,
         capacityType: capacityType || 'UNLIMITED',
         maxSpots: capacityType === 'CAPPED' ? (maxSpots || null) : null,
@@ -241,7 +247,12 @@ exports.updateOffer = catchAsync(async (req, res, next) => {
     promoCode, minQuantity, minSpendAmount, maxRedemptionsPerCustomer, stackable,
   } = req.body;
 
-  if (startDate && endDate && new Date(startDate) >= new Date(endDate))
+  // Same inclusive-end-of-day normalisation as createOffer. Falls back to the
+  // stored value (which is idempotent for already-normalised rows) so the
+  // invariants and the overlap check always run against what will be written.
+  const endDateValue = endDate !== undefined ? endOfUtcDay(endDate) : existing.endDate;
+
+  if (startDate && endDateValue && new Date(startDate) >= endDateValue)
     return next(new AppError('Start date must be before end date', 400));
 
   const dType = discountType || existing.discountType;
@@ -264,14 +275,13 @@ exports.updateOffer = catchAsync(async (req, res, next) => {
   // Merged view of the offer once this update applies, used for all invariants.
   const effectiveType = offerType || existing.offerType;
   const effectiveStart = startDate !== undefined ? (startDate ? new Date(startDate) : null) : existing.startDate;
-  const effectiveEnd = endDate !== undefined ? (endDate ? new Date(endDate) : null) : existing.endDate;
   const effectiveCapacityType = capacityType || existing.capacityType;
   const effectiveMaxSpots = maxSpots !== undefined ? maxSpots : existing.maxSpots;
 
   if (effectiveType === 'LIMITED_TIME') {
-    if (!effectiveStart || !effectiveEnd) return next(new AppError('Start and end dates are required', 400));
-    if (new Date(effectiveStart) >= new Date(effectiveEnd)) return next(new AppError('Start date must be before end date', 400));
-  } else if (effectiveStart && effectiveEnd && new Date(effectiveStart) >= new Date(effectiveEnd)) {
+    if (!effectiveStart || !endDateValue) return next(new AppError('Start and end dates are required', 400));
+    if (new Date(effectiveStart) >= endDateValue) return next(new AppError('Start date must be before end date', 400));
+  } else if (effectiveStart && endDateValue && new Date(effectiveStart) >= endDateValue) {
     return next(new AppError('End date must be after start date', 400));
   }
 
@@ -293,7 +303,7 @@ exports.updateOffer = catchAsync(async (req, res, next) => {
       supplierId: existing.supplierId,
       targets: overlapTargets,
       startDate: effectiveStart,
-      endDate: effectiveEnd,
+      endDate: endDateValue,
       selfId: id,
     });
   }
@@ -320,7 +330,7 @@ exports.updateOffer = catchAsync(async (req, res, next) => {
         ...(discountPercentage !== undefined && { discountPercentage: dType === 'PERCENTAGE' ? discountPercentage : 0 }),
         ...(fixedDiscountValue !== undefined && { fixedDiscountValue: dType === 'FIXED_AMOUNT' ? fixedDiscountValue : null }),
         ...(startDate !== undefined && { startDate: startDate ? new Date(startDate) : null }),
-        ...(endDate !== undefined && { endDate: endDate ? new Date(endDate) : null }),
+        ...(endDate !== undefined && { endDate: endDateValue }),
         ...(isActive !== undefined && { isActive }),
         ...(capacityType !== undefined && { capacityType }),
         ...(maxSpots !== undefined && { maxSpots: effectiveCapacityType === 'CAPPED' ? maxSpots : null }),

@@ -27,7 +27,7 @@ jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(a
 
 const prisma = require('../../src/core/services/prismaClient');
 const cacheHelper = require('../../src/core/services/cacheHelper');
-const { createOffer, updateOffer } = require('../../src/core/domain/specialOfferController');
+const { createOffer, updateOffer, getOffers } = require('../../src/core/domain/specialOfferController');
 
 const VALID_BODY = {
   name: 'Summer Sale',
@@ -244,6 +244,102 @@ describe('specialOfferController validation', () => {
 
       expect(result.error).toBeUndefined();
       expect(mockTx.specialOffer.update).toHaveBeenCalled();
+    });
+  });
+
+  describe('inclusive end-date semantics', () => {
+    // `computeStatus` compares against the real clock, so anchor the fixtures
+    // to whole UTC days relative to now: "today" must read active, "yesterday"
+    // must read expired.
+    function endOfUtcDayOffset(offset) {
+      const now = new Date();
+      return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + offset, 23, 59, 59, 999));
+    }
+
+    function captureJson(fn, r) {
+      return new Promise((resolve) => {
+        const next = (err) => resolve({ error: err });
+        const res = {
+          json: jest.fn((payload) => resolve({ json: payload })),
+          status: jest.fn(() => res),
+        };
+        fn(r, res, next).catch((err) => resolve({ error: err }));
+      });
+    }
+
+    function statusOffer(endDate) {
+      return {
+        id: 'offer-1',
+        name: 'Sale',
+        offerType: 'LIMITED_TIME',
+        isActive: true,
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+        endDate,
+        discountType: 'PERCENTAGE',
+        discountPercentage: 10,
+        capacityType: 'UNLIMITED',
+        maxSpots: null,
+        spotsSold: 0,
+        targets: [],
+      };
+    }
+
+    it('stores createOffer endDate at the last millisecond of the chosen UTC day', async () => {
+      const result = await run(createOffer, req(VALID_BODY));
+
+      expect(result.error).toBeUndefined();
+      const data = mockTx.specialOffer.create.mock.calls[0][0].data;
+      expect(data.endDate.toISOString()).toBe('2026-09-01T23:59:59.999Z');
+      // The start date keeps its start-of-day meaning.
+      expect(data.startDate.toISOString()).toBe('2026-08-01T00:00:00.000Z');
+    });
+
+    it('accepts an offer that starts and ends on the same day', async () => {
+      const body = { ...VALID_BODY, startDate: '2026-08-01T00:00:00Z', endDate: '2026-08-01T00:00:00Z' };
+
+      const result = await run(createOffer, req(body));
+
+      expect(result.error).toBeUndefined();
+      expect(mockTx.specialOffer.create).toHaveBeenCalled();
+      expect(mockTx.specialOffer.create.mock.calls[0][0].data.endDate.toISOString()).toBe('2026-08-01T23:59:59.999Z');
+    });
+
+    it('rejects an unparseable end date rather than storing Invalid Date', async () => {
+      const result = await run(createOffer, req({ ...VALID_BODY, endDate: 'not-a-date' }));
+
+      expect(result.error).toBeInstanceOf(Error);
+      expect(result.error.statusCode).toBe(400);
+      expect(mockTx.specialOffer.create).not.toHaveBeenCalled();
+    });
+
+    it('stores updateOffer endDate at the last millisecond of the chosen UTC day', async () => {
+      const result = await run(updateOffer, req({ endDate: '2026-12-15T00:00:00Z' }, { params: { id: 'offer-1' } }));
+
+      expect(result.error).toBeUndefined();
+      expect(mockTx.specialOffer.update.mock.calls[0][0].data.endDate.toISOString()).toBe('2026-12-15T23:59:59.999Z');
+    });
+
+    it('leaves endDate alone when the update does not send one', async () => {
+      const result = await run(updateOffer, req({ discountPercentage: 25 }, { params: { id: 'offer-1' } }));
+
+      expect(result.error).toBeUndefined();
+      expect(mockTx.specialOffer.update.mock.calls[0][0].data.endDate).toBeUndefined();
+    });
+
+    it('reports an offer as active through the whole of its end date', async () => {
+      prisma.specialOffer.findMany.mockResolvedValue([statusOffer(endOfUtcDayOffset(0))]);
+
+      const { json } = await captureJson(getOffers, req({}, { query: {} }));
+
+      expect(json.data.offers[0].status).toBe('active');
+    });
+
+    it('reports an offer as expired once its end day has fully passed', async () => {
+      prisma.specialOffer.findMany.mockResolvedValue([statusOffer(endOfUtcDayOffset(-1))]);
+
+      const { json } = await captureJson(getOffers, req({}, { query: {} }));
+
+      expect(json.data.offers[0].status).toBe('expired');
     });
   });
 });
