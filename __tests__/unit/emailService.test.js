@@ -647,7 +647,7 @@ describe('brandKey threading (inline hardening)', () => {
     const payload = __send.mock.calls[0][0];
     expect(payload.html).toContain('Welcome to Travio Ghana');
     expect(payload.from).toBe('Travio Ghana <notifications@travioghana.com>');
-    expect(payload.html).toContain('https://supplier.travioghana.com/dashboard');
+    expect(payload.html).toContain('https://supplier.travioghana.com/');
   });
 
   it('brands expedition-scoped recipients Expedition-Go Tours', async () => {
@@ -733,9 +733,9 @@ describe('brandKey threading (inline hardening)', () => {
 describe('brand-aware email links (ForUser variants)', () => {
   it('routes Ghana suppliers to the Ghana dashboard', () => {
     expect(emailUrls.supplierDashboardForUser({ roles: ['supplier', 'ghana'] }))
-      .toBe('https://supplier.travioghana.com/dashboard');
+      .toBe('https://supplier.travioghana.com/');
     expect(emailUrls.supplierEarningsForUser({ roles: ['ghana'] }))
-      .toBe('https://supplier.travioghana.com/earnings');
+      .toBe('https://supplier.travioghana.com/finance');
     expect(emailUrls.supplierReviewForUser('r1', { roles: ['ghana'] }))
       .toBe('https://supplier.travioghana.com/reviews?reviewId=r1');
     expect(emailUrls.supplierReplyReviewForUser('r1', { roles: ['ghana'] }))

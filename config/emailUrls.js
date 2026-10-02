@@ -145,10 +145,13 @@ module.exports = {
   getDirections: (location) => mapsDirectionsUrl(location),
 
   // ── Supplier (dashboard) ───────────────────────────────────────────
-  supplierViewBooking: (bookingId) => `${DASHBOARD_URL}/bookings/${bookingId}`,
-  supplierDashboard: () => `${DASHBOARD_URL}/dashboard`,
-  supplierEarnings: () => `${DASHBOARD_URL}/earnings`,
-  supplierPayouts: () => `${DASHBOARD_URL}/earnings/payouts`,
+  // Brand-aware variant — routes Ghana suppliers to the Ghana dashboard.
+  // The supplier dashboard's BookingsPage reads ?bookingId=<id> from the
+  // URL to pre-select a booking (it has no /bookings/:id route).
+  supplierViewBooking: (bookingId) => `${DASHBOARD_URL}/bookings?bookingId=${encodeURIComponent(bookingId)}`,
+  supplierDashboard: () => `${DASHBOARD_URL}/`,
+  supplierEarnings: () => `${DASHBOARD_URL}/finance`,
+  supplierPayouts: () => `${DASHBOARD_URL}/finance`,
   supplierBookings: () => `${DASHBOARD_URL}/bookings`,
   supplierProducts: () => `${DASHBOARD_URL}/products`,
   supplierProduct: (tourId) => `${DASHBOARD_URL}/products/build/${encodeURIComponent(tourId)}/type`,
@@ -162,8 +165,8 @@ module.exports = {
   // Brand-aware home/earnings/review links — the bare variants above always
   // point at the TravioAfrica dashboard, which is the wrong home for Ghana
   // suppliers opening a branded email.
-  supplierDashboardForUser: (user) => `${dashboardBaseForUser(user)}/dashboard`,
-  supplierEarningsForUser: (user) => `${dashboardBaseForUser(user)}/earnings`,
+  supplierDashboardForUser: (user) => `${dashboardBaseForUser(user)}/`,
+  supplierEarningsForUser: (user) => `${dashboardBaseForUser(user)}/finance`,
   supplierReviewForUser: (reviewId, user) =>
     `${dashboardBaseForUser(user)}/reviews?reviewId=${encodeURIComponent(reviewId)}`,
   supplierReplyReviewForUser: (reviewId, user) =>

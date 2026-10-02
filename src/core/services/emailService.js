@@ -554,9 +554,11 @@ async function buildBookingBase(booking, opts = {}) {
 
     // supplier URLs — brand-aware so Ghana/Expedition bookings point at the
     // Ghana dashboard instead of always falling through to TravioAfrica.
-    supplierBookingUrl: `${emailUrls.dashboardBaseForBrand(brandKey)}/bookings/${encodeURIComponent(booking.id)}`,
-    supplierPayoutUrl: `${emailUrls.dashboardBaseForBrand(brandKey)}/earnings/payouts`,
-    dashboardUrl: `${emailUrls.dashboardBaseForBrand(brandKey)}/dashboard`,
+    // The supplier dashboard's BookingsPage reads ?bookingId=<id> from the
+    // URL to pre-select a booking (it has no /bookings/:id route).
+    supplierBookingUrl: `${emailUrls.dashboardBaseForBrand(brandKey)}/bookings?bookingId=${encodeURIComponent(booking.id)}`,
+    supplierPayoutUrl: `${emailUrls.dashboardBaseForBrand(brandKey)}/finance`,
+    dashboardUrl: `${emailUrls.dashboardBaseForBrand(brandKey)}/`,
   };
 
   return base;
