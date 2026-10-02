@@ -150,6 +150,9 @@ exports.getCancellationSummary = catchAsync(async (req, res, next) => {
     (b) => (b.status === 'CANCELLED' || b.status === 'REFUNDED') && isSupplierCaused(b),
   );
   const cancelledCount = supplierCancelled.length;
+  const totalCancelled = bookings.filter(
+    (b) => b.status === 'CANCELLED' || b.status === 'REFUNDED',
+  ).length;
 
   // GYG's second supplier metric: no-shows must stay ≤ 0.2% of bookings.
   const noShowCount = bookings.filter((b) => b.status === 'NO_SHOW').length;
@@ -193,7 +196,8 @@ exports.getCancellationSummary = catchAsync(async (req, res, next) => {
       cancellationRate: roundedRate,
       status,
       confirmed: confirmedCount,
-      cancelled: cancelledCount,
+      cancelled: totalCancelled,
+      supplierCausedCount: cancelledCount,
       completed: completedCount,
       noShow: noShowCount,
       noShowRate: Math.round(noShowRate * 100) / 100,
@@ -231,20 +235,21 @@ exports.getCancellationRecords = catchAsync(async (req, res, next) => {
   };
   if (productId) where.tourId = productId;
 
-  // Fetch all matching cancelled bookings (no pagination yet — filter first, paginate after)
+  // Fetch ALL matching cancelled bookings, not just supplier-caused.
+  // Customer-caused cancellations appear here too — they don't count toward
+  // the supplier's rate (countsTowardRate: false) but the supplier still
+  // needs to see that a booking was cancelled and why.
   const allCancelled = await prisma.booking.findMany({
     where,
     orderBy: { travelDate: 'desc' },
     include: { tour: { select: { id: true, title: true } } },
   });
 
-  // Filter to supplier-caused only, then paginate
-  const supplierCaused = allCancelled.filter((r) => isSupplierCaused(r));
-  const totalCount = supplierCaused.length;
+  const totalCount = allCancelled.length;
   const totalPages = Math.ceil(totalCount / pageSize);
   const currentPage = Math.min(parseInt(page), Math.max(totalPages, 1));
   const skip = (currentPage - 1) * pageSize;
-  const paged = supplierCaused.slice(skip, skip + pageSize);
+  const paged = allCancelled.slice(skip, skip + pageSize);
 
   res.status(200).json({
     status: 'success',
