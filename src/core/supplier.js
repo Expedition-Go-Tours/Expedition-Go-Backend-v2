@@ -14,6 +14,7 @@ const prisma = require('./services/prismaClient');
 const AppError = require('./services/appError');
 const catchAsync = require('./services/catchAsync');
 const cache = require('./services/cacheHelper');
+const { computeOfferStatus } = require('./services/offerStatus');
 const { getBrand } = require('../../config/brands');
 
 
@@ -346,17 +347,11 @@ controller.getSpecialOffers = catchAsync(async (req, res) => {
   });
 
   // Match the shared controller: expose a computed status so the UI's
-  // Active/Scheduled/Expired/Inactive filters and badges work.
+  // Active/Scheduled/Expired/Inactive filters and badges work. Delegates to the
+  // shared service so the list badge and the detail/builder badge can never
+  // drift apart.
   const now = new Date();
-  const withStatus = offers.map((o) => {
-    let status = 'inactive';
-    if (o.isActive) {
-      if (o.startDate && now < new Date(o.startDate)) status = 'scheduled';
-      else if (o.endDate && now > new Date(o.endDate)) status = 'expired';
-      else status = 'active';
-    }
-    return { ...o, status };
-  });
+  const withStatus = offers.map((o) => ({ ...o, status: computeOfferStatus(o, now) }));
 
   res.json({ status: 'success', data: { offers: withStatus } });
 });

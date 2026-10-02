@@ -139,6 +139,52 @@ describe('specialOfferEngine', () => {
       );
     });
 
+    // The where clause previously only ADDED a promoCode filter when a code was
+    // present, so with no code it matched every offer — gated ones included.
+    // A promo-gated discount then applied to every booking that never
+    // mentioned the code.
+    it('scopes the query to ungated offers when no code is supplied', async () => {
+      prisma.specialOffer.findMany.mockResolvedValue([]);
+
+      await findApplicableOffers({ tourId: 'tour-1', travelDate: '2026-07-01' });
+
+      expect(prisma.specialOffer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ promoCode: null }) })
+      );
+    });
+
+    it('never applies a promo-gated offer to a booking that never presented the code', async () => {
+      // Returned by the mock despite the where clause, so this exercises the
+      // defensive post-filter too — not just the query.
+      prisma.specialOffer.findMany.mockResolvedValue([makeOffer({ promoCode: 'SAVE20' })]);
+
+      const result = await findApplicableOffers({ tourId: 'tour-1', travelDate: '2026-07-01' });
+
+      expect(result).toHaveLength(0);
+    });
+
+    it('applies a promo-gated offer when its code is presented', async () => {
+      prisma.specialOffer.findMany.mockResolvedValue([makeOffer({ promoCode: 'SAVE20' })]);
+
+      const result = await findApplicableOffers({
+        tourId: 'tour-1',
+        travelDate: '2026-07-01',
+        promoCode: 'SAVE20',
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0].promoCode).toBe('SAVE20');
+    });
+
+    it('applies ungated offers normally when no code is supplied', async () => {
+      prisma.specialOffer.findMany.mockResolvedValue([makeOffer()]);
+
+      const result = await findApplicableOffers({ tourId: 'tour-1', travelDate: '2026-07-01' });
+
+      expect(result).toHaveLength(1);
+      expect(result[0].promoCode).toBeNull();
+    });
+
     it('filters by customer redemptions', async () => {
       const offer = makeOffer({ maxRedemptionsPerCustomer: 2 });
       prisma.specialOffer.findMany.mockResolvedValue([offer]);

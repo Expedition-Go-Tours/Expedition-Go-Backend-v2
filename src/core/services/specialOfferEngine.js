@@ -29,7 +29,12 @@ async function findApplicableOffers({ tourId, tourOptionKey, travelDate, promoCo
     },
   };
 
-  if (promoCode) where.promoCode = promoCode;
+  // Promo-gated offers only apply when the caller supplied their code. With no
+  // code, `promoCode: null` matches only ungated offers (SQL IS NULL) — without
+  // this a gated discount applied for free to every booking that never
+  // mentioned the code. Supplying a code restricts the match to that code,
+  // which is the existing behaviour.
+  where.promoCode = promoCode || null;
 
   const offers = await prisma.specialOffer.findMany({
     where,
@@ -46,7 +51,13 @@ async function findApplicableOffers({ tourId, tourOptionKey, travelDate, promoCo
   // booking or vice versa).
   const scoped = offers.filter((offer) => offer.targets?.length > 0);
 
-  const filtered = scoped.filter((offer) => {
+  // Belt and braces: even if the query above is ever loosened, a promo-gated
+  // offer must never discount a booking that did not present its code.
+  const gated = promoCode
+    ? scoped.filter((offer) => offer.promoCode === promoCode)
+    : scoped.filter((offer) => !offer.promoCode);
+
+  const filtered = gated.filter((offer) => {
     if (offer.startDate && new Date(travelDate) < new Date(offer.startDate)) return false;
     if (offer.endDate && new Date(travelDate) > new Date(offer.endDate)) return false;
 

@@ -3055,6 +3055,15 @@ async function buildPriceIdConstraint(prisma, minPrice, maxPrice, priceRange) {
  * - If promoCode belongs to a different supplier â†’ skip (log warning).
  * - If promoCode is null or not found â†’ create a new offer.
  */
+/**
+ * Trim an incoming offer name and cap it at the builder's 60-character limit.
+ * Returns '' when there is nothing usable, so callers can fall back.
+ */
+function sanitizeOfferName(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim().slice(0, 60);
+}
+
 async function upsertSpecialOffer(prisma, supplierId, tourId, offer) {
   // If offer has an id, try to update by id first (for re-publish of existing offers)
   if (offer.id) {
@@ -3063,7 +3072,11 @@ async function upsertSpecialOffer(prisma, supplierId, tourId, offer) {
       const updated = await prisma.specialOffer.update({
         where: { id: existing.id },
         data: {
-          name: offer.name ?? existing.name,
+          // `??` below only catches null/undefined, so a blank string from the
+          // payload would wipe the name. Trim, cap to the builder's 60-char
+          // counter, and fall back to the stored value when nothing usable
+          // arrives — this path skips-and-logs rather than rejecting.
+          name: sanitizeOfferName(offer.name) || existing.name,
           offerType: offer.offerType ?? existing.offerType,
           discountType: offer.discountType ?? existing.discountType,
           discountPercentage: offer.discountPercentage ?? existing.discountPercentage,
@@ -3090,7 +3103,7 @@ async function upsertSpecialOffer(prisma, supplierId, tourId, offer) {
     return prisma.specialOffer.create({
       data: {
         supplierId,
-        name: offer.name || 'Special Offer',
+        name: sanitizeOfferName(offer.name) || 'Special Offer',
         offerType: offer.offerType || 'LIMITED_TIME',
         discountType: offer.discountType || 'PERCENTAGE',
         discountPercentage: offer.discountPercentage || 10,

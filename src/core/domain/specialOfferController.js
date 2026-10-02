@@ -4,13 +4,44 @@ const AppError = require('../services/appError');
 const { logActivity } = require('../services/auditLogger');
 const cache = require('../services/cacheHelper');
 const { endOfUtcDay } = require('../services/offerDates');
+const { computeOfferStatus } = require('../services/offerStatus');
 
+const VALID_WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+/**
+ * Normalise a specificWeekdays payload: trim, lowercase, de-dupe, and reject
+ * anything that isn't a weekday name. The engine compares against the lowercase
+ * output of `new Date().getDay()`, so a payload of "Monday" or "MON" would
+ * otherwise store cleanly and then never match a single date.
+ *
+ * @param {string[]|undefined|null} list
+ * @throws {AppError} 400 on an unrecognised day
+ * @returns {string[]}
+ */
+function normalizeWeekdays(list) {
+  const days = [...new Set((list || []).map((d) => String(d).trim().toLowerCase()).filter(Boolean))];
+  const unknown = days.filter((d) => !VALID_WEEKDAYS.includes(d));
+  if (unknown.length) throw new AppError(`Unknown weekday: ${unknown.join(', ')}`, 400);
+  return days;
+}
+
+/**
+ * A weekday-limited offer with no weekdays selected matches nothing — it would
+ * sit in the list advertising a discount nobody can ever claim.
+ */
+function assertWeekdaysSelected(slotMode, weekdays, next) {
+  if (slotMode === 'SPECIFIC_WEEKDAYS' && weekdays.length === 0) {
+    next(new AppError('Select at least one weekday for a weekday-limited offer', 400));
+    return false;
+  }
+  return true;
+}
+
+// Delegates to the shared service so this controller and the supplier-scoped
+// list (supplier.js) always agree. See src/core/services/offerStatus.js for why
+// the end date is checked before the switch.
 function computeStatus(offer) {
-  const now = new Date();
-  if (!offer.isActive) return 'inactive';
-  if (offer.startDate && now < new Date(offer.startDate)) return 'scheduled';
-  if (offer.endDate && now > new Date(offer.endDate)) return 'expired';
-  return 'active';
+  return computeOfferStatus(offer);
 }
 
 // Only published tours may carry offers — matches the supplier picker UI.
@@ -105,6 +136,7 @@ exports.createOffer = catchAsync(async (req, res, next) => {
   const endDateValue = endOfUtcDay(endDate);
 
   if (!name || !name.trim()) return next(new AppError('Offer name is required', 400));
+  if (name.trim().length > 60) return next(new AppError('Offer name must be 60 characters or fewer', 400));
   if (!offerType) return next(new AppError('Offer type is required', 400));
   if (offerType === 'LIMITED_TIME') {
     if (!startDate || !endDateValue) return next(new AppError('Start and end dates are required', 400));
@@ -112,6 +144,9 @@ exports.createOffer = catchAsync(async (req, res, next) => {
   } else if (startDate && endDateValue && new Date(startDate) >= endDateValue) {
     return next(new AppError('End date must be after start date', 400));
   }
+  const slotMode = timeSlotMode || 'ALL_DAYS';
+  const weekdays = normalizeWeekdays(specificWeekdays);
+  if (!assertWeekdaysSelected(slotMode, weekdays, next)) return;
   if (!targets || targets.length === 0) return next(new AppError('At least one target product is required', 400));
   await validateTargets(targets, supplierId);
   await assertNoOverlap({ supplierId, targets, startDate, endDate: endDateValue });
@@ -154,8 +189,8 @@ exports.createOffer = catchAsync(async (req, res, next) => {
         isActive: isActive !== false,
         capacityType: capacityType || 'UNLIMITED',
         maxSpots: capacityType === 'CAPPED' ? (maxSpots || null) : null,
-        timeSlotMode: timeSlotMode || 'ALL_DAYS',
-        specificWeekdays: specificWeekdays || [],
+        timeSlotMode: slotMode,
+        specificWeekdays: weekdays,
         earlyBirdAdvanceDays: offerType === 'EARLY_BIRD' ? (earlyBirdAdvanceDays || 7) : null,
         lastMinuteWindowHours: offerType === 'LAST_MINUTE' ? (lastMinuteWindowHours || 72) : null,
         promoCode: promoCode || null,
@@ -252,6 +287,14 @@ exports.updateOffer = catchAsync(async (req, res, next) => {
   // invariants and the overlap check always run against what will be written.
   const endDateValue = endDate !== undefined ? endOfUtcDay(endDate) : existing.endDate;
 
+  // P5: createOffer validates the name, updateOffer never did — a PUT could
+  // blank an offer's name (or exceed the 60-char builder counter) while every
+  // other field passed its checks.
+  if (name !== undefined) {
+    if (!name || !name.trim()) return next(new AppError('Offer name is required', 400));
+    if (name.trim().length > 60) return next(new AppError('Offer name must be 60 characters or fewer', 400));
+  }
+
   if (startDate && endDateValue && new Date(startDate) >= endDateValue)
     return next(new AppError('Start date must be before end date', 400));
 
@@ -277,6 +320,11 @@ exports.updateOffer = catchAsync(async (req, res, next) => {
   const effectiveStart = startDate !== undefined ? (startDate ? new Date(startDate) : null) : existing.startDate;
   const effectiveCapacityType = capacityType || existing.capacityType;
   const effectiveMaxSpots = maxSpots !== undefined ? maxSpots : existing.maxSpots;
+  const effectiveSlotMode = timeSlotMode !== undefined ? (timeSlotMode || 'ALL_DAYS') : existing.timeSlotMode;
+  const effectiveWeekdays = specificWeekdays !== undefined
+    ? normalizeWeekdays(specificWeekdays)
+    : (existing.specificWeekdays || []);
+  if (!assertWeekdaysSelected(effectiveSlotMode, effectiveWeekdays, next)) return;
 
   if (effectiveType === 'LIMITED_TIME') {
     if (!effectiveStart || !endDateValue) return next(new AppError('Start and end dates are required', 400));
@@ -334,8 +382,8 @@ exports.updateOffer = catchAsync(async (req, res, next) => {
         ...(isActive !== undefined && { isActive }),
         ...(capacityType !== undefined && { capacityType }),
         ...(maxSpots !== undefined && { maxSpots: effectiveCapacityType === 'CAPPED' ? maxSpots : null }),
-        ...(timeSlotMode !== undefined && { timeSlotMode }),
-        ...(specificWeekdays !== undefined && { specificWeekdays }),
+        ...(timeSlotMode !== undefined && { timeSlotMode: effectiveSlotMode }),
+        ...(specificWeekdays !== undefined && { specificWeekdays: effectiveWeekdays }),
         ...(earlyBirdAdvanceDays !== undefined && { earlyBirdAdvanceDays }),
         ...(lastMinuteWindowHours !== undefined && { lastMinuteWindowHours }),
         ...(promoCode !== undefined && { promoCode: promoCode || null }),

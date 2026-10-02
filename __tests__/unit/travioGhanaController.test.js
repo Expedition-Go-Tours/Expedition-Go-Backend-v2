@@ -10,6 +10,7 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   cartItem: { deleteMany: jest.fn() },
   supplierProfile: { findFirst: jest.fn() },
   payout: { create: jest.fn(), updateMany: jest.fn(), findMany: jest.fn() },
+  specialOffer: { update: jest.fn(), findUnique: jest.fn(), findMany: jest.fn() },
   payoutRequestItem: { findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
   payoutRequest: { updateMany: jest.fn().mockResolvedValue({ count: 0 }), update: jest.fn().mockResolvedValue({}) },
   checkoutDraft: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
@@ -23,7 +24,16 @@ jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
   invalidateKeys: jest.fn(() => Promise.resolve()),
 }));
-jest.mock('../../src/core/services/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/emailService', () => ({
+  sendEmail: jest.fn(() => Promise.resolve()),
+  // cancelBooking destructures these; a partial mock makes the call throw
+  // synchronously rather than reject, which .catch() would not absorb.
+  sendSupplierCustomerCancelledFreeEmail: jest.fn(() => Promise.resolve()),
+  sendSupplierCustomerCancelledLateEmail: jest.fn(() => Promise.resolve()),
+}));
+jest.mock('../../src/core/services/discordNotifier', () => ({
+  notifyDiscord: jest.fn(() => Promise.resolve()),
+}));
 jest.mock('../../src/core/services/queue', () => ({
   enqueueEvent: jest.fn(() => Promise.resolve()),
   enqueueEmail: jest.fn(() => Promise.resolve()),
@@ -190,5 +200,70 @@ describe('travioGhanaController (Phase 1b characterization)', () => {
       expect(schema.aggregateRating.ratingValue).toBe(4.7);
       expect(schema.aggregateRating.reviewCount).toBe(211);
     });
+  });
+});
+
+// The offer round-trip had never been proven end to end. The INCREMENT on
+// checkout is covered by stripeHelpers.test.js, but nothing anywhere asserted
+// that cancelling gives the capacity back — a leak there strands a capped
+// offer at "sold out" forever, and production shows 0 bookings have ever
+// applied an offer, so no live traffic would have revealed it either.
+describe('cancelBooking gives back the offer capacity it consumed', () => {
+  const offerBooking = {
+    id: 'b-1',
+    bookingNumber: 'TRG-0001-2026',
+    customerId: 'user-1',
+    status: 'CONFIRMED',
+    paymentStatus: 'PENDING',
+    refundStatus: null,
+    grossAmount: 300,
+    currency: 'USD',
+    source: 'GHANA',
+    leadTravelerName: 'Ama',
+    appliedOfferId: 'offer-9',
+    travelers: { adults: 2, children: 1, infants: 1 },
+    tour: { id: 'tour-1', title: 'Safari', supplierId: 'sup-1', supplier: { id: 'sup-1' } },
+  };
+
+  let req, res, tx;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    req = { params: { id: 'b-1' }, body: { reason: 'changed my mind' }, query: {}, user: { id: 'user-1' } };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis(), send: jest.fn().mockReturnThis() };
+    tx = {
+      booking: { update: jest.fn().mockResolvedValue({ ...offerBooking, cancelledAt: new Date() }) },
+      payout: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      specialOffer: { update: jest.fn().mockResolvedValue({}) },
+      payoutRequestItem: {
+        findMany: jest.fn().mockResolvedValue([]),
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        delete: jest.fn().mockResolvedValue({}),
+      },
+      payoutRequest: { updateMany: jest.fn().mockResolvedValue({ count: 0 }), update: jest.fn().mockResolvedValue({}) },
+    };
+    prisma.$transaction.mockImplementation(async (fn) => fn(tx));
+    prisma.booking.findFirst.mockResolvedValue(offerBooking);
+    prisma.booking.update.mockResolvedValue({});
+    prisma.specialOffer.update.mockResolvedValue({});
+  });
+
+  it('releases one spot per traveller when an offer was applied', async () => {
+    await controller.cancelBooking(req, res);
+
+    expect(tx.specialOffer.update).toHaveBeenCalledWith({
+      where: { id: 'offer-9' },
+      data: { spotsSold: { decrement: 4 } },
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('leaves the offer untouched when the booking never applied one', async () => {
+    prisma.booking.findFirst.mockResolvedValue({ ...offerBooking, appliedOfferId: null });
+
+    await controller.cancelBooking(req, res);
+
+    expect(tx.specialOffer.update).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
   });
 });
