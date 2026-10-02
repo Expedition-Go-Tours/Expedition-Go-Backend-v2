@@ -47,8 +47,21 @@ const DEFAULT_JOB_OPTIONS = {
 const queueInstances = new Map();
 const workers = [];
 const pausedWorkers = new Set();
+/**
+ * queueName -> { processor, concurrency } for every worker registerWorkers has
+ * created. Recovery needs this: if a Worker dies (connection blip, uncaught
+ * error) its closure is gone, and without the spec there is no way to put it
+ * back — which is exactly how 12 scheduled jobs went 55 minutes without running.
+ */
+const workerSpecs = new Map();
 let resumeMonitor = null;
+let monitorStartedAt = null;
+let lastMonitorTickAt = null;
 let lastWorkerErrorLog = 0;
+let lastMonitorLogAt = 0;
+/** queueName -> last rebuild timestamp. Bounds how often one queue can be torn down. */
+const rebuildCooldown = new Map();
+const REBUILD_COOLDOWN_MS = 5 * 60 * 1000;
 let closed = false;
 
 function getQueue(queueName) {
@@ -274,6 +287,38 @@ async function verifySchedules() {
 }
 
 /**
+ * Jobs whose last run is older than 2x cadence — the ground truth for "this
+ * schedule stopped executing". Shared by /health (reporting) and the resume
+ * monitor (acting), so the two can never disagree about what is broken.
+ *
+ * Each entry carries its queue label; QUEUE_BY_LABEL maps that to the real
+ * BullMQ queue whose Worker should be consuming it.
+ */
+async function getStaleJobs() {
+  const out = [];
+  const now = Date.now();
+  const exRecords = await Promise.all(
+    SCHEDULES.map((s) => readExecution(s.jobName).catch(() => schedulerExecution.get(s.jobName) || null)),
+  );
+  SCHEDULES.forEach((s, i) => {
+    const ex = exRecords[i];
+    const lastRunAt = ex?.lastRunAt;
+    if (!lastRunAt) return; // never ran since state was tracked — not yet stale
+    if (now - lastRunAt > s.everyMs * 2) {
+      out.push({
+        jobName: s.jobName,
+        queueLabel: s.queue,
+        cadence: s.everyMs,
+        lastRunAt: new Date(lastRunAt).toISOString(),
+        lastFailureAt: ex?.lastFailureAt ? new Date(ex.lastFailureAt).toISOString() : null,
+        consecutiveFailures: ex?.consecutiveFailures || 0,
+      });
+    }
+  });
+  return out;
+}
+
+/**
  * Health used by /health + ops digest. Combines registration health with
  * EXECUTION health (a registered scheduler that silently stopped is the real
  * risk). Schedules whose last run is older than 2x cadence are flagged stale.
@@ -288,30 +333,23 @@ async function getSchedulerHealth() {
     out.missing = v.missing;
     out.lastVerifiedAt = new Date().toISOString();
     out.status = v.missing.length === 0 ? 'healthy' : 'unhealthy';
-    const now = Date.now();
-    // Resolve all execution records concurrently (still bounded by ~20 keys).
-    const exRecords = await Promise.all(
-      SCHEDULES.map((s) => readExecution(s.jobName).catch(() => schedulerExecution.get(s.jobName) || null))
-    );
-    SCHEDULES.forEach((s, i) => {
-      const ex = exRecords[i];
-      const lastRunAt = ex?.lastRunAt;
-      if (!lastRunAt) return; // never ran since state was tracked — not yet stale
-      const ageMs = now - lastRunAt;
-      if (ageMs > s.everyMs * 2) {
-        out.stale.push({
-          jobName: s.jobName,
-          cadence: s.everyMs,
-          lastRunAt: new Date(lastRunAt).toISOString(),
-          lastFailureAt: ex?.lastFailureAt ? new Date(ex.lastFailureAt).toISOString() : null,
-          consecutiveFailures: ex?.consecutiveFailures || 0,
-        });
-      }
-    });
+    out.stale = await getStaleJobs();
     if (out.status === 'healthy' && out.stale.length > 0) out.status = 'degraded';
+
+    // Worker + monitor liveness. Staleness needs 2x cadence to appear (up to
+    // 30 min for an hourly job); a dead worker or a monitor that stopped
+    // ticking is wrong immediately, so it degrades sooner and says why.
+    const mon = getMonitorHealth();
+    out.monitor = mon;
+    if (out.status === 'healthy' && (mon.monitorStale || mon.workers.broken > 0)) {
+      out.status = 'degraded';
+    }
     return out;
-  } catch {
-    return out; // Redis unavailable → unknown
+  } catch (err) {
+    // Redis unavailable → unknown. Recorded rather than dropped so an outage is
+    // distinguishable from "the health check itself is broken".
+    out.monitorError = err?.message || String(err);
+    return out;
   }
 }
 
@@ -673,8 +711,12 @@ async function enqueueHomepagePrecompute() {
     // Redis unavailable — run inline as fallback
     try {
       const { precomputeHomepageSections } = require('./homepagePrecompute');
-      precomputeHomepageSections().catch(() => {});
-    } catch { /* noop */ }
+      precomputeHomepageSections().catch((e) =>
+        console.warn(`[Queue] inline homepage precompute failed: ${e?.message || e}`),
+      );
+    } catch (e) {
+      console.warn(`[Queue] inline homepage precompute could not start: ${e?.message || e}`);
+    }
   }
 }
 
@@ -780,7 +822,24 @@ function registerWorkers() {
   const conn = getConnection();
 
   function createWorker(queueName, processor, concurrency = 1) {
+    // Remember how to rebuild this worker. The processor only exists as a
+    // closure inside registerWorkers, so once a Worker dies nothing outside it
+    // can put it back — without this spec, recovery is impossible. `recreate`
+    // is captured here (not called later by name) because createWorker is not
+    // in scope from the module-level recovery helpers.
+    workerSpecs.set(queueName, {
+      processor,
+      concurrency,
+      recreate: () => createWorker(queueName, processor, concurrency),
+    });
+
+    // Idempotent: registering a queue twice would give two consumers racing for
+    // the same jobs (double-sending email, double-charging a payout).
+    const existing = workers.find((w) => w.__queueName === queueName && isWorkerUsable(w));
+    if (existing) return existing;
+
     const worker = new Worker(queueName, processor, { connection: conn, concurrency });
+    worker.__queueName = queueName;
     worker.on('error', (err) => {
       if (isLimitError(err) || !isReady()) {
         // Degraded (e.g. Upstash quota exhausted): stop the hot retry loop and
@@ -792,7 +851,13 @@ function registerWorkers() {
         }
         if (!pausedWorkers.has(worker)) {
           pausedWorkers.add(worker);
-          if (typeof worker.pause === 'function') worker.pause().catch(() => {});
+          if (typeof worker.pause === 'function') {
+            // A silent catch here hides the failure to even start the pause —
+            // the worker then looks healthy while consuming nothing.
+            worker.pause().catch((e) =>
+              console.warn(`[Queue] failed to pause "${queueName}": ${e?.message || e}`),
+            );
+          }
         }
       } else {
         console.warn(`[Queue] Worker error (${queueName}):`, err?.message);
@@ -1204,46 +1269,216 @@ function registerWorkers() {
 // ---------------------------------------------------------------------------
 
 /**
- * Every 60s, if we are in a degraded/recovered state, check Redis with the
- * real-command probe and (re)start workers. Runs no Redis calls while healthy
- * with running workers.
+ * A worker counts as usable if it is either consuming or deliberately paused.
+ * `isRunning`/`isPaused` do not exist on the test double, so an unknown shape
+ * is assumed healthy rather than triggering a rebuild every tick.
+ */
+function isWorkerUsable(worker) {
+  if (!worker) return false;
+  try {
+    if (typeof worker.isRunning !== 'function') return true;
+    if (worker.isRunning()) return true;
+    if (typeof worker.isPaused === 'function' && worker.isPaused()) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Neither running nor paused: the Worker exists but its main loop is gone.
+ * This is the state a connection blip leaves behind, and the one the old monitor
+ * could not see — it only ever tracked workers it had paused itself, so a
+ * worker that died any other way was invisible and 12 schedules stalled silently.
+ */
+function isWorkerBroken(worker) {
+  if (!worker || pausedWorkers.has(worker)) return false;
+  try {
+    if (typeof worker.isRunning !== 'function') return false; // shape unknown — don't guess
+    if (worker.isRunning()) return false;
+    if (typeof worker.isPaused === 'function' && worker.isPaused()) return false;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+/** Within REBUILD_COOLDOWN_MS of the last rebuild for this queue? */
+function inRebuildCooldown(queueName) {
+  const at = rebuildCooldown.get(queueName);
+  return typeof at === 'number' && Date.now() - at < REBUILD_COOLDOWN_MS;
+}
+
+/** Replace a Worker whose loop is gone, using the spec recorded at creation. */
+async function rebuildWorker(worker) {
+  const name = worker && worker.__queueName;
+  const spec = name ? workerSpecs.get(name) : null;
+  if (!name || !spec) {
+    console.warn(`[Queue] cannot rebuild worker${name ? ` for "${name}"` : ''}: no spec recorded`);
+    return false;
+  }
+  try {
+    if (typeof worker.close === 'function') await worker.close();
+  } catch (e) {
+    console.warn(`[Queue] closing dead worker "${name}" failed: ${e?.message || e}`);
+  }
+  const idx = workers.indexOf(worker);
+  if (idx >= 0) workers.splice(idx, 1);
+  pausedWorkers.delete(worker);
+  if (typeof spec.recreate !== 'function') {
+    console.warn(`[Queue] cannot rebuild "${name}": no recreate() captured at registration`);
+    return false;
+  }
+  try {
+    spec.recreate();
+    rebuildCooldown.set(name, Date.now());
+    console.log(`[Queue] rebuilt dead worker for "${name}"`);
+    return true;
+  } catch (e) {
+    console.error(`[Queue] FAILED to rebuild worker for "${name}": ${e?.message || e}`);
+    return false;
+  }
+}
+
+/** At most one recovery log per minute — a broken tick retries every 60s. */
+function monitorWarn(message) {
+  const now = Date.now();
+  if (now - lastMonitorLogAt < 60000) return;
+  lastMonitorLogAt = now;
+  console.warn(message);
+}
+
+/**
+ * Every 60s: verify Redis, resume anything we paused, rebuild anything whose
+ * loop died, and re-assert every Job Scheduler.
+ *
+ * Three things this deliberately does that the previous version did not:
+ *  1. It acts on workers it never paused (isWorkerBroken), so a worker killed by
+ *     a connection blip is restored instead of silently missing forever.
+ *  2. It records lastMonitorTickAt, so /health can tell "monitor alive, nothing
+ *     to do" apart from "monitor itself is dead".
+ *  3. It logs every failure. The old `catch {}` hid each attempt, which is why
+ *     the last incident recovered nothing for 55 minutes and left no trace.
  */
 function startResumeMonitor() {
   if (resumeMonitor) return;
+  monitorStartedAt = new Date().toISOString();
   resumeMonitor = setInterval(async () => {
     try {
       if (closed) return;
-      if (pausedWorkers.size > 0 || workers.length === 0) {
-        if (await isRedisAvailable()) {
-          const toResume = [...pausedWorkers];
-          pausedWorkers.clear();
-          for (const w of toResume) {
-            if (typeof w.resume === 'function') await w.resume().catch(() => {});
-          }
-          if (workers.length === 0) {
-            registerWorkers();
-            console.log('[Queue] Redis available — workers registered');
-          } else if (toResume.length > 0) {
-            console.log('[Queue] Redis recovered — workers resumed');
-          }
-          // Ensure every expected Job Scheduler exists after recovery (idempotent).
-          await registerSchedules();
-          const verify = await verifySchedules();
-          if (verify.missing.length > 0) {
-            console.error(`[SCHEDULER_HEALTH] CRITICAL Missing schedulers after recovery: ${verify.missing.join(', ')}`);
-          } else {
-            console.log(`[Queue] Schedulers verified (${verify.registered}/${verify.expected})`);
-          }
-          // Reconcile any AI scoring jobs that were pending during Redis outage
-          reconcilePendingAiJobs().catch(() => {});
-          // NOTE: Ghana/TravioAfrica publish reconciles are now BullMQ
-          // scheduled jobs (reconcile-ghana / reconcile-travioafrica) and are
-          // re-registered above — no inline duplicate execution here.
+      lastMonitorTickAt = new Date().toISOString();
+
+      const paused = [...pausedWorkers];
+      const broken = workers.filter((w) => isWorkerBroken(w));
+
+      // Stale schedules are the signal that matters: whatever isRunning()
+      // claims, a job past 2x cadence means its queue is not consuming. This is
+      // how the incident looked from the outside — schedules registered, worker
+      // "there", 12 jobs silent — so act on it directly rather than inferring.
+      const stale = await getStaleJobs();
+      const staleQueues = new Set(
+        stale.map((s) => QUEUE_BY_LABEL[s.queueLabel]).filter(Boolean),
+      );
+      const stuck = workers.filter(
+        (w) => staleQueues.has(w.__queueName) && !inRebuildCooldown(w.__queueName),
+      );
+
+      if (paused.length === 0 && broken.length === 0 && stuck.length === 0 && workers.length > 0) {
+        return;
+      }
+
+      if (!(await isRedisAvailable())) {
+        monitorWarn(
+          `[Queue] resume monitor: Redis unavailable — ${paused.length} paused, ${broken.length} broken, ` +
+            `${stale.length} stale job(s) still waiting`,
+        );
+        return;
+      }
+
+      let actioned = 0;
+
+      // Drop from the set BEFORE resuming: if resume() throws, the worker must
+      // not stay in pausedWorkers looking handled while consuming nothing.
+      for (const w of paused) {
+        pausedWorkers.delete(w);
+        try {
+          if (typeof w.resume === 'function') await w.resume();
+          actioned += 1;
+        } catch (e) {
+          console.warn(`[Queue] resume failed for "${w.__queueName || '?'}": ${e?.message || e} — rebuilding`);
+          if (await rebuildWorker(w)) actioned += 1;
         }
       }
-    } catch { /* keep the monitor alive */ }
+
+      for (const w of broken) {
+        if (await rebuildWorker(w)) actioned += 1;
+      }
+
+      // Queues whose schedules went stale: rebuild the consumer. Cooldown-guarded
+      // so a job that stays stale cannot turn into a rebuild every 60s.
+      for (const w of workers.filter((x) => staleQueues.has(x.__queueName))) {
+        if (inRebuildCooldown(w.__queueName)) continue;
+        console.warn(
+          `[Queue] schedule "${stale.find((s) => QUEUE_BY_LABEL[s.queueLabel] === w.__queueName)?.jobName}" ` +
+            `is stale on "${w.__queueName}" — rebuilding consumer`,
+        );
+        if (await rebuildWorker(w)) actioned += 1;
+      }
+
+      // registerWorkers is idempotent (it skips queues that already have a
+      // usable worker), so this only backfills queues with no worker at all.
+      const before = workers.length;
+      registerWorkers();
+      actioned += workers.length - before;
+
+      if (actioned > 0) {
+        console.log(`[Queue] Redis recovered — workers resumed (${actioned} worker(s) actioned)`);
+
+        // Ensure every expected Job Scheduler exists after recovery (idempotent).
+        await registerSchedules();
+        const verify = await verifySchedules();
+        if (verify.missing.length > 0) {
+          console.error(`[SCHEDULER_HEALTH] CRITICAL Missing schedulers after recovery: ${verify.missing.join(', ')}`);
+        } else {
+          console.log(`[Queue] Schedulers verified (${verify.registered}/${verify.expected})`);
+        }
+        reconcilePendingAiJobs().catch((e) =>
+          console.warn(`[Queue] reconcilePendingAiJobs failed after recovery: ${e?.message || e}`),
+        );
+        // NOTE: Ghana/TravioAfrica publish reconciles are now BullMQ
+        // scheduled jobs (reconcile-ghana / reconcile-travioafrica) and are
+        // re-registered above — no inline duplicate execution here.
+      }
+    } catch (err) {
+      console.warn(`[Queue] resume monitor tick failed: ${err?.message || err}`);
+    }
   }, 60 * 1000);
   if (resumeMonitor.unref) resumeMonitor.unref();
+}
+
+/** Monitor + worker liveness for /health — makes the recovery path observable. */
+function getMonitorHealth() {
+  const running = workers.filter((w) => {
+    try {
+      return typeof w.isRunning === 'function' ? w.isRunning() : true;
+    } catch {
+      return false;
+    }
+  }).length;
+  const lastTickAt = lastMonitorTickAt ? Date.parse(lastMonitorTickAt) : null;
+  const monitorStale = lastTickAt ? Date.now() - lastTickAt > 3 * 60 * 1000 : false;
+  return {
+    startedAt: monitorStartedAt,
+    lastTickAt,
+    monitorStale,
+    workers: {
+      registered: workers.length,
+      expected: workerSpecs.size,
+      running,
+      paused: pausedWorkers.size,
+      broken: workers.filter((w) => isWorkerBroken(w)).length,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1256,6 +1491,12 @@ async function closeAll() {
     resumeMonitor = null;
   }
   pausedWorkers.clear();
+  // Full reset: these are process-local mirrors. Leaving them populated would
+  // carry a rebuild cooldown (or a seeded last-run) into the next run, which is
+  // exactly the kind of "recovery ran but did nothing" state this module is
+  // supposed to make impossible.
+  rebuildCooldown.clear();
+  schedulerExecution.clear();
   const closePromises = [];
   for (const [, queue] of queueInstances) {
     closePromises.push(queue.close());
@@ -1290,7 +1531,30 @@ module.exports = {
   registerSchedules,
   verifySchedules,
   getSchedulerHealth,
+  getMonitorHealth,
   startResumeMonitor,
+
+  /**
+   * Recovery internals, exposed for unit tests only. The monitor's repair path
+   * shipped untested and silently failed to recover for 55 minutes — these are
+   * exported so that path has coverage rather than being verified by incident.
+   */
+  _test: {
+    isWorkerUsable,
+    isWorkerBroken,
+    rebuildWorker,
+    inRebuildCooldown,
+    getStaleJobs,
+    workerSpecs,
+    getWorkers: () => workers,
+    pausedWorkers,
+    getMonitorState: () => ({ startedAt: monitorStartedAt, lastTickAt: lastMonitorTickAt }),
+    /** Seed a job's last-run time so the stale→rebuild path can be exercised. */
+    seedLastRun: (jobName, lastRunAt) => {
+      const prev = schedulerExecution.get(jobName) || {};
+      schedulerExecution.set(jobName, { ...prev, lastRunAt });
+    },
+  },
   closeAll,
   getConnection,
   isRedisAvailable,

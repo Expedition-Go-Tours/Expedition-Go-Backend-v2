@@ -248,8 +248,11 @@ app.get('/health', async (req, res) => {
     try {
       const { getSchedulerHealth } = require('./src/core/services/queue');
       body.scheduler = await getSchedulerHealth();
-    } catch {
-      body.scheduler = { status: 'unknown' };
+    } catch (err) {
+      // A health endpoint that hides its own failure reports "unknown" forever
+      // with nothing in the logs to explain it.
+      console.warn(`[Health] scheduler check failed: ${err?.message || err}`);
+      body.scheduler = { status: 'unknown', error: err?.message || String(err) };
     }
   } else {
     body.scheduler = { status: 'unknown', reason: 'redis_down' };
