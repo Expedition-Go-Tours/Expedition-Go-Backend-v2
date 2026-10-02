@@ -642,6 +642,10 @@ function mapTourCard(t) {
     category: t.category,
     city: t.city,
     country: t.country,
+    // TOUR_SELECT already reads `region`; the mapper used to drop it, so the
+    // storefront could not scope the homepage to a clicked tour's region the
+    // way a search-suggestion click does. Kept nullable to match `city`.
+    region: t.region ?? null,
     averageRating: t.averageRating ? parseFloat(t.averageRating) : null,
     reviewCount: t.reviewCount || 0,
     totalBookings: t.totalBookings || 0,
@@ -2680,6 +2684,7 @@ module.exports = {
   getBackfillTours,
   escapeLike,
   extractStartingPrice,
+  mapTourCard,
   KEYWORD_CATEGORIES,
   CATEGORY_NAME_TO_SLUG,
   computeCategoryRelevance,

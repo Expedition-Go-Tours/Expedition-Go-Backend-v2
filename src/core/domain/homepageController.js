@@ -349,7 +349,7 @@ async function computeOffersData(city = null) {
       tour: {
         select: {
           id: true, title: true, slug: true, coverPhoto: true, photos: true,
-          category: true, city: true, country: true, averageRating: true,
+          category: true, city: true, country: true, region: true, averageRating: true,
           reviewCount: true, totalBookings: true, schedulesAndPricing: true,
           durationMinutes: true, difficulty: true, tags: true, status: true,
           createdAt: true,
@@ -408,6 +408,9 @@ async function computeOffersData(city = null) {
       category: tour.category,
       city: tour.city,
       country: tour.country,
+      // Same reason as mapTourCard — the storefront scopes the homepage by a
+      // clicked tour's region, and offers are clickable cards too.
+      region: tour.region ?? null,
       averageRating: tour.averageRating ? parseFloat(tour.averageRating) : null,
       reviewCount: tour.reviewCount || 0,
       totalBookings: tour.totalBookings || 0,
