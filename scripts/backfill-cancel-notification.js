@@ -45,6 +45,7 @@ async function main() {
     amount: booking.grossAmount,
     currency: booking.currency,
     reason: booking.cancellationReason || 'Customer requested cancellation',
+    note: booking.cancellationNote || undefined,
     customer: booking.customer.name || booking.leadTravelerName || booking.customer.email || '—',
     refundSucceeded,
   });

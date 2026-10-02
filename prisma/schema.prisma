@@ -981,7 +981,8 @@ model Booking {
   requiresPaymentActionAt DateTime?
 
   // Cancellation
-  cancellationReason String?
+  cancellationReason String?  // structured reason code from the customer/supplier form
+  cancellationNote   String?  // optional free-text note the customer or supplier provided
   cancelledAt        DateTime?
   refundAmount       Decimal?  @db.Decimal(10, 2)
   refundedAt         DateTime?

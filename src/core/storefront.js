@@ -2624,7 +2624,7 @@ controller.getBookingBySession = catchAsync(async (req, res, next) => {
 
 controller.cancelBooking = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const { reason } = req.body;
+  const { reason, note } = req.body;
   const customerId = req.user.id;
 
   const booking = await prisma.booking.findFirst({
@@ -2653,6 +2653,7 @@ controller.cancelBooking = catchAsync(async (req, res, next) => {
       data: {
         status: 'CANCELLED',
         cancellationReason: reason || null,
+        cancellationNote: note || null,
         cancelledAt: new Date(),
         payoutStatus: 'CANCELLED',
         // Structured, for the same reason the other storefront writes them:
@@ -2731,7 +2732,7 @@ controller.cancelBooking = catchAsync(async (req, res, next) => {
     userId: booking.tour.supplierId,
     type: 'BOOKING_CANCELLED',
     title: `Booking Cancelled: ${booking.tour.title}`,
-    message: `Booking ${booking.bookingNumber} was cancelled by the customer. Reason: ${reason || 'Not specified'}`,
+    message: `Booking ${booking.bookingNumber} was cancelled by the customer. Reason: ${reason || 'Not specified'}${note ? '. Note: ' + note : ''}`,
     data: { bookingId: booking.id, source: BRAND.eventNamespace },
   }).catch((err) => console.error('[Expedition] Supplier cancellation notification failed:', err.message));
 
@@ -2758,6 +2759,7 @@ controller.cancelBooking = catchAsync(async (req, res, next) => {
     amount: booking.grossAmount,
     currency: booking.currency,
     reason,
+    note: note || undefined,
     customer: req.user?.name || booking.leadTravelerName || '—',
     refundSucceeded,
   });

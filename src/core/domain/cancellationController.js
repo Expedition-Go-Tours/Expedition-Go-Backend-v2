@@ -261,6 +261,7 @@ exports.getCancellationRecords = catchAsync(async (req, res, next) => {
           (r.cancellationCode && getReason(r.cancellationCode)?.label) ||
           r.cancellationReason ||
           'Unknown',
+        note: r.cancellationNote || null,
         category: r.cancellationCategory || null,
         origin: r.cancellationOrigin || null,
         countsTowardRate: typeof r.countsTowardRate === 'boolean' ? r.countsTowardRate : null,
