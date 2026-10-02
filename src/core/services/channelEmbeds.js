@@ -59,7 +59,7 @@ function salesBookingConfirmed(booking) {
   };
 }
 
-function salesBookingCancelled({ bookingNumber, tour, amount, currency, reason }) {
+function salesBookingCancelled({ bookingNumber, tour, amount, currency, reason, customer, refundSucceeded }) {
   return {
     content: `Booking ${bookingLink(bookingNumber)} cancelled`,
     opts: {
@@ -68,7 +68,9 @@ function salesBookingCancelled({ bookingNumber, tour, amount, currency, reason }
       fields: [
         { name: 'Tour', value: tour || '—', inline: true },
         { name: 'Amount', value: money(amount, currency), inline: true },
+        { name: 'Customer', value: customer || '—', inline: true },
         { name: 'Reason', value: reason || '—', inline: false },
+        { name: 'Refund', value: refundSucceeded ? 'Issued' : 'Pending / Failed', inline: true },
       ],
       cooldownKey: bookingNumber || `${tour}-${amount}`,
     },

@@ -33,6 +33,8 @@ const eventEmitter = require('./services/eventEmitter');
 const { sanitizeBookingPaymentInternals } = require('./services/sanitizeBookings');
 const { withChoiceToken } = require('./services/cancellationReasons');
 const { bookingRefundState } = require('./services/bookingRefundState');
+const { notifyDiscord } = require('./services/discordNotifier');
+const { salesBookingCancelled } = require('./services/channelEmbeds');
 
 const { getBrand, eventNamespaceForSource } = require('../../config/brands');
 function makeStorefrontController(brandKey) {
@@ -2731,6 +2733,20 @@ controller.cancelBooking = catchAsync(async (req, res, next) => {
     resourceId: booking.id,
     metadata: { reason, refundAmount: refundSucceeded ? refundAmount : 0, refundSucceeded, source: eventNamespaceForSource(booking.source) },
   }).catch(() => {});
+
+  // Sales channel — the only Discord notification for a cancellation, so it
+  // must carry everything the team needs to see at a glance.
+  const cancelNotification = salesBookingCancelled({
+    bookingNumber: booking.bookingNumber,
+    tour: booking.tour.title,
+    amount: booking.grossAmount,
+    currency: booking.currency,
+    reason,
+    customer: req.user?.name || booking.leadTravelerName || '—',
+    refundSucceeded,
+  });
+  notifyDiscord('sales', cancelNotification.content, cancelNotification.opts)
+    .catch((err) => console.warn('[Expedition] Cancellation Discord notification failed:', err?.message));
 
   res.status(200).json({ status: 'success', data: { booking: result } });
 });

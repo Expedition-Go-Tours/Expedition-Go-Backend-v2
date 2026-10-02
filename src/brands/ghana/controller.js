@@ -9,6 +9,8 @@ const { placeRankFor, normalizeRegion } = require('../../core/services/placeReso
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../../core/services/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, isValidEmail } = require('../../core/services/bookingHelpers');
 const { withChoiceToken } = require('../../core/services/cancellationReasons');
+const { notifyDiscord } = require('../../core/services/discordNotifier');
+const { salesBookingCancelled } = require('../../core/services/channelEmbeds');
 const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../../core/services/tourHelpers');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../../core/services/availabilityCore');
 const { resolvePickupSelection } = require('../../core/services/geoUtils');
@@ -1324,6 +1326,18 @@ const cancelBooking = catchAsync(async (req, res, next) => {
     resourceId: booking.id,
     metadata: { reason, refundAmount: refundSucceeded ? refundAmount : 0, refundSucceeded, source: eventNamespaceForSource(booking.source) },
   }).catch(() => {});
+
+  const cancelNotification = salesBookingCancelled({
+    bookingNumber: booking.bookingNumber,
+    tour: booking.tour.title,
+    amount: booking.grossAmount,
+    currency: booking.currency,
+    reason,
+    customer: req.user?.name || booking.leadTravelerName || '—',
+    refundSucceeded,
+  });
+  notifyDiscord('sales', cancelNotification.content, cancelNotification.opts)
+    .catch((err) => console.warn('[Travio Ghana] Cancellation Discord notification failed:', err?.message));
 
   res.status(200).json({ status: 'success', data: { booking: result } });
 });

@@ -154,10 +154,25 @@ exports.handleStripeWebhook = catchAsync(async (req, res, next) => {
         } catch { /* best effort */ }
       } else if (event.type === 'charge.refunded') {
         const ch = event.data.object || {};
+        // The refund notification is the only Discord message for a refunded
+        // booking, so it needs to carry the booking number. The PaymentIntent
+        // metadata was stamped at checkout.
+        let bookingNumber = null;
+        try {
+          const piId = ch.payment_intent;
+          if (piId) {
+            const booking = await prisma.booking.findFirst({
+              where: { stripePaymentIntentId: piId },
+              select: { bookingNumber: true },
+            });
+            bookingNumber = booking?.bookingNumber || null;
+          }
+        } catch { /* best effort — the refund is the critical part */ }
         const refunded = salesRefundIssued({
           amount: (ch.amount_refunded || 0) / 100,
           currency: ch.currency || 'USD',
           chargeId: ch.id,
+          bookingNumber,
         });
         notifyDiscord('sales', refunded.content, refunded.opts);
       }
