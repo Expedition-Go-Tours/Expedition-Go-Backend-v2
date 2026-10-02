@@ -32,12 +32,27 @@ jest.mock('../../src/core/services/cacheHelper', () => ({
   invalidateKeys: jest.fn(() => Promise.resolve()),
 }));
 
-jest.mock('../../src/core/services/emailService', () => ({ sendEmail: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/emailService', () => ({
+  sendEmail: jest.fn(() => Promise.resolve()),
+  sendSupplierCustomerCancelledFreeEmail: jest.fn(() => Promise.resolve()),
+  sendSupplierCustomerCancelledLateEmail: jest.fn(() => Promise.resolve()),
+}));
 
 jest.mock('../../src/core/services/queue', () => ({
   enqueueEvent: jest.fn(() => Promise.resolve()),
   enqueueEmail: jest.fn(() => Promise.resolve()),
   enqueueNotification: jest.fn(() => Promise.resolve()),
+}));
+
+jest.mock('../../src/core/services/discordNotifier', () => ({
+  notifyDiscord: jest.fn(() => Promise.resolve()),
+}));
+
+jest.mock('../../src/core/services/channelEmbeds', () => ({
+  salesBookingCancelled: jest.fn(() => ({
+    content: 'Booking cancelled',
+    opts: { title: 'Booking Cancelled', color: 0, fields: [], cooldownKey: 'test' },
+  })),
 }));
 
 jest.mock('../../src/core/services/bookingHelpers', () => ({
@@ -149,7 +164,7 @@ describe('expeditionController', () => {
       query: {},
       params: {},
       body: {},
-      user: { id: 'user-1', roles: ['customer'], stripeCustomerId: 'cus_123' },
+      user: { id: 'user-1', name: 'Test Customer', roles: ['customer'], stripeCustomerId: 'cus_123' },
       headers: {},
       socket: { remoteAddress: '127.0.0.1' },
       ip: '127.0.0.1',
@@ -1114,9 +1129,11 @@ describe('expeditionController', () => {
       paymentStatus: 'SUCCEEDED',
       travelDate: futureDate,
       grossAmount: 105,
+      currency: 'USD',
       stripePaymentIntentId: 'pi_mock_123',
       tour: {
         id: 'tour-1',
+        supplierId: 'supplier-1',
         title: 'Test Tour',
         bookingAndTickets: null,
         supplier: { id: 'supplier-1', name: 'Test Supplier' },

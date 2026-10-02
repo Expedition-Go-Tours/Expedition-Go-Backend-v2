@@ -7,6 +7,7 @@ const { haversineKm, resolveCityCentroid } = require('../../core/services/locati
 const { placeTourIds } = require('../../core/services/placeListing');
 const { placeRankFor, normalizeRegion } = require('../../core/services/placeResolver');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../../core/services/queue');
+const { sendSupplierCustomerCancelledFreeEmail, sendSupplierCustomerCancelledLateEmail } = require('../../core/services/emailService');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, isValidEmail } = require('../../core/services/bookingHelpers');
 const { withChoiceToken } = require('../../core/services/cancellationReasons');
 const { notifyDiscord } = require('../../core/services/discordNotifier');
@@ -1318,6 +1319,21 @@ const cancelBooking = catchAsync(async (req, res, next) => {
     refundAmount: refundSucceeded ? refundAmount : 0,
     brandName: 'Travio Ghana',
   }).catch((err) => console.error('[Travio Ghana] Cancellation email failed:', err.message));
+
+  // Supplier notification — in-app + email so the supplier knows immediately.
+  enqueueNotification({
+    userId: booking.tour.supplierId,
+    type: 'BOOKING_CANCELLED',
+    title: `Booking Cancelled: ${booking.tour.title}`,
+    message: `Booking ${booking.bookingNumber} was cancelled by the customer. Reason: ${reason || 'Not specified'}`,
+    data: { bookingId: booking.id, source: 'ghana' },
+  }).catch((err) => console.error('[Travio Ghana] Supplier cancellation notification failed:', err.message));
+
+  const supplierCancelEmail = refundSucceeded
+    ? sendSupplierCustomerCancelledFreeEmail(booking, { cancelledAt: result.cancelledAt })
+    : sendSupplierCustomerCancelledLateEmail(booking, { cancelledAt: result.cancelledAt });
+  supplierCancelEmail
+    .catch((err) => console.error('[Travio Ghana] Supplier cancellation email failed:', err.message));
 
   logActivity({
     userId: customerId,

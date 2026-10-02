@@ -3,7 +3,7 @@ const prisma = require('./services/prismaClient');
 const catchAsync = require('./services/catchAsync');
 const AppError = require('./services/appError');
 const cache = require('./services/cacheHelper');
-const { sendEmail } = require('./services/emailService');
+const { sendEmail, sendSupplierCustomerCancelledFreeEmail, sendSupplierCustomerCancelledLateEmail } = require('./services/emailService');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('./services/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, evaluateModifyPolicy, isValidEmail } = require('./services/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('./services/tourHelpers');
@@ -2725,6 +2725,22 @@ controller.cancelBooking = catchAsync(async (req, res, next) => {
     refundAmount: refundSucceeded ? refundAmount : 0,
     brandName: BRAND.brandName,
   }).catch((err) => console.error('[Expedition] Cancellation email failed:', err.message));
+
+  // Supplier notification — the booking was theirs, they need to know it's gone.
+  enqueueNotification({
+    userId: booking.tour.supplierId,
+    type: 'BOOKING_CANCELLED',
+    title: `Booking Cancelled: ${booking.tour.title}`,
+    message: `Booking ${booking.bookingNumber} was cancelled by the customer. Reason: ${reason || 'Not specified'}`,
+    data: { bookingId: booking.id, source: BRAND.eventNamespace },
+  }).catch((err) => console.error('[Expedition] Supplier cancellation notification failed:', err.message));
+
+  // Supplier email — different templates for free-cancellation vs late/penalty.
+  const supplierCancelEmail = refundSucceeded
+    ? sendSupplierCustomerCancelledFreeEmail(booking, { cancelledAt: result.cancelledAt })
+    : sendSupplierCustomerCancelledLateEmail(booking, { cancelledAt: result.cancelledAt });
+  supplierCancelEmail
+    .catch((err) => console.error('[Expedition] Supplier cancellation email failed:', err.message));
 
   logActivity({
     userId: customerId,
