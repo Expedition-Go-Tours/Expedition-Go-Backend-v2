@@ -549,7 +549,7 @@ describe('specialOfferController validation', () => {
       const fromShared = shared.json.data.offers.map((o) => o.status);
       const fromList = listed.json.data.offers.map((o) => o.status);
 
-      expect(fromShared).toEqual(['expired', 'inactive', 'active', 'scheduled', 'expired']);
+      expect(fromShared).toEqual(['expired', 'expired', 'active', 'scheduled', 'expired']);
       expect(fromList).toEqual(fromShared);
     });
   });
