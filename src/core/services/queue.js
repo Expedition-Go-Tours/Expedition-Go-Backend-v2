@@ -1466,7 +1466,18 @@ function getMonitorHealth() {
     }
   }).length;
   const lastTickMs = lastMonitorTickAt ? Date.parse(lastMonitorTickAt) : null;
-  const monitorStale = lastTickMs ? Date.now() - lastTickMs > 3 * 60 * 1000 : false;
+  const startedMs = monitorStartedAt ? Date.parse(monitorStartedAt) : null;
+  // A monitor that never ticks is the failure this field exists to catch, so
+  // the no-tick case cannot default to false. Fall back to startedAt: until the
+  // first tick lands (interval is 60s) the age is measured from startup, which
+  // gives a 3x-interval grace period instead of flagging a booting process.
+  // Workers registered with no monitor at all is equally broken — repair exists
+  // on paper only. setupQueueWorkers always starts the monitor before it
+  // registers workers, so a healthy boot never trips this.
+  const refMs = lastTickMs ?? startedMs;
+  const monitorStale =
+    workers.length > 0 &&
+    (refMs !== null ? Date.now() - refMs > 3 * 60 * 1000 : monitorStartedAt === null);
   return {
     startedAt: monitorStartedAt,
     // ISO, like every other timestamp in this payload (startedAt, lastVerifiedAt,
@@ -1501,6 +1512,11 @@ async function closeAll() {
   // supposed to make impossible.
   rebuildCooldown.clear();
   schedulerExecution.clear();
+  // Monitor bookkeeping is process-lifetime state: a shutdown/start must not
+  // inherit the previous run's tick, or a restarted process looks like it has
+  // been ticking for days when the interval has not fired once.
+  monitorStartedAt = null;
+  lastMonitorTickAt = null;
   const closePromises = [];
   for (const [, queue] of queueInstances) {
     closePromises.push(queue.close());

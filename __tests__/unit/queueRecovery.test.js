@@ -277,6 +277,10 @@ describe('queue worker recovery', () => {
 
     it('is healthy with every schedule present and every worker alive', async () => {
       registerAllSchedules();
+      // Production order: setupQueueWorkers starts the monitor first, then
+      // registers workers. Registering workers with no monitor running is
+      // reported as stale (repair exists on paper only).
+      queue.startResumeMonitor();
       queue.registerWorkers();
       const health = await queue.getSchedulerHealth();
 
@@ -294,6 +298,7 @@ describe('queue worker recovery', () => {
 
     it('degrades when a worker is broken even though schedules are registered', async () => {
       registerAllSchedules();
+      queue.startResumeMonitor();
       queue.registerWorkers();
       // Precondition: this is the incident's starting state, schedules fine.
       expect((await queue.getSchedulerHealth()).status).toBe('healthy');
@@ -305,9 +310,58 @@ describe('queue worker recovery', () => {
       const health = await queue.getSchedulerHealth();
 
       // The incident signature: registered schedules, dead consumer. It must
-      // surface immediately rather than waiting 2x cadence to go stale.
+      // surface immediately rather than waiting 2x cadence to go stale — and
+      // degraded must be attributable to the dead consumer, not the monitor.
+      expect(health.monitor.monitorStale).toBe(false);
       expect(health.monitor.workers.broken).toBeGreaterThan(0);
       expect(health.status).toBe('degraded');
+    });
+  });
+
+  describe('a monitor that stops ticking is itself reported', () => {
+    it('does not flag the interval before the very first tick', async () => {
+      queue.registerWorkers();
+      jest.useFakeTimers();
+      queue.startResumeMonitor();
+      // Two minutes in, no tick yet — still inside the 3x-interval grace.
+      jest.setSystemTime(Date.now() + 2 * 60 * 1000);
+
+      const { monitor } = await queue.getSchedulerHealth();
+      expect(monitor.lastTickAt).toBeNull();
+      expect(monitor.monitorStale).toBe(false);
+    });
+
+    it('flags a monitor that started and then never ticked at all', async () => {
+      // The bug this replaces: staleness was `lastTickMs ? age > 3m : false`,
+      // so a monitor that never fired reported healthy forever — the one
+      // failure the field exists to catch read as fine.
+      queue.registerWorkers();
+      jest.useFakeTimers();
+      queue.startResumeMonitor();
+      jest.setSystemTime(Date.now() + 5 * 60 * 1000); // well past grace, no timer fired
+
+      const { monitor } = await queue.getSchedulerHealth();
+      expect(monitor.startedAt).not.toBeNull();
+      expect(monitor.lastTickAt).toBeNull();
+      expect(monitor.monitorStale).toBe(true);
+    });
+
+    it('flags a monitor whose most recent tick has gone silent', async () => {
+      queue.registerWorkers();
+      jest.useFakeTimers();
+      queue.startResumeMonitor();
+      await jest.advanceTimersByTimeAsync(61 * 1000);
+      expect((await queue.getSchedulerHealth()).monitor.monitorStale).toBe(false);
+
+      jest.setSystemTime(Date.now() + 5 * 60 * 1000); // ticks stop arriving
+      expect((await queue.getSchedulerHealth()).monitor.monitorStale).toBe(true);
+    });
+
+    it('treats registered workers with no monitor as stale', async () => {
+      queue.registerWorkers(); // closeAll left monitorStartedAt null
+      const { monitor } = await queue.getSchedulerHealth();
+      expect(monitor.startedAt).toBeNull();
+      expect(monitor.monitorStale).toBe(true);
     });
   });
 
