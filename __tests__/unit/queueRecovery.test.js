@@ -243,6 +243,20 @@ describe('queue worker recovery', () => {
       jest.useRealTimers();
     });
 
+    it('emits lastTickAt as ISO, matching every other timestamp in /health', async () => {
+      jest.useFakeTimers();
+      queue.registerWorkers();
+      queue.startResumeMonitor();
+      await jest.advanceTimersByTimeAsync(61 * 1000);
+      jest.useRealTimers();
+
+      const { lastTickAt, startedAt } = (await queue.getSchedulerHealth()).monitor;
+
+      expect(lastTickAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+      expect(Number.isNaN(Date.parse(lastTickAt))).toBe(false);
+      expect(startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
     it('is not marked stale immediately after it starts ticking', async () => {
       jest.useFakeTimers();
       queue.registerWorkers();

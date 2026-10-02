@@ -1465,11 +1465,15 @@ function getMonitorHealth() {
       return false;
     }
   }).length;
-  const lastTickAt = lastMonitorTickAt ? Date.parse(lastMonitorTickAt) : null;
-  const monitorStale = lastTickAt ? Date.now() - lastTickAt > 3 * 60 * 1000 : false;
+  const lastTickMs = lastMonitorTickAt ? Date.parse(lastMonitorTickAt) : null;
+  const monitorStale = lastTickMs ? Date.now() - lastTickMs > 3 * 60 * 1000 : false;
   return {
     startedAt: monitorStartedAt,
-    lastTickAt,
+    // ISO, like every other timestamp in this payload (startedAt, lastVerifiedAt,
+    // stale[].lastRunAt). Emitting epoch ms here would parse as 1970-01-01 in
+    // any rule that applies new Date() uniformly to /health, hiding a live
+    // monitor as ancient or vice versa.
+    lastTickAt: lastMonitorTickAt,
     monitorStale,
     workers: {
       registered: workers.length,
