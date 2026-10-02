@@ -553,6 +553,56 @@ function returnPolicyNode() {
   };
 }
 
+/**
+ * `shippingDetails`, which Search Console's merchant-listing report requires on
+ * every `Offer` and reports as "Missing field 'shippingDetails' (in 'offers')"
+ * when absent.
+ *
+ * A tour has no shipping, so this is stated in the only terms that are true of
+ * one: what is "delivered" is the booking confirmation, at no charge, issued
+ * essentially immediately. Hence a zero rate, no carrier transit, and a
+ * handling window that is the only real delay in the chain.
+ *
+ * Deliberately NOT a two-day shipping chain, which is what generic "add
+ * shippingDetails" guidance suggests. Asserting a delivery time for something
+ * that is not delivered is inaccurate structured data, and inaccurate
+ * structured data is a manual-action risk — worse than the warning it clears.
+ *
+ * `shippingDestination` is GH because that is where the experience runs from
+ * and where a return would be made from — the same reading `applicableCountry`
+ * above takes.
+ */
+function shippingDetailsNode() {
+  return {
+    '@type': 'OfferShippingDetails',
+    shippingRate: {
+      '@type': 'MonetaryAmount',
+      value: '0',
+      currency: 'USD', // the currency the offers themselves are priced in
+    },
+    shippingDestination: {
+      '@type': 'DefinedRegion',
+      addressCountry: 'GH',
+    },
+    deliveryTime: {
+      '@type': 'ShippingDeliveryTime',
+      handlingTime: {
+        '@type': 'QuantitativeValue',
+        minValue: 0,
+        maxValue: 1,
+        unitCode: 'DAY',
+      },
+      // Instant: the confirmation is in the app at booking time.
+      transitTime: {
+        '@type': 'QuantitativeValue',
+        minValue: 0,
+        maxValue: 0,
+        unitCode: 'DAY',
+      },
+    },
+  };
+}
+
 function buildProductSchema(site, tour) {
   const schema = {
     '@context': 'https://schema.org',
@@ -569,6 +619,7 @@ function buildProductSchema(site, tour) {
       availability: 'https://schema.org/InStock',
       seller: brandOrganization(site),
       hasMerchantReturnPolicy: returnPolicyNode(),
+      shippingDetails: shippingDetailsNode(),
     },
   };
   // Report the combined (in-app + external) standing when the API provides it,

@@ -427,6 +427,105 @@ describe('offer return policy', () => {
   });
 });
 
+/**
+ * Search Console's merchant-listing report also requires `shippingDetails` on
+ * the offer, reporting "Missing field 'shippingDetails' (in 'offers')".
+ *
+ * A tour is not shipped, so these tests are as much about what the block does
+ * NOT claim as about what it must contain. The generic fix for this warning
+ * adds a zero shipping rate with a one-to-two day transit time; that would be
+ * an invented delivery promise for something with no delivery, which is the
+ * kind of inaccurate structured data that risks a manual action — a far worse
+ * outcome than the warning. What is actually "delivered" is the booking
+ * confirmation, immediately and at no charge, and the markup says that.
+ */
+describe('offer shipping details', () => {
+  const tour = {
+    id: 'tour-1',
+    slug: 'kakum-canopy-walk',
+    title: 'Kakum Canopy Walk',
+    city: 'Cape Coast',
+    startingPrice: 45,
+    currency: 'USD',
+    averageRating: 4.8,
+    reviewCount: 12,
+  };
+
+  /** The rendered Product schema, parsed back out of the page. */
+  async function productOf(opts) {
+    nextResponse = { statusCode: 200, payload: { status: 'success', data: { tour: { tour } } } };
+    const res = await render('/tour/kakum-canopy-walk', opts);
+    const blocks = [...res.body.matchAll(/<script[^>]*application\/ld\+json[^>]*>(.*?)<\/script>/gs)]
+      .map((m) => JSON.parse(m[1]));
+    const product = blocks.find((b) => b['@type'] === 'Product');
+    expect(product).toBeDefined();
+    return product;
+  }
+
+  it('publishes shippingDetails on the offer, where the report looks', async () => {
+    const product = await productOf({ host: GHANA_HOST });
+    expect(product.offers.shippingDetails).toBeDefined();
+    expect(product.offers.shippingDetails['@type']).toBe('OfferShippingDetails');
+  });
+
+  it('charges nothing to deliver, in the currency the offers are priced in', async () => {
+    const rate = (await productOf({ host: GHANA_HOST })).offers.shippingDetails.shippingRate;
+    expect(rate['@type']).toBe('MonetaryAmount');
+    expect(Number(rate.value)).toBe(0);
+    // A zero amount still needs a valid ISO 4217 code; a missing one reads as
+    // malformed rather than free.
+    expect(rate.currency).toBe('USD');
+  });
+
+  it('declares a destination, which Google requires to scope the offer', async () => {
+    const dest = (await productOf({ host: GHANA_HOST })).offers.shippingDetails.shippingDestination;
+    expect(dest['@type']).toBe('DefinedRegion');
+    expect(dest.addressCountry).toBe('GH');
+  });
+
+  it('states a handling window rather than inventing a carrier transit time', async () => {
+    const delivery = (await productOf({ host: GHANA_HOST })).offers.shippingDetails.deliveryTime;
+    expect(delivery['@type']).toBe('ShippingDeliveryTime');
+    expect(delivery.handlingTime).toMatchObject({ unitCode: 'DAY', minValue: 0 });
+    expect(Number(delivery.handlingTime.maxValue)).toBeGreaterThanOrEqual(
+      Number(delivery.handlingTime.minValue),
+    );
+    // The confirmation lands at booking time. A transit window of one or more
+    // days would be a delivery promise this product cannot keep.
+    expect(Number(delivery.transitTime.minValue)).toBe(0);
+    expect(Number(delivery.transitTime.maxValue)).toBe(0);
+  });
+
+  it('keeps handling and transit in the ISO 8601 duration unit code', async () => {
+    const delivery = (await productOf({ host: GHANA_HOST })).offers.shippingDetails.deliveryTime;
+    expect(delivery.handlingTime.unitCode).toBe('DAY');
+    expect(delivery.transitTime.unitCode).toBe('DAY');
+  });
+
+  it('returns a fresh object per render, so one page cannot mutate another', async () => {
+    const first = await productOf({ host: GHANA_HOST });
+    const second = await productOf({ host: GHANA_HOST });
+    expect(first.offers.shippingDetails).not.toBe(second.offers.shippingDetails);
+    first.offers.shippingDetails.shippingRate.value = '99';
+    expect(second.offers.shippingDetails.shippingRate.value).toBe('0');
+  });
+
+  it('serialises as valid JSON-LD in the rendered page', async () => {
+    // The block is inlined into HTML, so an unserialisable value would break the
+    // whole script tag and take the rest of the page's schema with it.
+    const res = await (async () => {
+      nextResponse = { statusCode: 200, payload: { status: 'success', data: { tour: { tour } } } };
+      return render('/tour/kakum-canopy-walk', { host: GHANA_HOST });
+    })();
+    const raw = [...res.body.matchAll(/<script[^>]*application\/ld\+json[^>]*>(.*?)<\/script>/gs)]
+      .map((m) => m[1])
+      .find((t) => t.includes('"@type":"Product"'));
+    expect(raw).toBeDefined();
+    expect(() => JSON.parse(raw)).not.toThrow();
+    expect(raw).not.toContain('undefined');
+  });
+});
+
 describe('tour pages', () => {
   const tour = {
     id: 'tour-1',
