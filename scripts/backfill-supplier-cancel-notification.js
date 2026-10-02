@@ -66,13 +66,17 @@ async function main() {
     console.error('  In-app notification failed:', err.message);
   }
 
-  // 2. Supplier email
+  // 2. Supplier email — pass the ID, not the object, so
+  // resolveBookingContext re-fetches with full includes (tour + supplier +
+  // customer). The backfill fetches a minimal booking; passing the object
+  // directly would skip the re-fetch and leave supplierRecipientList with
+  // an empty supplier — the email would silently go to nobody.
   console.log('Sending supplier email...');
   try {
     const emailFn = refundSucceeded
       ? sendSupplierCustomerCancelledFreeEmail
       : sendSupplierCustomerCancelledLateEmail;
-    await emailFn(booking, { cancelledAt: booking.cancelledAt });
+    await emailFn(booking.id, { cancelledAt: booking.cancelledAt });
     console.log('  Supplier email sent ✓');
   } catch (err) {
     console.error('  Supplier email failed:', err.message);
