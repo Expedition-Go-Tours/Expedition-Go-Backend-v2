@@ -67,7 +67,7 @@ const BRANDS = {
     brandName: 'Travio Ghana',
     source: 'GHANA', // BookingSource enum
     role: 'ghana', // UserRole enum
-    bookingPrefix: 'GHA',
+    bookingPrefix: 'TRG',
     storefrontDomain: 'travioghana.com',
     storefrontUrl: 'https://travioghana.com',
     supplierDashboardUrl: 'https://supplier.travioghana.com',

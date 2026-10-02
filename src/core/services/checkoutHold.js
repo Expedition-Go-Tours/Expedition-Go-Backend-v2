@@ -48,6 +48,14 @@ async function acquireHold({
     scope = tourOpts.optionScopeFor(tour, optionId) || scope;
   }
 
+  // Resolve the brand once, from the booking source, BEFORE anything is
+  // written. The booking prefix must follow from the source — a hardcoded
+  // default here is exactly how one storefront's prefix ends up on another
+  // storefront's bookings when a caller forgets to pass one.
+  const { BRANDS } = require('../../../config/brands');
+  const brand =
+    Object.values(BRANDS).find((b) => b.source === (source || 'EXPEDITION')) || BRANDS.expedition;
+
   const draft = await prisma.$transaction(async (tx) => {
     // ── Serialize on the tour row (same lock used by confirmBooking,
     //    override writes, and delete checks). ──────────────────────
@@ -105,7 +113,7 @@ async function acquireHold({
         payload: {
           ...(payload ?? {}),
           _source: source || 'EXPEDITION',
-          _bookingPrefix: bookingPrefix || 'EXP',
+          _bookingPrefix: bookingPrefix || brand.bookingPrefix,
           _clientOrigin: clientOrigin || null,
           ...(optId ? { _optionId: optId, _optionTitle: optTitle } : {}),
         },
@@ -125,8 +133,8 @@ async function acquireHold({
   // mid-funnel signal (it also covers the abandoned-checkout drop-off).
   try {
     const { enqueueEvent } = require('./queue');
-    const { BRANDS } = require('../../../config/brands');
-    const brand = Object.values(BRANDS).find((b) => b.source === (source || 'EXPEDITION')) || BRANDS.expedition;
+    // `brand` was resolved above from the same source — reuse it rather than
+    // repeating the lookup, so analytics and the stored prefix cannot diverge.
     enqueueEvent({
       name: `${brand.eventNamespace}.checkout_started`,
       userId: customerId,
@@ -175,9 +183,17 @@ async function materializeHold(draftId, session, paymentIntentId) {
       return null; // Already materialized / expired — idempotent no-op
     }
 
-    // Read source/prefix from draft payload (set by acquireHold)
+    // Read source/prefix from draft payload (set by acquireHold). The prefix is
+    // never hardcoded here: if a draft predates `_bookingPrefix` or a caller
+    // omitted it, derive it from the draft's OWN source so the booking is
+    // minted under the storefront that took the payment — not under whichever
+    // brand the original author happened to have in mind when writing the
+    // default. This is the path that used to produce EXP- numbers on Ghana
+    // bookings.
+    const { BRANDS } = require('../../../config/brands');
     const source = draftRecord.payload?._source || 'EXPEDITION';
-    const bookingPrefix = draftRecord.payload?._bookingPrefix || 'EXP';
+    const brand = Object.values(BRANDS).find((b) => b.source === source) || BRANDS.expedition;
+    const bookingPrefix = draftRecord.payload?._bookingPrefix || brand.bookingPrefix;
 
     // ── Lock the tour ──────────────────────────────────────────
     const [locked] = await tx.$queryRawUnsafe(

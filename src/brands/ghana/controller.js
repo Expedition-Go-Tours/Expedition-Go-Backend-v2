@@ -853,7 +853,7 @@ const confirmBooking = catchAsync(async (req, res, next) => {
       throw new Error(evalResult.reason);
     }
 
-    const bookingNumber = await generateBookingNumber('GHA');
+    const bookingNumber = await generateBookingNumber(BRAND.bookingPrefix);
     const commission = await calculateCommission(pricing.total, tour.supplier.supplierProfile);
 
     const booking = await tx.booking.create({
@@ -1009,7 +1009,7 @@ const confirmBooking = catchAsync(async (req, res, next) => {
       },
       commission,
       source: 'GHANA',
-      bookingPrefix: 'GHA',
+      bookingPrefix: BRAND.bookingPrefix,
       clientOrigin: resolveAllowedClientUrl(req),
       ...(optionRef ? { optionId: optionRef.optionId, optionScope: optionRef.optionScope } : {}),
     });
