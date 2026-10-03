@@ -724,6 +724,73 @@ describe('expeditionController', () => {
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 500 }));
       expect(res.status).not.toHaveBeenCalledWith(201);
     });
+
+    // The supplier email is headed "Pickup information has changed", so it may
+    // only go out when there is a location to report. "I don't know yet" sends
+    // { skipValidation: true }, which resolves ok (so it clears the 400 guard
+    // above) but stores areaName:'' / address:null / status:'deferred'. The
+    // old `if (pickupSnapshot)` test only truthiness, so this snapshot — which
+    // is an object, and therefore truthy — mailed a blank "New location" row.
+    describe('the supplier pickup email follows the address, not the pickup object', () => {
+      const withPickupZones = () =>
+        prisma.tour.findFirst.mockResolvedValue({
+          ...mockTour,
+          bookingAndTickets: JSON.stringify({
+            pickupType: 'area',
+            pickupAreas: [{ name: 'Osu', lat: 5.6, lng: -0.2 }],
+          }),
+        });
+
+      const pickupEmails = () =>
+        enqueueEmail.mock.calls.filter(([job]) => job.type === 'supplier-pickup-updated');
+
+      it('stays silent for a deferred pickup that names nowhere to go', async () => {
+        withPickupZones();
+        req.body = {
+          ...validBookingBody,
+          paymentTiming: 'later',
+          paymentMethodId: 'pm_123',
+          pickup: { skipValidation: true },
+        };
+
+        await controller.confirmBooking(req, res, next);
+
+        // The booking still succeeds — we suppress one misleading email, not
+        // the reservation.
+        expect(res.status).toHaveBeenCalledWith(201);
+        expect(pickupEmails()).toHaveLength(0);
+      });
+
+      it('still notifies when the customer did give an area', async () => {
+        withPickupZones();
+        req.body = {
+          ...validBookingBody,
+          paymentTiming: 'later',
+          paymentMethodId: 'pm_123',
+          pickup: { areaName: 'Osu' },
+        };
+
+        await controller.confirmBooking(req, res, next);
+
+        expect(res.status).toHaveBeenCalledWith(201);
+        expect(pickupEmails()).toHaveLength(1);
+      });
+
+      it('still sends the reserve-later confirmation either way', async () => {
+        withPickupZones();
+        req.body = {
+          ...validBookingBody,
+          paymentTiming: 'later',
+          paymentMethodId: 'pm_123',
+          pickup: { skipValidation: true },
+        };
+
+        await controller.confirmBooking(req, res, next);
+
+        const types = enqueueEmail.mock.calls.map(([job]) => job.type);
+        expect(types).toContain('reserve-later-confirmed');
+      });
+    });
   });
 
   describe('getWishlist', () => {

@@ -2011,7 +2011,14 @@ controller.confirmBooking = catchAsync(async (req, res, next) => {
       brandName: BRAND.brandName,
     }).catch((err) => console.error('[Expedition] Reserve-later confirmation email failed:', err.message));
 
-    if (pickupSnapshot) {
+    // Require a resolvable address, not merely a truthy pickup object: a
+    // deferred pickup (customer chose "I don't know yet") still yields a
+    // snapshot whose address fields are empty, and testing truthiness mailed a
+    // "Pickup information has changed" notice with a blank "New location"
+    // row. The supplier's in-app notification above already announces the
+    // booking, and the charge-time confirmation email carries
+    // pickupLocation/pickupRequiredLabel once a location exists.
+    if (pickupAddressLabel(pickupSnapshot)) {
       enqueueEmail({ type: 'supplier-pickup-updated', bookingId: result.id })
         .catch((err) => console.error('[Expedition] supplier-pickup-updated email failed:', err.message));
     }

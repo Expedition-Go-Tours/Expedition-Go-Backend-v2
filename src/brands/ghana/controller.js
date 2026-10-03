@@ -15,6 +15,7 @@ const { salesBookingCancelled } = require('../../core/services/channelEmbeds');
 const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../../core/services/tourHelpers');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../../core/services/availabilityCore');
 const { resolvePickupSelection } = require('../../core/services/geoUtils');
+const { pickupAddressLabel } = require('../../core/services/emailFormatting');
 const { validatePassengerMix } = require('../../core/services/passengerMix');
 const { createPaymentIntent, createCheckoutSession, calculateCommission, getStripe, ensureStripeCustomer } = require('../../core/services/stripeHelpers');
 const { refundCancelledBooking } = require('../../core/services/bookingModify');
@@ -957,7 +958,14 @@ const confirmBooking = catchAsync(async (req, res, next) => {
       brandName: 'Travio Ghana',
     }).catch((err) => console.error('[Travio Ghana] Reserve-later confirmation email failed:', err.message));
 
-    if (pickupSnapshot) {
+    // Require a resolvable address, not merely a truthy pickup object. A
+    // deferred pickup (customer chose "I don't know yet") still yields a
+    // snapshot with empty address fields, so testing truthiness mailed a
+    // "Pickup information has changed" notice whose "New location" row was
+    // blank. The supplier's in-app notification above already announces the
+    // booking itself, and the charge-time confirmation email carries
+    // pickupLocation/pickupRequiredLabel once a location exists.
+    if (pickupAddressLabel(pickupSnapshot)) {
       enqueueEmail({ type: 'supplier-pickup-updated', bookingId: result.id })
         .catch((err) => console.error('[Travio Ghana] supplier-pickup-updated email failed:', err.message));
     }

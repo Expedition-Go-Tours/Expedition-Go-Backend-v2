@@ -1047,11 +1047,13 @@ async function processStripeWebhook(event) {
       : { type: 'supplier-new-booking', bookingId: booking.id })
       .catch((err) => console.error(`[Email] ${chargedReservation ? 'Supplier reservation charge' : 'Supplier notification'} failed:`, err.message));
 
-    // If the customer selected pickup during checkout, notify the supplier.
-    if (booking.pickup) {
-      enqueueEmail({ type: 'supplier-pickup-updated', bookingId: booking.id })
-        .catch((err) => console.error('[Email] supplier-pickup-updated failed:', err.message));
-    }
+    // Deliberately no "supplier-pickup-updated" here. The two emails queued
+    // above already render pickupLocation and pickupRequiredLabel, and for a
+    // deferred pickup — the customer chose "I don't know yet", so every
+    // address field is empty — pickupLocation resolves to ''. Sending this on
+    // payment produced a "Pickup information has changed" notice whose
+    // "New location" row was blank, on every successful payment. A genuine
+    // edit is reported by the pickup-update endpoint instead.
 
     // Discord: new confirmed booking (fire-and-forget, never affects booking state)
     const { salesBookingConfirmed } = require('./channelEmbeds');
