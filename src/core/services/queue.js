@@ -487,6 +487,14 @@ async function processEmailJob(job) {
   }
 
   // ── Finance v2: payout request + dispute emails ───────────────────────
+  // The window-open mail carries its own snapshot (booking list, deadline) so
+  // a retry that lands hours later still describes the window that was open
+  // when the cycle came up, rather than re-reading a table that has since
+  // changed.
+  if (job.type === 'payout-request-window-open') {
+    await emailService.sendPayoutRequestWindowOpenEmail(job);
+    return;
+  }
   if (['payout-request-submitted', 'payout-request-approved', 'payout-completed'].includes(job.type)) {
     const request = await prisma.payoutRequest.findUnique({
       where: { id: job.payoutRequestId },
@@ -1070,8 +1078,19 @@ function registerWorkers() {
           // what each supplier's run pays out.
           const { sweepEarningsEligibility } = require('./payoutCycles');
           await sweepEarningsEligibility();
-          const { generateDuePayoutRuns } = require('./payoutRuns');
+          const { generateDuePayoutRuns, notifyDuePayoutWindows } = require('./payoutRuns');
           await generateDuePayoutRuns();
+          // After the auto-run, never before it: whatever the scheduler has
+          // just claimed is no longer requestable, so telling the supplier to
+          // request it would be wrong. Also runs when the scheduler is off.
+          const windowReport = await notifyDuePayoutWindows();
+          if (windowReport.notified > 0 || windowReport.dueCycles.length > 0) {
+            console.log(
+              `[Finance] Payout window open (${windowReport.dueCycles.join(', ')}): notified ${windowReport.notified}, `
+              + `${windowReport.skippedAlreadyRequested} already requested, ${windowReport.skippedNotified} already notified, `
+              + `${windowReport.skippedNoFunds} without funds, ${windowReport.skippedNoMethod} without a payout method`
+            );
+          }
           break;
         }
         case 'charge-pay-later-bookings': {

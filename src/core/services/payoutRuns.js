@@ -155,21 +155,20 @@ function withLabel(period) {
 }
 
 /**
- * Days after a run day during which an enrolled supplier may still submit a
- * manual request. The scheduler is hourly and matches the calendar day only,
- * so without a grace the button would be open for a single day and any outage
- * on that day would strand the funds until the next cadence.
+ * How long the manual-request window stays open once it opens: the run day
+ * itself, so 24 hours. Miss it and you miss the request until the next cadence
+ * — deliberately strict rather than a forgiving grace, so nobody is left
+ * guessing whether "a couple of days" means two or three.
  */
-const MANUAL_REQUEST_GRACE_DAYS = 2;
+const MANUAL_REQUEST_GRACE_HOURS = 24;
 
 /**
  * The window in which an auto-managed supplier may request a payout by hand.
  *
  * Enrolled suppliers are paid automatically, so a manual request is a
- * self-serve fallback: it exists for the run day itself and the short grace
- * after it, in case the job has not produced a request yet. Outside that span
- * the scheduler owns the period and the request is refused with a 409 naming
- * the next run.
+ * self-serve fallback: it opens on their own run day and closes 24 hours
+ * later. Outside that span the scheduler owns the period and the request is
+ * refused with a 409 naming the next run.
  *
  * The window is derived from the supplier's own cadence rather than the legacy
  * twice-monthly calendar, because a weekly supplier's "payout is due" has
@@ -182,13 +181,12 @@ function getSupplierRequestWindow(plan, now = new Date()) {
   if (!plan?.autoManaged || !plan?.cycle) return null;
 
   // Today when today is a run day, otherwise the most recent run day on or
-  // before it — so `end` lands on run day + grace no matter where in the
-  // cadence we are.
+  // before it — so the span always starts at the run day and ends 24h later.
   const runDay = lastRunAt(plan.cycle, now);
   if (!runDay) return null;
 
   const opensAt = startOfDay(runDay);
-  const closesAt = endOfDay(addDays(runDay, MANUAL_REQUEST_GRACE_DAYS));
+  const closesAt = new Date(opensAt.getTime() + MANUAL_REQUEST_GRACE_HOURS * 60 * 60 * 1000 - 1);
 
   return {
     open: now <= closesAt,
@@ -305,6 +303,122 @@ function buildPayoutPlan(profile, { now = new Date(), defaultCycle = 'TWICE_MONT
     defaultCycle,
     autoRunsEnabled: autoRuns,
   };
+}
+
+/**
+ * Tell every supplier whose cycle has just come up that they have 24 hours to
+ * request a payout — with the list of bookings that are ready and the total.
+ *
+ * Deliberately run *after* the auto-run: whatever the scheduler already
+ * claimed is no longer requestable, so those suppliers must not be told to go
+ * and request it. It is also independent of the auto-run kill switch, because
+ * a paused scheduler is precisely when a supplier most needs telling.
+ *
+ * Returns a small report for logs and tests.
+ */
+async function notifyDuePayoutWindows(now = new Date()) {
+  const { enqueueNotification, enqueueEmail } = require('./queue');
+
+  const report = { notified: 0, skippedNoFunds: 0, skippedAlreadyRequested: 0, skippedNotified: 0, skippedNoMethod: 0, dueCycles: [] };
+  const dueCycles = VALID_CYCLES.filter((c) => isRunDate(c, now));
+  report.dueCycles = dueCycles;
+  if (dueCycles.length === 0) return report;
+
+  const profiles = await prisma.supplierProfile.findMany({
+    where: { payoutCycle: { in: dueCycles }, status: { in: ['APPROVED', 'ACTIVE'] } },
+    select: {
+      id: true,
+      userId: true,
+      payoutCycle: true,
+      user: { select: { id: true, name: true, email: true, roles: true } },
+    },
+  });
+
+  for (const profile of profiles) {
+    const supplierId = profile.userId;
+    const window = getSupplierRequestWindow({ autoManaged: true, cycle: profile.payoutCycle }, now);
+    if (!window || !window.open) continue;
+
+    const method = await resolvePayoutMethod({ supplierId });
+    if (!method) {
+      report.skippedNoMethod += 1;
+      continue;
+    }
+
+    const bookings = await selectEligibleBookings({ supplierId });
+    if (bookings.length === 0) {
+      report.skippedNoFunds += 1;
+      continue;
+    }
+
+    // An open request already covers this period — they have nothing to
+    // request, so asking them to would generate a support ticket.
+    const existing = await prisma.payoutRequest.findFirst({
+      where: {
+        supplierId,
+        status: { in: ['PROCESSING', 'APPROVED'] },
+        cycleStartDate: { lte: window.cycle.end },
+        cycleEndDate: { gte: window.cycle.start },
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      report.skippedAlreadyRequested += 1;
+      continue;
+    }
+
+    // The cron is hourly and the window lasts 24 hours, so without this the
+    // same supplier would get 24 emails on one run day. Anything already
+    // recorded at or after this window's opening means we have told them about
+    // *this* cycle — `opensAt` is the run day, so it doubles as the run key.
+    const alreadyNotified = await prisma.notification.findFirst({
+      where: {
+        userId: supplierId,
+        type: 'PAYOUT_REQUEST_WINDOW_OPEN',
+        createdAt: { gte: window.opensAt },
+      },
+      select: { id: true },
+    });
+    if (alreadyNotified) {
+      report.skippedNotified += 1;
+      continue;
+    }
+
+    const currency = bookings[0].currency || 'USD';
+    const total = bookings.reduce((s, b) => s + toNumber(b.supplierPayout), 0);
+    const money = `${total.toFixed(2)} ${currency}`;
+    const closesLabel = window.closesAt.toLocaleString('en-GB', {
+      weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+    });
+
+    await enqueueNotification({
+      userId: supplierId,
+      type: 'PAYOUT_REQUEST_WINDOW_OPEN',
+      title: 'Payout window open — 24 hours',
+      message: `Your ${window.cycle.label} cycle has finished. ${money} from ${bookings.length} booking${bookings.length === 1 ? '' : 's'} is ready to withdraw. Request it before ${closesLabel}, or it waits for your next run day.`,
+      data: {
+        opensAt: window.opensAt.toISOString(),
+        closesAt: window.closesAt.toISOString(),
+        cycleLabel: window.cycle.label,
+        amount: total,
+        currency,
+        bookingCount: bookings.length,
+      },
+    });
+
+    await enqueueEmail({
+      type: 'payout-request-window-open',
+      supplier: profile.user,
+      bookings,
+      cycleLabel: window.cycle.label,
+      closesAt: window.closesAt.toISOString(),
+      currency,
+    });
+
+    report.notified += 1;
+  }
+
+  return report;
 }
 
 /**
@@ -789,6 +903,7 @@ module.exports = {
   getDefaultCycle,
   autoRunsEnabled,
   getSupplierRequestWindow,
+  notifyDuePayoutWindows,
   getMinThreshold,
   getSupplierPayoutPlan,
   updateSupplierPayoutPlan,

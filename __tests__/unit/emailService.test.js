@@ -34,6 +34,7 @@ beforeEach(() => {
 const {
   sendEmail,
   renderTemplate,
+  sendPayoutRequestWindowOpenEmail,
   sendBookingConfirmedEmail,
   sendBookingConfirmationEmail,
   sendBookingCancellationEmail,
@@ -821,5 +822,74 @@ describe('brand-scoped Reply-To', () => {
   it('an explicit opts.replyTo beats env and brand fallbacks', async () => {
     await sendEmail({ ...base, opts: { brandKey: 'ghana', replyTo: 'explicit@example.com' } });
     expect(__send.mock.calls[0][0].reply_to).toBe('explicit@example.com');
+  });
+});
+// Cycle came up -> the supplier gets the list of bookings that are ready,
+// their amounts, and the 24-hour deadline.
+describe('sendPayoutRequestWindowOpenEmail', () => {
+  const supplier = { id: 'sup1', name: 'Coastal Routes GH', email: 'ops@example.com', roles: [] };
+  const bookings = [
+    { bookingNumber: 'GHA-1', tour: { title: 'Kakum Canopy Walk' }, travelDate: '2026-09-20T00:00:00.000Z', supplierPayout: 100, currency: 'USD' },
+    { bookingNumber: 'GHA-2', tour: { title: 'Cape Coast Castle' }, travelDate: '2026-09-21T00:00:00.000Z', supplierPayout: 75.5, currency: 'USD' },
+  ];
+
+  it('lists every booking, the amount and the deadline', async () => {
+    await sendPayoutRequestWindowOpenEmail({
+      supplier,
+      bookings,
+      cycleLabel: 'Oct 1–14',
+      closesAt: new Date(2026, 9, 15, 23, 59, 59, 999).toISOString(),
+      currency: 'USD',
+    });
+
+    expect(__send).toHaveBeenCalledTimes(1);
+    const payload = __send.mock.calls[0][0];
+    const html = payload.html;
+
+    // Every booking, by number, tour and amount.
+    expect(html).toContain('GHA-1');
+    expect(html).toContain('Kakum Canopy Walk');
+    expect(html).toContain('100.00 USD');
+    expect(html).toContain('GHA-2');
+    expect(html).toContain('Cape Coast Castle');
+    expect(html).toContain('75.50 USD');
+    // The total, not just the parts.
+    expect(html).toContain('175.50 USD');
+    expect(html).toContain('Total ready');
+    // The 24-hour deadline and the action.
+    expect(html).toContain('Request payout');
+    expect(html).toMatch(/can request it until <strong>/);
+    expect(payload.text).toContain('175.50 USD');
+
+    // Subject states the money and the window length.
+    expect(payload.subject).toContain('175.50 USD');
+    expect(payload.subject).toContain('24 hours');
+  });
+
+  it('escapes booking data rather than trusting it', async () => {
+    await sendPayoutRequestWindowOpenEmail({
+      supplier,
+      bookings: [{
+        bookingNumber: 'GHA-9',
+        tour: { title: '<img src=x onerror=alert(1)>' },
+        travelDate: null,
+        supplierPayout: 10,
+        currency: 'USD',
+      }],
+      cycleLabel: 'Oct 1–14',
+      currency: 'USD',
+    });
+
+    const html = __send.mock.calls[0][0].html;
+    // Tour titles are supplier-authored, so they must never reach the DOM raw.
+    expect(html).not.toContain('<img src=x');
+    expect(html).toContain('&lt;img src=x');
+  });
+
+  it('sends when there is a deadline but nothing to tabulate', async () => {
+    await sendPayoutRequestWindowOpenEmail({ supplier, bookings: [], cycleLabel: 'Oct 1–14', currency: 'USD' });
+    const payload = __send.mock.calls[0][0];
+    expect(payload.html).toContain('Total ready');
+    expect(payload.html).toContain('0.00 USD');
   });
 });

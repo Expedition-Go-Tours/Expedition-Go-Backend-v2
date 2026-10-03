@@ -1335,6 +1335,42 @@ async function sendFinancePayoutRequestEmail(eventType, request) {
   });
 }
 
+/**
+ * Notify a supplier their payout window is open for 24 hours, listing every
+ * booking that is ready to withdraw.
+ *
+ * Audience is the business owner plus anyone opted into payment notifications,
+ * same recipient rule as the rest of the finance mail.
+ */
+async function sendPayoutRequestWindowOpenEmail({ supplier = {}, bookings = [], cycleLabel, closesAt, currency } = {}) {
+  const brandKey = resolveEmailBrand({ supplier });
+  const cur = currency || bookings[0]?.currency || 'USD';
+  const total = bookings.reduce((s, b) => s + Number(b.supplierPayout || 0), 0);
+  // Brand-scoped, resolved here rather than in the caller, so the link lands on
+  // the storefront this supplier actually sells on.
+  const url = `${emailUrls.dashboardBaseForBrand(brandKey)}/finance`;
+
+  return sendEmail({
+    ...await supplierRecipientList(supplier, 'payments'),
+    subject: `Request your payout — ${Number(total).toFixed(2)} ${cur} ready for 24 hours`,
+    template: 'payout-request-window-open',
+    opts: { brandKey },
+    data: {
+      supplierName: supplier.name || '',
+      cycleLabel: cycleLabel || '',
+      closesAt: closesAt || null,
+      url,
+      currency: cur,
+      bookings: bookings.map((b) => ({
+        bookingNumber: b.bookingNumber || b.id || '',
+        tourTitle: b.tour?.title || b.tourTitle || '—',
+        travelDate: b.travelDate ? new Date(b.travelDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : null,
+        supplierPayout: b.supplierPayout,
+      })),
+    },
+  });
+}
+
 async function sendDisputeOpenedEmail(dispute) {
   const booking = dispute.booking || {};
   const tour = booking.tour || {};
@@ -1663,6 +1699,7 @@ async function sendTeamInviteRevokedEmail({ to, supplierName, roles, role, invit
 function generateEmailContent(template, data) {
   const templates = {
     'generic-notification': generateGenericNotificationEmail,
+    'payout-request-window-open': generatePayoutWindowOpenEmail,
     'notification-recipient-verify': generateNotificationRecipientVerifyEmail,
     'contact-form': generateContactFormEmail,
   };
@@ -1723,6 +1760,83 @@ function generateContactFormEmail(data) {
 </html>`;
 
   return { html, text: messageText };
+}
+
+/**
+ * The cycle is up and the supplier has 24 hours to request a payout.
+ *
+ * Own generator rather than generic-notification because the generic one drops
+ * the body inside a <p>, and a booking table inside a <p> is not valid HTML —
+ * the parser would hoist it out and undo the styling. This one owns its own
+ * markup so the list renders as drawn.
+ *
+ * data: { supplierName, cycleLabel, closesAt, url, currency,
+ *         bookings: [{ bookingNumber, tourTitle, travelDate, supplierPayout }] }
+ */
+function generatePayoutWindowOpenEmail(data) {
+  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+  const bookings = Array.isArray(data.bookings) ? data.bookings : [];
+  const currency = data.currency || 'USD';
+  const money = (v) => `${Number(v || 0).toFixed(2)} ${currency}`;
+  const total = bookings.reduce((s, b) => s + Number(b.supplierPayout || 0), 0);
+  const closesLabel = data.closesAt
+    ? new Date(data.closesAt).toLocaleString('en-GB', {
+        weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+      })
+    : null;
+
+  const rows = bookings.map((b) => `
+        <tr>
+          <td style="padding:10px 8px;font-size:13px;color:#0F172A;font-weight:600;border-bottom:1px solid #E2E8F0;">${esc(b.bookingNumber)}</td>
+          <td style="padding:10px 8px;font-size:13px;color:#334155;border-bottom:1px solid #E2E8F0;">${esc(b.tourTitle)}</td>
+          <td style="padding:10px 8px;font-size:13px;color:#64748B;border-bottom:1px solid #E2E8F0;white-space:nowrap;">${esc(b.travelDate || '—')}</td>
+          <td style="padding:10px 8px;font-size:13px;color:#0F172A;font-weight:700;text-align:right;white-space:nowrap;border-bottom:1px solid #E2E8F0;">${esc(money(b.supplierPayout))}</td>
+        </tr>`).join('');
+
+  const heading = 'Your payout is ready to request';
+  const intro = `Your ${esc(data.cycleLabel || '')} payout cycle has finished and ${esc(money(total))} from ${bookings.length} booking${bookings.length === 1 ? '' : 's'} is ready to withdraw.${closesLabel ? ` You can request it until <strong>${esc(closesLabel)}</strong> — after that this window closes until your next run day.` : ''}`;
+  const table = `
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:16px 0;border-collapse:collapse;">
+        <tr>
+          <th align="left" style="padding:0 8px 8px;font-size:11px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.06em;border-bottom:2px solid #E2E8F0;">Booking</th>
+          <th align="left" style="padding:0 8px 8px;font-size:11px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.06em;border-bottom:2px solid #E2E8F0;">Tour</th>
+          <th align="left" style="padding:0 8px 8px;font-size:11px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.06em;border-bottom:2px solid #E2E8F0;">Travel date</th>
+          <th align="right" style="padding:0 8px 8px;font-size:11px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.06em;border-bottom:2px solid #E2E8F0;">Supplier payout</th>
+        </tr>${rows}
+        <tr>
+          <td colspan="3" align="right" style="padding:12px 8px 0;font-size:14px;font-weight:700;color:#001F3F;border-top:2px solid #E2E8F0;">Total ready</td>
+          <td align="right" style="padding:12px 8px 0;font-size:15px;font-weight:800;color:#0E9F6E;white-space:nowrap;border-top:2px solid #E2E8F0;">${esc(money(total))}</td>
+        </tr>
+      </table>`;
+
+  const buttonHtml = data.url
+    ? `<tr><td align="center" style="padding:8px 40px 4px 40px;"><a href="${esc(data.url)}" style="display:inline-block;background-color:#0E9F6E;color:#ffffff;font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;border-radius:10px;padding:14px 34px;">Request payout</a></td></tr>`
+    : '';
+
+  const html = `<div style="font-family:'Plus Jakarta Sans',Arial,sans-serif;background:#F8FAFC;padding:32px 16px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center">
+      <table role="presentation" width="100%" style="max-width:680px;background:#ffffff;border:1px solid #E2E8F0;border-radius:16px;" cellspacing="0" cellpadding="0" border="0">
+        <tr><td style="padding:32px 32px 8px 32px;">
+          <h1 style="margin:0 0 10px;font-size:26px;font-weight:800;color:#001F3F;">${heading}</h1>
+          <p style="margin:0;font-size:15px;color:#334155;line-height:1.7;">${intro}</p>
+          ${table}
+        </td></tr>
+        ${buttonHtml}
+        <tr><td align="center" style="padding:12px 40px 4px 40px;"><span style="font-size:13px;color:#64748B;">Payouts are only released to a verified payout method.</span></td></tr>
+        <tr><td align="center" style="padding:16px 40px 0 40px;"><span style="font-size:13px;color:#64748B;">Need help? <a href="mailto:{{supportEmail}}" style="color:#0E9F6E;">Contact support</a></span></td></tr>
+      </table>
+      <p style="margin:24px 0 0;text-align:center;font-size:11px;color:#94A3B8;">&copy; {{year}} {{brandName}}. All rights reserved.</p>
+      </td></tr></table>
+    </div>`;
+
+  const text = `${heading}\n\n${intro.replace(/<[^>]+>/g, '')}\n\n`
+    + bookings.map((b) => `${b.bookingNumber} — ${b.tourTitle} (${b.travelDate || '—'}) — ${money(b.supplierPayout)}`).join('\n')
+    + `\n\nTotal ready: ${money(total)}`
+    + (data.url ? `\nRequest payout: ${data.url}` : '');
+
+  return { html, text };
 }
 
 function generateGenericNotificationEmail(data) {
@@ -1935,6 +2049,7 @@ module.exports = {
 
   // finance v2
   sendFinancePayoutRequestEmail,
+  sendPayoutRequestWindowOpenEmail,
   sendDisputeOpenedEmail,
 
   // legacy

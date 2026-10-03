@@ -197,6 +197,7 @@ enum NotificationType {
   PAYOUT_REQUEST_APPROVED
   PAYOUT_REQUEST_REJECTED
   PAYOUT_SCHEDULE_UPDATED // Supplier/admin changed the automated payout cadence
+  PAYOUT_REQUEST_WINDOW_OPEN // Cycle came up: supplier has 24h to request a payout
   SYSTEM_ALERT
   NEW_MESSAGE
   TOUR_SUBMITTED

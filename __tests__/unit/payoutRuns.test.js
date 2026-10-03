@@ -8,7 +8,7 @@ jest.mock('../../src/core/services/prismaClient', () => {
     supplierProfile: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
     payoutMethod: { findFirst: jest.fn(), count: jest.fn() },
     booking: { findMany: jest.fn(), aggregate: jest.fn() },
-    payoutRequest: { create: jest.fn() },
+    payoutRequest: { create: jest.fn(), findFirst: jest.fn() },
     supplierCharge: { findMany: jest.fn(), updateMany: jest.fn() },
     notification: { findFirst: jest.fn() },
     $transaction: jest.fn((fn) => fn(tx)),
@@ -31,13 +31,14 @@ jest.mock('../../src/core/services/channelEmbeds', () => ({
 const prisma = require('../../src/core/services/prismaClient');
 const getConfig = require('../../src/core/services/getConfig');
 const { logActivity } = require('../../src/core/services/auditLogger');
-const { enqueueNotification } = require('../../src/core/services/queue');
+const { enqueueNotification, enqueueEmail } = require('../../src/core/services/queue');
 const {
   isRunDate,
   nextRunAt,
   lastRunAt,
   cyclePeriodFor,
   getSupplierRequestWindow,
+  notifyDuePayoutWindows,
   nextEffectiveDate,
   resolveEffectiveCycle,
   buildPayoutPlan,
@@ -385,10 +386,9 @@ describe('generateDuePayoutRuns', () => {
   });
 });
 
-// The manual-request window an enrolled supplier gets: their own run day plus
-// a short grace, so a self-serve request is possible when the scheduler should
-// have paid them but hasn't. Dates are passed in explicitly rather than
-// faking the clock, so every case is exact.
+// The manual-request window an enrolled supplier gets: their own run day, for
+// 24 hours. Dates are passed in explicitly rather than faking the clock, so
+// every case is exact.
 describe('getSupplierRequestWindow', () => {
   const plan = (cycle) => ({ autoManaged: true, cycle, autoRunsEnabled: true });
 
@@ -398,12 +398,12 @@ describe('getSupplierRequestWindow', () => {
     expect(getSupplierRequestWindow(null, new Date(2026, 9, 5))).toBeNull();
   });
 
-  it('opens on the run day and closes two days later', () => {
+  it('opens on the run day and closes 24 hours later', () => {
     // Mon 5 Oct 2026 is a WEEKLY run day.
     const onDay = getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 5, 9, 30));
     expect(onDay.open).toBe(true);
     expect(onDay.opensAt).toEqual(new Date(2026, 9, 5));
-    expect(onDay.closesAt).toEqual(new Date(2026, 9, 7, 23, 59, 59, 999));
+    expect(onDay.closesAt).toEqual(new Date(2026, 9, 5, 23, 59, 59, 999));
     // Labels the period that run pays: Mon 28 Sep -> Sun 4 Oct.
     expect(onDay.cycle.start).toEqual(new Date(2026, 8, 28));
     expect(onDay.cycle.end).toEqual(new Date(2026, 9, 4, 23, 59, 59, 999));
@@ -411,23 +411,25 @@ describe('getSupplierRequestWindow', () => {
     expect(onDay.source).toBe('schedule');
   });
 
-  it('stays open through the grace period', () => {
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 6)).open).toBe(true); // Tue
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 7, 23, 0)).open).toBe(true); // Wed, last moment
+  it('holds open for the whole run day', () => {
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 5, 0, 0)).open).toBe(true); // first minute
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 5, 23, 59)).open).toBe(true); // last minute
   });
 
-  it('closes once the grace has passed', () => {
+  it('closes the moment the 24 hours are up', () => {
+    // Midnight into Tuesday: no grace period any more.
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 6, 0, 0)).open).toBe(false);
     expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 8)).open).toBe(false); // Thu
-    // Run day was Mon 19 Oct; grace ends Wed 21 Oct.
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 23)).open).toBe(false); // Fri
-    // Immediately before a run the scheduler owns the period, so it is closed
-    // too — Sun 4 Oct, with Mon 5 pending.
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 23)).open).toBe(false); // run day was Mon 19
+    // Immediately before a run the scheduler owns the period too — Sun 4 Oct,
+    // with Mon 5 pending.
     expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 4)).open).toBe(false);
   });
 
   it('follows the supplier cadence, not the calendar', () => {
     const twice = getSupplierRequestWindow(plan('TWICE_MONTHLY'), new Date(2026, 9, 15));
     expect(twice.open).toBe(true);
+    expect(twice.closesAt).toEqual(new Date(2026, 9, 15, 23, 59, 59, 999));
     expect(twice.cycle.start).toEqual(new Date(2026, 9, 1));
     expect(twice.cycle.end).toEqual(new Date(2026, 9, 14, 23, 59, 59, 999));
 
@@ -441,5 +443,117 @@ describe('getSupplierRequestWindow', () => {
     expect(m.open).toBe(true);
     expect(m.cycle.start).toEqual(new Date(2026, 8, 1));
     expect(m.cycle.end).toEqual(new Date(2026, 8, 30, 23, 59, 59, 999));
+    expect(getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 9, 2)).open).toBe(false);
+  });
+});
+
+// Cycle came up -> tell the supplier they have 24 hours to request a payout,
+// with the bookings and the total. The condition that matters is "there is
+// actually something to request": a supplier whose payout was auto-generated
+// must never be asked to request it again.
+describe('notifyDuePayoutWindows', () => {
+  const profile = {
+    id: 'sp1',
+    userId: 'sup1',
+    payoutCycle: 'TWICE_MONTHLY',
+    user: { id: 'sup1', name: 'Coastal Routes GH', email: 'ops@example.com', roles: [] },
+  };
+  const bookings = [
+    { id: 'b1', bookingNumber: 'GHA-1', tour: { title: 'Kakum Canopy Walk' }, travelDate: new Date('2026-09-20'), supplierPayout: 100, currency: 'USD' },
+    { id: 'b2', bookingNumber: 'GHA-2', tour: { title: 'Cape Coast Castle' }, travelDate: new Date('2026-09-21'), supplierPayout: 75.5, currency: 'USD' },
+  ];
+  // 15 Oct 2026 is a TWICE_MONTHLY run day.
+  const RUN_DAY = new Date(2026, 9, 15, 6, 0);
+
+  beforeEach(() => {
+    prisma.supplierProfile.findMany.mockResolvedValue([profile]);
+    prisma.payoutMethod.findFirst.mockResolvedValue({ id: 'pm1', verified: true });
+    prisma.booking.findMany.mockResolvedValue(bookings);
+    prisma.payoutRequest.findFirst.mockResolvedValue(null);
+    // clearAllMocks resets calls, not implementations, so a mockResolvedValue
+    // set by an earlier suite in this file would leak in and make this look
+    // like the supplier was already notified. Set it every time.
+    prisma.notification.findFirst.mockResolvedValue(null);
+  });
+
+  it('notifies on a run day when there is something to request', async () => {
+    const report = await notifyDuePayoutWindows(RUN_DAY);
+
+    expect(report.notified).toBe(1);
+    expect(enqueueNotification).toHaveBeenCalledTimes(1);
+    const n = enqueueNotification.mock.calls[0][0];
+    expect(n.userId).toBe('sup1');
+    expect(n.type).toBe('PAYOUT_REQUEST_WINDOW_OPEN');
+    expect(n.message).toContain('175.50 USD');
+    expect(n.message).toContain('2 bookings');
+    expect(n.message).toContain('Oct 1–14');
+    // 24 hours: closes at the end of the run day, not two days later.
+    expect(new Date(n.data.closesAt)).toEqual(new Date(2026, 9, 15, 23, 59, 59, 999));
+
+    expect(enqueueEmail).toHaveBeenCalledTimes(1);
+    const e = enqueueEmail.mock.calls[0][0];
+    expect(e.type).toBe('payout-request-window-open');
+    expect(e.cycleLabel).toBe('Oct 1–14');
+    expect(e.bookings).toHaveLength(2);
+    expect(e.bookings[0]).toMatchObject({ bookingNumber: 'GHA-1', supplierPayout: 100 });
+    expect(e.currency).toBe('USD');
+  });
+
+  it('stays quiet when an open request already covers the period', async () => {
+    prisma.payoutRequest.findFirst.mockResolvedValue({ id: 'pr1' });
+
+    const report = await notifyDuePayoutWindows(RUN_DAY);
+
+    expect(report.notified).toBe(0);
+    expect(report.skippedAlreadyRequested).toBe(1);
+    expect(enqueueNotification).not.toHaveBeenCalled();
+    expect(enqueueEmail).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet when nothing is eligible yet', async () => {
+    prisma.booking.findMany.mockResolvedValue([]);
+
+    const report = await notifyDuePayoutWindows(RUN_DAY);
+
+    expect(report.notified).toBe(0);
+    expect(report.skippedNoFunds).toBe(1);
+    expect(enqueueNotification).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet without a verified payout method', async () => {
+    prisma.payoutMethod.findFirst.mockResolvedValue(null);
+
+    const report = await notifyDuePayoutWindows(RUN_DAY);
+
+    expect(report.notified).toBe(0);
+    expect(report.skippedNoMethod).toBe(1);
+    expect(enqueueNotification).not.toHaveBeenCalled();
+  });
+
+  it('notifies at most once per run day however often the cron fires', async () => {
+    // The scheduler is hourly and the window is open all day, so an unguarded
+    // sweep would send 24 emails for one cycle.
+    const first = await notifyDuePayoutWindows(RUN_DAY);
+    expect(first.notified).toBe(1);
+
+    // The notification from that sweep now exists.
+    prisma.notification.findFirst.mockResolvedValue({ id: 'n1' });
+
+    const second = await notifyDuePayoutWindows(RUN_DAY);
+    expect(second.notified).toBe(0);
+    expect(second.skippedNotified).toBe(1);
+
+    expect(enqueueNotification).toHaveBeenCalledTimes(1);
+    expect(enqueueEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing on a day that is not a run date', async () => {
+    // Sat 3 Oct: no cadence runs.
+    const report = await notifyDuePayoutWindows(new Date(2026, 9, 3));
+
+    expect(report.dueCycles).toEqual([]);
+    expect(report.notified).toBe(0);
+    expect(prisma.supplierProfile.findMany).not.toHaveBeenCalled();
+    expect(enqueueNotification).not.toHaveBeenCalled();
   });
 });
