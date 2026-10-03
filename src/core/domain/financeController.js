@@ -12,6 +12,7 @@ const {
   cyclePeriodFor,
   lastRunAt,
   withLabel,
+  getSupplierRequestWindow,
 } = require('../services/payoutRuns');
 const { logActivity } = require('../services/auditLogger');
 
@@ -74,6 +75,29 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
     inReview[r.currency] = (inReview[r.currency] || 0) + toNumber(r.amount);
   }
 
+  // Which window decides whether "Request payout" is available.
+  //
+  // Enrolled suppliers are paid on their own cadence, so their window is their
+  // run day plus a short grace — not the legacy twice-monthly calendar, which
+  // has nothing to do with whether a weekly supplier's payout is due. Returns
+  // null only for an enrolled supplier whose plan has no cycle, preserving the
+  // old contract everywhere else.
+  let requestWindow;
+  if (payoutPlan.autoManaged) {
+    const w = getSupplierRequestWindow(payoutPlan);
+    requestWindow = w
+      ? { open: w.open, opensAt: w.opensAt, closesAt: w.closesAt, cycleLabel: w.cycle.label, source: w.source }
+      : null;
+  } else {
+    requestWindow = {
+      open: window.open,
+      opensAt: window.start,
+      closesAt: window.end,
+      cycleLabel: window.label,
+      source: 'window',
+    };
+  }
+
   res.status(200).json({
     status: 'success',
     data: {
@@ -100,14 +124,7 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
       // The supplier's payout schedule (auto-generated runs). `autoManaged`
       // false means the legacy window-based manual flow below still applies.
       payoutPlan,
-      withdrawalWindow: payoutPlan.autoManaged
-        ? null
-        : {
-            open: window.open,
-            opensAt: window.start,
-            closesAt: window.end,
-            cycleLabel: window.label,
-          },
+      withdrawalWindow: requestWindow,
     },
   });
 });
@@ -244,22 +261,41 @@ exports.createPayoutRequest = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
   const { bookingIds, payoutMethodId, notes } = req.body || {};
 
-  // Enrolled suppliers are paid automatically — they never request manually.
-  // (If the scheduler is switched off they can fall back to a manual request so
-  // funds are never stranded.)
+  // Enrolled suppliers are paid automatically — they don't request by hand
+  // except as a self-serve fallback, and only while their own run window is
+  // open. Outside it the scheduler owns the period, so this stays a 409 that
+  // names the next run instead of quietly letting a second payout through.
+  //
+  // This branch used to do `const next = plan.nextRunAt...toISOString()` and
+  // then call `next(...)` — shadowing the catchAsync `next` callback with a
+  // string, so it threw "next is not a function" rather than returning 409.
   const plan = await getSupplierPayoutPlan(supplierId);
-  if (plan.autoManaged && plan.autoRunsEnabled) {
-    const next = plan.nextRunAt ? plan.nextRunAt.toISOString().slice(0, 10) : null;
+  // `autoManaged` is defined as Boolean(cycle), so a null window here can only
+  // mean the scheduler is paused — which is exactly the case that must fall
+  // through to the manual path so funds are never stranded.
+  const requestWindow = plan.autoManaged && plan.autoRunsEnabled
+    ? getSupplierRequestWindow(plan)
+    : null;
+  if (requestWindow && !requestWindow.open) {
+    const nextRun = plan.nextRunAt ? plan.nextRunAt.toISOString().slice(0, 10) : null;
     return next(new AppError(
-      `Payouts on your account are generated automatically (${plan.scheduleLabel}).${next ? ` Your next payout is scheduled for ${next}.` : ''}`,
+      `Payouts on your account are generated automatically (${plan.scheduleLabel}).`
+      + ` You can request manually between ${requestWindow.opensAt.toISOString().slice(0, 10)}`
+      + ` and ${requestWindow.closesAt.toISOString().slice(0, 10)}.`
+      + (nextRun ? ` Your next payout is scheduled for ${nextRun}.` : ''),
       409
     ));
   }
 
   let cycleWindow;
-  if (plan.autoManaged) {
-    // Emergency manual request while the scheduler is paused — label it with
-    // the run period the funds were accumulating in.
+  if (requestWindow) {
+    // Enrolled and inside its own run window: record exactly the period the
+    // dialog showed, so the label the supplier approved is the one that lands
+    // on the request even if the clock crosses a cadence boundary between them.
+    cycleWindow = requestWindow.cycle;
+  } else if (plan.autoManaged) {
+    // Paused scheduler — no window to quote, so derive the period the funds
+    // were accumulating in from the cadence, as the auto-generated run would.
     cycleWindow = withLabel(cyclePeriodFor(plan.cycle, lastRunAt(plan.cycle, new Date()) || new Date()));
   } else {
     const window = await getRequestWindow();
@@ -270,6 +306,36 @@ exports.createPayoutRequest = catchAsync(async (req, res, next) => {
       ));
     }
     cycleWindow = { start: window.cycle.start, end: window.cycle.end, label: window.cycle.label };
+  }
+
+  // One open request per supplier per period. Without this a supplier could
+  // submit repeatedly while an earlier request for the same period is still
+  // sitting in the admin queue, and the queue grows a row per attempt.
+  //
+  // This is about queue hygiene, not double payment — that is prevented
+  // upstream: selectEligibleBookings excludes bookings already on a request,
+  // so a manual request claims every eligible booking and the auto-generated
+  // run then finds none and skips. The scheduler is additionally idempotent
+  // via runKey, and is deliberately not subject to this guard.
+  //
+  // Terminal states (rejected/cancelled/completed) release the bookings and do
+  // not block.
+  const openForPeriod = await prisma.payoutRequest.findFirst({
+    where: {
+      supplierId,
+      status: { in: ['PROCESSING', 'APPROVED'] },
+      cycleStartDate: { lte: cycleWindow.end },
+      cycleEndDate: { gte: cycleWindow.start },
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { requestNumber: true },
+  });
+  if (openForPeriod) {
+    return next(new AppError(
+      `You already have an open payout request (${openForPeriod.requestNumber}) for this period. `
+      + 'It has to be approved, rejected or cancelled before you can submit another.',
+      409
+    ));
   }
 
   // Validate payout method ownership + verification when provided

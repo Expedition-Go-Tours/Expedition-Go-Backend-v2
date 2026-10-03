@@ -37,6 +37,7 @@ const {
   nextRunAt,
   lastRunAt,
   cyclePeriodFor,
+  getSupplierRequestWindow,
   nextEffectiveDate,
   resolveEffectiveCycle,
   buildPayoutPlan,
@@ -381,5 +382,64 @@ describe('generateDuePayoutRuns', () => {
     const report = await generateDuePayoutRuns(new Date(2026, 9, 1, 1));
     expect(report.generated).toBe(0);
     expect(report.skippedBlocked).toBe(1);
+  });
+});
+
+// The manual-request window an enrolled supplier gets: their own run day plus
+// a short grace, so a self-serve request is possible when the scheduler should
+// have paid them but hasn't. Dates are passed in explicitly rather than
+// faking the clock, so every case is exact.
+describe('getSupplierRequestWindow', () => {
+  const plan = (cycle) => ({ autoManaged: true, cycle, autoRunsEnabled: true });
+
+  it('returns null for a supplier with no schedule', () => {
+    // The legacy twice-monthly window applies instead.
+    expect(getSupplierRequestWindow({ autoManaged: false }, new Date(2026, 9, 5))).toBeNull();
+    expect(getSupplierRequestWindow(null, new Date(2026, 9, 5))).toBeNull();
+  });
+
+  it('opens on the run day and closes two days later', () => {
+    // Mon 5 Oct 2026 is a WEEKLY run day.
+    const onDay = getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 5, 9, 30));
+    expect(onDay.open).toBe(true);
+    expect(onDay.opensAt).toEqual(new Date(2026, 9, 5));
+    expect(onDay.closesAt).toEqual(new Date(2026, 9, 7, 23, 59, 59, 999));
+    // Labels the period that run pays: Mon 28 Sep -> Sun 4 Oct.
+    expect(onDay.cycle.start).toEqual(new Date(2026, 8, 28));
+    expect(onDay.cycle.end).toEqual(new Date(2026, 9, 4, 23, 59, 59, 999));
+    expect(onDay.cycle.label).toBeTruthy();
+    expect(onDay.source).toBe('schedule');
+  });
+
+  it('stays open through the grace period', () => {
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 6)).open).toBe(true); // Tue
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 7, 23, 0)).open).toBe(true); // Wed, last moment
+  });
+
+  it('closes once the grace has passed', () => {
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 8)).open).toBe(false); // Thu
+    // Run day was Mon 19 Oct; grace ends Wed 21 Oct.
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 23)).open).toBe(false); // Fri
+    // Immediately before a run the scheduler owns the period, so it is closed
+    // too — Sun 4 Oct, with Mon 5 pending.
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 4)).open).toBe(false);
+  });
+
+  it('follows the supplier cadence, not the calendar', () => {
+    const twice = getSupplierRequestWindow(plan('TWICE_MONTHLY'), new Date(2026, 9, 15));
+    expect(twice.open).toBe(true);
+    expect(twice.cycle.start).toEqual(new Date(2026, 9, 1));
+    expect(twice.cycle.end).toEqual(new Date(2026, 9, 14, 23, 59, 59, 999));
+
+    // 15 Oct 2026 is a Thursday: the twice-monthly supplier is due, the weekly
+    // one is not. Their windows must not be conflated.
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 15)).open).toBe(false);
+  });
+
+  it('opens for the monthly cadence on the 1st', () => {
+    const m = getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 9, 1));
+    expect(m.open).toBe(true);
+    expect(m.cycle.start).toEqual(new Date(2026, 8, 1));
+    expect(m.cycle.end).toEqual(new Date(2026, 8, 30, 23, 59, 59, 999));
   });
 });

@@ -155,6 +155,54 @@ function withLabel(period) {
 }
 
 /**
+ * Days after a run day during which an enrolled supplier may still submit a
+ * manual request. The scheduler is hourly and matches the calendar day only,
+ * so without a grace the button would be open for a single day and any outage
+ * on that day would strand the funds until the next cadence.
+ */
+const MANUAL_REQUEST_GRACE_DAYS = 2;
+
+/**
+ * The window in which an auto-managed supplier may request a payout by hand.
+ *
+ * Enrolled suppliers are paid automatically, so a manual request is a
+ * self-serve fallback: it exists for the run day itself and the short grace
+ * after it, in case the job has not produced a request yet. Outside that span
+ * the scheduler owns the period and the request is refused with a 409 naming
+ * the next run.
+ *
+ * The window is derived from the supplier's own cadence rather than the legacy
+ * twice-monthly calendar, because a weekly supplier's "payout is due" has
+ * nothing to do with the 1st and 15th.
+ *
+ * Returns null when the supplier has no schedule at all (the legacy window
+ * flow applies instead).
+ */
+function getSupplierRequestWindow(plan, now = new Date()) {
+  if (!plan?.autoManaged || !plan?.cycle) return null;
+
+  // Today when today is a run day, otherwise the most recent run day on or
+  // before it — so `end` lands on run day + grace no matter where in the
+  // cadence we are.
+  const runDay = lastRunAt(plan.cycle, now);
+  if (!runDay) return null;
+
+  const opensAt = startOfDay(runDay);
+  const closesAt = endOfDay(addDays(runDay, MANUAL_REQUEST_GRACE_DAYS));
+
+  return {
+    open: now <= closesAt,
+    opensAt,
+    closesAt,
+    // The accumulation period this run pays out — the same expression the
+    // paused-scheduler fallback uses, so both paths label the period alike.
+    cycle: withLabel(cyclePeriodFor(plan.cycle, runDay)),
+    runDay,
+    source: 'schedule',
+  };
+}
+
+/**
  * Triage order for the admin schedule list: whoever's payout run is due
  * soonest comes first, then by supplier name/email so the order is stable.
  *
@@ -740,6 +788,7 @@ module.exports = {
   buildPayoutPlan,
   getDefaultCycle,
   autoRunsEnabled,
+  getSupplierRequestWindow,
   getMinThreshold,
   getSupplierPayoutPlan,
   updateSupplierPayoutPlan,
