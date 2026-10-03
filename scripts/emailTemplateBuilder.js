@@ -47,8 +47,16 @@ const BASE_CSS = `
     .pad-top { padding-top:28px !important; }
     .stack { display:block !important; width:100% !important; box-sizing:border-box !important; }
     .stack-td { display:block !important; width:100% !important; box-sizing:border-box !important; text-align:left !important; }
-    .btn { width:100% !important; display:block !important; text-align:center !important; box-sizing:border-box !important; }
-    .btn-wrap { width:100% !important; display:block !important; text-align:center !important; }
+    .btn { width:100% !important; display:block !important; text-align:center !important; box-sizing:border-box !important; padding-left:16px !important; padding-right:16px !important; }
+    /* The button wrapper is a shrink-to-fit table, so the .btn width:100%
+       rule alone resolves against a content-width cell and the label wraps
+       onto three lines on a 320px phone. Collapsing the wrapper AND its
+       row-group/row to blocks is required: blockifying only the <table>
+       leaves the <tr> as a table-row, which the engine wraps in a
+       shrink-to-fit anonymous table and width:100% resolves against that
+       instead of the container. */
+    .btn-wrap, .btn-wrap tbody, .btn-wrap tr { display:block !important; width:100% !important; }
+    .btn-wrap td { display:block !important; width:100% !important; box-sizing:border-box !important; padding:0 0 8px 0 !important; }
     .h1 { font-size:24px !important; }
     .h2 { font-size:18px !important; }
     .body-lg { font-size:16px !important; }
@@ -305,13 +313,12 @@ function bulletList() {
  */
 function buttons(items) {
   const btnHtml = items
-    .map((b, i) => {
+    .map((b) => {
       const href = b.href; // e.g. "{{bookingUrl}}" or a literal URL
       const style =
         b.kind === 'secondary'
           ? `background-color:${COLORS.card};border:1px solid ${COLORS.border};color:${COLORS.navy};`
           : `background-color:${COLORS.accent};color:#ffffff;`;
-      const margin = i > 0 ? 'padding:0 0 0 8px;' : 'padding:0;';
       return `
         <td style="padding:0 8px 0 0;vertical-align:middle;">
           <a href="${href}" class="btn" style="display:inline-block;${style}font-family:${FONT};font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">${b.label}</a>
@@ -319,9 +326,11 @@ function buttons(items) {
     })
     .join('');
 
+  // `btn-wrap` is the hook the mobile block above hangs off; without it
+  // `.btn { width:100% }` collapses to the label's own width.
   return `
   <tr><td class="pad" style="padding:28px 40px 8px 40px;">
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
+    <table role="presentation" class="btn-wrap" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
       <tr>${btnHtml}</tr>
     </table>
   </td></tr>`;
