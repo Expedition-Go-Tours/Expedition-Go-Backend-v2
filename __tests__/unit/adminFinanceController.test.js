@@ -84,3 +84,126 @@ describe('adminFinanceController.getPayoutSchedules — triage order', () => {
     }
   });
 });
+
+describe('adminFinanceController.getPayoutRequests — column sort', () => {
+  let req, res, next;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    req = { query: {}, user: { id: 'admin-1' } };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    next = jest.fn();
+    prisma.payoutRequest.findMany.mockResolvedValue([]);
+    prisma.payoutRequest.count.mockResolvedValue(0);
+    prisma.payoutRequest.groupBy.mockResolvedValue([]);
+  });
+
+  /** Pull the orderBy Prisma was actually called with. */
+  const orderBy = () => prisma.payoutRequest.findMany.mock.calls[0][0].orderBy;
+
+  const run = async () => {
+    await controller.getPayoutRequests(req, res, next);
+    expect(next).not.toHaveBeenCalled();
+    expect(prisma.payoutRequest.findMany).toHaveBeenCalledTimes(1);
+  };
+
+  it('defaults to newest first with a deterministic tie-break', async () => {
+    await run();
+    expect(orderBy()).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
+  });
+
+  it('sorts by amount descending when asked', async () => {
+    req.query.sortBy = 'amount';
+    req.query.sortOrder = 'desc';
+    await run();
+    expect(orderBy()).toEqual([{ amount: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }]);
+  });
+
+  it('honours ascending order', async () => {
+    req.query.sortBy = 'createdAt';
+    req.query.sortOrder = 'asc';
+    await run();
+    expect(orderBy()[0]).toEqual({ createdAt: 'asc' });
+  });
+
+  it('always tie-breaks so pagination cannot repeat or skip rows', async () => {
+    req.query.sortBy = 'requestNumber';
+    req.query.sortOrder = 'asc';
+    await run();
+    const ob = orderBy();
+    expect(ob).toHaveLength(3);
+    expect(ob[1]).toEqual({ createdAt: 'desc' });
+    expect(ob[2]).toEqual({ id: 'desc' });
+  });
+
+  // The whitelist is the only thing standing between a query param and
+  // `orderBy`. If it ever widens to pass-through, this test starts failing.
+  it('ignores an unknown column instead of forwarding it to Prisma', async () => {
+    req.query.sortBy = 'supplierId';
+    await run();
+    expect(orderBy()).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
+  });
+
+  it('ignores a prototype-pollution style column name', async () => {
+    req.query.sortBy = '__proto__';
+    await run();
+    expect(orderBy()).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
+  });
+
+  it('treats an unrecognised direction as descending', async () => {
+    req.query.sortBy = 'amount';
+    req.query.sortOrder = 'ASC; DROP TABLE payoutRequest';
+    await run();
+    expect(orderBy()[0]).toEqual({ amount: 'desc' });
+  });
+
+  it('passes a comma-separated status list through for non-exclusive facets', async () => {
+    req.query.status = 'PROCESSING, APPROVED ,PROCESSING';
+    await run();
+    expect(prisma.payoutRequest.findMany.mock.calls[0][0].where.status).toEqual({
+      in: ['PROCESSING', 'APPROVED', 'PROCESSING'],
+    });
+  });
+});
+
+describe('adminFinanceController.getPayoutRequests — bookingCount', () => {
+  let req, res, next;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    req = { query: {}, user: { id: 'admin-1' } };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    next = jest.fn();
+    prisma.payoutRequest.count.mockResolvedValue(0);
+    prisma.payoutRequest.groupBy.mockResolvedValue([]);
+  });
+
+  const runWith = async (items) => {
+    prisma.payoutRequest.findMany.mockResolvedValue(
+      items.map((it, i) => ({ id: `pr-${i}`, amount: '100.00', supplierId: 's-1', items: it })),
+    );
+    await controller.getPayoutRequests(req, res, next);
+    expect(next).not.toHaveBeenCalled();
+    return res.json.mock.calls[0][0].data.requests;
+  };
+
+  // The client type declares bookingCount but the endpoint used to omit it,
+  // so the Bookings column was blank and the dialogs said "undefined bookings".
+  it('emits bookingCount derived from the included items', async () => {
+    const out = await runWith([
+      [{ id: 'i1' }, { id: 'i2' }, { id: 'i3' }],
+      [{ id: 'i4' }],
+      [],
+    ]);
+    expect(out.map((r) => r.bookingCount)).toEqual([3, 1, 0]);
+  });
+
+  it('reports 0 rather than undefined when a request somehow has no items array', async () => {
+    prisma.payoutRequest.findMany.mockResolvedValue([
+      { id: 'pr-x', amount: '10.00', supplierId: 's-1' },
+    ]);
+    await controller.getPayoutRequests(req, res, next);
+    const out = res.json.mock.calls[0][0].data.requests;
+    expect(out[0].bookingCount).toBe(0);
+  });
+});

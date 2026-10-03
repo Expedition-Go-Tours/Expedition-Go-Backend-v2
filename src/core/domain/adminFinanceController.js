@@ -90,6 +90,28 @@ exports.getPayoutRequests = catchAsync(async (req, res) => {
     where.status = { in: String(req.query.status).split(',').map((s) => s.trim()).filter(Boolean) };
   }
 
+  // Whitelisted column sort for the ops table. Without a server-side sort a
+  // clickable "Amount" header can only reshuffle the 20 rows already loaded,
+  // which reads as "sorted" while silently ignoring the rest of the queue.
+  // Only scalar columns on PayoutRequest are sortable -- `bookingCount` is a
+  // relation count and would need a groupBy, so it is deliberately absent.
+  // A Map, not an object literal: an object literal inherits from
+  // Object.prototype, so `__proto__` / `constructor` / `toString` look up to a
+  // truthy value and would pass the whitelist straight into `orderBy`.
+  const SORTABLE = new Map([
+    ['amount', 'amount'],
+    ['createdAt', 'createdAt'],
+    ['status', 'status'],
+    ['requestNumber', 'requestNumber'],
+  ]);
+  const sortKey = SORTABLE.get(String(req.query.sortBy || '').trim());
+  const sortDir = String(req.query.sortOrder || '').toLowerCase() === 'asc' ? 'asc' : 'desc';
+  // Always append a deterministic tie-break, otherwise rows sharing the sorted
+  // value can drift between pages and appear twice or not at all.
+  const orderBy = sortKey
+    ? [{ [sortKey]: sortDir }, { createdAt: 'desc' }, { id: 'desc' }]
+    : [{ createdAt: 'desc' }, { id: 'desc' }];
+
   // Search scope (request number or supplier identity) — shared by the list
   // and the per-status counts so tab badges stay consistent with results.
   const searchWhere = {};
@@ -110,7 +132,7 @@ exports.getPayoutRequests = catchAsync(async (req, res) => {
         payoutMethod: { select: METHOD_SELECT },
         items: { include: { booking: { select: { bookingNumber: true, travelDate: true, tour: { select: { title: true } } } } } },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy,
       skip: (page - 1) * limit,
       take: limit,
     }),
@@ -137,7 +159,16 @@ exports.getPayoutRequests = catchAsync(async (req, res) => {
   res.status(200).json({
     status: 'success',
     data: {
-      requests: requests.map((r) => ({ ...r, amount: toNumber(r.amount) })),
+      // `bookingCount` is declared on the client type but was never emitted, so
+      // every row rendered a blank Bookings cell and the reject/complete
+      // confirmation dialogs read "all undefined bookings". `items` is always
+      // included by the query above and is not touched by
+      // attachFallbackMethods, so its length is authoritative here.
+      requests: requests.map((r) => ({
+        ...r,
+        amount: toNumber(r.amount),
+        bookingCount: r.items?.length ?? 0,
+      })),
       pagination: { currentPage: page, limit, totalCount, totalPages: Math.ceil(totalCount / limit) },
       summary: { statusCounts, totalCount: grandTotal, totalAmount: grandAmount },
     },
