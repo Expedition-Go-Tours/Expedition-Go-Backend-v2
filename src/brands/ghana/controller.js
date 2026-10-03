@@ -28,6 +28,7 @@ const { shouldCountTourView } = require('../../core/services/viewTracking');
 const eventEmitter = require('../../core/services/eventEmitter');
 const { sanitizeBookingPaymentInternals } = require('../../core/services/sanitizeBookings');
 const { bookingRefundState } = require('../../core/services/bookingRefundState');
+const { tourMatchWhere, isTourIdParam } = require('../../core/services/tourLookup');
 
 const { getBrand, eventNamespaceForSource } = require('../../../config/brands');
 const BRAND = getBrand('ghana');
@@ -435,9 +436,9 @@ const getTourBadges = catchAsync(async (req, res) => {
 const getTourBySlug = catchAsync(async (req, res, next) => {
   const { slug } = req.params;
 
-  const result = await cache.getOrSet(DETAIL_CACHE_KEY(slug), async () => {
+  const loadTour = async () => {
     const record = await prisma.travioGhanaTour.findFirst({
-      where: { isActive: true, tour: { slug, status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } } },
+      where: { isActive: true, tour: { ...tourMatchWhere(slug), status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } } },
       include: {
         tour: {
           include: {
@@ -540,7 +541,17 @@ const getTourBySlug = catchAsync(async (req, res, next) => {
         },
       },
     };
-  }, 300);
+  };
+
+  // Slug requests keep the cached fast path. Id-shaped params bypass it:
+  // invalidateCaches() only removes slug-keyed detail entries, so an id-keyed
+  // copy could outlive a tour edit until its TTL expires. Both storefronts
+  // publish /tour/{id}/{slug} and fetch the detail with `cache: 'no-store'`
+  // precisely so a supplier's just-saved pricing shows up immediately, so an
+  // id-keyed cache entry would quietly undo that.
+  const result = isTourIdParam(slug)
+    ? await loadTour()
+    : await cache.getOrSet(DETAIL_CACHE_KEY(slug), loadTour, 300);
 
   if (!result) {
     return next(new AppError('Tour not found', 404));

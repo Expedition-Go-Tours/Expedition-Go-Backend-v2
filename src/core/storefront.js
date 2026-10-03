@@ -33,6 +33,7 @@ const eventEmitter = require('./services/eventEmitter');
 const { sanitizeBookingPaymentInternals } = require('./services/sanitizeBookings');
 const { withChoiceToken } = require('./services/cancellationReasons');
 const { bookingRefundState } = require('./services/bookingRefundState');
+const { tourMatchWhere, isTourIdParam } = require('./services/tourLookup');
 const { notifyDiscord } = require('./services/discordNotifier');
 const { salesBookingCancelled } = require('./services/channelEmbeds');
 
@@ -48,13 +49,6 @@ const FEATURED_CACHE_KEY = `${CACHE_PREFIX}tours:featured`;
 const DETAIL_CACHE_KEY = (slug) => `${CACHE_PREFIX}detail:${slug}`;
 const SITEMAP_CACHE_KEY = `${CACHE_PREFIX}sitemap`;
 
-// Tour route params (/:slug) also accept the tour's id so legacy id-based
-// links keep resolving. The lookup is always `slug OR id` (correct for any
-// param); the shape check only drives cache behaviour — CUIDs are 24-32
-// alphanumeric chars with no hyphens, and an id-shaped slug in that range
-// merely loses caching, which is harmless.
-const isTourIdParam = (value) => typeof value === 'string' && /^[a-z0-9]{24,32}$/i.test(value);
-const tourMatchWhere = (value) => ({ OR: [{ slug: value }, { id: value }] });
 const CHECKOUT_CACHE_TTL = 60;
 
 /**

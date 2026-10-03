@@ -18,12 +18,14 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   $queryRawUnsafe: jest.fn(),
 }));
 
-jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
-jest.mock('../../src/core/services/eventEmitter', () => ({ emit: jest.fn(), emitBatch: jest.fn() }));
 jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
   invalidateKeys: jest.fn(() => Promise.resolve()),
 }));
+const cache = require('../../src/core/services/cacheHelper');
+
+jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
+jest.mock('../../src/core/services/eventEmitter', () => ({ emit: jest.fn(), emitBatch: jest.fn() }));
 jest.mock('../../src/core/services/emailService', () => ({
   sendEmail: jest.fn(() => Promise.resolve()),
   // cancelBooking destructures these; a partial mock makes the call throw
@@ -199,6 +201,111 @@ describe('travioGhanaController (Phase 1b characterization)', () => {
       const schema = res.json.mock.calls[res.json.mock.calls.length - 1][0].data.tour.tourSchema;
       expect(schema.aggregateRating.ratingValue).toBe(4.7);
       expect(schema.aggregateRating.reviewCount).toBe(211);
+    });
+  });
+
+  // Ghana's getTourBySlug is a hand-rolled override of the shared storefront
+  // handler, and it used to match on `slug` alone. Both storefronts publish
+  // /tour/{id}/{slug} and their detail pages pass the id straight through, so
+  // every tour page view on expeditiongotours.com and travioghana.com fired a
+  // 404 against /api/travioghana/tours/{id} and silently fell back to the
+  // generic /api/tours/{id} endpoint, losing the curated `options` payload.
+  // /reviews, /similar and /availability resolve the same id correctly, which
+  // is what made the detail endpoint the odd one out.
+  describe('getTourBySlug resolves a tour by slug or by id', () => {
+    const ID = 'cmt8hjkii00bo646phdiznmrr';
+    let next;
+
+    beforeEach(() => {
+      res.set = jest.fn().mockReturnThis();
+      prisma.tour.update.mockResolvedValue({});
+      // Declared in the outer beforeEach; reassigned per test so the
+      // not-called assertion below can't be satisfied by a stale reference.
+      next = jest.fn();
+    });
+
+    it('matches the param against the slug OR the id, not the slug alone', async () => {
+      req.params.slug = ID;
+      await controller.getTourBySlug(req, res, next);
+      const tour = prisma.travioGhanaTour.findFirst.mock.calls[0][0].where.tour;
+      expect(tour.OR).toEqual([{ slug: ID }, { id: ID }]);
+      // The rest of the visibility gate must survive the spread.
+      expect(tour.status).toBe('ACTIVE');
+      expect(tour.supplier).toEqual({ supplierProfile: { status: 'ACTIVE' } });
+    });
+
+    // The prisma mock returns whatever it is told, so a where-clause bug is
+    // invisible unless the mock honours it. Make findFirst respect the OR the
+    // way the real query would: the row only comes back when the param matches
+    // its slug OR its id. A slug-only where clause then reproduces the live
+    // 404 exactly, which is what made this worth pinning.
+    const honourWhere = () => {
+      // The tour row carries the id under test, so the mock can only match it
+      // through the id branch of the OR. When the handler passes a bare
+      // `tour: { slug }` instead, the mock must fall back to slug-only
+      // matching — which is exactly what Prisma would do, and what makes this
+      // reproduce the live 404 rather than passing on a mock that agrees with
+      // whatever it is handed.
+      const row = { ...mockGhanaTour, tour: { ...mockTour, id: ID } };
+      prisma.travioGhanaTour.findFirst.mockImplementation(({ where }) => {
+        const t = where?.tour || {};
+        const matches = t.OR
+          ? t.OR.some((c) => c.slug === row.tour.slug || c.id === row.tour.id)
+          : t.slug === row.tour.slug;
+        return Promise.resolve(matches ? row : null);
+      });
+      return row;
+    };
+
+    it('serves the id-based request instead of 404ing', async () => {
+      const row = honourWhere();
+      req.params.slug = ID;
+      await controller.getTourBySlug(req, res, next);
+      expect(next).not.toHaveBeenCalled();
+      const body = res.json.mock.calls[res.json.mock.calls.length - 1][0];
+      expect(body.status).toBe('success');
+      expect(body.data.tour.tour.id).toBe(row.tour.id);
+    });
+
+    it('serves the slug-based request the same way', async () => {
+      honourWhere();
+      req.params.slug = mockTour.slug;
+      await controller.getTourBySlug(req, res, next);
+      expect(next).not.toHaveBeenCalled();
+      const body = res.json.mock.calls[res.json.mock.calls.length - 1][0];
+      expect(body.status).toBe('success');
+    });
+
+    it('still resolves the slug', async () => {
+      req.params.slug = 'test-tour';
+      await controller.getTourBySlug(req, res, next);
+      const tour = prisma.travioGhanaTour.findFirst.mock.calls[0][0].where.tour;
+      expect(tour.OR).toEqual([{ slug: 'test-tour' }, { id: 'test-tour' }]);
+    });
+
+    it('404s a genuinely unknown id', async () => {
+      req.params.slug = ID;
+      prisma.travioGhanaTour.findFirst.mockResolvedValue(null);
+      await controller.getTourBySlug(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
+    });
+
+    // invalidateCaches() only purges the slug-keyed entry, so an id-keyed
+    // cached copy would survive a supplier's edit until its TTL expired —
+    // exactly the staleness the storefront's `cache: 'no-store'` detail fetch
+    // exists to prevent.
+    it('caches a slug request but never caches an id request', async () => {
+      req.params.slug = 'test-tour';
+      await controller.getTourBySlug(req, res, next);
+      expect(cache.getOrSet).toHaveBeenCalledWith(expect.stringContaining('detail:test-tour'), expect.any(Function), 300);
+
+      jest.clearAllMocks();
+      prisma.travioGhanaTour.findFirst.mockResolvedValue(mockGhanaTour);
+
+      req.params.slug = ID;
+      await controller.getTourBySlug(req, res, next);
+      expect(cache.getOrSet).not.toHaveBeenCalled();
+      expect(prisma.travioGhanaTour.findFirst).toHaveBeenCalledTimes(1);
     });
   });
 });
