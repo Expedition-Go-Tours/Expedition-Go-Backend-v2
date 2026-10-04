@@ -494,6 +494,11 @@ router.get('/finance/payout-schedules',
   requirePermission('payouts.view', 'dashboard.*'),
   adminFinanceController.getPayoutSchedules,
 );
+// Before the :supplierId route for readability; the paths do not collide.
+router.get('/finance/payout-schedules/:supplierId/eligible-bookings',
+  requirePermission('payouts.view', 'dashboard.*'),
+  adminFinanceController.getSupplierEligibleBookings,
+);
 router.get('/finance/payout-schedules/:supplierId',
   requirePermission('payouts.view', 'dashboard.*'),
   adminFinanceController.getSupplierPayoutSchedule,

@@ -3,7 +3,7 @@ const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
 const { logActivity } = require('../services/auditLogger');
 const { enqueueNotification, enqueueEmail } = require('../services/queue');
-const { detachBookingFromActiveRequests, unfreezeBookingAfterDispute } = require('../services/financeHelpers');
+const { detachBookingFromActiveRequests, unfreezeBookingAfterDispute, payoutBookingsWhere, eligibleBookingsWhere } = require('../services/financeHelpers');
 const { notifyDiscord } = require('../services/discordNotifier');
 const {
   buildPayoutPlan,
@@ -15,6 +15,9 @@ const {
   compareSchedulesForTriage,
   VALID_CYCLES,
   CYCLE_META,
+  getMinThreshold,
+  cyclePeriodFor,
+  withLabel,
 } = require('../services/payoutRuns');
 
 // ── Finance v2 — admin processing of supplier payout requests + disputes ──
@@ -658,6 +661,101 @@ const PROFILE_PLAN_SELECT = {
 };
 
 /**
+ * Eligible totals for a whole page of suppliers in two queries, instead of
+ * one aggregate awaited per row — the loop this replaced did 20 sequential
+ * round trips on a default page.
+ *
+ * Grouped by tour because `supplierId` lives on the tour relation, so the
+ * aggregation stays in the database and only an id map comes back.
+ *
+ * @param {string[]} supplierIds
+ * @returns {Promise<Map<string, {amount: number, count: number}>>} keyed by supplierId
+ */
+async function eligibleTotalsFor(supplierIds) {
+  const totals = new Map();
+  if (!supplierIds || supplierIds.length === 0) return totals;
+
+  const byTour = await prisma.booking.groupBy({
+    by: ['tourId'],
+    where: payoutBookingsWhere({ supplierIds }),
+    _sum: { supplierPayout: true },
+    _count: { _all: true },
+  });
+  if (byTour.length === 0) return totals;
+
+  const tours = await prisma.tour.findMany({
+    where: { id: { in: byTour.map((r) => r.tourId) } },
+    select: { id: true, supplierId: true },
+  });
+  const owner = new Map(tours.map((t) => [t.id, t.supplierId]));
+
+  for (const row of byTour) {
+    const supplierId = owner.get(row.tourId);
+    if (!supplierId) continue;
+    const current = totals.get(supplierId) || { amount: 0, count: 0 };
+    current.amount += toNumber(row._sum?.supplierPayout);
+    current.count += row._count?._all ?? 0;
+    totals.set(supplierId, current);
+  }
+  return totals;
+}
+
+/**
+ * Whether a supplier's automated run would actually fire, phrased the way
+ * finance reads the queue.
+ *
+ * The order is the scheduler's own (generateDuePayoutRuns: destination, then
+ * funds, then the minimum threshold — each of which causes a skip), so the
+ * reason shown is the first thing that would make the run skip that
+ * supplier. The global pause is checked last on purpose: it is already
+ * bannered across the top of the tab, and leading with it would bury "this
+ * supplier has no verified payout method" behind a switch that is wrong for
+ * everyone.
+ *
+ * @returns {{code: string, label: string, detail: string, kind: 'ready'|'blocked'|'idle'}}
+ */
+function buildPayoutReadiness({ hasVerifiedMethod, amount, bookingCount, autoRuns, minThreshold }) {
+  if (!hasVerifiedMethod) {
+    return {
+      code: 'NO_METHOD',
+      label: 'No verified payout method',
+      detail: 'The run skips suppliers with no verified destination for the money.',
+      kind: 'blocked',
+    };
+  }
+  if (!bookingCount) {
+    return {
+      code: 'NOTHING_ELIGIBLE',
+      label: 'Nothing eligible yet',
+      detail: 'No booking has cleared the payment window for this supplier, so the run has nothing to pay.',
+      kind: 'idle',
+    };
+  }
+  if (minThreshold > 0 && amount < minThreshold) {
+    return {
+      code: 'BELOW_MINIMUM',
+      label: `Below the ${minThreshold.toFixed(2)} USD minimum`,
+      detail: `The scheduler only fires at or above ${minThreshold.toFixed(2)} USD. This amount rolls into the next cadence.`,
+      kind: 'blocked',
+    };
+  }
+  if (autoRuns === false) {
+    return {
+      code: 'SCHEDULER_PAUSED',
+      label: 'Runs are paused',
+      detail: 'Automatic payout runs are switched off platform-wide, so nothing is released until they are switched back on.',
+      kind: 'blocked',
+    };
+  }
+  return {
+    code: 'READY',
+    label: 'Ready to run',
+    detail: 'Funds cleared, a verified destination, and above the minimum — this supplier pays on their next run.',
+    kind: 'ready',
+  };
+}
+
+/**
  * GET /admin/finance/payout-schedules?page=&limit=&search=&cycle=
  * Every enrolled supplier with their cadence, next run date and eligible
  * balance (so finance can see what each upcoming run will pay).
@@ -728,27 +826,22 @@ exports.getPayoutSchedules = catchAsync(async (req, res) => {
   const paged = projected.slice((page - 1) * limit, (page - 1) * limit + limit);
 
   const supplierIds = paged.map(({ profile }) => profile.userId);
-  const verifiedMethods = supplierIds.length
-    ? await prisma.payoutMethod.findMany({
-        where: { supplierId: { in: supplierIds }, verified: true },
-        select: { supplierId: true },
-      })
-    : [];
+  const [verifiedMethods, minThreshold, eligibleBySupplier] = await Promise.all([
+    supplierIds.length
+      ? prisma.payoutMethod.findMany({
+          where: { supplierId: { in: supplierIds }, verified: true },
+          select: { supplierId: true },
+        })
+      : [],
+    getMinThreshold(),
+    eligibleTotalsFor(supplierIds),
+  ]);
   const hasMethod = new Set(verifiedMethods.map((m) => m.supplierId));
 
   const schedules = [];
   for (const { profile: p, plan } of paged) {
-    const eligible = await prisma.booking.aggregate({
-      where: {
-        tour: { supplierId: p.userId },
-        isSimulated: false,
-        payoutStatus: 'ELIGIBLE',
-        paymentStatus: 'SUCCEEDED',
-        status: { in: ['CONFIRMED', 'COMPLETED'] },
-      },
-      _sum: { supplierPayout: true },
-      _count: true,
-    });
+    const eligible = eligibleBySupplier.get(p.userId) || { amount: 0, count: 0 };
+    const method = hasMethod.has(p.userId);
 
     schedules.push({
       supplierId: p.userId,
@@ -757,11 +850,20 @@ exports.getPayoutSchedules = catchAsync(async (req, res) => {
       status: p.status,
       plan,
       eligibleBalance: {
-        amount: toNumber(eligible._sum.supplierPayout),
-        bookingCount: eligible._count,
+        amount: eligible.amount,
+        bookingCount: eligible.count,
         currency: 'USD',
       },
-      hasVerifiedMethod: hasMethod.has(p.userId),
+      hasVerifiedMethod: method,
+      // Why the figure is what it is — a zero on its own is unactionable, and
+      // 38 of these suppliers currently show one.
+      readiness: buildPayoutReadiness({
+        hasVerifiedMethod: method,
+        amount: eligible.amount,
+        bookingCount: eligible.count,
+        autoRuns,
+        minThreshold,
+      }),
     });
   }
 
@@ -794,22 +896,21 @@ exports.getSupplierPayoutSchedule = catchAsync(async (req, res, next) => {
   });
   if (!profile) return next(new AppError('Supplier not found', 404));
 
-  const [defaultCycle, autoRuns, eligible, verifiedMethodCount] = await Promise.all([
+  const [defaultCycle, autoRuns, minThreshold, eligible, verifiedMethodCount] = await Promise.all([
     getDefaultCycle(),
     autoRunsEnabled(),
+    getMinThreshold(),
     prisma.booking.aggregate({
-      where: {
-        tour: { supplierId: profile.userId },
-        isSimulated: false,
-        payoutStatus: 'ELIGIBLE',
-        paymentStatus: 'SUCCEEDED',
-        status: { in: ['CONFIRMED', 'COMPLETED'] },
-      },
+      where: eligibleBookingsWhere(profile.userId),
       _sum: { supplierPayout: true },
       _count: true,
     }),
     prisma.payoutMethod.count({ where: { supplierId: profile.userId, verified: true } }),
   ]);
+
+  const amount = toNumber(eligible._sum.supplierPayout);
+  const bookingCount = eligible._count;
+  const hasVerifiedMethod = verifiedMethodCount > 0;
 
   res.status(200).json({
     status: 'success',
@@ -819,9 +920,112 @@ exports.getSupplierPayoutSchedule = catchAsync(async (req, res, next) => {
       email: profile.user?.email || null,
       status: profile.status,
       plan: buildPayoutPlan(profile, { defaultCycle, autoRuns }),
-      eligibleBalance: { amount: toNumber(eligible._sum.supplierPayout), bookingCount: eligible._count, currency: 'USD' },
-      hasVerifiedMethod: verifiedMethodCount > 0,
+      eligibleBalance: { amount, bookingCount, currency: 'USD' },
+      hasVerifiedMethod,
+      readiness: buildPayoutReadiness({ hasVerifiedMethod, amount, bookingCount, autoRuns, minThreshold }),
       cycles: VALID_CYCLES.map((c) => ({ value: c, ...CYCLE_META[c] })),
+      autoRunsEnabled: autoRuns,
+      defaultCycle,
+    },
+  });
+});
+
+/**
+ * GET /admin/finance/payout-schedules/:supplierId/eligible-bookings
+ *
+ * The line items behind the "Eligible now" figure — every booking the next
+ * run would claim, so a row expanded underneath the total can never show a
+ * different total than the cell above it. Both sides come from
+ * `eligibleBookingsWhere`, the same clause that decides what gets paid.
+ *
+ * Fetched lazily, one supplier at a time: the list response covers 40
+ * suppliers and joining their line items into it would multiply the payload
+ * for rows nobody has opened.
+ *
+ * Also reports whether each booking's travel date actually falls inside the
+ * cadence window the row is labelled with. The label describes the *run*
+ * ("covering Sep 28 – Oct 4") while the figure is "everything cleared so
+ * far" — with a clearance buffer those are genuinely different sets, and an
+ * outside-window booking is normal, not an error. Flagging it means the
+ * mismatch is visible rather than implied.
+ */
+exports.getSupplierEligibleBookings = catchAsync(async (req, res, next) => {
+  const profile = await prisma.supplierProfile.findUnique({
+    where: { userId: req.params.supplierId },
+    select: PROFILE_PLAN_SELECT,
+  });
+  if (!profile) return next(new AppError('Supplier not found', 404));
+
+  const [defaultCycle, autoRuns, minThreshold, bookings, verifiedMethodCount] = await Promise.all([
+    getDefaultCycle(),
+    autoRunsEnabled(),
+    getMinThreshold(),
+    prisma.booking.findMany({
+      where: eligibleBookingsWhere(profile.userId),
+      // Oldest first: this is money that has been waiting longest, which is
+      // the order a finance officer reads it in.
+      orderBy: [{ travelDate: 'asc' }, { createdAt: 'asc' }],
+      select: {
+        id: true,
+        bookingNumber: true,
+        travelDate: true,
+        supplierPayout: true,
+        currency: true,
+        status: true,
+        paymentStatus: true,
+        createdAt: true,
+        tour: { select: { title: true } },
+      },
+    }),
+    prisma.payoutMethod.count({ where: { supplierId: profile.userId, verified: true } }),
+  ]);
+
+  const plan = buildPayoutPlan(profile, { defaultCycle, autoRuns });
+
+  // The window the row is labelled with, so each booking can be compared
+  // against it. Null when the supplier has no cadence yet.
+  const period = plan.cycle && plan.nextRunAt
+    ? withLabel(cyclePeriodFor(plan.cycle, plan.nextRunAt))
+    : null;
+
+  const amount = bookings.reduce((sum, b) => sum + toNumber(b.supplierPayout), 0);
+  const bookingCount = bookings.length;
+  const hasVerifiedMethod = verifiedMethodCount > 0;
+
+  const items = bookings.map((b) => {
+    const travel = b.travelDate ? new Date(b.travelDate) : null;
+    const inPeriod = period && travel
+      ? travel >= new Date(period.start) && travel <= new Date(period.end)
+      : null;
+    return {
+      id: b.id,
+      bookingNumber: b.bookingNumber,
+      tourTitle: b.tour?.title || null,
+      travelDate: travel,
+      supplierPayout: toNumber(b.supplierPayout),
+      currency: b.currency || 'USD',
+      status: b.status,
+      paymentStatus: b.paymentStatus,
+      clearedAt: b.createdAt,
+      inPeriod,
+    };
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      supplierId: profile.userId,
+      name: profile.user?.name || null,
+      email: profile.user?.email || null,
+      plan,
+      // The cadence window this pot is attributed to, if there is one.
+      period: period ? { start: period.start, end: period.end, label: period.label } : null,
+      eligibleBalance: { amount, bookingCount, currency: 'USD' },
+      hasVerifiedMethod,
+      readiness: buildPayoutReadiness({ hasVerifiedMethod, amount, bookingCount, autoRuns, minThreshold }),
+      // True when at least one booking travelled outside the labelled window.
+      straddlesPeriod: items.some((i) => i.inPeriod === false),
+      bookings: items,
       autoRunsEnabled: autoRuns,
       defaultCycle,
     },

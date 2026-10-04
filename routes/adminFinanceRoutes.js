@@ -239,6 +239,32 @@ router.get('/payout-schedules', requirePermission('payouts.view'), adminFinanceC
 
 /**
  * @swagger
+ * /admin/finance/payout-schedules/{supplierId}/eligible-bookings:
+ *   get:
+ *     summary: The line items behind a supplier's "Eligible now" figure
+ *     description: |
+ *       Every booking the next payout run would claim for this supplier,
+ *       built from the same predicate that decides what gets paid, plus the
+ *       reason the run will or will not fire. Fetched lazily when a row is
+ *       expanded rather than joined into the list response.
+ *     tags: [Admin Finance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: supplierId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Eligible bookings, readiness and the cadence window
+ *       404:
+ *         description: Supplier not found
+ */
+router.get('/payout-schedules/:supplierId/eligible-bookings', requirePermission('payouts.view'), adminFinanceController.getSupplierEligibleBookings);
+
+/**
+ * @swagger
  * /admin/finance/payout-schedules/{supplierId}:
  *   get:
  *     summary: One supplier's payout schedule

@@ -90,9 +90,56 @@ async function unfreezeBookingAfterDispute(tx, bookingId) {
   });
 }
 
+/**
+ * The booking filter every payout figure on the platform is derived from.
+ *
+ * This exists because the clause used to be restated at four separate call
+ * sites — two aggregates in the admin schedules list, the supplier's own
+ * finance summary, and `selectEligibleBookings`, which is the one that
+ * actually decides what gets paid. They agree today, but nothing kept them
+ * agreeing: edit one and the "Eligible now" a finance officer reads quietly
+ * stops meaning "the amount that run will pay". Now they all call this.
+ *
+ * The four conditions:
+ *   isSimulated      — demo/seed bookings are not real money, and every other
+ *                      money view on the platform already excludes them;
+ *   payoutStatus     — ELIGIBLE is claimable; PENDING is still inside the
+ *                      clearance buffer; DISPUTED/CANCELLED are frozen;
+ *   paymentStatus    — we do not advance money the customer has not paid;
+ *   status           — a cancelled or refunded experience is not owed payout.
+ *
+ * Open disputes are handled earlier, in `sweepEarningsEligibility`, which
+ * refuses to flip a booking into ELIGIBLE while a dispute is live — so they
+ * never reach this clause at all.
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.supplierId]     a single supplier
+ * @param {string[]} [opts.supplierIds]  several, for a batch aggregate
+ * @param {string} [opts.payoutStatus='ELIGIBLE']
+ * @returns {object} a Prisma `where` fragment
+ */
+function payoutBookingsWhere({ supplierId, supplierIds, payoutStatus = 'ELIGIBLE' } = {}) {
+  const where = {
+    isSimulated: false,
+    payoutStatus,
+    paymentStatus: 'SUCCEEDED',
+    status: { in: ['CONFIRMED', 'COMPLETED'] },
+  };
+  if (supplierId) where.tour = { supplierId };
+  else if (supplierIds && supplierIds.length > 0) where.tour = { supplierId: { in: supplierIds } };
+  return where;
+}
+
+/** The subset of a supplier's bookings that is claimable for payout right now. */
+function eligibleBookingsWhere(supplierId) {
+  return payoutBookingsWhere({ supplierId });
+}
+
 module.exports = {
   detachBookingFromActiveRequests,
   cancelBookingFunds,
   freezeBookingForDispute,
   unfreezeBookingAfterDispute,
+  payoutBookingsWhere,
+  eligibleBookingsWhere,
 };

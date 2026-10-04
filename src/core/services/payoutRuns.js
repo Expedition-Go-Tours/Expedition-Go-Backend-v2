@@ -27,6 +27,7 @@ const getConfig = require('./getConfig');
 const AppError = require('./appError');
 const { logActivity } = require('./auditLogger');
 const { formatCycleLabel } = require('./payoutCycles');
+const { eligibleBookingsWhere } = require('./financeHelpers');
 
 const VALID_CYCLES = ['WEEKLY', 'TWICE_MONTHLY', 'MONTHLY'];
 
@@ -574,17 +575,10 @@ async function promoteDueCycles(now = new Date()) {
 
 /** Candidate bookings for a payout: eligible funds, not disputed. */
 async function selectEligibleBookings({ supplierId, bookingIds = null }) {
-  const where = {
-    tour: { supplierId },
-    // Demo/seed bookings must never be paid out. Every other money view on the
-    // platform (finance summary, admin dashboards, analytics) excludes them, so
-    // including them here would pay out test data that the supplier's own
-    // balance card does not even show.
-    isSimulated: false,
-    payoutStatus: 'ELIGIBLE',
-    paymentStatus: 'SUCCEEDED',
-    status: { in: ['CONFIRMED', 'COMPLETED'] },
-  };
+  // The shared predicate: this is the query that decides what actually gets
+  // paid, so every figure shown *about* a payout is built from the same
+  // clause (see financeHelpers.payoutBookingsWhere).
+  const where = eligibleBookingsWhere(supplierId);
   if (Array.isArray(bookingIds) && bookingIds.length > 0) {
     where.id = { in: bookingIds };
   }

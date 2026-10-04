@@ -15,6 +15,7 @@ const {
   getSupplierRequestWindow,
 } = require('../services/payoutRuns');
 const { logActivity } = require('../services/auditLogger');
+const { payoutBookingsWhere } = require('../services/financeHelpers');
 
 // ── Finance v2 — supplier-facing payout cycle endpoints ──
 // Mounted at /finance (see routes/financeRoutes.js). All routes resolve the
@@ -46,12 +47,12 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
 
   const [eligible, pendingClearance, activeRequests, paidOut, window, cycle, bufferDays, payoutPlan] = await Promise.all([
     prisma.booking.aggregate({
-      where: { tour: { supplierId }, isSimulated: false, payoutStatus: 'ELIGIBLE', paymentStatus: 'SUCCEEDED', status: { in: ['CONFIRMED', 'COMPLETED'] } },
+      where: payoutBookingsWhere({ supplierId, payoutStatus: 'ELIGIBLE' }),
       _sum: { supplierPayout: true },
       _count: true,
     }),
     prisma.booking.aggregate({
-      where: { tour: { supplierId }, isSimulated: false, payoutStatus: 'PENDING', paymentStatus: 'SUCCEEDED', status: { in: ['CONFIRMED', 'COMPLETED'] } },
+      where: payoutBookingsWhere({ supplierId, payoutStatus: 'PENDING' }),
       _sum: { supplierPayout: true },
       _count: true,
     }),
