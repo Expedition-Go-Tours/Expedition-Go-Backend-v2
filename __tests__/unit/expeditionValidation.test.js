@@ -1,4 +1,8 @@
-const { confirmBookingSchema, calculateCheckoutSchema } = require('../../src/core/services/expeditionValidation');
+const {
+  confirmBookingSchema,
+  calculateCheckoutSchema,
+  supplierToursSchema,
+} = require('../../src/core/services/expeditionValidation');
 
 const basePayload = {
   body: {
@@ -232,5 +236,92 @@ describe('calculateCheckoutSchema', () => {
       body: { ...baseCalc.body, travelDate: '15-08-2026' },
     });
     expect(result.success).toBe(false);
+  });
+});
+
+/**
+ * The public "tours by this supplier" rail.
+ *
+ * Supplier and Tour ids are Prisma `cuid()`s. This schema once demanded
+ * `z.string().uuid()`, so every real request was rejected with
+ * `params.supplierId: Invalid UUID` and the rail was dead on Expedition while
+ * being unregistered on TravioGhana. These cases pin the id shapes that actually
+ * occur in production and the bounds that must still hold.
+ */
+describe('supplierToursSchema', () => {
+  const CUID_SUPPLIER = 'cmuebob1r0000m002vrdichto';
+  const CUID_TOUR = 'cmur6ozh200267qyccvhcrboq';
+  const UUID_ID = '3f2504e0-4f89-11d3-9a0c-0305e82c3301';
+
+  it('accepts a cuid supplier id', () => {
+    const result = supplierToursSchema.safeParse({
+      body: undefined,
+      params: { supplierId: CUID_SUPPLIER },
+      query: { limit: '8' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a cuid exclude id, so a page can omit its own tour', () => {
+    const result = supplierToursSchema.safeParse({
+      body: undefined,
+      params: { supplierId: CUID_SUPPLIER },
+      query: { limit: '8', exclude: CUID_TOUR },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data.query.exclude).toBe(CUID_TOUR);
+  });
+
+  it('accepts a legacy uuid id for either parameter', () => {
+    const result = supplierToursSchema.safeParse({
+      body: undefined,
+      params: { supplierId: UUID_ID },
+      query: { exclude: UUID_ID },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('defaults the limit to 8', () => {
+    const result = supplierToursSchema.safeParse({
+      body: undefined,
+      params: { supplierId: CUID_SUPPLIER },
+      query: {},
+    });
+    expect(result.success).toBe(true);
+    expect(result.data.query.limit).toBe(8);
+  });
+
+  it('rejects a non-id supplier id', () => {
+    const result = supplierToursSchema.safeParse({
+      body: undefined,
+      params: { supplierId: '../../etc/passwd' },
+      query: {},
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a missing supplier id', () => {
+    const result = supplierToursSchema.safeParse({ body: undefined, params: {}, query: {} });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a non-id exclude value', () => {
+    const result = supplierToursSchema.safeParse({
+      body: undefined,
+      params: { supplierId: CUID_SUPPLIER },
+      query: { exclude: 'not an id!' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a limit outside 1..20', () => {
+    for (const limit of ['0', '21', '-1']) {
+      const result = supplierToursSchema.safeParse({
+        body: undefined,
+        params: { supplierId: CUID_SUPPLIER },
+        query: { limit },
+      });
+      expect(result.success).toBe(false);
+    }
   });
 });

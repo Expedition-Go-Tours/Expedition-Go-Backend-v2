@@ -48,6 +48,7 @@ const {
   modifyBookingSchema,
   discardModifySchema,
   updateBookingPickupSchema,
+  supplierToursSchema,
 } = require('../../core/services/expeditionValidation');
 // Structured GetYourGuide-style cancellation validation (shared with core) —
 // replaces the brand-local loose schema so a supplier cancel can never skip
@@ -310,6 +311,37 @@ router.get('/tours/:slug/reviews', validate(getTourReviewsSchema), travioGhanaCo
  *         description: Tour not found
  */
 router.get('/tours/:slug/similar', validate(slugParamSchema), travioGhanaController.getSimilarTours);
+
+/**
+ * @swagger
+ * /api/travioghana/suppliers/{supplierId}/tours:
+ *   get:
+ *     summary: Get a supplier's active tours
+ *     description: |
+ *       Returns a supplier's own active tours for the "tours by this supplier"
+ *       rail on the tour-detail page and the "more from this supplier" row on
+ *       the booking confirmation. Only listings that are active, whose tour is
+ *       ACTIVE and whose supplier profile is ACTIVE are returned, ordered by
+ *       rating. Pass `exclude` to omit the tour the visitor is already viewing
+ *       so a page never lists itself.
+ *     tags: [Storefront]
+ *     parameters:
+ *       - in: path
+ *         name: supplierId
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: exclude
+ *         schema: { type: string }
+ *         description: Tour id to omit from the result
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 8, minimum: 1, maximum: 20 }
+ *     responses:
+ *       200:
+ *         description: Supplier tours
+ */
+router.get('/suppliers/:supplierId/tours', validate(supplierToursSchema), travioGhanaController.getSupplierTours);
 
 /**
  * @swagger

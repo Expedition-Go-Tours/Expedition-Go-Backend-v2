@@ -431,14 +431,34 @@ const analyticsFunnelSchema = z.object({
   params: z.object({}).optional(),
 });
 
+/**
+ * Supplier and Tour primary keys are Prisma `cuid()`s, not UUIDs — every model
+ * in schema.prisma that this route touches defaults to `cuid()`. Validating
+ * them as `z.string().uuid()` rejected every real request with
+ * `params.supplierId: Invalid UUID`, so the public supplier rail never
+ * resolved. Both storefronts therefore had a dead "tours by this supplier"
+ * section: TravioGhana 404 (the route was never registered on that brand) and
+ * Expedition 400 (the validator rejected the id).
+ *
+ * A cuid is 25 chars of lowercase alphanumerics, conventionally starting with
+ * `c`. Accepting that shape — plus a UUID, for any id that predates the switch —
+ * validates the real thing while still rejecting path junk.
+ */
+const cuidOrUuid = z
+  .string()
+  .max(64)
+  .refine((v) => /^[a-z][a-z0-9]{7,63}$/i.test(v) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v), {
+    message: 'Invalid id',
+  });
+
 const supplierToursSchema = z.object({
   body: z.any().optional(),
   query: z.object({
-    exclude: z.string().uuid().optional(),
+    exclude: cuidOrUuid.optional(),
     limit: z.coerce.number().int().min(1).max(20).default(8).optional(),
   }).passthrough(),
   params: z.object({
-    supplierId: z.string().uuid(),
+    supplierId: cuidOrUuid,
   }),
 });
 
