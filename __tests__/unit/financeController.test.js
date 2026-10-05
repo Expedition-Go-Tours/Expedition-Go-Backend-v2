@@ -1,6 +1,6 @@
 jest.mock('../../src/core/services/prismaClient', () => ({
   payoutRequest: { findFirst: jest.fn(), create: jest.fn(), findMany: jest.fn() },
-  booking: { aggregate: jest.fn(), findFirst: jest.fn(), findMany: jest.fn() },
+  booking: { aggregate: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), groupBy: jest.fn() },
   payout: { aggregate: jest.fn() },
   $transaction: jest.fn(),
 }));
@@ -273,6 +273,11 @@ describe('getFinanceSummary — a payout in flight', () => {
     prisma.payout.aggregate.mockResolvedValue({ _sum: { amount: 586.5 } });
     prisma.payoutRequest.findMany.mockResolvedValue([activeRequest]);
     prisma.booking.findFirst.mockResolvedValue({ travelDate: new Date(2026, 9, 6) });
+    prisma.booking.groupBy.mockResolvedValue([
+      { payoutStatus: 'PENDING', _count: { _all: 2 } },
+      { payoutStatus: 'REQUESTED', _count: { _all: 12 } },
+      { payoutStatus: 'CANCELLED', _count: { _all: 1 } },
+    ]);
     getSupplierPayoutPlan.mockResolvedValue(schedule());
     getSupplierRequestWindow.mockReturnValue(closedWindow);
   });
@@ -293,6 +298,21 @@ describe('getFinanceSummary — a payout in flight', () => {
       cycleLabel: 'Sep 28 – Oct 4',
     });
     expect(data.inReview.latestRequest.createdAt).toBeInstanceOf(Date);
+  });
+
+  it('counts every payout bucket, including the empty ones', async () => {
+    const { data } = await invokeSummary();
+
+    // Every key present so the UI never has to tell 0 from missing, and so the
+    // filter chips can be labelled with real numbers.
+    expect(data.payoutCounts).toEqual({
+      PENDING: 2,
+      ELIGIBLE: 0,
+      REQUESTED: 12,
+      PAID: 0,
+      DISPUTED: 0,
+      CANCELLED: 1,
+    });
   });
 
   it('asks for the newest request first', async () => {

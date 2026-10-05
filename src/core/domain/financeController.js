@@ -45,7 +45,7 @@ function serializeRequest(request) {
 exports.getFinanceSummary = catchAsync(async (req, res) => {
   const supplierId = req.supplierId;
 
-  const [eligible, pendingClearance, activeRequests, paidOut, window, cycle, bufferDays, payoutPlan, nextPending] = await Promise.all([
+  const [eligible, pendingClearance, activeRequests, paidOut, window, cycle, bufferDays, payoutPlan, nextPending, payoutCounts] = await Promise.all([
     prisma.booking.aggregate({
       where: payoutBookingsWhere({ supplierId, payoutStatus: 'ELIGIBLE' }),
       _sum: { supplierPayout: true },
@@ -96,6 +96,15 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
       },
       orderBy: { travelDate: 'asc' },
       select: { travelDate: true },
+    }),
+    // How many bookings sit in each payout bucket. The earnings table can be
+    // filtered down to an empty set while the supplier holds plenty of bookings
+    // in another bucket, and "No earnings yet" for someone with 15 bookings is
+    // simply false — these counts are what let the page say where they went.
+    prisma.booking.groupBy({
+      by: ['payoutStatus'],
+      where: { tour: { supplierId }, isSimulated: false },
+      _count: { _all: true },
     }),
   ]);
 
@@ -165,6 +174,14 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
             }
           : null,
       },
+      // Booking count per payout bucket, always every key present so the UI
+      // never has to distinguish "0" from "missing".
+      payoutCounts: Object.fromEntries(
+        ['PENDING', 'ELIGIBLE', 'REQUESTED', 'PAID', 'DISPUTED', 'CANCELLED'].map((key) => [
+          key,
+          Number(payoutCounts.find((r) => r.payoutStatus === key)?._count?._all || 0),
+        ])
+      ),
       // When the soonest uncleared booking becomes withdrawable: its travel date
       // plus the clearance buffer, which is exactly the sweep's own cutoff.
       nextEligibleAt: nextPending?.travelDate
