@@ -10,6 +10,7 @@ const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = requi
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('./services/availabilityCore');
 const { resolvePickupSelection, normalizePickupSnapshot } = require('./services/geoUtils');
 const { pickupAddressLabel } = require('./services/emailFormatting');
+const { pickupChange } = require('./services/pickupChange');
 const { validatePassengerMix } = require('./services/passengerMix');
 const { createPaymentIntent, createCheckoutSession, createCustomCheckoutPaymentIntent, createCustomerSession, calculateCommission, getStripe, ensureStripeCustomer } = require('./services/stripeHelpers');
 const { resolveAllowedClientUrl } = require('./services/clientOrigin');
@@ -3079,9 +3080,13 @@ controller.updateMyPickup = catchAsync(async (req, res, next) => {
   const snapshot = normalizePickupSnapshot(pickup, pickupConfig);
   if (!snapshot) return next(new AppError('Invalid pickup selection', 400));
 
-  // Capture the pre-update location so the supplier email can show the old
-  // pickup (struck through) next to the new one.
-  const previousPickupLocation = pickupAddressLabel(booking.pickup);
+  // Compare against what is stored *before* writing, so a save that moves
+  // nothing stays silent. Re-submitting the pickup already chosen at checkout
+  // used to mail the supplier "Pickup information has changed" with the same
+  // address in both the previous and the new row — the templates state the
+  // change happened and ask them to redo their schedule for a location that
+  // never moved.
+  const { changed, previousPickupLocation } = pickupChange(booking.pickup, snapshot);
 
   await prisma.booking.update({
     where: { id },
@@ -3089,20 +3094,22 @@ controller.updateMyPickup = catchAsync(async (req, res, next) => {
   });
 
   // Notify the supplier (in-app + email) so they can plan the pickup.
-  enqueueNotification({
-    userId: booking.tour.supplierId,
-    type: 'PICKUP_UPDATED',
-    title: 'Customer updated pickup details',
-    message: `Customer updated pickup for booking "${booking.tour.title}"`,
-    data: { bookingId: booking.id, pickup: true, source: BRAND.eventNamespace },
-  }).catch((err) => console.error('[Expedition] enqueueNotification (customer pickup update) failed:', err.message));
+  if (changed) {
+    enqueueNotification({
+      userId: booking.tour.supplierId,
+      type: 'PICKUP_UPDATED',
+      title: 'Customer updated pickup details',
+      message: `Customer updated pickup for booking "${booking.tour.title}"`,
+      data: { bookingId: booking.id, pickup: true, source: BRAND.eventNamespace },
+    }).catch((err) => console.error('[Expedition] enqueueNotification (customer pickup update) failed:', err.message));
 
-  enqueueEmail({
-    type: 'supplier-pickup-updated',
-    bookingId: booking.id,
-    data: { previousPickupLocation },
-  })
-  .catch((err) => console.error('[Expedition] supplier-pickup-updated email failed:', err.message));
+    enqueueEmail({
+      type: 'supplier-pickup-updated',
+      bookingId: booking.id,
+      data: { previousPickupLocation },
+    })
+    .catch((err) => console.error('[Expedition] supplier-pickup-updated email failed:', err.message));
+  }
 
   logActivity({
     userId: customerId,

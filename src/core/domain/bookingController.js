@@ -24,7 +24,7 @@ const { Prisma } = require('@prisma/client');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../services/availabilityCore');
 const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../services/queue');
 const { resolvePickupSelection, pickupStatus, isPickupIncomplete } = require('../services/geoUtils');
-const { pickupAddressLabel } = require('../services/emailFormatting');
+const { pickupChange } = require('../services/pickupChange');
 const getConfig = require('../services/getConfig');
 const { detachBookingFromActiveRequests } = require('../services/financeHelpers');
 const { generatePrintableTicketHtml } = require('../services/emailService');
@@ -1434,10 +1434,6 @@ exports.updateBookingPickup = catchAsync(async (req, res, next) => {
     ? (() => { try { return JSON.parse(booking.pickup); } catch { return null; } })()
     : booking.pickup || {};
 
-  // Capture the pre-update location so the customer email can show the old
-  // pickup (struck through) next to the new one.
-  const previousPickupLocation = pickupAddressLabel(current);
-
   const pickupFieldsProvided = [pickupTime, pickupPlace, instructions, locationName, areaName, lat, lng]
     .some((value) => value !== undefined);
 
@@ -1475,8 +1471,13 @@ exports.updateBookingPickup = catchAsync(async (req, res, next) => {
 
   const updatedBooking = await prisma.booking.update({ where: { id }, data });
 
-  // Notify the customer (in-app + email) only when the pickup details changed.
-  if (pickupFieldsProvided) {
+  // Notify the customer (in-app + email) only when the pickup details actually
+  // changed. `pickupFieldsProvided` merely says the supplier sent a form; it
+  // said nothing about whether anything moved, so re-saving identical details
+  // mailed a "Your pickup details have been updated" notice whose previous and
+  // new rows were the same value.
+  const pickupChangeResult = data.pickup ? pickupChange(current, data.pickup) : null;
+  if (pickupChangeResult && pickupChangeResult.changed) {
     enqueueNotification({
       userId: booking.customerId,
       type: 'PICKUP_UPDATED',
@@ -1488,7 +1489,7 @@ exports.updateBookingPickup = catchAsync(async (req, res, next) => {
     enqueueEmail({
       type: 'pickup-details-updated',
       bookingId: booking.id,
-      data: { previousPickupLocation },
+      data: { previousPickupLocation: pickupChangeResult.previousPickupLocation },
     })
     .catch((err) => console.error('[Email] pickup-details-updated failed:', err.message));
   }
