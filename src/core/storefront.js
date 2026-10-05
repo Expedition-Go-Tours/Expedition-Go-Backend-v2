@@ -896,8 +896,12 @@ controller.getSupplierTours = catchAsync(async (req, res, next) => {
             id: true, title: true, slug: true, description: true,
             coverPhoto: true, photos: true, category: true,
             durationMinutes: true, averageRating: true, reviewCount: true,
-            city: true, country: true, tags: true, startingPrice: true,
-            currency: true, totalBookings: true,
+            city: true, country: true, tags: true,
+            // Price lives in schedulesAndPricing, not on the row —
+            // transformForListing derives startingPrice/currency from it, and
+            // `startingPrice` is not a column, so selecting it made every
+            // request fail Prisma validation.
+            schedulesAndPricing: true,
             supplier: { select: { id: true, name: true, photoURL: true } },
           },
         },
