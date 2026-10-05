@@ -690,6 +690,22 @@ jobs:
             done
             git reset --hard origin/main
 
+            # git reset writes as root, and it only rewrites files whose blob
+            # changed — so precisely the files the new commit touched end up
+            # root:root 644. The next step runs as `deploy`, and npm rewrites
+            # package-lock.json on every install, so a commit that touches it
+            # (or package.json) made the deploy die here:
+            #
+            #   npm error code EACCES
+            #   npm error path /home/deploy/Expedition-Go-Backend-v2/package-lock.json
+            #
+            # and `set -euo pipefail` aborted before the pm2 reload, leaving the
+            # new code on disk but the old process still serving. Two of the last
+            # forty deploys failed this way, and both were the only two commits
+            # in that window that touched the lockfile. Re-assert ownership
+            # after the reset, not just before it.
+            chown -R deploy:deploy "$APP_DIR"
+
             echo "=== Installing dependencies ==="
             su - deploy -c "cd $APP_DIR && npm install --production"
 
@@ -935,17 +951,36 @@ jobs:
           TESTS_E2E_PASSED: ${{ needs.e2e-tests.outputs.passed }}
           TESTS_E2E_FAILED: ${{ needs.e2e-tests.outputs.failed }}
           TESTS_E2E_SKIPPED: ${{ needs.e2e-tests.outputs.skipped }}
-          FAILED_JOBS: ${{ steps.status.outputs.failed_jobs }}
           DISCORD_DEPLOY_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
         run: |
-          # Collect failed job names
-          NEEDS_CONTEXT='${{ needs }}'
+          # Collect failed job names.
+          #
+          # This used to interpolate the whole `needs` context into a quoted
+          # bash string (NEEDS_CONTEXT) and re-parse it with jq. Expressions are
+          # expanded across the entire run block before bash sees it, so that
+          # put a JSON blob in the middle of a quoted string and then asked jq
+          # to parse it back out — fragile for any output value containing a
+          # quote or newline, and when it did break this step failed too,
+          # masking the very failure it was meant to report. Every per-job
+          # result is a bare enum string, so interpolate those directly and
+          # carry them as name=result pairs: no JSON, no jq, nothing to quote.
           FAILED_JOBS=""
-          for JOB in lint unit-tests integration-tests startup-check smoke-test e2e-tests coverage deploy deploy-verify; do
-            RESULT=$(echo "$NEEDS_CONTEXT" | jq -r --arg j "$JOB" '.[$j].result // "skipped"')
-            if [ "$RESULT" = "failure" ]; then
-              FAILED_JOBS="${FAILED_JOBS}\`${JOB}\` "
+          for PAIR in \
+            "lint=${{ needs.lint.result }}" \
+            "unit-tests=${{ needs.unit-tests.result }}" \
+            "integration-tests=${{ needs.integration-tests.result }}" \
+            "startup-check=${{ needs.startup-check.result }}" \
+            "smoke-test=${{ needs.smoke-test.result }}" \
+            "e2e-tests=${{ needs.e2e-tests.result }}" \
+            "coverage=${{ needs.coverage.result }}" \
+            "deploy=${{ needs.deploy.result }}" \
+            "deploy-verify=${{ needs.deploy-verify.result }}"; do
+            if [ "${PAIR#*=}" = "failure" ]; then
+              FAILED_JOBS="${FAILED_JOBS}\`${PAIR%%=*}\` "
             fi
           done
-          echo "failed_jobs=$FAILED_JOBS" >> "$GITHUB_OUTPUT"
+          echo "failed jobs:${FAILED_JOBS:-none}"
+          # Exported rather than written to GITHUB_OUTPUT: GITHUB_OUTPUT does
+          # not reach this step, and this step is what runs the notifier.
+          export FAILED_JOBS
           node scripts/deployNotify.js
