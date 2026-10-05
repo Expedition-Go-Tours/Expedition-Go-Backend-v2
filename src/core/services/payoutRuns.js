@@ -251,9 +251,18 @@ function nextEffectiveDate(now = new Date()) {
 }
 
 /**
- * The cadence actually in force for a profile: a pending change that has
- * reached its effective date wins, otherwise the active value. Pure — safe to
- * call on read paths without writing.
+ * The cadence actually in force for a profile, or null when it is on none. A
+ * pending change that has reached its effective date wins, otherwise the active
+ * value. Pure — safe to call on read paths without writing.
+ *
+ * The absence of a platform-default fallback is deliberate and has been
+ * mistaken for a bug more than once. `payout.default_cycle` is applied at
+ * signup (see `supplierController`), so every supplier created since that
+ * rollout already carries a `payoutCycle`. Backfilling one here as well would
+ * silently enrol the pre-rollout suppliers who never picked a schedule — moving
+ * real money onto a cadence they did not agree to, on the strength of a config
+ * value they never saw. A null cycle means "legacy calendar window", and that
+ * stays true until the supplier chooses a schedule themselves.
  */
 function resolveEffectiveCycle(profile, now = new Date()) {
   if (!profile) return null;
