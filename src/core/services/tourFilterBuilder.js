@@ -397,6 +397,34 @@ async function getAvailableFilterOptions(prisma) {
 }
 
 /**
+ * Is this query value a usable positive integer?
+ *
+ * Accepts the number and numeric-string forms a query string can carry, plus an
+ * array's first element (`?page=1&page=2`). Rejects the blank, whitespace,
+ * partially-numeric (`'2abc'`) and non-positive values that would otherwise
+ * reach `parseInt` and become NaN.
+ *
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+/**
+ * Is this query value a usable positive integer?
+ *
+ * Mirrors `z.coerce.number().int().min(1)`, the rule the brand routes already
+ * apply to `page`/`limit`, so this legacy route answers a blank or malformed
+ * value the same way they do. Blank, whitespace, non-numeric and fractional
+ * values fail; `'3'`, `' 3 '`, `'+3'` and `'3e0'` pass.
+ *
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isPositiveIntQueryValue(value) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const parsed = typeof raw === 'string' ? Number(raw.trim()) : raw;
+  return Number.isFinite(parsed) && Number.isInteger(parsed) && parsed >= 1;
+}
+
+/**
  * Validate filter parameters
  */
 function validateFilterParams(queryParams) {
@@ -434,11 +462,19 @@ function validateFilterParams(queryParams) {
     }
   }
 
-  // Validate pagination
-  if (queryParams.page && (isNaN(parseInt(queryParams.page)) || parseInt(queryParams.page) < 1)) {
+  // Validate pagination.
+  //
+  // The presence test must be `!== undefined` rather than truthiness. A blank
+  // value (`?page=`, `?limit=`) is falsy, so the old `queryParams.page && ...`
+  // check read it as absent, passed validation, and left `parseInt('')` to
+  // produce NaN in the caller's `skip` — which Prisma serializes away and then
+  // rejects with "Argument `skip` is missing", 500ing the request. Reject the
+  // blank explicitly, matching what the zod-validated brand routes already
+  // return for the same input.
+  if (queryParams.page !== undefined && !isPositiveIntQueryValue(queryParams.page)) {
     errors.push('page must be a positive integer');
   }
-  if (queryParams.limit && (isNaN(parseInt(queryParams.limit)) || parseInt(queryParams.limit) < 1)) {
+  if (queryParams.limit !== undefined && !isPositiveIntQueryValue(queryParams.limit)) {
     errors.push('limit must be a positive integer');
   }
 

@@ -31,6 +31,7 @@ const {
   getTourDistances,
   findTourIdsByItinerary
 } = require('../services/tourFilterBuilder');
+const { toPositiveInt } = require('../services/pagination');
 const { shouldCountTourView } = require('../services/viewTracking');
 const { haversineKm, resolveCityCentroid, findNearbyCities } = require('../services/locationGeo');
 const { rankByPlace, resolvePlace } = require('../services/placeResolver');
@@ -73,15 +74,21 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
   } = req.query;
 
   const sortBy = search && !rawSortBy ? 'relevance' : (rawSortBy || 'createdAt');
-  const pageLimit = parseInt(limit);
-  // When a date is searched, fetch a lookahead buffer so the availability
-  // re-check can still return a full page after dropping unavailable tours.
-  const queryLimit = req.query.availableDate ? Math.min(pageLimit * 3, 60) : pageLimit;
 
   const validation = validateFilterParams(req.query);
   if (!validation.isValid) {
     return next(new AppError(`Invalid filters: ${validation.errors.join(', ')}`, 400));
   }
+
+  // Coerce page/limit to integers that Prisma can be handed unconditionally.
+  // The destructuring defaults above only fire for `undefined`, so a blank
+  // `?page=`/`?limit=` reached parseInt and produced NaN; the validator now
+  // rejects those, and this keeps the arithmetic total regardless.
+  const pageNumber = toPositiveInt(page, 1);
+  const pageLimit = toPositiveInt(limit, 12);
+  // When a date is searched, fetch a lookahead buffer so the availability
+  // re-check can still return a full page after dropping unavailable tours.
+  const queryLimit = req.query.availableDate ? Math.min(pageLimit * 3, 60) : pageLimit;
 
   const hasGeo = lat && lng;
   const cacheKey = 'tours:list:' + crypto.createHash('md5').update(JSON.stringify(req.query)).digest('hex');
@@ -92,7 +99,7 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
     // into the search clause.
     const itineraryTourIds = search ? await findTourIdsByItinerary(prisma, search) : [];
     const where = buildTourFilters(req.query, { itineraryTourIds });
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const skip = (pageNumber - 1) * pageLimit;
     // Collect ID constraints from filters that cannot be expressed as Prisma queries
     const idFilters = [];
 
@@ -100,14 +107,14 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
     if (hasGeo) {
       const nearbyIds = await findNearbyTourIds(prisma, parseFloat(lat), parseFloat(lng), parseFloat(radius) || 50);
       if (nearbyIds.length === 0) {
-        const totalPages = Math.ceil(0 / parseInt(limit));
+        const totalPages = Math.ceil(0 / pageLimit);
         return {
           status: 'success',
           data: {
             tours: [],
             pagination: {
-              currentPage: parseInt(page), totalPages, totalCount: 0,
-              hasNextPage: false, hasPrevPage: false, limit: parseInt(limit)
+              currentPage: pageNumber, totalPages, totalCount: 0,
+              hasNextPage: false, hasPrevPage: false, limit: pageLimit
             },
             appliedFilters: {
               category: req.query.category, theme: req.query.theme,
@@ -126,14 +133,14 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
     const priceConstraint = await buildPriceIdConstraint(prisma, minPrice, maxPrice, priceRange);
     if (priceConstraint === false) {
       // No results match the price filter
-      const totalPages = Math.ceil(0 / parseInt(limit));
+      const totalPages = Math.ceil(0 / pageLimit);
       return {
         status: 'success',
         data: {
           tours: [],
           pagination: {
-            currentPage: parseInt(page), totalPages, totalCount: 0,
-            hasNextPage: false, hasPrevPage: false, limit: parseInt(limit)
+            currentPage: pageNumber, totalPages, totalCount: 0,
+            hasNextPage: false, hasPrevPage: false, limit: pageLimit
           },
           appliedFilters: {
             category: req.query.category, theme: req.query.theme,
@@ -357,15 +364,15 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
     }
 
     const totalPages = Math.ceil(totalCount / pageLimit);
-    const hasNextPage = parseInt(page) < totalPages;
-    const hasPrevPage = parseInt(page) > 1;
+    const hasNextPage = pageNumber < totalPages;
+    const hasPrevPage = pageNumber > 1;
 
     const response = {
       status: 'success',
       data: {
         tours: optimizedTours,
         pagination: {
-          currentPage: parseInt(page), totalPages, totalCount,
+          currentPage: pageNumber, totalPages, totalCount,
           hasNextPage, hasPrevPage, limit: pageLimit
         },
         appliedFilters: {
