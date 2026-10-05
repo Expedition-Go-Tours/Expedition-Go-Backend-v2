@@ -914,8 +914,12 @@ controller.getSupplierTours = catchAsync(async (req, res, next) => {
     }));
   }, 600);
 
-  if (!result) return res.json({ status: 'success', data: { tours: [] } });
-  res.status(200).json(result);
+  // Always the same envelope. The empty branch used to return
+  // `{ status, data: { tours: [] } }` while the populated branch returned the
+  // bare array, so every storefront caller reading `data.tours` silently got an
+  // empty rail whenever there was something to show — the one case where it
+  // matters. Both branches now answer `{ status, data: { tours } }`.
+  res.status(200).json({ status: 'success', data: { tours: result || [] } });
 });
 
 controller.getTourBySlug = catchAsync(async (req, res, next) => {

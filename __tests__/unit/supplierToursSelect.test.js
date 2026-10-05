@@ -107,6 +107,54 @@ describe('getSupplierTours Prisma select', () => {
     const args = await runHandler();
     expect(args.where.tour.id).toBeUndefined();
   });
+
+  it('answers the same envelope whether or not there are rows', async () => {
+    const prisma = require('../../src/core/services/prismaClient');
+
+    const respond = async (rows) => {
+      prisma.travioGhanaTour.findMany.mockResolvedValue(rows);
+      const res = { json: jest.fn(), status: jest.fn().mockReturnThis() };
+      await controller.getSupplierTours(
+        { params: { supplierId: 'cmuebob1r0000m002vrdichto' }, query: { limit: '8' } },
+        res,
+        jest.fn(),
+      );
+      return res.json.mock.calls[0][0];
+    };
+
+    // The populated branch used to answer a bare array while only the empty
+    // branch answered `{ status, data: { tours } }`, so a caller reading
+    // `data.tours` saw nothing precisely when there was something to show.
+    const populated = await respond([
+      { id: 'listing-1', tour: { id: 'tour-1', title: 'A tour', schedulesAndPricing: null } },
+    ]);
+    expect(Array.isArray(populated)).toBe(false);
+    expect(populated.status).toBe('success');
+    expect(populated.data.tours).toHaveLength(1);
+
+    const empty = await respond([]);
+    expect(Array.isArray(empty)).toBe(false);
+    expect(empty.status).toBe('success');
+    expect(empty.data.tours).toEqual([]);
+  });
+
+  it('returns the listing id and the tour id side by side', async () => {
+    const prisma = require('../../src/core/services/prismaClient');
+    prisma.travioGhanaTour.findMany.mockResolvedValue([
+      { id: 'listing-1', tour: { id: 'tour-1', title: 'A tour', schedulesAndPricing: null } },
+    ]);
+    const res = { json: jest.fn(), status: jest.fn().mockReturnThis() };
+    await controller.getSupplierTours(
+      { params: { supplierId: 'cmuebob1r0000m002vrdichto' }, query: { limit: '8' } },
+      res,
+      jest.fn(),
+    );
+
+    const row = res.json.mock.calls[0][0].data.tours[0];
+    expect(row.id).toBe('listing-1');
+    expect(row.tour.id).toBe('tour-1');
+    expect(row.id).not.toBe(row.tour.id);
+  });
 });
 
 describe('supplier tours route is registered on both storefront brands', () => {
