@@ -1342,7 +1342,7 @@ async function sendFinancePayoutRequestEmail(eventType, request) {
  * Audience is the business owner plus anyone opted into payment notifications,
  * same recipient rule as the rest of the finance mail.
  */
-async function sendPayoutRequestWindowOpenEmail({ supplier = {}, bookings = [], cycleLabel, closesAt, currency } = {}) {
+async function sendPayoutRequestWindowOpenEmail({ supplier = {}, bookings = [], cycleLabel, closesAt, runDay, currency } = {}) {
   const brandKey = resolveEmailBrand({ supplier });
   const cur = currency || bookings[0]?.currency || 'USD';
   const total = bookings.reduce((s, b) => s + Number(b.supplierPayout || 0), 0);
@@ -1352,13 +1352,14 @@ async function sendPayoutRequestWindowOpenEmail({ supplier = {}, bookings = [], 
 
   return sendEmail({
     ...await supplierRecipientList(supplier, 'payments'),
-    subject: `Request your payout — ${Number(total).toFixed(2)} ${cur} ready for 24 hours`,
+    subject: `${Number(total).toFixed(2)} ${cur} ready — request it early or we pay it automatically`,
     template: 'payout-request-window-open',
     opts: { brandKey },
     data: {
       supplierName: supplier.name || '',
       cycleLabel: cycleLabel || '',
       closesAt: closesAt || null,
+      runDay: runDay || null,
       url,
       currency: cur,
       bookings: bookings.map((b) => ({
@@ -1795,9 +1796,17 @@ function generatePayoutWindowOpenEmail(data) {
           <td style="padding:10px 8px;font-size:13px;color:#0F172A;font-weight:700;text-align:right;white-space:nowrap;border-bottom:1px solid #E2E8F0;">${esc(money(b.supplierPayout))}</td>
         </tr>`).join('');
 
-  const heading = 'Your payout is ready to request';
-  const intro = `Your ${esc(data.cycleLabel || '')} payout cycle has finished and ${esc(money(total))} from ${bookings.length} booking${bookings.length === 1 ? '' : 's'} is ready to withdraw.${closesLabel ? ` You can request it until <strong>${esc(closesLabel)}</strong> — after that this window closes until your next run day.` : ''}`;
-  const table = `
+    const runLabel = data.runDay
+      ? new Date(data.runDay).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
+      : null;
+
+    const heading = 'You can request your payout early';
+    // The window is a head start, not a deadline: payouts are generated
+    // automatically, so doing nothing here cannot lose the money. Say that
+    // plainly, or the copy implies a forfeiture that will never happen.
+    const intro = `${esc(money(total))} from ${bookings.length} booking${bookings.length === 1 ? '' : 's'} is ready now.${closesLabel ? ` Request it before <strong>${esc(closesLabel)}</strong> and it is paid up to a day early.` : ''}${runLabel ? ` Or leave it and it is paid automatically on <strong>${esc(runLabel)}</strong>.` : ''}`;
+
+    const table = `
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:16px 0;border-collapse:collapse;">
         <tr>
           <th align="left" style="padding:0 8px 8px;font-size:11px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.06em;border-bottom:2px solid #E2E8F0;">Booking</th>

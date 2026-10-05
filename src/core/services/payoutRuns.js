@@ -156,24 +156,38 @@ function withLabel(period) {
 }
 
 /**
- * How long the manual-request window stays open once it opens: the run day
- * itself, so 24 hours. Miss it and you miss the request until the next cadence
- * — deliberately strict rather than a forgiving grace, so nobody is left
- * guessing whether "a couple of days" means two or three.
+ * How far ahead of a run the manual-request window opens: 24 hours.
+ *
+ * Lead time, not grace time. The window used to open *on* the run day and close
+ * 24h later, which meant the only hours it was ever open were the hours *after*
+ * the scheduler had already swept every ELIGIBLE booking into an auto-generated
+ * request -- so the button read "$0.00" on the one day of the cycle it appeared.
+ * Opening before the run makes a manual request a genuine "pay me early";
+ * whatever is still ELIGIBLE at run time is swept automatically, so nothing is
+ * stranded and nothing is double-paid (a manual request has already moved its
+ * bookings to REQUESTED, which the sweep does not select).
+ *
+ * Widening this is a one-line change with no migration.
  */
-const MANUAL_REQUEST_GRACE_HOURS = 24;
+const MANUAL_REQUEST_LEAD_HOURS = 24;
 
 /**
- * The window in which an auto-managed supplier may request a payout by hand.
+ * The window in which an auto-managed supplier may request a payout by hand:
+ * the 24 hours ending at their next scheduled run.
  *
- * Enrolled suppliers are paid automatically, so a manual request is a
- * self-serve fallback: it opens on their own run day and closes 24 hours
- * later. Outside that span the scheduler owns the period and the request is
- * refused with a 409 naming the next run.
+ * Auto-generation is the default and the safety net - a supplier who never
+ * requests is still paid automatically on their cadence. This window is the
+ * accelerator for anyone who wants the money sooner than the cadence allows.
+ * Outside it the request is refused with a 409 naming the next run.
  *
  * The window is derived from the supplier's own cadence rather than the legacy
  * twice-monthly calendar, because a weekly supplier's "payout is due" has
  * nothing to do with the 1st and 15th.
+ *
+ * Deterministic by construction: it is always anchored to `nextRunAt`, which is
+ * strictly after `now`. It never consults whether the scheduler has fired, so
+ * the summary the dashboard renders and the gate `createPayoutRequest` enforces
+ * can never disagree - the failure mode that made the old window a dead button.
  *
  * Returns null when the supplier has no schedule at all (the legacy window
  * flow applies instead).
@@ -181,20 +195,21 @@ const MANUAL_REQUEST_GRACE_HOURS = 24;
 function getSupplierRequestWindow(plan, now = new Date()) {
   if (!plan?.autoManaged || !plan?.cycle) return null;
 
-  // Today when today is a run day, otherwise the most recent run day on or
-  // before it — so the span always starts at the run day and ends 24h later.
-  const runDay = lastRunAt(plan.cycle, now);
+  // Strictly after `now`, so on a run day this is the *following* run: once the
+  // sweep has claimed the period, the next manual chance is for the next cycle.
+  const runDay = nextRunAt(plan.cycle, now);
   if (!runDay) return null;
 
-  const opensAt = startOfDay(runDay);
-  const closesAt = new Date(opensAt.getTime() + MANUAL_REQUEST_GRACE_HOURS * 60 * 60 * 1000 - 1);
+  const closesAt = runDay;
+  const opensAt = new Date(runDay.getTime() - MANUAL_REQUEST_LEAD_HOURS * 60 * 60 * 1000);
 
   return {
-    open: now <= closesAt,
+    open: now >= opensAt && now <= closesAt,
     opensAt,
     closesAt,
-    // The accumulation period this run pays out — the same expression the
-    // paused-scheduler fallback uses, so both paths label the period alike.
+    // The accumulation period this run pays out. Anchoring to the same run as
+    // `nextRunPeriodLabel` on the plan is what stops the card contradicting
+    // itself with a window that closes before the period it "covers" begins.
     cycle: withLabel(cyclePeriodFor(plan.cycle, runDay)),
     runDay,
     source: 'schedule',
@@ -307,13 +322,15 @@ function buildPayoutPlan(profile, { now = new Date(), defaultCycle = 'TWICE_MONT
 }
 
 /**
- * Tell every supplier whose cycle has just come up that they have 24 hours to
- * request a payout — with the list of bookings that are ready and the total.
+ * Tell every supplier whose manual-request window is open that they can pull
+ * their money forward — with the list of bookings that are ready and the total.
  *
- * Deliberately run *after* the auto-run: whatever the scheduler already
- * claimed is no longer requestable, so those suppliers must not be told to go
- * and request it. It is also independent of the auto-run kill switch, because
- * a paused scheduler is precisely when a supplier most needs telling.
+ * Keyed off the window rather than the run day, because the window opens 24h
+ * *before* the run. Skipping suppliers who already have an open request for the
+ * period is what stops the email asking for money that is already on its way.
+ *
+ * Independent of the auto-run kill switch, because a paused scheduler is
+ * precisely when a supplier most needs telling.
  *
  * Returns a small report for logs and tests.
  */
@@ -321,12 +338,22 @@ async function notifyDuePayoutWindows(now = new Date()) {
   const { enqueueNotification, enqueueEmail } = require('./queue');
 
   const report = { notified: 0, skippedNoFunds: 0, skippedAlreadyRequested: 0, skippedNotified: 0, skippedNoMethod: 0, dueCycles: [] };
-  const dueCycles = VALID_CYCLES.filter((c) => isRunDate(c, now));
-  report.dueCycles = dueCycles;
-  if (dueCycles.length === 0) return report;
+
+  // Keyed off the manual-request window, not the run day. The window opens 24h
+  // *before* the run, so a cron that only fired on the run day would find it
+  // already closed and never notify anybody.
+  const windowsByCycle = {};
+  for (const cycle of VALID_CYCLES) {
+    const w = getSupplierRequestWindow({ autoManaged: true, cycle }, now);
+    if (w && w.open) windowsByCycle[cycle] = w;
+  }
+
+  const openCycles = Object.keys(windowsByCycle);
+  report.dueCycles = openCycles;
+  if (openCycles.length === 0) return report;
 
   const profiles = await prisma.supplierProfile.findMany({
-    where: { payoutCycle: { in: dueCycles }, status: { in: ['APPROVED', 'ACTIVE'] } },
+    where: { payoutCycle: { in: openCycles }, status: { in: ['APPROVED', 'ACTIVE'] } },
     select: {
       id: true,
       userId: true,
@@ -337,7 +364,7 @@ async function notifyDuePayoutWindows(now = new Date()) {
 
   for (const profile of profiles) {
     const supplierId = profile.userId;
-    const window = getSupplierRequestWindow({ autoManaged: true, cycle: profile.payoutCycle }, now);
+    const window = windowsByCycle[profile.payoutCycle];
     if (!window || !window.open) continue;
 
     const method = await resolvePayoutMethod({ supplierId });
@@ -368,10 +395,11 @@ async function notifyDuePayoutWindows(now = new Date()) {
       continue;
     }
 
-    // The cron is hourly and the window lasts 24 hours, so without this the
-    // same supplier would get 24 emails on one run day. Anything already
-    // recorded at or after this window's opening means we have told them about
-    // *this* cycle — `opensAt` is the run day, so it doubles as the run key.
+    // The cron runs often and the window lasts 24 hours, so without this the
+    // same supplier would be told repeatedly about the same window. Anything
+    // already recorded at or after this window's opening means we have told
+    // them about *this* window, and `opensAt` is unique per run, so it doubles
+    // as the dedupe key.
     const alreadyNotified = await prisma.notification.findFirst({
       where: {
         userId: supplierId,
@@ -380,6 +408,7 @@ async function notifyDuePayoutWindows(now = new Date()) {
       },
       select: { id: true },
     });
+
     if (alreadyNotified) {
       report.skippedNotified += 1;
       continue;
@@ -391,15 +420,17 @@ async function notifyDuePayoutWindows(now = new Date()) {
     const closesLabel = window.closesAt.toLocaleString('en-GB', {
       weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
     });
+    const runLabel = window.runDay.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
 
     await enqueueNotification({
       userId: supplierId,
       type: 'PAYOUT_REQUEST_WINDOW_OPEN',
-      title: 'Payout window open — 24 hours',
-      message: `Your ${window.cycle.label} cycle has finished. ${money} from ${bookings.length} booking${bookings.length === 1 ? '' : 's'} is ready to withdraw. Request it before ${closesLabel}, or it waits for your next run day.`,
+      title: 'You can request your payout early',
+      message: `Your ${window.cycle.label} earnings: ${money} from ${bookings.length} booking${bookings.length === 1 ? '' : 's'} is ready now. Request it before ${closesLabel} to be paid up to a day early, or leave it and it is paid automatically on ${runLabel}.`,
       data: {
         opensAt: window.opensAt.toISOString(),
         closesAt: window.closesAt.toISOString(),
+        runDay: window.runDay.toISOString(),
         cycleLabel: window.cycle.label,
         amount: total,
         currency,
@@ -413,6 +444,7 @@ async function notifyDuePayoutWindows(now = new Date()) {
       bookings,
       cycleLabel: window.cycle.label,
       closesAt: window.closesAt.toISOString(),
+      runDay: window.runDay.toISOString(),
       currency,
     });
 

@@ -824,8 +824,8 @@ describe('brand-scoped Reply-To', () => {
     expect(__send.mock.calls[0][0].reply_to).toBe('explicit@example.com');
   });
 });
-// Cycle came up -> the supplier gets the list of bookings that are ready,
-// their amounts, and the 24-hour deadline.
+// Window opened -> the supplier gets the list of bookings that are ready, their
+// amounts, and the deadline for requesting early.
 describe('sendPayoutRequestWindowOpenEmail', () => {
   const supplier = { id: 'sup1', name: 'Coastal Routes GH', email: 'ops@example.com', roles: [] };
   const bookings = [
@@ -838,7 +838,8 @@ describe('sendPayoutRequestWindowOpenEmail', () => {
       supplier,
       bookings,
       cycleLabel: 'Oct 1–14',
-      closesAt: new Date(2026, 9, 15, 23, 59, 59, 999).toISOString(),
+      closesAt: new Date(2026, 9, 15, 0, 0, 0, 0).toISOString(),
+      runDay: new Date(2026, 9, 15, 0, 0, 0, 0).toISOString(),
       currency: 'USD',
     });
 
@@ -856,14 +857,18 @@ describe('sendPayoutRequestWindowOpenEmail', () => {
     // The total, not just the parts.
     expect(html).toContain('175.50 USD');
     expect(html).toContain('Total ready');
-    // The 24-hour deadline and the action.
+    // The action, and the deadline stated as a head start rather than a
+    // forfeit: payouts run automatically, so the copy must not imply that
+    // missing the window loses the money.
     expect(html).toContain('Request payout');
-    expect(html).toMatch(/can request it until <strong>/);
+    expect(html).toMatch(/Request it before <strong>/);
+    expect(html).toMatch(/paid automatically on <strong>/);
+    expect(html).not.toMatch(/window closes until your next run day/);
     expect(payload.text).toContain('175.50 USD');
 
-    // Subject states the money and the window length.
+    // Subject states the money and that auto is the default.
     expect(payload.subject).toContain('175.50 USD');
-    expect(payload.subject).toContain('24 hours');
+    expect(payload.subject).toMatch(/pay it automatically/i);
   });
 
   it('escapes booking data rather than trusting it', async () => {

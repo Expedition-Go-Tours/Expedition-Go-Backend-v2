@@ -398,59 +398,100 @@ describe('getSupplierRequestWindow', () => {
     expect(getSupplierRequestWindow(null, new Date(2026, 9, 5))).toBeNull();
   });
 
-  it('opens on the run day and closes 24 hours later', () => {
-    // Mon 5 Oct 2026 is a WEEKLY run day.
-    const onDay = getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 5, 9, 30));
-    expect(onDay.open).toBe(true);
-    expect(onDay.opensAt).toEqual(new Date(2026, 9, 5));
-    expect(onDay.closesAt).toEqual(new Date(2026, 9, 5, 23, 59, 59, 999));
-    // Labels the period that run pays: Mon 28 Sep -> Sun 4 Oct.
-    expect(onDay.cycle.start).toEqual(new Date(2026, 8, 28));
-    expect(onDay.cycle.end).toEqual(new Date(2026, 9, 4, 23, 59, 59, 999));
-    expect(onDay.cycle.label).toBeTruthy();
-    expect(onDay.source).toBe('schedule');
+  it('opens 24 hours before the run and closes when it fires', () => {
+    // Mon 5 Oct 2026 is a WEEKLY run day, so the window is Sun 4 Oct -> Mon 5
+    // Oct. Asking during it is a genuine "pay me early": the sweep has not run
+    // yet, so the eligible balance is still there to take.
+    const sunday = getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 4, 10, 0));
+    expect(sunday.open).toBe(true);
+    expect(sunday.opensAt).toEqual(new Date(2026, 9, 4));
+    expect(sunday.closesAt).toEqual(new Date(2026, 9, 5));
+    expect(sunday.runDay).toEqual(new Date(2026, 9, 5));
+    expect(sunday.source).toBe('schedule');
   });
 
-  it('holds open for the whole run day', () => {
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 5, 0, 0)).open).toBe(true); // first minute
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 5, 23, 59)).open).toBe(true); // last minute
+  it('is shut on the run day itself, because the sweep owns the period', () => {
+    // This is the regression that made the old button dead: the window used to
+    // open on the run day, so the only hours it was ever open were the hours
+    // *after* the scheduler had swept every ELIGIBLE booking into a request.
+    const justAfterTheSweep = getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 5, 9, 30));
+    expect(justAfterTheSweep.open).toBe(false);
+    // And at the very first minute of the run day, before any sweep has fired.
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 5, 0, 0)).open).toBe(false);
   });
 
-  it('closes the moment the 24 hours are up', () => {
-    // Midnight into Tuesday: no grace period any more.
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 6, 0, 0)).open).toBe(false);
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 8)).open).toBe(false); // Thu
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 23)).open).toBe(false); // run day was Mon 19
-    // Immediately before a run the scheduler owns the period too — Sun 4 Oct,
-    // with Mon 5 pending.
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 4)).open).toBe(false);
+  it('stays shut for the whole cycle between windows', () => {
+    // Tue, Thu, Sat: three days with nothing to do, because the money is not
+    // due until Monday.
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 6, 12, 0)).open).toBe(false);
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 8, 12, 0)).open).toBe(false);
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 10, 12, 0)).open).toBe(false);
+  });
+
+  it('reopens the day before the next run', () => {
+    // Sun 11 Oct for the Mon 12 Oct run.
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 10, 23, 59)).open).toBe(false);
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 11, 0, 0)).open).toBe(true);
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 11, 23, 59)).open).toBe(true);
+  });
+
+  it('labels the period the upcoming run pays, not the one already swept', () => {
+    // The card shows "Covering <period>" from the plan's nextRunPeriodLabel and
+    // the window's own label. They must be the same run, or the page contradicts
+    // itself with a window that closes before the period it covers begins.
+    const sunday = getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 4, 10, 0));
+    expect(sunday.cycle.start).toEqual(new Date(2026, 8, 28));
+    expect(sunday.cycle.end).toEqual(new Date(2026, 9, 4, 23, 59, 59, 999));
+    expect(sunday.cycle.label).toBeTruthy();
+
+    const planForSunday = buildPayoutPlan(
+      { payoutCycle: 'WEEKLY' },
+      { now: new Date(2026, 9, 4, 10, 0) }
+    );
+    expect(planForSunday.nextRunAt).toEqual(sunday.runDay);
+    expect(planForSunday.nextRunPeriodLabel).toBe(sunday.cycle.label);
   });
 
   it('follows the supplier cadence, not the calendar', () => {
-    const twice = getSupplierRequestWindow(plan('TWICE_MONTHLY'), new Date(2026, 9, 15));
-    expect(twice.open).toBe(true);
-    expect(twice.closesAt).toEqual(new Date(2026, 9, 15, 23, 59, 59, 999));
-    expect(twice.cycle.start).toEqual(new Date(2026, 9, 1));
-    expect(twice.cycle.end).toEqual(new Date(2026, 9, 14, 23, 59, 59, 999));
+    // A twice-monthly supplier's window is the day before the 15th.
+    const before15 = getSupplierRequestWindow(plan('TWICE_MONTHLY'), new Date(2026, 9, 14, 10, 0));
+    expect(before15.open).toBe(true);
+    expect(before15.closesAt).toEqual(new Date(2026, 9, 15));
+    expect(before15.cycle.start).toEqual(new Date(2026, 9, 1));
+    expect(before15.cycle.end).toEqual(new Date(2026, 9, 14, 23, 59, 59, 999));
 
-    // 15 Oct 2026 is a Thursday: the twice-monthly supplier is due, the weekly
-    // one is not. Their windows must not be conflated.
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 15)).open).toBe(false);
+    // Same day, different cadence: the weekly supplier is shut (Monday is four
+    // days out) and the twice-monthly one is open. Cadences must not bleed.
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 14, 10, 0)).open).toBe(false);
+    // And a weekly supplier is open on a day the twice-monthly one is not due.
+    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 11, 10, 0)).open).toBe(true);
+    expect(getSupplierRequestWindow(plan('TWICE_MONTHLY'), new Date(2026, 9, 11, 10, 0)).open).toBe(false);
   });
 
-  it('opens for the monthly cadence on the 1st', () => {
-    const m = getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 9, 1));
+  it('opens for the monthly cadence before the 1st', () => {
+    const m = getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 9, 31, 10, 0));
     expect(m.open).toBe(true);
-    expect(m.cycle.start).toEqual(new Date(2026, 8, 1));
-    expect(m.cycle.end).toEqual(new Date(2026, 8, 30, 23, 59, 59, 999));
-    expect(getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 9, 2)).open).toBe(false);
+    expect(m.closesAt).toEqual(new Date(2026, 10, 1));
+    expect(m.cycle.start).toEqual(new Date(2026, 9, 1));
+    expect(m.cycle.end).toEqual(new Date(2026, 9, 31, 23, 59, 59, 999));
+    expect(getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 9, 15, 10, 0)).open).toBe(false);
   });
+
+  it('agrees with itself at the exact boundaries', () => {
+    const before = getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 3, 23, 59, 59, 999));
+    expect(before.open).toBe(false);
+    const atOpen = getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 4, 0, 0));
+    expect(atOpen.open).toBe(true);
+    const atClose = getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 5, 0, 0));
+    expect(atClose.open).toBe(false);
+  });
+
 });
 
-// Cycle came up -> tell the supplier they have 24 hours to request a payout,
-// with the bookings and the total. The condition that matters is "there is
-// actually something to request": a supplier whose payout was auto-generated
-// must never be asked to request it again.
+// Window opened -> tell the supplier they can pull their money forward, with the
+// bookings and the total. The condition that matters is "there is actually
+// something to request": a supplier whose payout is already on its way must
+// never be asked to request it again.
 describe('notifyDuePayoutWindows', () => {
   const profile = {
     id: 'sp1',
@@ -462,7 +503,12 @@ describe('notifyDuePayoutWindows', () => {
     { id: 'b1', bookingNumber: 'GHA-1', tour: { title: 'Kakum Canopy Walk' }, travelDate: new Date('2026-09-20'), supplierPayout: 100, currency: 'USD' },
     { id: 'b2', bookingNumber: 'GHA-2', tour: { title: 'Cape Coast Castle' }, travelDate: new Date('2026-09-21'), supplierPayout: 75.5, currency: 'USD' },
   ];
-  // 15 Oct 2026 is a TWICE_MONTHLY run day.
+  // Wed 14 Oct 2026: inside the 24h window that leads into the TWICE_MONTHLY
+  // run on Thu 15 Oct. This is deliberately *not* the run day - the window opens
+  // the day before, and a cron that only fired on the run day would never reach
+  // this code with an open window.
+  const IN_WINDOW = new Date(2026, 9, 14, 6, 0);
+  // Thu 15 Oct, after the run has swept the balance: nothing left to ask for.
   const RUN_DAY = new Date(2026, 9, 15, 6, 0);
 
   beforeEach(() => {
@@ -476,8 +522,8 @@ describe('notifyDuePayoutWindows', () => {
     prisma.notification.findFirst.mockResolvedValue(null);
   });
 
-  it('notifies on a run day when there is something to request', async () => {
-    const report = await notifyDuePayoutWindows(RUN_DAY);
+  it('notifies while the window is open when there is something to request', async () => {
+    const report = await notifyDuePayoutWindows(IN_WINDOW);
 
     expect(report.notified).toBe(1);
     expect(enqueueNotification).toHaveBeenCalledTimes(1);
@@ -487,13 +533,21 @@ describe('notifyDuePayoutWindows', () => {
     expect(n.message).toContain('175.50 USD');
     expect(n.message).toContain('2 bookings');
     expect(n.message).toContain('Oct 1–14');
-    // 24 hours: closes at the end of the run day, not two days later.
-    expect(new Date(n.data.closesAt)).toEqual(new Date(2026, 9, 15, 23, 59, 59, 999));
+    // Closes when the run fires, i.e. at midnight into the 15th, not at the end
+    // of it. That is what makes the request an early payout rather than a race
+    // with the sweep.
+    expect(new Date(n.data.closesAt)).toEqual(new Date(2026, 9, 15));
+    expect(new Date(n.data.runDay)).toEqual(new Date(2026, 9, 15));
+    expect(new Date(n.data.opensAt)).toEqual(new Date(2026, 9, 14));
+    // Auto is the default, so the copy has to name the fallback rather than
+    // imply the money is stranded if they do nothing.
+    expect(n.message).toMatch(/paid automatically/i);
 
     expect(enqueueEmail).toHaveBeenCalledTimes(1);
     const e = enqueueEmail.mock.calls[0][0];
     expect(e.type).toBe('payout-request-window-open');
     expect(e.cycleLabel).toBe('Oct 1–14');
+    expect(new Date(e.runDay)).toEqual(new Date(2026, 9, 15));
     expect(e.bookings).toHaveLength(2);
     expect(e.bookings[0]).toMatchObject({ bookingNumber: 'GHA-1', supplierPayout: 100 });
     expect(e.currency).toBe('USD');
@@ -502,7 +556,7 @@ describe('notifyDuePayoutWindows', () => {
   it('stays quiet when an open request already covers the period', async () => {
     prisma.payoutRequest.findFirst.mockResolvedValue({ id: 'pr1' });
 
-    const report = await notifyDuePayoutWindows(RUN_DAY);
+    const report = await notifyDuePayoutWindows(IN_WINDOW);
 
     expect(report.notified).toBe(0);
     expect(report.skippedAlreadyRequested).toBe(1);
@@ -513,7 +567,7 @@ describe('notifyDuePayoutWindows', () => {
   it('stays quiet when nothing is eligible yet', async () => {
     prisma.booking.findMany.mockResolvedValue([]);
 
-    const report = await notifyDuePayoutWindows(RUN_DAY);
+    const report = await notifyDuePayoutWindows(IN_WINDOW);
 
     expect(report.notified).toBe(0);
     expect(report.skippedNoFunds).toBe(1);
@@ -523,23 +577,23 @@ describe('notifyDuePayoutWindows', () => {
   it('stays quiet without a verified payout method', async () => {
     prisma.payoutMethod.findFirst.mockResolvedValue(null);
 
-    const report = await notifyDuePayoutWindows(RUN_DAY);
+    const report = await notifyDuePayoutWindows(IN_WINDOW);
 
     expect(report.notified).toBe(0);
     expect(report.skippedNoMethod).toBe(1);
     expect(enqueueNotification).not.toHaveBeenCalled();
   });
 
-  it('notifies at most once per run day however often the cron fires', async () => {
-    // The scheduler is hourly and the window is open all day, so an unguarded
-    // sweep would send 24 emails for one cycle.
-    const first = await notifyDuePayoutWindows(RUN_DAY);
+  it('notifies at most once per window however often the cron fires', async () => {
+    // The cron runs often and the window is open all day, so an unguarded sweep
+    // would send an email per tick for one cycle.
+    const first = await notifyDuePayoutWindows(IN_WINDOW);
     expect(first.notified).toBe(1);
 
     // The notification from that sweep now exists.
     prisma.notification.findFirst.mockResolvedValue({ id: 'n1' });
 
-    const second = await notifyDuePayoutWindows(RUN_DAY);
+    const second = await notifyDuePayoutWindows(new Date(2026, 9, 14, 18, 0));
     expect(second.notified).toBe(0);
     expect(second.skippedNotified).toBe(1);
 
@@ -547,13 +601,52 @@ describe('notifyDuePayoutWindows', () => {
     expect(enqueueEmail).toHaveBeenCalledTimes(1);
   });
 
-  it('does nothing on a day that is not a run date', async () => {
-    // Sat 3 Oct: no cadence runs.
+  it('does notify again for the next cycle window', async () => {
+    // The dedupe is scoped to one window, not to the supplier forever: a week
+    // later they must be told about the next batch of money.
+    prisma.notification.findFirst.mockResolvedValueOnce({ id: 'n1' });
+    await notifyDuePayoutWindows(IN_WINDOW);
+
+    // The next TWICE_MONTHLY window: Fri 14 Nov -> Sat 15 Nov.
+    prisma.notification.findFirst.mockResolvedValueOnce(null);
+    const later = await notifyDuePayoutWindows(new Date(2026, 10, 14, 6, 0));
+    expect(later.notified).toBe(1);
+    expect(later.dueCycles).toEqual(['TWICE_MONTHLY']);
+
+    expect(enqueueNotification).toHaveBeenCalledTimes(1);
+    expect(enqueueEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing on a day no window is open', async () => {
+    // Sat 3 Oct: no cadence is within 24h of a run.
     const report = await notifyDuePayoutWindows(new Date(2026, 9, 3));
 
     expect(report.dueCycles).toEqual([]);
     expect(report.notified).toBe(0);
     expect(prisma.supplierProfile.findMany).not.toHaveBeenCalled();
     expect(enqueueNotification).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet on the run day itself, once the sweep has taken the balance', async () => {
+    // The regression guard for the notification trigger: the window is anchored
+    // to the *next* run, so a run day finds it shut and nobody is told to
+    // request money the scheduler is already paying out.
+    const report = await notifyDuePayoutWindows(RUN_DAY);
+
+    expect(report.dueCycles).toEqual([]);
+    expect(report.notified).toBe(0);
+    expect(enqueueNotification).not.toHaveBeenCalled();
+  });
+
+  it('only queries suppliers whose cadence actually has an open window', async () => {
+    await notifyDuePayoutWindows(IN_WINDOW);
+
+    // Wed 14 Oct is within 24h of the 15th (twice-monthly) but four days from
+    // Monday (weekly), so a weekly supplier must not be swept up by the query.
+    expect(prisma.supplierProfile.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ payoutCycle: { in: ['TWICE_MONTHLY'] } }),
+      })
+    );
   });
 });
