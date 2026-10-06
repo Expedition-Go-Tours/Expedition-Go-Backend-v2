@@ -283,11 +283,16 @@ const pickupDetailsUpdated = {
   key: 'pickup-details-updated',
   name: 'Customer · Pickup details updated',
   build() {
-    return B.shell('Your pickup information has been updated', `
+    return B.shell('Your pickup information has been updated (Ref: {{bookingNumber}})', `
       ${B.hero({ heading: 'Pickup information updated', badgeText: 'Updated', badgeColor: 'info' })}
     ${B.detailRows([
+      { label: 'Booking reference', value: '{{bookingNumber}}' },
+      { label: 'Activity', value: '{{tourTitle}}' },
+      { label: 'Lead traveller', value: '{{leadTravelerName}}' },
+    ])}
+    ${B.detailRows([
       { label: 'Previous pickup location', value: '{{previousPickupLocation}}', if: '{{previousPickupLocation}}', strike: true },
-      { label: 'New pickup location', value: '{{pickupLocation}}' },
+      { label: 'New pickup location', value: '{{pickupLocation}}', if: '{{pickupLocation}}' },
       { label: 'Pickup date', value: '{{dateLabel}}' },
       { label: 'Pickup time / window', value: '{{pickupTime}}', if: '{{pickupTime}}' },
     ])}
@@ -691,11 +696,16 @@ const supplierPickupUpdated = {
   key: 'supplier-pickup-updated',
   name: 'Supplier · Customer pickup updated',
   build() {
-    return B.shell('Customer pickup location updated', `
+    return B.shell('Customer pickup location updated — {{customerName}} (Ref: {{bookingNumber}})', `
       ${B.hero({ heading: 'Pickup information has changed', badgeText: 'Updated', badgeColor: 'info' })}
     ${B.detailRows([
+      { label: 'Booking reference', value: '{{bookingNumber}}' },
+      { label: 'Activity', value: '{{tourTitle}}' },
+      { label: 'Lead traveller', value: '{{leadTravelerName}}' },
+    ])}
+    ${B.detailRows([
       { label: 'Previous location', value: '{{previousPickupLocation}}', if: '{{previousPickupLocation}}', strike: true },
-      { label: 'New location', value: '{{pickupLocation}}' },
+      { label: 'New location', value: '{{pickupLocation}}', if: '{{pickupLocation}}' },
       { label: 'Pickup date', value: '{{dateLabel}}' },
       { label: 'Pickup time', value: '{{pickupTime}}', if: '{{pickupTime}}' },
     ])}
@@ -964,7 +974,7 @@ function inviterBlock() {
 function roleAccessBlock() {
   return `
   <tr><td class="pad" style="padding:24px 40px 0 40px;">
-    <p style="margin:0 0 10px 0;font-family:${B.FONT};font-size:11px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:#94A3B8;">Your access</p>
+    <p style="margin:0 0 10px 0;font-family:${B.FONT};font-size:11px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:${B.COLORS.faint};">Your access</p>
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;">
       <tr><td style="padding:16px 18px;">
         <div style="margin:0 0 12px 0;">
@@ -987,7 +997,7 @@ function roleAccessBlock() {
 function fallbackLinkBlock() {
   return `
   <tr><td class="pad" style="padding:4px 40px 0 40px;">
-    <p style="margin:0;font-family:${B.FONT};font-size:12px;color:#94A3B8;line-height:1.6;word-break:break-all;" class="dm-muted">
+    <p style="margin:0;font-family:${B.FONT};font-size:12px;color:${B.COLORS.muted};line-height:1.6;word-break:break-all;" class="dm-muted">
       Button not working? Paste this link into your browser:<br>
       <a href="{{inviteUrl}}" style="color:{{accentColor}};text-decoration:underline;">{{inviteUrl}}</a>
     </p>

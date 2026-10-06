@@ -19,9 +19,9 @@ const COLORS = {
   border: '#E2E8F0',
   navy: '#001F3F',
   body: '#334155',
-  muted: '#64748B',
-  faint: '#94A3B8',
-  accent: '#00A669',
+  muted: '#475569',
+  faint: '#64748B',
+  accent: '#007A4D',
   accentDark: '#007A4D',
   accentSoft: '#E6F6F0',
   danger: '#DC2626',
@@ -116,7 +116,9 @@ function shell(title, bodyHtml) {
           <!-- Card -->
           <tr>
             <td class="dm-card" style="background-color:${COLORS.card};border:1px solid ${COLORS.border};border-radius:16px;padding:0;">
-              ${bodyHtml}
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                ${bodyHtml}
+              </table>
             </td>
           </tr>
           <!-- Footer -->
@@ -129,7 +131,7 @@ function shell(title, bodyHtml) {
                   </td>
                 </tr>
                 <tr>
-                  <td align="center" style="font-family:${FONT};font-size:12px;color:${COLORS.faint};line-height:1.6;">
+                  <td align="center" style="font-family:${FONT};font-size:12px;color:${COLORS.muted};line-height:1.6;">
                     &copy; {{year}} {{brandName}}. All rights reserved.
                   </td>
                 </tr>
@@ -169,8 +171,8 @@ function hero({ heading, subtitle, badgeText, badgeColor = 'accent' }) {
   <tr><td class="pad" style="padding:36px 40px 4px 40px;">
     <h1 class="h1 font-main" style="margin:0 0 12px 0;font-size:28px;font-weight:800;color:${COLORS.navy};line-height:1.25;text-align:center;">${heading}</h1>
     ${subtitle ? `<p class="body-lg font-main" style="margin:0 auto;max-width:480px;font-size:15px;color:${COLORS.body};line-height:1.6;text-align:center;">${subtitle}</p>` : ''}
-    ${badge}
-  </td></tr>`;
+  </td></tr>
+  ${badge}`;
 }
 
 function sectionTitle(text) {

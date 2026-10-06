@@ -54,24 +54,25 @@
             <td align="center" style="padding:0 0 24px 0;">
               <img src="{{logoUrl}}" alt="{{brandName}}" width="170" style="display:block;width:170px;max-width:170px;height:auto;border:0;outline:none;">
               {{#if poweredByLabel}}<div style="margin-top:10px;">
-                <span style="display:inline-block;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:700;letter-spacing:0.3px;color:#00A669;background-color:#E6F6F0;border-radius:999px;padding:5px 14px;line-height:1;">{{poweredByLabel}}</span>
+                <span style="display:inline-block;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:700;letter-spacing:0.3px;color:#007A4D;background-color:#E6F6F0;border-radius:999px;padding:5px 14px;line-height:1;">{{poweredByLabel}}</span>
               </div>{{/if}}
             </td>
           </tr>
           <!-- Card -->
           <tr>
             <td class="dm-card" style="background-color:#FFFFFF;border:1px solid #E2E8F0;border-radius:16px;padding:0;">
-              
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                
       
   <tr><td class="pad" style="padding:36px 40px 4px 40px;">
     <h1 class="h1 font-main" style="margin:0 0 12px 0;font-size:28px;font-weight:800;color:#001F3F;line-height:1.25;text-align:center;">Your booking details have changed</h1>
     
-    <tr><td align="center" style="padding:0px 0 0 0;">
+  </td></tr>
+  <tr><td align="center" style="padding:0px 0 0 0;">
          <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
            <tr><td style="background-color:#EFF6FF;border-radius:20px;padding:6px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:700;color:#1D4ED8;line-height:1.2;">Important</td></tr>
          </table>
        </td></tr>
-  </td></tr>
       
   <tr><td class="pad" style="padding:16px 40px 0 40px;">
     <p style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#334155;line-height:1.7;text-align:left;">We’re contacting you because a change has been made to your experience.</p>
@@ -82,13 +83,13 @@
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;">
       <tr>
         <td style="background-color:#EEF2F7;padding:10px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#001F3F;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid #E2E8F0;width:40%;">Detail</td>
-        <td style="background-color:#EEF2F7;padding:10px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#64748B;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid #E2E8F0;width:30%;">Previous</td>
-        <td style="background-color:#EEF2F7;padding:10px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#00A669;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid #E2E8F0;width:30%;">Updated</td>
+        <td style="background-color:#EEF2F7;padding:10px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid #E2E8F0;width:30%;">Previous</td>
+        <td style="background-color:#EEF2F7;padding:10px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#007A4D;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid #E2E8F0;width:30%;">Updated</td>
       </tr>
       {{#each changes}}
       <tr>
-        <td style="padding:10px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#64748B;border-bottom:1px solid #E2E8F0;line-height:1.5;">{{label}}</td>
-        <td style="padding:10px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#94A3B8;border-bottom:1px solid #E2E8F0;line-height:1.5;text-decoration:line-through;">{{previous}}</td>
+        <td style="padding:10px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;border-bottom:1px solid #E2E8F0;line-height:1.5;">{{label}}</td>
+        <td style="padding:10px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#64748B;border-bottom:1px solid #E2E8F0;line-height:1.5;text-decoration:line-through;">{{previous}}</td>
         <td style="padding:10px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:700;color:#001F3F;border-bottom:1px solid #E2E8F0;line-height:1.5;">{{updated}}</td>
       </tr>
       {{/each}}
@@ -118,7 +119,7 @@
     <table role="presentation" class="btn-wrap" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
       <tr>
         <td style="padding:0 8px 0 0;vertical-align:middle;">
-          <a href="{{acceptUrl}}" class="btn" style="display:inline-block;background-color:#00A669;color:#ffffff;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Accept changes</a>
+          <a href="{{acceptUrl}}" class="btn" style="display:inline-block;background-color:#007A4D;color:#ffffff;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Accept changes</a>
         </td>
         <td style="padding:0 8px 0 0;vertical-align:middle;">
           <a href="{{rescheduleUrl}}" class="btn" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Choose another date</a>
@@ -134,13 +135,14 @@
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
       <tr>
         <td align="center">
-          <a href="{{bookingUrl}}" class="btn" style="display:inline-block;background-color:#00A669;color:#ffffff;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;font-weight:700;text-decoration:none;border-radius:10px;padding:14px 34px;line-height:1.2;">View updated booking</a>
+          <a href="{{bookingUrl}}" class="btn" style="display:inline-block;background-color:#007A4D;color:#ffffff;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;font-weight:700;text-decoration:none;border-radius:10px;padding:14px 34px;line-height:1.2;">View updated booking</a>
         </td>
       </tr>
     </table>
   </td></tr>
       {{/if}}
     
+              </table>
             </td>
           </tr>
           <!-- Footer -->
@@ -148,12 +150,12 @@
             <td align="center" style="padding:28px 20px 0 20px;">
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                 <tr>
-                  <td align="center" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#64748B;line-height:1.6;padding:0 0 6px 0;">
-                    Need help? <a href="mailto:{{supportEmail}}" style="color:#00A669;text-decoration:none;font-weight:600;">Contact support</a>
+                  <td align="center" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.6;padding:0 0 6px 0;">
+                    Need help? <a href="mailto:{{supportEmail}}" style="color:#007A4D;text-decoration:none;font-weight:600;">Contact support</a>
                   </td>
                 </tr>
                 <tr>
-                  <td align="center" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;color:#94A3B8;line-height:1.6;">
+                  <td align="center" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;color:#475569;line-height:1.6;">
                     &copy; {{year}} {{brandName}}. All rights reserved.
                   </td>
                 </tr>

@@ -721,7 +721,7 @@ async function sendPickupDetailsUpdatedEmail(booking, { previousPickupLocation =
   };
   return sendRendered({
     to: base.customerEmail,
-    subject: 'Your pickup information has been updated',
+    subject: `Your pickup information has been updated (Ref: ${base.bookingNumber})`,
     key: 'pickup-details-updated',
     data,
   });
@@ -1073,7 +1073,7 @@ async function sendSupplierPickupUpdatedEmail(booking, { previousPickupLocation 
   };
   return sendRendered({
     ...await supplierRecipientList(supplier, "bookings"),
-    subject: 'Customer pickup location updated',
+    subject: `Customer pickup location updated — ${base.customerName} (Ref: ${base.bookingNumber})`,
     key: 'supplier-pickup-updated',
     data,
   });
