@@ -24,7 +24,7 @@ const COLORS = {
   accent: '#007A4D',
   accentDark: '#007A4D',
   accentSoft: '#E6F6F0',
-  danger: '#DC2626',
+  danger: '#B91C1C',
   dangerSoft: '#FEF2F2',
   warning: '#B45309',
   warningSoft: '#FFFBEB',
@@ -67,6 +67,7 @@ const BASE_CSS = `
     .dm-card { background-color:#111827 !important; border-color:#1F2937 !important; }
     .dm-text { color:#E5E7EB !important; }
     .dm-muted { color:#9CA3AF !important; }
+    .dm-accent { color:#34D399 !important; }
   }
 `;
 
@@ -126,12 +127,12 @@ function shell(title, bodyHtml) {
             <td align="center" style="padding:28px 20px 0 20px;">
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                 <tr>
-                  <td align="center" style="font-family:${FONT};font-size:13px;color:${COLORS.muted};line-height:1.6;padding:0 0 6px 0;">
-                    Need help? <a href="mailto:{{supportEmail}}" style="color:${COLORS.accent};text-decoration:none;font-weight:600;">Contact support</a>
+                  <td align="center" class="dm-muted" style="font-family:${FONT};font-size:13px;color:${COLORS.muted};line-height:1.6;padding:0 0 6px 0;">
+                    Need help? <a href="mailto:{{supportEmail}}" class="dm-accent" style="color:${COLORS.accent};text-decoration:none;font-weight:600;">Contact support</a>
                   </td>
                 </tr>
                 <tr>
-                  <td align="center" style="font-family:${FONT};font-size:12px;color:${COLORS.muted};line-height:1.6;">
+                  <td align="center" class="dm-muted" style="font-family:${FONT};font-size:12px;color:${COLORS.muted};line-height:1.6;">
                     &copy; {{year}} {{brandName}}. All rights reserved.
                   </td>
                 </tr>
@@ -169,8 +170,8 @@ function hero({ heading, subtitle, badgeText, badgeColor = 'accent' }) {
 
   return `
   <tr><td class="pad" style="padding:36px 40px 4px 40px;">
-    <h1 class="h1 font-main" style="margin:0 0 12px 0;font-size:28px;font-weight:800;color:${COLORS.navy};line-height:1.25;text-align:center;">${heading}</h1>
-    ${subtitle ? `<p class="body-lg font-main" style="margin:0 auto;max-width:480px;font-size:15px;color:${COLORS.body};line-height:1.6;text-align:center;">${subtitle}</p>` : ''}
+    <h1 class="h1 font-main dm-text" style="margin:0 0 12px 0;font-size:28px;font-weight:800;color:${COLORS.navy};line-height:1.25;text-align:center;">${heading}</h1>
+    ${subtitle ? `<p class="body-lg font-main dm-text" style="margin:0 auto;max-width:480px;font-size:15px;color:${COLORS.body};line-height:1.6;text-align:center;">${subtitle}</p>` : ''}
   </td></tr>
   ${badge}`;
 }
@@ -178,7 +179,7 @@ function hero({ heading, subtitle, badgeText, badgeColor = 'accent' }) {
 function sectionTitle(text) {
   return `
   <tr><td class="pad" style="padding:28px 40px 4px 40px;">
-    <div class="h2 font-main" style="font-size:15px;font-weight:800;color:${COLORS.navy};letter-spacing:0.4px;text-transform:uppercase;line-height:1.3;">${text}</div>
+    <div class="h2 font-main dm-text" style="font-size:15px;font-weight:800;color:${COLORS.navy};letter-spacing:0.4px;text-transform:uppercase;line-height:1.3;">${text}</div>
   </td></tr>`;
 }
 
@@ -201,10 +202,11 @@ function detailRows(rows, options = {}) {
     const valueStyle = row.strike
       ? `color:${COLORS.faint};text-decoration:line-through;`
       : `color:${COLORS.navy};`;
+    const valueClass = row.strike ? 'dm-muted' : 'dm-text';
 
     const valueHtml = row.raw !== undefined
       ? row.raw
-      : `<span style="${valueStyle}font-weight:600;">${row.value || '&mdash;'}</span>`;
+      : `<span class="${valueClass}" style="${valueStyle}font-weight:600;">${row.value || '&mdash;'}</span>`;
 
     // When the whole row is already gated by {{#if}}, the value renders plain.
     const value = rowConditional ? valueHtml : valueHtml;
@@ -214,7 +216,7 @@ function detailRows(rows, options = {}) {
         <td style="padding:7px 40px 7px 40px;" class="pad">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
             <tr>
-              <td style="font-family:${FONT};font-size:13px;color:${COLORS.muted};line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">${row.label}</td>
+              <td class="dm-muted" style="font-family:${FONT};font-size:13px;color:${COLORS.muted};line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">${row.label}</td>
               <td style="font-family:${FONT};font-size:14px;line-height:1.5;vertical-align:top;">${value}</td>
             </tr>
           </table>
@@ -243,9 +245,9 @@ function diffTable() {
       </tr>
       {{#each changes}}
       <tr>
-        <td style="padding:10px 16px;font-family:${FONT};font-size:13px;color:${COLORS.muted};border-bottom:1px solid ${COLORS.border};line-height:1.5;">{{label}}</td>
-        <td style="padding:10px 16px;font-family:${FONT};font-size:13px;color:${COLORS.faint};border-bottom:1px solid ${COLORS.border};line-height:1.5;text-decoration:line-through;">{{previous}}</td>
-        <td style="padding:10px 16px;font-family:${FONT};font-size:13px;font-weight:700;color:${COLORS.navy};border-bottom:1px solid ${COLORS.border};line-height:1.5;">{{updated}}</td>
+        <td class="dm-muted" style="padding:10px 16px;font-family:${FONT};font-size:13px;color:${COLORS.muted};border-bottom:1px solid ${COLORS.border};line-height:1.5;">{{label}}</td>
+        <td class="dm-muted" style="padding:10px 16px;font-family:${FONT};font-size:13px;color:${COLORS.faint};border-bottom:1px solid ${COLORS.border};line-height:1.5;text-decoration:line-through;">{{previous}}</td>
+        <td class="dm-text" style="padding:10px 16px;font-family:${FONT};font-size:13px;font-weight:700;color:${COLORS.navy};border-bottom:1px solid ${COLORS.border};line-height:1.5;">{{updated}}</td>
       </tr>
       {{/each}}
     </table>
@@ -286,9 +288,10 @@ function paragraph(text, options = {}) {
   const { center = false, muted = false, small = false } = options;
   const size = small ? '13px' : '15px';
   const color = muted ? COLORS.muted : COLORS.body;
+  const cls = muted ? 'dm-muted' : 'dm-text';
   return `
   <tr><td class="pad" style="padding:16px 40px 0 40px;">
-    <p style="margin:0;font-family:${FONT};font-size:${size};color:${color};line-height:1.7;text-align:${center ? 'center' : 'left'};">${text}</p>
+    <p class="${cls}" style="margin:0;font-family:${FONT};font-size:${size};color:${color};line-height:1.7;text-align:${center ? 'center' : 'left'};">${text}</p>
   </td></tr>`;
 }
 
@@ -301,8 +304,8 @@ function bulletList() {
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
       {{#each items}}
       <tr>
-        <td style="padding:4px 0;font-family:${FONT};font-size:14px;color:${COLORS.body};line-height:1.6;vertical-align:top;width:20px;">&bull;</td>
-        <td style="padding:4px 0;font-family:${FONT};font-size:14px;color:${COLORS.body};line-height:1.6;">{{this}}</td>
+        <td class="dm-text" style="padding:4px 0;font-family:${FONT};font-size:14px;color:${COLORS.body};line-height:1.6;vertical-align:top;width:20px;">&bull;</td>
+        <td class="dm-text" style="padding:4px 0;font-family:${FONT};font-size:14px;color:${COLORS.body};line-height:1.6;">{{this}}</td>
       </tr>
       {{/each}}
     </table>
@@ -391,8 +394,8 @@ function stackedRows(rows) {
       return `
       <tr>
         <td style="padding:8px 40px 0 40px;" class="pad">
-          <div style="font-family:${FONT};font-size:12px;color:${COLORS.muted};line-height:1.4;text-transform:uppercase;letter-spacing:0.3px;font-weight:700;">${r.label}</div>
-          <div style="font-family:${FONT};font-size:15px;color:${COLORS.navy};line-height:1.5;font-weight:600;padding:2px 0 0 0;">${r.value || '&mdash;'}</div>
+          <div class="dm-muted" style="font-family:${FONT};font-size:12px;color:${COLORS.muted};line-height:1.4;text-transform:uppercase;letter-spacing:0.3px;font-weight:700;">${r.label}</div>
+          <div class="dm-text" style="font-family:${FONT};font-size:15px;color:${COLORS.navy};line-height:1.5;font-weight:600;padding:2px 0 0 0;">${r.value || '&mdash;'}</div>
         </td>
       </tr>`;
     })
@@ -406,9 +409,9 @@ function stackedRows(rows) {
 function chatHeader(subtitle) {
   return `
   <tr><td class="pad" style="padding:34px 40px 0 40px;">
-    <p style="margin:0 0 6px 0;font-family:${FONT};font-size:11px;font-weight:800;color:${COLORS.accent};letter-spacing:1.6px;text-transform:uppercase;text-align:center;">Messaging</p>
-    <h1 style="margin:0;font-family:${FONT};font-size:24px;font-weight:800;color:${COLORS.navy};line-height:1.25;text-align:center;">New message</h1>
-    ${subtitle ? `<p class="body-lg font-main" style="margin:6px auto 0 auto;max-width:460px;font-size:13px;color:${COLORS.muted};line-height:1.6;text-align:center;">${subtitle}</p>` : ''}
+    <p class="dm-accent" style="margin:0 0 6px 0;font-family:${FONT};font-size:11px;font-weight:800;color:${COLORS.accent};letter-spacing:1.6px;text-transform:uppercase;text-align:center;">Messaging</p>
+    <h1 class="dm-text" style="margin:0;font-family:${FONT};font-size:24px;font-weight:800;color:${COLORS.navy};line-height:1.25;text-align:center;">New message</h1>
+    ${subtitle ? `<p class="body-lg font-main dm-muted" style="margin:6px auto 0 auto;max-width:460px;font-size:13px;color:${COLORS.muted};line-height:1.6;text-align:center;">${subtitle}</p>` : ''}
   </td></tr>`;
 }
 
@@ -431,8 +434,8 @@ function senderRow(nameVar, roleVar, avatarVar, initialsVar) {
           {{/if}}
         </td>
         <td valign="middle" style="font-family:${FONT};">
-          <div style="font-size:15px;font-weight:800;color:${COLORS.navy};line-height:1.3;">${nameVar}</div>
-          <div style="font-size:13px;color:${COLORS.muted};line-height:1.4;padding-top:2px;">${roleVar}</div>
+          <div class="dm-text" style="font-size:15px;font-weight:800;color:${COLORS.navy};line-height:1.3;">${nameVar}</div>
+          <div class="dm-muted" style="font-size:13px;color:${COLORS.muted};line-height:1.4;padding-top:2px;">${roleVar}</div>
         </td>
       </tr>
     </table>

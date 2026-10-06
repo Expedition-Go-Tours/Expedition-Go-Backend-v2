@@ -39,6 +39,7 @@
     .dm-card { background-color:#111827 !important; border-color:#1F2937 !important; }
     .dm-text { color:#E5E7EB !important; }
     .dm-muted { color:#9CA3AF !important; }
+    .dm-accent { color:#34D399 !important; }
   }
 </style>
 </head>
@@ -65,27 +66,27 @@
                 
       
   <tr><td class="pad" style="padding:36px 40px 4px 40px;">
-    <h1 class="h1 font-main" style="margin:0 0 12px 0;font-size:28px;font-weight:800;color:#001F3F;line-height:1.25;text-align:center;">Please update your payment method</h1>
+    <h1 class="h1 font-main dm-text" style="margin:0 0 12px 0;font-size:28px;font-weight:800;color:#001F3F;line-height:1.25;text-align:center;">Please update your payment method</h1>
     
   </td></tr>
   <tr><td align="center" style="padding:0px 0 0 0;">
          <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
-           <tr><td style="background-color:#FEF2F2;border-radius:20px;padding:6px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:700;color:#DC2626;line-height:1.2;">Action required</td></tr>
+           <tr><td style="background-color:#FEF2F2;border-radius:20px;padding:6px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:700;color:#B91C1C;line-height:1.2;">Action required</td></tr>
          </table>
        </td></tr>
       
   <tr><td class="pad" style="padding:16px 40px 0 40px;">
-    <p style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#334155;line-height:1.7;text-align:left;">We could not collect <strong>{{paymentAmountLabel}}</strong> for booking <strong>#{{bookingNumber}}</strong>.</p>
+    <p class="dm-text" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#334155;line-height:1.7;text-align:left;">We could not collect <strong>{{paymentAmountLabel}}</strong> for booking <strong>#{{bookingNumber}}</strong>.</p>
   </td></tr>
       
   <tr><td class="pad" style="padding:20px 40px 0 40px;">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#FEF2F2;border-radius:10px;">
-      <tr><td style="padding:14px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;color:#DC2626;line-height:1.6;font-weight:600;">Please update your payment method by <strong>{{deadlineLabel}}</strong> to keep your booking.</td></tr>
+      <tr><td style="padding:14px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;color:#B91C1C;line-height:1.6;font-weight:600;">Please update your payment method by <strong>{{deadlineLabel}}</strong> to keep your booking.</td></tr>
     </table>
   </td></tr>
       
   <tr><td class="pad" style="padding:16px 40px 0 40px;">
-    <p style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.7;text-align:left;">If payment is not completed before the deadline, the booking may be cancelled automatically.</p>
+    <p class="dm-muted" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.7;text-align:left;">If payment is not completed before the deadline, the booking may be cancelled automatically.</p>
   </td></tr>
       
   <tr><td class="pad" style="padding:28px 40px 8px 40px;">
@@ -106,12 +107,12 @@
             <td align="center" style="padding:28px 20px 0 20px;">
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                 <tr>
-                  <td align="center" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.6;padding:0 0 6px 0;">
-                    Need help? <a href="mailto:{{supportEmail}}" style="color:#007A4D;text-decoration:none;font-weight:600;">Contact support</a>
+                  <td align="center" class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.6;padding:0 0 6px 0;">
+                    Need help? <a href="mailto:{{supportEmail}}" class="dm-accent" style="color:#007A4D;text-decoration:none;font-weight:600;">Contact support</a>
                   </td>
                 </tr>
                 <tr>
-                  <td align="center" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;color:#475569;line-height:1.6;">
+                  <td align="center" class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;color:#475569;line-height:1.6;">
                     &copy; {{year}} {{brandName}}. All rights reserved.
                   </td>
                 </tr>

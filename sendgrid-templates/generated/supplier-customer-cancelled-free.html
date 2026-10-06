@@ -39,6 +39,7 @@
     .dm-card { background-color:#111827 !important; border-color:#1F2937 !important; }
     .dm-text { color:#E5E7EB !important; }
     .dm-muted { color:#9CA3AF !important; }
+    .dm-accent { color:#34D399 !important; }
   }
 </style>
 </head>
@@ -65,18 +66,18 @@
                 
       
   <tr><td class="pad" style="padding:36px 40px 4px 40px;">
-    <h1 class="h1 font-main" style="margin:0 0 12px 0;font-size:28px;font-weight:800;color:#001F3F;line-height:1.25;text-align:center;">This booking has been cancelled</h1>
+    <h1 class="h1 font-main dm-text" style="margin:0 0 12px 0;font-size:28px;font-weight:800;color:#001F3F;line-height:1.25;text-align:center;">This booking has been cancelled</h1>
     
   </td></tr>
   <tr><td align="center" style="padding:0px 0 0 0;">
          <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
-           <tr><td style="background-color:#FEF2F2;border-radius:20px;padding:6px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:700;color:#DC2626;line-height:1.2;">Cancelled</td></tr>
+           <tr><td style="background-color:#FEF2F2;border-radius:20px;padding:6px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:700;color:#B91C1C;line-height:1.2;">Cancelled</td></tr>
          </table>
        </td></tr>
       
   <tr><td class="pad" style="padding:20px 40px 0 40px;">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#FEF2F2;border-radius:10px;">
-      <tr><td style="padding:14px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;color:#DC2626;line-height:1.6;font-weight:600;">DO NOT OPERATE THIS BOOKING</td></tr>
+      <tr><td style="padding:14px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;color:#B91C1C;line-height:1.6;font-weight:600;">DO NOT OPERATE THIS BOOKING</td></tr>
     </table>
   </td></tr>
       
@@ -84,8 +85,8 @@
         <td style="padding:7px 40px 7px 40px;" class="pad">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
             <tr>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Cancelled by</td>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span style="color:#001F3F;font-weight:600;">Customer</span></td>
+              <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Cancelled by</td>
+              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span class="dm-text" style="color:#001F3F;font-weight:600;">Customer</span></td>
             </tr>
           </table>
         </td>
@@ -94,8 +95,8 @@
         <td style="padding:7px 40px 7px 40px;" class="pad">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
             <tr>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Cancellation time</td>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span style="color:#001F3F;font-weight:600;">{{cancelledAtLabel}}</span></td>
+              <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Cancellation time</td>
+              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{cancelledAtLabel}}</span></td>
             </tr>
           </table>
         </td>
@@ -104,8 +105,8 @@
         <td style="padding:7px 40px 7px 40px;" class="pad">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
             <tr>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Experience date</td>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span style="color:#001F3F;font-weight:600;">{{dateLabel}}</span></td>
+              <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Experience date</td>
+              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{dateLabel}}</span></td>
             </tr>
           </table>
         </td>
@@ -114,8 +115,8 @@
         <td style="padding:7px 40px 7px 40px;" class="pad">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
             <tr>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Travellers</td>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span style="color:#001F3F;font-weight:600;">{{travelersLabel}}</span></td>
+              <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Travellers</td>
+              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{travelersLabel}}</span></td>
             </tr>
           </table>
         </td>
@@ -124,8 +125,8 @@
         <td style="padding:7px 40px 7px 40px;" class="pad">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
             <tr>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Cancellation policy</td>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span style="color:#001F3F;font-weight:600;">Free cancellation</span></td>
+              <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Cancellation policy</td>
+              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span class="dm-text" style="color:#001F3F;font-weight:600;">Free cancellation</span></td>
             </tr>
           </table>
         </td>
@@ -134,8 +135,8 @@
         <td style="padding:7px 40px 7px 40px;" class="pad">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
             <tr>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Supplier payout</td>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span style="color:#001F3F;font-weight:600;">{{payoutAmountLabel}}</span></td>
+              <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Supplier payout</td>
+              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{payoutAmountLabel}}</span></td>
             </tr>
           </table>
         </td>
@@ -144,8 +145,8 @@
         <td style="padding:7px 40px 7px 40px;" class="pad">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
             <tr>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Availability</td>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span style="color:#001F3F;font-weight:600;">Automatically restored</span></td>
+              <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Availability</td>
+              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span class="dm-text" style="color:#001F3F;font-weight:600;">Automatically restored</span></td>
             </tr>
           </table>
         </td>
@@ -175,12 +176,12 @@
             <td align="center" style="padding:28px 20px 0 20px;">
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                 <tr>
-                  <td align="center" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.6;padding:0 0 6px 0;">
-                    Need help? <a href="mailto:{{supportEmail}}" style="color:#007A4D;text-decoration:none;font-weight:600;">Contact support</a>
+                  <td align="center" class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.6;padding:0 0 6px 0;">
+                    Need help? <a href="mailto:{{supportEmail}}" class="dm-accent" style="color:#007A4D;text-decoration:none;font-weight:600;">Contact support</a>
                   </td>
                 </tr>
                 <tr>
-                  <td align="center" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;color:#475569;line-height:1.6;">
+                  <td align="center" class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;color:#475569;line-height:1.6;">
                     &copy; {{year}} {{brandName}}. All rights reserved.
                   </td>
                 </tr>

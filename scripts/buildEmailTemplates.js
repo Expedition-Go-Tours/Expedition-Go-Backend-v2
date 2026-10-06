@@ -959,8 +959,8 @@ function inviterBlock() {
           <div style="width:40px;height:40px;border-radius:999px;background-color:{{accentColor}};color:#ffffff;font-family:${B.FONT};font-size:14px;font-weight:700;text-align:center;line-height:40px;letter-spacing:0.5px;">{{inviterInitials}}</div>
         </td>
         <td valign="middle" style="padding:14px 16px 14px 8px;">
-          <p style="margin:0;font-family:${B.FONT};font-size:14px;font-weight:700;color:#001F3F;line-height:1.4;" class="dm-text">{{inviterName}}</p>
-          <p style="margin:2px 0 0 0;font-family:${B.FONT};font-size:12px;color:#64748B;line-height:1.5;" class="dm-muted">{{#if inviterEmail}}{{inviterEmail}} &middot; {{/if}}invited you to join {{supplierName}}</p>
+          <p style="margin:0;font-family:${B.FONT};font-size:14px;font-weight:700;color:#001F3F;line-height:1.4;">{{inviterName}}</p>
+          <p style="margin:2px 0 0 0;font-family:${B.FONT};font-size:12px;color:#64748B;line-height:1.5;">{{#if inviterEmail}}{{inviterEmail}} &middot; {{/if}}invited you to join {{supplierName}}</p>
         </td>
       </tr>
     </table>
@@ -974,7 +974,7 @@ function inviterBlock() {
 function roleAccessBlock() {
   return `
   <tr><td class="pad" style="padding:24px 40px 0 40px;">
-    <p style="margin:0 0 10px 0;font-family:${B.FONT};font-size:11px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:${B.COLORS.faint};">Your access</p>
+    <p class="dm-muted" style="margin:0 0 10px 0;font-family:${B.FONT};font-size:11px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:${B.COLORS.faint};">Your access</p>
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;">
       <tr><td style="padding:16px 18px;">
         <div style="margin:0 0 12px 0;">
@@ -983,8 +983,8 @@ function roleAccessBlock() {
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
           {{#each roles}}
           <tr>
-            <td valign="top" style="width:18px;padding:3px 0;font-family:${B.FONT};font-size:13px;line-height:1.6;color:{{accentDark}};">&#10003;</td>
-            <td style="padding:3px 0;font-family:${B.FONT};font-size:13px;line-height:1.6;color:#334155;" class="dm-text"><strong>{{label}}</strong> &mdash; {{summary}}</td>
+            <td valign="top" style="width:18px;padding:3px 0;font-family:${B.FONT};font-size:13px;line-height:1.6;color:${B.COLORS.accentDark};">&#10003;</td>
+            <td style="padding:3px 0;font-family:${B.FONT};font-size:13px;line-height:1.6;color:#334155;"><strong>{{label}}</strong> &mdash; {{summary}}</td>
           </tr>
           {{/each}}
         </table>
@@ -999,7 +999,7 @@ function fallbackLinkBlock() {
   <tr><td class="pad" style="padding:4px 40px 0 40px;">
     <p style="margin:0;font-family:${B.FONT};font-size:12px;color:${B.COLORS.muted};line-height:1.6;word-break:break-all;" class="dm-muted">
       Button not working? Paste this link into your browser:<br>
-      <a href="{{inviteUrl}}" style="color:{{accentColor}};text-decoration:underline;">{{inviteUrl}}</a>
+      <a href="{{inviteUrl}}" class="dm-accent" style="color:{{accentColor}};text-decoration:underline;">{{inviteUrl}}</a>
     </p>
   </td></tr>`;
 }
