@@ -246,10 +246,10 @@ function linkList(links, site) {
     .join('\n        ');
 }
 
-function buildHtml(site, { title, description, keywords, image, url, canonical, type, jsonLd, price, rating, robots, bodyHtml }) {
+function buildHtml(site, { title, description, keywords, image, url, canonical, type, jsonLd, price, rating, robots, bodyHtml, appendSiteName = true }) {
   const SITE_URL = site.url;
   const SITE_NAME = site.name;
-  const fullTitle = `${title} | ${SITE_NAME}`;
+  const fullTitle = appendSiteName ? `${title} | ${SITE_NAME}` : title;
   const ogImage = image && String(image).startsWith('http') ? image : `${SITE_URL}${image || ''}`;
   // Declare dimensions only when they are ours to vouch for: the branded card
   // ships at a fixed 1200x630, tour photos and logo fallbacks are left alone.
@@ -928,7 +928,10 @@ ${HOME_FAQS.map((f) => `          <dt>${escapeHtml(f.q)}</dt>\n          <dd>${e
   }
 
   return buildHtml(site, {
-    title: 'Ghana Tours & Experiences | Book Authentic African Adventures',
+    title: site.apiBrand === 'expedition'
+      ? 'Ghana Tours & Activities | Discover Experiences | Book & Explore'
+      : 'Ghana Tours & Experiences | Book Authentic African Adventures',
+    appendSiteName: site.apiBrand !== 'expedition',
     description: 'Discover authentic Ghana tours and experiences. Book cultural tours, wildlife safaris, food tours, and adventure activities across Accra, Cape Coast, Volta Region, and more. Free cancellation, best prices guaranteed.',
     keywords: 'Ghana tours, things to do in Ghana, Ghana experiences, Accra tours, Cape Coast tours, Ghana safari, Ghana food tour, Ghana cultural tour, West Africa tours, African vacation, Ghana travel',
     image: site.defaultImage.url,
