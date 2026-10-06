@@ -100,7 +100,7 @@ describe('brand resolution', () => {
     const res = await render('/');
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('<link rel="canonical" href="https://www.expeditiongotours.com/">');
-    expect(res.body).toContain('| Expedition-Go Tours</title>');
+    expect(res.body).toContain('<title>Ghana Tours &amp; Activities | Discover Experiences | Book &amp; Explore</title>');
     expect(res.body).toContain('content="Expedition-Go Tours"');
   });
 
