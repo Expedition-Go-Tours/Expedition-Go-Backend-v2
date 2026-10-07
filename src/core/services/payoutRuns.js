@@ -739,6 +739,14 @@ async function createRequestsForBookings({
 /**
  * Generate every payout run that is due today. Idempotent: safe to run on any
  * cadence. Returns a small report for logging/tests.
+ *
+ * SUPERSEDED by finance v3 (invoiceService.generateDueInvoices). The scheduler
+ * was repointed at the v3 invoice job in queue.js and the v2 scheduler pruned
+ * from Redis, so nothing calls this in production — it is retained for unit
+ * coverage of the legacy flow and must NOT be re-wired to the scheduler: an
+ * auto-run here would pay suppliers via v2 PayoutRequests UNDERNEATH v3
+ * invoices and double-pay. The same applies to notifyDuePayoutWindows, which
+ * only served the v2 early-request window.
  */
 async function generateDuePayoutRuns(now = new Date()) {
   if (!(await autoRunsEnabled())) {

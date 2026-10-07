@@ -122,10 +122,12 @@ const SCHEDULES = [
   { jobName: 'resolve-cancellation-choices', queue: 'cleanup',     everyMs: 5 * 60 * 1000 },
   { jobName: 'cancellation-request-reminder', queue: 'cleanup',    everyMs: 60 * 60 * 1000 },
   { jobName: 'earnings-eligibility-sweep',  queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
-  // Automated supplier payout runs (weekly / twice-monthly / monthly plans).
+  // Automated supplier invoicing (v3; replaced the v2 payout-request sweep).
   // Hourly + idempotent (runKey guard) so a run lands shortly after midnight
   // on its cadence date regardless of which cluster worker picks it up.
-  { jobName: 'generate-payout-runs',        queue: 'cleanup',      everyMs: 60 * 60 * 1000 },
+  // The v2 auto-request sweep (generate-payout-runs) is retired and its
+  // scheduler is pruned on boot — see registerSchedules.
+  { jobName: 'generate-due-invoices',       queue: 'cleanup',      everyMs: 60 * 60 * 1000 },
   { jobName: 'plan-booking-reminders',      queue: 'cleanup',      everyMs: 3600 * 1000 },
   { jobName: 'dispatch-booking-reminders',  queue: 'cleanup',      everyMs: 15 * 60 * 1000 },
   // CLEANUP — reconciles
@@ -248,6 +250,11 @@ async function recordSweepFailure(jobName) {
 /**
  * Register every schedule in Redis via idempotent upsertJobScheduler.
  * Returns per-job results (ok:/fail:) so the caller can verify.
+ *
+ * Also prunes schedulers retired from SCHEDULES — upsertJobScheduler only
+ * creates/updates, so an entry removed from SCHEDULES would otherwise keep
+ * firing from Redis forever. (generate-payout-runs: the v2 auto-request
+ * sweep, superseded by the v3 generate-due-invoices invoice job.)
  */
 async function registerSchedules() {
   const results = [];
@@ -264,6 +271,20 @@ async function registerSchedules() {
       results.push(`fail:${s.jobName}:${e?.message || e}`);
     }
   }
+
+  // Retired schedulers that must be removed from Redis so they can never fire
+  // again. Guarded for queues/mocks without the method (no-op if absent).
+  const RETIRED_SCHEDULER_IDS = ['sched:generate-payout-runs'];
+  for (const label of Object.keys(QUEUE_BY_LABEL)) {
+    const q = getQueue(QUEUE_BY_LABEL[label]);
+    if (typeof q.removeJobScheduler !== 'function') continue;
+    for (const id of RETIRED_SCHEDULER_IDS) {
+      try {
+        await q.removeJobScheduler(id);
+      } catch { /* not registered — nothing to prune */ }
+    }
+  }
+
   return results;
 }
 
@@ -1073,24 +1094,19 @@ function registerWorkers() {
           await sweepEarningsEligibility();
           break;
         }
-        case 'generate-payout-runs': {
-          // Ensure freshly-travelled bookings are ELIGIBLE before we decide
-          // what each supplier's run pays out.
+        case 'generate-payout-runs':
+        case 'generate-due-invoices': {
+          // Finance v3: automatic supplier invoicing replaced the v2 auto
+          // payout sweep. The scheduler key for this cadence was renamed to
+          // generate-due-invoices (the v2 scheduler is pruned on boot), but
+          // keep the old case label so an in-flight job from before the prune
+          // routes here and runs the same idempotent work instead of sweeping
+          // v2 requests. generateDuePayoutRuns is gated off at the source —
+          // the v2 auto-run can never double-pay alongside v3 invoices.
           const { sweepEarningsEligibility } = require('./payoutCycles');
           await sweepEarningsEligibility();
-          const { generateDuePayoutRuns, notifyDuePayoutWindows } = require('./payoutRuns');
-          await generateDuePayoutRuns();
-          // After the auto-run, never before it: whatever the scheduler has
-          // just claimed is no longer requestable, so telling the supplier to
-          // request it would be wrong. Also runs when the scheduler is off.
-          const windowReport = await notifyDuePayoutWindows();
-          if (windowReport.notified > 0 || windowReport.dueCycles.length > 0) {
-            console.log(
-              `[Finance] Payout window open (${windowReport.dueCycles.join(', ')}): notified ${windowReport.notified}, `
-              + `${windowReport.skippedAlreadyRequested} already requested, ${windowReport.skippedNotified} already notified, `
-              + `${windowReport.skippedNoFunds} without funds, ${windowReport.skippedNoMethod} without a payout method`
-            );
-          }
+          const { generateDueInvoices } = require('./invoiceService');
+          await generateDueInvoices();
           break;
         }
         case 'charge-pay-later-bookings': {
