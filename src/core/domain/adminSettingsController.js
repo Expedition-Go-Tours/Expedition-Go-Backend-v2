@@ -37,6 +37,15 @@ function sanitizeSetting(key, value) {
     // normalize to the fraction that Booking.commissionRate (Decimal(5,4))
     // expects. The two rates are combined additively at calculation time
     // (stripeHelpers.calculateCommission), where the total is clamped at 1.
+    //
+    // The surcharge may be exactly 0 — that IS the current flat-15% default —
+    // so it gets its own acceptance path: normalizeCommissionRate() rejects 0
+    // because the BASE rate must always be above 0.
+    const num = typeof value === 'number' ? value : parseFloat(value);
+    if (key === 'commission.surcharge_rate' && Number.isFinite(num) && num >= 0) {
+      const frac = num > 1 ? num / 100 : num;
+      return String(Math.min(frac, 1));
+    }
     const rate = normalizeCommissionRate(value, null);
     if (rate === null) {
       throw new AppError(

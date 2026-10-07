@@ -110,23 +110,23 @@ const mockStripeEvent = (type, data = {}) => ({
 });
 
 describe('calculateCommission', () => {
-  it('applies the flat 17% rate (15% base + 2% surcharge) to every booking', async () => {
+  it('applies the flat 15% rate (15% base, no surcharge) to every booking', async () => {
     const result = await calculateCommission(100);
 
-    expect(result.rate).toBe(0.17);
-    expect(result.amount).toBe(17);
-    expect(result.supplierPayout).toBe(83);
+    expect(result.rate).toBe(0.15);
+    expect(result.amount).toBe(15);
+    expect(result.supplierPayout).toBe(85);
   });
 
   it('keeps the same flat rate regardless of booking amount', async () => {
     const small = await calculateCommission(50);
     const large = await calculateCommission(1000);
 
-    expect(small.rate).toBe(0.17);
-    expect(small.amount).toBe(8.5);
-    expect(large.rate).toBe(0.17);
-    expect(large.amount).toBe(170);
-    expect(large.supplierPayout).toBe(830);
+    expect(small.rate).toBe(0.15);
+    expect(small.amount).toBe(7.5);
+    expect(large.rate).toBe(0.15);
+    expect(large.amount).toBe(150);
+    expect(large.supplierPayout).toBe(850);
   });
 
   it('honors a custom commission.surcharge_rate from config', async () => {
@@ -143,7 +143,7 @@ describe('calculateCommission', () => {
   it('handles zero booking amount', async () => {
     const result = await calculateCommission(0);
 
-    expect(result.rate).toBe(0.17);
+    expect(result.rate).toBe(0.15);
     expect(result.amount).toBe(0);
     expect(result.supplierPayout).toBe(0);
   });
@@ -151,9 +151,9 @@ describe('calculateCommission', () => {
   it('handles string amount input', async () => {
     const result = await calculateCommission('200');
 
-    expect(result.rate).toBe(0.17);
-    expect(result.amount).toBe(34);
-    expect(result.supplierPayout).toBe(166);
+    expect(result.rate).toBe(0.15);
+    expect(result.amount).toBe(30);
+    expect(result.supplierPayout).toBe(170);
   });
 
   it('tolerates percentage-style config (15 + 2 → 0.17)', async () => {

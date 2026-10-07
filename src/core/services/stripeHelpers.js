@@ -574,10 +574,13 @@ async function cancelPaymentIntent(paymentIntentId) {
 /**
  * Calculate the platform commission for a booking — a flat rate for every
  * supplier: rate = commission.default_rate + commission.surcharge_rate
- * (defaults 0.15 + 0.02 = 17%). The performance-tier discounts (12–14%) were
- * retired with the v3 invoice migration, so totalBookings/averageRating no
- * longer influence the rate. The rate is written to Booking.commissionRate
- * at creation, freezing each booking's commission at booking time.
+ * (defaults 0.15 + 0.00 = 15% — flat 15% since the commission change; an
+ * environment can still set a surcharge via SystemConfig). The
+ * performance-tier discounts (12–14%) were retired with the v3 invoice
+ * migration, so totalBookings/averageRating no longer influence the rate.
+ * The rate is written to Booking.commissionRate at creation, freezing each
+ * booking's commission at booking time (forward-only: bookings taken under
+ * the old 17% keep their frozen rate).
  *
  * @param {number|string} bookingAmount - gross booking amount
  * @returns {Promise<{rate: number, amount: number, supplierPayout: number}>}

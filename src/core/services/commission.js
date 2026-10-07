@@ -5,11 +5,13 @@
 const DEFAULT_COMMISSION_RATE = 0.15;
 
 /**
- * Default acquisition surcharge on top of DEFAULT_COMMISSION_RATE — every
- * booking pays a flat rate of 0.15 + 0.02 = 0.17 (17%). Configurable per
- * environment via SystemConfig 'commission.surcharge_rate'.
+ * Default acquisition surcharge on top of DEFAULT_COMMISSION_RATE. Since the
+ * flat-15% change this defaults to 0 — the effective commission is a flat
+ * 0.15 (15%). It stays a separate config hook ('commission.surcharge_rate')
+ * so a surcharge can still be turned on per environment: when set, the two
+ * rates are added (0.15 + surcharge) at calculation time.
  */
-const DEFAULT_SURCHARGE_RATE = 0.02;
+const DEFAULT_SURCHARGE_RATE = 0;
 
 /**
  * Normalize a commission rate config value into a decimal fraction in (0, 1].
