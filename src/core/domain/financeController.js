@@ -9,10 +9,6 @@ const {
   resolvePayoutMethod,
   createRequestsForBookings,
   notifyPayoutRequestsCreated,
-  cyclePeriodFor,
-  lastRunAt,
-  withLabel,
-  getSupplierRequestWindow,
 } = require('../services/payoutRuns');
 const { logActivity } = require('../services/auditLogger');
 const { payoutBookingsWhere } = require('../services/financeHelpers');
@@ -188,17 +184,21 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
 
   // Which window decides whether "Request payout" is available.
   //
-  // Enrolled suppliers are paid on their own cadence, so their window is their
-  // run day plus a short grace — not the legacy twice-monthly calendar, which
-  // has nothing to do with whether a weekly supplier's payout is due. Returns
-  // null only for an enrolled supplier whose plan has no cycle, preserving the
-  // old contract everywhere else.
+  // Enrolled suppliers are paid via the invoice engine (v3): their money is
+  // invoiced automatically on their cadence, and the early-payout accelerator
+  // is the invoice flow (POST /finance/invoices) — always available, once per
+  // pending window. They no longer have a legacy withdrawal window. Legacy
+  // (unmigrated) suppliers keep the twice-monthly calendar window, which is
+  // unrelated to the v2 run-day window a weekly cadence used to imply.
   let requestWindow;
   if (payoutPlan.autoManaged) {
-    const w = getSupplierRequestWindow(payoutPlan);
-    requestWindow = w
-      ? { open: w.open, opensAt: w.opensAt, closesAt: w.closesAt, cycleLabel: w.cycle.label, source: w.source }
-      : null;
+    requestWindow = {
+      open: true,
+      source: 'invoice',
+      cycleLabel: payoutPlan.nextRunPeriodLabel || null,
+      opensAt: null,
+      closesAt: null,
+    };
   } else {
     requestWindow = {
       open: window.open,
@@ -510,52 +510,30 @@ exports.createPayoutRequest = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
   const { bookingIds, payoutMethodId, notes } = req.body || {};
 
-  // Enrolled suppliers are paid automatically — they don't request by hand
-  // except as a self-serve fallback, and only while their own run window is
-  // open. Outside it the scheduler owns the period, so this stays a 409 that
-  // names the next run instead of quietly letting a second payout through.
-  //
-  // This branch used to do `const next = plan.nextRunAt...toISOString()` and
-  // then call `next(...)` — shadowing the catchAsync `next` callback with a
-  // string, so it threw "next is not a function" rather than returning 409.
+  // Enrolled suppliers are paid via invoices — automatically on their cadence,
+  // and early through POST /finance/invoices (one early invoice per pending
+  // window). The v2 manual batch flow is retired for them: a legacy
+  // PayoutRequest would open a second payment channel the invoice engine has
+  // no visibility into, and the v2 auto-run that used to sweep those batches
+  // is superseded. Legacy (unmigrated) suppliers keep the calendar-window flow
+  // below, so nothing about their existing flow changes.
   const plan = await getSupplierPayoutPlan(supplierId);
-  // `autoManaged` is defined as Boolean(cycle), so a null window here can only
-  // mean the scheduler is paused — which is exactly the case that must fall
-  // through to the manual path so funds are never stranded.
-  const requestWindow = plan.autoManaged && plan.autoRunsEnabled
-    ? getSupplierRequestWindow(plan)
-    : null;
-  if (requestWindow && !requestWindow.open) {
-    const nextRun = plan.nextRunAt ? plan.nextRunAt.toISOString().slice(0, 10) : null;
+  if (plan.autoManaged) {
     return next(new AppError(
-      `Payouts on your account are generated automatically (${plan.scheduleLabel}).`
-      + ` You can request manually between ${requestWindow.opensAt.toISOString().slice(0, 10)}`
-      + ` and ${requestWindow.closesAt.toISOString().slice(0, 10)}.`
-      + (nextRun ? ` Your next payout is scheduled for ${nextRun}.` : ''),
+      `Payouts on your account are generated automatically via invoices (${plan.scheduleLabel}). `
+      + 'To be paid before your next invoice date, use the invoice-based early payout instead.',
       409
     ));
   }
 
-  let cycleWindow;
-  if (requestWindow) {
-    // Enrolled and inside its own run window: record exactly the period the
-    // dialog showed, so the label the supplier approved is the one that lands
-    // on the request even if the clock crosses a cadence boundary between them.
-    cycleWindow = requestWindow.cycle;
-  } else if (plan.autoManaged) {
-    // Paused scheduler — no window to quote, so derive the period the funds
-    // were accumulating in from the cadence, as the auto-generated run would.
-    cycleWindow = withLabel(cyclePeriodFor(plan.cycle, lastRunAt(plan.cycle, new Date()) || new Date()));
-  } else {
-    const window = await getRequestWindow();
-    if (!window.open) {
-      return next(new AppError(
-        `The withdrawal window is closed. It opens ${window.start.toISOString().slice(0, 10)} for the "${window.label}" cycle.`,
-        400
-      ));
-    }
-    cycleWindow = { start: window.cycle.start, end: window.cycle.end, label: window.cycle.label };
+  const window = await getRequestWindow();
+  if (!window.open) {
+    return next(new AppError(
+      `The withdrawal window is closed. It opens ${window.start.toISOString().slice(0, 10)} for the "${window.label}" cycle.`,
+      400
+    ));
   }
+  const cycleWindow = { start: window.cycle.start, end: window.cycle.end, label: window.cycle.label };
 
   // One open request per supplier per period. Without this a supplier could
   // submit repeatedly while an earlier request for the same period is still
