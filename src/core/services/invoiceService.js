@@ -15,8 +15,11 @@
  *                    under its own runKey (GetYourGuide's "an early payout
  *                    takes what is there now"). Bookings are never double
  *                    invoiced: InvoiceItem.bookingId is unique.
- *   Money movement:  finance marks the invoice paid with a real bank reference
- *                    (markInvoicePaid) — no provider API.
+ *   Money movement:  finance approves the invoice (approveInvoice — maker,
+ *                    checker, audit), sends the transfer itself, then records
+ *                    the real bank reference with markInvoicePaid — no
+ *                    provider API, and no way from INVOICED to PAID without
+ *                    passing through APPROVED.
  *   Estimate:        buildInvoiceEstimate() — the "Next payout" projection,
  *                    which includes FUTURE confirmed tours in the pending
  *                    window and recalculates on cancellations/refunds/date
@@ -191,9 +194,56 @@ async function buildInvoiceEstimate({ supplierId, cycle, now = new Date() }) {
 }
 
 /**
- * Admin marks an invoice as actually paid, recording the real bank/transaction
- * reference (money movement stays manual — no provider API). Flips the line
- * items' bookings to PAID so every payout figure stays consistent.
+ * Finance approves the invoice — the maker–checker step between generation
+ * and payment. Only INVOICED invoices can be approved (409 otherwise), the
+ * approval records WHO authorized the transfer and WHEN, and markInvoicePaid
+ * refuses to run on anything but APPROVED — so the gate can never be skipped
+ * or auto-bypassed; there is deliberately no scheduled auto-approval.
+ *
+ * @param {object} params
+ * @param {string} params.invoiceId
+ * @param {string} params.adminUserId
+ * @param {string} [params.adminEmail]
+ * @returns {Promise<object>} the updated invoice row
+ */
+async function approveInvoice({ invoiceId, adminUserId, adminEmail }) {
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    select: { id: true, invoiceNumber: true, status: true },
+  });
+  if (!invoice) throw new AppError('Invoice not found', 404);
+  if (invoice.status !== 'INVOICED') {
+    throw new AppError(
+      `Invoice ${invoice.invoiceNumber} is already ${invoice.status.toLowerCase()} — only an awaiting-approval invoice can be approved`,
+      409
+    );
+  }
+
+  const approved = await prisma.invoice.update({
+    where: { id: invoice.id },
+    data: { status: 'APPROVED', approvedAt: new Date(), approvedBy: adminUserId },
+    select: { id: true, invoiceNumber: true, status: true, approvedAt: true, approvedBy: true },
+  });
+
+  await logActivity({
+    userId: adminUserId || undefined,
+    userEmail: adminEmail || undefined,
+    action: 'invoice.approved',
+    resource: 'Invoice',
+    resourceId: invoice.id,
+    oldValues: { status: 'INVOICED' },
+    newValues: { status: 'APPROVED' },
+    metadata: { invoiceNumber: invoice.invoiceNumber },
+  }).catch(() => {});
+
+  return approved;
+}
+
+/**
+ * Admin marks an approved invoice as actually paid, recording the real
+ * bank/transaction reference (money movement stays manual — no provider API;
+ * approval already happened via approveInvoice). Flips the line items'
+ * bookings to PAID so every payout figure stays consistent.
  *
  * @returns {Promise<object>} the updated invoice row
  */
@@ -211,8 +261,13 @@ async function markInvoicePaid({ invoiceId, reference, adminUserId, adminEmail }
     },
   });
   if (!invoice) throw new AppError('Invoice not found', 404);
-  if (invoice.status !== 'INVOICED') {
-    throw new AppError(`Invoice ${invoice.invoiceNumber} is already marked ${invoice.status.toLowerCase()}`, 409);
+  if (invoice.status !== 'APPROVED') {
+    throw new AppError(
+      invoice.status === 'INVOICED'
+        ? `Invoice ${invoice.invoiceNumber} is awaiting approval — approve it before recording payment`
+        : `Invoice ${invoice.invoiceNumber} is already marked ${invoice.status.toLowerCase()}`,
+      409
+    );
   }
 
   const bookingIds = invoice.items.map((i) => i.bookingId);
@@ -238,7 +293,7 @@ async function markInvoicePaid({ invoiceId, reference, adminUserId, adminEmail }
     action: 'invoice.marked_paid',
     resource: 'Invoice',
     resourceId: invoice.id,
-    oldValues: { status: 'INVOICED' },
+    oldValues: { status: 'APPROVED' },
     newValues: { status: 'PAID', reference: paid.reference },
     metadata: { invoiceNumber: paid.invoiceNumber, bookings: bookingIds.length },
   }).catch(() => {});
@@ -247,11 +302,11 @@ async function markInvoicePaid({ invoiceId, reference, adminUserId, adminEmail }
 }
 
 /**
- * Detach a booking from any unpaid (INVOICED) invoice. Removes the line item
- * and rebalances the invoice's money totals + bookingCount from its remaining
- * items; cancels a now-empty invoice. PAID invoices are left untouched — their
- * ledger rows are immutable and corrections happen via disputes (mirrors
- * detachBookingFromActiveRequests for v2 payout requests).
+ * Detach a booking from any unpaid (INVOICED or APPROVED) invoice. Removes
+ * the line item and rebalances the invoice's money totals + bookingCount from
+ * its remaining items; cancels a now-empty invoice. PAID invoices are left
+ * untouched — their ledger rows are immutable and corrections happen via
+ * disputes (mirrors detachBookingFromActiveRequests for v2 payout requests).
  *
  * @param {object} tx Prisma transaction client (or prisma)
  * @param {string} bookingId
@@ -261,7 +316,7 @@ async function detachBookingFromInvoices(tx, bookingId) {
   const client = tx || prisma;
 
   const items = await client.invoiceItem.findMany({
-    where: { bookingId, invoice: { status: 'INVOICED' } },
+    where: { bookingId, invoice: { status: { in: ['INVOICED', 'APPROVED'] } } },
     select: { id: true, invoiceId: true },
   });
 
@@ -315,11 +370,12 @@ async function createInvoiceNow({ supplierId, cycle = null, payoutMethodId = nul
   const window = nextInvoiceWindow(effectiveCycle, now);
   if (!window) throw new AppError('Could not determine the current payout period', 400);
 
-  // One manual early-request invoice per overlapping window.
+  // One manual early-request invoice per overlapping window. APPROVED counts
+  // as open too — it is still unpaid, so it still owns the window.
   const open = await prisma.invoice.findFirst({
     where: {
       supplierId,
-      status: 'INVOICED',
+      status: { in: ['INVOICED', 'APPROVED'] },
       runKey: null,
       cycleStartDate: { lte: window.end },
       cycleEndDate: { gte: window.start },
@@ -411,8 +467,8 @@ function invoiceIdOf(invoices) {
  * arrived, groups them by (window, currency) and creates one Invoice per group
  * under a stable runKey. Re-fires are no-ops; bookings that land after the
  * invoice was created (e.g. a delayed payment confirmation) are appended to
- * the existing INVOICED invoice. Missed days self-heal: the window stays due
- * until its invoice exists.
+ * the existing unpaid invoice (INVOICED or APPROVED). Missed days self-heal:
+ * the window stays due until its invoice exists.
  *
  * Also promotes pending payout-cycle switches (previously inside the v2 sweep,
  * which v3 supersedes).
@@ -497,7 +553,9 @@ async function generateDueInvoices(now = new Date()) {
         select: { id: true, status: true },
       });
 
-      if (existing && existing.status !== 'INVOICED') continue; // PAID/CANCELLED — window closed
+      // Unpaid invoices (awaiting approval or approved) absorb late-confirmed
+      // bookings; PAID/CANCELLED are closed — the window never reopens.
+      if (existing && !['INVOICED', 'APPROVED'].includes(existing.status)) continue;
 
       if (!existing) {
         report.windows += 1;
@@ -544,10 +602,10 @@ async function generateDueInvoices(now = new Date()) {
           // invoice / claimed the bookings. The next hourly run reconciles.
         }
       } else {
-        // INVOICED invoice already exists for this window+currency — append
-        // anything that landed after it was created (delayed payment confirm,
-        // late same-day booking). createMany's bookingId uniqueness keeps this
-        // from ever duplicating a line item.
+        // An unpaid invoice (INVOICED/APPROVED) already exists for this
+        // window+currency — append anything that landed after it was created
+        // (delayed payment confirm, late same-day booking). createMany's
+        // bookingId uniqueness keeps this from ever duplicating a line item.
         try {
           await prisma.$transaction(async (tx) => {
             await tx.invoiceItem.createMany({
@@ -607,6 +665,7 @@ module.exports = {
   nextInvoiceNumber,
   normalizeReference,
   buildInvoiceEstimate,
+  approveInvoice,
   markInvoicePaid,
   createInvoiceNow,
   generateDueInvoices,

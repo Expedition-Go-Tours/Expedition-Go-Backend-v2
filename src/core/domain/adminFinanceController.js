@@ -4,7 +4,7 @@ const AppError = require('../services/appError');
 const { logActivity } = require('../services/auditLogger');
 const { enqueueNotification, enqueueEmail } = require('../services/queue');
 const { detachBookingFromActiveRequests, unfreezeBookingAfterDispute, payoutBookingsWhere, eligibleBookingsWhere } = require('../services/financeHelpers');
-const { markInvoicePaid, detachBookingFromInvoices } = require('../services/invoiceService');
+const { approveInvoice, markInvoicePaid, detachBookingFromInvoices } = require('../services/invoiceService');
 const { notifyDiscord } = require('../services/discordNotifier');
 const {
   buildPayoutPlan,
@@ -571,9 +571,66 @@ exports.getInvoiceById = catchAsync(async (req, res, next) => {
 });
 
 /**
+ * PATCH /admin/finance/invoices/:id/approve
+ * Maker–checker gate: finance authorizes the transfer before it happens.
+ * Only INVOICED invoices can be approved; records who approved and when.
+ * There is deliberately no auto-approval job — the gate only holds if
+ * nothing can bypass it.
+ */
+exports.approveInvoice = catchAsync(async (req, res, next) => {
+  const approved = await approveInvoice({
+    invoiceId: req.params.id,
+    adminUserId: req.user.id,
+    adminEmail: req.user.email,
+  });
+
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: req.params.id },
+    select: {
+      invoiceNumber: true,
+      supplierId: true,
+      currency: true,
+      netTotal: true,
+      paymentScheduledAt: true,
+    },
+  });
+
+  if (invoice) {
+    enqueueNotification({
+      userId: invoice.supplierId,
+      type: 'INVOICE_APPROVED',
+      title: 'Invoice Approved',
+      message: `Your invoice ${invoice.invoiceNumber} of ${toNumber(invoice.netTotal).toFixed(2)} ${invoice.currency} has been approved by finance and is scheduled for payment.`,
+      data: { invoiceId: req.params.id, invoiceNumber: invoice.invoiceNumber },
+    }).catch(() => {});
+
+    notifyDiscord(
+      'approvals',
+      `Invoice ${invoice.invoiceNumber} approved for payment.`,
+      {
+        title: 'Invoice Approved',
+        color: 0x2196f3,
+        fields: [
+          { name: 'Invoice #', value: invoice.invoiceNumber, inline: true },
+          { name: 'Amount', value: `${invoice.currency} ${toNumber(invoice.netTotal).toFixed(2)}`, inline: true },
+          { name: 'Pay by', value: invoice.paymentScheduledAt ? invoice.paymentScheduledAt.toISOString().slice(0, 10) : 'N/A', inline: true },
+        ],
+        cooldownKey: req.params.id,
+      }
+    ).catch(() => {});
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: { invoice: approved },
+  });
+});
+
+/**
  * PATCH /admin/finance/invoices/:id/mark-paid
  * Records the real bank/transaction reference; invoice → PAID and its
- * bookings' payoutStatus → PAID. Only INVOICED invoices can be marked paid.
+ * bookings' payoutStatus → PAID. Only APPROVED invoices can be marked paid —
+ * approval is the mandatory step before this one.
  */
 exports.markInvoicePaid = catchAsync(async (req, res, next) => {
   const { reference } = req.body || {};

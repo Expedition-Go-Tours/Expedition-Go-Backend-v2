@@ -189,14 +189,42 @@ router.get('/invoices/:id', requirePermission('payouts.view'), adminFinanceContr
 
 /**
  * @swagger
+ * /admin/finance/invoices/{id}/approve:
+ *   patch:
+ *     summary: Approve an invoice for payment (maker–checker gate)
+ *     description: |
+ *       Finance authorizes the transfer before it happens. Only INVOICED
+ *       invoices can be approved; approval records who approved and when.
+ *       mark-paid refuses to run on anything but APPROVED, so every payout
+ *       passes through this step — there is no auto-approval job.
+ *     tags: [Admin Finance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Invoice approved (APPROVED, approvedBy/approvedAt set)
+ *       404:
+ *         description: Invoice not found
+ *       409:
+ *         description: Invoice is not awaiting approval (already APPROVED/PAID/CANCELLED)
+ */
+router.patch('/invoices/:id/approve', requirePermission('payouts.approve'), adminFinanceController.approveInvoice);
+
+/**
+ * @swagger
  * /admin/finance/invoices/{id}/mark-paid:
  *   patch:
- *     summary: Mark an invoice as paid (records the real bank reference)
+ *     summary: Mark an approved invoice as paid (records the real bank reference)
  *     description: |
  *       Money movement stays manual — no provider API. The admin records the
  *       bank/transaction reference; the invoice flips to PAID (leaving the
  *       supplier's balance) and its bookings' payoutStatus flip to PAID.
- *       Only INVOICED invoices can be marked paid.
+ *       Only APPROVED invoices can be marked paid — approve first.
  *     tags: [Admin Finance]
  *     security:
  *       - bearerAuth: []
@@ -220,7 +248,7 @@ router.get('/invoices/:id', requirePermission('payouts.view'), adminFinanceContr
  *       404:
  *         description: Invoice not found
  *       409:
- *         description: Invoice is already PAID or CANCELLED
+ *         description: Invoice is not APPROVED (awaiting approval, already PAID, or CANCELLED)
  */
 router.patch('/invoices/:id/mark-paid', requirePermission('payouts.approve'), adminFinanceController.markInvoicePaid);
 

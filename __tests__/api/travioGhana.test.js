@@ -473,6 +473,71 @@ describe('TravioGhana API — admin endpoints', () => {
     expect(res.status).toBe(200);
   });
 
+  // ── Finance v3 invoices — the admin Invoices tab rewrites /admin/* to THIS
+  // brand router, never the core /api/admin/finance one. All four paths 404'd
+  // until the brand router grew the invoice routes; these pin them down. ──
+
+  it('GET /admin/finance/invoices returns the invoice queue (was 404)', async () => {
+    prisma.invoice.findMany.mockResolvedValue([]);
+    const res = await request(app).get('/api/travioghana/admin/finance/invoices').set(auth(adminToken));
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('success');
+    expect(res.body.data.invoices).toEqual([]);
+  });
+
+  it('GET /admin/finance/invoices/:id returns the invoice detail (was 404)', async () => {
+    prisma.invoice.findUnique.mockResolvedValue({
+      id: 'inv-1',
+      invoiceNumber: 'INV-20261016-0001',
+      status: 'INVOICED',
+      grossTotal: '100',
+      commissionTotal: '17',
+      netTotal: '83',
+      currency: 'USD',
+      supplier: { id: 'supplier-1', name: 'Perf Supplier', email: 'perf-supplier@test.com' },
+      payoutMethod: null,
+      items: [],
+    });
+    const res = await request(app).get('/api/travioghana/admin/finance/invoices/inv-1').set(auth(adminToken));
+    expect(res.status).toBe(200);
+    expect(res.body.data.invoice.invoiceNumber).toBe('INV-20261016-0001');
+    expect(res.body.data.invoice.netTotal).toBe(83);
+  });
+
+  it('PATCH /admin/finance/invoices/:id/approve records the approval (was 404)', async () => {
+    prisma.invoice.findUnique
+      .mockResolvedValueOnce({ id: 'inv-1', invoiceNumber: 'INV-20261016-0001', status: 'INVOICED' })
+      .mockResolvedValueOnce({
+        invoiceNumber: 'INV-20261016-0001',
+        supplierId: 'supplier-1',
+        currency: 'USD',
+        netTotal: '83',
+        paymentScheduledAt: new Date(Date.UTC(2026, 9, 20)),
+      });
+    const res = await request(app)
+      .patch('/api/travioghana/admin/finance/invoices/inv-1/approve')
+      .set(auth(adminToken));
+    expect(res.status).toBe(200);
+    expect(prisma.invoice.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'APPROVED', approvedBy: 'admin-1' }) })
+    );
+  });
+
+  it('PATCH /admin/finance/invoices/:id/mark-paid refuses until approved (was 404)', async () => {
+    prisma.invoice.findUnique.mockResolvedValue({
+      id: 'inv-1',
+      invoiceNumber: 'INV-20261016-0001',
+      status: 'INVOICED',
+      items: [],
+    });
+    const res = await request(app)
+      .patch('/api/travioghana/admin/finance/invoices/inv-1/mark-paid')
+      .set(auth(adminToken))
+      .send({ reference: 'WB-1420' });
+    expect(res.status).toBe(409);
+    expect(res.body.message).toContain('awaiting approval');
+  });
+
   it('GET /analytics/overview returns 200', async () => {
     prisma.travioGhanaTour.count.mockResolvedValue(1);
     prisma.booking.count.mockResolvedValue(0);

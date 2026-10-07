@@ -488,6 +488,28 @@ router.patch('/finance/disputes/:id/resolve',
 );
 
 // ══════════════════════════════════════════════════════════════════════════
+// INVOICES — finance v3 automatic supplier invoices (proxied)
+// The admin Invoices tab hits these through the axios brand rewrite; without
+// this block every queue request 404s (the core router is never mounted here).
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/finance/invoices',
+  requirePermission('payouts.view', 'dashboard.*'),
+  adminFinanceController.getInvoices,
+);
+router.get('/finance/invoices/:id',
+  requirePermission('payouts.view', 'dashboard.*'),
+  adminFinanceController.getInvoiceById,
+);
+router.patch('/finance/invoices/:id/approve',
+  requirePermission('payouts.approve'),
+  adminFinanceController.approveInvoice,
+);
+router.patch('/finance/invoices/:id/mark-paid',
+  requirePermission('payouts.approve'),
+  adminFinanceController.markInvoicePaid,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
 // PAYOUT SCHEDULES — automated payout cadences (proxied)
 // ══════════════════════════════════════════════════════════════════════════
 router.get('/finance/payout-schedules',

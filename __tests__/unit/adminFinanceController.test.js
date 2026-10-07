@@ -4,7 +4,7 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   supplierProfile: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
   booking: { aggregate: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
   tour: { findMany: jest.fn() },
-  invoice: { findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), findUnique: jest.fn() },
+  invoice: { findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
   invoiceItem: { findMany: jest.fn(), delete: jest.fn() },
   $transaction: jest.fn(),
 }));
@@ -592,7 +592,7 @@ describe('adminFinanceController.markInvoicePaid (v3)', () => {
     };
     prisma.$transaction.mockImplementation(async (cb) => cb(tx));
     prisma.invoice.findUnique
-      .mockResolvedValueOnce({ id: 'inv-1', invoiceNumber: 'INV-20261016-0001', status: 'INVOICED', items: [{ bookingId: 'bk-1' }] })
+      .mockResolvedValueOnce({ id: 'inv-1', invoiceNumber: 'INV-20261016-0001', status: 'APPROVED', items: [{ bookingId: 'bk-1' }] })
       .mockResolvedValueOnce({ invoiceNumber: 'INV-20261016-0001', supplierId: 's-1', currency: 'USD', netTotal: '83', reference: 'WB-1420', paidAt: new Date() });
     req.body = { reference: 'WB-1420' };
 
@@ -606,5 +606,69 @@ describe('adminFinanceController.markInvoicePaid (v3)', () => {
     expect(enqueueNotification).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 's-1', type: 'INVOICE_PAID' })
     );
+  });
+
+  it('409s when the invoice has not been approved yet', async () => {
+    prisma.invoice.findUnique.mockResolvedValue({ id: 'inv-1', invoiceNumber: 'INV-1', status: 'INVOICED', items: [] });
+    req.body = { reference: 'WB-1420' };
+
+    await controller.markInvoicePaid(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 409 }));
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('adminFinanceController.approveInvoice (v3) — the maker–checker gate', () => {
+  let req, res, next;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    req = { query: {}, params: { id: 'inv-1' }, body: {}, user: { id: 'admin-1', email: 'a@x.com' } };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    next = jest.fn();
+  });
+
+  it('approves the invoice, notifies the supplier and returns it', async () => {
+    prisma.invoice.findUnique
+      .mockResolvedValueOnce({ id: 'inv-1', invoiceNumber: 'INV-20261016-0001', status: 'INVOICED' })
+      .mockResolvedValueOnce({
+        invoiceNumber: 'INV-20261016-0001',
+        supplierId: 's-1',
+        currency: 'USD',
+        netTotal: '83',
+        paymentScheduledAt: new Date(Date.UTC(2026, 9, 20)),
+      });
+    prisma.invoice.update.mockResolvedValue({
+      id: 'inv-1',
+      invoiceNumber: 'INV-20261016-0001',
+      status: 'APPROVED',
+      approvedAt: new Date(),
+      approvedBy: 'admin-1',
+    });
+
+    await controller.approveInvoice(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json.mock.calls[0][0].data.invoice.status).toBe('APPROVED');
+    expect(prisma.invoice.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'inv-1' },
+        data: expect.objectContaining({ status: 'APPROVED', approvedBy: 'admin-1' }),
+      })
+    );
+    expect(enqueueNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 's-1', type: 'INVOICE_APPROVED' })
+    );
+  });
+
+  it('passes a 409 through when the invoice is not awaiting approval', async () => {
+    prisma.invoice.findUnique.mockResolvedValue({ id: 'inv-1', invoiceNumber: 'INV-1', status: 'PAID' });
+
+    await controller.approveInvoice(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 409 }));
+    expect(prisma.invoice.update).not.toHaveBeenCalled();
+    expect(res.status).not.toHaveBeenCalledWith(200);
   });
 });

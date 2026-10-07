@@ -373,6 +373,11 @@ describe('getFinanceSummary — a payout in flight', () => {
       { currency: 'USD', amount: 500 },
       { currency: 'EUR', amount: 200 },
     ]);
+    // Approved-but-unpaid invoices are still owed to the supplier — the
+    // balance query must count APPROVED alongside INVOICED, never PAID.
+    expect(prisma.invoice.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { supplierId: 'sup1', status: { in: ['INVOICED', 'APPROVED'] } } })
+    );
   });
 
   it('shows the next-payout estimate for the pending window with processing dates', async () => {
@@ -495,6 +500,22 @@ describe('getMyInvoices — the supplier invoice history (finance v3)', () => {
 
     expect(prisma.invoice.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { supplierId: 'sup1', status: 'PAID' } })
+    );
+  });
+
+  it('accepts APPROVED as a filter — approved but unpaid is supplier-visible', async () => {
+    await invokeList({ status: 'APPROVED' });
+
+    expect(prisma.invoice.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { supplierId: 'sup1', status: 'APPROVED' } })
+    );
+  });
+
+  it('ignores statuses outside the supplier-facing whitelist', async () => {
+    await invokeList({ status: 'CANCELLED' });
+
+    expect(prisma.invoice.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { supplierId: 'sup1' } })
     );
   });
 });

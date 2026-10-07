@@ -67,7 +67,7 @@ function serializeRequest(request) {
 /**
  * GET /finance/summary
  * Finance page data, GetYourGuide semantics on top of the legacy v2 fields:
- *  - balance     "Your balance" — unpaid (INVOICED) invoices, per currency
+ *  - balance     "Your balance" — unpaid (INVOICED/APPROVED) invoices, per currency
  *  - nextPayout  the pending window's projection BEFORE it is invoiced,
  *                including FUTURE confirmed tours + exact activity-date range
  *                and processing dates; null for legacy (window-managed) suppliers
@@ -140,9 +140,11 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
       _count: { _all: true },
     }),
     // Finance v3: unpaid invoices = "Your balance"; paid invoices count into
-    // the lifetime paid-out total alongside the legacy Payout rows.
+    // the lifetime paid-out total alongside the legacy Payout rows. Approved
+    // (APPROVED) invoices are still owed to the supplier — the money is
+    // authorized but has not moved — so they count as balance too.
     prisma.invoice.findMany({
-      where: { supplierId, status: 'INVOICED' },
+      where: { supplierId, status: { in: ['INVOICED', 'APPROVED'] } },
       orderBy: { invoicedAt: 'asc' },
       select: {
         id: true,
@@ -284,14 +286,15 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
  * GET /finance/invoices?status=INVOICED&page=1&limit=20
  * The supplier's invoice history (finance v3): every generated invoice with
  * its money snapshot, window label and payment status. This is the page's
- * "Your balance" (status INVOICED) and paid-history source.
+ * "Your balance" (status INVOICED or APPROVED — approved-but-unpaid still
+ * counts) and paid-history source.
  */
 exports.getMyInvoices = catchAsync(async (req, res) => {
   const supplierId = req.supplierId;
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const rawStatus = req.query.status ? String(req.query.status).toUpperCase() : null;
-  const status = rawStatus && ['INVOICED', 'PAID'].includes(rawStatus) ? rawStatus : undefined;
+  const status = rawStatus && ['INVOICED', 'APPROVED', 'PAID'].includes(rawStatus) ? rawStatus : undefined;
 
   const where = { supplierId, ...(status ? { status } : {}) };
 

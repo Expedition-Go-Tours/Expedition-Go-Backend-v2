@@ -236,6 +236,9 @@ enum NotificationType {
   CANCELLATION_CHOICE_REQUIRED // Customer must pick reschedule-or-refund (48h window)
   CANCELLATION_REQUEST_APPROVED // Admin approved the supplier's cancellation request
   CANCELLATION_REQUEST_REJECTED // Admin rejected the supplier's cancellation request
+  INVOICE_GENERATED // Finance v3: a payout-window invoice was generated
+  INVOICE_PAID // Finance v3: finance recorded the bank reference (payment sent)
+  INVOICE_APPROVED // Finance v3: finance approved the invoice (transfer authorized)
 }
 
 // Lifecycle of an additional notification email address. PENDING until the
@@ -1340,7 +1343,8 @@ model PayoutRequestItem {
 // a job re-runs. runKey is a second idempotency guard (one invoice per
 // supplier per window per currency).
 enum InvoiceStatus {
-  INVOICED // Waiting to be paid by finance
+  INVOICED // Generated; waiting for finance to approve the transfer
+  APPROVED // Finance approved it — ready to send (only state mark-paid accepts)
   PAID // Finance recorded the bank reference; leaves the supplier balance
   CANCELLED // Voided before payment (administrative correction; never reused)
 }
@@ -1360,6 +1364,12 @@ model Invoice {
   // Fixed processing dates (weekend-skipped; bank may credit later)
   invoicedAt         DateTime // When the invoice was generated (16th / 1st)
   paymentScheduledAt DateTime // When the transfer was scheduled (20th / 5th)
+
+  // Maker–checker: finance approves before it pays. Nothing can jump from
+  // INVOICED to PAID — markInvoicePaid 409s unless the invoice is APPROVED.
+  approvedAt         DateTime?
+  approvedBy         String? // Admin user id who approved it
+
   paidAt             DateTime?
   paidBy             String? // Admin user id who marked it paid
   reference          String? // Real bank / transaction reference entered by finance

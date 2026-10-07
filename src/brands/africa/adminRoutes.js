@@ -181,6 +181,12 @@ router.patch('/finance/payout-requests/:id/complete', requirePermission('payouts
 router.get('/finance/disputes', requirePermission('payouts.view', 'dashboard.*'), adminFinanceController.getDisputes);
 router.get('/finance/disputes/:id', requirePermission('payouts.view', 'dashboard.*'), adminFinanceController.getDisputeById);
 router.patch('/finance/disputes/:id/resolve', requirePermission('payouts.approve'), adminFinanceController.resolveDispute);
+// Finance v3 invoices — the admin Invoices tab rewrites here; without these
+// the queue 404s (core /api/admin/finance is never mounted for this brand).
+router.get('/finance/invoices', requirePermission('payouts.view', 'dashboard.*'), adminFinanceController.getInvoices);
+router.get('/finance/invoices/:id', requirePermission('payouts.view', 'dashboard.*'), adminFinanceController.getInvoiceById);
+router.patch('/finance/invoices/:id/approve', requirePermission('payouts.approve'), adminFinanceController.approveInvoice);
+router.patch('/finance/invoices/:id/mark-paid', requirePermission('payouts.approve'), adminFinanceController.markInvoicePaid);
 
 // PAYOUTS — shared platform endpoints (proxied)
 router.get('/payouts', requirePermission('payouts.view'), payoutController.getAllPayouts);

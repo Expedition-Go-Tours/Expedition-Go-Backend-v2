@@ -11,7 +11,7 @@ jest.mock('../../src/core/services/prismaClient', () => {
   return {
     supplierProfile: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
     booking: { findMany: jest.fn(), updateMany: jest.fn() },
-    invoice: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn() },
+    invoice: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
     invoiceItem: { createMany: jest.fn() },
     payoutMethod: { findFirst: jest.fn() },
     $transaction: jest.fn((fn) => fn(tx)),
@@ -30,8 +30,10 @@ jest.mock('../../src/core/services/discordNotifier', () => ({ notifyDiscord: jes
 
 const prisma = require('../../src/core/services/prismaClient');
 const { enqueueNotification } = require('../../src/core/services/queue');
+const { logActivity } = require('../../src/core/services/auditLogger');
 const {
   buildInvoiceEstimate,
+  approveInvoice,
   markInvoicePaid,
   createInvoiceNow,
   generateDueInvoices,
@@ -184,6 +186,8 @@ describe('createInvoiceNow — the manual early-request accelerator', () => {
     prisma.supplierProfile.findUnique.mockResolvedValue({ payoutCycle: 'TWICE_MONTHLY', payoutCyclePending: null, payoutCyclePendingAt: null });
     prisma.invoice.findFirst.mockResolvedValue({ invoiceNumber: 'INV-20261007-111111aa' });
     await expect(createInvoiceNow({ supplierId: 'sup-1', now: new Date(2026, 9, 7) })).rejects.toMatchObject({ statusCode: 409 });
+    // APPROVED counts as open too — it is still unpaid, so it still owns the window.
+    expect(prisma.invoice.findFirst.mock.calls[0][0].where.status).toEqual({ in: ['INVOICED', 'APPROVED'] });
   });
 
   it('requires a verified payout method', async () => {
@@ -297,6 +301,25 @@ describe('generateDueInvoices — the hourly scheduled job', () => {
     );
   });
 
+  it('appends bookings to an APPROVED invoice too — approved does not mean closed', async () => {
+    prisma.supplierProfile.findMany.mockImplementation(({ where } = {}) =>
+      Promise.resolve(where && where.payoutCyclePending ? [] : [{ userId: 'sup-1', payoutCycle: 'TWICE_MONTHLY' }])
+    );
+    prisma.booking.findMany.mockResolvedValue([
+      b('b1', new Date(2026, 9, 5), 'USD', 100, 15, 85), // late booking after finance approved
+    ]);
+    prisma.invoice.findUnique.mockResolvedValue({ id: 'inv-approved', status: 'APPROVED' });
+    prisma.__tx.invoiceItem.createMany.mockResolvedValue({ count: 1 });
+
+    const report = await generateDueInvoices(now);
+
+    expect(report.invoicesCreated).toBe(0);
+    expect(report.appendedBookings).toBe(1);
+    expect(prisma.__tx.invoiceItem.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.arrayContaining([expect.objectContaining({ invoiceId: 'inv-approved', bookingId: 'b1' })]) })
+    );
+  });
+
   it('leaves a PAID invoice untouched', async () => {
     prisma.supplierProfile.findMany.mockImplementation(({ where } = {}) =>
       Promise.resolve(where && where.payoutCyclePending ? [] : [{ userId: 'sup-1', payoutCycle: 'TWICE_MONTHLY' }])
@@ -370,7 +393,7 @@ describe('markInvoicePaid — finance records the real transfer', () => {
     prisma.invoice.findUnique.mockResolvedValue({
       id: 'inv-1',
       invoiceNumber: 'INV-1',
-      status: 'INVOICED',
+      status: 'APPROVED',
       items: [{ bookingId: 'b1' }, { bookingId: 'b2' }],
     });
     prisma.__tx.invoice.update.mockResolvedValue({
@@ -408,10 +431,54 @@ describe('markInvoicePaid — finance records the real transfer', () => {
       .rejects.toMatchObject({ statusCode: 404 });
   });
 
-  it('409s when the invoice is not INVOICED', async () => {
+  it('409s when the invoice is still awaiting approval', async () => {
+    prisma.invoice.findUnique.mockResolvedValue({ id: 'inv-1', invoiceNumber: 'INV-1', status: 'INVOICED', items: [] });
+    await expect(markInvoicePaid({ invoiceId: 'inv-1', reference: 'TRX-123', adminUserId: 'a', adminEmail: 'x' }))
+      .rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('awaiting approval') });
+    expect(prisma.__tx.invoice.update).not.toHaveBeenCalled();
+  });
+
+  it('409s when the invoice is not APPROVED (already PAID)', async () => {
     prisma.invoice.findUnique.mockResolvedValue({ id: 'inv-1', invoiceNumber: 'INV-1', status: 'PAID', items: [] });
     await expect(markInvoicePaid({ invoiceId: 'inv-1', reference: 'TRX-123', adminUserId: 'a', adminEmail: 'x' }))
       .rejects.toMatchObject({ statusCode: 409 });
+  });
+});
+
+describe('approveInvoice — the maker–checker gate', () => {
+  it('approves an INVOICED invoice and records who approved it', async () => {
+    prisma.invoice.findUnique.mockResolvedValue({ id: 'inv-1', invoiceNumber: 'INV-1', status: 'INVOICED' });
+    prisma.invoice.update.mockResolvedValue({
+      id: 'inv-1',
+      invoiceNumber: 'INV-1',
+      status: 'APPROVED',
+      approvedAt: new Date(),
+      approvedBy: 'admin-1',
+    });
+
+    const result = await approveInvoice({ invoiceId: 'inv-1', adminUserId: 'admin-1', adminEmail: 'fin@x.com' });
+
+    expect(result.status).toBe('APPROVED');
+    const data = prisma.invoice.update.mock.calls[0][0].data;
+    expect(data).toEqual(expect.objectContaining({ status: 'APPROVED', approvedBy: 'admin-1' }));
+    expect(data.approvedAt).toBeInstanceOf(Date);
+    expect(logActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'invoice.approved', resourceId: 'inv-1' })
+    );
+  });
+
+  it('404s for an unknown invoice', async () => {
+    prisma.invoice.findUnique.mockResolvedValue(null);
+    await expect(approveInvoice({ invoiceId: 'nope', adminUserId: 'a' })).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it('409s when the invoice is not awaiting approval', async () => {
+    for (const status of ['APPROVED', 'PAID', 'CANCELLED']) {
+      prisma.invoice.findUnique.mockResolvedValue({ id: 'inv-1', invoiceNumber: 'INV-1', status });
+      await expect(approveInvoice({ invoiceId: 'inv-1', adminUserId: 'a' })).rejects.toMatchObject({ statusCode: 409 });
+    }
+    expect(prisma.invoice.update).not.toHaveBeenCalled();
+    expect(logActivity).not.toHaveBeenCalled();
   });
 });
 
@@ -471,6 +538,20 @@ describe('detachBookingFromInvoices — cancellation keeps unpaid invoices hones
     expect(tx.invoice.update).toHaveBeenCalledWith({
       where: { id: 'inv-1' },
       data: { status: 'CANCELLED', grossTotal: 0, commissionTotal: 0, netTotal: 0, bookingCount: 0 },
+    });
+  });
+
+  it('targets every unpaid invoice (INVOICED or APPROVED), never a PAID one', async () => {
+    const tx = {
+      invoiceItem: { findMany: jest.fn().mockResolvedValue([]), delete: jest.fn() },
+      invoice: { update: jest.fn() },
+    };
+
+    await detachBookingFromInvoices(tx, 'bk-1');
+
+    expect(tx.invoiceItem.findMany).toHaveBeenCalledWith({
+      where: { bookingId: 'bk-1', invoice: { status: { in: ['INVOICED', 'APPROVED'] } } },
+      select: { id: true, invoiceId: true },
     });
   });
 
