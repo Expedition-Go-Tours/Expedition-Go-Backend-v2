@@ -97,16 +97,24 @@ enum PayoutStatus {
   CANCELLED // Payout cancelled
 }
 
-// Lifecycle of a booking's supplier payout portion (finance v2).
+// Lifecycle of a booking's supplier payout portion.
+//
+// finance v2 (legacy manual requests, read-only history):
 // PENDING   → paid, in escrow until travel date passes (+ clearance buffer)
 // ELIGIBLE  → travel completed with no dispute; withdrawable during an open window
 // REQUESTED → included in a submitted PayoutRequest (locked)
 // PAID      → funds released to the supplier (ledger row exists)
 // DISPUTED  → an open dispute/refund freezes the funds
 // CANCELLED → terminal: refunded/cancelled, supplier never gets paid
+//
+// finance v3 (automatic invoicing):
+// ELIGIBLE → netted into a generated Invoice (InvoiceItem.bookingId unique)
+// INVOICED → included in an unpaid Invoice; counted in "Your balance"
+// PAID     → the invoice was marked paid; leaves the balance
 enum BookingPayoutStatus {
   PENDING
   ELIGIBLE
+  INVOICED
   REQUESTED
   PAID
   DISPUTED
@@ -135,18 +143,25 @@ enum PayoutMethodType {
   PAYPAL
 }
 
-// Supplier-selectable payout cadence (GetYourGuide-style).
+// Supplier-selectable payout cadence (finance v3 automatic invoicing).
 //
 // The presence of a value on SupplierProfile.payoutCycle enrols the supplier in
-// AUTOMATED payout runs on that cadence — the scheduler builds the payout
-// request for them on each run date and it lands in the admin approval queue.
-// `null` keeps the legacy behaviour (twice-monthly withdrawal windows the
-// supplier requests manually), so brands that have not adopted the schedule
-// feature are completely unaffected.
+// AUTOMATED invoicing on that cadence — the scheduler generates an Invoice for
+// every booking whose ACTIVITY DATE falls in the cycle window, and it lands in
+// the finance admin queue to be marked paid. `null` keeps the legacy
+// twice-monthly manual withdrawal behaviour for brands that have not adopted
+// the feature, exactly as before.
+//
+//   TWICE_MONTHLY  activities 1st–15th → invoiced on the 16th → paid 20th
+//                  activities 16th–EOM  → invoiced on the 1st  → paid 5th
+//   MONTHLY        prior-month activities → invoiced on the 1st → paid 5th
+//
+// (Invoicing/payment dates fall on the next business day when on a weekend.)
+// WEEKLY was dropped when invoicing launched; migrated suppliers run
+// TWICE_MONTHLY.
 enum PayoutCycle {
-  WEEKLY // run every Monday
-  TWICE_MONTHLY // run on the 1st and the 15th
-  MONTHLY // run on the 1st
+  TWICE_MONTHLY // run on the 16th and the 1st (payments 20th / 5th)
+  MONTHLY // run on the 1st (payment 5th)
 }
 
 enum BookingSource {
@@ -397,6 +412,7 @@ model User {
   payouts                      Payout[]
   payoutMethods                PayoutMethod[]
   payoutRequests               PayoutRequest[]
+  invoices                     Invoice[] // finance v3 automatic invoicing
   supplierCharges              SupplierCharge[] // Cancellation fees charged to this supplier
   disputesOpened               Dispute[]                 @relation("DisputeOpener")
   disputesAgainst              Dispute[]                 @relation("DisputeSupplier")
@@ -636,6 +652,7 @@ model PayoutMethod {
 
   payouts        Payout[] // Payouts that used this method
   payoutRequests PayoutRequest[] // Payout requests paid to this method
+  invoices       Invoice[] // finance v3 invoices pointing at this destination
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1052,6 +1069,7 @@ model Booking {
   review             Review?
   payouts            Payout[]
   payoutRequestItems PayoutRequestItem[]
+  invoiceItems       InvoiceItem[] // finance v3: line items on generated invoices
   supplierCharges    SupplierCharge[]
   disputes           Dispute[]
   refundClaims       RefundClaim[]
@@ -1298,6 +1316,99 @@ model PayoutRequestItem {
   createdAt DateTime @default(now())
 
   @@index([payoutRequestId])
+}
+
+// ── Finance v3: supplier invoices (GetYourGuide-style automatic invoicing) ──
+// Replaces the manual payout-request flow going forward. An Invoice is
+// generated ON SCHEDULE by the payout scheduler, grouping every booking whose
+// ACTIVITY DATE fell inside the cycle window (never the purchase date). Each
+// invoice covers exactly one window:
+//   TWICE_MONTHLY  1st–15th   → invoiced on the 16th → payment due the 20th
+//                 16th–EOM   → invoiced on the 1st   → payment due the 5th
+//   MONTHLY        prior month → invoiced on the 1st  → payment due the 5th
+// (All processing dates fall on the next business day when on a weekend; the
+// bank may credit the supplier later.)
+//
+// Semantics exposed to the supplier:
+//   "Your balance"  = sum of unpaid invoices; marking one PAID removes it.
+//   "Next payout"   = the pre-invoicing estimate built by financeController
+//                     (includes future confirmed tours; resets when an invoice
+//                     generates) — see getFinanceSummary.
+//
+// BookingPayoutStatus.INVOICED is set on each included booking; InvoiceItem.
+// bookingId is UNIQUE, so the same booking can never be invoiced twice even if
+// a job re-runs. runKey is a second idempotency guard (one invoice per
+// supplier per window per currency).
+enum InvoiceStatus {
+  INVOICED // Waiting to be paid by finance
+  PAID // Finance recorded the bank reference; leaves the supplier balance
+  CANCELLED // Voided before payment (administrative correction; never reused)
+}
+
+model Invoice {
+  id            String @id @default(cuid())
+  invoiceNumber String @unique // Human-readable reference e.g. INV-20261016-0001
+  supplierId    String
+  supplier      User   @relation(fields: [supplierId], references: [id])
+
+  // Cadence + activity-date window this invoice covers (inclusive bounds)
+  cycle          PayoutCycle
+  cycleStartDate DateTime
+  cycleEndDate   DateTime
+  cycleLabel     String // e.g. "Oct 1–15", "Sep 16–30", "Sep 2026"
+
+  // Fixed processing dates (weekend-skipped; bank may credit later)
+  invoicedAt         DateTime // When the invoice was generated (16th / 1st)
+  paymentScheduledAt DateTime // When the transfer was scheduled (20th / 5th)
+  paidAt             DateTime?
+  paidBy             String? // Admin user id who marked it paid
+  reference          String? // Real bank / transaction reference entered by finance
+
+  status InvoiceStatus @default(INVOICED)
+
+  // Money (net amounts; commission already applied per line item)
+  grossTotal      Decimal @db.Decimal(10, 2)
+  commissionTotal Decimal @db.Decimal(10, 2)
+  netTotal        Decimal @db.Decimal(10, 2)
+  currency        String  @default("USD")
+  bookingCount    Int
+
+  // Destination account snapshot at generation time (any PayoutMethod:
+  // bank transfer, mobile money, or PayPal — as configured by the supplier)
+  payoutMethodId String?
+  payoutMethod   PayoutMethod? @relation(fields: [payoutMethodId], references: [id])
+
+  // Idempotency guard for scheduled runs: "invoice:<supplierId>:<cycleStartISO>:<currency>"
+  runKey String? @unique
+
+  items InvoiceItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([supplierId, status])
+  @@index([status, invoicedAt])
+  @@index([supplierId, invoicedAt])
+}
+
+model InvoiceItem {
+  id        String  @id @default(cuid())
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  // A booking can only ever be invoiced once — the double-invoicing guard
+  bookingId String  @unique
+  booking   Booking @relation(fields: [bookingId], references: [id])
+
+  // Immutable money snapshots at invoicing time (net amounts)
+  grossAmount        Decimal @db.Decimal(10, 2)
+  platformCommission Decimal @db.Decimal(10, 2)
+  supplierPayout     Decimal @db.Decimal(10, 2)
+  currency           String  @default("USD")
+
+  createdAt DateTime @default(now())
+
+  @@index([invoiceId])
 }
 
 // ── Supplier cancellation requests (admin-approval gate) ──────────────────
