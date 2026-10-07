@@ -606,7 +606,7 @@ exports.getPayoutSettings = catchAsync(async (req, res, next) => {
 
 /**
  * PATCH /finance/payout-settings
- * Body: { cycle: 'WEEKLY' | 'TWICE_MONTHLY' | 'MONTHLY' }
+ * Body: { cycle: 'TWICE_MONTHLY' | 'MONTHLY' }
  *
  * Changes take effect on the 1st of the following month (GetYourGuide rule) so
  * a supplier can never switch mid-cycle; a first enrolment applies immediately

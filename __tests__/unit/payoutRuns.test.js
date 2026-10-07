@@ -68,13 +68,14 @@ describe('run-date math', () => {
     expect(isRunDate('TWICE_MONTHLY', new Date(2026, 9, 15))).toBe(true);
     expect(isRunDate('TWICE_MONTHLY', new Date(2026, 9, 16))).toBe(false);
 
-    expect(isRunDate('WEEKLY', new Date(2026, 9, 5))).toBe(true); // Monday
+    // WEEKLY was retired with v3 invoicing — no cadence may fire for it.
+    expect(isRunDate('WEEKLY', new Date(2026, 9, 5))).toBe(false); // a Monday
     expect(isRunDate('WEEKLY', new Date(2026, 9, 6))).toBe(false);
   });
 
   it('finds the next run strictly after the current moment', () => {
-    // From Thursday 1 Oct: weekly → Mon 5 Oct; twice-monthly → Thu 15 Oct.
-    expect(nextRunAt('WEEKLY', new Date(2026, 9, 1, 10))).toEqual(new Date(2026, 9, 5));
+    // From Thursday 1 Oct: twice-monthly → Thu 15 Oct; monthly → Sun 1 Nov.
+    expect(nextRunAt('WEEKLY', new Date(2026, 9, 1, 10))).toBeNull(); // retired cadence schedules nothing
     expect(nextRunAt('TWICE_MONTHLY', new Date(2026, 9, 1, 10))).toEqual(new Date(2026, 9, 15));
     expect(nextRunAt('MONTHLY', new Date(2026, 9, 1, 10))).toEqual(new Date(2026, 10, 1));
   });
@@ -86,9 +87,8 @@ describe('run-date math', () => {
   });
 
   it('computes the accumulation window each run pays out', () => {
-    const weekly = cyclePeriodFor('WEEKLY', new Date(2026, 9, 5)); // Mon 5 Oct
-    expect(weekly.start).toEqual(new Date(2026, 8, 28)); // previous Monday
-    expect(weekly.end.getDate()).toBe(4); // Sunday 4 Oct
+    // WEEKLY is retired: no accumulation window is defined for it.
+    expect(cyclePeriodFor('WEEKLY', new Date(2026, 9, 5))).toBeNull();
 
     const twiceFirst = cyclePeriodFor('TWICE_MONTHLY', new Date(2026, 9, 15));
     expect(twiceFirst.start).toEqual(new Date(2026, 9, 1));
@@ -120,11 +120,11 @@ describe('plan resolution', () => {
   it('uses the pending cadence only once its effective date has arrived', () => {
     const profile = {
       payoutCycle: 'MONTHLY',
-      payoutCyclePending: 'WEEKLY',
+      payoutCyclePending: 'TWICE_MONTHLY',
       payoutCyclePendingAt: new Date(2026, 10, 1),
     };
     expect(resolveEffectiveCycle(profile, new Date(2026, 9, 20))).toBe('MONTHLY');
-    expect(resolveEffectiveCycle(profile, new Date(2026, 10, 2))).toBe('WEEKLY');
+    expect(resolveEffectiveCycle(profile, new Date(2026, 10, 2))).toBe('TWICE_MONTHLY');
   });
 
   it('reports autoManaged=false for a supplier with no schedule', () => {
@@ -136,13 +136,13 @@ describe('plan resolution', () => {
 
   it('builds a labelled plan for an enrolled supplier', () => {
     const plan = buildPayoutPlan(
-      { payoutCycle: 'WEEKLY' },
+      { payoutCycle: 'TWICE_MONTHLY' },
       { now: new Date(2026, 9, 1, 10), defaultCycle: 'TWICE_MONTHLY', autoRuns: true }
     );
     expect(plan.autoManaged).toBe(true);
-    expect(plan.scheduleLabel).toMatch(/Monday/);
-    expect(plan.nextRunAt).toEqual(new Date(2026, 9, 5));
-    expect(plan.nextRunPeriodLabel).toBe('Sep 28 – Oct 4');
+    expect(plan.scheduleLabel).toMatch(/1st & 15th/);
+    expect(plan.nextRunAt).toEqual(new Date(2026, 9, 15));
+    expect(plan.nextRunPeriodLabel).toBe('Oct 1–14');
   });
 
   it('falls back to the default when the configured default is invalid', async () => {
@@ -161,10 +161,10 @@ describe('updateSupplierPayoutPlan', () => {
     prisma.supplierProfile.findUnique.mockResolvedValue({ id: 'sp1', payoutCycle: null, payoutCyclePending: null });
     prisma.supplierProfile.update.mockResolvedValue({});
 
-    await updateSupplierPayoutPlan({ supplierId: 'sup1', cycle: 'WEEKLY' });
+    await updateSupplierPayoutPlan({ supplierId: 'sup1', cycle: 'TWICE_MONTHLY' });
 
     const data = prisma.supplierProfile.update.mock.calls[0][0].data;
-    expect(data.payoutCycle).toBe('WEEKLY');
+    expect(data.payoutCycle).toBe('TWICE_MONTHLY');
     expect(data.payoutCyclePending).toBeNull();
     expect(data.payoutCycleEffectiveAt).toBeInstanceOf(Date);
   });
@@ -173,12 +173,16 @@ describe('updateSupplierPayoutPlan', () => {
     prisma.supplierProfile.findUnique.mockResolvedValue({ id: 'sp1', payoutCycle: 'MONTHLY', payoutCyclePending: null });
     prisma.supplierProfile.update.mockResolvedValue({});
 
-    await updateSupplierPayoutPlan({ supplierId: 'sup1', cycle: 'WEEKLY' });
+    await updateSupplierPayoutPlan({ supplierId: 'sup1', cycle: 'TWICE_MONTHLY' });
 
     const data = prisma.supplierProfile.update.mock.calls[0][0].data;
     expect(data.payoutCycle).toBeUndefined();
-    expect(data.payoutCyclePending).toBe('WEEKLY');
+    expect(data.payoutCyclePending).toBe('TWICE_MONTHLY');
     expect(data.payoutCyclePendingAt).toBeInstanceOf(Date);
+  });
+
+  it('rejects the retired WEEKLY cadence', async () => {
+    await expect(updateSupplierPayoutPlan({ supplierId: 'sup1', cycle: 'WEEKLY' })).rejects.toThrow(/Invalid payout plan/);
   });
 
   it('rejects an unknown cadence', async () => {
@@ -399,57 +403,58 @@ describe('getSupplierRequestWindow', () => {
   });
 
   it('opens 24 hours before the run and closes when it fires', () => {
-    // Mon 5 Oct 2026 is a WEEKLY run day, so the window is Sun 4 Oct -> Mon 5
-    // Oct. Asking during it is a genuine "pay me early": the sweep has not run
-    // yet, so the eligible balance is still there to take.
-    const sunday = getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 4, 10, 0));
-    expect(sunday.open).toBe(true);
-    expect(sunday.opensAt).toEqual(new Date(2026, 9, 4));
-    expect(sunday.closesAt).toEqual(new Date(2026, 9, 5));
-    expect(sunday.runDay).toEqual(new Date(2026, 9, 5));
-    expect(sunday.source).toBe('schedule');
+    // Sat 31 Oct 2026 is the day before the MONTHLY run on Sun 1 Nov, so the
+    // window is 31 Oct 00:00 → 1 Nov 00:00. Asking during it is a genuine
+    // "pay me early": the sweep has not run yet, so the eligible balance is
+    // still there to take.
+    const eve = getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 9, 31, 10, 0));
+    expect(eve.open).toBe(true);
+    expect(eve.opensAt).toEqual(new Date(2026, 9, 31));
+    expect(eve.closesAt).toEqual(new Date(2026, 10, 1));
+    expect(eve.runDay).toEqual(new Date(2026, 10, 1));
+    expect(eve.source).toBe('schedule');
   });
 
   it('is shut on the run day itself, because the sweep owns the period', () => {
     // This is the regression that made the old button dead: the window used to
     // open on the run day, so the only hours it was ever open were the hours
     // *after* the scheduler had swept every ELIGIBLE booking into a request.
-    const justAfterTheSweep = getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 5, 9, 30));
+    const justAfterTheSweep = getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 10, 1, 9, 30));
     expect(justAfterTheSweep.open).toBe(false);
     // And at the very first minute of the run day, before any sweep has fired.
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 5, 0, 0)).open).toBe(false);
+    expect(getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 10, 1, 0, 0)).open).toBe(false);
   });
 
   it('stays shut for the whole cycle between windows', () => {
-    // Tue, Thu, Sat: three days with nothing to do, because the money is not
-    // due until Monday.
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 6, 12, 0)).open).toBe(false);
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 8, 12, 0)).open).toBe(false);
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 10, 12, 0)).open).toBe(false);
+    // Three mid-month days with nothing to do: the money is not due until the
+    // 1st of next month, and the window only opens the day before.
+    expect(getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 10, 5, 12, 0)).open).toBe(false);
+    expect(getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 10, 10, 12, 0)).open).toBe(false);
+    expect(getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 10, 15, 12, 0)).open).toBe(false);
   });
 
   it('reopens the day before the next run', () => {
-    // Sun 11 Oct for the Mon 12 Oct run.
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 10, 23, 59)).open).toBe(false);
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 11, 0, 0)).open).toBe(true);
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 11, 23, 59)).open).toBe(true);
+    // Sat 30 Nov for the Mon 1 Dec run.
+    expect(getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 10, 29, 23, 59)).open).toBe(false);
+    expect(getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 10, 30, 0, 0)).open).toBe(true);
+    expect(getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 10, 30, 23, 59)).open).toBe(true);
   });
 
   it('labels the period the upcoming run pays, not the one already swept', () => {
     // The card shows "Covering <period>" from the plan's nextRunPeriodLabel and
     // the window's own label. They must be the same run, or the page contradicts
     // itself with a window that closes before the period it covers begins.
-    const sunday = getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 4, 10, 0));
-    expect(sunday.cycle.start).toEqual(new Date(2026, 8, 28));
-    expect(sunday.cycle.end).toEqual(new Date(2026, 9, 4, 23, 59, 59, 999));
-    expect(sunday.cycle.label).toBeTruthy();
+    const eve = getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 9, 31, 10, 0));
+    expect(eve.cycle.start).toEqual(new Date(2026, 9, 1));
+    expect(eve.cycle.end).toEqual(new Date(2026, 9, 31, 23, 59, 59, 999));
+    expect(eve.cycle.label).toBeTruthy();
 
-    const planForSunday = buildPayoutPlan(
-      { payoutCycle: 'WEEKLY' },
-      { now: new Date(2026, 9, 4, 10, 0) }
+    const planForEve = buildPayoutPlan(
+      { payoutCycle: 'MONTHLY' },
+      { now: new Date(2026, 9, 31, 10, 0) }
     );
-    expect(planForSunday.nextRunAt).toEqual(sunday.runDay);
-    expect(planForSunday.nextRunPeriodLabel).toBe(sunday.cycle.label);
+    expect(planForEve.nextRunAt).toEqual(eve.runDay);
+    expect(planForEve.nextRunPeriodLabel).toBe(eve.cycle.label);
   });
 
   it('follows the supplier cadence, not the calendar', () => {
@@ -460,12 +465,13 @@ describe('getSupplierRequestWindow', () => {
     expect(before15.cycle.start).toEqual(new Date(2026, 9, 1));
     expect(before15.cycle.end).toEqual(new Date(2026, 9, 14, 23, 59, 59, 999));
 
-    // Same day, different cadence: the weekly supplier is shut (Monday is four
-    // days out) and the twice-monthly one is open. Cadences must not bleed.
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 14, 10, 0)).open).toBe(false);
-    // And a weekly supplier is open on a day the twice-monthly one is not due.
-    expect(getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 11, 10, 0)).open).toBe(true);
-    expect(getSupplierRequestWindow(plan('TWICE_MONTHLY'), new Date(2026, 9, 11, 10, 0)).open).toBe(false);
+    // Same day, different cadence: the monthly supplier is shut (the 1st is
+    // over two weeks out) while the twice-monthly one is open. Cadences must
+    // not bleed into each other's windows.
+    expect(getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 9, 14, 10, 0)).open).toBe(false);
+    // And on a mid-cycle day neither cadence has anything due.
+    expect(getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 10, 5, 10, 0)).open).toBe(false);
+    expect(getSupplierRequestWindow(plan('TWICE_MONTHLY'), new Date(2026, 10, 5, 10, 0)).open).toBe(false);
   });
 
   it('opens for the monthly cadence before the 1st', () => {
@@ -478,11 +484,11 @@ describe('getSupplierRequestWindow', () => {
   });
 
   it('agrees with itself at the exact boundaries', () => {
-    const before = getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 3, 23, 59, 59, 999));
+    const before = getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 9, 30, 23, 59, 59, 999));
     expect(before.open).toBe(false);
-    const atOpen = getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 4, 0, 0));
+    const atOpen = getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 9, 31, 0, 0));
     expect(atOpen.open).toBe(true);
-    const atClose = getSupplierRequestWindow(plan('WEEKLY'), new Date(2026, 9, 5, 0, 0));
+    const atClose = getSupplierRequestWindow(plan('MONTHLY'), new Date(2026, 10, 1, 0, 0));
     expect(atClose.open).toBe(false);
   });
 

@@ -88,11 +88,11 @@ describe('adminFinanceController.getPayoutSchedules — triage order', () => {
 
   it('lists the supplier whose payout run is due soonest first', async () => {
     jest.useFakeTimers();
-    // Fri 2 Oct 2026 → next runs: weekly Mon 5 Oct, twice-monthly 15 Oct,
-    // monthly 1 Nov. The order must follow those dates, not insertion order.
+    // Fri 2 Oct 2026 → next runs: twice-monthly 15 Oct (Ann, Bob), monthly
+    // 1 Nov (Zed). The order must follow those dates, then name, not insertion.
     jest.setSystemTime(new Date(2026, 9, 2, 10, 0, 0));
     try {
-      const rows = [profile('MONTHLY', 'Zed'), profile('WEEKLY', 'Ann'), profile('TWICE_MONTHLY', 'Bob')];
+      const rows = [profile('MONTHLY', 'Zed'), profile('TWICE_MONTHLY', 'Ann'), profile('TWICE_MONTHLY', 'Bob')];
       prisma.supplierProfile.findMany.mockResolvedValueOnce(rows).mockResolvedValueOnce(rows);
       prisma.supplierProfile.groupBy.mockResolvedValue([]);
       prisma.supplierProfile.count.mockResolvedValue(0);
@@ -105,7 +105,7 @@ describe('adminFinanceController.getPayoutSchedules — triage order', () => {
       await controller.getPayoutSchedules({ query: {} }, res, jest.fn());
 
       const payload = res.json.mock.calls[0][0].data;
-      expect(payload.schedules.map((s) => s.plan.cycle)).toEqual(['WEEKLY', 'TWICE_MONTHLY', 'MONTHLY']);
+      expect(payload.schedules.map((s) => s.plan.cycle)).toEqual(['TWICE_MONTHLY', 'TWICE_MONTHLY', 'MONTHLY']);
       expect(payload.pagination.totalCount).toBe(3);
     } finally {
       jest.useRealTimers();
@@ -245,7 +245,7 @@ describe('adminFinanceController.getPayoutSchedules — readiness', () => {
     id: 'sp-1',
     userId: 'u-1',
     status: 'ACTIVE',
-    payoutCycle: 'WEEKLY',
+    payoutCycle: 'TWICE_MONTHLY',
     payoutCycleEffectiveAt: new Date(2026, 9, 1),
     payoutCyclePending: null,
     payoutCyclePendingAt: null,
@@ -325,7 +325,7 @@ describe('adminFinanceController.getSupplierEligibleBookings', () => {
     id: 'sp-1',
     userId: 'u-1',
     status: 'ACTIVE',
-    payoutCycle: 'WEEKLY',
+    payoutCycle: 'TWICE_MONTHLY',
     payoutCycleEffectiveAt: new Date(2026, 9, 1),
     payoutCyclePending: null,
     payoutCyclePendingAt: null,
@@ -348,8 +348,11 @@ describe('adminFinanceController.getSupplierEligibleBookings', () => {
   });
 
   const rows = [
-    // Fri 2 Oct 2026 → next WEEKLY run Mon 5 Oct, covering Sep 28 – Oct 4.
-    { id: 'b-in', bookingNumber: 'GHA-100', travelDate: new Date(2026, 8, 30), supplierPayout: 100, currency: 'USD', status: 'COMPLETED', paymentStatus: 'SUCCEEDED', createdAt: new Date(2026, 9, 1), tour: { title: 'Kakum Canopy Walk' } },
+    // Fri 2 Oct 2026 → next TWICE_MONTHLY run Thu 15 Oct, covering Oct 1–14.
+    // One booking falls inside that window, one does not — the endpoint must
+    // still return the shared predicate untouched (windows are applied only
+    // when a request is actually built, so the list cannot disagree with pay).
+    { id: 'b-in', bookingNumber: 'GHA-100', travelDate: new Date(2026, 9, 5), supplierPayout: 100, currency: 'USD', status: 'COMPLETED', paymentStatus: 'SUCCEEDED', createdAt: new Date(2026, 9, 1), tour: { title: 'Kakum Canopy Walk' } },
     { id: 'b-out', bookingNumber: 'GHA-200', travelDate: new Date(2026, 8, 10), supplierPayout: 50, currency: 'USD', status: 'CONFIRMED', paymentStatus: 'SUCCEEDED', createdAt: new Date(2026, 8, 20), tour: { title: 'Cape Coast Castle' } },
   ];
 
@@ -400,7 +403,7 @@ describe('adminFinanceController.getSupplierEligibleBookings', () => {
       expect(data.period.label).toBeTruthy();
 
       const byId = Object.fromEntries(data.bookings.map((b) => [b.id, b]));
-      // 30 Sep sits inside Mon 28 Sep – Sun 4 Oct; 10 Sep predates the window.
+      // 5 Oct sits inside Oct 1–14; 10 Sep predates the window.
       expect(byId['b-in'].inPeriod).toBe(true);
       expect(byId['b-out'].inPeriod).toBe(false);
       // Genuine and normal: the pot is "cleared so far", the label is the run.

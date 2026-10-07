@@ -23,8 +23,9 @@ const NUMERIC_KEYS = [
 // Settings keys that must be a boolean string.
 const BOOLEAN_KEYS = ['system.maintenance_mode', 'payout.auto_generate_enabled'];
 
-// Valid automated payout cadences (GetYourGuide-style schedules).
-const PAYOUT_CYCLES = ['WEEKLY', 'TWICE_MONTHLY', 'MONTHLY'];
+// Valid automated payout cadences (GetYourGuide-style schedules). WEEKLY was
+// retired with the v3 invoicing migration and is no longer offered.
+const PAYOUT_CYCLES = ['TWICE_MONTHLY', 'MONTHLY'];
 
 /**
  * Validate/normalize a single setting value before it is persisted.

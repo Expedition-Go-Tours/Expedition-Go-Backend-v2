@@ -10,7 +10,7 @@
  * schedule feature are completely unaffected.
  *
  * Cadences (Africa/Accra = UTC+0, no DST, so server-local dates are stable):
- *   WEEKLY         run every Monday
+ *   WEEKLY         retired with v3 invoicing — no longer offered anywhere
  *   TWICE_MONTHLY  run on the 1st and the 15th
  *   MONTHLY        run on the 1st (for the previous calendar month)
  *
@@ -29,18 +29,14 @@ const { logActivity } = require('./auditLogger');
 const { formatCycleLabel } = require('./payoutCycles');
 const { eligibleBookingsWhere } = require('./financeHelpers');
 
-const VALID_CYCLES = ['WEEKLY', 'TWICE_MONTHLY', 'MONTHLY'];
+const VALID_CYCLES = ['TWICE_MONTHLY', 'MONTHLY'];
 
 // Copy shown in the supplier + admin dashboards. Deliberately avoids the
 // ambiguous word "bi-monthly" (which can read as "twice a month" or "every two
 // months") — the cadence and anchor days are always stated explicitly.
+// WEEKLY was retired with the v3 invoicing migration (all enrolled suppliers
+// were moved to TWICE_MONTHLY), so it is absent here and in `VALID_CYCLES`.
 const CYCLE_META = {
-  WEEKLY: {
-    shortLabel: 'Weekly',
-    label: 'Every week — paid every Monday',
-    runDays: 'Every Monday',
-    description: 'Payouts are generated every Monday for experiences completed by the Sunday before.',
-  },
   TWICE_MONTHLY: {
     shortLabel: 'Twice a month',
     label: 'Twice a month — paid on the 1st & 15th',
@@ -89,7 +85,6 @@ function daysInMonth(year, month) {
 /** Is `date` a payout run date for this cadence? */
 function isRunDate(cycle, date) {
   const day = date.getDate();
-  if (cycle === 'WEEKLY') return date.getDay() === 1; // Monday
   if (cycle === 'TWICE_MONTHLY') return day === 1 || day === 15;
   if (cycle === 'MONTHLY') return day === 1;
   return false;
@@ -120,16 +115,15 @@ function lastRunAt(cycle, from = new Date()) {
 }
 
 /**
- * The accumulation window a run on `runDate` covers — e.g. the Monday run
- * covers the previous Mon–Sun; the 15th run covers the 1st–14th. Used for the
- * human-readable cycle label on the payout request.
+ * The accumulation window a run on `runDate` covers — e.g. the 15th run
+ * covers the 1st–14th. Used for the human-readable cycle label on the payout
+ * request. Returns null for a cadence that is not in force (WEEKLY was retired
+ * and is no longer offered anywhere).
  */
 function cyclePeriodFor(cycle, runDate) {
   const run = startOfDay(runDate);
 
-  if (cycle === 'WEEKLY') {
-    return { start: addDays(run, -7), end: endOfDay(addDays(run, -1)), slot: 'W' };
-  }
+  if (cycle !== 'MONTHLY' && cycle !== 'TWICE_MONTHLY') return null;
 
   if (cycle === 'MONTHLY') {
     const y = run.getFullYear();
@@ -499,7 +493,7 @@ async function getSupplierPayoutPlan(supplierId, now = new Date()) {
  *
  * @param {object} opts
  * @param {string} opts.supplierId
- * @param {string} opts.cycle            WEEKLY | TWICE_MONTHLY | MONTHLY
+ * @param {string} opts.cycle            TWICE_MONTHLY | MONTHLY
  * @param {boolean} [opts.immediate]     admin override — skip the 1st-of-month rule
  * @param {string}  [opts.actorUserId]   who made the change (null = system)
  * @param {string}  [opts.actorEmail]

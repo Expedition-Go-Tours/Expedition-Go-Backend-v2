@@ -154,6 +154,158 @@ async function getRequestWindow(now = new Date()) {
   };
 }
 
+// ── Finance v3: GetYourGuide-style automatic invoicing ──
+//
+// Invoices are driven by the booking's ACTIVITY date (travelDate), never the
+// purchase date. Every activity date maps to exactly one invoice window, and
+// each window has fixed processing dates that are pushed to the next business
+// day when they fall on a weekend (no holiday calendar — Accra is UTC+0, the
+// same clock the server runs on):
+//
+//   TWICE_MONTHLY
+//     slot A   activities 1st–15th  → invoice on the 16th      → paid on the 20th
+//     slot B   activities 16th–EOM  → invoice on 1st biz day   → paid on the 5th
+//   MONTHLY
+//     previous month's activities   → invoice on 1st biz day   → paid on the 5th
+//
+// These are the *processing* dates — the bank may credit later. "Next payout"
+// (`nextInvoiceWindow`) is the earliest window whose invoice has not yet been
+// generated; it rolls forward the instant that invoice is created, which is
+// what makes an estimate drop to zero ("resets") and switch to the next window.
+
+const TWICE_MONTHLY = 'TWICE_MONTHLY';
+const MONTHLY = 'MONTHLY';
+
+/** Saturday or Sunday — the only calendar the processing dates honour. */
+function isWeekend(d) {
+  const day = new Date(d).getDay();
+  return day === 0 || day === 6;
+}
+
+/** The next business (non-weekend) day on or after `d`, at 00:00. */
+function nextBusinessDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  while (isWeekend(x)) x.setDate(x.getDate() + 1);
+  return x;
+}
+
+function sameCalendarDay(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+/**
+ * The invoice window a single activity date belongs to.
+ *
+ * @param {Date|string} travelDate  the booking's activity date
+ * @param {string} cycle            TWICE_MONTHLY | MONTHLY
+ * @returns {{ cycle, slot, start, end, invoicedOn, paidOn, label }}
+ *   start/end      inclusive activity-date bounds for this window
+ *   invoicedOn     the date the invoice is generated (business day)
+ *   paidOn         the date payment is scheduled (business day)
+ *   label          shorthand like "Oct 1–15"
+ */
+function invoiceWindowFor(travelDate, cycle) {
+  const d = new Date(travelDate);
+  d.setHours(0, 0, 0, 0);
+  const y = d.getFullYear();
+  const m = d.getMonth();
+  const eom = daysInMonth(y, m);
+
+  if (cycle === MONTHLY) {
+    return decorateWindow({
+      cycle: MONTHLY,
+      slot: 'M',
+      start: new Date(y, m, 1),
+      end: new Date(y, m, eom, 23, 59, 59, 999),
+      invoicedOn: nextBusinessDay(new Date(y, m + 1, 1)),
+      paidOn: nextBusinessDay(new Date(y, m + 1, 5)),
+    });
+  }
+
+  // TWICE_MONTHLY
+  if (d.getDate() <= 15) {
+    return decorateWindow({
+      cycle: TWICE_MONTHLY,
+      slot: 'A',
+      start: new Date(y, m, 1),
+      end: new Date(y, m, 15, 23, 59, 59, 999),
+      invoicedOn: nextBusinessDay(new Date(y, m, 16)),
+      paidOn: nextBusinessDay(new Date(y, m, 20)),
+    });
+  }
+  return decorateWindow({
+    cycle: TWICE_MONTHLY,
+    slot: 'B',
+    start: new Date(y, m, 16),
+    end: new Date(y, m, eom, 23, 59, 59, 999),
+    invoicedOn: nextBusinessDay(new Date(y, m + 1, 1)),
+    paidOn: nextBusinessDay(new Date(y, m + 1, 5)),
+  });
+}
+
+function decorateWindow(window) {
+  return { ...window, label: formatCycleLabel(window.start, window.end) };
+}
+
+/**
+ * The window the "Next payout" estimate refers to: the earliest invoice window
+ * (for this cadence) whose invoice has not been generated yet — i.e. the
+ * smallest `invoicedOn` strictly after `now`. Confirmed tours whose activity
+ * date falls inside it are what the next invoice will pay. Returns null only
+ * when the cadence is unknown.
+ */
+function nextInvoiceWindow(cycle, now = new Date()) {
+  const y = now.getFullYear();
+  const m = now.getMonth();
+
+  const candidates = [];
+  if (cycle === MONTHLY) {
+    candidates.push(invoiceWindowFor(new Date(y, m, 1), MONTHLY));
+    candidates.push(invoiceWindowFor(new Date(y, m + 1, 1), MONTHLY));
+  } else if (cycle === TWICE_MONTHLY) {
+    candidates.push(invoiceWindowFor(new Date(y, m - 1, 16), TWICE_MONTHLY)); // slot B, last month
+    candidates.push(invoiceWindowFor(new Date(y, m, 1), TWICE_MONTHLY)); // slot A, this month
+    candidates.push(invoiceWindowFor(new Date(y, m, 16), TWICE_MONTHLY)); // slot B, this month
+    candidates.push(invoiceWindowFor(new Date(y, m + 1, 1), TWICE_MONTHLY)); // slot A, next month
+  } else {
+    return null;
+  }
+
+  const pending = candidates
+    .filter((w) => w.invoicedOn > now)
+    .sort((a, b) => a.invoicedOn - b.invoicedOn)[0];
+  return pending || null;
+}
+
+/**
+ * Every invoice window whose invoice is due on `date` (the daily
+ * generate-due-invoices job calls this once and processes the results):
+ *  - TWICE_MONTHLY slot A of this month, when today is its (business) 16th;
+ *  - TWICE_MONTHLY slot B and MONTHLY of last month, when today is the 1st
+ *    business day of the month.
+ *
+ * @returns {Array<{ cycle, slot, start, end, invoicedOn, paidOn, label }>}
+ */
+function invoiceWindowsDueOn(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const y = d.getFullYear();
+  const m = d.getMonth();
+  const due = [];
+
+  const slotA = invoiceWindowFor(new Date(y, m, 1), TWICE_MONTHLY);
+  if (sameCalendarDay(slotA.invoicedOn, d)) due.push(slotA);
+
+  const firstBiz = nextBusinessDay(new Date(y, m, 1));
+  if (sameCalendarDay(firstBiz, d)) {
+    due.push(invoiceWindowFor(new Date(y, m - 1, 16), TWICE_MONTHLY));
+    due.push(invoiceWindowFor(new Date(y, m - 1, 1), MONTHLY));
+  }
+
+  return due;
+}
+
 /**
  * Extra clearance buffer (days after travelDate) before funds are eligible.
  */
@@ -192,10 +344,18 @@ async function sweepEarningsEligibility() {
 }
 
 module.exports = {
+  // Finance v2 (manual withdrawal windows)
   getCurrentCycle,
   getPreviousCycle,
   getRequestWindow,
   getClearanceBufferDays,
   sweepEarningsEligibility,
+  // Finance v3 (automatic invoicing)
+  isWeekend,
+  nextBusinessDay,
+  invoiceWindowFor,
+  nextInvoiceWindow,
+  invoiceWindowsDueOn,
+  // shared
   formatCycleLabel,
 };
