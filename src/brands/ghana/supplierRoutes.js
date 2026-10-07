@@ -118,6 +118,8 @@ router.patch('/pickup-planner/:id', resolveSupplier, requireTeamPermission('book
 // expected response shapes; the old Ghana-specific summary returned a flat
 // shape the frontend couldn't read, so everything showed $0)
 router.get('/finance/summary', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getFinanceSummary);
+router.get('/finance/invoices', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getMyInvoices);
+router.post('/finance/invoices', resolveSupplier, requireTeamPermission('payouts.request'), financeController.requestEarlyPayout);
 router.get('/finance/charges', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getSupplierCharges);
 router.get('/finance/earnings', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getEarnings);
 router.get('/finance/payouts/requests', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getPayoutRequests);

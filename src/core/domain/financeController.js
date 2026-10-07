@@ -16,13 +16,43 @@ const {
 } = require('../services/payoutRuns');
 const { logActivity } = require('../services/auditLogger');
 const { payoutBookingsWhere } = require('../services/financeHelpers');
+const { buildInvoiceEstimate, createInvoiceNow } = require('../services/invoiceService');
 
-// ── Finance v2 — supplier-facing payout cycle endpoints ──
+// ── Finance v2 + v3 — supplier-facing payout/invoice endpoints ──
 // Mounted at /finance (see routes/financeRoutes.js). All routes resolve the
 // acting supplier via resolveSupplier + requireTeamPermission in the router.
+// v3 = GetYourGuide-style automatic invoices (balance = unpaid invoices,
+// next payout = pending-window projection); v2 PayoutRequest endpoints remain
+// for the legacy flow and history.
 
 function toNumber(v) {
   return v == null ? 0 : parseFloat(v);
+}
+
+function round2(n) {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+function serializeInvoice(invoice) {
+  return {
+    id: invoice.id,
+    invoiceNumber: invoice.invoiceNumber,
+    status: invoice.status,
+    cycle: invoice.cycle,
+    cycleLabel: invoice.cycleLabel,
+    cycleStartDate: invoice.cycleStartDate,
+    cycleEndDate: invoice.cycleEndDate,
+    invoicedAt: invoice.invoicedAt,
+    paymentScheduledAt: invoice.paymentScheduledAt,
+    paidAt: invoice.paidAt,
+    reference: invoice.reference,
+    grossTotal: toNumber(invoice.grossTotal),
+    commissionTotal: toNumber(invoice.commissionTotal),
+    netTotal: toNumber(invoice.netTotal),
+    currency: invoice.currency,
+    bookingCount: invoice.bookingCount,
+    payoutMethodId: invoice.payoutMethodId || null,
+  };
 }
 
 function serializeRequest(request) {
@@ -40,12 +70,19 @@ function serializeRequest(request) {
 
 /**
  * GET /finance/summary
- * KPI cards + current cycle / withdrawal window state for the Finance page.
+ * Finance page data, GetYourGuide semantics on top of the legacy v2 fields:
+ *  - balance     "Your balance" — unpaid (INVOICED) invoices, per currency
+ *  - nextPayout  the pending window's projection BEFORE it is invoiced,
+ *                including FUTURE confirmed tours + exact activity-date range
+ *                and processing dates; null for legacy (window-managed) suppliers
+ * The legacy v2 fields (availableBalance/pendingClearance/inReview/
+ * withdrawalWindow/nextEligibleAt) are kept until the UI migrates to the new
+ * model, so the current Finance page keeps rendering.
  */
 exports.getFinanceSummary = catchAsync(async (req, res) => {
   const supplierId = req.supplierId;
 
-  const [eligible, pendingClearance, activeRequests, paidOut, window, cycle, bufferDays, payoutPlan, nextPending, payoutCounts] = await Promise.all([
+  const [eligible, pendingClearance, activeRequests, paidOut, window, cycle, bufferDays, payoutPlan, nextPending, payoutCounts, openInvoices, paidInvoices] = await Promise.all([
     prisma.booking.aggregate({
       where: payoutBookingsWhere({ supplierId, payoutStatus: 'ELIGIBLE' }),
       _sum: { supplierPayout: true },
@@ -106,7 +143,42 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
       where: { tour: { supplierId }, isSimulated: false },
       _count: { _all: true },
     }),
+    // Finance v3: unpaid invoices = "Your balance"; paid invoices count into
+    // the lifetime paid-out total alongside the legacy Payout rows.
+    prisma.invoice.findMany({
+      where: { supplierId, status: 'INVOICED' },
+      orderBy: { invoicedAt: 'asc' },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        currency: true,
+        netTotal: true,
+        bookingCount: true,
+        cycleLabel: true,
+        paymentScheduledAt: true,
+      },
+    }),
+    prisma.invoice.aggregate({
+      where: { supplierId, status: 'PAID' },
+      _sum: { netTotal: true },
+    }),
   ]);
+
+  // ── Finance v3: "Your balance" = the sum of unpaid invoices, by currency ──
+  const balanceByCurrency = {};
+  let balanceBookingCount = 0;
+  for (const inv of openInvoices) {
+    balanceByCurrency[inv.currency] = (balanceByCurrency[inv.currency] || 0) + toNumber(inv.netTotal);
+    balanceBookingCount += inv.bookingCount;
+  }
+
+  // ── Finance v3: "Next payout" = live projection for the pending window.
+  // Includes future confirmed tours; recalculates on every load; becomes the
+  // balance once the window's invoice date arrives. Legacy (window-managed)
+  // suppliers have no cadence, so they get null and keep the v2 flow. ──
+  const nextPayout = payoutPlan.autoManaged && payoutPlan.cycle
+    ? await buildInvoiceEstimate({ supplierId, cycle: payoutPlan.cycle })
+    : null;
 
   // Group active request totals by currency
   const inReview = {};
@@ -140,6 +212,14 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
   res.status(200).json({
     status: 'success',
     data: {
+      // ── Finance v3 (GetYourGuide model) ──
+      balance: {
+        byCurrency: Object.entries(balanceByCurrency).map(([currency, amount]) => ({ currency, amount: round2(amount) })),
+        bookingCount: balanceBookingCount,
+        openInvoiceCount: openInvoices.length,
+      },
+      nextPayout,
+      // ── Legacy v2 fields (kept until the UI migrates) ──
       availableBalance: {
         amount: toNumber(eligible._sum.supplierPayout),
         bookingCount: eligible._count,
@@ -177,7 +257,7 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
       // Booking count per payout bucket, always every key present so the UI
       // never has to distinguish "0" from "missing".
       payoutCounts: Object.fromEntries(
-        ['PENDING', 'ELIGIBLE', 'REQUESTED', 'PAID', 'DISPUTED', 'CANCELLED'].map((key) => [
+        ['PENDING', 'ELIGIBLE', 'REQUESTED', 'INVOICED', 'PAID', 'DISPUTED', 'CANCELLED'].map((key) => [
           key,
           Number(payoutCounts.find((r) => r.payoutStatus === key)?._count?._all || 0),
         ])
@@ -188,7 +268,8 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
         ? new Date(new Date(nextPending.travelDate).getTime() + bufferDays * 24 * 60 * 60 * 1000)
         : null,
       paidOut: {
-        total: toNumber(paidOut._sum.amount),
+        // Legacy Payout rows + v3 paid invoices.
+        total: round2(toNumber(paidOut._sum.amount) + toNumber(paidInvoices._sum.netTotal)),
       },
       currentCycle: { start: cycle.start, end: cycle.end, label: cycle.label },
       // The supplier's payout schedule (auto-generated runs). `autoManaged`
@@ -196,6 +277,104 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
       payoutPlan,
       withdrawalWindow: requestWindow,
     },
+  });
+});
+
+/**
+ * GET /finance/invoices?status=INVOICED&page=1&limit=20
+ * The supplier's invoice history (finance v3): every generated invoice with
+ * its money snapshot, window label and payment status. This is the page's
+ * "Your balance" (status INVOICED) and paid-history source.
+ */
+exports.getMyInvoices = catchAsync(async (req, res) => {
+  const supplierId = req.supplierId;
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const rawStatus = req.query.status ? String(req.query.status).toUpperCase() : null;
+  const status = rawStatus && ['INVOICED', 'PAID'].includes(rawStatus) ? rawStatus : undefined;
+
+  const where = { supplierId, ...(status ? { status } : {}) };
+
+  const [invoices, totalCount] = await Promise.all([
+    prisma.invoice.findMany({
+      where,
+      orderBy: { invoicedAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+      select: {
+        id: true,
+        invoiceNumber: true,
+        status: true,
+        cycle: true,
+        cycleLabel: true,
+        cycleStartDate: true,
+        cycleEndDate: true,
+        invoicedAt: true,
+        paymentScheduledAt: true,
+        paidAt: true,
+        reference: true,
+        grossTotal: true,
+        commissionTotal: true,
+        netTotal: true,
+        currency: true,
+        bookingCount: true,
+        payoutMethodId: true,
+        _count: { select: { items: true } },
+      },
+    }),
+    prisma.invoice.count({ where }),
+  ]);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      invoices: invoices.map((i) => ({
+        id: i.id,
+        invoiceNumber: i.invoiceNumber,
+        status: i.status,
+        cycle: i.cycle,
+        cycleLabel: i.cycleLabel,
+        cycleStartDate: i.cycleStartDate,
+        cycleEndDate: i.cycleEndDate,
+        invoicedAt: i.invoicedAt,
+        paymentScheduledAt: i.paymentScheduledAt,
+        paidAt: i.paidAt,
+        reference: i.reference,
+        grossTotal: toNumber(i.grossTotal),
+        commissionTotal: toNumber(i.commissionTotal),
+        netTotal: toNumber(i.netTotal),
+        currency: i.currency,
+        bookingCount: i.bookingCount,
+        itemCount: i._count.items,
+        payoutMethodId: i.payoutMethodId,
+      })),
+      pagination: {
+        currentPage: page,
+        limit,
+        totalCount,
+        totalPages: Math.ceil(totalCount / limit),
+      },
+    },
+  });
+});
+
+/**
+ * POST /finance/invoices
+ * Manual "Request payout" accelerator (finance v3): invoices the CURRENT
+ * pending window immediately. Enrolled suppliers only; one open manual invoice
+ * per window (409 otherwise). Uninvoiced bookings in the same window that
+ * arrive later are picked up by the scheduled run under its own runKey.
+ * Body: { payoutMethodId?: string }
+ */
+exports.requestEarlyPayout = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  const { payoutMethodId } = req.body || {};
+
+  const invoices = await createInvoiceNow({ supplierId, payoutMethodId });
+
+  res.status(201).json({
+    status: 'success',
+    data: { invoices: invoices.map(serializeInvoice) },
   });
 });
 

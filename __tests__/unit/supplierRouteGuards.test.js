@@ -81,6 +81,7 @@ const MONEY_READS = [
   { path: '/earnings', key: 'payouts.view' },
   { path: '/payouts', key: 'payouts.view' },
   { path: '/finance/summary', key: 'payouts.view' },
+  { path: '/finance/invoices', key: 'payouts.view' },
   { path: '/finance/charges', key: 'payouts.view' },
   { path: '/finance/earnings', key: 'payouts.view' },
   { path: '/finance/payouts/requests', key: 'payouts.view' },
@@ -91,6 +92,7 @@ const MONEY_READS = [
 
 /** Writes that move money: the request key, not the view key. */
 const MONEY_WRITES = [
+  { path: '/finance/invoices', method: 'POST', key: 'payouts.request' },
   { path: '/finance/payout/request', method: 'POST', key: 'payouts.request' },
   { path: '/finance/payouts/requests/:id/cancel', method: 'PATCH', key: 'payouts.request' },
   { path: '/finance/payout-settings', method: 'PATCH', key: 'payouts.request' },

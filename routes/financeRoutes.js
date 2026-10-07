@@ -23,6 +23,11 @@ router.use(protect);
  */
 router.get('/summary', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getFinanceSummary);
 
+// Finance v3: invoice history ("Your balance" = status INVOICED) + the early
+// payout accelerator (invoices the pending window immediately).
+router.get('/invoices', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getMyInvoices);
+router.post('/invoices', resolveSupplier, requireTeamPermission('payouts.request'), financeController.requestEarlyPayout);
+
 // Cancellation-fee ledger (open fees are netted off the next payout request)
 router.get('/charges', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getSupplierCharges);
 

@@ -2,6 +2,9 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   payoutRequest: { findFirst: jest.fn(), create: jest.fn(), findMany: jest.fn() },
   booking: { aggregate: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), groupBy: jest.fn() },
   payout: { aggregate: jest.fn() },
+  invoice: { findMany: jest.fn(), aggregate: jest.fn(), findFirst: jest.fn(), create: jest.fn(), count: jest.fn() },
+  payoutMethod: { findFirst: jest.fn() },
+  supplierProfile: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
   $transaction: jest.fn(),
 }));
 
@@ -273,11 +276,15 @@ describe('getFinanceSummary — a payout in flight', () => {
     prisma.payout.aggregate.mockResolvedValue({ _sum: { amount: 586.5 } });
     prisma.payoutRequest.findMany.mockResolvedValue([activeRequest]);
     prisma.booking.findFirst.mockResolvedValue({ travelDate: new Date(2026, 9, 6) });
+    prisma.booking.findMany.mockResolvedValue([]);
     prisma.booking.groupBy.mockResolvedValue([
       { payoutStatus: 'PENDING', _count: { _all: 2 } },
       { payoutStatus: 'REQUESTED', _count: { _all: 12 } },
       { payoutStatus: 'CANCELLED', _count: { _all: 1 } },
     ]);
+    // Finance v3: no open invoices, no paid invoices by default.
+    prisma.invoice.findMany.mockResolvedValue([]);
+    prisma.invoice.aggregate.mockResolvedValue({ _sum: { netTotal: 0 } });
     getSupplierPayoutPlan.mockResolvedValue(schedule());
     getSupplierRequestWindow.mockReturnValue(closedWindow);
   });
@@ -309,6 +316,7 @@ describe('getFinanceSummary — a payout in flight', () => {
       PENDING: 2,
       ELIGIBLE: 0,
       REQUESTED: 12,
+      INVOICED: 0,
       PAID: 0,
       DISPUTED: 0,
       CANCELLED: 1,
@@ -360,5 +368,194 @@ describe('getFinanceSummary — a payout in flight', () => {
         }),
       })
     );
+  });
+
+  // ── Finance v3 ──
+
+  it('reports the v3 "Your balance" from unpaid invoices, per currency', async () => {
+    prisma.invoice.findMany.mockResolvedValue([
+      { id: 'inv-1', invoiceNumber: 'INV-A', currency: 'USD', netTotal: 500, bookingCount: 2, cycleLabel: 'Oct 1–15', paymentScheduledAt: new Date(2026, 9, 20) },
+      { id: 'inv-2', invoiceNumber: 'INV-B', currency: 'EUR', netTotal: 200, bookingCount: 1, cycleLabel: 'Oct 1–15', paymentScheduledAt: new Date(2026, 9, 20) },
+    ]);
+
+    const { data } = await invokeSummary();
+
+    expect(data.balance.openInvoiceCount).toBe(2);
+    expect(data.balance.bookingCount).toBe(3);
+    expect(data.balance.byCurrency).toEqual([
+      { currency: 'USD', amount: 500 },
+      { currency: 'EUR', amount: 200 },
+    ]);
+  });
+
+  it('shows the next-payout estimate for the pending window with processing dates', async () => {
+    const { data } = await invokeSummary();
+
+    expect(data.nextPayout).not.toBeNull();
+    expect(data.nextPayout.window.cycle).toBe('TWICE_MONTHLY');
+    expect(data.nextPayout.window.label).toMatch(/^\w{3} \d+–\d+$/);
+    expect(data.nextPayout.window.start).toBeInstanceOf(Date);
+    expect(data.nextPayout.window.end).toBeInstanceOf(Date);
+    expect(data.nextPayout.window.invoicedOn).toBeInstanceOf(Date);
+    expect(data.nextPayout.window.paidOn).toBeInstanceOf(Date);
+    expect(data.nextPayout.bookingCount).toBe(0);
+    expect(data.nextPayout.netTotal).toBe(0);
+    expect(data.nextPayout.byCurrency).toEqual([]);
+    // The estimate must use the finance-v3 predicate (PENDING future tours
+    // included), not the v2 ELIGIBLE-only eligibility clause.
+    expect(prisma.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          payoutStatus: { in: ['PENDING', 'ELIGIBLE'] },
+          tour: { supplierId: 'sup1' },
+        }),
+      })
+    );
+  });
+
+  it('returns null nextPayout for an unenrolled supplier and keeps the legacy window', async () => {
+    getSupplierPayoutPlan.mockResolvedValue(schedule({ autoManaged: false, cycle: null }));
+    getRequestWindow.mockReturnValue({
+      open: false,
+      start: new Date(2026, 9, 1),
+      end: new Date(2026, 9, 15, 23, 59, 59, 999),
+      label: 'Oct 1–15',
+    });
+
+    const { data } = await invokeSummary();
+
+    expect(data.nextPayout).toBeNull();
+    expect(data.withdrawalWindow).toMatchObject({ source: 'window' });
+  });
+
+  it('folds v3 paid invoices into the lifetime paid-out total', async () => {
+    // Legacy Payout rows: 586.5 (beforeEach) + paid invoices: 250.
+    prisma.invoice.aggregate.mockResolvedValue({ _sum: { netTotal: 250 } });
+
+    const { data } = await invokeSummary();
+
+    expect(data.paidOut.total).toBe(836.5);
+  });
+
+  it('keeps the legacy v2 fields so the current Finance page keeps rendering', async () => {
+    const { data } = await invokeSummary();
+
+    expect(data.availableBalance).toBeDefined();
+    expect(data.pendingClearance).toBeDefined();
+    expect(data.inReview).toBeDefined();
+    expect(data.withdrawalWindow).toBeDefined();
+    expect(data.nextEligibleAt).toBeDefined();
+    expect(data.currentCycle).toBeDefined();
+    expect(data.payoutPlan).toBeDefined();
+  });
+});
+
+describe('getMyInvoices — the supplier invoice history (finance v3)', () => {
+  async function invokeList(query = {}) {
+    const req = { supplierId: 'sup1', query };
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    const next = jest.fn();
+    await financeController.getMyInvoices(req, res, next);
+    return { next, data: res.json.mock.calls[0][0].data };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.invoice.count.mockResolvedValue(1);
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: 'inv-1',
+        invoiceNumber: 'INV-20261016-123456ab',
+        status: 'INVOICED',
+        cycle: 'TWICE_MONTHLY',
+        cycleLabel: 'Oct 1–15',
+        cycleStartDate: new Date(2026, 9, 1),
+        cycleEndDate: new Date(2026, 9, 15, 23, 59, 59, 999),
+        invoicedAt: new Date(2026, 9, 16, 0, 0),
+        paymentScheduledAt: new Date(2026, 9, 20),
+        paidAt: null,
+        reference: null,
+        grossTotal: 150,
+        commissionTotal: 25.5,
+        netTotal: 124.5,
+        currency: 'USD',
+        bookingCount: 2,
+        payoutMethodId: 'pm-1',
+        _count: { items: 2 },
+      },
+    ]);
+  });
+
+  it('returns the invoice history with money snapshots and item counts', async () => {
+    const { data } = await invokeList();
+
+    expect(data.invoices).toHaveLength(1);
+    expect(data.invoices[0]).toMatchObject({
+      invoiceNumber: 'INV-20261016-123456ab',
+      status: 'INVOICED',
+      cycleLabel: 'Oct 1–15',
+      netTotal: 124.5,
+      grossTotal: 150,
+      commissionTotal: 25.5,
+      bookingCount: 2,
+      itemCount: 2,
+    });
+    expect(data.pagination).toEqual({ currentPage: 1, limit: 20, totalCount: 1, totalPages: 1 });
+  });
+
+  it('filters by status when asked', async () => {
+    await invokeList({ status: 'PAID' });
+
+    expect(prisma.invoice.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { supplierId: 'sup1', status: 'PAID' } })
+    );
+  });
+});
+
+describe('requestEarlyPayout — the manual accelerator (finance v3)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('creates one invoice per currency for the pending window and returns 201', async () => {
+    const created = [
+      { id: 'inv-usd', invoiceNumber: 'INV-USD', status: 'INVOICED', cycle: 'TWICE_MONTHLY', cycleLabel: 'Oct 1–15', cycleStartDate: new Date(2026, 9, 1), cycleEndDate: new Date(2026, 9, 15, 23, 59, 59, 999), invoicedAt: new Date(2026, 9, 7), paymentScheduledAt: new Date(2026, 9, 20), paidAt: null, reference: null, grossTotal: 100, commissionTotal: 15, netTotal: 85, currency: 'USD', bookingCount: 1, payoutMethodId: 'pm-1' },
+    ];
+    prisma.__tx = { invoice: { create: jest.fn().mockResolvedValue(created[0]) }, invoiceItem: { createMany: jest.fn() }, booking: { updateMany: jest.fn() } };
+    prisma.$transaction.mockImplementation((fn) => fn(prisma.__tx));
+    prisma.supplierProfile.findUnique.mockResolvedValue({ payoutCycle: 'TWICE_MONTHLY', payoutCyclePending: null, payoutCyclePendingAt: null });
+    prisma.invoice.findFirst.mockResolvedValue(null);
+    resolvePayoutMethod.mockResolvedValue({ id: 'pm-1', verified: true });
+    prisma.booking.findMany.mockResolvedValue([
+      { id: 'b1', bookingNumber: 'BK1', travelDate: new Date(2026, 9, 3), currency: 'USD', grossAmount: 100, platformCommission: 15, supplierPayout: 85 },
+    ]);
+
+    const req = { supplierId: 'sup1', body: {} };
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    const next = jest.fn();
+    await financeController.requestEarlyPayout(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    const data = res.json.mock.calls[0][0].data;
+    expect(data.invoices).toHaveLength(1);
+    expect(data.invoices[0]).toMatchObject({ invoiceNumber: 'INV-USD', netTotal: 85, status: 'INVOICED' });
+    expect(prisma.__tx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { payoutStatus: 'INVOICED' } })
+    );
+  });
+
+  it('propagates a 409 when an open manual invoice already exists for the window', async () => {
+    prisma.__tx = { invoice: { create: jest.fn() }, invoiceItem: { createMany: jest.fn() }, booking: { updateMany: jest.fn() } };
+    prisma.$transaction.mockImplementation((fn) => fn(prisma.__tx));
+    prisma.supplierProfile.findUnique.mockResolvedValue({ payoutCycle: 'TWICE_MONTHLY', payoutCyclePending: null, payoutCyclePendingAt: null });
+    prisma.invoice.findFirst.mockResolvedValue({ invoiceNumber: 'INV-20261007-111111aa' });
+
+    const req = { supplierId: 'sup1', body: {} };
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    const next = jest.fn();
+    await financeController.requestEarlyPayout(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 409 }));
+    expect(res.status).not.toHaveBeenCalledWith(201);
   });
 });
