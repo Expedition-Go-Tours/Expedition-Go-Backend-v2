@@ -5,6 +5,13 @@
 const DEFAULT_COMMISSION_RATE = 0.15;
 
 /**
+ * Default acquisition surcharge on top of DEFAULT_COMMISSION_RATE — every
+ * booking pays a flat rate of 0.15 + 0.02 = 0.17 (17%). Configurable per
+ * environment via SystemConfig 'commission.surcharge_rate'.
+ */
+const DEFAULT_SURCHARGE_RATE = 0.02;
+
+/**
  * Normalize a commission rate config value into a decimal fraction in (0, 1].
  *
  * Accepts both decimal-fraction ("0.15") and percentage ("15") input so a
@@ -32,4 +39,5 @@ function normalizeCommissionRate(raw, fallback = DEFAULT_COMMISSION_RATE) {
 module.exports = {
   normalizeCommissionRate,
   DEFAULT_COMMISSION_RATE,
+  DEFAULT_SURCHARGE_RATE,
 };

@@ -866,7 +866,7 @@ const confirmBooking = catchAsync(async (req, res, next) => {
     }
 
     const bookingNumber = await generateBookingNumber(BRAND.bookingPrefix);
-    const commission = await calculateCommission(pricing.total, tour.supplier.supplierProfile);
+    const commission = await calculateCommission(pricing.total);
 
     const booking = await tx.booking.create({
       data: {
@@ -1002,7 +1002,7 @@ const confirmBooking = catchAsync(async (req, res, next) => {
   // checkout.session.completed webhook materializes one from the hold.
   // Abandoned sessions are released by the expired-session webhook or
   // the expire-checkout-holds sweep.
-  const commission = await calculateCommission(pricing.total, tour.supplier.supplierProfile);
+  const commission = await calculateCommission(pricing.total);
   let holdResult;
   try {
     holdResult = await acquireHold({

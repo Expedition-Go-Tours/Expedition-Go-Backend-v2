@@ -6,9 +6,6 @@
  * @version 1.0.0
  */
 
-const getConfig = require('./getConfig');
-const { normalizeCommissionRate } = require('./commission');
-
 /**
  * Validate supplier application data
  */
@@ -335,51 +332,6 @@ function generateVerificationChecklist(supplierProfile) {
 }
 
 /**
- * Get supplier tier based on performance
- */
-async function getSupplierTier(supplierProfile) {
-  const { totalBookings, averageRating, totalEarnings } = supplierProfile;
-
-  // Normalize the config value: tolerates both "0.15" and "15" so a
-  // percentage-style config can never produce an invalid tier rate.
-  const baseRate = normalizeCommissionRate(await getConfig('commission.default_rate', '0.15'));
-
-  if (totalBookings >= 100 && averageRating >= 4.8 && totalEarnings >= 10000) {
-    return {
-      tier: 'platinum',
-      name: 'Platinum Supplier',
-      benefits: ['Lowest commission rates', 'Priority support', 'Featured listings'],
-      commissionRate: Math.max(0.01, baseRate - 0.05)
-    };
-  }
-
-  if (totalBookings >= 50 && averageRating >= 4.5 && totalEarnings >= 5000) {
-    return {
-      tier: 'gold',
-      name: 'Gold Supplier',
-      benefits: ['Reduced commission rates', 'Priority support'],
-      commissionRate: Math.max(0.01, baseRate - 0.03)
-    };
-  }
-
-  if (totalBookings >= 20 && averageRating >= 4.0 && totalEarnings >= 1000) {
-    return {
-      tier: 'silver',
-      name: 'Silver Supplier',
-      benefits: ['Standard commission rates', 'Regular support'],
-      commissionRate: Math.max(0.01, baseRate - 0.01)
-    };
-  }
-
-  return {
-    tier: 'bronze',
-    name: 'New Supplier',
-    benefits: ['Standard commission rates', 'Getting started support'],
-    commissionRate: baseRate
-  };
-}
-
-/**
  * Calculate supplier performance metrics
  */
 function calculateSupplierMetrics(supplierProfile, bookings, reviews) {
@@ -423,6 +375,5 @@ function calculateSupplierMetrics(supplierProfile, bookings, reviews) {
 module.exports = {
   validateSupplierData,
   generateVerificationChecklist,
-  getSupplierTier,
   calculateSupplierMetrics
 };

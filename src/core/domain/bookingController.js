@@ -606,7 +606,7 @@ exports.createBooking = catchAsync(async (req, res, next) => {
 
     for (const item of bookingItems) {
       const bookingNumber = await generateBookingNumber();
-      const commission = await calculateCommission(item.total, item.tour.supplier.supplierProfile);
+      const commission = await calculateCommission(item.total);
       
       const booking = await tx.booking.create({
         data: {

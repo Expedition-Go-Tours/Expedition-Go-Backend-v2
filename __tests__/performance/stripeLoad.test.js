@@ -101,9 +101,8 @@ describe('Stripe Load Tests', () => {
   ];
 
   it('calculateCommission — pure function throughput', async () => {
-    const profile = { totalBookings: 30, averageRating: 4.5 };
     const results = await runLoadTestScenarios('calculateCommission', () => {
-      calculateCommission(Math.random() * 1000, profile);
+      calculateCommission(Math.random() * 1000);
       return Promise.resolve();
     }, [
       { concurrency: 100, targetRps: 5000, durationMs: 500 },
@@ -171,8 +170,7 @@ describe('Stripe Load Tests', () => {
 
     await test.run(async () => {
       const amount = Math.round(Math.random() * 50000) + 5000;
-      const profile = { totalBookings: Math.floor(Math.random() * 200), averageRating: Math.random() * 5 };
-      const commission = calculateCommission(amount / 100, profile);
+      const commission = calculateCommission(amount / 100);
 
       prisma.stripeEvent.findUnique.mockResolvedValue(null);
       prisma.stripeEvent.upsert.mockResolvedValue({});

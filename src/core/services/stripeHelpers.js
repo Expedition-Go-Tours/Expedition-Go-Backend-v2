@@ -35,7 +35,7 @@ const { enqueueEmail, enqueueEvent, enqueueNotification } = require('./queue');
 const { notifyAdmin } = require('./adminNotificationService');
 const { sendWebSocketNotification } = require('./notificationService');
 const getConfig = require('./getConfig');
-const { normalizeCommissionRate } = require('./commission');
+const { normalizeCommissionRate, DEFAULT_SURCHARGE_RATE } = require('./commission');
 const redis = require('./redisClient');
 const { invalidateUserCache } = require('../../../middleware/authMiddleware');
 const { travelerCount, parseBlob } = require('./availabilityCore');
@@ -572,26 +572,29 @@ async function cancelPaymentIntent(paymentIntentId) {
 }
 
 /**
- * Calculate commission based on supplier tier and booking amount
+ * Calculate the platform commission for a booking — a flat rate for every
+ * supplier: rate = commission.default_rate + commission.surcharge_rate
+ * (defaults 0.15 + 0.02 = 17%). The performance-tier discounts (12–14%) were
+ * retired with the v3 invoice migration, so totalBookings/averageRating no
+ * longer influence the rate. The rate is written to Booking.commissionRate
+ * at creation, freezing each booking's commission at booking time.
+ *
+ * @param {number|string} bookingAmount - gross booking amount
+ * @returns {Promise<{rate: number, amount: number, supplierPayout: number}>}
  */
-async function calculateCommission(bookingAmount, supplierProfile) {
+async function calculateCommission(bookingAmount) {
   const amount = parseFloat(bookingAmount);
 
-  // Normalize the config value: tolerates both "0.15" and "15" so a
+  // Normalize each config value: tolerates both "0.15" and "15" so a
   // percentage-style config can never overflow Decimal(5,4).
-  const defaultRate = normalizeCommissionRate(await getConfig('commission.default_rate', '0.15'));
-  let commissionRate = defaultRate;
-
-  // Adjust rate based on supplier performance
-  // Use totalBookings + 1 since this booking hasn't been counted yet
-  const bookingCount = supplierProfile.totalBookings + 1;
-  if (bookingCount > 100) {
-    commissionRate = Math.max(0.01, defaultRate - 0.03);
-  } else if (bookingCount > 50) {
-    commissionRate = Math.max(0.01, defaultRate - 0.02);
-  } else if (supplierProfile.averageRating && supplierProfile.averageRating >= 4.8) {
-    commissionRate = Math.max(0.01, defaultRate - 0.01);
-  }
+  const baseRate = normalizeCommissionRate(await getConfig('commission.default_rate', '0.15'));
+  const surchargeRate = normalizeCommissionRate(
+    await getConfig('commission.surcharge_rate', String(DEFAULT_SURCHARGE_RATE)),
+    DEFAULT_SURCHARGE_RATE
+  );
+  // Round to the Decimal(5,4) column precision, then clamp at 1 so the
+  // supplier payout can never go negative.
+  const commissionRate = Math.min(Math.round((baseRate + surchargeRate) * 10000) / 10000, 1);
 
   const commissionAmount = amount * commissionRate;
   const supplierPayout = amount - commissionAmount;

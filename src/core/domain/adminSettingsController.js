@@ -32,13 +32,15 @@ const PAYOUT_CYCLES = ['TWICE_MONTHLY', 'MONTHLY'];
  * Throws AppError (400) for invalid values so bad config can never be saved.
  */
 function sanitizeSetting(key, value) {
-  if (key === 'commission.default_rate') {
-    // Accept either a fraction ("0.15") or a percentage ("15"); normalize to
-    // the fraction that Booking.commissionRate (Decimal(5,4)) expects.
+  if (key === 'commission.default_rate' || key === 'commission.surcharge_rate') {
+    // Accept either a fraction ("0.15"/"0.02") or a percentage ("15"/"2");
+    // normalize to the fraction that Booking.commissionRate (Decimal(5,4))
+    // expects. The two rates are combined additively at calculation time
+    // (stripeHelpers.calculateCommission), where the total is clamped at 1.
     const rate = normalizeCommissionRate(value, null);
     if (rate === null) {
       throw new AppError(
-        `commission.default_rate must be a number greater than 0 (e.g. "0.15" for 15%)`,
+        `${key} must be a number greater than 0 (e.g. "${key === 'commission.surcharge_rate' ? '0.02' : '0.15'}" for ${key === 'commission.surcharge_rate' ? '2%' : '15%'})`,
         400
       );
     }

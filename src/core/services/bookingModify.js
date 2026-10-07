@@ -299,8 +299,7 @@ async function computeSnapshot(ctx) {
     throw new AppError('Unable to price the requested change', 400);
   }
 
-  const supplierProfile = tour.supplier?.supplierProfile || {};
-  const commission = await calculateCommission(newTotal, supplierProfile);
+  const commission = await calculateCommission(newTotal);
 
   const previous = {
     travelDate: new Date(booking.travelDate),

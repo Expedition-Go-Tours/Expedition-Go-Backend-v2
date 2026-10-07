@@ -1,10 +1,6 @@
-jest.mock('../../src/core/services/getConfig', () => jest.fn().mockResolvedValue('0.15'));
-
-const getConfig = require('../../src/core/services/getConfig');
 const {
   validateSupplierData,
   generateVerificationChecklist,
-  getSupplierTier,
   calculateSupplierMetrics,
 } = require('../../src/core/services/supplierHelpers');
 
@@ -270,53 +266,6 @@ describe('generateVerificationChecklist', () => {
     expect(result.businessInfo.items[3].completed).toBe(false);
     expect(result.overall.percentage).toBeGreaterThan(0);
     expect(result.overall.percentage).toBeLessThan(100);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getSupplierTier
-// ---------------------------------------------------------------------------
-describe('getSupplierTier', () => {
-  it('returns platinum for top performers', async () => {
-    const result = await getSupplierTier({ totalBookings: 100, averageRating: 4.8, totalEarnings: 10000 });
-    expect(result.tier).toBe('platinum');
-    expect(result.commissionRate).toBeCloseTo(0.1, 5);
-  });
-
-  it('returns gold for mid-tier performers', async () => {
-    const result = await getSupplierTier({ totalBookings: 50, averageRating: 4.5, totalEarnings: 5000 });
-    expect(result.tier).toBe('gold');
-    expect(result.commissionRate).toBeCloseTo(0.12, 5);
-  });
-
-  it('returns silver for moderate performers', async () => {
-    const result = await getSupplierTier({ totalBookings: 20, averageRating: 4.0, totalEarnings: 1000 });
-    expect(result.tier).toBe('silver');
-    expect(result.commissionRate).toBeCloseTo(0.14, 5);
-  });
-
-  it('returns bronze for new or low performers', async () => {
-    const result = await getSupplierTier({ totalBookings: 0, averageRating: 0, totalEarnings: 0 });
-    expect(result.tier).toBe('bronze');
-    expect(result.commissionRate).toBeCloseTo(0.15, 5);
-  });
-
-  it('ensures commissionRate does not go below 0.01', async () => {
-    getConfig.mockResolvedValue('0.03');
-    const result = await getSupplierTier({ totalBookings: 100, averageRating: 4.8, totalEarnings: 10000 });
-    expect(result.commissionRate).toBeCloseTo(0.01, 5);
-  });
-
-  it('tolerates percentage-style config (15 → 0.15)', async () => {
-    getConfig.mockResolvedValue('15');
-    const result = await getSupplierTier({ totalBookings: 0, averageRating: 0, totalEarnings: 0 });
-    expect(result.tier).toBe('bronze');
-    expect(result.commissionRate).toBeCloseTo(0.15, 5);
-  });
-
-  it('returns bronze when some conditions not met', async () => {
-    const result = await getSupplierTier({ totalBookings: 100, averageRating: 3.0, totalEarnings: 10000 });
-    expect(result.tier).toBe('bronze');
   });
 });
 

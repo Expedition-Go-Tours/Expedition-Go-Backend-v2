@@ -1928,7 +1928,7 @@ controller.confirmBooking = catchAsync(async (req, res, next) => {
     }
 
     const bookingNumber = await generateBookingNumber(BRAND.bookingPrefix);
-    const commission = await calculateCommission(pricing.total, tour.supplier.supplierProfile);
+    const commission = await calculateCommission(pricing.total);
 
     const booking = await tx.booking.create({
       data: {
@@ -2064,7 +2064,7 @@ controller.confirmBooking = catchAsync(async (req, res, next) => {
   // hold (payment_intent.succeeded for the Payment-Element flow, or
   // checkout.session.completed for legacy hosted sessions). Abandoned holds are
   // released by the expire-checkout-holds sweep.
-  const commission = await calculateCommission(pricing.total, tour.supplier.supplierProfile);
+  const commission = await calculateCommission(pricing.total);
   let holdResult;
   try {
     holdResult = await acquireHold({

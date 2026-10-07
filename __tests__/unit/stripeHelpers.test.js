@@ -110,77 +110,72 @@ const mockStripeEvent = (type, data = {}) => ({
 });
 
 describe('calculateCommission', () => {
-  it('returns 15% for default tier (low volume)', async () => {
-    const profile = { totalBookings: 5, averageRating: null };
-    const result = await calculateCommission(100, profile);
+  it('applies the flat 17% rate (15% base + 2% surcharge) to every booking', async () => {
+    const result = await calculateCommission(100);
 
-    expect(result.rate).toBe(0.15);
-    expect(result.amount).toBe(15);
-    expect(result.supplierPayout).toBe(85);
+    expect(result.rate).toBe(0.17);
+    expect(result.amount).toBe(17);
+    expect(result.supplierPayout).toBe(83);
   });
 
-  it('returns 14% for high-rated new suppliers', async () => {
-    const profile = { totalBookings: 5, averageRating: 4.9 };
-    const result = await calculateCommission(100, profile);
+  it('keeps the same flat rate regardless of booking amount', async () => {
+    const small = await calculateCommission(50);
+    const large = await calculateCommission(1000);
 
-    expect(result.rate).toBeCloseTo(0.14);
+    expect(small.rate).toBe(0.17);
+    expect(small.amount).toBe(8.5);
+    expect(large.rate).toBe(0.17);
+    expect(large.amount).toBe(170);
+    expect(large.supplierPayout).toBe(830);
   });
 
-  it('returns 13% for medium-volume suppliers (51-100 bookings)', async () => {
-    const profile = { totalBookings: 75, averageRating: null };
-    const result = await calculateCommission(100, profile);
+  it('honors a custom commission.surcharge_rate from config', async () => {
+    getConfig
+      .mockResolvedValueOnce('0.15') // commission.default_rate
+      .mockResolvedValueOnce('0.04'); // commission.surcharge_rate
+    const result = await calculateCommission(100);
 
-    expect(result.rate).toBe(0.13);
-  });
-
-  it('returns 12% for high-volume suppliers (100+ bookings)', async () => {
-    const profile = { totalBookings: 150, averageRating: null };
-    const result = await calculateCommission(100, profile);
-
-    expect(result.rate).toBe(0.12);
-  });
-
-  it('high volume takes priority over high rating', async () => {
-    const profile = { totalBookings: 150, averageRating: 4.9 };
-    const result = await calculateCommission(100, profile);
-
-    expect(result.rate).toBe(0.12);
+    expect(result.rate).toBe(0.19);
+    expect(result.amount).toBe(19);
+    expect(result.supplierPayout).toBe(81);
   });
 
   it('handles zero booking amount', async () => {
-    const profile = { totalBookings: 0, averageRating: null };
-    const result = await calculateCommission(0, profile);
+    const result = await calculateCommission(0);
 
-    expect(result.rate).toBe(0.15);
+    expect(result.rate).toBe(0.17);
     expect(result.amount).toBe(0);
     expect(result.supplierPayout).toBe(0);
   });
 
   it('handles string amount input', async () => {
-    const profile = { totalBookings: 10, averageRating: null };
-    const result = await calculateCommission('200', profile);
+    const result = await calculateCommission('200');
 
-    expect(result.rate).toBe(0.15);
-    expect(result.amount).toBe(30);
-    expect(result.supplierPayout).toBe(170);
+    expect(result.rate).toBe(0.17);
+    expect(result.amount).toBe(34);
+    expect(result.supplierPayout).toBe(166);
   });
 
-  it('tolerates percentage-style config (15 → 0.15)', async () => {
-    getConfig.mockResolvedValueOnce('15');
-    const profile = { totalBookings: 5, averageRating: null };
-    const result = await calculateCommission(100, profile);
+  it('tolerates percentage-style config (15 + 2 → 0.17)', async () => {
+    getConfig
+      .mockResolvedValueOnce('15') // commission.default_rate
+      .mockResolvedValueOnce('2'); // commission.surcharge_rate
+    const result = await calculateCommission(100);
 
-    expect(result.rate).toBe(0.15);
-    expect(result.amount).toBe(15);
-    expect(result.supplierPayout).toBe(85);
+    expect(result.rate).toBe(0.17);
+    expect(result.amount).toBe(17);
+    expect(result.supplierPayout).toBe(83);
   });
 
-  it('clamps an oversized config to at most 100%', async () => {
-    getConfig.mockResolvedValueOnce('150');
-    const profile = { totalBookings: 5, averageRating: null };
-    const result = await calculateCommission(100, profile);
+  it('clamps the combined rate to at most 100%', async () => {
+    getConfig
+      .mockResolvedValueOnce('0.95') // commission.default_rate
+      .mockResolvedValueOnce('0.2'); // commission.surcharge_rate
+    const result = await calculateCommission(100);
 
     expect(result.rate).toBe(1);
+    expect(result.amount).toBe(100);
+    expect(result.supplierPayout).toBe(0);
   });
 });
 

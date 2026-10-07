@@ -1,4 +1,12 @@
-const { normalizeCommissionRate, DEFAULT_COMMISSION_RATE } = require('../../src/core/services/commission');
+const { normalizeCommissionRate, DEFAULT_COMMISSION_RATE, DEFAULT_SURCHARGE_RATE } = require('../../src/core/services/commission');
+
+describe('flat-rate constants', () => {
+  it('base + surcharge = the flat 17% offer rate', () => {
+    expect(DEFAULT_COMMISSION_RATE).toBe(0.15);
+    expect(DEFAULT_SURCHARGE_RATE).toBe(0.02);
+    expect(DEFAULT_COMMISSION_RATE + DEFAULT_SURCHARGE_RATE).toBeCloseTo(0.17, 5);
+  });
+});
 
 describe('normalizeCommissionRate', () => {
   it('returns a decimal-fraction input unchanged', () => {
