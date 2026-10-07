@@ -1,5 +1,17 @@
 const prisma = require('./prismaClient');
 
+/**
+ * Booking statuses that are owed a supplier payout. Shared by every money
+ * predicate — the v3 invoice selection, the eligibility sweep, and the v2
+ * "eligible now" clause — so they cannot drift apart.
+ *
+ * NO_SHOW is payable: the supplier ran the tour, the booking is
+ * non-refundable, and GetYourGuide's Supplier T&C §3.9(ii) treats a no-show
+ * "as a Completed Booking for purposes of payment". Refunded money never
+ * reaches these predicates anyway — they all require paymentStatus SUCCEEDED.
+ */
+const PAYABLE_BOOKING_STATUSES = Object.freeze(['CONFIRMED', 'COMPLETED', 'NO_SHOW']);
+
 // ── Finance v2 shared helpers ──
 // Used by booking/expedition cancellation flows and the dispute service to
 // keep PayoutRequests consistent when a booking's funds change state.
@@ -106,7 +118,10 @@ async function unfreezeBookingAfterDispute(tx, bookingId) {
  *   payoutStatus     — ELIGIBLE is claimable; PENDING is still inside the
  *                      clearance buffer; DISPUTED/CANCELLED are frozen;
  *   paymentStatus    — we do not advance money the customer has not paid;
- *   status           — a cancelled or refunded experience is not owed payout.
+ *   status           — a cancelled or refunded experience is not owed payout,
+ *                      but a NO_SHOW is: it is non-refundable and counts as
+ *                      completed for payment (GetYourGuide parity, see
+ *                      PAYABLE_BOOKING_STATUSES).
  *
  * Open disputes are handled earlier, in `sweepEarningsEligibility`, which
  * refuses to flip a booking into ELIGIBLE while a dispute is live — so they
@@ -123,7 +138,7 @@ function payoutBookingsWhere({ supplierId, supplierIds, payoutStatus = 'ELIGIBLE
     isSimulated: false,
     payoutStatus,
     paymentStatus: 'SUCCEEDED',
-    status: { in: ['CONFIRMED', 'COMPLETED'] },
+    status: { in: [...PAYABLE_BOOKING_STATUSES] },
   };
   if (supplierId) where.tour = { supplierId };
   else if (supplierIds && supplierIds.length > 0) where.tour = { supplierId: { in: supplierIds } };
@@ -136,6 +151,7 @@ function eligibleBookingsWhere(supplierId) {
 }
 
 module.exports = {
+  PAYABLE_BOOKING_STATUSES,
   detachBookingFromActiveRequests,
   cancelBookingFunds,
   freezeBookingForDispute,

@@ -1,5 +1,6 @@
 const getConfig = require('./getConfig');
 const prisma = require('./prismaClient');
+const { PAYABLE_BOOKING_STATUSES } = require('./financeHelpers');
 
 // ── Finance v2: bi-monthly payout cycles ──
 //
@@ -318,7 +319,8 @@ async function getClearanceBufferDays() {
 /**
  * Eligibility sweep — flips PENDING → ELIGIBLE once a booking's travel date
  * has passed (plus configurable clearance buffer), payment succeeded and the
- * booking is confirmed/completed. Bookings with an open dispute stay frozen.
+ * booking is confirmed/completed (or NO_SHOW — non-refundable, so payable).
+ * Bookings with an open dispute stay frozen.
  * Idempotent; safe to run frequently.
  */
 async function sweepEarningsEligibility() {
@@ -330,7 +332,7 @@ async function sweepEarningsEligibility() {
     where: {
       payoutStatus: 'PENDING',
       paymentStatus: 'SUCCEEDED',
-      status: { in: ['CONFIRMED', 'COMPLETED'] },
+      status: { in: [...PAYABLE_BOOKING_STATUSES] },
       travelDate: { lt: cutoff },
       disputes: { none: { status: { in: ['OPEN', 'UNDER_REVIEW'] } } },
     },

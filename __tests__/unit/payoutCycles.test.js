@@ -184,7 +184,7 @@ describe('sweepEarningsEligibility', () => {
         where: expect.objectContaining({
           payoutStatus: 'PENDING',
           paymentStatus: 'SUCCEEDED',
-          status: { in: ['CONFIRMED', 'COMPLETED'] },
+          status: { in: ['CONFIRMED', 'COMPLETED', 'NO_SHOW'] },
           disputes: { none: { status: { in: ['OPEN', 'UNDER_REVIEW'] } } },
         }),
         data: { payoutStatus: 'ELIGIBLE' },

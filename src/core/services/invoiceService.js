@@ -34,6 +34,7 @@ const { logActivity } = require('./auditLogger');
 const { enqueueNotification } = require('./queue');
 const { invoiceWindowFor, nextInvoiceWindow } = require('./payoutCycles');
 const { resolvePayoutMethod, resolveEffectiveCycle, promoteDueCycles } = require('./payoutRuns');
+const { PAYABLE_BOOKING_STATUSES } = require('./financeHelpers');
 
 function toNumber(v) {
   return v == null ? 0 : parseFloat(v);
@@ -44,10 +45,12 @@ function round2(n) {
 }
 
 /**
- * The finance-v3 booking predicate: any confirmed, paid, non-simulated booking
+ * The finance-v3 booking predicate: any payable, paid, non-simulated booking
  * whose activity date falls inside the window belongs to that window's invoice,
  * whether the activity already happened (payoutStatus ELIGIBLE) or is still to
  * come (PENDING) — this is what puts FUTURE confirmed tours into the estimate.
+ * NO_SHOW bookings are payable too (non-refundable, supplier performed —
+ * GetYourGuide Supplier T&C §3.9(ii); see PAYABLE_BOOKING_STATUSES).
  * Bookings already claimed by an invoice (INVOICED/PAID) or a legacy v2 payout
  * request (REQUESTED/PAID) are excluded; InvoiceItem.bookingId @unique backs
  * the "never invoiced twice" rule at the database level.
@@ -56,7 +59,7 @@ function v3BookingsWhere({ supplierId, window }) {
   return {
     isSimulated: false,
     paymentStatus: 'SUCCEEDED',
-    status: { in: ['CONFIRMED', 'COMPLETED'] },
+    status: { in: [...PAYABLE_BOOKING_STATUSES] },
     payoutStatus: { in: ['PENDING', 'ELIGIBLE'] },
     travelDate: { gte: window.start, lte: window.end },
     tour: { supplierId },
@@ -451,7 +454,7 @@ async function generateDueInvoices(now = new Date()) {
       where: {
         isSimulated: false,
         paymentStatus: 'SUCCEEDED',
-        status: { in: ['CONFIRMED', 'COMPLETED'] },
+        status: { in: [...PAYABLE_BOOKING_STATUSES] },
         payoutStatus: { in: ['PENDING', 'ELIGIBLE'] },
         travelDate: { lte: horizon },
         tour: { supplierId: profile.userId },

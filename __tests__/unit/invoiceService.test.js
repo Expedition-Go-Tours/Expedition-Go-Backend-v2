@@ -71,11 +71,21 @@ describe('v3BookingsWhere — the finance-v3 selection predicate', () => {
     expect(where.tour).toEqual({ supplierId: 'sup-1' });
     expect(where.isSimulated).toBe(false);
     expect(where.paymentStatus).toBe('SUCCEEDED');
-    expect(where.status.in).toEqual(['CONFIRMED', 'COMPLETED']);
+    expect(where.status.in).toEqual(['CONFIRMED', 'COMPLETED', 'NO_SHOW']);
     // PENDING (future tours not yet travelled) + ELIGIBLE (travelled) both count.
     expect(where.payoutStatus.in).toEqual(['PENDING', 'ELIGIBLE']);
     expect(where.travelDate.gte).toEqual(new Date(2026, 9, 1));
     expect(where.travelDate.lte).toEqual(new Date(2026, 9, 15, 23, 59, 59, 999));
+  });
+
+  it('pays NO_SHOW bookings (non-refundable, supplier performed — GYG parity) and never refunded money', () => {
+    const window = invoiceWindowFor(new Date(2026, 9, 10), 'TWICE_MONTHLY');
+    const { status } = v3BookingsWhere({ supplierId: 'sup-1', window });
+    expect(status.in).toContain('NO_SHOW');
+    // Refunded/cancelled/pending money never enters an invoice.
+    expect(status.in).not.toContain('CANCELLED');
+    expect(status.in).not.toContain('REFUNDED');
+    expect(status.in).not.toContain('PENDING');
   });
 });
 
@@ -235,6 +245,20 @@ describe('generateDueInvoices — the hourly scheduled job', () => {
       expect.objectContaining({ data: { payoutStatus: 'INVOICED' } })
     );
     expect(enqueueNotification).toHaveBeenCalledWith(expect.objectContaining({ userId: 'sup-1', type: 'INVOICE_GENERATED' }));
+  });
+
+  it('sweeps every payable status, NO_SHOW included, in the scheduled run', async () => {
+    prisma.supplierProfile.findMany.mockImplementation(({ where } = {}) =>
+      Promise.resolve(where && where.payoutCyclePending ? [] : [{ userId: 'sup-1', payoutCycle: 'TWICE_MONTHLY' }])
+    );
+    prisma.booking.findMany.mockResolvedValue([b('b1', new Date(2026, 9, 5), 'USD', 100, 15, 85)]);
+    prisma.__tx.invoice.create.mockResolvedValue({ id: 'inv-a', invoiceNumber: 'INV-A', netTotal: 85, currency: 'USD' });
+
+    await generateDueInvoices(now);
+
+    const where = prisma.booking.findMany.mock.calls[0][0].where;
+    expect(where.status.in).toEqual(['CONFIRMED', 'COMPLETED', 'NO_SHOW']);
+    expect(where.payoutStatus.in).toEqual(['PENDING', 'ELIGIBLE']);
   });
 
   it('is idempotent — a re-fire with no remaining bookings does nothing', async () => {
