@@ -30,6 +30,7 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   payout: { findMany: jest.fn(), findFirst: jest.fn(), aggregate: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
   payoutRequest: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
   payoutMethod: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn() },
+  invoice: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), aggregate: jest.fn(), count: jest.fn(), groupBy: jest.fn(), create: jest.fn(), update: jest.fn() },
   dispute: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn() },
   chatConversation: { findMany: jest.fn(), count: jest.fn() },
   cancellationRecord: { findMany: jest.fn(), count: jest.fn() },
@@ -109,7 +110,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockSendTeamInviteEmail.mockResolvedValue();
 
-  const models = ['travioGhanaTour', 'expeditionTour', 'tour', 'user', 'review', 'booking', 'specialOffer', 'payout', 'notification', 'teamMember', 'payoutRequest', 'dispute', 'chatConversation', 'cancellationRecord', 'wishlistItem'];
+  const models = ['travioGhanaTour', 'expeditionTour', 'tour', 'user', 'review', 'booking', 'specialOffer', 'payout', 'notification', 'teamMember', 'payoutRequest', 'payoutMethod', 'invoice', 'dispute', 'chatConversation', 'cancellationRecord', 'wishlistItem'];
   for (const m of models) {
     prisma[m].findMany?.mockResolvedValue([]);
     prisma[m].count?.mockResolvedValue(0);
