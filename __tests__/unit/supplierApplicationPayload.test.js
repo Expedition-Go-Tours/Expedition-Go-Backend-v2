@@ -115,7 +115,7 @@ describe('supplierApplicationPayload', () => {
         'operatingInfo.regions must be an array',
         'operatingInfo.yearsInBusiness must be a number between 0 and 100',
         'representativeInfo.fullName is required',
-        'payoutInfo.schedule must be one of: WEEKLY, TWICE_MONTHLY, MONTHLY',
+        'payoutInfo.schedule must be one of: TWICE_MONTHLY, MONTHLY',
         'payoutInfo.method must be one of: bank, paypal, momo',
         'payoutInfo.payoutCurrency must be an ISO 4217 code (e.g. "GHS")',
       ])
