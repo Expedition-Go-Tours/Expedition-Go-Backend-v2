@@ -131,6 +131,99 @@ router.patch('/payout-requests/:id/reject', requirePermission('payouts.approve')
  */
 router.patch('/payout-requests/:id/complete', requirePermission('payouts.approve'), adminFinanceController.completePayoutRequest);
 
+// ── Finance v3 — invoices (automatic GetYourGuide-style billing) ──
+
+/**
+ * @swagger
+ * /admin/finance/invoices:
+ *   get:
+ *     summary: List supplier invoices (Your balance / paid history)
+ *     tags: [Admin Finance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema: { type: string }
+ *         description: Comma-separated INVOICED,PAID,CANCELLED
+ *       - in: query
+ *         name: search
+ *         schema: { type: string }
+ *         description: Invoice number, reference, or supplier name/email
+ *       - in: query
+ *         name: sortBy
+ *         schema: { type: string, enum: [invoiceNumber, netTotal, status, invoicedAt, createdAt] }
+ *       - in: query
+ *         name: sortOrder
+ *         schema: { type: string, enum: [asc, desc] }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer }
+ *     responses:
+ *       200:
+ *         description: Invoices with supplier + method + line-item context
+ */
+router.get('/invoices', requirePermission('payouts.view'), adminFinanceController.getInvoices);
+
+/**
+ * @swagger
+ * /admin/finance/invoices/{id}:
+ *   get:
+ *     summary: Invoice detail with booking line items
+ *     tags: [Admin Finance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Full invoice with bookings, customer + tour context
+ */
+router.get('/invoices/:id', requirePermission('payouts.view'), adminFinanceController.getInvoiceById);
+
+/**
+ * @swagger
+ * /admin/finance/invoices/{id}/mark-paid:
+ *   patch:
+ *     summary: Mark an invoice as paid (records the real bank reference)
+ *     description: |
+ *       Money movement stays manual — no provider API. The admin records the
+ *       bank/transaction reference; the invoice flips to PAID (leaving the
+ *       supplier's balance) and its bookings' payoutStatus flip to PAID.
+ *       Only INVOICED invoices can be marked paid.
+ *     tags: [Admin Finance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [reference]
+ *             properties:
+ *               reference: { type: string, description: Real bank / transaction reference }
+ *     responses:
+ *       200:
+ *         description: Invoice marked paid
+ *       404:
+ *         description: Invoice not found
+ *       409:
+ *         description: Invoice is already PAID or CANCELLED
+ */
+router.patch('/invoices/:id/mark-paid', requirePermission('payouts.approve'), adminFinanceController.markInvoicePaid);
+
 // ── Refund requests (supplier-initiated; stored as Dispute) ──
 
 /**

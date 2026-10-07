@@ -27,6 +27,7 @@ const { createRefund } = require('./stripeHelpers');
 const { evaluateCancellationPolicy } = require('./bookingHelpers');
 const { evaluateBookingAvailability } = require('./availabilityCore');
 const { detachBookingFromActiveRequests } = require('./financeHelpers');
+const { detachBookingFromInvoices } = require('./invoiceService');
 const { enqueueEmail, enqueueNotification, enqueueEvent } = require('./queue');
 const { notifyAdmin } = require('./adminNotificationService');
 const { logActivity } = require('./auditLogger');
@@ -246,6 +247,10 @@ async function cancelBySupplier({ booking, payload, supplierId, req, skipValidat
 
     // Finance v2: detach from any active payout request.
     await detachBookingFromActiveRequests(tx, booking.id);
+
+    // Finance v3: detach from any unpaid invoice and rebalance it — a
+    // cancelled booking must never be paid out through an invoice.
+    await detachBookingFromInvoices(tx, booking.id);
 
     // 25%-of-retail fee (operational cancels only).
     if (fee > 0) {

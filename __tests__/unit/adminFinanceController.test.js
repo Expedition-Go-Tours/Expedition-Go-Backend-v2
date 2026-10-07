@@ -4,9 +4,11 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   supplierProfile: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
   booking: { aggregate: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
   tour: { findMany: jest.fn() },
+  invoice: { findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), findUnique: jest.fn() },
+  invoiceItem: { findMany: jest.fn(), delete: jest.fn() },
   $transaction: jest.fn(),
 }));
-jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn() }));
+jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn().mockResolvedValue(undefined) }));
 // Key-aware: getMinThreshold and autoRunsEnabled both read through this, and
 // without it every schedule falls to defaults — minimum threshold 0, runs on —
 // which makes two of the five readiness reasons untestable.
@@ -19,7 +21,7 @@ jest.mock('../../src/core/services/getConfig', () => {
   fn.clearCache = () => {};
   return fn;
 });
-jest.mock('../../src/core/services/queue', () => ({ enqueueNotification: jest.fn(), enqueueEmail: jest.fn() }));
+jest.mock('../../src/core/services/queue', () => ({ enqueueNotification: jest.fn(() => Promise.resolve()), enqueueEmail: jest.fn(() => Promise.resolve()) }));
 // Spreading the real module matters: the controller also pulls
 // payoutBookingsWhere / eligibleBookingsWhere from here, and stubbing this
 // module with only the two transaction helpers used to make those undefined
@@ -436,5 +438,173 @@ describe('adminFinanceController.getSupplierEligibleBookings', () => {
     const err = next.mock.calls[0][0];
     expect(err).toBeInstanceOf(AppError);
     expect(err.statusCode).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Finance v3 — admin invoice queue
+// ---------------------------------------------------------------------------
+const { enqueueNotification } = require('../../src/core/services/queue');
+
+describe('adminFinanceController.getInvoices (v3)', () => {
+  let req, res, next;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    req = { query: {}, params: {}, body: {}, user: { id: 'admin-1', email: 'a@x.com' } };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    next = jest.fn();
+  });
+
+  it('lists invoices with supplier context and per-status totals', async () => {
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: 'inv-1',
+        invoiceNumber: 'INV-20261016-0001',
+        status: 'INVOICED',
+        grossTotal: '100',
+        commissionTotal: '17',
+        netTotal: '83',
+        currency: 'USD',
+        bookingCount: 1,
+        items: [{ id: 'i1' }],
+        supplier: { id: 's1', name: 'Supplier One', email: 's@t.com' },
+        payoutMethod: null,
+      },
+    ]);
+    prisma.invoice.count.mockResolvedValue(1);
+    prisma.invoice.groupBy.mockResolvedValue([
+      { status: 'INVOICED', _count: { _all: 1 }, _sum: { netTotal: '83' } },
+    ]);
+
+    await controller.getInvoices(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const data = res.json.mock.calls[0][0].data;
+    expect(data.invoices[0].netTotal).toBe(83);
+    expect(data.invoices[0].bookingCount).toBe(1);
+    expect(data.pagination.totalCount).toBe(1);
+    expect(data.summary.statusCounts.INVOICED).toBe(1);
+    expect(data.summary.totalAmount).toBe(83);
+  });
+
+  it('filters by comma-separated status and passes search to counts', async () => {
+    req.query = { status: 'INVOICED,PAID', search: 'INV-2026' };
+    prisma.invoice.findMany.mockResolvedValue([]);
+    prisma.invoice.count.mockResolvedValue(0);
+    prisma.invoice.groupBy.mockResolvedValue([]);
+
+    await controller.getInvoices(req, res, next);
+
+    const where = prisma.invoice.findMany.mock.calls[0][0].where;
+    expect(where.status.in).toEqual(['INVOICED', 'PAID']);
+    expect(where.OR).toBeDefined();
+    const countWhere = prisma.invoice.count.mock.calls[0][0].where;
+    expect(countWhere.OR).toBeDefined();
+  });
+
+  it('sorts only whitelisted columns and rejects prototype keys', async () => {
+    req.query = { sortBy: 'netTotal', sortOrder: 'asc' };
+    prisma.invoice.findMany.mockResolvedValue([]);
+    prisma.invoice.count.mockResolvedValue(0);
+    prisma.invoice.groupBy.mockResolvedValue([]);
+
+    await controller.getInvoices(req, res, next);
+    expect(prisma.invoice.findMany.mock.calls[0][0].orderBy[0]).toEqual({ netTotal: 'asc' });
+
+    req.query = { sortBy: '__proto__', sortOrder: 'desc' };
+    await controller.getInvoices(req, res, next);
+    // Falls back to newest-first because __proto__ is not whitelisted.
+    expect(prisma.invoice.findMany.mock.calls[1][0].orderBy[0]).toEqual({ createdAt: 'desc' });
+  });
+});
+
+describe('adminFinanceController.getInvoiceById (v3)', () => {
+  let req, res, next;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    req = { query: {}, params: { id: 'inv-1' }, body: {}, user: { id: 'admin-1', email: 'a@x.com' } };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    next = jest.fn();
+  });
+
+  it('returns the invoice with booking line items (money as numbers)', async () => {
+    prisma.invoice.findUnique.mockResolvedValue({
+      id: 'inv-1',
+      invoiceNumber: 'INV-20261016-0001',
+      status: 'PAID',
+      grossTotal: '100',
+      commissionTotal: '17',
+      netTotal: '83',
+      bookingCount: 1,
+      supplier: { id: 's1' },
+      payoutMethod: null,
+      items: [
+        {
+          id: 'i1',
+          grossAmount: '100',
+          platformCommission: '17',
+          supplierPayout: '83',
+          currency: 'USD',
+          booking: { id: 'bk-1', bookingNumber: 'BK-1', status: 'CONFIRMED', paymentStatus: 'PAID', payoutStatus: 'PAID', customer: { name: 'C' }, tour: { title: 'T' } },
+        },
+      ],
+    });
+
+    await controller.getInvoiceById(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const invoice = res.json.mock.calls[0][0].data.invoice;
+    expect(invoice.netTotal).toBe(83);
+    expect(typeof invoice.items[0].supplierPayout).toBe('number');
+    expect(invoice.items[0].supplierPayout).toBe(83);
+  });
+
+  it('404s for an unknown invoice', async () => {
+    prisma.invoice.findUnique.mockResolvedValue(null);
+    await controller.getInvoiceById(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
+  });
+});
+
+describe('adminFinanceController.markInvoicePaid (v3)', () => {
+  let req, res, next;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    req = { query: {}, params: { id: 'inv-1' }, body: {}, user: { id: 'admin-1', email: 'a@x.com' } };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    next = jest.fn();
+  });
+
+  it('rejects a missing reference without touching the database', async () => {
+    req.body = {};
+    await controller.markInvoicePaid(req, res, next);
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('marks the invoice paid and notifies the supplier', async () => {
+    const tx = {
+      invoice: { update: jest.fn().mockResolvedValue({ id: 'inv-1', invoiceNumber: 'INV-20261016-0001', status: 'PAID', reference: 'WB-1420' }) },
+      booking: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    };
+    prisma.$transaction.mockImplementation(async (cb) => cb(tx));
+    prisma.invoice.findUnique
+      .mockResolvedValueOnce({ id: 'inv-1', invoiceNumber: 'INV-20261016-0001', status: 'INVOICED', items: [{ bookingId: 'bk-1' }] })
+      .mockResolvedValueOnce({ invoiceNumber: 'INV-20261016-0001', supplierId: 's-1', currency: 'USD', netTotal: '83', reference: 'WB-1420', paidAt: new Date() });
+    req.body = { reference: 'WB-1420' };
+
+    await controller.markInvoicePaid(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(tx.invoice.update).toHaveBeenCalled();
+    expect(tx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ['bk-1'] } }, data: { payoutStatus: 'PAID' } })
+    );
+    expect(enqueueNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 's-1', type: 'INVOICE_PAID' })
+    );
   });
 });

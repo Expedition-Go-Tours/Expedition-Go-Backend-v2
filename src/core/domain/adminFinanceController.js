@@ -4,6 +4,7 @@ const AppError = require('../services/appError');
 const { logActivity } = require('../services/auditLogger');
 const { enqueueNotification, enqueueEmail } = require('../services/queue');
 const { detachBookingFromActiveRequests, unfreezeBookingAfterDispute, payoutBookingsWhere, eligibleBookingsWhere } = require('../services/financeHelpers');
+const { markInvoicePaid, detachBookingFromInvoices } = require('../services/invoiceService');
 const { notifyDiscord } = require('../services/discordNotifier');
 const {
   buildPayoutPlan,
@@ -428,6 +429,208 @@ exports.completePayoutRequest = catchAsync(async (req, res, next) => {
   });
 });
 
+// ── Finance v3 — invoices (automatic GetYourGuide-style billing) ──
+// Money movement stays manual: an admin records the real bank reference and
+// the invoice leaves the supplier's balance; there is no provider API.
+
+/**
+ * GET /admin/finance/invoices?status=&page=&limit=&search=&sortBy=&sortOrder=
+ */
+exports.getInvoices = catchAsync(async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+
+  const where = {};
+  if (req.query.status) {
+    where.status = { in: String(req.query.status).split(',').map((s) => s.trim()).filter(Boolean) };
+  }
+
+  // Whitelisted scalar-column sort (mirrors getPayoutRequests; avoids
+  // prototype-key injection via an object literal).
+  const SORTABLE = new Map([
+    ['invoiceNumber', 'invoiceNumber'],
+    ['netTotal', 'netTotal'],
+    ['status', 'status'],
+    ['invoicedAt', 'invoicedAt'],
+    ['createdAt', 'createdAt'],
+  ]);
+  const sortKey = SORTABLE.get(String(req.query.sortBy || '').trim());
+  const sortDir = String(req.query.sortOrder || '').toLowerCase() === 'asc' ? 'asc' : 'desc';
+  const orderBy = sortKey
+    ? [{ [sortKey]: sortDir }, { createdAt: 'desc' }, { id: 'desc' }]
+    : [{ createdAt: 'desc' }, { id: 'desc' }];
+
+  const searchWhere = {};
+  const term = String(req.query.search || '').trim();
+  if (term) {
+    searchWhere.OR = [
+      { invoiceNumber: { contains: term, mode: 'insensitive' } },
+      { reference: { contains: term, mode: 'insensitive' } },
+      { supplier: { name: { contains: term, mode: 'insensitive' } } },
+      { supplier: { email: { contains: term, mode: 'insensitive' } } },
+    ];
+  }
+
+  const [invoices, totalCount, statusGroups] = await Promise.all([
+    prisma.invoice.findMany({
+      where: { ...searchWhere, ...where },
+      include: {
+        supplier: { select: { id: true, name: true, email: true, logoUrl: true } },
+        payoutMethod: { select: METHOD_SELECT },
+        items: { include: { booking: { select: { bookingNumber: true, travelDate: true, tour: { select: { title: true } } } } } },
+      },
+      orderBy,
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.invoice.count({ where: { ...searchWhere, ...where } }),
+    prisma.invoice.groupBy({
+      by: ['status'],
+      where: searchWhere,
+      _count: { _all: true },
+      _sum: { netTotal: true },
+    }),
+  ]);
+
+  const statusCounts = {};
+  let grandTotal = 0;
+  let grandAmount = 0;
+  for (const g of statusGroups) {
+    statusCounts[g.status] = g._count._all;
+    grandTotal += g._count._all;
+    grandAmount += parseFloat(g._sum.netTotal || 0);
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      invoices: invoices.map((inv) => ({
+        ...inv,
+        grossTotal: toNumber(inv.grossTotal),
+        commissionTotal: toNumber(inv.commissionTotal),
+        netTotal: toNumber(inv.netTotal),
+        bookingCount: inv.items?.length ?? inv.bookingCount,
+      })),
+      pagination: { currentPage: page, limit, totalCount, totalPages: Math.ceil(totalCount / limit) },
+      summary: { statusCounts, totalCount: grandTotal, totalAmount: grandAmount },
+    },
+  });
+});
+
+/**
+ * GET /admin/finance/invoices/:id — full invoice with booking line items
+ */
+exports.getInvoiceById = catchAsync(async (req, res, next) => {
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: req.params.id },
+    include: {
+      supplier: { select: { id: true, name: true, email: true } },
+      payoutMethod: { select: METHOD_SELECT },
+      items: {
+        orderBy: { createdAt: 'asc' },
+        include: {
+          booking: {
+            select: {
+              id: true,
+              bookingNumber: true,
+              travelDate: true,
+              selectedTime: true,
+              status: true,
+              paymentStatus: true,
+              payoutStatus: true,
+              grossAmount: true,
+              supplierPayout: true,
+              platformCommission: true,
+              customer: { select: { id: true, name: true, email: true } },
+              tour: { select: { id: true, title: true, imageCover: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!invoice) return next(new AppError('Invoice not found', 404));
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      invoice: {
+        ...invoice,
+        grossTotal: toNumber(invoice.grossTotal),
+        commissionTotal: toNumber(invoice.commissionTotal),
+        netTotal: toNumber(invoice.netTotal),
+        items: invoice.items.map((i) => ({
+          ...i,
+          grossAmount: toNumber(i.grossAmount),
+          platformCommission: toNumber(i.platformCommission),
+          supplierPayout: toNumber(i.supplierPayout),
+        })),
+      },
+    },
+  });
+});
+
+/**
+ * PATCH /admin/finance/invoices/:id/mark-paid
+ * Records the real bank/transaction reference; invoice → PAID and its
+ * bookings' payoutStatus → PAID. Only INVOICED invoices can be marked paid.
+ */
+exports.markInvoicePaid = catchAsync(async (req, res, next) => {
+  const { reference } = req.body || {};
+  if (!reference || !String(reference).trim()) {
+    return next(new AppError('Please provide the bank/transaction reference', 400));
+  }
+
+  const paid = await markInvoicePaid({
+    invoiceId: req.params.id,
+    reference,
+    adminUserId: req.user.id,
+    adminEmail: req.user.email,
+  });
+
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: req.params.id },
+    select: {
+      invoiceNumber: true,
+      supplierId: true,
+      currency: true,
+      netTotal: true,
+      reference: true,
+      paidAt: true,
+    },
+  });
+
+  if (invoice) {
+    enqueueNotification({
+      userId: invoice.supplierId,
+      type: 'INVOICE_PAID',
+      title: 'Invoice Paid',
+      message: `Your invoice ${invoice.invoiceNumber} of ${toNumber(invoice.netTotal).toFixed(2)} ${invoice.currency} has been paid. Reference: ${invoice.reference || 'N/A'}`,
+      data: { invoiceId: req.params.id, invoiceNumber: invoice.invoiceNumber },
+    }).catch(() => {});
+
+    notifyDiscord(
+      'approvals',
+      `Invoice ${invoice.invoiceNumber} marked as paid.`,
+      {
+        title: 'Invoice Paid',
+        color: 0x00c853,
+        fields: [
+          { name: 'Invoice #', value: invoice.invoiceNumber, inline: true },
+          { name: 'Amount', value: `${invoice.currency} ${toNumber(invoice.netTotal).toFixed(2)}`, inline: true },
+          { name: 'Reference', value: invoice.reference || 'N/A', inline: true },
+        ],
+        cooldownKey: req.params.id,
+      }
+    ).catch(() => {});
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: { invoice: paid },
+  });
+});
+
 /**
  * GET /admin/disputes?status=&page=&limit=
  */
@@ -581,6 +784,8 @@ exports.resolveDispute = catchAsync(async (req, res, next) => {
         },
       });
       await detachBookingFromActiveRequests(tx, dispute.booking.id);
+      // Finance v3: a refunded booking must leave any unpaid invoice too.
+      await detachBookingFromInvoices(tx, dispute.booking.id);
     });
   } else {
     await prisma.$transaction(async (tx) => {

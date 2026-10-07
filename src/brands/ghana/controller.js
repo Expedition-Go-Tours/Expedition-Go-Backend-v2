@@ -24,6 +24,7 @@ const { acquireHold, releaseHold } = require('../../core/services/checkoutHold')
 const { notifyAdmin } = require('../../core/services/adminNotificationService');
 const getConfig = require('../../core/services/getConfig');
 const { detachBookingFromActiveRequests } = require('../../core/services/financeHelpers');
+const { detachBookingFromInvoices } = require('../../core/services/invoiceService');
 const { logActivity } = require('../../core/services/auditLogger');
 const { shouldCountTourView } = require('../../core/services/viewTracking');
 const eventEmitter = require('../../core/services/eventEmitter');
@@ -1286,6 +1287,10 @@ const cancelBooking = catchAsync(async (req, res, next) => {
     // Finance v2: detach from any active payout request so the supplier's
     // pending request total no longer includes this booking.
     await detachBookingFromActiveRequests(tx, id);
+
+    // Finance v3: detach from any unpaid invoice and rebalance it — a
+    // cancelled booking must never be paid out through an invoice.
+    await detachBookingFromInvoices(tx, id);
 
     // Decrement special offer spotsSold if an offer was applied
     if (booking.appliedOfferId) {

@@ -21,6 +21,7 @@ const { haversineKm, resolveCityCentroid } = require('./services/locationGeo');
 const { placeTourIds } = require('./services/placeListing');
 const { placeRankFor, normalizeRegion } = require('./services/placeResolver');
 const { detachBookingFromActiveRequests } = require('./services/financeHelpers');
+const { detachBookingFromInvoices } = require('./services/invoiceService');
 const { logActivity } = require('./services/auditLogger');
 const {
   quoteBookingModification,
@@ -2691,6 +2692,10 @@ controller.cancelBooking = catchAsync(async (req, res, next) => {
     // Finance v2: detach from any active payout request so the supplier's
     // pending request total no longer includes this booking.
     await detachBookingFromActiveRequests(tx, id);
+
+    // Finance v3: detach from any unpaid invoice and rebalance it — a
+    // cancelled booking must never be paid out through an invoice.
+    await detachBookingFromInvoices(tx, id);
 
     // Decrement special offer spotsSold if an offer was applied
     if (booking.appliedOfferId) {

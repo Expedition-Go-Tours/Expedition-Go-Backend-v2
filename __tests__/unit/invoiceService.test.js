@@ -38,6 +38,7 @@ const {
   invoiceRunKey,
   normalizeReference,
   v3BookingsWhere,
+  detachBookingFromInvoices,
 } = require('../../src/core/services/invoiceService');
 const { invoiceWindowFor } = require('../../src/core/services/payoutCycles');
 
@@ -399,5 +400,95 @@ describe('normalizeReference', () => {
     expect(normalizeReference('N/A').error).toBeDefined();
     expect(normalizeReference('').error).toBeDefined();
     expect(normalizeReference('a'.repeat(101)).error).toBeDefined();
+  });
+});
+
+describe('detachBookingFromInvoices — cancellation keeps unpaid invoices honest', () => {
+  it('removes the line item and rebalances the invoice from its remaining items', async () => {
+    const tx = {
+      invoiceItem: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([{ id: 'item-1', invoiceId: 'inv-1' }])
+          .mockResolvedValueOnce([
+            { grossAmount: '100', platformCommission: '17', supplierPayout: '83' },
+            { grossAmount: '50', platformCommission: '8.5', supplierPayout: '41.5' },
+          ]),
+        delete: jest.fn().mockResolvedValue({}),
+      },
+      invoice: { update: jest.fn().mockResolvedValue({}) },
+    };
+
+    const adjusted = await detachBookingFromInvoices(tx, 'bk-1');
+
+    expect(adjusted).toBe(1);
+    expect(tx.invoiceItem.delete).toHaveBeenCalledWith({ where: { id: 'item-1' } });
+    expect(tx.invoice.update).toHaveBeenCalledWith({
+      where: { id: 'inv-1' },
+      data: { grossTotal: 150, commissionTotal: 25.5, netTotal: 124.5, bookingCount: 2 },
+    });
+  });
+
+  it('cancels the invoice when its last item is removed', async () => {
+    const tx = {
+      invoiceItem: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([{ id: 'item-1', invoiceId: 'inv-1' }])
+          .mockResolvedValueOnce([]),
+        delete: jest.fn().mockResolvedValue({}),
+      },
+      invoice: { update: jest.fn().mockResolvedValue({}) },
+    };
+
+    const adjusted = await detachBookingFromInvoices(tx, 'bk-1');
+
+    expect(adjusted).toBe(1);
+    expect(tx.invoice.update).toHaveBeenCalledWith({
+      where: { id: 'inv-1' },
+      data: { status: 'CANCELLED', grossTotal: 0, commissionTotal: 0, netTotal: 0, bookingCount: 0 },
+    });
+  });
+
+  it('does not touch invoices that are already PAID', async () => {
+    const tx = {
+      invoiceItem: { findMany: jest.fn().mockResolvedValue([]), delete: jest.fn() },
+      invoice: { update: jest.fn() },
+    };
+
+    const adjusted = await detachBookingFromInvoices(tx, 'bk-1');
+
+    expect(adjusted).toBe(0);
+    expect(tx.invoiceItem.delete).not.toHaveBeenCalled();
+    expect(tx.invoice.update).not.toHaveBeenCalled();
+  });
+
+  it('detaches bookings across multiple invoices in one pass', async () => {
+    const tx = {
+      invoiceItem: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([
+            { id: 'item-a', invoiceId: 'inv-a' },
+            { id: 'item-b', invoiceId: 'inv-b' },
+          ])
+          .mockResolvedValueOnce([]) // inv-a left empty
+          .mockResolvedValueOnce([{ grossAmount: '80', platformCommission: '13.6', supplierPayout: '66.4' }]), // inv-b keeps one
+        delete: jest.fn().mockResolvedValue({}),
+      },
+      invoice: { update: jest.fn().mockResolvedValue({}) },
+    };
+
+    const adjusted = await detachBookingFromInvoices(tx, 'bk-1');
+
+    expect(adjusted).toBe(2);
+    expect(tx.invoice.update.mock.calls[0][0]).toEqual({
+      where: { id: 'inv-a' },
+      data: { status: 'CANCELLED', grossTotal: 0, commissionTotal: 0, netTotal: 0, bookingCount: 0 },
+    });
+    expect(tx.invoice.update.mock.calls[1][0]).toEqual({
+      where: { id: 'inv-b' },
+      data: { grossTotal: 80, commissionTotal: 13.6, netTotal: 66.4, bookingCount: 1 },
+    });
   });
 });

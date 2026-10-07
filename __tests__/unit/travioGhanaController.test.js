@@ -348,6 +348,11 @@ describe('cancelBooking gives back the offer capacity it consumed', () => {
         delete: jest.fn().mockResolvedValue({}),
       },
       payoutRequest: { updateMany: jest.fn().mockResolvedValue({ count: 0 }), update: jest.fn().mockResolvedValue({}) },
+      invoiceItem: {
+        findMany: jest.fn().mockResolvedValue([]),
+        delete: jest.fn().mockResolvedValue({}),
+      },
+      invoice: { update: jest.fn().mockResolvedValue({}) },
     };
     prisma.$transaction.mockImplementation(async (fn) => fn(tx));
     prisma.booking.findFirst.mockResolvedValue(offerBooking);

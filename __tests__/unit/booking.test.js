@@ -192,6 +192,11 @@ const mockTx = {
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     update: jest.fn().mockResolvedValue({}),
   },
+  invoiceItem: {
+    findMany: jest.fn().mockResolvedValue([]),
+    delete: jest.fn().mockResolvedValue({}),
+  },
+  invoice: { update: jest.fn().mockResolvedValue({}) },
   specialOffer: { update: jest.fn().mockResolvedValue({}) },
 };
 

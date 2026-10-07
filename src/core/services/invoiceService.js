@@ -244,6 +244,53 @@ async function markInvoicePaid({ invoiceId, reference, adminUserId, adminEmail }
 }
 
 /**
+ * Detach a booking from any unpaid (INVOICED) invoice. Removes the line item
+ * and rebalances the invoice's money totals + bookingCount from its remaining
+ * items; cancels a now-empty invoice. PAID invoices are left untouched — their
+ * ledger rows are immutable and corrections happen via disputes (mirrors
+ * detachBookingFromActiveRequests for v2 payout requests).
+ *
+ * @param {object} tx Prisma transaction client (or prisma)
+ * @param {string} bookingId
+ * @returns {Promise<number>} number of invoiced line items removed
+ */
+async function detachBookingFromInvoices(tx, bookingId) {
+  const client = tx || prisma;
+
+  const items = await client.invoiceItem.findMany({
+    where: { bookingId, invoice: { status: 'INVOICED' } },
+    select: { id: true, invoiceId: true },
+  });
+
+  let adjusted = 0;
+  for (const item of items) {
+    await client.invoiceItem.delete({ where: { id: item.id } });
+    const remaining = await client.invoiceItem.findMany({
+      where: { invoiceId: item.invoiceId },
+      select: { grossAmount: true, platformCommission: true, supplierPayout: true },
+    });
+    if (remaining.length === 0) {
+      await client.invoice.update({
+        where: { id: item.invoiceId },
+        data: { status: 'CANCELLED', grossTotal: 0, commissionTotal: 0, netTotal: 0, bookingCount: 0 },
+      });
+    } else {
+      await client.invoice.update({
+        where: { id: item.invoiceId },
+        data: {
+          grossTotal: round2(remaining.reduce((s, r) => s + parseFloat(r.grossAmount), 0)),
+          commissionTotal: round2(remaining.reduce((s, r) => s + parseFloat(r.platformCommission), 0)),
+          netTotal: round2(remaining.reduce((s, r) => s + parseFloat(r.supplierPayout), 0)),
+          bookingCount: remaining.length,
+        },
+      });
+    }
+    adjusted += 1;
+  }
+  return adjusted;
+}
+
+/**
  * Manual "Request payout" accelerator for enrolled suppliers: invoices the
  * CURRENT pending window immediately (no runKey). One open manual invoice per
  * window; the scheduled run later invoices anything that arrives in the same
@@ -560,4 +607,5 @@ module.exports = {
   markInvoicePaid,
   createInvoiceNow,
   generateDueInvoices,
+  detachBookingFromInvoices,
 };

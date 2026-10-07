@@ -18,6 +18,11 @@ jest.mock('../../src/core/services/prismaClient', () => ({
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     update: jest.fn().mockResolvedValue({}),
   },
+  invoiceItem: {
+    findMany: jest.fn().mockResolvedValue([]),
+    delete: jest.fn().mockResolvedValue({}),
+  },
+  invoice: { update: jest.fn().mockResolvedValue({}) },
   checkoutDraft: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
   $transaction: jest.fn(),
   $queryRawUnsafe: jest.fn(),

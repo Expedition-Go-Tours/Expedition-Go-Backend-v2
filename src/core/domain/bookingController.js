@@ -27,6 +27,7 @@ const { resolvePickupSelection, pickupStatus, isPickupIncomplete } = require('..
 const { pickupChange } = require('../services/pickupChange');
 const getConfig = require('../services/getConfig');
 const { detachBookingFromActiveRequests } = require('../services/financeHelpers');
+const { detachBookingFromInvoices } = require('../services/invoiceService');
 const { generatePrintableTicketHtml } = require('../services/emailService');
 const { logActivity } = require('../services/auditLogger');
 const logger = require('../services/logger');
@@ -1039,6 +1040,10 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     // Finance v2: detach from any active payout request so the supplier's
     // pending request total no longer includes this booking.
     await detachBookingFromActiveRequests(tx, id);
+
+    // Finance v3: detach from any unpaid invoice and rebalance it — a
+    // cancelled booking must never be paid out through an invoice.
+    await detachBookingFromInvoices(tx, id);
 
     // Decrement spotsSold for applied special offer (one per traveler — the
     // same count that was incremented at confirmation time)
