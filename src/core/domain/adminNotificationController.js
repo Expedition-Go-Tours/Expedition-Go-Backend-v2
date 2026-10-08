@@ -70,6 +70,28 @@ const ADMIN_NOTIFICATION_TYPES = [
 ];
 
 /**
+ * Compose every visibility constraint into ONE where clause.
+ *
+ * These used to be spread-merged (`{ ...buildPermissionWhere(), ...brandNotificationWhere() }`),
+ * which silently dropped conditions whenever both objects carried an `OR` key:
+ * brandNotificationWhere()'s branch won, so on a non-Ghana brand the permission
+ * filter never reached the database and every notification type was visible to
+ * every admin. Using an explicit `$and` makes each constraint independent of
+ * the others, so permission, brand and request filters always apply together.
+ *
+ * `extra` is for request-scoped filters (e.g. `?types=`). It is composed the
+ * same way, so a filter can never widen the visible set.
+ */
+function buildNotificationWhere(req, extra = {}) {
+  const parts = [
+    buildPermissionWhere(req.user?.permissionKeys || []),
+    brandNotificationWhere(req),
+  ];
+  if (extra && Object.keys(extra).length > 0) parts.push(extra);
+  return { AND: parts };
+}
+
+/**
  * Build a Prisma where clause that keeps only the notifications this admin
  * role is allowed to see, so list/count/stats all agree with the feed instead
  * of filtering after pagination.
@@ -108,9 +130,51 @@ function buildPermissionWhere(permissionKeys = []) {
   return { OR: or };
 }
 
+/**
+ * Parse the optional `?types=` filter (comma-separated enum values).
+ *
+ * Returns `null` when the parameter is absent (no type filter), or an array of
+ * types to keep. Values are validated against ADMIN_NOTIFICATION_TYPES so an
+ * unknown value can never reach Prisma; if the caller asked only for unknown
+ * types the result is an empty array, which deliberately matches nothing
+ * rather than silently falling back to an unfiltered feed.
+ */
+function parseTypesParam(raw) {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const allowed = new Set(ADMIN_NOTIFICATION_TYPES);
+  const requested = String(raw).split(',').map((s) => s.trim()).filter(Boolean);
+  return [...new Set(requested.filter((t) => allowed.has(t)))];
+}
+
+/**
+ * Parse the optional `?search=` free-text filter.
+ *
+ * Returns `null` when there is nothing to search for, otherwise the trimmed
+ * term. Capped so a long payload can't turn into an unbounded LIKE scan.
+ */
+const MAX_SEARCH_LENGTH = 200;
+
+function parseSearchParam(raw) {
+  if (raw === undefined || raw === null) return null;
+  const term = String(raw).trim().slice(0, MAX_SEARCH_LENGTH);
+  return term.length > 0 ? term : null;
+}
+
 exports.getNotifications = catchAsync(async (req, res) => {
-  const { page = 1, limit = 20, unacknowledgedOnly = false } = req.query;
-  const where = { ...buildPermissionWhere(req.user.permissionKeys || []), ...brandNotificationWhere(req) };
+  const { page = 1, limit = 20, unacknowledgedOnly = false, types, search } = req.query;
+  const typeFilter = parseTypesParam(types);
+  const term = parseSearchParam(search);
+
+  const extra = {};
+  if (typeFilter) extra.type = { in: typeFilter };
+  if (term) {
+    extra.OR = [
+      { title: { contains: term, mode: 'insensitive' } },
+      { message: { contains: term, mode: 'insensitive' } },
+    ];
+  }
+
+  const where = buildNotificationWhere(req, extra);
   const result = await adminNotifService.getNotifications({
     page: parseInt(page),
     limit: parseInt(limit),
@@ -121,7 +185,7 @@ exports.getNotifications = catchAsync(async (req, res) => {
 });
 
 exports.getUnreadCount = catchAsync(async (req, res) => {
-  const where = { ...buildPermissionWhere(req.user.permissionKeys || []), ...brandNotificationWhere(req) };
+  const where = buildNotificationWhere(req);
   const result = await adminNotifService.getNotifications({ limit: 1, unacknowledgedOnly: true, where });
   res.status(200).json({
     status: 'success',
@@ -131,13 +195,16 @@ exports.getUnreadCount = catchAsync(async (req, res) => {
 
 exports.acknowledge = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const result = await adminNotifService.acknowledgeNotification(id, req.user.id);
+  // Scope the write with the same visibility rules as the read, so an id from
+  // another brand (or a type this role cannot see) cannot be acknowledged by
+  // crafting the request directly.
+  const result = await adminNotifService.acknowledgeNotification(id, req.user.id, buildNotificationWhere(req));
   if (!result.success) return next(new AppError('Notification not found', 404));
   res.status(200).json({ status: 'success', message: 'Notification acknowledged' });
 });
 
 exports.acknowledgeAll = catchAsync(async (req, res) => {
-  const where = { ...buildPermissionWhere(req.user.permissionKeys || []), ...brandNotificationWhere(req) };
+  const where = buildNotificationWhere(req);
   const result = await adminNotifService.acknowledgeAll(req.user.id, where);
   res.status(200).json({
     status: 'success',
@@ -146,9 +213,17 @@ exports.acknowledgeAll = catchAsync(async (req, res) => {
 });
 
 exports.getStats = catchAsync(async (req, res) => {
-  const where = { ...buildPermissionWhere(req.user.permissionKeys || []), ...brandNotificationWhere(req) };
+  const { unacknowledgedOnly = false } = req.query;
+  // The filter rail's counts must agree with the feed underneath them, so the
+  // caller can scope stats to the same read-state the list is showing.
+  const where = buildNotificationWhere(
+    req,
+    unacknowledgedOnly === 'true' ? { acknowledged: false } : {},
+  );
   const stats = await adminNotifService.getStats(where);
   res.status(200).json({ status: 'success', data: stats });
 });
 
 exports.buildPermissionWhere = buildPermissionWhere;
+exports.buildNotificationWhere = buildNotificationWhere;
+exports.ADMIN_NOTIFICATION_TYPES = ADMIN_NOTIFICATION_TYPES;

@@ -216,10 +216,12 @@ async function getNotifications({ page = 1, limit = 20, unacknowledgedOnly = fal
   };
 }
 
-async function acknowledgeNotification(id, adminId) {
+async function acknowledgeNotification(id, adminId, where = {}) {
   try {
     const result = await prisma.adminNotification.updateMany({
-      where: { id, acknowledged: false },
+      // `where` carries the caller's permission + brand scope so this write
+      // can only ever touch notifications the caller is allowed to read.
+      where: { id, acknowledged: false, ...where },
       data: { acknowledged: true, acknowledgedAt: new Date(), acknowledgedBy: adminId },
     });
     return { success: result.count > 0 };
