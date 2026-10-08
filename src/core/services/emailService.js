@@ -1352,7 +1352,7 @@ async function sendPayoutRequestWindowOpenEmail({ supplier = {}, bookings = [], 
 
   return sendEmail({
     ...await supplierRecipientList(supplier, 'payments'),
-    subject: `${Number(total).toFixed(2)} ${cur} ready — request it early or we pay it automatically`,
+    subject: `${Number(total).toFixed(2)} ${cur} ready — paid automatically on your payout date`,
     template: 'payout-request-window-open',
     opts: { brandKey },
     data: {
@@ -1782,11 +1782,6 @@ function generatePayoutWindowOpenEmail(data) {
   const currency = data.currency || 'USD';
   const money = (v) => `${Number(v || 0).toFixed(2)} ${currency}`;
   const total = bookings.reduce((s, b) => s + Number(b.supplierPayout || 0), 0);
-  const closesLabel = data.closesAt
-    ? new Date(data.closesAt).toLocaleString('en-GB', {
-        weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
-      })
-    : null;
 
   const rows = bookings.map((b) => `
         <tr>
@@ -1800,11 +1795,11 @@ function generatePayoutWindowOpenEmail(data) {
       ? new Date(data.runDay).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
       : null;
 
-    const heading = 'You can request your payout early';
-    // The window is a head start, not a deadline: payouts are generated
-    // automatically, so doing nothing here cannot lose the money. Say that
-    // plainly, or the copy implies a forfeiture that will never happen.
-    const intro = `${esc(money(total))} from ${bookings.length} booking${bookings.length === 1 ? '' : 's'} is ready now.${closesLabel ? ` Request it before <strong>${esc(closesLabel)}</strong> and it is paid up to a day early.` : ''}${runLabel ? ` Or leave it and it is paid automatically on <strong>${esc(runLabel)}</strong>.` : ''}`;
+    const heading = 'Your payout is scheduled';
+    // Payment is automatic: the supplier is being told what is on its way and
+    // when, not asked to do anything. Say that plainly, or the copy implies a
+    // forfeiture that will never happen.
+    const intro = `${esc(money(total))} from ${bookings.length} booking${bookings.length === 1 ? '' : 's'} is ready.${runLabel ? ` It is paid automatically on <strong>${esc(runLabel)}</strong>.` : ''}`;
 
     const table = `
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:16px 0;border-collapse:collapse;">
@@ -1821,7 +1816,7 @@ function generatePayoutWindowOpenEmail(data) {
       </table>`;
 
   const buttonHtml = data.url
-    ? `<tr><td align="center" style="padding:8px 40px 4px 40px;"><a href="${esc(data.url)}" style="display:inline-block;background-color:#0E9F6E;color:#ffffff;font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;border-radius:10px;padding:14px 34px;">Request payout</a></td></tr>`
+    ? `<tr><td align="center" style="padding:8px 40px 4px 40px;"><a href="${esc(data.url)}" style="display:inline-block;background-color:#0E9F6E;color:#ffffff;font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;border-radius:10px;padding:14px 34px;">View payouts</a></td></tr>`
     : '';
 
   const html = `<div style="font-family:'Plus Jakarta Sans',Arial,sans-serif;background:#F8FAFC;padding:32px 16px;">
@@ -1843,7 +1838,7 @@ function generatePayoutWindowOpenEmail(data) {
   const text = `${heading}\n\n${intro.replace(/<[^>]+>/g, '')}\n\n`
     + bookings.map((b) => `${b.bookingNumber} — ${b.tourTitle} (${b.travelDate || '—'}) — ${money(b.supplierPayout)}`).join('\n')
     + `\n\nTotal ready: ${money(total)}`
-    + (data.url ? `\nRequest payout: ${data.url}` : '');
+    + (data.url ? `\nView payouts: ${data.url}` : '');
 
   return { html, text };
 }

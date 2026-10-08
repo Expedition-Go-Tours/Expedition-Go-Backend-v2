@@ -859,16 +859,17 @@ describe('sendPayoutRequestWindowOpenEmail', () => {
     expect(html).toContain('Total ready');
     // The action, and the deadline stated as a head start rather than a
     // forfeit: payouts run automatically, so the copy must not imply that
-    // missing the window loses the money.
-    expect(html).toContain('Request payout');
-    expect(html).toMatch(/Request it before <strong>/);
+    // missing the window loses the money — or that there is an early request
+    // to make at all.
+    expect(html).toContain('View payouts');
+    expect(html).not.toMatch(/request it early|Request it before <strong>|request your payout early/i);
     expect(html).toMatch(/paid automatically on <strong>/);
     expect(html).not.toMatch(/window closes until your next run day/);
     expect(payload.text).toContain('175.50 USD');
 
     // Subject states the money and that auto is the default.
     expect(payload.subject).toContain('175.50 USD');
-    expect(payload.subject).toMatch(/pay it automatically/i);
+    expect(payload.subject).toMatch(/paid automatically/i);
   });
 
   it('escapes booking data rather than trusting it', async () => {

@@ -12,7 +12,7 @@ const {
 } = require('../services/payoutRuns');
 const { logActivity } = require('../services/auditLogger');
 const { payoutBookingsWhere } = require('../services/financeHelpers');
-const { buildInvoiceEstimate, createInvoiceNow } = require('../services/invoiceService');
+const { buildInvoiceEstimate } = require('../services/invoiceService');
 
 // ── Finance v2 + v3 — supplier-facing payout/invoice endpoints ──
 // Mounted at /finance (see routes/financeRoutes.js). All routes resolve the
@@ -27,28 +27,6 @@ function toNumber(v) {
 
 function round2(n) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
-}
-
-function serializeInvoice(invoice) {
-  return {
-    id: invoice.id,
-    invoiceNumber: invoice.invoiceNumber,
-    status: invoice.status,
-    cycle: invoice.cycle,
-    cycleLabel: invoice.cycleLabel,
-    cycleStartDate: invoice.cycleStartDate,
-    cycleEndDate: invoice.cycleEndDate,
-    invoicedAt: invoice.invoicedAt,
-    paymentScheduledAt: invoice.paymentScheduledAt,
-    paidAt: invoice.paidAt,
-    reference: invoice.reference,
-    grossTotal: toNumber(invoice.grossTotal),
-    commissionTotal: toNumber(invoice.commissionTotal),
-    netTotal: toNumber(invoice.netTotal),
-    currency: invoice.currency,
-    bookingCount: invoice.bookingCount,
-    payoutMethodId: invoice.payoutMethodId || null,
-  };
 }
 
 function serializeRequest(request) {
@@ -68,9 +46,9 @@ function serializeRequest(request) {
  * GET /finance/summary
  * Finance page data, GetYourGuide semantics on top of the legacy v2 fields:
  *  - balance     "Your balance" — unpaid (INVOICED/APPROVED) invoices, per currency
- *  - nextPayout  the pending window's projection BEFORE it is invoiced,
- *                including FUTURE confirmed tours + exact activity-date range
- *                and processing dates; null for legacy (window-managed) suppliers
+ *  - nextPayout  the pending window's projection BEFORE it is invoiced: only
+ *                ELIGIBLE money, with the exact activity-date range and
+ *                processing dates; null for legacy (window-managed) suppliers
  * The legacy v2 fields (availableBalance/pendingClearance/inReview/
  * withdrawalWindow/nextEligibleAt) are kept until the UI migrates to the new
  * model, so the current Finance page keeps rendering.
@@ -187,9 +165,9 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
   // Which window decides whether "Request payout" is available.
   //
   // Enrolled suppliers are paid via the invoice engine (v3): their money is
-  // invoiced automatically on their cadence, and the early-payout accelerator
-  // is the invoice flow (POST /finance/invoices) — always available, once per
-  // pending window. They no longer have a legacy withdrawal window. Legacy
+  // invoiced automatically on their cadence, so they have no manual request
+  // button and no legacy withdrawal window (the summary still carries an
+  // invoice-sourced window so the UI can describe the processing dates). Legacy
   // (unmigrated) suppliers keep the twice-monthly calendar window, which is
   // unrelated to the v2 run-day window a weekly cadence used to imply.
   let requestWindow;
@@ -362,26 +340,6 @@ exports.getMyInvoices = catchAsync(async (req, res) => {
 });
 
 /**
- * POST /finance/invoices
- * Manual "Request payout" accelerator (finance v3): invoices the CURRENT
- * pending window immediately. Enrolled suppliers only; one open manual invoice
- * per window (409 otherwise). Uninvoiced bookings in the same window that
- * arrive later are picked up by the scheduled run under its own runKey.
- * Body: { payoutMethodId?: string }
- */
-exports.requestEarlyPayout = catchAsync(async (req, res, next) => {
-  const supplierId = req.supplierId;
-  const { payoutMethodId } = req.body || {};
-
-  const invoices = await createInvoiceNow({ supplierId, payoutMethodId });
-
-  res.status(201).json({
-    status: 'success',
-    data: { invoices: invoices.map(serializeInvoice) },
-  });
-});
-
-/**
  * GET /finance/earnings?payoutStatus=ELIGIBLE&page=1&limit=20
  * Booking-level earnings list with payout lifecycle filter.
  */
@@ -513,18 +471,17 @@ exports.createPayoutRequest = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
   const { bookingIds, payoutMethodId, notes } = req.body || {};
 
-  // Enrolled suppliers are paid via invoices — automatically on their cadence,
-  // and early through POST /finance/invoices (one early invoice per pending
-  // window). The v2 manual batch flow is retired for them: a legacy
-  // PayoutRequest would open a second payment channel the invoice engine has
-  // no visibility into, and the v2 auto-run that used to sweep those batches
-  // is superseded. Legacy (unmigrated) suppliers keep the calendar-window flow
-  // below, so nothing about their existing flow changes.
+  // Enrolled suppliers are paid via invoices — automatically on their cadence.
+  // The v2 manual batch flow is retired for them: a legacy PayoutRequest would
+  // open a second payment channel the invoice engine has no visibility into,
+  // and the v2 auto-run that used to sweep those batches is superseded. Legacy
+  // (unmigrated) suppliers keep the calendar-window flow below, so nothing
+  // about their existing flow changes.
   const plan = await getSupplierPayoutPlan(supplierId);
   if (plan.autoManaged) {
     return next(new AppError(
       `Payouts on your account are generated automatically via invoices (${plan.scheduleLabel}). `
-      + 'To be paid before your next invoice date, use the invoice-based early payout instead.',
+      + 'Your earnings are invoiced and paid on that schedule — no manual request is needed.',
       409
     ));
   }

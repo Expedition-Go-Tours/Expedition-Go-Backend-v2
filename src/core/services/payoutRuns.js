@@ -420,16 +420,13 @@ async function notifyDuePayoutWindows(now = new Date()) {
     const currency = bookings[0].currency || 'USD';
     const total = bookings.reduce((s, b) => s + toNumber(b.supplierPayout), 0);
     const money = `${total.toFixed(2)} ${currency}`;
-    const closesLabel = window.closesAt.toLocaleString('en-GB', {
-      weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
-    });
     const runLabel = window.runDay.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
 
     await enqueueNotification({
       userId: supplierId,
       type: 'PAYOUT_REQUEST_WINDOW_OPEN',
-      title: 'You can request your payout early',
-      message: `Your ${window.cycle.label} earnings: ${money} from ${bookings.length} booking${bookings.length === 1 ? '' : 's'} is ready now. Request it before ${closesLabel} to be paid up to a day early, or leave it and it is paid automatically on ${runLabel}.`,
+      title: 'Your payout is scheduled',
+      message: `Your ${window.cycle.label} earnings: ${money} from ${bookings.length} booking${bookings.length === 1 ? '' : 's'} ${bookings.length === 1 ? 'is' : 'are'} ready. This is paid automatically on ${runLabel}.`,
       data: {
         opensAt: window.opensAt.toISOString(),
         closesAt: window.closesAt.toISOString(),

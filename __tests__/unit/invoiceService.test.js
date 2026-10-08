@@ -1,7 +1,7 @@
 // Unit tests for the finance v3 invoice service (automatic supplier invoicing).
-// The job loop, estimate builder, early-request accelerator and mark-paid path
-// are exercised against a mocked Prisma client; window/date math comes from the
-// real v3 engine in payoutCycles.js.
+// The job loop, estimate builder and mark-paid path are exercised against a
+// mocked Prisma client; window/date math comes from the real v3 engine in
+// payoutCycles.js.
 jest.mock('../../src/core/services/prismaClient', () => {
   const tx = {
     invoice: { create: jest.fn(), update: jest.fn() },
@@ -35,7 +35,6 @@ const {
   buildInvoiceEstimate,
   approveInvoice,
   markInvoicePaid,
-  createInvoiceNow,
   generateDueInvoices,
   invoiceRunKey,
   normalizeReference,
@@ -67,15 +66,16 @@ beforeEach(() => {
 });
 
 describe('v3BookingsWhere — the finance-v3 selection predicate', () => {
-  it('selects confirmed/paid bookings by activity date inside the window, including future tours', () => {
+  it('selects only ELIGIBLE bookings by activity date inside the window', () => {
     const window = invoiceWindowFor(new Date(2026, 9, 10), 'TWICE_MONTHLY');
     const where = v3BookingsWhere({ supplierId: 'sup-1', window });
     expect(where.tour).toEqual({ supplierId: 'sup-1' });
     expect(where.isSimulated).toBe(false);
     expect(where.paymentStatus).toBe('SUCCEEDED');
     expect(where.status.in).toEqual(['CONFIRMED', 'COMPLETED', 'NO_SHOW']);
-    // PENDING (future tours not yet travelled) + ELIGIBLE (travelled) both count.
-    expect(where.payoutStatus.in).toEqual(['PENDING', 'ELIGIBLE']);
+    // Only ELIGIBLE money is invoiced. Still-clearing bookings — including
+    // tours whose activity date is still ahead — must never enter a payout.
+    expect(where.payoutStatus).toBe('ELIGIBLE');
     expect(where.travelDate.gte).toEqual(new Date(2026, 9, 1));
     expect(where.travelDate.lte).toEqual(new Date(2026, 9, 15, 23, 59, 59, 999));
   });
@@ -95,8 +95,8 @@ describe('buildInvoiceEstimate — the "Next payout" projection', () => {
   it('returns the pending window with per-currency net totals and processing dates', async () => {
     prisma.booking.findMany.mockResolvedValue([
       b('b1', new Date(2026, 9, 3), 'USD', 100, 15, 85),
-      // Future confirmed tour — travel date still ahead, payoutStatus PENDING.
-      b('b2', new Date(2026, 9, 12), 'USD', 50, 7.5, 42.5),
+      // Second cleared booking inside the same (still-pending) window.
+      b('b2', new Date(2026, 9, 5), 'USD', 50, 7.5, 42.5),
     ]);
     const est = await buildInvoiceEstimate({
       supplierId: 'sup-1',
@@ -137,83 +137,6 @@ describe('buildInvoiceEstimate — the "Next payout" projection', () => {
     expect(est.window).toBeNull();
     expect(est.bookingCount).toBe(0);
     expect(est.netTotal).toBe(0);
-  });
-});
-
-describe('createInvoiceNow — the manual early-request accelerator', () => {
-  it('creates an invoice for the pending window WITHOUT a runKey and claims the bookings', async () => {
-    prisma.supplierProfile.findUnique.mockResolvedValue({
-      payoutCycle: 'TWICE_MONTHLY',
-      payoutCyclePending: null,
-      payoutCyclePendingAt: null,
-    });
-    prisma.booking.findMany.mockResolvedValue([
-      b('b1', new Date(2026, 9, 3), 'USD', 100, 15, 85),
-      b('b2', new Date(2026, 9, 12), 'USD', 50, 7.5, 42.5),
-    ]);
-    prisma.__tx.invoice.create.mockResolvedValue({ id: 'inv-1', invoiceNumber: 'INV-20261007-000000ab', netTotal: 127.5, currency: 'USD' });
-
-    const invoices = await createInvoiceNow({ supplierId: 'sup-1', now: new Date(2026, 9, 7, 10, 0) });
-
-    expect(invoices).toHaveLength(1);
-    const data = prisma.__tx.invoice.create.mock.calls[0][0].data;
-    expect(data.runKey).toBeUndefined(); // manual requests never carry a runKey
-    expect(data.supplierId).toBe('sup-1');
-    expect(data.cycle).toBe('TWICE_MONTHLY');
-    expect(data.cycleLabel).toBe('Oct 1–15');
-    expect(data.cycleStartDate).toEqual(new Date(2026, 9, 1));
-    expect(data.cycleEndDate).toEqual(new Date(2026, 9, 15, 23, 59, 59, 999));
-    expect(data.paymentScheduledAt).toEqual(new Date(2026, 9, 20));
-    expect(data.payoutMethodId).toBe('pm-1');
-    expect(data.netTotal).toBe(127.5);
-    expect(data.bookingCount).toBe(2);
-    expect(data.items.create).toHaveLength(2);
-    // Bookings claimed atomically with the invoice.
-    expect(prisma.__tx.booking.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: ['b1', 'b2'] } }, data: { payoutStatus: 'INVOICED' } })
-    );
-    expect(enqueueNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: 'sup-1', type: 'INVOICE_GENERATED' })
-    );
-  });
-
-  it('rejects a supplier who is not enrolled on an automatic schedule', async () => {
-    prisma.supplierProfile.findUnique.mockResolvedValue({ payoutCycle: null, payoutCyclePending: null, payoutCyclePendingAt: null });
-    await expect(createInvoiceNow({ supplierId: 'sup-1' })).rejects.toMatchObject({ statusCode: 400 });
-  });
-
-  it('blocks a second open manual invoice for the same window', async () => {
-    prisma.supplierProfile.findUnique.mockResolvedValue({ payoutCycle: 'TWICE_MONTHLY', payoutCyclePending: null, payoutCyclePendingAt: null });
-    prisma.invoice.findFirst.mockResolvedValue({ invoiceNumber: 'INV-20261007-111111aa' });
-    await expect(createInvoiceNow({ supplierId: 'sup-1', now: new Date(2026, 9, 7) })).rejects.toMatchObject({ statusCode: 409 });
-    // APPROVED counts as open too — it is still unpaid, so it still owns the window.
-    expect(prisma.invoice.findFirst.mock.calls[0][0].where.status).toEqual({ in: ['INVOICED', 'APPROVED'] });
-  });
-
-  it('requires a verified payout method', async () => {
-    prisma.supplierProfile.findUnique.mockResolvedValue({ payoutCycle: 'TWICE_MONTHLY', payoutCyclePending: null, payoutCyclePendingAt: null });
-    prisma.payoutMethod.findFirst.mockResolvedValue(null);
-    await expect(createInvoiceNow({ supplierId: 'sup-1', now: new Date(2026, 9, 7) })).rejects.toMatchObject({ statusCode: 400 });
-  });
-
-  it('rejects when there is nothing to invoice', async () => {
-    prisma.supplierProfile.findUnique.mockResolvedValue({ payoutCycle: 'TWICE_MONTHLY', payoutCyclePending: null, payoutCyclePendingAt: null });
-    prisma.booking.findMany.mockResolvedValue([]);
-    await expect(createInvoiceNow({ supplierId: 'sup-1', now: new Date(2026, 9, 7) })).rejects.toMatchObject({ statusCode: 400 });
-  });
-
-  it('creates one invoice per currency for a manual request', async () => {
-    prisma.supplierProfile.findUnique.mockResolvedValue({ payoutCycle: 'TWICE_MONTHLY', payoutCyclePending: null, payoutCyclePendingAt: null });
-    prisma.booking.findMany.mockResolvedValue([
-      b('b1', new Date(2026, 9, 3), 'USD', 100, 15, 85),
-      b('b2', new Date(2026, 9, 4), 'EUR', 200, 30, 170),
-    ]);
-    prisma.__tx.invoice.create.mockResolvedValueOnce({ id: 'inv-usd', invoiceNumber: 'INV-USD', netTotal: 85, currency: 'USD' });
-    prisma.__tx.invoice.create.mockResolvedValueOnce({ id: 'inv-eur', invoiceNumber: 'INV-EUR', netTotal: 170, currency: 'EUR' });
-
-    const invoices = await createInvoiceNow({ supplierId: 'sup-1', now: new Date(2026, 9, 7) });
-    expect(invoices).toHaveLength(2);
-    expect(prisma.__tx.invoice.create).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -262,7 +185,8 @@ describe('generateDueInvoices — the hourly scheduled job', () => {
 
     const where = prisma.booking.findMany.mock.calls[0][0].where;
     expect(where.status.in).toEqual(['CONFIRMED', 'COMPLETED', 'NO_SHOW']);
-    expect(where.payoutStatus.in).toEqual(['PENDING', 'ELIGIBLE']);
+    // Clearing (PENDING) bookings are never swept into an invoice.
+    expect(where.payoutStatus).toBe('ELIGIBLE');
   });
 
   it('is idempotent — a re-fire with no remaining bookings does nothing', async () => {
@@ -320,17 +244,33 @@ describe('generateDueInvoices — the hourly scheduled job', () => {
     );
   });
 
-  it('leaves a PAID invoice untouched', async () => {
+  it('raises a catch-up invoice when a booking only clears after its window was paid', async () => {
     prisma.supplierProfile.findMany.mockImplementation(({ where } = {}) =>
       Promise.resolve(where && where.payoutCyclePending ? [] : [{ userId: 'sup-1', payoutCycle: 'TWICE_MONTHLY' }])
     );
     prisma.booking.findMany.mockResolvedValue([b('b1', new Date(2026, 9, 5), 'USD', 100, 15, 85)]);
+    // The window's scheduled invoice is settled: the booking cannot join it.
     prisma.invoice.findUnique.mockResolvedValue({ id: 'inv-paid', status: 'PAID' });
+    prisma.__tx.invoice.create.mockResolvedValue({ id: 'inv-catchup', invoiceNumber: 'INV-CATCHUP', netTotal: 85, currency: 'USD' });
+
     const report = await generateDueInvoices(now);
-    expect(report.invoicesCreated).toBe(0);
-    expect(report.appendedBookings).toBe(0);
-    expect(prisma.__tx.invoice.create).not.toHaveBeenCalled();
+
+    // The money is ELIGIBLE, so it must not be stranded on a closed window: it
+    // is raised on its own invoice, WITHOUT a runKey (runKey is unique per
+    // window+currency, and this window already has one).
+    expect(report.invoicesCreated).toBe(1);
+    expect(report.bookingsInvoiced).toBe(1);
+    expect(report.windows).toBe(0); // a catch-up is not a new window
+    const data = prisma.__tx.invoice.create.mock.calls[0][0].data;
+    expect(data.runKey).toBeNull();
+    expect(data.netTotal).toBe(85);
+    expect(data.cycleLabel).toBe('Oct 1–15');
+    expect(prisma.__tx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { payoutStatus: 'INVOICED' } })
+    );
+    // It is created (not appended) — the settled invoice is left untouched.
     expect(prisma.__tx.invoiceItem.createMany).not.toHaveBeenCalled();
+    expect(prisma.__tx.invoice.update).not.toHaveBeenCalled();
   });
 
   it('skips suppliers without a verified payout method — their bookings wait', async () => {

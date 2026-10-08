@@ -118,7 +118,7 @@ beforeEach(() => {
 });
 
 describe('createPayoutRequest — enrolled suppliers are gated to the invoice flow', () => {
-  it('refuses with a 409 (not a TypeError) pointing at the invoice early payout', async () => {
+  it('refuses with a 409 (not a TypeError) instead of falling through to the v2 flow', async () => {
     // The old branch shadowed the catchAsync `next` callback with a date
     // string and then called it, so it threw "next is not a function" instead
     // of returning this response. Catching that is still the point of this
@@ -133,7 +133,7 @@ describe('createPayoutRequest — enrolled suppliers are gated to the invoice fl
     const err = next.mock.calls[0][0];
     expect(err.statusCode).toBe(409);
     expect(err.message).toMatch(/generated automatically via invoices/i);
-    expect(err.message).toMatch(/invoice-based early payout/i);
+    expect(err.message).toMatch(/no manual request is needed/i);
     // The v2 window machinery is retired for enrolled suppliers — the gate
     // must not depend on (or consult) the old run window at all.
     expect(getSupplierRequestWindow).not.toHaveBeenCalled();
@@ -143,9 +143,9 @@ describe('createPayoutRequest — enrolled suppliers are gated to the invoice fl
 
   it('does not quietly fall back to a v2 batch when the scheduler is paused', async () => {
     // autoRunsEnabled:false used to mean "manual request any time". Enrolled
-    // suppliers still get a 409: the v3 early invoice (POST /finance/invoices)
-    // is the fallback that keeps funds movable, so nothing is stranded by the
-    // gate even while the scheduler is switched off.
+    // suppliers still get a 409: their money moves through the scheduled
+    // invoice, so nothing is stranded by the gate even while the v2 scheduler
+    // is switched off.
     getSupplierPayoutPlan.mockResolvedValue(schedule({ autoRunsEnabled: false }));
     getSupplierRequestWindow.mockReturnValue(null);
 
@@ -154,7 +154,7 @@ describe('createPayoutRequest — enrolled suppliers are gated to the invoice fl
     expect(res.status).not.toHaveBeenCalled();
     const err = next.mock.calls[0][0];
     expect(err.statusCode).toBe(409);
-    expect(err.message).toMatch(/invoice-based early payout/i);
+    expect(err.message).toMatch(/no manual request is needed/i);
     expect(createRequestsForBookings).not.toHaveBeenCalled();
   });
 });
@@ -393,12 +393,13 @@ describe('getFinanceSummary — a payout in flight', () => {
     expect(data.nextPayout.bookingCount).toBe(0);
     expect(data.nextPayout.netTotal).toBe(0);
     expect(data.nextPayout.byCurrency).toEqual([]);
-    // The estimate must use the finance-v3 predicate (PENDING future tours
-    // included), not the v2 ELIGIBLE-only eligibility clause.
+    // The estimate must use the finance-v3 predicate (ELIGIBLE only —
+    // still-clearing money is never projected as payable), not the v2
+    // eligibility clause either.
     expect(prisma.booking.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          payoutStatus: { in: ['PENDING', 'ELIGIBLE'] },
+          payoutStatus: 'ELIGIBLE',
           tour: { supplierId: 'sup1' },
         }),
       })
@@ -517,53 +518,5 @@ describe('getMyInvoices — the supplier invoice history (finance v3)', () => {
     expect(prisma.invoice.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { supplierId: 'sup1' } })
     );
-  });
-});
-
-describe('requestEarlyPayout — the manual accelerator (finance v3)', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
-
-  it('creates one invoice per currency for the pending window and returns 201', async () => {
-    const created = [
-      { id: 'inv-usd', invoiceNumber: 'INV-USD', status: 'INVOICED', cycle: 'TWICE_MONTHLY', cycleLabel: 'Oct 1–15', cycleStartDate: new Date(2026, 9, 1), cycleEndDate: new Date(2026, 9, 15, 23, 59, 59, 999), invoicedAt: new Date(2026, 9, 7), paymentScheduledAt: new Date(2026, 9, 20), paidAt: null, reference: null, grossTotal: 100, commissionTotal: 15, netTotal: 85, currency: 'USD', bookingCount: 1, payoutMethodId: 'pm-1' },
-    ];
-    prisma.__tx = { invoice: { create: jest.fn().mockResolvedValue(created[0]) }, invoiceItem: { createMany: jest.fn() }, booking: { updateMany: jest.fn() } };
-    prisma.$transaction.mockImplementation((fn) => fn(prisma.__tx));
-    prisma.supplierProfile.findUnique.mockResolvedValue({ payoutCycle: 'TWICE_MONTHLY', payoutCyclePending: null, payoutCyclePendingAt: null });
-    prisma.invoice.findFirst.mockResolvedValue(null);
-    resolvePayoutMethod.mockResolvedValue({ id: 'pm-1', verified: true });
-    prisma.booking.findMany.mockResolvedValue([
-      { id: 'b1', bookingNumber: 'BK1', travelDate: new Date(2026, 9, 3), currency: 'USD', grossAmount: 100, platformCommission: 15, supplierPayout: 85 },
-    ]);
-
-    const req = { supplierId: 'sup1', body: {} };
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
-    const next = jest.fn();
-    await financeController.requestEarlyPayout(req, res, next);
-
-    expect(res.status).toHaveBeenCalledWith(201);
-    const data = res.json.mock.calls[0][0].data;
-    expect(data.invoices).toHaveLength(1);
-    expect(data.invoices[0]).toMatchObject({ invoiceNumber: 'INV-USD', netTotal: 85, status: 'INVOICED' });
-    expect(prisma.__tx.booking.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { payoutStatus: 'INVOICED' } })
-    );
-  });
-
-  it('propagates a 409 when an open manual invoice already exists for the window', async () => {
-    prisma.__tx = { invoice: { create: jest.fn() }, invoiceItem: { createMany: jest.fn() }, booking: { updateMany: jest.fn() } };
-    prisma.$transaction.mockImplementation((fn) => fn(prisma.__tx));
-    prisma.supplierProfile.findUnique.mockResolvedValue({ payoutCycle: 'TWICE_MONTHLY', payoutCyclePending: null, payoutCyclePendingAt: null });
-    prisma.invoice.findFirst.mockResolvedValue({ invoiceNumber: 'INV-20261007-111111aa' });
-
-    const req = { supplierId: 'sup1', body: {} };
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
-    const next = jest.fn();
-    await financeController.requestEarlyPayout(req, res, next);
-
-    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 409 }));
-    expect(res.status).not.toHaveBeenCalledWith(201);
   });
 });

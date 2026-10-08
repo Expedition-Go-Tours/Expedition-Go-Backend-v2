@@ -9,21 +9,21 @@
  *
  *   Scheduled run:   generateDueInvoices() — idempotent via
  *                    Invoice.runKey = "invoice:<supplierId>:<cycleStartISO>:<currency>"
- *   Manual early:    createInvoiceNow() — invoices the current pending window
- *                    immediately, WITHOUT a runKey. The scheduled run that
- *                    follows invoices whatever arrived later in the same window
- *                    under its own runKey (GetYourGuide's "an early payout
- *                    takes what is there now"). Bookings are never double
- *                    invoiced: InvoiceItem.bookingId is unique.
+ *                    Only ELIGIBLE bookings are invoiced. A booking that is
+ *                    still clearing when its window runs is picked up by a
+ *                    later run — appended to the window's unpaid invoice, or
+ *                    raised on its own catch-up invoice if that one is already
+ *                    closed. Bookings are never double invoiced:
+ *                    InvoiceItem.bookingId is unique.
  *   Money movement:  finance approves the invoice (approveInvoice — maker,
  *                    checker, audit), sends the transfer itself, then records
  *                    the real bank reference with markInvoicePaid — no
  *                    provider API, and no way from INVOICED to PAID without
  *                    passing through APPROVED.
  *   Estimate:        buildInvoiceEstimate() — the "Next payout" projection,
- *                    which includes FUTURE confirmed tours in the pending
- *                    window and recalculates on cancellations/refunds/date
- *                    changes because it is a live query, not a snapshot.
+ *                    which counts only ELIGIBLE money in the pending window and
+ *                    recalculates on cancellations/refunds/date changes because
+ *                    it is a live query, not a snapshot.
  *
  * Point of no return: once an invoice exists for a supplier+window+currency,
  * its line items are immutable; corrections go through the admin finance queue
@@ -36,7 +36,7 @@ const AppError = require('./appError');
 const { logActivity } = require('./auditLogger');
 const { enqueueNotification } = require('./queue');
 const { invoiceWindowFor, nextInvoiceWindow } = require('./payoutCycles');
-const { resolvePayoutMethod, resolveEffectiveCycle, promoteDueCycles } = require('./payoutRuns');
+const { resolvePayoutMethod, promoteDueCycles } = require('./payoutRuns');
 const { PAYABLE_BOOKING_STATUSES } = require('./financeHelpers');
 
 function toNumber(v) {
@@ -48,11 +48,13 @@ function round2(n) {
 }
 
 /**
- * The finance-v3 booking predicate: any payable, paid, non-simulated booking
- * whose activity date falls inside the window belongs to that window's invoice,
- * whether the activity already happened (payoutStatus ELIGIBLE) or is still to
- * come (PENDING) — this is what puts FUTURE confirmed tours into the estimate.
- * NO_SHOW bookings are payable too (non-refundable, supplier performed —
+ * The finance-v3 booking predicate: only ELIGIBLE money moves. A booking counts
+ * once the eligibility sweep has released it — its activity date has passed
+ * (plus any clearance buffer), the customer paid, the booking is in a payable
+ * status and nothing is frozen by an open dispute. Still-clearing (PENDING)
+ * bookings — including tours whose activity date is in the future — are
+ * deliberately excluded from both the estimate and the invoice.
+ * NO_SHOW bookings are payable (non-refundable, supplier performed —
  * GetYourGuide Supplier T&C §3.9(ii); see PAYABLE_BOOKING_STATUSES).
  * Bookings already claimed by an invoice (INVOICED/PAID) or a legacy v2 payout
  * request (REQUESTED/PAID) are excluded; InvoiceItem.bookingId @unique backs
@@ -63,7 +65,7 @@ function v3BookingsWhere({ supplierId, window }) {
     isSimulated: false,
     paymentStatus: 'SUCCEEDED',
     status: { in: [...PAYABLE_BOOKING_STATUSES] },
-    payoutStatus: { in: ['PENDING', 'ELIGIBLE'] },
+    payoutStatus: 'ELIGIBLE',
     travelDate: { gte: window.start, lte: window.end },
     tour: { supplierId },
   };
@@ -105,8 +107,9 @@ function groupBookingsByCurrency(bookings) {
 
 /**
  * Idempotency key for SCHEDULED runs — one runKey per supplier + window +
- * currency. Manual early requests deliberately have no runKey so the two
- * mechanisms can never collide on the unique index.
+ * currency. Catch-up invoices (raised when a booking only cleared after its
+ * window's invoice was already settled) deliberately have no runKey, so they
+ * can never collide with the scheduled invoice on the unique index.
  */
 function invoiceRunKey(supplierId, window, currency) {
   return `invoice:${supplierId}:${new Date(window.start).toISOString()}:${currency || 'USD'}`;
@@ -154,9 +157,9 @@ function invoiceItemData(booking, invoiceId = null) {
 
 /**
  * The "Next payout" estimate — the pre-invoicing projection for a supplier's
- * pending window. Includes future confirmed tours (see v3BookingsWhere),
- * shows the exact activity-date range + processing dates, and resets to the
- * next window once an invoice for the pending window has been generated.
+ * pending window. Counts only ELIGIBLE money (see v3BookingsWhere), shows the
+ * exact activity-date range + processing dates, and resets to the next window
+ * once an invoice for the pending window has been generated.
  *
  * @returns {{ window: object|null, bookingCount, grossTotal, commissionTotal,
  *             netTotal, byCurrency: Array }}
@@ -349,119 +352,6 @@ async function detachBookingFromInvoices(tx, bookingId) {
 }
 
 /**
- * Manual "Request payout" accelerator for enrolled suppliers: invoices the
- * CURRENT pending window immediately (no runKey). One open manual invoice per
- * window; the scheduled run later invoices anything that arrives in the same
- * window under its own runKey.
- *
- * @returns {Promise<object[]>} the created invoices (one per currency)
- */
-async function createInvoiceNow({ supplierId, cycle = null, payoutMethodId = null, now = new Date() }) {
-  const profile = await prisma.supplierProfile.findUnique({
-    where: { userId: supplierId },
-    select: { payoutCycle: true, payoutCyclePending: true, payoutCyclePendingAt: true },
-  });
-
-  const effectiveCycle = cycle || resolveEffectiveCycle(profile || {}, now);
-  if (!effectiveCycle) {
-    throw new AppError('Your account is not on an automatic payout schedule', 400);
-  }
-
-  const window = nextInvoiceWindow(effectiveCycle, now);
-  if (!window) throw new AppError('Could not determine the current payout period', 400);
-
-  // One manual early-request invoice per overlapping window. APPROVED counts
-  // as open too — it is still unpaid, so it still owns the window.
-  const open = await prisma.invoice.findFirst({
-    where: {
-      supplierId,
-      status: { in: ['INVOICED', 'APPROVED'] },
-      runKey: null,
-      cycleStartDate: { lte: window.end },
-      cycleEndDate: { gte: window.start },
-    },
-    select: { invoiceNumber: true },
-  });
-  if (open) {
-    throw new AppError(
-      `You already have an open invoice (${open.invoiceNumber}) for this payout period. `
-      + 'Finance records it as paid before another early payout can be requested for the same window.',
-      409
-    );
-  }
-
-  const method = await resolvePayoutMethod({ supplierId, payoutMethodId });
-  if (!method) {
-    throw new AppError('Add and verify a payout method before requesting a payout', 400);
-  }
-
-  const bookings = await selectInvoiceBookings({ supplierId, window });
-  if (bookings.length === 0) {
-    throw new AppError('No eligible bookings found for this payout period', 400);
-  }
-
-  const invoices = await prisma.$transaction(async (tx) => {
-    const created = [];
-    for (const group of groupBookingsByCurrency(bookings)) {
-      const invoice = await tx.invoice.create({
-        data: {
-          invoiceNumber: nextInvoiceNumber(now),
-          supplierId,
-          cycle: effectiveCycle,
-          cycleStartDate: window.start,
-          cycleEndDate: window.end,
-          cycleLabel: window.label,
-          invoicedAt: new Date(now),
-          paymentScheduledAt: window.paidOn,
-          payoutMethodId: method.id,
-          grossTotal: group.grossTotal,
-          commissionTotal: group.commissionTotal,
-          netTotal: group.netTotal,
-          currency: group.currency,
-          bookingCount: group.bookingCount,
-          items: { create: group.items.map((b) => invoiceItemData(b)) },
-        },
-      });
-      await tx.booking.updateMany({
-        where: { id: { in: group.items.map((b) => b.id) } },
-        data: { payoutStatus: 'INVOICED' },
-      });
-      created.push(invoice);
-    }
-    return created;
-  });
-
-  await logActivity({
-    userId: supplierId,
-    action: 'invoice.requested_early',
-    resource: 'Invoice',
-    resourceId: invoiceIdOf(invoices),
-    metadata: {
-      invoices: invoices.map((i) => i.invoiceNumber),
-      cycleLabel: window.label,
-      netTotal: invoices.reduce((s, i) => s + toNumber(i.netTotal), 0),
-      note: 'Manual early payout request (accelerator)',
-    },
-  }).catch(() => {});
-
-  enqueueNotification({
-    userId: supplierId,
-    type: 'INVOICE_GENERATED',
-    title: 'Your invoice is ready',
-    message: `Invoice ${invoices.map((i) => i.invoiceNumber).join(', ')} for ${window.label} `
-      + `(${invoices.reduce((s, i) => s + toNumber(i.netTotal), 0).toFixed(2)} ${invoices[0].currency || 'USD'}) `
-      + `— payment is scheduled for ${window.paidOn.toISOString().slice(0, 10)}.`,
-    data: { invoices: invoices.map((i) => i.invoiceNumber), windowLabel: window.label },
-  }).catch(() => {});
-
-  return invoices;
-}
-
-function invoiceIdOf(invoices) {
-  return invoices.length === 1 ? invoices[0].id : invoices.map((i) => i.id).join(',');
-}
-
-/**
  * The scheduled invoice job (hourly; idempotent). For every enrolled supplier
  * it collects confirmed/paid bookings whose invoice window's invoice date has
  * arrived, groups them by (window, currency) and creates one Invoice per group
@@ -500,7 +390,7 @@ async function generateDueInvoices(now = new Date()) {
 
     const method = await resolvePayoutMethod({ supplierId: profile.userId });
     if (!method) {
-      // No verified destination — bookings stay PENDING/ELIGIBLE and the
+      // No verified destination — eligible bookings stay un-invoiced and the
       // hourly run retries once the supplier adds one. Never stranded.
       report.skippedNoMethod += 1;
       continue;
@@ -511,7 +401,7 @@ async function generateDueInvoices(now = new Date()) {
         isSimulated: false,
         paymentStatus: 'SUCCEEDED',
         status: { in: [...PAYABLE_BOOKING_STATUSES] },
-        payoutStatus: { in: ['PENDING', 'ELIGIBLE'] },
+        payoutStatus: 'ELIGIBLE',
         travelDate: { lte: horizon },
         tour: { supplierId: profile.userId },
       },
@@ -553,59 +443,17 @@ async function generateDueInvoices(now = new Date()) {
         select: { id: true, status: true },
       });
 
-      // Unpaid invoices (awaiting approval or approved) absorb late-confirmed
-      // bookings; PAID/CANCELLED are closed — the window never reopens.
-      if (existing && !['INVOICED', 'APPROVED'].includes(existing.status)) continue;
+      // An unpaid invoice (INVOICED/APPROVED) already exists for this
+      // window+currency and absorbs anything that arrives after it was created
+      // (a delayed payment confirm, a booking that only just cleared). A closed
+      // invoice (PAID/CANCELLED) cannot be touched, so a late-clearing booking
+      // is raised on its own catch-up invoice instead of being stranded:
+      // runKey is unique per window+currency, so the catch-up carries none.
+      // InvoiceItem.bookingId uniqueness + the ELIGIBLE filter guarantee the
+      // booking is never invoiced twice.
+      const openExisting = Boolean(existing && ['INVOICED', 'APPROVED'].includes(existing.status));
 
-      if (!existing) {
-        report.windows += 1;
-        try {
-          const invoice = await prisma.$transaction(async (tx) => {
-            const created = await tx.invoice.create({
-              data: {
-                invoiceNumber: nextInvoiceNumber(now),
-                supplierId: profile.userId,
-                cycle,
-                cycleStartDate: group.window.start,
-                cycleEndDate: group.window.end,
-                cycleLabel: group.window.label,
-                invoicedAt: new Date(now),
-                paymentScheduledAt: group.window.paidOn,
-                payoutMethodId: method.id,
-                grossTotal,
-                commissionTotal,
-                netTotal,
-                currency: group.currency,
-                bookingCount: group.items.length,
-                runKey: key,
-                items: { create: group.items.map((b) => invoiceItemData(b)) },
-              },
-            });
-            await tx.booking.updateMany({
-              where: { id: { in: group.items.map((b) => b.id) } },
-              data: { payoutStatus: 'INVOICED' },
-            });
-            return created;
-          });
-          report.invoicesCreated += 1;
-          report.bookingsInvoiced += group.items.length;
-          createdThisSupplier.push({
-            invoiceNumber: invoice.invoiceNumber,
-            netTotal,
-            currency: group.currency,
-            label: group.window.label,
-            paidOn: group.window.paidOn,
-          });
-        } catch (err) {
-          if (String(err?.code) !== 'P2002') throw err; // real DB failure → BullMQ retries
-          // Unique clash (runKey or bookingId): a concurrent run created the
-          // invoice / claimed the bookings. The next hourly run reconciles.
-        }
-      } else {
-        // An unpaid invoice (INVOICED/APPROVED) already exists for this
-        // window+currency — append anything that landed after it was created
-        // (delayed payment confirm, late same-day booking). createMany's
-        // bookingId uniqueness keeps this from ever duplicating a line item.
+      if (openExisting) {
         try {
           await prisma.$transaction(async (tx) => {
             await tx.invoiceItem.createMany({
@@ -629,6 +477,50 @@ async function generateDueInvoices(now = new Date()) {
         } catch (err) {
           if (String(err?.code) !== 'P2002') throw err;
           // Already appended by a concurrent run — next run reconciles.
+        }
+      } else {
+        if (!existing) report.windows += 1;
+        try {
+          const invoice = await prisma.$transaction(async (tx) => {
+            const created = await tx.invoice.create({
+              data: {
+                invoiceNumber: nextInvoiceNumber(now),
+                supplierId: profile.userId,
+                cycle,
+                cycleStartDate: group.window.start,
+                cycleEndDate: group.window.end,
+                cycleLabel: group.window.label,
+                invoicedAt: new Date(now),
+                paymentScheduledAt: group.window.paidOn,
+                payoutMethodId: method.id,
+                grossTotal,
+                commissionTotal,
+                netTotal,
+                currency: group.currency,
+                bookingCount: group.items.length,
+                runKey: existing ? null : key,
+                items: { create: group.items.map((b) => invoiceItemData(b)) },
+              },
+            });
+            await tx.booking.updateMany({
+              where: { id: { in: group.items.map((b) => b.id) } },
+              data: { payoutStatus: 'INVOICED' },
+            });
+            return created;
+          });
+          report.invoicesCreated += 1;
+          report.bookingsInvoiced += group.items.length;
+          createdThisSupplier.push({
+            invoiceNumber: invoice.invoiceNumber,
+            netTotal,
+            currency: group.currency,
+            label: group.window.label,
+            paidOn: group.window.paidOn,
+          });
+        } catch (err) {
+          if (String(err?.code) !== 'P2002') throw err; // real DB failure → BullMQ retries
+          // Unique clash (runKey or bookingId): a concurrent run created the
+          // invoice / claimed the bookings. The next hourly run reconciles.
         }
       }
     }
@@ -667,7 +559,6 @@ module.exports = {
   buildInvoiceEstimate,
   approveInvoice,
   markInvoicePaid,
-  createInvoiceNow,
   generateDueInvoices,
   detachBookingFromInvoices,
 };
