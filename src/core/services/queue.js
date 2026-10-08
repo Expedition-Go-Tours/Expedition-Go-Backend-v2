@@ -381,13 +381,33 @@ async function getSchedulerHealth() {
 /**
  * Enqueue an analytics event for batch processing.
  * The worker flushes buffered events to the Event table on a cadence.
+ *
+ * If Redis/BullMQ is unavailable, falls back to writing the event directly via
+ * eventEmitter (same pattern as enqueueEmail / enqueueNotification) so
+ * analytics can never silently vanish — a past outage dropped every queued
+ * event (including `checkout_started`), which produced a "Checkout Started 0"
+ * funnel. `emit` is itself fire-and-forget and never throws.
  */
 async function enqueueEvent(eventData) {
   try {
     return await eventQueue().add('event', eventData, {
       jobId: `evt:${eventData.name}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
     });
-  } catch { /* Redis unavailable — skip event */ }
+  } catch {
+    try {
+      const { emit } = require('./eventEmitter');
+      emit({
+        name: eventData.name,
+        userId: eventData.userId,
+        sessionId: eventData.sessionId,
+        resource: eventData.resource,
+        resourceId: eventData.resourceId,
+        properties: eventData.properties,
+        source: eventData.source,
+        req: eventData.req,
+      });
+    } catch { /* analytics is best-effort — never break the caller */ }
+  }
 }
 
 /**

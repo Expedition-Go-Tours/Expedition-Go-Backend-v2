@@ -33,7 +33,7 @@ const { enqueueNotification } = require('../../src/core/services/queue');
 
 const EXPECTED_FUNCTIONS = [
   'getOverview', 'getRevenueTrend', 'getTourPerformance', 'getUserGrowth', 'getFunnel', 'getCLV',
-  'getSearchAnalytics', 'getCartAbandonment', 'getTours', 'getTourDetail', 'updateTour', 'deleteTour',
+  'getSearchAnalytics', 'getTours', 'getTourDetail', 'updateTour', 'deleteTour',
   'getTourReviewQueue', 'reviewTour', 'searchTours', 'getBookings', 'getTodayBookings', 'getBookingById',
   'confirmPayment', 'getSuppliers', 'getSupplierDetail', 'suspendSupplier', 'activateSupplier',
   'getActiveUsers', 'getRecentSignups', 'searchUsers', 'getAiStatus', 'getFailedTours', 'getPendingReviews',
@@ -42,14 +42,14 @@ const EXPECTED_FUNCTIONS = [
 ];
 
 describe('admin controller brand factory (Phase 2b)', () => {
-  it('Ghana admin exports all 36 functions + makeAdminController', () => {
+  it('Ghana admin exports all 35 functions + makeAdminController', () => {
     for (const name of EXPECTED_FUNCTIONS) expect(typeof ghanaAdmin[name]).toBe('function');
     expect(typeof ghanaAdmin.makeAdminController).toBe('function');
   });
 
-  it('Africa admin exports the same 36 functions (reuses the factory)', () => {
+  it('Africa admin exports the same 35 functions (reuses the factory)', () => {
     for (const name of EXPECTED_FUNCTIONS) expect(typeof africaAdmin[name]).toBe('function');
-    expect(Object.keys(africaAdmin)).toHaveLength(36);
+    expect(Object.keys(africaAdmin)).toHaveLength(35);
   });
 
   it('factory produces distinct brand instances (ghana vs africa)', () => {

@@ -131,11 +131,14 @@ async function acquireHold({
   // ── Analytics: the customer started checkout ──────────────────────────
   // The live flow has no cart step, so "checkout started" is the meaningful
   // mid-funnel signal (it also covers the abandoned-checkout drop-off).
+  // Written DIRECTLY via eventEmitter (not the queue): hold acquisition is
+  // low-volume and queue drops previously removed every `checkout_started`
+  // event from the Event table, making the admin funnel show 0.
   try {
-    const { enqueueEvent } = require('./queue');
+    const event = require('./eventEmitter');
     // `brand` was resolved above from the same source — reuse it rather than
     // repeating the lookup, so analytics and the stored prefix cannot diverge.
-    enqueueEvent({
+    event.emit({
       name: `${brand.eventNamespace}.checkout_started`,
       userId: customerId,
       resource: 'Tour',
@@ -328,12 +331,13 @@ async function materializeHold(draftId, session, paymentIntentId) {
   // The pay-now path materializes the Booking here (from the Stripe webhook),
   // not in the request that started checkout, so this is the only place the
   // completion step can be recorded. Brand comes off the draft payload.
+  // Written directly via eventEmitter (see the checkout_started note above).
   try {
-    const { enqueueEvent } = require('./queue');
+    const event = require('./eventEmitter');
     const { BRANDS } = require('../../../config/brands');
     const brandSource = draft.payload?._source || 'EXPEDITION';
     const brand = Object.values(BRANDS).find((b) => b.source === brandSource) || BRANDS.expedition;
-    enqueueEvent({
+    event.emit({
       name: `${brand.eventNamespace}.booking_reserved`,
       userId: createdBooking.customerId,
       resource: 'Booking',

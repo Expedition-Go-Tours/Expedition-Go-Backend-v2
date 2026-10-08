@@ -21,6 +21,11 @@
 
 jest.mock('../../src/core/services/queue', () => ({ enqueueEvent: jest.fn() }));
 
+// checkoutHold records the checkout-start analytics directly via eventEmitter
+// (never the queue — queued events were silently dropped during a Redis
+// outage, which is exactly why the funnel went empty). Pin the direct write.
+jest.mock('../../src/core/services/eventEmitter', () => ({ emit: jest.fn() }));
+
 jest.mock('../../src/core/services/availabilityCore', () => ({
   evaluateBookingAvailability: jest.fn().mockResolvedValue({ ok: true }),
   travelerCount: jest.fn().mockReturnValue(2),
@@ -169,9 +174,9 @@ describe('booking reference prefix', () => {
     });
 
     it('still records the source analytics event under the resolved brand', async () => {
-      const { enqueueEvent } = require('../../src/core/services/queue');
+      const { emit } = require('../../src/core/services/eventEmitter');
       await acquireHold(holdArgs({ source: 'GHANA' }));
-      expect(enqueueEvent).toHaveBeenCalledWith(
+      expect(emit).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'ghana.checkout_started' }),
       );
     });

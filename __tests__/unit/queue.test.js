@@ -219,6 +219,18 @@ describe('queue', () => {
       mockQueueInstance.add.mockRejectedValue(new Error('Redis down'));
       await expect(queue.enqueueEvent({ name: 'test' })).resolves.not.toThrow();
     });
+
+    it('writes the event directly via eventEmitter when the queue is down', async () => {
+      mockQueueInstance.add.mockRejectedValue(new Error('Redis down'));
+
+      await queue.enqueueEvent({ name: 'booking.completed', userId: 'u-1', properties: { total: 99 } });
+
+      // The heal: queued events can no longer vanish — they fall back to a
+      // synchronous write so the funnel always sees checkout signals.
+      expect(eventEmitter.emit).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'booking.completed', userId: 'u-1', properties: { total: 99 } }),
+      );
+    });
   });
 
   describe('enqueueAggregation', () => {

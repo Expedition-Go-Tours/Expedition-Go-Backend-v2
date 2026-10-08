@@ -1691,29 +1691,6 @@ router.get('/admin/analytics/customers', validate(analyticsOverviewSchema), expe
 
 /**
  * @swagger
- * /api/expedition/admin/analytics/cart-abandonment:
- *   get:
- *     summary: Cart abandonment rate
- *     description: |
- *       Returns cart creation count vs successful checkouts with abandonment rate.
- *     tags: [Expedition Admin]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: query
- *         name: startDate
- *         schema: { type: string, format: date }
- *       - in: query
- *         name: endDate
- *         schema: { type: string, format: date }
- *     responses:
- *       200:
- *         description: Cart abandonment data
- */
-router.get('/admin/analytics/cart-abandonment', validate(analyticsOverviewSchema), expeditionAnalyticsController.getCartAbandonment);
-
-/**
- * @swagger
  * /api/expedition/admin/analytics/search:
  *   get:
  *     summary: Search analytics

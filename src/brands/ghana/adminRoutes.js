@@ -87,10 +87,6 @@ router.get('/analytics/search',
   requirePermission('analytics.view'),
   ghana.getSearchAnalytics,
 );
-router.get('/analytics/cart-abandonment',
-  requirePermission('analytics.view'),
-  ghana.getCartAbandonment,
-);
 
 // ══════════════════════════════════════════════════════════════════════════
 // TOURS — TravioGhanaTour model + shared tour admin endpoints (proxied)

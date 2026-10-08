@@ -24,6 +24,7 @@ const { enqueueNotification } = require('../services/queue');
 const { buildTourDiff, computeChangesSummary, mergeDraftContent, buildLiveUpdateData } = require('../services/tourDraft');
 const { deleteCloudinaryImage } = require('../services/cloudinaryHelper');
 const { getBrand } = require('../../../config/brands');
+const { computeFunnel } = require('../services/funnelEngine');
 
 const GHANA_ROLE = getBrand('ghana').role;
 const GHANA_STOREFRONT_URL = getBrand('ghana').storefrontUrl;
@@ -635,9 +636,14 @@ exports.getTourPerformance = catchAsync(async (req, res, next) => {
 /**
  * GET /api/admin/analytics/funnel
  *
- * Booking conversion funnel: viewed → cart_added → checkout → completed
- * Each step is a user count, not an event count (deduplicated by userId).
- * The funnel shows how many unique users reached each stage.
+ * Platform-wide booking conversion funnel: viewed → checkout_started →
+ * booking_completed. Each step counts unique people, not event rows.
+ *
+ * The live storefronts have no cart — the retired `cart.added` / cart tunnel
+ * step is intentionally omitted. "Checkout Started" comes from the
+ * CheckoutDraft table (every seat hold is a checkout start) and "Booking
+ * Completed" from the Booking table (non-cancelled, non-simulated); only the
+ * top step still reads the Event table (see funnelEngine.js).
  *
  * Query params: period (7d | 30d | 90d | 1y) — defaults to 30d
  */
@@ -648,74 +654,10 @@ exports.getFunnel = catchAsync(async (req, res, next) => {
   startDate.setDate(startDate.getDate() - days);
 
   const bucket = Math.floor(Date.now() / 300000);
-  const result = await cache.getOrSet(`admin:funnel:${bucket}:${days}`, async () => {
-    const [viewed, cartAdded, checkoutStarted, completed, stepData] = await Promise.all([
-
-  // Each query counts unique userIds who performed the event at least once in the period.
-  // This is the true "user funnel" — a single user may be counted at most once per step.
-      prisma.event.groupBy({
-        by: ['userId'],
-        where: { name: 'tour.viewed', createdAt: { gte: startDate }, userId: { not: null } },
-        _count: true,
-      }),
-
-      prisma.event.groupBy({
-        by: ['userId'],
-        where: { name: 'cart.added', createdAt: { gte: startDate }, userId: { not: null } },
-        _count: true,
-      }),
-
-      prisma.event.groupBy({
-        by: ['userId'],
-        where: { name: 'booking.initiated', createdAt: { gte: startDate }, userId: { not: null } },
-        _count: true,
-      }),
-
-      prisma.event.groupBy({
-        by: ['userId'],
-        where: { name: 'booking.status_completed', createdAt: { gte: startDate }, userId: { not: null } },
-        _count: true,
-      }),
-
-      prisma.$queryRaw`
-        SELECT
-          name,
-          DATE_TRUNC('day', "createdAt")::date AS day,
-          COUNT(DISTINCT "userId")::int AS users
-        FROM "Event"
-        WHERE "createdAt" >= ${startDate}
-          AND "name" IN ('tour.viewed', 'cart.added', 'booking.initiated', 'booking.status_completed')
-          AND "userId" IS NOT NULL
-        GROUP BY name, DATE_TRUNC('day', "createdAt")
-        ORDER BY day ASC
-      `,
-    ]);
-
-    const viewedUsers = viewed.length;
-    const cartUsers = cartAdded.length;
-    const checkoutUsers = checkoutStarted.length;
-    const completedUsers = completed.length;
-
-    const calcRate = (numerator, denominator) =>
-      denominator > 0 ? parseFloat(((numerator / denominator) * 100).toFixed(1)) : 0;
-
-    return {
-      period: `${days}d`,
-      funnel: [
-        { step: 'viewed',          users: viewedUsers,     dropOff: null },
-        { step: 'cart_added',      users: cartUsers,       dropOff: `${(100 - calcRate(cartUsers, viewedUsers))}%` },
-        { step: 'checkout_started',users: checkoutUsers,    dropOff: `${(100 - calcRate(checkoutUsers, cartUsers))}%` },
-        { step: 'booking_completed',users: completedUsers,  dropOff: `${(100 - calcRate(completedUsers, checkoutUsers))}%` },
-      ],
-      conversionRates: {
-        viewToCart:  calcRate(cartUsers, viewedUsers),
-        cartToCheckout: calcRate(checkoutUsers, cartUsers),
-        checkoutToComplete: calcRate(completedUsers, checkoutUsers),
-        overall:    calcRate(completedUsers, viewedUsers),
-      },
-      dailyTrend: stepData,
-    };
-  });
+  const result = await cache.getOrSet(`admin:funnel:v2:${bucket}:${days}`, async () => {
+    const funnel = await computeFunnel({ startDate, brand: null });
+    return { period: `${days}d`, ...funnel };
+  }, 300);
 
   res.status(200).json({ status: 'success', data: result });
 });
@@ -1061,163 +1003,6 @@ exports.getSearchAnalytics = catchAsync(async (req, res, next) => {
         day: d.day,
         searches: d.searches,
         searchesWithResults: d.searchesWithResults,
-      })),
-    },
-  });
-});
-
-/**
- * GET /api/admin/analytics/cart-abandonment
- *
- * Cart abandonment rate & reasons.
- * Uses events to track:
- *   - Total carts created
- *   - Carts that converted to bookings
- *   - Abandonment rate
- *   - Abandoned carts by tour
- *
- * Query params: period (7d | 30d | 90d | 1y) — defaults to 30d
- */
-exports.getCartAbandonment = catchAsync(async (req, res, next) => {
-  const periodMap = { '7d': 7, '30d': 30, '90d': 90, '1y': 365 };
-  const days = periodMap[req.query.period] || 30;
-  const startDate = new Date();
-  startDate.setDate(startDate.getDate() - days);
-
-  const [
-    cartMetrics,
-    cartByTour,
-    dailyAbandonment,
-  ] = await Promise.all([
-
-    // Cart-level metrics
-    prisma.$queryRaw`
-      WITH cart_users AS (
-        SELECT DISTINCT "userId"
-        FROM "Event"
-        WHERE "name" = 'cart.added'
-          AND "createdAt" >= ${startDate}
-          AND "userId" IS NOT NULL
-      ),
-      booking_users AS (
-        SELECT DISTINCT e."userId"
-        FROM "Event" e
-        JOIN cart_users c ON c."userId" = e."userId"
-        WHERE e."name" = 'booking.status_completed'
-          AND e."createdAt" >= ${startDate}
-      )
-      SELECT
-        (SELECT COUNT(*) FROM cart_users)::int               AS "cartsCreated",
-        (SELECT COUNT(*) FROM booking_users)::int             AS "cartsConverted",
-        ROUND(
-          (1 - (SELECT COUNT(*)::numeric FROM booking_users)
-                / NULLIF((SELECT COUNT(*)::numeric FROM cart_users), 0))
-          * 100, 1
-        ) AS "abandonmentRate"
-    `,
-
-    // Abandonment by tour (which tours get abandoned most?)
-    prisma.$queryRaw`
-      WITH cart_tour AS (
-        SELECT DISTINCT ON ("userId", "resourceId")
-          "userId",
-          "resourceId" AS tour_id,
-          "createdAt" AS cart_time
-        FROM "Event"
-        WHERE "name" = 'cart.added'
-          AND "createdAt" >= ${startDate}
-          AND "userId" IS NOT NULL
-          AND "resourceId" IS NOT NULL
-        ORDER BY "userId", "resourceId", "createdAt" DESC
-      ),
-      booked_tour AS (
-        SELECT DISTINCT "userId", "properties"->>'tourId' AS tour_id
-        FROM "Event"
-        WHERE "name" = 'booking.status_completed'
-          AND "createdAt" >= ${startDate}
-      )
-      SELECT
-        ct.tour_id AS "tourId",
-        COUNT(*)::int AS "cartsAdded",
-        COUNT(*) FILTER (WHERE bt."userId" IS NOT NULL)::int AS "converted"
-      FROM cart_tour ct
-      LEFT JOIN booked_tour bt ON bt."userId" = ct."userId" AND bt.tour_id = ct.tour_id
-      GROUP BY ct.tour_id
-      ORDER BY "cartsAdded" DESC
-      LIMIT 20
-    `,
-
-    // Daily abandonment chart
-    prisma.$queryRaw`
-      WITH daily_carts AS (
-        SELECT
-          DATE_TRUNC('day', "createdAt")::date AS day,
-          COUNT(DISTINCT "userId")::int AS cart_users
-        FROM "Event"
-        WHERE "name" = 'cart.added'
-          AND "createdAt" >= ${startDate}
-        GROUP BY DATE_TRUNC('day', "createdAt")
-      ),
-      daily_converted AS (
-        SELECT
-          DATE_TRUNC('day', e."createdAt")::date AS day,
-          COUNT(DISTINCT e."userId")::int AS converted_users
-        FROM "Event" e
-        JOIN daily_carts dc ON dc.day = DATE_TRUNC('day', e."createdAt")
-        WHERE e."name" = 'booking.status_completed'
-          AND e."createdAt" >= ${startDate}
-        GROUP BY DATE_TRUNC('day', e."createdAt")
-      )
-      SELECT
-        dc.day,
-        dc.cart_users AS "cartsAdded",
-        COALESCE(dcv.converted_users, 0)::int AS "converted",
-        ROUND(
-          (1 - COALESCE(dcv.converted_users, 0)::numeric
-                / NULLIF(dc.cart_users, 0))
-          * 100, 1
-        ) AS "abandonmentRate"
-      FROM daily_carts dc
-      LEFT JOIN daily_converted dcv ON dcv.day = dc.day
-      ORDER BY dc.day ASC
-    `,
-  ]);
-
-  // Enrich top abandoned tours with titles
-  const tourIds = cartByTour.map((c) => c.tourId).filter(Boolean);
-  let tourMap = {};
-  if (tourIds.length > 0) {
-    const tours = await prisma.tour.findMany({
-      where: { id: { in: tourIds } },
-      select: { id: true, title: true },
-    });
-
-    tourMap = Object.fromEntries(tours.map((t) => [t.id, t.title]));
-  }
-
-  res.status(200).json({
-    status: 'success',
-    data: {
-      period: `${days}d`,
-      overview: {
-        cartsCreated: cartMetrics[0].cartsCreated,
-        cartsConverted: cartMetrics[0].cartsConverted,
-        abandonmentRate: parseFloat(cartMetrics[0].abandonmentRate || 0),
-      },
-      byTour: cartByTour.map((c) => ({
-        tourId: c.tourId,
-        tourTitle: tourMap[c.tourId] || 'Unknown',
-        cartsAdded: c.cartsAdded,
-        converted: c.converted,
-        abandonmentRate: c.cartsAdded > 0
-          ? parseFloat((((c.cartsAdded - c.converted) / c.cartsAdded) * 100).toFixed(1))
-          : 0,
-      })),
-      dailyTrend: dailyAbandonment.map((d) => ({
-        day: d.day,
-        cartsAdded: d.cartsAdded,
-        converted: d.converted,
-        abandonmentRate: parseFloat(d.abandonmentRate || 0),
       })),
     },
   });

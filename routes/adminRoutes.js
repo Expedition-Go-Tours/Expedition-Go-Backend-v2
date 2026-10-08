@@ -174,9 +174,12 @@ router.get('/analytics/tour-performance', requirePermission('analytics.view'), a
  *   get:
  *     summary: Booking conversion funnel
  *     description: |
- *       Tracks unique users through the booking funnel:
- *       viewed → cart_added → checkout_started → booking_completed.
- *       Each step is deduplicated by userId. View-to-book conversion rate included.
+ *       Tracks unique people through the booking funnel:
+ *       viewed → checkout_started → booking_completed.
+ *       There is no cart step — the storefronts have no cart; Checkout Started
+ *       counts CheckoutDraft holds and Booking Completed counts real bookings.
+ *       Includes conversion rates, daily trend and insights (biggest drop-off,
+ *       median checkout time, abandoned-checkout value).
  *     tags: [Admin, Analytics]
  *     security:
  *       - bearerAuth: []
@@ -270,43 +273,6 @@ router.get('/analytics/clv', requirePermission('analytics.view'), adminControlle
  *                   $ref: '#/components/schemas/SearchAnalyticsResponse'
  */
 router.get('/analytics/search', requirePermission('analytics.view'), adminController.getSearchAnalytics);
-
-/**
- * @swagger
- * /admin/analytics/cart-abandonment:
- *   get:
- *     summary: Cart abandonment rate & analysis
- *     description: |
- *       Tracks add-to-cart to booking conversion. Shows:
- *       - Overall cart abandonment rate
- *       - Which tours have the highest abandonment (fix pricing or UX?)
- *       - Daily abandonment trend chart
- *     tags: [Admin, Analytics]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - name: period
- *         in: query
- *         schema:
- *           type: string
- *           enum: [7d, 30d, 90d, 1y]
- *           default: 30d
- *         description: Lookback period for analysis
- *     responses:
- *       200:
- *         description: Cart abandonment data retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   $ref: '#/components/schemas/CartAbandonmentResponse'
- */
-router.get('/analytics/cart-abandonment', requirePermission('analytics.view'), adminController.getCartAbandonment);
 
 /**
  * Admin Notifications

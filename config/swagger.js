@@ -48,10 +48,9 @@ All analytics endpoints require \`admin\` role and are available at \`/api/admin
 | \`/analytics/revenue-trend\` | Monthly revenue + commission (last 24 months) |
 | \`/analytics/user-growth\` | Monthly signups by role (last 24 months) |
 | \`/analytics/tour-performance\` | Paginated tour metrics (sortable, filterable) |
-| \`/analytics/funnel\` | Booking conversion funnel (view → cart → checkout → complete) |
+| \`/analytics/funnel\` | Booking conversion funnel (view → checkout → complete, no cart) |
 | \`/analytics/clv\` | Customer Lifetime Value, repeat rate, cohorts |
 | \`/analytics/search\` | Top queries, zero-result detection, search outcomes |
-| \`/analytics/cart-abandonment\` | Abandonment rate, per-tour breakdown, daily trend |
 
 ## Authentication
 All protected endpoints require a Firebase JWT token in the Authorization header:
@@ -2583,8 +2582,10 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
     FunnelStep: {
       type: 'object',
       properties: {
-        step: { type: 'string', enum: ['viewed', 'cart_added', 'checkout_started', 'booking_completed'], description: 'Funnel stage name' },
-        users: { type: 'integer', description: 'Unique users who reached this stage' },
+        step: { type: 'string', enum: ['viewed', 'checkout_started', 'booking_completed'], description: 'Funnel stage name (no cart step — storefronts have no cart)' },
+        users: { type: 'integer', description: 'Unique people who reached this stage' },
+        overallPct: { type: 'number', description: '% of the funnel top (viewed) that reached this stage' },
+        relativePct: { type: 'number', nullable: true, description: '% of the previous stage that continued (null for first stage)' },
         dropOff: { type: 'string', nullable: true, description: 'Drop-off percentage from previous stage (null for first stage)', example: '25.0%' }
       }
     },
@@ -2597,13 +2598,33 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
         conversionRates: {
           type: 'object',
           properties: {
-            viewToCart: { type: 'number', example: 60.0 },
-            cartToCheckout: { type: 'number', example: 75.0 },
-            checkoutToComplete: { type: 'number', example: 100.0 },
-            overall: { type: 'number', example: 60.0 }
+            viewToCheckout: { type: 'number', example: 12.0 },
+            checkoutToBook: { type: 'number', example: 20.0 },
+            overall: { type: 'number', example: 2.4 }
           }
         },
-        dailyTrend: { type: 'array', items: { type: 'object' } }
+        dailyTrend: {
+          type: 'array',
+          description: 'Per-day distinct people per step',
+          items: { type: 'object', properties: { day: { type: 'string', format: 'date' }, views: { type: 'integer' }, checkouts: { type: 'integer' }, bookings: { type: 'integer' } } }
+        },
+        insights: {
+          type: 'object',
+          description: 'Derived takeaways for the funnel page',
+          properties: {
+            biggestDropOff: { type: 'object', description: 'Step pair losing the most people', properties: { from: { type: 'string' }, to: { type: 'string' }, users: { type: 'integer' }, rate: { type: 'number' } } },
+            medianTimeToBookMinutes: { type: 'number', description: 'Median hold → paid-booking time for pay-now checkouts (minutes)' },
+            abandoned: {
+              type: 'object',
+              description: 'EXPIRED checkouts (holds that never paid)',
+              properties: {
+                checkouts: { type: 'integer' },
+                value: { type: 'number', description: 'Sum of frozen checkout totals' },
+                byTour: { type: 'array', items: { type: 'object', properties: { tourId: { type: 'string' }, tourTitle: { type: 'string' }, checkouts: { type: 'integer' }, value: { type: 'number' } } } }
+              }
+            }
+          }
+        }
       }
     },
     CLVResponse: {
@@ -2710,43 +2731,6 @@ Connect to: \`ws://localhost:5000\` or \`wss://your-domain.com\`
           }
         },
         dailyTrend: { type: 'array', items: { type: 'object' } }
-      }
-    },
-    CartAbandonmentResponse: {
-      type: 'object',
-      description: 'Cart abandonment rate and per-tour breakdown',
-      properties: {
-        period: { type: 'string', example: '30d' },
-        overview: {
-          type: 'object',
-          properties: {
-            cartsCreated: { type: 'integer' },
-            cartsConverted: { type: 'integer' },
-            abandonmentRate: { type: 'number', description: 'Percentage of carts that never converted to bookings' }
-          }
-        },
-        byTour: {
-          type: 'array',
-          description: 'Breakdown by individual tour',
-          items: {
-            type: 'object',
-            properties: {
-              tourId: { type: 'string' }, tourTitle: { type: 'string' },
-              cartsAdded: { type: 'integer' }, converted: { type: 'integer' },
-              abandonmentRate: { type: 'number' }
-            }
-          }
-        },
-        dailyTrend: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              day: { type: 'string', format: 'date' }, cartsAdded: { type: 'integer' },
-              converted: { type: 'integer' }, abandonmentRate: { type: 'number' }
-            }
-          }
-        }
       }
     },
     RevenueTrendResponse: {

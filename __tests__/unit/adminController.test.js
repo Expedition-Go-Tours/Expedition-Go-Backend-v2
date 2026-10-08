@@ -334,29 +334,47 @@ describe('adminController', () => {
   });
 
   // ============================
-  // getFunnel
+  // getFunnel — 3-step viewed → checkout_started → booking_completed
   // ============================
   describe('getFunnel', () => {
-    const mockEventGroup = Array.from({ length: 10 }, (_, i) => ({ userId: `u${i}`, _count: 1 }));
+    const day = new Date('2026-10-05');
 
     beforeEach(() => {
-      prisma.event.groupBy.mockResolvedValue(mockEventGroup);
-      prisma.$queryRaw.mockResolvedValue([]);
+      // funnelEngine.computeFunnel runs exactly 7 $queryRaw calls (Promise.all):
+      // steps, views/day, checkouts/day, bookings/day, median, abandoned, byTour.
+      prisma.$queryRaw
+        .mockResolvedValueOnce([
+          { step: 'viewed', users: 100 },
+          { step: 'checkout_started', users: 20 },
+          { step: 'booking_completed', users: 5 },
+        ])
+        .mockResolvedValueOnce([{ day, users: 40 }])                    // views per day
+        .mockResolvedValueOnce([{ day, users: 8 }])                     // checkouts per day
+        .mockResolvedValueOnce([{ day, users: 2 }])                     // bookings per day
+        .mockResolvedValueOnce([{ median_minutes: 12 }])                // median time to book
+        .mockResolvedValueOnce([{ checkouts: 15, value: 4200 }])        // abandoned overview
+        .mockResolvedValueOnce([{ tourId: 't1', tourTitle: 'Tour One', checkouts: 6, value: 1800 }]); // byTour
     });
 
-    it('returns funnel with conversion rates', async () => {
+    it('returns the 3-step funnel without a cart step', async () => {
       await controller.getFunnel(req, res, next);
 
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            funnel: expect.any(Array),
-            conversionRates: expect.any(Object),
-            dailyTrend: expect.any(Array),
-          }),
-        })
-      );
+      const body = res.json.mock.calls[0][0];
+      expect(body.data.funnel.map((f) => f.step)).toEqual([
+        'viewed',
+        'checkout_started',
+        'booking_completed',
+      ]);
+      expect(body.data.conversionRates).toEqual({
+        viewToCheckout: 20,
+        checkoutToBook: 25,
+        overall: 5,
+      });
+      expect(body.data.insights.medianTimeToBookMinutes).toBe(12);
+      expect(body.data.insights.abandoned.checkouts).toBe(15);
+      expect(body.data.insights.abandoned.value).toBe(4200);
+      expect(body.data.insights.abandoned.byTour[0].tourTitle).toBe('Tour One');
+      expect(body.data.dailyTrend).toEqual(expect.any(Array));
     });
 
     it('respects period query parameter', async () => {
@@ -368,12 +386,14 @@ describe('adminController', () => {
     });
 
     it('handles zero view users gracefully', async () => {
-      prisma.event.groupBy.mockResolvedValue([]);
+      prisma.$queryRaw.mockReset();
+      prisma.$queryRaw.mockResolvedValue([]);
 
       await controller.getFunnel(req, res, next);
 
       const body = res.json.mock.calls[0][0];
       expect(body.data.conversionRates.overall).toBe(0);
+      expect(body.data.funnel.map((f) => f.users)).toEqual([0, 0, 0]);
     });
   });
 
@@ -469,72 +489,6 @@ describe('adminController', () => {
       await controller.getSearchAnalytics(req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(200);
-    });
-  });
-
-  // ============================
-  // getCartAbandonment
-  // ============================
-  describe('getCartAbandonment', () => {
-    const mockCartMetrics = [{ cartsCreated: 200, cartsConverted: 50, abandonmentRate: '75.0' }];
-    const mockCartByTour = [{ tourId: 't1', cartsAdded: 30, converted: 10 }, { tourId: null, cartsAdded: 5, converted: 0 }];
-    const mockDailyAbandonment = [{ day: new Date(), cartsAdded: 10, converted: 3, abandonmentRate: '70.0' }];
-
-    beforeEach(() => {
-      prisma.$queryRaw
-        .mockResolvedValueOnce(mockCartMetrics)
-        .mockResolvedValueOnce(mockCartByTour)
-        .mockResolvedValueOnce(mockDailyAbandonment);
-      prisma.tour.findMany.mockResolvedValue([{ id: 't1', title: 'Tour One' }]);
-    });
-
-    it('returns cart abandonment analytics', async () => {
-      await controller.getCartAbandonment(req, res, next);
-
-      expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            overview: expect.objectContaining({
-              cartsCreated: 200,
-              cartsConverted: 50,
-              abandonmentRate: 75.0,
-            }),
-            byTour: expect.any(Array),
-            dailyTrend: expect.any(Array),
-          }),
-        })
-      );
-    });
-
-    it('enriches abandoned tours with titles', async () => {
-      await controller.getCartAbandonment(req, res, next);
-
-      const body = res.json.mock.calls[0][0];
-      const t1 = body.data.byTour.find((t) => t.tourId === 't1');
-      expect(t1.tourTitle).toBe('Tour One');
-    });
-
-    it('shows Unknown for missing tour IDs', async () => {
-      await controller.getCartAbandonment(req, res, next);
-
-      const body = res.json.mock.calls[0][0];
-      const nullTour = body.data.byTour.find((t) => t.tourId === null);
-      expect(nullTour.tourTitle).toBe('Unknown');
-    });
-
-    it('skips tour enrichment when no tourIds', async () => {
-      prisma.$queryRaw.mockReset();
-      prisma.$queryRaw
-        .mockResolvedValueOnce(mockCartMetrics)
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce(mockDailyAbandonment);
-
-      await controller.getCartAbandonment(req, res, next);
-
-      const body = res.json.mock.calls[0][0];
-      expect(body.data.byTour).toEqual([]);
-      expect(body.data.overview.cartsCreated).toBe(200);
     });
   });
 

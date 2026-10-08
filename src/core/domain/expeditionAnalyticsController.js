@@ -331,37 +331,6 @@ exports.getCustomerAnalytics = catchAsync(async (req, res, next) => {
   res.status(200).json({ status: 'success', data: result });
 });
 
-exports.getCartAbandonment = catchAsync(async (req, res, next) => {
-  const { startDate, endDate } = req.query;
-  const { start, end } = dateRange(startDate, endDate);
-
-  const cacheKey = `${CACHE_PREFIX}cartAbandon:${start.toISOString().slice(0, 10)}:${end.toISOString().slice(0, 10)}`;
-
-  const result = await cache.getOrSet(cacheKey, async () => {
-    const [cartItems, successfulCheckouts] = await Promise.all([
-      prisma.cartItem.findMany({
-        where: { createdAt: { gte: start, lte: end } },
-        select: { createdAt: true, expiresAt: true },
-      }),
-      prisma.booking.count({
-        where: { ...EXPEDITION_NOT_GHANA, isSimulated: false, createdAt: { gte: start, lte: end } },
-      }),
-    ]);
-
-    const totalCartItems = cartItems.length;
-
-    return {
-      totalCartCreations: totalCartItems,
-      successfulCheckouts,
-      abandonmentRate: totalCartItems > 0
-        ? parseFloat((((totalCartItems - successfulCheckouts) / totalCartItems) * 100).toFixed(1))
-        : 0,
-    };
-  }, 300);
-
-  res.status(200).json({ status: 'success', data: result });
-});
-
 exports.getSearchAnalytics = catchAsync(async (req, res, next) => {
   const { startDate, endDate } = req.query;
   const { start, end } = dateRange(startDate, endDate);

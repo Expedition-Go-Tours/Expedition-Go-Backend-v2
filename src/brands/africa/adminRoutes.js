@@ -57,7 +57,6 @@ router.get('/analytics/user-growth', requirePermission('analytics.view'), africa
 router.get('/analytics/funnel', requirePermission('analytics.view'), africa.getFunnel);
 router.get('/analytics/clv', requirePermission('analytics.view'), africa.getCLV);
 router.get('/analytics/search', requirePermission('analytics.view'), africa.getSearchAnalytics);
-router.get('/analytics/cart-abandonment', requirePermission('analytics.view'), africa.getCartAbandonment);
 
 // TOURS — TravioAfricaTour model + shared tour admin endpoints (proxied)
 router.get('/tours', requirePermission('tours.view', 'dashboard.*'), africa.getTours);
