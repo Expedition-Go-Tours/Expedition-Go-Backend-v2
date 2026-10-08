@@ -1074,12 +1074,18 @@ async function processStripeWebhook(event) {
         data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.grossAmount, source: 'expedition' },
       }).catch((err) => console.error('[AdminNotification] Expedition notification failed:', err.message));
     } else {
+      // Ghana (non-Expedition) booking paid: report the booking itself, not a
+      // payout. A per-booking "New Payout Pending — awaiting approval" fired
+      // the instant a customer paid, before any payout request existed; admins
+      // read it as a booking notification misfiled under payouts. The truthful
+      // "needs approval" alert comes from payoutRuns when a real payout
+      // request is formed from eligible bookings.
       notifyAdmin({
-        type: 'PAYOUT_NEEDS_APPROVAL',
-        title: 'New Payout Pending',
-        message: `Booking #${booking.bookingNumber}: $${parseFloat(booking.supplierPayout).toFixed(2)} payout awaiting approval`,
-        data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.supplierPayout, supplierId: booking.tour?.supplierId },
-      }).catch((err) => console.error('[AdminNotification] Payout notification failed:', err.message));
+        type: 'BOOKING_CONFIRMED',
+        title: 'Booking Confirmed',
+        message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.grossAmount).toFixed(2)} for "${booking.tour.title}" has been confirmed. Supplier payout: $${parseFloat(booking.supplierPayout).toFixed(2)}.`,
+        data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.grossAmount, supplierPayout: booking.supplierPayout, supplierId: booking.tour?.supplierId },
+      }).catch((err) => console.error('[AdminNotification] Booking notification failed:', err.message));
     }
 
     enqueueEvent({

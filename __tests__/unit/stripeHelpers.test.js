@@ -11,6 +11,7 @@ jest.mock('../../src/core/services/prismaClient', () => ({
 
 const prisma = require('../../src/core/services/prismaClient');
 const { enqueueEmail, enqueueEvent, enqueueNotification } = require('../../src/core/services/queue');
+const { notifyAdmin } = require('../../src/core/services/adminNotificationService');
 jest.mock('../../src/core/services/queue', () => ({
   enqueueEmail: jest.fn(() => Promise.resolve()),
   enqueueEvent: jest.fn(() => Promise.resolve()),
@@ -19,6 +20,9 @@ jest.mock('../../src/core/services/queue', () => ({
 }));
 jest.mock('../../src/core/services/eventEmitter', () => ({
   emit: jest.fn(),
+}));
+jest.mock('../../src/core/services/adminNotificationService', () => ({
+  notifyAdmin: jest.fn(async () => {}),
 }));
 jest.mock('../../src/core/services/redisClient', () => ({
   setnx: jest.fn(async () => null),
@@ -238,6 +242,39 @@ describe('processStripeWebhook', () => {
     );
     expect(enqueueEmail).toHaveBeenCalled();
     expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'booking.completed' }));
+  });
+
+  it('reports a paid Ghana booking as a confirmed booking, not a payout', async () => {
+    notifyAdmin.mockClear();
+    await processStripeWebhook(mockStripeEvent('payment_intent.succeeded'));
+
+    // mockBooking has no `source`, so it is treated as a Ghana (non-Expedition)
+    // booking. The payment webhook must notify admins about the booking itself;
+    // the "payout awaiting approval" alert is reserved for real payout requests.
+    expect(notifyAdmin).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'BOOKING_CONFIRMED',
+      title: 'Booking Confirmed',
+      message: expect.stringContaining('Booking #BK-001'),
+      data: expect.objectContaining({
+        bookingId: 'booking-1',
+        supplierPayout: 327.25,
+      }),
+    }));
+    expect(notifyAdmin).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: 'PAYOUT_NEEDS_APPROVAL',
+    }));
+  });
+
+  it('reports a paid Expedition booking as an Expedition booking confirmation', async () => {
+    notifyAdmin.mockClear();
+    mockBooking.source = 'EXPEDITION';
+    await processStripeWebhook(mockStripeEvent('payment_intent.succeeded'));
+    mockBooking.source = undefined;
+
+    expect(notifyAdmin).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'BOOKING_CONFIRMED',
+      title: 'Expedition Booking Confirmed',
+    }));
   });
 
   it('does not resurrect already-cancelled bookings on a late succeeded event', async () => {
