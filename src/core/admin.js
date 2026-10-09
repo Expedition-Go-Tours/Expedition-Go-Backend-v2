@@ -480,29 +480,74 @@ controller.getTourPerformance = catchAsync(async (req, res, next) => {
 });
 
 /**
+ * Signup counts per bucket for the Ghana marketplace.
+ *
+ * Scope is everyone in the Ghana marketplace: suppliers carrying the brand
+ * role (e.g. 'ghana') AND plain customers who register with only the
+ * 'customer' role — the storefront does not tag customers with a brand role.
+ * Buckets are daily (30d), weekly (90d) or monthly (1y / default 24 months),
+ * and bucket labels are serialized as plain 'YYYY-MM' / 'YYYY-MM-DD' strings
+ * so clients never have to parse ISO timestamps.
+ */
+function userGrowthQuery(from, to, granularity) {
+  // Truncation unit and label pattern come from a fixed whitelist, so they
+  // are safe to embed as literals (and keep Postgres' date_trunc happy).
+  const trunc = { day: 'day', week: 'week', month: 'month' }[granularity] || 'month';
+  const fmt = granularity === 'month' ? 'YYYY-MM' : 'YYYY-MM-DD';
+  return prisma.$queryRaw`
+    SELECT
+      to_char(DATE_TRUNC(${Prisma.raw(`'${trunc}'`)}, "createdAt"), ${Prisma.raw(`'${fmt}'`)}) AS month,
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE 'customer' = ANY("roles"::text[]))::int AS customers,
+      COUNT(*) FILTER (WHERE 'supplier' = ANY("roles"::text[]))::int AS suppliers
+    FROM "User"
+    WHERE (${BRAND.role} = ANY("roles"::text[]) OR 'customer' = ANY("roles"::text[]))
+      AND "createdAt" >= ${from}
+      AND "createdAt" < ${to}
+    GROUP BY 1
+    ORDER BY month ASC
+  `;
+}
+
+/**
  * GET /api/travioghana/admin/analytics/user-growth
- * Ghana user signups per month (last 24 months).
+ * Ghana signups (customers + suppliers) over time.
+ *
+ * period: 30d (daily) | 90d (weekly) | 1y (monthly) — default 24 months.
+ * Returns `growth` (current window) and `previous` (the equal-length window
+ * right before it) so the UI can show "vs previous period" deltas, plus the
+ * granularity so the client formats bucket labels correctly.
  */
 controller.getUserGrowth = catchAsync(async (req, res, next) => {
-  // period: 30d | 90d | 1y — default 24 months (backward compat).
-  const periodMonths = { '30d': 1, '90d': 3, '1y': 12 }[req.query.period] || 24;
+  const period = ['30d', '90d', '1y'].includes(req.query.period) ? req.query.period : '24m';
+  const granularity = ({ '30d': 'day', '90d': 'week', '1y': 'month', '24m': 'month' })[period];
+
+  const now = new Date();
+  // Calendar-window shifts for monthly buckets keep the two windows aligned
+  // index-to-index (bucket i of `previous` = the same calendar month one
+  // year / two years earlier). Fixed-day shifts are exact for day/week.
+  const monthsBack = period === '1y' ? 12 : 24;
+  const start = period === '30d'
+    ? new Date(now.getTime() - 30 * 86400000)
+    : period === '90d'
+      ? new Date(now.getTime() - 90 * 86400000)
+      : new Date(now.getFullYear(), now.getMonth() - monthsBack, now.getDate());
+  const prevStart = period === '30d'
+    ? new Date(start.getTime() - 30 * 86400000)
+    : period === '90d'
+      ? new Date(start.getTime() - 90 * 86400000)
+      : new Date(now.getFullYear(), now.getMonth() - monthsBack * 2, now.getDate());
+
   const bucket = Math.floor(Date.now() / 300000);
-  const growth = await cache.getOrSet(`${BRAND.cachePrefix}admin:userGrowth:${bucket}:${periodMonths}`, async () => {
-    return prisma.$queryRaw`
-      SELECT
-        DATE_TRUNC('month', "createdAt")::date AS month,
-        COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE 'customer' = ANY("roles"::text[]))::int AS customers,
-        COUNT(*) FILTER (WHERE 'supplier' = ANY("roles"::text[]))::int AS suppliers
-      FROM "User"
-      WHERE ${BRAND.role} = ANY("roles"::text[])
-        AND "createdAt" >= NOW() - (${periodMonths} || ' months')::interval
-      GROUP BY DATE_TRUNC('month', "createdAt")
-      ORDER BY month ASC
-    `;
+  const data = await cache.getOrSet(`${BRAND.cachePrefix}admin:userGrowth:v2:${bucket}:${period}`, async () => {
+    const [growth, previous] = await Promise.all([
+      userGrowthQuery(start, now, granularity),
+      userGrowthQuery(prevStart, start, granularity),
+    ]);
+    return { growth, previous, granularity, period };
   }, 300);
 
-  res.status(200).json({ status: 'success', data: { growth } });
+  res.status(200).json({ status: 'success', data });
 });
 
 /**
@@ -1558,35 +1603,82 @@ controller.getActiveUsers = catchAsync(async (req, res, next) => {
 
 /**
  * GET /api/travioghana/admin/users/new-signups
- * Today's Ghana signups.
+ * Recent Ghana signups (customers + suppliers).
+ *
+ * The UserGrowth drill-down dialog sends ?period=30d|90d|1y&role=...&bucket=...
+ * &granularity=day|week|month (plus the Overview "new signups" card which calls
+ * without a period — that defaults to today). `bucket` scopes the list to one
+ * bucket label (YYYY-MM or YYYY-MM-DD); `month` is accepted as an alias for a
+ * YYYY-MM bucket.
+ * Customers (who carry no brand role) are included, and users who have
+ * booked get their phone number back (account phone, else the checkout
+ * phone on their latest booking) — alongside name/email, for admin follow-up.
  */
 controller.getRecentSignups = catchAsync(async (req, res, next) => {
-  // The UserGrowth drill-down dialog sends ?period=30d|90d|1y&role=...
-  // (plus the Overview "new signups" card which calls without a period —
-  // that defaults to today).
   const periodMap = { '30d': 30, '90d': 90, '1y': 365 };
   const days = req.query.period ? periodMap[req.query.period] : null;
-  const { role } = req.query;
+  const { role, month, bucket } = req.query;
+  // Bucket scope drives the drill-down from a clicked bar: `granularity`
+  // (day|week|month, default month) tells us how wide a bucket label is.
+  // `month` (YYYY-MM) is accepted as an alias for month granularity.
+  const granularity = ['day', 'week', 'month'].includes(req.query.granularity) ? req.query.granularity : 'month';
 
-  const where = { roles: { has: BRAND.role } };
+  const where = {
+    OR: [{ roles: { has: BRAND.role } }, { roles: { has: 'customer' } }],
+  };
   if (days) {
     where.createdAt = { gte: new Date(Date.now() - days * 24 * 60 * 60 * 1000) };
   } else {
     const now = new Date();
     where.createdAt = { gte: new Date(now.getFullYear(), now.getMonth(), now.getDate()) };
   }
-  if (role) where.roles = { hasEvery: [BRAND.role, role] };
+  const rawBucket = typeof bucket === 'string' ? bucket : typeof month === 'string' ? month : null;
+  if (rawBucket) {
+    const match = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(rawBucket);
+    if (match) {
+      const y = Number(match[1]);
+      const m = Number(match[2]);
+      const d = Number(match[3] || 1);
+      if (y >= 1970 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+        const gte = new Date(y, m - 1, d);
+        const isMonthLabel = !match[3];
+        const lt = isMonthLabel || granularity === 'month'
+          ? new Date(y, m, 1)
+          : granularity === 'week'
+            ? new Date(y, m - 1, d + 7)
+            : new Date(y, m - 1, d + 1);
+        where.createdAt = { ...where.createdAt, gte, lt };
+      }
+    }
+  }
+  if (role) where.roles = { has: role };
 
   const users = await prisma.user.findMany({
     where,
     select: {
       id: true, name: true, email: true, photoURL: true,
-      roles: true, createdAt: true,
+      roles: true, createdAt: true, phone: true,
+      bookings: { select: { leadTravelerPhone: true }, orderBy: { createdAt: 'desc' }, take: 1 },
+      _count: { select: { bookings: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
 
-  res.status(200).json({ status: 'success', data: { users } });
+  res.status(200).json({
+    status: 'success',
+    data: {
+      users: users.map((u) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        photoURL: u.photoURL,
+        roles: u.roles,
+        createdAt: u.createdAt,
+        phone: u.phone || u.bookings?.[0]?.leadTravelerPhone || null,
+        hasBookings: (u._count?.bookings ?? 0) > 0,
+      })),
+    },
+  });
 });
 
 /**
