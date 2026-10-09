@@ -171,7 +171,7 @@ describe('static page copy', () => {
 describe('structured data', () => {
   it('points the Organization logo at a crawlable asset', async () => {
     const ghana = await render('/', { host: GHANA_HOST });
-    expect(ghana.body).toContain('"logo":{"@type":"ImageObject","url":"https://www.travioghana.com/logo.png","width":512,"height":512}');
+    expect(ghana.body).toContain('"logo":{"@type":"ImageObject","url":"https://www.travioghana.com/search-logo.png","width":1254,"height":1254}');
     expect(ghana.body).not.toContain('/src/assets/icons/compyIcon.png');
 
     const fallback = await render('/');
@@ -181,9 +181,9 @@ describe('structured data', () => {
 
   it('gives Travio Ghana a branded, sized social card', async () => {
     const res = await render('/', { host: GHANA_HOST });
-    expect(res.body).toContain('property="og:image" content="https://www.travioghana.com/og-default.png"');
-    expect(res.body).toContain('property="og:image:width" content="1200"');
-    expect(res.body).toContain('property="og:image:height" content="630"');
+    expect(res.body).toContain('property="og:image" content="https://www.travioghana.com/search-logo.png"');
+    expect(res.body).toContain('property="og:image:width" content="1254"');
+    expect(res.body).toContain('property="og:image:height" content="1254"');
     // No X/Twitter profile for this brand — twitter:site must not be borrowed.
     expect(res.body).not.toContain('name="twitter:site"');
     expect(res.body).not.toContain('@ExpeditionGo');

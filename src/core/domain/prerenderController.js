@@ -38,10 +38,10 @@ const BRANDS = {
     // Travio Ghana has no X/Twitter profile — omit twitter:site rather than
     // point at another brand's account.
     twitterSite: '',
-    logo: { url: 'https://www.travioghana.com/logo.png', width: 512, height: 512 },
+    logo: { url: 'https://www.travioghana.com/search-logo.png', width: 1254, height: 1254 },
     // Branded 1200x630 social card shipped by the storefront; the Cloudinary
     // hero it replaces was404, so every non-tour page shared a dead card.
-    defaultImage: { url: 'https://www.travioghana.com/og-default.png', width: 1200, height: 630 },
+    defaultImage: { url: 'https://www.travioghana.com/search-logo.png', width: 1254, height: 1254 },
     sameAs: [
       // No Facebook. This brand has no Facebook page of its own, and the URL
       // that was here was not a near-miss — it was another brand's page.
