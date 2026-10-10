@@ -770,9 +770,14 @@ const supplierCustomerCancelledFree = {
       ${B.hero({ heading: 'This booking has been cancelled', badgeText: 'Cancelled', badgeColor: 'danger' })}
       ${B.callout('DO NOT OPERATE THIS BOOKING', 'danger')}
       ${B.detailRows([
+        { label: 'Booking reference', value: '{{bookingNumber}}' },
+        { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Lead traveller', value: '{{leadTravelerName}}' },
         { label: 'Cancelled by', value: 'Customer' },
         { label: 'Cancellation time', value: '{{cancelledAtLabel}}' },
         { label: 'Experience date', value: '{{dateLabel}}' },
+        { label: 'Start time', value: '{{timeLabel}}', if: '{{timeLabel}}' },
+        { label: 'Duration', value: '{{durationLabel}}', if: '{{durationLabel}}' },
         { label: 'Travellers', value: '{{travelersLabel}}' },
         { label: 'Cancellation policy', value: 'Free cancellation' },
         { label: 'Supplier payout', value: '{{payoutAmountLabel}}' },
@@ -792,6 +797,11 @@ const supplierCustomerCancelledLate = {
       ${B.hero({ heading: 'Booking cancelled after the deadline', badgeText: 'Late cancellation', badgeColor: 'danger' })}
       ${B.callout('DO NOT OPERATE UNLESS SUPPORT INSTRUCTS OTHERWISE', 'danger')}
       ${B.detailRows([
+        { label: 'Booking reference', value: '{{bookingNumber}}' },
+        { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Lead traveller', value: '{{leadTravelerName}}' },
+        { label: 'Experience date', value: '{{dateLabel}}' },
+        { label: 'Travellers', value: '{{travelersLabel}}' },
         { label: 'Cancelled by', value: 'Customer' },
         { label: 'Cancellation deadline', value: '{{cancellationDeadlineLabel}}' },
         { label: 'Cancellation time', value: '{{cancelledAtLabel}}' },
@@ -812,6 +822,11 @@ const supplierPlatformCancelled = {
       ${B.hero({ heading: 'Do not operate this booking', badgeText: 'Cancelled', badgeColor: 'danger' })}
       ${B.paragraph('{{brandName}} has cancelled this booking.')}
       ${B.detailRows([
+        { label: 'Booking reference', value: '{{bookingNumber}}' },
+        { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Lead traveller', value: '{{leadTravelerName}}' },
+        { label: 'Experience date', value: '{{dateLabel}}' },
+        { label: 'Travellers', value: '{{travelersLabel}}' },
         { label: 'Reason', value: '{{cancellationReason}}', if: '{{cancellationReason}}' },
         { label: 'Customer notified', value: 'Yes' },
         { label: 'Customer refund', value: 'Full refund' },
