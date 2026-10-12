@@ -600,6 +600,140 @@ describe('tour pages', () => {
   });
 });
 
+describe('blog article pages', () => {
+  const article = {
+    id: 'art-1',
+    title: 'The Best Cocoa Farms Near Accra',
+    slug: 'best-cocoa-farms-near-accra',
+    excerpt: 'A day among the cocoa groves, from pod to chocolate.',
+    body: {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'Cocoa farms open their gates to visitors almost year round.' }],
+        },
+        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'When to go' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'The dry season keeps the paths walkable.' }] },
+      ],
+    },
+    featuredImage: 'https://res.cloudinary.com/demo/cocoa.jpg',
+    metaTitle: 'Cocoa Farms Near Accra | Travio Ghana',
+    metaDescription: 'Visit working cocoa farms near Accra.',
+    canonicalUrl: null,
+    category: { id: 'c1', name: 'Destinations', slug: 'destinations' },
+    tags: [{ id: 't1', name: 'Cocoa', slug: 'cocoa' }],
+    author: { id: 'u1', name: 'Ama Mensah', photoURL: null },
+    publishedAt: '2026-06-12T10:00:00.000Z',
+    readTime: 5,
+    locale: 'en',
+    viewCount: 0,
+    createdAt: '2026-06-10T10:00:00.000Z',
+    images: [],
+    relatedTours: [],
+    alternateLocales: [],
+  };
+
+  const detailWith = (payload, statusCode = 200) => ({
+    statusCode,
+    payload: statusCode === 200 ? { status: 'success', data: payload } : { status: 'fail', message: 'Article not found' },
+  });
+
+  it('renders a published article with meta, canonical and Article JSON-LD', async () => {
+    nextResponse = detailWith({ article });
+    const res = await render('/blog/best-cocoa-farms-near-accra', { host: GHANA_HOST });
+
+    expect(res.statusCode).toBe(200);
+    // Blog routes are shared across brands — never under the brand prefix
+    // the catalogue lives at (/api/travioghana/...).
+    expect(requested[0]).toContain('/api/blog/articles/best-cocoa-farms-near-accra');
+    expect(requested[0]).not.toContain('/api/travioghana/blog');
+    expect(res.body).toContain('<link rel="canonical" href="https://www.travioghana.com/blog/best-cocoa-farms-near-accra">');
+    expect(res.body).toContain('<title>Cocoa Farms Near Accra | Travio Ghana</title>');
+    expect(res.body).toContain('content="Visit working cocoa farms near Accra."');
+    expect(res.body).toContain('content="article"');
+    expect(res.body).toContain('"@type":"Article"');
+    expect(res.body).toContain('"url":"https://www.travioghana.com/blog/best-cocoa-farms-near-accra"');
+    expect(res.body).toContain('"datePublished":"2026-06-12T10:00:00.000Z"');
+    expect(res.body).toContain('"author":{"@type":"Person","name":"Ama Mensah"}');
+  });
+
+  it('carries the TipTap body as readable text for crawlers', async () => {
+    nextResponse = detailWith({ article });
+    const res = await render('/blog/best-cocoa-farms-near-accra', { host: GHANA_HOST });
+
+    expect(res.body).toContain('Cocoa farms open their gates to visitors almost year round.');
+    expect(res.body).toContain('<h2>When to go</h2>');
+    expect(res.body).toContain('The dry season keeps the paths walkable.');
+    // Excerpt lead + byline meta line.
+    expect(res.body).toContain('A day among the cocoa groves');
+    expect(res.body).toContain('By Ama Mensah');
+    expect(res.body).toContain('5 min read');
+  });
+
+  it('extracts Portable Text bodies too (the seed/Sanity shape)', async () => {
+    nextResponse = detailWith({
+      article: {
+        ...article,
+        metaTitle: null,
+        body: [
+          {
+            _type: 'block',
+            style: 'normal',
+            markDefs: [],
+            children: [{ _type: 'span', text: 'Portable text flows the same way.', marks: [] }],
+          },
+          { _type: 'block', style: 'h2', markDefs: [], children: [{ _type: 'span', text: 'A heading', marks: [] }] },
+        ],
+      },
+    });
+    const res = await render('/blog/best-cocoa-farms-near-accra', { host: GHANA_HOST });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Portable text flows the same way.');
+    expect(res.body).toContain('<h2>A heading</h2>');
+    // No metaTitle → the raw headline still gets the brand suffix.
+    expect(res.body).toContain('| Travio Ghana</title>');
+  });
+
+  it('links related articles so the feed is crawlable from any post', async () => {
+    nextResponse = detailWith({
+      article,
+      // One payload serves both calls: the detail read and the related list.
+      articles: [
+        { slug: 'kakum-canopy-guide', title: 'A Guide to the Kakum Canopy Walk' },
+        { slug: 'best-cocoa-farms-near-accra', title: 'The Best Cocoa Farms Near Accra' },
+      ],
+    });
+    const res = await render('/blog/best-cocoa-farms-near-accra', { host: GHANA_HOST });
+
+    expect(res.body).toContain('More from the blog');
+    expect(res.body).toContain('https://www.travioghana.com/blog/kakum-canopy-guide');
+    expect(res.body).toContain('>A Guide to the Kakum Canopy Walk</a>');
+    // An article never lists itself in its own related block.
+    expect(res.body).not.toContain('>The Best Cocoa Farms Near Accra</a>');
+  });
+
+  it('answers 404 when the article does not exist', async () => {
+    nextResponse = detailWith(null, 404);
+    const res = await render('/blog/no-such-post', { host: GHANA_HOST });
+
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toContain('Page not found');
+    expect(res.body).toContain('noindex, follow');
+  });
+
+  it('keeps the exact /blog hub on the static copy (dispatch order)', async () => {
+    nextResponse = { statusCode: 200, payload: { status: 'success', data: {} } };
+    const res = await render('/blog', { host: GHANA_HOST });
+
+    expect(res.statusCode).toBe(200);
+    expect(requested.some((url) => url.includes('/api/blog/'))).toBe(false);
+    expect(res.body).toContain('<link rel="canonical" href="https://www.travioghana.com/blog">');
+    expect(res.body).toContain('| Travio Ghana</title>');
+  });
+});
+
 describe('destination listings', () => {
   const listingWith = (tours) => ({ statusCode: 200, payload: { status: 'success', data: { tours } } });
 

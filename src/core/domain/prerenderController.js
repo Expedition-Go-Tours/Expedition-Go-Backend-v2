@@ -791,6 +791,160 @@ async function handleListingsPage(site, place) {
 }
 
 /**
+ * Plain text out of an article body, which arrives in one of three shapes
+ * from the same `Article.body Json` column:
+ *   - TipTap JSON ({ type: 'doc', content: [...] }) — the admin's editor
+ *   - Portable Text ([{ _type: 'block', children: [...] }]) — Sanity import + seeds
+ *   - a plain string (legacy rows)
+ * Returns block-level strings so the crawler copy keeps paragraph shape.
+ */
+function articleBodyBlocks(body) {
+  const nodeText = (node) => {
+    if (node == null) return '';
+    if (typeof node === 'string') return node;
+    if (Array.isArray(node)) return node.map(nodeText).join(' ');
+    if (typeof node !== 'object') return '';
+    let out = typeof node.text === 'string' ? node.text : '';
+    if (Array.isArray(node.content)) out += ` ${node.content.map(nodeText).join(' ')}`;
+    if (Array.isArray(node.children)) out += ` ${node.children.map(nodeText).join(' ')}`;
+    return out;
+  };
+  const blocks = [];
+  const push = (text, heading) => {
+    const clean = String(text || '').replace(/\s+/g, ' ').trim();
+    if (clean) blocks.push({ text: clean, heading: Boolean(heading) });
+  };
+
+  if (typeof body === 'string') {
+    for (const paragraph of body.split(/\n{2,}/)) push(paragraph);
+    return blocks;
+  }
+  if (Array.isArray(body)) {
+    for (const block of body) {
+      if (block && typeof block === 'object') {
+        push(nodeText(block.children || block), /^h[1-6]$/.test(block.style || ''));
+      }
+    }
+    return blocks;
+  }
+  if (body && typeof body === 'object' && Array.isArray(body.content)) {
+    for (const node of body.content) {
+      if (node && typeof node === 'object') push(nodeText(node), node.type === 'heading');
+    }
+  }
+  return blocks;
+}
+
+/**
+ * Crawler copy of a published article (/blog/<slug>).
+ *
+ * The storefront renders this route client-side and handleStaticPage only
+ * knows the exact /blog hub — without this branch every article a crawler
+ * followed (sitemap or hub links) came back 404 and could never be indexed.
+ * A genuine API 404 stays a real 404; transient failures bubble up to the
+ * handler's 503 + Retry-After rather than being indexed as missing.
+ */
+async function handleBlogArticlePage(site, slug) {
+  let body;
+  try {
+    body = await fetchJson(`${apiBase()}/api/blog/articles/${encodeURIComponent(slug)}`);
+  } catch (err) {
+    if (err instanceof HttpError && err.statusCode === 404) return null;
+    throw err;
+  }
+  const article = body && body.data && body.data.article;
+  if (!article || !article.title) return null;
+
+  const canonical = article.canonicalUrl || `${site.url}/blog/${article.slug}`;
+  const description = String(article.metaDescription || article.excerpt || article.title).slice(0, 500);
+  const image = article.featuredImage || site.defaultImage.url;
+  const publishedAt = article.publishedAt || article.createdAt;
+  const authorName = (article.author && article.author.name) || site.name;
+  const tags = Array.isArray(article.tags) ? article.tags.filter((t) => t && t.name) : [];
+  const keywordList = tags.map((t) => t.name);
+
+  // Related articles — internal links so a crawler discovers the rest of the
+  // feed from any one article. Best-effort: a failure never blocks the page.
+  let relatedHtml = '';
+  try {
+    const listData = await fetchJson(`${apiBase()}/api/blog/articles?limit=6`);
+    const others = ((listData && listData.data && listData.data.articles) || [])
+      .filter((a) => a && a.slug && a.slug !== article.slug)
+      .slice(0, 5);
+    if (others.length) {
+      relatedHtml = `<section aria-label="More articles">
+        <h2>More from the blog</h2>
+        <ul>
+          ${others.map((a) => `<li><a href="${site.url}/blog/${escapeHtml(a.slug)}">${escapeHtml(a.title)}</a></li>`).join('\n          ')}
+        </ul>
+      </section>`;
+    }
+  } catch { /* related articles are non-critical */ }
+
+  // Body copy for crawlers: the excerpt plus as much prose as fits, block by
+  // block so it keeps paragraph shape. The full render is the SPA's job —
+  // this copy exists for indexing, not reading.
+  const MAX_BODY_CHARS = 4000;
+  let budget = MAX_BODY_CHARS;
+  const bodyParts = [];
+  for (const block of articleBodyBlocks(article.body)) {
+    if (budget <= 0) break;
+    const text = block.text.length > budget
+      ? `${block.text.slice(0, budget).replace(/\s+\S*$/, '')}…`
+      : block.text;
+    budget -= text.length + 1;
+    bodyParts.push(block.heading ? `<h2>${escapeHtml(text)}</h2>` : `<p>${escapeHtml(text)}</p>`);
+  }
+
+  const metaBits = [`By ${authorName}`];
+  if (publishedAt) {
+    metaBits.push(new Date(publishedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }));
+  }
+  if (article.readTime) metaBits.push(`${article.readTime} min read`);
+
+  const bodyHtml = `
+      ${article.excerpt ? `<p><strong>${escapeHtml(article.excerpt)}</strong></p>` : ''}
+      <p>${escapeHtml(metaBits.join(' · '))}</p>
+      ${bodyParts.join('\n      ')}
+      ${relatedHtml}`;
+
+  return buildHtml(site, {
+    title: article.metaTitle || article.title,
+    // A metaTitle is written complete (brand suffix included); a raw headline
+    // still gets the site name appended like every other static page.
+    appendSiteName: !article.metaTitle,
+    description,
+    keywords: keywordList.join(', ') || undefined,
+    image,
+    url: canonical,
+    canonical,
+    type: 'article',
+    bodyHtml,
+    jsonLd: [
+      {
+        '@context': 'https://schema.org',
+        '@type': 'Article',
+        headline: article.title,
+        description,
+        image,
+        url: canonical,
+        datePublished: publishedAt,
+        dateModified: publishedAt,
+        author: { '@type': 'Person', name: authorName },
+        publisher: { '@type': 'Organization', name: site.name },
+        ...(article.category && article.category.name ? { articleSection: article.category.name } : {}),
+        ...(keywordList.length ? { keywords: keywordList.join(', ') } : {}),
+      },
+      buildBreadcrumbSchema([
+        { name: 'Home', url: `${site.url}/` },
+        { name: 'Blog', url: `${site.url}/blog` },
+        { name: article.title, url: canonical },
+      ]),
+    ],
+  });
+}
+
+/**
  * Customer-facing FAQs shown on the crawler homepage (and emitted as FAQPage
  * structured data). Copy is deliberately brand-neutral and policy-free beyond
  * what every brand guarantees, so one table serves all storefronts.
@@ -1151,6 +1305,12 @@ exports.prerender = async (req, res) => {
           { name: name, url: `${site.url}${path}` },
         ])],
       });
+    } else if (path.startsWith('/blog/')) {
+      // Admin-published article — the SPA route /blog/<slug>. The exact /blog
+      // hub stays in handleStaticPage; anything beneath it is an article, and
+      // without this branch it fell through to a 404 for every published post.
+      const slug = decodeURIComponent(path.replace(/^\/blog\//, '').replace(/\/+$/, ''));
+      html = slug ? await handleBlogArticlePage(site, slug) : null;
     } else {
       html = handleStaticPage(site, path);
     }
