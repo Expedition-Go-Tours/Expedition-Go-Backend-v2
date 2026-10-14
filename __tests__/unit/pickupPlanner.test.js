@@ -202,4 +202,27 @@ describe('updateBookingPickup — picked up', () => {
     expect(enqueueEmail).toHaveBeenCalled();
     expect(enqueueNotification).toHaveBeenCalled();
   });
+
+  it('suppresses pickup-details-updated email for unpaid reserve-now-pay-later bookings', async () => {
+    prisma.booking.findFirst.mockResolvedValue({
+      id: 'b1',
+      customerId: 'c1',
+      paymentTiming: 'later',
+      paymentStatus: 'PENDING',
+      pickup: { place: 'Hotel', time: '08:00' },
+      customer: { id: 'c1', name: 'Ann', email: 'a@b.c' },
+    });
+    const res = mockRes();
+    await controller.updateBookingPickup(
+      mockReq({ params: { id: 'b1' }, body: { pickupTime: '09:30' } }),
+      res,
+      next
+    );
+
+    // In-app notification still fires (supplier still sees the change in dashboard)
+    expect(enqueueNotification).toHaveBeenCalled();
+    // Email is suppressed — pickup update merges into the charge-time confirmation
+    expect(enqueueEmail).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
 });

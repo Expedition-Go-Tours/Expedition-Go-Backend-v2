@@ -95,3 +95,12 @@ describe('generated email templates', () => {
     expect(primary[1]).toBe('{{reviewUrl}}');
   });
 });
+
+describe('pay-later-charged template renders pickup section', () => {
+  it('includes Pickup & meeting section with pickupLocation field', () => {
+    const html = fs.readFileSync(path.join(GENERATED_DIR, 'pay-later-charged.html'), 'utf8');
+    expect(html).toMatch(/Pickup\s*&\s*meeting/);
+    expect(html).toMatch(/pickupIncludedLabel/);
+    expect(html).toMatch(/pickupLocation/);
+  });
+});

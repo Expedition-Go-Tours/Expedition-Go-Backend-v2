@@ -193,6 +193,8 @@ const payLaterCharged = {
       ${B.sectionTitle('Booking details')}
       ${customerBookingDetailsRows()}
       ${B.divider()}
+      ${customerPickupSection()}
+      ${B.divider()}
       ${B.sectionTitle('Payment')}
       ${B.detailRows([
         { label: 'Booking total', value: '{{totalLabel}}' },

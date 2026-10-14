@@ -182,4 +182,18 @@ describe('both pickup endpoints gate the notice on the comparison', () => {
     expect(storefront).toMatch(/require\('\.\/services\/pickupChange'\)/);
     expect(bookingController).toMatch(/require\('\.\.\/services\/pickupChange'\)/);
   });
+
+  it('suppresses supplier-pickup-updated email for unpaid reserve-now-pay-later bookings', () => {
+    // The customer endpoint must check paymentTiming/paymentStatus before
+    // sending supplier-pickup-updated; the in-app notification still fires.
+    expect(storefront).toMatch(/booking\.paymentTiming\s*===\s*'later'\s*&&\s*booking\.paymentStatus\s*!==\s*'SUCCEEDED'/);
+    expect(storefront).toMatch(/if\s*\(\s*!unpaidReservation\s*\)\s*\{[\s\S]{0,200}type:\s*'supplier-pickup-updated'/);
+  });
+
+  it('suppresses pickup-details-updated email for unpaid reserve-now-pay-later bookings', () => {
+    // The supplier endpoint must check paymentTiming/paymentStatus before
+    // sending pickup-details-updated to the customer.
+    expect(bookingController).toMatch(/booking\.paymentTiming\s*===\s*'later'\s*&&\s*booking\.paymentStatus\s*!==\s*'SUCCEEDED'/);
+    expect(bookingController).toMatch(/if\s*\(\s*!unpaidReservation\s*\)\s*\{[\s\S]{0,200}type:\s*'pickup-details-updated'/);
+  });
 });

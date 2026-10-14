@@ -1361,6 +1361,41 @@ describe('expeditionController', () => {
 
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
+
+    it('suppresses supplier-pickup-updated email for unpaid reserve-now-pay-later bookings', async () => {
+      const booking = {
+        id: 'booking-1',
+        customerId: 'customer-1',
+        status: 'CONFIRMED',
+        paymentTiming: 'later',
+        paymentStatus: 'PENDING',
+        travelDate: new Date(Date.now() + 3 * 24 * 3600 * 1000),
+        selectedTime: null,
+        tour: {
+          id: 'tour-1',
+          title: 'Test Tour',
+          bookingAndTickets: { pickupType: 'area', pickupAreas: [{ name: 'Osu', lat: 5.6, lng: -0.2 }] },
+          supplierId: 'supplier-1',
+        },
+      };
+      prisma.booking.findFirst.mockResolvedValue(booking);
+      prisma.booking.update.mockResolvedValue({ ...booking, pickup: { status: 'deferred' } });
+
+      const req = { user: { id: 'customer-1' }, params: { id: 'booking-1' }, body: { pickup: { skipValidation: true } } };
+      const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+      const next = jest.fn();
+
+      await controller.updateMyPickup(req, res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      // In-app notification still fires
+      expect(enqueueNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'supplier-1', type: 'PICKUP_UPDATED' })
+      );
+      // Email is suppressed — pickup update merges into the charge-time confirmation
+      expect(enqueueEmail).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
   });
 });
 

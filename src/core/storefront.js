@@ -3116,12 +3116,19 @@ controller.updateMyPickup = catchAsync(async (req, res, next) => {
       data: { bookingId: booking.id, pickup: true, source: BRAND.eventNamespace },
     }).catch((err) => console.error('[Expedition] enqueueNotification (customer pickup update) failed:', err.message));
 
-    enqueueEmail({
-      type: 'supplier-pickup-updated',
-      bookingId: booking.id,
-      data: { previousPickupLocation },
-    })
-    .catch((err) => console.error('[Expedition] supplier-pickup-updated email failed:', err.message));
+    // Reserve-now-pay-later bookings: suppress pickup-update emails until
+    // payment succeeds. The supplier's charge-time confirmation email
+    // (supplier-pay-later-charged) already renders the latest pickup, so no
+    // information is lost — the update is simply folded into the single email.
+    const unpaidReservation = booking.paymentTiming === 'later' && booking.paymentStatus !== 'SUCCEEDED';
+    if (!unpaidReservation) {
+      enqueueEmail({
+        type: 'supplier-pickup-updated',
+        bookingId: booking.id,
+        data: { previousPickupLocation },
+      })
+      .catch((err) => console.error('[Expedition] supplier-pickup-updated email failed:', err.message));
+    }
   }
 
   logActivity({
