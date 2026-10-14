@@ -196,6 +196,53 @@ async function dispatchDueReminders() {
         continue;
       }
     }
+
+    // Reminders are planned up to 72h ahead, so the booking can change between
+    // planning and firing. Re-check the live state before sending anything:
+    // a cancelled booking has nothing to remind either party about, and an
+    // uncharged reserve-now-pay-later booking must not receive transactional
+    // mail — the charge-time confirmation emails (pay-later-charged /
+    // supplier-pay-later-charged) carry the same booking details once the
+    // card is settled.
+    const gate = await prisma.booking.findUnique({
+      where: { id: reminder.bookingId },
+      select: { status: true, paymentTiming: true, paymentStatus: true, travelDate: true },
+    });
+    if (!gate) {
+      await markReminder(reminder.id, 'SKIPPED', 'Booking no longer exists');
+      continue;
+    }
+    if (gate.status === 'CANCELLED') {
+      await markReminder(reminder.id, 'SKIPPED', 'Booking cancelled');
+      continue;
+    }
+
+    // "Your card will be charged" is wrong once the charge has landed (the
+    // sweep and this reminder both target T-24h — a race either way).
+    if (reminder.type === 'PAYMENT_DUE_24H' && gate.paymentStatus === 'SUCCEEDED') {
+      await markReminder(reminder.id, 'SKIPPED', 'Already charged');
+      continue;
+    }
+
+    const unpaidPayLater = gate.paymentTiming === 'later' && gate.paymentStatus !== 'SUCCEEDED';
+    if (unpaidPayLater && reminder.type !== 'PAYMENT_DUE_24H') {
+      if (reminder.type === 'PICKUP_LOCATION_REQUIRED') {
+        // Re-arm past the charge window (T-20h) so a customer who does pay
+        // still gets the pickup nudge. Bounded to a single re-arm: on the
+        // second pass T-20h is no longer in the future, so the reminder falls
+        // through to SKIPPED below and can never loop.
+        const rearmAt = new Date(gate.travelDate.getTime() - 20 * 60 * 60 * 1000);
+        if (rearmAt > new Date()) {
+          await prisma.bookingReminder.update({
+            where: { id: reminder.id },
+            data: { scheduledFor: rearmAt },
+          });
+          continue;
+        }
+      }
+      await markReminder(reminder.id, 'SKIPPED', 'Pay-later booking not charged yet');
+      continue;
+    }
     try {
       await enqueueEmail(email);
       await markReminder(reminder.id, 'SENT');

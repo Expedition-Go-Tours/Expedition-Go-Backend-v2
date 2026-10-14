@@ -100,6 +100,78 @@ describe('bookingModify supplier notification on apply', () => {
     expect(enqueueNotification).not.toHaveBeenCalled();
     expect(notifyAdmin).toHaveBeenCalledTimes(1);
   });
+
+  it('holds BOTH modification emails for an uncharged reserve-now-pay-later booking', async () => {
+    // Same rule as pickup-update emails: no transactional email until the
+    // card is charged. The customer would otherwise have no signal at all
+    // (their bell is the only in-app channel — the supplier bell fires
+    // unconditionally below), so a BOOKING_MODIFIED notification goes to
+    // BOTH parties instead, and the charge-time confirmation renders the
+    // final booking state.
+    prisma.booking.findUnique.mockResolvedValue({
+      id: 'b1',
+      bookingNumber: 'EXP-3',
+      source: 'EXPEDITION',
+      customerId: 'u1',
+      paymentTiming: 'later',
+      paymentStatus: 'PENDING',
+      tour: { supplierId: 's1', title: 'Sunset Safari' },
+    });
+
+    await notifyModificationApplied('b1', {
+      changes: [{ label: 'Travellers', detail: '1 → 2' }],
+      previousTotal: 100,
+      newTotal: 120,
+      adjustment: 20,
+      previousPayout: 85,
+      newPayout: 102,
+      payoutAdjustment: 17,
+    });
+
+    // No emails before payment.
+    expect(enqueueEmail).not.toHaveBeenCalled();
+
+    // Both parties get the in-app signal instead.
+    const notified = enqueueNotification.mock.calls.map(([job]) => job);
+    expect(notified).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ userId: 'u1', type: 'BOOKING_MODIFIED' }),
+        expect.objectContaining({ userId: 's1', type: 'BOOKING_MODIFIED' }),
+      ])
+    );
+
+    // Ops visibility is unchanged either way.
+    expect(notifyAdmin).toHaveBeenCalledTimes(1);
+  });
+
+  it('emails both parties once the pay-later charge has settled', async () => {
+    prisma.booking.findUnique.mockResolvedValue({
+      id: 'b1',
+      bookingNumber: 'EXP-4',
+      source: 'EXPEDITION',
+      customerId: 'u1',
+      paymentTiming: 'later',
+      paymentStatus: 'SUCCEEDED',
+      tour: { supplierId: 's1', title: 'Sunset Safari' },
+    });
+
+    await notifyModificationApplied('b1', {
+      changes: [{ label: 'Travellers', detail: '1 → 2' }],
+      previousTotal: 100,
+      newTotal: 120,
+      adjustment: 20,
+    });
+
+    expect(enqueueEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'customer-booking-changed', bookingId: 'b1' })
+    );
+    expect(enqueueEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'supplier-booking-changed', bookingId: 'b1' })
+    );
+    // The customer bell is only a substitute channel — no duplicate once
+    // the emails flow.
+    expect(enqueueNotification).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('buildChangeLabels', () => {

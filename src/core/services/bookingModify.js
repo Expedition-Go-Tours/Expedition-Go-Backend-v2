@@ -570,27 +570,51 @@ async function notifyModificationApplied(bookingId, payload) {
     adjustment: data.adjustment,
   };
 
-  enqueueEmail({
-    type: 'customer-booking-changed',
-    bookingId,
-    data: {
-      changes,
-      previousTotal: data.previousTotal,
-      adjustment: data.adjustment,
-      newTotal: data.newTotal,
-    },
-  }).catch((err) => console.error('[BookingModify] customer-booking-changed email failed:', err.message));
+  // Reserve-now-pay-later bookings are not paid yet, so the modification
+  // emails are held until the charge settles — the same rule as pickup-update
+  // emails. In-app notifications still fire so both parties see the change
+  // immediately, and the charge-time confirmation renders the final booking
+  // state, so nothing is lost by folding the change into that email.
+  const unpaidReservation = booking.paymentTiming === 'later' && booking.paymentStatus !== 'SUCCEEDED';
 
-  enqueueEmail({
-    type: 'supplier-booking-changed',
-    bookingId,
-    data: {
-      changes,
-      previousPayout: data.previousPayout,
-      newPayout: data.newPayout,
-      payoutAdjustment: data.payoutAdjustment,
-    },
-  }).catch((err) => console.error('[BookingModify] supplier-booking-changed email failed:', err.message));
+  if (unpaidReservation) {
+    // The customer otherwise has no in-app signal for a modification (the
+    // supplier bell below fires unconditionally), so suppressing the email
+    // would leave them hearing nothing about their own booking changing.
+    enqueueNotification({
+      userId: booking.customerId,
+      type: 'BOOKING_MODIFIED',
+      title: 'Booking updated',
+      message: `Booking #${booking.bookingNumber} was updated — ${summary}`,
+      data: sharedData,
+    }).catch((err) =>
+      console.error('[BookingModify] customer BOOKING_MODIFIED notification failed:', err.message)
+    );
+  }
+
+  if (!unpaidReservation) {
+    enqueueEmail({
+      type: 'customer-booking-changed',
+      bookingId,
+      data: {
+        changes,
+        previousTotal: data.previousTotal,
+        adjustment: data.adjustment,
+        newTotal: data.newTotal,
+      },
+    }).catch((err) => console.error('[BookingModify] customer-booking-changed email failed:', err.message));
+
+    enqueueEmail({
+      type: 'supplier-booking-changed',
+      bookingId,
+      data: {
+        changes,
+        previousPayout: data.previousPayout,
+        newPayout: data.newPayout,
+        payoutAdjustment: data.payoutAdjustment,
+      },
+    }).catch((err) => console.error('[BookingModify] supplier-booking-changed email failed:', err.message));
+  }
 
   if (booking.tour?.supplierId) {
     enqueueNotification({

@@ -137,3 +137,32 @@ describe('the payment path no longer queues the update email', () => {
     expect(source).not.toMatch(/enqueueEmail\(\s*\{\s*type:\s*'supplier-pickup-updated'/);
   });
 });
+
+describe('the reserve-now-pay-later reservation path never queues it either', () => {
+  const storefront = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'src', 'core', 'storefront.js'),
+    'utf-8',
+  );
+  const ghana = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'src', 'brands', 'ghana', 'controller.js'),
+    'utf-8',
+  );
+
+  // Both creation-time sends lived inside the paymentTiming === 'later'
+  // branch — i.e. always before any payment exists. The rule is no
+  // transactional email until the card is charged: the supplier's in-app
+  // BOOKING_CONFIRMED bell announces the reservation, and the charge-time
+  // supplier-pay-later-charged email renders the pickup once it exists.
+  it('storefront: supplier-pickup-updated survives only inside the unpaid gate of updateMyPickup', () => {
+    const sends = [...storefront.matchAll(/type:\s*'supplier-pickup-updated'/g)];
+    expect(sends.length).toBe(1);
+    // The one remaining send is the update endpoint's, gated on payment.
+    expect(storefront).toMatch(
+      /if\s*\(\s*!unpaidReservation\s*\)\s*\{[\s\S]{0,200}type:\s*'supplier-pickup-updated'/
+    );
+  });
+
+  it('ghana controller: no supplier-pickup-updated send remains at all', () => {
+    expect(ghana).not.toMatch(/type:\s*'supplier-pickup-updated'/);
+  });
+});

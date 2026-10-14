@@ -766,7 +766,13 @@ describe('expeditionController', () => {
         expect(pickupEmails()).toHaveLength(0);
       });
 
-      it('still notifies when the customer did give an area', async () => {
+      it('never emails the supplier at reservation time, even with a real area', async () => {
+        // Was: an addressable pickup queued supplier-pickup-updated at
+        // creation. That send always predated any payment (this branch is
+        // reserve-now-pay-later only), violating the no-transactional-email-
+        // until-charged rule. The in-app BOOKING_CONFIRMED bell announces
+        // the reservation; the charge-time supplier-pay-later-charged email
+        // renders the pickup once it exists.
         withPickupZones();
         req.body = {
           ...validBookingBody,
@@ -778,7 +784,7 @@ describe('expeditionController', () => {
         await controller.confirmBooking(req, res, next);
 
         expect(res.status).toHaveBeenCalledWith(201);
-        expect(pickupEmails()).toHaveLength(1);
+        expect(pickupEmails()).toHaveLength(0);
       });
 
       it('still sends the reserve-later confirmation either way', async () => {

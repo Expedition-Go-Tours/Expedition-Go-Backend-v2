@@ -9,7 +9,6 @@ const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy,
 const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('./services/tourHelpers');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('./services/availabilityCore');
 const { resolvePickupSelection, normalizePickupSnapshot } = require('./services/geoUtils');
-const { pickupAddressLabel } = require('./services/emailFormatting');
 const { pickupChange } = require('./services/pickupChange');
 const { validatePassengerMix } = require('./services/passengerMix');
 const { createPaymentIntent, createCheckoutSession, createCustomCheckoutPaymentIntent, createCustomerSession, calculateCommission, getStripe, ensureStripeCustomer } = require('./services/stripeHelpers');
@@ -2021,17 +2020,12 @@ controller.confirmBooking = catchAsync(async (req, res, next) => {
       brandName: BRAND.brandName,
     }).catch((err) => console.error('[Expedition] Reserve-later confirmation email failed:', err.message));
 
-    // Require a resolvable address, not merely a truthy pickup object: a
-    // deferred pickup (customer chose "I don't know yet") still yields a
-    // snapshot whose address fields are empty, and testing truthiness mailed a
-    // "Pickup information has changed" notice with a blank "New location"
-    // row. The supplier's in-app notification above already announces the
-    // booking, and the charge-time confirmation email carries
+    // Reserve-now-pay-later: no supplier-pickup-updated email here. This
+    // branch runs before any payment exists, and the rule is no
+    // transactional email until the card is charged. The supplier's in-app
+    // BOOKING_CONFIRMED notification above already announces the booking,
+    // and the charge-time supplier-pay-later-charged email renders
     // pickupLocation/pickupRequiredLabel once a location exists.
-    if (pickupAddressLabel(pickupSnapshot)) {
-      enqueueEmail({ type: 'supplier-pickup-updated', bookingId: result.id })
-        .catch((err) => console.error('[Expedition] supplier-pickup-updated email failed:', err.message));
-    }
 
     enqueueEvent({
       name: `${BRAND.eventNamespace}.booking_reserved`,
