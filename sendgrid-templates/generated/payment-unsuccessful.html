@@ -7,7 +7,7 @@
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
   <meta name="color-scheme" content="light dark">
   <meta name="supported-color-schemes" content="light dark">
-<title>Action required: We couldn’t process your payment</title>
+<title>Action required: We could not process your payment</title>
 <style>
   body { margin:0; padding:0; width:100% !important; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; background-color:#F8FAFC; }
   table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; border-collapse:collapse; }
@@ -67,16 +67,34 @@
       
   <tr><td class="pad" style="padding:36px 40px 4px 40px;">
     <h1 class="h1 font-main dm-text" style="margin:0 0 12px 0;font-size:28px;font-weight:800;color:#001F3F;line-height:1.25;text-align:center;">Please update your payment method</h1>
-    
+    <p class="body-lg font-main dm-text" style="margin:0 auto;max-width:480px;font-size:15px;color:#334155;line-height:1.6;text-align:center;">Hello {{customerName}},<br>We could not collect <strong>{{paymentAmountLabel}}</strong> for <strong>{{tourTitle}}</strong>.</p>
   </td></tr>
-  <tr><td align="center" style="padding:0px 0 0 0;">
+  <tr><td align="center" style="padding:8px 0 0 0;">
          <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
            <tr><td style="background-color:#FEF2F2;border-radius:20px;padding:6px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:700;color:#B91C1C;line-height:1.2;">Action required</td></tr>
          </table>
        </td></tr>
       
-  <tr><td class="pad" style="padding:16px 40px 0 40px;">
-    <p class="dm-text" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#334155;line-height:1.7;text-align:left;">We could not collect <strong>{{paymentAmountLabel}}</strong> for booking <strong>#{{bookingNumber}}</strong>.</p>
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;overflow:hidden;">
+      
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Experience</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{tourTitle}}</span></td>
+      </tr>
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Date</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{dateLabel}}</span></td>
+      </tr>
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Booking reference</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{bookingNumber}}</span></td>
+      </tr>
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Amount due</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{paymentAmountLabel}}</span></td>
+      </tr>
+    </table>
   </td></tr>
       
   <tr><td class="pad" style="padding:20px 40px 0 40px;">

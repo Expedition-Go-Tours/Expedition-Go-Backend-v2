@@ -208,15 +208,17 @@ const paymentReminder = {
   name: 'Customer · Payment reminder',
   build() {
     return B.shell('Upcoming payment for your booking', `
-      ${B.hero({ heading: 'Your payment is coming up', badgeText: 'Payment reminder', badgeColor: 'warning' })}
-      ${B.paragraph('We will collect <strong>{{paymentAmountLabel}}</strong> on <strong>{{chargeDateLabel}}</strong> for your upcoming experience.')}
+      ${B.hero({ heading: 'Your payment is coming up', badgeText: 'Payment reminder', badgeColor: 'warning', subtitle: 'Hello {{customerName}},<br>We will collect <strong>{{paymentAmountLabel}}</strong> on <strong>{{chargeDateLabel}}</strong> for <strong>{{tourTitle}}</strong>.' })}
       ${B.sectionTitle('Booking summary')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Experience', value: '{{tourTitle}}' },
         { label: 'Experience date', value: '{{experienceDateLabel}}' },
         { label: 'Payment date', value: '{{chargeDateLabel}}' },
         { label: 'Payment method', value: '{{paymentMethodLabel}}', if: '{{paymentMethodLabel}}' },
       ])}
+      {{#if cancelDeadlineLabel}}
+      ${B.callout('Free cancellation until <strong>{{cancelDeadlineLabel}}</strong>. Update your payment method before then to keep your booking.', 'warning')}
+      {{/if}}
       ${B.buttonPrimary('Review payment details', '{{managePaymentUrl}}')}
     `);
   },
@@ -227,10 +229,15 @@ const paymentSuccessful = {
   name: 'Customer · Payment successful',
   build() {
     return B.shell('Payment received', `
-      ${B.hero({ heading: 'Your payment was successful', badgeText: '&#10003;&nbsp;&nbsp;Paid', badgeColor: 'accent' })}
-      ${B.paragraph('We successfully received <strong>{{paymentAmountLabel}}</strong> for your booking.')}
+      ${B.hero({ heading: 'Your payment was successful', badgeText: '&#10003;&nbsp;&nbsp;Paid', badgeColor: 'accent', subtitle: 'Hello {{customerName}},<br>We successfully received <strong>{{paymentAmountLabel}}</strong> for <strong>{{tourTitle}}</strong>.' })}
+      ${B.sectionTitle('Booking details')}
+      ${B.detailCard([
+        { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Date', value: '{{dateLabel}}' },
+        { label: 'Travellers', value: '{{travelersLabel}}' },
+      ])}
       ${B.sectionTitle('Payment details')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Payment reference', value: '{{paymentReference}}', if: '{{paymentReference}}' },
         { label: 'Amount paid', value: '{{paymentAmountLabel}}' },
         { label: 'Outstanding balance', value: '{{outstandingBalanceLabel}}' },
@@ -250,14 +257,11 @@ const payLaterCharged = {
   build() {
     return B.shell('Your reservation is confirmed: payment collected', `
       ${B.hero({ heading: 'Your reservation is now confirmed', badgeText: '&#10003;&nbsp;&nbsp;Paid', badgeColor: 'accent', subtitle: 'Hello {{customerName}},<br>Your reserved experience has been charged and is now fully confirmed.' })}
-      ${B.paragraph('We\u2019ve collected <strong>{{amountChargedLabel}}</strong> from your saved payment method for <strong>{{tourTitle}}</strong> on <strong>{{dateLabel}}</strong>. Your booking is confirmed. See you there!')}
       ${B.sectionTitle('Booking details')}
       ${customerBookingDetailsRows()}
-      ${B.divider()}
       ${customerPickupSection()}
-      ${B.divider()}
       ${B.sectionTitle('Payment')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Booking total', value: '{{totalLabel}}' },
         { label: 'Amount charged', value: '{{amountChargedLabel}}' },
         { label: 'Charged on', value: '{{chargedAtLabel}}' },
@@ -303,9 +307,14 @@ const paymentUnsuccessful = {
   key: 'payment-unsuccessful',
   name: 'Customer · Payment unsuccessful',
   build() {
-    return B.shell('Action required: We couldn\u2019t process your payment', `
-      ${B.hero({ heading: 'Please update your payment method', badgeText: 'Action required', badgeColor: 'danger' })}
-      ${B.paragraph('We could not collect <strong>{{paymentAmountLabel}}</strong> for booking <strong>#{{bookingNumber}}</strong>.')}
+    return B.shell('Action required: We could not process your payment', `
+      ${B.hero({ heading: 'Please update your payment method', badgeText: 'Action required', badgeColor: 'danger', subtitle: 'Hello {{customerName}},<br>We could not collect <strong>{{paymentAmountLabel}}</strong> for <strong>{{tourTitle}}</strong>.' })}
+      ${B.detailCard([
+        { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Date', value: '{{dateLabel}}' },
+        { label: 'Booking reference', value: '{{bookingNumber}}' },
+        { label: 'Amount due', value: '{{paymentAmountLabel}}' },
+      ])}
       ${B.callout('Please update your payment method by <strong>{{deadlineLabel}}</strong> to keep your booking.', 'danger')}
       ${B.paragraph('If payment is not completed before the deadline, the booking may be cancelled automatically.', { muted: true, small: true })}
       ${B.buttonPrimary('Update payment method', '{{managePaymentUrl}}')}
@@ -765,25 +774,21 @@ const supplierPayLaterCharged = {
   build() {
     return B.shell('Reservation payment collected: booking confirmed', `
       ${B.hero({ heading: 'Reservation payment collected', badgeText: '&#10003;&nbsp;&nbsp;Paid', badgeColor: 'accent', subtitle: 'Hello {{supplierName}},<br>The payment for a reserved booking has been collected. This booking is now confirmed and ready to operate.' })}
-      ${B.callout('This was a reserve-now-pay-later booking. The customer\u2019s card has now been charged.', 'success')}
+      ${B.callout('This was a reserve-now-pay-later booking. The customer\'s card has now been charged.', 'success')}
       ${B.sectionTitle('Booking details')}
       ${supplierBookingDetailsRows()}
       {{#if specialRequirements}}
-      ${B.detailRows([
-        { label: 'Special requirements', value: '{{specialRequirements}}' },
-      ])}
+      ${B.paragraph('Special requests: <strong>{{specialRequirements}}</strong>')}
       {{/if}}
-      ${B.divider()}
-      ${B.sectionTitle('Customer details')}
+      ${B.sectionTitle('Lead traveller')}
       ${customerContactRows()}
-      ${B.divider()}
       ${B.sectionTitle('Supplier payout')}
       ${B.summaryRows([
         { label: 'Retail value', value: '{{totalLabel}}' },
         { label: 'Commission', value: '{{commissionLabel}}' },
         { label: 'Supplier payout', value: '{{payoutAmountLabel}}', total: true },
       ])}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Payment collected', value: '{{chargedAtLabel}}' },
         { label: 'Payout status', value: 'Scheduled' },
       ])}
