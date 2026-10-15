@@ -19,7 +19,7 @@ const OUT_DIR = path.join(__dirname, '..', 'sendgrid-templates', 'generated');
 // ────────────────────────────────────────────────────────────────────────────
 
 function customerBookingDetailsRows() {
-  return B.detailRows([
+  return B.detailCard([
     { label: 'Booking reference', value: '{{bookingNumber}}' },
     { label: 'Experience', value: '{{tourTitle}}' },
     { label: 'Date', value: '{{dateLabel}}' },
@@ -35,7 +35,7 @@ function customerBookingDetailsRows() {
 function customerPickupSection() {
   return `
     ${B.sectionTitle('Pickup & meeting')}
-    ${B.detailRows([
+    ${B.detailCard([
       { label: 'Pickup included', value: '{{pickupIncludedLabel}}' },
       { label: 'Pickup location', value: '{{pickupLocation}}', if: '{{pickupLocation}}' },
       { label: 'Pickup time', value: '{{pickupTime}}', if: '{{pickupTime}}' },
@@ -46,12 +46,12 @@ function customerPickupSection() {
     ${B.paragraph('Pickup instructions: <strong>{{pickupInstructions}}</strong>')}
     {{/if}}
     {{#if directionsUrl}}
-    ${B.buttonPrimary('Get directions', '{{directionsUrl}}')}
+    ${B.buttons([{ label: 'Get directions', href: '{{directionsUrl}}', kind: 'secondary' }])}
     {{/if}}`;
 }
 
 function supplierBookingDetailsRows() {
-  return B.detailRows([
+  return B.detailCard([
     { label: 'Booking reference', value: '{{bookingNumber}}' },
     { label: 'Supplier reference', value: '{{supplierReference}}', if: '{{supplierReference}}' },
     { label: 'Experience', value: '{{tourTitle}}' },
@@ -66,15 +66,11 @@ function supplierBookingDetailsRows() {
 }
 
 function customerContactRows() {
-  return B.stackedRows([
-    { label: 'Lead traveller', value: '{{customerName}}' },
-    { label: 'Telephone', value: '{{customerPhone}}', if: '{{customerPhone}}' },
-    { label: 'Email', value: '{{customerEmail}}', if: '{{customerEmail}}' },
-  ]);
+  return B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{customerInitials}}' });
 }
 
 function supplierPayoutRows() {
-  return B.detailRows([
+  return B.detailCard([
     { label: 'Booking reference', value: '{{bookingNumber}}', if: '{{bookingNumber}}' },
     { label: 'Experience', value: '{{tourTitle}}', if: '{{tourTitle}}' },
     { label: 'Supplier payout', value: '{{payoutAmountLabel}}' },
@@ -224,7 +220,7 @@ const paymentSuccessful = {
         { label: 'Payment reference', value: '{{paymentReference}}', if: '{{paymentReference}}' },
         { label: 'Amount paid', value: '{{paymentAmountLabel}}' },
         { label: 'Outstanding balance', value: '{{outstandingBalanceLabel}}' },
-        { label: 'Payment status', value: 'Paid' },
+        { label: 'Payment status', value: '{{paymentStatusLabel}}' },
       ])}
       ${B.buttons([
         { label: 'View receipt', href: '{{bookingUrl}}' },
@@ -238,9 +234,9 @@ const payLaterCharged = {
   key: 'pay-later-charged',
   name: 'Customer · Reservation charged & confirmed',
   build() {
-    return B.shell('Your reservation is confirmed — payment collected', `
+    return B.shell('Your reservation is confirmed: payment collected', `
       ${B.hero({ heading: 'Your reservation is now confirmed', badgeText: '&#10003;&nbsp;&nbsp;Paid', badgeColor: 'accent', subtitle: 'Hello {{customerName}},<br>Your reserved experience has been charged and is now fully confirmed.' })}
-      ${B.paragraph('We\u2019ve collected <strong>{{amountChargedLabel}}</strong> from your saved payment method for <strong>{{tourTitle}}</strong> on <strong>{{dateLabel}}</strong>. Your booking is confirmed — see you there!')}
+      ${B.paragraph('We\u2019ve collected <strong>{{amountChargedLabel}}</strong> from your saved payment method for <strong>{{tourTitle}}</strong> on <strong>{{dateLabel}}</strong>. Your booking is confirmed. See you there!')}
       ${B.sectionTitle('Booking details')}
       ${customerBookingDetailsRows()}
       ${B.divider()}
@@ -252,7 +248,7 @@ const payLaterCharged = {
         { label: 'Amount charged', value: '{{amountChargedLabel}}' },
         { label: 'Charged on', value: '{{chargedAtLabel}}' },
         { label: 'Payment reference', value: '{{paymentReference}}', if: '{{paymentReference}}' },
-        { label: 'Payment status', value: 'Paid' },
+        { label: 'Payment status', value: '{{paymentStatusLabel}}' },
       ])}
       ${B.callout('This payment was the scheduled collection for your reserve-now-pay-later booking.', 'success')}
       ${B.buttons([
@@ -268,8 +264,8 @@ const awaitingConfirmation = {
   key: 'awaiting-confirmation',
   name: 'Customer · Payment received, awaiting confirmation',
   build() {
-    return B.shell('Payment received — awaiting confirmation', `
-      ${B.hero({ heading: 'Payment received', badgeText: 'Paid', badgeColor: 'info', subtitle: 'Hello {{customerName}},<br>Your payment for <strong>{{tourTitle}}</strong> has been received. Your booking is not confirmed yet — the tour provider will confirm it shortly.' })}
+    return B.shell('Payment received: awaiting confirmation', `
+      ${B.hero({ heading: 'Payment received', badgeText: 'Paid', badgeColor: 'info', subtitle: 'Hello {{customerName}},<br>Your payment for <strong>{{tourTitle}}</strong> has been received. Your booking is not confirmed yet. The tour provider will confirm it shortly.' })}
       ${B.paragraph('We\u2019ve received <strong>{{amountPaidLabel}}</strong> for <strong>{{tourTitle}}</strong> on <strong>{{dateLabel}}</strong>. Because this tour is confirmed manually by the provider, your booking will be confirmed once they accept it. You\u2019ll receive a confirmation email when that happens.')}
       ${B.sectionTitle('Booking details')}
       ${customerBookingDetailsRows()}
@@ -280,7 +276,7 @@ const awaitingConfirmation = {
         { label: 'Amount received', value: '{{amountPaidLabel}}' },
         { label: 'Received on', value: '{{paidAtLabel}}' },
         { label: 'Payment reference', value: '{{paymentReference}}', if: '{{paymentReference}}' },
-        { label: 'Payment status', value: 'Paid' },
+        { label: 'Payment status', value: '{{paymentStatusLabel}}' },
       ])}
       ${B.callout('Your booking is awaiting confirmation from the tour provider. We\u2019ll email you as soon as it\u2019s confirmed.', 'info')}
       ${B.buttons([
@@ -522,9 +518,9 @@ const supplierCancelledBooking = {
   name: 'Customer · Supplier cancelled booking',
   build() {
     return B.shell('Important: Your booking has been cancelled', `
-      ${B.hero({ heading: 'We\u2019re sorry\u2014your experience has been cancelled', badgeText: 'Cancelled', badgeColor: 'danger' })}
+      ${B.hero({ heading: "We're sorry, your experience has been cancelled", badgeText: 'Cancelled', badgeColor: 'danger' })}
       {{#if choiceUrl}}
-      ${B.paragraph('You can choose a new date for this experience, or take a full refund \u2014 no questions asked. If we don\u2019t hear from you, a full refund is issued automatically.')}
+      ${B.paragraph('You can choose a new date for this experience, or take a full refund, no questions asked. If we don\u2019t hear from you, a full refund is issued automatically.')}
       {{else}}
       ${B.paragraph('Unfortunately, the supplier can no longer operate your experience. Your refund is on its way back to your original payment method.')}
       {{/if}}
@@ -586,7 +582,7 @@ const supplierCancellationDecision = {
       ${B.paragraph('Your cancellation request was approved. The customer has been notified and their refund is on its way; any applicable cancellation fee will be netted off your next payout.')}
       {{else}}
       ${B.hero({ heading: 'Cancellation request rejected', badgeText: 'Rejected', badgeColor: 'danger' })}
-      ${B.paragraph('Your cancellation request was reviewed and rejected. The booking remains confirmed \u2014 the experience is still expected to run as scheduled.')}
+      ${B.paragraph('Your cancellation request was reviewed and rejected. The booking remains confirmed. The experience is still expected to run as scheduled.')}
       {{/if}}
       ${B.detailRows([
         { label: 'Booking', value: '{{bookingNumber}}' },
@@ -605,7 +601,7 @@ const supplierCancellationFee = {
   build() {
     return B.shell('Cancellation fee applied', `
       ${B.hero({ heading: 'A cancellation fee has been applied to your account', badgeText: 'Fee', badgeColor: 'danger' })}
-      ${B.paragraph('Because this cancellation was for an operational reason within your control, a {{feePctLabel}} cancellation fee (of the booking\u2019s retail price) applies. The customer has been fully refunded \u2014 the fee will be deducted automatically from your next payout.')}
+      ${B.paragraph('Because this cancellation was for an operational reason within your control, a {{feePctLabel}} cancellation fee (of the booking\u2019s retail price) applies. The customer has been fully refunded. The fee will be deducted automatically from your next payout.')}
       ${B.detailRows([
         { label: 'Booking reference', value: '{{bookingNumber}}' },
         { label: 'Experience', value: '{{tourTitle}}' },
@@ -739,9 +735,9 @@ const supplierPayLaterCharged = {
   key: 'supplier-pay-later-charged',
   name: 'Supplier · Reservation charged & confirmed',
   build() {
-    return B.shell('Reservation payment collected — booking confirmed', `
+    return B.shell('Reservation payment collected: booking confirmed', `
       ${B.hero({ heading: 'Reservation payment collected', badgeText: '&#10003;&nbsp;&nbsp;Paid', badgeColor: 'accent', subtitle: 'Hello {{supplierName}},<br>The payment for a reserved booking has been collected. This booking is now confirmed and ready to operate.' })}
-      ${B.callout('This was a reserve-now-pay-later booking — the customer\u2019s card has now been charged.', 'success')}
+      ${B.callout('This was a reserve-now-pay-later booking. The customer\u2019s card has now been charged.', 'success')}
       ${B.sectionTitle('Booking details')}
       ${supplierBookingDetailsRows()}
       {{#if specialRequirements}}
@@ -811,7 +807,7 @@ const supplierPickupUpdated = {
   key: 'supplier-pickup-updated',
   name: 'Supplier · Customer pickup updated',
   build() {
-    return B.shell('Customer pickup location updated — {{customerName}} (Ref: {{bookingNumber}})', `
+    return B.shell('Customer pickup location updated (Ref: {{bookingNumber}})', `
       ${B.hero({ heading: 'Pickup information has changed', badgeText: 'Updated', badgeColor: 'info' })}
     ${B.detailRows([
       { label: 'Booking reference', value: '{{bookingNumber}}' },
@@ -881,7 +877,7 @@ const supplierCustomerCancelledFree = {
   key: 'supplier-customer-cancelled-free',
   name: 'Supplier · Customer cancelled (free period)',
   build() {
-    return B.shell('Booking cancelled — do not operate', `
+    return B.shell('Booking cancelled: do not operate', `
       ${B.hero({ heading: 'This booking has been cancelled', badgeText: 'Cancelled', badgeColor: 'danger' })}
       ${B.callout('DO NOT OPERATE THIS BOOKING', 'danger')}
       ${B.detailRows([
@@ -1148,12 +1144,12 @@ const teamInvite = {
       roleAccessBlock(),
       B.buttonPrimary('Accept invitation', '{{inviteUrl}}', { color: '{{accentColor}}' }),
       B.paragraph(
-        'This secure link only works for <strong>{{inviteeEmail}}</strong> and expires in {{expiresInHours}} hours. No password needed — sign in with that address and you are in.',
+        'This secure link only works for <strong>{{inviteeEmail}}</strong> and expires in {{expiresInHours}} hours. No password needed. Sign in with that address and you are in.',
         { center: true, muted: true, small: true },
       ),
       fallbackLinkBlock(),
       B.callout(
-        "You're receiving this because {{inviterName}} added you to {{supplierName}}. If you weren't expecting this invitation, you can safely ignore this email — nothing changes on your account until you accept.",
+        "You're receiving this because {{inviterName}} added you to {{supplierName}}. If you weren't expecting this invitation, you can safely ignore this email. Nothing changes on your account until you accept.",
         'info',
       ),
     ].join('\n');
@@ -1176,7 +1172,7 @@ const teamInviteRevoked = {
         '{{inviterName}} cancelled the invitation to join {{supplierName}} as <strong>{{rolesText}}</strong>. The link in the original email no longer works, so no action is needed from you.',
       ),
       B.callout(
-        'Still need access? Ask {{inviterName}} to send a new invitation — it only takes a moment.',
+        'Still need access? Ask {{inviterName}} to send a new invitation. It only takes a moment.',
         'warning',
       ),
       B.paragraph(

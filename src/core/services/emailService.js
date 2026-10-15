@@ -545,7 +545,7 @@ async function buildBookingBase(booking, opts = {}) {
     customerAvatarUrl: profileAvatarUrl(customer.photoURL),
     customerInitials: initialsOf(customer.name),
     // Lead traveler (the person going on the trip) — for templates that want it
-    leadTravelerName: leadName || customer.name || '',
+    leadTravelerName: leadName || customer.name || 'Guest',
     leadTravelerEmail: leadEmail || customer.email || '',
     leadTravelerPhone: leadPhone || fmt.travelerPhone(booking.travelers) || customer.phone || '',
     supplierName: supplier.name || '',
