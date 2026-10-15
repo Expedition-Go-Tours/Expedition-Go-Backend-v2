@@ -116,6 +116,11 @@ function run() {
     .finally(async () => {
       await closeAll().catch(() => {});
       await prisma.$disconnect();
+      // BullMQ/redis clients keep the event loop alive after the work is done,
+      // which left earlier one-off scripts (this family included) hanging for
+      // days. The emails are already persisted in Redis and the Discord POST
+      // has resolved by the time main() returns, so exit explicitly.
+      process.exit(process.exitCode || 0);
     });
 }
 
