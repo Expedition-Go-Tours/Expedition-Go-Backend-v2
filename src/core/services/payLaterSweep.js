@@ -60,8 +60,11 @@ async function settleBooking(booking, intent) {
     data: { chargeRetries: 0, nextRetryAt: null, requiresPaymentActionAt: null },
   }).catch(() => {});
 
-  // handlePaymentSucceeded already enqueues the pay-later-charged emails
-  // (customer + supplier), so no separate payment-successful email here.
+  // handlePaymentSucceeded runs the pay-later-charged emails (customer +
+  // supplier) and the #sales booking embed itself when it is the call that
+  // claims the booking (standalone settle, no tx), so no separate
+  // payment-successful email here. The webhook path runs them too — but only
+  // from whichever side wins the claim, so nothing double-sends.
 
   enqueueNotification({
     userId: booking.customerId,
@@ -340,7 +343,6 @@ async function finalizeBooking(booking, reason) {
  * Returns a bucket label for the sweep summary.
  */
 async function chargeBooking(booking) {
-  const prisma = require('./prismaClient');
   const now = new Date();
 
   // Charge-after-event guard (defense-in-depth; the sweep query already only

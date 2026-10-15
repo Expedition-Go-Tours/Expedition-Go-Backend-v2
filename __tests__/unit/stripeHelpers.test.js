@@ -30,6 +30,12 @@ jest.mock('../../src/core/services/redisClient', () => ({
 }));
 jest.mock('../../src/core/services/emailService', () => ({}));
 jest.mock('../../src/core/services/getConfig', () => jest.fn((key, defaultValue) => Promise.resolve(defaultValue)));
+jest.mock('../../src/core/services/discordNotifier', () => ({
+  notifyDiscord: jest.fn(() => Promise.resolve()),
+  sendViaBot: jest.fn(() => Promise.resolve()),
+  updateWebhookUrl: jest.fn(() => Promise.resolve()),
+  WEBHOOKS: {},
+}));
 
 const mockConstructEvent = jest.fn();
 let mockStripeInstance;
@@ -64,6 +70,7 @@ const {
 } = require('../../src/core/services/stripeHelpers');
 const redis = require('../../src/core/services/redisClient');
 const getConfig = require('../../src/core/services/getConfig');
+const { notifyDiscord } = require('../../src/core/services/discordNotifier');
 
 const mockBooking = {
   id: 'booking-1',
@@ -533,6 +540,110 @@ describe('handlePaymentSucceeded manual confirmation', () => {
     );
     expect(confirmCall).toBeTruthy();
     expect(result.bookings[0].status).toBe('CONFIRMED');
+  });
+});
+
+describe('handlePaymentSucceeded direct settlement notifications (pay-later race)', () => {
+  function directClient() {
+    return {
+      booking: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findMany: jest.fn().mockResolvedValue([{ ...mockBooking, paymentTiming: 'later' }]),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      notification: { create: jest.fn().mockResolvedValue({}) },
+      supplierProfile: { update: jest.fn().mockResolvedValue({}) },
+      tour: { update: jest.fn().mockResolvedValue({}) },
+      specialOffer: {
+        findUnique: jest.fn().mockResolvedValue({ capacityType: 'UNLIMITED', maxSpots: null, spotsSold: 0 }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      $executeRaw: jest.fn().mockResolvedValue(1),
+    };
+  }
+
+  const chargedCalls = () =>
+    enqueueEmail.mock.calls.filter((c) => c[0] && c[0].type === 'pay-later-charged');
+  const supplierChargedCalls = () =>
+    enqueueEmail.mock.calls.filter((c) => c[0] && c[0].type === 'supplier-pay-later-charged');
+
+  beforeEach(() => {
+    enqueueEmail.mockClear();
+    enqueueEvent.mockClear();
+    enqueueNotification.mockClear();
+    notifyAdmin.mockClear();
+    notifyDiscord.mockClear();
+  });
+
+  it('runs the charged emails, #sales embed and booking.completed on a direct settle', async () => {
+    const client = directClient();
+    prisma.$transaction.mockImplementation(async (cb) => cb(client));
+
+    await handlePaymentSucceeded({ id: 'pi_direct', metadata: { bookingIds: 'booking-1' } });
+
+    expect(enqueueEmail).toHaveBeenCalledWith({ type: 'pay-later-charged', bookingId: 'booking-1' });
+    expect(enqueueEmail).toHaveBeenCalledWith({ type: 'supplier-pay-later-charged', bookingId: 'booking-1' });
+    expect(notifyDiscord).toHaveBeenCalledWith('sales', expect.any(String), expect.any(Object));
+    expect(notifyAdmin).toHaveBeenCalledWith(expect.objectContaining({ type: 'BOOKING_CONFIRMED' }));
+    expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'booking.completed' }));
+  });
+
+  it('does not notify when a transaction client is supplied (the webhook owns that step)', async () => {
+    const client = directClient();
+
+    await handlePaymentSucceeded({ id: 'pi_web', metadata: { bookingIds: 'booking-1' } }, client);
+
+    expect(enqueueEmail).not.toHaveBeenCalled();
+    expect(notifyDiscord).not.toHaveBeenCalled();
+    expect(enqueueEvent).not.toHaveBeenCalled();
+  });
+
+  it('notifies nobody when it claims no rows (already settled by another path)', async () => {
+    const client = directClient();
+    client.booking.updateMany.mockResolvedValue({ count: 0 });
+    client.booking.findMany.mockResolvedValue([]);
+    prisma.$transaction.mockImplementation(async (cb) => cb(client));
+
+    const result = await handlePaymentSucceeded({ id: 'pi_none', metadata: { bookingIds: 'booking-1' } });
+
+    expect(result.bookings).toHaveLength(0);
+    expect(enqueueEmail).not.toHaveBeenCalled();
+    expect(notifyDiscord).not.toHaveBeenCalled();
+  });
+
+  it('sends each charged email exactly once when a late webhook matches 0 rows', async () => {
+    // 1) The sweep settles first and claims the row — notifications fire once.
+    const client = directClient();
+    prisma.$transaction.mockImplementation(async (cb) => cb(client));
+    await handlePaymentSucceeded({ id: 'pi_race', metadata: { bookingIds: 'booking-1' } });
+
+    expect(chargedCalls()).toHaveLength(1);
+    expect(supplierChargedCalls()).toHaveLength(1);
+
+    // 2) Stripe's payment_intent.succeeded webhook lands late and matches
+    //    nothing (the row is already SUCCEEDED), so it must not re-send.
+    const lateTx = {
+      stripeEvent: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockResolvedValue({}),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      booking: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      checkoutDraft: { findUnique: jest.fn().mockResolvedValue(null) },
+    };
+    prisma.$transaction.mockImplementation(async (cb) => cb(lateTx));
+    await processStripeWebhook({
+      id: 'evt_race',
+      type: 'payment_intent.succeeded',
+      data: { object: { id: 'pi_race', metadata: { bookingIds: 'booking-1' } } },
+    });
+
+    expect(chargedCalls()).toHaveLength(1);
+    expect(supplierChargedCalls()).toHaveLength(1);
+    expect(notifyDiscord).toHaveBeenCalledTimes(1);
   });
 });
 

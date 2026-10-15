@@ -627,6 +627,101 @@ async function isLatestRefundBookingModify(paymentIntentId) {
 }
 
 /**
+ * Post-commit side effects for bookings claimed by a successful payment.
+ *
+ * EXACTLY-ONCE GUARANTEE: the `booking.updateMany` in handlePaymentSucceeded
+ * that flips PENDING/PROCESSING → SUCCEEDED is the *claim*; only the caller
+ * that claimed the row(s) runs these notifications. That means a settling
+ * Stripe webhook and a direct settle that race each other (pay-later sweep,
+ * admin "charge now", booking cleanup) can never both send the emails or the
+ * Discord embed — the loser sees `count === 0` and notifies nobody.
+ *
+ * Before this helper existed the notifications lived only inside
+ * processStripeWebhook's post-transaction block, so a pay-later sweep that
+ * confirmed the PaymentIntent itself (winning the race) left the customer and
+ * supplier without their "reservation charged" emails and #sales without the
+ * booking embed.
+ *
+ * @param {Array} bookings settled bookings (customer + tour.supplier included)
+ * @param {{ paymentIntentId?: string, source?: string }} [opts]
+ */
+function notifyBookingsSettled(bookings, { paymentIntentId, source = 'system' } = {}) {
+  for (const booking of bookings) {
+    const isExpedition = booking.source === 'EXPEDITION';
+    const chargedReservation = booking.paymentTiming === 'later';
+    // Manual-confirmation tour: customer gets "payment received — awaiting
+    // confirmation" instead of a confirmation email.
+    const manualHold = (parseBlob(booking.tour?.bookingAndTickets) || {}).instantConfirmation === false;
+
+    // A reserve-now-pay-later booking being charged gets a distinct "your
+    // reservation was charged" email for the customer and supplier instead of
+    // the pay-now "new confirmed booking" confirmation.
+    enqueueEmail(manualHold
+      ? { type: 'awaiting-confirmation', bookingId: booking.id }
+      : chargedReservation
+        ? { type: 'pay-later-charged', bookingId: booking.id }
+        : { type: 'booking-confirmed', bookingId: booking.id })
+      .catch((err) => console.error(`[Email] ${manualHold ? 'Awaiting confirmation' : chargedReservation ? 'Reservation charge' : 'Booking confirmation'} failed:`, err.message));
+    enqueueEmail(chargedReservation
+      ? { type: 'supplier-pay-later-charged', bookingId: booking.id }
+      : { type: 'supplier-new-booking', bookingId: booking.id })
+      .catch((err) => console.error(`[Email] ${chargedReservation ? 'Supplier reservation charge' : 'Supplier notification'} failed:`, err.message));
+
+    // Deliberately no "supplier-pickup-updated" here. The two emails queued
+    // above already render pickupLocation and pickupRequiredLabel, and for a
+    // deferred pickup — the customer chose "I don't know yet", so every
+    // address field is empty — pickupLocation resolves to ''. Sending this on
+    // payment produced a "Pickup information has changed" notice whose
+    // "New location" row was blank, on every successful payment. A genuine
+    // edit is reported by the pickup-update endpoint instead.
+
+    // Discord: new confirmed booking (fire-and-forget, never affects booking state)
+    const { salesBookingConfirmed } = require('./channelEmbeds');
+    const bookingEmbed = salesBookingConfirmed(booking);
+    notifyDiscord('sales', bookingEmbed.content, bookingEmbed.opts);
+
+    if (isExpedition) {
+      notifyAdmin({
+        type: 'BOOKING_CONFIRMED',
+        title: 'Expedition Booking Confirmed',
+        message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.grossAmount).toFixed(2)} for "${booking.tour.title}" has been confirmed`,
+        data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.grossAmount, source: 'expedition' },
+      }).catch((err) => console.error('[AdminNotification] Expedition notification failed:', err.message));
+    } else {
+      // Ghana (non-Expedition) booking paid: report the booking itself, not a
+      // payout. A per-booking "New Payout Pending — awaiting approval" fired
+      // the instant a customer paid, before any payout request existed; admins
+      // read it as a booking notification misfiled under payouts. The truthful
+      // "needs approval" alert comes from payoutRuns when a real payout
+      // request is formed from eligible bookings.
+      notifyAdmin({
+        type: 'BOOKING_CONFIRMED',
+        title: 'Booking Confirmed',
+        message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.grossAmount).toFixed(2)} for "${booking.tour.title}" has been confirmed. Supplier payout: $${parseFloat(booking.supplierPayout).toFixed(2)}.`,
+        data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.grossAmount, supplierPayout: booking.supplierPayout, supplierId: booking.tour?.supplierId },
+      }).catch((err) => console.error('[AdminNotification] Booking notification failed:', err.message));
+    }
+
+    enqueueEvent({
+      name: isExpedition ? 'expedition.booking_completed' : 'booking.completed',
+      userId: booking.customerId,
+      resource: 'Booking',
+      resourceId: booking.id,
+      properties: {
+        tourId: booking.tourId,
+        total: parseFloat(booking.grossAmount),
+        currency: booking.currency,
+        supplierPayout: parseFloat(booking.supplierPayout),
+        commissionAmount: parseFloat(booking.platformCommission),
+        supplierId: booking.tour?.supplierId,
+        paymentIntentId: paymentIntentId || booking.stripePaymentIntentId,
+      },
+      source: isExpedition ? 'expedition' : source,
+    });
+  }
+}
+
+/**
  * Process Stripe webhook events
  *
  * Idempotency is guaranteed by wrapping the entire flow in a single
@@ -1032,79 +1127,13 @@ async function processStripeWebhook(event) {
   // These are fire-and-forget; failures are caught and logged but do
   // not affect the booking state (which is already committed).
 
-  for (const booking of bookings) {
-    const isExpedition = booking.source === 'EXPEDITION';
-    const chargedReservation = booking.paymentTiming === 'later';
-    // Manual-confirmation tour: customer gets "payment received — awaiting
-    // confirmation" instead of a confirmation email.
-    const manualHold = (parseBlob(booking.tour?.bookingAndTickets) || {}).instantConfirmation === false;
-
-    // A reserve-now-pay-later booking being charged gets a distinct "your
-    // reservation was charged" email for the customer and supplier instead of
-    // the pay-now "new confirmed booking" confirmation.
-    enqueueEmail(manualHold
-      ? { type: 'awaiting-confirmation', bookingId: booking.id }
-      : chargedReservation
-        ? { type: 'pay-later-charged', bookingId: booking.id }
-        : { type: 'booking-confirmed', bookingId: booking.id })
-      .catch((err) => console.error(`[Email] ${manualHold ? 'Awaiting confirmation' : chargedReservation ? 'Reservation charge' : 'Booking confirmation'} failed:`, err.message));
-    enqueueEmail(chargedReservation
-      ? { type: 'supplier-pay-later-charged', bookingId: booking.id }
-      : { type: 'supplier-new-booking', bookingId: booking.id })
-      .catch((err) => console.error(`[Email] ${chargedReservation ? 'Supplier reservation charge' : 'Supplier notification'} failed:`, err.message));
-
-    // Deliberately no "supplier-pickup-updated" here. The two emails queued
-    // above already render pickupLocation and pickupRequiredLabel, and for a
-    // deferred pickup — the customer chose "I don't know yet", so every
-    // address field is empty — pickupLocation resolves to ''. Sending this on
-    // payment produced a "Pickup information has changed" notice whose
-    // "New location" row was blank, on every successful payment. A genuine
-    // edit is reported by the pickup-update endpoint instead.
-
-    // Discord: new confirmed booking (fire-and-forget, never affects booking state)
-    const { salesBookingConfirmed } = require('./channelEmbeds');
-    const bookingEmbed = salesBookingConfirmed(booking);
-    notifyDiscord('sales', bookingEmbed.content, bookingEmbed.opts);
-
-    if (isExpedition) {
-      notifyAdmin({
-        type: 'BOOKING_CONFIRMED',
-        title: 'Expedition Booking Confirmed',
-        message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.grossAmount).toFixed(2)} for "${booking.tour.title}" has been confirmed`,
-        data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.grossAmount, source: 'expedition' },
-      }).catch((err) => console.error('[AdminNotification] Expedition notification failed:', err.message));
-    } else {
-      // Ghana (non-Expedition) booking paid: report the booking itself, not a
-      // payout. A per-booking "New Payout Pending — awaiting approval" fired
-      // the instant a customer paid, before any payout request existed; admins
-      // read it as a booking notification misfiled under payouts. The truthful
-      // "needs approval" alert comes from payoutRuns when a real payout
-      // request is formed from eligible bookings.
-      notifyAdmin({
-        type: 'BOOKING_CONFIRMED',
-        title: 'Booking Confirmed',
-        message: `Booking #${booking.bookingNumber} — $${parseFloat(booking.grossAmount).toFixed(2)} for "${booking.tour.title}" has been confirmed. Supplier payout: $${parseFloat(booking.supplierPayout).toFixed(2)}.`,
-        data: { bookingId: booking.id, tourTitle: booking.tour?.title, amount: booking.grossAmount, supplierPayout: booking.supplierPayout, supplierId: booking.tour?.supplierId },
-      }).catch((err) => console.error('[AdminNotification] Booking notification failed:', err.message));
-    }
-
-    enqueueEvent({
-      name: isExpedition ? 'expedition.booking_completed' : 'booking.completed',
-      userId: booking.customerId,
-      resource: 'Booking',
-      resourceId: booking.id,
-      properties: {
-        tourId: booking.tourId,
-        total: parseFloat(booking.grossAmount),
-        currency: booking.currency,
-        supplierPayout: parseFloat(booking.supplierPayout),
-        commissionAmount: parseFloat(booking.platformCommission),
-        supplierId: booking.tour?.supplierId,
-        paymentIntentId: reconciledPaymentIntentId || event.data.object?.id,
-      },
-      source: isExpedition ? 'expedition' : 'webhook',
-    });
-  }
+  // Settlement notifications for the bookings this webhook claimed. When a
+  // direct settle (sweep / admin / cleanup) won the race, `bookings` is empty
+  // here — that path runs the same helper from handlePaymentSucceeded.
+  notifyBookingsSettled(bookings, {
+    paymentIntentId: reconciledPaymentIntentId || event.data.object?.id,
+    source: 'webhook',
+  });
 
   // ── Oversold offer capacity: refund immediately ─────────────────────
   // The booking was cancelled inside the transaction; money must go back
@@ -1461,6 +1490,15 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
     await prisma.$transaction(dbWork);
   }
 
+  // Standalone settle (pay-later sweep, admin "charge now", booking cleanup):
+  // there is no outer webhook to run the post-commit notifications, so run
+  // them here for the bookings this call claimed. When `tx` is provided the
+  // caller (processStripeWebhook) owns that step after ITS transaction
+  // commits, so we must not fire twice.
+  if (!tx && bookings && bookings.length > 0) {
+    notifyBookingsSettled(bookings, { paymentIntentId: paymentIntent.id, source: 'system' });
+  }
+
   return { bookings: bookings || [], oversold: oversoldBookings };
 }
 
@@ -1543,5 +1581,6 @@ module.exports = {
   processStripeWebhook,
   handlePaymentSucceeded,
   handlePaymentFailed,
+  notifyBookingsSettled,
   verifyWebhookSignature,
 };
