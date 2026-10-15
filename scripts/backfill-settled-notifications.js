@@ -40,12 +40,22 @@ const BOOKING_INCLUDE = {
 };
 
 function parseArgs(argv) {
-  const sinceIdx = argv.indexOf('--since');
-  const since = sinceIdx !== -1 ? argv[sinceIdx + 1] : null;
-  if (sinceIdx !== -1 && !since) {
-    throw new Error('--since requires an ISO date, e.g. --since 2026-10-01');
+  const numbers = [];
+  let since = null;
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--since') {
+      since = argv[i + 1];
+      if (!since) {
+        throw new Error('--since requires an ISO date, e.g. --since 2026-10-01');
+      }
+      i += 1;
+    } else if (arg.startsWith('--')) {
+      throw new Error(`Unknown option: ${arg}`);
+    } else {
+      numbers.push(arg);
+    }
   }
-  const numbers = argv.filter((arg, i) => !arg.startsWith('--') && i !== sinceIdx + 1);
   return { since, numbers };
 }
 
@@ -97,12 +107,20 @@ async function main() {
   await new Promise((resolve) => setTimeout(resolve, 2000));
 }
 
-main()
-  .catch((err) => {
-    console.error('[backfill-settled-notifications] Failed:', err);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await closeAll().catch(() => {});
-    await prisma.$disconnect();
-  });
+function run() {
+  return main()
+    .catch((err) => {
+      console.error('[backfill-settled-notifications] Failed:', err);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await closeAll().catch(() => {});
+      await prisma.$disconnect();
+    });
+}
+
+if (require.main === module) {
+  run();
+}
+
+module.exports = { parseArgs };
