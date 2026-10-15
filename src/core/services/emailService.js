@@ -372,7 +372,7 @@ async function sendNotificationRecipientVerificationEmail({ to, supplierName, ve
 // Booking context resolution + shared data assembly
 // ---------------------------------------------------------------------------
 const BOOKING_CONTEXT_INCLUDE = {
-  customer: { select: { id: true, name: true, email: true, phone: true } },
+  customer: { select: { id: true, name: true, email: true, phone: true, photoURL: true } },
   tour: {
     select: {
       id: true,
@@ -454,6 +454,21 @@ function resolveEmailBrand({ brandKey, booking, supplier, user, conversation } =
 }
 
 /**
+ * Customer profile picture for contact-card avatars.
+ *
+ * Google OAuth sign-in stores the avatar in `User.photoURL` as a size-capped
+ * googleusercontent URL (`…=s96-c`). The contact card renders at 46px, so ask
+ * Google for a larger square to keep it sharp on retina mail clients. Anything
+ * not hosted on googleusercontent (self-hosted avatars) passes through.
+ */
+function profileAvatarUrl(url) {
+  if (typeof url !== 'string' || !url.trim()) return '';
+  const u = url.trim();
+  if (!u.includes('googleusercontent.com')) return u;
+  return u.replace(/=s\d+(?:-c)?(?=$|[?&])/, '=s192-c');
+}
+
+/**
  * Shared booking data used by every booking-scoped template.
  * Callers can override any field afterwards.
  */
@@ -495,6 +510,10 @@ async function buildBookingBase(booking, opts = {}) {
     customerEmail: customer.email || '',
     customerPhone: fmt.travelerPhone(booking.travelers) || customer.phone || '',
     customerLocation: fmt.travelerLocation(booking.travelers) || customer.location || '',
+    // Contact-card avatar: the customer's Google profile photo when they
+    // signed up with Google, else an initials circle.
+    customerAvatarUrl: profileAvatarUrl(customer.photoURL),
+    customerInitials: initialsOf(customer.name),
     // Lead traveler (the person going on the trip) — for templates that want it
     leadTravelerName: leadName || customer.name || '',
     leadTravelerEmail: leadEmail || customer.email || '',

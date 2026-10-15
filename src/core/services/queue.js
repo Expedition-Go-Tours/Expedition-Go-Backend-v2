@@ -415,7 +415,7 @@ async function enqueueEvent(eventData) {
  * re-fetch the same relations per send.
  */
 const EMAIL_BOOKING_INCLUDE = {
-  customer: { select: { id: true, name: true, email: true, phone: true } },
+  customer: { select: { id: true, name: true, email: true, phone: true, photoURL: true } },
   tour: {
     select: {
       id: true,

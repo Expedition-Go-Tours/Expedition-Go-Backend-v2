@@ -116,7 +116,7 @@ function shell(title, bodyHtml) {
           </tr>
           <!-- Card -->
           <tr>
-            <td class="dm-card" style="background-color:${COLORS.card};border:1px solid ${COLORS.border};border-radius:16px;padding:0;">
+            <td class="dm-card" style="background-color:${COLORS.card};border:1px solid ${COLORS.border};border-radius:16px;padding:0;overflow:hidden;">
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                 ${bodyHtml}
               </table>
@@ -484,6 +484,296 @@ function contextRow(titleVar, bookingVar) {
   {{/if}}`;
 }
 
+/**
+ * Full-bleed media header — tour photo behind a dark scrim with a status
+ * badge, heading and subtitle sitting bottom-left over it.
+ *
+ * Renders as a real photo in every modern client (Apple Mail, Gmail, mobile)
+ * via `background-image` + a linear-gradient scrim. Outlook's Word engine
+ * ignores gradients and `background-image`, so the MSO/VML branch below paints
+ * a solid navy panel instead — the text stays white-on-navy and readable
+ * rather than white-on-white.
+ *
+ * @param {object} o
+ * @param {string} o.imageUrl  photo URL (Handlebars ok)
+ * @param {string} [o.badgeText]  small uppercase pill over the heading
+ * @param {string} [o.badgeColor] accent | warning | info | success
+ * @param {string} o.heading
+ * @param {string} [o.subtitle]
+ * @param {number} [o.height]  desktop hero height in px (default 248)
+ */
+function mediaHeader({ imageUrl, badgeText, badgeColor = 'warning', heading, subtitle, height = 248 }) {
+  const badgeTones = {
+    accent: { bg: COLORS.accent, text: '#FFFFFF' },
+    warning: { bg: '#F59E0B', text: '#3B2500' },
+    info: { bg: COLORS.info, text: '#FFFFFF' },
+    success: { bg: COLORS.accent, text: '#FFFFFF' },
+    danger: { bg: COLORS.danger, text: '#FFFFFF' },
+  };
+  const bt = badgeTones[badgeColor] || badgeTones.warning;
+  const badge = badgeText
+    ? `<div style="margin:0 0 14px 0;"><span style="display:inline-block;background-color:${bt.bg};color:${bt.text};font-family:${FONT};font-size:11px;font-weight:800;letter-spacing:0.9px;text-transform:uppercase;border-radius:999px;padding:7px 14px;line-height:1;">${badgeText}</span></div>`
+    : '';
+
+  const inner = `
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:separate;border-spacing:0;background-color:${COLORS.navy};background-image:linear-gradient(180deg, rgba(0,31,63,0.08) 0%, rgba(0,31,63,0.55) 55%, rgba(0,31,63,0.9) 100%), url('${imageUrl}');background-size:cover;background-position:center;background-repeat:no-repeat;border-radius:16px 16px 0 0;overflow:hidden;">
+      <tr>
+        <td valign="bottom" class="pad" style="padding:120px 34px 28px 34px;">
+          ${badge}
+          <div style="font-family:${FONT};font-size:26px;font-weight:800;color:#ffffff;line-height:1.24;text-shadow:0 1px 3px rgba(0,0,0,0.45);">${heading}</div>
+          ${subtitle ? `<div style="font-family:${FONT};font-size:14px;font-weight:500;color:#E8EEF5;line-height:1.5;padding-top:8px;text-shadow:0 1px 3px rgba(0,0,0,0.45);">${subtitle}</div>` : ''}
+        </td>
+      </tr>
+    </table>`;
+
+  return `
+  <tr><td style="padding:0;">
+    <!--[if gte mso 9]>
+    <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:640px;height:${height}px;">
+      <v:fill color="#001F3F" />
+      <v:textbox inset="0,0,0,0">
+    <![endif]-->
+    <div>${inner}</div>
+    <!--[if gte mso 9]>
+      </v:textbox>
+    </v:rect>
+    <![endif]-->
+  </td></tr>`;
+}
+
+/**
+ * Reference bar — "REF <code>" chip on the left, an optional meta string
+ * (e.g. "Reserved 9 Oct 2026") right-aligned.
+ */
+function referenceBar({ reference, right }) {
+  return `
+  <tr><td class="pad" style="padding:20px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+      <tr>
+        <td valign="middle" style="font-family:${FONT};">
+          <span style="display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:1.3px;text-transform:uppercase;color:${COLORS.faint};vertical-align:middle;">Ref</span>
+          <span style="display:inline-block;margin-left:8px;font-family:'SFMono-Regular',Menlo,Consolas,'Courier New',monospace;font-size:15px;font-weight:700;color:${COLORS.navy};background-color:${COLORS.navySoft};border-radius:7px;padding:5px 11px;letter-spacing:0.4px;vertical-align:middle;">${reference}</span>
+        </td>
+        ${right ? `<td valign="middle" align="right" style="font-family:${FONT};font-size:12px;color:${COLORS.faint};white-space:nowrap;">${right}</td>` : ''}
+      </tr>
+    </table>
+  </td></tr>`;
+}
+
+/**
+ * Lifecycle progress rail — a row of steps, each a coloured bar + label +
+ * sublabel. Steps before `activeIndex` are done (accent), the step at
+ * `activeIndex` is current (amber), the rest are pending (grey). Stacks
+ * vertically on narrow screens.
+ *
+ * @param {Array<{label:string, sublabel?:string}>} steps
+ * @param {number} [activeIndex]
+ */
+function statusStrip(steps, activeIndex = 0) {
+  const width = Math.floor(100 / steps.length);
+  const cells = steps
+    .map((s, i) => {
+      const done = i < activeIndex;
+      const active = i === activeIndex;
+      const barColor = done ? COLORS.accent : active ? '#F59E0B' : COLORS.border;
+      const labelColor = done ? COLORS.accent : active ? COLORS.navy : COLORS.faint;
+      const weight = done || active ? '800' : '600';
+      return `
+      <td class="stack-td" width="${width}%" valign="top" style="padding:0 5px 8px 5px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+          <tr><td style="height:4px;background-color:${barColor};border-radius:2px;font-size:0;line-height:0;">&nbsp;</td></tr>
+          <tr><td style="padding:11px 0 0 0;font-family:${FONT};font-size:12px;font-weight:${weight};color:${labelColor};line-height:1.3;">${s.label}</td></tr>
+          <tr><td style="padding:3px 0 0 0;font-family:${FONT};font-size:11px;font-weight:500;color:${COLORS.faint};line-height:1.35;">${s.sublabel || ''}</td></tr>
+        </table>
+      </td>`;
+    })
+    .join('');
+  return `
+  <tr><td class="pad" style="padding:20px 35px 0 35px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>${cells}</tr></table>
+  </td></tr>`;
+}
+
+/**
+ * Monochrome line icons (Feather-style, 24×24 viewBox). Stroke colour and
+ * weight come from the wrapper in statGrid. Kept as inline SVG rather than
+ * emoji so the tiles match the design system instead of the OS font.
+ */
+const ICONS = {
+  calendar:
+    '<rect x="3" y="4" width="18" height="18" rx="2.5"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
+  clock:
+    '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>',
+  duration:
+    '<path d="M7 3h10"/><path d="M7 21h10"/><path d="M8 3v3.4a4 4 0 0 0 1.2 2.85L12 12l2.8-2.75A4 4 0 0 0 16 6.4V3"/><path d="M8 21v-3.4a4 4 0 0 1 1.2-2.85L12 12l2.8 2.75A4 4 0 0 1 16 17.6V21"/>',
+  users:
+    '<path d="M16 20v-1.8a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4V20"/><circle cx="9" cy="7" r="4"/><path d="M22 20v-1.8a4 4 0 0 0-3-3.87"/><path d="M15.5 3.13a4 4 0 0 1 0 7.75"/>',
+};
+
+/**
+ * Hosted versions of `ICONS`. Gmail and Outlook strip inline `<svg>`, so the
+ * Key-facts cards reference these PNGs instead and the SVG above is only the
+ * source (and the fallback if a key is missing from this map).
+ *
+ * Cloudinary renders them from sendgrid-templates/assets/email-icons/*.svg at
+ * 2x for a 20px slot. Refresh with:
+ *   node scripts/upload-email-icons.js
+ * (It uploads under fixed public_ids with overwrite, and the URLs are
+ * versionless, so this constant stays valid across re-uploads.)
+ */
+const EMAIL_ICON_URLS = {
+  calendar: 'https://res.cloudinary.com/dfpagrtoy/image/upload/f_png,w_40,h_40,c_fit,q_95/email-icons/calendar.svg',
+  clock: 'https://res.cloudinary.com/dfpagrtoy/image/upload/f_png,w_40,h_40,c_fit,q_95/email-icons/clock.svg',
+  duration: 'https://res.cloudinary.com/dfpagrtoy/image/upload/f_png,w_40,h_40,c_fit,q_95/email-icons/duration.svg',
+  users: 'https://res.cloudinary.com/dfpagrtoy/image/upload/f_png,w_40,h_40,c_fit,q_95/email-icons/users.svg',
+};
+
+/**
+ * Stat grid — 2×2 cards of colour-tinted facts. Each card carries a solid
+ * accent badge with a white line icon, an accent-coloured label and a navy
+ * value. Deliberately not the usual pale-grey box + chip: the tint is per
+ * fact, so the row reads as a designed summary rather than filler.
+ *
+ * Icons are inline SVG (no emoji). The card still reads if a client strips
+ * the SVG, because the tint, label and value carry the content. Stacks to
+ * one column on mobile via the shared `.stack-td` rule.
+ *
+ * @param {Array<{icon:string, label:string, value:string, color?:string, tint?:string}>} tiles
+ */
+function statGrid(tiles) {
+  const cell = (t) => {
+    const tint = t.tint || COLORS.accentSoft;
+    const color = t.color || COLORS.accent;
+    // Hosted PNG first: Gmail and Outlook drop inline <svg>, which would leave
+    // the badge empty. The SVG path only remains for icons missing from
+    // EMAIL_ICON_URLS (so an unknown key still renders in Apple Mail).
+    const hosted = EMAIL_ICON_URLS[t.icon];
+    const glyph = hosted
+      ? `<img src="${hosted}" width="20" height="20" alt="" style="display:block;width:20px;height:20px;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;">`
+      : ICONS[t.icon]
+        ? `<svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">${ICONS[t.icon]}</svg>`
+        : '';
+    return `
+    <td class="stack-td" width="50%" valign="top" style="padding:0 6px 12px 6px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:${tint};border-radius:16px;">
+        <tr>
+          <td style="padding:16px 18px 18px 18px;font-family:${FONT};">
+            <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+              <td width="38" height="38" align="center" valign="middle" style="background-color:${color};border-radius:11px;line-height:0;font-size:0;">${glyph}</td>
+            </tr></table>
+            <div style="padding-top:13px;font-size:10.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:${color};line-height:1;">${t.label}</div>
+            <div class="dm-text" style="padding-top:5px;font-size:16px;font-weight:700;color:${COLORS.navy};line-height:1.3;">${t.value}</div>
+          </td>
+        </tr>
+      </table>
+    </td>`;
+  };
+
+  const rows = [];
+  for (let i = 0; i < tiles.length; i += 2) {
+    rows.push(`<tr>${cell(tiles[i])}${tiles[i + 1] ? cell(tiles[i + 1]) : '<td class="stack-td" width="50%">&nbsp;</td>'}</tr>`);
+  }
+  return `
+  <tr><td class="pad" style="padding:10px 34px 0 34px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">${rows.join('')}</table>
+  </td></tr>`;
+}
+
+/**
+ * Numbered "what happens next" steps.
+ * @param {Array<{title:string, body?:string}>} items
+ */
+function stepList(items) {
+  const rows = items
+    .map(
+      (it, i) => `
+    <tr>
+      <td width="40" valign="top" style="padding:0 12px 16px 0;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+          <td width="26" height="26" align="center" style="background-color:${COLORS.navy};border-radius:50%;font-family:${FONT};font-size:12px;font-weight:800;color:#ffffff;">${i + 1}</td>
+        </tr></table>
+      </td>
+      <td valign="top" style="padding:2px 0 16px 0;font-family:${FONT};">
+        <div class="dm-text" style="font-size:14px;font-weight:700;color:${COLORS.navy};line-height:1.4;">${it.title}</div>
+        ${it.body ? `<div class="dm-muted" style="font-size:13px;color:${COLORS.muted};line-height:1.6;padding-top:3px;">${it.body}</div>` : ''}
+      </td>
+    </tr>`
+    )
+    .join('');
+  return `
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">${rows}</table>
+  </td></tr>`;
+}
+
+/**
+ * Customer contact card — Google profile photo (from User.photoURL) when
+ * available, otherwise an initials avatar. Name + email/phone lines.
+ */
+function contactCard({ name, email, phone, initials, avatarVar = 'customerAvatarUrl' }) {
+  const media = `
+    {{#if ${avatarVar}}}
+    <img src="{{${avatarVar}}}" width="46" height="46" alt="" style="display:block;width:46px;height:46px;border-radius:50%;border:1px solid ${COLORS.border};object-fit:cover;">
+    {{else}}
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td width="46" height="46" align="center" style="background-color:${COLORS.navy};border-radius:50%;font-family:${FONT};font-size:16px;font-weight:800;color:#ffffff;">${initials}</td></tr></table>
+    {{/if}}`;
+  const line = (icon, value, href) =>
+    value
+      ? `<div style="font-family:${FONT};font-size:13px;color:${COLORS.body};line-height:1.7;"><span style="color:${COLORS.faint};">${icon}</span>&nbsp;&nbsp;<a href="${href || '#'}" style="color:${COLORS.body};text-decoration:none;">${value}</a></div>`
+      : '';
+  return `
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F4F6F9;border:1px solid ${COLORS.border};border-radius:14px;">
+      <tr>
+        <td width="58" valign="middle" style="padding:16px 0 16px 18px;">${media}</td>
+        <td valign="middle" style="padding:16px 18px 16px 0;font-family:${FONT};">
+          <div class="dm-text" style="font-size:15px;font-weight:800;color:${COLORS.navy};line-height:1.3;padding-bottom:3px;">${name}</div>
+          ${line('&#9993;', email, `mailto:${email}`)}
+          ${line('&#9742;', phone)}
+        </td>
+      </tr>
+    </table>
+  </td></tr>`;
+}
+
+/**
+ * Payout panel — navy money block with the payout visually dominant and an
+ * optional amber status pill underneath. Uses solid colours throughout so
+ * Outlook (no rgba support) renders it legibly.
+ *
+ * @param {object} o
+ * @param {Array<{label:string, value:string}>} o.rows  retail / commission lines
+ * @param {string} o.total       the supplier payout value
+ * @param {string} [o.statusLabel]
+ */
+function payoutPanel({ rows, total, statusLabel }) {
+  const rowHtml = rows
+    .map(
+      (r) => `
+      <tr>
+        <td style="padding:5px 0;font-family:${FONT};font-size:13px;color:#C7D2E0;line-height:1.5;">${r.label}</td>
+        <td style="padding:5px 0;font-family:${FONT};font-size:13px;font-weight:700;color:#ffffff;line-height:1.5;text-align:right;white-space:nowrap;">${r.value}</td>
+      </tr>`
+    )
+    .join('');
+  return `
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:${COLORS.navy};border-radius:14px;">
+      <tr><td style="padding:20px 22px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+          ${rowHtml}
+          <tr><td colspan="2" style="padding:12px 0;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="border-top:1px solid #2A4A6B;font-size:0;line-height:0;">&nbsp;</td></tr></table></td></tr>
+          <tr>
+            <td style="font-family:${FONT};font-size:11px;font-weight:800;letter-spacing:0.7px;text-transform:uppercase;color:#C7D2E0;vertical-align:bottom;">Your payout</td>
+            <td style="font-family:${FONT};font-size:26px;font-weight:800;color:#ffffff;text-align:right;white-space:nowrap;line-height:1.1;">${total}</td>
+          </tr>
+        </table>
+        ${statusLabel ? `<div style="padding-top:14px;"><span style="display:inline-block;background-color:#FEF3C7;color:#B45309;font-family:${FONT};font-size:11.5px;font-weight:800;letter-spacing:0.3px;border-radius:999px;padding:6px 13px;line-height:1;">${statusLabel}</span></div>` : ''}
+      </td></tr>
+    </table>
+  </td></tr>`;
+}
+
 module.exports = {
   COLORS,
   FONT,
@@ -504,6 +794,15 @@ module.exports = {
   senderRow,
   messageCard,
   contextRow,
+  mediaHeader,
+  referenceBar,
+  statusStrip,
+  statGrid,
+  ICONS,
+  EMAIL_ICON_URLS,
+  stepList,
+  contactCard,
+  payoutPanel,
   spacer,
   msoSpacer,
 };

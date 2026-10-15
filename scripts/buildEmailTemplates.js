@@ -622,6 +622,68 @@ const supplierNewBooking = {
   },
 };
 
+const supplierReserveLater = {
+  key: 'supplier-reserve-later',
+  name: 'Supplier · New reservation (pay later)',
+  build() {
+    return B.shell('New reservation: payment pending', `
+      ${B.mediaHeader({
+        imageUrl: '{{tourImageUrl}}',
+        badgeText: '&#9203;&nbsp;&nbsp;Payment pending',
+        badgeColor: 'warning',
+        heading: 'New reservation received',
+        subtitle: '{{tourTitle}} &middot; {{travelersLabel}}',
+      })}
+      ${B.referenceBar({ reference: '{{bookingNumber}}', right: 'Reserved {{bookedAtLabel}}' })}
+      ${B.statusStrip([
+        { label: 'Reserved', sublabel: 'Slot held for customer' },
+        { label: 'Charge', sublabel: '{{chargeDateLabel}}' },
+        { label: 'Confirmed', sublabel: 'After charge clears' },
+        { label: 'Complete', sublabel: 'After travel' },
+      ], 0)}
+      ${B.callout('Reserve now, pay later. The customer&#8217;s card has <strong>not been charged yet</strong>. We charge it automatically on <strong>{{chargeDateLabel}}</strong>. Please hold this slot until then.', 'warning')}
+      ${B.sectionTitle('Key facts')}
+      ${B.statGrid([
+        { icon: 'calendar', label: 'Date', value: '{{dateLabel}}', tint: '#E7F6EE', color: '#0B7A4B' },
+        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tint: '#E8F1FE', color: '#1D4ED8' },
+        { icon: 'duration', label: 'Duration', value: '{{durationLabel}}', tint: '#FEF4E6', color: '#B45309' },
+        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tint: '#F2ECFE', color: '#6D28D9' },
+      ])}
+      ${B.sectionTitle('Booking details')}
+      ${supplierBookingDetailsRows()}
+      ${B.divider()}
+      ${B.sectionTitle('Customer')}
+      ${B.contactCard({ name: '{{customerName}}', email: '{{customerEmail}}', phone: '{{customerPhone}}', initials: '{{customerInitials}}' })}
+      {{#if specialRequirements}}
+      ${B.paragraph('Special requests: <strong>{{specialRequirements}}</strong>')}
+      {{/if}}
+      ${B.divider()}
+      ${B.sectionTitle('Payment & payout')}
+      ${B.payoutPanel({
+        rows: [
+          { label: 'Retail value', value: '{{totalLabel}}' },
+          { label: 'Platform commission', value: '{{commissionLabel}}' },
+        ],
+        total: '{{payoutAmountLabel}}',
+        statusLabel: '&#9679;&nbsp; Awaiting card charge &middot; released after travel',
+      })}
+      ${B.divider()}
+      ${B.sectionTitle('What happens next')}
+      ${B.stepList([
+        { title: '{{chargeDateLabel}}: we charge the saved card', body: 'The customer added a payment method when they reserved. No action is needed from you.' },
+        { title: 'On success, the booking is confirmed automatically', body: 'You will receive a &#8220;Reservation payment collected&#8221; email with the final pickup details, and this booking becomes ready to operate.' },
+        { title: 'If the charge fails, we handle it and keep you posted', body: 'We contact the customer to update their card and email you the outcome. Please keep this slot held until you hear from us.' },
+      ])}
+      ${B.divider()}
+      ${B.paragraph('{{cancellationPolicyText}}', { small: true, muted: true })}
+      ${B.buttons([
+        { label: 'View booking', href: '{{supplierBookingUrl}}' },
+        { label: 'Open dashboard', href: '{{dashboardUrl}}', kind: 'secondary' },
+      ])}
+    `);
+  },
+};
+
 const supplierPayLaterCharged = {
   key: 'supplier-pay-later-charged',
   name: 'Supplier · Reservation charged & confirmed',
@@ -1096,6 +1158,7 @@ const TEMPLATE_DEFS = [
   supplierCancellationFee,
   reviewRequest,
   supplierNewBooking,
+  supplierReserveLater,
   supplierPayLaterCharged,
   supplierBookingChanged,
   supplierContactUpdated,

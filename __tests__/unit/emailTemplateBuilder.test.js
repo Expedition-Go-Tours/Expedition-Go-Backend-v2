@@ -104,3 +104,93 @@ describe('pay-later-charged template renders pickup section', () => {
     expect(html).toMatch(/pickupLocation/);
   });
 });
+
+describe('statGrid — Key facts tiles', () => {
+  const built = B.statGrid([
+    { icon: 'calendar', label: 'Date', value: '{{dateLabel}}', tint: '#E6F6F0', color: '#007A4D' },
+    { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tint: '#EFF6FF', color: '#1D4ED8' },
+    { icon: 'duration', label: 'Duration', value: '{{durationLabel}}', tint: '#FFFBEB', color: '#B45309' },
+    { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tint: '#EEF2F7', color: '#001F3F' },
+  ]);
+
+  it('uses hosted PNG icons instead of inline SVG so Gmail and Outlook render them', () => {
+    // Gmail/Outlook strip <svg>; the tiles must reference the Cloudinary PNGs.
+    expect((built.match(/<img src="/g) || []).length).toBe(4);
+    for (const name of ['calendar', 'clock', 'duration', 'users']) {
+      expect(built).toContain(B.EMAIL_ICON_URLS[name]);
+      expect(B.EMAIL_ICON_URLS[name]).toMatch(/res\.cloudinary\.com/);
+      expect(B.EMAIL_ICON_URLS[name]).toContain('f_png');
+    }
+    // Keeps an img slot that cannot shift layout, and the white glyph is on a
+    // transparent background so it sits on the accent badge.
+    expect(built).toMatch(/alt=""/);
+    expect(built).toMatch(/width="20" height="20"/);
+  });
+
+  it('falls back to inline SVG for an icon that has no hosted URL', () => {
+    const saved = B.EMAIL_ICON_URLS.clock;
+    try {
+      delete B.EMAIL_ICON_URLS.clock;
+      const fallback = B.statGrid([{ icon: 'clock', label: 'Start time', value: '09:00' }]);
+      expect(fallback).toContain('<svg ');
+      expect(fallback).toContain(B.ICONS.clock);
+      expect(fallback).not.toContain('<img src=');
+    } finally {
+      B.EMAIL_ICON_URLS.clock = saved;
+    }
+  });
+
+  it('contains no emoji codepoints', () => {
+    // Anything in the emoji planes (U+1F300–U+1FAFF) came from a hard-coded
+    // 🗓 / 🕐 / ⏳ / 👥 in the old tiles.
+    expect(/[\u{1F300}-\u{1FAFF}]/u.test(built)).toBe(false);
+  });
+
+  it('stacks to one column on mobile and keeps labels/values templated', () => {
+    expect(built).toMatch(/class="stack-td"/);
+    expect(built).toContain('{{dateLabel}}');
+    expect(built).toContain('{{travelersLabel}}');
+  });
+});
+
+describe('contactCard — customer avatar', () => {
+  const built = B.contactCard({
+    name: '{{customerName}}',
+    email: '{{customerEmail}}',
+    phone: '{{customerPhone}}',
+    initials: '{{customerInitials}}',
+  });
+
+  it('prefers the Google profile photo and falls back to initials', () => {
+    expect(built).toMatch(/\{\{#if customerAvatarUrl\}\}/);
+    expect(built).toContain('{{customerAvatarUrl}}');
+    expect(built).toMatch(/\{\{else\}\}[\s\S]*\{\{customerInitials\}\}[\s\S]*\{\{\/if\}\}/);
+  });
+
+  it('renders the avatar as a round image', () => {
+    expect(built).toMatch(/border-radius:50%/);
+  });
+});
+
+describe('generated templates are in sync with the builder', () => {
+  const { TEMPLATE_DEFS } = require('../../scripts/buildEmailTemplates');
+
+  it('regenerating every template reproduces the committed artifact byte-for-byte', () => {
+    const drifted = [];
+    for (const def of TEMPLATE_DEFS) {
+      const file = path.join(GENERATED_DIR, `${def.key}.html`);
+      if (!fs.existsSync(file)) {
+        drifted.push(`${def.key} (missing)`);
+        continue;
+      }
+      if (fs.readFileSync(file, 'utf8') !== def.build()) drifted.push(def.key);
+    }
+    expect(drifted).toEqual([]);
+  });
+
+  it('has no orphaned generated files without a template definition', () => {
+    const definedKeys = new Set(TEMPLATE_DEFS.map((d) => `${d.key}.html`));
+    const files = fs.readdirSync(GENERATED_DIR).filter((f) => f.endsWith('.html'));
+    expect(files.filter((f) => !definedKeys.has(f))).toEqual([]);
+  });
+});
