@@ -495,14 +495,17 @@ function contextRow(titleVar, bookingVar) {
  * rather than white-on-white.
  *
  * @param {object} o
- * @param {string} o.imageUrl  photo URL (Handlebars ok)
+ * @param {string} [o.imageUrl]  photo URL (Handlebars ok); ignored when imageVar is set
+ * @param {string} [o.imageVar]  template variable name (e.g. 'tourImageUrl'). When
+ *   given, the photo is emitted inside a runtime {{#if}} so a missing/empty value
+ *   falls back to the gradient over the navy panel instead of an empty url('').
  * @param {string} [o.badgeText]  small uppercase pill over the heading
  * @param {string} [o.badgeColor] accent | warning | info | success
  * @param {string} o.heading
  * @param {string} [o.subtitle]
  * @param {number} [o.height]  desktop hero height in px (default 248)
  */
-function mediaHeader({ imageUrl, badgeText, badgeColor = 'warning', heading, subtitle, height = 248 }) {
+function mediaHeader({ imageUrl, imageVar, badgeText, badgeColor = 'warning', heading, subtitle, height = 248 }) {
   const badgeTones = {
     accent: { bg: COLORS.accent, text: '#FFFFFF' },
     warning: { bg: '#F59E0B', text: '#3B2500' },
@@ -515,8 +518,18 @@ function mediaHeader({ imageUrl, badgeText, badgeColor = 'warning', heading, sub
     ? `<div style="margin:0 0 14px 0;"><span style="display:inline-block;background-color:${bt.bg};color:${bt.text};font-family:${FONT};font-size:11px;font-weight:800;letter-spacing:0.9px;text-transform:uppercase;border-radius:999px;padding:7px 14px;line-height:1;">${badgeText}</span></div>`
     : '';
 
+  // The hero photo sits behind a gradient that has to survive on its own: some
+  // tours have no cover image, and an empty url('') makes mail clients drop the
+  // entire background-image declaration, gradient included. When the caller
+  // names the variable backing the image, emit a runtime {{#if}} so a missing
+  // photo degrades to the gradient over the navy panel instead of a flat block.
+  const GRADIENT = 'linear-gradient(180deg, rgba(0,31,63,0.08) 0%, rgba(0,31,63,0.55) 55%, rgba(0,31,63,0.9) 100%)';
+  const background = imageVar
+    ? `{{#if ${imageVar}}}background-image:${GRADIENT}, url('{{${imageVar}}}');{{else}}background-image:${GRADIENT};{{/if}}`
+    : `background-image:${GRADIENT}, url('${imageUrl || ''}');`;
+
   const inner = `
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:separate;border-spacing:0;background-color:${COLORS.navy};background-image:linear-gradient(180deg, rgba(0,31,63,0.08) 0%, rgba(0,31,63,0.55) 55%, rgba(0,31,63,0.9) 100%), url('${imageUrl}');background-size:cover;background-position:center;background-repeat:no-repeat;border-radius:16px 16px 0 0;overflow:hidden;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:separate;border-spacing:0;background-color:${COLORS.navy};${background}background-size:cover;background-position:center;background-repeat:no-repeat;border-radius:16px 16px 0 0;overflow:hidden;">
       <tr>
         <td valign="bottom" class="pad" style="padding:120px 34px 28px 34px;">
           ${badge}

@@ -62,6 +62,21 @@ function formatShortDate(date, timeZone = 'UTC') {
 }
 
 /**
+ * Format a Date as "9 Oct 2026".
+ *
+ * Assembled from the parts rather than delegated to one toLocaleDateString call
+ * so the *order* is fixed regardless of the host locale's date ordering
+ * (en-US would render "Oct 9, 2026" from the same options object).
+ */
+function formatCompactDate(date, timeZone = 'UTC') {
+  if (!date) return '';
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  const part = (opts) => d.toLocaleDateString('en-US', { ...opts, timeZone });
+  return `${part({ day: 'numeric' })} ${part({ month: 'short' })} ${part({ year: 'numeric' })}`;
+}
+
+/**
  * Format a Date + time as "August 17, 2026, 9:00 AM".
  */
 function formatDateTime(date, timeZone = 'UTC') {
@@ -331,6 +346,7 @@ function pickupAddressLabel(pickupLike) {
 
 module.exports = {
   formatCurrency,
+  formatCompactDate,
   formatLongDate,
   formatShortDate,
   formatDateTime,

@@ -380,6 +380,7 @@ const BOOKING_CONTEXT_INCLUDE = {
       title: true,
       description: true,
       photos: true,
+      coverPhoto: true,
       productContent: true,
       bookingAndTickets: true,
       categorization: true,
@@ -467,6 +468,34 @@ function profileAvatarUrl(url) {
   const u = url.trim();
   if (!u.includes('googleusercontent.com')) return u;
   return u.replace(/=s\d+(?:-c)?(?=$|[?&])/, '=s192-c');
+}
+
+/**
+ * Wide hero image behind a media-header banner.
+ *
+ * Cloudinary sources get an explicit crop so a 4000px original is never pulled
+ * for a header that renders 640px wide (`c_fill,g_auto,w_1200,h_520`, the box
+ * the artwork is drawn against). Non-Cloudinary hosts pass through untouched,
+ * and a source that already carries a transformation is left alone because
+ * Cloudinary refuses a second plain transformation before the version.
+ */
+const HERO_TRANSFORM = 'c_fill,g_auto,w_1200,h_520';
+
+function heroImageUrl(tour) {
+  const raw = (tour && (tour.coverPhoto || (Array.isArray(tour.photos) ? tour.photos[0] : ''))) || '';
+  if (typeof raw !== 'string' || !raw.trim()) return '';
+  // Strip quotes: this is interpolated into url('…') inside a style attribute.
+  const src = raw.trim().replace(/['"]/g, '');
+  if (!src.includes('res.cloudinary.com')) return src;
+
+  const marker = '/upload/';
+  const at = src.indexOf(marker);
+  if (at === -1) return src;
+  const rest = src.slice(at + marker.length);
+  const firstSegment = rest.split('/')[0] || '';
+  // /upload/v178…/x.jpg carries no transformation; /upload/w_100,c_fill/… does.
+  if (firstSegment && !/^v\d+$/.test(firstSegment)) return src;
+  return `${src.slice(0, at + marker.length)}${HERO_TRANSFORM}/${rest}`;
 }
 
 /**
@@ -1045,6 +1074,45 @@ async function sendSupplierNewBookingEmail(booking) {
     subject: `New confirmed booking — ${base.tourTitle} (Ref: ${base.bookingNumber})`,
     key: 'supplier-new-booking',
     data,
+  });
+}
+
+/**
+ * Supplier: a reserve-now-pay-later reservation just landed.
+ *
+ * EXCEPTION to the "no transactional email until the card is charged" rule
+ * (commit a3195e7): the supplier has to know a slot is being held while the card
+ * is still uncharged, otherwise they cannot hold inventory or plan staffing.
+ * The copy states plainly that the card has NOT been charged and names the
+ * charge date, so nothing implies payment has been received; the charge itself
+ * is announced by `supplier-pay-later-charged` once it settles.
+ *
+ * Keep this rationale in sync with the enqueue sites in src/core/storefront.js
+ * (Expedition) and src/brands/ghana/controller.js (Travio Ghana).
+ */
+async function sendSupplierReserveLaterEmail(booking) {
+  const b = await resolveBookingContext(booking);
+  const base = await buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const chargeAt = payLaterChargeAt(b.travelDate);
+  const data = {
+    ...base,
+    supplierName: supplier.name || 'Supplier',
+    tourImageUrl: heroImageUrl(b.tour),
+    // Sent at creation time, so a context without createdAt still yields an
+    // accurate "Reserved today".
+    bookedAtLabel: fmt.formatCompactDate(b.createdAt || new Date()),
+    chargeDateLabel: chargeAt ? fmt.formatLongDate(chargeAt) : '',
+    cancellationPolicyText: cancellationPolicyTextFor(b.tour),
+  };
+  return sendRendered({
+    ...await supplierRecipientList(supplier, "bookings"),
+    subject: `New reservation, payment pending: ${base.tourTitle} (Ref: ${base.bookingNumber})`,
+    key: 'supplier-reserve-later',
+    data,
+    opts: {
+      preheader: `A reserve-now-pay-later slot is being held. The card has not been charged yet; we charge it on ${data.chargeDateLabel}.`,
+    },
   });
 }
 
@@ -2081,6 +2149,7 @@ module.exports = {
 
   // supplier
   sendSupplierNewBookingEmail,
+  sendSupplierReserveLaterEmail,
   sendSupplierPayLaterChargedEmail,
   sendSupplierBookingChangedEmail,
   sendSupplierContactUpdatedEmail,

@@ -958,11 +958,21 @@ const confirmBooking = catchAsync(async (req, res, next) => {
       brandName: 'Travio Ghana',
     }).catch((err) => console.error('[Travio Ghana] Reserve-later confirmation email failed:', err.message));
 
-    // Reserve-now-pay-later: no supplier-pickup-updated email here. This
-    // branch runs before any payment exists, and the rule is no
-    // transactional email until the card is charged. The supplier's in-app
-    // BOOKING_CONFIRMED notification above already announces the booking
-    // itself, and the charge-time supplier-pay-later-charged email carries
+    // Sanctioned exception to the "no transactional email until the card is
+    // charged" rule (a3195e7): the supplier must be told a slot is being held
+    // while the card is still uncharged, or they cannot hold inventory or plan
+    // staffing. The email states plainly that the card has not been charged yet
+    // and names the charge date. This is the ONLY pre-charge supplier email; the
+    // charge itself is announced later by supplier-pay-later-charged.
+    enqueueEmail({
+      type: 'supplier-reserve-later',
+      bookingId: result.id,
+      brandName: 'Travio Ghana',
+    }).catch((err) => console.error('[Travio Ghana] Supplier reserve-later email failed:', err.message));
+
+    // Reserve-now-pay-later: still no supplier-pickup-updated email here. This
+    // branch runs before any payment exists and the pickup details are usually
+    // not known yet; the charge-time supplier-pay-later-charged email carries
     // pickupLocation/pickupRequiredLabel once a location exists.
 
     enqueueEvent({

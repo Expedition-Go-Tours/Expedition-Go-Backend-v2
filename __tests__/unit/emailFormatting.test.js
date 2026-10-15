@@ -1,4 +1,28 @@
-const { formatTravelers, getBookingTypeLabel } = require('../../src/core/services/emailFormatting');
+const { formatTravelers, getBookingTypeLabel, formatCompactDate } = require('../../src/core/services/emailFormatting');
+
+/**
+ * formatCompactDate — the "Reserved 9 Oct 2026" reference-bar form.
+ * Fixed day-month-year order regardless of host locale.
+ */
+describe('formatCompactDate', () => {
+  it('renders day month-abbrev year', () => {
+    expect(formatCompactDate(new Date('2026-10-09T12:00:00Z'))).toBe('9 Oct 2026');
+  });
+
+  it('does not zero-pad the day', () => {
+    expect(formatCompactDate(new Date('2026-01-05T00:00:00Z'))).toBe('5 Jan 2026');
+  });
+
+  it('renders the UTC day for a late-UTC timestamp', () => {
+    expect(formatCompactDate(new Date('2026-10-09T23:30:00Z'))).toBe('9 Oct 2026');
+  });
+
+  it('returns empty for missing or invalid input', () => {
+    expect(formatCompactDate(null)).toBe('');
+    expect(formatCompactDate(undefined)).toBe('');
+    expect(formatCompactDate('nonsense')).toBe('');
+  });
+});
 
 /**
  * Precedence regressions for the "Travellers" row in every booking email.

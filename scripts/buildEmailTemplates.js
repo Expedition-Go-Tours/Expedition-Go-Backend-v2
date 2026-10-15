@@ -638,7 +638,7 @@ const supplierReserveLater = {
   build() {
     return B.shell('New reservation: payment pending', `
       ${B.mediaHeader({
-        imageUrl: '{{tourImageUrl}}',
+        imageVar: 'tourImageUrl',
         badgeText: '&#9203;&nbsp;&nbsp;Payment pending',
         badgeColor: 'warning',
         heading: 'New reservation received',

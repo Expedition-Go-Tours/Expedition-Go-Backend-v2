@@ -423,6 +423,7 @@ const EMAIL_BOOKING_INCLUDE = {
       slug: true,
       description: true,
       photos: true,
+      coverPhoto: true,
       productContent: true,
       bookingAndTickets: true,
       categorization: true,
@@ -465,6 +466,7 @@ const EMAIL_JOB_DISPATCH = {
   'chat-new-message': ['sendChatMessageEmail', false],
   // supplier
   'supplier-new-booking': ['sendSupplierNewBookingEmail', true],
+  'supplier-reserve-later': ['sendSupplierReserveLaterEmail', true],
   'supplier-pay-later-charged': ['sendSupplierPayLaterChargedEmail', true],
   'supplier-booking-changed': ['sendSupplierBookingChangedEmail', true],
   'supplier-customer-contact-updated': ['sendSupplierContactUpdatedEmail', true],
