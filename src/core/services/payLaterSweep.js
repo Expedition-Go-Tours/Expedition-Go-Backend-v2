@@ -37,9 +37,9 @@ const { enqueueNotification, enqueueEvent, enqueueEmail } = require('./queue');
 const { notifyAdmin } = require('./adminNotificationService');
 const { notifyDiscord } = require('./discordNotifier');
 const { logActivity } = require('./auditLogger');
+const { chargeWindowEnd } = require('./payLaterCharge');
 
 const SWEEP_LIMIT = 200;
-const DEFAULT_CHARGE_BEFORE_HOURS = 24;
 const MAX_CHARGE_RETRIES = 3;
 // After the activity day ends (travelDate + 24h) we allow a short grace for an
 // in-flight webhook to settle before finalizing an unpaid reservation.
@@ -449,12 +449,12 @@ async function chargeBooking(booking) {
 
 async function chargePayLaterBookings() {
   const prisma = require('./prismaClient');
-  const chargeBeforeHours =
-    parseFloat(process.env.PAY_LATER_CHARGE_BEFORE_HOURS || String(DEFAULT_CHARGE_BEFORE_HOURS)) ||
-    DEFAULT_CHARGE_BEFORE_HOURS;
 
   const now = new Date();
-  const windowEnd = new Date(now.getTime() + chargeBeforeHours * 60 * 60 * 1000);
+  // Charge window: bookings whose charge moment (travelDate − before-hours) has
+  // arrived. chargeWindowEnd() is the query form of payLaterChargeAt() <= now,
+  // and it is the same "T − 24h" the customer is told about in the emails.
+  const windowEnd = chargeWindowEnd(now);
 
   // Due: pay-later, unpaid, still reserved (PENDING or CONFIRMED), activity
   // date ahead and within the charge window. CONFIRMED is kept for legacy rows

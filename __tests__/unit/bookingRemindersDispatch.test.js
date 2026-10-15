@@ -38,6 +38,7 @@ jest.mock('../../src/core/services/prismaClient', () => ({
 
 const { dispatchDueReminders } = require('../../src/core/services/bookingReminders');
 const { enqueueEmail } = require('../../src/core/services/queue');
+const { notifyAdmin } = require('../../src/core/services/adminNotificationService');
 const prisma = require('../../src/core/services/prismaClient');
 
 const now = Date.now();
@@ -202,5 +203,34 @@ describe('dispatchDueReminders rechecks the booking before sending', () => {
       expect.objectContaining({ data: expect.objectContaining({ error: 'Booking no longer exists' }) })
     );
     expect(result.sent).toBe(0);
+  });
+
+  it('tells the admin the CHARGE date (travel − 24h), not the activity date', async () => {
+    prisma.bookingReminder.findMany.mockResolvedValue([dueReminder('PAYMENT_DUE_24H')]);
+    prisma.booking.findUnique
+      // dispatch gate re-check
+      .mockResolvedValueOnce(liveBooking({ paymentTiming: 'later', paymentStatus: 'PENDING', travelDate: hours(48) }))
+      // admin-alert lookup
+      .mockResolvedValueOnce({
+        bookingNumber: 'LAT-9',
+        grossAmount: 175,
+        travelDate: hours(48),
+        tour: { title: 'Safari' },
+      });
+
+    await dispatchDueReminders();
+
+    const chargeAt = new Date(hours(48).getTime() - 24 * 60 * 60 * 1000);
+    const expected = chargeAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const travel = hours(48).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+    expect(notifyAdmin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'PAYMENT_UPCOMING',
+        message: expect.stringContaining(`charged on ${expected}`),
+      })
+    );
+    // The two must be distinguishable for the assertion to mean anything.
+    expect(expected).not.toBe(travel);
   });
 });

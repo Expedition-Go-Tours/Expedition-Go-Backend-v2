@@ -9,7 +9,8 @@
  *
  * Types planned:
  *   PAYMENT_DUE_24H          — reserve-now-pay-later, still unpaid: remind customer
- *                              that the card will be charged (24h before the activity).
+ *                              that the card will be charged (a lead before the
+ *                              deferred charge; see payLaterCharge.js).
  *   BOOKING_24H              — confirmed upcoming booking: customer reminder.
  *   SUPPLIER_BOOKING_24H     — confirmed upcoming booking: supplier reminder.
  *   PICKUP_LOCATION_REQUIRED — tour offers pickup but no location chosen yet:
@@ -24,10 +25,15 @@
 const { enqueueEmail } = require('./queue');
 const prisma = require('./prismaClient');
 const { notifyAdmin } = require('./adminNotificationService');
+const { payLaterChargeAt } = require('./payLaterCharge');
 
 const BOOKING_24H_BEFORE_HOURS = 24;
 const PICKUP_REQUIRED_HOURS = 72;
 const REVIEW_REQUEST_HOURS_AFTER = 48;
+// Pay-later reminders fire a lead *before* the card is charged, so the
+// "your card will be charged on <date>" notice arrives ahead of the charge
+// rather than alongside it. The charge itself is payLaterChargeAt(travelDate).
+const PAYMENT_REMINDER_LEAD_HOURS = 24;
 
 /**
  * Scan for bookings that need reminders planned. Creates BookingReminder rows
@@ -79,13 +85,19 @@ async function planBookingReminders() {
       });
     }
 
-    // Pay-later payment reminder (24h before the charge window / activity)
+    // Pay-later payment reminder. The card is charged at
+    // payLaterChargeAt(travelDate) (T-24h by default), so the reminder must
+    // land a lead before that; otherwise the "we will charge you on <date>"
+    // notice races the charge it is warning about.
     if (booking.paymentTiming === 'later' && booking.paymentStatus === 'PENDING') {
-      reminders.push({
-        bookingId: booking.id,
-        type: 'PAYMENT_DUE_24H',
-        scheduledFor: new Date(date.getTime() - BOOKING_24H_BEFORE_HOURS * 60 * 60 * 1000),
-      });
+      const chargeAt = payLaterChargeAt(date);
+      if (chargeAt) {
+        reminders.push({
+          bookingId: booking.id,
+          type: 'PAYMENT_DUE_24H',
+          scheduledFor: new Date(chargeAt.getTime() - PAYMENT_REMINDER_LEAD_HOURS * 60 * 60 * 1000),
+        });
+      }
     }
 
     // Pickup location still required (tour offers pickup but none chosen).
@@ -217,8 +229,9 @@ async function dispatchDueReminders() {
       continue;
     }
 
-    // "Your card will be charged" is wrong once the charge has landed (the
-    // sweep and this reminder both target T-24h — a race either way).
+    // "Your card will be charged" is wrong once the charge has landed. The
+    // reminder is planned a lead ahead of payLaterChargeAt(), but a slow or
+    // failing sweep can still land the charge first.
     if (reminder.type === 'PAYMENT_DUE_24H' && gate.paymentStatus === 'SUCCEEDED') {
       await markReminder(reminder.id, 'SKIPPED', 'Already charged');
       continue;
@@ -227,12 +240,14 @@ async function dispatchDueReminders() {
     const unpaidPayLater = gate.paymentTiming === 'later' && gate.paymentStatus !== 'SUCCEEDED';
     if (unpaidPayLater && reminder.type !== 'PAYMENT_DUE_24H') {
       if (reminder.type === 'PICKUP_LOCATION_REQUIRED') {
-        // Re-arm past the charge window (T-20h) so a customer who does pay
-        // still gets the pickup nudge. Bounded to a single re-arm: on the
-        // second pass T-20h is no longer in the future, so the reminder falls
-        // through to SKIPPED below and can never loop.
-        const rearmAt = new Date(gate.travelDate.getTime() - 20 * 60 * 60 * 1000);
-        if (rearmAt > new Date()) {
+        // Re-arm a few hours past the charge (payLaterChargeAt + 4h, i.e. T-20h
+        // by default) so a customer who does pay still gets the pickup nudge.
+        // Bounded to a single re-arm: on the second pass that point is no
+        // longer in the future, so the reminder falls through to SKIPPED below
+        // and can never loop.
+        const chargeAt = payLaterChargeAt(gate.travelDate);
+        const rearmAt = chargeAt ? new Date(chargeAt.getTime() + 4 * 60 * 60 * 1000) : null;
+        if (rearmAt && rearmAt > new Date()) {
           await prisma.bookingReminder.update({
             where: { id: reminder.id },
             data: { scheduledFor: rearmAt },
@@ -257,7 +272,12 @@ async function dispatchDueReminders() {
           });
           if (booking) {
             const amount = parseFloat(booking.grossAmount).toFixed(2);
-            const dateStr = booking.travelDate ? new Date(booking.travelDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'tomorrow';
+            // The alert names the CHARGE date, which is payLaterChargeAt()
+            // (T-24h), not the activity date the customer travels on.
+            const chargeAt = payLaterChargeAt(booking.travelDate);
+            const dateStr = chargeAt
+              ? chargeAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+              : 'soon';
             notifyAdmin({
               type: 'PAYMENT_UPCOMING',
               title: 'Pay-later charge upcoming',
