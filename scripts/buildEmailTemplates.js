@@ -431,8 +431,7 @@ const customerCancelledFullRefund = {
   name: 'Customer · Cancelled with full refund',
   build() {
     return B.shell('Your booking has been cancelled', `
-      ${B.hero({ heading: 'Your booking is cancelled', badgeText: 'Cancelled', badgeColor: 'danger' })}
-      ${B.paragraph('Your cancellation has been completed.')}
+      ${B.hero({ heading: 'Your booking is cancelled', badgeText: 'Cancelled', badgeColor: 'danger', subtitle: 'Hello {{customerName}},<br>Your cancellation for <strong>{{tourTitle}}</strong> has been completed.' })}
       ${B.sectionTitle('Cancellation details')}
       ${B.detailCard([
         { label: 'Experience', value: '{{tourTitle}}' },
@@ -480,12 +479,14 @@ const refundProcessing = {
   name: 'Customer · Refund processing',
   build() {
     return B.shell('Your refund is being processed', `
-      ${B.hero({ heading: 'We\u2019re processing your refund', badgeText: 'Processing', badgeColor: 'info' })}
+      ${B.hero({ heading: 'We are processing your refund', badgeText: 'Processing', badgeColor: 'info', subtitle: 'Hello {{customerName}},<br>Your refund for <strong>{{tourTitle}}</strong> is being processed.' })}
       ${B.detailCard([
+        { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Date', value: '{{dateLabel}}' },
         { label: 'Refund amount', value: '{{refundAmountLabel}}' },
         { label: 'Refund method', value: 'Original payment method' },
         { label: 'Refund reference', value: '{{refundReference}}', if: '{{refundReference}}' },
-        { label: 'Expected arrival', value: '5\u201310 business days' },
+        { label: 'Expected arrival', value: '5-10 business days' },
         { label: 'Status', value: 'Processing' },
       ])}
       ${B.buttonPrimary('View refund', '{{refundUrl}}')}
@@ -498,9 +499,10 @@ const refundCompleted = {
   name: 'Customer · Refund completed',
   build() {
     return B.shell('Your refund has been issued', `
-      ${B.hero({ heading: 'Your refund is complete', badgeText: '&#10003;&nbsp;&nbsp;Refunded', badgeColor: 'accent' })}
-      ${B.paragraph('We have issued <strong>{{refundAmountLabel}}</strong> to your original payment method.')}
+      ${B.hero({ heading: 'Your refund is complete', badgeText: '&#10003;&nbsp;&nbsp;Refunded', badgeColor: 'accent', subtitle: 'Hello {{customerName}},<br>We have issued <strong>{{refundAmountLabel}}</strong> for <strong>{{tourTitle}}</strong>.' })}
       ${B.detailCard([
+        { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Date', value: '{{dateLabel}}' },
         { label: 'Refund reference', value: '{{refundReference}}', if: '{{refundReference}}' },
         { label: 'Refund amount', value: '{{refundAmountLabel}}' },
         { label: 'Refund issued', value: '{{refundedAtLabel}}' },
@@ -650,9 +652,15 @@ const reviewRequest = {
   name: 'Customer · Review request',
   build() {
     return B.shell('How was your experience?', `
-      ${B.hero({ heading: 'Tell us about your experience', badgeText: 'Review', badgeColor: 'accent' })}
-      ${B.paragraph('Thank you for booking with {{brandName}}. We hope you had a memorable {{tourTitle}} experience.')}
-      ${B.paragraph('Your review helps other travellers make better choices.')}
+      ${B.mediaHeader({
+        imageVar: 'tourImageUrl',
+        badgeText: 'Review',
+        badgeColor: 'accent',
+        heading: 'How was your experience?',
+        subtitle: '{{tourTitle}} &middot; {{dateLabel}}',
+      })}
+      ${B.paragraph('Hello {{customerName}}, thank you for booking with {{brandName}}. We hope you had a memorable experience.')}
+      ${B.paragraph('Your review helps other travellers make better choices. It only takes a minute.')}
       ${B.buttons([
         { label: 'Write a review', href: '{{reviewUrl}}' },
         { label: 'Explore more experiences', href: '{{browseUrl}}', kind: 'secondary' },
@@ -915,16 +923,21 @@ const supplierCustomerCancelledFree = {
     return B.shell('Booking cancelled: do not operate', `
       ${B.hero({ heading: 'This booking has been cancelled', badgeText: 'Cancelled', badgeColor: 'danger' })}
       ${B.callout('DO NOT OPERATE THIS BOOKING', 'danger')}
+      ${B.sectionTitle('Booking details')}
       ${B.detailCard([
         { label: 'Booking reference', value: '{{bookingNumber}}' },
         { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Lead traveller', value: '{{leadTravelerName}}' },
-        { label: 'Cancelled by', value: 'Customer' },
-        { label: 'Cancellation time', value: '{{cancelledAtLabel}}' },
         { label: 'Experience date', value: '{{dateLabel}}' },
         { label: 'Start time', value: '{{timeLabel}}', if: '{{timeLabel}}' },
         { label: 'Duration', value: '{{durationLabel}}', if: '{{durationLabel}}' },
         { label: 'Travellers', value: '{{travelersLabel}}' },
+      ])}
+      ${B.sectionTitle('Lead traveller')}
+      ${B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{customerInitials}}' })}
+      ${B.sectionTitle('Cancellation details')}
+      ${B.detailCard([
+        { label: 'Cancelled by', value: 'Customer' },
+        { label: 'Cancellation time', value: '{{cancelledAtLabel}}' },
         { label: 'Cancellation policy', value: 'Free cancellation' },
         { label: 'Supplier payout', value: '{{payoutAmountLabel}}' },
         { label: 'Availability', value: 'Automatically restored' },
@@ -942,12 +955,17 @@ const supplierCustomerCancelledLate = {
     return B.shell('Late customer cancellation', `
       ${B.hero({ heading: 'Booking cancelled after the deadline', badgeText: 'Late cancellation', badgeColor: 'danger' })}
       ${B.callout('DO NOT OPERATE UNLESS SUPPORT INSTRUCTS OTHERWISE', 'danger')}
+      ${B.sectionTitle('Booking details')}
       ${B.detailCard([
         { label: 'Booking reference', value: '{{bookingNumber}}' },
         { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Lead traveller', value: '{{leadTravelerName}}' },
         { label: 'Experience date', value: '{{dateLabel}}' },
         { label: 'Travellers', value: '{{travelersLabel}}' },
+      ])}
+      ${B.sectionTitle('Lead traveller')}
+      ${B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{customerInitials}}' })}
+      ${B.sectionTitle('Cancellation details')}
+      ${B.detailCard([
         { label: 'Cancelled by', value: 'Customer' },
         { label: 'Cancellation deadline', value: '{{cancellationDeadlineLabel}}' },
         { label: 'Cancellation time', value: '{{cancelledAtLabel}}' },
@@ -965,14 +983,18 @@ const supplierPlatformCancelled = {
   name: 'Supplier · Platform cancelled booking',
   build() {
     return B.shell('Booking cancelled by Expedition-Go Tours', `
-      ${B.hero({ heading: 'Do not operate this booking', badgeText: 'Cancelled', badgeColor: 'danger' })}
-      ${B.paragraph('{{brandName}} has cancelled this booking.')}
+      ${B.hero({ heading: 'Do not operate this booking', badgeText: 'Cancelled', badgeColor: 'danger', subtitle: '{{brandName}} has cancelled this booking.' })}
+      ${B.sectionTitle('Booking details')}
       ${B.detailCard([
         { label: 'Booking reference', value: '{{bookingNumber}}' },
         { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Lead traveller', value: '{{leadTravelerName}}' },
         { label: 'Experience date', value: '{{dateLabel}}' },
         { label: 'Travellers', value: '{{travelersLabel}}' },
+      ])}
+      ${B.sectionTitle('Lead traveller')}
+      ${B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{customerInitials}}' })}
+      ${B.sectionTitle('Cancellation details')}
+      ${B.detailCard([
         { label: 'Reason', value: '{{cancellationReason}}', if: '{{cancellationReason}}' },
         { label: 'Customer notified', value: 'Yes' },
         { label: 'Customer refund', value: 'Full refund' },
