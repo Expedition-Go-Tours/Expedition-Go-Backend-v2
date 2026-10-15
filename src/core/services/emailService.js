@@ -23,6 +23,7 @@ const { render } = require('./emailRenderer');
 const fmt = require('./emailFormatting');
 const emailUrls = require('../../../config/emailUrls');
 const { resolveRecipients } = require('./notificationRecipientService');
+const { payLaterChargeAt } = require('./payLaterCharge');
 
 const GENERATED_DIR = path.join(__dirname, '..', '..', '..', 'sendgrid-templates', 'generated');
 
@@ -587,16 +588,26 @@ async function buildBookingBase(booking, opts = {}) {
 // Customer emails
 // ---------------------------------------------------------------------------
 
+/**
+ * Human-readable cancellation policy for a tour, with a sensible default.
+ * Shared by the customer booking emails so the wording can never disagree
+ * between the pay-now and reserve-later confirmations.
+ */
+function cancellationPolicyTextFor(tour) {
+  const policy = (tour && tour.bookingAndTickets && tour.bookingAndTickets.cancellationPolicy) || null;
+  return (
+    (typeof policy === 'object' && policy && policy.text) ||
+    (typeof policy === 'string' && policy) ||
+    'Free cancellation up to 24 hours before your experience.'
+  );
+}
+
 async function sendBookingConfirmedEmail(booking) {
   const b = await resolveBookingContext(booking);
   const base = await buildBookingBase(b);
-  const ticket = b.tour?.bookingAndTickets || {};
   const data = {
     ...base,
-    cancellationPolicyText:
-      (typeof ticket.cancellationPolicy === 'object' && ticket.cancellationPolicy.text) ||
-      (typeof ticket.cancellationPolicy === 'string' && ticket.cancellationPolicy) ||
-      'Free cancellation up to 24 hours before your experience.',
+    cancellationPolicyText: cancellationPolicyTextFor(b.tour),
   };
   return sendRendered({
     to: base.customerEmail,
@@ -609,31 +620,47 @@ async function sendBookingConfirmedEmail(booking) {
 async function sendReserveLaterConfirmedEmail(booking) {
   const b = await resolveBookingContext(booking);
   const base = await buildBookingBase(b);
+  // The card is charged at payLaterChargeAt(travelDate), i.e. T-24h, NOT on the
+  // activity date. Surface both so the customer can tell them apart, and reuse
+  // the same cancellation policy wording as the pay-now confirmation.
+  const chargeAt = payLaterChargeAt(b.travelDate);
   const data = {
     ...base,
-    paymentDateLabel: fmt.formatLongDate(b.travelDate),
+    chargeDateLabel: chargeAt ? fmt.formatLongDate(chargeAt) : '',
+    experienceDateLabel: base.dateLabel,
+    cancellationPolicyText: cancellationPolicyTextFor(b.tour),
   };
   return sendRendered({
     to: base.customerEmail,
-    subject: `Your booking is confirmed — payment scheduled (Ref: ${base.bookingNumber})`,
+    subject: `Your booking is confirmed: payment scheduled (Ref: ${base.bookingNumber})`,
     key: 'reserve-later-confirmed',
     data,
+    opts: {
+      preheader: `Your booking is reserved. We will charge your card on ${data.chargeDateLabel} and email you before then.`,
+    },
   });
 }
 
 async function sendPaymentReminderEmail(booking, { paymentDate, paymentAmount } = {}) {
   const b = await resolveBookingContext(booking);
   const base = await buildBookingBase(b);
+  // Same charge moment the sweep uses. An explicit `paymentDate` extra still
+  // wins when a caller supplies one (e.g. a rescheduled charge).
+  const chargeAt = paymentDate || payLaterChargeAt(b.travelDate) || b.travelDate;
   const data = {
     ...base,
     paymentAmountLabel: fmt.formatCurrency(paymentAmount ?? b.grossAmount, b.currency),
-    paymentDateLabel: fmt.formatLongDate(paymentDate || b.travelDate),
+    chargeDateLabel: fmt.formatLongDate(chargeAt),
+    experienceDateLabel: base.dateLabel,
   };
   return sendRendered({
     to: base.customerEmail,
     subject: 'Upcoming payment for your booking',
     key: 'payment-reminder',
     data,
+    opts: {
+      preheader: `We will collect ${data.paymentAmountLabel} on ${data.chargeDateLabel} for ${base.tourTitle}.`,
+    },
   });
 }
 

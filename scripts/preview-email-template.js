@@ -72,6 +72,7 @@ const SAMPLE = {
   payoutAmountLabel: '$327.25',
   amountPaidTodayLabel: '$0.00',
   scheduledPaymentLabel: '$385.00',
+  paymentAmountLabel: '$385.00',
   paymentMethodLabel: 'Visa •••• 4242',
   paymentStatusLabel: 'Pending',
 

@@ -123,20 +123,30 @@ const reserveLaterConfirmed = {
   key: 'reserve-later-confirmed',
   name: 'Customer · Reserve now, pay later',
   build() {
-    return B.shell('Your booking is confirmed — payment scheduled', `
+    return B.shell('Your booking is confirmed: payment scheduled', `
       ${B.hero({ heading: 'Your experience is reserved!', badgeText: 'Reserved', badgeColor: 'info', subtitle: 'Hello {{customerName}},<br>Your booking is confirmed. No payment has been taken yet.' })}
+      ${B.sectionTitle('Booking details')}
+      ${customerBookingDetailsRows()}
+      ${B.divider()}
       ${B.sectionTitle('Payment schedule')}
       ${B.detailRows([
         { label: 'Booking total', value: '{{totalLabel}}' },
         { label: 'Amount paid today', value: '{{amountPaidTodayLabel}}' },
         { label: 'Scheduled payment', value: '{{scheduledPaymentLabel}}' },
-        { label: 'Payment date', value: '{{paymentDateLabel}}' },
+        { label: 'Experience date', value: '{{experienceDateLabel}}' },
+        { label: 'Payment date', value: '{{chargeDateLabel}}' },
         { label: 'Payment method', value: '{{paymentMethodLabel}}', if: '{{paymentMethodLabel}}' },
       ])}
-      ${B.callout('We\u2019ll remind you before the payment is collected.', 'info')}
+      ${B.callout('We\u2019ll remind you before the payment is collected. You can update your card at any time.', 'info')}
+      ${B.divider()}
+      ${customerPickupSection()}
+      ${B.divider()}
+      ${B.sectionTitle('Cancellation policy')}
+      ${B.paragraph('{{cancellationPolicyText}}')}
       ${B.buttons([
         { label: 'View booking', href: '{{bookingUrl}}' },
         { label: 'Manage payment method', href: '{{managePaymentUrl}}', kind: 'secondary' },
+        { label: 'Manage booking', href: '{{manageUrl}}', kind: 'secondary' },
       ])}
     `);
   },
@@ -148,12 +158,12 @@ const paymentReminder = {
   build() {
     return B.shell('Upcoming payment for your booking', `
       ${B.hero({ heading: 'Your payment is coming up', badgeText: 'Payment reminder', badgeColor: 'warning' })}
-      ${B.paragraph('We will collect <strong>{{paymentAmountLabel}}</strong> on <strong>{{paymentDateLabel}}</strong> for your upcoming experience.')}
+      ${B.paragraph('We will collect <strong>{{paymentAmountLabel}}</strong> on <strong>{{chargeDateLabel}}</strong> for your upcoming experience.')}
       ${B.sectionTitle('Booking summary')}
       ${B.detailRows([
         { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Tour date', value: '{{dateLabel}}' },
-        { label: 'Payment date', value: '{{paymentDateLabel}}' },
+        { label: 'Experience date', value: '{{experienceDateLabel}}' },
+        { label: 'Payment date', value: '{{chargeDateLabel}}' },
         { label: 'Payment method', value: '{{paymentMethodLabel}}', if: '{{paymentMethodLabel}}' },
       ])}
       ${B.buttonPrimary('Review payment details', '{{managePaymentUrl}}')}
