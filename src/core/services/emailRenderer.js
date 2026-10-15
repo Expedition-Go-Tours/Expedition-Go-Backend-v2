@@ -77,7 +77,11 @@ function parse(source) {
     } else if (expr === 'else') {
       const top = stack[stack.length - 1];
       if (top.type !== 'branch') throw new Error('{{else}} outside {{#if}} block');
-      top.parent.branches.push([]);
+      // Close the current (if-true) branch and open the else branch. The
+      // children collected so far are the if-true body, so they must be
+      // pushed *before* resetting — otherwise a truthy {{#if}} renders its
+      // else branch (or nothing) instead of its body.
+      top.parent.branches.push(top.children);
       top.children = [];
     } else {
       stack[stack.length - 1].children.push({ type: 'var', name: expr });
