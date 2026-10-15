@@ -67,89 +67,90 @@
       
   <tr><td class="pad" style="padding:36px 40px 4px 40px;">
     <h1 class="h1 font-main dm-text" style="margin:0 0 12px 0;font-size:28px;font-weight:800;color:#001F3F;line-height:1.25;text-align:center;">Get ready for your experience!</h1>
-    
+    <p class="body-lg font-main dm-text" style="margin:0 auto;max-width:480px;font-size:15px;color:#334155;line-height:1.6;text-align:center;">Hello {{customerName}},<br>Your experience begins on <strong>{{dateLabel}}</strong>.</p>
   </td></tr>
-  <tr><td align="center" style="padding:0px 0 0 0;">
+  <tr><td align="center" style="padding:8px 0 0 0;">
          <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
            <tr><td style="background-color:#EFF6FF;border-radius:20px;padding:6px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:700;color:#1D4ED8;line-height:1.2;">Coming up</td></tr>
          </table>
        </td></tr>
       
-  <tr><td class="pad" style="padding:16px 40px 0 40px;">
-    <p class="dm-text" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#334155;line-height:1.7;text-align:left;">Your experience begins on <strong>{{dateLabel}}</strong>.</p>
+  <tr><td class="pad" style="padding:28px 40px 4px 40px;">
+    <div class="h2 font-main dm-text" style="font-size:15px;font-weight:800;color:#001F3F;letter-spacing:0.4px;text-transform:uppercase;line-height:1.3;">Key facts</div>
   </td></tr>
       
+  <tr><td class="pad" style="padding:10px 34px 0 34px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+    <td class="stack-td" width="50%" valign="top" style="padding:0 6px 12px 6px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#E7F6EE;border-radius:16px;">
+        <tr>
+          <td style="padding:16px 18px 18px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+            <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+              <td width="38" height="38" align="center" valign="middle" style="background-color:#0B7A4B;border-radius:11px;line-height:0;font-size:0;"><img src="https://res.cloudinary.com/dfpagrtoy/image/upload/f_png,w_40,h_40,c_fit,q_95/email-icons/calendar.svg" width="20" height="20" alt="" style="display:block;width:20px;height:20px;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;"></td>
+            </tr></table>
+            <div style="padding-top:13px;font-size:10.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:#0B7A4B;line-height:1;">Date</div>
+            <div class="dm-text" style="padding-top:5px;font-size:16px;font-weight:700;color:#001F3F;line-height:1.3;">{{dateLabel}}</div>
+          </td>
+        </tr>
+      </table>
+    </td>{{#if timeLabel}}
+    <td class="stack-td" width="50%" valign="top" style="padding:0 6px 12px 6px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#E8F1FE;border-radius:16px;">
+        <tr>
+          <td style="padding:16px 18px 18px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+            <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+              <td width="38" height="38" align="center" valign="middle" style="background-color:#1D4ED8;border-radius:11px;line-height:0;font-size:0;"><img src="https://res.cloudinary.com/dfpagrtoy/image/upload/f_png,w_40,h_40,c_fit,q_95/email-icons/clock.svg" width="20" height="20" alt="" style="display:block;width:20px;height:20px;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;"></td>
+            </tr></table>
+            <div style="padding-top:13px;font-size:10.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:#1D4ED8;line-height:1;">Start time</div>
+            <div class="dm-text" style="padding-top:5px;font-size:16px;font-weight:700;color:#001F3F;line-height:1.3;">{{timeLabel}}</div>
+          </td>
+        </tr>
+      </table>
+    </td>{{/if}}</tr><tr>
+    <td class="stack-td" width="50%" valign="top" style="padding:0 6px 12px 6px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F2ECFE;border-radius:16px;">
+        <tr>
+          <td style="padding:16px 18px 18px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+            <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+              <td width="38" height="38" align="center" valign="middle" style="background-color:#6D28D9;border-radius:11px;line-height:0;font-size:0;"><img src="https://res.cloudinary.com/dfpagrtoy/image/upload/f_png,w_40,h_40,c_fit,q_95/email-icons/users.svg" width="20" height="20" alt="" style="display:block;width:20px;height:20px;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;"></td>
+            </tr></table>
+            <div style="padding-top:13px;font-size:10.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:#6D28D9;line-height:1;">Travellers</div>
+            <div class="dm-text" style="padding-top:5px;font-size:16px;font-weight:700;color:#001F3F;line-height:1.3;">{{travelersLabel}}</div>
+          </td>
+        </tr>
+      </table>
+    </td><td class="stack-td" width="50%">&nbsp;</td></tr></table>
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:28px 40px 4px 40px;">
+    <div class="h2 font-main dm-text" style="font-size:15px;font-weight:800;color:#001F3F;letter-spacing:0.4px;text-transform:uppercase;line-height:1.3;">Pickup & meeting</div>
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;overflow:hidden;">
+      {{#if locationLabel}}
       <tr>
-        <td style="padding:7px 40px 7px 40px;" class="pad">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-            <tr>
-              <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Tour</td>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{tourTitle}}</span></td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:7px 40px 7px 40px;" class="pad">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-            <tr>
-              <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Date</td>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{dateLabel}}</span></td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:7px 40px 7px 40px;" class="pad">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-            <tr>
-              <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Starting time</td>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{timeLabel}}</span></td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:7px 40px 7px 40px;" class="pad">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-            <tr>
-              <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Travellers</td>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{travelersLabel}}</span></td>
-            </tr>
-          </table>
-        </td>
-      </tr>{{#if locationLabel}}
-      <tr>
-        <td style="padding:7px 40px 7px 40px;" class="pad">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-            <tr>
-              <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Pickup / meeting point</td>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{locationLabel}}</span></td>
-            </tr>
-          </table>
-        </td>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Pickup / meeting point</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{locationLabel}}</span></td>
       </tr>{{/if}}{{#if pickupTime}}
       <tr>
-        <td style="padding:7px 40px 7px 40px;" class="pad">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-            <tr>
-              <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Pickup / meeting time</td>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{pickupTime}}</span></td>
-            </tr>
-          </table>
-        </td>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Pickup / meeting time</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{pickupTime}}</span></td>
       </tr>{{/if}}{{#if supplierContact}}
       <tr>
-        <td style="padding:7px 40px 7px 40px;" class="pad">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-            <tr>
-              <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:0 12px 0 0;width:45%;vertical-align:top;">Guide / supplier contact</td>
-              <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;vertical-align:top;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{supplierContact}}</span></td>
-            </tr>
-          </table>
-        </td>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Guide / supplier contact</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{supplierContact}}</span></td>
       </tr>{{/if}}
-      <tr><td style="padding:24px 40px 0 40px;" class="pad"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="border-top:1px solid #E2E8F0;font-size:0;line-height:0;">&nbsp;</td></tr></table></td></tr>
+    </table>
+  </td></tr>
+      {{#if cancelDeadlineLabel}}
+      
+  <tr><td class="pad" style="padding:20px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#FFFBEB;border-radius:10px;">
+      <tr><td style="padding:14px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;color:#B45309;line-height:1.6;font-weight:600;">Free cancellation until <strong>{{cancelDeadlineLabel}}</strong>. This is your last chance to cancel for free.</td></tr>
+    </table>
+  </td></tr>
+      {{/if}}
       
   <tr><td class="pad" style="padding:28px 40px 4px 40px;">
     <div class="h2 font-main dm-text" style="font-size:15px;font-weight:800;color:#001F3F;letter-spacing:0.4px;text-transform:uppercase;line-height:1.3;">Before you go</div>
@@ -165,15 +166,23 @@
       {{/each}}
     </table>
   </td></tr>
+      {{#if directionsUrl}}
+      
+  <tr><td class="pad" style="padding:28px 40px 8px 40px;">
+    <table role="presentation" class="btn-wrap" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
+      <tr>
+        <td style="padding:0 8px 0 0;vertical-align:middle;">
+          <a href="{{directionsUrl}}" class="btn" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Get directions</a>
+        </td></tr>
+    </table>
+  </td></tr>
+      {{/if}}
       
   <tr><td class="pad" style="padding:28px 40px 8px 40px;">
     <table role="presentation" class="btn-wrap" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
       <tr>
         <td style="padding:0 8px 0 0;vertical-align:middle;">
           <a href="{{voucherUrl}}" class="btn" style="display:inline-block;background-color:#007A4D;color:#ffffff;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">View voucher</a>
-        </td>
-        <td style="padding:0 8px 0 0;vertical-align:middle;">
-          <a href="{{directionsUrl}}" class="btn" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Get directions</a>
         </td>
         <td style="padding:0 8px 0 0;vertical-align:middle;">
           <a href="{{supportUrl}}" class="btn" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Contact support</a>

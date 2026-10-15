@@ -161,25 +161,39 @@ const reserveLaterConfirmed = {
   name: 'Customer · Reserve now, pay later',
   build() {
     return B.shell('Your booking is confirmed: payment scheduled', `
-      ${B.hero({ heading: 'Your experience is reserved!', badgeText: 'Reserved', badgeColor: 'info', subtitle: 'Hello {{customerName}},<br>Your booking is confirmed. No payment has been taken yet.' })}
+      ${B.mediaHeader({
+        imageVar: 'tourImageUrl',
+        badgeText: 'Reserved',
+        badgeColor: 'info',
+        heading: 'Your experience is reserved!',
+        subtitle: '{{tourTitle}} &middot; {{travelersLabel}}',
+      })}
+      ${B.referenceBar({ reference: '{{bookingNumber}}', right: '{{#if bookedAtLabel}}Booked {{bookedAtLabel}}{{/if}}' })}
+      ${B.paragraph('Hello {{customerName}}, your booking is confirmed. No payment has been taken yet.')}
+      ${B.sectionTitle('Key facts')}
+      ${B.statGrid([
+        { icon: 'calendar', label: 'Experience date', value: '{{experienceDateLabel}}', tint: '#E7F6EE', color: '#0B7A4B' },
+        { icon: 'clock', label: 'Payment date', value: '{{chargeDateLabel}}', tint: '#FEF4E6', color: '#B45309' },
+        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tint: '#F2ECFE', color: '#6D28D9' },
+      ])}
       ${B.sectionTitle('Booking details')}
       ${customerBookingDetailsRows()}
-      ${B.divider()}
       ${B.sectionTitle('Payment schedule')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Booking total', value: '{{totalLabel}}' },
         { label: 'Amount paid today', value: '{{amountPaidTodayLabel}}' },
         { label: 'Scheduled payment', value: '{{scheduledPaymentLabel}}' },
-        { label: 'Experience date', value: '{{experienceDateLabel}}' },
-        { label: 'Payment date', value: '{{chargeDateLabel}}' },
         { label: 'Payment method', value: '{{paymentMethodLabel}}', if: '{{paymentMethodLabel}}' },
       ])}
-      ${B.callout('We\u2019ll remind you before the payment is collected. You can update your card at any time.', 'info')}
-      ${B.divider()}
+      ${B.callout('We will remind you before the payment is collected. You can update your card at any time.', 'info')}
       ${customerPickupSection()}
-      ${B.divider()}
       ${B.sectionTitle('Cancellation policy')}
-      ${B.paragraph('{{cancellationPolicyText}}')}
+      {{#if cancelDeadlineLabel}}
+      ${B.callout('Free cancellation until <strong>{{cancelDeadlineLabel}}</strong>.', 'success')}
+      ${B.paragraph('{{cancellationPolicyText}}', { small: true, muted: true })}
+      {{else}}
+      ${B.callout('{{cancellationPolicyText}}', 'warning')}
+      {{/if}}
       ${B.buttons([
         { label: 'View booking', href: '{{bookingUrl}}' },
         { label: 'Manage payment method', href: '{{managePaymentUrl}}', kind: 'secondary' },
@@ -266,19 +280,17 @@ const awaitingConfirmation = {
   build() {
     return B.shell('Payment received: awaiting confirmation', `
       ${B.hero({ heading: 'Payment received', badgeText: 'Paid', badgeColor: 'info', subtitle: 'Hello {{customerName}},<br>Your payment for <strong>{{tourTitle}}</strong> has been received. Your booking is not confirmed yet. The tour provider will confirm it shortly.' })}
-      ${B.paragraph('We\u2019ve received <strong>{{amountPaidLabel}}</strong> for <strong>{{tourTitle}}</strong> on <strong>{{dateLabel}}</strong>. Because this tour is confirmed manually by the provider, your booking will be confirmed once they accept it. You\u2019ll receive a confirmation email when that happens.')}
       ${B.sectionTitle('Booking details')}
       ${customerBookingDetailsRows()}
-      ${B.divider()}
       ${B.sectionTitle('Payment')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Booking total', value: '{{totalLabel}}' },
         { label: 'Amount received', value: '{{amountPaidLabel}}' },
         { label: 'Received on', value: '{{paidAtLabel}}' },
         { label: 'Payment reference', value: '{{paymentReference}}', if: '{{paymentReference}}' },
         { label: 'Payment status', value: '{{paymentStatusLabel}}' },
       ])}
-      ${B.callout('Your booking is awaiting confirmation from the tour provider. We\u2019ll email you as soon as it\u2019s confirmed.', 'info')}
+      ${B.callout('Your booking is awaiting confirmation from the tour provider. We will email you as soon as it is confirmed.', 'info')}
       ${B.buttons([
         { label: 'View booking', href: '{{bookingUrl}}' },
         { label: 'Manage booking', href: '{{manageUrl}}', kind: 'secondary' },
@@ -376,23 +388,29 @@ const bookingReminder = {
   name: 'Customer · Booking reminder',
   build() {
     return B.shell('Your experience is coming up', `
-      ${B.hero({ heading: 'Get ready for your experience!', badgeText: 'Coming up', badgeColor: 'info' })}
-      ${B.paragraph('Your experience begins on <strong>{{dateLabel}}</strong>.')}
-      ${B.detailRows([
-        { label: 'Tour', value: '{{tourTitle}}' },
-        { label: 'Date', value: '{{dateLabel}}' },
-        { label: 'Starting time', value: '{{timeLabel}}' },
-        { label: 'Travellers', value: '{{travelersLabel}}' },
+      ${B.hero({ heading: 'Get ready for your experience!', badgeText: 'Coming up', badgeColor: 'info', subtitle: 'Hello {{customerName}},<br>Your experience begins on <strong>{{dateLabel}}</strong>.' })}
+      ${B.sectionTitle('Key facts')}
+      ${B.statGrid([
+        { icon: 'calendar', label: 'Date', value: '{{dateLabel}}', tint: '#E7F6EE', color: '#0B7A4B' },
+        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tint: '#E8F1FE', color: '#1D4ED8', if: '{{timeLabel}}' },
+        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tint: '#F2ECFE', color: '#6D28D9' },
+      ])}
+      ${B.sectionTitle('Pickup & meeting')}
+      ${B.detailCard([
         { label: 'Pickup / meeting point', value: '{{locationLabel}}', if: '{{locationLabel}}' },
         { label: 'Pickup / meeting time', value: '{{pickupTime}}', if: '{{pickupTime}}' },
         { label: 'Guide / supplier contact', value: '{{supplierContact}}', if: '{{supplierContact}}' },
       ])}
-      ${B.divider()}
+      {{#if cancelDeadlineLabel}}
+      ${B.callout('Free cancellation until <strong>{{cancelDeadlineLabel}}</strong>. This is your last chance to cancel for free.', 'warning')}
+      {{/if}}
       ${B.sectionTitle('Before you go')}
       ${B.bulletList()}
+      {{#if directionsUrl}}
+      ${B.buttons([{ label: 'Get directions', href: '{{directionsUrl}}', kind: 'secondary' }])}
+      {{/if}}
       ${B.buttons([
         { label: 'View voucher', href: '{{voucherUrl}}' },
-        { label: 'Get directions', href: '{{directionsUrl}}', kind: 'secondary' },
         { label: 'Contact support', href: '{{supportUrl}}', kind: 'secondary' },
       ])}
     `);
@@ -643,18 +661,28 @@ const supplierNewBooking = {
   name: 'Supplier · New confirmed booking',
   build() {
     return B.shell('New confirmed booking', `
-      ${B.hero({ heading: 'You have a new confirmed booking', badgeText: '&#10003;&nbsp;&nbsp;Confirmed', badgeColor: 'accent', subtitle: 'Hello {{supplierName}},<br>A new booking has been added to your supplier dashboard.' })}
+      ${B.mediaHeader({
+        imageVar: 'tourImageUrl',
+        badgeText: '&#10003;&nbsp;&nbsp;Confirmed',
+        badgeColor: 'accent',
+        heading: 'New confirmed booking',
+        subtitle: '{{tourTitle}} &middot; {{travelersLabel}}',
+      })}
+      ${B.referenceBar({ reference: '{{bookingNumber}}', right: '{{#if bookedAtLabel}}Booked {{bookedAtLabel}}{{/if}}' })}
+      ${B.sectionTitle('Key facts')}
+      ${B.statGrid([
+        { icon: 'calendar', label: 'Date', value: '{{dateLabel}}', tint: '#E7F6EE', color: '#0B7A4B' },
+        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tint: '#E8F1FE', color: '#1D4ED8', if: '{{timeLabel}}' },
+        { icon: 'duration', label: 'Duration', value: '{{durationLabel}}', tint: '#FEF4E6', color: '#B45309', if: '{{durationLabel}}' },
+        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tint: '#F2ECFE', color: '#6D28D9' },
+      ])}
       ${B.sectionTitle('Booking details')}
       ${supplierBookingDetailsRows()}
       {{#if specialRequirements}}
-      ${B.detailRows([
-        { label: 'Special requirements', value: '{{specialRequirements}}' },
-      ])}
+      ${B.paragraph('Special requests: <strong>{{specialRequirements}}</strong>')}
       {{/if}}
-      ${B.divider()}
       ${B.sectionTitle('Lead traveller')}
       ${B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{customerInitials}}' })}
-      ${B.divider()}
       ${B.sectionTitle('Supplier payout')}
       ${B.summaryRows([
         { label: 'Retail value', value: '{{totalLabel}}' },
@@ -853,20 +881,22 @@ const supplierBookingReminder = {
   name: 'Supplier · Upcoming booking reminder',
   build() {
     return B.shell('Upcoming booking reminder', `
-      ${B.hero({ heading: 'This booking is coming up', badgeText: 'Reminder', badgeColor: 'info' })}
-      ${B.detailRows([
+      ${B.hero({ heading: 'This booking is coming up', badgeText: 'Reminder', badgeColor: 'info', subtitle: 'Hello {{supplierName}},<br>An upcoming booking needs your attention.' })}
+      ${B.sectionTitle('Key facts')}
+      ${B.statGrid([
+        { icon: 'calendar', label: 'Date', value: '{{dateLabel}}', tint: '#E7F6EE', color: '#0B7A4B' },
+        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tint: '#E8F1FE', color: '#1D4ED8', if: '{{timeLabel}}' },
+        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tint: '#F2ECFE', color: '#6D28D9' },
+      ])}
+      ${B.sectionTitle('Booking details')}
+      ${B.detailCard([
         { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Date', value: '{{dateLabel}}' },
-        { label: 'Starting time', value: '{{timeLabel}}' },
-        { label: 'Travellers', value: '{{travelersLabel}}' },
         { label: 'Customer', value: '{{customerName}}' },
         { label: 'Telephone', value: '{{customerPhone}}', if: '{{customerPhone}}' },
         { label: 'Pickup / meeting point', value: '{{pickupLocation}}', if: '{{pickupLocation}}' },
       ])}
       {{#if specialRequirements}}
-      ${B.detailRows([
-        { label: 'Special requirements', value: '{{specialRequirements}}' },
-      ])}
+      ${B.paragraph('Special requests: <strong>{{specialRequirements}}</strong>')}
       {{/if}}
       ${B.buttonPrimary('View booking', '{{supplierBookingUrl}}')}
     `);
