@@ -231,6 +231,45 @@ function detailRows(rows, options = {}) {
 }
 
 /**
+ * A single rounded surface wrapping label/value rows. Same data contract as
+ * detailRows (`{ label, value, if }`), but drawn as one card instead of
+ * free-floating rows, so a group of related facts reads as a designed block.
+ * The heading (if any) is rendered by the caller via sectionTitle.
+ *
+ * Optional rows use the same `if: '{{var}}'` guard as detailRows, so an empty
+ * value drops the whole row rather than leaving a label with no value.
+ */
+function detailCard(rows, options = {}) {
+  const { background = COLORS.bg } = options;
+  let body = '';
+  for (const row of rows) {
+    const cond = row.if === undefined ? true : row.if;
+    if (cond === false) continue;
+
+    const ifMatch = typeof cond === 'string' && cond.match(/^\{\{\s*([a-zA-Z0-9_]+)\s*\}\}$/);
+    const rowConditional = row.conditional || (ifMatch ? ifMatch[1] : null);
+
+    const valueHtml = row.raw !== undefined
+      ? row.raw
+      : `<span class="dm-text" style="color:${COLORS.navy};font-weight:600;">${row.value || '&mdash;'}</span>`;
+
+    const rowHtml = `
+      <tr>
+        <td class="dm-muted" style="font-family:${FONT};font-size:13px;color:${COLORS.muted};line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid ${COLORS.border};">${row.label}</td>
+        <td style="font-family:${FONT};font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid ${COLORS.border};">${valueHtml}</td>
+      </tr>`;
+
+    body += rowConditional ? `{{#if ${rowConditional}}}${rowHtml}{{/if}}` : rowHtml;
+  }
+  return `
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:${background};border:1px solid ${COLORS.border};border-radius:14px;overflow:hidden;">
+      ${body}
+    </table>
+  </td></tr>`;
+}
+
+/**
  * Before/after diff table (change emails). Renders header + {{#each changes}}.
  */
 function diffTable() {
@@ -651,7 +690,12 @@ const EMAIL_ICON_URLS = {
  * the SVG, because the tint, label and value carry the content. Stacks to
  * one column on mobile via the shared `.stack-td` rule.
  *
- * @param {Array<{icon:string, label:string, value:string, color?:string, tint?:string}>} tiles
+ * A tile may carry `if: '{{someVar}}'` to disappear when that value is empty —
+ * the same contract as detailRows, so a tour with no start time does not print
+ * a blank "Start time" tile. With no `if` the markup is byte-identical to the
+ * original grid, which keeps already-shipped artifacts in sync.
+ *
+ * @param {Array<{icon:string, label:string, value:string, color?:string, tint?:string, if?:string}>} tiles
  */
 function statGrid(tiles) {
   const cell = (t) => {
@@ -666,7 +710,7 @@ function statGrid(tiles) {
       : ICONS[t.icon]
         ? `<svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">${ICONS[t.icon]}</svg>`
         : '';
-    return `
+    const html = `
     <td class="stack-td" width="50%" valign="top" style="padding:0 6px 12px 6px;">
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:${tint};border-radius:16px;">
         <tr>
@@ -680,6 +724,12 @@ function statGrid(tiles) {
         </tr>
       </table>
     </td>`;
+
+    // Optional tile: hide the whole cell when the value is absent, exactly like
+    // detailRows does for a row. No `if` means the original markup, untouched.
+    const ifMatch = typeof t.if === 'string' && t.if.match(/^\{\{\s*([a-zA-Z0-9_]+)\s*\}\}$/);
+    const tileConditional = t.conditional || (ifMatch ? ifMatch[1] : null);
+    return tileConditional ? `{{#if ${tileConditional}}}${html}{{/if}}` : html;
   };
 
   const rows = [];
@@ -794,6 +844,7 @@ module.exports = {
   hero,
   sectionTitle,
   detailRows,
+  detailCard,
   diffTable,
   divider,
   callout,

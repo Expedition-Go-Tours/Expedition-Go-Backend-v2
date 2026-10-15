@@ -556,6 +556,10 @@ async function buildBookingBase(booking, opts = {}) {
     bookingNumber: booking.bookingNumber,
     tourTitle: tour.title || '',
     tourDescription: tour.description || '',
+    // Wide banner image for media-header templates; '' degrades to the navy
+    // gradient (see mediaHeader's imageVar branch).
+    tourImageUrl: heroImageUrl(tour),
+    bookedAtLabel: fmt.formatCompactDate(booking.createdAt),
     dateLabel: fmt.formatLongDate(booking.travelDate),
     timeLabel: fmt.formatTime(booking.selectedTime),
     durationLabel: fmt.getDurationLabel(tour),
@@ -594,6 +598,11 @@ async function buildBookingBase(booking, opts = {}) {
     commissionLabel: fmt.formatCurrency(booking.platformCommission, currency),
     payoutAmountLabel: fmt.formatCurrency(booking.supplierPayout, currency),
 
+    // cancellation — the last moment a free cancellation can be made, or ''
+    // when the policy is non-refundable. Lets a confirmation show the exact
+    // deadline rather than only the policy prose.
+    cancelDeadlineLabel: fmt.formatDateTime(fmt.getCancelDeadline(booking, tour)),
+
     // customer URLs — point at the storefront the booking was made on
     bookingUrl: emailUrls.viewBooking(booking.id, clientOrigin),
     voucherUrl: emailUrls.downloadVoucher(booking.id, clientOrigin),
@@ -629,11 +638,17 @@ async function buildBookingBase(booking, opts = {}) {
  */
 function cancellationPolicyTextFor(tour) {
   const policy = (tour && tour.bookingAndTickets && tour.bookingAndTickets.cancellationPolicy) || null;
-  return (
+  const text =
     (typeof policy === 'object' && policy && policy.text) ||
     (typeof policy === 'string' && policy) ||
-    'Free cancellation up to 24 hours before your experience.'
-  );
+    '';
+  if (text) return text;
+  // A non-refundable policy with no explicit wording must not fall through to
+  // the free-cancellation default, which would contradict the deadline callout.
+  if (policy && typeof policy === 'object' && policy.type === 'all_sales_final') {
+    return 'All sales are final. This experience is non-refundable.';
+  }
+  return 'Free cancellation up to 24 hours before your experience.';
 }
 
 async function sendBookingConfirmedEmail(booking) {
@@ -648,6 +663,9 @@ async function sendBookingConfirmedEmail(booking) {
     subject: `Booking Confirmed — ${base.tourTitle} (Ref: ${base.bookingNumber})`,
     key: 'booking-confirmed',
     data,
+    opts: {
+      preheader: `Everything you need for ${base.tourTitle} is inside: your date, the meeting point and your voucher.`,
+    },
   });
 }
 

@@ -94,25 +94,66 @@ const customerBookingConfirmed = {
   name: 'Customer · Booking confirmed',
   build(data) {
     return B.shell('Your booking is confirmed', `
-      ${B.hero({ heading: 'Your experience is confirmed!', badgeText: '&#10003;&nbsp;&nbsp;Confirmed', badgeColor: 'accent', subtitle: 'Hello {{customerName}},<br>Thank you for booking with {{brandName}}. Your experience is confirmed, and everything you need is below.' })}
+      ${B.mediaHeader({
+        imageVar: 'tourImageUrl',
+        badgeText: '&#10003;&nbsp;&nbsp;Confirmed',
+        badgeColor: 'accent',
+        heading: 'Your booking is confirmed',
+        subtitle: '{{tourTitle}} &middot; {{travelersLabel}}',
+      })}
+      ${B.referenceBar({ reference: '{{bookingNumber}}', right: '{{#if bookedAtLabel}}Booked {{bookedAtLabel}}{{/if}}' })}
+      ${B.paragraph('Hello {{customerName}}, thank you for booking with {{brandName}}. Your experience is confirmed and everything you need is below.')}
+      ${B.sectionTitle('Key facts')}
+      ${B.statGrid([
+        { icon: 'calendar', label: 'Date', value: '{{dateLabel}}', tint: '#E7F6EE', color: '#0B7A4B' },
+        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tint: '#E8F1FE', color: '#1D4ED8', if: '{{timeLabel}}' },
+        { icon: 'duration', label: 'Duration', value: '{{durationLabel}}', tint: '#FEF4E6', color: '#B45309', if: '{{durationLabel}}' },
+        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tint: '#F2ECFE', color: '#6D28D9' },
+      ])}
       ${B.sectionTitle('Booking details')}
-      ${customerBookingDetailsRows()}
-      ${B.divider()}
-      ${customerPickupSection()}
-      ${B.divider()}
+      ${B.detailCard([
+        { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Booked via', value: '{{brandName}}' },
+        { label: 'Language', value: '{{languageLabel}}' },
+        { label: 'Booking type', value: '{{bookingTypeLabel}}' },
+        { label: 'Supplier', value: '{{supplierName}}' },
+      ])}
+      ${B.sectionTitle('Pickup & meeting')}
+      ${B.detailCard([
+        { label: 'Pickup included', value: '{{pickupIncludedLabel}}' },
+        { label: 'Pickup location', value: '{{pickupLocation}}', if: '{{pickupLocation}}' },
+        { label: 'Pickup time', value: '{{pickupTime}}', if: '{{pickupTime}}' },
+        { label: 'Meeting point', value: '{{meetingPoint}}', if: '{{meetingPoint}}' },
+        { label: 'Meeting time', value: '{{meetingTime}}', if: '{{meetingTime}}' },
+      ])}
+      {{#if pickupInstructions}}
+      ${B.paragraph('Pickup instructions: <strong>{{pickupInstructions}}</strong>')}
+      {{/if}}
+      {{#if directionsUrl}}
+      ${B.buttons([{ label: 'Get directions', href: '{{directionsUrl}}', kind: 'secondary' }])}
+      {{/if}}
       ${B.sectionTitle('Payment')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Booking total', value: '{{totalLabel}}' },
         { label: 'Amount paid', value: '{{amountPaidLabel}}' },
         { label: 'Payment status', value: '{{paymentStatusLabel}}' },
         { label: 'Payment method', value: '{{paymentMethodLabel}}', if: '{{paymentMethodLabel}}' },
       ])}
-      ${B.divider()}
       ${B.sectionTitle('Cancellation policy')}
-      ${B.paragraph('{{cancellationPolicyText}}')}
+      {{#if cancelDeadlineLabel}}
+      ${B.callout('Free cancellation until <strong>{{cancelDeadlineLabel}}</strong>.', 'success')}
+      ${B.paragraph('{{cancellationPolicyText}}', { small: true, muted: true })}
+      {{else}}
+      ${B.callout('{{cancellationPolicyText}}', 'warning')}
+      {{/if}}
+      ${B.sectionTitle('What happens next')}
+      ${B.stepList([
+        { title: 'Show your mobile voucher at the meeting point', body: 'Download it below or open it any time from your booking.' },
+        { title: 'Arrive 10 minutes before the start time', body: 'A little leeway keeps check-in smooth and the group on schedule.' },
+      ])}
       ${B.buttons([
-        { label: 'View booking', href: '{{bookingUrl}}' },
         { label: 'Download voucher', href: '{{voucherUrl}}' },
+        { label: 'View booking', href: '{{bookingUrl}}', kind: 'secondary' },
         { label: 'Manage booking', href: '{{manageUrl}}', kind: 'secondary' },
       ])}
     `);
@@ -615,8 +656,8 @@ const supplierNewBooking = {
       ])}
       {{/if}}
       ${B.divider()}
-      ${B.sectionTitle('Customer details')}
-      ${customerContactRows()}
+      ${B.sectionTitle('Lead traveller')}
+      ${B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{customerInitials}}' })}
       ${B.divider()}
       ${B.sectionTitle('Supplier payout')}
       ${B.summaryRows([

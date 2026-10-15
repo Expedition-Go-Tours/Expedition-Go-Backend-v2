@@ -45,6 +45,11 @@ const SAMPLE = {
   customerPhone: '+27 82 555 0142',
   supplierName: 'Expedition Go Travel and Tours Ltd',
 
+  // lead traveler (the person going on the trip)
+  leadTravelerName: 'My Pascaline',
+  leadTravelerEmail: 'pasci231@gmail.com',
+  leadTravelerPhone: '+27 82 555 0142',
+
   // experience
   tourTitle: 'Accra Flying Dress Experience',
   tourImageUrl:
@@ -65,11 +70,13 @@ const SAMPLE = {
   pickupTime: '08:15',
   meetingPoint: 'Kempinski Hotel lobby',
   meetingTime: '08:30',
+  directionsUrl: 'https://www.google.com/maps/dir/?api=1&destination=Kempinski%20Hotel%20lobby',
 
   // money
   totalLabel: '$385.00',
   commissionLabel: '$57.75',
   payoutAmountLabel: '$327.25',
+  amountPaidLabel: '$385.00',
   amountPaidTodayLabel: '$0.00',
   scheduledPaymentLabel: '$385.00',
   paymentAmountLabel: '$385.00',
@@ -81,6 +88,7 @@ const SAMPLE = {
   chargeAtLabel: 'Tue, 3 Nov 2026, 00:15 GMT',
   bookedAtLabel: '9 Oct 2026',
   cancellationPolicyText: 'Free cancellation up to 24 hours before your experience.',
+  cancelDeadlineLabel: 'November 3, 2026, 9:00 AM',
 
   // links
   bookingUrl: 'https://travioghana.com/bookings/cmv2v1rxj0200i4nqlq9n1fau',
