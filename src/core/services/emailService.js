@@ -585,7 +585,12 @@ async function buildBookingBase(booking, opts = {}) {
     amountPaidTodayLabel: fmt.formatCurrency(paidNow ? amountPaid : 0, currency),
     scheduledPaymentLabel: fmt.formatCurrency(paidNow ? 0 : Number(booking.grossAmount), currency),
     paymentStatusLabel: paymentStatusLabel(booking.paymentStatus),
-    paymentMethodLabel: '',
+    // Card on file (pay-later). Empty for pay-now and unfilled rows, which
+    // makes the templates' `if: '{{paymentMethodLabel}}'` hide the row.
+    paymentMethodLabel: fmt.formatPaymentMethodLabel({
+      brand: booking.paymentMethodBrand,
+      last4: booking.paymentMethodLast4,
+    }),
     commissionLabel: fmt.formatCurrency(booking.platformCommission, currency),
     payoutAmountLabel: fmt.formatCurrency(booking.supplierPayout, currency),
 

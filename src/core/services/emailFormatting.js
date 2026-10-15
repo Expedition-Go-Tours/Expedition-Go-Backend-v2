@@ -331,6 +331,41 @@ function formatCardLast4(paymentMethod) {
   return '';
 }
 
+// Stripe's lowercase card brands → the names customers see on their statement.
+const CARD_BRAND_LABELS = {
+  visa: 'Visa',
+  mastercard: 'Mastercard',
+  amex: 'American Express',
+  discover: 'Discover',
+  diners: 'Diners Club',
+  jcb: 'JCB',
+  unionpay: 'UnionPay',
+  cartes_bancaires: 'Cartes Bancaires',
+};
+
+/**
+ * Human-readable card brand. Falls back to title-casing an unknown brand rather
+ * than dropping it, so a brand Stripe adds later still shows up.
+ */
+function formatCardBrand(brand) {
+  if (!brand) return '';
+  const key = String(brand).toLowerCase();
+  if (CARD_BRAND_LABELS[key]) return CARD_BRAND_LABELS[key];
+  return key.replace(/_/g, ' ').replace(/(^|\s)\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * "Visa •••• 4242" for the Payment method row. Degrades to whichever half is
+ * known, or '' when neither is — templates hide the row when it is empty.
+ */
+function formatPaymentMethodLabel({ brand, last4 } = {}) {
+  const b = formatCardBrand(brand);
+  const l = last4 ? String(last4) : '';
+  if (b && l) return `${b} •••• ${l}`;
+  if (l) return `•••• ${l}`;
+  return b;
+}
+
 /**
  * Normalize a stored pickup snapshot (object or JSON string) and return the
  * human-readable location label. Used to show the PREVIOUS pickup in update
@@ -361,4 +396,6 @@ module.exports = {
   getLanguageLabel,
   getBookingTypeLabel,
   formatCardLast4,
+  formatCardBrand,
+  formatPaymentMethodLabel,
 };

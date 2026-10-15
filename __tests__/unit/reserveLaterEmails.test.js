@@ -112,6 +112,26 @@ describe('reserve-later-confirmed email', () => {
       delete process.env.PAY_LATER_CHARGE_BEFORE_HOURS;
     }
   });
+
+  it('shows the card on file on the Payment method row', async () => {
+    await sendReserveLaterConfirmedEmail({
+      ...booking(),
+      paymentMethodBrand: 'visa',
+      paymentMethodLast4: '4242',
+    });
+    const { html } = __send.mock.calls[0][0];
+    expect(html).toContain('Payment method');
+    expect(html).toContain('Visa •••• 4242');
+  });
+
+  it('hides the Payment method row when there is no card on file', async () => {
+    // Pay-now bookings and pre-backfill rows: the row must disappear, not
+    // render an empty label.
+    await sendReserveLaterConfirmedEmail(booking());
+    const { html } = __send.mock.calls[0][0];
+    expect(html).not.toContain('Payment method');
+    expect(html).not.toContain('{{paymentMethodLabel}}');
+  });
 });
 
 describe('payment-reminder email', () => {

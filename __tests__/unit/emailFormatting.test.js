@@ -1,4 +1,4 @@
-const { formatTravelers, getBookingTypeLabel, formatCompactDate } = require('../../src/core/services/emailFormatting');
+const { formatTravelers, getBookingTypeLabel, formatCompactDate, formatCardBrand, formatPaymentMethodLabel } = require('../../src/core/services/emailFormatting');
 
 /**
  * formatCompactDate — the "Reserved 9 Oct 2026" reference-bar form.
@@ -21,6 +21,43 @@ describe('formatCompactDate', () => {
     expect(formatCompactDate(null)).toBe('');
     expect(formatCompactDate(undefined)).toBe('');
     expect(formatCompactDate('nonsense')).toBe('');
+  });
+});
+
+describe('formatCardBrand', () => {
+  it('uses the names customers recognise', () => {
+    expect(formatCardBrand('visa')).toBe('Visa');
+    expect(formatCardBrand('mastercard')).toBe('Mastercard');
+    expect(formatCardBrand('amex')).toBe('American Express');
+    expect(formatCardBrand('diners')).toBe('Diners Club');
+  });
+
+  it('title-cases an unknown brand rather than dropping it', () => {
+    expect(formatCardBrand('brand_new')).toBe('Brand New');
+  });
+
+  it('returns empty for nothing', () => {
+    expect(formatCardBrand(null)).toBe('');
+    expect(formatCardBrand(undefined)).toBe('');
+  });
+});
+
+describe('formatPaymentMethodLabel', () => {
+  it('renders the statement-line form from brand + last4', () => {
+    expect(formatPaymentMethodLabel({ brand: 'visa', last4: '4242' })).toBe('Visa •••• 4242');
+  });
+
+  it('degrades to last4 only when the brand is unknown', () => {
+    expect(formatPaymentMethodLabel({ brand: null, last4: '4242' })).toBe('•••• 4242');
+  });
+
+  it('degrades to brand only when last4 is missing', () => {
+    expect(formatPaymentMethodLabel({ brand: 'mastercard', last4: null })).toBe('Mastercard');
+  });
+
+  it('returns empty when neither half is known (templates hide the row)', () => {
+    expect(formatPaymentMethodLabel({})).toBe('');
+    expect(formatPaymentMethodLabel()).toBe('');
   });
 });
 

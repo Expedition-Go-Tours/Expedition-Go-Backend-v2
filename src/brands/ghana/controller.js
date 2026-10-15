@@ -17,6 +17,7 @@ const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTou
 const { resolvePickupSelection } = require('../../core/services/geoUtils');
 const { validatePassengerMix } = require('../../core/services/passengerMix');
 const { createPaymentIntent, createCheckoutSession, calculateCommission, getStripe, ensureStripeCustomer } = require('../../core/services/stripeHelpers');
+const { cardSummaryFromIntent } = require('../../core/services/stripeCardSummary');
 const { refundCancelledBooking } = require('../../core/services/bookingModify');
 const { resolveAllowedClientUrl } = require('../../core/services/clientOrigin');
 const { acquireHold, releaseHold } = require('../../core/services/checkoutHold');
@@ -777,6 +778,9 @@ const confirmBooking = catchAsync(async (req, res, next) => {
   // can auto-charge it near the activity date. Pay-now uses Stripe's hosted
   // Checkout page instead — no PaymentIntent is created here.
   let paymentIntent = null;
+  // Brand + last4 of the card saved for a pay-later booking. Stays null for
+  // pay-now (Stripe Checkout owns the card there) so the columns stay NULL.
+  let cardSummary = { brand: null, last4: null };
   if (paymentTiming === 'later') {
     if (!req.body.paymentMethodId) {
       return next(new AppError('A payment method is required to reserve now and pay later.', 400));
@@ -814,7 +818,7 @@ const confirmBooking = catchAsync(async (req, res, next) => {
       // "requires_confirmation") even when the live PaymentIntent was since
       // charged or cancelled. Check the LIVE status so a stale replay of a
       // previously-settled intent is detected and replaced.
-      const liveIntent = await getStripe().paymentIntents.retrieve(paymentIntent.id);
+      const liveIntent = await getStripe().paymentIntents.retrieve(paymentIntent.id, { expand: ['payment_method'] });
       if (liveIntent.status !== 'requires_confirmation') {
         // Collision with a stale PI from a prior attempt on the same request
         // shape (same customer/tour/date/amount) — e.g. a previously charged or
@@ -831,6 +835,10 @@ const confirmBooking = catchAsync(async (req, res, next) => {
           user: req.user,
         });
       }
+      // Both branches share the same payment method (the recreated intent reuses
+      // req.body.paymentMethodId), so the expanded live intent is authoritative
+      // for the card on file either way.
+      cardSummary = cardSummaryFromIntent(liveIntent);
     } catch (err) {
       return next(new AppError(`Payment failed: ${err.message}`, 400));
     }
@@ -889,6 +897,8 @@ const confirmBooking = catchAsync(async (req, res, next) => {
          specialRequests,
          ...(pickupSnapshot && { pickup: pickupSnapshot }),
          ...(paymentIntent && { stripePaymentIntentId: paymentIntent.id }),
+         paymentMethodBrand: cardSummary.brand,
+         paymentMethodLast4: cardSummary.last4,
          appliedOfferId: appliedOffer?.id || null,
          offerName: appliedOffer?.name || null,
          offerPromoCode: appliedOffer?.promoCode || null,

@@ -1001,6 +1001,14 @@ model Booking {
   // the pay-later sweep stops auto-confirming this booking. Cleared on settle.
   requiresPaymentActionAt DateTime?
 
+  // Card on file for a reserve-now-pay-later booking, captured at checkout from
+  // the Stripe PaymentMethod (brand + last4 only; Stripe never exposes the PAN).
+  // Lets emails, admin and support name the saved card without another Stripe
+  // round-trip. Null for pay-now bookings and for rows created before this was
+  // captured (see scripts/backfill-payment-method-labels.js).
+  paymentMethodBrand String?
+  paymentMethodLast4 String?
+
   // Cancellation
   cancellationReason String?  // structured reason code from the customer/supplier form
   cancellationNote   String?  // optional free-text note the customer or supplier provided
