@@ -337,7 +337,7 @@ const customerBookingChanged = {
         { label: 'Additional charge / refund', value: '{{adjustmentLabel}}' },
         { label: 'New total', value: '{{newTotalLabel}}', total: true },
       ])}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Payment status', value: '{{paymentStatusLabel}}' },
       ])}
       ${B.callout('Your previous voucher is no longer valid.', 'warning')}
@@ -355,12 +355,12 @@ const pickupDetailsUpdated = {
   build() {
     return B.shell('Your pickup information has been updated (Ref: {{bookingNumber}})', `
       ${B.hero({ heading: 'Pickup information updated', badgeText: 'Updated', badgeColor: 'info' })}
-    ${B.detailRows([
+    ${B.detailCard([
       { label: 'Booking reference', value: '{{bookingNumber}}' },
       { label: 'Activity', value: '{{tourTitle}}' },
       { label: 'Lead traveller', value: '{{leadTravelerName}}' },
     ])}
-    ${B.detailRows([
+    ${B.detailCard([
       { label: 'Previous pickup location', value: '{{previousPickupLocation}}', if: '{{previousPickupLocation}}', strike: true },
       { label: 'New pickup location', value: '{{pickupLocation}}', if: '{{pickupLocation}}' },
       { label: 'Pickup date', value: '{{dateLabel}}' },
@@ -382,7 +382,7 @@ const pickupLocationRequired = {
     return B.shell('Action required: Add your pickup location', `
       ${B.hero({ heading: 'Where should we pick you up?', badgeText: 'Action required', badgeColor: 'warning' })}
       ${B.paragraph('You selected \u201cI\u2019ll choose later\u201d during booking. Please provide your pickup location before <strong>{{deadlineLabel}}</strong>.')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Experience', value: '{{tourTitle}}' },
         { label: 'Date', value: '{{dateLabel}}' },
         { label: 'Starting time', value: '{{timeLabel}}' },
@@ -434,7 +434,7 @@ const customerCancelledFullRefund = {
       ${B.hero({ heading: 'Your booking is cancelled', badgeText: 'Cancelled', badgeColor: 'danger' })}
       ${B.paragraph('Your cancellation has been completed.')}
       ${B.sectionTitle('Cancellation details')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Experience', value: '{{tourTitle}}' },
         { label: 'Original date', value: '{{dateLabel}}' },
         { label: 'Cancelled by', value: 'Customer' },
@@ -460,7 +460,7 @@ const customerCancelledNoRefund = {
     return B.shell('Your booking has been cancelled', `
       ${B.hero({ heading: 'Your booking is cancelled', badgeText: 'Cancelled', badgeColor: 'danger' })}
       ${B.paragraph('Your cancellation was made after the free-cancellation deadline.')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Cancellation deadline', value: '{{cancellationDeadlineLabel}}' },
         { label: 'Cancellation time', value: '{{cancelledAtLabel}}' },
         { label: 'Cancellation fee', value: '{{cancellationFeeLabel}}' },
@@ -481,7 +481,7 @@ const refundProcessing = {
   build() {
     return B.shell('Your refund is being processed', `
       ${B.hero({ heading: 'We\u2019re processing your refund', badgeText: 'Processing', badgeColor: 'info' })}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Refund amount', value: '{{refundAmountLabel}}' },
         { label: 'Refund method', value: 'Original payment method' },
         { label: 'Refund reference', value: '{{refundReference}}', if: '{{refundReference}}' },
@@ -500,7 +500,7 @@ const refundCompleted = {
     return B.shell('Your refund has been issued', `
       ${B.hero({ heading: 'Your refund is complete', badgeText: '&#10003;&nbsp;&nbsp;Refunded', badgeColor: 'accent' })}
       ${B.paragraph('We have issued <strong>{{refundAmountLabel}}</strong> to your original payment method.')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Refund reference', value: '{{refundReference}}', if: '{{refundReference}}' },
         { label: 'Refund amount', value: '{{refundAmountLabel}}' },
         { label: 'Refund issued', value: '{{refundedAtLabel}}' },
@@ -551,7 +551,7 @@ const supplierCancelledBooking = {
       {{else}}
       ${B.paragraph('Unfortunately, the supplier can no longer operate your experience. Your refund is on its way back to your original payment method.')}
       {{/if}}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Experience', value: '{{tourTitle}}' },
         { label: 'Original date', value: '{{dateLabel}}' },
         { label: 'Reason', value: '{{cancellationReason}}', if: '{{cancellationReason}}' },
@@ -581,7 +581,7 @@ const adminCancellationRequest = {
     return B.shell('Action needed: supplier cancellation request', `
       ${B.hero({ heading: 'A supplier has requested a cancellation', badgeText: 'Approval needed', badgeColor: 'warning' })}
       ${B.paragraph('No money has moved and the customer has not been notified. Review the request in the admin Cancellations queue, then approve or reject it.')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Booking', value: '{{bookingNumber}}' },
         { label: 'Experience', value: '{{tourTitle}}' },
         { label: 'Supplier', value: '{{supplierName}}' },
@@ -611,7 +611,7 @@ const supplierCancellationDecision = {
       ${B.hero({ heading: 'Cancellation request rejected', badgeText: 'Rejected', badgeColor: 'danger' })}
       ${B.paragraph('Your cancellation request was reviewed and rejected. The booking remains confirmed. The experience is still expected to run as scheduled.')}
       {{/if}}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Booking', value: '{{bookingNumber}}' },
         { label: 'Experience', value: '{{tourTitle}}' },
         { label: 'Decision', value: '{{decisionLabel}}' },
@@ -629,7 +629,7 @@ const supplierCancellationFee = {
     return B.shell('Cancellation fee applied', `
       ${B.hero({ heading: 'A cancellation fee has been applied to your account', badgeText: 'Fee', badgeColor: 'danger' })}
       ${B.paragraph('Because this cancellation was for an operational reason within your control, a {{feePctLabel}} cancellation fee (of the booking\u2019s retail price) applies. The customer has been fully refunded. The fee will be deducted automatically from your next payout.')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Booking reference', value: '{{bookingNumber}}' },
         { label: 'Experience', value: '{{tourTitle}}' },
         { label: 'Date', value: '{{dateLabel}}' },
@@ -698,7 +698,7 @@ const supplierNewBooking = {
         { label: 'Commission', value: '{{commissionLabel}}' },
         { label: 'Supplier payout', value: '{{payoutAmountLabel}}', total: true },
       ])}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Payout status', value: 'Scheduled' },
       ])}
       ${B.buttonPrimary('View booking', '{{supplierBookingUrl}}')}
@@ -842,12 +842,12 @@ const supplierPickupUpdated = {
   build() {
     return B.shell('Customer pickup location updated (Ref: {{bookingNumber}})', `
       ${B.hero({ heading: 'Pickup information has changed', badgeText: 'Updated', badgeColor: 'info' })}
-    ${B.detailRows([
+    ${B.detailCard([
       { label: 'Booking reference', value: '{{bookingNumber}}' },
       { label: 'Activity', value: '{{tourTitle}}' },
       { label: 'Lead traveller', value: '{{leadTravelerName}}' },
     ])}
-    ${B.detailRows([
+    ${B.detailCard([
       { label: 'Previous location', value: '{{previousPickupLocation}}', if: '{{previousPickupLocation}}', strike: true },
       { label: 'New location', value: '{{pickupLocation}}', if: '{{pickupLocation}}' },
       { label: 'Pickup date', value: '{{dateLabel}}' },
@@ -869,7 +869,7 @@ const supplierPickupRequired = {
     return B.shell('Action required: Confirm pickup details', `
       ${B.hero({ heading: 'Pickup details still needed', badgeText: 'Action required', badgeColor: 'danger' })}
       ${B.paragraph('Booking <strong>#{{bookingNumber}}</strong> for <strong>{{tourTitle}}</strong> includes pickup, but the pickup location has not been confirmed yet.')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Booking reference', value: '{{bookingNumber}}' },
         { label: 'Experience', value: '{{tourTitle}}' },
         { label: 'Activity date', value: '{{deadlineLabel}}' },
@@ -915,7 +915,7 @@ const supplierCustomerCancelledFree = {
     return B.shell('Booking cancelled: do not operate', `
       ${B.hero({ heading: 'This booking has been cancelled', badgeText: 'Cancelled', badgeColor: 'danger' })}
       ${B.callout('DO NOT OPERATE THIS BOOKING', 'danger')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Booking reference', value: '{{bookingNumber}}' },
         { label: 'Experience', value: '{{tourTitle}}' },
         { label: 'Lead traveller', value: '{{leadTravelerName}}' },
@@ -942,7 +942,7 @@ const supplierCustomerCancelledLate = {
     return B.shell('Late customer cancellation', `
       ${B.hero({ heading: 'Booking cancelled after the deadline', badgeText: 'Late cancellation', badgeColor: 'danger' })}
       ${B.callout('DO NOT OPERATE UNLESS SUPPORT INSTRUCTS OTHERWISE', 'danger')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Booking reference', value: '{{bookingNumber}}' },
         { label: 'Experience', value: '{{tourTitle}}' },
         { label: 'Lead traveller', value: '{{leadTravelerName}}' },
@@ -967,7 +967,7 @@ const supplierPlatformCancelled = {
     return B.shell('Booking cancelled by Expedition-Go Tours', `
       ${B.hero({ heading: 'Do not operate this booking', badgeText: 'Cancelled', badgeColor: 'danger' })}
       ${B.paragraph('{{brandName}} has cancelled this booking.')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Booking reference', value: '{{bookingNumber}}' },
         { label: 'Experience', value: '{{tourTitle}}' },
         { label: 'Lead traveller', value: '{{leadTravelerName}}' },
@@ -991,7 +991,7 @@ const supplierCancellationRecorded = {
     return B.shell('Supplier cancellation confirmed', `
       ${B.hero({ heading: 'Your cancellation has been recorded', badgeText: 'Recorded', badgeColor: 'warning' })}
       ${B.paragraph('The customer has been notified and will receive a full refund.')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Cancellation reason', value: '{{cancellationReason}}', if: '{{cancellationReason}}' },
         { label: 'Customer refund', value: '{{refundAmountLabel}}' },
         { label: 'Supplier payout', value: '{{payoutAmountLabel}}' },
@@ -1034,7 +1034,7 @@ const supplierPayoutFailed = {
     return B.shell('Action required: Supplier payout unsuccessful', `
       ${B.hero({ heading: 'We couldn\u2019t complete your payout', badgeText: 'Action required', badgeColor: 'danger' })}
       ${B.paragraph('We could not send the payout for booking <strong>#{{bookingNumber}}</strong>.')}
-      ${B.detailRows([
+      ${B.detailCard([
         { label: 'Payout amount', value: '{{payoutAmountLabel}}' },
         { label: 'Reason', value: '{{payoutReason}}', if: '{{payoutReason}}' },
         { label: 'Status', value: 'Action required' },
