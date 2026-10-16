@@ -1082,11 +1082,15 @@ ${HOME_FAQS.map((f) => `          <dt>${escapeHtml(f.q)}</dt>\n          <dd>${e
   }
 
   return buildHtml(site, {
-    title: ['expedition', 'travioghana'].includes(site.apiBrand)
+    title: site.apiBrand === 'expedition'
+      ? 'Ghana Tours & Activities | Book with Expedition-Go Tours'
+      : site.apiBrand === 'travioghana'
       ? 'Ghana Tours & Activities | Discover Experiences | Book & Explore'
       : 'Ghana Tours & Experiences | Book Authentic African Adventures',
     appendSiteName: !['expedition', 'travioghana'].includes(site.apiBrand),
-    description: 'Discover authentic Ghana tours and experiences. Book cultural tours, wildlife safaris, food tours, and adventure activities across Accra, Cape Coast, Volta Region, and more. Free cancellation, best prices guaranteed.',
+    description: site.apiBrand === 'expedition'
+      ? 'Discover, compare and book Ghana tours, activities and experiences from trusted local providers. Find your next adventure with Expedition-Go Tours.'
+      : 'Discover authentic Ghana tours and experiences. Book cultural tours, wildlife safaris, food tours, and adventure activities across Accra, Cape Coast, Volta Region, and more. Free cancellation, best prices guaranteed.',
     keywords: 'Ghana tours, things to do in Ghana, Ghana experiences, Accra tours, Cape Coast tours, Ghana safari, Ghana food tour, Ghana cultural tour, West Africa tours, African vacation, Ghana travel',
     image: site.defaultImage.url,
     url: `${site.url}/`,
