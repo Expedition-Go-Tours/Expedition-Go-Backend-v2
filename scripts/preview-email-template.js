@@ -89,6 +89,11 @@ const SAMPLE = {
   bookedAtLabel: '9 Oct 2026',
   cancellationPolicyText: 'Free cancellation up to 24 hours before your experience.',
   cancelDeadlineLabel: 'November 3, 2026, 9:00 AM',
+  cancellationDeadlineLabel: 'November 3, 2026, 9:00 AM',
+  cancelledAtLabel: '15 Oct 2026, 20:01 GMT',
+  cancellationReason: 'Severe weather in the region',
+  compensationLabel: '$327.25',
+  refundAmountLabel: '$385.00',
 
   // links
   bookingUrl: 'https://travioghana.com/bookings/cmv2v1rxj0200i4nqlq9n1fau',
