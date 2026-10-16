@@ -221,6 +221,28 @@
   </td></tr>
       
   <tr><td class="pad" style="padding:28px 40px 4px 40px;">
+    <div class="h2 font-main dm-text" style="font-size:15px;font-weight:800;color:#001F3F;letter-spacing:0.4px;text-transform:uppercase;line-height:1.3;">Lead traveller</div>
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-surface" style="background-color:#F4F6F9;border:1px solid #E2E8F0;border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
+      <tr>
+        <td width="58" valign="middle" style="padding:16px 0 16px 18px;">
+    {{#if leadTravelerAvatarUrl}}
+    <img src="{{leadTravelerAvatarUrl}}" width="46" height="46" alt="" style="display:block;width:46px;height:46px;border-radius:50%;border:1px solid #E2E8F0;object-fit:cover;">
+    {{else}}
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td width="46" height="46" align="center" style="background-color:#001F3F;border-radius:50%;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:16px;font-weight:800;color:#ffffff;">{{leadTravelerInitials}}</td></tr></table>
+    {{/if}}</td>
+        <td valign="middle" style="padding:16px 18px 16px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+          <div class="dm-text" style="font-size:15px;font-weight:800;color:#001F3F;line-height:1.3;padding-bottom:3px;">{{leadTravelerName}}</div>
+          <div class="dm-text" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#334155;line-height:1.7;"><span class="dm-muted" style="color:#64748B;">&#9993;</span>&nbsp;&nbsp;<a class="dm-text" href="mailto:{{leadTravelerEmail}}" style="color:#334155;text-decoration:none;">{{leadTravelerEmail}}</a></div>
+          <div class="dm-text" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#334155;line-height:1.7;"><span class="dm-muted" style="color:#64748B;">&#9742;</span>&nbsp;&nbsp;<a class="dm-text" href="#" style="color:#334155;text-decoration:none;">{{leadTravelerPhone}}</a></div>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:28px 40px 4px 40px;">
     <div class="h2 font-main dm-text" style="font-size:15px;font-weight:800;color:#001F3F;letter-spacing:0.4px;text-transform:uppercase;line-height:1.3;">Pickup & meeting</div>
   </td></tr>
       
@@ -353,6 +375,9 @@
           <a href="{{voucherUrl}}" class="btn" style="display:inline-block;background-color:#007A4D;color:#ffffff;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Download voucher</a>
         </td>
         <td style="padding:0 8px 0 0;vertical-align:middle;">
+          <a href="{{tourUrl}}" class="btn dm-card dm-text" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">View the experience</a>
+        </td>
+        <td style="padding:0 8px 0 0;vertical-align:middle;">
           <a href="{{bookingUrl}}" class="btn dm-card dm-text" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">View booking</a>
         </td>
         <td style="padding:0 8px 0 0;vertical-align:middle;">
@@ -360,6 +385,33 @@
         </td></tr>
     </table>
   </td></tr>
+      {{#if similarTours}}
+  <tr><td class="pad" style="padding:28px 40px 0 40px;">
+    <div class="h2 font-main dm-text" style="font-size:15px;font-weight:800;color:#001F3F;letter-spacing:0.4px;text-transform:uppercase;line-height:1.3;">Similar activities</div>
+    <div class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.6;padding-top:5px;">More experiences travellers love in the same destination.</div>
+  </td></tr>
+  {{#each similarTours}}
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:#FFFFFF;border:1px solid #E2E8F0;border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
+      <tr>
+        {{#if imageUrl}}
+        <td width="120" valign="top" style="width:120px;padding:0;">
+          <a href="{{url}}" target="_blank" style="display:block;line-height:0;text-decoration:none;">
+            <img src="{{imageUrl}}" width="120" height="120" alt="{{title}}" style="display:block;width:120px;height:120px;object-fit:cover;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;">
+          </a>
+        </td>
+        {{/if}}
+        <td valign="middle" style="padding:14px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+          <a href="{{url}}" target="_blank" class="dm-text" style="display:block;text-decoration:none;font-size:15px;font-weight:800;color:#001F3F;line-height:1.35;">{{title}}</a>
+          {{#if place}}<div class="dm-muted" style="font-size:12.5px;color:#475569;line-height:1.4;padding-top:3px;">{{place}}</div>{{/if}}
+          {{#if hasRating}}<div style="font-size:13px;line-height:1.4;padding-top:7px;"><span style="color:#F5A623;font-weight:800;">&#9733;</span> <span class="dm-text" style="color:#001F3F;font-weight:800;">{{ratingLabel}}</span> <span class="dm-muted" style="color:#475569;font-weight:500;">{{reviewCountLabel}}</span></div>{{/if}}
+          {{#if hasPrice}}<div class="dm-muted" style="font-size:13px;color:#475569;line-height:1.4;padding-top:6px;">From <span class="dm-text" style="color:#001F3F;font-weight:800;">{{priceLabel}}</span></div>{{/if}}
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+  {{/each}}
+  {{/if}}
     
               </table>
             </td>

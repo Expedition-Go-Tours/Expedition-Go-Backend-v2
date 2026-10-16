@@ -211,7 +211,7 @@ async function cancelStalePendingBookings() {
  */
 async function autoCompleteBookings() {
   const prisma = require('./prismaClient');
-  const { enqueueReviewRequest } = require('./reviewRequestNotify');
+  const { notifyBookingCompleted } = require('./reviewRequestNotify');
   const now = new Date();
   // The activity date is stored at midnight UTC in the tour's timezone context;
   // once `travelDate` is strictly before today (start of day), the activity is
@@ -243,7 +243,7 @@ async function autoCompleteBookings() {
     });
 
     for (const booking of rows) {
-      enqueueReviewRequest(booking, booking.tour);
+      notifyBookingCompleted(booking, booking.tour);
     }
 
     if (updated.count > 0) {

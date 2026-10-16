@@ -1,4 +1,4 @@
-const { enqueueNotification } = require('./queue');
+const { enqueueNotification, enqueueEmail } = require('./queue');
 
 /**
  * Sends the customer a "your trip is complete — write a review" in-app
@@ -39,4 +39,41 @@ function enqueueReviewRequest(booking, tour) {
   });
 }
 
-module.exports = { enqueueReviewRequest };
+/**
+ * Hands the supplier the customer's review link once the activity is complete.
+ *
+ * Sent at the same moment the customer's own review nudge is queued (a paid
+ * booking becomes COMPLETED), so the operator can forward the guest's
+ * `/review/<slug>` URL to WhatsApp, SMS or email. The link is the storefront
+ * review page for the exact tour the guest booked; the sender personalises it
+ * with the lead traveller's name, the real tour photo and the booking reference.
+ *
+ * @param {object} booking - Booking row (must have id, paymentStatus, tour/tourId)
+ * @param {object} [tour]  - Tour row (id, slug, title, supplier) when available.
+ */
+function enqueueSupplierReviewInvite(booking, tour) {
+  if (!booking || !booking.id) return;
+  // Only paid bookings can be reviewed, so only those get a forwardable link.
+  if (booking.paymentStatus !== 'SUCCEEDED') return;
+  // Without a tour there is no review URL to forward; the auto-completion sweep
+  // selects it, but guard so a caller with a bare booking row can't send a
+  // link-less email.
+  const t = tour || booking.tour || null;
+  if (!t) return;
+
+  enqueueEmail({ type: 'supplier-review-invite', bookingId: booking.id }).catch((err) => {
+    console.error('[ReviewInvite] Failed to queue supplier review invite:', booking.id, err.message);
+  });
+}
+
+/**
+ * Single entry point for the completion moment: nudges the customer to write a
+ * review AND hands the supplier the link to forward. Callers flip a paid
+ * booking to COMPLETED; both emails go out once.
+ */
+function notifyBookingCompleted(booking, tour) {
+  enqueueReviewRequest(booking, tour);
+  enqueueSupplierReviewInvite(booking, tour);
+}
+
+module.exports = { enqueueReviewRequest, enqueueSupplierReviewInvite, notifyBookingCompleted };

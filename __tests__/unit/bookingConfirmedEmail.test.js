@@ -117,6 +117,86 @@ describe('booking-confirmed artifact', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Booked-tour link, lead traveller and the Similar activities rail
+// ---------------------------------------------------------------------------
+describe('booking-confirmed — booked-tour link, lead traveller, recommendations', () => {
+  it('links back to the booked experience via the canonical tour URL', () => {
+    const html = artifact();
+    expect(html).toContain('View the experience');
+    expect(html).toContain('href="{{tourUrl}}"');
+  });
+
+  it('shows a lead-traveller contact card keyed off the lead initials, not the account', () => {
+    const html = artifact();
+    expect(html).toContain('Lead traveller');
+    expect(html).toContain('{{leadTravelerName}}');
+    expect(html).toContain('{{leadTravelerInitials}}');
+  });
+
+  it('renders a Similar activities rail, guarded so it collapses when empty', () => {
+    const html = artifact();
+    expect(html).toContain('Similar activities');
+    expect(html).toContain('{{#if similarTours}}');
+    expect(html).toContain('{{#each similarTours}}');
+    expect(html).toContain('{{ratingLabel}}');
+    expect(html).toContain('{{reviewCountLabel}}');
+    expect(html).toContain('{{priceLabel}}');
+  });
+
+  it('keeps View the experience a secondary action, not a second accent CTA', () => {
+    const html = artifact();
+    const accent = (href) =>
+      new RegExp(`<a href="\\{\\{${href}\\}\\}" class="btn" style="display:inline-block;background-color:#007A4D`).test(html);
+    expect(accent('tourUrl')).toBe(false);
+    expect(accent('voucherUrl')).toBe(true);
+  });
+});
+
+describe('recommendations primitive', () => {
+  it('renders nothing at all (heading included) when the list is empty or missing', () => {
+    const built = B.recommendations('Similar activities');
+    expect(render(built, { similarTours: [] })).toBe('');
+    expect(render(built, {})).toBe('');
+  });
+
+  it('renders a linked card with a star rating and a from-price per tour', () => {
+    const built = B.recommendations('Similar activities');
+    const html = render(built, {
+      similarTours: [
+        {
+          url: 'https://x/tour/1/harbour-kayak',
+          imageUrl: 'https://img/1.png',
+          title: 'Harbour Kayak',
+          place: 'Accra, Ghana',
+          hasRating: true,
+          ratingLabel: '4.9',
+          reviewCountLabel: '214 reviews',
+          hasPrice: true,
+          priceLabel: '$38.00',
+        },
+      ],
+    });
+    expect(html).toContain('Similar activities');
+    expect(html).toContain('Harbour Kayak');
+    expect(html).toContain('href="https://x/tour/1/harbour-kayak"');
+    expect(html).toContain('https://img/1.png');
+    expect(html).toContain('4.9');
+    expect(html).toContain('214 reviews');
+    expect(html).toContain('$38.00');
+  });
+
+  it('omits the rating row and price when a tour has neither', () => {
+    const built = B.recommendations('Similar activities');
+    const html = render(built, {
+      similarTours: [{ url: 'u', title: 'Plain Tour', hasRating: false, hasPrice: false }],
+    });
+    expect(html).toContain('Plain Tour');
+    expect(html).not.toContain('reviews');
+    expect(html).not.toContain('From ');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // detailCard + statGrid primitives
 // ---------------------------------------------------------------------------
 describe('detailCard', () => {
@@ -229,5 +309,55 @@ describe('sendBookingConfirmedEmail', () => {
     await sendBookingConfirmedEmail(noPhoto);
     const { html } = __send.mock.calls[0][0];
     expect(html).not.toContain("url('')");
+  });
+
+  it('threads same-city recommendations into the rendered email', async () => {
+    const prisma = require('../../src/core/services/prismaClient');
+    prisma.tour.findUnique.mockResolvedValueOnce({
+      destinationCity: 'Accra',
+      city: 'Accra',
+      region: 'Greater Accra',
+    });
+    // The default brand for an origin-less booking is "africa", whose listing
+    // model is travioAfricaTour. The mock has no such model by default, so add
+    // it for this test only (fxOne so it never leaks into later tests).
+    prisma.travioAfricaTour = {
+      findMany: jest.fn().mockResolvedValueOnce([
+        {
+          tour: {
+            id: 'tour-2',
+            title: 'Jamestown Walking Tour',
+            slug: 'jamestown-walking-tour',
+            coverPhoto: 'https://img/2.png',
+            photos: [],
+            city: 'Accra',
+            region: 'Greater Accra',
+            country: 'Ghana',
+            averageRating: 4.6,
+            reviewCount: 10,
+            combinedRating: 4.9,
+            combinedReviewCount: 214,
+            schedulesAndPricing: {
+              pricingSchedules: { currency: 'USD' },
+              travelerDetails: {
+                pricingModel: 'perPerson',
+                pricingApproach: 'sameForEveryone',
+                uniformPrice: 38,
+              },
+            },
+          },
+        },
+      ]),
+    };
+
+    await sendBookingConfirmedEmail(booking());
+    const { html } = __send.mock.calls[0][0];
+
+    expect(html).toContain('Similar activities');
+    expect(html).toContain('Jamestown Walking Tour');
+    expect(html).toContain('4.9');
+    expect(html).toContain('214 reviews');
+    expect(html).toContain('$38.00');
+    expect(html).toContain('https://travioafrica.com/tour/tour-2/jamestown-walking-tour');
   });
 });

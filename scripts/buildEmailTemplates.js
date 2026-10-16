@@ -69,18 +69,6 @@ function customerContactRows() {
   return B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{customerInitials}}' });
 }
 
-function supplierPayoutRows() {
-  return B.detailCard([
-    { label: 'Booking reference', value: '{{bookingNumber}}', if: '{{bookingNumber}}' },
-    { label: 'Experience', value: '{{tourTitle}}', if: '{{tourTitle}}' },
-    { label: 'Supplier payout', value: '{{payoutAmountLabel}}' },
-    { label: 'Payout reference', value: '{{payoutReference}}', if: '{{payoutReference}}' },
-    { label: 'Payout date', value: '{{payoutDateLabel}}', if: '{{payoutDateLabel}}' },
-    { label: 'Payment destination', value: '{{paymentDestination}}', if: '{{paymentDestination}}' },
-    { label: 'Status', value: '{{statusLabel}}' },
-  ]);
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // Customer emails
 // ────────────────────────────────────────────────────────────────────────────
@@ -114,6 +102,8 @@ const customerBookingConfirmed = {
         { label: 'Booking type', value: '{{bookingTypeLabel}}' },
         { label: 'Supplier', value: '{{supplierName}}' },
       ])}
+      ${B.sectionTitle('Lead traveller')}
+      ${B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{leadTravelerInitials}}', avatarVar: 'leadTravelerAvatarUrl' })}
       ${B.sectionTitle('Pickup & meeting')}
       ${B.detailCard([
         { label: 'Pickup included', value: '{{pickupIncludedLabel}}' },
@@ -149,9 +139,11 @@ const customerBookingConfirmed = {
       ])}
       ${B.buttons([
         { label: 'Download voucher', href: '{{voucherUrl}}' },
+        { label: 'View the experience', href: '{{tourUrl}}', kind: 'secondary' },
         { label: 'View booking', href: '{{bookingUrl}}', kind: 'secondary' },
         { label: 'Manage booking', href: '{{manageUrl}}', kind: 'secondary' },
       ])}
+      ${B.recommendations('Similar activities', 'More experiences travellers love in the same destination.')}
     `);
   },
 };
@@ -479,16 +471,30 @@ const refundProcessing = {
   name: 'Customer · Refund processing',
   build() {
     return B.shell('Your refund is being processed', `
-      ${B.hero({ heading: 'We are processing your refund', badgeText: 'Processing', badgeColor: 'info', subtitle: 'Hello {{customerName}},<br>Your refund for <strong>{{tourTitle}}</strong> is being processed.' })}
-      ${B.detailCard([
+      ${B.mediaHeader({
+        imageVar: 'tourImageUrl',
+        badgeText: '&#9203;&nbsp;&nbsp;Processing',
+        badgeColor: 'info',
+        heading: 'We are processing your refund',
+        subtitle: '{{tourTitle}} &middot; {{dateLabel}}',
+      })}
+      ${B.referenceBar({ reference: '{{bookingNumber}}', right: 'Refund in progress' })}
+      ${B.paragraph('Hello {{customerName}}, we have started your refund for <strong>{{tourTitle}}</strong>. No action is needed from you.')}
+      ${B.statusStrip([
+        { label: 'Requested', sublabel: 'Refund requested' },
+        { label: 'Processing', sublabel: 'On its way to you' },
+        { label: 'Completed', sublabel: 'Funds returned' },
+      ], 1)}
+      ${B.sectionTitle('Refund details')}
+      ${B.summaryRows([
         { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Lead traveller', value: '{{leadTravelerName}}' },
         { label: 'Activity date', value: '{{dateLabel}}' },
-        { label: 'Refund amount', value: '{{refundAmountLabel}}' },
         { label: 'Refund method', value: 'Original payment method' },
         { label: 'Refund reference', value: '{{refundReference}}', if: '{{refundReference}}' },
-        { label: 'Expected arrival', value: '5-10 business days' },
-        { label: 'Status', value: 'Processing' },
+        { label: 'Refund amount', value: '{{refundAmountLabel}}', total: true },
       ])}
+      ${B.callout('Refunds usually arrive within <strong>5-10 business days</strong>. We will email you the moment it is complete.', 'info')}
       ${B.buttonPrimary('View refund', '{{refundUrl}}')}
     `);
   },
@@ -499,17 +505,31 @@ const refundCompleted = {
   name: 'Customer · Refund completed',
   build() {
     return B.shell('Your refund has been issued', `
-      ${B.hero({ heading: 'Your refund is complete', badgeText: '&#10003;&nbsp;&nbsp;Refunded', badgeColor: 'accent', subtitle: 'Hello {{customerName}},<br>We have issued <strong>{{refundAmountLabel}}</strong> for <strong>{{tourTitle}}</strong>.' })}
-      ${B.detailCard([
+      ${B.mediaHeader({
+        imageVar: 'tourImageUrl',
+        badgeText: '&#10003;&nbsp;&nbsp;Refunded',
+        badgeColor: 'accent',
+        heading: 'Your refund is complete',
+        subtitle: '{{refundAmountLabel}} returned for {{tourTitle}}',
+      })}
+      ${B.referenceBar({ reference: '{{bookingNumber}}', right: '{{#if refundedAtLabel}}Refunded {{refundedAtLabel}}{{/if}}' })}
+      ${B.paragraph('Hello {{customerName}}, we have issued <strong>{{refundAmountLabel}}</strong> for <strong>{{tourTitle}}</strong>. Here is the full breakdown.')}
+      ${B.statusStrip([
+        { label: 'Requested', sublabel: 'Refund requested' },
+        { label: 'Processing', sublabel: 'Sent to your bank' },
+        { label: 'Completed', sublabel: 'Funds returned' },
+      ], 2)}
+      ${B.sectionTitle('Refund details')}
+      ${B.summaryRows([
         { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Lead traveller', value: '{{leadTravelerName}}' },
         { label: 'Activity date', value: '{{dateLabel}}' },
+        { label: 'Refund method', value: 'Original payment method' },
         { label: 'Refund reference', value: '{{refundReference}}', if: '{{refundReference}}' },
-        { label: 'Refund amount', value: '{{refundAmountLabel}}' },
         { label: 'Refund issued', value: '{{refundedAtLabel}}' },
-        { label: 'Payment method', value: '{{paymentMethodLabel}}', if: '{{paymentMethodLabel}}' },
-        { label: 'Status', value: 'Completed' },
+        { label: 'Refund amount', value: '{{refundAmountLabel}}', total: true },
       ])}
-      ${B.paragraph('Your bank may take additional time to display the funds.', { muted: true, small: true })}
+      ${B.callout('The refund is on its way to your original payment method. Your bank may take additional time to display the funds.', 'success')}
       ${B.buttonPrimary('View refund details', '{{refundUrl}}')}
     `);
   },
@@ -699,17 +719,20 @@ const supplierNewBooking = {
       ${B.paragraph('Special requests: <strong>{{specialRequirements}}</strong>')}
       {{/if}}
       ${B.sectionTitle('Lead traveller')}
-      ${B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{customerInitials}}' })}
-      ${B.sectionTitle('Supplier payout')}
-      ${B.summaryRows([
-        { label: 'Retail value', value: '{{totalLabel}}' },
-        { label: 'Commission', value: '{{commissionLabel}}' },
-        { label: 'Supplier payout', value: '{{payoutAmountLabel}}', total: true },
+      ${B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{leadTravelerInitials}}', avatarVar: 'leadTravelerAvatarUrl' })}
+      ${B.sectionTitle('Payment & payout')}
+      ${B.payoutPanel({
+        rows: [
+          { label: 'Retail value', value: '{{totalLabel}}' },
+          { label: 'Platform commission', value: '{{commissionLabel}}' },
+        ],
+        total: '{{payoutAmountLabel}}',
+        statusLabel: '&#9679;&nbsp; Scheduled',
+      })}
+      ${B.buttons([
+        { label: 'View booking', href: '{{supplierBookingUrl}}' },
+        { label: 'View the experience', href: '{{tourUrl}}', kind: 'secondary' },
       ])}
-      ${B.detailCard([
-        { label: 'Payout status', value: 'Scheduled' },
-      ])}
-      ${B.buttonPrimary('View booking', '{{supplierBookingUrl}}')}
     `);
   },
 };
@@ -790,16 +813,16 @@ const supplierPayLaterCharged = {
       {{/if}}
       ${B.sectionTitle('Lead traveller')}
       ${customerContactRows()}
-      ${B.sectionTitle('Supplier payout')}
-      ${B.summaryRows([
-        { label: 'Retail value', value: '{{totalLabel}}' },
-        { label: 'Commission', value: '{{commissionLabel}}' },
-        { label: 'Supplier payout', value: '{{payoutAmountLabel}}', total: true },
-      ])}
-      ${B.detailCard([
-        { label: 'Payment collected', value: '{{chargedAtLabel}}' },
-        { label: 'Payout status', value: 'Scheduled' },
-      ])}
+      ${B.sectionTitle('Payment & payout')}
+      ${B.payoutPanel({
+        rows: [
+          { label: 'Retail value', value: '{{totalLabel}}' },
+          { label: 'Platform commission', value: '{{commissionLabel}}' },
+          { label: 'Payment collected', value: '{{chargedAtLabel}}', if: '{{chargedAtLabel}}' },
+        ],
+        total: '{{payoutAmountLabel}}',
+        statusLabel: '&#9679;&nbsp; Scheduled',
+      })}
       ${B.buttonPrimary('View booking', '{{supplierBookingUrl}}')}
     `);
   },
@@ -1030,8 +1053,31 @@ const supplierPayoutScheduled = {
   name: 'Supplier · Payout scheduled',
   build() {
     return B.shell('Payout scheduled', `
-      ${B.hero({ heading: 'Your payout is scheduled', badgeText: 'Scheduled', badgeColor: 'info' })}
-      ${supplierPayoutRows()}
+      ${B.mediaHeader({
+        imageVar: 'tourImageUrl',
+        badgeText: 'Scheduled',
+        badgeColor: 'info',
+        heading: 'Your payout is scheduled',
+        subtitle: '{{tourTitle}}',
+      })}
+      ${B.referenceBar({ reference: '{{bookingNumber}}', right: '{{#if payoutDateLabel}}Due {{payoutDateLabel}}{{/if}}' })}
+      ${B.paragraph('Hello {{supplierName}}, your payout for <strong>{{tourTitle}}</strong> has been scheduled. No action is needed from you.')}
+      ${B.statusStrip([
+        { label: 'Delivered', sublabel: 'Experience complete' },
+        { label: 'Scheduled', sublabel: 'Awaiting release' },
+        { label: 'Paid', sublabel: 'Funds in your account' },
+      ], 1)}
+      ${B.payoutPanel({
+        rows: [
+          { label: 'Booking reference', value: '{{bookingNumber}}' },
+          { label: 'Experience', value: '{{tourTitle}}' },
+          { label: 'Payout reference', value: '{{payoutReference}}', if: '{{payoutReference}}' },
+          { label: 'Payment destination', value: '{{paymentDestination}}', if: '{{paymentDestination}}' },
+          { label: 'Payout date', value: '{{payoutDateLabel}}', if: '{{payoutDateLabel}}' },
+        ],
+        total: '{{payoutAmountLabel}}',
+        statusLabel: '&#9679;&nbsp; Scheduled',
+      })}
       ${B.buttonPrimary('View payout', '{{supplierPayoutUrl}}')}
     `);
   },
@@ -1042,8 +1088,32 @@ const supplierPayoutCompleted = {
   name: 'Supplier · Payout completed',
   build() {
     return B.shell('Payout sent', `
-      ${B.hero({ heading: 'Your payout has been sent', badgeText: '&#10003;&nbsp;&nbsp;Completed', badgeColor: 'accent' })}
-      ${supplierPayoutRows()}
+      ${B.mediaHeader({
+        imageVar: 'tourImageUrl',
+        badgeText: '&#10003;&nbsp;&nbsp;Paid',
+        badgeColor: 'accent',
+        heading: 'Your payout has been sent',
+        subtitle: '{{tourTitle}}',
+      })}
+      ${B.referenceBar({ reference: '{{bookingNumber}}', right: '{{#if payoutDateLabel}}Paid {{payoutDateLabel}}{{/if}}' })}
+      ${B.paragraph('Hello {{supplierName}}, we have sent your payout for <strong>{{tourTitle}}</strong>. Here is the summary.')}
+      ${B.statusStrip([
+        { label: 'Delivered', sublabel: 'Experience complete' },
+        { label: 'Scheduled', sublabel: 'Payout queued' },
+        { label: 'Paid', sublabel: 'Funds sent' },
+      ], 2)}
+      ${B.payoutPanel({
+        rows: [
+          { label: 'Booking reference', value: '{{bookingNumber}}' },
+          { label: 'Experience', value: '{{tourTitle}}' },
+          { label: 'Payout reference', value: '{{payoutReference}}', if: '{{payoutReference}}' },
+          { label: 'Payment destination', value: '{{paymentDestination}}', if: '{{paymentDestination}}' },
+          { label: 'Payout date', value: '{{payoutDateLabel}}', if: '{{payoutDateLabel}}' },
+        ],
+        total: '{{payoutAmountLabel}}',
+        statusLabel: '&#10003;&nbsp; Paid',
+      })}
+      ${B.callout('Funds can take 1-3 business days to appear, depending on your bank. A payout statement is always available in your dashboard.', 'success')}
       ${B.buttonPrimary('View payout statement', '{{supplierPayoutUrl}}')}
     `);
   },
@@ -1051,15 +1121,33 @@ const supplierPayoutCompleted = {
 
 const supplierPayoutFailed = {
   key: 'supplier-payout-failed',
-  name: 'Supplier A� Payout failed',
+  name: 'Supplier · Payout failed',
   build() {
     return B.shell('Action required: Supplier payout unsuccessful', `
-      ${B.hero({ heading: 'We couldn\u2019t complete your payout', badgeText: 'Action required', badgeColor: 'danger' })}
-      ${B.paragraph('We could not send the payout for booking <strong>#{{bookingNumber}}</strong>.')}
-      ${B.detailCard([
-        { label: 'Payout amount', value: '{{payoutAmountLabel}}' },
-        { label: 'Reason', value: '{{payoutReason}}', if: '{{payoutReason}}' },
-        { label: 'Status', value: 'Action required' },
+      ${B.mediaHeader({
+        imageVar: 'tourImageUrl',
+        badgeText: 'Action required',
+        badgeColor: 'danger',
+        heading: 'We could not complete your payout',
+        subtitle: '{{tourTitle}}',
+      })}
+      ${B.referenceBar({ reference: '{{bookingNumber}}', right: 'Payout unsuccessful' })}
+      ${B.paragraph('Hello {{supplierName}}, your payout for <strong>{{tourTitle}}</strong> could not be sent. This usually means the payout details on file need to be updated.')}
+      {{#if payoutReason}}
+      ${B.callout('Reason: <strong>{{payoutReason}}</strong>', 'warning')}
+      {{/if}}
+      ${B.payoutPanel({
+        rows: [
+          { label: 'Booking reference', value: '{{bookingNumber}}' },
+          { label: 'Experience', value: '{{tourTitle}}' },
+        ],
+        total: '{{payoutAmountLabel}}',
+        statusLabel: '&#9679;&nbsp; Action required',
+      })}
+      ${B.sectionTitle('What to do next')}
+      ${B.stepList([
+        { title: 'Check your payout details', body: 'Confirm your bank account or payout method in the dashboard.' },
+        { title: 'Update anything that has changed', body: 'Once saved, we retry the payout automatically on the next cycle.' },
       ])}
       ${B.buttonPrimary('Review payout details', '{{supplierPayoutUrl}}')}
     `);
@@ -1096,6 +1184,38 @@ const supplierProductUpdateSubmitted = {
       ${B.paragraph('If we need any additional information or changes from you, we\u2019ll contact you.')}
       ${B.paragraph('Thank you for partnering with {{brandName}}.', { muted: true, small: true })}
       ${B.buttonPrimary('View my product', '{{supplierProductUrl}}')}
+    `);
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Review invite — the supplier forwards the guest's review link after the
+// activity is marked complete (customer-facing link, supplier-facing email).
+// ---------------------------------------------------------------------------
+const supplierReviewInvite = {
+  key: 'supplier-review-invite',
+  name: 'Supplier · Activity completed review link',
+  build() {
+    return B.shell('Invite {{guestName}} to review their experience', `
+      ${B.mediaHeader({
+        imageVar: 'tourImageUrl',
+        badgeText: '&#10003;&nbsp;&nbsp;Completed',
+        badgeColor: 'success',
+        heading: 'Invite {{guestName}} to review their experience',
+        subtitle: '{{tourTitle}}{{#if dateLabel}} &middot; {{dateLabel}}{{/if}}',
+      })}
+      ${B.paragraph('Hi {{supplierName}},')}
+      ${B.paragraph('Your activity, {{tourTitle}}, with {{guestName}}{{#if dateLabel}} on {{dateLabel}}{{/if}} has been marked as completed.')}
+      ${B.paragraph('Now is a good time to follow up with your guest and invite them to share their experience. Honest reviews help future travellers know what to expect and give you useful feedback to improve the experiences you offer.')}
+      ${B.sectionTitle('Review link for {{guestName}}')}
+      ${B.paragraph('Share the link below with your guest so they can leave a review of their experience.')}
+      ${B.copyLink('{{reviewUrl}}')}
+      ${B.paragraph(`Prefer to check the reservation first? <a href="{{supplierBookingUrl}}" class="dm-accent" style="color:${B.COLORS.accent};font-weight:700;text-decoration:none;">View booking</a>`)}
+      {{#if bookingNumber}}
+      ${B.referenceBar({ reference: '{{bookingNumber}}' })}
+      {{/if}}
+      ${B.paragraph('Please let your guest share their own experience in their own words. There is no need to suggest a particular rating or response.', { muted: true, small: true })}
+      ${B.paragraph('Thank you for delivering memorable experiences with {{brandName}}.')}
     `);
   },
 };
@@ -1280,6 +1400,7 @@ const TEMPLATE_DEFS = [
   supplierPayoutFailed,
   supplierProductSubmitted,
   supplierProductUpdateSubmitted,
+  supplierReviewInvite,
   chatNewMessage,
   teamInvite,
   teamInviteRevoked,

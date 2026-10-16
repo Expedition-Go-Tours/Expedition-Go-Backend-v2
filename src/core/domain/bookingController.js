@@ -1652,14 +1652,14 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
 
   // Completed + paid → nudge the customer to write a review (legacy/Travio flow).
   if (status === 'COMPLETED') {
-    const { enqueueReviewRequest } = require('../services/reviewRequestNotify');
+    const { notifyBookingCompleted } = require('../services/reviewRequestNotify');
     const tour = booking.tourId
       ? await prisma.tour.findUnique({
           where: { id: booking.tourId },
           select: { id: true, slug: true, title: true },
         })
       : null;
-    enqueueReviewRequest({ ...booking, tour }, tour);
+    notifyBookingCompleted({ ...booking, tour }, tour);
   }
 
   // Manual-confirmation flow: when a supplier accepts a previously-awaiting

@@ -51,7 +51,8 @@ function getResend() {
 // DB/env config remains the fallback for the default brand so existing
 // deployments keep rendering exactly as before.
 // ---------------------------------------------------------------------------
-const { getBrandEmail, BRANDS, DEFAULT_BRAND, resolveBrandKey } = require('../../../config/brands');
+const { getBrandEmail, getBrand, BRANDS, DEFAULT_BRAND, resolveBrandKey } = require('../../../config/brands');
+const { cheapestRetailPrice } = require('./tourHelpers');
 
 const shellCache = new Map();
 const shellPromises = new Map();
@@ -378,6 +379,7 @@ const BOOKING_CONTEXT_INCLUDE = {
     select: {
       id: true,
       title: true,
+      slug: true,
       description: true,
       photos: true,
       coverPhoto: true,
@@ -548,6 +550,9 @@ async function buildBookingBase(booking, opts = {}) {
     leadTravelerName: leadName || customer.name || 'Guest',
     leadTravelerEmail: leadEmail || customer.email || '',
     leadTravelerPhone: leadPhone || fmt.travelerPhone(booking.travelers) || customer.phone || '',
+    // Initials for the lead-traveller contact card (the lead has no photo, so
+    // its card always uses this fallback circle).
+    leadTravelerInitials: initialsOf(leadName || customer.name),
     supplierName: supplier.name || '',
     supplierContact: supplier.phone || supplier.email || '',
     brandSubtext: `by ${shell.brandName}`,
@@ -604,6 +609,7 @@ async function buildBookingBase(booking, opts = {}) {
     cancelDeadlineLabel: fmt.formatDateTime(fmt.getCancelDeadline(booking, tour)),
 
     // customer URLs — point at the storefront the booking was made on
+    tourUrl: emailUrls.viewTour(tour.id, tour.slug, clientOrigin),
     bookingUrl: emailUrls.viewBooking(booking.id, clientOrigin),
     voucherUrl: emailUrls.downloadVoucher(booking.id, clientOrigin),
     manageUrl: emailUrls.manageBooking(booking.id, clientOrigin),
@@ -625,6 +631,105 @@ async function buildBookingBase(booking, opts = {}) {
   };
 
   return base;
+}
+
+/** Currency declared by a tour's pricing blob (defaults to USD). */
+function tourCurrency(blob) {
+  try {
+    const sp = typeof blob === 'string' ? JSON.parse(blob) : blob;
+    return (sp && sp.pricingSchedules && sp.pricingSchedules.currency) || 'USD';
+  } catch {
+    return 'USD';
+  }
+}
+
+/**
+ * "Similar activities" recommendations for a confirmation email — up to `limit`
+ * live experiences sharing the booked tour's destination city/region, ranked by
+ * the combined rating and review count the storefront trusts, excluding the
+ * booked tour itself. Scoped to the brand's own listing table so a customer is
+ * never recommended a tour their storefront does not sell.
+ *
+ * Returns [] on any failure (or when the tour has no resolvable place) so a
+ * recommendation lookup can never break a transactional send.
+ */
+async function buildSimilarTours(tour, brandKey, origin, limit = 3) {
+  if (!tour || !tour.id) return [];
+  const listingModel = getBrand(brandKey)?.listingModel;
+  if (!listingModel) return [];
+
+  try {
+    const current = await prisma.tour.findUnique({
+      where: { id: tour.id },
+      select: { destinationCity: true, city: true, region: true },
+    });
+    const place = (current && (current.destinationCity || current.city)) || null;
+    const region = (current && current.region) || null;
+
+    const tourWhere = { status: 'ACTIVE', id: { not: tour.id } };
+    if (place) {
+      tourWhere.OR = [{ destinationCity: place }, { city: place }];
+    } else if (region) {
+      tourWhere.region = region;
+    } else {
+      return [];
+    }
+
+    const records = await prisma[listingModel].findMany({
+      where: { isActive: true, tour: tourWhere },
+      // Combined (in-app + external) stats drive ranking; PostgreSQL sorts
+      // NULLs first on DESC, so force nulls last like the storefront does.
+      orderBy: [
+        { tour: { combinedRating: { sort: 'desc', nulls: 'last' } } },
+        { tour: { combinedReviewCount: 'desc' } },
+      ],
+      take: Math.max(1, Math.min(limit, 6)),
+      include: {
+        tour: {
+          select: {
+            id: true,
+            title: true,
+            slug: true,
+            coverPhoto: true,
+            photos: true,
+            city: true,
+            region: true,
+            country: true,
+            averageRating: true,
+            reviewCount: true,
+            combinedRating: true,
+            combinedReviewCount: true,
+            schedulesAndPricing: true,
+          },
+        },
+      },
+    });
+
+    return records
+      .map((r) => {
+        const t = r.tour || {};
+        const rating = t.combinedRating != null
+          ? Number(t.combinedRating)
+          : (t.averageRating != null ? Number(t.averageRating) : null);
+        const reviews = t.combinedReviewCount > 0 ? t.combinedReviewCount : (t.reviewCount || 0);
+        const price = cheapestRetailPrice(t.schedulesAndPricing);
+        return {
+          url: emailUrls.viewTour(t.id, t.slug, origin),
+          imageUrl: t.coverPhoto || (Array.isArray(t.photos) && t.photos[0]) || '',
+          title: t.title || '',
+          place: t.city || t.region || '',
+          hasRating: rating != null && reviews > 0,
+          ratingLabel: rating != null ? rating.toFixed(1) : '',
+          reviewCountLabel: reviews > 0 ? `${reviews} ${reviews === 1 ? 'review' : 'reviews'}` : '',
+          hasPrice: price != null,
+          priceLabel: price != null ? fmt.formatCurrency(price, tourCurrency(t.schedulesAndPricing)) : '',
+        };
+      })
+      .filter((t) => t.title && t.url);
+  } catch (err) {
+    console.error('[Email] similar tours lookup failed:', err.message);
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -657,6 +762,8 @@ async function sendBookingConfirmedEmail(booking) {
   const data = {
     ...base,
     cancellationPolicyText: cancellationPolicyTextFor(b.tour),
+    // Recommendation rail — best-effort, never blocks the confirmation send.
+    similarTours: await buildSimilarTours(b.tour, base.brandKey, emailUrls.bookingClientOrigin(b)),
   };
   return sendRendered({
     to: base.customerEmail,
@@ -1096,6 +1203,38 @@ async function sendSupplierNewBookingEmail(booking) {
     ...await supplierRecipientList(supplier, "bookings"),
     subject: `New confirmed booking — ${base.tourTitle} (Ref: ${base.bookingNumber})`,
     key: 'supplier-new-booking',
+    data,
+  });
+}
+
+/**
+ * Supplier: an activity was just marked complete, so hand the operator the
+ * guest's review link to forward (WhatsApp, SMS, email). The link is the same
+ * storefront `/review/<slug>` URL the customer's own review-request email uses,
+ * shown as visible, copyable text plus a matching CTA button. Sent once, when
+ * the booking transitions to COMPLETED (auto-sweep or manual supplier action).
+ *
+ * The recipient is the guest, addressed by name: prefer the lead traveller (the
+ * person who went on the trip), fall back to the booking account holder, then a
+ * neutral "your guest" so the copy never names a nameless placeholder.
+ */
+async function sendSupplierReviewInviteEmail(booking) {
+  const b = await resolveBookingContext(booking);
+  const base = await buildBookingBase(b);
+  const supplier = b.tour?.supplier || {};
+  const guestName = base.leadTravelerName && base.leadTravelerName !== 'Guest'
+    ? base.leadTravelerName
+    : 'your guest';
+  const refSuffix = base.bookingNumber ? ` (Ref: ${base.bookingNumber})` : '';
+  const data = {
+    ...base,
+    guestName,
+    preheader: `Your activity is marked as completed. Share the review link with ${guestName}.`,
+  };
+  return sendRendered({
+    ...await supplierRecipientList(supplier, "reviews"),
+    subject: `Activity completed - send ${guestName} the review link${refSuffix}`,
+    key: 'supplier-review-invite',
     data,
   });
 }
@@ -2188,6 +2327,7 @@ module.exports = {
   sendSupplierPayoutFailedEmail,
   sendSupplierProductSubmittedEmail,
   sendSupplierProductUpdateSubmittedEmail,
+  sendSupplierReviewInviteEmail,
 
   // finance v2
   sendFinancePayoutRequestEmail,

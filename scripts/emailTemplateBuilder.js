@@ -24,6 +24,7 @@ const COLORS = {
   accent: '#007A4D',
   accentDark: '#007A4D',
   accentSoft: '#E6F6F0',
+  accentSoftBorder: '#B7E4D2',
   danger: '#B91C1C',
   dangerSoft: '#FEF2F2',
   warning: '#B45309',
@@ -431,16 +432,23 @@ function buttonPrimary(label, href, options = {}) {
 function summaryRows(rows) {
   const rowHtml = rows
     .map((r) => {
+      const cond = r.if === undefined ? true : r.if;
+      if (cond === false) return '';
       const isTotal = r.total;
       const labelColor = isTotal ? COLORS.navy : COLORS.muted;
       const valColor = isTotal ? COLORS.navy : COLORS.navy;
       const labelClass = isTotal ? 'dm-text' : 'dm-muted';
       const weight = isTotal ? 'font-size:16px;font-weight:800;' : 'font-size:14px;font-weight:600;';
-      return `
+      const rowHtmlInner = `
       <tr>
         <td class="${labelClass}" style="padding:${isTotal ? '12px' : '6px'} 18px;font-family:${FONT};font-size:14px;color:${labelColor};line-height:1.5;${isTotal ? 'font-weight:700;' : ''}">${r.label}</td>
         <td class="dm-text" style="padding:${isTotal ? '12px' : '6px'} 18px;font-family:${FONT};${weight}color:${valColor};line-height:1.5;text-align:right;white-space:nowrap;">${r.value}</td>
       </tr>`;
+      // Mirror detailCard: a bare `{{var}}` in `if` becomes a runtime
+      // {{#if var}} around the row so optional rows vanish when unset.
+      const ifMatch = typeof cond === 'string' && cond.match(/^\{\{\s*([a-zA-Z0-9_]+)\s*\}\}$/);
+      const rowConditional = r.conditional || (ifMatch ? ifMatch[1] : null);
+      return rowConditional ? `{{#if ${rowConditional}}}${rowHtmlInner}{{/if}}` : rowHtmlInner;
     })
     .join('');
   // `border-collapse:separate` (the global table rule sets collapse) is what
@@ -641,6 +649,41 @@ function referenceBar({ reference, right }) {
         </td>
         ${right ? `<td class="dm-muted" valign="middle" align="right" style="font-family:${FONT};font-size:12px;color:${COLORS.faint};white-space:nowrap;">${right}</td>` : ''}
       </tr>
+    </table>
+  </td></tr>`;
+}
+
+/**
+ * Copy-friendly link block — the hero for "hand this URL to someone else".
+ *
+ * The full URL is rendered as selectable monospace text that wraps
+ * (`word-break:break-all`) instead of overflowing, paired with a "Copy"
+ * affordance to its right. Email clients block JavaScript, so the control
+ * cannot itself write to the clipboard: it is a visual cue next to the
+ * selectable link (long-press on mobile, select on desktop), which is what a
+ * recipient actually copies. The layout stacks on narrow screens.
+ *
+ * @param {string} url  URL (Handlebars expression allowed)
+ * @param {object} [options]
+ * @param {string} [options.label]  small uppercase caption above the URL
+ */
+function copyLink(url, options = {}) {
+  const { label = '' } = options;
+  return `
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-surface dm-accent-soft" style="background-color:${COLORS.accentSoft};border:1px solid ${COLORS.accentSoftBorder};border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
+      <tr><td style="padding:16px 18px;font-family:${FONT};">
+        ${label ? `<div class="dm-accent" style="font-size:11px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:${COLORS.accent};line-height:1;padding-bottom:10px;">${label}</div>` : ''}
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+          <tr>
+            <td class="stack-td dm-text" style="font-family:'SFMono-Regular',Menlo,Consolas,'Courier New',monospace;font-size:13px;font-weight:600;color:${COLORS.navy};line-height:1.6;word-break:break-all;overflow-wrap:anywhere;vertical-align:middle;padding:0 12px 0 0;">${url}</td>
+            <td class="stack-td" width="1" align="right" style="white-space:nowrap;vertical-align:middle;padding:0;">
+              <span class="dm-chip" style="display:inline-block;font-family:${FONT};font-size:12px;font-weight:800;letter-spacing:0.3px;color:${COLORS.navy};background-color:${COLORS.card};border:1px solid ${COLORS.border};border-radius:8px;padding:9px 16px;line-height:1;">Copy</span>
+            </td>
+          </tr>
+        </table>
+        <div class="dm-muted" style="font-family:${FONT};font-size:12px;color:${COLORS.faint};line-height:1.5;padding-top:10px;">Select or long-press the link to copy it, then send it to your guest.</div>
+      </td></tr>
     </table>
   </td></tr>`;
 }
@@ -853,6 +896,47 @@ function contactCard({ name, email, phone, initials, avatarVar = 'customerAvatar
 }
 
 /**
+ * "Similar activities" recommendation rail. Renders the `similarTours` array
+ * (see emailService.buildSimilarTours) through a Handlebars {{#each}} loop, so
+ * the whole section collapses to nothing when the payload is empty.
+ *
+ * Each card leads with the three signals a GetYourGuide/Viator card uses: the
+ * experience photo, its star rating with review count, and a "From" price. The
+ * photo and title both deep-link to the experience page.
+ */
+function recommendations(title = 'You may also like', subtitle = '') {
+  // Wrapped in {{#if similarTours}} so an empty (or missing) array removes the
+  // whole section, heading included, rather than leaving a dangling title.
+  return `{{#if similarTours}}
+  <tr><td class="pad" style="padding:28px 40px 0 40px;">
+    <div class="h2 font-main dm-text" style="font-size:15px;font-weight:800;color:${COLORS.navy};letter-spacing:0.4px;text-transform:uppercase;line-height:1.3;">${title}</div>
+    ${subtitle ? `<div class="dm-muted" style="font-family:${FONT};font-size:13px;color:${COLORS.muted};line-height:1.6;padding-top:5px;">${subtitle}</div>` : ''}
+  </td></tr>
+  {{#each similarTours}}
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:${COLORS.card};border:1px solid ${COLORS.border};border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
+      <tr>
+        {{#if imageUrl}}
+        <td width="120" valign="top" style="width:120px;padding:0;">
+          <a href="{{url}}" target="_blank" style="display:block;line-height:0;text-decoration:none;">
+            <img src="{{imageUrl}}" width="120" height="120" alt="{{title}}" style="display:block;width:120px;height:120px;object-fit:cover;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;">
+          </a>
+        </td>
+        {{/if}}
+        <td valign="middle" style="padding:14px 18px;font-family:${FONT};">
+          <a href="{{url}}" target="_blank" class="dm-text" style="display:block;text-decoration:none;font-size:15px;font-weight:800;color:${COLORS.navy};line-height:1.35;">{{title}}</a>
+          {{#if place}}<div class="dm-muted" style="font-size:12.5px;color:${COLORS.muted};line-height:1.4;padding-top:3px;">{{place}}</div>{{/if}}
+          {{#if hasRating}}<div style="font-size:13px;line-height:1.4;padding-top:7px;"><span style="color:#F5A623;font-weight:800;">&#9733;</span> <span class="dm-text" style="color:${COLORS.navy};font-weight:800;">{{ratingLabel}}</span> <span class="dm-muted" style="color:${COLORS.muted};font-weight:500;">{{reviewCountLabel}}</span></div>{{/if}}
+          {{#if hasPrice}}<div class="dm-muted" style="font-size:13px;color:${COLORS.muted};line-height:1.4;padding-top:6px;">From <span class="dm-text" style="color:${COLORS.navy};font-weight:800;">{{priceLabel}}</span></div>{{/if}}
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+  {{/each}}
+  {{/if}}`;
+}
+
+/**
  * Payout panel — navy money block with the payout visually dominant and an
  * optional amber status pill underneath. Uses solid colours throughout so
  * Outlook (no rgba support) renders it legibly.
@@ -864,13 +948,18 @@ function contactCard({ name, email, phone, initials, avatarVar = 'customerAvatar
  */
 function payoutPanel({ rows, total, statusLabel }) {
   const rowHtml = rows
-    .map(
-      (r) => `
+    .map((r) => {
+      const cond = r.if === undefined ? true : r.if;
+      if (cond === false) return '';
+      const ifMatch = typeof cond === 'string' && cond.match(/^\{\{\s*([a-zA-Z0-9_]+)\s*\}\}$/);
+      const rowConditional = r.conditional || (ifMatch ? ifMatch[1] : null);
+      const rowInner = `
       <tr>
         <td style="padding:5px 0;font-family:${FONT};font-size:13px;color:#C7D2E0;line-height:1.5;">${r.label}</td>
         <td style="padding:5px 0;font-family:${FONT};font-size:13px;font-weight:700;color:#ffffff;line-height:1.5;text-align:right;white-space:nowrap;">${r.value}</td>
-      </tr>`
-    )
+      </tr>`;
+      return rowConditional ? `{{#if ${rowConditional}}}${rowInner}{{/if}}` : rowInner;
+    })
     .join('');
   return `
   <tr><td class="pad" style="padding:12px 40px 0 40px;">
@@ -913,12 +1002,14 @@ module.exports = {
   contextRow,
   mediaHeader,
   referenceBar,
+  copyLink,
   statusStrip,
   statGrid,
   ICONS,
   EMAIL_ICON_URLS,
   stepList,
   contactCard,
+  recommendations,
   payoutPanel,
   spacer,
   msoSpacer,

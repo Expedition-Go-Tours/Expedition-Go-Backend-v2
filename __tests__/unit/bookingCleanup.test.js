@@ -4,6 +4,8 @@ jest.mock('../../src/core/services/prismaClient', () => ({
 
 jest.mock('../../src/core/services/reviewRequestNotify', () => ({
   enqueueReviewRequest: jest.fn(),
+  enqueueSupplierReviewInvite: jest.fn(),
+  notifyBookingCompleted: jest.fn(),
 }));
 
 jest.mock('../../src/core/services/stripeHelpers', () => {
@@ -39,6 +41,7 @@ jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn((
 
 const prisma = require('../../src/core/services/prismaClient');
 const { getStripe, handlePaymentSucceeded } = require('../../src/core/services/stripeHelpers');
+const { notifyBookingCompleted } = require('../../src/core/services/reviewRequestNotify');
 const { cancelStalePendingBookings, autoCompleteBookings } = require('../../src/core/services/bookingCleanup');
 
 const pendingBooking = (overrides = {}) => ({
@@ -228,5 +231,20 @@ describe('autoCompleteBookings', () => {
     const result = await autoCompleteBookings();
     expect(prisma.booking.updateMany).not.toHaveBeenCalled();
     expect(result).toEqual({ completed: 0 });
+  });
+
+  it('nudges the customer AND hands the supplier the review link on every completion', async () => {
+    await autoCompleteBookings();
+
+    // Single entry point fans out to both notifications, once per completed row.
+    expect(notifyBookingCompleted).toHaveBeenCalledTimes(3);
+    expect(notifyBookingCompleted).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'b1' }),
+      expect.objectContaining({ id: 't1' }),
+    );
+    expect(notifyBookingCompleted).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'b3' }),
+      expect.objectContaining({ id: 't2' }),
+    );
   });
 });

@@ -141,6 +141,17 @@ module.exports = {
   cancellationChoice: (token, origin) =>
     `${baseUrl(origin)}/cancellation-choice?token=${encodeURIComponent(token)}`,
   browseExperiences: (origin) => `${baseUrl(origin)}/tours`,
+  // Public experience page — canonical /tour/{id}/{slug} on every storefront
+  // (see src/core/storefront.js buildTourSchemaUrl). Falls back to the bare
+  // slug route, then the browse listing, when the id/slug are unavailable.
+  viewTour: (tourId, tourSlug, origin) => {
+    const base = baseUrl(origin);
+    if (tourId && tourSlug) {
+      return `${base}/tour/${encodeURIComponent(tourId)}/${encodeURIComponent(tourSlug)}`;
+    }
+    if (tourSlug) return `${base}/tour/${encodeURIComponent(tourSlug)}`;
+    return `${base}/tours`;
+  },
   contactSupport: (origin) => brandPath(origin, 'support'),
   getDirections: (location) => mapsDirectionsUrl(location),
 

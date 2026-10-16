@@ -1596,8 +1596,8 @@ const updateBookingStatus = catchAsync(async (req, res, next) => {
 
   // Completed + paid → nudge the customer to write a review.
   if (status === 'COMPLETED') {
-    const { enqueueReviewRequest } = require('../../core/services/reviewRequestNotify');
-    enqueueReviewRequest(updated, updated.tour);
+    const { notifyBookingCompleted } = require('../../core/services/reviewRequestNotify');
+    notifyBookingCompleted(updated, updated.tour);
   }
 
   enqueueEvent({

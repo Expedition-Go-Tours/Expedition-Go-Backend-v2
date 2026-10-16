@@ -477,6 +477,7 @@ const EMAIL_JOB_DISPATCH = {
   'supplier-customer-cancelled-late': ['sendSupplierCustomerCancelledLateEmail', true],
   'supplier-platform-cancelled': ['sendSupplierPlatformCancelledEmail', true],
   'supplier-cancellation-recorded': ['sendSupplierCancellationRecordedEmail', true],
+  'supplier-review-invite': ['sendSupplierReviewInviteEmail', true],
 };
 
 /**

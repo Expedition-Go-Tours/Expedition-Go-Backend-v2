@@ -50,6 +50,31 @@ describe('emailUrls brand-aware deep links', () => {
   });
 });
 
+describe('viewTour — canonical experience deep link', () => {
+  const legacy = 'https://travioafrica.com';
+  const expedition = 'https://expeditiongotours.vercel.app';
+
+  it('builds the /tour/{id}/{slug} route on the booking origin', () => {
+    expect(emailUrls.viewTour('tour-1', 'accra-flying-dress', legacy)).toBe(
+      'https://travioafrica.com/tour/tour-1/accra-flying-dress'
+    );
+    expect(emailUrls.viewTour('tour-1', 'accra-flying-dress', expedition)).toBe(
+      `${expedition}/tour/tour-1/accra-flying-dress`
+    );
+  });
+
+  it('falls back to the bare slug route, then the browse listing', () => {
+    expect(emailUrls.viewTour('', 'accra-flying-dress', legacy)).toBe(
+      'https://travioafrica.com/tour/accra-flying-dress'
+    );
+    expect(emailUrls.viewTour('', '', legacy)).toBe('https://travioafrica.com/tours');
+  });
+
+  it('defaults to CLIENT_URL when no origin is supplied', () => {
+    expect(emailUrls.viewTour('tour-1', 'slug-x')).toBe('https://travioafrica.com/tour/tour-1/slug-x');
+  });
+});
+
 describe('dashboardBaseForBrand — brand-key dashboard resolution', () => {
   const GHANA = 'https://supplier.travioghana.com';
   const AFRICA = expect.stringMatching(/supplier\.travioafrica\.com/);
