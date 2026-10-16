@@ -34,12 +34,39 @@
     .body-lg { font-size:16px !important; }
     .hide-mobile { display:none !important; }
   }
+  /* Dark mode.
+     Clients that honour prefers-color-scheme (Apple Mail, Outlook.com, iOS
+     Gmail) swap these classes. Every tinted surface and its matching text
+     colour has a dark counterpart: a light background whose text flips light
+     is unreadable, so the surface must move with the text. Clients that force
+     colour inversion instead (some Android Gmail builds) simply ignore these
+     and keep the already-legible light styling. */
   @media (prefers-color-scheme: dark) {
     .dm-bg { background-color:#0B1220 !important; }
     .dm-card { background-color:#111827 !important; border-color:#1F2937 !important; }
+    .dm-surface { background-color:#111827 !important; border-color:#1F2937 !important; }
+    .dm-chip { background-color:#1F2937 !important; color:#E5E7EB !important; }
     .dm-text { color:#E5E7EB !important; }
     .dm-muted { color:#9CA3AF !important; }
     .dm-accent { color:#34D399 !important; }
+    .dm-info { color:#60A5FA !important; }
+    .dm-warning { color:#FBBF24 !important; }
+    .dm-danger { color:#F87171 !important; }
+    /* Soft tinted surfaces (callouts, badges) */
+    .dm-accent-soft { background-color:#0F2A22 !important; }
+    .dm-info-soft { background-color:#101F33 !important; }
+    .dm-warning-soft { background-color:#2A2110 !important; }
+    .dm-danger-soft { background-color:#2A1414 !important; }
+    .dm-navy-soft { background-color:#1F2937 !important; }
+    /* Key-facts tiles: surface + its accent label */
+    .dm-tile-green { background-color:#0F2A22 !important; }
+    .dm-tile-blue { background-color:#101F33 !important; }
+    .dm-tile-amber { background-color:#2A2110 !important; }
+    .dm-tile-purple { background-color:#1E1733 !important; }
+    .dm-label-green { color:#34D399 !important; }
+    .dm-label-blue { color:#60A5FA !important; }
+    .dm-label-amber { color:#FBBF24 !important; }
+    .dm-label-purple { color:#C4B5FD !important; }
   }
 </style>
 </head>
@@ -55,7 +82,7 @@
             <td align="center" style="padding:0 0 24px 0;">
               <img src="{{logoUrl}}" alt="{{brandName}}" width="170" style="display:block;width:170px;max-width:170px;height:auto;border:0;outline:none;">
               {{#if poweredByLabel}}<div style="margin-top:10px;">
-                <span style="display:inline-block;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:700;letter-spacing:0.3px;color:#007A4D;background-color:#E6F6F0;border-radius:999px;padding:5px 14px;line-height:1;">{{poweredByLabel}}</span>
+                <span class="dm-accent-soft dm-accent" style="display:inline-block;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:700;letter-spacing:0.3px;color:#007A4D;background-color:#E6F6F0;border-radius:999px;padding:5px 14px;line-height:1;">{{poweredByLabel}}</span>
               </div>{{/if}}
             </td>
           </tr>
@@ -71,7 +98,7 @@
   </td></tr>
   <tr><td align="center" style="padding:0px 0 0 0;">
          <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
-           <tr><td style="background-color:#EFF6FF;border-radius:20px;padding:6px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:700;color:#1D4ED8;line-height:1.2;">Important</td></tr>
+           <tr><td class="dm-info-soft dm-info" style="background-color:#EFF6FF;border-radius:20px;padding:6px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:700;color:#1D4ED8;line-height:1.2;">Important</td></tr>
          </table>
        </td></tr>
       
@@ -81,11 +108,11 @@
       
   {{#if changes}}
   <tr><td class="pad" style="padding:12px 40px 4px 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-surface" style="border:1px solid #E2E8F0;border-radius:10px;border-collapse:separate;border-spacing:0;overflow:hidden;">
       <tr>
-        <td style="background-color:#EEF2F7;padding:10px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#001F3F;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid #E2E8F0;width:40%;">Detail</td>
-        <td style="background-color:#EEF2F7;padding:10px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid #E2E8F0;width:30%;">Previous</td>
-        <td style="background-color:#EEF2F7;padding:10px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#007A4D;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid #E2E8F0;width:30%;">Updated</td>
+        <td class="dm-navy-soft dm-text" style="background-color:#EEF2F7;padding:10px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#001F3F;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid #E2E8F0;width:40%;">Detail</td>
+        <td class="dm-navy-soft dm-muted" style="background-color:#EEF2F7;padding:10px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid #E2E8F0;width:30%;">Previous</td>
+        <td class="dm-navy-soft dm-accent" style="background-color:#EEF2F7;padding:10px 16px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#007A4D;text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid #E2E8F0;width:30%;">Updated</td>
       </tr>
       {{#each changes}}
       <tr>
@@ -111,8 +138,8 @@
       {{#if needsAcceptance}}
       
   <tr><td class="pad" style="padding:20px 40px 0 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#FFFBEB;border-radius:10px;">
-      <tr><td style="padding:14px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;color:#B45309;line-height:1.6;font-weight:600;">If the change is significant, let us know what works best for you.</td></tr>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-warning-soft" style="background-color:#FFFBEB;border-radius:10px;border-collapse:separate;border-spacing:0;">
+      <tr><td class="dm-warning" style="padding:14px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;color:#B45309;line-height:1.6;font-weight:600;">If the change is significant, let us know what works best for you.</td></tr>
     </table>
   </td></tr>
       
@@ -123,10 +150,10 @@
           <a href="{{acceptUrl}}" class="btn" style="display:inline-block;background-color:#007A4D;color:#ffffff;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Accept changes</a>
         </td>
         <td style="padding:0 8px 0 0;vertical-align:middle;">
-          <a href="{{rescheduleUrl}}" class="btn" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Choose another date</a>
+          <a href="{{rescheduleUrl}}" class="btn dm-card dm-text" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Choose another date</a>
         </td>
         <td style="padding:0 8px 0 0;vertical-align:middle;">
-          <a href="{{cancelUrl}}" class="btn" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Cancel for a full refund</a>
+          <a href="{{cancelUrl}}" class="btn dm-card dm-text" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Cancel for a full refund</a>
         </td></tr>
     </table>
   </td></tr>

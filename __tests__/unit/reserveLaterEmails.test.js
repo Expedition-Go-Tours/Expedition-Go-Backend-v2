@@ -72,7 +72,7 @@ describe('reserve-later-confirmed email', () => {
     delete process.env.PAY_LATER_CHARGE_BEFORE_HOURS;
   });
 
-  it('states the charge date (travel − 24h) and keeps the experience date separate', async () => {
+  it('states the charge date (travel − 24h) and keeps the activity date separate', async () => {
     await sendReserveLaterConfirmedEmail(booking());
     const { subject, html } = __send.mock.calls[0][0];
 
@@ -81,7 +81,7 @@ describe('reserve-later-confirmed email', () => {
     // The charge date is emitted (it appears nowhere else in the booking data).
     expect(html).toContain(chargeLabel());
     expect(html).toContain(travelLabel());
-    expect(html).toContain('Experience date');
+    expect(html).toContain('Activity date');
     expect(html).toContain('Payment date');
     // inbox preheader also names the charge date
     expect(html).toContain(`We will charge your card on ${chargeLabel()}`);

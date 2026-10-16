@@ -62,12 +62,39 @@ const BASE_CSS = `
     .body-lg { font-size:16px !important; }
     .hide-mobile { display:none !important; }
   }
+  /* Dark mode.
+     Clients that honour prefers-color-scheme (Apple Mail, Outlook.com, iOS
+     Gmail) swap these classes. Every tinted surface and its matching text
+     colour has a dark counterpart: a light background whose text flips light
+     is unreadable, so the surface must move with the text. Clients that force
+     colour inversion instead (some Android Gmail builds) simply ignore these
+     and keep the already-legible light styling. */
   @media (prefers-color-scheme: dark) {
     .dm-bg { background-color:#0B1220 !important; }
     .dm-card { background-color:#111827 !important; border-color:#1F2937 !important; }
+    .dm-surface { background-color:#111827 !important; border-color:#1F2937 !important; }
+    .dm-chip { background-color:#1F2937 !important; color:#E5E7EB !important; }
     .dm-text { color:#E5E7EB !important; }
     .dm-muted { color:#9CA3AF !important; }
     .dm-accent { color:#34D399 !important; }
+    .dm-info { color:#60A5FA !important; }
+    .dm-warning { color:#FBBF24 !important; }
+    .dm-danger { color:#F87171 !important; }
+    /* Soft tinted surfaces (callouts, badges) */
+    .dm-accent-soft { background-color:#0F2A22 !important; }
+    .dm-info-soft { background-color:#101F33 !important; }
+    .dm-warning-soft { background-color:#2A2110 !important; }
+    .dm-danger-soft { background-color:#2A1414 !important; }
+    .dm-navy-soft { background-color:#1F2937 !important; }
+    /* Key-facts tiles: surface + its accent label */
+    .dm-tile-green { background-color:#0F2A22 !important; }
+    .dm-tile-blue { background-color:#101F33 !important; }
+    .dm-tile-amber { background-color:#2A2110 !important; }
+    .dm-tile-purple { background-color:#1E1733 !important; }
+    .dm-label-green { color:#34D399 !important; }
+    .dm-label-blue { color:#60A5FA !important; }
+    .dm-label-amber { color:#FBBF24 !important; }
+    .dm-label-purple { color:#C4B5FD !important; }
   }
 `;
 
@@ -110,7 +137,7 @@ function shell(title, bodyHtml) {
             <td align="center" style="padding:0 0 24px 0;">
               <img src="{{logoUrl}}" alt="{{brandName}}" width="170" style="display:block;width:170px;max-width:170px;height:auto;border:0;outline:none;">
               {{#if poweredByLabel}}<div style="margin-top:10px;">
-                <span style="display:inline-block;font-family:${FONT};font-size:12px;font-weight:700;letter-spacing:0.3px;color:${COLORS.accent};background-color:${COLORS.accentSoft};border-radius:999px;padding:5px 14px;line-height:1;">{{poweredByLabel}}</span>
+                <span class="dm-accent-soft dm-accent" style="display:inline-block;font-family:${FONT};font-size:12px;font-weight:700;letter-spacing:0.3px;color:${COLORS.accent};background-color:${COLORS.accentSoft};border-radius:999px;padding:5px 14px;line-height:1;">{{poweredByLabel}}</span>
               </div>{{/if}}
             </td>
           </tr>
@@ -152,18 +179,18 @@ function shell(title, bodyHtml) {
  */
 function hero({ heading, subtitle, badgeText, badgeColor = 'accent' }) {
   const badgeColors = {
-    accent: { bg: COLORS.accentSoft, text: COLORS.accent },
-    danger: { bg: COLORS.dangerSoft, text: COLORS.danger },
-    warning: { bg: COLORS.warningSoft, text: COLORS.warning },
-    info: { bg: COLORS.infoSoft, text: COLORS.info },
-    navy: { bg: COLORS.navySoft, text: COLORS.navy },
+    accent: { bg: COLORS.accentSoft, text: COLORS.accent, dmBg: 'dm-accent-soft', dmFg: 'dm-accent' },
+    danger: { bg: COLORS.dangerSoft, text: COLORS.danger, dmBg: 'dm-danger-soft', dmFg: 'dm-danger' },
+    warning: { bg: COLORS.warningSoft, text: COLORS.warning, dmBg: 'dm-warning-soft', dmFg: 'dm-warning' },
+    info: { bg: COLORS.infoSoft, text: COLORS.info, dmBg: 'dm-info-soft', dmFg: 'dm-info' },
+    navy: { bg: COLORS.navySoft, text: COLORS.navy, dmBg: 'dm-navy-soft', dmFg: 'dm-text' },
   };
   const bc = badgeColors[badgeColor] || badgeColors.accent;
 
   const badge = badgeText
     ? `<tr><td align="center" style="padding:${subtitle ? '8' : '0'}px 0 0 0;">
          <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
-           <tr><td style="background-color:${bc.bg};border-radius:20px;padding:6px 16px;font-family:${FONT};font-size:13px;font-weight:700;color:${bc.text};line-height:1.2;">${badgeText}</td></tr>
+           <tr><td class="${bc.dmBg} ${bc.dmFg}" style="background-color:${bc.bg};border-radius:20px;padding:6px 16px;font-family:${FONT};font-size:13px;font-weight:700;color:${bc.text};line-height:1.2;">${badgeText}</td></tr>
          </table>
        </td></tr>`
     : '';
@@ -263,7 +290,7 @@ function detailCard(rows, options = {}) {
   }
   return `
   <tr><td class="pad" style="padding:12px 40px 0 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:${background};border:1px solid ${COLORS.border};border-radius:14px;overflow:hidden;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:${background};border:1px solid ${COLORS.border};border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
       ${body}
     </table>
   </td></tr>`;
@@ -276,11 +303,11 @@ function diffTable() {
   return `
   {{#if changes}}
   <tr><td class="pad" style="padding:12px 40px 4px 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid ${COLORS.border};border-radius:10px;overflow:hidden;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-surface" style="border:1px solid ${COLORS.border};border-radius:10px;border-collapse:separate;border-spacing:0;overflow:hidden;">
       <tr>
-        <td style="background-color:${COLORS.navySoft};padding:10px 16px;font-family:${FONT};font-size:12px;font-weight:800;color:${COLORS.navy};text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid ${COLORS.border};width:40%;">Detail</td>
-        <td style="background-color:${COLORS.navySoft};padding:10px 16px;font-family:${FONT};font-size:12px;font-weight:800;color:${COLORS.muted};text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid ${COLORS.border};width:30%;">Previous</td>
-        <td style="background-color:${COLORS.navySoft};padding:10px 16px;font-family:${FONT};font-size:12px;font-weight:800;color:${COLORS.accent};text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid ${COLORS.border};width:30%;">Updated</td>
+        <td class="dm-navy-soft dm-text" style="background-color:${COLORS.navySoft};padding:10px 16px;font-family:${FONT};font-size:12px;font-weight:800;color:${COLORS.navy};text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid ${COLORS.border};width:40%;">Detail</td>
+        <td class="dm-navy-soft dm-muted" style="background-color:${COLORS.navySoft};padding:10px 16px;font-family:${FONT};font-size:12px;font-weight:800;color:${COLORS.muted};text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid ${COLORS.border};width:30%;">Previous</td>
+        <td class="dm-navy-soft dm-accent" style="background-color:${COLORS.navySoft};padding:10px 16px;font-family:${FONT};font-size:12px;font-weight:800;color:${COLORS.accent};text-transform:uppercase;letter-spacing:0.4px;border-bottom:1px solid ${COLORS.border};width:30%;">Updated</td>
       </tr>
       {{#each changes}}
       <tr>
@@ -306,16 +333,16 @@ function divider() {
  */
 function callout(text, tone = 'info') {
   const tones = {
-    info: { bg: COLORS.infoSoft, text: COLORS.info },
-    warning: { bg: COLORS.warningSoft, text: COLORS.warning },
-    danger: { bg: COLORS.dangerSoft, text: COLORS.danger },
-    success: { bg: COLORS.accentSoft, text: COLORS.accent },
+    info: { bg: COLORS.infoSoft, text: COLORS.info, dmBg: 'dm-info-soft', dmFg: 'dm-info' },
+    warning: { bg: COLORS.warningSoft, text: COLORS.warning, dmBg: 'dm-warning-soft', dmFg: 'dm-warning' },
+    danger: { bg: COLORS.dangerSoft, text: COLORS.danger, dmBg: 'dm-danger-soft', dmFg: 'dm-danger' },
+    success: { bg: COLORS.accentSoft, text: COLORS.accent, dmBg: 'dm-accent-soft', dmFg: 'dm-accent' },
   };
   const t = tones[tone] || tones.info;
   return `
   <tr><td class="pad" style="padding:20px 40px 0 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:${t.bg};border-radius:10px;">
-      <tr><td style="padding:14px 18px;font-family:${FONT};font-size:14px;color:${t.text};line-height:1.6;font-weight:600;">${text}</td></tr>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="${t.dmBg}" style="background-color:${t.bg};border-radius:10px;border-collapse:separate;border-spacing:0;">
+      <tr><td class="${t.dmFg}" style="padding:14px 18px;font-family:${FONT};font-size:14px;color:${t.text};line-height:1.6;font-weight:600;">${text}</td></tr>
     </table>
   </td></tr>`;
 }
@@ -363,9 +390,10 @@ function buttons(items) {
         b.kind === 'secondary'
           ? `background-color:${COLORS.card};border:1px solid ${COLORS.border};color:${COLORS.navy};`
           : `background-color:${COLORS.accent};color:#ffffff;`;
+      const cls = b.kind === 'secondary' ? 'btn dm-card dm-text' : 'btn';
       return `
         <td style="padding:0 8px 0 0;vertical-align:middle;">
-          <a href="${href}" class="btn" style="display:inline-block;${style}font-family:${FONT};font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">${b.label}</a>
+          <a href="${href}" class="${cls}" style="display:inline-block;${style}font-family:${FONT};font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">${b.label}</a>
         </td>`;
     })
     .join('');
@@ -406,17 +434,22 @@ function summaryRows(rows) {
       const isTotal = r.total;
       const labelColor = isTotal ? COLORS.navy : COLORS.muted;
       const valColor = isTotal ? COLORS.navy : COLORS.navy;
+      const labelClass = isTotal ? 'dm-text' : 'dm-muted';
       const weight = isTotal ? 'font-size:16px;font-weight:800;' : 'font-size:14px;font-weight:600;';
       return `
       <tr>
-        <td style="padding:${isTotal ? '12px' : '6px'} 18px;font-family:${FONT};font-size:14px;color:${labelColor};line-height:1.5;${isTotal ? 'font-weight:700;' : ''}">${r.label}</td>
-        <td style="padding:${isTotal ? '12px' : '6px'} 18px;font-family:${FONT};${weight}color:${valColor};line-height:1.5;text-align:right;white-space:nowrap;">${r.value}</td>
+        <td class="${labelClass}" style="padding:${isTotal ? '12px' : '6px'} 18px;font-family:${FONT};font-size:14px;color:${labelColor};line-height:1.5;${isTotal ? 'font-weight:700;' : ''}">${r.label}</td>
+        <td class="dm-text" style="padding:${isTotal ? '12px' : '6px'} 18px;font-family:${FONT};${weight}color:${valColor};line-height:1.5;text-align:right;white-space:nowrap;">${r.value}</td>
       </tr>`;
     })
     .join('');
+  // `border-collapse:separate` (the global table rule sets collapse) is what
+  // lets the border follow the 12px radius; without it the border draws as a
+  // square box around the rounded background. `overflow:hidden` clips the
+  // first/last rows to the corners in WebKit/Blink.
   return `
   <tr><td class="pad" style="padding:16px 40px 4px 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:${COLORS.bg};border:1px solid ${COLORS.border};border-radius:12px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-surface" style="background-color:${COLORS.bg};border:1px solid ${COLORS.border};border-radius:12px;border-collapse:separate;border-spacing:0;overflow:hidden;">
       ${rowHtml}
     </table>
   </td></tr>`;
@@ -489,15 +522,15 @@ function senderRow(nameVar, roleVar, avatarVar, initialsVar) {
 function messageCard(textVar, thumbVar, docVar) {
   return `
   <tr><td class="pad" style="padding:12px 40px 0 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F4F6F9;border:1px solid ${COLORS.border};border-radius:14px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-surface" style="background-color:#F4F6F9;border:1px solid ${COLORS.border};border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
       {{#if ${thumbVar.replace(/[{}]/g, '')}}}
       <tr><td style="padding:14px 14px 0 14px;">
         <img src="${thumbVar}" alt="Attached image" style="display:block;width:auto;max-width:100%;max-height:240px;border-radius:10px;border:1px solid ${COLORS.border};">
       </td></tr>
       {{/if}}
-      <tr><td style="padding:14px 18px;font-family:${FONT};font-size:15px;color:${COLORS.body};line-height:1.7;">${textVar}</td></tr>
+      <tr><td class="dm-text" style="padding:14px 18px;font-family:${FONT};font-size:15px;color:${COLORS.body};line-height:1.7;">${textVar}</td></tr>
       {{#if ${docVar.replace(/[{}]/g, '')}}}
-      <tr><td style="padding:0 18px 14px 18px;font-family:${FONT};font-size:13px;color:${COLORS.muted};">&#128206;&nbsp; ${docVar}</td></tr>
+      <tr><td class="dm-muted" style="padding:0 18px 14px 18px;font-family:${FONT};font-size:13px;color:${COLORS.muted};">&#128206;&nbsp; ${docVar}</td></tr>
       {{/if}}
     </table>
   </td></tr>`;
@@ -513,9 +546,9 @@ function contextRow(titleVar, bookingVar) {
   <tr><td class="pad" style="padding:16px 40px 0 40px;">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
       <tr>
-        <td style="padding:10px 14px;background-color:${COLORS.navySoft};border-left:3px solid ${COLORS.accent};border-radius:8px;font-family:${FONT};font-size:13px;color:${COLORS.body};line-height:1.5;">
-          <span style="font-weight:800;color:${COLORS.navy};">${titleVar}</span>
-          {{#if ${bookingVar.replace(/[{}]/g, '')}}}&nbsp;&nbsp;&middot;&nbsp;&nbsp;<span style="color:${COLORS.muted};">Ref ${bookingVar}</span>{{/if}}
+        <td class="dm-navy-soft dm-text" style="padding:10px 14px;background-color:${COLORS.navySoft};border-left:3px solid ${COLORS.accent};border-radius:8px;font-family:${FONT};font-size:13px;color:${COLORS.body};line-height:1.5;">
+          <span class="dm-text" style="font-weight:800;color:${COLORS.navy};">${titleVar}</span>
+          {{#if ${bookingVar.replace(/[{}]/g, '')}}}&nbsp;&nbsp;&middot;&nbsp;&nbsp;<span class="dm-muted" style="color:${COLORS.muted};">Ref ${bookingVar}</span>{{/if}}
         </td>
       </tr>
     </table>
@@ -603,10 +636,10 @@ function referenceBar({ reference, right }) {
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
       <tr>
         <td valign="middle" style="font-family:${FONT};">
-          <span style="display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:1.3px;text-transform:uppercase;color:${COLORS.faint};vertical-align:middle;">Ref</span>
-          <span style="display:inline-block;margin-left:8px;font-family:'SFMono-Regular',Menlo,Consolas,'Courier New',monospace;font-size:15px;font-weight:700;color:${COLORS.navy};background-color:${COLORS.navySoft};border-radius:7px;padding:5px 11px;letter-spacing:0.4px;vertical-align:middle;">${reference}</span>
+          <span class="dm-muted" style="display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:1.3px;text-transform:uppercase;color:${COLORS.faint};vertical-align:middle;">Ref</span>
+          <span class="dm-chip" style="display:inline-block;margin-left:8px;font-family:'SFMono-Regular',Menlo,Consolas,'Courier New',monospace;font-size:15px;font-weight:700;color:${COLORS.navy};background-color:${COLORS.navySoft};border-radius:7px;padding:5px 11px;letter-spacing:0.4px;vertical-align:middle;">${reference}</span>
         </td>
-        ${right ? `<td valign="middle" align="right" style="font-family:${FONT};font-size:12px;color:${COLORS.faint};white-space:nowrap;">${right}</td>` : ''}
+        ${right ? `<td class="dm-muted" valign="middle" align="right" style="font-family:${FONT};font-size:12px;color:${COLORS.faint};white-space:nowrap;">${right}</td>` : ''}
       </tr>
     </table>
   </td></tr>`;
@@ -629,13 +662,14 @@ function statusStrip(steps, activeIndex = 0) {
       const active = i === activeIndex;
       const barColor = done ? COLORS.accent : active ? '#F59E0B' : COLORS.border;
       const labelColor = done ? COLORS.accent : active ? COLORS.navy : COLORS.faint;
+      const labelClass = done ? 'dm-accent' : active ? 'dm-text' : 'dm-muted';
       const weight = done || active ? '800' : '600';
       return `
       <td class="stack-td" width="${width}%" valign="top" style="padding:0 5px 8px 5px;">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
           <tr><td style="height:4px;background-color:${barColor};border-radius:2px;font-size:0;line-height:0;">&nbsp;</td></tr>
-          <tr><td style="padding:11px 0 0 0;font-family:${FONT};font-size:12px;font-weight:${weight};color:${labelColor};line-height:1.3;">${s.label}</td></tr>
-          <tr><td style="padding:3px 0 0 0;font-family:${FONT};font-size:11px;font-weight:500;color:${COLORS.faint};line-height:1.35;">${s.sublabel || ''}</td></tr>
+          <tr><td class="${labelClass}" style="padding:11px 0 0 0;font-family:${FONT};font-size:12px;font-weight:${weight};color:${labelColor};line-height:1.3;">${s.label}</td></tr>
+          <tr><td class="dm-muted" style="padding:3px 0 0 0;font-family:${FONT};font-size:11px;font-weight:500;color:${COLORS.faint};line-height:1.35;">${s.sublabel || ''}</td></tr>
         </table>
       </td>`;
     })
@@ -681,10 +715,27 @@ const EMAIL_ICON_URLS = {
 };
 
 /**
+ * Key-facts tile palette. Each tone pairs a light surface + accent label with
+ * the dark-mode classes defined in BASE_CSS, so the tile and its label move
+ * together instead of leaving dark text on a light tile (or vice versa).
+ */
+const TILE_TONES = {
+  green: { tint: '#E7F6EE', color: '#0B7A4B', dmTint: 'dm-tile-green', dmLabel: 'dm-label-green' },
+  blue: { tint: '#E8F1FE', color: '#1D4ED8', dmTint: 'dm-tile-blue', dmLabel: 'dm-label-blue' },
+  amber: { tint: '#FEF4E6', color: '#B45309', dmTint: 'dm-tile-amber', dmLabel: 'dm-label-amber' },
+  purple: { tint: '#F2ECFE', color: '#6D28D9', dmTint: 'dm-tile-purple', dmLabel: 'dm-label-purple' },
+};
+
+/**
  * Stat grid — 2×2 cards of colour-tinted facts. Each card carries a solid
  * accent badge with a white line icon, an accent-coloured label and a navy
  * value. Deliberately not the usual pale-grey box + chip: the tint is per
  * fact, so the row reads as a designed summary rather than filler.
+ *
+ * Pass `tone` (green | blue | amber | purple) to get a tinted card whose
+ * background and label also have dark-mode variants. Explicit `tint`/`color`
+ * hexes remain supported for one-off colours, but then no dark variant is
+ * emitted, so prefer `tone`.
  *
  * Icons are inline SVG (no emoji). The card still reads if a client strips
  * the SVG, because the tint, label and value carry the content. Stacks to
@@ -692,15 +743,17 @@ const EMAIL_ICON_URLS = {
  *
  * A tile may carry `if: '{{someVar}}'` to disappear when that value is empty —
  * the same contract as detailRows, so a tour with no start time does not print
- * a blank "Start time" tile. With no `if` the markup is byte-identical to the
- * original grid, which keeps already-shipped artifacts in sync.
+ * a blank "Start time" tile.
  *
- * @param {Array<{icon:string, label:string, value:string, color?:string, tint?:string, if?:string}>} tiles
+ * @param {Array<{icon:string, label:string, value:string, tone?:string, color?:string, tint?:string, if?:string}>} tiles
  */
 function statGrid(tiles) {
   const cell = (t) => {
-    const tint = t.tint || COLORS.accentSoft;
-    const color = t.color || COLORS.accent;
+    const tone = t.tone ? TILE_TONES[t.tone] : null;
+    const tint = (tone && tone.tint) || t.tint || COLORS.accentSoft;
+    const color = (tone && tone.color) || t.color || COLORS.accent;
+    const tileClass = tone ? ` class="${tone.dmTint}"` : '';
+    const labelClass = tone ? ` class="${tone.dmLabel}"` : '';
     // Hosted PNG first: Gmail and Outlook drop inline <svg>, which would leave
     // the badge empty. The SVG path only remains for icons missing from
     // EMAIL_ICON_URLS (so an unknown key still renders in Apple Mail).
@@ -712,13 +765,13 @@ function statGrid(tiles) {
         : '';
     const html = `
     <td class="stack-td" width="50%" valign="top" style="padding:0 6px 12px 6px;">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:${tint};border-radius:16px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"${tileClass} style="background-color:${tint};border-radius:16px;border-collapse:separate;border-spacing:0;overflow:hidden;">
         <tr>
           <td style="padding:16px 18px 18px 18px;font-family:${FONT};">
             <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
               <td width="38" height="38" align="center" valign="middle" style="background-color:${color};border-radius:11px;line-height:0;font-size:0;">${glyph}</td>
             </tr></table>
-            <div style="padding-top:13px;font-size:10.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:${color};line-height:1;">${t.label}</div>
+            <div${labelClass} style="padding-top:13px;font-size:10.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:${color};line-height:1;">${t.label}</div>
             <div class="dm-text" style="padding-top:5px;font-size:16px;font-weight:700;color:${COLORS.navy};line-height:1.3;">${t.value}</div>
           </td>
         </tr>
@@ -782,11 +835,11 @@ function contactCard({ name, email, phone, initials, avatarVar = 'customerAvatar
     {{/if}}`;
   const line = (icon, value, href) =>
     value
-      ? `<div style="font-family:${FONT};font-size:13px;color:${COLORS.body};line-height:1.7;"><span style="color:${COLORS.faint};">${icon}</span>&nbsp;&nbsp;<a href="${href || '#'}" style="color:${COLORS.body};text-decoration:none;">${value}</a></div>`
+      ? `<div class="dm-text" style="font-family:${FONT};font-size:13px;color:${COLORS.body};line-height:1.7;"><span class="dm-muted" style="color:${COLORS.faint};">${icon}</span>&nbsp;&nbsp;<a class="dm-text" href="${href || '#'}" style="color:${COLORS.body};text-decoration:none;">${value}</a></div>`
       : '';
   return `
   <tr><td class="pad" style="padding:12px 40px 0 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F4F6F9;border:1px solid ${COLORS.border};border-radius:14px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-surface" style="background-color:#F4F6F9;border:1px solid ${COLORS.border};border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
       <tr>
         <td width="58" valign="middle" style="padding:16px 0 16px 18px;">${media}</td>
         <td valign="middle" style="padding:16px 18px 16px 0;font-family:${FONT};">
@@ -821,7 +874,7 @@ function payoutPanel({ rows, total, statusLabel }) {
     .join('');
   return `
   <tr><td class="pad" style="padding:12px 40px 0 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:${COLORS.navy};border-radius:14px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:${COLORS.navy};border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
       <tr><td style="padding:20px 22px;">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
           ${rowHtml}

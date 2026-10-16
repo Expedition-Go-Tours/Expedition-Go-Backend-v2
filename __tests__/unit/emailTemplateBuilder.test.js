@@ -29,12 +29,12 @@ describe('email template button wrapper', () => {
   });
 
   it('still keeps every button addressable inside one row on desktop', () => {
-    expect(built).toMatch(/<a href="\{\{reviewUrl\}\}" class="btn"/);
-    expect(built).toMatch(/<a href="\{\{browseUrl\}\}" class="btn"/);
+    expect(built).toMatch(/<a href="\{\{reviewUrl\}\}" class="btn(?: |")/);
+    expect(built).toMatch(/<a href="\{\{browseUrl\}\}" class="btn(?: |")/);
     // Both buttons share the one inner row — stacking is a mobile-only concern.
     const innerRow = built.match(/<tr>(\s*<td style="padding:0 8px 0 0;vertical-align:middle;">[\s\S]*?)<\/td><\/tr>/);
     expect(innerRow).not.toBeNull();
-    expect((innerRow[1].match(/class="btn"/g) || []).length).toBe(2);
+    expect((innerRow[1].match(/class="btn(?: |")/g) || []).length).toBe(2);
   });
 
   it('gives .btn-wrap cells a full-width block layout under 640px', () => {
@@ -78,7 +78,7 @@ describe('generated email templates', () => {
     const offenders = [];
     for (const file of files) {
       const html = fs.readFileSync(path.join(GENERATED_DIR, file), 'utf8');
-      if (!html.includes('class="btn"')) continue;
+      if (!html.includes('class="btn')) continue;
       if (!html.includes('class="btn-wrap"')) {
         // Only a group layout needs the hook; a lone full-width button does not.
         const buttonsInOneTable = /<table[^>]*width="100%"[^>]*>\s*<tr>\s*<td align="center">/.test(html);
@@ -150,6 +150,61 @@ describe('statGrid — Key facts tiles', () => {
     expect(built).toMatch(/class="stack-td"/);
     expect(built).toContain('{{dateLabel}}');
     expect(built).toContain('{{travelersLabel}}');
+  });
+});
+
+describe('dark mode variants', () => {
+  // The dark stylesheet lives at the top of every artifact; assert it here so
+  // a surface can never flip its text without also moving its background.
+  const darkBlock = B.shell('Subject', '').match(/@media \(prefers-color-scheme: dark\) \{([\s\S]*?)\n {2}\}/)[1];
+
+  it('defines a dark class for every tinted surface and its text', () => {
+    for (const cls of [
+      'dm-bg', 'dm-card', 'dm-surface', 'dm-chip', 'dm-text', 'dm-muted',
+      'dm-accent', 'dm-info', 'dm-warning', 'dm-danger',
+      'dm-accent-soft', 'dm-info-soft', 'dm-warning-soft', 'dm-danger-soft', 'dm-navy-soft',
+      'dm-tile-green', 'dm-tile-blue', 'dm-tile-amber', 'dm-tile-purple',
+      'dm-label-green', 'dm-label-blue', 'dm-label-amber', 'dm-label-purple',
+    ]) {
+      expect(darkBlock).toContain(`.${cls} {`);
+    }
+  });
+
+  it('tags key-facts tiles with the tone-matched dark surface + label classes', () => {
+    const built = B.statGrid([
+      { icon: 'calendar', label: 'Activity date', value: '{{dateLabel}}', tone: 'green' },
+      { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tone: 'blue' },
+    ]);
+    // The light tint stays (clients that ignore the media query keep it)...
+    expect(built).toMatch(/<table[^>]*class="dm-tile-green"[^>]*style="background-color:#E7F6EE/);
+    expect(built).toMatch(/<div class="dm-label-green"[^>]*color:#0B7A4B/);
+    // ...and each tone gets its own pair, so a new tone cannot silently miss.
+    expect(built).toMatch(/class="dm-tile-blue"/);
+    expect(built).toMatch(/class="dm-label-blue"/);
+  });
+
+  it('tags the lead-traveller card surface and its text lines for dark mode', () => {
+    const built = B.contactCard({
+      name: '{{leadTravelerName}}',
+      email: '{{leadTravelerEmail}}',
+      phone: '{{leadTravelerPhone}}',
+      initials: '{{customerInitials}}',
+    });
+    expect(built).toMatch(/<table[^>]*class="dm-surface"/);
+    expect(built).toMatch(/<a class="dm-text" href="mailto:/);
+    expect(built).toMatch(/<span class="dm-muted"/);
+  });
+
+  it('tags the payout summary card so its light surface moves with its text', () => {
+    const built = B.summaryRows([
+      { label: 'Retail value', value: '{{totalLabel}}' },
+      { label: 'Supplier payout', value: '{{payoutAmountLabel}}', total: true },
+    ]);
+    expect(built).toMatch(/<table[^>]*class="dm-surface"/);
+    // The global `table { border-collapse:collapse }` kills the radius, so the
+    // card has to opt back into separate borders for the rounded corner to hold.
+    expect(built).toContain('border-collapse:separate');
+    expect(built).toMatch(/<td class="dm-text"[^>]*>\{\{payoutAmountLabel\}\}<\/td>/);
   });
 });
 

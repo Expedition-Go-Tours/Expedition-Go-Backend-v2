@@ -22,7 +22,7 @@ function customerBookingDetailsRows() {
   return B.detailCard([
     { label: 'Booking reference', value: '{{bookingNumber}}' },
     { label: 'Experience', value: '{{tourTitle}}' },
-    { label: 'Date', value: '{{dateLabel}}' },
+    { label: 'Activity date', value: '{{dateLabel}}' },
     { label: 'Starting time', value: '{{timeLabel}}', if: '{{timeLabel}}' },
     { label: 'Duration', value: '{{durationLabel}}', if: '{{durationLabel}}' },
     { label: 'Travellers', value: '{{travelersLabel}}' },
@@ -55,7 +55,7 @@ function supplierBookingDetailsRows() {
     { label: 'Booking reference', value: '{{bookingNumber}}' },
     { label: 'Supplier reference', value: '{{supplierReference}}', if: '{{supplierReference}}' },
     { label: 'Experience', value: '{{tourTitle}}' },
-    { label: 'Date', value: '{{dateLabel}}' },
+    { label: 'Activity date', value: '{{dateLabel}}' },
     { label: 'Starting time', value: '{{timeLabel}}', if: '{{timeLabel}}' },
     { label: 'Travellers', value: '{{travelersLabel}}' },
     { label: 'Language', value: '{{languageLabel}}' },
@@ -101,10 +101,10 @@ const customerBookingConfirmed = {
       ${B.paragraph('Hello {{customerName}}, thank you for booking with {{brandName}}. Your experience is confirmed and everything you need is below.')}
       ${B.sectionTitle('Key facts')}
       ${B.statGrid([
-        { icon: 'calendar', label: 'Date', value: '{{dateLabel}}', tint: '#E7F6EE', color: '#0B7A4B' },
-        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tint: '#E8F1FE', color: '#1D4ED8', if: '{{timeLabel}}' },
-        { icon: 'duration', label: 'Duration', value: '{{durationLabel}}', tint: '#FEF4E6', color: '#B45309', if: '{{durationLabel}}' },
-        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tint: '#F2ECFE', color: '#6D28D9' },
+        { icon: 'calendar', label: 'Activity date', value: '{{dateLabel}}', tone: 'green' },
+        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tone: 'blue', if: '{{timeLabel}}' },
+        { icon: 'duration', label: 'Duration', value: '{{durationLabel}}', tone: 'amber', if: '{{durationLabel}}' },
+        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tone: 'purple' },
       ])}
       ${B.sectionTitle('Booking details')}
       ${B.detailCard([
@@ -172,9 +172,9 @@ const reserveLaterConfirmed = {
       ${B.paragraph('Hello {{customerName}}, your booking is confirmed. No payment has been taken yet.')}
       ${B.sectionTitle('Key facts')}
       ${B.statGrid([
-        { icon: 'calendar', label: 'Experience date', value: '{{experienceDateLabel}}', tint: '#E7F6EE', color: '#0B7A4B' },
-        { icon: 'clock', label: 'Payment date', value: '{{chargeDateLabel}}', tint: '#FEF4E6', color: '#B45309' },
-        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tint: '#F2ECFE', color: '#6D28D9' },
+        { icon: 'calendar', label: 'Activity date', value: '{{experienceDateLabel}}', tone: 'green' },
+        { icon: 'clock', label: 'Payment date', value: '{{chargeDateLabel}}', tone: 'amber' },
+        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tone: 'purple' },
       ])}
       ${B.sectionTitle('Booking details')}
       ${customerBookingDetailsRows()}
@@ -233,7 +233,7 @@ const paymentSuccessful = {
       ${B.sectionTitle('Booking details')}
       ${B.detailCard([
         { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Date', value: '{{dateLabel}}' },
+        { label: 'Activity date', value: '{{dateLabel}}' },
         { label: 'Travellers', value: '{{travelersLabel}}' },
       ])}
       ${B.sectionTitle('Payment details')}
@@ -311,7 +311,7 @@ const paymentUnsuccessful = {
       ${B.hero({ heading: 'Please update your payment method', badgeText: 'Action required', badgeColor: 'danger', subtitle: 'Hello {{customerName}},<br>We could not collect <strong>{{paymentAmountLabel}}</strong> for <strong>{{tourTitle}}</strong>.' })}
       ${B.detailCard([
         { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Date', value: '{{dateLabel}}' },
+        { label: 'Activity date', value: '{{dateLabel}}' },
         { label: 'Booking reference', value: '{{bookingNumber}}' },
         { label: 'Amount due', value: '{{paymentAmountLabel}}' },
       ])}
@@ -384,7 +384,7 @@ const pickupLocationRequired = {
       ${B.paragraph('You selected \u201cI\u2019ll choose later\u201d during booking. Please provide your pickup location before <strong>{{deadlineLabel}}</strong>.')}
       ${B.detailCard([
         { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Date', value: '{{dateLabel}}' },
+        { label: 'Activity date', value: '{{dateLabel}}' },
         { label: 'Starting time', value: '{{timeLabel}}' },
       ])}
       ${B.buttonPrimary('Add pickup location', '{{pickupUrl}}')}
@@ -400,9 +400,9 @@ const bookingReminder = {
       ${B.hero({ heading: 'Get ready for your experience!', badgeText: 'Coming up', badgeColor: 'info', subtitle: 'Hello {{customerName}},<br>Your experience begins on <strong>{{dateLabel}}</strong>.' })}
       ${B.sectionTitle('Key facts')}
       ${B.statGrid([
-        { icon: 'calendar', label: 'Date', value: '{{dateLabel}}', tint: '#E7F6EE', color: '#0B7A4B' },
-        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tint: '#E8F1FE', color: '#1D4ED8', if: '{{timeLabel}}' },
-        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tint: '#F2ECFE', color: '#6D28D9' },
+        { icon: 'calendar', label: 'Activity date', value: '{{dateLabel}}', tone: 'green' },
+        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tone: 'blue', if: '{{timeLabel}}' },
+        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tone: 'purple' },
       ])}
       ${B.sectionTitle('Pickup & meeting')}
       ${B.detailCard([
@@ -482,7 +482,7 @@ const refundProcessing = {
       ${B.hero({ heading: 'We are processing your refund', badgeText: 'Processing', badgeColor: 'info', subtitle: 'Hello {{customerName}},<br>Your refund for <strong>{{tourTitle}}</strong> is being processed.' })}
       ${B.detailCard([
         { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Date', value: '{{dateLabel}}' },
+        { label: 'Activity date', value: '{{dateLabel}}' },
         { label: 'Refund amount', value: '{{refundAmountLabel}}' },
         { label: 'Refund method', value: 'Original payment method' },
         { label: 'Refund reference', value: '{{refundReference}}', if: '{{refundReference}}' },
@@ -502,7 +502,7 @@ const refundCompleted = {
       ${B.hero({ heading: 'Your refund is complete', badgeText: '&#10003;&nbsp;&nbsp;Refunded', badgeColor: 'accent', subtitle: 'Hello {{customerName}},<br>We have issued <strong>{{refundAmountLabel}}</strong> for <strong>{{tourTitle}}</strong>.' })}
       ${B.detailCard([
         { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Date', value: '{{dateLabel}}' },
+        { label: 'Activity date', value: '{{dateLabel}}' },
         { label: 'Refund reference', value: '{{refundReference}}', if: '{{refundReference}}' },
         { label: 'Refund amount', value: '{{refundAmountLabel}}' },
         { label: 'Refund issued', value: '{{refundedAtLabel}}' },
@@ -634,7 +634,7 @@ const supplierCancellationFee = {
       ${B.detailCard([
         { label: 'Booking reference', value: '{{bookingNumber}}' },
         { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Date', value: '{{dateLabel}}' },
+        { label: 'Activity date', value: '{{dateLabel}}' },
         { label: 'Booking retail price', value: '{{grossAmountLabel}}' },
         { label: 'Refund to customer', value: '{{refundAmountLabel}}' },
         { label: 'Cancellation fee ({{feePctLabel}})', value: '{{feeAmountLabel}}' },
@@ -688,10 +688,10 @@ const supplierNewBooking = {
       ${B.referenceBar({ reference: '{{bookingNumber}}', right: '{{#if bookedAtLabel}}Booked {{bookedAtLabel}}{{/if}}' })}
       ${B.sectionTitle('Key facts')}
       ${B.statGrid([
-        { icon: 'calendar', label: 'Date', value: '{{dateLabel}}', tint: '#E7F6EE', color: '#0B7A4B' },
-        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tint: '#E8F1FE', color: '#1D4ED8', if: '{{timeLabel}}' },
-        { icon: 'duration', label: 'Duration', value: '{{durationLabel}}', tint: '#FEF4E6', color: '#B45309', if: '{{durationLabel}}' },
-        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tint: '#F2ECFE', color: '#6D28D9' },
+        { icon: 'calendar', label: 'Activity date', value: '{{dateLabel}}', tone: 'green' },
+        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tone: 'blue', if: '{{timeLabel}}' },
+        { icon: 'duration', label: 'Duration', value: '{{durationLabel}}', tone: 'amber', if: '{{durationLabel}}' },
+        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tone: 'purple' },
       ])}
       ${B.sectionTitle('Booking details')}
       ${supplierBookingDetailsRows()}
@@ -736,10 +736,10 @@ const supplierReserveLater = {
       ${B.callout('Reserve now, pay later. The customer&#8217;s card has <strong>not been charged yet</strong>. We charge it automatically on <strong>{{chargeDateLabel}}</strong>. Please hold this slot until then.', 'warning')}
       ${B.sectionTitle('Key facts')}
       ${B.statGrid([
-        { icon: 'calendar', label: 'Date', value: '{{dateLabel}}', tint: '#E7F6EE', color: '#0B7A4B' },
-        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tint: '#E8F1FE', color: '#1D4ED8' },
-        { icon: 'duration', label: 'Duration', value: '{{durationLabel}}', tint: '#FEF4E6', color: '#B45309' },
-        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tint: '#F2ECFE', color: '#6D28D9' },
+        { icon: 'calendar', label: 'Activity date', value: '{{dateLabel}}', tone: 'green' },
+        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tone: 'blue' },
+        { icon: 'duration', label: 'Duration', value: '{{durationLabel}}', tone: 'amber' },
+        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tone: 'purple' },
       ])}
       ${B.sectionTitle('Booking details')}
       ${supplierBookingDetailsRows()}
@@ -897,9 +897,9 @@ const supplierBookingReminder = {
       ${B.hero({ heading: 'This booking is coming up', badgeText: 'Reminder', badgeColor: 'info', subtitle: 'Hello {{supplierName}},<br>An upcoming booking needs your attention.' })}
       ${B.sectionTitle('Key facts')}
       ${B.statGrid([
-        { icon: 'calendar', label: 'Date', value: '{{dateLabel}}', tint: '#E7F6EE', color: '#0B7A4B' },
-        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tint: '#E8F1FE', color: '#1D4ED8', if: '{{timeLabel}}' },
-        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tint: '#F2ECFE', color: '#6D28D9' },
+        { icon: 'calendar', label: 'Activity date', value: '{{dateLabel}}', tone: 'green' },
+        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tone: 'blue', if: '{{timeLabel}}' },
+        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tone: 'purple' },
       ])}
       ${B.sectionTitle('Booking details')}
       ${B.detailCard([

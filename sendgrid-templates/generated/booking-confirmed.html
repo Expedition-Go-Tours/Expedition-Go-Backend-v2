@@ -34,12 +34,39 @@
     .body-lg { font-size:16px !important; }
     .hide-mobile { display:none !important; }
   }
+  /* Dark mode.
+     Clients that honour prefers-color-scheme (Apple Mail, Outlook.com, iOS
+     Gmail) swap these classes. Every tinted surface and its matching text
+     colour has a dark counterpart: a light background whose text flips light
+     is unreadable, so the surface must move with the text. Clients that force
+     colour inversion instead (some Android Gmail builds) simply ignore these
+     and keep the already-legible light styling. */
   @media (prefers-color-scheme: dark) {
     .dm-bg { background-color:#0B1220 !important; }
     .dm-card { background-color:#111827 !important; border-color:#1F2937 !important; }
+    .dm-surface { background-color:#111827 !important; border-color:#1F2937 !important; }
+    .dm-chip { background-color:#1F2937 !important; color:#E5E7EB !important; }
     .dm-text { color:#E5E7EB !important; }
     .dm-muted { color:#9CA3AF !important; }
     .dm-accent { color:#34D399 !important; }
+    .dm-info { color:#60A5FA !important; }
+    .dm-warning { color:#FBBF24 !important; }
+    .dm-danger { color:#F87171 !important; }
+    /* Soft tinted surfaces (callouts, badges) */
+    .dm-accent-soft { background-color:#0F2A22 !important; }
+    .dm-info-soft { background-color:#101F33 !important; }
+    .dm-warning-soft { background-color:#2A2110 !important; }
+    .dm-danger-soft { background-color:#2A1414 !important; }
+    .dm-navy-soft { background-color:#1F2937 !important; }
+    /* Key-facts tiles: surface + its accent label */
+    .dm-tile-green { background-color:#0F2A22 !important; }
+    .dm-tile-blue { background-color:#101F33 !important; }
+    .dm-tile-amber { background-color:#2A2110 !important; }
+    .dm-tile-purple { background-color:#1E1733 !important; }
+    .dm-label-green { color:#34D399 !important; }
+    .dm-label-blue { color:#60A5FA !important; }
+    .dm-label-amber { color:#FBBF24 !important; }
+    .dm-label-purple { color:#C4B5FD !important; }
   }
 </style>
 </head>
@@ -55,7 +82,7 @@
             <td align="center" style="padding:0 0 24px 0;">
               <img src="{{logoUrl}}" alt="{{brandName}}" width="170" style="display:block;width:170px;max-width:170px;height:auto;border:0;outline:none;">
               {{#if poweredByLabel}}<div style="margin-top:10px;">
-                <span style="display:inline-block;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:700;letter-spacing:0.3px;color:#007A4D;background-color:#E6F6F0;border-radius:999px;padding:5px 14px;line-height:1;">{{poweredByLabel}}</span>
+                <span class="dm-accent-soft dm-accent" style="display:inline-block;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:700;letter-spacing:0.3px;color:#007A4D;background-color:#E6F6F0;border-radius:999px;padding:5px 14px;line-height:1;">{{poweredByLabel}}</span>
               </div>{{/if}}
             </td>
           </tr>
@@ -91,10 +118,10 @@
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
       <tr>
         <td valign="middle" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-          <span style="display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:1.3px;text-transform:uppercase;color:#64748B;vertical-align:middle;">Ref</span>
-          <span style="display:inline-block;margin-left:8px;font-family:'SFMono-Regular',Menlo,Consolas,'Courier New',monospace;font-size:15px;font-weight:700;color:#001F3F;background-color:#EEF2F7;border-radius:7px;padding:5px 11px;letter-spacing:0.4px;vertical-align:middle;">{{bookingNumber}}</span>
+          <span class="dm-muted" style="display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:1.3px;text-transform:uppercase;color:#64748B;vertical-align:middle;">Ref</span>
+          <span class="dm-chip" style="display:inline-block;margin-left:8px;font-family:'SFMono-Regular',Menlo,Consolas,'Courier New',monospace;font-size:15px;font-weight:700;color:#001F3F;background-color:#EEF2F7;border-radius:7px;padding:5px 11px;letter-spacing:0.4px;vertical-align:middle;">{{bookingNumber}}</span>
         </td>
-        <td valign="middle" align="right" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;color:#64748B;white-space:nowrap;">{{#if bookedAtLabel}}Booked {{bookedAtLabel}}{{/if}}</td>
+        <td class="dm-muted" valign="middle" align="right" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;color:#64748B;white-space:nowrap;">{{#if bookedAtLabel}}Booked {{bookedAtLabel}}{{/if}}</td>
       </tr>
     </table>
   </td></tr>
@@ -110,52 +137,52 @@
   <tr><td class="pad" style="padding:10px 34px 0 34px;">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
     <td class="stack-td" width="50%" valign="top" style="padding:0 6px 12px 6px;">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#E7F6EE;border-radius:16px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-tile-green" style="background-color:#E7F6EE;border-radius:16px;border-collapse:separate;border-spacing:0;overflow:hidden;">
         <tr>
           <td style="padding:16px 18px 18px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
             <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
               <td width="38" height="38" align="center" valign="middle" style="background-color:#0B7A4B;border-radius:11px;line-height:0;font-size:0;"><img src="https://res.cloudinary.com/dfpagrtoy/image/upload/f_png,w_40,h_40,c_fit,q_95/email-icons/calendar.svg" width="20" height="20" alt="" style="display:block;width:20px;height:20px;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;"></td>
             </tr></table>
-            <div style="padding-top:13px;font-size:10.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:#0B7A4B;line-height:1;">Date</div>
+            <div class="dm-label-green" style="padding-top:13px;font-size:10.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:#0B7A4B;line-height:1;">Activity date</div>
             <div class="dm-text" style="padding-top:5px;font-size:16px;font-weight:700;color:#001F3F;line-height:1.3;">{{dateLabel}}</div>
           </td>
         </tr>
       </table>
     </td>{{#if timeLabel}}
     <td class="stack-td" width="50%" valign="top" style="padding:0 6px 12px 6px;">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#E8F1FE;border-radius:16px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-tile-blue" style="background-color:#E8F1FE;border-radius:16px;border-collapse:separate;border-spacing:0;overflow:hidden;">
         <tr>
           <td style="padding:16px 18px 18px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
             <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
               <td width="38" height="38" align="center" valign="middle" style="background-color:#1D4ED8;border-radius:11px;line-height:0;font-size:0;"><img src="https://res.cloudinary.com/dfpagrtoy/image/upload/f_png,w_40,h_40,c_fit,q_95/email-icons/clock.svg" width="20" height="20" alt="" style="display:block;width:20px;height:20px;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;"></td>
             </tr></table>
-            <div style="padding-top:13px;font-size:10.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:#1D4ED8;line-height:1;">Start time</div>
+            <div class="dm-label-blue" style="padding-top:13px;font-size:10.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:#1D4ED8;line-height:1;">Start time</div>
             <div class="dm-text" style="padding-top:5px;font-size:16px;font-weight:700;color:#001F3F;line-height:1.3;">{{timeLabel}}</div>
           </td>
         </tr>
       </table>
     </td>{{/if}}</tr><tr>{{#if durationLabel}}
     <td class="stack-td" width="50%" valign="top" style="padding:0 6px 12px 6px;">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#FEF4E6;border-radius:16px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-tile-amber" style="background-color:#FEF4E6;border-radius:16px;border-collapse:separate;border-spacing:0;overflow:hidden;">
         <tr>
           <td style="padding:16px 18px 18px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
             <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
               <td width="38" height="38" align="center" valign="middle" style="background-color:#B45309;border-radius:11px;line-height:0;font-size:0;"><img src="https://res.cloudinary.com/dfpagrtoy/image/upload/f_png,w_40,h_40,c_fit,q_95/email-icons/duration.svg" width="20" height="20" alt="" style="display:block;width:20px;height:20px;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;"></td>
             </tr></table>
-            <div style="padding-top:13px;font-size:10.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:#B45309;line-height:1;">Duration</div>
+            <div class="dm-label-amber" style="padding-top:13px;font-size:10.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:#B45309;line-height:1;">Duration</div>
             <div class="dm-text" style="padding-top:5px;font-size:16px;font-weight:700;color:#001F3F;line-height:1.3;">{{durationLabel}}</div>
           </td>
         </tr>
       </table>
     </td>{{/if}}
     <td class="stack-td" width="50%" valign="top" style="padding:0 6px 12px 6px;">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F2ECFE;border-radius:16px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-tile-purple" style="background-color:#F2ECFE;border-radius:16px;border-collapse:separate;border-spacing:0;overflow:hidden;">
         <tr>
           <td style="padding:16px 18px 18px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
             <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
               <td width="38" height="38" align="center" valign="middle" style="background-color:#6D28D9;border-radius:11px;line-height:0;font-size:0;"><img src="https://res.cloudinary.com/dfpagrtoy/image/upload/f_png,w_40,h_40,c_fit,q_95/email-icons/users.svg" width="20" height="20" alt="" style="display:block;width:20px;height:20px;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;"></td>
             </tr></table>
-            <div style="padding-top:13px;font-size:10.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:#6D28D9;line-height:1;">Travellers</div>
+            <div class="dm-label-purple" style="padding-top:13px;font-size:10.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:#6D28D9;line-height:1;">Travellers</div>
             <div class="dm-text" style="padding-top:5px;font-size:16px;font-weight:700;color:#001F3F;line-height:1.3;">{{travelersLabel}}</div>
           </td>
         </tr>
@@ -168,7 +195,7 @@
   </td></tr>
       
   <tr><td class="pad" style="padding:12px 40px 0 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;overflow:hidden;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
       
       <tr>
         <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Experience</td>
@@ -198,7 +225,7 @@
   </td></tr>
       
   <tr><td class="pad" style="padding:12px 40px 0 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;overflow:hidden;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
       
       <tr>
         <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Pickup included</td>
@@ -234,7 +261,7 @@
     <table role="presentation" class="btn-wrap" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
       <tr>
         <td style="padding:0 8px 0 0;vertical-align:middle;">
-          <a href="{{directionsUrl}}" class="btn" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Get directions</a>
+          <a href="{{directionsUrl}}" class="btn dm-card dm-text" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Get directions</a>
         </td></tr>
     </table>
   </td></tr>
@@ -245,7 +272,7 @@
   </td></tr>
       
   <tr><td class="pad" style="padding:12px 40px 0 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;overflow:hidden;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
       
       <tr>
         <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Booking total</td>
@@ -272,8 +299,8 @@
       {{#if cancelDeadlineLabel}}
       
   <tr><td class="pad" style="padding:20px 40px 0 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#E6F6F0;border-radius:10px;">
-      <tr><td style="padding:14px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;color:#007A4D;line-height:1.6;font-weight:600;">Free cancellation until <strong>{{cancelDeadlineLabel}}</strong>.</td></tr>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-accent-soft" style="background-color:#E6F6F0;border-radius:10px;border-collapse:separate;border-spacing:0;">
+      <tr><td class="dm-accent" style="padding:14px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;color:#007A4D;line-height:1.6;font-weight:600;">Free cancellation until <strong>{{cancelDeadlineLabel}}</strong>.</td></tr>
     </table>
   </td></tr>
       
@@ -283,8 +310,8 @@
       {{else}}
       
   <tr><td class="pad" style="padding:20px 40px 0 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#FFFBEB;border-radius:10px;">
-      <tr><td style="padding:14px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;color:#B45309;line-height:1.6;font-weight:600;">{{cancellationPolicyText}}</td></tr>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-warning-soft" style="background-color:#FFFBEB;border-radius:10px;border-collapse:separate;border-spacing:0;">
+      <tr><td class="dm-warning" style="padding:14px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;color:#B45309;line-height:1.6;font-weight:600;">{{cancellationPolicyText}}</td></tr>
     </table>
   </td></tr>
       {{/if}}
@@ -326,10 +353,10 @@
           <a href="{{voucherUrl}}" class="btn" style="display:inline-block;background-color:#007A4D;color:#ffffff;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Download voucher</a>
         </td>
         <td style="padding:0 8px 0 0;vertical-align:middle;">
-          <a href="{{bookingUrl}}" class="btn" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">View booking</a>
+          <a href="{{bookingUrl}}" class="btn dm-card dm-text" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">View booking</a>
         </td>
         <td style="padding:0 8px 0 0;vertical-align:middle;">
-          <a href="{{manageUrl}}" class="btn" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Manage booking</a>
+          <a href="{{manageUrl}}" class="btn dm-card dm-text" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Manage booking</a>
         </td></tr>
     </table>
   </td></tr>
