@@ -20,6 +20,11 @@ jest.mock('../../src/core/services/notificationRecipientService', () => ({
   resolveRecipients: jest.fn(() => Promise.resolve([{ email: 'supplier@test.com', recipientId: null }])),
 }));
 
+// Set BEFORE the requires below: config/emailUrls.js reads CLIENT_URL once at
+// module load, so a later assignment (beforeAll) has no effect and the deep
+// links silently fall back to the default origin.
+process.env.CLIENT_URL = 'https://travioafrica.com';
+
 const { __send } = require('resend');
 const fmt = require('../../src/core/services/emailFormatting');
 const { sendSupplierReserveLaterEmail } = require('../../src/core/services/emailService');
@@ -27,7 +32,6 @@ const { sendSupplierReserveLaterEmail } = require('../../src/core/services/email
 beforeAll(() => {
   process.env.RESEND_API_KEY = 're_testkey';
   process.env.EMAIL_FROM = 'Travio Africa <noreply@travioafrica.com>';
-  process.env.CLIENT_URL = 'https://travioafrica.com';
   process.env.SUPPORT_EMAIL = 'support@expeditiongo.com';
 });
 

@@ -21,6 +21,14 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   $disconnect: jest.fn(),
 }));
 
+// Must run BEFORE the requires below: config/emailUrls.js reads CLIENT_URL once
+// at module load, so assigning it later (e.g. in beforeAll) has no effect and
+// the customer deep links silently fall back to the default origin. Without
+// this the test only passed when the ambient environment already set
+// CLIENT_URL (local .env); CI leaves it unset and the links resolved to
+// http://localhost:5173.
+process.env.CLIENT_URL = 'https://travioafrica.com';
+
 const fs = require('fs');
 const path = require('path');
 const { __send } = require('resend');
@@ -32,7 +40,6 @@ const { sendBookingConfirmedEmail } = require('../../src/core/services/emailServ
 beforeAll(() => {
   process.env.RESEND_API_KEY = 're_testkey';
   process.env.EMAIL_FROM = 'Travio Africa <noreply@travioafrica.com>';
-  process.env.CLIENT_URL = 'https://travioafrica.com';
   process.env.SUPPORT_EMAIL = 'support@expeditiongo.com';
 });
 
