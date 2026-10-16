@@ -116,7 +116,11 @@ app.use(
     skip: (req) =>
       req.method === 'OPTIONS' ||
       req.path === '/prerender' ||
-      req.path.endsWith('/sitemap'),
+      req.path.endsWith('/sitemap') ||
+      // The email-preview gallery frames one request per template on load, so
+      // it would burn the shared budget in a few refreshes. It is gated by a
+      // short-lived signed token instead (a brute force is infeasible).
+      req.path.startsWith('/admin/email-previews'),
   }),
 );
 
@@ -307,6 +311,7 @@ const webhookRoutes = require('./routes/webhookRoutes');
 const authRoutes = require('./routes/authRoutes');
 const ssoRoutes = require('./routes/ssoRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const adminEmailPreviewRoutes = require('./routes/adminEmailPreviewRoutes');
 const externalReviewRoutes = require('./routes/externalReviewRoutes');
 const payoutRoutes = require('./routes/payoutRoutes');
 const payoutMethodRoutes = require('./routes/payoutMethodRoutes');
@@ -386,6 +391,11 @@ app.use(
 // Machine-to-machine external-reviews sync — mounted BEFORE the admin router so
 // it is guarded by a service token, not the admin JWT/session middleware.
 app.use('/api/admin/external-reviews', externalReviewRoutes);
+// Email preview gallery — read routes are gated by a short-lived signed token
+// (opened in a plain browser), so it must precede the admin router's global
+// protect(). The token is minted by POST /api/admin/email-previews/link, which
+// carries its own admin auth.
+app.use('/api/admin/email-previews', adminEmailPreviewRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin/settings', adminSettingsRoutes);
 app.use('/api/admin/system', adminSystemRoutes);
