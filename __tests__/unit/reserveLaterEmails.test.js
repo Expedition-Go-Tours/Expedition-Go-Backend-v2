@@ -1,7 +1,7 @@
 /**
  * Customer reserve-later + payment-reminder emails must state the CHARGE date
  * (payLaterChargeAt = travelDate − 24h), not the activity date. The activity
- * date is still shown, as "Experience date", so the two cannot be confused.
+ * date is still shown, as "Activity date", so the two cannot be confused.
  */
 jest.mock('resend', () => {
   const send = jest.fn();

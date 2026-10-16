@@ -212,7 +212,7 @@ const paymentReminder = {
       ${B.sectionTitle('Booking summary')}
       ${B.detailCard([
         { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Experience date', value: '{{experienceDateLabel}}' },
+        { label: 'Activity date', value: '{{experienceDateLabel}}' },
         { label: 'Payment date', value: '{{chargeDateLabel}}' },
         { label: 'Payment method', value: '{{paymentMethodLabel}}', if: '{{paymentMethodLabel}}' },
       ])}
@@ -927,7 +927,7 @@ const supplierCustomerCancelledFree = {
       ${B.detailCard([
         { label: 'Booking reference', value: '{{bookingNumber}}' },
         { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Experience date', value: '{{dateLabel}}' },
+        { label: 'Activity date', value: '{{dateLabel}}' },
         { label: 'Start time', value: '{{timeLabel}}', if: '{{timeLabel}}' },
         { label: 'Duration', value: '{{durationLabel}}', if: '{{durationLabel}}' },
         { label: 'Travellers', value: '{{travelersLabel}}' },
@@ -959,7 +959,7 @@ const supplierCustomerCancelledLate = {
       ${B.detailCard([
         { label: 'Booking reference', value: '{{bookingNumber}}' },
         { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Experience date', value: '{{dateLabel}}' },
+        { label: 'Activity date', value: '{{dateLabel}}' },
         { label: 'Travellers', value: '{{travelersLabel}}' },
       ])}
       ${B.sectionTitle('Lead traveller')}
@@ -988,7 +988,7 @@ const supplierPlatformCancelled = {
       ${B.detailCard([
         { label: 'Booking reference', value: '{{bookingNumber}}' },
         { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Experience date', value: '{{dateLabel}}' },
+        { label: 'Activity date', value: '{{dateLabel}}' },
         { label: 'Travellers', value: '{{travelersLabel}}' },
       ])}
       ${B.sectionTitle('Lead traveller')}
