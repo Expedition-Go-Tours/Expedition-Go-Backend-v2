@@ -542,7 +542,7 @@ exports.getInvoiceById = catchAsync(async (req, res, next) => {
               supplierPayout: true,
               platformCommission: true,
               customer: { select: { id: true, name: true, email: true } },
-              tour: { select: { id: true, title: true, imageCover: true } },
+              tour: { select: { id: true, title: true, coverPhoto: true } },
             },
           },
         },

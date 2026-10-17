@@ -273,7 +273,11 @@ exports.getMyInvoices = catchAsync(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const rawStatus = req.query.status ? String(req.query.status).toUpperCase() : null;
-  const status = rawStatus && ['INVOICED', 'APPROVED', 'PAID'].includes(rawStatus) ? rawStatus : undefined;
+  // CANCELLED (voided) invoices stay supplier-visible: an invoice that was
+  // voided still explains a window that produced no payment, so hiding it
+  // would leave a gap in the history. The allow-list is what stops a supplier
+  // from probing arbitrary status values.
+  const status = rawStatus && ['INVOICED', 'APPROVED', 'PAID', 'CANCELLED'].includes(rawStatus) ? rawStatus : undefined;
 
   const where = { supplierId, ...(status ? { status } : {}) };
 
@@ -787,7 +791,7 @@ exports.getInvoiceById = catchAsync(async (req, res, next) => {
               id: true, bookingNumber: true, travelDate: true, selectedTime: true,
               status: true, paymentStatus: true, payoutStatus: true,
               grossAmount: true, supplierPayout: true, platformCommission: true,
-              tour: { select: { id: true, title: true, imageCover: true } },
+              tour: { select: { id: true, title: true, coverPhoto: true } },
             },
           },
         },
@@ -848,7 +852,7 @@ exports.getInvoiceById = catchAsync(async (req, res, next) => {
             grossAmount: toNumber(i.booking?.grossAmount),
             supplierPayout: toNumber(i.booking?.supplierPayout),
             platformCommission: toNumber(i.booking?.platformCommission),
-            tour: i.booking?.tour ? { id: i.booking.tour.id, title: i.booking.tour.title, imageCover: i.booking.tour.imageCover } : null,
+            tour: i.booking?.tour ? { id: i.booking.tour.id, title: i.booking.tour.title, coverPhoto: i.booking.tour.coverPhoto } : null,
           },
         })),
       },

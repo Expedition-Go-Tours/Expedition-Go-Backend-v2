@@ -512,8 +512,16 @@ describe('getMyInvoices — the supplier invoice history (finance v3)', () => {
     );
   });
 
-  it('ignores statuses outside the supplier-facing whitelist', async () => {
+  it('accepts CANCELLED as a filter — a voided invoice still explains its window', async () => {
     await invokeList({ status: 'CANCELLED' });
+
+    expect(prisma.invoice.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { supplierId: 'sup1', status: 'CANCELLED' } })
+    );
+  });
+
+  it('ignores statuses outside the supplier-facing whitelist', async () => {
+    await invokeList({ status: 'DRAFT' });
 
     expect(prisma.invoice.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { supplierId: 'sup1' } })
