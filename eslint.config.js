@@ -66,7 +66,10 @@ module.exports = [
     },
   },
   {
-    files: ['__tests__/**/*.js'],
+    // Any __tests__ directory, not just the root one: jest's testMatch is
+    // `**/__tests__/**/*.test.js`, so a test nested under e.g. scripts/ is a
+    // real test too — without this it lints as no-undef on describe/it/expect.
+    files: ['**/__tests__/**/*.js'],
     languageOptions: {
       globals: {
         describe: 'readonly',
