@@ -616,6 +616,14 @@ const confirmBooking = catchAsync(async (req, res, next) => {
     leadTraveler,
   } = req.body;
 
+  // GA4 attribution captured by the storefront at checkout. `gaClientId` is the
+  // visitor's `_ga` client_id (absent without analytics consent) and
+  // `analyticsConsent` is the choice made at checkout. Both ride onto the
+  // Booking (pay-later, directly; pay-now, through the checkout draft payload)
+  // so the backend can report the settled purchase/refund server-side.
+  const gaClientId = typeof req.body.gaClientId === 'string' ? req.body.gaClientId.slice(0, 128) : null;
+  const analyticsConsent = typeof req.body.analyticsConsent === 'boolean' ? req.body.analyticsConsent : null;
+
   if (!tourId || !travelDate || !travelers) {
     return next(new AppError('tourId, travelDate, and travelers are required', 400));
   }
@@ -899,6 +907,9 @@ const confirmBooking = catchAsync(async (req, res, next) => {
          ...(paymentIntent && { stripePaymentIntentId: paymentIntent.id }),
          paymentMethodBrand: cardSummary.brand,
          paymentMethodLast4: cardSummary.last4,
+         // GA4 attribution captured at checkout (null when consent was absent).
+         gaClientId,
+         analyticsConsent,
          appliedOfferId: appliedOffer?.id || null,
          offerName: appliedOffer?.name || null,
          offerPromoCode: appliedOffer?.promoCode || null,
@@ -1034,6 +1045,9 @@ const confirmBooking = catchAsync(async (req, res, next) => {
         specialRequests,
         leadTraveler: { name: leadName, email: leadEmail, phone: leadPhone },
         promoCode: req.body.promoCode || null,
+        // GA4 attribution for the materialized booking (pay-now).
+        gaClientId,
+        analyticsConsent,
       },
       pricing: {
         subtotal: pricing.subtotal,

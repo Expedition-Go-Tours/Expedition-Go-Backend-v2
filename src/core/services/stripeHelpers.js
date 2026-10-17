@@ -627,6 +627,22 @@ async function isLatestRefundBookingModify(paymentIntentId) {
 }
 
 /**
+ * The newest refund on a Charge object (by `created`), or null.
+ *
+ * `charge.amount_refunded` is cumulative across every refund on the intent, so
+ * using it for the GA `refund` value would report a second partial refund as
+ * the sum of both. The triggering refund's own `amount` is the honest value.
+ */
+function latestChargeRefund(charge) {
+  const refunds = (charge && charge.refunds && charge.refunds.data) || [];
+  if (!refunds.length) return null;
+  return refunds.reduce(
+    (newest, r) => (r && (r.created || 0) > (newest.created || 0) ? r : newest),
+    refunds[0]
+  );
+}
+
+/**
  * Post-commit side effects for bookings claimed by a successful payment.
  *
  * EXACTLY-ONCE GUARANTEE: the `booking.updateMany` in handlePaymentSucceeded
@@ -718,6 +734,14 @@ function notifyBookingsSettled(bookings, { paymentIntentId, source = 'system' } 
       },
       source: isExpedition ? 'expedition' : source,
     });
+
+    // GA4 Measurement Protocol: report the money event server-side. This hook is
+    // the exactly-once post-commit path, so a booking is reported once whichever
+    // way it settled (Webhook, pay-later sweep, admin "charge now"). The service
+    // no-ops unless the visitor granted analytics consent at checkout and a GA4
+    // client_id was captured — see ga4Measurement.js.
+    const { sendPurchase } = require('./ga4Measurement');
+    sendPurchase(booking);
   }
 }
 
@@ -742,6 +766,11 @@ async function processStripeWebhook(event) {
   let failedPaymentBookings = [];
   let refundedBookings = [];
   let disputedBookings = [];
+  // GA4 refunds to report after commit. Kept separate from `refundedBookings`
+  // (which drives emails/admin alerts) because an app-initiated refund flips the
+  // booking to REFUNDED before this webhook arrives, so `updateMany` matches 0
+  // rows — yet the money did move and must be reported to GA exactly once.
+  const gaRefundBookings = [];
   let reconciledPaymentIntentId = null;
   // Set when a booking-topup PaymentIntent is settled (parked change applied);
   // its side-effect emails run after the transaction like every other branch.
@@ -922,10 +951,27 @@ async function processStripeWebhook(event) {
         });
         if (result.count > 0) {
           console.log(` charge.refunded → ${result.count} booking(s) reconciled to REFUNDED${isFull ? ' (full)' : ''}`);
-          refundedBookings = await tx.booking.findMany({
+        }
+        // GA4: report the money returned exactly once, whichever side flipped
+        // the status. `updateMany` only matches still-SUCCEEDED rows, so an
+        // app-initiated refund (customer/supplier cancel, admin) — which sets
+        // REFUNDED synchronously — leaves count at 0 here; that refund still
+        // needs reporting. Fetch by intent regardless and report each booking
+        // that is now REFUNDED. The per-refund amount comes from the charge's
+        // newest refund so multiple partial refunds are not summed twice.
+        {
+          const affected = await tx.booking.findMany({
             where: { stripePaymentIntentId: paymentIntentId },
             include: WEBHOOK_BOOKING_INCLUDE,
           });
+          if (result.count > 0) refundedBookings = affected;
+          const newest = latestChargeRefund(charge);
+          const refundValue = newest && newest.amount
+            ? Number((newest.amount / 100).toFixed(2))
+            : (amountRefunded > 0 ? Number((amountRefunded / 100).toFixed(2)) : undefined);
+          for (const b of affected) {
+            if (b.paymentStatus === 'REFUNDED') gaRefundBookings.push({ booking: b, value: refundValue });
+          }
         }
         break;
       }
@@ -1221,6 +1267,16 @@ async function processStripeWebhook(event) {
     }).catch(() => {});
   }
 
+  // ── GA4: reverse purchases with a `refund` event ─────────────────────
+  // Covers every refund the charge.refunded webhook observed — app-initiated
+  // (customer/supplier cancel, admin, cleanup retry) and out-of-band. The value
+  // is the triggering refund's own amount, matched to the purchase by
+  // transaction_id. The service no-ops without analytics consent.
+  for (const { booking, value } of gaRefundBookings) {
+    const { sendRefund } = require('./ga4Measurement');
+    sendRefund(booking, { value });
+  }
+
   // ── Chargeback disputes: alert so an operator can respond ─────────────
   for (const booking of disputedBookings) {
     notifyAdmin({
@@ -1229,6 +1285,15 @@ async function processStripeWebhook(event) {
       message: `A chargeback was filed for booking #${booking.bookingNumber} (${booking.tour?.title || 'tour'}). Funds are frozen pending the dispute outcome.`,
       data: { bookingId: booking.id, supplierId: booking.tour?.supplierId },
     }).catch(() => {});
+
+    // Only a LOST dispute returns money to the customer (the row is flipped to
+    // REFUNDED in charge.dispute.closed); a won dispute leaves it SUCCEEDED. A
+    // chargeback is not a refund, so no charge.refunded event accompanies it —
+    // report it here.
+    if (booking.paymentStatus === 'REFUNDED') {
+      const { sendRefund } = require('./ga4Measurement');
+      sendRefund(booking);
+    }
   }
 
   // ── Booking modification top-up settled: notify both parties ──────────

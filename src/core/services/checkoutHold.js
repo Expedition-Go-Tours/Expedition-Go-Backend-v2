@@ -273,6 +273,9 @@ async function materializeHold(draftId, session, paymentIntentId) {
         status: 'CONFIRMED',
         paymentStatus: 'SUCCEEDED',
         paidAt: new Date(),
+        // GA4 attribution forwarded from the checkout draft (see confirmBooking).
+        gaClientId: typeof draftRecord.payload?.gaClientId === 'string' ? draftRecord.payload.gaClientId.slice(0, 128) : null,
+        analyticsConsent: typeof draftRecord.payload?.analyticsConsent === 'boolean' ? draftRecord.payload.analyticsConsent : null,
         travelers: draftRecord.payload.travelers,
         travelDate: draftRecord.travelDate,
         selectedTime: draftRecord.selectedTime || null,

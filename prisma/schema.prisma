@@ -1056,6 +1056,15 @@ model Booking {
   // the platform the booking was actually made on — not one global brand domain.
   clientOrigin String?
 
+  // GA4 Measurement Protocol attribution captured at checkout. `gaClientId` is
+  // the visitor's first-party client_id from the `_ga` cookie (null when
+  // analytics consent was never granted). `analyticsConsent` is the choice made
+  // at checkout; the backend only reports purchase/refund events server-side
+  // when it is true — Consent Mode cannot be applied by the Measurement
+  // Protocol, so the stored flag is the gate.
+  gaClientId       String?
+  analyticsConsent Boolean?
+
   // Customer-selected pickup snapshot (mode, area/location, address, time).
   // Null when the tour has no pickup service.
   pickup Json?
