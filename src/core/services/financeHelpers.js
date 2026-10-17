@@ -150,6 +150,73 @@ function eligibleBookingsWhere(supplierId) {
   return payoutBookingsWhere({ supplierId });
 }
 
+// ── Payout destination description (supplier-facing) ──
+//
+// Invoices and PDFs say WHERE the money went without reprinting the full
+// account details: an invoice gets forwarded to accountants and stored in
+// email inboxes, so it carries a statement-style mask (last four only) while
+// the full record stays on the Payout Methods page.
+
+/** "••••1234" — the last four characters of an account number/IBAN/wallet. */
+function maskTail(value) {
+  const s = String(value || '').trim();
+  if (!s) return '';
+  return s.length <= 4 ? `••${s}` : `••••${s.slice(-4)}`;
+}
+
+/** "kw•••••@example.com" — the domain stays readable, the local part shrinks. */
+function maskEmail(value) {
+  const s = String(value || '').trim();
+  const at = s.indexOf('@');
+  if (at <= 0) return s ? '••••' : '';
+  const local = s.slice(0, at);
+  const head = local.slice(0, Math.min(2, local.length));
+  return `${head}${'•'.repeat(Math.max(3, local.length - head.length))}@${s.slice(at + 1)}`;
+}
+
+/**
+ * A masked, human-readable description of a payout method, shaped for
+ * display on an invoice (API `destination` field and the PDF's payment
+ * details block).
+ *
+ * @param {object|null} method a PayoutMethod row (or a METHOD_SELECT subset)
+ * @returns {object|null} { type, label, accountName, maskedDetail }
+ */
+function describePayoutDestination(method) {
+  if (!method) return null;
+  const { type } = method;
+  if (type === 'BANK_TRANSFER') {
+    const parts = [
+      method.accountNumber ? `account ${maskTail(method.accountNumber)}` : null,
+      method.iban ? `IBAN ${maskTail(method.iban)}` : null,
+      method.swiftCode ? `SWIFT ${maskTail(method.swiftCode)}` : null,
+    ].filter(Boolean);
+    return {
+      type,
+      label: method.bankName ? `Bank transfer · ${method.bankName}` : 'Bank transfer',
+      accountName: method.accountName || null,
+      maskedDetail: parts.join(' · '),
+    };
+  }
+  if (type === 'MOBILE_MONEY') {
+    return {
+      type,
+      label: method.mobileProvider ? `Mobile money · ${method.mobileProvider}` : 'Mobile money',
+      accountName: method.accountName || null,
+      maskedDetail: method.mobileNumber ? `wallet ${maskTail(method.mobileNumber)}` : '',
+    };
+  }
+  if (type === 'PAYPAL') {
+    return {
+      type,
+      label: 'PayPal',
+      accountName: null,
+      maskedDetail: method.paypalEmail ? maskEmail(method.paypalEmail) : '',
+    };
+  }
+  return { type, label: String(type || 'Payout').replace(/_/g, ' '), accountName: null, maskedDetail: '' };
+}
+
 module.exports = {
   PAYABLE_BOOKING_STATUSES,
   detachBookingFromActiveRequests,
@@ -158,4 +225,7 @@ module.exports = {
   unfreezeBookingAfterDispute,
   payoutBookingsWhere,
   eligibleBookingsWhere,
+  maskTail,
+  maskEmail,
+  describePayoutDestination,
 };

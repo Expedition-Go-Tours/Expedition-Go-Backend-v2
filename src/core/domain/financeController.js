@@ -11,8 +11,9 @@ const {
   notifyPayoutRequestsCreated,
 } = require('../services/payoutRuns');
 const { logActivity } = require('../services/auditLogger');
-const { payoutBookingsWhere } = require('../services/financeHelpers');
+const { payoutBookingsWhere, describePayoutDestination } = require('../services/financeHelpers');
 const { buildInvoiceEstimate } = require('../services/invoiceService');
+const { renderInvoicePdf } = require('../services/invoicePdf');
 
 // ── Finance v2 + v3 — supplier-facing payout/invoice endpoints ──
 // Mounted at /finance (see routes/financeRoutes.js). All routes resolve the
@@ -758,3 +759,166 @@ exports.updatePayoutSettings = catchAsync(async (req, res, next) => {
 
   res.status(200).json({ status: 'success', data: plan });
 });
+
+/**
+ * GET /finance/invoices/:id — supplier-scoped full invoice with booking line items
+ */
+exports.getInvoiceById = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  const { id } = req.params;
+  if (!id) return next(new AppError('Invoice ID is required', 400));
+
+  const invoice = await prisma.invoice.findFirst({
+    where: { id, supplierId },
+    include: {
+      supplier: { select: { id: true, name: true, email: true, address: true, city: true, country: true } },
+      payoutMethod: {
+        select: {
+          id: true, type: true, isDefault: true, bankName: true, accountName: true,
+          accountNumber: true, swiftCode: true, iban: true, mobileProvider: true,
+          mobileNumber: true, paypalEmail: true,
+        },
+      },
+      items: {
+        orderBy: { createdAt: 'asc' },
+        include: {
+          booking: {
+            select: {
+              id: true, bookingNumber: true, travelDate: true, selectedTime: true,
+              status: true, paymentStatus: true, payoutStatus: true,
+              grossAmount: true, supplierPayout: true, platformCommission: true,
+              tour: { select: { id: true, title: true, imageCover: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!invoice) return next(new AppError('Invoice not found', 404));
+
+  const destination = describePayoutDestination(invoice.payoutMethod);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      invoice: {
+        id: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        status: invoice.status,
+        cycle: invoice.cycle,
+        cycleLabel: invoice.cycleLabel,
+        cycleStartDate: invoice.cycleStartDate,
+        cycleEndDate: invoice.cycleEndDate,
+        invoicedAt: invoice.invoicedAt,
+        paymentScheduledAt: invoice.paymentScheduledAt,
+        approvedAt: invoice.approvedAt,
+        paidAt: invoice.paidAt,
+        reference: invoice.reference,
+        grossTotal: toNumber(invoice.grossTotal),
+        commissionTotal: toNumber(invoice.commissionTotal),
+        netTotal: toNumber(invoice.netTotal),
+        currency: invoice.currency,
+        bookingCount: invoice.bookingCount,
+        supplier: {
+          id: invoice.supplier?.id || supplierId,
+          name: invoice.supplier?.name || null,
+          email: invoice.supplier?.email || null,
+          address: invoice.supplier?.address || null,
+          city: invoice.supplier?.city || null,
+          country: invoice.supplier?.country || null,
+        },
+        payoutMethod: invoice.payoutMethod ? { ...invoice.payoutMethod } : null,
+        destination,
+        items: invoice.items.map((i) => ({
+          id: i.id,
+          bookingId: i.bookingId,
+          grossAmount: toNumber(i.grossAmount),
+          platformCommission: toNumber(i.platformCommission),
+          supplierPayout: toNumber(i.supplierPayout),
+          currency: i.currency,
+          booking: {
+            id: i.booking?.id,
+            bookingNumber: i.booking?.bookingNumber,
+            travelDate: i.booking?.travelDate,
+            selectedTime: i.booking?.selectedTime,
+            status: i.booking?.status,
+            paymentStatus: i.booking?.paymentStatus,
+            payoutStatus: i.booking?.payoutStatus,
+            grossAmount: toNumber(i.booking?.grossAmount),
+            supplierPayout: toNumber(i.booking?.supplierPayout),
+            platformCommission: toNumber(i.booking?.platformCommission),
+            tour: i.booking?.tour ? { id: i.booking.tour.id, title: i.booking.tour.title, imageCover: i.booking.tour.imageCover } : null,
+          },
+        })),
+      },
+    },
+  });
+});
+
+/**
+ * GET /finance/invoices/:id/pdf
+ * Streams a supplier-scoped invoice as a PDF.
+ */
+exports.downloadInvoicePdf = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  const { id } = req.params;
+  if (!id) return next(new AppError('Invoice ID is required', 400));
+  const invoice = await prisma.invoice.findFirst({
+    where: { id, supplierId },
+    include: {
+      supplier: { select: { id: true, name: true, email: true, address: true, city: true, country: true } },
+      payoutMethod: {
+        select: {
+          id: true, type: true, isDefault: true, bankName: true, accountName: true,
+          accountNumber: true, swiftCode: true, iban: true, mobileProvider: true,
+          mobileNumber: true, paypalEmail: true,
+        },
+      },
+      items: {
+        orderBy: { createdAt: 'asc' },
+        include: {
+          booking: {
+            select: {
+              id: true, bookingNumber: true, travelDate: true,
+              tour: { select: { id: true, title: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!invoice) return next(new AppError('Invoice not found', 404));
+  const buffer = await renderInvoicePdf({
+    invoice,
+    items: invoice.items.map((i) => ({
+      id: i.id,
+      bookingId: i.bookingId,
+      grossAmount: toNumber(i.grossAmount),
+      platformCommission: toNumber(i.platformCommission),
+      supplierPayout: toNumber(i.supplierPayout),
+      currency: i.currency,
+      booking: {
+        id: i.booking?.id,
+        bookingNumber: i.booking?.bookingNumber,
+        travelDate: i.booking?.travelDate,
+        tour: i.booking?.tour ? { id: i.booking.tour.id, title: i.booking.tour.title } : null,
+      },
+    })),
+    supplier: {
+      name: invoice.supplier?.name || null,
+      email: invoice.supplier?.email || null,
+      address: invoice.supplier?.address || null,
+      city: invoice.supplier?.city || null,
+      country: invoice.supplier?.country || null,
+    },
+    payoutMethod: invoice.payoutMethod ? { ...invoice.payoutMethod } : null,
+    brandKey: req.brandKey || 'ghana',
+  });
+  const safe = String(invoice.invoiceNumber || id).replace(/[^A-Za-z0-9._-]+/g, '_');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="invoice-${safe}.pdf"`);
+  res.setHeader('Content-Length', buffer.length);
+  res.status(200).send(buffer);
+});
+
