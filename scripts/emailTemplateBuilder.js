@@ -42,6 +42,11 @@ const BASE_CSS = `
   table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; border-collapse:collapse; }
   img { border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; }
   .font-main { font-family:${FONT}; }
+  /* Key-facts tiles: two per row, or one spanning the full row when a grid
+     ends on an odd tile. Widths are duplicated on the td's width attribute
+     and inline styles because Outlook desktop ignores <style> entirely. */
+  .kf-cell { width:50%; }
+  .kf-cell-wide { width:100%; }
   @media only screen and (max-width:640px) {
     .container { width:100% !important; }
     .pad { padding-left:20px !important; padding-right:20px !important; }
@@ -133,18 +138,24 @@ function shell(title, bodyHtml) {
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="container" style="max-width:640px;">
           <!-- Preheader (hidden) -->
           <tr><td style="display:none;max-height:0;overflow:hidden;mso-hide:all;">{{preheader}}</td></tr>
-          <!-- Header -->
-          <tr>
-            <td align="center" style="padding:0 0 24px 0;">
-              <img src="{{logoUrl}}" alt="{{brandName}}" width="170" style="display:block;width:170px;max-width:170px;height:auto;border:0;outline:none;">
-              {{#if poweredByLabel}}<div style="margin-top:10px;">
-                <span class="dm-accent-soft dm-accent" style="display:inline-block;font-family:${FONT};font-size:12px;font-weight:700;letter-spacing:0.3px;color:${COLORS.accent};background-color:${COLORS.accentSoft};border-radius:999px;padding:5px 14px;line-height:1;">{{poweredByLabel}}</span>
-              </div>{{/if}}
-            </td>
-          </tr>
           <!-- Card -->
           <tr>
             <td class="dm-card" style="background-color:${COLORS.card};border:1px solid ${COLORS.border};border-radius:16px;padding:0;overflow:hidden;">
+              <!-- Brand header: the logo lives INSIDE the card so the whole
+                   email reads as one object, and is sized up from the old
+                   170px so it holds its own against the 640px card. It carries
+                   the card's top radius itself because overflow:hidden on a
+                   <td> is not honoured everywhere. -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:separate;border-spacing:0;border-radius:16px 16px 0 0;">
+                <tr>
+                  <td align="center" style="padding:26px 24px 22px 24px;">
+                    <img src="{{logoUrl}}" alt="{{brandName}}" width="220" style="display:block;width:220px;max-width:220px;height:auto;margin:0 auto;border:0;outline:none;">
+                    {{#if poweredByLabel}}<div style="margin-top:12px;">
+                      <span class="dm-accent-soft dm-accent" style="display:inline-block;font-family:${FONT};font-size:12px;font-weight:700;letter-spacing:0.3px;color:${COLORS.accent};background-color:${COLORS.accentSoft};border-radius:999px;padding:5px 14px;line-height:1;">{{poweredByLabel}}</span>
+                    </div>{{/if}}
+                  </td>
+                </tr>
+              </table>
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                 ${bodyHtml}
               </table>
@@ -609,7 +620,7 @@ function mediaHeader({ imageUrl, imageVar, badgeText, badgeColor = 'warning', he
     : `background-image:${GRADIENT}, url('${imageUrl || ''}');`;
 
   const inner = `
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:separate;border-spacing:0;background-color:${COLORS.navy};${background}background-size:cover;background-position:center;background-repeat:no-repeat;border-radius:16px 16px 0 0;overflow:hidden;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:separate;border-spacing:0;background-color:${COLORS.navy};${background}background-size:cover;background-position:center;background-repeat:no-repeat;border-radius:0;overflow:hidden;">
       <tr>
         <td valign="bottom" class="pad" style="padding:120px 34px 28px 34px;">
           ${badge}
@@ -788,10 +799,27 @@ const TILE_TONES = {
  * the same contract as detailRows, so a tour with no start time does not print
  * a blank "Start time" tile.
  *
+ * Row packing: the top row must always hold two tiles that actually render.
+ * Tiles are paired at BUILD time, but a conditional tile only reveals itself at
+ * SEND time via {{#if}} — so pairing in declaration order produced a lone tile
+ * sitting at 50% width on top with the remaining pair below whenever the first
+ * tile of a row was conditional and empty ("one at the top, two at the
+ * bottom"). To guarantee the first row is always full, always-on tiles are
+ * packed first (keeping their relative order) and conditional tiles flow into
+ * the rows beneath them. A grid with an odd tile count ends on a tile that
+ * spans the full row (`.kf-cell-wide`) rather than leaving a half-row gap.
+ *
  * @param {Array<{icon:string, label:string, value:string, tone?:string, color?:string, tint?:string, if?:string}>} tiles
  */
 function statGrid(tiles) {
-  const cell = (t) => {
+  // Optional tile: hide the whole cell when the value is absent, exactly like
+  // detailRows does for a row. No `if` means the markup is unconditional.
+  const conditionalVar = (t) => {
+    const ifMatch = typeof t.if === 'string' && t.if.match(/^\{\{\s*([a-zA-Z0-9_]+)\s*\}\}$/);
+    return t.conditional || (ifMatch ? ifMatch[1] : null);
+  };
+
+  const cell = (t, wide = false) => {
     const tone = t.tone ? TILE_TONES[t.tone] : null;
     const tint = (tone && tone.tint) || t.tint || COLORS.accentSoft;
     const color = (tone && tone.color) || t.color || COLORS.accent;
@@ -806,8 +834,9 @@ function statGrid(tiles) {
       : ICONS[t.icon]
         ? `<svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">${ICONS[t.icon]}</svg>`
         : '';
+    const widthAttr = wide ? '100%' : '50%';
     const html = `
-    <td class="stack-td" width="50%" valign="top" style="padding:0 6px 12px 6px;">
+    <td class="stack-td kf-cell${wide ? ' kf-cell-wide' : ''}" width="${widthAttr}" valign="top" style="width:${widthAttr};padding:0 6px 12px 6px;">
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"${tileClass} style="background-color:${tint};border-radius:16px;border-collapse:separate;border-spacing:0;overflow:hidden;">
         <tr>
           <td style="padding:16px 18px 18px 18px;font-family:${FONT};">
@@ -821,16 +850,21 @@ function statGrid(tiles) {
       </table>
     </td>`;
 
-    // Optional tile: hide the whole cell when the value is absent, exactly like
-    // detailRows does for a row. No `if` means the original markup, untouched.
-    const ifMatch = typeof t.if === 'string' && t.if.match(/^\{\{\s*([a-zA-Z0-9_]+)\s*\}\}$/);
-    const tileConditional = t.conditional || (ifMatch ? ifMatch[1] : null);
-    return tileConditional ? `{{#if ${tileConditional}}}${html}{{/if}}` : html;
+    const cond = conditionalVar(t);
+    return cond ? `{{#if ${cond}}}${html}{{/if}}` : html;
   };
 
+  // Always-on tiles first so the top row can never half-render; conditional
+  // tiles keep their own relative order and fill the rows beneath.
+  const always = tiles.filter((t) => !conditionalVar(t));
+  const optional = tiles.filter((t) => conditionalVar(t));
+  const packed = [...always, ...optional];
+
   const rows = [];
-  for (let i = 0; i < tiles.length; i += 2) {
-    rows.push(`<tr>${cell(tiles[i])}${tiles[i + 1] ? cell(tiles[i + 1]) : '<td class="stack-td" width="50%">&nbsp;</td>'}</tr>`);
+  for (let i = 0; i < packed.length; i += 2) {
+    const a = packed[i];
+    const b = packed[i + 1];
+    rows.push(b ? `<tr>${cell(a)}${cell(b)}</tr>` : `<tr>${cell(a, true)}</tr>`);
   }
   return `
   <tr><td class="pad" style="padding:10px 34px 0 34px;">

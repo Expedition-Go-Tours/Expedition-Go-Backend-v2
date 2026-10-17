@@ -13,6 +13,11 @@
   table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; border-collapse:collapse; }
   img { border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; }
   .font-main { font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  /* Key-facts tiles: two per row, or one spanning the full row when a grid
+     ends on an odd tile. Widths are duplicated on the td's width attribute
+     and inline styles because Outlook desktop ignores <style> entirely. */
+  .kf-cell { width:50%; }
+  .kf-cell-wide { width:100%; }
   @media only screen and (max-width:640px) {
     .container { width:100% !important; }
     .pad { padding-left:20px !important; padding-right:20px !important; }
@@ -77,18 +82,24 @@
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="container" style="max-width:640px;">
           <!-- Preheader (hidden) -->
           <tr><td style="display:none;max-height:0;overflow:hidden;mso-hide:all;">{{preheader}}</td></tr>
-          <!-- Header -->
-          <tr>
-            <td align="center" style="padding:0 0 24px 0;">
-              <img src="{{logoUrl}}" alt="{{brandName}}" width="170" style="display:block;width:170px;max-width:170px;height:auto;border:0;outline:none;">
-              {{#if poweredByLabel}}<div style="margin-top:10px;">
-                <span class="dm-accent-soft dm-accent" style="display:inline-block;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:700;letter-spacing:0.3px;color:#007A4D;background-color:#E6F6F0;border-radius:999px;padding:5px 14px;line-height:1;">{{poweredByLabel}}</span>
-              </div>{{/if}}
-            </td>
-          </tr>
           <!-- Card -->
           <tr>
             <td class="dm-card" style="background-color:#FFFFFF;border:1px solid #E2E8F0;border-radius:16px;padding:0;overflow:hidden;">
+              <!-- Brand header: the logo lives INSIDE the card so the whole
+                   email reads as one object, and is sized up from the old
+                   170px so it holds its own against the 640px card. It carries
+                   the card's top radius itself because overflow:hidden on a
+                   <td> is not honoured everywhere. -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:separate;border-spacing:0;border-radius:16px 16px 0 0;">
+                <tr>
+                  <td align="center" style="padding:26px 24px 22px 24px;">
+                    <img src="{{logoUrl}}" alt="{{brandName}}" width="220" style="display:block;width:220px;max-width:220px;height:auto;margin:0 auto;border:0;outline:none;">
+                    {{#if poweredByLabel}}<div style="margin-top:12px;">
+                      <span class="dm-accent-soft dm-accent" style="display:inline-block;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:700;letter-spacing:0.3px;color:#007A4D;background-color:#E6F6F0;border-radius:999px;padding:5px 14px;line-height:1;">{{poweredByLabel}}</span>
+                    </div>{{/if}}
+                  </td>
+                </tr>
+              </table>
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                 
       
@@ -99,7 +110,7 @@
       <v:textbox inset="0,0,0,0">
     <![endif]-->
     <div>
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:separate;border-spacing:0;background-color:#001F3F;{{#if tourImageUrl}}background-image:linear-gradient(180deg, rgba(0,31,63,0.08) 0%, rgba(0,31,63,0.55) 55%, rgba(0,31,63,0.9) 100%), url('{{tourImageUrl}}');{{else}}background-image:linear-gradient(180deg, rgba(0,31,63,0.08) 0%, rgba(0,31,63,0.55) 55%, rgba(0,31,63,0.9) 100%);{{/if}}background-size:cover;background-position:center;background-repeat:no-repeat;border-radius:16px 16px 0 0;overflow:hidden;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:separate;border-spacing:0;background-color:#001F3F;{{#if tourImageUrl}}background-image:linear-gradient(180deg, rgba(0,31,63,0.08) 0%, rgba(0,31,63,0.55) 55%, rgba(0,31,63,0.9) 100%), url('{{tourImageUrl}}');{{else}}background-image:linear-gradient(180deg, rgba(0,31,63,0.08) 0%, rgba(0,31,63,0.55) 55%, rgba(0,31,63,0.9) 100%);{{/if}}background-size:cover;background-position:center;background-repeat:no-repeat;border-radius:0;overflow:hidden;">
       <tr>
         <td valign="bottom" class="pad" style="padding:120px 34px 28px 34px;">
           <div style="margin:0 0 14px 0;"><span style="display:inline-block;background-color:#007A4D;color:#FFFFFF;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:11px;font-weight:800;letter-spacing:0.9px;text-transform:uppercase;border-radius:999px;padding:7px 14px;line-height:1;">&#10003;&nbsp;&nbsp;Refunded</span></div>

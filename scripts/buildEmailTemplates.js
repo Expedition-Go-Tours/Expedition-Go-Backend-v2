@@ -389,7 +389,15 @@ const bookingReminder = {
   name: 'Customer · Booking reminder',
   build() {
     return B.shell('Your experience is coming up', `
-      ${B.hero({ heading: 'Get ready for your experience!', badgeText: 'Coming up', badgeColor: 'info', subtitle: 'Hello {{customerName}},<br>Your experience begins on <strong>{{dateLabel}}</strong>.' })}
+      ${B.mediaHeader({
+        imageVar: 'tourImageUrl',
+        badgeText: 'Coming up',
+        badgeColor: 'info',
+        heading: 'Get ready for your experience!',
+        subtitle: '{{tourTitle}} &middot; {{travelersLabel}}',
+      })}
+      ${B.referenceBar({ reference: '{{bookingNumber}}', right: '{{#if bookedAtLabel}}Booked {{bookedAtLabel}}{{/if}}' })}
+      ${B.paragraph('Hello {{customerName}}, your experience begins on <strong>{{dateLabel}}</strong>. Here is everything you need before you go.')}
       ${B.sectionTitle('Key facts')}
       ${B.statGrid([
         { icon: 'calendar', label: 'Activity date', value: '{{dateLabel}}', tone: 'green' },
@@ -917,7 +925,14 @@ const supplierBookingReminder = {
   name: 'Supplier · Upcoming booking reminder',
   build() {
     return B.shell('Upcoming booking reminder', `
-      ${B.hero({ heading: 'This booking is coming up', badgeText: 'Reminder', badgeColor: 'info', subtitle: 'Hello {{supplierName}},<br>An upcoming booking needs your attention.' })}
+      ${B.mediaHeader({
+        imageVar: 'tourImageUrl',
+        badgeText: 'Coming up',
+        badgeColor: 'info',
+        heading: 'This booking is coming up',
+        subtitle: '{{tourTitle}} &middot; {{travelersLabel}}',
+      })}
+      ${B.referenceBar({ reference: '{{bookingNumber}}', right: '{{#if bookedAtLabel}}Booked {{bookedAtLabel}}{{/if}}' })}
       ${B.sectionTitle('Key facts')}
       ${B.statGrid([
         { icon: 'calendar', label: 'Activity date', value: '{{dateLabel}}', tone: 'green' },

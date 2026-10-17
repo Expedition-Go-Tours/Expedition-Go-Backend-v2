@@ -147,9 +147,45 @@ describe('statGrid — Key facts tiles', () => {
   });
 
   it('stacks to one column on mobile and keeps labels/values templated', () => {
-    expect(built).toMatch(/class="stack-td"/);
+    // stack-td remains the leading class (the shared mobile stacking rule);
+    // kf-cell/kf-cell-wide carry the 2-up desktop widths alongside it.
+    expect(built).toMatch(/class="stack-td kf-cell/);
     expect(built).toContain('{{dateLabel}}');
     expect(built).toContain('{{travelersLabel}}');
+  });
+
+  it('packs always-on tiles into the first row so it can never half-render', () => {
+    // A conditional tile only disappears at send time via {{#if}}, so a grid
+    // paired in declaration order left a lone tile at 50% width on top. The
+    // always-on tiles must all be emitted before the first conditional, so the
+    // top row is always full; the conditionals follow beneath.
+    const grid = B.statGrid([
+      { icon: 'calendar', label: 'Date', value: '{{dateLabel}}' },
+      { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', if: '{{timeLabel}}' },
+      { icon: 'duration', label: 'Duration', value: '{{durationLabel}}', if: '{{durationLabel}}' },
+      { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}' },
+    ]);
+    const firstConditional = grid.indexOf('{{#if');
+    expect(firstConditional).toBeGreaterThan(-1);
+    // Both always-on tiles sit above every conditional wrapper.
+    expect(grid.indexOf('Date')).toBeLessThan(firstConditional);
+    expect(grid.indexOf('Travellers')).toBeLessThan(firstConditional);
+    // Both conditional tiles are still wrapped and keep their own order.
+    expect(grid).toContain('{{#if timeLabel}}');
+    expect(grid).toContain('{{#if durationLabel}}');
+    expect(grid.indexOf('{{#if timeLabel}}')).toBeLessThan(grid.indexOf('{{#if durationLabel}}'));
+  });
+
+  it('spans the full width when a grid ends on an odd tile', () => {
+    const odd = B.statGrid([
+      { icon: 'calendar', label: 'Date', value: '{{dateLabel}}' },
+      { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', if: '{{timeLabel}}' },
+      { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}' },
+    ]);
+    // Row 1 = the two always-on tiles; the conditional tile is alone on row 2
+    // and must fill it rather than leave a half-row gap.
+    expect(odd).toContain('class="stack-td kf-cell kf-cell-wide" width="100%"');
+    expect((odd.match(/kf-cell-wide/g) || []).length).toBe(1);
   });
 });
 
