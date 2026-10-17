@@ -21,10 +21,15 @@
  *     double-pay or re-invoice anything still in flight.
  *   - `invoiceItems: { none: {} }` + the InvoiceItem.bookingId @unique index mean
  *     a booking can never be claimed twice, even across concurrent runs.
- *   - runKey uses the SAME key as the scheduler (`invoiceRunKey`), so a window +
- *     currency that already has an invoice collides on the unique index and is
- *     skipped instead of duplicated. (These bookings are PAID, not ELIGIBLE, so
- *     the scheduler would never pick them up — the key is belt-and-braces.)
+ *   - runKey lives in its OWN namespace, `backfill:<supplier>:<window>:<currency>`
+ *     (see backfillRunKey below). Re-running is still a no-op — it collides with
+ *     itself on the unique index — but it can never collide with the
+ *     scheduler's `invoice:` key. That matters because a window may legitimately
+ *     hold two invoices: the scheduler's, raised from the ELIGIBLE bookings it
+ *     swept on the run day, and this one, reconstructing PAID bookings that
+ *     predate the launch and were therefore never in that sweep. Sharing the
+ *     key would silently discard the second one, and since these bookings are
+ *     already PAID the scheduler will never retry them.
  *   - Nothing existing is mutated: this only INSERTs invoices + line items.
  *
  * The invoices are created straight in PAID state (approvedAt/paidAt set to the
@@ -44,10 +49,7 @@
  */
 const prisma = require('../src/core/services/prismaClient');
 const { invoiceWindowFor } = require('../src/core/services/payoutCycles');
-const {
-  invoiceRunKey,
-  nextInvoiceNumber,
-} = require('../src/core/services/invoiceService');
+const { nextInvoiceNumber } = require('../src/core/services/invoiceService');
 const { resolvePayoutMethod, getDefaultCycle, VALID_CYCLES } = require('../src/core/services/payoutRuns');
 const { PAYABLE_BOOKING_STATUSES } = require('../src/core/services/financeHelpers');
 
@@ -61,6 +63,23 @@ function toNumber(v) {
 }
 function round2(n) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * Idempotency key for reconstructed invoices — its own namespace, deliberately
+ * NOT `invoiceRunKey` (what the scheduler writes).
+ *
+ * A window can legitimately hold two invoices: the scheduler's, built from the
+ * ELIGIBLE bookings it swept on the run day, and a backfill, rebuilding PAID
+ * bookings that predate finance v3 and so were never in that sweep. Reusing the
+ * scheduler's key would make the unique index silently swallow the second one —
+ * and because those bookings are already PAID, nothing would ever retry them.
+ *
+ * Keyed on the same triple (supplier + window start + currency) so the backfill
+ * is still idempotent against itself: a second run collides and skips.
+ */
+function backfillRunKey(supplierId, window, currency) {
+  return `backfill:${supplierId}:${new Date(window.start).toISOString()}:${currency || 'USD'}`;
 }
 
 async function main() {
@@ -133,7 +152,7 @@ async function main() {
     if (!window) continue;
 
     const currency = b.currency || 'USD';
-    const key = invoiceRunKey(supplierId, window, currency);
+    const key = backfillRunKey(supplierId, window, currency);
 
     if (!bySupplier.has(supplierId)) bySupplier.set(supplierId, new Map());
     const groups = bySupplier.get(supplierId);
@@ -161,22 +180,40 @@ async function main() {
       const netTotal = round2(group.items.reduce((s, b) => s + toNumber(b.supplierPayout), 0));
       const label = group.window.label || 'unknown window';
 
-      // Belt-and-braces: if an invoice already exists for this window+currency,
-      // never create a second one.
+      // Idempotency against THIS script: same supplier + window + currency has
+      // already been rebuilt. A scheduler invoice on the same window is not a
+      // collision — it covers the sweep, this one covers the pre-v3 history —
+      // so it is reported for context but never treated as a skip.
       const existing = await prisma.invoice.findUnique({
         where: { runKey: key },
         select: { id: true, invoiceNumber: true, status: true },
       });
       if (existing) {
         report.skippedExisting += 1;
-        console.log(`   ↷ ${label} — already invoiced (${existing.invoiceNumber}, ${existing.status})`);
+        console.log(`   ↷ ${label} — already backfilled (${existing.invoiceNumber}, ${existing.status})`);
         continue;
       }
+
+      // Any other invoice on this window is the scheduler's (or a catch-up on
+      // it). Reported as context only — it is not a collision for us. The
+      // backfill key check above already returned if we built one here.
+      const scheduled = await prisma.invoice.findFirst({
+        where: {
+          supplierId,
+          cycleStartDate: group.window.start,
+          cycleEndDate: group.window.end,
+          currency: group.currency,
+        },
+        select: { invoiceNumber: true, status: true, runKey: true },
+      });
 
       console.log(
         `   ${DRY_RUN ? '→ would create' : '+ creating'} ${label}` +
           ` · ${group.items.length} booking(s) · ${group.currency} ${netTotal.toFixed(2)} net` +
-          `${method ? '' : ' · (no payout method on file)'}`
+          `${method ? '' : ' · (no payout method on file)'}` +
+          // Two invoices on one window is intended (scheduler's sweep + this
+          // pre-v3 history), but it should never happen silently.
+          `${scheduled ? ` · alongside ${scheduled.invoiceNumber} (${scheduled.status})` : ''}`
       );
 
       if (DRY_RUN) {
@@ -252,9 +289,15 @@ async function main() {
   }
 }
 
-main()
-  .catch((err) => {
-    console.error('Backfill failed:', err);
-    process.exitCode = 1;
-  })
-  .finally(() => prisma.$disconnect());
+// Only run when executed (`node scripts/…`), so the tests can import the key
+// helper without a database.
+if (require.main === module) {
+  main()
+    .catch((err) => {
+      console.error('Backfill failed:', err);
+      process.exitCode = 1;
+    })
+    .finally(() => prisma.$disconnect());
+}
+
+module.exports = { backfillRunKey };
