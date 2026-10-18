@@ -35,8 +35,23 @@ describeDb('GET /api/tours', () => {
     await prisma.$disconnect();
   });
 
-  /** The catalogue the endpoint should be reading. */
-  const activeCount = () => prisma.tour.count({ where: { status: 'ACTIVE' } });
+  /**
+   * The catalogue the endpoint should be reading.
+   *
+   * `status: 'ACTIVE'` alone is not enough: `buildTourFilters` also hides any
+   * tour whose supplier has not been approved
+   * (`supplier.supplierProfile.status in ['ACTIVE','APPROVED']`). Real-DB
+   * suites legitimately create ACTIVE tours owned by a supplier still awaiting
+   * approval — `travioGhana.test.js` does exactly that, on purpose, to prove
+   * the filter works — and those are counted by a raw `status` query but never
+   * served. Modelling the rule here keeps this suite measuring the endpoint
+   * rather than the table.
+   */
+  const CATALOGUE_VISIBLE = {
+    status: 'ACTIVE',
+    supplier: { supplierProfile: { status: { in: ['ACTIVE', 'APPROVED'] } } },
+  };
+  const activeCount = () => prisma.tour.count({ where: CATALOGUE_VISIBLE });
 
   it('returns 200 with a non-empty paginated catalogue', async () => {
     const seeded = await activeCount();
@@ -122,7 +137,7 @@ describeDb('GET /api/tours', () => {
     // `buildTourFilters` reads the `category` column, not the `categorization`
     // JSON — seeding only the JSON would silently return everything.
     const expected = await prisma.tour.count({
-      where: { status: 'ACTIVE', category: { equals: 'Adventure', mode: 'insensitive' } },
+      where: { ...CATALOGUE_VISIBLE, category: { equals: 'Adventure', mode: 'insensitive' } },
     });
     expect(expected).toBeGreaterThan(0);
 
@@ -139,7 +154,7 @@ describeDb('GET /api/tours', () => {
 
   it('filters by city', async () => {
     const expected = await prisma.tour.count({
-      where: { status: 'ACTIVE', city: { equals: 'Accra', mode: 'insensitive' } },
+      where: { ...CATALOGUE_VISIBLE, city: { equals: 'Accra', mode: 'insensitive' } },
     });
     expect(expected).toBeGreaterThan(0);
 
