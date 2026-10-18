@@ -7,8 +7,17 @@ describeDb('User model', () => {
   const testEmail = `integration-${Date.now()}@test.com`;
 
   afterAll(async () => {
+    // Both patterns this file creates. The duplicate-email test below uses a
+    // `dup-` prefix and was never cleaned up, so every run left a row behind —
+    // against the dev database that is how 116 `dup-*@test.com` users
+    // accumulated (of 119 total) with no bookings, reviews or consents
+    // attached. jest.globalSetup.js now refuses to run this suite against dev
+    // in the first place, but the cleanup should still match what it writes.
     await prisma.user.deleteMany({
       where: { email: { startsWith: 'integration-' } },
+    });
+    await prisma.user.deleteMany({
+      where: { email: { startsWith: 'dup-' } },
     });
     await prisma.$disconnect();
   });

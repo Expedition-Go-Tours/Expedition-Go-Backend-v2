@@ -327,6 +327,156 @@ async function seedDevUsers() {
   console.log(`  Dev: ${devUser.name} (${devUser.email})`);
 }
 
+/**
+ * A small but real catalogue.
+ *
+ * `__tests__/api/tours.test.js` asserts `Array.isArray(res.body.data.tours)`,
+ * which passes against an empty table — the test was green without ever
+ * reading a row. Seeding ACTIVE tours gives it something to return, and gives
+ * `buildTourFilters` real values to filter on.
+ *
+ * The scalar columns matter: `buildTourFilters` and the filter-options
+ * endpoint query `category`/`subcategory`/`city`/`region` directly, so a seed
+ * that only populated the `categorization` JSON would still look empty to them.
+ *
+ * Each tour also gets an `ExpeditionTour` row. Brand-scoped queries join on it
+ * (`JOIN "ExpeditionTour" et ON et."tourId" = t.id AND et."isActive" = true`),
+ * so a Tour without one is invisible to `expeditionOnly` scopes — which is why
+ * the region-fallback tests always fell through their guards and passed
+ * without asserting anything.
+ *
+ * Idempotent: upserted by slug, so repeated seeds (CI, local) never duplicate.
+ */
+async function seedTours() {
+  console.log('Seeding tours...');
+
+  const supplier = await prisma.user.findFirst({
+    where: { roles: { has: 'supplier' }, email: 'rxsieon@gmail.com' },
+    select: { id: true },
+  });
+  if (!supplier) {
+    console.log('  Skipping (supplier user not found)');
+    return;
+  }
+
+  const IMG = (n) => `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME || 'dfpagrtoy'}/image/upload/v1/seed/tour-${n}.jpg`;
+
+  const base = {
+    status: 'ACTIVE',
+    country: 'Ghana',
+    photos: [IMG('a'), IMG('b')],
+    coverPhoto: IMG('cover'),
+    schedulesAndPricing: {},
+    bookingAndTickets: {},
+    aiProcessingStatus: 'PENDING',
+  };
+
+  const CATALOGUE = [
+    {
+      slug: 'cape-coast-castle-day-trip',
+      title: 'Cape Coast Castle Day Trip',
+      description: 'Guided tour of Cape Coast Castle and the Cape Coast township, with lunch at a local restaurant.',
+      category: 'Cultural', subcategory: 'Historical Sites', activityType: 'Guided Tour',
+      primaryTheme: 'History & Culture',
+      city: 'Cape Coast', region: 'Central',
+      latitude: 5.1053, longitude: -1.2466,
+      tags: ['castle', 'history', 'guided'],
+      categorization: { category: 'Cultural', subcategory: 'Historical Sites', activityType: 'Guided Tour' },
+      theme: { primary: 'History & Culture' },
+      productContent: { location: { city: 'Cape Coast', country: 'Ghana' }, duration: 'Full day' },
+      itineraryRegions: ['Central Region'],
+    },
+    {
+      slug: 'kakum-canopy-walk-adventure',
+      title: 'Kakum Canopy Walk Adventure',
+      description: 'Rainforest canopy walkway with a guided nature trail through Kakum National Park.',
+      category: 'Adventure', subcategory: 'Nature & Wildlife', activityType: 'Half-Day Tour',
+      primaryTheme: 'Nature & Outdoors',
+      city: 'Cape Coast', region: 'Central',
+      latitude: 5.3566, longitude: -1.3376,
+      tags: ['forest', 'canopy', 'hiking'],
+      categorization: { category: 'Adventure', subcategory: 'Nature & Wildlife', activityType: 'Half-Day Tour' },
+      theme: { primary: 'Nature & Outdoors' },
+      productContent: { location: { city: 'Cape Coast', country: 'Ghana' }, duration: 'Half day' },
+      itineraryRegions: ['Central Region'],
+    },
+    {
+      slug: 'accra-city-highlights-tour',
+      title: 'Accra City Highlights Tour',
+      description: 'Independence Square, Makola Market and Jamestown lighthouse in one day.',
+      category: 'City Tour', subcategory: 'Urban Exploration', activityType: 'Full-Day Tour',
+      primaryTheme: 'Urban Exploration',
+      city: 'Accra', region: 'Greater Accra',
+      latitude: 5.6037, longitude: -0.1870,
+      tags: ['city', 'culture', 'photography'],
+      categorization: { category: 'City Tour', subcategory: 'Urban Exploration', activityType: 'Full-Day Tour' },
+      theme: { primary: 'Urban Exploration' },
+      productContent: { location: { city: 'Accra', country: 'Ghana' }, duration: 'Full day' },
+      itineraryRegions: ['Greater Accra Region'],
+    },
+    {
+      slug: 'aburi-botanical-gardens-escape',
+      title: 'Aburi Botanical Gardens Escape',
+      description: 'A slow day in the Aburi hills: botanical gardens, craft market and mountain views.',
+      category: 'Nature', subcategory: 'Gardens', activityType: 'Half-Day Tour',
+      primaryTheme: 'Relaxation',
+      city: 'Aburi', region: 'Eastern',
+      latitude: 5.8500, longitude: -0.1771,
+      tags: ['gardens', 'relaxation', 'hills'],
+      categorization: { category: 'Nature', subcategory: 'Gardens', activityType: 'Half-Day Tour' },
+      theme: { primary: 'Relaxation' },
+      productContent: { location: { city: 'Aburi', country: 'Ghana' }, duration: 'Half day' },
+      itineraryRegions: ['Eastern Region'],
+    },
+    {
+      slug: 'volta-waterfall-hike',
+      title: 'Volta Waterfall Hike',
+      description: 'Full-day hike to Wli Waterfalls through the Volta hills, with a local guide.',
+      category: 'Adventure', subcategory: 'Hiking', activityType: 'Full-Day Tour',
+      primaryTheme: 'Nature & Outdoors',
+      city: 'Hohoe', region: 'Volta',
+      latitude: 7.1500, longitude: 0.4700,
+      tags: ['hiking', 'waterfall', 'volta'],
+      categorization: { category: 'Adventure', subcategory: 'Hiking', activityType: 'Full-Day Tour' },
+      theme: { primary: 'Nature & Outdoors' },
+      productContent: { location: { city: 'Hohoe', country: 'Ghana' }, duration: 'Full day' },
+      itineraryRegions: ['Volta Region'],
+    },
+    {
+      slug: 'kumasi-cultural-weekend',
+      title: 'Kumasi Cultural Weekend',
+      description: 'Manhyia Palace Museum, Kejetia Market and the Ashanti cultural centre.',
+      category: 'Cultural', subcategory: 'Museums', activityType: 'Weekend Tour',
+      primaryTheme: 'History & Culture',
+      city: 'Kumasi', region: 'Ashanti',
+      latitude: 6.6885, longitude: -1.6244,
+      tags: ['ashanti', 'museum', 'market'],
+      categorization: { category: 'Cultural', subcategory: 'Museums', activityType: 'Weekend Tour' },
+      theme: { primary: 'History & Culture' },
+      productContent: { location: { city: 'Kumasi', country: 'Ghana' }, duration: '2 days' },
+      itineraryRegions: ['Ashanti Region'],
+    },
+  ];
+
+  for (const entry of CATALOGUE) {
+    const data = { ...base, ...entry, supplierId: supplier.id };
+    const tour = await prisma.tour.upsert({
+      where: { slug: entry.slug },
+      update: data,
+      create: data,
+    });
+    // Brand visibility: without this row the tour is invisible to every
+    // `expeditionOnly` query even though it is ACTIVE.
+    await prisma.expeditionTour.upsert({
+      where: { tourId: tour.id },
+      update: { isActive: true },
+      create: { tourId: tour.id, isActive: true },
+    });
+  }
+
+  console.log(`  ${CATALOGUE.length} ACTIVE tours (+ ExpeditionTour rows)`);
+}
+
 async function main() {
   console.log('=== Admin RBAC Seed ===\n');
   await seedPermissions();
@@ -336,6 +486,8 @@ async function main() {
   await seedDefaultRoleAssignment();
   console.log();
   await seedDevUsers();
+  console.log();
+  await seedTours();
   console.log('\nDone.');
 }
 
