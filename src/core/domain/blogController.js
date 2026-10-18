@@ -43,7 +43,7 @@ function shouldCountView(req) {
       }
     }
   }
-  viewTrackingCache.set(viewerId, now);
+  viewTrackingCache.set(viewKey, now);
   return true;
 }
 
@@ -948,6 +948,11 @@ exports.handleSanityWebhook = catchAsync(async (req, res, next) => {
         excerpt: sanityArticle.excerpt || '',
         body: sanityArticle.body || [],
         featuredImage: sanityArticle.featuredImage || null,
+        // The update branch above has always carried these; the create branch
+        // did not, so the first publish of an article dropped its SEO copy and
+        // only a later edit restored it.
+        metaTitle: sanityArticle.seo?.metaTitle || null,
+        metaDescription: sanityArticle.seo?.metaDescription || null,
         status: 'PUBLISHED',
         publishedAt: new Date(),
         locale: sanityArticle.locale || 'en',
