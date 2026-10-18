@@ -111,9 +111,24 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
     env:
       JEST_JUNIT_OUTPUT_DIR: reports/junit
       JEST_JUNIT_OUTPUT_NAME: api.xml
+      # Caching, rate limiting and the SSO ticket's single-use SET NX are all
+      # Redis-backed in production. Without the service those paths degrade
+      # silently rather than loudly: ssoService reads an unreachable Redis as
+      # "allow the exchange", so its replay test would have gone green having
+      # verified nothing — the vacuous pass this job exists to prevent.
+      REDIS_URL: redis://localhost:6379
       # This job stands up PostGIS and runs migrate+seed, so the DB-gated
       # suites are supposed to run. Without this, a failed DB probe would set
       # TEST_DB_AVAILABLE=false, the suites would skip, and the job would go
@@ -549,6 +564,10 @@ jobs:
       # probe that comes back empty means the gated suites silently vanished
       # from the coverage run while the thresholds below were still enforced.
       TEST_DB_EXPECTED: '1'
+      # Same reasoning as integration-tests: Redis is a production dependency
+      # and the SSO suite asserts the ticket's single-use SET NX, which only
+      # means anything against a real server.
+      REDIS_URL: redis://localhost:6379
     services:
       postgis:
         image: postgis/postgis:16-3.4
@@ -562,6 +581,15 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
