@@ -114,6 +114,12 @@ jobs:
     env:
       JEST_JUNIT_OUTPUT_DIR: reports/junit
       JEST_JUNIT_OUTPUT_NAME: api.xml
+      # This job stands up PostGIS and runs migrate+seed, so the DB-gated
+      # suites are supposed to run. Without this, a failed DB probe would set
+      # TEST_DB_AVAILABLE=false, the suites would skip, and the job would go
+      # green having verified nothing — the exact vacuous pass the query
+      # guards exist to prevent.
+      TEST_DB_EXPECTED: '1'
     outputs:
       passed: ${{ steps.counts.outputs.passed }}
       failed: ${{ steps.counts.outputs.failed }}
@@ -538,6 +544,11 @@ jobs:
   coverage:
     if: github.event_name == 'pull_request' || github.ref_name == 'main' || github.ref_name == 'master'
     runs-on: ubuntu-latest
+    env:
+      # Same reason as integration-tests: this job provides PostGIS, so a DB
+      # probe that comes back empty means the gated suites silently vanished
+      # from the coverage run while the thresholds below were still enforced.
+      TEST_DB_EXPECTED: '1'
     services:
       postgis:
         image: postgis/postgis:16-3.4
