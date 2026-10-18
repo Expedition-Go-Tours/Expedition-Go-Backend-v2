@@ -52,6 +52,9 @@ const RELATION_WRITE_KEYS = new Set([
 /** Aggregate result keys — not fields. */
 const AGGREGATE_KEYS = new Set(['_sum', '_avg', '_count', '_min', '_max']);
 
+/** Relation-filter operators in a `where`: `{ review: { is: null } }` etc. */
+const RELATION_FILTER_KEYS = ['is', 'isNot', 'some', 'every', 'none'];
+
 class PrismaQueryShapeError extends Error {
   constructor(path, message) {
     super(`Invalid Prisma query at ${path}: ${message}`);
@@ -77,6 +80,33 @@ function fieldOf(modelName, fieldName) {
 
 function hasField(modelName, fieldName) {
   return Boolean(MODEL_FIELDS.get(modelName)?.has(fieldName));
+}
+
+/**
+ * Compound unique keys, as `@@unique([a, b])`, plus compound primary keys
+ * `@@id([a, b])`, which behave the same way in a `where`.
+ *
+ * Prisma addresses these by joining the field names with an underscore:
+ * `where: { tourId_date: { tourId, date } }`. That is not a field, so a naive
+ * `where` check flags every one of them — there are 17 such keys in this
+ * schema and they account for most of what the sweep would otherwise report.
+ * Building the set once keeps the check O(1).
+ */
+const COMPOUND_UNIQUES = new Map(
+  dmmf.datamodel.models.map((m) => {
+    const keys = new Set();
+    for (const index of m.uniqueIndexes || []) {
+      if (index.fields.length > 1) keys.add(index.fields.join('_'));
+    }
+    if (m.primaryKey && m.primaryKey.fields.length > 1) {
+      keys.add(m.primaryKey.fields.join('_'));
+    }
+    return [m.name, keys];
+  })
+);
+
+function hasCompoundUnique(modelName, key) {
+  return Boolean(COMPOUND_UNIQUES.get(modelName)?.has(key));
 }
 
 /**
@@ -160,9 +190,10 @@ function validateDistinct(modelName, distinct, path) {
 }
 
 /**
- * Walk a `where` clause. Top-level keys are fields or the AND/OR/NOT groups;
- * a relation key recurses into the related model's `where`; everything else is
- * treated as an operator block and not field-checked.
+ * Walk a `where` clause. Top-level keys are fields, compound unique keys, or
+ * the AND/OR/NOT groups; a relation key recurses into the related model's
+ * `where`; everything else is treated as an operator block and not
+ * field-checked.
  */
 function validateWhere(modelName, where, path) {
   if (!where || typeof where !== 'object') return;
@@ -173,6 +204,15 @@ function validateWhere(modelName, where, path) {
     if (key === 'AND' || key === 'OR' || key === 'NOT') {
       const clauses = Array.isArray(value) ? value : [value];
       clauses.forEach((clause, i) => validateWhere(modelName, clause, `${keyPath}[${i}]`));
+      continue;
+    }
+
+    // `where: { tourId_date: { tourId, date } }` — a compound unique lookup.
+    // Its payload is a where clause on the *same* model, so it is checked too.
+    if (hasCompoundUnique(modelName, key)) {
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        validateWhere(modelName, value, keyPath);
+      }
       continue;
     }
 
@@ -187,9 +227,14 @@ function validateWhere(modelName, where, path) {
 
     const relModel = relatedModelName(field);
     if (relModel && value && typeof value === 'object') {
-      // A relation filter: either a nested where, or `{ is }`/`{ some }` etc.
-      const inner = value.is ?? value.some ?? value.every ?? value.none;
-      if (inner && typeof inner === 'object') validateWhere(relModel, inner, keyPath);
+      // A relation filter: either a nested where, or one of the operator keys
+      // `{ is }`, `{ isNot }`, `{ some }`, `{ every }`, `{ none }`.
+      //
+      // The key's *presence* decides, not its value — `{ review: { is: null } }`
+      // is a perfectly valid "no review" filter, and testing the payload for
+      // truthiness would fall through to treating `is` as a field name.
+      const operatorKey = RELATION_FILTER_KEYS.find((k) => k in value);
+      if (operatorKey) validateWhere(relModel, value[operatorKey], `${keyPath}.${operatorKey}`);
       else validateWhere(relModel, value, keyPath);
     }
   }

@@ -387,9 +387,11 @@ exports.deleteVehicle = catchAsync(async (req, res, next) => {
   const profile = await resolveProfileByUserId(req.supplierId || req.user.id);
   if (!profile) return next(new AppError('No supplier application found', 404));
 
+  // No `_count: { select: { documents } }` here: `Vehicle` has no `documents`
+  // relation, so Prisma rejected the query outright and deleteVehicle 500'd.
+  // Nothing below read the count.
   const vehicle = await prisma.vehicle.findFirst({
     where: { id: req.params.vehicleId, supplierId: profile.id },
-    include: { _count: { select: { documents: true } } },
   });
   if (!vehicle) return next(new AppError('Vehicle not found', 404));
 

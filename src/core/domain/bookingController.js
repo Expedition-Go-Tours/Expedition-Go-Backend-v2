@@ -1752,7 +1752,10 @@ exports.getCancellationChoice = catchAsync(async (req, res, next) => {
   const booking = await prisma.booking.findUnique({
     where: { id: parsed.bookingId },
     include: {
-      tour: { select: { id: true, title: true, slug: true, coverPhoto: true, timeZone: true } },
+      // `Tour` has no `timeZone` column — selecting one made Prisma reject the
+      // whole query with a PrismaClientValidationError. Nothing below reads a
+      // time zone, so the field is simply gone.
+      tour: { select: { id: true, title: true, slug: true, coverPhoto: true } },
     },
   });
   if (!booking || booking.cancellationOrigin !== 'SUPPLIER') {

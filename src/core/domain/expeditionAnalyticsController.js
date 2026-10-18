@@ -8,6 +8,27 @@ const { getBrand } = require('../../../config/brands');
 const GHANA_ROLE = getBrand('ghana').role;
 
 /**
+ * Event names, as written by eventEmitter.
+ *
+ * There is no `trackedClick` model and never was one — these handlers used to
+ * query `prisma.trackedClick`, which is `undefined`, so every call threw a
+ * TypeError and both admin endpoints 500'd. The tracking table is `Event`, and
+ * its `name` is dot-notation, optionally namespaced by brand.
+ *
+ * Scoping is by the `expedition.` *name* namespace, deliberately:
+ *
+ *  - `properties->>'source'` (the brand stamp) only exists for rows after
+ *    2026-09-20, so filtering on it hid every older expedition row.
+ *  - The un-namespaced `tour.viewed` / `page_viewed` events are overwhelmingly
+ *    TravioGhana traffic (7.8k vs 0 expedition rows), so including them would
+ *    report ghana's numbers on Expedition's dashboard.
+ *
+ * The cost is that `page_viewed` cannot be attributed to a brand and is left
+ * out of the impressions stage rather than mis-attributed.
+ */
+const TOUR_VIEW_EVENTS = ['expedition.tour_viewed'];
+
+/**
  * Prisma booking where clause: Expedition bookings excluding Ghana suppliers.
  *
  * Ghana suppliers' bookings belong on the TravioGhana admin dashboard,
@@ -222,33 +243,25 @@ exports.getConversionFunnel = catchAsync(async (req, res, next) => {
   const cacheKey = `${CACHE_PREFIX}funnel:${start.toISOString().slice(0, 10)}:${end.toISOString().slice(0, 10)}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
+    // Brand scoping is the `expedition.` name namespace — see the comment on
+    // TOUR_VIEW_EVENTS. Filtering on `properties->>'source'` instead hid every
+    // row older than the 2026-09-20 brand-stamp migration.
     const [
-      totalImpressions,
       tourViewEvents,
       checkoutCalculations,
       bookingAttempts,
       successfulBookings,
     ] = await Promise.all([
-      prisma.trackedClick.aggregate({
+      prisma.event.count({
         where: {
-          source: 'expedition',
           createdAt: { gte: start, lte: end },
-          event: { in: ['impression', 'tour_view', 'page_view'] },
-        },
-        _count: true,
-      }),
-      prisma.trackedClick.count({
-        where: {
-          source: 'expedition',
-          createdAt: { gte: start, lte: end },
-          event: 'tour_view',
+          name: { in: TOUR_VIEW_EVENTS },
         },
       }),
-      prisma.trackedClick.count({
+      prisma.event.count({
         where: {
-          source: 'expedition',
           createdAt: { gte: start, lte: end },
-          event: 'checkout_calculate',
+          name: 'expedition.checkout_started',
         },
       }),
       prisma.booking.count({
@@ -259,8 +272,13 @@ exports.getConversionFunnel = catchAsync(async (req, res, next) => {
       }),
     ]);
 
+    // `impressions` is not counted separately: the only impression-shaped event
+    // is `page_viewed`, which carries no brand namespace, so attributing it
+    // would report ghana's page traffic as expedition impressions. Tour views
+    // are the narrowest honest proxy and are reused for both stages rather
+    // than issuing the same query twice.
     const funnel = [
-      { stage: 'impressions', count: totalImpressions._count || 0 },
+      { stage: 'impressions', count: tourViewEvents },
       { stage: 'tour_views', count: tourViewEvents },
       { stage: 'checkout_starts', count: checkoutCalculations },
       { stage: 'booking_attempts', count: bookingAttempts },
@@ -338,24 +356,50 @@ exports.getSearchAnalytics = catchAsync(async (req, res, next) => {
   const cacheKey = `${CACHE_PREFIX}search:${start.toISOString().slice(0, 10)}:${end.toISOString().slice(0, 10)}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
-    const clicks = await prisma.trackedClick.findMany({
+    // Searches are `Event(name='search.executed')` with the term in
+    // `properties.query` — the same shape adminController's search analytics
+    // read in raw SQL. `Event` has no `target` column, and no separate
+    // "result click" event is emitted.
+    //
+    // Unlike tour views, `search.executed` is *not* brand-namespaced, so the
+    // brand stamp on `properties` is the only available signal for it. That
+    // stamp is best-effort: it currently attributes most searches to ghana, so
+    // this endpoint reports few or no rows until search events are emitted
+    // with an `expedition.` name. Reporting the honest low number beats
+    // padding with unattributed traffic.
+    const events = await prisma.event.findMany({
       where: {
-        source: 'expedition',
+        name: 'search.executed',
+        properties: { path: ['source'], equals: 'expedition' },
         createdAt: { gte: start, lte: end },
-        event: { in: ['search', 'search_result_click'] },
       },
-      select: { event: true, target: true, createdAt: true },
+      select: { properties: true, sessionId: true },
     });
 
-    const searchCount = clicks.filter((c) => c.event === 'search').length;
-    const clickCount = clicks.filter((c) => c.event === 'search_result_click').length;
+    const searchCount = events.length;
 
-    // Top search terms from target field
+    // Sessions that searched and then viewed an expedition tour — the honest
+    // stand-in for a result click, since no `search_result_click` event exists.
+    const sessions = events.map((e) => e.sessionId).filter(Boolean);
+    const convertedSessions = sessions.length
+      ? await prisma.event.findMany({
+        where: {
+          name: { in: TOUR_VIEW_EVENTS },
+          createdAt: { gte: start, lte: end },
+          sessionId: { in: sessions },
+        },
+        select: { sessionId: true },
+        distinct: ['sessionId'],
+      })
+      : [];
+    const convertedSet = new Set(convertedSessions.map((s) => s.sessionId));
+    const clickCount = sessions.filter((id) => convertedSet.has(id)).length;
+
+    // Top search terms from the `query` property.
     const termMap = new Map();
-    for (const c of clicks) {
-      if (c.target) {
-        termMap.set(c.target, (termMap.get(c.target) || 0) + 1);
-      }
+    for (const e of events) {
+      const term = e.properties?.query;
+      if (term) termMap.set(term, (termMap.get(term) || 0) + 1);
     }
 
     const topSearches = Array.from(termMap.entries())
