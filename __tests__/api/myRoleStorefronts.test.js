@@ -7,51 +7,25 @@
  * And a member's own roles are always `['customer']`, because 'expedition' is
  * not in BRAND_ROLES and is therefore never inherited. The answer has to come
  * from the OWNER in every branch, or team members silently lose the menu.
+ *
+ * The previous version mocked `prismaClient` and drove both branches by
+ * hand-setting `supplierProfile.findFirst` / `teamMember.findFirst`. That
+ * reproduced the controller's OWN reading of the schema, so the trap could only
+ * have been caught by the person writing the mock: `supplier: { roles }` in the
+ * member branch is a relation include on `TeamMember.supplier`, and if that
+ * relation resolved to something other than the owner User the stub would still
+ * have returned whatever it was told to.
+ *
+ * Everything here is now created for real — two owner accounts each holding an
+ * actual SupplierProfile, three separate members, and one admin — so both
+ * meanings of `supplierId` are asserted against rows the database produced.
  */
+
 const request = require('supertest');
 const { signAccessToken } = require('../../config/jwt');
 
-jest.mock('../../src/core/services/prismaClient', () => ({
-  travioGhanaTour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
-  expeditionTour: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), count: jest.fn() },
-  tour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn() },
-  user: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn() },
-  supplierProfile: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
-  adminRole: { findUnique: jest.fn() },
-  teamMember: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
-  review: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), aggregate: jest.fn() },
-  booking: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
-  specialOffer: { findMany: jest.fn(), count: jest.fn(), findFirst: jest.fn() },
-  specialOfferTarget: { findMany: jest.fn().mockResolvedValue([]) },
-  newsletterSubscriber: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
-  tourDateOverride: { findMany: jest.fn(), upsert: jest.fn() },
-  wishlistItem: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
-  notification: { findMany: jest.fn(), count: jest.fn(), updateMany: jest.fn(), aggregate: jest.fn(), update: jest.fn() },
-  adminNotification: { findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), updateMany: jest.fn(), update: jest.fn(), create: jest.fn() },
-  payout: { findMany: jest.fn(), findFirst: jest.fn(), aggregate: jest.fn(), count: jest.fn() },
-  payoutRequest: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
-  payoutMethod: { findMany: jest.fn(), count: jest.fn() },
-  dispute: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn() },
-  chatConversation: { findMany: jest.fn(), count: jest.fn() },
-  cancellationRecord: { findMany: jest.fn(), count: jest.fn() },
-  event: { findMany: jest.fn() },
-  auditLog: { findMany: jest.fn() },
-  $transaction: jest.fn(),
-  $queryRaw: jest.fn(),
-  $queryRawUnsafe: jest.fn(),
-}));
-
-jest.mock('../../src/core/services/homepageRanking', () => {
-  const empty = () => jest.fn().mockResolvedValue([]);
-  return {
-    getLikelySellOut: empty(),
-    getTopRated: empty(),
-    getTrending: empty(),
-    getMoodKeywords: empty(),
-    getPopularDestinations: empty(),
-  };
-});
-
+// Reads must reach the database rather than a shared Redis holding an entry
+// from a previous run; it is a cache, not the data under test.
 jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
   invalidateKey: jest.fn(() => Promise.resolve()),
@@ -64,7 +38,6 @@ jest.mock('../../src/core/services/emailService', () => ({
   sendTeamInviteRevokedEmail: jest.fn(() => Promise.resolve()),
   resolveEmailBrand: jest.fn(() => 'ghana'),
 }));
-
 jest.mock('../../src/core/services/queue', () => ({
   enqueueEvent: jest.fn(() => Promise.resolve()),
   enqueueEmail: jest.fn(() => Promise.resolve()),
@@ -72,119 +45,194 @@ jest.mock('../../src/core/services/queue', () => ({
 }));
 jest.mock('../../src/core/services/getConfig', () => jest.fn((key, def) => Promise.resolve(def)));
 jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
-jest.mock('../../src/core/services/tourHelpers', () => ({
-  checkTourAvailability: jest.fn(() => Promise.resolve({ available: true, availableSpots: 10, reason: null })),
-  calculateTourPrice: jest.fn(() => Promise.resolve({ success: true, currency: 'USD', subtotal: 100, fees: 5, discount: 0, total: 105 })),
-  cheapestRetailPrice: jest.fn(() => 100),
-}));
 jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
 
 const app = require('../../app');
 const prisma = require('../../src/core/services/prismaClient');
 
-const base = (roles) => ({
-  name: 'Probe', email: '', roles, active: true, photoURL: '', notificationPreferences: {},
-});
+const dbAvailable = process.env.TEST_DB_AVAILABLE === 'true';
+const describeDb = dbAvailable ? describe : describe.skip;
 
-const OWNER_BOTH = { ...base(['supplier', 'ghana', 'expedition']), id: 'owner-both', email: 'both@test.com' };
-const OWNER_GHANA = { ...base(['supplier', 'ghana']), id: 'owner-ghana', email: 'ghana@test.com' };
-const ADMIN = { ...base(['admin']), id: 'admin-1', email: 'admin@test.com' };
-const PLAIN = { ...base(['customer']), id: 'member-1', email: 'member@test.com' };
+const E = (n) => `mrs-${n}@test.invalid`;
 
-const USERS = {
-  'owner-both': OWNER_BOTH,
-  'owner-ghana': OWNER_GHANA,
-  'admin-1': ADMIN,
-  'member-1': PLAIN,
-};
+const EMAILS = [
+  E('owner-both'), E('owner-ghana'), E('owner-plain'), E('admin'),
+  E('editor'), E('support'), E('nobody'),
+];
 
-const token = (user) => signAccessToken({ userId: user.id });
-const auth = (user) => ({ Authorization: `Bearer ${token(user)}` });
+let ownerBoth;
+let ownerGhana;
+let ownerPlain;
+let profileBoth;
+let profileGhana;
+let profilePlain;
+
+/** Every membership this suite creates, removed in afterAll. */
+const created = { users: [], profiles: [], members: [] };
+
+async function makeUser(email, roles) {
+  const user = await prisma.user.create({
+    data: {
+      firebaseUid: `test-${email}`,
+      name: `MRS ${email}`,
+      email,
+      roles,
+      active: true,
+      photoURL: '',
+    },
+  });
+  created.users.push(user.id);
+  return user;
+}
+
+async function makeProfile(userId) {
+  const profile = await prisma.supplierProfile.create({
+    data: {
+      userId,
+      status: 'ACTIVE',
+      supplierType: 'TOUR_COMPANY',
+      // The six required Json columns carry no shape this endpoint reads.
+      businessInfo: {},
+      operatingInfo: {},
+      representativeInfo: {},
+      businessDocuments: {},
+      payoutInfo: {},
+      compliance: {},
+    },
+  });
+  created.profiles.push(profile.id);
+  return profile;
+}
+
+async function makeMember(email, supplierId, roles) {
+  const member = await prisma.teamMember.create({
+    data: {
+      email,
+      supplierId,
+      roles,
+      role: roles[0] || null,
+      status: 'ACCEPTED',
+    },
+  });
+  created.members.push(member.id);
+  return member;
+}
 
 const MY_ROLE = '/api/travioghana/supplier/settings/team/my-role';
+const auth = (user) => ({ Authorization: `Bearer ${signAccessToken({ userId: user.id })}` });
 
-beforeEach(() => {
-  jest.clearAllMocks();
+describeDb('GET /settings/team/my-role — storefronts (real DB)', () => {
+  jest.setTimeout(30000);
 
-  prisma.user.findUnique.mockImplementation(({ where }) => Promise.resolve(USERS[where.id] || null));
-  prisma.user.findFirst.mockResolvedValue(null);
-  prisma.user.update.mockImplementation(({ where, data }) => Promise.resolve({ ...USERS[where.id], ...data }));
+  let admin;
+  let editor;
+  let support;
+  let nobody;
 
-  // Only owner accounts hold a supplier profile — members and admins do not.
-  prisma.supplierProfile.findFirst.mockImplementation(({ where }) => (
-    Promise.resolve(where.userId === 'owner-both' || where.userId === 'owner-ghana'
-      ? { id: `profile-${where.userId}` }
-      : null)
-  ));
+  beforeAll(async () => {
+    await prisma.$connect();
 
-  prisma.teamMember.findFirst.mockResolvedValue(null);
-  prisma.teamMember.count.mockResolvedValue(0);
-  prisma.$transaction.mockImplementation(async (cb) => (typeof cb === 'function' ? cb(prisma) : cb));
-});
+    // Clear residue from a previous run so membership lookups are unambiguous.
+    await prisma.teamMember.deleteMany({ where: { email: { in: EMAILS } } });
+    await prisma.supplierProfile.deleteMany({ where: { user: { email: { in: EMAILS } } } });
+    await prisma.user.deleteMany({ where: { email: { in: EMAILS } } });
 
-describe('GET /settings/team/my-role — storefronts', () => {
+    ownerBoth = await makeUser(E('owner-both'), ['supplier', 'ghana', 'expedition']);
+    ownerGhana = await makeUser(E('owner-ghana'), ['supplier', 'ghana']);
+    // Holds a profile and the base supplier role, but no brand role at all —
+    // the only shape in which a member's storefronts can legitimately be empty.
+    ownerPlain = await makeUser(E('owner-plain'), ['supplier']);
+    admin = await makeUser(E('admin'), ['admin']);
+    editor = await makeUser(E('editor'), ['customer']);
+    support = await makeUser(E('support'), ['customer']);
+    nobody = await makeUser(E('nobody'), ['customer']);
+
+    profileBoth = await makeProfile(ownerBoth.id);
+    profileGhana = await makeProfile(ownerGhana.id);
+    profilePlain = await makeProfile(ownerPlain.id);
+
+    await makeMember(E('editor'), ownerBoth.id, ['editor']);
+    await makeMember(E('support'), ownerPlain.id, ['support']);
+    // `nobody` has no SupplierProfile and no TeamMember row on purpose.
+  });
+
+  afterAll(async () => {
+    await prisma.teamMember.deleteMany({ where: { id: { in: created.members } } }).catch(() => {});
+    await prisma.supplierProfile.deleteMany({ where: { id: { in: created.profiles } } }).catch(() => {});
+    await prisma.user.deleteMany({ where: { id: { in: created.users } } }).catch(() => {});
+    await prisma.$disconnect();
+  });
+
   it('maps an owner with both brand roles to Travio Ghana first, then Expedition', async () => {
-    const res = await request(app).get(MY_ROLE).set(auth(OWNER_BOTH));
+    const res = await request(app).get(MY_ROLE).set(auth(ownerBoth));
 
     expect(res.status).toBe(200);
     expect(res.body.data.storefronts).toEqual(['GHANA', 'EXPEDITION']);
     expect(res.body.data.isOwner).toBe(true);
+
+    // On the owner branch `supplierId` is a SupplierProfile id…
+    expect(res.body.data.supplierId).toBe(profileBoth.id);
+    expect(res.body.data.supplierId).not.toBe(ownerBoth.id);
   });
 
   it('maps an owner with only the ghana role to a single storefront', async () => {
-    const res = await request(app).get(MY_ROLE).set(auth(OWNER_GHANA));
+    const res = await request(app).get(MY_ROLE).set(auth(ownerGhana));
 
     expect(res.status).toBe(200);
     expect(res.body.data.storefronts).toEqual(['GHANA']);
+    expect(res.body.data.supplierId).toBe(profileGhana.id);
   });
 
   it('reads the OWNER roles for a team member, whose own roles never carry expedition', async () => {
     // The member is a plain `customer`: 'expedition' is not in BRAND_ROLES, so
     // accepting the invite never copies it onto them.
-    expect(PLAIN.roles).toEqual(['customer']);
+    expect(editor.roles).toEqual(['customer']);
 
-    prisma.teamMember.findFirst.mockResolvedValue({
-      roles: ['editor'],
-      role: 'editor',
-      supplierId: OWNER_BOTH.id,
-      supplier: { roles: OWNER_BOTH.roles },
-    });
-
-    const res = await request(app).get(MY_ROLE).set(auth(PLAIN));
+    const res = await request(app).get(MY_ROLE).set(auth(editor));
 
     expect(res.status).toBe(200);
     expect(res.body.data.isOwner).toBe(false);
     expect(res.body.data.roles).toEqual(['editor']);
+
+    // …while on the member branch the same field is the OWNER's User id.
+    expect(res.body.data.supplierId).toBe(ownerBoth.id);
+    expect(res.body.data.supplierId).not.toBe(profileBoth.id);
+
+    // The storefronts came from the owner's roles, read through the
+    // `TeamMember.supplier` relation — not from the member's own.
     expect(res.body.data.storefronts).toEqual(['GHANA', 'EXPEDITION']);
   });
 
   it('returns an empty list for a team member whose owner has no brand roles', async () => {
-    prisma.teamMember.findFirst.mockResolvedValue({
-      roles: ['support'],
-      role: 'support',
-      supplierId: OWNER_GHANA.id,
-      supplier: { roles: ['supplier'] },
-    });
-
-    const res = await request(app).get(MY_ROLE).set(auth(PLAIN));
+    const res = await request(app).get(MY_ROLE).set(auth(support));
 
     expect(res.status).toBe(200);
+    expect(res.body.data.isOwner).toBe(false);
+    expect(res.body.data.roles).toEqual(['support']);
     expect(res.body.data.storefronts).toEqual([]);
+
+    // The owner genuinely holds no brand role, so nothing can be inherited.
+    expect(res.body.data.supplierId).toBe(ownerPlain.id);
+    expect(res.body.data.supplierId).not.toBe(profilePlain.id);
   });
 
   it('returns an empty list for an admin, who is not a supplier', async () => {
-    const res = await request(app).get(MY_ROLE).set(auth(ADMIN));
+    const res = await request(app).get(MY_ROLE).set(auth(admin));
 
     expect(res.status).toBe(200);
     expect(res.body.data.storefronts).toEqual([]);
+    expect(res.body.data.isOwner).toBe(true);
+    expect(res.body.data.supplierId).toBeUndefined();
   });
 
   it('always ships the key, so the dashboard can distinguish "none" from "not answered"', async () => {
     // No supplier profile and no membership: the pre-existing "nobody" answer.
-    const res = await request(app).get(MY_ROLE).set(auth(PLAIN));
+    const res = await request(app).get(MY_ROLE).set(auth(nobody));
 
     expect(res.status).toBe(200);
+    expect(res.body.data).toHaveProperty('storefronts');
     expect(res.body.data.storefronts).toEqual([]);
     expect(res.body.data.isOwner).toBe(false);
+    expect(res.body.data.supplierId).toBeUndefined();
   });
 });
