@@ -14,6 +14,7 @@ const prisma = require('./services/prismaClient');
 const AppError = require('./services/appError');
 const catchAsync = require('./services/catchAsync');
 const cache = require('./services/cacheHelper');
+const { invalidateKeys } = require('./services/cacheHelper');
 const { computeOfferStatus } = require('./services/offerStatus');
 const { getBrand } = require('../../config/brands');
 
@@ -216,10 +217,30 @@ controller.getAvailability = catchAsync(async (req, res, next) => {
 
 /**
  * POST /api/travioghana/supplier/availability/:tourId
+ *
+ * Writes a single-day override. The request vocabulary is `available` /
+ * `maxBookings` / `note` (what the supplier form sends), but the table's
+ * columns are `status` / `capacity` / `notes` — there has never been an
+ * `available` column, so passing the payload straight through raised
+ * PrismaClientValidationError and every write 500'd. Map explicitly.
+ *
+ * `status` is only touched when `available` is actually present, so a request
+ * that only narrows the day limit cannot silently unblock a blocked date.
+ *
+ * The calendar is cached per tour/range (availabilityController), so the
+ * invalidation has to happen here too or a block would not take effect until
+ * the TTL elapsed.
  */
 controller.setAvailability = catchAsync(async (req, res, next) => {
   const { tourId } = req.params;
   const { date, available, maxBookings, note } = req.body;
+
+  // Dates are stored `@db.Date`. Anchoring to UTC midnight keeps the day
+  // stable regardless of the server's timezone (the same normalization
+  // availabilityController applies).
+  const parts = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(date ?? ''));
+  if (!parts) return next(new AppError('Invalid date format. Use YYYY-MM-DD.', 400));
+  const parsedDate = new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3])));
 
   const tour = await prisma.tour.findFirst({
     where: { id: tourId, supplierId: req.supplierId || req.user.id },
@@ -227,11 +248,26 @@ controller.setAvailability = catchAsync(async (req, res, next) => {
   });
   if (!tour) return next(new AppError('Tour not found', 404));
 
+  const data = {};
+  if (available !== undefined) {
+    data.status = available === false || available === 'false' ? 'BLOCKED' : 'AVAILABLE';
+  }
+  if (maxBookings !== undefined) {
+    const capacity = maxBookings === null || maxBookings === '' ? null : Number(maxBookings);
+    if (capacity !== null && Number.isNaN(capacity)) {
+      return next(new AppError('maxBookings must be a number', 400));
+    }
+    data.capacity = capacity;
+  }
+  if (note !== undefined) data.notes = note === null ? null : String(note);
+
   const override = await prisma.tourDateOverride.upsert({
-    where: { tourId_date: { tourId, date: new Date(date) } },
-    update: { available, maxBookings, note },
-    create: { tourId, date: new Date(date), available, maxBookings, note },
+    where: { tourId_date: { tourId, date: parsedDate } },
+    update: data,
+    create: { tourId, date: parsedDate, ...data },
   });
+
+  await invalidateKeys([`availability:cal:${tourId}:*`]);
 
   res.json({ status: 'success', data: { override } });
 });
