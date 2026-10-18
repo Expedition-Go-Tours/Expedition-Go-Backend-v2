@@ -2872,7 +2872,7 @@ controller.getSupplierBookings = catchAsync(async (req, res, next) => {
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const take = Math.min(parseInt(limit), 100);
 
-  const [bookings, totalCount] = await Promise.all([
+  const [bookings, totalCount, revenueAgg] = await Promise.all([
     prisma.booking.findMany({
       where,
       include: {
@@ -2882,13 +2882,26 @@ controller.getSupplierBookings = catchAsync(async (req, res, next) => {
             title: true,
             slug: true,
             coverPhoto: true,
+            photos: true,
             category: true,
             city: true,
             country: true,
+            bookingAndTickets: true,
           },
         },
         customer: {
-          select: { id: true, name: true, email: true, photoURL: true },
+          select: { id: true, name: true, email: true, phone: true, photoURL: true },
+        },
+        appliedOffer: {
+          select: {
+            id: true,
+            name: true,
+            offerType: true,
+            discountType: true,
+            discountPercentage: true,
+            fixedDiscountValue: true,
+            promoCode: true,
+          },
         },
         review: true,
       },
@@ -2897,24 +2910,40 @@ controller.getSupplierBookings = catchAsync(async (req, res, next) => {
       take,
     }),
     prisma.booking.count({ where }),
+    prisma.booking.aggregate({
+      where,
+      _sum: { grossAmount: true, supplierPayout: true },
+      _count: true,
+    }),
   ]);
 
   // Admin-approval gate: open cancellation requests ride along as chips.
   const { pendingRequestsForBookingIds } = require('./services/cancellationRequestService');
   const pendingMap = await pendingRequestsForBookingIds(bookings.map((b) => b.id));
 
+  // Both supplier dashboards read this response through the SAME client helper
+  // (`response.data.data.{bookings,pagination,summary}`), so the shape has to
+  // match Ghana's inline handler exactly. `pagination` used to sit at the top
+  // level and there was no `summary`, which the client read as nulls: the page
+  // counted one page worth of bookings however many existed, and the revenue
+  // stat silently fell back to summing only the rows on screen.
   res.status(200).json({
     status: 'success',
     data: {
       bookings: sanitizeBookingPaymentInternals(
         bookings.map((b) => ({ ...b, pendingCancellation: pendingMap.get(b.id) || null })),
       ),
-    },
-    pagination: {
-      currentPage: parseInt(page),
-      totalPages: Math.ceil(totalCount / take),
-      totalCount,
-      limit: take,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(totalCount / take),
+        totalCount,
+        limit: take,
+      },
+      summary: {
+        totalRevenue: parseFloat(revenueAgg._sum.grossAmount || 0),
+        totalEarnings: parseFloat(revenueAgg._sum.supplierPayout || 0),
+        totalBookings: revenueAgg._count,
+      },
     },
   });
 });

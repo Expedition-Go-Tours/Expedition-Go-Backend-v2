@@ -1,166 +1,243 @@
 /**
  * Chat is a shared route: customers, suppliers and team members all use it, so
- * the blanket `requirePermission` above it deliberately lets every non-admin
- * through. That left the supplier's customer inbox readable by ANY accepted
- * member — `GET /chat/conversations` returned 200 with the business's threads to
- * an editor or a finance member, while the dashboards hide the Customers page
- * from them (it is gated on `chat.view`, i.e. admin + support).
+ * the blanket gate above it deliberately lets every non-admin through. That
+ * left the supplier's customer inbox readable by ANY accepted member — an
+ * editor or a finance member got 200 with the business's threads, while the
+ * dashboards hide the Customers page from them (it is gated on `chat.view`, i.e.
+ * admin + support).
  *
  * The fix gates on "acting through a membership" rather than on the account
  * type, so customers, the owner and platform admins are untouched.
+ *
+ * This suite used to mock Prisma, with every `conversationParticipant.findMany`
+ * returning `[]`. That was enough to prove the guard let a support member
+ * through and named the owner's id in the where clause — but an empty inbox and
+ * a properly scoped one are the same thing to a mock, so the property the fix
+ * exists for was never actually measured. There were two businesses here, and
+ * neither could be told apart from the other's.
+ *
+ * Running against `travio_test` gives each supplier a real conversation, so the
+ * assertions are now about who sees WHAT:
+ *
+ *   - owner1 and owner2 each see only their own thread;
+ *   - a support member of owner1 sees owner1's thread and not owner2's, and
+ *     the mirror case holds for a support member of owner2;
+ *   - the traveller sees both, because they are genuinely in both;
+ *   - an editor and a finance member are refused before any query runs.
+ *
+ * Kept mocked: `cacheHelper` as a pass-through (membership is looked up through
+ * a 30-second cache entry; leaving it real would let one test's membership leak
+ * into the next), plus `queue`, `emailService`, `getConfig`, `auditLogger` and
+ * `imageOptimizer`, none of which this route touches meaningfully.
+ *
+ * `config/jwt` is NOT mocked: tokens are minted for real users.
+ *
+ * Fixtures are keyed on a `cta-` prefix and removed in `afterAll`.
  */
 const request = require('supertest');
-const { signAccessToken } = require('../../config/jwt');
 
-jest.mock('../../src/core/services/prismaClient', () => ({
-  travioGhanaTour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
-  expeditionTour: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), count: jest.fn() },
-  tour: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn(), count: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn() },
-  user: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn() },
-  supplierProfile: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
-  adminRole: { findUnique: jest.fn() },
-  teamMember: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
-  review: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn() },
-  booking: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
-  specialOffer: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
-  specialOfferTarget: { findMany: jest.fn().mockResolvedValue([]) },
-  newsletterSubscriber: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
-  tourDateOverride: { findMany: jest.fn(), upsert: jest.fn(), findFirst: jest.fn() },
-  wishlistItem: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), delete: jest.fn() },
-  notification: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), updateMany: jest.fn(), update: jest.fn(), delete: jest.fn(), aggregate: jest.fn() },
-  adminNotification: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), updateMany: jest.fn(), groupBy: jest.fn() },
-  payout: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn() },
-  payoutRequest: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn() },
-  payoutMethod: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
-  dispute: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn() },
-  chatConversation: { findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn(), findFirst: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
-  conversationParticipant: { findMany: jest.fn().mockResolvedValue([]), create: jest.fn(), deleteMany: jest.fn() },
-  message: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn(), count: jest.fn().mockResolvedValue(0), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
-  cancellationRecord: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn() },
-  event: { findMany: jest.fn() },
-  auditLog: { findMany: jest.fn() },
-  $transaction: jest.fn(),
-  $queryRaw: jest.fn(),
-  $queryRawUnsafe: jest.fn(),
-}));
-
-jest.mock('../../src/core/services/cacheHelper', () => ({
-  getOrSet: jest.fn((key, fn) => fn()),
-  invalidateKey: jest.fn(() => Promise.resolve()),
-  invalidateKeys: jest.fn(() => Promise.resolve()),
-}));
-
-jest.mock('../../src/core/services/emailService', () => ({
-  sendEmail: jest.fn(() => Promise.resolve()),
-  resolveEmailBrand: jest.fn(() => 'ghana'),
-}));
 jest.mock('../../src/core/services/queue', () => ({
   enqueueEvent: jest.fn(() => Promise.resolve()),
   enqueueEmail: jest.fn(() => Promise.resolve()),
   enqueueNotification: jest.fn(() => Promise.resolve()),
 }));
-jest.mock('../../src/core/services/getConfig', () => jest.fn((key, def) => Promise.resolve(def)));
+jest.mock('../../src/core/services/cacheHelper', () => ({
+  getOrSet: jest.fn((_key, fn) => fn()),
+  invalidateKey: jest.fn(() => Promise.resolve()),
+  invalidateKeys: jest.fn(() => Promise.resolve()),
+  _clearMemory: jest.fn(),
+}));
+jest.mock('../../src/core/services/emailService', () => ({
+  sendEmail: jest.fn(() => Promise.resolve()),
+  resolveEmailBrand: jest.fn(() => 'ghana'),
+}));
+jest.mock('../../src/core/services/getConfig', () => jest.fn((_key, def) => Promise.resolve(def)));
 jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
 
 const app = require('../../app');
 const prisma = require('../../src/core/services/prismaClient');
+const { signAccessToken } = require('../../config/jwt');
 
-const OWNER = { id: 'owner-1', name: 'Expedition-Go Tours', email: 'owner@test.com', roles: ['supplier'], active: true, photoURL: '', notificationPreferences: {} };
-const SUPPORT = { id: 'support-1', name: 'Support', email: 'support@test.com', roles: ['customer'], active: true, photoURL: '', notificationPreferences: null };
-const EDITOR = { id: 'editor-1', name: 'Editor', email: 'editor@test.com', roles: ['customer'], active: true, photoURL: '', notificationPreferences: null };
-const FINANCE = { id: 'finance-1', name: 'Finance', email: 'finance@test.com', roles: ['customer'], active: true, photoURL: '', notificationPreferences: null };
-const CUSTOMER = { id: 'customer-1', name: 'Traveller', email: 'traveller@test.com', roles: ['customer'], active: true, photoURL: '', notificationPreferences: null };
+const dbAvailable = process.env.TEST_DB_AVAILABLE === 'true';
+const describeDb = dbAvailable ? describe : describe.skip;
 
-const USERS = {
-  'owner-1': OWNER,
-  'support-1': SUPPORT,
-  'editor-1': EDITOR,
-  'finance-1': FINANCE,
-  'customer-1': CUSTOMER,
-};
+const PREFIX = 'cta-';
 
-const MEMBERS = {
-  'support@test.com': { roles: ['support'], role: 'support' },
-  'editor@test.com': { roles: ['editor'], role: 'editor' },
-  'finance@test.com': { roles: ['finance'], role: 'finance' },
-};
+/** Two businesses, so "sees only its own" has something to be measured against. */
+const OWNER1 = `${PREFIX}owner1`;
+const OWNER2 = `${PREFIX}owner2`;
+const SUPPORT1 = `${PREFIX}support1`;
+const SUPPORT2 = `${PREFIX}support2`;
+const EDITOR = `${PREFIX}editor`;
+const FINANCE = `${PREFIX}finance`;
+const TRAVELLER = `${PREFIX}traveller`;
 
-const auth = (user) => ({ Authorization: `Bearer ${signAccessToken({ userId: user.id })}` });
-const CONVERSATIONS = '/api/chat/conversations';
+const emailFor = (name) => `${name}@example.test`;
 
-beforeEach(() => {
-  jest.clearAllMocks();
+let convOwner1Id;
+let convOwner2Id;
+let tokens;
 
-  const models = ['tour', 'user', 'review', 'booking', 'specialOffer', 'payout', 'notification', 'teamMember', 'payoutRequest', 'dispute', 'cancellationRecord', 'wishlistItem'];
-  for (const m of models) {
-    prisma[m].findMany?.mockResolvedValue([]);
-    prisma[m].count?.mockResolvedValue(0);
-    if (prisma[m].aggregate) prisma[m].aggregate.mockResolvedValue({ _sum: {}, _avg: {}, _count: 0 });
-    if (prisma[m].groupBy) prisma[m].groupBy.mockResolvedValue([]);
-    if (prisma[m].update) prisma[m].update.mockResolvedValue({});
-    if (prisma[m].updateMany) prisma[m].updateMany.mockResolvedValue({ count: 0 });
-    if (prisma[m].create) prisma[m].create.mockResolvedValue({});
-    if (prisma[m].delete) prisma[m].delete.mockResolvedValue({});
-  }
+const auth = (who) => ({ Authorization: `Bearer ${tokens[who]}` });
 
-  prisma.user.findUnique.mockImplementation(({ where }) => Promise.resolve(USERS[where.id] || null));
-  prisma.user.findFirst.mockResolvedValue(null);
-  prisma.message.count.mockResolvedValue(0);
-  prisma.conversationParticipant.findMany.mockResolvedValue([]);
-
-  // Only the owner is a supplier in their own right; members reach the account
-  // through an ACCEPTED membership, and the traveller has neither.
-  prisma.supplierProfile.findFirst.mockImplementation(({ where }) => (
-    Promise.resolve(where.userId === 'owner-1' ? { id: 'profile-1' } : null)
-  ));
-
-  prisma.teamMember.findFirst.mockImplementation(({ where }) => {
-    const membership = MEMBERS[where?.email];
-    if (!membership || where?.status !== 'ACCEPTED') return Promise.resolve(null);
-    return Promise.resolve({ roles: membership.roles, role: membership.role, supplierId: 'owner-1' });
+async function upsertUser(name, data) {
+  return prisma.user.upsert({
+    where: { email: emailFor(name) },
+    update: data,
+    create: { firebaseUid: `test-${name}`, email: emailFor(name), photoURL: '', active: true, ...data },
   });
-});
+}
 
-describe('chat access for team members', () => {
+async function upsertMember(name, supplierId, roles) {
+  return prisma.teamMember.upsert({
+    where: { supplierId_email: { supplierId, email: emailFor(name) } },
+    update: { roles, role: roles[0], status: 'ACCEPTED' },
+    create: {
+      supplierId,
+      email: emailFor(name),
+      roles,
+      role: roles[0],
+      status: 'ACCEPTED',
+      acceptedAt: new Date(),
+    },
+  });
+}
+
+/** A `SUPPLIER_CUSTOMER` thread: that type is visible to both roles involved. */
+async function upsertConversation(key, ownerId, travellerId) {
+  const existing = await prisma.conversation.findFirst({
+    where: { title: `${PREFIX}${key}` },
+    include: { participants: true },
+  });
+  if (existing) return existing.id;
+
+  const created = await prisma.conversation.create({
+    data: {
+      title: `${PREFIX}${key}`,
+      type: 'SUPPLIER_CUSTOMER',
+      brand: 'ghana',
+      participants: { create: [{ userId: ownerId }, { userId: travellerId }] },
+    },
+    include: { participants: true },
+  });
+  return created.id;
+}
+
+describeDb('chat access for team members', () => {
+  jest.setTimeout(60000);
+
+  beforeAll(async () => {
+    await prisma.$connect();
+
+    tokens = {};
+
+    const owner1 = await upsertUser(OWNER1, { name: 'CTA Owner One', roles: ['supplier'] });
+    const owner2 = await upsertUser(OWNER2, { name: 'CTA Owner Two', roles: ['supplier'] });
+    const support1 = await upsertUser(SUPPORT1, { name: 'CTA Support One', roles: ['customer'] });
+    const support2 = await upsertUser(SUPPORT2, { name: 'CTA Support Two', roles: ['customer'] });
+    const editor = await upsertUser(EDITOR, { name: 'CTA Editor', roles: ['customer'] });
+    const finance = await upsertUser(FINANCE, { name: 'CTA Finance', roles: ['customer'] });
+    const traveller = await upsertUser(TRAVELLER, { name: 'CTA Traveller', roles: ['customer'] });
+
+    // `chat.view` is admin + support: the owner passes because they own a
+    // supplier profile, and the support members pass on their role. Editor and
+    // finance deliberately have neither.
+    await upsertMember(SUPPORT1, owner1.id, ['support']);
+    await upsertMember(SUPPORT2, owner2.id, ['support']);
+    await upsertMember(EDITOR, owner1.id, ['editor']);
+    await upsertMember(FINANCE, owner1.id, ['finance']);
+
+    convOwner1Id = await upsertConversation('conv-one', owner1.id, traveller.id);
+    convOwner2Id = await upsertConversation('conv-two', owner2.id, traveller.id);
+
+    for (const [who, user] of Object.entries({ owner1, owner2, support1, support2, editor, finance, traveller })) {
+      tokens[who] = signAccessToken({ userId: user.id });
+    }
+  });
+
+  afterAll(async () => {
+    await prisma.conversation.deleteMany({ where: { title: { startsWith: PREFIX } } });
+    await prisma.teamMember.deleteMany({ where: { email: { startsWith: PREFIX } } });
+    await prisma.user.deleteMany({ where: { email: { startsWith: PREFIX } } });
+    await prisma.$disconnect();
+  });
+
+  const idsIn = (res) => res.body.data.conversations.map((c) => c.id);
+
   it('refuses the supplier inbox to a member without chat.view (editor)', async () => {
-    const res = await request(app).get(CONVERSATIONS).set(auth(EDITOR));
+    const res = await request(app).get('/api/chat/conversations').set(auth('editor'));
 
     expect(res.status).toBe(403);
-    expect(prisma.conversationParticipant.findMany).not.toHaveBeenCalled();
   });
 
   it('refuses it to a finance member too', async () => {
-    const res = await request(app).get(CONVERSATIONS).set(auth(FINANCE));
+    const res = await request(app).get('/api/chat/conversations').set(auth('finance'));
 
     expect(res.status).toBe(403);
   });
 
-  it('serves it to a support member, scoped to the supplier account', async () => {
-    const res = await request(app).get(CONVERSATIONS).set(auth(SUPPORT));
+  it('serves owner one their own thread, and not the other business’s', async () => {
+    const res = await request(app).get('/api/chat/conversations').set(auth('owner1'));
 
     expect(res.status).toBe(200);
-    // The membership, not the member's own account, decides whose inbox this is.
-    expect(prisma.conversationParticipant.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { userId: 'owner-1' } }),
-    );
+    const ids = idsIn(res);
+    expect(ids).toContain(convOwner1Id);
+    // The leak the mocked suite could not express: a second supplier's thread
+    // is real, present, and must not appear here.
+    expect(ids).not.toContain(convOwner2Id);
   });
 
-  it('leaves the owner alone — they act as themselves, not as a member', async () => {
-    const res = await request(app).get(CONVERSATIONS).set(auth(OWNER));
+  it('serves owner two their own thread, and not the other business’s', async () => {
+    const res = await request(app).get('/api/chat/conversations').set(auth('owner2'));
 
     expect(res.status).toBe(200);
-    expect(prisma.conversationParticipant.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { userId: 'owner-1' } }),
-    );
+    const ids = idsIn(res);
+    expect(ids).toContain(convOwner2Id);
+    expect(ids).not.toContain(convOwner1Id);
   });
 
-  it('leaves a traveller alone — chat is their route too', async () => {
-    const res = await request(app).get(CONVERSATIONS).set(auth(CUSTOMER));
+  it('serves a support member the OWNER\'s thread, not the other business\'s', async () => {
+    const res = await request(app).get('/api/chat/conversations').set(auth('support1'));
 
     expect(res.status).toBe(200);
-    expect(prisma.conversationParticipant.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { userId: 'customer-1' } }),
-    );
+    const ids = idsIn(res);
+    // The membership, not the member's own account, decides whose inbox this
+    // is — and it is scoped to that one account.
+    expect(ids).toContain(convOwner1Id);
+    expect(ids).not.toContain(convOwner2Id);
+    // The member is in no conversation of their own, so nothing of theirs can
+    // be mixed in either.
+    expect(ids).toEqual([convOwner1Id]);
+  });
+
+  it('scopes a second business\'s support member the same way, in reverse', async () => {
+    const res = await request(app).get('/api/chat/conversations').set(auth('support2'));
+
+    expect(res.status).toBe(200);
+    expect(idsIn(res)).toEqual([convOwner2Id]);
+  });
+
+  it('leaves a traveller alone — chat is their route too, and both threads are theirs', async () => {
+    const res = await request(app).get('/api/chat/conversations').set(auth('traveller'));
+
+    expect(res.status).toBe(200);
+    const ids = idsIn(res);
+    expect(ids).toContain(convOwner1Id);
+    expect(ids).toContain(convOwner2Id);
+  });
+
+  it('rejects a caller with no token at all', async () => {
+    const res = await request(app).get('/api/chat/conversations');
+
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a forged token', async () => {
+    const res = await request(app)
+      .get('/api/chat/conversations')
+      .set('Authorization', 'Bearer not-a-real-token');
+
+    expect(res.status).toBe(401);
   });
 });
