@@ -452,7 +452,10 @@ const getTourBySlug = catchAsync(async (req, res, next) => {
                 },
               },
             },
-            _count: { select: { reviews: true } },
+            // APPROVED only — same reasoning as storefront.js: this is the
+            // customer-facing detail page, and the `Tour.reviewCount` column
+            // the listing cards read is maintained approved-only.
+            _count: { select: { reviews: { where: { status: 'APPROVED' } } } },
           },
         },
       },

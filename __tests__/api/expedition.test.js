@@ -412,13 +412,22 @@ describeDb('Expedition API (real DB)', () => {
       await request(app).get(`/api/expedition/tours/${SLUG_UNLISTED}`).expect(404);
     });
 
-    it('counts every review row, moderated or not', async () => {
+    it('counts only moderated reviews, matching what the listing shows', async () => {
       const res = await request(app).get(`/api/expedition/tours/${SLUG_A}`).expect(200);
 
-      // `_count: { select: { reviews } }` is deliberately unfiltered — three
-      // rows exist (2 APPROVED, 1 PENDING) — whereas `/reviews` below is scoped
-      // to APPROVED and reports two. The two numbers can therefore differ.
-      expect(res.body.data.tour.tour.reviewCount).toBe(3);
+      // Three review rows exist (2 APPROVED, 1 PENDING). This badge used to
+      // count all three while `/reviews` below reports two — and it sat right
+      // next to `averageRating`, which comes from `Tour.reviewCount`, a column
+      // ratingHelper maintains approved-only. So the page could advertise
+      // "3 reviews" above an average computed from two of them, above a list
+      // containing two.
+      expect(res.body.data.tour.tour.reviewCount).toBe(2);
+
+      const reviews = await request(app)
+        .get(`/api/reviews/tours/${tourA.id}`)
+        .expect(200);
+      expect(reviews.body.data.reviews).toHaveLength(2);
+      expect(reviews.body.data.reviews.every((r) => r.status === 'APPROVED')).toBe(true);
     });
   });
 

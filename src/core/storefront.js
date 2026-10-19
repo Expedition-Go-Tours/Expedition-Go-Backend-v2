@@ -940,7 +940,15 @@ controller.getTourBySlug = catchAsync(async (req, res, next) => {
                 },
               },
             },
-            _count: { select: { reviews: true } },
+            _count: {
+              // APPROVED only, to match the `Tour.reviewCount` column the
+              // listing cards use — that column is maintained exclusively by
+              // ratingHelper's add/remove/updateApprovedRating, and the review
+              // list endpoint also filters to APPROVED. Counting every row
+              // here put PENDING, REJECTED and FLAGGED reviews in a badge
+              // sitting next to an approved-only rating from the same row.
+              select: { reviews: { where: { status: 'APPROVED' } } },
+            },
           },
         },
       },
