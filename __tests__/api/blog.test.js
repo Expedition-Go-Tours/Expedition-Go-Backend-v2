@@ -540,11 +540,13 @@ describeDb('Blog API', () => {
 
       // The increment is deliberately fire-and-forget in the handler, so the
       // row has to be polled for rather than assumed to be written already.
+      // `> before` rather than `>= 1`, so a fixture that ever starts above
+      // zero still waits instead of passing on an already-satisfied check.
       const counted = await eventually(async () => {
         const now = await viewCountOf(SLUG_VIEWS);
-        return now >= 1 ? now : null;
+        return now > before ? now : null;
       });
-      expect(counted).toBe(1);
+      expect(counted).toBe(before + 1);
 
       // A second read from the same viewer, of a *different* article, must not
       // add a view either — the window is 30 minutes per reader.
@@ -564,6 +566,9 @@ describeDb('Blog API', () => {
       // never populated and the branch is unreachable here. The token below is
       // deliberately presented without being required, to pin that reality
       // rather than the intent.
+      const before = await viewCountOf(SLUG_ADMIN_VIEWS);
+      expect(before).toBe(5);
+
       const res = await request(app)
         .get(`/api/blog/articles/${SLUG_ADMIN_VIEWS}`)
         .set(auth())
@@ -571,8 +576,16 @@ describeDb('Blog API', () => {
         .expect(200);
 
       expect(res.body.data.article.slug).toBe(SLUG_ADMIN_VIEWS);
-      await eventually(async () => (await viewCountOf(SLUG_ADMIN_VIEWS)) >= 1);
-      expect(await viewCountOf(SLUG_ADMIN_VIEWS)).toBe(6);
+
+      // The increment is fire-and-forget, so the row has to be polled for.
+      // The condition must be `> before`, not `>= 1`: the fixture already
+      // starts at 5, and a `>= 1` poll returns on its first check without
+      // waiting at all — which reads the row before the write lands.
+      const counted = await eventually(async () => {
+        const now = await viewCountOf(SLUG_ADMIN_VIEWS);
+        return now > before ? now : null;
+      });
+      expect(counted).toBe(before + 1);
     });
 
     it('falls through to the list endpoint when no slug is given', async () => {
@@ -934,12 +947,16 @@ describeDb('Blog API', () => {
       expect(res.body.data.article.body).toEqual(PORTABLE_TEXT);
     });
 
-    it('returns a draft to an admin', async () => {
+    it('returns a draft to an admin, and says so', async () => {
       const draft = await prisma.article.findUnique({ where: { slug: SLUG_DRAFT } });
       const res = await request(app).get(`/api/blog/admin/articles/${draft.id}`).set(auth());
 
       expect(res.status).toBe(200);
       expect(res.body.data.article.slug).toBe(SLUG_DRAFT);
+      // The detail projection has to report the status, otherwise an editor
+      // opening a draft cannot be told it is one from the response they
+      // just asked for.
+      expect(res.body.data.article.status).toBe('DRAFT');
     });
 
     it('returns 404 for a non-existent id', async () => {
@@ -972,11 +989,9 @@ describeDb('Blog API', () => {
         });
 
       expect(res.status).toBe(201);
-      // Note the detail projection omits `status` entirely — the list
-      // projection carries it, the detail one does not — so it can only be
-      // read back out of the table here.
       expect(res.body.data.article).toMatchObject({
         slug,
+        status: 'PUBLISHED',
         author: { id: adminId },
         category: { id: categoryDestinationsId },
       });

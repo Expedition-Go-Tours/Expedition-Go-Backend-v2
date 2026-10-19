@@ -78,6 +78,10 @@ function transformArticleDetail(article) {
     metaTitle: article.metaTitle,
     metaDescription: article.metaDescription,
     canonicalUrl: article.canonicalUrl,
+    // The list projection has always carried this; the detail one omitted it,
+    // so an editor opening a draft could not be told it was a draft from the
+    // response they had just requested.
+    status: article.status,
     category: article.category ? { id: article.category.id, name: article.category.name, slug: article.category.slug } : null,
     tags: article.tags?.map((t) => ({ id: t.tag.id, name: t.tag.name, slug: t.tag.slug })) || [],
     author: article.author ? { id: article.author.id, name: article.author.name, photoURL: article.author.photoURL || null } : null,
