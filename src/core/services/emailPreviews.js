@@ -60,7 +60,7 @@ const SAMPLE = {
   // experience
   tourTitle: 'Accra Flying Dress Experience',
   tourImageUrl:
-    'https://res.cloudinary.com/dfpagrtoy/image/upload/c_fill,g_auto,w_1200,h_520/v1787749419/user-photos/f7k7m3eeasci5xgt0csk.png',
+    'https://res.cloudinary.com/dfpagrtoy/image/upload/c_fill,g_auto,w_1200,h_520,f_jpg,q_auto/v1787749419/user-photos/f7k7m3eeasci5xgt0csk.png',
   dateLabel: 'Wed, 4 Nov 2026',
   experienceDateLabel: 'Wed, 4 Nov 2026',
   timeLabel: '09:00',

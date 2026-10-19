@@ -1,4 +1,4 @@
-const { formatTravelers, getBookingTypeLabel, formatCompactDate, formatCardBrand, formatPaymentMethodLabel } = require('../../src/core/services/emailFormatting');
+const { formatTravelers, getBookingTypeLabel, formatCompactDate, formatCardBrand, formatPaymentMethodLabel, emailPhotoUrl, HERO_TRANSFORM, CARD_TRANSFORM } = require('../../src/core/services/emailFormatting');
 
 /**
  * formatCompactDate — the "Reserved 9 Oct 2026" reference-bar form.
@@ -220,5 +220,72 @@ describe('getBookingTypeLabel', () => {
     expect(getBookingTypeLabel({})).toBe('Shared');
     expect(getBookingTypeLabel(undefined)).toBe('Shared');
     expect(getBookingTypeLabel({ bookingAndTickets: {} })).toBe('Shared');
+  });
+});
+
+/**
+ * emailPhotoUrl — delivery sizing for photos embedded in emails.
+ *
+ * Cover photos are unoptimized uploads (measured 100KB-4MB, PNG included) and
+ * mail clients download full bytes on open (Gmail app on mobile over
+ * cellular), so every photo must request only the box it renders in. These
+ * rules pin the wire format; the send-path behaviour is asserted in
+ * bookingConfirmedEmail.test.js.
+ */
+describe('emailPhotoUrl', () => {
+  const T = 'c_fill,g_auto,w_240,h_240,f_jpg,q_auto';
+
+  it('inserts the transform after /upload/ on a versioned Cloudinary source', () => {
+    expect(
+      emailPhotoUrl('https://res.cloudinary.com/dfpagrtoy/image/upload/v1790968229/user-photos/a.jpg', T),
+    ).toBe('https://res.cloudinary.com/dfpagrtoy/image/upload/c_fill,g_auto,w_240,h_240,f_jpg,q_auto/v1790968229/user-photos/a.jpg');
+  });
+
+  it('transforms version-less Cloudinary folder URLs too', () => {
+    expect(
+      emailPhotoUrl('https://res.cloudinary.com/dfpagrtoy/image/upload/user-photos/a.jpg', T),
+    ).toBe('https://res.cloudinary.com/dfpagrtoy/image/upload/c_fill,g_auto,w_240,h_240,f_jpg,q_auto/user-photos/a.jpg');
+  });
+
+  it('leaves a URL that already carries a transformation untouched', () => {
+    const src = 'https://res.cloudinary.com/dfpagrtoy/image/upload/w_100,c_fill/v1/x.jpg';
+    expect(emailPhotoUrl(src, T)).toBe(src);
+  });
+
+  it('leaves signed (query-string) URLs untouched', () => {
+    const src = 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1/x.jpg?s=abc123';
+    expect(emailPhotoUrl(src, T)).toBe(src);
+  });
+
+  it('passes non-Cloudinary hosts through untouched', () => {
+    const src = 'https://firebasestorage.googleapis.com/v0/b/x/o/img.png?alt=media';
+    expect(emailPhotoUrl(src, T)).toBe(src);
+    const google = 'https://lh3.googleusercontent.com/a/x=s96-c';
+    expect(emailPhotoUrl(google, T)).toBe(google);
+  });
+
+  it('passes a Cloudinary URL without the upload marker through untouched', () => {
+    const src = 'https://res.cloudinary.com/dfpagrtoy/demo/other/x.jpg';
+    expect(emailPhotoUrl(src, T)).toBe(src);
+  });
+
+  it('returns empty for missing or non-string input', () => {
+    expect(emailPhotoUrl('', T)).toBe('');
+    expect(emailPhotoUrl(null, T)).toBe('');
+    expect(emailPhotoUrl(undefined, T)).toBe('');
+    expect(emailPhotoUrl(42, T)).toBe('');
+    expect(emailPhotoUrl('   ', T)).toBe('');
+  });
+
+  it('requests a universal, quality-adapted encoding in both email specs', () => {
+    // f_jpg (never f_auto): WebP breaks in Outlook and in proxy caches.
+    // q_auto: Cloudinary's fixed default quality ships multi-MB PNG heroes.
+    for (const spec of [HERO_TRANSFORM, CARD_TRANSFORM]) {
+      expect(spec).toContain('f_jpg');
+      expect(spec).toContain('q_auto');
+      expect(spec).not.toContain('f_auto');
+      expect(spec).toContain('c_fill');
+      expect(spec).toContain('g_auto');
+    }
   });
 });

@@ -115,7 +115,7 @@ describe('supplier reserve-later email', () => {
   it('inserts a Cloudinary crop into the hero image', async () => {
     await sendSupplierReserveLaterEmail(booking());
     expect(htmlOf()).toContain(
-      "url('https://res.cloudinary.com/dfpagrtoy/image/upload/c_fill,g_auto,w_1200,h_520/v1787749419/user-photos/abc.png')"
+      "url('https://res.cloudinary.com/dfpagrtoy/image/upload/c_fill,g_auto,w_1200,h_520,f_jpg,q_auto/v1787749419/user-photos/abc.png')"
     );
   });
 
@@ -135,7 +135,7 @@ describe('supplier reserve-later email', () => {
     await sendSupplierReserveLaterEmail(booking({
       tour: { ...booking().tour, coverPhoto: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1/cover.png' },
     }));
-    expect(htmlOf()).toContain('/upload/c_fill,g_auto,w_1200,h_520/v1/cover.png');
+    expect(htmlOf()).toContain('/upload/c_fill,g_auto,w_1200,h_520,f_jpg,q_auto/v1/cover.png');
   });
 
   it('degrades to the gradient (no empty url) when the tour has no photo', async () => {

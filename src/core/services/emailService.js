@@ -475,29 +475,16 @@ function profileAvatarUrl(url) {
 /**
  * Wide hero image behind a media-header banner.
  *
- * Cloudinary sources get an explicit crop so a 4000px original is never pulled
- * for a header that renders 640px wide (`c_fill,g_auto,w_1200,h_520`, the box
- * the artwork is drawn against). Non-Cloudinary hosts pass through untouched,
- * and a source that already carries a transformation is left alone because
- * Cloudinary refuses a second plain transformation before the version.
+ * Sizing lives in emailFormatting (emailPhotoUrl + HERO_TRANSFORM): the
+ * same crop/quality/format rules back every photo surface, and the
+ * non-Cloudinary passthrough means a Firebase-hosted cover is still emitted
+ * (just at full size). Quotes are stripped because this is interpolated into
+ * url('…') inside a style attribute.
  */
-const HERO_TRANSFORM = 'c_fill,g_auto,w_1200,h_520';
-
 function heroImageUrl(tour) {
   const raw = (tour && (tour.coverPhoto || (Array.isArray(tour.photos) ? tour.photos[0] : ''))) || '';
   if (typeof raw !== 'string' || !raw.trim()) return '';
-  // Strip quotes: this is interpolated into url('…') inside a style attribute.
-  const src = raw.trim().replace(/['"]/g, '');
-  if (!src.includes('res.cloudinary.com')) return src;
-
-  const marker = '/upload/';
-  const at = src.indexOf(marker);
-  if (at === -1) return src;
-  const rest = src.slice(at + marker.length);
-  const firstSegment = rest.split('/')[0] || '';
-  // /upload/v178…/x.jpg carries no transformation; /upload/w_100,c_fill/… does.
-  if (firstSegment && !/^v\d+$/.test(firstSegment)) return src;
-  return `${src.slice(0, at + marker.length)}${HERO_TRANSFORM}/${rest}`;
+  return fmt.emailPhotoUrl(raw.trim().replace(/['"]/g, ''), fmt.HERO_TRANSFORM);
 }
 
 /**
@@ -715,7 +702,12 @@ async function buildSimilarTours(tour, brandKey, origin, limit = 3) {
         const price = cheapestRetailPrice(t.schedulesAndPricing);
         return {
           url: emailUrls.viewTour(t.id, t.slug, origin),
-          imageUrl: t.coverPhoto || (Array.isArray(t.photos) && t.photos[0]) || '',
+          // Cards render at 120x120; the raw cover is an unoptimized upload
+          // (up to ~4MB), so request the card's box instead — see CARD_TRANSFORM.
+          imageUrl: fmt.emailPhotoUrl(
+            t.coverPhoto || (Array.isArray(t.photos) && t.photos[0]) || '',
+            fmt.CARD_TRANSFORM,
+          ),
           title: t.title || '',
           place: t.city || t.region || '',
           hasRating: rating != null && reviews > 0,

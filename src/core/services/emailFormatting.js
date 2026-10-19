@@ -379,6 +379,59 @@ function pickupAddressLabel(pickupLike) {
   return pickup.address?.address || pickup.address?.name || pickup.place || pickup.areaName || pickup.locationName || '';
 }
 
+/**
+ * Cloudinary delivery transforms for photos embedded in emails.
+ *
+ * Mail clients proxy and cache every image, and the Gmail app on mobile
+ * downloads the full bytes over cellular on first open — while cover photos
+ * are unoptimized uploads (measured 100KB-4MB, PNG included). Every photo
+ * must therefore request only the box it renders in, in a universally
+ * decodable encoding:
+ * - f_jpg (deliberately NOT f_auto): WebP served via f_auto breaks in
+ *   Outlook and in proxies that cache the wrong variant; JPEG decodes
+ *   everywhere.
+ * - q_auto: adapts quality to content instead of Cloudinary's fixed default.
+ *
+ * HERO: the media-header artwork is drawn against a 640px-wide box (2x for
+ * retina) at the banner's 1200:520 aspect.
+ * CARD: the similar-tour cards render at 120x120 (2x for retina).
+ */
+const HERO_TRANSFORM = 'c_fill,g_auto,w_1200,h_520,f_jpg,q_auto';
+const CARD_TRANSFORM = 'c_fill,g_auto,w_240,h_240,f_jpg,q_auto';
+
+/** `/upload/w_100,c_fill/...`-style first segment: comma-joined `xx_value` flags. */
+const CLOUDINARY_TRANSFORM_SEGMENT = /^[a-z]{1,3}_[^,/]+(,[a-z]{1,3}_[^,/]+)*$/;
+
+/**
+ * Insert a Cloudinary delivery transform into a photo URL.
+ *
+ * Rules:
+ * - Cloudinary sources get `transform` inserted after `/upload/`, covering
+ *   both versioned (`/upload/v123/x.jpg`) and version-less
+ *   (`/upload/user-photos/x.jpg`) delivery URLs.
+ * - A source that already carries a transformation is left alone: the stored
+ *   transform may derive from a smaller derivative, so re-specifying the
+ *   box could upscale, and the true source size is unknowable.
+ * - A URL with a query string is left alone: signed delivery (`?s=`) breaks
+ *   the moment the transformation changes the payload.
+ * - Non-Cloudinary hosts (Firebase storage, googleusercontent, ...) pass
+ *   through untouched — they resize via their own URL dialect.
+ */
+function emailPhotoUrl(url, transform) {
+  if (typeof url !== 'string' || !url.trim()) return '';
+  const src = url.trim();
+  if (!src.includes('res.cloudinary.com')) return src;
+  const queryAt = src.search(/[?#]/);
+  if (queryAt !== -1) return src;
+  const marker = '/upload/';
+  const at = src.indexOf(marker);
+  if (at === -1) return src;
+  const rest = src.slice(at + marker.length);
+  const firstSegment = rest.split('/')[0] || '';
+  if (CLOUDINARY_TRANSFORM_SEGMENT.test(firstSegment)) return src;
+  return `${src.slice(0, at + marker.length)}${transform}/${rest}`;
+}
+
 module.exports = {
   formatCurrency,
   formatCompactDate,
@@ -398,4 +451,7 @@ module.exports = {
   formatCardLast4,
   formatCardBrand,
   formatPaymentMethodLabel,
+  emailPhotoUrl,
+  HERO_TRANSFORM,
+  CARD_TRANSFORM,
 };

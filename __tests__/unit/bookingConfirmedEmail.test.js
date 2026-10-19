@@ -285,9 +285,10 @@ describe('sendBookingConfirmedEmail', () => {
     expect(html).toContain(fmt.formatDateTime(deadline));
     // bookedAtLabel
     expect(html).toContain(fmt.formatCompactDate(new Date('2026-06-20T00:00:00Z')));
-    // hero image is Cloudinary-transformed, not the raw original
+    // hero image is Cloudinary-transformed (crop + jpg/q_auto) for delivery,
+    // not the raw original
     expect(html).toContain(
-      'https://res.cloudinary.com/dfpagrtoy/image/upload/c_fill,g_auto,w_1200,h_520/v1787749419/user-photos/abc.png',
+      'https://res.cloudinary.com/dfpagrtoy/image/upload/c_fill,g_auto,w_1200,h_520,f_jpg,q_auto/v1787749419/user-photos/abc.png',
     );
     expect(html).not.toContain('{{');
     expect(html).not.toContain('\u2014');
@@ -335,7 +336,8 @@ describe('sendBookingConfirmedEmail', () => {
             id: 'tour-2',
             title: 'Jamestown Walking Tour',
             slug: 'jamestown-walking-tour',
-            coverPhoto: 'https://img/2.png',
+            coverPhoto:
+              'https://res.cloudinary.com/dfpagrtoy/image/upload/v1790968229/user-photos/sim2.jpg',
             photos: [],
             city: 'Accra',
             region: 'Greater Accra',
@@ -366,5 +368,13 @@ describe('sendBookingConfirmedEmail', () => {
     expect(html).toContain('214 reviews');
     expect(html).toContain('$38.00');
     expect(html).toContain('https://travioafrica.com/tour/tour-2/jamestown-walking-tour');
+    // Card images render at 120x120; the 1200px+ original must never ship —
+    // request the card's box (2x retina) in a universal encoding instead.
+    expect(html).toContain(
+      'https://res.cloudinary.com/dfpagrtoy/image/upload/c_fill,g_auto,w_240,h_240,f_jpg,q_auto/v1790968229/user-photos/sim2.jpg',
+    );
+    expect(html).not.toContain(
+      'https://res.cloudinary.com/dfpagrtoy/image/upload/v1790968229/user-photos/sim2.jpg"',
+    );
   });
 });
