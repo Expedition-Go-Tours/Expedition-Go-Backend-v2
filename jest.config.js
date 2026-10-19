@@ -4,7 +4,7 @@ module.exports = {
   verbose: true,
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'json-summary'],
-  coveragePathIgnorePatterns: ['/node_modules/', '/generated/', 'bm25Index.js', 'xgboostService.js', 'clipClient.js', 'clipService.py', 'homepageRanking.js', 'aiContentAnalyzer.js', 'aiCronFallback.js'],
+  coveragePathIgnorePatterns: ['/node_modules/', '/generated/', 'bm25Index.js', 'xgboostService.js', 'clipClient.js', 'clipService.py', 'aiContentAnalyzer.js', 'aiCronFallback.js'],
   setupFiles: ['./jest.setup.js'],
   globalSetup: './jest.globalSetup.js',
   testTimeout: 30000,

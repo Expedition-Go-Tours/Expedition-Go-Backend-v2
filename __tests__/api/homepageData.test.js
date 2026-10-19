@@ -4,28 +4,26 @@
  * right call for what that file tests (whether a cache hit passes through and a
  * cache miss recomputes and enqueues precompute), but it meant the page was
  * never once assembled from data. Forty tests cover the ranking services and
- * not one of them is gated on a database; `homepageRanking.js` is also in
- * `coveragePathIgnorePatterns`, so nothing measures it either.
+ * not one of them is gated on a database.
  *
- * The two tests here close the part that can be closed: `/api/homepage` against
- * a real database and a cold cache, on the assumption that a 500 on this page
- * is the most expensive failure the API has.
+ * The two tests here close the part that can be closed at the endpoint's level:
+ * `/api/homepage` against a real database and a cold cache, on the assumption
+ * that a 500 on this page is the most expensive failure the API has.
  *
  * ────────────────────────────────────────────────────────────────────────────
- * WHAT IS DELIBERATELY NOT COVERED, AND WHY
+ * THE LOCATION TIER — NOW COVERED, AND HOW IT GOT THAT WAY
  *
  * The location tier — `getLocationTourIds`, a `$queryRaw` joining
  * `SupplierProfile` on `sp."userId" = t."supplierId"` while requiring
  * `sp.status = 'ACTIVE'`, matching city / destinationCity / region /
  * "<region> region" / unnest(attractions) / unnest(tags) with three LIKE shapes
  * — is the single most load-bearing raw query in the codebase. It feeds six
- * production call sites, it is the query behind a reported-and-never-reproduced
- * production `42601 syntax error at or near "$1"`, and it is exactly what this
- * suite was written to exercise. It cannot be run here.
+ * production call sites, and it is the query behind a reported-and-never-
+ * reproduced production `42601 syntax error at or near "$1"`.
  *
- * Every variant fails under Jest with that same 42601, and the identical query
- * succeeds outside Jest against the identical database. Established by
- * bisection:
+ * It could not be executed under Jest when this file was written. Every
+ * variant failed with that same 42601 while the identical query succeeded
+ * outside Jest against the identical database. Established by bisection:
  *
  *   - the failure is deterministic under Jest, and absent outside it. A probe
  *     using a unique city name — which can never match and, being an empty
@@ -40,12 +38,14 @@
  *   - it is specific to that case: plain parameters, several of them, and
  *     `Prisma.sql` fragments all execute correctly under Jest.
  *
- * This is a test-environment incompatibility, not a production bug: the
- * function returns the correct tour ids in a plain Node process, and the
- * production homepage serves. It is written down rather than skipped in silence
- * because it is the reason this path has never had a single assertion, and
- * because whoever fixes it should find the reproduction already reduced to one
- * line.
+ * It was a test-harness incompatibility, not a production bug — and it is now
+ * fixed in the harness (`jest.setup.js` rebuilds tagged `$queryRaw` arguments
+ * and delegates to `$queryRawUnsafe`, splicing fragments on `{strings, values}`).
+ * The function has real assertions in `homepageRanking.test.js`, including the
+ * `Prisma.empty` branch that used to be the failing one. The bisection above is
+ * kept because it is the diagnosis of a production incident, and because the
+ * next fragment-shaped incompatibility should start from a known minimal repro
+ * rather than from scratch.
  */
 
 const request = require('supertest');
