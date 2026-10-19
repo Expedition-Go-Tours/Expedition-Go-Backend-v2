@@ -24,9 +24,16 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 }
 
 /**
- * Resolve a city name to the centroid (average lat/lng) of its ACTIVE,
- * geolocated tours. Cached for an hour; returns null when the city has no
- * geolocated tours (the listing then simply falls back to its default order).
+ * Resolve a city or region name to the centroid (average lat/lng) of its
+ * ACTIVE, geolocated tours. Cached for an hour; returns null when the name
+ * matches neither a city nor a region with geolocated tours (the listing then
+ * simply falls back to its default order).
+ *
+ * Region-shaped names are first-class callers: the location filter stores
+ * REGIONS ("Greater Accra Region"), and a city-equality miss therefore falls
+ * back to matching `region` with and without the " Region" suffix — stored
+ * region values are mostly suffixed, with occasional bare strays
+ * ("Greater Accra"), so both forms are attempted.
  *
  * @param {string} city
  * @returns {Promise<{ lat: number, lng: number, city: string } | null>}
@@ -37,16 +44,29 @@ async function resolveCityCentroid(city) {
 
   const key = `hp:loctier:centroid:${name.toLowerCase()}`;
   return cache.getOrSet(key, async () => {
-    const rows = await prisma.tour.findMany({
+    const geolocated = { latitude: { not: null }, longitude: { not: null } };
+    let rows = await prisma.tour.findMany({
       where: {
         status: 'ACTIVE',
         city: { equals: name, mode: 'insensitive' },
-        latitude: { not: null },
-        longitude: { not: null },
+        ...geolocated,
       },
       select: { latitude: true, longitude: true },
       take: 200,
     });
+    if (rows.length === 0) {
+      const bare = name.replace(/\s+Region$/i, '');
+      const regionForms = [...new Set([name, bare, `${bare} Region`])];
+      rows = await prisma.tour.findMany({
+        where: {
+          status: 'ACTIVE',
+          region: { in: regionForms, mode: 'insensitive' },
+          ...geolocated,
+        },
+        select: { latitude: true, longitude: true },
+        take: 200,
+      });
+    }
     if (rows.length === 0) return null;
     const lat = rows.reduce((s, r) => s + r.latitude, 0) / rows.length;
     const lng = rows.reduce((s, r) => s + r.longitude, 0) / rows.length;

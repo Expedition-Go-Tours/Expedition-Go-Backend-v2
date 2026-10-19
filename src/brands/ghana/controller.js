@@ -173,7 +173,11 @@ const getTours = catchAsync(async (req, res) => {
     if (category) tourWhere.category = category;
     if (city) tourWhere.city = city;
     if (country) tourWhere.country = country;
-    // `near` = order results by proximity to this city (keep all).
+    // `near` = proximity metadata for the searched place. When it is the ONLY
+    // scoping param it also scopes the listing (see placeQuery below): the
+    // homepage's location filter and every "view all" link carry the searched
+    // location as `near`, and a heading that says "near X" must not show the
+    // whole country.
     const centroid = near ? await resolveCityCentroid(near) : null;
     // `place=<name>` = GYG-style place scope. `q=<raw>` = the unified form where
     // the SERVER decides: resolve the query, scope to the place when it is one
@@ -185,7 +189,8 @@ const getTours = catchAsync(async (req, res) => {
     // Scope metadata returned to the client so it can label a widened result.
     let placeScope = null;
     let effectiveSearch = search;
-    const placeQuery = place || q;
+    const nearOnly = !place && !q && !!near;
+    const placeQuery = place || q || (nearOnly ? near : null);
     if (placeQuery) {
       const { resolved, ids, localIds, nearIds, regionFallback } = await placeTourIds(placeQuery, { ghanaOnly: true });
       if (resolved && ids) {
@@ -224,7 +229,11 @@ const getTours = catchAsync(async (req, res) => {
         // rather than by a second client request.
         effectiveSearch = q;
         placeScope = { requested: q, displayName: q, mode: 'text', fallbackRegion: null, region: null };
-      } else {
+      } else if (!nearOnly) {
+        // `place`/`q` naming nothing → nothing matches. An unresolvable `near`
+        // is different: it only ever hinted proximity, so it keeps the full
+        // list (placeScope stays null → the client shows it unscoped) instead
+        // of blanking the page.
         tourWhere.id = { in: [] };
       }
     }

@@ -49,6 +49,10 @@ const baseTour = {
   country: 'Ghana',
   description: 'Fixture tour for the region-fallback suite.',
   photos: [],
+  // coverPhoto set: tours.test.js binds the first ACTIVE tour's coverPhoto,
+  // and a null-rated, coverPhoto-less fixture sorts to row 1 while this
+  // suite's window is open (DESC NULLS FIRST).
+  coverPhoto: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1/seed/rlf-cover.jpg',
   tags: [],
   // No latitude/longitude: see the file header. Coordinates would pull these
   // into the radius band and make "the town has no tours" untrue.

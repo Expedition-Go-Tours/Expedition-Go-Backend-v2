@@ -53,13 +53,38 @@ describeDb('GET /api/tours', () => {
   };
   const activeCount = () => prisma.tour.count({ where: CATALOGUE_VISIBLE });
 
+  /**
+   * `count → request` pairs race with the other real-DB suites: jest runs
+   * suites in parallel against one `travio_test` database, and any seeder's
+   * beforeAll/afterAll window (a suite creating or wiping its ACTIVE tours)
+   * can open between the two steps — `toursNearScope.test.js`, `tvg-`,
+   * `soff-` and friends all do this legitimately. When that happens the
+   * endpoint's answer and the count taken a moment earlier disagree without
+   * either being wrong.
+   *
+   * So the count is taken AFTER the response — shrinking the gap to the
+   * count query itself — and a mismatch is retried with the listing cache
+   * dropped so the next response recomputes. A genuinely dropped filter
+   * fails every attempt and the assertion below still catches it; a schedule
+   * collision passes on the next attempt.
+   */
+  const getListingWithExpectedCount = async (path, countWhere = CATALOGUE_VISIBLE) => {
+    let res;
+    let expected;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await cache.invalidateKeys([cache.TOUR_LIST_PREFIX, cache.TOUR_FILTERS_KEY]);
+      res = await request(app).get(path);
+      expected = await prisma.tour.count({ where: countWhere });
+      if (res.body.data.pagination.totalCount === expected) break;
+    }
+    return { res, expected };
+  };
+
   it('returns 200 with a non-empty paginated catalogue', async () => {
-    const seeded = await activeCount();
+    const { res, expected: seeded } = await getListingWithExpectedCount('/api/tours');
     // If this fails there is nothing to read and the rest of the suite is
     // vacuous — it is the guard that makes the other assertions mean anything.
     expect(seeded).toBeGreaterThan(0);
-
-    const res = await request(app).get('/api/tours');
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('success');
@@ -112,39 +137,54 @@ describeDb('GET /api/tours', () => {
   });
 
   it('walks pages without repeating or dropping tours', async () => {
-    const seeded = await activeCount();
+    // A page walk compares responses fetched moments apart, so the catalogue
+    // size must not move mid-walk — but other real-DB suites create and wipe
+    // ACTIVE tours concurrently (see getListingWithExpectedCount). The walk
+    // brackets itself with counts: unchanged before/after means it saw one
+    // stable catalogue, and the invariants are checked against that size. A
+    // real pagination bug (a repeated id, a short page, wrong flags) fails
+    // every attempt; only a schedule collision passes on a retry.
     const limit = 5;
-    const first = await request(app).get(`/api/tours?limit=${limit}&page=1`);
-    const second = await request(app).get(`/api/tours?limit=${limit}&page=2`);
+    let seeded;
+    let first;
+    let second;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await cache.invalidateKeys([cache.TOUR_LIST_PREFIX, cache.TOUR_FILTERS_KEY]);
+      seeded = await activeCount();
+      first = await request(app).get(`/api/tours?limit=${limit}&page=1`);
+      second = await request(app).get(`/api/tours?limit=${limit}&page=2`);
+      if ((await activeCount()) === seeded) break;
+    }
 
+    expect(seeded).toBeGreaterThan(0);
     expect(first.body.data.tours.length).toBe(Math.min(limit, seeded));
     expect(first.body.data.pagination.hasPrevPage).toBe(false);
     expect(first.body.data.pagination.hasNextPage).toBe(seeded > limit);
 
-    const lastPage = Math.ceil(seeded / limit);
-    if (lastPage > 1) {
-      expect(second.body.data.pagination.hasPrevPage).toBe(true);
-      expect(second.body.data.tours.length).toBe(seeded - limit);
-      expect(second.body.data.pagination.hasNextPage).toBe(false);
+    // The catalogue is bigger than two pages once enough suites seed at once,
+    // so page 2 is asserted against the general formula — full until the
+    // remainder — rather than assuming it is the last page.
+    expect(second.body.data.pagination.hasPrevPage).toBe(true);
+    expect(second.body.data.tours.length).toBe(Math.min(limit, Math.max(0, seeded - limit)));
+    expect(second.body.data.pagination.hasNextPage).toBe(seeded > limit * 2);
+    expect(second.body.data.pagination.totalPages).toBe(Math.ceil(seeded / limit));
 
-      const firstIds = first.body.data.tours.map((t) => t.id);
-      const secondIds = second.body.data.tours.map((t) => t.id);
-      expect(secondIds.filter((id) => firstIds.includes(id))).toEqual([]);
-    }
+    const firstIds = first.body.data.tours.map((t) => t.id);
+    const secondIds = second.body.data.tours.map((t) => t.id);
+    expect(secondIds.filter((id) => firstIds.includes(id))).toEqual([]);
   });
 
   it('filters by category against the scalar column', async () => {
     // `buildTourFilters` reads the `category` column, not the `categorization`
     // JSON — seeding only the JSON would silently return everything.
-    const expected = await prisma.tour.count({
-      where: { ...CATALOGUE_VISIBLE, category: { equals: 'Adventure', mode: 'insensitive' } },
+    const { res, expected } = await getListingWithExpectedCount('/api/tours?category=Adventure', {
+      ...CATALOGUE_VISIBLE,
+      category: { equals: 'Adventure', mode: 'insensitive' },
     });
     expect(expected).toBeGreaterThan(0);
 
-    const res = await request(app).get('/api/tours?category=Adventure');
-
     expect(res.status).toBe(200);
-    expect(res.body.data.tours.length).toBe(expected);
+    expect(res.body.data.tours.length).toBe(Math.min(expected, 12));
     expect(res.body.data.pagination.totalCount).toBe(expected);
     for (const tour of res.body.data.tours) {
       expect(tour.category.toLowerCase()).toBe('adventure');
@@ -153,14 +193,14 @@ describeDb('GET /api/tours', () => {
   });
 
   it('filters by city', async () => {
-    const expected = await prisma.tour.count({
-      where: { ...CATALOGUE_VISIBLE, city: { equals: 'Accra', mode: 'insensitive' } },
+    const { res, expected } = await getListingWithExpectedCount('/api/tours?city=Accra', {
+      ...CATALOGUE_VISIBLE,
+      city: { equals: 'Accra', mode: 'insensitive' },
     });
     expect(expected).toBeGreaterThan(0);
 
-    const res = await request(app).get('/api/tours?city=Accra');
-
-    expect(res.body.data.tours.length).toBe(expected);
+    expect(res.body.data.pagination.totalCount).toBe(expected);
+    expect(res.body.data.tours.length).toBe(Math.min(expected, 12));
     for (const tour of res.body.data.tours) {
       expect(tour.city.toLowerCase()).toBe('accra');
     }

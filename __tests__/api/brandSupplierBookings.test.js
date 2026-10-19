@@ -149,6 +149,10 @@ async function upsertTour(owner, key) {
       description: 'A tour that exists so a booking has somewhere to hang.',
       slug: `${PREFIX}${key}`,
       photos: [],
+      // coverPhoto set: tours.test.js binds the first ACTIVE tour's coverPhoto,
+      // and a null-rated, coverPhoto-less fixture sorts to row 1 while this
+      // suite's window is open (DESC NULLS FIRST).
+      coverPhoto: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1/seed/bsb-cover.jpg',
       categorization: {},
       theme: {},
       productContent: {},
