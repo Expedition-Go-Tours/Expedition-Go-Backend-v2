@@ -271,7 +271,18 @@ exports.getOffer = catchAsync(async (req, res, next) => {
 
 exports.updateOffer = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const existing = await prisma.specialOffer.findFirst({ where: { id, supplierId: req.supplierId } });
+  // `targets` has to come back WITH the offer. `overlapTargets` below falls back
+  // to `existing.targets` precisely so a date-only edit still runs the collision
+  // guard — and without this include that fallback was always empty, so a PUT
+  // that moved the window without restating the products skipped `assertNoOverlap`
+  // entirely. Two active offers could then cover the same product and period,
+  // which is the one thing the guard exists to prevent, and the mocked unit
+  // suite could not see it because its `existing` fixture carried the relation
+  // the real query never selected.
+  const existing = await prisma.specialOffer.findFirst({
+    where: { id, supplierId: req.supplierId },
+    include: { targets: { select: { tourId: true, tourOptionKey: true, tourOptionLabel: true } } },
+  });
   if (!existing) return next(new AppError('Offer not found', 404));
 
   const {
