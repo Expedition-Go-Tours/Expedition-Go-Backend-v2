@@ -80,6 +80,13 @@ describe('booking-confirmed artifact', () => {
     expect(html).toContain('{{#if bookedAtLabel}}Booked {{bookedAtLabel}}{{/if}}');
   });
 
+  it('ships the mobile shell gutter (8px wrapper, 16px inset) in the compiled artifact', () => {
+    const html = artifact();
+    expect(html).toContain('class="shell-pad"');
+    expect(html).toContain('.shell-pad { padding-left:8px !important; padding-right:8px !important; }');
+    expect(html).toContain('.pad { padding-left:16px !important; padding-right:16px !important; }');
+  });
+
   it('renders the four key facts as hosted PNG icon tiles, never inline SVG or emoji', () => {
     const html = artifact();
     expect((html.match(/<img src="/g) || []).length).toBeGreaterThanOrEqual(4);

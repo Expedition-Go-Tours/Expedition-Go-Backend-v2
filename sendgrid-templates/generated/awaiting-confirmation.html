@@ -33,7 +33,13 @@
   .media-header-scrim { background-image:linear-gradient(180deg, rgba(0,31,63,0.08) 0%, rgba(0,31,63,0.55) 55%, rgba(0,31,63,0.9) 100%) !important; background-color:transparent !important; }
   @media only screen and (max-width:640px) {
     .container { width:100% !important; }
-    .pad { padding-left:20px !important; padding-right:20px !important; }
+    /* Two padding jobs, one class: the shell wrapper AND every content row
+       carried .pad, so phones paid 20px twice (40px per side of a 375px
+       viewport) and the card read as a slim strip. The wrapper now has its
+       own .shell-pad hook: a thin 8px gutter that frames the rounded card
+       without eating the text column. */
+    .shell-pad { padding-left:8px !important; padding-right:8px !important; }
+    .pad { padding-left:16px !important; padding-right:16px !important; }
     .pad-top { padding-top:28px !important; }
     .stack { display:block !important; width:100% !important; box-sizing:border-box !important; }
     .stack-td { display:block !important; width:100% !important; box-sizing:border-box !important; text-align:left !important; }
@@ -91,7 +97,7 @@
 <body class="dm-bg" style="margin:0;padding:0;background-color:#F8FAFC;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC" class="dm-bg">
     <tr>
-      <td align="center" style="padding:32px 16px;" class="pad">
+      <td align="center" style="padding:32px 16px;" class="shell-pad">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="container" style="max-width:640px;">
           <!-- Preheader (hidden) -->
           <tr><td style="display:none;max-height:0;overflow:hidden;mso-hide:all;">{{preheader}}</td></tr>

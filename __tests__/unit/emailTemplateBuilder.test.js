@@ -285,3 +285,38 @@ describe('generated templates are in sync with the builder', () => {
     expect(files.filter((f) => !definedKeys.has(f))).toEqual([]);
   });
 });
+
+/**
+ * Mobile shell padding contract.
+ *
+ * The shell wrapper and every content row shared one .pad class, so the
+ * mobile rule fired on both: 20px outer + 20px inner = 40px per side of a
+ * 375px viewport, leaving the card a 335px strip with a 295px text column.
+ * The wrapper now carries its own .shell-pad hook so the gutter (8px) and
+ * the text inset (16px) can differ on phones while desktop keeps 32px 16px.
+ */
+describe('email shell mobile gutter', () => {
+  const built = B.shell('T', '<tr></tr>');
+  const styleCss = (built.match(/<style>([\s\S]*?)<\/style>/) || [])[1] || '';
+
+  it('tags the shell wrapper so the mobile gutter rule can reach it', () => {
+    // Regression guard: sharing .pad is exactly what shipped too slim.
+    expect(built).toMatch(/<td align="center" style="padding:32px 16px;" class="shell-pad">/);
+    expect(built).not.toMatch(/style="padding:32px 16px;" class="pad"/);
+  });
+
+  it('gives the wrapper its own narrow gutter and trims the content inset', () => {
+    expect(styleCss).toContain('.shell-pad { padding-left:8px !important; padding-right:8px !important; }');
+    expect(styleCss).toContain('.pad { padding-left:16px !important; padding-right:16px !important; }');
+    // The gutter must stay strictly narrower than the text inset, otherwise
+    // the wrapper class buys nothing over plain .pad.
+    const gutter = Number((styleCss.match(/\.shell-pad \{ padding-left:(\d+)px/) || [])[1]);
+    const inset = Number((styleCss.match(/\.pad \{ padding-left:(\d+)px/) || [])[1]);
+    expect(gutter).toBeLessThan(inset);
+  });
+
+  it('leaves the desktop wrapper padding untouched', () => {
+    // Wide clients and Outlook read the inline value, not the media query.
+    expect(built).toContain('style="padding:32px 16px;"');
+  });
+});
