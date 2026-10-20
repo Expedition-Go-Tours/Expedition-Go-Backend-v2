@@ -31,8 +31,9 @@ const KEYS = [
 describe('refund & payout emails — shared redesign', () => {
   it.each(KEYS)('%s leads with a photo media header that degrades gracefully', (key) => {
     const html = art(key);
-    expect(html).toContain('{{#if tourImageUrl}}');
-    expect(html).not.toContain("url('')");
+    expect(html).toContain('{{#if tourImageUrl}} background="{{tourImageUrl}}"{{/if}}');
+    // No CSS url() anywhere — Gmail rewrites or strips it (caniemail #343/#395)
+    expect(html).not.toContain("url('");
     // Outlook gets the VML fallback the media header ships with.
     expect(html).toContain('v:rect');
   });

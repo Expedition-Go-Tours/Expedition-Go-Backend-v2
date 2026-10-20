@@ -115,19 +115,19 @@ describe('supplier reserve-later email', () => {
   it('inserts a Cloudinary crop into the hero image', async () => {
     await sendSupplierReserveLaterEmail(booking());
     expect(htmlOf()).toContain(
-      "url('https://res.cloudinary.com/dfpagrtoy/image/upload/c_fill,g_auto,w_1200,h_520,f_jpg,q_auto/v1787749419/user-photos/abc.png')"
+      ' background="https://res.cloudinary.com/dfpagrtoy/image/upload/c_fill,g_auto,w_1200,h_520,f_jpg,q_auto/v1787749419/user-photos/abc.png"'
     );
   });
 
   it('leaves a non-Cloudinary hero untouched', async () => {
     await sendSupplierReserveLaterEmail(booking({ tour: { ...booking().tour, photos: ['https://example.com/a.png'] } }));
-    expect(htmlOf()).toContain("url('https://example.com/a.png')");
+    expect(htmlOf()).toContain(' background="https://example.com/a.png"');
   });
 
   it('does not double-transform a Cloudinary URL that already has a transform', async () => {
     const url = 'https://res.cloudinary.com/dfpagrtoy/image/upload/w_100,c_fill,f_auto/v123/user-photos/a.png';
     await sendSupplierReserveLaterEmail(booking({ tour: { ...booking().tour, photos: [url] } }));
-    expect(htmlOf()).toContain(`url('${url}')`);
+    expect(htmlOf()).toContain(` background="${url}"`);
     expect(htmlOf()).not.toContain('c_fill,g_auto,w_1200,h_520');
   });
 
@@ -138,16 +138,19 @@ describe('supplier reserve-later email', () => {
     expect(htmlOf()).toContain('/upload/c_fill,g_auto,w_1200,h_520,f_jpg,q_auto/v1/cover.png');
   });
 
-  it('degrades to the gradient (no empty url) when the tour has no photo', async () => {
+  it('degrades to the scrim (no empty attribute) when the tour has no photo', async () => {
     await sendSupplierReserveLaterEmail(booking({
       tour: { ...booking().tour, photos: [], coverPhoto: null },
     }));
     const html = htmlOf();
 
-    // The {{else}} branch must win: gradient only, never url('') which would
-    // make mail clients drop the whole background-image declaration.
-    expect(html).not.toContain("url('')");
+    // The {{#if}} swallows the background attribute entirely — an empty
+    // background="" or any CSS url() would make Gmail strip the hero.
+    expect(html).not.toContain(' background=""');
+    expect(html).not.toContain("url('");
+    // The scrim still renders: stylesheet gradient + inline rgba() fallback
     expect(html).toContain('background-image:linear-gradient(180deg, rgba(0,31,63,0.08)');
+    expect(html).toContain('background-color:rgba(0,31,63,0.45)');
     expect(html).not.toContain('{{');
   });
 });

@@ -18,6 +18,19 @@
      and inline styles because Outlook desktop ignores <style> entirely. */
   .kf-cell { width:50%; }
   .kf-cell-wide { width:100%; }
+  /* Media header. The tour photo rides on the outer td's HTML background
+     ATTRIBUTE, never in CSS: Gmail rewrites inline background-image (it
+     removes the comma between multiple values, turning gradient+url() into
+     invalid CSS) and can delete the whole style attribute when it finds a
+     url() in it - caniemail issues #343/#395. background-size/position are
+     duplicated inline on the td so they survive <style>-less clients too. */
+  .media-header-background { background-position:center !important; background-size:cover !important; background-repeat:no-repeat !important; }
+  /* Scrim. The gradient lives here (style block) because Gmail Android
+     mishandles it inline; !important background-color:transparent stops it
+     stacking on the inline flat tint, so supported clients keep the original
+     gradient-over-photo look and the inline rgba() remains as the scrim
+     wherever this rule is dropped. */
+  .media-header-scrim { background-image:linear-gradient(180deg, rgba(0,31,63,0.08) 0%, rgba(0,31,63,0.55) 55%, rgba(0,31,63,0.9) 100%) !important; background-color:transparent !important; }
   @media only screen and (max-width:640px) {
     .container { width:100% !important; }
     .pad { padding-left:20px !important; padding-right:20px !important; }

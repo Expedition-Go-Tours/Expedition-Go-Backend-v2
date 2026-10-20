@@ -47,6 +47,19 @@ const BASE_CSS = `
      and inline styles because Outlook desktop ignores <style> entirely. */
   .kf-cell { width:50%; }
   .kf-cell-wide { width:100%; }
+  /* Media header. The tour photo rides on the outer td's HTML background
+     ATTRIBUTE, never in CSS: Gmail rewrites inline background-image (it
+     removes the comma between multiple values, turning gradient+url() into
+     invalid CSS) and can delete the whole style attribute when it finds a
+     url() in it - caniemail issues #343/#395. background-size/position are
+     duplicated inline on the td so they survive <style>-less clients too. */
+  .media-header-background { background-position:center !important; background-size:cover !important; background-repeat:no-repeat !important; }
+  /* Scrim. The gradient lives here (style block) because Gmail Android
+     mishandles it inline; !important background-color:transparent stops it
+     stacking on the inline flat tint, so supported clients keep the original
+     gradient-over-photo look and the inline rgba() remains as the scrim
+     wherever this rule is dropped. */
+  .media-header-scrim { background-image:linear-gradient(180deg, rgba(0,31,63,0.08) 0%, rgba(0,31,63,0.55) 55%, rgba(0,31,63,0.9) 100%) !important; background-color:transparent !important; }
   @media only screen and (max-width:640px) {
     .container { width:100% !important; }
     .pad { padding-left:20px !important; padding-right:20px !important; }
@@ -579,17 +592,23 @@ function contextRow(titleVar, bookingVar) {
  * Full-bleed media header — tour photo behind a dark scrim with a status
  * badge, heading and subtitle sitting bottom-left over it.
  *
- * Renders as a real photo in every modern client (Apple Mail, Gmail, mobile)
- * via `background-image` + a linear-gradient scrim. Outlook's Word engine
- * ignores gradients and `background-image`, so the MSO/VML branch below paints
- * a solid navy panel instead — the text stays white-on-navy and readable
- * rather than white-on-white.
+ * The photo rides on the td's HTML background ATTRIBUTE, never in CSS: Gmail
+ * rewrites inline background-image (it strips the comma between multiple
+ * values, turning gradient+url() into invalid CSS) and can delete an entire
+ * style attribute when it finds a url() in it — caniemail #343/#395. The
+ * scrim gradient therefore lives in the stylesheet (.media-header-scrim in
+ * BASE_CSS) with the inline rgba() tint as the fallback wherever <style> is
+ * dropped, so supported clients keep the original gradient-over-photo look
+ * and unsupported ones still get a readable white-on-tinted-photo heading.
+ * Outlook's Word engine ignores both mechanisms, so the MSO/VML branch below
+ * paints a solid navy panel — the text stays white-on-navy and readable.
  *
  * @param {object} o
  * @param {string} [o.imageUrl]  photo URL (Handlebars ok); ignored when imageVar is set
  * @param {string} [o.imageVar]  template variable name (e.g. 'tourImageUrl'). When
- *   given, the photo is emitted inside a runtime {{#if}} so a missing/empty value
- *   falls back to the gradient over the navy panel instead of an empty url('').
+ *   given, the background attribute is emitted inside a runtime {{#if}} so a
+ *   missing/empty value falls back to the scrim over the navy panel instead of
+ *   an empty background attribute.
  * @param {string} [o.badgeText]  small uppercase pill over the heading
  * @param {string} [o.badgeColor] accent | warning | info | success
  * @param {string} o.heading
@@ -609,18 +628,17 @@ function mediaHeader({ imageUrl, imageVar, badgeText, badgeColor = 'warning', he
     ? `<div style="margin:0 0 14px 0;"><span style="display:inline-block;background-color:${bt.bg};color:${bt.text};font-family:${FONT};font-size:11px;font-weight:800;letter-spacing:0.9px;text-transform:uppercase;border-radius:999px;padding:7px 14px;line-height:1;">${badgeText}</span></div>`
     : '';
 
-  // The hero photo sits behind a gradient that has to survive on its own: some
-  // tours have no cover image, and an empty url('') makes mail clients drop the
-  // entire background-image declaration, gradient included. When the caller
-  // names the variable backing the image, emit a runtime {{#if}} so a missing
-  // photo degrades to the gradient over the navy panel instead of a flat block.
-  const GRADIENT = 'linear-gradient(180deg, rgba(0,31,63,0.08) 0%, rgba(0,31,63,0.55) 55%, rgba(0,31,63,0.9) 100%)';
-  const background = imageVar
-    ? `{{#if ${imageVar}}}background-image:${GRADIENT}, url('{{${imageVar}}}');{{else}}background-image:${GRADIENT};{{/if}}`
-    : `background-image:${GRADIENT}, url('${imageUrl || ''}');`;
+  // The photo attribute itself. When the caller names the variable backing
+  // the image, emit it inside a runtime {{#if}} so a tour without a cover
+  // degrades to navy + scrim rather than an empty background="".
+  const bgAttr = imageVar
+    ? `{{#if ${imageVar}}} background="{{${imageVar}}}"{{/if}}`
+    : imageUrl
+      ? ` background="${imageUrl}"`
+      : '';
 
   const inner = `
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:separate;border-spacing:0;background-color:${COLORS.navy};${background}background-size:cover;background-position:center;background-repeat:no-repeat;border-radius:0;overflow:hidden;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="media-header-scrim" style="border-collapse:separate;border-spacing:0;background-color:rgba(0,31,63,0.45);border-radius:0;overflow:hidden;">
       <tr>
         <td valign="bottom" class="pad" style="padding:120px 34px 28px 34px;">
           ${badge}
@@ -631,7 +649,7 @@ function mediaHeader({ imageUrl, imageVar, badgeText, badgeColor = 'warning', he
     </table>`;
 
   return `
-  <tr><td style="padding:0;">
+  <tr><td class="media-header-background" bgcolor="${COLORS.navy}" style="padding:0;background-color:${COLORS.navy};background-size:cover;background-position:center;background-repeat:no-repeat;"${bgAttr}>
     <!--[if gte mso 9]>
     <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:640px;height:${height}px;">
       <v:fill color="#001F3F" />

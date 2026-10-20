@@ -18,6 +18,19 @@
      and inline styles because Outlook desktop ignores <style> entirely. */
   .kf-cell { width:50%; }
   .kf-cell-wide { width:100%; }
+  /* Media header. The tour photo rides on the outer td's HTML background
+     ATTRIBUTE, never in CSS: Gmail rewrites inline background-image (it
+     removes the comma between multiple values, turning gradient+url() into
+     invalid CSS) and can delete the whole style attribute when it finds a
+     url() in it - caniemail issues #343/#395. background-size/position are
+     duplicated inline on the td so they survive <style>-less clients too. */
+  .media-header-background { background-position:center !important; background-size:cover !important; background-repeat:no-repeat !important; }
+  /* Scrim. The gradient lives here (style block) because Gmail Android
+     mishandles it inline; !important background-color:transparent stops it
+     stacking on the inline flat tint, so supported clients keep the original
+     gradient-over-photo look and the inline rgba() remains as the scrim
+     wherever this rule is dropped. */
+  .media-header-scrim { background-image:linear-gradient(180deg, rgba(0,31,63,0.08) 0%, rgba(0,31,63,0.55) 55%, rgba(0,31,63,0.9) 100%) !important; background-color:transparent !important; }
   @media only screen and (max-width:640px) {
     .container { width:100% !important; }
     .pad { padding-left:20px !important; padding-right:20px !important; }
@@ -103,14 +116,14 @@
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                 
       
-  <tr><td style="padding:0;">
+  <tr><td class="media-header-background" bgcolor="#001F3F" style="padding:0;background-color:#001F3F;background-size:cover;background-position:center;background-repeat:no-repeat;"{{#if tourImageUrl}} background="{{tourImageUrl}}"{{/if}}>
     <!--[if gte mso 9]>
     <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:640px;height:248px;">
       <v:fill color="#001F3F" />
       <v:textbox inset="0,0,0,0">
     <![endif]-->
     <div>
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:separate;border-spacing:0;background-color:#001F3F;{{#if tourImageUrl}}background-image:linear-gradient(180deg, rgba(0,31,63,0.08) 0%, rgba(0,31,63,0.55) 55%, rgba(0,31,63,0.9) 100%), url('{{tourImageUrl}}');{{else}}background-image:linear-gradient(180deg, rgba(0,31,63,0.08) 0%, rgba(0,31,63,0.55) 55%, rgba(0,31,63,0.9) 100%);{{/if}}background-size:cover;background-position:center;background-repeat:no-repeat;border-radius:0;overflow:hidden;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="media-header-scrim" style="border-collapse:separate;border-spacing:0;background-color:rgba(0,31,63,0.45);border-radius:0;overflow:hidden;">
       <tr>
         <td valign="bottom" class="pad" style="padding:120px 34px 28px 34px;">
           <div style="margin:0 0 14px 0;"><span style="display:inline-block;background-color:#007A4D;color:#FFFFFF;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:11px;font-weight:800;letter-spacing:0.9px;text-transform:uppercase;border-radius:999px;padding:7px 14px;line-height:1;">Review</span></div>

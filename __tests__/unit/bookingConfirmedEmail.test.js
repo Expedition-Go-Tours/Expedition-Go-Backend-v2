@@ -55,12 +55,21 @@ const artifact = () => fs.readFileSync(path.join(GENERATED, 'booking-confirmed.h
 // The compiled artifact (what SendGrid actually sends)
 // ---------------------------------------------------------------------------
 describe('booking-confirmed artifact', () => {
-  it('leads with a photo header that degrades to the gradient when the tour has no image', () => {
+  it('leads with a photo header that degrades to the scrim when the tour has no image', () => {
     const html = artifact();
-    // imageVar branch so a missing cover photo never emits url('')
-    expect(html).toContain('{{#if tourImageUrl}}');
-    expect(html).toContain("url('{{tourImageUrl}}')");
-    expect(html).not.toContain("url('')");
+    // The photo rides the HTML background attribute behind {{#if}}, so a
+    // missing cover never emits background="". CSS url() is banned outright:
+    // Gmail rewrites inline background-image (it strips the comma between
+    // multiple values, turning gradient+url() into invalid CSS) and can
+    // delete the whole style attribute — caniemail #343/#395.
+    expect(html).toContain('{{#if tourImageUrl}} background="{{tourImageUrl}}"{{/if}}');
+    expect(html).not.toContain(' background=""');
+    expect(html).not.toContain("url('");
+    // The scrim gradient comes from the stylesheet, with the inline rgba()
+    // tint as the fallback for clients that drop <style> entirely.
+    expect(html).toContain('class="media-header-scrim"');
+    expect(html).toContain('background-color:rgba(0,31,63,0.45)');
+    expect(html).toMatch(/\.media-header-scrim \{ background-image:linear-gradient\(/);
     // Outlook gets the VML fallback the media header ships with
     expect(html).toContain('v:rect');
   });
@@ -286,10 +295,12 @@ describe('sendBookingConfirmedEmail', () => {
     // bookedAtLabel
     expect(html).toContain(fmt.formatCompactDate(new Date('2026-06-20T00:00:00Z')));
     // hero image is Cloudinary-transformed (crop + jpg/q_auto) for delivery,
-    // not the raw original
+    // not the raw original — and it rides the HTML background attribute,
+    // never CSS url(), which Gmail's sanitiser rewrites or strips
     expect(html).toContain(
-      'https://res.cloudinary.com/dfpagrtoy/image/upload/c_fill,g_auto,w_1200,h_520,f_jpg,q_auto/v1787749419/user-photos/abc.png',
+      ' background="https://res.cloudinary.com/dfpagrtoy/image/upload/c_fill,g_auto,w_1200,h_520,f_jpg,q_auto/v1787749419/user-photos/abc.png"',
     );
+    expect(html).not.toContain("url('");
     expect(html).not.toContain('{{');
     expect(html).not.toContain('\u2014');
   });
@@ -310,13 +321,16 @@ describe('sendBookingConfirmedEmail', () => {
     expect(html).toContain('Everything you need for Test Tour is inside');
   });
 
-  it('renders the tour cover photo when present and no url() when absent', async () => {
+  it('renders no photo attribute and no url() when the tour has no cover', async () => {
     const noPhoto = booking();
     noPhoto.tour.coverPhoto = '';
     noPhoto.tour.photos = [];
     await sendBookingConfirmedEmail(noPhoto);
     const { html } = __send.mock.calls[0][0];
-    expect(html).not.toContain("url('')");
+    // The {{#if}} swallows the attribute entirely — no empty background=""
+    // and no CSS url() for Gmail to choke on
+    expect(html).not.toContain(' background=""');
+    expect(html).not.toContain("url('");
   });
 
   it('threads same-city recommendations into the rendered email', async () => {
