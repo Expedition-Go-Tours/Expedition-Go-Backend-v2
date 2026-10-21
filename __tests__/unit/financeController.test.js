@@ -485,6 +485,82 @@ describe('getFinanceSummary — a payout in flight', () => {
   });
 });
 
+
+describe('getTaxSummary — the record of tax charged', () => {
+  async function invokeTax(query = {}) {
+    const req = { supplierId: 'sup1', query };
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    const next = jest.fn();
+    await financeController.getTaxSummary(req, res, next);
+    return { next, status: res.status.mock.calls[0]?.[0], data: res.json.mock.calls[0]?.[0]?.data };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.booking.findMany.mockResolvedValue([]);
+  });
+
+  it('counts only money that actually moved', async () => {
+    await invokeTax({ from: '2026-01-01', to: '2026-12-31' });
+
+    const where = prisma.booking.findMany.mock.calls[0][0].where;
+    // A cancelled or never-charged booking collected no tax; a simulated one
+    // never existed.
+    expect(where.paymentStatus).toBe('SUCCEEDED');
+    expect(where.isSimulated).toBe(false);
+    expect(where.tour).toEqual({ supplierId: 'sup1' });
+  });
+
+  it('buckets by month AND currency, and never totals across currencies', async () => {
+    prisma.booking.findMany.mockResolvedValue([
+      { createdAt: new Date('2026-10-05T10:00:00.000Z'), currency: 'USD', taxes: 20, grossAmount: 400, supplierPayout: 340 },
+      { createdAt: new Date('2026-10-20T10:00:00.000Z'), currency: 'USD', taxes: 10, grossAmount: 200, supplierPayout: 170 },
+      { createdAt: new Date('2026-10-07T10:00:00.000Z'), currency: 'GHS', taxes: 200, grossAmount: 2000, supplierPayout: 1700 },
+      { createdAt: new Date('2026-11-02T10:00:00.000Z'), currency: 'USD', taxes: 5, grossAmount: 100, supplierPayout: 85 },
+    ]);
+
+    const { data } = await invokeTax({ from: '2026-10-01', to: '2026-11-30' });
+
+    expect(data.rows).toEqual([
+      { month: '2026-10', currency: 'GHS', bookings: 1, gross: 2000, tax: 200, net: 1800 },
+      { month: '2026-10', currency: 'USD', bookings: 2, gross: 600, tax: 30, net: 570 },
+      { month: '2026-11', currency: 'USD', bookings: 1, gross: 100, tax: 5, net: 95 },
+    ]);
+
+    // One total per currency — no invented single figure.
+    expect(data.totalsByCurrency).toEqual([
+      { currency: 'GHS', bookings: 1, gross: 2000, tax: 200, net: 1800 },
+      { currency: 'USD', bookings: 3, gross: 700, tax: 35, net: 665 },
+    ]);
+  });
+
+  it('says what the numbers are and are not', async () => {
+    const { data } = await invokeTax();
+
+    expect(data.disclaimer).toMatch(/not tax advice/i);
+    expect(data.disclaimer).toMatch(/record of the tax charged/i);
+  });
+
+  it('defaults to the last twelve months', async () => {
+    const { data } = await invokeTax();
+
+    const from = new Date(`${data.from}T00:00:00.000Z`);
+    const to = new Date(`${data.to}T00:00:00.000Z`);
+    const months =
+      (to.getUTCFullYear() - from.getUTCFullYear()) * 12 + (to.getUTCMonth() - from.getUTCMonth());
+    expect(months).toBe(11);
+  });
+
+  it('rejects malformed or reversed ranges instead of guessing', async () => {
+    const bad = await invokeTax({ from: '01/01/2026' });
+    expect(bad.next.mock.calls[0][0].statusCode).toBe(400);
+
+    const reversed = await invokeTax({ from: '2026-12-31', to: '2026-01-01' });
+    expect(reversed.next.mock.calls[0][0].statusCode).toBe(400);
+    expect(prisma.booking.findMany).not.toHaveBeenCalled();
+  });
+});
+
 describe('getMyInvoices — the supplier invoice history (finance v3)', () => {
   async function invokeList(query = {}) {
     const req = { supplierId: 'sup1', query };
