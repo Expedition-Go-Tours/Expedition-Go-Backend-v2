@@ -30,6 +30,42 @@ function round2(n) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
+/**
+ * Turn Prisma `groupBy` rows into per-currency money lines. Money is never
+ * summed across currencies: GH¢200 and $200 are two balances, not $400.
+ */
+function byCurrencyTotals(groups, sumField, countField) {
+  return (groups || [])
+    .map((g) => ({
+      currency: g.currency || 'USD',
+      amount: round2(toNumber(g._sum ? g._sum[sumField] : null)),
+      bookingCount: countField ? Number(g._count ? g._count[countField] : 0) : undefined,
+    }))
+    .filter((row) => row.amount !== 0 || (row.bookingCount || 0) > 0)
+    .sort((a, b) => a.currency.localeCompare(b.currency));
+}
+
+/**
+ * A money summary whose scalar `amount` is only present for a single-currency
+ * balance. With more than one currency the scalar is null and every consumer
+ * must walk `byCurrency` — printing a summed total across currencies is a
+ * number no account ever holds.
+ *
+ * An empty row set means the query ran and found nothing: that is a real 0.00,
+ * not "unknown". Unknown is only ever produced by a failed request, which the
+ * caller handles before this point.
+ */
+function moneySummary(rows, bookingCount) {
+  const currencies = new Set(rows.map((r) => r.currency));
+  const single = currencies.size === 1 ? rows[0] : null;
+  return {
+    amount: single ? single.amount : (rows.length === 0 ? 0 : null),
+    currency: single ? single.currency : (rows.length === 0 ? 'USD' : null),
+    byCurrency: rows,
+    bookingCount: bookingCount == null ? undefined : bookingCount,
+  };
+}
+
 function serializeRequest(request) {
   return {
     ...request,
@@ -58,15 +94,19 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
   const supplierId = req.supplierId;
 
   const [eligible, pendingClearance, activeRequests, paidOut, window, cycle, bufferDays, payoutPlan, nextPending, payoutCounts, openInvoices, paidInvoices] = await Promise.all([
-    prisma.booking.aggregate({
+    // Per currency, never summed across currencies: GH¢200 and $200 are not
+    // $400, and the dashboard used to add them into one "USD" number.
+    prisma.booking.groupBy({
+      by: ['currency'],
       where: payoutBookingsWhere({ supplierId, payoutStatus: 'ELIGIBLE' }),
       _sum: { supplierPayout: true },
-      _count: true,
+      _count: { _all: true },
     }),
-    prisma.booking.aggregate({
+    prisma.booking.groupBy({
+      by: ['currency'],
       where: payoutBookingsWhere({ supplierId, payoutStatus: 'PENDING' }),
       _sum: { supplierPayout: true },
-      _count: true,
+      _count: { _all: true },
     }),
     prisma.payoutRequest.findMany({
       where: { supplierId, status: { in: ['PROCESSING', 'APPROVED'] } },
@@ -89,7 +129,8 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
         createdAt: true,
       },
     }),
-    prisma.payout.aggregate({
+    prisma.payout.groupBy({
+      by: ['currency'],
       where: { supplierId, status: 'PAID' },
       _sum: { amount: true },
     }),
@@ -135,7 +176,8 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
         paymentScheduledAt: true,
       },
     }),
-    prisma.invoice.aggregate({
+    prisma.invoice.groupBy({
+      by: ['currency'],
       where: { supplierId, status: 'PAID' },
       _sum: { netTotal: true },
     }),
@@ -190,6 +232,25 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
     };
   }
 
+  // Money per currency, never across. The legacy single-number fields are
+  // kept for single-currency accounts and go null the moment a second currency
+  // appears, so no consumer can print a total the account does not hold.
+  const eligibleRows = byCurrencyTotals(eligible, 'supplierPayout', '_all');
+  const pendingRows = byCurrencyTotals(pendingClearance, 'supplierPayout', '_all');
+  const paidRowsMap = new Map();
+  for (const row of byCurrencyTotals(paidOut, 'amount')) {
+    paidRowsMap.set(row.currency, (paidRowsMap.get(row.currency) || 0) + row.amount);
+  }
+  for (const row of byCurrencyTotals(paidInvoices, 'netTotal')) {
+    paidRowsMap.set(row.currency, (paidRowsMap.get(row.currency) || 0) + row.amount);
+  }
+  const paidRows = [...paidRowsMap.entries()]
+    .map(([currency, amount]) => ({ currency, amount: round2(amount) }))
+    .sort((a, b) => a.currency.localeCompare(b.currency));
+  const inReviewRows = Object.entries(inReview)
+    .map(([currency, amount]) => ({ currency, amount: round2(amount) }))
+    .sort((a, b) => a.currency.localeCompare(b.currency));
+
   res.status(200).json({
     status: 'success',
     data: {
@@ -201,19 +262,23 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
       },
       nextPayout,
       // ── Legacy v2 fields (kept until the UI migrates) ──
-      availableBalance: {
-        amount: toNumber(eligible._sum.supplierPayout),
-        bookingCount: eligible._count,
-        currency: 'USD',
-      },
+      availableBalance: moneySummary(
+        eligibleRows,
+        eligibleRows.reduce((s, r) => s + (r.bookingCount || 0), 0),
+      ),
       pendingClearance: {
-        amount: toNumber(pendingClearance._sum.supplierPayout),
-        bookingCount: pendingClearance._count,
+        ...moneySummary(
+          pendingRows,
+          pendingRows.reduce((s, r) => s + (r.bookingCount || 0), 0),
+        ),
         clearanceBufferDays: bufferDays,
       },
       inReview: {
-        total: activeRequests.reduce((s, r) => s + toNumber(r.amount), 0),
+        // null when the requests span currencies; the UI must show them per
+        // currency instead of one invented total.
+        total: inReviewRows.length > 1 ? null : (inReviewRows[0]?.amount ?? 0),
         byCurrency: inReview,
+        byCurrencyList: inReviewRows,
         requestCount: activeRequests.length,
         bookingCount: activeRequests.reduce((s, r) => s + r.bookingCount, 0),
         // Newest request still in flight, in full. This is what lets the page
@@ -249,8 +314,8 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
         ? new Date(new Date(nextPending.travelDate).getTime() + bufferDays * 24 * 60 * 60 * 1000)
         : null,
       paidOut: {
-        // Legacy Payout rows + v3 paid invoices.
-        total: round2(toNumber(paidOut._sum.amount) + toNumber(paidInvoices._sum.netTotal)),
+        // Legacy Payout rows + v3 paid invoices, per currency.
+        ...moneySummary(paidRows, null),
       },
       currentCycle: { start: cycle.start, end: cycle.end, label: cycle.label },
       // The supplier's payout schedule (auto-generated runs). `autoManaged`

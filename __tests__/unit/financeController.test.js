@@ -1,8 +1,8 @@
 jest.mock('../../src/core/services/prismaClient', () => ({
   payoutRequest: { findFirst: jest.fn(), create: jest.fn(), findMany: jest.fn() },
   booking: { aggregate: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), groupBy: jest.fn() },
-  payout: { aggregate: jest.fn() },
-  invoice: { findMany: jest.fn(), aggregate: jest.fn(), findFirst: jest.fn(), create: jest.fn(), count: jest.fn() },
+  payout: { aggregate: jest.fn(), groupBy: jest.fn() },
+  invoice: { findMany: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn(), findFirst: jest.fn(), create: jest.fn(), count: jest.fn() },
   payoutMethod: { findFirst: jest.fn() },
   supplierProfile: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
   $transaction: jest.fn(),
@@ -256,22 +256,24 @@ describe('getFinanceSummary — a payout in flight', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    // Two booking.aggregate calls: ELIGIBLE then PENDING.
-    prisma.booking.aggregate
-      .mockResolvedValueOnce({ _sum: { supplierPayout: 0 }, _count: 0 })
-      .mockResolvedValueOnce({ _sum: { supplierPayout: 433.5 }, _count: 2 });
-    prisma.payout.aggregate.mockResolvedValue({ _sum: { amount: 586.5 } });
+    // Money is aggregated PER CURRENCY (never summed across currencies), so
+    // the booking.groupBy mock answers three questions in call order:
+    // ELIGIBLE rows, PENDING rows, then the payout-bucket counts.
+    prisma.booking.groupBy
+      .mockResolvedValueOnce([{ currency: 'USD', _sum: { supplierPayout: 0 }, _count: { _all: 0 } }])
+      .mockResolvedValueOnce([{ currency: 'USD', _sum: { supplierPayout: 433.5 }, _count: { _all: 2 } }])
+      .mockResolvedValueOnce([
+        { payoutStatus: 'PENDING', _count: { _all: 2 } },
+        { payoutStatus: 'REQUESTED', _count: { _all: 12 } },
+        { payoutStatus: 'CANCELLED', _count: { _all: 1 } },
+      ]);
+    prisma.payout.groupBy.mockResolvedValue([{ currency: 'USD', _sum: { amount: 586.5 } }]);
     prisma.payoutRequest.findMany.mockResolvedValue([activeRequest]);
     prisma.booking.findFirst.mockResolvedValue({ travelDate: new Date(2026, 9, 6) });
     prisma.booking.findMany.mockResolvedValue([]);
-    prisma.booking.groupBy.mockResolvedValue([
-      { payoutStatus: 'PENDING', _count: { _all: 2 } },
-      { payoutStatus: 'REQUESTED', _count: { _all: 12 } },
-      { payoutStatus: 'CANCELLED', _count: { _all: 1 } },
-    ]);
     // Finance v3: no open invoices, no paid invoices by default.
     prisma.invoice.findMany.mockResolvedValue([]);
-    prisma.invoice.aggregate.mockResolvedValue({ _sum: { netTotal: 0 } });
+    prisma.invoice.groupBy.mockResolvedValue([]);
     getSupplierPayoutPlan.mockResolvedValue(schedule());
     getSupplierRequestWindow.mockReturnValue(closedWindow);
   });
@@ -423,11 +425,51 @@ describe('getFinanceSummary — a payout in flight', () => {
 
   it('folds v3 paid invoices into the lifetime paid-out total', async () => {
     // Legacy Payout rows: 586.5 (beforeEach) + paid invoices: 250.
-    prisma.invoice.aggregate.mockResolvedValue({ _sum: { netTotal: 250 } });
+    prisma.invoice.groupBy.mockResolvedValue([{ currency: 'USD', _sum: { netTotal: 250 } }]);
 
     const { data } = await invokeSummary();
 
-    expect(data.paidOut.total).toBe(836.5);
+    // Single currency: the scalar is present, and it includes paid invoices.
+    expect(data.paidOut.amount).toBe(836.5);
+    expect(data.paidOut.currency).toBe('USD');
+    expect(data.paidOut.byCurrency).toEqual([{ currency: 'USD', amount: 836.5, bookingCount: undefined }]);
+  });
+
+  it('never sums two currencies into one balance', async () => {
+    prisma.booking.groupBy.mockReset();
+    prisma.booking.groupBy
+      .mockResolvedValueOnce([
+        { currency: 'GHS', _sum: { supplierPayout: 200 }, _count: { _all: 1 } },
+        { currency: 'USD', _sum: { supplierPayout: 100 }, _count: { _all: 1 } },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    prisma.payoutRequest.findMany.mockResolvedValue([]);
+
+    const { data } = await invokeSummary();
+
+    // The scalar goes null the moment a second currency appears: GH₵200 and
+    // $200 are not $300, and nothing may print a total the account does not hold.
+    expect(data.availableBalance.amount).toBeNull();
+    expect(data.availableBalance.currency).toBeNull();
+    expect(data.availableBalance.byCurrency).toEqual([
+      { currency: 'GHS', amount: 200, bookingCount: 1 },
+      { currency: 'USD', amount: 100, bookingCount: 1 },
+    ]);
+  });
+
+  it('reports a real 0.00 when the ledger is empty, not an unknown amount', async () => {
+    prisma.booking.groupBy.mockReset();
+    prisma.booking.groupBy
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    prisma.payoutRequest.findMany.mockResolvedValue([]);
+
+    const { data } = await invokeSummary();
+
+    expect(data.availableBalance.amount).toBe(0);
+    expect(data.availableBalance.currency).toBe('USD');
   });
 
   it('keeps the legacy v2 fields so the current Finance page keeps rendering', async () => {
