@@ -317,7 +317,12 @@ const cancelBookingSchema = z.object({
 const updateBookingPickupSchema = z.object({
   body: z.object({
     pickup: z.union([
-      z.object({ skipValidation: z.literal(true) }),
+      // `.strict()` matters: without it this branch also accepts
+      // `{ skipValidation: true, mode, address, … }` and Zod's default
+      // strip-mode silently drops the address. The storefront sends exactly
+      // that shape for out-of-zone addresses, so a plain object here loses
+      // the traveller's location (and the supplier never sees it).
+      z.strictObject({ skipValidation: z.literal(true) }),
       z.object({
         mode: z.enum(['area', 'address']).optional(),
         areaName: z.string().max(200).optional(),

@@ -2,6 +2,7 @@ const {
   confirmBookingSchema,
   calculateCheckoutSchema,
   supplierToursSchema,
+  updateBookingPickupSchema,
 } = require('../../src/core/services/expeditionValidation');
 
 const basePayload = {
@@ -323,5 +324,46 @@ describe('supplierToursSchema', () => {
       });
       expect(result.success).toBe(false);
     }
+  });
+});
+
+describe('updateBookingPickupSchema', () => {
+  const parse = (pickup) => updateBookingPickupSchema.safeParse({
+    body: { pickup },
+    query: {},
+    params: { id: 'booking-1' },
+  });
+
+  it('keeps mode and address when skipValidation is true', () => {
+    // Regression: the union's first branch (`{ skipValidation: true }`) used to
+    // win in Zod strip-mode and silently drop `mode` + `address`, so the
+    // storefront's out-of-zone pick was saved as a blank deferred snapshot.
+    const result = parse({
+      mode: 'area',
+      skipValidation: true,
+      address: { name: 'New York', address: 'New York, USA', lat: 40.7128, lng: -74.006 },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data.body.pickup).toEqual({
+      mode: 'area',
+      skipValidation: true,
+      address: { name: 'New York', address: 'New York, USA', lat: 40.7128, lng: -74.006 },
+    });
+  });
+
+  it('accepts a bare "arrange later" selection', () => {
+    const result = parse({ skipValidation: true });
+    expect(result.success).toBe(true);
+    expect(result.data.body.pickup).toEqual({ skipValidation: true });
+  });
+
+  it('keeps a named area selection', () => {
+    const result = parse({ mode: 'area', areaName: 'Accra Central' });
+    expect(result.success).toBe(true);
+    expect(result.data.body.pickup).toEqual({ mode: 'area', areaName: 'Accra Central' });
+  });
+
+  it('rejects a non-boolean skipValidation', () => {
+    expect(parse({ skipValidation: 'yes' }).success).toBe(false);
   });
 });

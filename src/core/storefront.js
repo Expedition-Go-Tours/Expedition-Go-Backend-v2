@@ -3141,6 +3141,15 @@ controller.updateMyPickup = catchAsync(async (req, res, next) => {
   }
 
   const pickupConfig = parsedBt;
+  // Exclusion ("no pickup here") zones are a hard rule, unlike an out-of-zone
+  // address which the customer may save with skipValidation so the supplier
+  // can still arrange a meeting point. normalizePickupSnapshot deliberately
+  // degrades invalid picks to `deferred`, so reject explicit exclusions here
+  // before they are silently stored.
+  const resolvedPickup = resolvePickupSelection(pickup, pickupConfig);
+  if (!resolvedPickup.ok && resolvedPickup.excluded) {
+    return next(new AppError(resolvedPickup.error, 400));
+  }
   const snapshot = normalizePickupSnapshot(pickup, pickupConfig);
   if (!snapshot) return next(new AppError('Invalid pickup selection', 400));
 

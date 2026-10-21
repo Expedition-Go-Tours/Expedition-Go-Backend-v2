@@ -83,15 +83,22 @@ function findPickupAreaForAddress(address, pickupAreas) {
       // meters), falling back to the default LOCATION_AREA_RADIUS_M for legacy
       // areas that don't have radiusKm set.
       const radiusM = Number.isFinite(area.radiusKm) ? area.radiusKm * 1000 : LOCATION_AREA_RADIUS_M;
-      if (
+      const withinRadius =
         Number.isFinite(area.lat) &&
         Number.isFinite(area.lng) &&
-        distanceMeters(address.lat, address.lng, area.lat, area.lng) <= radiusM
-      ) {
-        return area;
-      }
-      if (NORMALIZE_NAME(address.name) === NORMALIZE_NAME(area.name)) return area;
-      continue;
+        distanceMeters(address.lat, address.lng, area.lat, area.lng) <= radiusM;
+      const nameMatch = NORMALIZE_NAME(address.name) === NORMALIZE_NAME(area.name);
+      if (!withinRadius && !nameMatch) continue;
+
+      // The point/radius path is a service zone like any drawn polygon, so
+      // exclusion zones must be honoured here too. Returning early on a radius
+      // match used to ignore every `exclusions` ring on location-only areas.
+      const excludedByRadius = (area.exclusions || []).find(
+        (exclusion) => Array.isArray(exclusion) && pointInPolygon(address.lat, address.lng, exclusion)
+      );
+      if (excludedByRadius) return { ...area, _excluded: true };
+
+      return area;
     }
 
     if (!pointInPolygon(address.lat, address.lng, polygon)) continue;
@@ -135,6 +142,22 @@ function resolvePickupSelection(selection, pickupConfig = {}) {
     if (areas.length === 0) {
       // No zones configured yet — accept gracefully so the booking isn't
       // blocked. The supplier can collect pickup details after booking.
+      // "Arrange later" (skipValidation) is an explicit customer choice, so it
+      // must yield a deferred snapshot even when the tour has no pickup zones;
+      // returning `pickup: null` made the edit endpoint answer 400.
+      if (skipValidation) {
+        return {
+          ok: true,
+          pickup: {
+            mode: 'area',
+            pickupLater: true,
+            areaName: selection.areaName || '',
+            address: address || null,
+            time: selection.time ? String(selection.time) : '',
+            instructions: selection.instructions || '',
+          },
+        };
+      }
       if (!address && !requestedArea) {
         return { ok: true, pickup: null };
       }
@@ -145,7 +168,11 @@ function resolvePickupSelection(selection, pickupConfig = {}) {
     if (address) {
       const found = findPickupAreaForAddress(address, areas);
       if (found && found._excluded) {
-        return { ok: false, error: 'Pickup is not available at the provided address (outside the pickup zone)' };
+        return {
+          ok: false,
+          excluded: true,
+          error: 'Pickup is not available at the provided address (outside the pickup zone)',
+        };
       }
       if (found) {
         area = found;
@@ -178,7 +205,22 @@ function resolvePickupSelection(selection, pickupConfig = {}) {
   const locations = Array.isArray(config.pickupLocations) ? config.pickupLocations : [];
   if (locations.length === 0) {
     // No pickup points configured — accept gracefully so the booking isn't
-    // blocked. The supplier can collect pickup details after booking.
+    // blocked. The supplier can collect pickup details after booking. Same
+    // rule as the area branch: an explicit "arrange later" is persisted as a
+    // deferred snapshot rather than rejected.
+    if (skipValidation) {
+      return {
+        ok: true,
+        pickup: {
+          mode: 'address',
+          pickupLater: true,
+          locationName: selection.locationName || '',
+          address: address || null,
+          time: selection.time ? String(selection.time) : '',
+          instructions: selection.instructions || '',
+        },
+      };
+    }
     if (!address && !requestedLocation) {
       return { ok: true, pickup: null };
     }

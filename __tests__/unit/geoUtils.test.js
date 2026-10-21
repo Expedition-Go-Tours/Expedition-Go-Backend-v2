@@ -126,6 +126,35 @@ describe('findPickupAreaForAddress', () => {
     const match = findPickupAreaForAddress({ name: 'Legacy Area', lat: 6.0, lng: -1.6 }, noCoords);
     expect(match && match.name).toBe('Legacy Area');
   });
+
+  test('honours exclusion rings on a radius-only (location-only) area', () => {
+    const pointAreas = [{
+      name: 'Kumasi',
+      lat: 6.6871,
+      lng: -1.6219,
+      radiusKm: 10,
+      // A drawn "no pickup" hole inside the 10 km service zone.
+      exclusions: [[[6.685, -1.625], [6.689, -1.625], [6.689, -1.619], [6.685, -1.619]]],
+    }];
+
+    const insideHole = findPickupAreaForAddress({ name: 'Hole', lat: 6.687, lng: -1.622 }, pointAreas);
+    expect(insideHole && insideHole._excluded).toBe(true);
+
+    const outsideHole = findPickupAreaForAddress({ name: 'Some Rd', lat: 6.695, lng: -1.6219 }, pointAreas);
+    expect(outsideHole && outsideHole.name).toBe('Kumasi');
+    expect(outsideHole && outsideHole._excluded).toBeUndefined();
+  });
+
+  test('honours exclusion rings matched by area name on a radius-only area', () => {
+    const pointAreas = [{
+      name: 'Kumasi',
+      lat: 6.6871,
+      lng: -1.6219,
+      exclusions: [[[6.685, -1.625], [6.689, -1.625], [6.689, -1.619], [6.685, -1.619]]],
+    }];
+    const match = findPickupAreaForAddress({ name: 'Kumasi', lat: 6.687, lng: -1.622 }, pointAreas);
+    expect(match && match._excluded).toBe(true);
+  });
 });
 
 describe('resolvePickupSelection', () => {
@@ -216,6 +245,51 @@ describe('resolvePickupSelection', () => {
     expect(result.ok).toBe(true);
     expect(result.pickup.areaName).toBe('Custom');
   });
+
+  test('accepts "arrange later" even when the tour has no pickup config', () => {
+    const result = resolvePickupSelection({ skipValidation: true }, { pickupType: 'area', pickupAreas: [] });
+    expect(result.ok).toBe(true);
+    expect(result.pickup).toMatchObject({ mode: 'area', pickupLater: true, address: null });
+  });
+
+  test('accepts "arrange later" for an address-only tour with no pickup points', () => {
+    const result = resolvePickupSelection({ skipValidation: true }, { pickupType: 'address', pickupLocations: [] });
+    expect(result.ok).toBe(true);
+    expect(result.pickup).toMatchObject({ mode: 'address', pickupLater: true });
+  });
+
+  test('keeps the address for an out-of-zone skipValidation pick', () => {
+    const result = resolvePickupSelection(
+      {
+        mode: 'area',
+        skipValidation: true,
+        address: { name: 'NY', address: 'New York, USA', lat: 40.7128, lng: -74.006 },
+      },
+      CONFIG
+    );
+    expect(result.ok).toBe(true);
+    expect(result.pickup.pickupLater).toBe(true);
+    expect(result.pickup.address).toEqual({ name: 'NY', address: 'New York, USA', lat: 40.7128, lng: -74.006 });
+  });
+
+  test('flags an excluded address (even with skipValidation) for the edit endpoint', () => {
+    const config = {
+      pickupType: 'area',
+      pickupAreas: [{
+        name: 'Kumasi',
+        lat: 6.6871,
+        lng: -1.6219,
+        radiusKm: 10,
+        exclusions: [[[6.685, -1.625], [6.689, -1.625], [6.689, -1.619], [6.685, -1.619]]],
+      }],
+    };
+    const result = resolvePickupSelection(
+      { mode: 'area', skipValidation: true, address: { name: 'Hole', lat: 6.687, lng: -1.622 } },
+      config
+    );
+    expect(result.ok).toBe(false);
+    expect(result.excluded).toBe(true);
+  });
 });
 
 describe('isPickupBookable', () => {
@@ -284,6 +358,13 @@ describe('normalizePickupSnapshot', () => {
     const snap = normalizePickupSnapshot({ skipValidation: true }, CONFIG);
     expect(snap.status).toBe('deferred');
     expect(snap.pickupLater).toBe(true);
+  });
+
+  test('arrange-later on a tour with no pickup config yields deferred (not null)', () => {
+    // Resolve used to answer `{ ok: true, pickup: null }` here, which the
+    // storefront's PATCH /bookings/:id/pickup turned into a 400.
+    const snap = normalizePickupSnapshot({ skipValidation: true }, { pickupType: 'area', pickupAreas: [] });
+    expect(snap).toMatchObject({ mode: 'area', pickupLater: true, status: 'deferred' });
   });
 
   test('normalizes a named zone to selected', () => {
