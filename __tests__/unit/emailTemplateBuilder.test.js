@@ -213,10 +213,10 @@ describe('dark mode variants', () => {
     ]);
     // The light tint stays (clients that ignore the media query keep it)...
     expect(built).toMatch(/<table[^>]*class="dm-tile-green"[^>]*style="background-color:#E7F6EE/);
-    expect(built).toMatch(/<div class="dm-label-green"[^>]*color:#0B7A4B/);
+    expect(built).toMatch(/<div class="kf-lbl dm-label-green"[^>]*color:#0B7A4B/);
     // ...and each tone gets its own pair, so a new tone cannot silently miss.
     expect(built).toMatch(/class="dm-tile-blue"/);
-    expect(built).toMatch(/class="dm-label-blue"/);
+    expect(built).toMatch(/class="kf-lbl dm-label-blue"/);
   });
 
   it('tags the lead-traveller card surface and its text lines for dark mode', () => {
@@ -318,5 +318,52 @@ describe('email shell mobile gutter', () => {
   it('leaves the desktop wrapper padding untouched', () => {
     // Wide clients and Outlook read the inline value, not the media query.
     expect(built).toContain('style="padding:32px 16px;"');
+  });
+});
+
+/**
+ * Key-facts mobile grid contract.
+ *
+ * The tile cells carried .stack-td, whose mobile rule (display:block,
+ * width:100%) pulled every fact onto its own row: four tiles ate ~480px of
+ * a phone screen. The values are short (date, time, duration, travellers),
+ * so the grid opts back into two per row and the tile interior tightens
+ * for the ~130-155px column. Rule order is the load-bearing detail: the
+ * .kf-cell override sits AFTER .stack-td because equal specificity means
+ * source order decides the cascade.
+ */
+describe('key-facts mobile grid', () => {
+  const grid = B.statGrid([
+    { icon: 'calendar', label: 'Activity date', value: '{{dateLabel}}', tone: 'green' },
+    { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tone: 'blue' },
+  ]);
+  const css = (B.shell('T', '<tr></tr>').match(/<style>([\s\S]*?)<\/style>/) || [])[1] || '';
+
+  it('opts the tile cells back out of the one-per-row stack, after .stack-td', () => {
+    const stackAt = css.indexOf('.stack-td { display:block');
+    const cellAt = css.indexOf('.kf-cell { display:table-cell');
+    expect(stackAt).toBeGreaterThan(-1);
+    expect(cellAt).toBeGreaterThan(-1);
+    // The cascade IS the fix: before .stack-td the override loses and the
+    // tiles silently revert to one per row.
+    expect(cellAt).toBeGreaterThan(stackAt);
+    expect(css).toContain('.kf-cell-wide { display:table-cell !important; width:100% !important; }');
+  });
+
+  it('hooks the tile internals so the mobile compaction rules reach them', () => {
+    expect(grid).toContain('<td class="kf-pad"');
+    expect(grid).toContain('<td class="kf-icon" width="38"');
+    expect(grid).toContain('class="kf-lbl ');
+    expect(grid).toContain('class="dm-text kf-val"');
+    for (const rule of ['.kf-pad {', '.kf-icon {', '.kf-lbl {', '.kf-val {']) {
+      expect(css).toContain(rule);
+    }
+  });
+
+  it('leaves the desktop tile sizing intact (inline values still ship)', () => {
+    expect(grid).toContain('width="50%"');
+    expect(grid).toContain('padding:16px 18px 18px 18px');
+    expect(grid).toContain('font-size:16px');
+    expect(grid).toContain('font-size:10.5px');
   });
 });

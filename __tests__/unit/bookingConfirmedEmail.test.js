@@ -87,6 +87,16 @@ describe('booking-confirmed artifact', () => {
     expect(html).toContain('.pad { padding-left:16px !important; padding-right:16px !important; }');
   });
 
+  it('ships the key-facts two-per-row mobile grid in the compiled artifact', () => {
+    const html = artifact();
+    expect(html).toContain('.kf-cell { display:table-cell !important; width:50% !important; }');
+    // The override must appear after the stack rule inside the compiled
+    // style block, or the cascade drops the tiles back to one per row.
+    expect(html).toMatch(/\.stack-td \{[\s\S]*?\.kf-cell \{ display:table-cell/);
+    expect(html).toContain('class="kf-pad"');
+    expect(html).toContain('class="dm-text kf-val"');
+  });
+
   it('renders the four key facts as hosted PNG icon tiles, never inline SVG or emoji', () => {
     const html = artifact();
     expect((html.match(/<img src="/g) || []).length).toBeGreaterThanOrEqual(4);

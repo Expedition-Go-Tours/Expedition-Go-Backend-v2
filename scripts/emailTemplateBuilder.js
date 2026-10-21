@@ -72,6 +72,19 @@ const BASE_CSS = `
     .pad-top { padding-top:28px !important; }
     .stack { display:block !important; width:100% !important; box-sizing:border-box !important; }
     .stack-td { display:block !important; width:100% !important; box-sizing:border-box !important; text-align:left !important; }
+    /* Key-facts grid opts back OUT of the one-per-row stack: the values it
+       carries are short (date, time, duration, travellers), so two tiles per
+       row fit comfortably and halve the section's height. These rules MUST
+       sit after .stack-td - equal specificity, source order decides - or the
+       tiles silently revert to one per row. */
+    .kf-cell { display:table-cell !important; width:50% !important; }
+    .kf-cell-wide { display:table-cell !important; width:100% !important; }
+    /* Compact tiles for the ~130-155px column the 2-up grid leaves them:
+       smaller badge and padding, slightly reduced label/value sizes. */
+    .kf-pad { padding:12px 14px 14px 14px !important; }
+    .kf-icon { width:32px !important; height:32px !important; border-radius:9px !important; }
+    .kf-lbl { padding-top:11px !important; font-size:10px !important; }
+    .kf-val { font-size:14px !important; }
     .btn { width:100% !important; display:block !important; text-align:center !important; box-sizing:border-box !important; padding-left:16px !important; padding-right:16px !important; }
     /* The button wrapper is a shrink-to-fit table, so the .btn width:100%
        rule alone resolves against a content-width cell and the label wraps
@@ -848,7 +861,6 @@ function statGrid(tiles) {
     const tint = (tone && tone.tint) || t.tint || COLORS.accentSoft;
     const color = (tone && tone.color) || t.color || COLORS.accent;
     const tileClass = tone ? ` class="${tone.dmTint}"` : '';
-    const labelClass = tone ? ` class="${tone.dmLabel}"` : '';
     // Hosted PNG first: Gmail and Outlook drop inline <svg>, which would leave
     // the badge empty. The SVG path only remains for icons missing from
     // EMAIL_ICON_URLS (so an unknown key still renders in Apple Mail).
@@ -863,12 +875,12 @@ function statGrid(tiles) {
     <td class="stack-td kf-cell${wide ? ' kf-cell-wide' : ''}" width="${widthAttr}" valign="top" style="width:${widthAttr};padding:0 6px 12px 6px;">
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"${tileClass} style="background-color:${tint};border-radius:16px;border-collapse:separate;border-spacing:0;overflow:hidden;">
         <tr>
-          <td style="padding:16px 18px 18px 18px;font-family:${FONT};">
+          <td class="kf-pad" style="padding:16px 18px 18px 18px;font-family:${FONT};">
             <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
-              <td width="38" height="38" align="center" valign="middle" style="background-color:${color};border-radius:11px;line-height:0;font-size:0;">${glyph}</td>
+              <td class="kf-icon" width="38" height="38" align="center" valign="middle" style="background-color:${color};border-radius:11px;line-height:0;font-size:0;">${glyph}</td>
             </tr></table>
-            <div${labelClass} style="padding-top:13px;font-size:10.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:${color};line-height:1;">${t.label}</div>
-            <div class="dm-text" style="padding-top:5px;font-size:16px;font-weight:700;color:${COLORS.navy};line-height:1.3;">${t.value}</div>
+            <div class="kf-lbl${tone ? ` ${tone.dmLabel}` : ''}" style="padding-top:13px;font-size:10.5px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:${color};line-height:1;">${t.label}</div>
+            <div class="dm-text kf-val" style="padding-top:5px;font-size:16px;font-weight:700;color:${COLORS.navy};line-height:1.3;">${t.value}</div>
           </td>
         </tr>
       </table>
