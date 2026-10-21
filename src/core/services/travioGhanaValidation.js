@@ -321,12 +321,24 @@ const createReviewSchema = z.object({
   params: z.object({}).optional(),
 });
 
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
 const getSupplierBookingsSchema = z.object({
   body: z.any().optional(),
   query: z.object({
     page: z.coerce.number().int().min(1).default(1).optional(),
     limit: z.coerce.number().int().min(1).max(100).default(10).optional(),
-    status: z.string().optional(),
+    status: z.string().max(40).optional(),
+    tourId: z.string().max(100).optional(),
+    customerId: z.string().max(100).optional(),
+    // The bookings page searches server-side: the browser only ever holds one
+    // page, so filtering the visible rows hid every match on page 2.
+    search: z.string().trim().max(120).optional(),
+    purchaseFrom: z.string().regex(DATE_ONLY, 'Must be YYYY-MM-DD format').optional(),
+    purchaseTo: z.string().regex(DATE_ONLY, 'Must be YYYY-MM-DD format').optional(),
+    activityFrom: z.string().regex(DATE_ONLY, 'Must be YYYY-MM-DD format').optional(),
+    activityTo: z.string().regex(DATE_ONLY, 'Must be YYYY-MM-DD format').optional(),
+    sort: z.enum(['newest', 'oldest', 'travelDate']).optional(),
   }).passthrough(),
   params: z.object({}).optional(),
 });

@@ -1434,7 +1434,19 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
   // (`resolveSupplier`). A member's own account id owns no tours, so scoping by
   // it found nothing — the page was reachable and empty, with a 404 underneath.
   const supplierId = req.supplierId;
-  const { status, customerId, page = 1, limit = 10 } = req.query;
+  const {
+    status,
+    customerId,
+    tourId,
+    search,
+    purchaseFrom,
+    purchaseTo,
+    activityFrom,
+    activityTo,
+    sort = 'newest',
+    page = 1,
+    limit = 10,
+  } = req.query;
 
   const supplierProfile = await prisma.supplierProfile.findUnique({ where: { userId: supplierId } });
   if (!supplierProfile) return next(new AppError('Supplier profile not found', 404));
@@ -1448,11 +1460,60 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
   };
   if (status) where.status = status;
   if (customerId) where.customerId = customerId;
+  if (tourId) where.tourId = tourId;
+
+  // Free-text search has to run in the database. Filtering the current page in
+  // the browser made a match on page 2 look like it did not exist.
+  const term = typeof search === 'string' ? search.trim() : '';
+  if (term) {
+    where.OR = [
+      { bookingNumber: { contains: term, mode: 'insensitive' } },
+      { customer: { name: { contains: term, mode: 'insensitive' } } },
+      { customer: { email: { contains: term, mode: 'insensitive' } } },
+      { tour: { title: { contains: term, mode: 'insensitive' } } },
+    ];
+  }
+
+  const parseDay = (value, endOfDay = false) => {
+    if (!value) return null;
+    const date = new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
+
+  if (purchaseFrom && purchaseTo && purchaseFrom > purchaseTo) {
+    return next(new AppError('The purchase start date must be before the end date', 400));
+  }
+  if (activityFrom && activityTo && activityFrom > activityTo) {
+    return next(new AppError('The activity start date must be before the end date', 400));
+  }
+
+  const createdFrom = parseDay(purchaseFrom);
+  const createdTo = parseDay(purchaseTo, true);
+  if (createdFrom || createdTo) {
+    where.createdAt = {
+      ...(createdFrom ? { gte: createdFrom } : {}),
+      ...(createdTo ? { lte: createdTo } : {}),
+    };
+  }
+
+  const travelFrom = parseDay(activityFrom);
+  const travelTo = parseDay(activityTo, true);
+  if (travelFrom || travelTo) {
+    where.travelDate = {
+      ...(travelFrom ? { gte: travelFrom } : {}),
+      ...(travelTo ? { lte: travelTo } : {}),
+    };
+  }
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const take = Math.min(parseInt(limit), 100);
+  const orderBy = sort === 'oldest'
+    ? { createdAt: 'asc' }
+    : sort === 'travelDate'
+      ? { travelDate: 'asc' }
+      : { createdAt: 'desc' };
 
-  const [bookings, totalCount, revenueAgg] = await Promise.all([
+  const [bookings, totalCount, revenueAgg, statusGroups] = await Promise.all([
     prisma.booking.findMany({
       where,
       include: {
@@ -1475,7 +1536,7 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
         appliedOffer: { select: { id: true, name: true, offerType: true, discountType: true, discountPercentage: true, fixedDiscountValue: true, promoCode: true } },
         review: true,
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy,
       skip,
       take,
     }),
@@ -1485,7 +1546,20 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
       _sum: { grossAmount: true, supplierPayout: true },
       _count: true,
     }),
+    // The stat cards must agree with the list beneath them. They used to be
+    // counted from the current page, so "Total Bookings" showed 25 on any
+    // supplier with more than one page.
+    prisma.booking.groupBy({
+      by: ['status'],
+      where,
+      _count: { _all: true },
+    }),
   ]);
+
+  const counts = statusGroups.reduce((acc, group) => {
+    acc[group.status] = group._count?._all ?? group._count ?? 0;
+    return acc;
+  }, {});
 
   // Admin-approval gate: open cancellation requests ride along as chips.
   const { pendingRequestsForBookingIds } = require('../../core/services/cancellationRequestService');
@@ -1507,6 +1581,7 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
         totalRevenue: parseFloat(revenueAgg._sum.grossAmount || 0),
         totalEarnings: parseFloat(revenueAgg._sum.supplierPayout || 0),
         totalBookings: revenueAgg._count,
+        counts,
       },
     },
   });
