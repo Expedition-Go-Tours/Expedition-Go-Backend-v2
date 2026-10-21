@@ -1,3 +1,5 @@
+const GHANA_TOUR_SEO = require('./tourSeo');
+
 /**
  * Lightweight prerender endpoint for SEO.
  *
@@ -660,6 +662,8 @@ async function handleTourPage(site, slugOrId) {
   const tour = (listing && listing.tour) || listing;
   if (!tour || !tour.title) return null;
 
+  const tourSeo = site.apiBrand === 'travioghana' ? GHANA_TOUR_SEO[tour.id] : undefined;
+
   const city = tour.city || (tour.location && tour.location.split(',')[0].trim()) || 'Ghana';
   const region = tour.location ? tour.location.split(',')[1].trim() : '';
   const image = tour.coverPhoto || (tour.photos && tour.photos[0]) || site.defaultImage.url;
@@ -698,8 +702,9 @@ async function handleTourPage(site, slugOrId) {
       ${relatedHtml}`;
 
   return buildHtml(site, {
-    title: `${tour.title} in ${city}`,
-    description: `${tour.title} - ${durationLabel} in ${city}${region ? ', ' + region : ''}, Ghana. Book from $${tour.startingPrice || 0}. ${tour.averageRating ? `Rated ${tour.averageRating}/5` : ''} Free cancellation, instant confirmation.`,
+    title: tourSeo ? tourSeo.title : `${tour.title} in ${city}`,
+    appendSiteName: !tourSeo,
+    description: tourSeo ? tourSeo.description : `${tour.title} - ${durationLabel} in ${city}${region ? ', ' + region : ''}, Ghana. Book from $${tour.startingPrice || 0}. ${tour.averageRating ? `Rated ${tour.averageRating}/5` : ''} Free cancellation, instant confirmation.`,
     keywords: `${tour.title}, ${city} tours, ${tour.category || 'tours'} in ${city}, Ghana tours, book ${tour.title}, things to do in ${city}`,
     image,
     url: tourUrl(site, tour),
