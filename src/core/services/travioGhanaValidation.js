@@ -343,6 +343,17 @@ const getSupplierBookingsSchema = z.object({
   params: z.object({}).optional(),
 });
 
+const rescheduleBookingSchema = z.object({
+  body: z.object({
+    travelDate: z.string().regex(DATE_ONLY, 'Must be YYYY-MM-DD format'),
+    // Optional: omitting it keeps the booking's current start time.
+    selectedTime: z.string().regex(/^\d{2}:\d{2}$/, 'Must be HH:MM').optional(),
+    reason: z.string().max(500).optional(),
+  }),
+  query: z.any().optional(),
+  params: z.object({ id: z.string().min(1).max(100) }),
+});
+
 const supplierBookingParamsSchema = z.object({
   body: z.any().optional(),
   query: z.any().optional(),
@@ -415,6 +426,7 @@ module.exports = {
   createReviewSchema,
   getSupplierBookingsSchema,
   supplierBookingParamsSchema,
+  rescheduleBookingSchema,
   updateBookingStatusSchema,
   analyticsOverviewSchema,
   analyticsRevenueTrendSchema,

@@ -18,7 +18,7 @@ const { resolvePickupSelection } = require('../../core/services/geoUtils');
 const { validatePassengerMix } = require('../../core/services/passengerMix');
 const { createPaymentIntent, createCheckoutSession, calculateCommission, getStripe, ensureStripeCustomer } = require('../../core/services/stripeHelpers');
 const { cardSummaryFromIntent } = require('../../core/services/stripeCardSummary');
-const { refundCancelledBooking } = require('../../core/services/bookingModify');
+const { refundCancelledBooking, rescheduleBookingBySupplier } = require('../../core/services/bookingModify');
 const { resolveAllowedClientUrl } = require('../../core/services/clientOrigin');
 const { acquireHold, releaseHold } = require('../../core/services/checkoutHold');
 const { notifyAdmin } = require('../../core/services/adminNotificationService');
@@ -1744,6 +1744,40 @@ const exportSupplierBookings = catchAsync(async (req, res, next) => {
  * request — all scoped to a tour the acting supplier owns, exactly like the
  * list.
  */
+/**
+ * POST /api/travioghana/supplier/bookings/:id/reschedule
+ *
+ * Move one booking to another date/time. The hard rules live in
+ * bookingModify.rescheduleBookingBySupplier: same price or no move, capacity
+ * re-checked without this booking's own travellers, payout still pending, and
+ * the customer notified through the same channel as a self-service change.
+ */
+const rescheduleSupplierBooking = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  const { id } = req.params;
+  const { travelDate, selectedTime, reason } = req.body;
+
+  let result;
+  try {
+    result = await rescheduleBookingBySupplier({ bookingId: id, supplierId, travelDate, selectedTime, reason });
+  } catch (err) {
+    return next(err);
+  }
+
+  logActivity({
+    userId: req.user.id,
+    action: 'booking.rescheduled',
+    resource: 'Booking',
+    resourceId: id,
+    metadata: { travelDate, selectedTime: selectedTime || null, reason: reason || null },
+  }).catch(() => {});
+
+  res.status(200).json({
+    status: 'success',
+    data: { booking: result.booking, changes: result.changes },
+  });
+});
+
 const getSupplierBookingDetail = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
   const { id } = req.params;
@@ -1959,5 +1993,6 @@ module.exports = {
   getSupplierBookings,
   exportSupplierBookings,
   getSupplierBookingDetail,
+  rescheduleSupplierBooking,
   updateBookingStatus,
 };

@@ -36,6 +36,7 @@ const {
   cancelBookingSchema,
   getSupplierBookingsSchema,
   supplierBookingParamsSchema,
+  rescheduleBookingSchema,
   analyticsOverviewSchema,
   analyticsRevenueTrendSchema,
   analyticsFunnelSchema,
@@ -1097,6 +1098,7 @@ router.get('/supplier/bookings', protect, resolveSupplier, requireTeamPermission
 // `export` is a literal path, so it is registered BEFORE `/:id` — otherwise
 // "export" would be read as a booking id and 404.
 router.get('/supplier/bookings/export', protect, resolveSupplier, requireTeamPermission('bookings.view'), validate(getSupplierBookingsSchema), travioGhanaController.exportSupplierBookings);
+router.post('/supplier/bookings/:id/reschedule', protect, resolveSupplier, requireTeamPermission('bookings.manage'), validate(rescheduleBookingSchema), travioGhanaController.rescheduleSupplierBooking);
 router.get('/supplier/bookings/:id', protect, resolveSupplier, requireTeamPermission('bookings.view'), validate(supplierBookingParamsSchema), travioGhanaController.getSupplierBookingDetail);
 
 /**

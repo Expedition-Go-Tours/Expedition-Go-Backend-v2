@@ -1115,9 +1115,148 @@ async function refundCancelledBooking(booking, refundCents) {
   return createRefund(booking.stripePaymentIntentId, refundCents);
 }
 
+/**
+ * Supplier-initiated reschedule — move ONE booking to another date/time.
+ *
+ * Deliberately narrow, because it touches what a customer paid for:
+ *
+ *  - same price or no move. The target date is re-priced with the same engine a
+ *    new booking uses; if the live price differs by even a cent the call is
+ *    refused with both figures, and the supplier cancels/rebooks instead. A
+ *    supplier moving a booking must never silently change what the customer
+ *    paid, and must never be handed a hidden price change.
+ *  - capacity is re-checked EXCLUDING this booking's own travellers.
+ *  - the customer's change-cutoff does NOT apply here (a supplier moves a
+ *    booking for weather/operations at any hour), but the pay-later lead time
+ *    still does — the sweep has to fit before the activity.
+ *  - payout has not begun, and the booking is PENDING or CONFIRMED.
+ *  - the customer is told, through the same modification notification/email the
+ *    self-service flow uses, so nobody finds out at the door.
+ */
+async function rescheduleBookingBySupplier({ bookingId, supplierId, travelDate, selectedTime, reason }) {
+  const booking = await prisma.booking.findFirst({
+    where: { id: bookingId, tour: { supplierId }, isSimulated: false },
+    include: {
+      tour: { include: { supplier: { include: { supplierProfile: true } } } },
+      customer: true,
+    },
+  });
+  if (!booking) throw new AppError('Booking not found or access denied', 404);
+
+  if (!['PENDING', 'CONFIRMED'].includes(booking.status)) {
+    throw new AppError('Only pending or confirmed bookings can be moved to a new date', 400);
+  }
+  if (booking.payoutStatus && booking.payoutStatus !== 'PENDING') {
+    throw new AppError('This booking can no longer be changed once payout has begun', 409);
+  }
+
+  const target = buildTarget(booking, {
+    travelDate,
+    ...(selectedTime !== undefined ? { selectedTime } : {}),
+  });
+
+  const start = targetStart(target.date, target.time);
+  if (start.getTime() <= Date.now()) {
+    throw new AppError('The new activity date must be in the future', 400);
+  }
+
+  const maxAdvanceDays = parseInt(await getConfig('booking.max_advance_days', '365'), 10);
+  if ((start.getTime() - Date.now()) / (24 * 60 * 60 * 1000) > maxAdvanceDays) {
+    throw new AppError(`Changes can only be made up to ${maxAdvanceDays} days before the activity`, 400);
+  }
+
+  require('./payLaterLeadTime').assertPayLaterLeadTime({
+    paymentTiming: booking.paymentTiming,
+    startAt: start,
+  });
+
+  const tourOpt = require('./tourOptions');
+  const hasOptions = tourOpt.getTourOptions(booking.tour).length > 0;
+  const resolvedOpt = hasOptions ? tourOpt.applyOption(booking.tour, booking.optionId || 'default') : null;
+  const tour = resolvedOpt && resolvedOpt.optionScope ? resolvedOpt.tour : booking.tour;
+  const optionScope = resolvedOpt && resolvedOpt.optionScope ? resolvedOpt.optionScope : null;
+
+  await validateTargetCapacity(prisma, tour, target, booking.id, { optionScope });
+
+  const pricing = await calculateTourPrice(
+    tour,
+    target.travelers,
+    target.date,
+    target.time || null,
+    null,
+    booking.customerId,
+    null
+  );
+  if (!pricing || pricing.success === false) {
+    throw new AppError((pricing && pricing.error) || 'Unable to price the new date', 400);
+  }
+
+  const previousTotal = round2(booking.grossAmount);
+  const newTotal = round2(pricing.total);
+  const delta = round2(newTotal - previousTotal);
+  if (Math.abs(delta) > 0.01) {
+    const money = (v) =>
+      new Intl.NumberFormat('en-US', { style: 'currency', currency: booking.currency || 'USD' }).format(v);
+    throw new AppError(
+      `That date is priced ${money(newTotal)} instead of ${money(previousTotal)}. `
+      + 'A supplier move never changes what the customer paid, so this move is refused — '
+      + 'cancel this booking and take a new one for the new date instead.',
+      409
+    );
+  }
+
+  const previous = {
+    travelDate: new Date(booking.travelDate),
+    selectedTime: booking.selectedTime || null,
+    travelers: booking.travelers || {},
+    travelerTotal: travelerCount(booking.travelers),
+    subtotal: round2(booking.subtotal || 0),
+    discount: round2(booking.discounts || 0),
+    grossAmount: previousTotal,
+    platformCommission: round2(booking.platformCommission || 0),
+    supplierPayout: round2(booking.supplierPayout || 0),
+  };
+  const next = {
+    travelDate: new Date(target.date),
+    selectedTime: target.time || null,
+    travelers: target.travelers,
+    travelerTotal: target.travelerTotal,
+    subtotal: previous.subtotal,
+    discount: previous.discount,
+    newTotal: previousTotal,
+    platformCommission: previous.platformCommission,
+    supplierPayout: previous.supplierPayout,
+  };
+
+  const updated = await prisma.booking.update({
+    where: { id: booking.id },
+    data: {
+      travelDate: new Date(target.date),
+      selectedTime: target.time || null,
+      ...(reason ? { supplierNotes: [booking.supplierNotes, `Rescheduled: ${reason}`].filter(Boolean).join('\n') } : {}),
+      updatedAt: new Date(),
+    },
+  });
+
+  const changes = buildChangeLabels(previous, next, booking.currency || 'USD');
+
+  notifyModificationApplied(booking.id, {
+    changes,
+    previousTotal,
+    newTotal: previousTotal,
+    adjustment: 0,
+    previousPayout: previous.supplierPayout,
+    newPayout: previous.supplierPayout,
+    payoutAdjustment: 0,
+  }).catch((err) => console.error('[BookingModify] reschedule notifications failed:', err.message));
+
+  return { booking: updated, changes };
+}
+
 module.exports = {
   quoteBookingModification,
   applyBookingModification,
+  rescheduleBookingBySupplier,
   discardParkedChange,
   activeParkedChange,
   finalizeTopUpChangeInTx,
