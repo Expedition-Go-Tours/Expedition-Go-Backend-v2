@@ -731,7 +731,12 @@ async function handleListingsPage(site, place) {
   const tours = listings.map((l) => l.tour || l).filter(Boolean);
   const count = tours.length;
 
-  const title = place ? `Tours in ${place} | ${count} experiences` : 'Ghana Tours & Experiences';
+  const useGhanaListingTitle = site.apiBrand === 'travioghana' && !place;
+  const title = place
+    ? `Tours in ${place} | ${count} experiences`
+    : useGhanaListingTitle
+    ? 'The BEST Ghana Tours and Things to Do in 2026'
+    : 'Ghana Tours & Experiences';
   const description = place
     ? `Discover ${count} tours and experiences in ${place}, Ghana. Book cultural tours, food tours, wildlife safaris, and adventure activities. Free cancellation, best prices guaranteed.`
     : `Explore ${count} authentic Ghana tours and experiences. Book cultural tours, wildlife safaris, food tours, and adventure activities. Free cancellation.`;
@@ -748,6 +753,7 @@ async function handleListingsPage(site, place) {
 
   return buildHtml(site, {
     title,
+    appendSiteName: !useGhanaListingTitle,
     description,
     keywords,
     robots,
