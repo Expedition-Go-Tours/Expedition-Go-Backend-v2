@@ -14,6 +14,7 @@ const {
   sendPurchase,
   sendRefund,
   isEnabled,
+  isPlausibleApiSecret,
 } = require('../../src/core/services/ga4Measurement');
 
 const baseBooking = {
@@ -53,6 +54,54 @@ describe('ga4Measurement', () => {
       expect(isEnabled()).toBe(false);
       process.env.GA4_API_SECRET = 'secret';
       expect(isEnabled()).toBe(true);
+    });
+  });
+
+  describe('api secret shape guard', () => {
+    // The incident: the numeric data-stream ID was pasted as the secret. GA
+    // answers 204 for it, so nothing ever failed and revenue stayed at zero.
+    it('rejects the numeric data-stream ID', () => {
+      expect(isPlausibleApiSecret('16142161530')).toBe(false);
+    });
+
+    it('rejects any all-digit value regardless of length', () => {
+      expect(isPlausibleApiSecret('12345678901234567890')).toBe(false);
+    });
+
+    it('rejects missing, empty or truncated values', () => {
+      expect(isPlausibleApiSecret(undefined)).toBe(false);
+      expect(isPlausibleApiSecret('')).toBe(false);
+      expect(isPlausibleApiSecret('secret')).toBe(false);
+    });
+
+    it('accepts a generated API secret', () => {
+      expect(isPlausibleApiSecret('6Fb72ziwQdSz-pl0YLpHKA')).toBe(true);
+    });
+
+    it('shouts at boot when the configured secret is a stream id', () => {
+      process.env.GA4_MEASUREMENT_ID = 'G-TEST';
+      process.env.GA4_API_SECRET = '16142161530';
+      const calls = [];
+      errorSpy.mockImplementation((...args) => calls.push(args.join(' ')));
+
+      jest.isolateModules(() => {
+        require('../../src/core/services/ga4Measurement');
+      });
+
+      expect(calls.join('\n')).toContain('looks like a data-stream ID');
+    });
+
+    it('stays quiet at boot for a plausible secret', () => {
+      process.env.GA4_MEASUREMENT_ID = 'G-TEST';
+      process.env.GA4_API_SECRET = '6Fb72ziwQdSz-pl0YLpHKA';
+      const calls = [];
+      errorSpy.mockImplementation((...args) => calls.push(args.join(' ')));
+
+      jest.isolateModules(() => {
+        require('../../src/core/services/ga4Measurement');
+      });
+
+      expect(calls).toEqual([]);
     });
   });
 

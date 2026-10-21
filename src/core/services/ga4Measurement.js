@@ -36,6 +36,33 @@ function isEnabled() {
   return Boolean(process.env.GA4_MEASUREMENT_ID && process.env.GA4_API_SECRET);
 }
 
+/**
+ * GA4 API secrets are generated tokens (base64url-ish, typically 22 chars). The
+ * value that most often gets pasted here by mistake is the numeric data-stream
+ * ID from the same Admin page, which is accepted with HTTP 204 and then
+ * discarded — a silent, permanent zero-revenue failure. There is no runtime
+ * signal from GA, so this cheap shape check is the only guard.
+ */
+function isPlausibleApiSecret(secret) {
+  if (typeof secret !== 'string') return false;
+  if (secret.length < 16) return false;
+  if (/^[0-9]+$/.test(secret)) return false;
+  return true;
+}
+
+/** Boot-time alarm: a configured-but-impossible secret must never be quiet. */
+function warnIfMisconfigured() {
+  if (!isEnabled()) return;
+  if (isPlausibleApiSecret(process.env.GA4_API_SECRET)) return;
+  console.error(
+    '[ga4Measurement] GA4_API_SECRET looks like a data-stream ID, not an API secret ' +
+      '(all digits or too short). GA will answer 204 and discard every event. ' +
+      'Create a secret under Admin > Data Streams > (stream) > Measurement Protocol API secrets.'
+  );
+}
+
+warnIfMisconfigured();
+
 /** Money must be a finite, non-negative number before it reaches GA. */
 function toAmount(value) {
   const n = Number(value);
@@ -225,4 +252,5 @@ module.exports = {
   sendPurchase,
   sendRefund,
   isEnabled,
+  isPlausibleApiSecret,
 };
