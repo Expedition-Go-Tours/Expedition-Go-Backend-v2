@@ -1239,12 +1239,57 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
 const MAX_PICKUP_PLANNER_ROWS = 2000;
 
 /**
+ * Normalize the canonical pickup address object sent by the supplier
+ * dashboard. Returns null when the payload carries no usable location.
+ * Coordinates are only kept as a pair.
+ */
+function normalizePickupAddress(value) {
+  if (value === null) return null;
+  if (!value || typeof value !== 'object') return null;
+  const name = typeof value.name === 'string' ? value.name.trim().slice(0, 500) : '';
+  const address = typeof value.address === 'string' ? value.address.trim().slice(0, 500) : '';
+  const rawLat = value.lat == null ? null : Number(value.lat);
+  const rawLng = value.lng == null ? null : Number(value.lng);
+  const hasPair = Number.isFinite(rawLat) && Number.isFinite(rawLng)
+    && rawLat >= -90 && rawLat <= 90 && rawLng >= -180 && rawLng <= 180;
+  if (!name && !address && !hasPair) return null;
+  return {
+    name,
+    address,
+    lat: hasPair ? rawLat : null,
+    lng: hasPair ? rawLng : null,
+  };
+}
+
+/** True when a pickup snapshot contains some form of location. */
+function hasPickupLocation(pickup) {
+  if (!pickup || typeof pickup !== 'object') return false;
+  const address = pickup.address && typeof pickup.address === 'object' ? pickup.address : null;
+  return !!(
+    pickup.areaName ||
+    pickup.locationName ||
+    pickup.place ||
+    address?.name ||
+    address?.address ||
+    (Number.isFinite(address?.lat) && Number.isFinite(address?.lng)) ||
+    (Number.isFinite(pickup.lat) && Number.isFinite(pickup.lng))
+  );
+}
+
+/**
  * Get supplier's upcoming bookings that carry a pickup selection
  * (GetYourGuide-style pickup planner).
  */
 exports.getPickupPlanner = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
-  const { from, to, status, page = 1, limit = 50, tourId, pickupState = 'all', pickedUp } = req.query;
+  const { from, to, status, page = 1, limit = 50, tourId, pickupState = 'all', pickedUp, q } = req.query;
+
+  if (status && !['PENDING', 'CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW', 'REFUNDED'].includes(status)) {
+    return next(new AppError('Invalid booking status', 400));
+  }
+  if (!['all', 'deferred', 'incomplete', 'confirmed'].includes(String(pickupState || 'all').toLowerCase())) {
+    return next(new AppError('Invalid pickup state', 400));
+  }
 
   // Verify supplier status
   const supplierProfile = await prisma.supplierProfile.findUnique({
@@ -1271,7 +1316,9 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
     // Only bookings with a stored pickup snapshot (JSON column is DB NULL otherwise).
     pickup: { not: Prisma.DbNull },
     travelDate: { gte: fromDate, lte: toDate },
-    ...(status ? { status } : {}),
+    // A cancelled/refunded booking is not a stop on the run. The dashboard can
+    // still ask for them explicitly via ?status=CANCELLED.
+    ...(status ? { status } : { status: { notIn: ['CANCELLED', 'REFUNDED'] } }),
     ...(tourId ? { tourId } : {}),
   };
 
@@ -1303,13 +1350,12 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
       }
     },
     orderBy: [{ travelDate: 'asc' }, { selectedTime: 'asc' }],
-    take: MAX_PICKUP_PLANNER_ROWS
+    take: MAX_PICKUP_PLANNER_ROWS + 1
   });
 
-  // Derive the canonical pickup state (+ flags) for every booking. Server
-  // computation is the single source of truth — the dashboard never re-infers
-  // from field presence. `pickupState` is what the planner's filters use.
-  const enriched = rows.map((b) => {
+  // Derived state is the single source of truth — the dashboard never
+  // re-infers it from field presence.
+  const enriched = rows.slice(0, MAX_PICKUP_PLANNER_ROWS).map((b) => {
     const p = b.pickup && typeof b.pickup === 'object' ? b.pickup : null;
     const status = pickupStatus(p);
     const incomplete = isPickupIncomplete(p);
@@ -1341,6 +1387,28 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
   if (pickedUp === 'true') filtered = filtered.filter((b) => !!b.pickedUpAt);
   else if (pickedUp === 'false') filtered = filtered.filter((b) => !b.pickedUpAt);
 
+  // Range-wide search. Previously the search box filtered only the current
+  // page, so a customer on page 2 looked "missing" while the page was filtered.
+  const search = typeof q === 'string' ? q.trim().toLowerCase().slice(0, 100) : '';
+  if (search) {
+    const fields = (b) => [
+      b.customer?.name,
+      b.customer?.phone,
+      b.customer?.email,
+      b.bookingNumber,
+      b.tour?.title,
+      b.pickup?.address?.name,
+      b.pickup?.address?.address,
+      b.pickup?.place,
+      b.pickup?.areaName,
+      b.pickup?.locationName,
+      b.travelers?.location,
+    ];
+    filtered = filtered.filter((b) =>
+      fields(b).some((value) => String(value || '').toLowerCase().includes(search))
+    );
+  }
+
   // The supplier's drag-to-reorder stop order within a day wins; otherwise the
   // pickup time decides.
   const sorted = [...filtered].sort((a, b) => {
@@ -1364,6 +1432,9 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
     data: {
       bookings,
       counts,
+      // If the range holds more rows than the safety cap, the client warns
+      // before exporting instead of silently producing a partial manifest.
+      truncated: rows.length > MAX_PICKUP_PLANNER_ROWS,
       pagination: {
         currentPage: pageNum,
         totalPages,
@@ -1378,6 +1449,12 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
  * Persist the supplier's stop order for one service day.
  * Body: { date: 'YYYY-MM-DD', order: [bookingId, ...] } — index becomes the
  * stop position, so the planner can list the run in the order it is driven.
+ *
+ * Reorder is a full-day operation. The old endpoint accepted any subset and
+ * wrote 0..n-1, so dragging one row while a search/filter was active reset the
+ * hidden rows to the same positions and corrupted the route. The dashboard
+ * now fetches the complete day first; the server rejects partial orders so a
+ * stale client can never silently reshuffle the run.
  */
 exports.reorderPickupStops = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
@@ -1386,6 +1463,9 @@ exports.reorderPickupStops = catchAsync(async (req, res, next) => {
   if (!date || !Array.isArray(order) || order.length === 0) {
     return next(new AppError('date and a non-empty order array are required', 400));
   }
+  if (new Set(order).size !== order.length) {
+    return next(new AppError('order must not contain duplicate booking ids', 400));
+  }
 
   const dayStart = new Date(`${date}T00:00:00.000Z`);
   if (Number.isNaN(dayStart.getTime())) {
@@ -1393,12 +1473,26 @@ exports.reorderPickupStops = catchAsync(async (req, res, next) => {
   }
   const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
 
-  const found = await prisma.booking.findMany({
-    where: { id: { in: order }, tour: { supplierId }, travelDate: { gte: dayStart, lte: dayEnd } },
+  const dayBookings = await prisma.booking.findMany({
+    where: {
+      tour: { supplierId },
+      isSimulated: false,
+      pickup: { not: Prisma.DbNull },
+      status: { notIn: ['CANCELLED', 'REFUNDED'] },
+      travelDate: { gte: dayStart, lte: dayEnd },
+    },
     select: { id: true },
   });
-  if (found.length !== order.length) {
-    return next(new AppError('One or more bookings were not found for that day', 400));
+
+  const dayIds = new Set(dayBookings.map((b) => b.id));
+  const submitted = new Set(order);
+  const sameSize = dayIds.size === submitted.size;
+  const sameMembers = sameSize && [...dayIds].every((id) => submitted.has(id));
+  if (!sameMembers) {
+    return next(new AppError(
+      'Reorder must include every stop for the day. Refresh the planner and try again.',
+      400
+    ));
   }
 
   await prisma.$transaction(
@@ -1420,47 +1514,111 @@ exports.reorderPickupStops = catchAsync(async (req, res, next) => {
 
 /**
  * Update a booking's pickup details (suppliers only) and notify the customer.
+ *
+ * The customer app and the pickup-update email render `pickup.address`; the
+ * supplier dashboard now sends that object as `pickupAddress` when it moves
+ * the point. Flat lat/lng remain accepted for callers that predate the field,
+ * and are mirrored into `address` so every surface shows one location.
  */
 exports.updateBookingPickup = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
   const { id } = req.params;
-  const { pickupTime, pickupPlace, instructions, locationName, areaName, lat, lng, pickedUp } = req.body;
+  const {
+    pickupTime,
+    pickupPlace,
+    instructions,
+    locationName,
+    areaName,
+    lat,
+    lng,
+    pickupAddress,
+    pickedUp,
+  } = req.body;
 
   const booking = await prisma.booking.findFirst({
-    where: { id, tour: { supplierId } },
-    include: { customer: { select: { id: true, name: true, email: true } } }
+    where: { id, tour: { supplierId } }
+    // Scalar fields include paymentTiming/paymentStatus, which decide whether
+    // the pickup email may be sent before payment.
   });
 
   if (!booking) {
     return next(new AppError('Booking not found or access denied', 404));
   }
 
-  const current = typeof booking.pickup === 'string'
-    ? (() => { try { return JSON.parse(booking.pickup); } catch { return null; } })()
-    : booking.pickup || {};
+  // A cancelled/completed/no-show booking is history, not an editable stop.
+  if (['CANCELLED', 'REFUNDED', 'COMPLETED', 'NO_SHOW'].includes(booking.status)) {
+    return next(new AppError('This booking can no longer be edited', 400));
+  }
 
-  const pickupFieldsProvided = [pickupTime, pickupPlace, instructions, locationName, areaName, lat, lng]
-    .some((value) => value !== undefined);
+  const parsedPickup = typeof booking.pickup === 'string'
+    ? (() => { try { return JSON.parse(booking.pickup); } catch { return null; } })()
+    : booking.pickup;
+  const current = parsedPickup && typeof parsedPickup === 'object' ? parsedPickup : {};
+  const currentAddress = current.address && typeof current.address === 'object'
+    ? current.address
+    : null;
+
+  const pickupFieldsProvided = [
+    pickupTime, pickupPlace, instructions, locationName, areaName, lat, lng, pickupAddress,
+  ].some((value) => value !== undefined);
 
   const data = {};
   if (pickupFieldsProvided) {
+    const nextAddress = pickupAddress !== undefined
+      ? normalizePickupAddress(pickupAddress)
+      : currentAddress;
+
+    const currentLat = current.lat == null || current.lat === '' ? null : Number(current.lat);
+    const currentLng = current.lng == null || current.lng === '' ? null : Number(current.lng);
+    let nextLat = Number.isFinite(currentLat) ? currentLat : null;
+    let nextLng = Number.isFinite(currentLng) ? currentLng : null;
+    if (pickupAddress !== undefined) {
+      nextLat = nextAddress?.lat ?? null;
+      nextLng = nextAddress?.lng ?? null;
+    } else if (lat !== undefined || lng !== undefined) {
+      if (lat !== undefined) nextLat = lat === null ? null : Number(lat);
+      if (lng !== undefined) nextLng = lng === null ? null : Number(lng);
+    }
+
+    // A legacy caller that only sends top-level lat/lng used to update a pin
+    // the customer app/email never read (`pickup.address` stayed stale). Mirror
+    // the new point into the existing address object so every surface agrees.
+    const mirroredAddress =
+      pickupAddress === undefined && currentAddress && (lat !== undefined || lng !== undefined)
+        ? { ...currentAddress, lat: nextLat, lng: nextLng }
+        : null;
+
     const updatedPickup = {
       ...current,
-      ...(pickupTime !== undefined ? { time: String(pickupTime) } : {}),
-      ...(pickupPlace !== undefined ? { place: String(pickupPlace) } : {}),
-      ...(instructions !== undefined ? { instructions: String(instructions) } : {}),
-      ...(locationName !== undefined ? { locationName: String(locationName) } : {}),
-      ...(areaName !== undefined ? { areaName: String(areaName) } : {}),
-      ...(lat !== undefined ? { lat: lat !== null ? Number(lat) : null } : {}),
-      ...(lng !== undefined ? { lng: lng !== null ? Number(lng) : null } : {}),
-      // Supplier confirmation: normalizes the snapshot to a clean 'confirmed'
-      // state (drops any leftover pickupLater/skipValidation markers).
-      pickupLater: false,
-      status: 'confirmed',
+      ...(pickupTime !== undefined ? { time: String(pickupTime).trim() } : {}),
+      ...(pickupPlace !== undefined ? { place: String(pickupPlace).trim() } : {}),
+      ...(instructions !== undefined ? { instructions: String(instructions).trim() } : {}),
+      ...(locationName !== undefined ? { locationName: String(locationName).trim() } : {}),
+      ...(areaName !== undefined ? { areaName: String(areaName).trim() } : {}),
+      ...(pickupAddress !== undefined ? { address: nextAddress } : {}),
+      ...(mirroredAddress ? { address: mirroredAddress } : {}),
+      ...(pickupAddress !== undefined || lat !== undefined || lng !== undefined
+        ? { lat: nextLat, lng: nextLng }
+        : {}),
+      // Moving the point without replacement context must not leave the old
+      // hotel/zone label behind: the card would show the new street next to
+      // "Kempinski Hotel", and the email would name the old landmark.
+      ...(pickupAddress !== undefined && pickupPlace === undefined ? { place: '' } : {}),
+      ...(pickupAddress !== undefined && areaName === undefined ? { areaName: '' } : {}),
+      ...(pickupAddress !== undefined && locationName === undefined ? { locationName: '' } : {}),
       updatedBy: req.user.id,
       updatedAt: new Date().toISOString(),
     };
-    delete updatedPickup.skipValidation;
+
+    // Only a real location confirms the pickup. Editing instructions alone on
+    // a deferred booking used to write `pickupLater: false` + `status:
+    // 'confirmed'` and silently turned "customer will arrange later" into a
+    // confirmed pickup with no address.
+    if (hasPickupLocation(updatedPickup)) {
+      updatedPickup.pickupLater = false;
+      delete updatedPickup.skipValidation;
+    }
+    updatedPickup.status = pickupStatus(updatedPickup);
     data.pickup = updatedPickup;
   }
 
@@ -1482,28 +1640,43 @@ exports.updateBookingPickup = catchAsync(async (req, res, next) => {
   // mailed a "Your pickup details have been updated" notice whose previous and
   // new rows were the same value.
   const pickupChangeResult = data.pickup ? pickupChange(current, data.pickup) : null;
-  if (pickupChangeResult && pickupChangeResult.changed) {
-    enqueueNotification({
-      userId: booking.customerId,
-      type: 'PICKUP_UPDATED',
-      title: 'Pickup details updated',
-      message: 'Your pickup details have been updated by the supplier. Please check your booking.',
-      data: { bookingId: booking.id, pickup: true }
-    }).catch((err) => console.error('[Notification] enqueueNotification (pickup update) failed:', err.message));
-
-    // Reserve-now-pay-later bookings: suppress pickup-update emails until
-    // payment succeeds. The customer's charge-time confirmation email
-    // (pay-later-charged) renders the latest pickup once charged, so the
-    // update merges into the single confirmation email.
+  let pickupNotification = null;
+  if (pickupChangeResult) {
+    const changed = !!pickupChangeResult.changed;
     const unpaidReservation = booking.paymentTiming === 'later' && booking.paymentStatus !== 'SUCCEEDED';
-    if (!unpaidReservation) {
-      enqueueEmail({
-        type: 'pickup-details-updated',
-        bookingId: booking.id,
-        data: { previousPickupLocation: pickupChangeResult.previousPickupLocation },
-      })
-      .catch((err) => console.error('[Email] pickup-details-updated failed:', err.message));
+    const emailSuppressedReason = changed && unpaidReservation ? 'AWAITING_PAYMENT' : null;
+
+    if (changed) {
+      enqueueNotification({
+        userId: booking.customerId,
+        type: 'PICKUP_UPDATED',
+        title: 'Pickup details updated',
+        message: 'Your pickup details have been updated by the supplier. Please check your booking.',
+        data: { bookingId: booking.id, pickup: true }
+      }).catch((err) => console.error('[Notification] enqueueNotification (pickup update) failed:', err.message));
+
+      // Reserve-now-pay-later bookings: suppress pickup-update emails until
+      // payment succeeds. The customer's charge-time confirmation email
+      // (pay-later-charged) renders the latest pickup once charged, so the
+      // update merges into the single confirmation email.
+      if (!unpaidReservation) {
+        enqueueEmail({
+          type: 'pickup-details-updated',
+          bookingId: booking.id,
+          data: { previousPickupLocation: pickupChangeResult.previousPickupLocation },
+        })
+        .catch((err) => console.error('[Email] pickup-details-updated failed:', err.message));
+      }
     }
+
+    // The dashboard uses these flags instead of promising "customer notified"
+    // after a no-op save or an email that was deliberately held for payment.
+    pickupNotification = {
+      changed,
+      inAppQueued: changed,
+      emailQueued: changed && !unpaidReservation,
+      emailSuppressedReason,
+    };
   }
 
   logActivity({
@@ -1516,7 +1689,7 @@ exports.updateBookingPickup = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: { booking: updatedBooking }
+    data: { booking: updatedBooking, pickupNotification }
   });
 });
 

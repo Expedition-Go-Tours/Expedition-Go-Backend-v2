@@ -12,6 +12,7 @@ const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRo
 const { createUserLimiter } = require('../middleware/dynamicRateLimiter');
 const validate = require('../middleware/validate');
 const { updateBookingStatusSchema, bulkCancelSchema } = require('../src/core/services/cancellationSchemas');
+const { supplierUpdatePickupSchema, pickupReorderSchema } = require('../src/core/services/expeditionValidation');
 const bookingController = require('../src/core/domain/bookingController');
 const cancellationRequestController = require('../src/core/domain/cancellationRequestController');
 
@@ -594,7 +595,7 @@ router.get('/supplier/bookings', resolveSupplier, requireTeamPermission('booking
  *         description: Access denied
  */
 router.get('/supplier/pickup-planner', resolveSupplier, requireTeamPermission('bookings.view'), bookingController.getPickupPlanner);
-router.patch('/supplier/pickup-planner/reorder', resolveSupplier, requireTeamPermission('bookings.manage'), bookingController.reorderPickupStops);
+router.patch('/supplier/pickup-planner/reorder', resolveSupplier, requireTeamPermission('bookings.manage'), validate(pickupReorderSchema), bookingController.reorderPickupStops);
 
 /**
  * @swagger
@@ -637,7 +638,7 @@ router.patch('/supplier/pickup-planner/reorder', resolveSupplier, requireTeamPer
  *       403:
  *         description: Access denied
  */
-router.patch('/supplier/pickup-planner/:id', resolveSupplier, requireTeamPermission('bookings.manage'), bookingController.updateBookingPickup);
+router.patch('/supplier/pickup-planner/:id', resolveSupplier, requireTeamPermission('bookings.manage'), validate(supplierUpdatePickupSchema), bookingController.updateBookingPickup);
 
 /**
  * @swagger

@@ -3,6 +3,8 @@ const {
   calculateCheckoutSchema,
   supplierToursSchema,
   updateBookingPickupSchema,
+  supplierUpdatePickupSchema,
+  pickupReorderSchema,
 } = require('../../src/core/services/expeditionValidation');
 
 const basePayload = {
@@ -365,5 +367,65 @@ describe('updateBookingPickupSchema', () => {
 
   it('rejects a non-boolean skipValidation', () => {
     expect(parse({ skipValidation: 'yes' }).success).toBe(false);
+  });
+});
+
+describe('supplierUpdatePickupSchema', () => {
+  const parse = (body) => supplierUpdatePickupSchema.safeParse({
+    body,
+    query: {},
+    params: { id: 'booking-1' },
+  });
+
+  it('accepts a canonical pickupAddress and trims it at the controller', () => {
+    const result = parse({
+      pickupAddress: {
+        name: 'Marriott Hotel',
+        address: 'Marriott Hotel, Airport City, Accra',
+        lat: 5.605,
+        lng: -0.174,
+      },
+      areaName: '',
+      locationName: '',
+    });
+    expect(result.success).toBe(true);
+    expect(result.data.body.pickupAddress.name).toBe('Marriott Hotel');
+  });
+
+  it('rejects out-of-range coordinates and half a coordinate pair', () => {
+    expect(parse({ lat: 91, lng: 0 }).success).toBe(false);
+    expect(parse({ lat: 5.6 }).success).toBe(false);
+    expect(parse({ pickupAddress: { name: 'X', lat: 5.6 } }).success).toBe(false);
+  });
+
+  it('rejects an empty address object but allows an explicit clear', () => {
+    expect(parse({ pickupAddress: {} }).success).toBe(false);
+    expect(parse({ pickupAddress: { name: '', address: '', lat: null, lng: null } }).success).toBe(false);
+    expect(parse({ pickupAddress: null }).success).toBe(true);
+  });
+
+  it('rejects malformed times and unknown keys', () => {
+    expect(parse({ pickupTime: '9:5' }).success).toBe(false);
+    expect(parse({ pickupTime: '24:00' }).success).toBe(false);
+    expect(parse({ pickupTime: '08:00' }).success).toBe(true);
+    expect(parse({ pickupTime: '' }).success).toBe(true);
+    expect(parse({ pickupTime: '08:00', surprise: true }).success).toBe(false);
+  });
+
+  it('requires at least one field', () => {
+    expect(parse({}).success).toBe(false);
+  });
+});
+
+describe('pickupReorderSchema', () => {
+  const parse = (body) => pickupReorderSchema.safeParse({ body, query: {}, params: {} });
+
+  it('accepts a dated full-day order', () => {
+    expect(parse({ date: '2026-10-01', order: ['b1', 'b2'] }).success).toBe(true);
+  });
+
+  it('rejects a bad date and an empty order', () => {
+    expect(parse({ date: '01-10-2026', order: ['b1'] }).success).toBe(false);
+    expect(parse({ date: '2026-10-01', order: [] }).success).toBe(false);
   });
 });

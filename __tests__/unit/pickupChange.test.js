@@ -95,6 +95,26 @@ describe('a pickup that genuinely moved is still announced', () => {
     expect(pickupChange(PRODUCTION_PICKUP, next).changed).toBe(true);
   });
 
+  it('detects a top-level pin move written by the supplier dashboard', () => {
+    // The supplier picker writes lat/lng at the snapshot root, not under
+    // address. That is still a real move and must notify the customer.
+    const next = { ...PRODUCTION_PICKUP, lat: 5.6123456, lng: -0.2345678 };
+    expect(pickupChange(PRODUCTION_PICKUP, next).changed).toBe(true);
+  });
+
+  it('does not treat a root copy of the same address point as a move', () => {
+    // New supplier saves mirror the canonical point to the root. A customer
+    // re-save that only carries the address pair must stay silent, and a root
+    // duplicate of that same pair is not a second move.
+    const mirrored = {
+      ...PRODUCTION_PICKUP,
+      lat: PRODUCTION_PICKUP.address.lat,
+      lng: PRODUCTION_PICKUP.address.lng,
+    };
+    expect(pickupChange(PRODUCTION_PICKUP, mirrored).changed).toBe(false);
+    expect(pickupChange(mirrored, PRODUCTION_PICKUP).changed).toBe(false);
+  });
+
   it.each([
     ['a different area', { areaName: 'Osu, Accra' }],
     ['a different mode', { mode: 'address' }],
@@ -172,8 +192,9 @@ describe('both pickup endpoints gate the notice on the comparison', () => {
   });
 
   it('the supplier endpoint no longer treats "a form was sent" as a change', () => {
-    expect(bookingController).toMatch(/if\s*\(pickupChangeResult\s*&&\s*pickupChangeResult\.changed\)\s*\{/);
-    expect(bookingController).toMatch(/if\s*\(pickupChangeResult\s*&&\s*pickupChangeResult\.changed\)\s*\{[\s\S]{0,900}type:\s*'pickup-details-updated'/);
+    expect(bookingController).toMatch(
+      /if\s*\(pickupChangeResult\)\s*\{[\s\S]{0,600}if\s*\(changed\)\s*\{[\s\S]{0,900}type:\s*'pickup-details-updated'/
+    );
     // The old, content-free gate must be gone from the notification block.
     expect(bookingController).not.toMatch(/if\s*\(pickupFieldsProvided\)\s*\{\s*enqueueNotification/);
   });

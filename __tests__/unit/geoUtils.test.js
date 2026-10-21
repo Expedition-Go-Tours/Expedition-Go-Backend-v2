@@ -314,6 +314,7 @@ describe('pickupStatus', () => {
   test('selected when a location exists but no supplier-confirmed time', () => {
     expect(pickupStatus({ mode: 'area', areaName: 'Osu' })).toBe('selected');
     expect(pickupStatus({ mode: 'address', address: { name: 'x', address: 'y', lat: 5.6, lng: -0.2 } })).toBe('selected');
+    expect(pickupStatus({ mode: 'address', address: { lat: 5.6, lng: -0.2 } })).toBe('selected');
     expect(pickupStatus({ lat: 5.6, lng: -0.2 })).toBe('selected');
   });
 
@@ -331,13 +332,15 @@ describe('isPickupIncomplete', () => {
     expect(isPickupIncomplete({ pickupLater: true })).toBe(true);
   });
 
-  test('true when a location exists but time or instructions are missing', () => {
+  test('true when a location exists but the pickup time is missing', () => {
     expect(isPickupIncomplete({ areaName: 'Osu' })).toBe(true);
-    expect(isPickupIncomplete({ areaName: 'Osu', time: '09:00 AM' })).toBe(true);
+    expect(isPickupIncomplete({ address: { name: 'Osu' } })).toBe(true);
   });
 
-  test('false when location + time + instructions are all present', () => {
+  test('false when location and time are present; instructions are optional', () => {
+    expect(isPickupIncomplete({ areaName: 'Osu', time: '09:00 AM' })).toBe(false);
     expect(isPickupIncomplete({ areaName: 'Osu', time: '09:00 AM', instructions: 'Blue van' })).toBe(false);
+    expect(isPickupIncomplete({ address: { lat: 5.6, lng: -0.2 }, time: '09:00 AM' })).toBe(false);
   });
 });
 

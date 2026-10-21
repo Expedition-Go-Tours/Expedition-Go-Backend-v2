@@ -14,6 +14,8 @@
 
 const express = require('express');
 const { protect } = require('../../../middleware/authMiddleware');
+const validate = require('../../../middleware/validate');
+const { supplierUpdatePickupSchema } = require('../../core/services/expeditionValidation');
 const { resolveSupplier, requireTeamRole, requireTeamPermission } = require('../../../middleware/teamRoleMiddleware');
 const africaSupplier = require('./supplierController');
 
@@ -104,7 +106,7 @@ router.get('/products/list', resolveSupplier, cancellationController.getCancella
 
 // Pickup planner (proxied to shared bookingController)
 router.get('/pickup-planner', resolveSupplier, requireTeamPermission('bookings.view'), bookingController.getPickupPlanner);
-router.patch('/pickup-planner/:id', resolveSupplier, requireTeamPermission('bookings.manage'), bookingController.updateBookingPickup);
+router.patch('/pickup-planner/:id', resolveSupplier, requireTeamPermission('bookings.manage'), validate(supplierUpdatePickupSchema), bookingController.updateBookingPickup);
 
 // Finance (proxied to shared controller)
 router.get('/finance/summary', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getFinanceSummary);

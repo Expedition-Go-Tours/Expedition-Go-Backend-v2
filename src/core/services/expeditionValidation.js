@@ -343,6 +343,90 @@ const updateBookingPickupSchema = z.object({
   }),
 });
 
+/**
+ * Supplier pickup-planner edit. The dashboard sends a canonical
+ * `pickupAddress` object when the supplier moves the pickup point, so the
+ * customer app and the pickup-update email (which both render
+ * `pickup.address`) receive the same location the supplier saw. The older
+ * flat `lat`/`lng` fields stay accepted for backwards compatibility.
+ */
+const supplierPickupAddressSchema = z
+  .object({
+    name: z.string().max(500).optional().default(''),
+    address: z.string().max(500).optional().default(''),
+    lat: z.number().min(-90).max(90).nullable().optional(),
+    lng: z.number().min(-180).max(180).nullable().optional(),
+  })
+  .superRefine((address, ctx) => {
+    const hasText = !!(address.name.trim() || address.address.trim());
+    const hasPair = address.lat != null && address.lng != null;
+    if (!hasText && !hasPair) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [],
+        message: 'A pickup address needs a label, an address, or a coordinate pair',
+      });
+    }
+  });
+
+const pickupTimeSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Must be HH:MM')
+  .or(z.literal(''));
+
+const supplierUpdatePickupSchema = z.object({
+  body: z
+    .object({
+      pickupTime: pickupTimeSchema.optional(),
+      pickupPlace: z.string().max(500).optional(),
+      instructions: z.string().max(2000).optional(),
+      locationName: z.string().max(200).optional(),
+      areaName: z.string().max(200).optional(),
+      lat: z.number().min(-90).max(90).nullable().optional(),
+      lng: z.number().min(-180).max(180).nullable().optional(),
+      pickupAddress: supplierPickupAddressSchema.nullable().optional(),
+      pickedUp: z.boolean().optional(),
+    })
+    .strict()
+    .superRefine((body, ctx) => {
+      if ((body.lat == null) !== (body.lng == null)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['lat'],
+          message: 'lat and lng must be provided together',
+        });
+      }
+      if (body.pickupAddress && (body.pickupAddress.lat == null) !== (body.pickupAddress.lng == null)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['pickupAddress'],
+          message: 'pickupAddress lat and lng must be provided together',
+        });
+      }
+      if (Object.keys(body).length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [],
+          message: 'No pickup changes provided',
+        });
+      }
+    }),
+  query: z.any().optional(),
+  params: z.object({
+    id: z.string().min(1).max(100),
+  }),
+});
+
+/** Reorder is a full-day operation: partial orders corrupt the stop index. */
+const pickupReorderSchema = z.object({
+  body: z.object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD'),
+    order: z.array(z.string().min(1).max(100)).min(1).max(2000),
+  }),
+  query: z.any().optional(),
+  params: z.any().optional(),
+});
+
 // Customer self-service "modify booking" — change party size / date / time.
 // Travelers carries the desired traveller-count categories (merged over the
 // existing mix server-side); travelDate is a YYYY-MM-DD string.
@@ -488,6 +572,8 @@ module.exports = {
   bookingIdParamSchema,
   cancelBookingSchema,
   updateBookingPickupSchema,
+  supplierUpdatePickupSchema,
+  pickupReorderSchema,
   modifyBookingQuoteSchema,
   modifyBookingSchema,
   discardModifySchema,

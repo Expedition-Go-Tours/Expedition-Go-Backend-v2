@@ -14,6 +14,8 @@
 
 const express = require('express');
 const { protect } = require('../../../middleware/authMiddleware');
+const validate = require('../../../middleware/validate');
+const { supplierUpdatePickupSchema, pickupReorderSchema } = require('../../core/services/expeditionValidation');
 const { resolveSupplier, requireTeamRole, requireTeamPermission } = require('../../../middleware/teamRoleMiddleware');
 const ghanaSupplier = require('./supplierController');
 
@@ -111,8 +113,8 @@ router.get('/products/list', resolveSupplier, cancellationController.getCancella
 // Pickup planner (proxied to shared bookingController — the frontend rewrites
 // /bookings/supplier/pickup-planner to this Ghana namespace)
 router.get('/pickup-planner', resolveSupplier, requireTeamPermission('bookings.view'), bookingController.getPickupPlanner);
-router.patch('/pickup-planner/reorder', resolveSupplier, requireTeamPermission('bookings.manage'), bookingController.reorderPickupStops);
-router.patch('/pickup-planner/:id', resolveSupplier, requireTeamPermission('bookings.manage'), bookingController.updateBookingPickup);
+router.patch('/pickup-planner/reorder', resolveSupplier, requireTeamPermission('bookings.manage'), validate(pickupReorderSchema), bookingController.reorderPickupStops);
+router.patch('/pickup-planner/:id', resolveSupplier, requireTeamPermission('bookings.manage'), validate(supplierUpdatePickupSchema), bookingController.updateBookingPickup);
 
 // Finance (all proxied to shared controller — matches the finance page's
 // expected response shapes; the old Ghana-specific summary returned a flat

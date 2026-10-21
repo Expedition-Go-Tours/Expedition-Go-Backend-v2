@@ -54,9 +54,32 @@ const text = (value) => (value === null || value === undefined ? '' : String(val
  * enough to ignore pure representation differences.
  */
 const coord = (value) => {
+  if (value === null || value === undefined || value === '') return '';
   const n = Number(value);
   return Number.isFinite(n) ? n.toFixed(6) : '';
 };
+
+/**
+ * The canonical address point plus any *different* legacy top-level pin.
+ * Deduping the root copy means a supplier save that mirrors the same point to
+ * both places is not reported as a move, while a genuinely different top-level
+ * pin still is. Keeping the canonical pair separate (rather than in one set)
+ * means swapping the address and top-level points is still a change.
+ */
+function coordinateSignature(pickup) {
+  const address = pickup.address && typeof pickup.address === 'object' ? pickup.address : {};
+  const pair = (lat, lng) => {
+    const a = coord(lat);
+    const b = coord(lng);
+    return a && b ? `${a},${b}` : '';
+  };
+  const addressPair = pair(address.lat, address.lng);
+  const rootPair = pair(pickup.lat, pickup.lng);
+  return {
+    address: addressPair,
+    root: rootPair && rootPair !== addressPair ? rootPair : '',
+  };
+}
 
 /** Canonical form of the announcement-relevant fields. */
 function comparable(pickupLike) {
@@ -72,8 +95,13 @@ function comparable(pickupLike) {
     instructions: text(pickup.instructions),
     name: text(address.name),
     address: text(address.address),
-    lat: coord(address.lat),
-    lng: coord(address.lng),
+    // The supplier endpoint historically wrote the pin to the top-level
+    // snapshot fields while leaving `address` untouched. Those writes are a
+    // real move for the customer's map and must be announced too — otherwise
+    // the dashboard said "customer notified" after a pin-only edit and no
+    // notification was ever sent. Deduping identical pairs avoids a false
+    // notice when a save mirrors the address point to the root.
+    coords: coordinateSignature(pickup),
   });
 }
 

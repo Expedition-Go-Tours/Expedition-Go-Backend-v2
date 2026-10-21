@@ -291,10 +291,17 @@ function pickupStatus(snapshot) {
     typeof snapshot.address === 'object' &&
     (snapshot.address.name || snapshot.address.address)
   );
+  const hasAddressCoords = !!(
+    snapshot.address &&
+    typeof snapshot.address === 'object' &&
+    Number.isFinite(snapshot.address.lat) &&
+    Number.isFinite(snapshot.address.lng)
+  );
   const hasLocation = !!(
     snapshot.areaName ||
     snapshot.locationName ||
     hasAddress ||
+    hasAddressCoords ||
     (Number.isFinite(snapshot.lat) && Number.isFinite(snapshot.lng))
   );
 
@@ -306,8 +313,11 @@ function pickupStatus(snapshot) {
 
 /**
  * True when a booking's pickup still needs operator attention: no pickup
- * location, or no confirmed time, or no instructions. Mirrors the supplier
- * dashboard's client-side completeness rule so the API and UI agree.
+ * location or no confirmed time. Instructions are deliberately optional —
+ * neither storefront collects them at checkout, so requiring them marked
+ * every new pickup "Incomplete" and made the planner's red state meaningless.
+ * Mirrors the supplier dashboard's client-side completeness rule so the API
+ * and UI agree.
  */
 function isPickupIncomplete(snapshot) {
   if (!snapshot || typeof snapshot !== 'object') return true;
@@ -317,10 +327,12 @@ function isPickupIncomplete(snapshot) {
     snapshot.place ||
     (snapshot.address &&
       typeof snapshot.address === 'object' &&
-      (snapshot.address.name || snapshot.address.address)) ||
+      (snapshot.address.name ||
+        snapshot.address.address ||
+        (Number.isFinite(snapshot.address.lat) && Number.isFinite(snapshot.address.lng)))) ||
     (Number.isFinite(snapshot.lat) && Number.isFinite(snapshot.lng))
   );
-  return !hasLocation || !snapshot.time || !snapshot.instructions;
+  return !hasLocation || !snapshot.time;
 }
 
 /**
