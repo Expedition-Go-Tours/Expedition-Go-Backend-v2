@@ -188,6 +188,88 @@ describe('the detail endpoint behind the panel', () => {
   });
 });
 
+describe('the CSV export', () => {
+  async function invokeExport(query = {}) {
+    const req = { supplierId: 'supplier-1', query, user: { id: 'user-1' } };
+    const res = {
+      status: jest.fn().mockReturnThis(),
+      setHeader: jest.fn(),
+      send: jest.fn(),
+      json: jest.fn(),
+    };
+    const next = jest.fn();
+    await controller.exportSupplierBookings(req, res, next);
+    return { next, res, body: res.send.mock.calls[0]?.[0] || '' };
+  }
+
+  it('filters exactly like the list, so the file cannot disagree with the screen', async () => {
+    await invoke({ search: 'Ama', status: 'CONFIRMED', activityFrom: '2026-11-01' });
+
+    const where = prisma.booking.findMany.mock.calls[0][0].where;
+    expect(where.OR).toBeDefined();
+    expect(where.status).toBe('CONFIRMED');
+    expect(where.travelDate.gte.toISOString()).toBe('2026-11-01T00:00:00.000Z');
+  });
+
+  it('quotes cells that would break the row', async () => {
+    prisma.booking.findMany.mockResolvedValue([
+      {
+        bookingNumber: 'TRG-1',
+        source: 'GHANA',
+        status: 'CONFIRMED',
+        paymentStatus: 'SUCCEEDED',
+        paymentTiming: 'now',
+        createdAt: new Date('2026-10-01T09:00:00.000Z'),
+        travelDate: new Date('2026-11-04T00:00:00.000Z'),
+        selectedTime: '09:00',
+        travelers: { adults: 2 },
+        leadTravelerName: 'Ama, "Bee"',
+        leadTravelerEmail: 'ama@example.test',
+        leadTravelerPhone: '',
+        subtotal: 420,
+        discounts: 20,
+        grossAmount: 400,
+        currency: 'USD',
+        specialRequests: 'Window seat,\nplease',
+        supplierNotes: '',
+        customer: { name: 'Ama, "Bee"', email: 'ama@example.test', phone: '' },
+        tour: { title: 'Shai Hills Safari' },
+      },
+    ]);
+    prisma.booking.count.mockResolvedValue(1);
+
+    const { body } = await invokeExport();
+
+    // A name containing a comma and quotes must not split into two columns.
+    expect(body).toContain('"Ama, ""Bee"""');
+    expect(body).toContain('"Window seat,\nplease"');
+    expect(body).toContain('TRG-1,');
+  });
+
+  it('says the file was truncated instead of being silently short', async () => {
+    prisma.booking.findMany.mockResolvedValue([]);
+    prisma.booking.count.mockResolvedValue(8000);
+
+    const { body } = await invokeExport();
+
+    expect(body).toContain('stopped at 5000 of 8000 matching bookings');
+  });
+
+  it('names the file and never caches it', async () => {
+    prisma.booking.findMany.mockResolvedValue([]);
+    prisma.booking.count.mockResolvedValue(0);
+
+    const { res } = await invokeExport();
+
+    expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'text/csv; charset=utf-8');
+    expect(res.setHeader).toHaveBeenCalledWith(
+      'Content-Disposition',
+      expect.stringMatching(/attachment; filename="travio-bookings-\d{4}-\d{2}-\d{2}\.csv"/),
+    );
+    expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
+  });
+});
+
 describe('the summary the stat cards read', () => {
   it('counts statuses over the whole result set, not the current page', async () => {
     prisma.booking.count.mockResolvedValue(812);

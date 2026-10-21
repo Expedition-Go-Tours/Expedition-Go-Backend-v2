@@ -1428,12 +1428,15 @@ const cancelBooking = catchAsync(async (req, res, next) => {
 // REVIEWS
 // ================================
 
-const getSupplierBookings = catchAsync(async (req, res, next) => {
-  // The supplier is whoever the caller acts FOR: their own account when they
-  // are the owner, the owner of the team they belong to when they are a member
-  // (`resolveSupplier`). A member's own account id owns no tours, so scoping by
-  // it found nothing — the page was reachable and empty, with a 404 underneath.
-  const supplierId = req.supplierId;
+/**
+ * The `where`/`orderBy` behind GET /supplier/bookings and its CSV export.
+ *
+ * Both endpoints must filter identically, or the export quietly disagrees with
+ * the screen the supplier just filtered — the single most common way a
+ * spreadsheet export lies. Reversed date ranges throw (AppError) rather than
+ * returning an empty file that looks like "no bookings".
+ */
+function buildSupplierBookingsFilter(supplierId, query = {}) {
   const {
     status,
     customerId,
@@ -1444,12 +1447,7 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
     activityFrom,
     activityTo,
     sort = 'newest',
-    page = 1,
-    limit = 10,
-  } = req.query;
-
-  const supplierProfile = await prisma.supplierProfile.findUnique({ where: { userId: supplierId } });
-  if (!supplierProfile) return next(new AppError('Supplier profile not found', 404));
+  } = query;
 
   const where = {
     tour: { supplierId },
@@ -1481,10 +1479,10 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
   };
 
   if (purchaseFrom && purchaseTo && purchaseFrom > purchaseTo) {
-    return next(new AppError('The purchase start date must be before the end date', 400));
+    throw new AppError('The purchase start date must be before the end date', 400);
   }
   if (activityFrom && activityTo && activityFrom > activityTo) {
-    return next(new AppError('The activity start date must be before the end date', 400));
+    throw new AppError('The activity start date must be before the end date', 400);
   }
 
   const createdFrom = parseDay(purchaseFrom);
@@ -1505,13 +1503,31 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
     };
   }
 
-  const skip = (parseInt(page) - 1) * parseInt(limit);
-  const take = Math.min(parseInt(limit), 100);
   const orderBy = sort === 'oldest'
     ? { createdAt: 'asc' }
     : sort === 'travelDate'
       ? { travelDate: 'asc' }
       : { createdAt: 'desc' };
+
+  return { where, orderBy };
+}
+
+const getSupplierBookings = catchAsync(async (req, res, next) => {
+  // The supplier is whoever the caller acts FOR: their own account when they
+  // are the owner, the owner of the team they belong to when they are a member
+  // (`resolveSupplier`). A member's own account id owns no tours, so scoping by
+  // it found nothing — the page was reachable and empty, with a 404 underneath.
+  const supplierId = req.supplierId;
+  const { page = 1, limit = 10 } = req.query;
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({ where: { userId: supplierId } });
+  if (!supplierProfile) return next(new AppError('Supplier profile not found', 404));
+
+  // Shared with the CSV export so the file can never disagree with the screen.
+  const { where, orderBy } = buildSupplierBookingsFilter(supplierId, req.query);
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const take = Math.min(parseInt(limit), 100);
 
   const [bookings, totalCount, revenueAgg, statusGroups] = await Promise.all([
     prisma.booking.findMany({
@@ -1585,6 +1601,138 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
       },
     },
   });
+});
+
+/**
+ * GET /api/travioghana/supplier/bookings/export
+ *
+ * CSV of the filtered booking list. Same `where` as the list (shared builder),
+ * so the file cannot disagree with the screen the supplier just filtered. The
+ * row cap is deliberate: an unbounded export is a memory and timeout hazard,
+ * and when it bites, the file says so in its last line rather than being
+ * silently shorter than the page.
+ */
+const EXPORT_ROW_LIMIT = 5000;
+
+function csvCell(value) {
+  if (value === null || value === undefined) return '';
+  const text = String(value);
+  // Quote anything that would break the row, and double any quote inside it.
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+const exportSupplierBookings = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+
+  const supplierProfile = await prisma.supplierProfile.findUnique({ where: { userId: supplierId } });
+  if (!supplierProfile) return next(new AppError('Supplier profile not found', 404));
+
+  const { where, orderBy } = buildSupplierBookingsFilter(supplierId, req.query);
+
+  const [rows, totalCount] = await Promise.all([
+    prisma.booking.findMany({
+      where,
+      orderBy,
+      take: EXPORT_ROW_LIMIT,
+      select: {
+        bookingNumber: true,
+        source: true,
+        status: true,
+        paymentStatus: true,
+        paymentTiming: true,
+        createdAt: true,
+        travelDate: true,
+        selectedTime: true,
+        travelers: true,
+        leadTravelerName: true,
+        leadTravelerEmail: true,
+        leadTravelerPhone: true,
+        subtotal: true,
+        discounts: true,
+        grossAmount: true,
+        currency: true,
+        specialRequests: true,
+        supplierNotes: true,
+        customer: { select: { name: true, email: true, phone: true } },
+        tour: { select: { title: true } },
+      },
+    }),
+    prisma.booking.count({ where }),
+  ]);
+
+  const header = [
+    'Reference',
+    'Storefront',
+    'Status',
+    'Payment status',
+    'Payment timing',
+    'Booked at',
+    'Activity date',
+    'Activity time',
+    'Tour',
+    'Booked by',
+    'Customer email',
+    'Customer phone',
+    'Lead traveller',
+    'Lead traveller email',
+    'Lead traveller phone',
+    'Travellers',
+    'Currency',
+    'Subtotal',
+    'Discount',
+    'Total charged',
+    'Special requests',
+    'Supplier notes',
+  ];
+
+  const isoDate = (value) => (value ? new Date(value).toISOString().slice(0, 10) : '');
+
+  const lines = [header.join(',')];
+  for (const row of rows) {
+    const travelers = row.travelers && typeof row.travelers === 'object' ? row.travelers : {};
+    const travelerCount = ['adults', 'children', 'infants'].reduce(
+      (sum, key) => sum + (Number(travelers[key]) || 0),
+      0,
+    ) || (travelers.name ? 1 : 0);
+
+    lines.push([
+      row.bookingNumber,
+      row.source,
+      row.status,
+      row.paymentStatus,
+      row.paymentTiming,
+      isoDate(row.createdAt),
+      isoDate(row.travelDate),
+      row.selectedTime || '',
+      row.tour?.title || '',
+      row.customer?.name || '',
+      row.customer?.email || '',
+      row.customer?.phone || '',
+      row.leadTravelerName || row.customer?.name || '',
+      row.leadTravelerEmail || row.customer?.email || '',
+      row.leadTravelerPhone || row.customer?.phone || '',
+      travelerCount,
+      row.currency,
+      Number(row.subtotal || 0),
+      Number(row.discounts || 0),
+      Number(row.grossAmount || 0),
+      row.specialRequests || '',
+      row.supplierNotes || '',
+    ].map(csvCell).join(','));
+  }
+
+  // Honest truncation: a file that stops at the cap without saying so reads as
+  // "these are all my bookings".
+  if (totalCount > rows.length) {
+    lines.push('');
+    lines.push(csvCell(`NOTE: this export stopped at ${EXPORT_ROW_LIMIT} of ${totalCount} matching bookings. Narrow the filters (or the date range) to export the rest.`));
+  }
+
+  const stamp = new Date().toISOString().slice(0, 10);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="travio-bookings-${stamp}.csv"`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(200).send(`\uFEFF${lines.join('\r\n')}`);
 });
 
 /**
@@ -1809,6 +1957,7 @@ module.exports = {
   getBookingBySession,
   cancelBooking,
   getSupplierBookings,
+  exportSupplierBookings,
   getSupplierBookingDetail,
   updateBookingStatus,
 };

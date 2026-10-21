@@ -1094,6 +1094,9 @@ router.post('/reviews', protect, restrictTo('customer'), uploadReviewPhotos, rev
  *         description: Supplier profile not found
  */
 router.get('/supplier/bookings', protect, resolveSupplier, requireTeamPermission('bookings.view'), validate(getSupplierBookingsSchema), travioGhanaController.getSupplierBookings);
+// `export` is a literal path, so it is registered BEFORE `/:id` — otherwise
+// "export" would be read as a booking id and 404.
+router.get('/supplier/bookings/export', protect, resolveSupplier, requireTeamPermission('bookings.view'), validate(getSupplierBookingsSchema), travioGhanaController.exportSupplierBookings);
 router.get('/supplier/bookings/:id', protect, resolveSupplier, requireTeamPermission('bookings.view'), validate(supplierBookingParamsSchema), travioGhanaController.getSupplierBookingDetail);
 
 /**
