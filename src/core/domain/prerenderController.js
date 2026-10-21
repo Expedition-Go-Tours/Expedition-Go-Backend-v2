@@ -739,6 +739,8 @@ async function handleListingsPage(site, place) {
     : 'Ghana Tours & Experiences';
   const description = place
     ? `Discover ${count} tours and experiences in ${place}, Ghana. Book cultural tours, food tours, wildlife safaris, and adventure activities. Free cancellation, best prices guaranteed.`
+    : useGhanaListingTitle
+    ? 'Book popular Ghana tours and experiences. Discover recommended things to do, with free cancellation and reserve now, pay later options.'
     : `Explore ${count} authentic Ghana tours and experiences. Book cultural tours, wildlife safaris, food tours, and adventure activities. Free cancellation.`;
 
   const keywords = place
