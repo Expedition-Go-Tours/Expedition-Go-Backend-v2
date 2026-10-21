@@ -18,7 +18,11 @@ const KNOWN_CODES = REASONS.map((r) => r.code);
 const STATUS_ENUM = z.enum(['CONFIRMED', 'COMPLETED', 'NO_SHOW', 'CANCELLED']);
 
 const baseShape = {
-  status: STATUS_ENUM,
+  // Optional so the supplier can save notes without changing the status:
+  // the old shape required `status`, which forced a transition just to record
+  // "customer will arrive at 9am". The superRefine below keeps at least one of
+  // the two fields mandatory.
+  status: STATUS_ENUM.optional(),
   supplierNotes: z.string().max(2000).optional(),
   // Legacy free-text reason (pre-wizard callers / extra context). The
   // human-readable cancellationReason falls back to it when no explanation
@@ -58,6 +62,13 @@ const updateBookingStatusSchema = z.object({
   body: z
     .object(baseShape)
     .superRefine((data, ctx) => {
+      if (!data.status && data.supplierNotes === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['status'],
+          message: 'Provide a status change or supplierNotes',
+        });
+      }
       if (data.status === 'CANCELLED') cancellationIssues(data, ctx);
     }),
   query: z.any().optional(),

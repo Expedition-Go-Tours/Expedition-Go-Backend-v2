@@ -1587,6 +1587,74 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
   });
 });
 
+/**
+ * GET /api/travioghana/supplier/bookings/:id
+ *
+ * One booking in full for the detail panel: the list endpoint deliberately
+ * returns a narrow shape, and the panel needs the customer's contact details,
+ * the applied offer, the review the customer left and any parked cancellation
+ * request — all scoped to a tour the acting supplier owns, exactly like the
+ * list.
+ */
+const getSupplierBookingDetail = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  const { id } = req.params;
+
+  const booking = await prisma.booking.findFirst({
+    where: {
+      id,
+      tour: { supplierId },
+    },
+    include: {
+      tour: {
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          coverPhoto: true,
+          photos: true,
+          category: true,
+          city: true,
+          country: true,
+          bookingAndTickets: true,
+        },
+      },
+      customer: {
+        select: { id: true, name: true, email: true, phone: true, photoURL: true },
+      },
+      appliedOffer: {
+        select: {
+          id: true,
+          name: true,
+          offerType: true,
+          discountType: true,
+          discountPercentage: true,
+          fixedDiscountValue: true,
+          promoCode: true,
+        },
+      },
+      review: true,
+    },
+  });
+
+  if (!booking) {
+    return next(new AppError('Booking not found or not yours', 404));
+  }
+
+  const { pendingRequestsForBookingIds } = require('../../core/services/cancellationRequestService');
+  const pendingMap = await pendingRequestsForBookingIds([booking.id]);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      booking: sanitizeBookingPaymentInternals({
+        ...booking,
+        pendingCancellation: pendingMap.get(booking.id) || null,
+      }),
+    },
+  });
+});
+
 const updateBookingStatus = catchAsync(async (req, res, next) => {
   // The supplier is whoever the caller acts FOR: their own account when they
   // are the owner, the owner of the team they belong to when they are a member
@@ -1608,6 +1676,17 @@ const updateBookingStatus = catchAsync(async (req, res, next) => {
 
   if (!booking) {
     return next(new AppError('Booking not found or not yours', 404));
+  }
+
+  // Notes-only update: recording "customer arrives at 9am" must not require a
+  // status transition. Nothing about the booking changes for the customer, so
+  // nothing is notified.
+  if (!status) {
+    const notesOnly = await prisma.booking.update({
+      where: { id },
+      data: { supplierNotes, updatedAt: new Date() },
+    });
+    return res.status(200).json({ status: 'success', data: { booking: notesOnly } });
   }
 
   if (status === 'COMPLETED' && new Date(booking.travelDate) >= new Date()) {
@@ -1730,5 +1809,6 @@ module.exports = {
   getBookingBySession,
   cancelBooking,
   getSupplierBookings,
+  getSupplierBookingDetail,
   updateBookingStatus,
 };

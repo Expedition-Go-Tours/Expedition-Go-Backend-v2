@@ -35,6 +35,7 @@ const {
   bookingIdParamSchema,
   cancelBookingSchema,
   getSupplierBookingsSchema,
+  supplierBookingParamsSchema,
   analyticsOverviewSchema,
   analyticsRevenueTrendSchema,
   analyticsFunnelSchema,
@@ -1093,6 +1094,7 @@ router.post('/reviews', protect, restrictTo('customer'), uploadReviewPhotos, rev
  *         description: Supplier profile not found
  */
 router.get('/supplier/bookings', protect, resolveSupplier, requireTeamPermission('bookings.view'), validate(getSupplierBookingsSchema), travioGhanaController.getSupplierBookings);
+router.get('/supplier/bookings/:id', protect, resolveSupplier, requireTeamPermission('bookings.view'), validate(supplierBookingParamsSchema), travioGhanaController.getSupplierBookingDetail);
 
 /**
  * @swagger

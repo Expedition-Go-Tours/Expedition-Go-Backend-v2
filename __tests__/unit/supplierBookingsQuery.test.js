@@ -15,6 +15,8 @@
 jest.mock('../../src/core/services/prismaClient', () => ({
   booking: {
     findMany: jest.fn().mockResolvedValue([]),
+    findFirst: jest.fn().mockResolvedValue(null),
+    update: jest.fn().mockResolvedValue({}),
     count: jest.fn().mockResolvedValue(0),
     aggregate: jest.fn().mockResolvedValue({ _sum: { grossAmount: 0, supplierPayout: 0 }, _count: 0 }),
     groupBy: jest.fn().mockResolvedValue([]),
@@ -136,6 +138,53 @@ describe('server-side filters', () => {
     expect(status).toBeUndefined();
     expect(next.mock.calls[0][0].statusCode).toBe(400);
     expect(prisma.booking.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('the detail endpoint behind the panel', () => {
+  it('404s for a booking on someone else’s tour', async () => {
+    prisma.booking.findFirst.mockResolvedValue(null);
+
+    const req = { supplierId: 'supplier-1', params: { id: 'b-foreign' }, user: { id: 'user-1' } };
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    const next = jest.fn();
+
+    await controller.getSupplierBookingDetail(req, res, next);
+
+    expect(next.mock.calls[0][0].statusCode).toBe(404);
+    expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('returns the booking with its offer and review, scoped to the acting supplier', async () => {
+    const row = {
+      id: 'b-1',
+      bookingNumber: 'TRG-1',
+      status: 'CONFIRMED',
+      grossAmount: 420,
+      currency: 'USD',
+      customer: { id: 'u-1', name: 'Kwame', email: 'kwame@example.com' },
+      tour: { id: 't-1', title: 'Shai Hills Safari' },
+      appliedOffer: { id: 'o-1', name: 'Early bird', offerType: 'EARLY_BIRD', discountType: 'PERCENTAGE', discountPercentage: 10 },
+      review: { id: 'r-1', rating: 5, comment: 'Brilliant morning' },
+    };
+    prisma.booking.findFirst.mockResolvedValue(row);
+
+    const req = { supplierId: 'supplier-1', params: { id: 'b-1' }, user: { id: 'user-1' } };
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    const next = jest.fn();
+
+    await controller.getSupplierBookingDetail(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    // Scoped exactly like the list: a supplier can only open their own rows.
+    expect(prisma.booking.findFirst.mock.calls[0][0].where).toEqual({
+      id: 'b-1',
+      tour: { supplierId: 'supplier-1' },
+    });
+    const payload = res.json.mock.calls[0][0].data.booking;
+    expect(payload.review).toMatchObject({ rating: 5, comment: 'Brilliant morning' });
+    expect(payload.appliedOffer).toMatchObject({ name: 'Early bird', discountPercentage: 10 });
+    expect(payload.customer.email).toBe('kwame@example.com');
   });
 });
 

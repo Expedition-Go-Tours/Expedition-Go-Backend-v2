@@ -343,9 +343,19 @@ const getSupplierBookingsSchema = z.object({
   params: z.object({}).optional(),
 });
 
+const supplierBookingParamsSchema = z.object({
+  body: z.any().optional(),
+  query: z.any().optional(),
+  params: z.object({ id: z.string().min(1).max(100) }),
+});
+
 const updateBookingStatusSchema = z.object({
   body: z.object({
-    status: z.enum(['CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW']),
+    // Optional: the supplier can save notes without changing the status. The
+    // shared cancellation schema enforces "status or supplierNotes", so this
+    // mirrors it rather than accepting an empty write.
+    status: z.enum(['CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW']).optional(),
+    supplierNotes: z.string().max(2000).optional(),
     reason: z.string().max(500).optional(),
   }),
   query: z.any().optional(),
@@ -404,6 +414,7 @@ module.exports = {
   cancelBookingSchema,
   createReviewSchema,
   getSupplierBookingsSchema,
+  supplierBookingParamsSchema,
   updateBookingStatusSchema,
   analyticsOverviewSchema,
   analyticsRevenueTrendSchema,

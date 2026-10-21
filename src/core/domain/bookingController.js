@@ -1718,6 +1718,27 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
     return next(new AppError('Booking not found or access denied', 404));
   }
 
+  // ── Notes-only update ──
+  // Saving "customer arrives at 9am, needs a child seat" must not require a
+  // status transition (and the schema refuses an entirely empty write). No
+  // customer notification: nothing about the booking changed for them.
+  if (!status) {
+    const notesOnly = await prisma.booking.update({
+      where: { id },
+      data: { supplierNotes, updatedAt: new Date() },
+    });
+
+    logActivity({
+      userId: supplierId,
+      action: 'booking.notes_updated',
+      resource: 'Booking',
+      resourceId: id,
+      metadata: { cleared: supplierNotes === '' },
+    }).catch((err) => logger.warn('[booking] logActivity failed:', err?.message));
+
+    return res.status(200).json({ status: 'success', data: { booking: notesOnly } });
+  }
+
   const VALID_TRANSITIONS = {
     PENDING:   ['CONFIRMED', 'CANCELLED'],
     CONFIRMED: ['COMPLETED', 'CANCELLED', 'NO_SHOW'],

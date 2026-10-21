@@ -699,6 +699,40 @@ describe('Booking Controller', () => {
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
     });
 
+    it('saves supplier notes without a status transition and without notifying the customer', async () => {
+      // Recording "customer arrives at 9am" must not require moving the
+      // booking's status — and must not tell the customer anything changed,
+      // because nothing did.
+      const supplierBooking = {
+        ...mockBooking,
+        status: 'CONFIRMED',
+        tour: { supplierId: 'supplier-1', title: 'Tour' },
+        customer: { id: 'c-1' },
+      };
+      prisma.booking.findFirst.mockResolvedValue(supplierBooking);
+      prisma.booking.update.mockResolvedValue({ ...supplierBooking, supplierNotes: 'Customer arrives at 9am' });
+
+      const req = mockReq({
+        user: { id: 'supplier-1', roles: ['supplier'] },
+        params: { id: 'booking-1' },
+        body: { supplierNotes: 'Customer arrives at 9am' },
+      });
+      const res = mockRes();
+
+      await bookingController.updateBookingStatus(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.booking.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'booking-1' },
+          data: expect.objectContaining({ supplierNotes: 'Customer arrives at 9am' }),
+        })
+      );
+      // No status was sent, so nothing was transitioned and nobody notified.
+      expect(prisma.booking.update.mock.calls[0][0].data.status).toBeUndefined();
+      expect(enqueueNotification).not.toHaveBeenCalled();
+    });
+
     it('skips notification for status without message', async () => {
       const supplierBooking = { ...mockBooking, status: 'CANCELLED', tour: { supplierId: 'supplier-1', title: 'Tour' }, customer: { id: 'c-1' } };
       prisma.booking.findFirst.mockResolvedValue(supplierBooking);
