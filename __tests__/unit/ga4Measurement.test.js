@@ -29,10 +29,16 @@ const baseBooking = {
 
 describe('ga4Measurement', () => {
   const realFetch = global.fetch;
+  let logSpy;
+  let errorSpy;
 
   beforeEach(() => {
     delete process.env.GA4_MEASUREMENT_ID;
     delete process.env.GA4_API_SECRET;
+    // Every outcome now logs one line; silence it unless a test re-arms the
+    // spy with mockImplementation to capture.
+    logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -144,6 +150,114 @@ describe('ga4Measurement', () => {
       global.fetch = jest.fn().mockRejectedValue(new Error('network down'));
 
       await expect(sendPurchase(baseBooking)).resolves.toBeUndefined();
+    });
+  });
+
+  describe('observability: every outcome leaves exactly one log line', () => {
+    let logs;
+    let errors;
+
+    beforeEach(() => {
+      logs = [];
+      errors = [];
+      logSpy.mockImplementation((...args) => logs.push(args.join(' ')));
+      errorSpy.mockImplementation((...args) => errors.push(args.join(' ')));
+      process.env.GA4_MEASUREMENT_ID = 'G-TEST';
+      process.env.GA4_API_SECRET = 'secret';
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '' });
+    });
+
+    const stream = (lines) => lines.join('\n');
+
+    it('logs the sent line with booking, transaction and value on 2xx', async () => {
+      await sendPurchase(baseBooking);
+      expect(stream(logs)).toContain(
+        '[ga4Measurement] purchase sent booking=GH-12345 tx=GH-12345 value=120.5 GHS'
+      );
+    });
+
+    it('names a declined consent instead of dropping silently', async () => {
+      await sendPurchase({ ...baseBooking, analyticsConsent: false });
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(stream(logs)).toContain('purchase skipped booking=GH-12345 reason=no-consent');
+    });
+
+    it('separates never-captured attribution from a decline', async () => {
+      await sendPurchase({ ...baseBooking, analyticsConsent: null, gaClientId: null });
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(stream(logs)).toContain('purchase skipped booking=GH-12345 reason=no-attribution');
+    });
+
+    it('names a missing client_id when consent was granted', async () => {
+      await sendPurchase({ ...baseBooking, gaClientId: null });
+      expect(stream(logs)).toContain('reason=no-client-id');
+    });
+
+    it('names an unusable total when everything else is present', async () => {
+      await sendPurchase({ ...baseBooking, grossAmount: 'not-a-number' });
+      expect(stream(logs)).toContain('reason=no-amount');
+    });
+
+    it('shouts not-configured when the credentials are missing', async () => {
+      delete process.env.GA4_MEASUREMENT_ID; // the nested beforeEach above sets them
+      delete process.env.GA4_API_SECRET;
+      await sendPurchase(baseBooking);
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(stream(logs)).toContain('purchase skipped booking=GH-12345 reason=not-configured');
+    });
+
+    it('reports refund outcomes the same way', async () => {
+      await sendRefund({ ...baseBooking, analyticsConsent: false });
+      expect(stream(logs)).toContain('refund skipped booking=GH-12345 reason=no-consent');
+    });
+
+    it('keeps the HTTP status and booking ref when GA rejects the send', async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 400, text: async () => 'bad payload' });
+      await sendPurchase(baseBooking);
+      expect(stream(errors)).toContain('purchase send failed booking=GH-12345 HTTP 400');
+    });
+
+    it('never logs customer PII, only the booking reference', async () => {
+      await sendPurchase({
+        ...baseBooking,
+        customer: { name: 'Kwame Testerson', email: 'kwame@example.com' },
+        leadTravelerEmail: 'kwame@example.com',
+      });
+      const all = stream(logs) + stream(errors);
+      expect(all).not.toContain('kwame@example.com');
+      expect(all).not.toContain('Kwame Testerson');
+      expect(all).toContain('booking=GH-12345');
+    });
+  });
+
+  describe('historical backfill (timestamp override)', () => {
+    beforeEach(() => {
+      process.env.GA4_MEASUREMENT_ID = 'G-TEST';
+      process.env.GA4_API_SECRET = 'secret';
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '' });
+    });
+
+    it('stamps timestamp_micros on the event when the caller supplies the settle time', async () => {
+      await sendPurchase(baseBooking, { timestampMicros: 1760880000000000 });
+
+      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+      expect(body.events[0].name).toBe('purchase');
+      expect(body.events[0].params.timestamp_micros).toBe(1760880000000000);
+    });
+
+    it('omits timestamp_micros for live sends so GA uses server time', async () => {
+      await sendPurchase(baseBooking);
+
+      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+      expect(body.events[0].params.timestamp_micros).toBeUndefined();
+    });
+
+    it('stamps refunds too', async () => {
+      await sendRefund(baseBooking, { value: 40, timestampMicros: 1760880000000000 });
+
+      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+      expect(body.events[0].name).toBe('refund');
+      expect(body.events[0].params.timestamp_micros).toBe(1760880000000000);
     });
   });
 });

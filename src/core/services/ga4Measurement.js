@@ -11,7 +11,9 @@
  * client-side signal. Consent is therefore re-checked against the choice stored
  * on the booking (`analyticsConsent`) and the visitor's GA4 `client_id`
  * (`gaClientId`) must be present. A booking with no consent, or made before
- * this was captured, is silently skipped — no event is ever sent.
+ * this was captured, is skipped — and every outcome (sent, or skipped with its
+ * exact reason) leaves ONE `[ga4Measurement] ...` line in the pm2 logs, so a
+ * delivered or dropped money event is always diagnosable after the fact.
  *
  * Safe by design, like discordNotifier:
  *  - No-op (resolves immediately) when GA4_MEASUREMENT_ID / GA4_API_SECRET unset.
@@ -120,8 +122,34 @@ function buildRefundEvent(booking, valueOverride) {
   };
 }
 
+/**
+ * Why a booking produced no event. Mirrors resolveClientId + the amount gate so
+ * the log names the exact drop: a declined consent, attribution that was never
+ * captured (pre-feature or non-store flow), a missing client_id, or a bad total.
+ */
+function skipReason(booking) {
+  if (!booking) return 'no-booking';
+  if (booking.analyticsConsent === false) return 'no-consent';
+  if (booking.analyticsConsent !== true) return 'no-attribution';
+  const clientId = typeof booking.gaClientId === 'string' ? booking.gaClientId.trim() : '';
+  if (!clientId) return 'no-client-id';
+  return 'no-amount';
+}
+
+/** One line per skipped event: a silent drop must never be invisible in prod. */
+function logSkip(kind, booking, reason) {
+  const ref = (booking && booking.bookingNumber) || 'unknown';
+  console.log(`[ga4Measurement] ${kind} skipped booking=${ref} reason=${reason}`);
+}
+
 /** POST one Measurement Protocol body. Always resolves; never throws. */
-async function deliver(body) {
+async function deliver(body, { kind, ref } = {}) {
+  const label = kind || 'event';
+  const bookingRef = ref || 'unknown';
+  const event = body && body.events && body.events[0];
+  const tail = event
+    ? `tx=${event.params.transaction_id} value=${event.params.value} ${event.params.currency}`
+    : '';
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -134,24 +162,39 @@ async function deliver(body) {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      console.error(`[ga4Measurement] HTTP ${res.status}: ${text.slice(0, 300)}`);
+      console.error(`[ga4Measurement] ${label} send failed booking=${bookingRef} HTTP ${res.status}: ${text.slice(0, 300)}`);
+    } else {
+      console.log(`[ga4Measurement] ${label} sent booking=${bookingRef} ${tail}`);
     }
   } catch (err) {
-    console.error(`[ga4Measurement] send failed: ${err.message}`);
+    console.error(`[ga4Measurement] ${label} send failed booking=${bookingRef}: ${err.message}`);
   } finally {
     clearTimeout(timer);
   }
 }
 
 /**
- * Report a settled booking as a purchase. Fire-and-forget.
+ * Report a settled booking as a purchase. Fire-and-forget. Exactly one log line
+ * per call: either the `sent` line (with tx + value) or a `skipped` line naming
+ * the reason.
  * @param {object} booking a booking with gaClientId + analyticsConsent + tour included
+ * @param {{ timestampMicros?: number }} [opts] `timestamp_micros` for historical
+ *   re-reports: GA4 accepts events up to 72h in the past, so a backfill can stamp
+ *   the booking's original paidAt. Omit for a live send.
  */
-function sendPurchase(booking) {
-  if (!isEnabled()) return Promise.resolve();
+function sendPurchase(booking, { timestampMicros } = {}) {
+  const ref = (booking && booking.bookingNumber) || 'unknown';
+  if (!isEnabled()) {
+    logSkip('purchase', booking, 'not-configured');
+    return Promise.resolve();
+  }
   const body = buildPurchaseEvent(booking);
-  if (!body) return Promise.resolve();
-  return deliver(body);
+  if (!body) {
+    logSkip('purchase', booking, skipReason(booking));
+    return Promise.resolve();
+  }
+  if (timestampMicros) body.events[0].params.timestamp_micros = timestampMicros;
+  return deliver(body, { kind: 'purchase', ref });
 }
 
 /**
@@ -161,11 +204,19 @@ function sendPurchase(booking) {
  * @param {{ value?: number }} [opts] explicit refund amount (major units) when the
  *   booking row does not yet carry it (e.g. reported straight from the charge)
  */
-function sendRefund(booking, { value } = {}) {
-  if (!isEnabled()) return Promise.resolve();
+function sendRefund(booking, { value, timestampMicros } = {}) {
+  const ref = (booking && booking.bookingNumber) || 'unknown';
+  if (!isEnabled()) {
+    logSkip('refund', booking, 'not-configured');
+    return Promise.resolve();
+  }
   const body = buildRefundEvent(booking, value);
-  if (!body) return Promise.resolve();
-  return deliver(body);
+  if (!body) {
+    logSkip('refund', booking, skipReason(booking));
+    return Promise.resolve();
+  }
+  if (timestampMicros) body.events[0].params.timestamp_micros = timestampMicros;
+  return deliver(body, { kind: 'refund', ref });
 }
 
 module.exports = {
