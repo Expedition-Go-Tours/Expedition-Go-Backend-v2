@@ -55,14 +55,54 @@ ssh -i "$SSH_KEY" "$SERVER" bash -s <<REMOTE
   npx prisma migrate deploy
 
   echo "--- preflight: guard against a stray second PM2 daemon ---"
-  # A PM2 daemon started as root (e.g. an ad-hoc 'sudo pm2 restart') binds
-  # port 5000 and makes the deploy-owned expedition-api crash-loop on
-  # EADDRINUSE. Detect and remove it before reloading.
-  if [[ -f /root/.pm2/pm2.pid ]] && kill -0 "\$(cat /root/.pm2/pm2.pid)" 2>/dev/null; then
-    echo "WARN: stray root PM2 daemon detected — deleting its apps and killing it"
-    PM2_HOME=/root/.pm2 pm2 delete all >/dev/null 2>&1 || true
-    PM2_HOME=/root/.pm2 pm2 kill >/dev/null 2>&1 || true
-  fi
+  echo "=== Guarding against a stray second PM2 daemon ==="
+  # A PM2 daemon started as root (an ad-hoc `sudo pm2 …`) binds port
+  # 5000 and makes the deploy-owned expedition-api exit with
+  # "Port already in use — Exiting for PM2 backoff" on every boot, so
+  # PM2 restart-loops. scripts/deploy.sh has had this preflight for
+  # exactly that reason; the CI path was missing it.
+  #
+  # Two rules this code must obey, both learned on 2026-10-22:
+  #   1. NEVER run `pm2` as root here. pm2 STARTS the God daemon when
+  #      none is running, and that daemon auto-resurrects its saved
+  #      app list — so `pm2 delete all` CREATES the stray it is meant
+  #      to remove. That is what put the API in a bind loop.
+  #   2. This runs under `set -euo pipefail`, where `grep` finding
+  #      nothing aborts the deploy — and a naive ps|grep|awk matches
+  #      its own pipeline (each command carries the search string in
+  #      its own argv) and would kill itself. Detection is therefore
+  #      no-match-safe and filters out its own processes.
+  root_pids_matching() {
+    ps -eo pid=,user=,args= 2>/dev/null \
+      | grep -F -- "\$1" 2>/dev/null \
+      | grep -v grep 2>/dev/null \
+      | awk -v self="\$\$" -v parent="\$PPID" \
+          '\$2=="root" && \$1 != self && \$1 != parent && \$0 !~ /root_pids_matching|grep -v grep|ps -eo|pgrep|bash -c/ {print \$1}' \
+      || true
+  }
+
+  ROOT_PM2_PIDS="\$(root_pids_matching 'God Daemon (/root/.pm2)')"
+  for PID in \$ROOT_PM2_PIDS; do
+    case "\$PID" in ''|*[!0-9]*) continue ;; esac
+    echo "WARN: stray root PM2 daemon (pid \$PID) — killing it"
+    kill -TERM "\$PID" 2>/dev/null || true
+  done
+  if [ -n "\$ROOT_PM2_PIDS" ]; then sleep 2; fi
+  for PID in \$ROOT_PM2_PIDS; do
+    case "\$PID" in ''|*[!0-9]*) continue ;; esac
+    kill -KILL "\$PID" 2>/dev/null || true
+  done
+
+  # Root-owned copies of OUR apps fight the deploy-owned ones for the
+  # port. Kill those too, matched on this repo's paths only.
+  for APP_PATH in server.js utils/clipService.py bots/discord-bot/index.js; do
+    for PID in \$(root_pids_matching "/home/deploy/Expedition-Go-Backend-v2/\$APP_PATH"); do
+      case "\$PID" in ''|*[!0-9]*) continue ;; esac
+      echo "WARN: root-owned \$APP_PATH (pid \$PID) — killing"
+      kill -9 "\$PID" 2>/dev/null || true
+    done
+  done
+  rm -rf /root/.pm2
 
   echo "--- pm2 reload (as deploy user) ---"
   # CRITICAL: Use 'su - deploy' to ensure PM2 commands run under the
