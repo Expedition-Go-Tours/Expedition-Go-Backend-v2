@@ -711,6 +711,19 @@ jobs:
             APP_DIR="/home/deploy/Expedition-Go-Backend-v2"
             cd "$APP_DIR"
 
+            echo "=== Guarding against a stray second PM2 daemon ==="
+            # A PM2 daemon started as root (an ad-hoc `sudo pm2 …`) binds port
+            # 5000 and makes the deploy-owned expedition-api exit with
+            # "Port already in use — Exiting for PM2 backoff" on every boot, so
+            # PM2 restart-loops and the restart counter climbs into the
+            # hundreds while the API flaps. scripts/deploy.sh has had this
+            # preflight for exactly that reason; the CI path was missing it.
+            if [ -f /root/.pm2/pm2.pid ] && kill -0 "$(cat /root/.pm2/pm2.pid)" 2>/dev/null; then
+              echo "WARN: stray root PM2 daemon detected — deleting its apps and killing it"
+              PM2_HOME=/root/.pm2 pm2 delete all >/dev/null 2>&1 || true
+              PM2_HOME=/root/.pm2 pm2 kill >/dev/null 2>&1 || true
+            fi
+
             echo "=== Fixing file ownership ==="
             chown -R deploy:deploy "$APP_DIR"
 
@@ -769,14 +782,34 @@ jobs:
             ' 2>/dev/null || echo fork)
             if [ \"\$CUR_MODE\" != \"cluster_mode\" ]; then
               echo \"API not in cluster mode yet\"
-              pm2 delete expedition-api >/dev/null 2>&1 || true
-              pm2 start ecosystem.config.js --only expedition-api
+              # `pm2 restart` waits for the old process to exit before starting
+              # the new one; the previous `pm2 delete` + `pm2 start` raced the
+              # socket release and the new worker could come up to
+              # EADDRINUSE and backoff-loop. `start` stays only as the
+              # not-yet-managed fallback.
+              pm2 restart expedition-api --update-env >/dev/null 2>&1 \
+                || pm2 start ecosystem.config.js --only expedition-api
             else
               pm2 reload ecosystem.config.js --only expedition-api --update-env
             fi"
 
             echo "=== Restarting support apps ==="
-            su - deploy -c "pm2 restart discord-bot clip-service >/dev/null 2>&1 || true"
+            su - deploy -c "pm2 restart discord-bot >/dev/null 2>&1 || true"
+            # clip-service keeps the ~1 GB CLIP model resident. Restarting it on
+            # every deploy reloads that model into a 4 GB box that is already
+            # near its memory ceiling (and the swap spike it causes pushes
+            # expedition-api over max_memory_restart, which is what a burst of
+            # hundreds of PM2 restarts looks like). Only bounce it when the
+            # service's own source moved.
+            LAST_SHA_FILE="$APP_DIR/.ci-last-deploy-sha"
+            LAST_SHA="$(cat "$LAST_SHA_FILE" 2>/dev/null || true)"
+            if [ -n "$LAST_SHA" ] && git diff --quiet "$LAST_SHA" HEAD -- utils/clipService.py; then
+              echo "clip-service unchanged since $LAST_SHA — leaving it running"
+            else
+              echo "clip-service changed (or no previous deploy recorded) — restarting"
+              su - deploy -c "pm2 restart clip-service >/dev/null 2>&1 || true"
+            fi
+            git rev-parse HEAD > "$LAST_SHA_FILE"
 
             echo "=== Saving PM2 process list ==="
             su - deploy -c "pm2 save"
