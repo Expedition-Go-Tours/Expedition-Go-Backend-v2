@@ -805,6 +805,19 @@ jobs:
             su - deploy -c "cd $APP_DIR && npx prisma migrate deploy"
 
             echo "=== Reloading API (graceful cluster reload, zero-downtime) ==="
+            # Restart (not delete+start) when the app is not yet in cluster mode:
+            # `pm2 restart` waits for the old process to exit, while delete+start
+            # races the socket release and the new worker can come up to
+            # EADDRINUSE and backoff-loop. Cluster mode gets a true zero-downtime
+            # reload.
+            #
+            # This comment MUST stay outside the su -c string below. Inside a
+            # double-quoted string the OUTER shell runs backticks as command
+            # substitutions — on 2026-10-22 the backticks in this very comment
+            # executed pm2 restart / pm2 delete / pm2 start AS ROOT, which
+            # spawned the stray root PM2 daemon that this deploy's own
+            # preflight had just deleted. No backticks, and no comments, inside
+            # the su -c string.
             su - deploy -c "cd $APP_DIR && CUR_MODE=\$(pm2 jlist 2>/dev/null | python3 -c '
             import sys, json
             try:
@@ -818,12 +831,7 @@ jobs:
             ' 2>/dev/null || echo fork)
             if [ \"\$CUR_MODE\" != \"cluster_mode\" ]; then
               echo \"API not in cluster mode yet\"
-              # `pm2 restart` waits for the old process to exit before starting
-              # the new one; the previous `pm2 delete` + `pm2 start` raced the
-              # socket release and the new worker could come up to
-              # EADDRINUSE and backoff-loop. `start` stays only as the
-              # not-yet-managed fallback.
-              pm2 restart expedition-api --update-env >/dev/null 2>&1 \
+              pm2 restart expedition-api --update-env >/dev/null 2>&1 \\
                 || pm2 start ecosystem.config.js --only expedition-api
             else
               pm2 reload ecosystem.config.js --only expedition-api --update-env
