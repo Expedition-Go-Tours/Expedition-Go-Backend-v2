@@ -82,6 +82,11 @@ const corsOptions = {
     callback(null, isAllowedOrigin(origin, httpOrigins()));
   },
   credentials: true,
+  // `Content-Disposition` is not a CORS-safelisted response header, so a
+  // cross-origin fetch cannot read it unless it is exposed. Without this the
+  // CSV export fell back to a client-generated filename and ignored the name
+  // the server chose.
+  exposedHeaders: ['Content-Disposition'],
 };
 
 app.use(cors(corsOptions));
