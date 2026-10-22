@@ -37,8 +37,12 @@ describe('thresholds', () => {
 describe('buildEmbed', () => {
   const diag = {
     pm2: [
-      { name: 'expedition-api', status: 'online', restarts: 6, uptimeSec: 8, memMB: 300, pid: 1 },
-      { name: 'discord-bot', status: 'online', restarts: 0, uptimeSec: 900, memMB: 90, pid: 2 },
+      // `restarts` is PM2's LIFETIME counter — 6 here means "has existed a
+      // while", not "restarted 6 times in this incident". `unstableRestarts`
+      // is the crash-loop signal and `uptimeSec: 8` is what says a restart
+      // just happened.
+      { name: 'expedition-api', status: 'online', restarts: 6, unstableRestarts: 0, uptimeSec: 8, memMB: 300, pid: 1 },
+      { name: 'discord-bot', status: 'online', restarts: 0, unstableRestarts: 0, uptimeSec: 900, memMB: 90, pid: 2 },
     ],
     deploy: { lastCommitAt: '2026-09-01 13:20:00', apiUpSinceSec: 8, restartedRecently: true },
     errorTail: 'TypeError: something failed\n    at line 1',
@@ -59,23 +63,25 @@ describe('buildEmbed', () => {
     expect(e.content).toContain('Duration: ongoing');
 
     const byName = Object.fromEntries(e.fields.map((f) => [f.name, f.value]));
-    // Evidence, not overstatement
-    expect(byName['LIKELY CAUSE']).toContain('restarted 6×');
+    // Evidence, not overstatement: the cause names the restart that just
+    // happened (uptime), never the lifetime restart counter.
+    expect(byName['LIKELY CAUSE']).toContain('restarted ~8s ago');
+    expect(byName['LIKELY CAUSE']).not.toContain('6×');
     expect(byName['ASSESSMENT']).toContain('Likely deploy-related transient');
     expect(byName['ASSESSMENT']).toContain('~8s after deployment');
     expect(byName['DEPENDENCIES']).toContain('✅ PostgreSQL');
     expect(byName['RESOURCES']).toContain('CPU 31%');
     expect(byName['LATEST ERROR']).toContain('TypeError');
-    expect(byName['CHECK FIRST']).toContain('⚠️ expedition-api');
+    expect(byName['CHECK FIRST']).toContain('⚠️ expedition-api: online, restarted ~8s ago');
     expect(byName['Commit']).toContain('13:20:00');
   });
 
   it('labels unclassified assessment when no deploy correlation', () => {
-    const d = { ...diag, deploy: null, pm2: [{ name: 'expedition-api', status: 'online', restarts: 0, uptimeSec: 900, memMB: 300 }] };
+    const d = { ...diag, deploy: null, pm2: [{ name: 'expedition-api', status: 'online', restarts: 0, unstableRestarts: 0, uptimeSec: 900, memMB: 300 }] };
     const e = buildEmbed({ direction: 'down', ...BASE, diag: d });
     const byName = Object.fromEntries(e.fields.map((f) => [f.name, f.value]));
     expect(byName['ASSESSMENT']).toContain('Unclassified');
-    expect(byName['LIKELY CAUSE']).toContain('no PM2 restart detected');
+    expect(byName['LIKELY CAUSE']).toContain('no recent PM2 restart detected');
   });
 
   it('builds a green resolved embed with downtime duration', () => {
@@ -326,8 +332,8 @@ describe('probeSignal', () => {
 describe('resource embeds (parity with API cards)', () => {
   const diag = {
     pm2: [
-      { name: 'expedition-api', status: 'online', restarts: 6, uptimeSec: 8, memMB: 300, pid: 1 },
-      { name: 'discord-bot', status: 'online', restarts: 0, uptimeSec: 900, memMB: 90, pid: 2 },
+      { name: 'expedition-api', status: 'online', restarts: 6, unstableRestarts: 0, uptimeSec: 8, memMB: 300, pid: 1 },
+      { name: 'discord-bot', status: 'online', restarts: 0, unstableRestarts: 0, uptimeSec: 900, memMB: 90, pid: 2 },
     ],
     deploy: { lastCommitAt: '2026-09-01 13:20:00', apiUpSinceSec: 8, restartedRecently: true },
     errorTail: 'TypeError: something failed\n    at line 1',
@@ -347,14 +353,60 @@ describe('resource embeds (parity with API cards)', () => {
     expect(e.color).toBe(0xff4444);
     expect(e.content).toContain('LOAD: PROBLEM');
     const byName = Object.fromEntries(e.fields.map((f) => [f.name, f.value]));
-    expect(byName['LIKELY CAUSE']).toContain('PM2 restart burst');
-    expect(byName['LIKELY CAUSE']).toContain('restarted 6×');
-    expect(byName['LIKELY CAUSE']).toContain('~8s after deployment');
+    // The cause cites the restart that just happened — not a lifetime counter.
+    expect(byName['LIKELY CAUSE']).toContain('Processes restarted ~8s ago');
+    expect(byName['LIKELY CAUSE']).not.toContain('burst');
+    expect(byName['LIKELY CAUSE']).not.toContain('6×');
     expect(byName['LIKELY CAUSE']).toContain('load1 4.58 > 4');
     expect(byName['LIKELY CAUSE']).toContain('node');
     expect(byName['ASSESSMENT']).toContain('deploy-related transient');
     expect(byName['RESOURCES']).toContain('CPU 97%');
     expect(byName['Commit']).toContain('13:20:00');
+  });
+
+  it("never reads PM2's lifetime restart counter as a restart burst", () => {
+    // The exact bug behind two real incidents: `restart_time` is cumulative, so
+    // a healthy process that has simply existed for weeks reported
+    // "PM2 restart burst — restarted 265×" as the cause of unrelated memory
+    // and swap alerts.
+    const d = {
+      ...diag,
+      deploy: null,
+      pm2: [{ name: 'expedition-api', status: 'online', restarts: 265, unstableRestarts: 0, uptimeSec: 3600, memMB: 340 }],
+      topCpu: null,
+    };
+    for (const signal of ['ram', 'swap', 'load']) {
+      const e = buildEmbed({ direction: 'down', signal, detail: 'memory 86% used (3809MB)', startedAt: 1700000000000, diag: d });
+      const byName = Object.fromEntries(e.fields.map((f) => [f.name, f.value]));
+      expect(byName['LIKELY CAUSE']).not.toContain('265');
+      expect(byName['LIKELY CAUSE']).not.toContain('burst');
+      expect(byName['LIKELY CAUSE']).not.toContain('restarted');
+      expect(byName['LIKELY CAUSE']).toContain('memory 86% used');
+      expect(byName['ASSESSMENT']).toContain('Unclassified');
+    }
+    // CHECK FIRST renders on the API card: a process that has simply existed
+    // for weeks reads as healthy there, not as "online but restarted 265×".
+    const apiCard = buildEmbed({ direction: 'down', signal: 'api', detail: 'local down', startedAt: 1700000000000, diag: d });
+    const apiFields = Object.fromEntries(apiCard.fields.map((f) => [f.name, f.value]));
+    expect(apiFields['CHECK FIRST']).toContain('✅ expedition-api: online');
+  });
+
+  it('calls out a genuine crash loop via unstable restarts', () => {
+    const d = {
+      ...diag,
+      deploy: null,
+      pm2: [{ name: 'expedition-api', status: 'online', restarts: 265, unstableRestarts: 4, uptimeSec: 3, memMB: 340 }],
+      topCpu: null,
+    };
+    const e = buildEmbed({ direction: 'down', signal: 'ram', detail: 'memory 86% used', startedAt: 1700000000000, diag: d });
+    const byName = Object.fromEntries(e.fields.map((f) => [f.name, f.value]));
+    expect(byName['LIKELY CAUSE']).toContain('crash loop');
+    expect(byName['LIKELY CAUSE']).toContain('4 unstable restarts');
+    expect(byName['ASSESSMENT']).toContain('restarting without reaching a stable uptime');
+
+    const apiCard = buildEmbed({ direction: 'down', signal: 'api', detail: 'local down', startedAt: 1700000000000, diag: d });
+    const apiFields = Object.fromEntries(apiCard.fields.map((f) => [f.name, f.value]));
+    expect(apiFields['CHECK FIRST']).toContain('crash-looping');
   });
 
   it('resource card without deploy/restart evidence is labeled unclassified', () => {

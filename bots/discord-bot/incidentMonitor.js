@@ -185,7 +185,14 @@ async function collectDiagnostics(ctx) {
     diag.pm2 = procs.map((p) => ({
       name: p.name,
       status: p.pm2_env?.status || 'unknown',
+      // `restart_time` is PM2's LIFETIME restart counter: it only ever grows,
+      // so "restarted 265×" is usually just "this process has existed a while".
+      // Kept for context, never as incident evidence.
       restarts: p.pm2_env?.restart_time ?? 0,
+      // `unstable_restarts` is the real crash-loop signal: consecutive restarts
+      // that never reached PM2's stable-uptime bar. 0 while `restarts` is high
+      // means the process is healthy and merely old.
+      unstableRestarts: p.pm2_env?.unstable_restarts ?? 0,
       uptimeSec: p.pm2_env?.status === 'online' ? Math.round((Date.now() - (p.pm2_env?.pm_uptime || Date.now())) / 1000) : null,
       memMB: Math.round((p.monit?.memory || 0) / 1024 / 1024),
       pid: p.pid,
@@ -297,9 +304,14 @@ function checkFirstLines(diag) {
   const lines = [];
   const api = diag?.pm2?.find((p) => p.name === 'expedition-api');
   if (api) {
-    const restarts = api.restarts || 0;
+    // Evidence, not the lifetime counter: a crash loop shows up as
+    // `unstableRestarts`, a deploy as a short uptime. `restarts` alone says
+    // nothing — a process that has run for months has restarted hundreds of
+    // times and is perfectly healthy.
+    const loop = api.unstableRestarts || 0;
     if (api.status !== 'online') lines.push(`❌ expedition-api: \`${api.status}\``);
-    else if (restarts > 0) lines.push(`⚠️ expedition-api: online but restarted ${restarts}×`);
+    else if (loop > 0) lines.push(`🚨 expedition-api: online but crash-looping (${loop} unstable restart${loop === 1 ? '' : 's'})`);
+    else if (api.uptimeSec != null && api.uptimeSec < 600) lines.push(`⚠️ expedition-api: online, restarted ~${api.uptimeSec}s ago`);
     else lines.push(`✅ expedition-api: online`);
   } else {
     lines.push(`❓ expedition-api: no PM2 process found`);
@@ -489,19 +501,29 @@ function commonDiagFields(diag, { includeError = true } = {}) {
 
 function buildCauseAndAssessment(signal, detail, diag) {
   const api = diag?.pm2?.find((p) => p.name === 'expedition-api');
-  const restarts = api?.restarts || 0;
+  // `restarts` is PM2's lifetime counter and is NOT evidence of anything —
+  // a process that has run for months restarts hundreds of times and is
+  // healthy. The signals that mean something are:
+  //   unstableRestarts  consecutive restarts that never stabilised (crash loop)
+  //   uptimeSec < 600   a restart just happened (deploy or otherwise)
+  const loop = api?.unstableRestarts || 0;
+  const restartedRecently =
+    Boolean(diag?.deploy?.restartedRecently) ||
+    (api?.uptimeSec != null && api.uptimeSec < 600);
   const top = diag?.topCpu?.slice(0, 3).join('\n');
   let cause;
   let assessment;
 
   if (signal === 'api') {
     const likelyCauseLines = [];
-    if (restarts > 0) {
-      likelyCauseLines.push(`PM2 restart detected — \`expedition-api\` restarted ${restarts}×`);
+    if (loop > 0) {
+      likelyCauseLines.push(`PM2 crash loop — \`expedition-api\` has ${loop} unstable restart${loop === 1 ? '' : 's'}`);
+    } else if (restartedRecently) {
+      likelyCauseLines.push(`\`expedition-api\` restarted ~${api?.uptimeSec ?? diag?.deploy?.apiUpSinceSec}s ago`);
     } else if (api && api.status !== 'online') {
       likelyCauseLines.push(`\`expedition-api\` is not online (\`${api.status}\`)`);
     } else {
-      likelyCauseLines.push('Health check failed (no PM2 restart detected)');
+      likelyCauseLines.push('Health check failed (no recent PM2 restart detected)');
     }
     cause = likelyCauseLines.join('\n');
     assessment = 'Unclassified — correlation has not established a cause.';
@@ -513,8 +535,8 @@ function buildCauseAndAssessment(signal, detail, diag) {
 
   if (signal === 'scheduler') {
     cause = `A scheduled BullMQ sweep is not executing on time.\nObservation: ${detail}`;
-    if (restarts > 0) {
-      cause += `\nNote: \`expedition-api\` restarted ${restarts}×${diag?.deploy?.restartedRecently ? ` ~${diag.deploy.apiUpSinceSec}s ago` : ''} — workers/schedulers re-register on boot, so this may have self-healed.`;
+    if (restartedRecently) {
+      cause += `\nNote: \`expedition-api\` restarted ~${api?.uptimeSec ?? diag?.deploy?.apiUpSinceSec}s ago — workers/schedulers re-register on boot, so this may have self-healed.`;
     }
     assessment = diag?.deploy?.restartedRecently
       ? 'Scheduler stall detected right after a deployment/restart — confirm schedulers re-verified (registerSchedules/verifySchedules) and the missed run was caught up.'
@@ -540,18 +562,22 @@ function buildCauseAndAssessment(signal, detail, diag) {
     return { cause, assessment };
   }
 
-  // Resource signals: same evidence discipline — restart/deploy correlation,
-  // plus the top CPU consumers that explain a load/CPU/memory spike.
-  if (restarts > 0) {
-    cause = `PM2 restart burst — \`expedition-api\` restarted ${restarts}× (${api?.status || '?'})`;
-    if (diag?.deploy?.restartedRecently) {
-      cause += `, ~${diag.deploy.apiUpSinceSec}s after deployment`;
+  // Resource signals: same evidence discipline — crash loop or a restart that
+  // just happened, plus the top CPU consumers that explain the spike. The
+  // lifetime restart counter is never a cause.
+  if (loop > 0) {
+    cause = `PM2 crash loop — \`expedition-api\` has ${loop} unstable restart${loop === 1 ? '' : 's'} (${api?.status || '?'})`;
+    if (restartedRecently) {
+      cause += `, most recently ~${api?.uptimeSec ?? diag?.deploy?.apiUpSinceSec}s ago`;
     }
     cause += `\nObservation: ${detail}`;
     if (top) cause += `\nTop CPU:\n${top}`;
-    assessment = diag?.deploy?.restartedRecently
-      ? `Likely deploy-related transient — CPU/memory burst while the API recompiled and PM2 restarted (commit ${diag.deploy.lastCommitAt || 'recent'}).`
-      : 'PM2 restarts detected; not clearly deploy-tied. Verify the API is stable.';
+    assessment = 'The API is restarting without reaching a stable uptime. Look for a bind failure (EADDRINUSE from a stray PM2 daemon), an uncaught exception on boot, or a memory limit kill — and check the PM2 error log.';
+  } else if (restartedRecently) {
+    cause = `Processes restarted ~${api?.uptimeSec ?? diag?.deploy?.apiUpSinceSec}s ago`;
+    cause += `\nObservation: ${detail}`;
+    if (top) cause += `\nTop CPU:\n${top}`;
+    assessment = `Likely deploy-related transient — CPU/memory burst while the API recompiled and PM2 restarted (commit ${diag.deploy?.lastCommitAt || 'recent'}).`;
   } else {
     cause = `Observation: ${detail}`;
     if (top) cause += `\nTop CPU:\n${top}`;
