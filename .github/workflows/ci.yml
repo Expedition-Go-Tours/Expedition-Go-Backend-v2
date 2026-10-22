@@ -715,14 +715,33 @@ jobs:
             # A PM2 daemon started as root (an ad-hoc `sudo pm2 …`) binds port
             # 5000 and makes the deploy-owned expedition-api exit with
             # "Port already in use — Exiting for PM2 backoff" on every boot, so
-            # PM2 restart-loops and the restart counter climbs into the
-            # hundreds while the API flaps. scripts/deploy.sh has had this
-            # preflight for exactly that reason; the CI path was missing it.
-            if [ -f /root/.pm2/pm2.pid ] && kill -0 "$(cat /root/.pm2/pm2.pid)" 2>/dev/null; then
-              echo "WARN: stray root PM2 daemon detected — deleting its apps and killing it"
-              PM2_HOME=/root/.pm2 pm2 delete all >/dev/null 2>&1 || true
-              PM2_HOME=/root/.pm2 pm2 kill >/dev/null 2>&1 || true
+            # PM2 restart-loops. scripts/deploy.sh has had this preflight for
+            # exactly that reason; the CI path was missing it.
+            #
+            # Detect and remove it WITHOUT EVER RUNNING `pm2` AS ROOT: any pm2
+            # command starts the God daemon when it is not running, and that
+            # daemon auto-resurrects its saved app list. So `PM2_HOME=/root/.pm2
+            # pm2 delete all` CREATES the stray it is meant to remove — which is
+            # precisely what happened on 2026-10-22 and put the API in a bind
+            # loop. Read the process table instead, kill by PID, and drop
+            # /root/.pm2 so there is nothing left to resurrect from.
+            ROOT_PM2_PID="$(ps -eo pid,user,args | grep -F 'God Daemon (/root/.pm2)' | grep -v grep | awk '{print $1}')"
+            if [ -n "$ROOT_PM2_PID" ]; then
+              echo "WARN: stray root PM2 daemon (pid $ROOT_PM2_PID) — killing it"
+              kill -TERM $ROOT_PM2_PID 2>/dev/null || true
+              sleep 2
+              kill -KILL $ROOT_PM2_PID 2>/dev/null || true
             fi
+            # Root-owned copies of OUR apps fight the deploy-owned ones for the
+            # port. Kill those too, matched on this app's own paths only.
+            for APP_PATH in server.js utils/clipService.py bots/discord-bot/index.js; do
+              ROOT_APP_PIDS="$(ps -eo pid,user,args | awk -v app="/home/deploy/Expedition-Go-Backend-v2/$APP_PATH" '$2=="root" && index($0, app) {print $1}')"
+              if [ -n "$ROOT_APP_PIDS" ]; then
+                echo "WARN: root-owned $APP_PATH (pid $ROOT_APP_PIDS) — killing"
+                kill -9 $ROOT_APP_PIDS 2>/dev/null || true
+              fi
+            done
+            rm -rf /root/.pm2
 
             echo "=== Fixing file ownership ==="
             chown -R deploy:deploy "$APP_DIR"
