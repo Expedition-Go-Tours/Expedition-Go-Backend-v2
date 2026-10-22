@@ -515,6 +515,49 @@ router.get('/monthly-revenue', resolveSupplier, supplierController.getMonthlyRev
  */
 router.get('/analytics/products', resolveSupplier, requireTeamPermission('analytics.view'), supplierController.getProductAnalytics);
 
+/**
+ * @swagger
+ * /suppliers/analytics/ga4-funnel:
+ *   get:
+ *     summary: GA4 ecommerce funnel per product (viewed → cart → purchased)
+ *     description: |
+ *       The storefront-side half of per-product performance, read from the GA4
+ *       Data API: items viewed, added to cart, purchased and item revenue.
+ *       Answers what our own database cannot — a traveller who looked at a
+ *       tour and never booked leaves no row anywhere we own.
+ *
+ *       Three properties worth knowing before reading the numbers:
+ *       - `enabled: false` means this server cannot see GA4 (missing
+ *         GA4_PROPERTY_ID / service account). Those columns are UNKNOWN, not
+ *         zero, and `reason` says so.
+ *       - only the supplier's own tours are returned; everything else on the
+ *         property is counted in `excludedCount`.
+ *       - item ids listed in GA4_EXCLUDE_ITEM_IDS (test products) are dropped
+ *         and counted too.
+ *     tags: [Supplier Analytics]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: from
+ *         in: query
+ *         description: Start date (YYYY-MM-DD). Defaults to 30 days ago.
+ *         schema: { type: string, format: date }
+ *       - name: to
+ *         in: query
+ *         description: End date (YYYY-MM-DD, inclusive). Defaults to today.
+ *         schema: { type: string, format: date }
+ *     responses:
+ *       200:
+ *         description: Per-product funnel (or an explicit "not configured")
+ *       400:
+ *         description: Malformed or reversed date range
+ *       403:
+ *         description: Role cannot view analytics
+ *       502:
+ *         description: GA4 could not be reached (never rendered as zeros)
+ */
+router.get('/analytics/ga4-funnel', resolveSupplier, requireTeamPermission('analytics.view'), supplierController.getGa4ProductFunnel);
+
 // ================================
 // SUPPLIER CANCELLATION RATE
 // ================================

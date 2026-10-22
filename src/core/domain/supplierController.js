@@ -16,6 +16,7 @@ const { notifyAdmin } = require('../services/adminNotificationService');
 const { enqueueNotification } = require('../services/queue');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../services/cloudinaryHelper');
 const { isGhanaSupplier } = require('../services/supplierCountry');
+const ga4Reporting = require('../services/ga4Reporting');
 const {
   parseDocuments,
   parseVehiclePhotos,
@@ -691,6 +692,141 @@ exports.getProductAnalytics = catchAsync(async (req, res) => {
 
   res.json({ status: 'success', data: { products: result } });
 });
+
+/**
+ * GET /suppliers/analytics/ga4-funnel?from=YYYY-MM-DD&to=YYYY-MM-DD
+ *
+ * The GA4 half of per-product performance: items viewed → added to cart →
+ * purchased → item revenue, read straight from the GA4 Data API.
+ *
+ * `getProductAnalytics` above answers "what did my bookings do" from our own
+ * database. This answers "what did my products do in the storefront funnel" —
+ * the numbers that only GA4 sees, because a traveller who looked at a tour and
+ * never booked leaves no row in any table we own.
+ *
+ * Three rules, and the reason each exists:
+ *
+ *  - NOT CONFIGURED IS NOT ZERO. Without GA4 credentials this returns
+ *    `{ enabled: false, reason }`, never a table of zeros. A supplier reading
+ *    "0 views" must be able to tell "nobody looked" from "we cannot see GA4".
+ *  - A SUPPLIER SEES ONLY THEIR OWN PRODUCTS. GA4 reports the whole property —
+ *    every tour on the storefront. Rows for tours this supplier does not own
+ *    are excluded and COUNTED in `excludedCount`, so "hidden" never looks like
+ *    "nothing happened".
+ *  - TEST PRODUCTS STAY OUT. `GA4_EXCLUDE_ITEM_IDS` (comma-separated item ids)
+ *    removes known test rows — e.g. the "credential check" tour — from real
+ *    reports, the same way they should be kept out of the GA4 property.
+ */
+exports.getGa4ProductFunnel = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  const { from, to } = req.query || {};
+
+  const range = resolveGa4DateRange(from, to);
+  if (!range) {
+    return next(new AppError(
+      'from and to must be dates in YYYY-MM-DD format, with from on or before to',
+      400,
+    ));
+  }
+
+  // The supplier's own tours — the allow-list that keeps other suppliers'
+  // sales out of this table, and the name fallback for renamed tours.
+  const tours = await prisma.tour.findMany({
+    where: { supplierId },
+    select: { id: true, title: true },
+    take: 500,
+  });
+  const titleById = new Map(tours.map((t) => [t.id, t.title]));
+
+  const emptyTotals = { itemsViewed: 0, itemsAddedToCart: 0, itemsPurchased: 0, itemRevenue: 0 };
+
+  if (!ga4Reporting.isConfigured()) {
+    return res.json({
+      status: 'success',
+      data: {
+        enabled: false,
+        from: range.from,
+        to: range.to,
+        rows: [],
+        totals: emptyTotals,
+        excludedCount: 0,
+        reason:
+          'GA4 reporting is not configured on this server (GA4_PROPERTY_ID and a service account). '
+          + 'These columns are unknown here — they are not zero.',
+      },
+    });
+  }
+
+  let ga4Rows;
+  try {
+    ga4Rows = await ga4Reporting.fetchItemFunnel(range);
+  } catch (err) {
+    if (err && err.code === 'GA4_NOT_CONFIGURED') {
+      // isConfigured() raced a config change; treat exactly like the gate.
+      return res.json({
+        status: 'success',
+        data: {
+          enabled: false,
+          from: range.from,
+          to: range.to,
+          rows: [],
+          totals: emptyTotals,
+          excludedCount: 0,
+          reason: 'GA4 reporting is not configured on this server.',
+        },
+      });
+    }
+    // A failure to REACH GA4 is a failure, not an empty funnel: the dashboard
+    // shows the error rather than a convincing table of zeros.
+    return next(new AppError(`Could not load the GA4 funnel: ${err && err.message}`, 502));
+  }
+
+  const excludeItemIds = String(process.env.GA4_EXCLUDE_ITEM_IDS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const shaped = ga4Reporting.shapeRows(ga4Rows, {
+    ownedTourIds: tours.map((t) => t.id),
+    excludeItemIds,
+  });
+
+  res.json({
+    status: 'success',
+    data: {
+      enabled: true,
+      from: range.from,
+      to: range.to,
+      ...shaped,
+      rows: shaped.rows.map((row) => ({
+        ...row,
+        // GA4's own `itemName` is authoritative (it is what the event sent);
+        // fall back to the catalogue title when the event carried none.
+        itemName: row.itemName || titleById.get(row.itemId) || 'Unknown product',
+      })),
+    },
+  });
+});
+
+/**
+ * Normalise the funnel's date window. Defaults to the last 30 days — a window
+ * a human would recognise as "recently" — and rejects anything malformed or
+ * reversed rather than guessing, because a silently wrong range is worse than
+ * a 400.
+ */
+function resolveGa4DateRange(from, to) {
+  const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+  if ((from && !DAY_ONLY.test(String(from))) || (to && !DAY_ONLY.test(String(to)))) {
+    return null;
+  }
+  if (from && to && String(from) > String(to)) return null;
+
+  const end = to ? String(to) : new Date().toISOString().slice(0, 10);
+  const start = from
+    ? String(from)
+    : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  return { from: start, to: end };
+}
 
 exports.getMonthlyRevenue = catchAsync(async (req, res) => {
   const supplierId = req.supplierId;
