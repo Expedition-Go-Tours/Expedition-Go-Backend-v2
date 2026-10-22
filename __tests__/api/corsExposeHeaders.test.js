@@ -13,16 +13,34 @@
 const request = require('supertest');
 const app = require('../../app');
 
-describe('CORS — response headers the browser may read', () => {
-  // An origin on the allow-list (config/corsOrigins.js DEV_ORIGINS): the
-  // middleware emits no CORS headers at all for a refused origin, so a
-  // disallowed one would make this test assert nothing.
-  const ORIGIN = 'http://localhost:5173';
+// The origin allow-list is environment-dependent (config/corsOrigins.js):
+// ALLOWED_ORIGINS REPLACES the localhost dev defaults, and the CI jobs set it
+// to `http://localhost:3000`. A test that picks its origin from the ambient
+// environment therefore passes locally and fails in CI — or worse, passes in
+// both while asserting nothing, because a REFUSED origin gets no CORS headers
+// at all. Pin the allow-list here so the assertion is the same everywhere.
+const ORIGIN = 'http://localhost:3000';
+let savedAllowedOrigins;
 
+beforeAll(() => {
+  savedAllowedOrigins = process.env.ALLOWED_ORIGINS;
+  process.env.ALLOWED_ORIGINS = ORIGIN;
+});
+
+afterAll(() => {
+  if (savedAllowedOrigins === undefined) delete process.env.ALLOWED_ORIGINS;
+  else process.env.ALLOWED_ORIGINS = savedAllowedOrigins;
+});
+
+describe('CORS — response headers the browser may read', () => {
   it('exposes Content-Disposition so the export filename reaches the client', async () => {
     const res = await request(app)
       .get('/api/travioghana/supplier/bookings/export')
       .set('Origin', ORIGIN);
+
+    // The origin must actually be allowed, otherwise the assertion below is
+    // vacuous: a refused request carries no CORS headers to inspect.
+    expect(res.headers['access-control-allow-origin']).toBeTruthy();
 
     const exposed = String(res.headers['access-control-expose-headers'] || '');
     expect(exposed.toLowerCase()).toContain('content-disposition');
@@ -39,5 +57,16 @@ describe('CORS — response headers the browser may read', () => {
     expect(res.status).toBeGreaterThanOrEqual(400);
     const exposed = String(res.headers['access-control-expose-headers'] || '');
     expect(exposed.toLowerCase()).toContain('content-disposition');
+  });
+
+  it('does not expose internal headers to a disallowed origin', async () => {
+    // The counterpart: exposure must not become a blanket leak. A refused
+    // origin gets no CORS surface at all.
+    const res = await request(app)
+      .get('/api/travioghana/supplier/bookings/export')
+      .set('Origin', 'https://evil.example.com');
+
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    expect(res.headers['access-control-expose-headers']).toBeUndefined();
   });
 });
