@@ -54,6 +54,13 @@ const RECOVER_THRESHOLD = 2;
 // Load is more volatile (deploys/restarts burst CPU for a minute or two), so
 // require ~2min of sustained pressure before declaring. Recovery stays quick.
 const LOAD_FAIL_SAMPLES = 4;
+// Memory and swap are just as bursty: `npm install` + `prisma generate` + a
+// model reload during a deploy, or an operator's own diagnostic scans
+// (`find /`, `lsof`) push a genuinely healthy box over the threshold for a
+// sample or two. Two samples opened an incident for a 60s spike and then
+// resolved it 60s later — noise that trains people to ignore the channel.
+// Same ~2min sustained-pressure bar as load; recovery is still quick.
+const RESOURCE_FAIL_SAMPLES = 4;
 // sslDays is deliberately BELOW Let's Encrypt's 30-day renewal window so a
 // normal renewal (which fires the moment <30 days remain) never trips the
 // alert, while a genuinely failed renewal still warns with weeks to spare.
@@ -357,8 +364,8 @@ const SIGNALS = [
   { id: 'api', label: 'API', fail: FAIL_THRESHOLD, titleDown: '🚨 PRODUCTION INCIDENT', titleUp: '✅ INCIDENT RESOLVED' },
   { id: 'load', label: 'LOAD', fail: LOAD_FAIL_SAMPLES, titleDown: '🚨 HIGH LOAD', titleUp: '✅ LOAD NORMAL' },
   { id: 'disk', label: 'DISK', fail: FAIL_THRESHOLD, titleDown: '🚨 DISK SPACE', titleUp: '✅ DISK OK' },
-  { id: 'ram', label: 'MEMORY', fail: FAIL_THRESHOLD, titleDown: '🚨 MEMORY PRESSURE', titleUp: '✅ MEMORY OK' },
-  { id: 'swap', label: 'SWAP', fail: FAIL_THRESHOLD, titleDown: '🚨 SWAP PRESSURE', titleUp: '✅ SWAP OK' },
+  { id: 'ram', label: 'MEMORY', fail: RESOURCE_FAIL_SAMPLES, titleDown: '🚨 MEMORY PRESSURE', titleUp: '✅ MEMORY OK' },
+  { id: 'swap', label: 'SWAP', fail: RESOURCE_FAIL_SAMPLES, titleDown: '🚨 SWAP PRESSURE', titleUp: '✅ SWAP OK' },
   { id: 'postgres', label: 'POSTGRES', fail: FAIL_THRESHOLD, titleDown: '🚨 POSTGRES DOWN', titleUp: '✅ POSTGRES OK' },
   { id: 'redis', label: 'REDIS', fail: FAIL_THRESHOLD, titleDown: '🚨 REDIS DOWN', titleUp: '✅ REDIS OK' },
   { id: 'backup', label: 'BACKUP', fail: FAIL_THRESHOLD, titleDown: '🚨 BACKUP STALE', titleUp: '✅ BACKUP OK' },
@@ -797,4 +804,5 @@ module.exports = {
   FAIL_THRESHOLD,
   RECOVER_THRESHOLD,
   LOAD_FAIL_SAMPLES,
+  RESOURCE_FAIL_SAMPLES,
 };

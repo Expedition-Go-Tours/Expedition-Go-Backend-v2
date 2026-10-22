@@ -18,6 +18,8 @@ const {
   FAIL_THRESHOLD,
   RECOVER_THRESHOLD,
   LOAD_FAIL_SAMPLES,
+  RESOURCE_FAIL_SAMPLES,
+  SIGNALS,
 } = require('../../bots/discord-bot/incidentMonitor');
 
 const BASE = {
@@ -31,6 +33,25 @@ describe('thresholds', () => {
   it('declares after 2 consecutive failures and recovers after 2 good checks', () => {
     expect(FAIL_THRESHOLD).toBe(2);
     expect(RECOVER_THRESHOLD).toBe(2);
+  });
+
+  it('gives bursty resource checks the same sustained-pressure bar as load', () => {
+    // A deploy (`npm install` + `prisma generate` + model reload) and an
+    // operator's own `find`/`lsof` scans push memory over the threshold for a
+    // sample or two. At FAIL_THRESHOLD=2 that opened an incident for a 60s
+    // spike and closed it 60s later — noise. Memory/swap now need the same
+    // ~2min of sustained pressure load already needed.
+    expect(RESOURCE_FAIL_SAMPLES).toBe(LOAD_FAIL_SAMPLES);
+    expect(RESOURCE_FAIL_SAMPLES).toBeGreaterThan(FAIL_THRESHOLD);
+
+    const failById = Object.fromEntries(SIGNALS.map((s) => [s.id, s.fail]));
+    expect(failById.ram).toBe(RESOURCE_FAIL_SAMPLES);
+    expect(failById.swap).toBe(RESOURCE_FAIL_SAMPLES);
+    // The checks that are NOT bursty keep the fast 2-sample declaration: an
+    // API outage must not wait 2 minutes to page anyone, and disk creeps.
+    expect(failById.api).toBe(FAIL_THRESHOLD);
+    expect(failById.disk).toBe(FAIL_THRESHOLD);
+    expect(failById.postgres).toBe(FAIL_THRESHOLD);
   });
 });
 
