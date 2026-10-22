@@ -125,7 +125,6 @@ router.get('/finance/invoices/:id', resolveSupplier, requireTeamPermission('payo
 router.get('/finance/invoices/:id/pdf', resolveSupplier, requireTeamPermission('payouts.view'), financeController.downloadInvoicePdf);
 router.get('/finance/charges', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getSupplierCharges);
 router.get('/finance/earnings', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getEarnings);
-router.get('/finance/tax-summary', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getTaxSummary);
 router.get('/finance/payouts/requests', resolveSupplier, requireTeamPermission('payouts.view'), financeController.getPayoutRequests);
 router.post('/finance/payout/request', resolveSupplier, requireTeamPermission('payouts.request'), financeController.createPayoutRequest);
 router.patch('/finance/payouts/requests/:id/cancel', resolveSupplier, requireTeamPermission('payouts.request'), financeController.cancelPayoutRequest);
