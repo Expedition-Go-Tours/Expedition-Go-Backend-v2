@@ -22,10 +22,14 @@ const DEDUP_THRESHOLD = 0.01;
 function cacheKey(prefix, ...parts) {
   const input = parts.join(':').toLowerCase();
   const hash = crypto.createHash('md5').update(input).digest('hex');
-  // `v2` bumps the namespace: the v1 provider used Geoapify's `format=json`
-  // (which the normalizer couldn't parse), so v1 cache entries may be stale
-  // empty results. Versioning invalidates them without a manual cache flush.
-  return `geo:v2:${prefix}:${hash}`;
+  // `v3` bumps the namespace: the v2 entries were cached AFTER normalization,
+  // and the Google Maps display-name fix (a place is "Name, Address", not its
+  // address alone) changed the shape of those rows. Baking the wrong label
+  // into the cache means a corrected server still answers with it — which is
+  // exactly how "Accra, Ghana" survived the fix for the queries that had
+  // already been searched. Versioning invalidates them without a manual flush.
+  // (v2 did the same for Geoapify's `format=json` entries.)
+  return `geo:v3:${prefix}:${hash}`;
 }
 
 function isSameLocation(a, b) {
