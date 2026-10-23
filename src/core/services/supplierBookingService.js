@@ -244,7 +244,24 @@ async function createBooking({
       throw new AppError(pricing?.error || 'This tour cannot be priced for the selected date and party', 422);
     }
 
-    // 5. Guest or registered customer. No fake users, no email matching.
+    // 5. An offline collection is money in hand, so it cannot exceed what the
+    //    booking actually costs. `recordCollection` enforces the same ceiling
+    //    for later reports; creation must not be a way around it.
+    if (collection && Number(collection.amount) > 0) {
+      const reported = Math.round(Number(collection.amount) * 100) / 100;
+      const cost = Math.round(Number(pricing.total) * 100) / 100;
+      if (!Number.isFinite(reported) || reported <= 0) {
+        throw new AppError('A positive collection amount is required', 400);
+      }
+      if (reported > cost + 0.005) {
+        throw new AppError(
+          `That exceeds what the booking costs (${cost} ${pricing.currency || 'USD'})`,
+          400,
+        );
+      }
+    }
+
+    // 6. Guest or registered customer. No fake users, no email matching.
     let guestId = null;
     if (!customerId) {
       const created = await tx.bookingGuest.create({
@@ -257,7 +274,7 @@ async function createBooking({
       guestId = created.id;
     }
 
-    // 6. The booking. `origin` is set by the BACKEND; `source` keeps meaning
+    // 7. The booking. `origin` is set by the BACKEND; `source` keeps meaning
     //    which storefront this belongs to and is left to the caller's brand.
     const commission = await calculateCommission(pricing.total);
     const policy = await commissionPolicy();
@@ -296,7 +313,7 @@ async function createBooking({
       },
     });
 
-    // 7. Initial collection, if the supplier reports money in hand.
+    // 8. Initial collection, if the supplier reports money in hand.
     if (collection && Number(collection.amount) > 0) {
       await tx.bookingCollection.create({
         data: {
@@ -314,7 +331,7 @@ async function createBooking({
         },
       });
 
-      // 8. Commission follows money actually collected — an OPEN charge the
+      // 9. Commission follows money actually collected — an OPEN charge the
       //    payout request machinery already nets off. Idempotent per booking:
       //    a replayed create cannot raise it twice (the create above cannot
       //    run twice either — the idempotency key claims the slot).
@@ -334,7 +351,7 @@ async function createBooking({
       }
     }
 
-    // 9. Record the idempotency claim with the booking it produced.
+    // 10. Record the idempotency claim with the booking it produced.
     await tx.bookingIdempotencyKey.upsert({
       where: { supplierId_key: { supplierId, key: String(idempotencyKey) } },
       update: { requestHash, bookingId: created.id },

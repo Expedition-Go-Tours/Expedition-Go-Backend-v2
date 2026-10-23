@@ -306,6 +306,24 @@ describeDb('supplier-created bookings & offline payment collection', () => {
         .send({ amount: 50, method: 'CASH' });
       expect(tooMuch.status).toBe(409);
     });
+
+    it('refuses an initial collection above the price, and writes nothing at all', async () => {
+      const before = await prisma.booking.count({ where: { tourId } });
+      const guestsBefore = await prisma.bookingGuest.count({ where: { name: { startsWith: PREFIX } } });
+
+      // The same ceiling later collections obey: creating the booking must not
+      // be a way to record money the booking does not cost.
+      const res = await createBooking({
+        collection: { amount: 400.01, method: 'CASH' },
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/exceeds what the booking costs/i);
+
+      // The whole transaction rolled back: no booking, and no guest row left
+      // orphaned behind the refused attempt.
+      expect(await prisma.booking.count({ where: { tourId } })).toBe(before);
+      expect(await prisma.bookingGuest.count({ where: { name: { startsWith: PREFIX } } })).toBe(guestsBefore);
+    });
   });
 
   describe('5. a registered customer is shown by relay address, never by real email', () => {
