@@ -24,6 +24,13 @@ const supplierSettingsController = require('../../core/domain/supplierSettingsCo
 const cancellationController = require('../../core/domain/cancellationController');
 const teamController = require('../../core/domain/teamController');
 const bookingController = require('../../core/domain/bookingController');
+const supplierBookingController = require('../../core/domain/supplierBookingController');
+const {
+  quoteSupplierBookingSchema,
+  createSupplierBookingSchema,
+  recordCollectionSchema,
+  supplierBookingParamsSchema,
+} = require('../../core/services/travioGhanaValidation');
 const financeController = require('../../core/domain/financeController');
 const payoutMethodController = require('../../core/domain/payoutMethodController');
 const specialOfferController = require('../../core/domain/specialOfferController');
@@ -112,6 +119,20 @@ router.get('/products/list', resolveSupplier, cancellationController.getCancella
 
 // Pickup planner (proxied to shared bookingController — the frontend rewrites
 // /bookings/supplier/pickup-planner to this Ghana namespace)
+// ── Supplier-created bookings (walk-ins, offline collection) ────────────────
+// Feature-flagged SERVER-SIDE: when it is off, every route here 403s — hiding
+// the button is not a control. `bookings.manage` gates creation and money;
+// `bookings.view` gates reading the collection history.
+//
+// Note on routing: the shared router mounted at /api/travioghana owns
+// /supplier/bookings* and is registered first, so anything it declares wins;
+// these paths are declared only here and fall through to this router.
+router.post('/bookings', resolveSupplier, requireTeamPermission('bookings.manage'), validate(createSupplierBookingSchema), supplierBookingController.create);
+router.post('/bookings/quote', resolveSupplier, requireTeamPermission('bookings.manage'), validate(quoteSupplierBookingSchema), supplierBookingController.quote);
+router.get('/bookings/:id/collections', resolveSupplier, requireTeamPermission('bookings.view'), validate(supplierBookingParamsSchema), supplierBookingController.collections);
+router.post('/bookings/:id/collections', resolveSupplier, requireTeamPermission('bookings.manage'), validate(recordCollectionSchema), supplierBookingController.recordCollection);
+router.post('/bookings/:id/refunds', resolveSupplier, requireTeamPermission('bookings.manage'), validate(recordCollectionSchema), supplierBookingController.recordOfflineRefund);
+
 router.get('/pickup-planner', resolveSupplier, requireTeamPermission('bookings.view'), bookingController.getPickupPlanner);
 router.patch('/pickup-planner/reorder', resolveSupplier, requireTeamPermission('bookings.manage'), validate(pickupReorderSchema), bookingController.reorderPickupStops);
 router.patch('/pickup-planner/:id', resolveSupplier, requireTeamPermission('bookings.manage'), validate(supplierUpdatePickupSchema), bookingController.updateBookingPickup);

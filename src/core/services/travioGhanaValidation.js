@@ -354,6 +354,74 @@ const rescheduleBookingSchema = z.object({
   params: z.object({ id: z.string().min(1).max(100) }),
 });
 
+// ── Supplier-created bookings ──────────────────────────────────────────────
+// The client supplies WHO and WHAT; never a price, a supplier, an origin, a
+// status, a commission or an availability verdict. Those come from the server.
+
+const travelersSchema = z.record(z.string().min(1).max(40), z.coerce.number().int().min(0).max(60));
+
+const guestSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  phone: z.string().trim().max(40).optional(),
+  email: z.string().trim().email().max(254).optional(),
+});
+
+const collectionInputSchema = z.object({
+  amount: z.coerce.number().positive().max(1000000),
+  method: z.enum(['CASH', 'MOBILE_MONEY', 'BANK_TRANSFER', 'POS', 'OTHER']),
+  collectedAt: z.string().datetime().optional(),
+  externalRef: z.string().trim().max(120).optional(),
+  note: z.string().trim().max(500).optional(),
+});
+
+const quoteSupplierBookingSchema = z.object({
+  body: z.object({
+    tourId: z.string().min(1).max(100),
+    optionId: z.string().max(100).optional(),
+    travelDate: z.string().regex(DATE_ONLY, 'Must be YYYY-MM-DD'),
+    selectedTime: z.string().regex(/^\d{2}:\d{2}$/, 'Must be HH:MM').optional(),
+    travelers: travelersSchema,
+  }),
+  query: z.any().optional(),
+  params: z.object({}).optional(),
+});
+
+const createSupplierBookingSchema = z.object({
+  body: z.object({
+    tourId: z.string().min(1).max(100),
+    optionId: z.string().max(100).optional(),
+    travelDate: z.string().regex(DATE_ONLY, 'Must be YYYY-MM-DD'),
+    selectedTime: z.string().regex(/^\d{2}:\d{2}$/, 'Must be HH:MM').optional(),
+    travelers: travelersSchema,
+    // Exactly one of the two: a registered customer or a guest.
+    guest: guestSchema.optional(),
+    customerId: z.string().max(100).optional(),
+    pickup: z.object({
+      address: z.string().trim().max(500).optional(),
+      areaName: z.string().trim().max(200).optional(),
+    }).optional(),
+    specialRequests: z.string().trim().max(2000).optional(),
+    collection: collectionInputSchema.optional(),
+    idempotencyKey: z.string().min(8).max(120).optional(),
+  }),
+  query: z.any().optional(),
+  params: z.object({}).optional(),
+});
+
+const recordCollectionSchema = z.object({
+  body: z.object({
+    amount: z.coerce.number().positive().max(1000000),
+    method: z.enum(['CASH', 'MOBILE_MONEY', 'BANK_TRANSFER', 'POS', 'OTHER']),
+    collectedAt: z.string().datetime().optional(),
+    externalRef: z.string().trim().max(120).optional(),
+    note: z.string().trim().max(500).optional(),
+    reversesId: z.string().max(100).optional(),
+    idempotencyKey: z.string().min(8).max(120).optional(),
+  }),
+  query: z.any().optional(),
+  params: z.object({ id: z.string().min(1).max(100) }),
+});
+
 const supplierBookingParamsSchema = z.object({
   body: z.any().optional(),
   query: z.any().optional(),
@@ -426,6 +494,9 @@ module.exports = {
   createReviewSchema,
   getSupplierBookingsSchema,
   supplierBookingParamsSchema,
+  quoteSupplierBookingSchema,
+  createSupplierBookingSchema,
+  recordCollectionSchema,
   rescheduleBookingSchema,
   updateBookingStatusSchema,
   analyticsOverviewSchema,

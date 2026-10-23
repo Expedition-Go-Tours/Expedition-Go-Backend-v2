@@ -45,6 +45,8 @@ pids/
 !README.md
 !docs/testing.md
 !docs/booking-edits-lite-vs-ghana.md
+!docs/supplier-created-bookings-audit.md
+!docs/supplier-created-bookings-ui-audit.md
 *-fixed.js
 explore-database.js
 add-test-user.js

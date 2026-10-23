@@ -53,8 +53,13 @@ function gaPlace(over = {}) {
   };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks();
+  // Both caches live across tests within a file (the Google search cache and
+  // the reverse-geocoder cache). A shared query or pin would be answered from
+  // the previous test's world and derail the mock queues below.
+  const cacheHelper = require('../../src/core/services/cacheHelper');
+  await cacheHelper.invalidateKeys(['geo:v3:*']);
   // The reverse chain must not answer by accident: every test says what the
   // world looks like at its own pin.
   geoapify.reverse.mockRejectedValue(new Error('404'));
@@ -253,14 +258,14 @@ describe('the shape the rest of the app consumes', () => {
       data: { local_results: [gaPlace()] },
     });
 
-    const first = await locationService.googleSearch('Elmina Castle');
+    const first = await locationService.googleSearch('Cape Coast Castle');
     expect(first.ok).toBe(true);
     expect(first.results[0]).toMatchObject({ source: 'google_maps' });
 
     // A failed retry must surface its own reason, not a cached success and not
     // an empty list.
     axios.get.mockRejectedValueOnce({ response: { status: 429 } });
-    const cached = await locationService.googleSearch('Elmina Castle');
+    const cached = await locationService.googleSearch('Cape Coast Castle');
     expect(cached.ok).toBe(true); // served from cache — no second credit
 
     const different = await locationService.googleSearch('Kakum National Park');

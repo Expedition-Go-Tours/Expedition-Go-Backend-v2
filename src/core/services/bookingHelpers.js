@@ -12,18 +12,28 @@ const getConfig = require('./getConfig');
 /**
  * Generate unique booking number
  */
-async function generateBookingNumber(prefix = 'TRA') {
+/**
+ * Booking references are a per-prefix per-year sequence.
+ *
+ * `tx` is optional and preferred inside an outer transaction: the counter
+ * increment then belongs to that transaction, so a rolled-back booking does
+ * not burn a number — and, more importantly, calling `prisma.$transaction`
+ * from inside an interactive transaction opens a SECOND connection, which is
+ * exactly the nested-transaction hazard this codebase must not introduce.
+ */
+async function generateBookingNumber(prefix = 'TRA', tx = null) {
   const year = new Date().getFullYear();
   const timestamp = Date.now().toString().slice(-8);
 
-  const counter = await prisma.$transaction(async (tx) => {
-    const row = await tx.bookingCounter.upsert({
-      where: { prefix_year: { prefix, year } },
-      create: { prefix, year, count: 1 },
-      update: { count: { increment: 1 } },
-    });
-    return row.count;
+  const bump = async (client) => client.bookingCounter.upsert({
+    where: { prefix_year: { prefix, year } },
+    create: { prefix, year, count: 1 },
+    update: { count: { increment: 1 } },
   });
+
+  const counter = tx
+    ? (await bump(tx)).count
+    : (await prisma.$transaction(async (t) => (await bump(t)).count));
 
   return `${prefix}-${timestamp}-${year}-${String(counter).padStart(2, '0')}`;
 }

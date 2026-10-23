@@ -164,6 +164,30 @@ enum PayoutCycle {
   MONTHLY // run on the 1st (payment 5th)
 }
 
+// WHO CREATED the booking — distinct from `source`, which records which
+// STOREFRONT it came through. A supplier-created booking still belongs to a
+// brand; the two must never be conflated.
+enum BookingOrigin {
+  MARKETPLACE
+  SUPPLIER_CREATED
+}
+
+// How a supplier reports collecting money directly (cash, mobile money, bank
+// transfer, a card taken on their own terminal). NEVER a platform payment:
+// `paymentStatus` keeps meaning what the platform's own processor did.
+enum CollectionMethod {
+  CASH
+  MOBILE_MONEY
+  BANK_TRANSFER
+  POS
+  OTHER
+}
+
+enum CollectionStatus {
+  RECORDED
+  REVERSED
+}
+
 enum BookingSource {
   TRAVIO
   EXPEDITION
@@ -417,6 +441,11 @@ model User {
   payoutRequests               PayoutRequest[]
   invoices                     Invoice[] // finance v3 automatic invoicing
   supplierCharges              SupplierCharge[] // Cancellation fees charged to this supplier
+  // Supplier-created bookings: money the supplier reports collecting directly,
+  // who recorded it, and the idempotency keys of their submissions.
+  collectedBookings            BookingCollection[]
+  recordedCollections          BookingCollection[]    @relation("CollectionRecorder")
+  bookingIdempotencyKeys       BookingIdempotencyKey[]
   disputesOpened               Dispute[]                 @relation("DisputeOpener")
   disputesAgainst              Dispute[]                 @relation("DisputeSupplier")
   disputesResolved             Dispute[]                 @relation("DisputeResolver")
@@ -944,8 +973,25 @@ model Booking {
   bookingNumber String @unique // Human-readable booking reference
 
   // Relationships
-  customerId String
-  customer   User   @relation(fields: [customerId], references: [id])
+  //
+  // `customerId` is OPTIONAL: a walk-in booked by the supplier has no
+  // TravioAfrica account and we do not invent one to satisfy a foreign key.
+  // Registered customers keep exactly the same relationship as before.
+  customerId String?
+  customer   User?  @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  // Guest details for supplier-created bookings with no account. Never
+  // auto-matched to an account by email; linking is a separate, verified step.
+  guestId String?
+  guest   BookingGuest? @relation(fields: [guestId], references: [id])
+
+  // Offline money reported as collected, one row per event. This is the
+  // authority for what the supplier actually holds — never `paymentStatus`.
+  collections BookingCollection[]
+
+  // Who created this booking: online checkout (MARKETPLACE, the default for
+  // every existing row) or a supplier recording one (SUPPLIER_CREATED).
+  origin BookingOrigin @default(MARKETPLACE)
   tourId     String
   tour       Tour   @relation(fields: [tourId], references: [id])
 
@@ -1114,6 +1160,7 @@ model Booking {
   @@index([optionId]) // Per-option capacity + availability lookups
   @@index([cancellationChoiceDeadline]) // Choice-window expiry sweep
   @@index([refundStatus]) // Stuck-refund retry/alert sweep
+  @@index([origin, createdAt]) // Supplier-created reporting + origin filters
 }
 
 model BookingReminder {
@@ -1364,6 +1411,92 @@ enum InvoiceStatus {
   APPROVED // Finance approved it — ready to send (only state mark-paid accepts)
   PAID // Finance recorded the bank reference; leaves the supplier balance
   CANCELLED // Voided before payment (administrative correction; never reused)
+}
+
+// A guest with no TravioAfrica account, booked by a supplier (walk-in, phone
+// booking). Deliberately NOT a User: we do not create accounts to satisfy a
+// foreign key, and we do not attach a booking to an account just because an
+// email matches. Linking to a real account is a separate, verified operation.
+model BookingGuest {
+  id    String @id @default(cuid())
+  name  String
+  // E.164 where available; free-form is accepted for walk-ins who give a local
+  // number without a country code.
+  phone String?
+  // Optional: a cash walk-in may give no email at all.
+  email String?
+
+  bookings Booking[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([phone])
+}
+
+// Money reported as COLLECTED BY THE SUPPLIER, outside the platform's
+// processor. One row per event — partial collections are separate rows, never
+// an overwrite. `paymentStatus` on the booking is not touched by this ledger:
+// a platform payment and a supplier-collected payment are different facts.
+model BookingCollection {
+  id         String           @id @default(cuid())
+  bookingId  String
+  booking    Booking          @relation(fields: [bookingId], references: [id])
+  supplierId String
+  supplier   User             @relation(fields: [supplierId], references: [id])
+
+  // Decimal, same precision as every other money column in this schema —
+  // never floats for authoritative amounts.
+  amount   Decimal @db.Decimal(10, 2)
+  currency String  @default("USD")
+
+  method CollectionMethod
+  status CollectionStatus @default(RECORDED)
+
+  collectedAt  DateTime
+  recordedById String
+  recordedBy   User   @relation("CollectionRecorder", fields: [recordedById], references: [id])
+
+  // MoMo/bank reference, terminal receipt number — when the method has one.
+  externalRef String?
+  // Evidence attachment reference (existing secure storage), never a bare URL.
+  evidenceRef String?
+  note        String?
+
+  // A correction never edits the original: it reverses the row and writes a
+  // new one. This is the link between the two.
+  reversesId String?
+  reverses   BookingCollection? @relation("CollectionReversal", fields: [reversesId], references: [id])
+  reversedBy BookingCollection[] @relation("CollectionReversal")
+
+  // One collection per (booking, key): a retried submit cannot double-count
+  // money the supplier says they hold.
+  idempotencyKey String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([bookingId, idempotencyKey])
+  @@index([bookingId, collectedAt])
+  @@index([supplierId, collectedAt])
+}
+
+// Creation idempotency for supplier-created bookings: the same key with the
+// same request replays the original result; a different request is a conflict.
+model BookingIdempotencyKey {
+  id          String @id @default(cuid())
+  supplierId  String
+  supplier    User   @relation(fields: [supplierId], references: [id])
+  key         String
+  // SHA-256 of the canonical request body: same key + different body = 409.
+  requestHash String
+  bookingId   String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([supplierId, key])
+  @@index([createdAt])
 }
 
 model Invoice {

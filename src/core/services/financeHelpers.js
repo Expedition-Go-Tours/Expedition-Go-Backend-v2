@@ -139,6 +139,11 @@ function payoutBookingsWhere({ supplierId, supplierIds, payoutStatus = 'ELIGIBLE
     payoutStatus,
     paymentStatus: 'SUCCEEDED',
     status: { in: [...PAYABLE_BOOKING_STATUSES] },
+    // A supplier-created booking is one the supplier already collected the
+    // money for: paying it out again would pay them twice. Its financial truth
+    // lives in BookingCollection + SupplierCharge, not in the payout pipeline.
+    // Belt and braces: `paymentStatus` on those rows is never SUCCEEDED either.
+    origin: { not: 'SUPPLIER_CREATED' },
   };
   if (supplierId) where.tour = { supplierId };
   else if (supplierIds && supplierIds.length > 0) where.tour = { supplierId: { in: supplierIds } };

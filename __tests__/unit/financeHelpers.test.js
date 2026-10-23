@@ -29,6 +29,9 @@ describe('payoutBookingsWhere', () => {
       payoutStatus: 'ELIGIBLE',
       paymentStatus: 'SUCCEEDED',
       status: { in: ['CONFIRMED', 'COMPLETED', 'NO_SHOW'] },
+      // A supplier-created booking is cash the supplier already holds: it must
+      // never enter the payout pipeline, or they are paid twice.
+      origin: { not: 'SUPPLIER_CREATED' },
       tour: { supplierId: 'sup-1' },
     });
   });
