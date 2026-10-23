@@ -14,6 +14,20 @@ exports.autocomplete = catchAsync(async (req, res) => {
   res.status(200).json({ status: 'success', data: { results } });
 });
 
+/**
+ * GET /api/locations/google-search?q=…&lat=…&lng=…
+ *
+ * The SerpApi Google Maps fallback. Answers the storefront's contract
+ * (`{ ok, results, reason }`) so the client can tell "no matches" from "this
+ * server has no key" from "the quota is spent" — three states that must never
+ * render the same way in the picker.
+ */
+exports.googleSearch = catchAsync(async (req, res) => {
+  const { query, origin } = validator.validateGoogleSearchQuery(req);
+  const outcome = await locationService.googleSearch(query, origin);
+  res.status(200).json({ status: 'success', data: outcome });
+});
+
 exports.reverse = catchAsync(async (req, res) => {
   const { lat, lng } = validator.validateReverseQuery(req);
   const results = await locationService.reverse(lat, lng);

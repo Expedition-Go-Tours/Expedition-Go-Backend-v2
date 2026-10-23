@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const cache = require('./cacheHelper');
 const logger = require('./logger');
 const geoapify = require('../../../providers/geoapifyProvider');
+const serpApi = require('../../../providers/serpApiProvider');
 const nominatim = require('../../../providers/nominatimProvider');
 const photon = require('../../../providers/photonProvider');
 const normalizer = require('./locationNormalizer');
@@ -11,6 +12,9 @@ const TTL = {
   AUTOCOMPLETE: 60 * 60 * 24,
   REVERSE: 60 * 60 * 24 * 7,
   NEARBY: 60 * 60,
+  // Google Maps results are stable and every uncached lookup is a paid
+  // SerpApi credit — keep them as long as ordinary search results.
+  GOOGLE: 60 * 60 * 24,
 };
 
 const DEDUP_THRESHOLD = 0.01;
@@ -112,6 +116,46 @@ async function autocomplete(query, limit = 5) {
   }, TTL.AUTOCOMPLETE, { cacheEmpty: false });
 }
 
+/**
+ * Google Maps (SerpApi) search — the explicit fallback for places none of the
+ * free providers know. Never part of the automatic merge: it costs a credit
+ * per uncached lookup, so the UI offers it as a deliberate "search Google Maps"
+ * action rather than spending credits on every empty keystroke.
+ *
+ * The RESULT SET (including "no results") is cached, so re-clicking the same
+ * search is free. Failures are never cached: a quota blip must not lock the
+ * feature out for the whole TTL. Returns the storefront's contract —
+ * `{ ok: true, results } | { ok: false, reason }` — so `not_configured` and
+ * `quota` reach the UI as themselves and can never be read as "no matches".
+ */
+async function googleSearch(query, origin = null) {
+  const q = String(query || '').trim();
+  if (q.length < 3) return { ok: false, reason: 'invalid' };
+
+  const originKey = origin ? `${origin.lat.toFixed(3)},${origin.lng.toFixed(3)}` : 'default';
+  const key = cacheKey('google', q, originKey);
+
+  try {
+    const results = await cache.getOrSet(
+      key,
+      async () => {
+        const raw = await serpApi.search(q, origin);
+        if (!raw.ok) {
+          const err = new Error(`Google Maps search unavailable: ${raw.reason}`);
+          err.code = raw.reason;
+          throw err;
+        }
+        return normalizer.normalizeSerpMapsResponse(raw.results);
+      },
+      TTL.GOOGLE,
+      { cacheEmpty: true, cacheNull: false },
+    );
+    return { ok: true, results };
+  } catch (err) {
+    return { ok: false, reason: err.code || 'upstream' };
+  }
+}
+
 async function reverse(lat, lng) {
   const key = cacheKey('reverse', String(lat), String(lng));
   return cache.getOrSet(key, async () => {
@@ -148,4 +192,4 @@ async function nearby(lat, lng, radius = 10) {
   }, TTL.NEARBY);
 }
 
-module.exports = { search, autocomplete, reverse, nearby };
+module.exports = { search, autocomplete, googleSearch, reverse, nearby };

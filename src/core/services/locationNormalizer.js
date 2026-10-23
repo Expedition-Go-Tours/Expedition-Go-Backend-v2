@@ -19,6 +19,44 @@ function fromGeoapify(feature) {
   };
 }
 
+/**
+ * SerpApi Google Maps place → the same shape every other provider produces.
+ *
+ * Google Maps results carry a title, an address string and coordinates, and
+ * rarely the structured city/region breakdown the open-data providers give.
+ * Those fields are left empty rather than guessed from the address string: a
+ * fabricated `city` would flow into the saved pickup address and look real
+ * forever. `place_id` is kept in `externalId` so a result can be re-resolved.
+ */
+function fromSerpMaps(place) {
+  if (!place || typeof place !== 'object') return null;
+  const coords = place.gps_coordinates || {};
+  const latitude = Number.isFinite(Number(coords.latitude)) ? Number(coords.latitude) : null;
+  const longitude = Number.isFinite(Number(coords.longitude)) ? Number(coords.longitude) : null;
+  const title = String(place.title || '').trim();
+  const address = String(place.address || '').trim();
+  const formatted = address || title;
+  if (!formatted || latitude === null || longitude === null) return null;
+
+  return {
+    formatted,
+    latitude,
+    longitude,
+    city: '',
+    country: String(place.country || '').trim(),
+    countryCode: '',
+    region: '',
+    postcode: null,
+    street: '',
+    housenumber: null,
+    category: null,
+    source: 'google_maps',
+    confidence: null,
+    externalId: place.place_id ? String(place.place_id) : null,
+    name: title || formatted,
+  };
+}
+
 function fromNominatim(result) {
   if (!result) return null;
   const addr = result.address || {};
@@ -75,11 +113,22 @@ function normalizePhotonResponse(data) {
   return data.features.map(fromPhoton).filter(Boolean);
 }
 
+/**
+ * SerpApi already returns the place list pre-filtered to Ghana by the
+ * provider, so this is a straight map — no response envelope to unwrap.
+ */
+function normalizeSerpMapsResponse(places) {
+  if (!Array.isArray(places)) return [];
+  return places.map(fromSerpMaps).filter(Boolean);
+}
+
 module.exports = {
   fromGeoapify,
   fromNominatim,
   fromPhoton,
+  fromSerpMaps,
   normalizeGeoapifyResponse,
   normalizeNominatimResponse,
   normalizePhotonResponse,
+  normalizeSerpMapsResponse,
 };

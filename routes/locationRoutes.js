@@ -16,6 +16,9 @@ router.use(locationLimiter);
 
 router.get('/search', locationController.search);
 router.get('/autocomplete', locationController.autocomplete);
+// SerpApi Google Maps fallback — an explicit, credit-charged search the UI
+// offers only when the free providers found nothing. Key stays server-side.
+router.get('/google-search', locationController.googleSearch);
 router.get('/reverse', locationController.reverse);
 router.get('/nearby', locationController.nearby);
 router.get('/my-location', locationController.myLocation);
