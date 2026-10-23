@@ -192,6 +192,26 @@ describe('idempotency', () => {
   });
 });
 
+describe('availability is re-checked inside the transaction', () => {
+  it('refuses the last seat when someone else took it, and writes nothing', async () => {
+    evaluateBookingAvailability.mockResolvedValue({ ok: false, reason: 'No places left on this date' });
+
+    await expect(supplierBookingService.createBooking(baseInput)).rejects.toMatchObject({
+      statusCode: 409,
+    });
+    // The tour row was locked for this attempt and nothing was persisted — no
+    // half a booking, no guest row, no charge.
+    expect(globalThis.__tx.$queryRawUnsafe).toHaveBeenCalledWith(
+      expect.stringMatching(/FOR UPDATE/),
+      'tour-1',
+      SUPPLIER,
+    );
+    expect(prisma.booking.create).not.toHaveBeenCalled();
+    expect(prisma.bookingGuest.create).not.toHaveBeenCalled();
+    expect(prisma.supplierCharge.create).not.toHaveBeenCalled();
+  });
+});
+
 describe('guest identity', () => {
   it('creates a guest row for a walk-in and never a user', async () => {
     await supplierBookingService.createBooking(baseInput);

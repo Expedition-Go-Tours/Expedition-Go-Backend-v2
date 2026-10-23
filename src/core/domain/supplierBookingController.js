@@ -60,8 +60,13 @@ exports.create = catchAsync(async (req, res, next) => {
   });
 
   // The relay address in place of any real email — same privacy layer as the
-  // rest of the bookings API.
-  const contact = await supplierContact.contactAddressForBooking(booking).catch(() => null);
+  // rest of the bookings API. The minting helper resolves the supplier from
+  // `booking.tour.supplierId`; a freshly created row carries no relations, so
+  // the acting supplier is passed in explicitly. A guest booking (no
+  // customerId) simply has no relay, and nothing real is ever substituted.
+  const contact = await supplierContact
+    .contactAddressForBooking({ ...booking, tour: { supplierId } })
+    .catch(() => null);
 
   res.status(201).json({
     status: 'success',

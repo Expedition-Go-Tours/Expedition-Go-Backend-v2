@@ -41,6 +41,7 @@ const getConfig = require('./getConfig');
 const { calculateTourPrice, } = require('./tourHelpers');
 const { calculateCommission } = require('./stripeHelpers');
 const { evaluateBookingAvailability } = require('./availabilityCore');
+const { applyOption } = require('./tourOptions');
 const { generateBookingNumber } = require('./bookingHelpers');
 const { logActivity } = require('./auditLogger');
 const { enqueueEmail, enqueueNotification } = require('./queue');
@@ -80,17 +81,28 @@ function canonicalHash(payload) {
 
 /** Availability evaluation wants the FULL tour row (schedules, options). */
 async function loadTourForBooking(tx, tourId, supplierId) {
-  const tour = await tx.tour.findUnique({
-    where: { id: tourId },
-    include: {
-      schedulesAndPricing: true,
-      supplier: { select: { id: true, name: true, email: true } },
-    },
-  });
+  // No `include`: `schedulesAndPricing` is a Json column, not a relation, and
+  // every field the engines need comes back with the row itself.
+  const tour = await tx.tour.findUnique({ where: { id: tourId } });
   if (!tour || tour.supplierId !== supplierId) {
     throw new AppError('Tour not found or not yours', 404);
   }
   return tour;
+}
+
+/**
+ * Resolve the selected option the same way every other availability caller
+ * does (tourOptions.applyOption): the projected engine blobs for pricing and
+ * the capacity scope for the availability core. Passing the option KEY
+ * straight through would be silently ignored — the core scopes on the
+ * option's id.
+ */
+function resolveOption(tour, optionId) {
+  const applied = optionId ? applyOption(tour, optionId) : { tour, optionScope: null, optionId: null };
+  if (optionId && !applied.optionId) {
+    throw new AppError('That tour option does not exist on this tour', 422);
+  }
+  return applied;
 }
 
 /**
@@ -102,10 +114,13 @@ async function quoteBooking({ supplierId, brandKey, tourId, optionId, travelDate
   await assertFeatureEnabled(brandKey);
 
   const tour = await loadTourForBooking(prisma, tourId, supplierId);
+  const applied = resolveOption(tour, optionId);
   const dateKey = String(travelDate).slice(0, 10);
 
+  // Price the option-projected tour: the engine reads the projected engine
+  // blobs, while the selector still drives special-offer matching.
   const pricing = await calculateTourPrice(
-    tour,
+    applied.tour,
     travelers,
     dateKey,
     selectedTime || null,
@@ -119,11 +134,11 @@ async function quoteBooking({ supplierId, brandKey, tourId, optionId, travelDate
 
   const availability = await evaluateBookingAvailability(
     prisma,
-    tour,
+    applied.tour,
     dateKey,
     selectedTime || null,
     travelers,
-    optionId ? { optionScope: { tourOptionKey: optionId } } : {},
+    applied.optionScope ? { optionScope: applied.optionScope } : {},
   );
 
   const commission = await calculateCommission(pricing.total);
@@ -211,17 +226,20 @@ async function createBooking({
 
     // 3. Authoritative availability inside the transaction.
     const tour = await loadTourForBooking(tx, tourId, supplierId);
+    const applied = resolveOption(tour, optionId);
     const dateKey = String(travelDate).slice(0, 10);
     const availability = await evaluateBookingAvailability(
-      tx, tour, dateKey, selectedTime || null, travelers,
-      optionId ? { optionScope: { tourOptionKey: optionId } } : {},
+      tx, applied.tour, dateKey, selectedTime || null, travelers,
+      applied.optionScope ? { optionScope: applied.optionScope } : {},
     );
     if (!availability.ok) {
       throw new AppError(availability.reason || 'No availability for that date', 409);
     }
 
-    // 4. Authoritative price. Never the client's number.
-    const pricing = await calculateTourPrice(tour, travelers, dateKey, selectedTime || null, optionId || null, null, null);
+    // 4. Authoritative price. Never the client's number. The projected tour
+    //    (see resolveOption) is what the engine prices; the selector still
+    //    drives special-offer matching.
+    const pricing = await calculateTourPrice(applied.tour, travelers, dateKey, selectedTime || null, optionId || null, null, null);
     if (!pricing || pricing.success === false) {
       throw new AppError(pricing?.error || 'This tour cannot be priced for the selected date and party', 422);
     }
@@ -253,6 +271,9 @@ async function createBooking({
         customerId: customerId || null,
         guestId,
         tourId,
+        // The option's id (not its key): per-option capacity and availability
+        // lookups join on this column.
+        optionId: applied.optionId || null,
         travelDate: new Date(dateKey),
         selectedTime: selectedTime || null,
         travelers,
