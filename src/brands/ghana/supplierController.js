@@ -135,9 +135,24 @@ const getSupplierReviews = catchAsync(async (req, res) => {
     prisma.review.count({ where: { tourId: { in: tourIds } } }),
   ]);
 
-  const augmented = reviews.map(review => ({
-    ...review,
-    storefront: expeditionIds.has(review.tourId) && !ghanaIds.has(review.tourId) ? 'EXPEDITION' : 'GHANA',
+  // The reviewer's real inbox is not the supplier's to collect: a review is
+  // public feedback, and the person behind it stays reachable through the
+  // platform's relay. Blank when no conversation exists — never the real one.
+  const { contactAddressForBooking } = require('../../core/services/supplierContact');
+  const augmented = await Promise.all(reviews.map(async (review) => {
+    const contact = await contactAddressForBooking({
+      id: review.bookingId || review.id,
+      customerId: review.customer?.id,
+      bookingNumber: null,
+      tour: { supplierId: req.supplierId || req.user?.id, title: review.tour?.title },
+    }).catch(() => null);
+    return {
+      ...review,
+      storefront: expeditionIds.has(review.tourId) && !ghanaIds.has(review.tourId) ? 'EXPEDITION' : 'GHANA',
+      customer: review.customer
+        ? { ...review.customer, email: contact || '' }
+        : review.customer,
+    };
   }));
 
   res.json({

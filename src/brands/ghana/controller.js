@@ -19,6 +19,7 @@ const { validatePassengerMix } = require('../../core/services/passengerMix');
 const { createPaymentIntent, createCheckoutSession, calculateCommission, getStripe, ensureStripeCustomer } = require('../../core/services/stripeHelpers');
 const { cardSummaryFromIntent } = require('../../core/services/stripeCardSummary');
 const { refundCancelledBooking, rescheduleBookingBySupplier } = require('../../core/services/bookingModify');
+const supplierContact = require('../../core/services/supplierContact');
 const { resolveAllowedClientUrl } = require('../../core/services/clientOrigin');
 const { acquireHold, releaseHold } = require('../../core/services/checkoutHold');
 const { notifyAdmin } = require('../../core/services/adminNotificationService');
@@ -1581,11 +1582,21 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
   const { pendingRequestsForBookingIds } = require('../../core/services/cancellationRequestService');
   const pendingMap = await pendingRequestsForBookingIds(bookings.map((b) => b.id));
 
+  // The supplier gets a RELAY address, never the customer's real one (see
+  // services/supplierContact). Masking happens here at the API boundary, not
+  // in the UI: the real address must not reach the supplier's browser at all.
+  const contacts = await supplierContact.contactAddressesForBookings(bookings, supplierId);
+
   res.status(200).json({
     status: 'success',
     data: {
       bookings: sanitizeBookingPaymentInternals(
-        bookings.map((b) => ({ ...b, pendingCancellation: pendingMap.get(b.id) || null })),
+        bookings.map((b) =>
+          supplierContact.withSupplierContact(
+            { ...b, pendingCancellation: pendingMap.get(b.id) || null },
+            contacts.get(b.id) || null,
+          ),
+        ),
       ),
       pagination: {
         currentPage: parseInt(page),
@@ -1671,10 +1682,12 @@ const exportSupplierBookings = catchAsync(async (req, res, next) => {
     'Activity time',
     'Tour',
     'Booked by',
-    'Customer email',
+    // RELAY addresses, not the customer's real inbox: a spreadsheet is the
+    // easiest place for a contact list to leak out of the platform.
+    'Customer contact',
     'Customer phone',
     'Lead traveller',
-    'Lead traveller email',
+    'Lead traveller contact',
     'Lead traveller phone',
     'Travellers',
     'Currency',
@@ -1687,8 +1700,12 @@ const exportSupplierBookings = catchAsync(async (req, res, next) => {
 
   const isoDate = (value) => (value ? new Date(value).toISOString().slice(0, 10) : '');
 
+  // Contact columns carry the relay address (see services/supplierContact).
+  const contacts = await supplierContact.contactAddressesForBookings(rows, supplierId);
+
   const lines = [header.join(',')];
   for (const row of rows) {
+    const contact = contacts.get(row.id) || '';
     const travelers = row.travelers && typeof row.travelers === 'object' ? row.travelers : {};
     const travelerCount = ['adults', 'children', 'infants'].reduce(
       (sum, key) => sum + (Number(travelers[key]) || 0),
@@ -1706,10 +1723,10 @@ const exportSupplierBookings = catchAsync(async (req, res, next) => {
       row.selectedTime || '',
       row.tour?.title || '',
       row.customer?.name || '',
-      row.customer?.email || '',
+      contact,
       row.customer?.phone || '',
       row.leadTravelerName || row.customer?.name || '',
-      row.leadTravelerEmail || row.customer?.email || '',
+      contact,
       row.leadTravelerPhone || row.customer?.phone || '',
       travelerCount,
       row.currency,
@@ -1720,6 +1737,12 @@ const exportSupplierBookings = catchAsync(async (req, res, next) => {
       row.supplierNotes || '',
     ].map(csvCell).join(','));
   }
+
+  lines.push('');
+  lines.push(csvCell(
+    'NOTE: the contact columns are reply addresses that reach the guest '
+    + '(by email and in the app). The customer\'s real email address is never exported.',
+  ));
 
   // Honest truncation: a file that stops at the cap without saying so reads as
   // "these are all my bookings".
@@ -1826,13 +1849,20 @@ const getSupplierBookingDetail = catchAsync(async (req, res, next) => {
   const { pendingRequestsForBookingIds } = require('../../core/services/cancellationRequestService');
   const pendingMap = await pendingRequestsForBookingIds([booking.id]);
 
+  // Relay address in place of the customer's real email — the panel's mailto
+  // and "Message customer" both work through it, and a supplier who copies it
+  // still reaches the guest (and the reply lands in the app thread).
+  const contact = await supplierContact.contactAddressForBooking(booking);
+
   res.status(200).json({
     status: 'success',
     data: {
-      booking: sanitizeBookingPaymentInternals({
-        ...booking,
-        pendingCancellation: pendingMap.get(booking.id) || null,
-      }),
+      booking: sanitizeBookingPaymentInternals(
+        supplierContact.withSupplierContact(
+          { ...booking, pendingCancellation: pendingMap.get(booking.id) || null },
+          contact,
+        ),
+      ),
     },
   });
 });

@@ -184,7 +184,12 @@ describe('the detail endpoint behind the panel', () => {
     const payload = res.json.mock.calls[0][0].data.booking;
     expect(payload.review).toMatchObject({ rating: 5, comment: 'Brilliant morning' });
     expect(payload.appliedOffer).toMatchObject({ name: 'Early bird', discountPercentage: 10 });
-    expect(payload.customer.email).toBe('kwame@example.com');
+    // The customer's real inbox never reaches a supplier payload. What comes
+    // back is the relay address (or blank when none can be minted) — never
+    // the address itself.
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain('kwame@example.com');
+    expect(payload.customer.email === '' || /^c-[0-9a-f]{16}@/.test(payload.customer.email)).toBe(true);
   });
 });
 

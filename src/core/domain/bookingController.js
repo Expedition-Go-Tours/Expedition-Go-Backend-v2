@@ -32,6 +32,7 @@ const { generatePrintableTicketHtml } = require('../services/emailService');
 const { logActivity } = require('../services/auditLogger');
 const logger = require('../services/logger');
 const { sanitizeBookingPaymentInternals } = require('../services/sanitizeBookings');
+const supplierContact = require('../services/supplierContact');
 const { cancelBySupplier, cancelBatchBySupplier, applyCustomerChoice, CHOICE_WINDOW_HOURS } = require('../services/supplierCancellation');
 const { verifyChoiceToken, withChoiceToken } = require('../services/cancellationReasons');
 
@@ -1427,10 +1428,19 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   const bookings = sorted.slice((pageNum - 1) * pageSize, pageNum * pageSize);
 
+  // Masking happens at the response boundary, AFTER the search above — the
+  // supplier can still search by the customer's email, but the rows they get
+  // back carry the relay address (see services/supplierContact). The driver
+  // needs the phone and the name; not the guest's inbox.
+  const contacts = await supplierContact.contactAddressesForBookings(bookings, supplierId);
+  const maskedBookings = bookings.map((b) =>
+    supplierContact.withSupplierContact(b, contacts.get(b.id) || null),
+  );
+
   res.status(200).json({
     status: 'success',
     data: {
-      bookings,
+      bookings: maskedBookings,
       counts,
       // If the range holds more rows than the safety cap, the client warns
       // before exporting instead of silently producing a partial manifest.

@@ -278,8 +278,40 @@ async function sendHtml({ to, subject, html, text = '', attachments = [], replyT
   }
 }
 
-async function sendRendered({ to, subject, key, data = {}, attachments = [], opts = {}, tags, tagsByRecipient, unsubscribeUrl }) {
+/**
+ * Supplier-facing templates render `{{customerEmail}}` (booking notification,
+ * reserve-now-pay-later, contact-updated). They must show the guest's RELAY
+ * address, never the real inbox: a supplier emailing that relay reaches the
+ * guest — and the reply lands in the app thread, which is where the platform
+ * keeps its archive. Customer-facing keys keep the real address (it is the
+ * recipient's own), and admin keys keep it because support needs it.
+ */
+async function withSupplierContactData(data) {
+  try {
+    const supplierContact = require('./supplierContact');
+    const address = await supplierContact.contactAddressForBooking({
+      id: data.bookingId,
+      customerId: data.customerId,
+      bookingNumber: data.bookingNumber,
+      tour: { supplierId: data.supplierId, title: data.tourTitle },
+    });
+    // No relay mintable: blank the fields rather than fall back to the real
+    // inbox. The template then shows the name only.
+    return {
+      ...data,
+      customerEmail: address || '',
+      leadTravelerEmail: address || '',
+    };
+  } catch {
+    return { ...data, customerEmail: '', leadTravelerEmail: '' };
+  }
+}
+
+async function sendRendered({ to, subject, key, data = {}, attachments = [], opts = {}, tags, tagsByRecipient, unsubscribeUrl, recipient }) {
   const brandKey = opts.brandKey || data.brandKey || null;
+  // Only when the RECIPIENT is the supplier (see supplierRecipientList). A
+  // customer-facing template keeps the customer's own address.
+  if (recipient === 'supplier') data = await withSupplierContactData(data);
   const html = await renderTemplate(key, data, { ...opts, brandKey });
   return sendHtml({
     to, subject, html, text: opts.text || '', attachments,
@@ -337,7 +369,7 @@ async function supplierRecipientList(supplierOrId, category) {
   if (!supplierId) {
     const email = typeof supplierOrId === 'object' ? supplierOrId?.email : null;
     const normalized = email ? String(email).trim().toLowerCase() : null;
-    return { to: normalized ? [normalized] : [], tagsByRecipient: {} };
+    return { to: normalized ? [normalized] : [], tagsByRecipient: {}, recipient: 'supplier' };
   }
   const recipients = await resolveRecipients(supplierId, category);
   const tagsByRecipient = {};
@@ -346,7 +378,11 @@ async function supplierRecipientList(supplierOrId, category) {
       tagsByRecipient[r.email] = [{ name: 'notification_recipient', value: r.recipientId }];
     }
   }
-  return { to: recipients.map((r) => r.email), tagsByRecipient };
+  // `recipient: 'supplier'` is the mask switch in sendRendered: it is the
+  // RECIPIENT that decides whether the customer's address may render, not the
+  // template's name — `sendSupplierChangedBookingEmail` goes to the customer
+  // and must show them their own address.
+  return { to: recipients.map((r) => r.email), tagsByRecipient, recipient: 'supplier' };
 }
 
 /**
@@ -546,6 +582,11 @@ async function buildBookingBase(booking, opts = {}) {
 
     // booking
     bookingNumber: booking.bookingNumber,
+    // Ids the supplier-facing templates use to resolve the guest's RELAY
+    // address (see sendRendered): the real email must not render there.
+    bookingId: booking.id,
+    customerId: customer.id || booking.customerId || '',
+    tourId: tour.id || booking.tourId || '',
     tourTitle: tour.title || '',
     tourDescription: tour.description || '',
     // Wide banner image for media-header templates; '' degrades to the navy
@@ -1119,6 +1160,7 @@ async function sendSupplierCancellationFeeEmail(booking, { feeAmount } = {}) {
   };
   return sendRendered({
     to: supplier.email,
+    recipient: 'supplier',
     subject: `Cancellation fee applied — booking ${b.bookingNumber}`,
     key: 'supplier-cancellation-fee',
     data,
@@ -2276,6 +2318,9 @@ module.exports = {
   // core
   sendEmail,
   renderTemplate,
+  // The supplier-recipient mask (exported for tests): customer data reaching a
+  // supplier's inbox is the leak this guards.
+  withSupplierContactData,
   getShellVars,
   resolveEmailBrand,
 
