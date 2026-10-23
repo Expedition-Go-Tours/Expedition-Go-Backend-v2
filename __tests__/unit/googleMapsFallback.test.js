@@ -149,6 +149,51 @@ describe('failure reasons reach the UI as themselves', () => {
 });
 
 describe('the shape the rest of the app consumes', () => {
+  it('keeps a Google Maps place NAME with its address — never the address alone', () => {
+    // The real case: a named landmark whose Google Maps address is just the
+    // city. Using `address` as the label made the picker save "Accra, Ghana"
+    // for "Ghana Girl Guides Training Center", losing the only words the
+    // supplier actually typed.
+    const [place] = normalizer.normalizeSerpMapsResponse([{
+      title: 'Ghana Girl Guides Training Center',
+      address: 'Accra, Ghana',
+      country: 'Ghana',
+      gps_coordinates: { latitude: 5.62148, longitude: -0.21691 },
+      place_id: 'ChIJgguid',
+    }]);
+
+    expect(place.formatted).toBe('Ghana Girl Guides Training Center, Accra, Ghana');
+    expect(place.name).toBe('Ghana Girl Guides Training Center');
+    expect(place.latitude).toBe(5.62148);
+  });
+
+  it('does not double the name when the address already names the place', () => {
+    const [place] = normalizer.normalizeSerpMapsResponse([{
+      title: 'Coconut Grove Beach Resort',
+      address: 'Coconut Grove Beach Resort, Elmina, Ghana',
+      country: 'Ghana',
+      gps_coordinates: { latitude: 5.0833, longitude: -1.35 },
+    }]);
+
+    expect(place.formatted).toBe('Coconut Grove Beach Resort, Elmina, Ghana');
+  });
+
+  it('falls back cleanly when only one of name/address exists', () => {
+    const [nameOnly] = normalizer.normalizeSerpMapsResponse([{
+      title: 'Elmina Castle',
+      country: 'Ghana',
+      gps_coordinates: { latitude: 5.08, longitude: -1.35 },
+    }]);
+    const [addressOnly] = normalizer.normalizeSerpMapsResponse([{
+      address: 'W1 Lagoon St, Elmina, Ghana',
+      country: 'Ghana',
+      gps_coordinates: { latitude: 5.08, longitude: -1.35 },
+    }]);
+
+    expect(nameOnly.formatted).toBe('Elmina Castle');
+    expect(addressOnly.formatted).toBe('W1 Lagoon St, Elmina, Ghana');
+  });
+
   it('normalizes a Google Maps place to the same contract as every other provider', () => {
     const [place] = normalizer.normalizeSerpMapsResponse([gaPlace()]);
 

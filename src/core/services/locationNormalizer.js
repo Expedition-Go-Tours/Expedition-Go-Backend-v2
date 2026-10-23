@@ -22,11 +22,16 @@ function fromGeoapify(feature) {
 /**
  * SerpApi Google Maps place → the same shape every other provider produces.
  *
- * Google Maps results carry a title, an address string and coordinates, and
- * rarely the structured city/region breakdown the open-data providers give.
- * Those fields are left empty rather than guessed from the address string: a
- * fabricated `city` would flow into the saved pickup address and look real
- * forever. `place_id` is kept in `externalId` so a result can be re-resolved.
+ * Google Maps results carry a NAME (`title`) and an ADDRESS separately: for
+ * "Ghana Girl Guides Training Center" the address is just "Accra, Ghana". The
+ * display string must be the two together — using the address alone made the
+ * picker save "Accra, Ghana" for a named landmark, losing the only part the
+ * supplier actually typed. `place_id` is kept in `externalId` so a result can
+ * be re-resolved.
+ *
+ * Structured fields the other providers give (city/region) are left EMPTY
+ * rather than guessed out of the address string: a fabricated `city` would
+ * flow into the saved pickup address and look real forever.
  */
 function fromSerpMaps(place) {
   if (!place || typeof place !== 'object') return null;
@@ -35,8 +40,14 @@ function fromSerpMaps(place) {
   const longitude = Number.isFinite(Number(coords.longitude)) ? Number(coords.longitude) : null;
   const title = String(place.title || '').trim();
   const address = String(place.address || '').trim();
-  const formatted = address || title;
-  if (!formatted || latitude === null || longitude === null) return null;
+  if ((!title && !address) || latitude === null || longitude === null) return null;
+
+  // "Name, Address" — unless the address already names the place, or one of
+  // the two is missing.
+  const addressNamesPlace = title.length > 0 && address.toLowerCase().includes(title.toLowerCase());
+  const formatted = addressNamesPlace
+    ? address
+    : [title, address].filter(Boolean).join(', ');
 
   return {
     formatted,
