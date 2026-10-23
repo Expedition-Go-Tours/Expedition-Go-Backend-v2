@@ -9,6 +9,7 @@ const emailUrls = require('../../../config/emailUrls');
 const { enqueueNotification } = require('../services/queue');
 const { logActivity } = require('../services/auditLogger');
 const logger = require('../services/logger');
+const supplierBookingService = require('../services/supplierBookingService');
 const {
   MAX_TEAM_ROLES,
   normalizeTeamRoles,
@@ -39,6 +40,29 @@ const storefrontsFor = (roles) =>
         .filter((role) => roles.includes(role))
         .map((role) => STOREFRONT_ROLE_MAP[role])
     : [];
+
+/**
+ * Whether supplier-created bookings (and offline collection) are switched on
+ * for this business.
+ *
+ * This is the server's own answer, read through the same `isFeatureEnabled` the
+ * create path enforces with, so the dashboard cannot advertise a capability
+ * that would then be refused at the server. The flag is per brand
+ * (`feature.supplierCreatedBookings.<brand>`); a business is only offered the
+ * feature when a brand it actually holds is enabled.
+ *
+ * A team member inherits the owner's brand roles, so they inherit this answer
+ * too — a supplier member's own roles carry no brand and must not be read here.
+ */
+async function supplierCreatedBookingsFor(roles) {
+  if (!Array.isArray(roles) || roles.length === 0) return false;
+  const enabled = await Promise.all(
+    Object.keys(STOREFRONT_ROLE_MAP)
+      .filter((role) => roles.includes(role))
+      .map((role) => supplierBookingService.isFeatureEnabled(role)),
+  );
+  return enabled.includes(true);
+}
 
 /**
  * Team members accept with a plain account (`roles: ['customer']` is the signup
@@ -163,6 +187,9 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
         permissions: ['*'],
         isOwner: true,
         storefronts: [],
+        // Internal admin, not a supplier: no brand to enable a brand-scoped
+        // feature for, so the dashboard shows nothing that would 403.
+        supplierCreatedBookings: false,
       },
     });
   }
@@ -184,6 +211,7 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
         // This branch resolved SupplierProfile by userId: req.user IS the
         // owner, so their own roles are the business's storefronts.
         storefronts: storefrontsFor(req.user.roles),
+        supplierCreatedBookings: await supplierCreatedBookingsFor(req.user.roles),
       },
     });
   }
@@ -213,6 +241,7 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
         permissions: [],
         isOwner: false,
         storefronts: [],
+        supplierCreatedBookings: false,
       },
     });
   }
@@ -228,6 +257,8 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
       isOwner: false,
       supplierId: teamMember.supplierId,
       storefronts: storefrontsFor(teamMember.supplier?.roles),
+      // Inherited from the OWNER's brand roles, never the member's own.
+      supplierCreatedBookings: await supplierCreatedBookingsFor(teamMember.supplier?.roles),
     },
   });
 });

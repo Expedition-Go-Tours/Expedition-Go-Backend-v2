@@ -43,7 +43,14 @@ jest.mock('../../src/core/services/queue', () => ({
   enqueueEmail: jest.fn(() => Promise.resolve()),
   enqueueNotification: jest.fn(() => Promise.resolve()),
 }));
-jest.mock('../../src/core/services/getConfig', () => jest.fn((key, def) => Promise.resolve(def)));
+const config = {};
+// The supplier-creation answer is derived from the SAME `getConfig` keys the
+// create path enforces with, so a dashboard can never advertise a capability
+// the server would then refuse. Held in a map so each case turns the flag on
+// its own terms; defaults come from the same `def` the service passes.
+jest.mock('../../src/core/services/getConfig', () =>
+  jest.fn(async (key, def) => (config[key] !== undefined ? config[key] : def)),
+);
 jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
 
@@ -234,5 +241,81 @@ describeDb('GET /settings/team/my-role — storefronts (real DB)', () => {
     expect(res.body.data.storefronts).toEqual([]);
     expect(res.body.data.isOwner).toBe(false);
     expect(res.body.data.supplierId).toBeUndefined();
+  });
+});
+
+/**
+ * Whether the dashboard may offer supplier-created bookings at all.
+ *
+ * The answer must come from the same config the create path enforces with,
+ * because the backend refuses the create when the flag is off. Advertising the
+ * flow anyway earns a 403 — this is the field that lets the UI stay honest.
+ */
+describeDb('GET /settings/team/my-role — supplier-created bookings flag (real DB)', () => {
+  jest.setTimeout(30000);
+
+  // Declared here as well as in the first describe: each suite owns its users
+  // so one cannot depend on the other's setup order.
+  let flagOwnerGhana;
+  let flagOwnerPlain;
+  let flagEditor;
+  let flagAdmin;
+
+  beforeAll(async () => {
+    await prisma.$connect();
+    await prisma.teamMember.deleteMany({ where: { email: { in: EMAILS } } });
+    await prisma.supplierProfile.deleteMany({ where: { user: { email: { in: EMAILS } } } });
+    await prisma.user.deleteMany({ where: { email: { in: EMAILS } } });
+
+    flagOwnerGhana = await makeUser(E('owner-both'), ['supplier', 'ghana', 'expedition']);
+    flagOwnerPlain = await makeUser(E('owner-plain'), ['supplier']);
+    flagEditor = await makeUser(E('editor'), ['customer']);
+    flagAdmin = await makeUser(E('admin'), ['admin']);
+
+    await makeProfile(flagOwnerGhana.id);
+    await makeProfile(flagOwnerPlain.id);
+    await makeMember(E('editor'), flagOwnerGhana.id, ['editor']);
+
+    config['feature.supplierCreatedBookings.ghana'] = 'true';
+  });
+
+  afterAll(async () => {
+    delete config['feature.supplierCreatedBookings.ghana'];
+    await prisma.teamMember.deleteMany({ where: { id: { in: created.members } } }).catch(() => {});
+    await prisma.supplierProfile.deleteMany({ where: { id: { in: created.profiles } } }).catch(() => {});
+    await prisma.user.deleteMany({ where: { id: { in: created.users } } }).catch(() => {});
+    await prisma.$disconnect();
+  });
+
+  it('offers the flow to an owner whose brand is enabled', async () => {
+    const res = await request(app).get(MY_ROLE).set(auth(flagOwnerGhana));
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.supplierCreatedBookings).toBe(true);
+  });
+
+  it('inherits the owner\'s answer for a team member, never the member\'s own roles', async () => {
+    // The member is only `['customer']`; the flag follows the OWNER's brands.
+    const res = await request(app).get(MY_ROLE).set(auth(flagEditor));
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.isOwner).toBe(false);
+    expect(res.body.data.supplierCreatedBookings).toBe(true);
+  });
+
+  it('keeps the answer false for every brand that is not enabled', async () => {
+    // A supplier holding no brand role at all, and the flag off for their brand.
+    const res = await request(app).get(MY_ROLE).set(auth(flagOwnerPlain));
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.storefronts).toEqual([]);
+    expect(res.body.data.supplierCreatedBookings).toBe(false);
+  });
+
+  it('is false for an admin, who has no brand to enable it for', async () => {
+    const res = await request(app).get(MY_ROLE).set(auth(flagAdmin));
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.supplierCreatedBookings).toBe(false);
   });
 });
