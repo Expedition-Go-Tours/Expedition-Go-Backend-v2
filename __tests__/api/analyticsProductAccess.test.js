@@ -216,6 +216,11 @@ describeDb('per-product analytics (real DB)', () => {
     });
     ownerTourB = await makeTour(owner.id, {
       slug: 'apa-cape-coast', title: 'Cape Coast Castle',
+      // coverPhoto deliberately NULL: the handler must surface the column as
+      // stored, and this is the only fixture in the suite that proves it.
+      // (A coverless ACTIVE tour does sort to row 1 of GET /api/tours for as
+      // long as this suite's window is open; tours.test.js guards against
+      // that by not binding a single fixture row.)
       coverPhoto: null, averageRating: 4.1,
     });
     ownerTourSimulated = await makeTour(owner.id, {

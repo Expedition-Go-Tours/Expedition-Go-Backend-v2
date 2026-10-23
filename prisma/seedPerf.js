@@ -109,6 +109,13 @@ async function seedPerf() {
       category: 'Adventure',
       city: 'Nairobi',
       country: 'Kenya',
+      // coverPhoto set: this fixture is ACTIVE and owned by an approved
+      // supplier, so it is served by GET /api/tours like any real listing. A
+      // coverless row sorts to row 1 (newest first) and is then bound by
+      // tours.test.js, which expects a cover — a benchmark fixture must not be
+      // able to fail a functional suite.
+      photos: ['https://res.cloudinary.com/dfpagrtoy/image/upload/v1/seed/perf-safari.jpg'],
+      coverPhoto: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1/seed/perf-cover.jpg',
       durationMinutes: 480,
       totalBookings: 0,
       totalRevenue: 0,

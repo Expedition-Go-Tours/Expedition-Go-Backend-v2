@@ -8,6 +8,17 @@
  * count, and none of it would show. `prisma/seed.js` now provisions an ACTIVE
  * catalogue, so these assert on content and math instead of shape.
  *
+ * The "shape" case below binds a listing, not a fixture. It used to read
+ * `[0]`, which made it depend on whichever suite happened to be mid-run: the
+ * suite runs in parallel with the others against one `travio_test`, and any
+ * ACTIVE tour they create while it is fetching sorts in ahead of the seeded
+ * catalogue. One such fixture has no `coverPhoto` — the analytics suite keeps
+ * that NULL on purpose, to prove the handler surfaces the column as stored —
+ * and a benchmark fixture (`seedPerf.js`) is ACTIVE with an approved supplier
+ * and no cover. Either one sorted to row 1 and failed an assertion that had
+ * nothing to do with it. Filtering to the rows this suite can vouch for keeps
+ * the assertion about the contract rather than about whoever else is running.
+ *
  * Runs against a real database (gated on TEST_DB_AVAILABLE), which
  * scripts/test-db-up.sh provisions as the isolated `travio_test`.
  */
@@ -100,7 +111,15 @@ describeDb('GET /api/tours', () => {
 
   it('returns the shape the storefront binds to', async () => {
     const res = await request(app).get('/api/tours');
-    const [tour] = res.body.data.tours;
+
+    // Not `[0]`: the response is the whole visible catalogue, and a sibling
+    // suite's fixture can sort ahead of the seed while it is being created.
+    // One such fixture deliberately carries a NULL coverPhoto (the analytics
+    // suite proves the handler surfaces the column as stored), so bind a row
+    // that actually has the field — the assertion is about the shape the
+    // storefront binds to, not about whichever tour happens to be newest.
+    const [tour] = (res.body.data.tours || []).filter((t) => t.coverPhoto);
+    expect(tour).toBeDefined();
 
     expect(tour).toMatchObject({
       id: expect.any(String),
