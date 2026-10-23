@@ -16,6 +16,28 @@
 jest.mock('axios');
 const axios = require('axios');
 
+// The free providers are what the reverse geocoder walks; mocked here so the
+// enrichment tests can say what the world looks like at a given pin without a
+// network. `serpApiProvider` keeps using the mocked axios.
+jest.mock('../../providers/geoapifyProvider', () => ({
+  search: jest.fn(),
+  autocomplete: jest.fn(),
+  reverse: jest.fn(),
+  nearby: jest.fn(),
+}));
+jest.mock('../../providers/nominatimProvider', () => ({
+  search: jest.fn(),
+  reverse: jest.fn(),
+}));
+jest.mock('../../providers/photonProvider', () => ({
+  search: jest.fn(),
+  reverse: jest.fn(),
+}));
+
+const geoapify = require('../../providers/geoapifyProvider');
+const nominatim = require('../../providers/nominatimProvider');
+const photon = require('../../providers/photonProvider');
+
 const serpApi = require('../../providers/serpApiProvider');
 const normalizer = require('../../src/core/services/locationNormalizer');
 const locationService = require('../../src/core/services/locationService');
@@ -33,6 +55,11 @@ function gaPlace(over = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // The reverse chain must not answer by accident: every test says what the
+  // world looks like at its own pin.
+  geoapify.reverse.mockRejectedValue(new Error('404'));
+  nominatim.reverse.mockResolvedValue(null);
+  photon.reverse.mockResolvedValue(null);
   delete process.env.SERPAPI_API_KEY;
   delete process.env.VITE_SERP_API_KEY;
 });
@@ -250,5 +277,113 @@ describe('the shape the rest of the app consumes', () => {
     expect(params.get('ll')).toBe('@5.1,-1.35,12z');
     expect(params.get('engine')).toBe('google_maps');
     expect(params.get('api_key')).toBe('key');
+  });
+});
+
+describe('the label carries its locality (reverse geocoding)', () => {
+  // Google Maps search says "Accra, Ghana" for a place that sits on Achimota
+  // Forest Road — and a supplier setting a pickup point cannot tell WHICH
+  // Accra that is. The free reverse geocoder knows; it is what the map-click
+  // path already uses.
+  // One pin per test: the reverse geocoder caches per coordinates, so reusing
+  // a pin would have one test's world answered to the next.
+  const PINS = {
+    achimota: { latitude: 5.6214816, longitude: -0.2169066 },
+    elmina: { latitude: 5.0833, longitude: -1.35 },
+    remote: { latitude: 7.1, longitude: -2.2 },
+  };
+
+  beforeEach(() => {
+    process.env.SERPAPI_API_KEY = 'key';
+  });
+
+  it('rebuilds the label as Name, Street, City, Country', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        local_results: [{
+          title: 'Ghana Girl Guides Training Center',
+          address: 'Accra, Ghana',
+          country: 'Ghana',
+          gps_coordinates: PINS.achimota,
+          place_id: 'ChIJgguid',
+        }],
+      },
+    });
+    geoapify.reverse.mockResolvedValue({
+      type: 'FeatureCollection',
+      features: [{
+        properties: {
+          formatted: 'Achimota Police Station, Achimota Forest Road, Accra, Ghana',
+          address_line1: 'Achimota Forest Road',
+          city: 'Accra',
+          state: 'Greater Accra Region',
+          country: 'Ghana',
+          country_code: 'gh',
+        },
+        geometry: { coordinates: [PINS.achimota.longitude, PINS.achimota.latitude] },
+      }],
+    });
+
+    const out = await locationService.googleSearch('Ghana Girl Guides Training Center');
+
+    // The locality the supplier is asking about is now in the label.
+    expect(out.results[0].formatted).toBe(
+      'Ghana Girl Guides Training Center, Achimota Forest Road, Accra, Ghana',
+    );
+    // Structured fields come from the reverse geocoder too.
+    expect(out.results[0].street).toBe('Achimota Forest Road');
+    expect(out.results[0].city).toBe('Accra');
+    expect(out.results[0].name).toBe('Ghana Girl Guides Training Center');
+  });
+
+  it('never repeats a part the label already carries', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        local_results: [{
+          title: 'Coconut Grove Beach Resort',
+          address: 'Elmina, Ghana',
+          country: 'Ghana',
+          gps_coordinates: PINS.elmina,
+          place_id: 'ChIJelmina',
+        }],
+      },
+    });
+    geoapify.reverse.mockResolvedValue({
+      type: 'FeatureCollection',
+      features: [{
+        properties: {
+          formatted: 'Elmina, Ghana',
+          address_line1: '',
+          city: 'Elmina',
+          country: 'Ghana',
+          country_code: 'gh',
+        },
+        geometry: { coordinates: [PINS.elmina.longitude, PINS.elmina.latitude] },
+      }],
+    });
+
+    const out = await locationService.googleSearch('Coconut Grove Beach Resort');
+
+    expect(out.results[0].formatted).toBe('Coconut Grove Beach Resort, Elmina, Ghana');
+  });
+
+  it('keeps the Google label when the reverse geocoder has nothing', async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        local_results: [{
+          title: 'Somewhere Remote',
+          address: 'Accra, Ghana',
+          country: 'Ghana',
+          gps_coordinates: PINS.remote,
+          place_id: 'ChIJremote',
+        }],
+      },
+    });
+
+    const out = await locationService.googleSearch('Somewhere Remote');
+
+    // A slightly vague label beats losing the place entirely.
+    expect(out.results[0].formatted).toBe('Somewhere Remote, Accra, Ghana');
+    expect(out.results[0].street).toBe('');
   });
 });

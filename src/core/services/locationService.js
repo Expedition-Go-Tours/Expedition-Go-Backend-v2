@@ -121,6 +121,50 @@ async function autocomplete(query, limit = 5) {
 }
 
 /**
+ * One Google Maps place is often vaguer than the place itself: the search
+ * response carries `address: "Accra, Ghana"` for "Ghana Girl Guides Training
+ * Center", which sits on Achimota Forest Road. The supplier then cannot tell
+ * WHICH Accra they are setting as the pickup, and asks exactly that question.
+ *
+ * The reverse geocoder (free providers, already cached) knows better at those
+ * coordinates, so the label is rebuilt from it: `Name, Street, City, Country`.
+ * Free text we already have beats a second, credit-charged SerpApi call, and
+ * it is the same source the map-click path uses — so a pin dropped by hand and
+ * a place picked from Google Maps describe themselves the same way.
+ *
+ * The reverse call failing degrades to the Google label rather than losing the
+ * result: a slightly vague name is better than no place at all.
+ */
+async function enrichWithLocality(row) {
+  let reversed = [];
+  try {
+    reversed = await reverse(row.latitude, row.longitude);
+  } catch {
+    reversed = [];
+  }
+  const place = reversed[0];
+  if (!place) return row;
+
+  const name = row.name || '';
+  const tail = [place.street, place.city, place.country || row.country]
+    .filter(Boolean)
+    // de-duplicate while keeping order ("Accra, Accra, Ghana" is noise)
+    .filter((part, index, all) => all.indexOf(part) === index);
+
+  if (tail.length === 0) return row;
+
+  return {
+    ...row,
+    city: place.city || row.city,
+    region: place.region || row.region,
+    street: place.street || row.street,
+    country: place.country || row.country,
+    countryCode: place.countryCode || row.countryCode,
+    formatted: [name, ...tail].filter(Boolean).join(', '),
+  };
+}
+
+/**
  * Google Maps (SerpApi) search — the explicit fallback for places none of the
  * free providers know. Never part of the automatic merge: it costs a credit
  * per uncached lookup, so the UI offers it as a deliberate "search Google Maps"
@@ -154,7 +198,11 @@ async function googleSearch(query, origin = null) {
       TTL.GOOGLE,
       { cacheEmpty: true, cacheNull: false },
     );
-    return { ok: true, results };
+    // Enrichment runs outside the SerpApi cache so the locality is always
+    // rebuilt from the (separately cached) reverse geocoder — one provider's
+    // stale row can never bake a vague label in again.
+    const enriched = await Promise.all(results.map(enrichWithLocality));
+    return { ok: true, results: enriched };
   } catch (err) {
     return { ok: false, reason: err.code || 'upstream' };
   }
