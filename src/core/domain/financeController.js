@@ -93,7 +93,7 @@ function serializeRequest(request) {
 exports.getFinanceSummary = catchAsync(async (req, res) => {
   const supplierId = req.supplierId;
 
-  const [eligible, pendingClearance, activeRequests, paidOut, window, cycle, bufferDays, payoutPlan, nextPending, payoutCounts, openInvoices, paidInvoices] = await Promise.all([
+  const [eligible, pendingClearance, activeRequests, paidPayoutRows, window, cycle, bufferDays, payoutPlan, nextPending, payoutCounts, openInvoices, paidInvoiceRows] = await Promise.all([
     // Per currency, never summed across currencies: GH¢200 and $200 are not
     // $400, and the dashboard used to add them into one "USD" number.
     prisma.booking.groupBy({
@@ -129,8 +129,12 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
         createdAt: true,
       },
     }),
+    // PER BOOKING, not per currency: "Paid out" must count a booking's money
+    // exactly once, and a booking can appear in BOTH sources (see the union
+    // below). Grouping by currency here would have made that overlap
+    // invisible and double-counted it.
     prisma.payout.groupBy({
-      by: ['currency'],
+      by: ['bookingId', 'currency'],
       where: { supplierId, status: 'PAID' },
       _sum: { amount: true },
     }),
@@ -176,10 +180,13 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
         paymentScheduledAt: true,
       },
     }),
-    prisma.invoice.groupBy({
-      by: ['currency'],
-      where: { supplierId, status: 'PAID' },
-      _sum: { netTotal: true },
+    // Per BOOKING as well: the invoice net is already the sum of its line
+    // items, and the line item is the booking — which is what makes the
+    // per-booking dedup below possible at all.
+    prisma.invoiceItem.groupBy({
+      by: ['bookingId', 'currency'],
+      where: { invoice: { supplierId, status: 'PAID' } },
+      _sum: { supplierPayout: true },
     }),
   ]);
 
@@ -237,12 +244,41 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
   // appears, so no consumer can print a total the account does not hold.
   const eligibleRows = byCurrencyTotals(eligible, 'supplierPayout', '_all');
   const pendingRows = byCurrencyTotals(pendingClearance, 'supplierPayout', '_all');
-  const paidRowsMap = new Map();
-  for (const row of byCurrencyTotals(paidOut, 'amount')) {
-    paidRowsMap.set(row.currency, (paidRowsMap.get(row.currency) || 0) + row.amount);
+
+  // ── "Paid out": money that has actually moved, counted ONCE per booking ──
+  //
+  // Two flows write this money and they overlap by design:
+  //
+  //   legacy  `Payout` rows        — a booking paid per-booking before v3
+  //   v3      `InvoiceItem` rows   — a booking paid on an invoice window
+  //
+  // `backfill-historical-invoices` created PAID invoices for bookings that
+  // were ALREADY paid through the legacy flow, so every backfilled booking
+  // exists in both. Adding the two sums — which this did — counted that money
+  // twice and reported "Paid out" at exactly double the truth.
+  //
+  // So the union is per (booking, currency): the invoice is authoritative when
+  // one exists (v3 is the current ledger), otherwise the legacy payout row.
+  // One booking, one amount, one currency — then sum per currency.
+  const paidByBooking = new Map();
+  for (const row of paidPayoutRows || []) {
+    const key = `${row.bookingId}|${row.currency || 'USD'}`;
+    paidByBooking.set(key, {
+      currency: row.currency || 'USD',
+      amount: toNumber(row._sum ? row._sum.amount : 0),
+    });
   }
-  for (const row of byCurrencyTotals(paidInvoices, 'netTotal')) {
-    paidRowsMap.set(row.currency, (paidRowsMap.get(row.currency) || 0) + row.amount);
+  for (const row of paidInvoiceRows || []) {
+    const key = `${row.bookingId}|${row.currency || 'USD'}`;
+    paidByBooking.set(key, {
+      currency: row.currency || 'USD',
+      // The invoice's own amount wins: it is what finance actually paid.
+      amount: toNumber(row._sum ? row._sum.supplierPayout : 0),
+    });
+  }
+  const paidRowsMap = new Map();
+  for (const entry of paidByBooking.values()) {
+    paidRowsMap.set(entry.currency, (paidRowsMap.get(entry.currency) || 0) + entry.amount);
   }
   const paidRows = [...paidRowsMap.entries()]
     .map(([currency, amount]) => ({ currency, amount: round2(amount) }))
@@ -314,7 +350,8 @@ exports.getFinanceSummary = catchAsync(async (req, res) => {
         ? new Date(new Date(nextPending.travelDate).getTime() + bufferDays * 24 * 60 * 60 * 1000)
         : null,
       paidOut: {
-        // Legacy Payout rows + v3 paid invoices, per currency.
+        // Money that actually moved, counted once per booking across both
+        // flows (legacy Payout rows and v3 paid invoices), per currency.
         ...moneySummary(paidRows, null),
       },
       currentCycle: { start: cycle.start, end: cycle.end, label: cycle.label },

@@ -3,6 +3,7 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   booking: { aggregate: jest.fn(), findFirst: jest.fn(), findMany: jest.fn(), groupBy: jest.fn() },
   payout: { aggregate: jest.fn(), groupBy: jest.fn() },
   invoice: { findMany: jest.fn(), aggregate: jest.fn(), groupBy: jest.fn(), findFirst: jest.fn(), create: jest.fn(), count: jest.fn() },
+  invoiceItem: { groupBy: jest.fn(), findMany: jest.fn() },
   payoutMethod: { findFirst: jest.fn() },
   supplierProfile: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
   $transaction: jest.fn(),
@@ -267,11 +268,20 @@ describe('getFinanceSummary — a payout in flight', () => {
         { payoutStatus: 'REQUESTED', _count: { _all: 12 } },
         { payoutStatus: 'CANCELLED', _count: { _all: 1 } },
       ]);
-    prisma.payout.groupBy.mockResolvedValue([{ currency: 'USD', _sum: { amount: 586.5 } }]);
+    // "Paid out" is now built per BOOKING (a booking can exist in both the
+    // legacy Payout flow and the v3 invoice flow and must be counted once).
+    // Two legacy rows totalling 586.5 keeps the lifetime figure stable for
+    // every test that does not care about the overlap.
+    prisma.payout.groupBy.mockResolvedValue([
+      { bookingId: 'legacy-1', currency: 'USD', _sum: { amount: 300.5 } },
+      { bookingId: 'legacy-2', currency: 'USD', _sum: { amount: 286 } },
+    ]);
+    prisma.invoiceItem.groupBy.mockResolvedValue([]);
     prisma.payoutRequest.findMany.mockResolvedValue([activeRequest]);
     prisma.booking.findFirst.mockResolvedValue({ travelDate: new Date(2026, 9, 6) });
     prisma.booking.findMany.mockResolvedValue([]);
-    // Finance v3: no open invoices, no paid invoices by default.
+    // Finance v3: no open invoices by default (paid ones arrive per-test as
+    // invoiceItem rows — the per-booking ledger the summary now reads).
     prisma.invoice.findMany.mockResolvedValue([]);
     prisma.invoice.groupBy.mockResolvedValue([]);
     getSupplierPayoutPlan.mockResolvedValue(schedule());
@@ -424,8 +434,12 @@ describe('getFinanceSummary — a payout in flight', () => {
   });
 
   it('folds v3 paid invoices into the lifetime paid-out total', async () => {
-    // Legacy Payout rows: 586.5 (beforeEach) + paid invoices: 250.
-    prisma.invoice.groupBy.mockResolvedValue([{ currency: 'USD', _sum: { netTotal: 250 } }]);
+    // Legacy Payout rows: 586.5 (beforeEach, two bookings) + two invoiced
+    // bookings: 250. Four bookings, four amounts, one total.
+    prisma.invoiceItem.groupBy.mockResolvedValue([
+      { bookingId: 'inv-1', currency: 'USD', _sum: { supplierPayout: 150 } },
+      { bookingId: 'inv-2', currency: 'USD', _sum: { supplierPayout: 100 } },
+    ]);
 
     const { data } = await invokeSummary();
 
@@ -433,6 +447,43 @@ describe('getFinanceSummary — a payout in flight', () => {
     expect(data.paidOut.amount).toBe(836.5);
     expect(data.paidOut.currency).toBe('USD');
     expect(data.paidOut.byCurrency).toEqual([{ currency: 'USD', amount: 836.5, bookingCount: undefined }]);
+  });
+
+  it('counts a booking paid through BOTH flows exactly once', async () => {
+    // The real bug: `backfill-historical-invoices` raised PAID invoices for
+    // bookings that were already paid through the legacy Payout flow, and the
+    // summary added both sources. Every such booking was counted twice —
+    // one supplier's "Paid out" read $2,526.92 for $1,263.46 of real money.
+    prisma.payout.groupBy.mockResolvedValue([
+      { bookingId: 'both-1', currency: 'USD', _sum: { amount: 500 } },
+    ]);
+    prisma.invoiceItem.groupBy.mockResolvedValue([
+      // Same booking, same money, second ledger.
+      { bookingId: 'both-1', currency: 'USD', _sum: { supplierPayout: 500 } },
+    ]);
+
+    const { data } = await invokeSummary();
+
+    expect(data.paidOut.amount).toBe(500);
+    expect(data.paidOut.byCurrency).toEqual([{ currency: 'USD', amount: 500, bookingCount: undefined }]);
+  });
+
+  it('keeps currencies apart when a booking is duplicated across flows', async () => {
+    prisma.payout.groupBy.mockResolvedValue([
+      { bookingId: 'both-gh', currency: 'GHS', _sum: { amount: 200 } },
+    ]);
+    prisma.invoiceItem.groupBy.mockResolvedValue([
+      { bookingId: 'both-gh', currency: 'GHS', _sum: { supplierPayout: 200 } },
+      { bookingId: 'inv-us', currency: 'USD', _sum: { supplierPayout: 100 } },
+    ]);
+
+    const { data } = await invokeSummary();
+
+    expect(data.paidOut.amount).toBeNull();
+    expect(data.paidOut.byCurrency).toEqual([
+      { currency: 'GHS', amount: 200, bookingCount: undefined },
+      { currency: 'USD', amount: 100, bookingCount: undefined },
+    ]);
   });
 
   it('never sums two currencies into one balance', async () => {
