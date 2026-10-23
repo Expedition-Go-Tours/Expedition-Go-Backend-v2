@@ -91,8 +91,20 @@ supplier. The backend rejects when disabled — never only the button.
 | 3 | Watch: `SupplierCharge` rows with reason `SUPPLIER_COMMISSION`, BookingCollection volume, and payout request totals (they must NOT grow with collections). | — |
 | 4 | Commission policy stays `APPLY`; a `WAIVE` is a deliberate per-case config change, recorded on the booking and in the audit log. | — |
 
-**Production has NOT been migrated.** `prisma migrate deploy` runs against
-production only with explicit authorization, as part of the normal deploy.
+**Rollout status (2026-10-23).** Steps 0 and 1 are done in production: the
+migration is applied and the code is deployed. Step 2 is also done — the flag
+was switched on directly in the `SystemConfig` table, with the same key the
+backend reads (`feature.supplierCreatedBookings.ghana = true`). Nothing reloads
+config, so the change is live without a restart.
+
+Rollback for step 2: set that key back to `false`. Every create/quote/collection
+route 403s within the request; bookings and collections already recorded stay
+exactly as they are.
+
+Deploy note: this box has **no CI deploy workflow and no cron** — `git pull`
+gets the source onto the box, but the API process only picks it up when
+reloaded as `deploy` (`pm2 reload expedition-api`). Never run pm2 as root: a
+second daemon under `/root/.pm2` competes with the deploy-owned one.
 
 ## 6. Definition of done
 
