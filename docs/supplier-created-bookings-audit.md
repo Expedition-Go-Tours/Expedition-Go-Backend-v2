@@ -83,7 +83,61 @@ strict zod bodies, no client control of supplier/origin/status/pricing/commissio
 Feature flag (server config), **off by default**, enabled per brand and per
 supplier. The backend rejects when disabled — never only the button.
 
-## 6. What is deliberately NOT here
+| Step | What happens | Rollback |
+|---|---|---|
+| 0 | Merge. Migration is additive (`origin` defaults to `MARKETPLACE`, `customerId` stays populated for every existing row). Flag reads `false`. | Revert the deploy; nothing behavioural changed. |
+| 1 | `npx prisma migrate deploy` on the box during a normal deploy window. | Migration is forward-compatible; revert code only. |
+| 2 | Set `feature.supplierCreatedBookings.ghana = true` in the config service (one supplier at a time if desired — gate on `bookings.manage` membership meanwhile). | Set it back to `false`. Every route 403s within the request; already-recorded bookings and collections stay exactly as they are. |
+| 3 | Watch: `SupplierCharge` rows with reason `SUPPLIER_COMMISSION`, BookingCollection volume, and payout request totals (they must NOT grow with collections). | — |
+| 4 | Commission policy stays `APPLY`; a `WAIVE` is a deliberate per-case config change, recorded on the booking and in the audit log. | — |
+
+**Production has NOT been migrated.** `prisma migrate deploy` runs against
+production only with explicit authorization, as part of the normal deploy.
+
+## 6. Definition of done
+
+Delivered and verified (tests executed, not asserted):
+
+- [x] `docs/supplier-created-bookings-audit.md` + `supplier-created-bookings-ui-audit.md`
+- [x] Additive migration; CI's `prisma migrate diff` guard reports no drift
+- [x] `customerId` optional + `BookingGuest`; no fake users, no email matching
+- [x] `BookingCollection` (partial, refunds, corrections that preserve the
+      original) + per-booking idempotency + `Booking.origin`
+- [x] One transaction per create: tour row locked → availability → booking +
+      guest + snapshot + collection + charge + audit → commit → then mail
+- [x] Pricing and commission from the existing engines, snapshotted; the
+      client controls neither
+- [x] Commission = an OPEN `SupplierCharge` per collection (the cancellation
+      fee's ledger), waiver recorded; no charge on unpaid reservations
+- [x] `payoutBookingsWhere` (and through it `eligibleBookingsWhere`, payout
+      requests and the invoice sweep) excludes `SUPPLIER_CREATED` — proven in
+      the worst case by `__tests__/api/supplierCreatedBookings.test.js` #10
+- [x] Endpoints behind `bookings.manage` / `bookings.view`, strict zod bodies
+- [x] Feature flag, off by default, rejected server-side when off (scenario 12)
+- [x] Notifications after commit via the existing queue; a guest with no email
+      gets none; relay minted for registered customers, never the real address
+- [x] 21 unit + 14 DB-gated API tests, incl. the twelve named scenarios
+      (walk-in cash, MoMo reference, unpaid-then-paid, partials, masked
+      registered customer, concurrent last-place race, offline refund, waiver,
+      receivable, marketplace unchanged, idempotent resubmission, guest data
+      protected)
+- [x] Wizard + 5 frontend tests; supplier suite 1,019 green, build green
+
+Not in this delivery (honest gaps, none of them silent):
+
+- [ ] Browser-level Playwright flows for the wizard. The twelve scenarios are
+      covered end-to-end at the HTTP + database boundary, where the money
+      rules live; the UI has component tests but no browser script yet.
+- [ ] List/detail presentation of the new state: the `origin` pill, the
+      collection block ("Recorded as collected … Outstanding …"), origin and
+      collection-state filters, and CSV columns. The wizard and the API carry
+      these facts; the list surfaces do not yet show them.
+- [ ] `GET /bookings/:id/voucher` (printable confirmation).
+- [ ] Per-booking "you owe" line in the finance UI: the commission charge
+      exists and is netted off payout requests, but is not yet listed per
+      booking on the finance page.
+
+## 7. What is deliberately NOT here
 - No second pricing engine, no second availability engine.
 - No Stripe involvement for offline money (a POS charge collected outside the
   platform is an offline collection, not a Stripe payment).
