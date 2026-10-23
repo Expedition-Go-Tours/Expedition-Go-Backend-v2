@@ -58,14 +58,35 @@ controller.getDashboard = catchAsync(async (req, res) => {
         _count: true,
       }),
       prisma.review.count({ where: { tour: { supplierId }, status: 'APPROVED' } }),
-      prisma.booking.aggregate({
+      // PER CURRENCY. Summing GH¢200 and $200 into one number printed as "$"
+      // is the same lie the Finance summary used to tell; the card renders one
+      // figure per currency and a scalar only when there is exactly one.
+      prisma.booking.groupBy({
+        by: ['currency'],
         where: { tour: { supplierId }, isSimulated: false, paymentStatus: 'SUCCEEDED' },
         _sum: { supplierPayout: true, grossAmount: true },
+        _count: { _all: true },
       }),
     ]);
 
     const tourMap = Object.fromEntries(tourStats.map(t => [t.status, t._count]));
     const bookingMap = Object.fromEntries(bookingStats.map(b => [b.status, b._count]));
+
+    // Earnings, per currency. `totalEarnings` is the scalar ONLY for a
+    // single-currency account — it is null the moment a second currency
+    // appears, so no consumer can print a total the account does not hold.
+    // An account with NO paid bookings gets a real 0: that is a measurement
+    // ("you have earned nothing yet"), not an unknown.
+    const earningsByCurrency = (earningsAgg || [])
+      .map((r) => ({
+        currency: r.currency || 'USD',
+        supplierCut: Number(r._sum?.supplierPayout || 0),
+        gross: Number(r._sum?.grossAmount || 0),
+        bookings: r._count?._all || 0,
+      }))
+      .sort((a, b) => a.currency.localeCompare(b.currency));
+    const singleEarnings = earningsByCurrency.length === 1 ? earningsByCurrency[0] : null;
+    const emptyEarnings = earningsByCurrency.length === 0;
 
     // Top products — the supplier's tours ranked by booking volume, with the
     // revenue each has generated. Drives the "Top Products" card on the
@@ -108,9 +129,17 @@ controller.getDashboard = catchAsync(async (req, res) => {
     // so it reflects actual earnings even if the profile column is stale.
     return {
       earnings: {
-        totalEarnings: Number(earningsAgg._sum.supplierPayout || 0),
-        totalRevenue: Number(earningsAgg._sum.grossAmount || 0),
-        currency: 'USD',
+        // null when the account holds more than one currency: the UI must walk
+        // `byCurrency` rather than print a summed figure. Zero when nothing has
+        // been earned — a measured zero, not an unknown.
+        totalEarnings: singleEarnings
+          ? singleEarnings.supplierCut
+          : (emptyEarnings ? 0 : null),
+        totalRevenue: singleEarnings
+          ? singleEarnings.gross
+          : (emptyEarnings ? 0 : null),
+        currency: singleEarnings ? singleEarnings.currency : (emptyEarnings ? 'USD' : null),
+        byCurrency: earningsByCurrency,
       },
       tours: {
         total: Object.values(tourMap).reduce((a, b) => a + b, 0),
