@@ -1242,13 +1242,22 @@ const chatNewMessage = {
   key: 'chat-new-message',
   name: 'Chat New message',
   build() {
-    return B.shell('You have a new message', `
+    // Structure follows GetYourGuide's messaging email: who wrote, the message
+    // itself, the booking it is about, one clear action, and — most important —
+    // the promise that replying by email just works. That last block is the
+    // whole point of the relay: a supplier who is mid-pickup answers from their
+    // phone's mail app and the reply reaches the guest and the thread.
+    return B.shell('New message from {{senderName}}', `
       ${B.chatHeader()}
       ${B.senderRow('{{senderName}}', '{{senderRoleLabel}}', '{{senderAvatarUrl}}', '{{senderInitials}}')}
       ${B.messageCard('{{senderMessageHtml}}', '{{attachmentThumbUrl}}', '{{attachmentDocLabel}}')}
       ${B.contextRow('{{tourTitle}}', '{{bookingNumber}}')}
-      ${B.buttonPrimary('View conversation', '{{chatUrl}}')}
-      ${B.paragraph('Reply to this email to send a reply back in this conversation.', { center: true, muted: true, small: true })}
+      ${B.buttonPrimary('Reply in the conversation', '{{chatUrl}}')}
+      ${B.callout(
+        'Prefer to reply by email? Just answer this message. Your reply reaches {{senderName}} directly and is kept in this conversation, so nothing is lost — and you are both writing through protected addresses, so neither of you sees the other&rsquo;s personal email.',
+        'success',
+      )}
+      ${B.paragraph('Travio Ghana keeps the messages sent through this thread for your records and for dispute support.', { center: true, muted: true, small: true })}
     `);
   },
 };

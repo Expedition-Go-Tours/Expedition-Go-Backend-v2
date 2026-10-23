@@ -180,7 +180,11 @@ describe('renderTemplate', () => {
     expect(html).toContain('AM');
     expect(html).toContain('Hello, is the boat still on?');
     expect(html).toContain('https://example.com/chat?conversation=c1');
-    expect(html).toContain('Reply to this email');
+    // The reply-by-email promise (a supplier mid-pickup answers from their
+    // phone's mail app), and the guarantee the relay provides: neither side
+    // sees the other's personal address.
+    expect(html).toContain('Prefer to reply by email');
+    expect(html).toContain('protected addresses');
     expect(html).not.toContain('Ref ');
     expect(html.match(/\{\{[^}]+\}\}/g) || []).toEqual([]);
   });
