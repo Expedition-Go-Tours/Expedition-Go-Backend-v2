@@ -134,6 +134,19 @@ Delivered and verified (tests executed, not asserted):
       receivable, marketplace unchanged, idempotent resubmission, guest data
       protected)
 - [x] Wizard + 5 frontend tests; supplier suite 1,019 green, build green
+- [x] Wizard rebuilt on the dashboard's own language (framer-motion step
+      transitions, the app's inline DatePicker scoped to a compact month grid,
+      AM/PM time picker, tour cards with cover photos, traveller steppers,
+      payment-method cards, live summary rail, mobile footer total)
+- [x] `createBooking` enforces the same ceiling `recordCollection` does: an
+      initial collection above what the booking costs is refused and the whole
+      transaction rolls back (no booking, no orphaned guest row)
+- [x] `/my-role` reports `supplierCreatedBookings`, read through the same
+      `isFeatureEnabled` the create path enforces with, and the dashboard hides
+      the Create booking button when the brand's flag is off — so the flow can
+      no longer be offered and then 403
+- [x] Deployed to production: code live, migration applied, flag on for Ghana
+      (`SystemConfig`), API reloaded as `deploy` and verified healthy
 
 Not in this delivery (honest gaps, none of them silent):
 
@@ -154,3 +167,15 @@ Not in this delivery (honest gaps, none of them silent):
 - No Stripe involvement for offline money (a POS charge collected outside the
   platform is an offline collection, not a Stripe payment).
 - No email-based account matching for guests.
+
+## 8. Deploy mechanism (observed, not assumed)
+- **Backend:** there is no CI deploy workflow and no cron on the box. `git pull`
+  lands the source, but the API only runs it after a reload as `deploy`
+  (`pm2 reload expedition-api --update-env`). Never run pm2 as root: a second
+  daemon under `/root/.pm2` competes with the deploy-owned one for port 5000.
+- **Frontend:** Vercel auto-deploys on push to `main`; `vercel.json` handles the
+  SPA rewrite. Verified by fetching the live bundle and checking it carries the
+  newest commit's code.
+- Config flags live in the `SystemConfig` table and are read with a 60s
+  in-process cache, so changing one needs no reload but can take up to a minute
+  to be picked up by a long-lived process.
