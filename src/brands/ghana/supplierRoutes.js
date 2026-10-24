@@ -133,6 +133,15 @@ router.get('/bookings/:id/collections', resolveSupplier, requireTeamPermission('
 router.post('/bookings/:id/collections', resolveSupplier, requireTeamPermission('bookings.manage'), validate(recordCollectionSchema), supplierBookingController.recordCollection);
 router.post('/bookings/:id/refunds', resolveSupplier, requireTeamPermission('bookings.manage'), validate(recordCollectionSchema), supplierBookingController.recordOfflineRefund);
 
+// Commission cover — the supplier's available balance, which the "Create
+// booking" button gates on. Declared under /finance because /bookings/cover
+// would be swallowed by the shared router's earlier `/supplier/bookings/:id`
+// route, and because the figure it returns is a finance number: what the
+// platform is holding for this supplier, per currency, against the commission
+// a supplier-created booking would raise. `bookings.view` rather than
+// `payouts.view` — it drives a bookings action.
+router.get('/finance/commission-cover', resolveSupplier, requireTeamPermission('bookings.view'), supplierBookingController.cover);
+
 router.get('/pickup-planner', resolveSupplier, requireTeamPermission('bookings.view'), bookingController.getPickupPlanner);
 router.patch('/pickup-planner/reorder', resolveSupplier, requireTeamPermission('bookings.manage'), validate(pickupReorderSchema), bookingController.reorderPickupStops);
 router.patch('/pickup-planner/:id', resolveSupplier, requireTeamPermission('bookings.manage'), validate(supplierUpdatePickupSchema), bookingController.updateBookingPickup);

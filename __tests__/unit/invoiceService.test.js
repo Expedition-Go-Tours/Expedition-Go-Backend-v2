@@ -4,16 +4,30 @@
 // payoutCycles.js.
 jest.mock('../../src/core/services/prismaClient', () => {
   const tx = {
-    invoice: { create: jest.fn(), update: jest.fn() },
-    invoiceItem: { createMany: jest.fn() },
-    booking: { updateMany: jest.fn() },
+    invoice: {
+      create: jest.fn(),
+      update: jest.fn(),
+      findUnique: jest.fn(() => Promise.resolve(null)),
+    },
+    invoiceItem: { createMany: jest.fn(), findMany: jest.fn(() => Promise.resolve([])) },
+    booking: { updateMany: jest.fn(() => Promise.resolve({ count: 0 })) },
+    // Charges are netted off every invoice this service writes: released,
+    // re-selected, reserved at generation, settled on payment.
+    supplierCharge: {
+      findMany: jest.fn(() => Promise.resolve([])),
+      updateMany: jest.fn(() => Promise.resolve({ count: 0 })),
+    },
   };
   return {
     supplierProfile: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
     booking: { findMany: jest.fn(), updateMany: jest.fn() },
     invoice: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
-    invoiceItem: { createMany: jest.fn() },
+    invoiceItem: { createMany: jest.fn(), findMany: jest.fn(() => Promise.resolve([])) },
     payoutMethod: { findFirst: jest.fn() },
+    supplierCharge: {
+      findMany: jest.fn(() => Promise.resolve([])),
+      updateMany: jest.fn(() => Promise.resolve({ count: 0 })),
+    },
     $transaction: jest.fn((fn) => fn(tx)),
     __tx: tx,
   };
@@ -209,6 +223,15 @@ describe('generateDueInvoices — the hourly scheduled job', () => {
     ]);
     prisma.invoice.findUnique.mockResolvedValue({ id: 'inv-existing', status: 'INVOICED' });
     prisma.__tx.invoiceItem.createMany.mockResolvedValue({ count: 1 });
+    prisma.__tx.invoice.findUnique.mockResolvedValue({
+      id: 'inv-existing',
+      status: 'INVOICED',
+      supplierId: 'sup-1',
+      currency: 'USD',
+    });
+    prisma.__tx.invoiceItem.findMany.mockResolvedValue([
+      { grossAmount: '100', platformCommission: '15', supplierPayout: '85' },
+    ]);
 
     const report = await generateDueInvoices(now);
 
@@ -217,10 +240,13 @@ describe('generateDueInvoices — the hourly scheduled job', () => {
     expect(prisma.__tx.invoiceItem.createMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.arrayContaining([expect.objectContaining({ invoiceId: 'inv-existing', bookingId: 'b1' })]) })
     );
+    // Rebuilt from the full set of items rather than incremented: appending
+    // also re-selects the supplier's open charges against the larger payment,
+    // so a commission raised since the invoice was created is netted off it.
     expect(prisma.__tx.invoice.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'inv-existing' },
-        data: expect.objectContaining({ netTotal: { increment: 85 } }),
+        data: expect.objectContaining({ grossTotal: 100, chargesTotal: 0, netTotal: 85, bookingCount: 1 }),
       })
     );
   });
@@ -251,7 +277,14 @@ describe('generateDueInvoices — the hourly scheduled job', () => {
     prisma.booking.findMany.mockResolvedValue([b('b1', new Date(2026, 9, 5), 'USD', 100, 15, 85)]);
     // The window's scheduled invoice is settled: the booking cannot join it.
     prisma.invoice.findUnique.mockResolvedValue({ id: 'inv-paid', status: 'PAID' });
-    prisma.__tx.invoice.create.mockResolvedValue({ id: 'inv-catchup', invoiceNumber: 'INV-CATCHUP', netTotal: 85, currency: 'USD' });
+    prisma.__tx.invoice.create.mockResolvedValue({
+      id: 'inv-catchup',
+      invoiceNumber: 'INV-CATCHUP',
+      netTotal: 85,
+      currency: 'USD',
+      status: 'INVOICED',
+      supplierId: 'sup-1',
+    });
 
     const report = await generateDueInvoices(now);
 
@@ -270,7 +303,16 @@ describe('generateDueInvoices — the hourly scheduled job', () => {
     );
     // It is created (not appended) — the settled invoice is left untouched.
     expect(prisma.__tx.invoiceItem.createMany).not.toHaveBeenCalled();
-    expect(prisma.__tx.invoice.update).not.toHaveBeenCalled();
+    expect(prisma.__tx.invoice.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'inv-paid' } })
+    );
+    // The catch-up invoice is rebalanced like any other: the supplier's open
+    // charges are netted off it rather than waiting for a cycle that will
+    // never come back around.
+    expect(prisma.__tx.invoice.update).toHaveBeenCalledWith({
+      where: { id: 'inv-catchup' },
+      data: { status: 'INVOICED', grossTotal: 100, commissionTotal: 15, chargesTotal: 0, netTotal: 85, bookingCount: 1 },
+    });
   });
 
   it('skips suppliers without a verified payout method — their bookings wait', async () => {
@@ -447,16 +489,30 @@ describe('detachBookingFromInvoices — cancellation keeps unpaid invoices hones
           ]),
         delete: jest.fn().mockResolvedValue({}),
       },
-      invoice: { update: jest.fn().mockResolvedValue({}) },
+      invoice: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'inv-1', status: 'INVOICED', supplierId: 'sup-1', currency: 'USD' }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      supplierCharge: {
+        findMany: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
     };
 
     const adjusted = await detachBookingFromInvoices(tx, 'bk-1');
 
     expect(adjusted).toBe(1);
     expect(tx.invoiceItem.delete).toHaveBeenCalledWith({ where: { id: 'item-1' } });
+    // The invoice's charge hold is released before re-selecting, so a charge
+    // that no longer fits the smaller payment goes back into the open pool
+    // instead of pushing the invoice negative.
+    expect(tx.supplierCharge.updateMany).toHaveBeenCalledWith({
+      where: { invoiceId: 'inv-1' },
+      data: { invoiceId: null },
+    });
     expect(tx.invoice.update).toHaveBeenCalledWith({
       where: { id: 'inv-1' },
-      data: { grossTotal: 150, commissionTotal: 25.5, netTotal: 124.5, bookingCount: 2 },
+      data: { status: 'INVOICED', grossTotal: 150, commissionTotal: 25.5, chargesTotal: 0, netTotal: 124.5, bookingCount: 2 },
     });
   });
 
@@ -469,15 +525,28 @@ describe('detachBookingFromInvoices — cancellation keeps unpaid invoices hones
           .mockResolvedValueOnce([]),
         delete: jest.fn().mockResolvedValue({}),
       },
-      invoice: { update: jest.fn().mockResolvedValue({}) },
+      invoice: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'inv-1', status: 'INVOICED', supplierId: 'sup-1', currency: 'USD' }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      supplierCharge: {
+        findMany: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
     };
 
     const adjusted = await detachBookingFromInvoices(tx, 'bk-1');
 
     expect(adjusted).toBe(1);
+    // Cancelling a document that will never pay also releases everything it
+    // was holding — nothing is owed on a void invoice.
+    expect(tx.supplierCharge.updateMany).toHaveBeenCalledWith({
+      where: { invoiceId: 'inv-1' },
+      data: { invoiceId: null },
+    });
     expect(tx.invoice.update).toHaveBeenCalledWith({
       where: { id: 'inv-1' },
-      data: { status: 'CANCELLED', grossTotal: 0, commissionTotal: 0, netTotal: 0, bookingCount: 0 },
+      data: { status: 'CANCELLED', grossTotal: 0, commissionTotal: 0, chargesTotal: 0, netTotal: 0, bookingCount: 0 },
     });
   });
 
@@ -521,7 +590,19 @@ describe('detachBookingFromInvoices — cancellation keeps unpaid invoices hones
           .mockResolvedValueOnce([{ grossAmount: '80', platformCommission: '13.6', supplierPayout: '66.4' }]), // inv-b keeps one
         delete: jest.fn().mockResolvedValue({}),
       },
-      invoice: { update: jest.fn().mockResolvedValue({}) },
+      invoice: {
+        findUnique: jest.fn(({ where }) => Promise.resolve({
+          id: where.id,
+          status: 'INVOICED',
+          supplierId: 'sup-1',
+          currency: 'USD',
+        })),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      supplierCharge: {
+        findMany: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
     };
 
     const adjusted = await detachBookingFromInvoices(tx, 'bk-1');
@@ -529,11 +610,11 @@ describe('detachBookingFromInvoices — cancellation keeps unpaid invoices hones
     expect(adjusted).toBe(2);
     expect(tx.invoice.update.mock.calls[0][0]).toEqual({
       where: { id: 'inv-a' },
-      data: { status: 'CANCELLED', grossTotal: 0, commissionTotal: 0, netTotal: 0, bookingCount: 0 },
+      data: { status: 'CANCELLED', grossTotal: 0, commissionTotal: 0, chargesTotal: 0, netTotal: 0, bookingCount: 0 },
     });
     expect(tx.invoice.update.mock.calls[1][0]).toEqual({
       where: { id: 'inv-b' },
-      data: { grossTotal: 80, commissionTotal: 13.6, netTotal: 66.4, bookingCount: 1 },
+      data: { status: 'INVOICED', grossTotal: 80, commissionTotal: 13.6, chargesTotal: 0, netTotal: 66.4, bookingCount: 1 },
     });
   });
 });

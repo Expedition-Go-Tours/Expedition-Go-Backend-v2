@@ -78,6 +78,36 @@ exports.create = catchAsync(async (req, res, next) => {
   });
 });
 
+/**
+ * How much of the supplier's money the platform is holding right now, per
+ * currency — the number the "Create booking" button gates on. The server
+ * enforces the same rule at create and at every collection; this endpoint
+ * exists so the UI can disable the button with a reason instead of letting a
+ * request fail after the fact.
+ */
+exports.cover = catchAsync(async (req, res, next) => {
+  const supplierId = actingSupplier(req);
+  if (!supplierId) return next(new AppError('Not authorized', 401));
+
+  const balance = await supplierBookingService.coverBalance(supplierId);
+  const currencies = Object.entries(balance).map(([currency, b]) => ({
+    currency,
+    available: b.available,
+    eligible: b.eligible,
+    openCharges: b.openCharges,
+  }));
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      // A supplier with no earnings in any currency has no cover at all — the
+      // button disables and explains itself rather than failing on submit.
+      usable: currencies.some((c) => c.available > 0.005),
+      currencies,
+    },
+  });
+});
+
 exports.collections = catchAsync(async (req, res, next) => {
   const supplierId = actingSupplier(req);
   const booking = await require('../services/prismaClient').booking.findUnique({

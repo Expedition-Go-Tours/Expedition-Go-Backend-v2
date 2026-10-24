@@ -50,16 +50,46 @@ companion `supplier-created-bookings-ui-audit.md` covers the UI contract.
 - Collections are recorded, never marked as platform payments.
 - Commission follows the **existing** `SupplierCharge` mechanism (the same path
   the cancellation fee uses): an OPEN charge netted off the supplier's next
-  payout request. No second settlement ledger.
-- Policy is server-side config, snapshotted onto the booking; a waiver is an
-  explicit, audited action. The supplier never chooses the rate.
-- Commission applies to money actually COLLECTED, not to unpaid reservations.
+  payout request or invoice. No second settlement ledger.
+- Policy and rate are snapshotted onto the booking at creation
+  (`Booking.commissionRate`, `Booking.commissionPolicy`) and never re-read from
+  config afterwards. Changing the global rate cannot reprice a booking the
+  supplier already quoted a customer for.
+- Commission applies to money actually COLLECTED, not to unpaid reservations:
+  - each `BookingCollection` raises one charge (`SupplierCharge.collectionId`
+    is `@unique`, so a replay cannot double-charge);
+  - a correction reverses the original (voided in place while OPEN, or a
+    negative credit once settled) and raises the corrected amount;
+  - a refund raises a negative credit on the money returned, and a booking
+    refunded to zero has every charge on it voided so it lands on exactly 0;
+  - a waiver is an explicit, audited action. The supplier never chooses the rate.
+- **No credit.** A collection (or a create) is only accepted when the supplier's
+  available balance covers the commission it raises:
+  `available = eligible unpaid earnings − OPEN charges`, per currency, checked
+  inside the transaction under a per-supplier row lock. A supplier with no
+  marketplace earnings cannot create a receivable by reporting offline money;
+  the platform is never owed commission it has no held money to collect from.
+  `GET /finance/commission-cover` exposes the same figure so the UI disables the
+  button with an explanation instead of failing on submit.
+- Settlement is deterministic: credits apply in full, positive charges apply
+  oldest-first and stop at the first that does not fit, so a payout or invoice
+  can never go negative and the remainder carries to the next cycle. A charge
+  reserved by an unpaid invoice stays OPEN until `markInvoicePaid` settles it; a
+  cancelled invoice releases it back to the pool.
 
 ### Payout & invoices
 - `payoutBookingsWhere` and the invoice sweep explicitly exclude
   `origin = 'SUPPLIER_CREATED'` (they are not platform-collected revenue).
 - Their financial truth lives in `BookingCollection` + `SupplierCharge`, and is
-  surfaced in the finance UI as "Recorded as collected" / "you owe …".
+  surfaced in the finance UI as "Recorded as collected" and "Platform charges"
+  (commission on collected money, separate from cancellation fees).
+- Both settlement paths net the same ledger: the v2 payout request applies
+  credits then charges oldest-first, and v3 invoicing reserves charges on the
+  invoice (`Invoice.chargesTotal`, `netTotal = payments − charges`) and settles
+  them when it is marked paid.
+- Invariant, per booking:
+  `sum(non-reversed SUPPLIER_COMMISSION charges) == round(rate × sum(RECORDED collections))`,
+  asserted by the API suite.
 
 ### Notifications
 - Out of the transaction: `enqueueEmail`/`enqueueNotification` after commit
@@ -70,11 +100,16 @@ companion `supplier-created-bookings-ui-audit.md` covers the UI contract.
 ## 4. Endpoints (Ghana namespace — the deployed frontend's namespace)
 
 `POST   /api/travioghana/supplier/bookings`              create (idempotent)
-`POST   /api/travioghana/supplier/bookings/quote`        server-authoritative price
-`GET    /api/travioghana/supplier/bookings/:id/collections`  collection history
-`POST   /api/travioghana/supplier/bookings/:id/collections`  record a collection
+`POST   /api/travioghana/supplier/bookings/quote`        server-authoritative price + commission cover
+`GET    /api/travioghana/supplier/bookings/:id/collections`  collection history + commission ledger
+`POST   /api/travioghana/supplier/bookings/:id/collections`  record a collection or a correction
 `POST   /api/travioghana/supplier/bookings/:id/refunds`      record an offline refund
 `GET    /api/travioghana/supplier/bookings/:id/voucher`      printable confirmation
+`GET    /api/travioghana/supplier/finance/commission-cover`  available balance per currency
+
+`/finance/commission-cover` sits under `bookings.view` (it drives a bookings
+action, not a payout) and lives in the finance namespace because
+`/bookings/:id` would otherwise capture the path.
 
 All behind `protect` + `resolveSupplier` + `requireTeamPermission('bookings.manage')`,
 strict zod bodies, no client control of supplier/origin/status/pricing/commission.
@@ -121,6 +156,16 @@ Delivered and verified (tests executed, not asserted):
       client controls neither
 - [x] Commission = an OPEN `SupplierCharge` per collection (the cancellation
       fee's ledger), waiver recorded; no charge on unpaid reservations
+- [x] Commission ledger is the single source (`commissionLedger.js`): raises on
+      each collection, reverses on correction/refund, zeroes a fully refunded
+      booking, and freezes the rate + policy on the booking at creation
+- [x] No credit: create and collection are refused unless available earnings
+      (`eligibleBookingsWhere` − OPEN charges, per currency) cover the
+      commission, checked under a per-supplier row lock; `GET
+      /finance/commission-cover` powers the disabled button
+- [x] Both settlement paths net the ledger: v2 payout requests (credits first,
+      then positive charges oldest-first, never negative) and v3 invoices
+      (`rebalanceInvoice` reserves/releases, `markInvoicePaid` settles)
 - [x] `payoutBookingsWhere` (and through it `eligibleBookingsWhere`, payout
       requests and the invoice sweep) excludes `SUPPLIER_CREATED` — proven in
       the worst case by `__tests__/api/supplierCreatedBookings.test.js` #10
@@ -128,12 +173,13 @@ Delivered and verified (tests executed, not asserted):
 - [x] Feature flag, off by default, rejected server-side when off (scenario 12)
 - [x] Notifications after commit via the existing queue; a guest with no email
       gets none; relay minted for registered customers, never the real address
-- [x] 21 unit + 14 DB-gated API tests, incl. the twelve named scenarios
+- [x] 22 unit + 24 DB-gated API tests, incl. the twelve named scenarios
       (walk-in cash, MoMo reference, unpaid-then-paid, partials, masked
       registered customer, concurrent last-place race, offline refund, waiver,
       receivable, marketplace unchanged, idempotent resubmission, guest data
-      protected)
-- [x] Wizard + 5 frontend tests; supplier suite 1,019 green, build green
+      protected) plus the gate, a later collection, correction/reversal,
+      refund-to-zero, the frozen rate and the invariant reconciliation
+- [x] Wizard + 5 frontend tests; supplier suite 1,024 green, lint + build green
 - [x] Wizard rebuilt on the dashboard's own language (framer-motion step
       transitions, the app's inline DatePicker scoped to a compact month grid,
       AM/PM time picker, tour cards with cover photos, traveller steppers,
@@ -145,6 +191,11 @@ Delivered and verified (tests executed, not asserted):
       `isFeatureEnabled` the create path enforces with, and the dashboard hides
       the Create booking button when the brand's flag is off — so the flow can
       no longer be offered and then 403
+- [x] The button also disables (with the shortfall in its tooltip) when there
+      is no commission cover, and the wizard shows the shortfall before submit
+- [x] Finance → Payouts "Platform charges" card lists commission and
+      cancellation fees separately, including credits and the invoice/payout a
+      charge settled against; the booking detail shows the per-booking ledger
 - [x] Deployed to production: code live, migration applied, flag on for Ghana
       (`SystemConfig`), API reloaded as `deploy` and verified healthy
 
@@ -158,15 +209,18 @@ Not in this delivery (honest gaps, none of them silent):
       collection-state filters, and CSV columns. The wizard and the API carry
       these facts; the list surfaces do not yet show them.
 - [ ] `GET /bookings/:id/voucher` (printable confirmation).
-- [ ] Per-booking "you owe" line in the finance UI: the commission charge
-      exists and is netted off payout requests, but is not yet listed per
-      booking on the finance page.
+- [ ] Admin settlement screen and a prepaid wallet. Settlement is automatic
+      through the two existing paths (payout request, invoice); a supplier who
+      wants to clear a balance early has no manual "pay now" action yet.
 
 ## 7. What is deliberately NOT here
 - No second pricing engine, no second availability engine.
 - No Stripe involvement for offline money (a POS charge collected outside the
   platform is an offline collection, not a Stripe payment).
 - No email-based account matching for guests.
+- No credit limit / negative-balance allowance. "No credit" is implemented as a
+  cover gate on held earnings, not as a debt ceiling: the platform never books a
+  receivable it has no held money to settle against.
 
 ## 8. Deploy mechanism (observed, not assumed)
 - **Backend:** there is no CI deploy workflow and no cron on the box. `git pull`

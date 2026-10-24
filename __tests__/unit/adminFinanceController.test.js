@@ -589,6 +589,9 @@ describe('adminFinanceController.markInvoicePaid (v3)', () => {
     const tx = {
       invoice: { update: jest.fn().mockResolvedValue({ id: 'inv-1', invoiceNumber: 'INV-20261016-0001', status: 'PAID', reference: 'WB-1420' }) },
       booking: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      // Charges reserved by this invoice settle with it — the moment the
+      // platform's receivable on offline collections is actually collected.
+      supplierCharge: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     };
     prisma.$transaction.mockImplementation(async (cb) => cb(tx));
     prisma.invoice.findUnique

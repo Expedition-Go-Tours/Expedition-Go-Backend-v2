@@ -16,11 +16,30 @@
  */
 jest.mock('../../src/core/services/prismaClient', () => ({
   tour: { findUnique: jest.fn() },
-  booking: { create: jest.fn(), findUnique: jest.fn() },
+  booking: {
+    create: jest.fn(),
+    findUnique: jest.fn(),
+    // The no-credit gate sums eligible earnings per currency. Generous here so
+    // these boundary tests are about the booking rules, not the balance.
+    groupBy: jest.fn(() => Promise.resolve([{ currency: 'USD', _sum: { supplierPayout: 100000 } }])),
+  },
   bookingGuest: { create: jest.fn() },
-  bookingCollection: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
+  bookingCollection: {
+    create: jest.fn(),
+    findUnique: jest.fn(),
+    findFirst: jest.fn(),
+    findMany: jest.fn(),
+    update: jest.fn(),
+  },
   bookingIdempotencyKey: { findUnique: jest.fn(), upsert: jest.fn() },
-  supplierCharge: { create: jest.fn() },
+  supplierCharge: {
+    create: jest.fn(({ data }) => Promise.resolve({ id: 'charge-1', ...data })),
+    findUnique: jest.fn(() => Promise.resolve(null)),
+    findMany: jest.fn(() => Promise.resolve([])),
+    update: jest.fn(),
+    updateMany: jest.fn(() => Promise.resolve({ count: 0 })),
+    groupBy: jest.fn(() => Promise.resolve([])),
+  },
   bookingCounter: { upsert: jest.fn() },
   $transaction: jest.fn((fn) => fn(globalThis.__tx)),
   $queryRawUnsafe: jest.fn(),
@@ -99,7 +118,12 @@ beforeEach(() => {
   generateBookingNumber.mockResolvedValue('TRA-1-2026-01');
   prisma.bookingIdempotencyKey.findUnique.mockResolvedValue(null);
   prisma.bookingGuest.create.mockResolvedValue({ id: 'guest-1' });
-  prisma.booking.create.mockResolvedValue({ id: 'b-1', bookingNumber: 'TRA-1-2026-01', currency: 'USD', grossAmount: 400 });
+  prisma.booking.create.mockImplementation(({ data }) =>
+    Promise.resolve({ id: 'b-1', ...data }),
+  );
+  // Echo what was written, so the commission ledger sees the same amount the
+  // caller recorded rather than `undefined`.
+  prisma.bookingCollection.create.mockImplementation(({ data }) => Promise.resolve({ id: 'c-1', ...data }));
 });
 
 describe('the feature flag is a BACKEND control', () => {
@@ -243,12 +267,14 @@ describe('commission', () => {
       collection: { amount: 100, method: 'CASH' }, // partial collection
     });
 
-    // The charge is computed from the collection, not from grossAmount.
-    expect(calculateCommission).toHaveBeenLastCalledWith(100);
+    // The rate is taken once, from the platform, and frozen on the booking; the
+    // CHARGE is computed from the money this collection records (15% of 100),
+    // never from grossAmount.
+    expect(calculateCommission).toHaveBeenLastCalledWith(400);
     const charge = prisma.supplierCharge.create.mock.calls[0][0].data;
     expect(charge.reason).toBe('SUPPLIER_COMMISSION');
     expect(charge.status).toBe('OPEN'); // netted off the next payout request
-    expect(Number(charge.amount)).toBe(60);
+    expect(Number(charge.amount)).toBe(15);
   });
 
   it('raises no charge for an unpaid reservation', async () => {
@@ -311,6 +337,7 @@ describe('collections', () => {
       tour: { supplierId: SUPPLIER },
     });
     prisma.bookingCollection.findUnique.mockResolvedValue(null);
+    prisma.bookingCollection.findFirst.mockResolvedValue(null);
     prisma.bookingCollection.findMany.mockResolvedValue([]);
     prisma.bookingCollection.create.mockResolvedValue(collectionRow());
     prisma.bookingCollection.update.mockResolvedValue({ id: 'c-0', status: 'REVERSED' });
@@ -365,6 +392,8 @@ describe('collections', () => {
   });
 
   it('keeps a correction auditable: the original is reversed, not edited', async () => {
+    prisma.bookingCollection.findFirst.mockResolvedValue(collectionRow({ id: 'c-0', amount: 300 }));
+
     await supplierBookingService.recordCollection({
       bookingId: 'b-1', supplierId: SUPPLIER, actorId: ACTOR,
       amount: 200, method: 'CASH', idempotencyKey: 'coll-key-0005',

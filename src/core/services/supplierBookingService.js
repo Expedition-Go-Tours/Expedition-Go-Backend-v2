@@ -6,11 +6,12 @@
  *
  * This module deliberately REUSES every existing engine:
  *   pricing        tourHelpers.calculateTourPrice (the only pricing engine)
- *   commission     stripeHelpers.calculateCommission (server-side rate)
+ *   commission     commissionLedger (rate frozen on the booking, charged on
+ *                  money actually collected — see that module for the rules)
  *   availability   availabilityCore.evaluateBookingAvailability, inside a
  *                  transaction that has locked the tour row
  *   charges        SupplierCharge — the same OPEN-charge ledger the
- *                  cancellation fee uses, netted off the next payout request
+ *                  cancellation fee uses, netted off the next payout
  *   numbers        bookingHelpers.generateBookingNumber
  *
  * It does NOT create a second pricing engine, a second availability engine or
@@ -22,9 +23,17 @@
  *  - `payoutStatus` is never advanced. The supplier already holds this money;
  *    paying it out again would pay them twice.
  *  - COMMISSION FOLLOWS MONEY ACTUALLY COLLECTED: an OPEN SupplierCharge is
- *    raised per collection (idempotent per booking+collection), never on an
- *    unpaid reservation. The supplier never chooses the rate — it is read from
- *    config and snapshotted on the booking.
+ *    raised on EVERY collection, positive or negative, linked to the collection
+ *    row that raised it. Never on an unpaid reservation. The rate and policy
+ *    are frozen on the booking at creation and never re-read from config.
+ *  - NO CREDIT: a collection is only accepted when the supplier's available
+ *    balance (eligible unpaid earnings − open charges) covers the commission
+ *    it raises, checked under a per-supplier lock so two concurrent events
+ *    cannot both claim the same balance.
+ *  - `platformCommission` / `supplierPayout` are the MARKETPLACE settlement
+ *    snapshot. A supplier-created booking never settles through that pipeline,
+ *    so they carry 0 and the gross — the charge ledger is the only
+ *    authoritative commission figure for these rows.
  *  - CREATION IS ONE TRANSACTION with the tour row locked; availability is
  *    re-checked inside it, so two suppliers cannot oversell the last seat.
  *  - CREATION IS IDEMPOTENT: the same key + same request replays the original
@@ -46,6 +55,18 @@ const { generateBookingNumber } = require('./bookingHelpers');
 const { logActivity } = require('./auditLogger');
 const { enqueueEmail, enqueueNotification } = require('./queue');
 const logger = require('./logger');
+const {
+  round2,
+  policyFor: frozenPolicyFor,
+  configuredPolicy,
+  commissionFor,
+  coverBalance,
+  assertCover,
+  raiseCollectionCommission,
+  reverseCollectionCommission,
+  zeroBookingCommission,
+  bookingCommission,
+} = require('./commissionLedger');
 
 const ORIGIN = 'SUPPLIER_CREATED';
 
@@ -69,10 +90,12 @@ async function assertFeatureEnabled(brandKey) {
  * Commission policy for supplier-created bookings, read from config. The
  * supplier never supplies this. `APPLY` charges the configured rate on money
  * collected; `WAIVE` records a deliberate, auditable waiver.
+ *
+ * Once a booking exists the policy is FROZEN on it (`Booking.commissionPolicy`)
+ * — this reads config only for bookings that predate that column.
  */
 async function commissionPolicy() {
-  const policy = String(await getConfig('feature.supplierCreatedCommissionPolicy', 'APPLY')).toUpperCase();
-  return policy === 'WAIVE' ? 'WAIVE' : 'APPLY';
+  return configuredPolicy();
 }
 
 function canonicalHash(payload) {
@@ -143,9 +166,21 @@ async function quoteBooking({ supplierId, brandKey, tourId, optionId, travelDate
 
   const commission = await calculateCommission(pricing.total);
   const policy = await commissionPolicy();
+  const currency = pricing.currency || tour.schedulesAndPricing?.pricingSchedules?.currency || 'USD';
+  const rate = policy === 'APPLY' ? commission.rate : 0;
+  // The figure the drawer disables on and the create path enforces — one
+  // rounding rule, so the preview can never disagree with the charge.
+  const required = round2(rate * Number(pricing.total));
+
+  // No credit: the commission must be covered by money the platform is
+  // already holding for this supplier in this currency. This is the SAME
+  // check `createBooking` runs under a lock — here it is only a preview, so
+  // the button never appears enabled for a request the server would refuse.
+  const balance = await coverBalance(supplierId);
+  const line = balance[currency] || { available: 0, eligible: 0, openCharges: 0 };
 
   return {
-    currency: pricing.currency || tour.schedulesAndPricing?.pricingSchedules?.currency || 'USD',
+    currency,
     subtotal: pricing.subtotal,
     discount: pricing.discount || 0,
     total: pricing.total,
@@ -153,8 +188,17 @@ async function quoteBooking({ supplierId, brandKey, tourId, optionId, travelDate
     unavailableReason: availability.ok ? null : availability.reason,
     commission: {
       policy,
-      rate: policy === 'APPLY' ? commission.rate : 0,
-      amount: policy === 'APPLY' ? commission.amount : 0,
+      rate,
+      amount: required,
+    },
+    cover: {
+      currency,
+      available: line.available,
+      eligible: line.eligible,
+      openCharges: line.openCharges,
+      required,
+      sufficient: line.available + 0.005 >= required,
+      shortfall: line.available + 0.005 >= required ? 0 : round2(required - line.available),
     },
   };
 }
@@ -215,7 +259,17 @@ async function createBooking({
       }
     }
 
-    // 2. Lock the tour row — the same lock the checkout path takes. Two
+    // 2. Lock the SUPPLIER row. The no-credit cover check below is a
+    //    read-then-write on a balance other collections also change, so every
+    //    money event for a supplier serialises here first. Lock order is
+    //    always supplier → tour, so two concurrent creates cannot deadlock.
+    const [lockedSupplier] = await tx.$queryRawUnsafe(
+      'SELECT id FROM "User" WHERE id = $1 FOR UPDATE',
+      supplierId,
+    );
+    if (!lockedSupplier) throw new AppError('Supplier not found', 404);
+
+    // 3. Lock the tour row — the same lock the checkout path takes. Two
     //    concurrent creates for the last seat serialize here.
     const [lockedTour] = await tx.$queryRawUnsafe(
       'SELECT id FROM "Tour" WHERE id = $1 AND "supplierId" = $2 FOR UPDATE',
@@ -224,7 +278,7 @@ async function createBooking({
     );
     if (!lockedTour) throw new AppError('Tour not found or not yours', 404);
 
-    // 3. Authoritative availability inside the transaction.
+    // 4. Authoritative availability inside the transaction.
     const tour = await loadTourForBooking(tx, tourId, supplierId);
     const applied = resolveOption(tour, optionId);
     const dateKey = String(travelDate).slice(0, 10);
@@ -236,7 +290,7 @@ async function createBooking({
       throw new AppError(availability.reason || 'No availability for that date', 409);
     }
 
-    // 4. Authoritative price. Never the client's number. The projected tour
+    // 5. Authoritative price. Never the client's number. The projected tour
     //    (see resolveOption) is what the engine prices; the selector still
     //    drives special-offer matching.
     const pricing = await calculateTourPrice(applied.tour, travelers, dateKey, selectedTime || null, optionId || null, null, null);
@@ -244,7 +298,7 @@ async function createBooking({
       throw new AppError(pricing?.error || 'This tour cannot be priced for the selected date and party', 422);
     }
 
-    // 5. An offline collection is money in hand, so it cannot exceed what the
+    // 6. An offline collection is money in hand, so it cannot exceed what the
     //    booking actually costs. `recordCollection` enforces the same ceiling
     //    for later reports; creation must not be a way around it.
     if (collection && Number(collection.amount) > 0) {
@@ -261,7 +315,7 @@ async function createBooking({
       }
     }
 
-    // 6. Guest or registered customer. No fake users, no email matching.
+    // 7. Guest or registered customer. No fake users, no email matching.
     let guestId = null;
     if (!customerId) {
       const created = await tx.bookingGuest.create({
@@ -274,10 +328,25 @@ async function createBooking({
       guestId = created.id;
     }
 
-    // 7. The booking. `origin` is set by the BACKEND; `source` keeps meaning
+    // 8. The booking. `origin` is set by the BACKEND; `source` keeps meaning
     //    which storefront this belongs to and is left to the caller's brand.
     const commission = await calculateCommission(pricing.total);
     const policy = await commissionPolicy();
+    const currency = pricing.currency || 'USD';
+    const frozenRate = policy === 'APPLY' ? commission.rate : 0;
+
+    // NO CREDIT, and the authoritative gate. Required is the commission on the
+    // FULL booking total, not on the initial collection: the supplier must be
+    // able to collect the rest later without the balance failing them. Taken
+    // under the supplier lock above, so concurrent creates cannot both pass.
+    await assertCover({
+      tx,
+      supplierId,
+      currency,
+      required: round2(frozenRate * Number(pricing.total)),
+      verb: 'create this booking',
+    });
+
     // Passed `tx` on purpose: the counter increment joins THIS transaction, so
     // a rolled-back create burns no number and no second connection is opened.
     const bookingNumber = await generateBookingNumber(undefined, tx);
@@ -297,12 +366,18 @@ async function createBooking({
         subtotal: pricing.subtotal,
         grossAmount: pricing.total,
         discounts: pricing.discount || 0,
-        currency: pricing.currency || 'USD',
-        // Commission is snapshotted from config, never from the client. A
-        // waived policy writes zeros and is recorded in the audit trail.
-        commissionRate: policy === 'APPLY' ? commission.rate : 0,
-        platformCommission: policy === 'APPLY' ? commission.amount : 0,
-        supplierPayout: policy === 'APPLY' ? commission.supplierPayout : pricing.total,
+        currency,
+        // Commission is snapshotted from config, never from the client, and
+        // frozen here — every later collection uses this rate and policy, so a
+        // config change can never reprice this booking.
+        commissionRate: frozenRate,
+        commissionPolicy: policy,
+        // The supplier already holds this money; the platform never collected
+        // and will never pay it. `platformCommission` is the MARKETPLACE
+        // settlement snapshot and would be a lie here — the charge ledger is
+        // the authoritative commission figure for a supplier-created booking.
+        platformCommission: 0,
+        supplierPayout: pricing.total,
         specialRequests: specialRequests || null,
         ...(pickupAddress ? { pickup: { address: pickupAddress, ...(pickupAreaName ? { areaName: pickupAreaName } : {}) } } : {}),
         // NOT a platform payment. PENDING means "the platform has not been
@@ -313,9 +388,9 @@ async function createBooking({
       },
     });
 
-    // 8. Initial collection, if the supplier reports money in hand.
+    // 9. Initial collection, if the supplier reports money in hand.
     if (collection && Number(collection.amount) > 0) {
-      await tx.bookingCollection.create({
+      const row = await tx.bookingCollection.create({
         data: {
           bookingId: created.id,
           supplierId,
@@ -331,27 +406,17 @@ async function createBooking({
         },
       });
 
-      // 9. Commission follows money actually collected — an OPEN charge the
-      //    payout request machinery already nets off. Idempotent per booking:
-      //    a replayed create cannot raise it twice (the create above cannot
-      //    run twice either — the idempotency key claims the slot).
-      if (policy === 'APPLY') {
-        const commissionOnCollection = await calculateCommission(collection.amount);
-        await tx.supplierCharge.create({
-          data: {
-            supplierId,
-            bookingId: created.id,
-            amount: commissionOnCollection.amount,
-            currency: created.currency,
-            reason: 'SUPPLIER_COMMISSION',
-            status: 'OPEN',
-            notes: `Commission on offline collection (${collection.method}) — policy APPLY`,
-          },
-        });
-      }
+      // 10. Commission follows the money this row records. Raised through the
+      //     shared ledger so this path and `/collections` cannot drift apart.
+      await raiseCollectionCommission(tx, {
+        booking: { ...created, commissionPolicy: policy },
+        collection: row,
+        supplierId,
+        actorId,
+      });
     }
 
-    // 10. Record the idempotency claim with the booking it produced.
+    // 11. Record the idempotency claim with the booking it produced.
     await tx.bookingIdempotencyKey.upsert({
       where: { supplierId_key: { supplierId, key: String(idempotencyKey) } },
       update: { requestHash, bookingId: created.id },
@@ -375,6 +440,7 @@ async function createBooking({
         total: Number(pricing.total),
         currency: created.currency,
         commissionPolicy: policy,
+        commissionRate: frozenRate,
         collected: collection ? Number(collection.amount) : 0,
       },
     });
@@ -409,7 +475,7 @@ async function createBooking({
   return booking;
 }
 
-/** Collections + outstanding balance for one booking. */
+/** Collections, outstanding balance and the commission ledger, for one booking. */
 async function collectionSummary(bookingId) {
   const rows = await prisma.bookingCollection.findMany({
     where: { bookingId },
@@ -430,13 +496,20 @@ async function collectionSummary(bookingId) {
     total,
     currency: booking?.currency || 'USD',
     state: collected <= 0 ? 'NONE' : collected + 0.005 >= total ? 'FULL' : 'PARTIAL',
+    // "Recorded as collected" is the ledger; this is what the platform is
+    // owed on top of it. Never called "total paid" — the platform was not
+    // paid, the supplier collected the money.
+    commission: await bookingCommission(bookingId),
   };
 }
 
 /**
  * Record money the supplier reports collecting (or returning). Partial
  * collections are separate rows; a correction reverses the original and
- * writes a new one — it never edits history.
+ * writes a new one — it never edits history. Every row moves the commission
+ * ledger: a collection raises its share, a correction takes back the original
+ * and raises the corrected amount, a refund returns the commission on the
+ * money given back.
  */
 async function recordCollection({
   bookingId,
@@ -454,6 +527,14 @@ async function recordCollection({
   if (key.length < 8) throw new AppError('An idempotency key is required', 400);
 
   return prisma.$transaction(async (tx) => {
+    // The no-credit cover check below reads a balance other collections move.
+    // Same lock, and same order (supplier → nothing else here), as create.
+    const [lockedSupplier] = await tx.$queryRawUnsafe(
+      'SELECT id FROM "User" WHERE id = $1 FOR UPDATE',
+      supplierId,
+    );
+    if (!lockedSupplier) throw new AppError('Supplier not found', 404);
+
     const booking = await tx.booking.findUnique({
       where: { id: bookingId },
       include: { tour: { select: { supplierId: true } } },
@@ -475,17 +556,61 @@ async function recordCollection({
       throw new AppError('A non-zero amount is required', 400);
     }
 
+    // A CORRECTION replaces a mis-keyed collection with the right amount: it
+    // must be positive, must point at a row on this booking, and that row must
+    // not already be reversed (reversing twice would take back commission
+    // twice). A REFUND is ordinary money going the other way and carries no
+    // reversesId — mixing the two would double-count, so the two shapes are
+    // kept distinct rather than inferred.
+    let reversedRow = null;
+    if (reversesId) {
+      if (value <= 0) {
+        throw new AppError('A correction must have a positive amount — use the refund endpoint to return money', 400);
+      }
+      reversedRow = await tx.bookingCollection.findFirst({
+        where: { id: reversesId, bookingId },
+      });
+      if (!reversedRow) throw new AppError('The collection being corrected was not found', 404);
+      if (reversedRow.status === 'REVERSED') {
+        throw new AppError('That collection has already been corrected', 409);
+      }
+    }
+
     // A collection may not exceed the outstanding balance; a refund may not
-    // exceed what was collected. No silent overpayments.
+    // exceed what was collected. No silent overpayments. A CORRECTION is
+    // measured against the row it replaces: that money was already counted, so
+    // replacing 400 with 300 is not a second collection of 300.
     const summary = await collectionSummary(bookingId);
-    if (value > 0 && value > summary.outstanding + 0.005) {
+    const ceiling = round2(summary.outstanding + (reversedRow ? Number(reversedRow.amount) : 0));
+    if (value > 0 && value > ceiling + 0.005) {
       throw new AppError(
-        `That exceeds the outstanding balance of ${summary.outstanding} ${summary.currency}`,
+        `That exceeds the outstanding balance of ${ceiling} ${summary.currency}`,
         409,
       );
     }
     if (value < 0 && Math.abs(value) > summary.collected + 0.005) {
       throw new AppError('A refund cannot exceed what was collected', 409);
+    }
+
+    // NO CREDIT. The commission this row raises must be covered by money the
+    // platform already holds for this supplier. A correction is checked on the
+    // NET movement, since it both raises and takes back. Refunds are not
+    // gated: returning money cannot create a receivable.
+    if (value > 0) {
+      const policy = await frozenPolicyFor(booking);
+      let required = commissionFor(booking, value, policy);
+      if (reversedRow) {
+        required = commissionFor(booking, value - Number(reversedRow.amount), policy);
+      }
+      if (required > 0) {
+        await assertCover({
+          tx,
+          supplierId,
+          currency: booking.currency,
+          required,
+          verb: 'record this collection',
+        });
+      }
     }
 
     const row = await tx.bookingCollection.create({
@@ -505,7 +630,46 @@ async function recordCollection({
       },
     });
 
-    if (reversesId) {
+    // ── Commission follows this ledger movement ──
+    const bookingForLedger = {
+      id: booking.id,
+      commissionRate: booking.commissionRate,
+      commissionPolicy: booking.commissionPolicy,
+      currency: booking.currency,
+    };
+
+    if (value < 0) {
+      // A booking refunded to zero owns no commission. Zeroing every charge
+      // rather than crediting each by its own rounded share means rounding
+      // cannot leave a cent behind on a booking nobody owes anything on.
+      const netAfter = round2(summary.collected + value);
+      if (Math.abs(netAfter) < 0.005) {
+        await zeroBookingCommission(tx, { booking: bookingForLedger, actorId });
+      } else {
+        await raiseCollectionCommission(tx, {
+          booking: bookingForLedger,
+          collection: row,
+          supplierId,
+          actorId,
+        });
+      }
+    } else {
+      if (reversedRow) {
+        await reverseCollectionCommission(tx, {
+          booking: bookingForLedger,
+          originalCollection: reversedRow,
+          actorId,
+        });
+      }
+      await raiseCollectionCommission(tx, {
+        booking: bookingForLedger,
+        collection: row,
+        supplierId,
+        actorId,
+      });
+    }
+
+    if (reversedRow) {
       await tx.bookingCollection.update({
         where: { id: reversesId },
         data: { status: 'REVERSED' },
@@ -540,4 +704,6 @@ module.exports = {
   createBooking,
   recordCollection,
   collectionSummary,
+  coverBalance,
+  bookingCommission,
 };

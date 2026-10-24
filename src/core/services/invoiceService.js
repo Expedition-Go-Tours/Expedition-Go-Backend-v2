@@ -38,6 +38,7 @@ const { enqueueNotification } = require('./queue');
 const { invoiceWindowFor, nextInvoiceWindow } = require('./payoutCycles');
 const { resolvePayoutMethod, promoteDueCycles } = require('./payoutRuns');
 const { PAYABLE_BOOKING_STATUSES } = require('./financeHelpers');
+const { applyChargesToInvoice } = require('./commissionLedger');
 
 function toNumber(v) {
   return v == null ? 0 : parseFloat(v);
@@ -68,6 +69,11 @@ function v3BookingsWhere({ supplierId, window }) {
     payoutStatus: 'ELIGIBLE',
     travelDate: { gte: window.start, lte: window.end },
     tour: { supplierId },
+    // Belt and braces, not the primary guard: a supplier-created booking's
+    // paymentStatus is PENDING, so it can never be selected here anyway. But
+    // paying it out would pay the supplier twice for money they already
+    // collected, and that should not depend on one field staying untouched.
+    origin: { not: 'SUPPLIER_CREATED' },
   };
 }
 
@@ -287,7 +293,15 @@ async function markInvoicePaid({ invoiceId, reference, adminUserId, adminEmail }
         data: { payoutStatus: 'PAID' },
       });
     }
-    return updated;
+    // The charges this invoice withheld are now collected — money the
+    // platform was owed on bookings the supplier collected offline, and any
+    // credits it applied. They were reserved (invoiceId set, still OPEN) at
+    // generation; this is the moment they leave the supplier's balance.
+    const settledCharges = await tx.supplierCharge.updateMany({
+      where: { invoiceId: invoice.id, status: 'OPEN' },
+      data: { status: 'SETTLED', settledAt: new Date() },
+    });
+    return { ...updated, settledCharges: settledCharges.count };
   });
 
   await logActivity({
@@ -298,18 +312,86 @@ async function markInvoicePaid({ invoiceId, reference, adminUserId, adminEmail }
     resourceId: invoice.id,
     oldValues: { status: 'APPROVED' },
     newValues: { status: 'PAID', reference: paid.reference },
-    metadata: { invoiceNumber: paid.invoiceNumber, bookings: bookingIds.length },
+    metadata: { invoiceNumber: paid.invoiceNumber, bookings: bookingIds.length, chargesSettled: paid.settledCharges || 0 },
   }).catch(() => {});
 
   return paid;
 }
 
 /**
+ * Recompute an unpaid invoice's money from its remaining line items and its
+ * share of the supplier's open charges.
+ *
+ * Charges are released and re-selected rather than incrementally adjusted:
+ * the greedy oldest-first order is the only thing that makes the result
+ * deterministic no matter how many times it runs, and re-running it after any
+ * change (a detached booking, a new collection, a reversal) cannot drift.
+ *
+ * An invoice left with no line items is cancelled and its charges released in
+ * full — nothing is owed on a document that will never pay.
+ *
+ * @param {object} tx Prisma transaction client (or prisma)
+ * @param {string} invoiceId
+ * @param {object} [opts] options for rows the caller already holds
+ * @param {object} [opts.invoice] the invoice row when the caller already has
+ *   it (a create just wrote it in this same transaction).
+ * @param {object[]} [opts.items] the invoice's line items when the caller
+ *   already has them, so the totals are computed from what was written rather
+ *   than re-read.
+ * @returns {Promise<{status: string, grossTotal: number, commissionTotal:
+ *          number, chargesTotal: number, netTotal: number, bookingCount: number}|null>}
+ */
+async function rebalanceInvoice(tx, invoiceId, { items, invoice: known } = {}) {
+  const client = tx || prisma;
+  const invoice = known || (await client.invoice.findUnique({
+    where: { id: invoiceId },
+    select: { id: true, status: true, supplierId: true, currency: true },
+  }));
+  if (!invoice) return null;
+  if (invoice.status === 'PAID') {
+    // Immutable once paid — its charges settled with it.
+    return { status: invoice.status, grossTotal: 0, commissionTotal: 0, chargesTotal: 0, netTotal: 0, bookingCount: 0 };
+  }
+
+  const lines = items || (await client.invoiceItem.findMany({
+    where: { invoiceId },
+    select: { grossAmount: true, platformCommission: true, supplierPayout: true },
+  }));
+
+  // Release whatever this invoice was holding, then re-select against what
+  // remains. A charge that no longer fits goes back into the open pool for
+  // the next cycle rather than pushing the invoice negative.
+  await client.supplierCharge.updateMany({ where: { invoiceId }, data: { invoiceId: null } });
+
+  if (lines.length === 0) {
+    const money = { status: 'CANCELLED', grossTotal: 0, commissionTotal: 0, chargesTotal: 0, netTotal: 0, bookingCount: 0 };
+    await client.invoice.update({ where: { id: invoiceId }, data: money });
+    return money;
+  }
+
+  const grossTotal = round2(lines.reduce((s, r) => s + toNumber(r.grossAmount), 0));
+  const commissionTotal = round2(lines.reduce((s, r) => s + toNumber(r.platformCommission), 0));
+  const payments = round2(lines.reduce((s, r) => s + toNumber(r.supplierPayout), 0));
+  const { chargesTotal, netTotal } = await applyChargesToInvoice(client, {
+    supplierId: invoice.supplierId,
+    currency: invoice.currency,
+    payments,
+    invoiceId,
+  });
+
+  const money = { status: invoice.status, grossTotal, commissionTotal, chargesTotal, netTotal, bookingCount: lines.length };
+  await client.invoice.update({ where: { id: invoiceId }, data: money });
+  return money;
+}
+
+/**
  * Detach a booking from any unpaid (INVOICED or APPROVED) invoice. Removes
  * the line item and rebalances the invoice's money totals + bookingCount from
- * its remaining items; cancels a now-empty invoice. PAID invoices are left
- * untouched — their ledger rows are immutable and corrections happen via
- * disputes (mirrors detachBookingFromActiveRequests for v2 payout requests).
+ * its remaining items (re-selecting its share of open charges on the way);
+ * cancels a now-empty invoice and releases every charge it held. PAID
+ * invoices are left untouched — their ledger rows are immutable and
+ * corrections happen via disputes (mirrors detachBookingFromActiveRequests
+ * for v2 payout requests).
  *
  * @param {object} tx Prisma transaction client (or prisma)
  * @param {string} bookingId
@@ -326,26 +408,7 @@ async function detachBookingFromInvoices(tx, bookingId) {
   let adjusted = 0;
   for (const item of items) {
     await client.invoiceItem.delete({ where: { id: item.id } });
-    const remaining = await client.invoiceItem.findMany({
-      where: { invoiceId: item.invoiceId },
-      select: { grossAmount: true, platformCommission: true, supplierPayout: true },
-    });
-    if (remaining.length === 0) {
-      await client.invoice.update({
-        where: { id: item.invoiceId },
-        data: { status: 'CANCELLED', grossTotal: 0, commissionTotal: 0, netTotal: 0, bookingCount: 0 },
-      });
-    } else {
-      await client.invoice.update({
-        where: { id: item.invoiceId },
-        data: {
-          grossTotal: round2(remaining.reduce((s, r) => s + parseFloat(r.grossAmount), 0)),
-          commissionTotal: round2(remaining.reduce((s, r) => s + parseFloat(r.platformCommission), 0)),
-          netTotal: round2(remaining.reduce((s, r) => s + parseFloat(r.supplierPayout), 0)),
-          bookingCount: remaining.length,
-        },
-      });
-    }
+    await rebalanceInvoice(client, item.invoiceId);
     adjusted += 1;
   }
   return adjusted;
@@ -404,6 +467,9 @@ async function generateDueInvoices(now = new Date()) {
         payoutStatus: 'ELIGIBLE',
         travelDate: { lte: horizon },
         tour: { supplierId: profile.userId },
+        // See v3BookingsWhere: never pay out money the supplier already
+        // collected themselves.
+        origin: { not: 'SUPPLIER_CREATED' },
       },
       select: {
         id: true,
@@ -459,19 +525,15 @@ async function generateDueInvoices(now = new Date()) {
             await tx.invoiceItem.createMany({
               data: group.items.map((b) => invoiceItemData(b, existing.id)),
             });
-            await tx.invoice.update({
-              where: { id: existing.id },
-              data: {
-                grossTotal: { increment: grossTotal },
-                commissionTotal: { increment: commissionTotal },
-                netTotal: { increment: netTotal },
-                bookingCount: { increment: group.items.length },
-              },
-            });
             await tx.booking.updateMany({
               where: { id: { in: group.items.map((b) => b.id) } },
               data: { payoutStatus: 'INVOICED' },
             });
+            // Rebuilt from the full set of items rather than incremented: an
+            // appended invoice also re-selects the supplier's open charges
+            // against the larger payment, so a commission raised since the
+            // invoice was created is picked up here and netted off it.
+            await rebalanceInvoice(tx, existing.id);
           });
           report.appendedBookings += group.items.length;
         } catch (err) {
@@ -495,6 +557,8 @@ async function generateDueInvoices(now = new Date()) {
                 payoutMethodId: method.id,
                 grossTotal,
                 commissionTotal,
+                // Payment before charges; rebalanceInvoice below nets the
+                // supplier's open charges off this and writes the result.
                 netTotal,
                 currency: group.currency,
                 bookingCount: group.items.length,
@@ -506,13 +570,18 @@ async function generateDueInvoices(now = new Date()) {
               where: { id: { in: group.items.map((b) => b.id) } },
               data: { payoutStatus: 'INVOICED' },
             });
-            return created;
+            const money = await rebalanceInvoice(tx, created.id, { invoice: created, items: group.items });
+            // The invoice as it now stands: payments minus whatever charge
+            // share it carries. Reading the rebalanced figures rather than the
+            // placeholders written at create keeps the notification honest.
+            return { ...created, ...(money || {}) };
           });
           report.invoicesCreated += 1;
           report.bookingsInvoiced += group.items.length;
           createdThisSupplier.push({
             invoiceNumber: invoice.invoiceNumber,
-            netTotal,
+            netTotal: toNumber(invoice.netTotal),
+            chargesTotal: toNumber(invoice.chargesTotal),
             currency: group.currency,
             label: group.window.label,
             paidOn: group.window.paidOn,
@@ -532,6 +601,7 @@ async function generateDueInvoices(now = new Date()) {
         title: 'Your invoice has been generated',
         message: createdThisSupplier
           .map((c) => `${c.invoiceNumber} (${c.label}): ${c.currency} ${c.netTotal.toFixed(2)}`
+            + (c.chargesTotal ? ` after ${c.currency} ${c.chargesTotal.toFixed(2)} in platform charges` : '')
             + ` — payment scheduled ${c.paidOn.toISOString().slice(0, 10)}`)
           .join(' · '),
         data: { invoices: createdThisSupplier.map((c) => c.invoiceNumber) },
@@ -561,4 +631,5 @@ module.exports = {
   markInvoicePaid,
   generateDueInvoices,
   detachBookingFromInvoices,
+  rebalanceInvoice,
 };

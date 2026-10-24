@@ -77,12 +77,16 @@ const describeDb = dbAvailable ? describe : describe.skip;
 const PREFIX = 'scb-';
 const OWNER1 = `${PREFIX}owner1`;
 const OWNER2 = `${PREFIX}owner2`;
+// A supplier with a tour but no marketplace earnings at all — the "no credit"
+// gate's natural subject.
+const OWNER3 = `${PREFIX}owner3`;
 const CUSTOMER = `${PREFIX}customer`;
 const emailFor = (name) => `${name}@example.test`;
 
 let tokens = {};
 const auth = (who) => ({ Authorization: `Bearer ${tokens[who]}` });
 const CREATE = '/api/travioghana/supplier/bookings';
+const SUPPLIER = '/api/travioghana/supplier';
 const quote = (body) => request(app).post(`${CREATE}/quote`).set(auth('owner1')).send(body);
 
 let tourId;
@@ -122,10 +126,12 @@ describeDb('supplier-created bookings & offline payment collection', () => {
   beforeAll(async () => {
     const owner1 = await upsertUser(OWNER1, { name: 'SCB Owner One' });
     const owner2 = await upsertUser(OWNER2, { name: 'SCB Owner Two' });
+    const owner3 = await upsertUser(OWNER3, { name: 'SCB Owner Three' });
     const customer = await upsertUser(CUSTOMER, { name: 'SCB Customer' });
-    userIds.push(owner1.id, owner2.id, customer.id);
+    userIds.push(owner1.id, owner2.id, owner3.id, customer.id);
     await upsertProfile(owner1);
     await upsertProfile(owner2);
+    await upsertProfile(owner3);
 
     const existing = await prisma.tour.findFirst({ where: { slug: `${PREFIX}tour` } });
     if (existing) {
@@ -153,7 +159,59 @@ describeDb('supplier-created bookings & offline payment collection', () => {
     tokens = {
       owner1: signAccessToken({ userId: owner1.id }),
       owner2: signAccessToken({ userId: owner2.id }),
+      owner3: signAccessToken({ userId: owner3.id }),
     };
+
+    // Owner three's tour exists only so the no-credit scenario has somewhere to
+    // point a booking at. No marketplace booking hangs off it, so owner three's
+    // eligible earnings — and therefore their cover — are genuinely zero.
+    const bare = await prisma.tour.findFirst({ where: { slug: `${PREFIX}bare-tour` } });
+    if (!bare) {
+      await prisma.tour.create({
+        data: {
+          supplierId: owner3.id,
+          title: 'SCB Bare Tour',
+          description: 'A tour with no earnings behind it.',
+          slug: `${PREFIX}bare-tour`,
+          photos: [],
+          coverPhoto: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1/seed/scb-bare.jpg',
+          categorization: {},
+          theme: {},
+          productContent: {},
+          schedulesAndPricing: {},
+          bookingAndTickets: {},
+          status: 'ACTIVE',
+        },
+      });
+    }
+
+    // NO CREDIT, fixture side: a supplier-created booking's commission must be
+    // covered by money the platform is already holding for this supplier. With
+    // no eligible earnings there is no cover, every create would be refused,
+    // and the suite would only be testing the gate. One marketplace booking
+    // large enough to cover every scenario below gives the gate something to
+    // be satisfied by, and scenario 13 gives it something to refuse.
+    const cover = await prisma.booking.findFirst({ where: { bookingNumber: `${PREFIX}cover` } });
+    if (!cover) {
+      const created = await prisma.booking.create({
+        data: {
+          bookingNumber: `${PREFIX}cover`,
+          customerId: customer.id,
+          tourId,
+          travelDate: new Date('2026-11-01'),
+          travelers: { adults: 2 },
+          subtotal: 6000,
+          grossAmount: 6000,
+          commissionRate: 0.15,
+          platformCommission: 900,
+          supplierPayout: 5100,
+          status: 'CONFIRMED',
+          paymentStatus: 'SUCCEEDED',
+          payoutStatus: 'ELIGIBLE',
+        },
+      });
+      createIds.push(created.id);
+    }
 
     config['feature.supplierCreatedBookings.ghana'] = 'true';
     config['feature.supplierCreatedCommissionPolicy'] = 'APPLY';
@@ -173,9 +231,9 @@ describeDb('supplier-created bookings & offline payment collection', () => {
       where: { name: { startsWith: PREFIX } },
     });
     await prisma.bookingCounter.deleteMany({ where: { prefix: PREFIX } }).catch(() => {});
-    await prisma.tour.deleteMany({ where: { slug: `${PREFIX}tour` } });
+    await prisma.tour.deleteMany({ where: { slug: { in: [`${PREFIX}tour`, `${PREFIX}bare-tour`] } } });
     await prisma.supplierProfile.deleteMany({ where: { userId: { in: userIds } } }).catch(() => {});
-    await prisma.user.deleteMany({ where: { email: { in: [OWNER1, OWNER2, CUSTOMER].map(emailFor) } } });
+    await prisma.user.deleteMany({ where: { email: { in: [OWNER1, OWNER2, OWNER3, CUSTOMER].map(emailFor) } } });
   });
 
   const body = (over = {}) => ({
@@ -536,6 +594,212 @@ describeDb('supplier-created bookings & offline payment collection', () => {
 
       // The BACKEND refuses — hiding the button is not a control.
       expect(res.status).toBe(403);
+    });
+  });
+
+  describe('13. no credit — the gate is money already held, not a promise', () => {
+    it('refuses a booking the supplier cannot cover, and says by how much', async () => {
+      const owner3Tour = await prisma.tour.findFirst({ where: { slug: `${PREFIX}bare-tour` } });
+      const res = await request(app)
+        .post(CREATE)
+        .set(auth('owner3'))
+        .send(body({ tourId: owner3Tour.id, collection: { amount: 400, method: 'CASH' } }));
+
+      // Nothing was created — the refusal happens inside the transaction, after
+      // the supplier row lock, so it cannot be raced either.
+      expect(res.status).toBe(409);
+      expect(res.body.message).toMatch(/available earnings|available but this needs/i);
+      const count = await prisma.booking.count({
+        where: { tourId: owner3Tour.id, origin: 'SUPPLIER_CREATED' },
+      });
+      expect(count).toBe(0);
+    });
+
+    it('reports the same balance the gate uses', async () => {
+      const rich = await request(app).get(`${SUPPLIER}/finance/commission-cover`).set(auth('owner1'));
+      expect(rich.status).toBe(200);
+      expect(rich.body.data.usable).toBe(true);
+      const usd = rich.body.data.currencies.find((c) => c.currency === 'USD');
+      expect(usd.available).toBeGreaterThan(0);
+      // available is derived, not stored: eligible minus what is already owed.
+      expect(usd.available).toBeCloseTo(usd.eligible - usd.openCharges, 2);
+
+      const bare = await request(app).get(`${SUPPLIER}/finance/commission-cover`).set(auth('owner3'));
+      expect(bare.status).toBe(200);
+      expect(bare.body.data.usable).toBe(false);
+    });
+  });
+
+  describe('14. a later collection raises commission — the leak this ledger closes', () => {
+    it('charges on the money that arrives after creation, not only at creation', async () => {
+      const res = await createBooking();
+      const id = res.body.data.booking.id;
+
+      // Unpaid reservations raise nothing at all.
+      expect(await prisma.supplierCharge.count({ where: { bookingId: id } })).toBe(0);
+
+      const paid = await request(app)
+        .post(`${CREATE}/${id}/collections`)
+        .set(auth('owner1'))
+        .set('Idempotency-Key', 'scb-later-collection')
+        .send({ amount: 400, method: 'MOBILE_MONEY', externalRef: 'MM-LATER-1' });
+      expect(paid.status).toBe(201);
+
+      const charges = await prisma.supplierCharge.findMany({ where: { bookingId: id } });
+      expect(charges).toHaveLength(1);
+      expect(Number(charges[0].amount)).toBe(60); // 15% of 400, the money collected
+      expect(charges[0].status).toBe('OPEN');
+
+      // The booking row is still not claiming a platform payment or payout.
+      const row = await prisma.booking.findUnique({ where: { id } });
+      expect(Number(row.platformCommission)).toBe(0);
+      expect(row.paymentStatus).toBe('PENDING');
+    });
+  });
+
+  describe('15. a correction reverses the original and charges the corrected amount once', () => {
+    it('never double-charges when a mis-keyed collection is replaced', async () => {
+      const res = await createBooking({ collection: { amount: 400, method: 'CASH' } });
+      const id = res.body.data.booking.id;
+
+      const [original] = await prisma.bookingCollection.findMany({ where: { bookingId: id } });
+
+      const corrected = await request(app)
+        .post(`${CREATE}/${id}/collections`)
+        .set(auth('owner1'))
+        .set('Idempotency-Key', 'scb-correction-1')
+        .send({ amount: 300, method: 'CASH', reversesId: original.id });
+      expect(corrected.status).toBe(201);
+
+      const charges = await prisma.supplierCharge.findMany({
+        where: { bookingId: id },
+        orderBy: { createdAt: 'asc' },
+      });
+      // Two rows, one net figure: the original voided in place, the corrected
+      // collection charged on its own amount. 60 − 60 + 45 = 45.
+      expect(charges).toHaveLength(2);
+      const live = charges.filter((c) => c.status !== 'REVERSED');
+      expect(live).toHaveLength(1);
+      expect(Number(live[0].amount)).toBe(45);
+      expect(charges.find((c) => c.status === 'REVERSED').id).toBe(charges[0].id);
+
+      // The corrected row is the only one counted as collected.
+      const summary = await request(app).get(`${CREATE}/${id}/collections`).set(auth('owner1'));
+      expect(summary.body.data.collected).toBe(300);
+      expect(summary.body.data.commission.accrued).toBe(45);
+    });
+
+    it('refuses to correct the same collection twice', async () => {
+      const res = await createBooking({ collection: { amount: 400, method: 'CASH' } });
+      const id = res.body.data.booking.id;
+      const [original] = await prisma.bookingCollection.findMany({ where: { bookingId: id } });
+
+      const first = await request(app)
+        .post(`${CREATE}/${id}/collections`)
+        .set(auth('owner1'))
+        .set('Idempotency-Key', 'scb-correction-once-a')
+        .send({ amount: 200, method: 'CASH', reversesId: original.id });
+      expect(first.status).toBe(201);
+
+      const second = await request(app)
+        .post(`${CREATE}/${id}/collections`)
+        .set(auth('owner1'))
+        .set('Idempotency-Key', 'scb-correction-once-b')
+        .send({ amount: 100, method: 'CASH', reversesId: original.id });
+      expect(second.status).toBe(409);
+    });
+  });
+
+  describe('16. a refund returns the commission, and a full refund lands on exactly zero', () => {
+    it('credits the commission on refunded money', async () => {
+      const res = await createBooking({ collection: { amount: 400, method: 'CASH' } });
+      const id = res.body.data.booking.id;
+
+      const refund = await request(app)
+        .post(`${CREATE}/${id}/refunds`)
+        .set(auth('owner1'))
+        .set('Idempotency-Key', 'scb-refund-partial')
+        .send({ amount: 100, method: 'CASH' });
+      expect(refund.status).toBe(201);
+
+      const summary = await request(app).get(`${CREATE}/${id}/collections`).set(auth('owner1'));
+      // 60 charged on 400, 15 credited on the 100 returned.
+      expect(summary.body.data.collected).toBe(300);
+      expect(summary.body.data.commission.accrued).toBe(45);
+    });
+
+    it('leaves no residue when the whole booking is refunded', async () => {
+      const res = await createBooking({ collection: { amount: 400, method: 'CASH' } });
+      const id = res.body.data.booking.id;
+
+      for (const [key, amount] of [['scb-refund-all-a', 150], ['scb-refund-all-b', 250]]) {
+        const r = await request(app)
+          .post(`${CREATE}/${id}/refunds`)
+          .set(auth('owner1'))
+          .set('Idempotency-Key', key)
+          .send({ amount, method: 'CASH' });
+        expect(r.status).toBe(201);
+      }
+
+      const summary = await request(app).get(`${CREATE}/${id}/collections`).set(auth('owner1'));
+      expect(summary.body.data.collected).toBe(0);
+      expect(summary.body.data.commission.accrued).toBe(0);
+      const live = await prisma.supplierCharge.count({
+        where: { bookingId: id, status: { not: 'REVERSED' } },
+      });
+      expect(live).toBe(0);
+    });
+  });
+
+  describe('17. the rate is frozen at creation', () => {
+    it('does not reprice a booking when the platform changes its rate', async () => {
+      const res = await createBooking();
+      const id = res.body.data.booking.id;
+      const row = await prisma.booking.findUnique({ where: { id } });
+      expect(Number(row.commissionRate)).toBe(0.15);
+      expect(row.commissionPolicy).toBe('APPLY');
+
+      config['commission.default_rate'] = '0.5';
+      try {
+        const paid = await request(app)
+          .post(`${CREATE}/${id}/collections`)
+          .set(auth('owner1'))
+          .set('Idempotency-Key', 'scb-frozen-rate')
+          .send({ amount: 400, method: 'CASH' });
+        expect(paid.status).toBe(201);
+      } finally {
+        delete config['commission.default_rate'];
+      }
+
+      const charges = await prisma.supplierCharge.findMany({ where: { bookingId: id } });
+      // 15% of 400 — the rate the supplier quoted their customer — not 50%.
+      expect(Number(charges[0].amount)).toBe(60);
+    });
+  });
+
+  describe('18. the ledger reconciles with the money actually collected', () => {
+    it('sums non-reversed charges to rate × recorded collections, per booking', async () => {
+      const bookings = await prisma.booking.findMany({
+        where: { id: { in: createIds }, origin: 'SUPPLIER_CREATED' },
+        select: { id: true, commissionRate: true },
+      });
+
+      for (const booking of bookings) {
+        const [collections, charges] = await Promise.all([
+          prisma.bookingCollection.findMany({
+            where: { bookingId: booking.id, status: 'RECORDED' },
+            select: { amount: true },
+          }),
+          prisma.supplierCharge.findMany({
+            where: { bookingId: booking.id, reason: 'SUPPLIER_COMMISSION', status: { not: 'REVERSED' } },
+            select: { amount: true },
+          }),
+        ]);
+        const collected = collections.reduce((s, c) => s + Number(c.amount), 0);
+        const charged = charges.reduce((s, c) => s + Number(c.amount), 0);
+        const expected = Math.round(Number(booking.commissionRate) * collected * 100) / 100;
+        expect(charged).toBeCloseTo(expected, 2);
+      }
     });
   });
 });

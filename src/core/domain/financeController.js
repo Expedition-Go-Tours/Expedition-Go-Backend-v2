@@ -536,24 +536,39 @@ exports.getSupplierCharges = catchAsync(async (req, res, next) => {
     include: {
       booking: { select: { id: true, bookingNumber: true, travelDate: true, status: true } },
       payoutRequest: { select: { id: true, requestNumber: true, status: true } },
+      invoice: { select: { id: true, invoiceNumber: true, status: true } },
+      reversalOf: { select: { id: true, amount: true } },
     },
   });
 
+  // A charge is either commission on money the supplier collected offline or a
+  // cancellation fee. Both settle through the same ledger, but they mean
+  // different things to the supplier, so they are labelled and totalled apart.
+  const labelFor = (c) => (c.reason === 'SUPPLIER_COMMISSION'
+    ? 'Commission on money collected'
+    : 'Cancellation fee');
+
   const openTotals = {};
+  const openByReason = { SUPPLIER_COMMISSION: {}, CANCELLATION_FEE: {} };
   for (const c of charges) {
     if (c.status !== 'OPEN') continue;
-    openTotals[c.currency] = Math.round(((openTotals[c.currency] || 0) + toNumber(c.amount)) * 100) / 100;
+    const amount = toNumber(c.amount);
+    openTotals[c.currency] = Math.round(((openTotals[c.currency] || 0) + amount) * 100) / 100;
+    const bucket = c.reason === 'SUPPLIER_COMMISSION' ? openByReason.SUPPLIER_COMMISSION : openByReason.CANCELLATION_FEE;
+    bucket[c.currency] = Math.round(((bucket[c.currency] || 0) + amount) * 100) / 100;
   }
 
   res.status(200).json({
     status: 'success',
     data: {
       openTotals,
+      openByReason,
       charges: charges.map((c) => ({
         id: c.id,
         amount: toNumber(c.amount),
         currency: c.currency,
         reason: c.reason,
+        label: labelFor(c),
         status: c.status,
         notes: c.notes,
         createdAt: c.createdAt,
@@ -563,6 +578,16 @@ exports.getSupplierCharges = catchAsync(async (req, res, next) => {
         travelDate: c.booking?.travelDate || null,
         payoutRequestId: c.payoutRequestId,
         payoutRequestNumber: c.payoutRequest?.requestNumber || null,
+        // A charge is reserved by an unpaid invoice before it is paid, so the
+        // supplier can see where it is going before it settles.
+        invoiceId: c.invoiceId || null,
+        invoiceNumber: c.invoice?.invoiceNumber || null,
+        invoiceStatus: c.invoice?.status || null,
+        // Negative rows are credits: a correction or refund of a charge that had
+        // already settled, landing on the next payout or invoice.
+        isCredit: toNumber(c.amount) < 0,
+        reversalOfId: c.reversalOfId || null,
+        reversalOfAmount: c.reversalOf ? toNumber(c.reversalOf.amount) : null,
       })),
     },
   });

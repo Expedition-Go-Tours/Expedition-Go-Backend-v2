@@ -1027,6 +1027,11 @@ model Booking {
   commissionRate     Decimal @db.Decimal(5, 4) // e.g., 0.1500 for 15%
   platformCommission Decimal @map("commissionAmount") @db.Decimal(10, 2)
   supplierPayout     Decimal @db.Decimal(10, 2)
+  // Supplier-created bookings only: the policy this deal was struck under,
+  // frozen at creation. Every later collection uses `commissionRate` + this
+  // policy, so a config change can never retroactively reprice a booking.
+  // Null on marketplace bookings and on rows created before this column.
+  commissionPolicy   String?
 
   // Finance v2 — fund lifecycle (see BookingPayoutStatus enum)
   payoutStatus BookingPayoutStatus @default(PENDING)
@@ -1474,6 +1479,11 @@ model BookingCollection {
   // money the supplier says they hold.
   idempotencyKey String
 
+  // The commission this collection raised, if any. One charge per collection
+  // row, enforced by a unique index — the ledger's idempotency lives in the
+  // database, not in application code.
+  charges SupplierCharge[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1530,8 +1540,15 @@ model Invoice {
   grossTotal      Decimal @db.Decimal(10, 2)
   commissionTotal Decimal @db.Decimal(10, 2)
   netTotal        Decimal @db.Decimal(10, 2)
+  // OPEN platform charges netted off this invoice (positive = what was
+  // withheld, negative = credits applied). netTotal = payments − chargesTotal.
+  chargesTotal    Decimal @default(0) @db.Decimal(10, 2)
   currency        String  @default("USD")
   bookingCount    Int
+
+  // Charges reserved against (or settled by) this invoice. Reservations stay
+  // OPEN until the invoice is paid; a cancelled invoice releases them.
+  charges SupplierCharge[]
 
   // Destination account snapshot at generation time (any PayoutMethod:
   // bank transfer, mobile money, or PayPal — as configured by the supplier)
@@ -1638,12 +1655,32 @@ model SupplierCharge {
   currency String  @default("USD")
 
   reason String @default("SUPPLIER_CANCELLATION_FEE")
-  // OPEN (awaiting deduction) | SETTLED (netted off a payout request) | WAIVED
+  // OPEN (awaiting deduction) | SETTLED (netted off a payout request or a paid
+  // invoice) | WAIVED (deliberately forgiven) | REVERSED (the collection it
+  // was raised on was corrected; a compensating credit now offsets it).
+  // Kept a String, not an enum, so a new state cannot need a migration.
   status String @default("OPEN")
 
-  // Set when the charge is collected via a payout request
+  // The commission a collection raised. Unique: a retried collection cannot
+  // raise the charge twice, and a compensation can never double-offset.
+  // A cancellation fee has no collection, so this stays null.
+  collectionId String?             @unique
+  collection   BookingCollection?  @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+
+  // Settlement reference: which payout request or invoice collected this.
+  // An unpaid invoice RESERVES the charge (invoiceId set, still OPEN) so two
+  // invoices cannot both claim it; a paid invoice settles it.
   payoutRequestId String?
   payoutRequest   PayoutRequest? @relation(fields: [payoutRequestId], references: [id], onDelete: SetNull)
+
+  invoiceId String?
+  invoice   Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  // A compensating credit for a charge that could not simply be REVERSED —
+  // one that was already settled. Never mutates a paid document.
+  reversalOfId String?            @unique
+  reversalOf   SupplierCharge?    @relation("ChargeReversal", fields: [reversalOfId], references: [id], onDelete: SetNull)
+  reversals    SupplierCharge[]   @relation("ChargeReversal")
 
   settledAt DateTime?
   notes     String?
@@ -1656,6 +1693,8 @@ model SupplierCharge {
   @@index([supplierId, status])
   @@index([bookingId])
   @@index([payoutRequestId])
+  @@index([invoiceId])
+  @@index([reversalOfId])
 }
 
 // ── Finance v2: supplier-initiated refund requests ──
