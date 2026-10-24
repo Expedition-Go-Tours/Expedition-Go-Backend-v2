@@ -53,7 +53,8 @@ const { evaluateBookingAvailability } = require('./availabilityCore');
 const { applyOption } = require('./tourOptions');
 const { generateBookingNumber } = require('./bookingHelpers');
 const { logActivity } = require('./auditLogger');
-const { enqueueEmail, enqueueNotification } = require('./queue');
+const { notifySupplierBookingCreated } = require('./supplierBookingNotify');
+const { getBrand } = require('../../../config/brands');
 const logger = require('./logger');
 const {
   round2,
@@ -243,6 +244,18 @@ async function createBooking({
     collection: collection || null,
   });
 
+  // The storefront this booking belongs to. `brandKey` only gates the feature
+  // and colours the response; `source` is what every downstream email, admin
+  // notification and customer link uses to resolve the right brand. Without
+  // it the row defaults to TRAVIO, which no brand registry maps, and a Ghana
+  // booking would email the guest as Travio Africa.
+  const brandSource = getBrand(brandKey).source;
+
+  // An idempotent replay returns the ORIGINAL booking. It must not re-notify:
+  // a network retry would otherwise send the guest a second confirmation and
+  // ping the supplier twice for the same booking.
+  let replayed = false;
+
   const booking = await prisma.$transaction(async (tx) => {
     // 1. Claim the idempotency key FIRST, inside the same transaction: a
     //    concurrent duplicate loses the unique-constraint race and replays.
@@ -255,7 +268,10 @@ async function createBooking({
       }
       if (existing.bookingId) {
         const prior = await tx.booking.findUnique({ where: { id: existing.bookingId } });
-        if (prior) return prior; // replay: the original result, no second booking
+        if (prior) {
+          replayed = true;
+          return prior; // replay: the original result, no second booking
+        }
       }
     }
 
@@ -354,6 +370,9 @@ async function createBooking({
       data: {
         bookingNumber,
         origin: ORIGIN,
+        // Which storefront this belongs to (GHANA for the supplier app). Set
+        // by the backend from the validated brand key, never by the client.
+        source: brandSource,
         customerId: customerId || null,
         guestId,
         tourId,
@@ -416,7 +435,20 @@ async function createBooking({
       });
     }
 
-    // 11. Record the idempotency claim with the booking it produced.
+    // 11. Denormalised supplier counters, in the same transaction. The
+    //     supplier dashboard also recomputes these from bookings; keeping the
+    //     stored copy in step means the two cannot disagree. `supplierPayout`
+    //     is the gross here (the platform pays them nothing for this booking),
+    //     so that is what earnings grow by — commission lives in the ledger.
+    await tx.supplierProfile.updateMany({
+      where: { userId: supplierId },
+      data: {
+        totalBookings: { increment: 1 },
+        totalEarnings: { increment: pricing.total },
+      },
+    });
+
+    // 12. Record the idempotency claim with the booking it produced.
     await tx.bookingIdempotencyKey.upsert({
       where: { supplierId_key: { supplierId, key: String(idempotencyKey) } },
       update: { requestHash, bookingId: created.id },
@@ -450,26 +482,12 @@ async function createBooking({
 
   // ── AFTER COMMIT: notifications. Nothing external runs inside the
   //    transaction, so a slow or failing email can never roll back a booking.
-  try {
-    await enqueueNotification({
-      userId: supplierId,
-      type: 'BOOKING_CREATED_BY_SUPPLIER',
-      title: 'Booking created',
-      message: `Booking ${booking.bookingNumber} was created for ${guest?.name || 'a customer'}.`,
-      data: { bookingId: booking.id, origin: ORIGIN },
-    });
-    // A guest with no email simply gets no mail — the relay is never faked.
-    if (guest?.email) {
-      await enqueueEmail({
-        type: 'supplier-created-booking-confirmation',
-        bookingId: booking.id,
-        data: { bookingId: booking.id, guestName: guest.name, brandKey },
-      });
+  //    A replay returns the original row and must notify nobody.
+  if (!replayed) {
+    const dispatched = await notifySupplierBookingCreated(booking.id);
+    if (!dispatched.loaded) {
+      logger.warn(`[SupplierBooking] notification dispatch could not load ${booking.id}`);
     }
-  } catch (err) {
-    // The booking is committed and correct; a notification failure is logged
-    // for retry/reconciliation, never treated as a failed booking.
-    logger.warn(`[SupplierBooking] notification dispatch failed for ${booking.id}: ${err.message}`);
   }
 
   return booking;

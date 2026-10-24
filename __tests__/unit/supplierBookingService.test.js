@@ -41,6 +41,9 @@ jest.mock('../../src/core/services/prismaClient', () => ({
     groupBy: jest.fn(() => Promise.resolve([])),
   },
   bookingCounter: { upsert: jest.fn() },
+  // Supplier-created bookings move these counters in the same transaction as
+  // the booking, matching what the marketplace path does on settlement.
+  supplierProfile: { updateMany: jest.fn(() => Promise.resolve({ count: 1 })) },
   $transaction: jest.fn((fn) => fn(globalThis.__tx)),
   $queryRawUnsafe: jest.fn(),
 }));
@@ -106,6 +109,7 @@ beforeEach(() => {
     bookingIdempotencyKey: prisma.bookingIdempotencyKey,
     supplierCharge: prisma.supplierCharge,
     bookingCounter: prisma.bookingCounter,
+    supplierProfile: prisma.supplierProfile,
     $queryRawUnsafe: jest.fn().mockResolvedValue([{ id: 'tour-1' }]),
   };
   getConfig.mockImplementation(async (key, def) => {

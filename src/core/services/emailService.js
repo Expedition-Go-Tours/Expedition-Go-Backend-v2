@@ -411,6 +411,9 @@ async function sendNotificationRecipientVerificationEmail({ to, supplierName, ve
 // ---------------------------------------------------------------------------
 const BOOKING_CONTEXT_INCLUDE = {
   customer: { select: { id: true, name: true, email: true, phone: true, photoURL: true } },
+  // Supplier-created bookings address a walk-in guest who has no account.
+  // Without this include their confirmation has no recipient at all.
+  guest: { select: { id: true, name: true, email: true, phone: true } },
   tour: {
     select: {
       id: true,
@@ -805,6 +808,106 @@ async function sendBookingConfirmedEmail(booking) {
     data,
     opts: {
       preheader: `Everything you need for ${base.tourTitle} is inside: your date, the meeting point and your voucher.`,
+    },
+  });
+}
+
+/**
+ * Money facts for an offline (supplier-created) booking.
+ *
+ * `BookingCollection` is the authority for money the supplier reports as in
+ * hand. `paymentStatus` is about the PLATFORM's processor and stays PENDING
+ * here, so it must never be used to describe what the guest paid. Everything
+ * is read fresh from the committed rows, which keeps this email and the
+ * commission ledger in agreement.
+ */
+async function offlineMoneyContext(b) {
+  const currency = b.currency || 'USD';
+  const total = Number(b.grossAmount || 0);
+  const aggregate = await prisma.bookingCollection.aggregate({
+    // Only rows that still stand. A correction reverses the original and
+    // writes a replacement, so summing every row would count the corrected
+    // amount twice. Refund rows are negative and stay RECORDED: they are net
+    // money the supplier no longer holds, which is what "collected" means.
+    where: { bookingId: b.id, status: 'RECORDED' },
+    _sum: { amount: true },
+  });
+  const collected = Number(aggregate?._sum?.amount || 0);
+  const balance = Math.max(0, total - collected);
+  const rate = Number(b.commissionRate || 0);
+  return {
+    collectedLabel: fmt.formatCurrency(collected, currency),
+    balanceLabel: fmt.formatCurrency(balance, currency),
+    commissionRateLabel: `${Math.round(rate * 10000) / 100}%`,
+    offlineCollected: collected,
+    offlineBalance: balance,
+  };
+}
+
+/**
+ * The person a supplier-created booking is FOR: the walk-in guest when there
+ * is one, otherwise the account holder. Never invented, never email-matched.
+ */
+function guestIdentity(b) {
+  const guest = b.guest || {};
+  const customer = b.customer || {};
+  const name = guest.name || b.leadTravelerName || customer.name || 'Guest';
+  const email = String(guest.email || customer.email || '').trim();
+  const phone = guest.phone || b.leadTravelerPhone || customer.phone || '';
+  return { name, email, phone, initials: initialsOf(name) };
+}
+
+/**
+ * The guest's confirmation for a booking the SUPPLIER recorded and (usually)
+ * collected offline. Mirrors the marketplace `booking-confirmed` layout and
+ * copy, with one deliberate difference: the payment block never says the
+ * guest paid the platform. Money is "recorded as collected" by the supplier,
+ * and the remainder is shown as still due to the supplier.
+ */
+async function sendSupplierCreatedBookingEmail(booking) {
+  const b = await resolveBookingContext(booking);
+  const identity = guestIdentity(b);
+  const to = identity.email;
+  // No address on the booking: send nothing rather than guess or relay.
+  if (!to) return null;
+
+  const base = await buildBookingBase(b);
+  const money = await offlineMoneyContext(b);
+  const supplier = b.tour?.supplier || {};
+  const supplierName = supplier.name || 'your tour provider';
+  const hasContact = Boolean(supplier.email || supplier.phone);
+  const supplierContactUrl = supplier.email
+    ? `mailto:${supplier.email}`
+    : supplier.phone
+      ? `tel:${supplier.phone}`
+      : base.supportUrl;
+
+  const data = {
+    ...base,
+    // Address the person the booking is for, not the (possibly absent) account.
+    customerName: identity.name,
+    customerEmail: to,
+    customerPhone: identity.phone || base.customerPhone,
+    customerInitials: identity.initials,
+    leadTravelerName: b.leadTravelerName || identity.name,
+    leadTravelerEmail: b.leadTravelerEmail || to,
+    leadTravelerPhone: b.leadTravelerPhone || identity.phone,
+    leadTravelerInitials: identity.initials,
+    bookingTypeLabel: 'Booked directly with the supplier',
+    supplierContactUrl,
+    supplierContactLabel: hasContact ? 'Contact the supplier' : 'Contact support',
+    ...money,
+    similarTours: await buildSimilarTours(b.tour, base.brandKey, emailUrls.bookingClientOrigin(b)),
+    paidDirectlyNote: `${supplierName} collects payment directly. ${base.brandName} has not taken any payment for this booking.`,
+  };
+
+  return sendRendered({
+    to,
+    subject: `Booking confirmed with ${supplierName} (Ref: ${b.bookingNumber})`,
+    key: 'supplier-created-booking-confirmation',
+    data,
+    opts: {
+      preheader: `${base.tourTitle} - ${base.dateLabel}. Total ${base.totalLabel}, ${money.balanceLabel} still due to ${supplierName}.`,
     },
   });
 }
@@ -1238,6 +1341,63 @@ async function sendSupplierNewBookingEmail(booking) {
     subject: `New confirmed booking — ${base.tourTitle} (Ref: ${base.bookingNumber})`,
     key: 'supplier-new-booking',
     data,
+  });
+}
+
+/**
+ * The supplier's own record of a booking they created offline.
+ *
+ * Unlike `supplier-new-booking`, this must NOT show a platform "payout" or a
+ * platform commission of $0: the supplier already holds the money and the
+ * commission is charged on collections through the ledger. It shows what the
+ * guest owes, what has been recorded as collected, and the frozen commission
+ * rate that applies to future collections.
+ *
+ * The guest contact is deliberately NOT masked here. The supplier typed those
+ * details themselves for this booking, so relaying them to their own inbox
+ * would hide information they already own (see supplierRecipientList; the
+ * `recipient: 'supplier'` mask is dropped on purpose).
+ */
+async function sendSupplierBookingRecordedEmail(booking) {
+  const b = await resolveBookingContext(booking);
+  const base = await buildBookingBase(b);
+  const money = await offlineMoneyContext(b);
+  const identity = guestIdentity(b);
+  const supplier = b.tour?.supplier || {};
+  const rateApplies = (b.commissionPolicy || 'APPLY') === 'APPLY' && Number(b.commissionRate) > 0;
+
+  const data = {
+    ...base,
+    ...money,
+    customerName: identity.name,
+    customerEmail: identity.email,
+    customerPhone: identity.phone,
+    customerInitials: identity.initials,
+    leadTravelerName: b.leadTravelerName || identity.name,
+    leadTravelerEmail: b.leadTravelerEmail || identity.email,
+    leadTravelerPhone: b.leadTravelerPhone || identity.phone,
+    leadTravelerInitials: identity.initials,
+    bookingTypeLabel: 'Recorded by the supplier',
+    commissionNote: rateApplies
+      ? `Commission of ${money.commissionRateLabel} applies to money you record as collected. It is settled from your ${base.brandName} earnings, never added to the guest's price.`
+      : 'Commission is waived on this booking.',
+  };
+
+  const audience = await supplierRecipientList(supplier, 'bookings');
+  // Drop the relay mask on purpose: the supplier entered these guest details
+  // for their own booking, so masking them would hide information they own.
+  delete audience.recipient;
+  // No resolvable inbox: send nothing rather than hand Resend an empty "to".
+  if (!audience.to || audience.to.length === 0) return null;
+
+  return sendRendered({
+    ...audience,
+    subject: `Booking recorded - ${base.tourTitle} (Ref: ${b.bookingNumber})`,
+    key: 'supplier-booking-recorded',
+    data,
+    opts: {
+      preheader: `${base.totalLabel} booking value, ${money.collectedLabel} recorded as collected, ${money.balanceLabel} still to collect.`,
+    },
   });
 }
 
@@ -2326,6 +2486,7 @@ module.exports = {
 
   // customer
   sendBookingConfirmedEmail,
+  sendSupplierCreatedBookingEmail,
   sendReserveLaterConfirmedEmail,
   sendPaymentReminderEmail,
   sendPaymentSuccessfulEmail,
@@ -2348,6 +2509,7 @@ module.exports = {
 
   // supplier
   sendSupplierNewBookingEmail,
+  sendSupplierBookingRecordedEmail,
   sendSupplierReserveLaterEmail,
   sendSupplierPayLaterChargedEmail,
   sendSupplierBookingChangedEmail,

@@ -148,6 +148,67 @@ const customerBookingConfirmed = {
   },
 };
 
+const supplierCreatedConfirmation = {
+  key: 'supplier-created-booking-confirmation',
+  name: 'Customer · Booking recorded by supplier (offline)',
+  build() {
+    return B.shell('Your booking is confirmed', `
+      ${B.mediaHeader({
+        imageVar: 'tourImageUrl',
+        badgeText: '&#10003;&nbsp;&nbsp;Confirmed',
+        badgeColor: 'accent',
+        heading: 'Your booking is confirmed',
+        subtitle: '{{tourTitle}} &middot; {{travelersLabel}}',
+      })}
+      ${B.referenceBar({ reference: '{{bookingNumber}}', right: '{{#if bookedAtLabel}}Booked {{bookedAtLabel}}{{/if}}' })}
+      ${B.paragraph('Hello {{customerName}}, {{supplierName}} recorded this booking for you and your place is confirmed. Everything you need is below.')}
+      ${B.sectionTitle('Key facts')}
+      ${B.statGrid([
+        { icon: 'calendar', label: 'Activity date', value: '{{dateLabel}}', tone: 'green' },
+        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tone: 'blue', if: '{{timeLabel}}' },
+        { icon: 'duration', label: 'Duration', value: '{{durationLabel}}', tone: 'amber', if: '{{durationLabel}}' },
+        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tone: 'purple' },
+      ])}
+      ${B.sectionTitle('Booking details')}
+      ${B.detailCard([
+        { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Booked with', value: '{{supplierName}}' },
+        { label: 'Language', value: '{{languageLabel}}' },
+        { label: 'Booking type', value: '{{bookingTypeLabel}}' },
+      ])}
+      ${B.sectionTitle('Lead traveller')}
+      ${B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{leadTravelerInitials}}', avatarVar: 'leadTravelerAvatarUrl' })}
+      ${customerPickupSection()}
+      ${B.sectionTitle('Payment')}
+      ${B.detailCard([
+        { label: 'Booking total', value: '{{totalLabel}}' },
+        { label: 'Recorded as collected', value: '{{collectedLabel}}' },
+        { label: 'Balance due to the supplier', value: '{{balanceLabel}}' },
+        { label: 'Paid to', value: '{{supplierName}} (directly)' },
+      ])}
+      ${B.callout('{{paidDirectlyNote}}', 'info')}
+      ${B.sectionTitle('Cancellation policy')}
+      {{#if cancelDeadlineLabel}}
+      ${B.callout('Free cancellation until <strong>{{cancelDeadlineLabel}}</strong>.', 'success')}
+      ${B.paragraph('{{cancellationPolicyText}}', { small: true, muted: true })}
+      {{else}}
+      ${B.callout('{{cancellationPolicyText}}', 'warning')}
+      {{/if}}
+      ${B.sectionTitle('What happens next')}
+      ${B.stepList([
+        { title: 'Pay the supplier directly if you have not already', body: 'Your booking total is {{totalLabel}}. {{supplierName}} collects it, not the platform.' },
+        { title: 'Show this email or your booking reference at the meeting point', body: 'Your reference is {{bookingNumber}}.' },
+        { title: 'Arrive 10 minutes before the start time', body: 'A little leeway keeps check-in smooth and the group on schedule.' },
+      ])}
+      ${B.buttons([
+        { label: '{{supplierContactLabel}}', href: '{{supplierContactUrl}}' },
+        { label: 'View the experience', href: '{{tourUrl}}', kind: 'secondary' },
+      ])}
+      ${B.recommendations('Similar activities', 'More experiences travellers love in the same destination.')}
+    `);
+  },
+};
+
 const reserveLaterConfirmed = {
   key: 'reserve-later-confirmed',
   name: 'Customer · Reserve now, pay later',
@@ -737,6 +798,54 @@ const supplierNewBooking = {
         total: '{{payoutAmountLabel}}',
         statusLabel: '&#9679;&nbsp; Scheduled',
       })}
+      ${B.buttons([
+        { label: 'View booking', href: '{{supplierBookingUrl}}' },
+        { label: 'View the experience', href: '{{tourUrl}}', kind: 'secondary' },
+      ])}
+    `);
+  },
+};
+
+const supplierBookingRecorded = {
+  key: 'supplier-booking-recorded',
+  name: 'Supplier · Booking you recorded (offline)',
+  build() {
+    return B.shell('Booking recorded', `
+      ${B.mediaHeader({
+        imageVar: 'tourImageUrl',
+        badgeText: 'Recorded',
+        badgeColor: 'info',
+        heading: 'Booking recorded',
+        subtitle: '{{tourTitle}} &middot; {{travelersLabel}}',
+      })}
+      ${B.referenceBar({ reference: '{{bookingNumber}}', right: '{{#if bookedAtLabel}}Recorded {{bookedAtLabel}}{{/if}}' })}
+      ${B.paragraph('This is your record of a booking you created for {{leadTravelerName}}. The guest pays you directly; the platform has not collected this money.')}
+      ${B.sectionTitle('Key facts')}
+      ${B.statGrid([
+        { icon: 'calendar', label: 'Activity date', value: '{{dateLabel}}', tone: 'green' },
+        { icon: 'clock', label: 'Start time', value: '{{timeLabel}}', tone: 'blue', if: '{{timeLabel}}' },
+        { icon: 'duration', label: 'Duration', value: '{{durationLabel}}', tone: 'amber', if: '{{durationLabel}}' },
+        { icon: 'users', label: 'Travellers', value: '{{travelersLabel}}', tone: 'purple' },
+      ])}
+      ${B.sectionTitle('Booking details')}
+      ${supplierBookingDetailsRows()}
+      {{#if specialRequirements}}
+      ${B.paragraph('Special requests: <strong>{{specialRequirements}}</strong>')}
+      {{/if}}
+      ${B.sectionTitle('Lead traveller')}
+      ${B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{leadTravelerInitials}}', avatarVar: 'leadTravelerAvatarUrl' })}
+      ${B.sectionTitle('Payments you collected')}
+      ${B.summaryRows([
+        { label: 'Booking total', value: '{{totalLabel}}' },
+        { label: 'Recorded as collected', value: '{{collectedLabel}}' },
+        { label: 'Still to collect from the guest', value: '{{balanceLabel}}', total: true },
+      ])}
+      ${B.sectionTitle('Commission')}
+      ${B.detailCard([
+        { label: 'Rate on this booking', value: '{{commissionRateLabel}}' },
+        { label: 'Charged on', value: 'Money recorded as collected' },
+      ])}
+      ${B.callout('{{commissionNote}}', 'info')}
       ${B.buttons([
         { label: 'View booking', href: '{{supplierBookingUrl}}' },
         { label: 'View the experience', href: '{{tourUrl}}', kind: 'secondary' },
@@ -1387,6 +1496,7 @@ const teamInviteRevoked = {
 
 const TEMPLATE_DEFS = [
   customerBookingConfirmed,
+  supplierCreatedConfirmation,
   reserveLaterConfirmed,
   paymentReminder,
   paymentSuccessful,
@@ -1406,6 +1516,7 @@ const TEMPLATE_DEFS = [
   supplierCancellationFee,
   reviewRequest,
   supplierNewBooking,
+  supplierBookingRecorded,
   supplierReserveLater,
   supplierPayLaterCharged,
   supplierBookingChanged,

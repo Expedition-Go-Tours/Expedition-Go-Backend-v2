@@ -122,6 +122,16 @@ const SAMPLE = {
   payoutAmountLabel: '$327.25',
   amountPaidLabel: '$385.00',
   amountPaidTodayLabel: '$0.00',
+  // Supplier-created (offline) money facts. Never "amount paid": the guest
+  // pays the supplier, and the platform only records what the supplier says
+  // they collected.
+  collectedLabel: '$150.00',
+  balanceLabel: '$235.00',
+  commissionRateLabel: '15%',
+  commissionNote: 'Commission of 15% applies to money you record as collected. It is settled from your Travio Ghana earnings, never added to the guest\'s price.',
+  paidDirectlyNote: 'Sample Experiences Ltd collects payment directly. Travio Ghana has not taken any payment for this booking.',
+  supplierContactUrl: 'mailto:ops@example.com',
+  supplierContactLabel: 'Contact the supplier',
   scheduledPaymentLabel: '$385.00',
   paymentAmountLabel: '$385.00',
   paymentMethodLabel: 'Visa •••• 4242',
@@ -166,6 +176,8 @@ const SAMPLE = {
 // Templates touched by the current change set — highlighted in the gallery.
 const CHANGED = new Set([
   'booking-confirmed',
+  'supplier-created-booking-confirmation',
+  'supplier-booking-recorded',
   'supplier-new-booking',
   'supplier-pay-later-charged',
   'supplier-review-invite',
@@ -220,6 +232,24 @@ function listTemplateKeys() {
  * artifact (not the builder output) so a preview always reflects what would
  * actually be sent. Throws for an unknown key.
  */
+/**
+ * Per-template sample corrections.
+ *
+ * The shared sample describes a marketplace booking, so a template whose world
+ * is deliberately different has to say so. An offline booking was not "reserve
+ * now, pay later"; the supplier recorded it and collects the money themselves.
+ */
+const SAMPLE_OVERRIDES = {
+  'supplier-created-booking-confirmation': {
+    bookingTypeLabel: 'Booked directly with the supplier',
+    preheader: 'Booking confirmed with Sample Experiences Ltd - $150.00 recorded as collected',
+  },
+  'supplier-booking-recorded': {
+    bookingTypeLabel: 'Recorded by the supplier',
+    preheader: '$385.00 booking value, $150.00 recorded as collected, $235.00 still to collect',
+  },
+};
+
 function renderTemplateDoc(key) {
   const file = path.join(GENERATED_DIR, `${key}.html`);
   if (!fs.existsSync(file)) {
@@ -227,7 +257,11 @@ function renderTemplateDoc(key) {
     err.knownKeys = listTemplateKeys();
     throw err;
   }
-  return render(fs.readFileSync(file, 'utf8'), { ...SHELL, ...SAMPLE });
+  return render(fs.readFileSync(file, 'utf8'), {
+    ...SHELL,
+    ...SAMPLE,
+    ...(SAMPLE_OVERRIDES[key] || {}),
+  });
 }
 
 /**

@@ -41,6 +41,14 @@ jest.mock('../../src/core/services/emailService', () => ({
   resolveEmailBrand: jest.fn(() => 'ghana'),
 }));
 jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
+jest.mock('../../src/core/services/adminNotificationService', () => ({
+  ...jest.requireActual('../../src/core/services/adminNotificationService'),
+  notifyAdmin: jest.fn(() => Promise.resolve()),
+}));
+jest.mock('../../src/core/services/discordNotifier', () => ({
+  ...jest.requireActual('../../src/core/services/discordNotifier'),
+  notifyDiscord: jest.fn(() => Promise.resolve()),
+}));
 jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url) => url) }));
 jest.mock('../../src/core/services/cancellationRequestService', () => ({
   ...jest.requireActual('../../src/core/services/cancellationRequestService'),
@@ -68,6 +76,9 @@ jest.mock('../../src/core/services/tourHelpers', () => ({
 
 const app = require('../../app');
 const prisma = require('../../src/core/services/prismaClient');
+const queue = require('../../src/core/services/queue');
+const { notifyAdmin } = require('../../src/core/services/adminNotificationService');
+const { notifyDiscord } = require('../../src/core/services/discordNotifier');
 const { signAccessToken } = require('../../config/jwt');
 const { payoutBookingsWhere } = require('../../src/core/services/financeHelpers');
 
@@ -800,6 +811,117 @@ describeDb('supplier-created bookings & offline payment collection', () => {
         const expected = Math.round(Number(booking.commissionRate) * collected * 100) / 100;
         expect(charged).toBeCloseTo(expected, 2);
       }
+    });
+  });
+
+  describe('19. everyone is told, and nobody is told twice', () => {
+    beforeEach(() => {
+      queue.enqueueEmail.mockClear();
+      queue.enqueueNotification.mockClear();
+      notifyAdmin.mockClear();
+      notifyDiscord.mockClear();
+    });
+
+    const callsOf = (mock) => mock.mock.calls.map((call) => call[0]);
+
+    it('notifies the supplier, emails the guest and the supplier, and posts the record to ops', async () => {
+      const res = await createBooking({
+        collection: { amount: 150, method: 'MOBILE_MONEY', externalRef: 'MM-123' },
+      });
+      expect(res.status).toBe(201);
+      const booking = res.body.data.booking;
+
+      const row = await prisma.booking.findUnique({
+        where: { id: booking.id },
+        select: { source: true, tour: { select: { supplierId: true } } },
+      });
+      // The storefront the booking belongs to is persisted, so every email
+      // downstream renders with the Ghana identity instead of falling back.
+      expect(row.source).toBe('GHANA');
+
+      const bell = callsOf(queue.enqueueNotification).find((j) => j.type === 'BOOKING_CREATED_BY_SUPPLIER');
+      expect(bell).toBeDefined();
+      expect(bell.userId).toBe(row.tour.supplierId);
+      expect(bell.message).toContain('$150.00');
+      expect(bell.message).toContain('$250.00');
+
+      const emails = callsOf(queue.enqueueEmail);
+      const guestMail = emails.find((j) => j.type === 'supplier-created-booking-confirmation');
+      const supplierMail = emails.find((j) => j.type === 'supplier-booking-recorded');
+      expect(guestMail).toMatchObject({ bookingId: booking.id });
+      expect(supplierMail).toMatchObject({ bookingId: booking.id });
+
+      expect(notifyAdmin).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'BOOKING_CONFIRMED',
+        title: 'Booking Recorded by Supplier',
+      }));
+      expect(notifyDiscord).toHaveBeenCalledWith(
+        'sales',
+        expect.stringContaining('recorded by'),
+        expect.objectContaining({ title: 'Booking Recorded by Supplier' }),
+      );
+    });
+
+    it('rings a registered customer\'s bell instead of leaving them to the guest email', async () => {
+      const customer = await prisma.user.findUnique({ where: { email: emailFor(CUSTOMER) } });
+      const res = await createBooking({ customerId: customer.id, guest: undefined, collection: { amount: 100, method: 'CASH' } });
+      expect(res.status).toBe(201);
+
+      const bell = callsOf(queue.enqueueNotification).find((j) => j.type === 'BOOKING_CONFIRMED');
+      expect(bell).toBeDefined();
+      expect(bell.userId).toBe(customer.id);
+      expect(bell.message).toContain('recorded your booking');
+      // A registered customer still gets the written confirmation.
+      expect(callsOf(queue.enqueueEmail).some((j) => j.type === 'supplier-created-booking-confirmation')).toBe(true);
+    });
+
+    it('does not notify anyone again when the same request is replayed', async () => {
+      const key = `scb-notify-replay-${Math.random().toString(36).slice(2, 8)}`;
+      const first = await createBooking({ idempotencyKey: key, collection: { amount: 50, method: 'CASH' } });
+      expect(first.status).toBe(201);
+
+      queue.enqueueEmail.mockClear();
+      queue.enqueueNotification.mockClear();
+      notifyAdmin.mockClear();
+      notifyDiscord.mockClear();
+
+      const second = await createBooking({ idempotencyKey: key, collection: { amount: 50, method: 'CASH' } });
+      expect(second.status).toBe(201);
+      expect(second.body.data.booking.id).toBe(first.body.data.booking.id);
+      expect(queue.enqueueEmail).not.toHaveBeenCalled();
+      expect(queue.enqueueNotification).not.toHaveBeenCalled();
+      expect(notifyAdmin).not.toHaveBeenCalled();
+      expect(notifyDiscord).not.toHaveBeenCalled();
+    });
+
+    it('accepts the supplier notification type in the database', async () => {
+      // The enum value the worker inserts. Without the migration this row
+      // throws a Prisma validation error and the job dies silently.
+      const owner = await prisma.user.findUnique({ where: { email: emailFor(OWNER1) } });
+      const notification = await prisma.notification.create({
+        data: {
+          userId: owner.id,
+          type: 'BOOKING_CREATED_BY_SUPPLIER',
+          title: 'Booking recorded',
+          message: 'Enum acceptance check',
+        },
+      });
+      expect(notification.id).toBeDefined();
+      await prisma.notification.delete({ where: { id: notification.id } });
+    });
+
+    it('moves the supplier counters in step with the booking', async () => {
+      const owner = await prisma.user.findUnique({ where: { email: emailFor(OWNER1) } });
+      const before = await prisma.supplierProfile.findUnique({ where: { userId: owner.id } });
+
+      const res = await createBooking({ collection: { amount: 400, method: 'CASH' } });
+      expect(res.status).toBe(201);
+
+      const after = await prisma.supplierProfile.findUnique({ where: { userId: owner.id } });
+      expect(after.totalBookings).toBe(before.totalBookings + 1);
+      // supplierPayout is the gross for a supplier-created booking: the
+      // platform never pays it out, so nothing inflates the payout pipeline.
+      expect(Number(after.totalEarnings)).toBeCloseTo(Number(before.totalEarnings) + 400, 2);
     });
   });
 });

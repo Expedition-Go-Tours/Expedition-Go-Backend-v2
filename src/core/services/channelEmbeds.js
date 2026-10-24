@@ -59,6 +59,43 @@ function salesBookingConfirmed(booking) {
   };
 }
 
+/**
+ * A booking a supplier recorded themselves (walk-in, phone, WhatsApp). The
+ * money was taken offline, so this is deliberately NOT the "confirmed sale"
+ * embed: platform commission on these rows is always 0 until money is
+ * collected, and posting it as a confirmed sale would report money the
+ * platform never received. Tell ops what it is and what was collected.
+ */
+function salesBookingRecorded(booking, { collected, collectedLabel, commissionRateLabel } = {}) {
+  const currency = booking?.currency;
+  const rate = commissionRateLabel
+    || (booking?.commissionRate != null ? `${Math.round(Number(booking.commissionRate) * 100)}%` : '—');
+  const fields = [
+    { name: 'Tour', value: booking?.tour?.title || 'Unknown tour', inline: true },
+    { name: 'Booking value', value: money(booking?.grossAmount, currency), inline: true },
+    { name: 'Recorded as collected', value: collectedLabel || money(collected || 0, currency), inline: true },
+    { name: 'Commission on collected', value: `${rate} of money collected`, inline: true },
+    { name: 'Supplier', value: booking?.tour?.supplier?.name || '—', inline: true },
+    {
+      name: 'Customer',
+      value: booking?.guest?.name || booking?.customer?.name || booking?.leadTravelerName || '—',
+      inline: true,
+    },
+    { name: 'Booking #', value: bookingLink(booking?.bookingNumber), inline: true },
+    { name: 'Payment', value: 'Offline — paid to the supplier, not the platform', inline: false },
+  ];
+  return {
+    content: `Booking ${bookingLink(booking?.bookingNumber)} recorded by ${booking?.tour?.supplier?.name || 'a supplier'} (offline)`,
+    opts: {
+      title: 'Booking Recorded by Supplier',
+      color: COLORS.blue,
+      fields,
+      cooldownKey: booking?.id,
+      timestamp: booking?.createdAt ? new Date(booking.createdAt).toISOString() : new Date().toISOString(),
+    },
+  };
+}
+
 function salesBookingCancelled({ bookingNumber, tour, amount, currency, reason, note, customer, refundSucceeded }) {
   const fields = [
     { name: 'Tour', value: tour || '—', inline: true },
@@ -437,6 +474,7 @@ module.exports = {
   send,
   // sales
   salesBookingConfirmed,
+  salesBookingRecorded,
   salesBookingCancelled,
   salesPaymentFailed,
   salesPaymentRecovered,

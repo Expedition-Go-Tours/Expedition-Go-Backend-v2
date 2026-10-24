@@ -14,6 +14,7 @@ const CATEGORY_BY_TYPE = {
   // Bookings & operational changes
   BOOKING_CONFIRMED: 'bookings',
   BOOKING_CANCELLED: 'bookings',
+  BOOKING_CREATED_BY_SUPPLIER: 'bookings',
   BOOKING_STATUS_UPDATED: 'bookings',
   BOOKING_MODIFIED: 'bookings',
   BOOKING_AWAITING_CONFIRMATION: 'bookings',

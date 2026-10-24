@@ -92,10 +92,32 @@ companion `supplier-created-bookings-ui-audit.md` covers the UI contract.
   asserted by the API suite.
 
 ### Notifications
-- Out of the transaction: `enqueueEmail`/`enqueueNotification` after commit
-  (the repo's durable queue), never inside it.
-- Supplier-facing mail uses the existing relay (`services/supplierContact`) —
-  a guest with no email simply gets no customer mail; the relay is never faked.
+- Out of the transaction, after commit, through `supplierBookingNotify` (the
+  durable queue): one failing channel is logged and never fails the booking.
+- Every audience a marketplace booking reaches is reached here too:
+  - supplier in-app bell (`BOOKING_CREATED_BY_SUPPLIER`; the enum value was
+    missing, so the worker's insert used to fail validation and the job died
+    silently after its retries)
+  - guest email (`supplier-created-booking-confirmation`) in the same visual
+    language as `booking-confirmed`, but only for the guest address on the
+    booking; no invented or relayed address
+  - supplier email record (`supplier-booking-recorded`) to the owner and every
+    verified notification recipient
+  - registered-customer in-app bell (`BOOKING_CONFIRMED`) plus the existing
+    socket push when a `customerId` exists
+  - admin notification and the `#sales` Discord embed
+    (`salesBookingRecorded`)
+- The copy never calls offline money a platform payment. It says "recorded as
+  collected" and "still to collect"; the Discord embed marks the payment as
+  "Offline - paid to the supplier, not the platform"; the supplier mail shows
+  no platform payout because no payout will ever be made for this booking.
+- An idempotent replay notifies nobody: the original row is returned, and the
+  post-commit dispatch is skipped.
+- Supplier-facing mail uses the existing relay (`services/supplierContact`) for
+  customer details; the supplier's own record is the deliberate exception (the
+  supplier entered the guest's details for their own booking).
+- The supplier's denormalised counters (`totalBookings`, `totalEarnings`) move
+  in the same transaction as the booking, matching the dashboard aggregate.
 
 ## 4. Endpoints (Ghana namespace — the deployed frontend's namespace)
 

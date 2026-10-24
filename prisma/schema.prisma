@@ -221,6 +221,7 @@ enum PaymentStatus {
 enum NotificationType {
   BOOKING_CONFIRMED
   BOOKING_CANCELLED
+  BOOKING_CREATED_BY_SUPPLIER // A supplier recorded an offline booking (no platform payment)
   BOOKING_STATUS_UPDATED
   BOOKING_MODIFIED
   PICKUP_UPDATED

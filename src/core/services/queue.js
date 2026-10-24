@@ -444,6 +444,7 @@ const EMAIL_BOOKING_INCLUDE = {
 const EMAIL_JOB_DISPATCH = {
   // customer
   'booking-confirmed': ['sendBookingConfirmedEmail', true],
+  'supplier-created-booking-confirmation': ['sendSupplierCreatedBookingEmail', true],
   'reserve-later-confirmed': ['sendReserveLaterConfirmedEmail', true],
   'payment-reminder': ['sendPaymentReminderEmail', true],
   'payment-successful': ['sendPaymentSuccessfulEmail', true],
@@ -466,6 +467,7 @@ const EMAIL_JOB_DISPATCH = {
   'chat-new-message': ['sendChatMessageEmail', false],
   // supplier
   'supplier-new-booking': ['sendSupplierNewBookingEmail', true],
+  'supplier-booking-recorded': ['sendSupplierBookingRecordedEmail', true],
   'supplier-reserve-later': ['sendSupplierReserveLaterEmail', true],
   'supplier-pay-later-charged': ['sendSupplierPayLaterChargedEmail', true],
   'supplier-booking-changed': ['sendSupplierBookingChangedEmail', true],
