@@ -946,10 +946,16 @@ function contactCard({ name, email, phone, initials, avatarVar = 'customerAvatar
     {{else}}
     <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td width="46" height="46" align="center" style="background-color:${COLORS.navy};border-radius:50%;font-family:${FONT};font-size:16px;font-weight:800;color:#ffffff;">${initials}</td></tr></table>
     {{/if}}`;
-  const line = (icon, value, href) =>
-    value
-      ? `<div class="dm-text" style="font-family:${FONT};font-size:13px;color:${COLORS.body};line-height:1.7;"><span class="dm-muted" style="color:${COLORS.faint};">${icon}</span>&nbsp;&nbsp;<a class="dm-text" href="${href || '#'}" style="color:${COLORS.body};text-decoration:none;">${value}</a></div>`
-      : '';
+  const line = (icon, value, href) => {
+    if (!value) return '';
+    const markup = `<div class="dm-text" style="font-family:${FONT};font-size:13px;color:${COLORS.body};line-height:1.7;"><span class="dm-muted" style="color:${COLORS.faint};">${icon}</span>&nbsp;&nbsp;<a class="dm-text" href="${href || '#'}" style="color:${COLORS.body};text-decoration:none;">${value}</a></div>`;
+    // The value is a placeholder at build time, so the truthiness check above
+    // only removes rows the caller omitted entirely. A placeholder that renders
+    // empty (no relay mintable, no phone supplied) must also remove the row —
+    // otherwise the card prints an icon next to nothing.
+    const placeholder = /^\{\{([A-Za-z0-9_]+)\}\}$/.exec(value);
+    return placeholder ? `{{#if ${placeholder[1]}}}${markup}{{/if}}` : markup;
+  };
   return `
   <tr><td class="pad" style="padding:12px 40px 0 40px;">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-surface" style="background-color:#F4F6F9;border:1px solid ${COLORS.border};border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">

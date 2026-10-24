@@ -13,6 +13,10 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   $disconnect: jest.fn(),
 }));
 
+jest.mock('../../src/core/services/supplierContact', () => ({
+  contactAddressForBooking: jest.fn(),
+}));
+
 // Set BEFORE the requires below: config/emailUrls.js reads CLIENT_URL once at
 // module load, so a later assignment (beforeAll) has no effect and the deep
 // links silently fall back to the default origin.
@@ -20,6 +24,9 @@ process.env.CLIENT_URL = 'https://travioafrica.com';
 
 const { Resend, __send } = require('resend');
 const prisma = require('../../src/core/services/prismaClient');
+const supplierContact = require('../../src/core/services/supplierContact');
+
+const RELAY = 'c-0123456789abcdef@messages.travioghana.com';
 
 beforeAll(() => {
   process.env.RESEND_API_KEY = 're_testkey';
@@ -33,6 +40,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   Resend.mockClear();
   __send.mockResolvedValue({ data: { id: 'msg-123' }, error: null });
+  supplierContact.contactAddressForBooking.mockResolvedValue(RELAY);
 });
 
 const {
@@ -571,6 +579,25 @@ describe('sendSupplierBookingNotification', () => {
     expect(payload.subject).toContain('New confirmed booking');
     expect(payload.html).toContain('John Doe');
     expect(payload.html).toContain('+233501234567');
+  });
+
+  it('passes the supplier id so the guest contact resolves to a relay', async () => {
+    await sendSupplierNewBookingEmail(mockBooking);
+
+    // The regression: buildBookingBase used to omit supplierId, so
+    // contactAddressForBooking returned null without even logging, and every
+    // supplier email showed a blank contact line.
+    expect(supplierContact.contactAddressForBooking).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'b-1',
+        customerId: 'c-1',
+        bookingNumber: 'TB-001',
+        tour: expect.objectContaining({ supplierId: 's-1' }),
+      }),
+    );
+    const payload = __send.mock.calls[0][0];
+    expect(payload.html).toContain(RELAY);
+    expect(payload.html).not.toContain('john@test.com');
   });
 
   it('handles missing customer gracefully', async () => {

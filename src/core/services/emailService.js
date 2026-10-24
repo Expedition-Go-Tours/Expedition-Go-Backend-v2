@@ -589,6 +589,11 @@ async function buildBookingBase(booking, opts = {}) {
     // address (see sendRendered): the real email must not render there.
     bookingId: booking.id,
     customerId: customer.id || booking.customerId || '',
+    // The supplier id is what lets sendRendered resolve the guest's RELAY
+    // address for supplier-facing templates. Omitting it made every supplier
+    // email blank the contact line: contactAddressForBooking returns null
+    // immediately when it has no supplier id.
+    supplierId: supplier.id || tour.supplierId || '',
     tourId: tour.id || booking.tourId || '',
     tourTitle: tour.title || '',
     tourDescription: tour.description || '',

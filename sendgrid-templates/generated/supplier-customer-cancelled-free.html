@@ -200,8 +200,8 @@
     {{/if}}</td>
         <td valign="middle" style="padding:16px 18px 16px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
           <div class="dm-text" style="font-size:15px;font-weight:800;color:#001F3F;line-height:1.3;padding-bottom:3px;">{{leadTravelerName}}</div>
-          <div class="dm-text" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#334155;line-height:1.7;"><span class="dm-muted" style="color:#64748B;">&#9993;</span>&nbsp;&nbsp;<a class="dm-text" href="mailto:{{leadTravelerEmail}}" style="color:#334155;text-decoration:none;">{{leadTravelerEmail}}</a></div>
-          <div class="dm-text" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#334155;line-height:1.7;"><span class="dm-muted" style="color:#64748B;">&#9742;</span>&nbsp;&nbsp;<a class="dm-text" href="#" style="color:#334155;text-decoration:none;">{{leadTravelerPhone}}</a></div>
+          {{#if leadTravelerEmail}}<div class="dm-text" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#334155;line-height:1.7;"><span class="dm-muted" style="color:#64748B;">&#9993;</span>&nbsp;&nbsp;<a class="dm-text" href="mailto:{{leadTravelerEmail}}" style="color:#334155;text-decoration:none;">{{leadTravelerEmail}}</a></div>{{/if}}
+          {{#if leadTravelerPhone}}<div class="dm-text" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#334155;line-height:1.7;"><span class="dm-muted" style="color:#64748B;">&#9742;</span>&nbsp;&nbsp;<a class="dm-text" href="#" style="color:#334155;text-decoration:none;">{{leadTravelerPhone}}</a></div>{{/if}}
         </td>
       </tr>
     </table>

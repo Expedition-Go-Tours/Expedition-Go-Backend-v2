@@ -231,6 +231,19 @@ describe('dark mode variants', () => {
     expect(built).toMatch(/<span class="dm-muted"/);
   });
 
+  it('collapses contact lines whose placeholder renders empty', () => {
+    const built = B.contactCard({
+      name: '{{leadTravelerName}}',
+      email: '{{leadTravelerEmail}}',
+      phone: '{{leadTravelerPhone}}',
+      initials: '{{customerInitials}}',
+    });
+    // An unavailable relay or phone must remove the whole line: a bare icon is
+    // worse than no line, and a placeholder is truthy at build time.
+    expect(built).toContain('{{#if leadTravelerEmail}}');
+    expect(built).toContain('{{#if leadTravelerPhone}}');
+  });
+
   it('tags the payout summary card so its light surface moves with its text', () => {
     const built = B.summaryRows([
       { label: 'Retail value', value: '{{totalLabel}}' },
