@@ -114,8 +114,9 @@ companion `supplier-created-bookings-ui-audit.md` covers the UI contract.
 - An idempotent replay notifies nobody: the original row is returned, and the
   post-commit dispatch is skipped.
 - Supplier-facing mail uses the existing relay (`services/supplierContact`) for
-  customer details; the supplier's own record is the deliberate exception (the
-  supplier entered the guest's details for their own booking).
+  customer details. The supplier's own record shows the guest details the
+  supplier entered for that booking as entered; when the booking belongs to a
+  registered account, that address still goes through the relay.
 - The supplier's denormalised counters (`totalBookings`, `totalEarnings`) move
   in the same transaction as the booking, matching the dashboard aggregate.
 

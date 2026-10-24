@@ -1353,10 +1353,11 @@ async function sendSupplierNewBookingEmail(booking) {
  * guest owes, what has been recorded as collected, and the frozen commission
  * rate that applies to future collections.
  *
- * The guest contact is deliberately NOT masked here. The supplier typed those
- * details themselves for this booking, so relaying them to their own inbox
- * would hide information they already own (see supplierRecipientList; the
- * `recipient: 'supplier'` mask is dropped on purpose).
+ * The guest contact entered by the supplier is not masked here: they typed
+ * those details themselves for this booking, so relaying them to their own
+ * inbox would hide information they already own. An account holder's address
+ * is different — that is platform data, so it still goes through the relay
+ * (see the `recipient` switch at the send call).
  */
 async function sendSupplierBookingRecordedEmail(booking) {
   const b = await resolveBookingContext(booking);
@@ -1392,6 +1393,11 @@ async function sendSupplierBookingRecordedEmail(booking) {
 
   return sendRendered({
     ...audience,
+    // A walk-in guest's details were typed by the supplier for this booking,
+    // so they are shown as entered. A registered account holder's address is
+    // platform data, so that case keeps the relay mask like every other
+    // supplier email.
+    recipient: b.guest ? undefined : 'supplier',
     subject: `Booking recorded - ${base.tourTitle} (Ref: ${b.bookingNumber})`,
     key: 'supplier-booking-recorded',
     data,

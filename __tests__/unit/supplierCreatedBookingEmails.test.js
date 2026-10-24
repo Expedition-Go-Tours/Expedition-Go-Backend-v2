@@ -38,6 +38,10 @@ jest.mock('../../src/core/services/notificationRecipientService', () => ({
   resolveRecipients: jest.fn(async () => [{ email: 'ops@accrawalks.com', recipientId: null }]),
 }));
 
+jest.mock('../../src/core/services/supplierContact', () => ({
+  contactAddressForBooking: jest.fn(async () => 'relay-scb@messages.travioghana.com'),
+}));
+
 process.env.CLIENT_URL = 'https://travioghana.com';
 
 const { Resend, __send } = require('resend');
@@ -229,6 +233,21 @@ describe('sendSupplierBookingRecordedEmail', () => {
     expect(payload.html).toContain('Commission of 15%');
     expect(payload.html).toContain('$150.00');
     expect(payload.html).not.toContain('Your payout');
+  });
+
+  it('relays a registered customer\'s address instead of exposing it', async () => {
+    const booking = buildBooking({
+      guest: null,
+      guestId: null,
+      customerId: 'cus_1',
+      customer: { id: 'cus_1', name: 'Ama Mensah', email: 'ama@example.com', phone: '+233201234567' },
+    });
+    prisma.booking.findUnique.mockResolvedValue(booking);
+
+    await sendSupplierBookingRecordedEmail(booking);
+    const payload = __send.mock.calls[0][0];
+    expect(payload.html).toContain('relay-scb@messages.travioghana.com');
+    expect(payload.html).not.toContain('ama@example.com');
   });
 
   it('says commission is waived when the booking froze a waiver', async () => {
