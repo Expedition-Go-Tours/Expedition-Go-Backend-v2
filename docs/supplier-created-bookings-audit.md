@@ -256,3 +256,22 @@ Not in this delivery (honest gaps, none of them silent):
 - Config flags live in the `SystemConfig` table and are read with a 60s
   in-process cache, so changing one needs no reload but can take up to a minute
   to be picked up by a long-lived process.
+
+## 9. Post-launch corrections (2026-10-24)
+- **Supplier email relay:** the base booking data omitted `supplierId`, so
+  `contactAddressForBooking` returned null before it could look up or mint the
+  relay. Every supplier-facing email blanked the guest contact line. The base
+  now carries the tour supplier id, and the contact card hides a row whose
+  placeholder renders empty. Verified against a real production booking with a
+  read-only render (provider disabled, relay resolver stubbed): the relay is
+  present, the real inbox is not, and no empty `mailto:` is emitted.
+- **Pickup rendering:** the list card and detail panel now both resolve a
+  snapshot through `pickupDisplay`. A storefront snapshot stores `address` as
+  `{ lat, lng, name, address }`; the detail panel previously handed that object
+  to React, and the list card summarised by `areaName` before the street
+  address. Regression tests cover the object shape and the mapper seam.
+- **Dependency security:** patched the npm advisories (`zod`, `multer`,
+  `body-parser`, `follow-redirects`, `ip-address` on the backend; `zod`,
+  `dompurify`, `vitest`, `@vitest/ui`, `undici` on the supplier dashboard).
+  Both `npm audit` runs report zero, with full unit, API and frontend suites
+  green.
