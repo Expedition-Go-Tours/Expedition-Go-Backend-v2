@@ -15,6 +15,12 @@ const { assessEligibility, customerEmailFor } = require('./paymentLinkService');
 
 const ACTIVE_ATTEMPT_STATUSES = ['CREATING', 'ACTIVE'];
 
+// Stripe will not create a Checkout Session shorter than this, and the attempt
+// service refuses below it (paymentLinkService.assertSessionWindow). Offering
+// Send once the remaining window is shorter would advertise an action the
+// server is guaranteed to reject.
+const SESSION_MIN_MS = 30 * 60 * 1000;
+
 const SAFE_FAILURE_REASONS = {
   AUTHENTICATION_REQUIRED: 'The customer must verify the payment with their bank (3D Secure).',
   CARD_DECLINED: 'The saved card was declined.',
@@ -103,7 +109,14 @@ function buildBookingAttention(booking, snapshot = {}, options = {}) {
   const relevantAttempt = liveAttempt || latestAttempt;
   const lastSend = latestSendForBooking(sends, relevantAttempt);
   const emailState = emailStateFor(lastSend);
-  const eligible = eligibility.eligible;
+  // Session life, not merely "before the cutoff": the attempt service refuses
+  // to open a Stripe session with less than 30 minutes of life left, so an
+  // eligible booking inside that floor must not be offered a Send action the
+  // server is guaranteed to reject.
+  const sessionFloorOpen = Boolean(
+    deadlineAt && deadlineAt.getTime() - now.getTime() >= SESSION_MIN_MS,
+  );
+  const eligible = eligibility.eligible && sessionFloorOpen;
   const activityNotStarted = Boolean(
     activityStart && !Number.isNaN(activityStart.getTime())
       && now.getTime() < activityStart.getTime(),

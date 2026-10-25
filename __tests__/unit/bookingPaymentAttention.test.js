@@ -298,6 +298,23 @@ describe('booking attention projection', () => {
     expect(result.actions).toEqual([]);
     expect(result.nextStep).toMatch(/window has closed/i);
   });
+
+  it('stops offering Send once less than the session floor remains', () => {
+    // The issue window runs to 07:00Z (activity 09:00Z minus 2h). Stripe will
+    // not open a session with under 30 minutes of life, so the projection must
+    // not advertise a Send that the attempt service is guaranteed to refuse.
+    const now = new Date('2026-10-31T06:45:00.000Z');
+    const result = attention({
+      travelDate: new Date('2026-10-31T00:00:00.000Z'),
+      selectedTime: '09:00',
+      paymentFailureCode: 'CARD_DECLINED',
+      requiresPaymentActionAt: now,
+    }, {}, { now });
+
+    expect(result.link.canSend).toBe(false);
+    expect(result.actions.map((a) => a.code)).not.toContain('SEND_PAYMENT_LINK');
+    expect(result.nextStep).toMatch(/window has closed/i);
+  });
 });
 
 describe('payment-link eligibility and session window', () => {
