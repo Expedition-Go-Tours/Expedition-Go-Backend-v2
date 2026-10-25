@@ -537,6 +537,22 @@ describe('chatService', () => {
   });
 
   describe('notifyConversationByEmail — brand-correct links', () => {
+    // `bookingClientOriginOrNull` only honours an origin that is allow-listed
+    // at call time. CI has no .env, so without this pin the Africa origin in
+    // the booking test is untrusted and the link falls back to the
+    // conversation brand (Ghana). Keep this suite hermetic instead of relying
+    // on whatever ALLOWED_ORIGINS the developer happens to have locally.
+    const configuredOrigins = process.env.ALLOWED_ORIGINS;
+    beforeAll(() => {
+      process.env.ALLOWED_ORIGINS = [configuredOrigins, 'https://travioafrica.com']
+        .filter(Boolean)
+        .join(',');
+    });
+    afterAll(() => {
+      if (configuredOrigins === undefined) delete process.env.ALLOWED_ORIGINS;
+      else process.env.ALLOWED_ORIGINS = configuredOrigins;
+    });
+
     const conversationFor = (overrides = {}) => ({
       id: 'c-1',
       type: 'USER_SUPPORT',
