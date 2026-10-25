@@ -110,12 +110,16 @@ exports.startPayNow = catchAsync(async (req, res, next) => {
 
   const tour = booking.tour || {};
   const origin = resolveAllowedClientUrl(req);
+  // Prefer the storefront the booking was created on. It was allow-listed and
+  // stored at creation time, so the post-payment redirect stays on the right
+  // brand even when the request's Origin header is missing or untrusted.
   const clientOrigin = booking.clientOrigin || origin;
   // Land the customer back on their booking after payment so the new status
-  // (CONFIRMED / paid) is obvious. Expedition manages bookings in the dashboard;
-  // legacy storefronts use the /booking/:id deep link.
+  // (CONFIRMED / paid) is obvious. The Expedition and Ghana storefronts both
+  // manage bookings in the dashboard; legacy TravioAfrica uses /booking/:id.
   const isExpedition = booking.source === 'EXPEDITION';
-  const successPath = isExpedition
+  const usesDashboard = isExpedition || booking.source === 'GHANA';
+  const successPath = usesDashboard
     ? `/dashboard/bookings?booking=${encodeURIComponent(booking.id)}&paid=1`
     : `/booking/${encodeURIComponent(booking.id)}?paid=1`;
 
@@ -130,7 +134,7 @@ exports.startPayNow = catchAsync(async (req, res, next) => {
     tourCoverPhoto: tour.coverPhoto || (Array.isArray(tour.photos) && tour.photos[0]) || null,
     customerId: req.user.stripeCustomerId || undefined,
     customerEmail: req.user.email || booking.customer?.email,
-    clientUrl: origin,
+    clientUrl: clientOrigin,
     successPath,
     source: isExpedition ? 'expedition' : 'ghana',
   });
