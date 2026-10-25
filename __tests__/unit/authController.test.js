@@ -397,8 +397,35 @@ describe('setCookies', () => {
     expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 401 }));
   });
 
+  it('returns 401 when refreshToken is invalid', async () => {
+    mockVerifyAccessToken.mockReturnValue({ userId: 'user-1' });
+    mockVerifyRefreshToken.mockImplementation(() => { throw new Error('jwt error'); });
+    const req = mockReq({ body: { accessToken: 'valid-at', refreshToken: 'bad-rt' } });
+    const res = mockRes();
+    const next = mockNext();
+
+    await controller.setCookies(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 401 }));
+    expect(mockSetAuthCookies).not.toHaveBeenCalled();
+  });
+
+  it('returns 401 when the tokens belong to different users', async () => {
+    mockVerifyAccessToken.mockReturnValue({ userId: 'user-1' });
+    mockVerifyRefreshToken.mockReturnValue({ userId: 'user-2' });
+    const req = mockReq({ body: { accessToken: 'valid-at', refreshToken: 'valid-rt' } });
+    const res = mockRes();
+    const next = mockNext();
+
+    await controller.setCookies(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 401 }));
+    expect(mockSetAuthCookies).not.toHaveBeenCalled();
+  });
+
   it('returns 200 on success', async () => {
     mockVerifyAccessToken.mockReturnValue({ userId: 'user-1' });
+    mockVerifyRefreshToken.mockReturnValue({ userId: 'user-1' });
     const req = mockReq({ body: { accessToken: 'valid-at', refreshToken: 'valid-rt' } });
     const res = mockRes();
     const next = mockNext();
@@ -406,6 +433,7 @@ describe('setCookies', () => {
     await controller.setCookies(req, res, next);
 
     expect(mockVerifyAccessToken).toHaveBeenCalledWith('valid-at');
+    expect(mockVerifyRefreshToken).toHaveBeenCalledWith('valid-rt');
     expect(mockSetAuthCookies).toHaveBeenCalledWith(res, 'valid-at', 'valid-rt');
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ status: 'success', message: 'Cookies set' });

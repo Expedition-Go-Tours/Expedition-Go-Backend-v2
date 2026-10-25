@@ -190,12 +190,18 @@ exports.setCookies = catchAsync(async (req, res, next) => {
     return next(new AppError('accessToken and refreshToken are required', 400));
   }
 
-  // Validate the access token before setting cookies
+  // Validate both tokens before setting cookies. A mismatched pair would let
+  // one user's access token ride on another user's refresh token and keep the
+  // session alive under the wrong identity.
   try {
-    const { verifyAccessToken } = require('../../../config/jwt');
-    verifyAccessToken(accessToken);
+    const { verifyAccessToken, verifyRefreshToken } = require('../../../config/jwt');
+    const access = verifyAccessToken(accessToken);
+    const refresh = verifyRefreshToken(refreshToken);
+    if (!access?.userId || access.userId !== refresh?.userId) {
+      return next(new AppError('Tokens do not belong to the same user', 401));
+    }
   } catch {
-    return next(new AppError('Invalid access token', 401));
+    return next(new AppError('Invalid access or refresh token', 401));
   }
 
   setAuthCookies(res, accessToken, refreshToken);
