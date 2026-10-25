@@ -40,11 +40,22 @@ function verifyRefreshToken(token) {
 
 const isProduction = process.env.NODE_ENV === 'production';
 
-// Auth cookie domain. Auth is Bearer-first (frontends store the token in
-// localStorage and send the Authorization header), so cookies are secondary;
-// keep the domain config-driven rather than hardcoded to one brand. Defaults
-// to the Travio Africa apex for backward compatibility.
-const COOKIE_DOMAIN = process.env.AUTH_COOKIE_DOMAIN || '.travioafrica.com';
+// Auth cookie scope. Auth is Bearer-first (frontends store the token in
+// localStorage and send the Authorization header), so cookies are secondary.
+// Cookies are host-only by default: a token minted by api.travioghana.com is
+// then sent back only to that API host, never to admin/supplier storefronts
+// (which may run on Vercel) or to a different brand's API. A parent domain
+// such as `.travioafrica.com` is rejected by the browser when the response
+// comes from api.travioghana.com, which silently breaks cookie-based sign-in.
+// Set AUTH_COOKIE_DOMAIN only when a deployment genuinely needs to share the
+// cookie across subdomains.
+const COOKIE_DOMAIN = process.env.AUTH_COOKIE_DOMAIN?.trim() || undefined;
+
+// Before host-only scoping, Africa auth cookies were issued for this parent
+// domain. Clear it on Africa API responses so a stale cookie of the same name
+// cannot shadow the new host-only token. Ghana/Expedition hosts never had a
+// valid parent-domain cookie, so this cleanup is scoped to *.travioafrica.com.
+const LEGACY_COOKIE_DOMAIN = '.travioafrica.com';
 
 const COOKIE_OPTIONS = Object.freeze({
   accessToken: {
@@ -89,9 +100,20 @@ function verifySsoTicket(token) {
   return jwt.verify(token, SSO_TICKET_SECRET);
 }
 
+function clearLegacyAuthCookies(res) {
+  if (!isProduction || COOKIE_DOMAIN) return;
+  if (typeof res.clearCookie !== 'function') return;
+  const hostname = (res.req?.hostname || '').toLowerCase();
+  if (hostname !== 'travioafrica.com' && !hostname.endsWith('.travioafrica.com')) return;
+  const base = { domain: LEGACY_COOKIE_DOMAIN, secure: true, sameSite: 'none' };
+  res.clearCookie('accessToken', { ...base, path: '/' });
+  res.clearCookie('refreshToken', { ...base, path: '/api/auth' });
+}
+
 function setAuthCookies(res, accessToken, refreshToken) {
   res.cookie('accessToken', accessToken, COOKIE_OPTIONS.accessToken);
   res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS.refreshToken);
+  clearLegacyAuthCookies(res);
 }
 
 function clearAuthCookies(res) {
@@ -99,6 +121,7 @@ function clearAuthCookies(res) {
   const refreshOpts = { ...COOKIE_OPTIONS.refreshToken, maxAge: 0 };
   res.cookie('accessToken', '', opts);
   res.cookie('refreshToken', '', refreshOpts);
+  clearLegacyAuthCookies(res);
 }
 
 module.exports = {
