@@ -1,20 +1,26 @@
 jest.mock('../../src/core/services/prismaClient', () => ({
   user: { findFirst: jest.fn(), findUnique: jest.fn(), findMany: jest.fn() },
-  conversation: { findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
+  conversation: { findFirst: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   conversationParticipant: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
   message: { findMany: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), count: jest.fn() },
   chatMessageHide: { upsert: jest.fn(), findMany: jest.fn() },
   notification: { updateMany: jest.fn() },
   adminNotification: { updateMany: jest.fn() },
   systemConfig: { findUnique: jest.fn() },
+  booking: { findUnique: jest.fn() },
 }));
 
-jest.mock('../../src/core/services/queue', () => ({ enqueueNotification: jest.fn() }));
+jest.mock('../../src/core/services/queue', () => ({ enqueueNotification: jest.fn(), enqueueEmail: jest.fn() }));
 jest.mock('../../src/core/services/adminNotificationService', () => ({ notifyAdmin: jest.fn() }));
+jest.mock('../../src/core/services/chatInbound', () => ({
+  ensureConversationToken: jest.fn().mockResolvedValue('c-0123456789abcdef'),
+  replyAddressFor: jest.fn().mockReturnValue('c-0123456789abcdef@messages.travioghana.com'),
+}));
 
 const prisma = require('../../src/core/services/prismaClient');
-const { enqueueNotification } = require('../../src/core/services/queue');
+const { enqueueNotification, enqueueEmail } = require('../../src/core/services/queue');
 const { notifyAdmin } = require('../../src/core/services/adminNotificationService');
+const emailUrls = require('../../config/emailUrls');
 const chatService = require('../../src/core/services/chatService');
 
 describe('chatService', () => {
@@ -38,6 +44,7 @@ describe('chatService', () => {
     prisma.user.findUnique.mockResolvedValue(mockUser);
     prisma.user.findMany.mockResolvedValue([]);
     prisma.conversation.findFirst.mockResolvedValue(mockConversation);
+    prisma.conversation.findUnique.mockResolvedValue({ ...mockConversation, brand: 'ghana', bookingId: null });
     prisma.conversation.create.mockResolvedValue(mockConversation);
     prisma.conversation.update.mockResolvedValue(mockConversation);
     prisma.conversation.delete.mockResolvedValue();
@@ -55,6 +62,8 @@ describe('chatService', () => {
     prisma.notification.updateMany.mockResolvedValue({ count: 1 });
     prisma.adminNotification.updateMany.mockResolvedValue({ count: 1 });
     prisma.systemConfig.findUnique.mockResolvedValue(null);
+    prisma.booking.findUnique.mockResolvedValue(null);
+    enqueueEmail.mockResolvedValue();
   });
 
   describe('getSharedAdminId', () => {
@@ -524,6 +533,147 @@ describe('chatService', () => {
       const findManyArg = prisma.conversationParticipant.findMany.mock.calls[0][0];
       expect(findManyArg.where).toMatchObject({ userId: 'u-1' });
       expect(findManyArg.where.conversation).toBeUndefined();
+    });
+  });
+
+  describe('notifyConversationByEmail — brand-correct links', () => {
+    const conversationFor = (overrides = {}) => ({
+      id: 'c-1',
+      type: 'USER_SUPPORT',
+      brand: 'ghana',
+      bookingId: null,
+      bookingNumber: null,
+      tourTitle: null,
+      ...overrides,
+    });
+
+    const deliverTo = ({ conversation, recipients }) => {
+      prisma.conversation.findUnique.mockResolvedValue(conversation);
+      prisma.conversationParticipant.findMany.mockResolvedValue(
+        recipients.map((u) => ({ userId: u.id })),
+      );
+      prisma.user.findMany.mockResolvedValue(recipients);
+    };
+
+    const sentLink = () => enqueueEmail.mock.calls[0][0].data.link;
+
+    it('sends a Ghana customer to the Ghana storefront, not Expedition', async () => {
+      deliverTo({
+        conversation: conversationFor({ id: 'c-ghana' }),
+        recipients: [{ id: 'cust-1', name: 'Ama', email: 'ama@example.com', roles: ['customer'] }],
+      });
+
+      await chatService.notifyConversationByEmail({
+        conversationId: 'c-ghana',
+        type: 'USER_SUPPORT',
+        senderId: 'admin-1',
+        senderName: 'Support',
+        content: 'Hello',
+      });
+
+      expect(sentLink()).toBe('https://www.travioghana.com/dashboard/chat?conversation=c-ghana');
+    });
+
+    it('keeps Expedition support on the Expedition storefront', async () => {
+      deliverTo({
+        conversation: conversationFor({ id: 'c-exp', type: 'EXPEDITION_CUSTOMER' }),
+        recipients: [{ id: 'cust-1', name: 'Ama', email: 'ama@example.com', roles: ['customer'] }],
+      });
+
+      await chatService.notifyConversationByEmail({
+        conversationId: 'c-exp',
+        type: 'EXPEDITION_CUSTOMER',
+        senderId: 'exp-1',
+        senderName: 'Expedition support',
+        content: 'Hello',
+      });
+
+      expect(sentLink()).toBe(emailUrls.customerChatLink({
+        brandKey: 'ghana',
+        type: 'EXPEDITION_CUSTOMER',
+        conversationId: 'c-exp',
+      }));
+    });
+
+    it('sends an Africa customer to the Africa storefront', async () => {
+      deliverTo({
+        conversation: conversationFor({ id: 'c-africa', brand: 'africa' }),
+        recipients: [{ id: 'cust-1', name: 'Ama', email: 'ama@example.com', roles: ['customer'] }],
+      });
+
+      await chatService.notifyConversationByEmail({
+        conversationId: 'c-africa',
+        type: 'USER_SUPPORT',
+        senderId: 'admin-1',
+        senderName: 'Support',
+        content: 'Hello',
+      });
+
+      expect(sentLink()).toBe('https://travioafrica.com/dashboard/chat?conversation=c-africa');
+    });
+
+    it('uses the booking storefront when the conversation has a booking', async () => {
+      deliverTo({
+        conversation: conversationFor({
+          id: 'c-booking',
+          type: 'SUPPLIER_CUSTOMER',
+          bookingId: 'b-1',
+        }),
+        recipients: [{ id: 'cust-1', name: 'Ama', email: 'ama@example.com', roles: ['customer'] }],
+      });
+      prisma.booking.findUnique.mockResolvedValue({ clientOrigin: 'https://travioafrica.com' });
+
+      await chatService.notifyConversationByEmail({
+        conversationId: 'c-booking',
+        type: 'SUPPLIER_CUSTOMER',
+        senderId: 'supplier-1',
+        senderName: 'Operator',
+        content: 'Hello',
+      });
+
+      expect(prisma.booking.findUnique).toHaveBeenCalledWith({
+        where: { id: 'b-1' },
+        select: { clientOrigin: true },
+      });
+      expect(sentLink()).toBe('https://travioafrica.com/dashboard/chat?conversation=c-booking');
+    });
+
+    it('routes Ghana admin notifications to the Ghana admin app', async () => {
+      deliverTo({
+        conversation: conversationFor({ id: 'c-admin' }),
+        recipients: [{ id: 'admin-1', name: 'Admin', email: 'admin@example.com', roles: ['admin', 'ghana'] }],
+      });
+
+      await chatService.notifyConversationByEmail({
+        conversationId: 'c-admin',
+        type: 'USER_SUPPORT',
+        senderId: 'cust-1',
+        senderName: 'Ama',
+        content: 'Hello',
+      });
+
+      expect(sentLink()).toBe(
+        `${emailUrls.adminBaseForBrand('ghana')}/chat?conversation=c-admin`,
+      );
+    });
+
+    it('routes Ghana supplier notifications to the Ghana dashboard', async () => {
+      deliverTo({
+        conversation: conversationFor({ id: 'c-supplier' }),
+        recipients: [{ id: 'supplier-1', name: 'Operator', email: 'op@example.com', roles: ['supplier', 'ghana'] }],
+      });
+
+      await chatService.notifyConversationByEmail({
+        conversationId: 'c-supplier',
+        type: 'SUPPLIER_CUSTOMER',
+        senderId: 'cust-1',
+        senderName: 'Ama',
+        content: 'Hello',
+      });
+
+      expect(sentLink()).toBe(
+        `${emailUrls.dashboardBaseForBrand('ghana')}/chat?conversation=c-supplier`,
+      );
     });
   });
 

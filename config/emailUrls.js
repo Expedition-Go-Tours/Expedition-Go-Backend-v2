@@ -16,6 +16,7 @@
  */
 
 const { normalizeOrigin, getAllowedClientOrigins } = require('../src/core/services/clientOrigin');
+const { getBrand } = require('./brands');
 
 const CLIENT_URL = (process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/$/, '');
 const DASHBOARD_URL = (process.env.SUPPLIER_DASHBOARD_URL || process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/$/, '');
@@ -30,6 +31,19 @@ const API_URL = (process.env.API_URL || 'http://localhost:5000').replace(/\/$/, 
 const ADMIN_URL = (process.env.ADMIN_URL || process.env.ADMIN_DASHBOARD_URL || API_URL).replace(/\/$/, '');
 // Ghana runs its own admin app; Ghana-scoped requests must link there.
 const GHANA_ADMIN_URL = (process.env.GHANA_ADMIN_DASHBOARD_URL || ADMIN_URL).replace(/\/$/, '');
+
+// Customer storefronts. Ghana and Expedition intentionally have separate
+// buyer apps even though Expedition shares Ghana's supplier/admin stack.
+// Prefer an explicit env override, then the canonical customer domain.
+const GHANA_STOREFRONT_URL = (
+  process.env.GHANA_STOREFRONT_URL || 'https://www.travioghana.com'
+).replace(/\/+$/, '');
+const AFRICA_STOREFRONT_URL = (
+  process.env.AFRICA_STOREFRONT_URL || getBrand('africa').storefrontUrl
+).replace(/\/+$/, '');
+const EXPEDITION_STOREFRONT_URL = (
+  process.env.EXPEDITION_STOREFRONT_URL || getBrand('expedition').storefrontUrl
+).replace(/\/+$/, '');
 
 function adminBaseForRoles(roles) {
   return Array.isArray(roles) && roles.includes('ghana') ? GHANA_ADMIN_URL : ADMIN_URL;
@@ -99,6 +113,55 @@ function bookingClientOrigin(booking) {
   return CLIENT_URL;
 }
 
+/**
+ * Same as bookingClientOrigin, but only returns an explicit allow-listed
+ * origin. Chat links use this because falling back to CLIENT_URL is wrong for
+ * an old Ghana/Expedition booking that predates origin tracking — the caller
+ * should fall back to the conversation's brand instead.
+ */
+function bookingClientOriginOrNull(booking) {
+  const rec = booking && booking.booking ? booking.booking : booking;
+  const stored = rec && rec.clientOrigin ? normalizeOrigin(String(rec.clientOrigin)) : null;
+  return stored && getAllowedClientOrigins().has(stored) ? stored : null;
+}
+
+/** Customer storefront base for a brand registry key. */
+function customerBaseForBrand(brandKey) {
+  if (brandKey === 'ghana') return GHANA_STOREFRONT_URL;
+  if (brandKey === 'africa') return AFRICA_STOREFRONT_URL;
+  return EXPEDITION_STOREFRONT_URL;
+}
+
+/**
+ * Customer chat deep link.
+ *
+ * Resolution order:
+ *   1. the exact storefront the underlying booking was made on (if any)
+ *   2. Expedition support threads (they have no booking context and live on
+ *      Expedition's storefront, even though the conversation is branded Ghana
+ *      for admin isolation)
+ *   3. the conversation's brand
+ *
+ * This is what stops Ghana customers being sent to the Expedition storefront
+ * from a chat-notification email.
+ */
+function customerChatLink({ brandKey = null, type = null, conversationId, bookingOrigin = null } = {}) {
+  const q = `?conversation=${encodeURIComponent(conversationId)}`;
+  const safeBookingOrigin = bookingClientOriginOrNull({ clientOrigin: bookingOrigin });
+  const base = safeBookingOrigin
+    ? baseUrl(safeBookingOrigin)
+    : type === 'EXPEDITION_CUSTOMER'
+      ? EXPEDITION_STOREFRONT_URL
+      : customerBaseForBrand(brandKey);
+  return `${base}/dashboard/chat${q}`;
+}
+
+/** Admin dashboard base for a brand registry key. */
+function adminBaseForBrand(brandKey) {
+  if (brandKey === 'ghana' || brandKey === 'expedition') return GHANA_ADMIN_URL;
+  return ADMIN_URL;
+}
+
 function mapsDirectionsUrl(location) {
   if (!location) return null;
   const address =
@@ -117,6 +180,10 @@ module.exports = {
   CLIENT_URL,
   DASHBOARD_URL,
   bookingClientOrigin,
+  bookingClientOriginOrNull,
+  customerBaseForBrand,
+  customerChatLink,
+  adminBaseForBrand,
 
   // ── Customer (storefront) — origin = allow-listed booking frontend ──────
   viewBooking: (bookingId, origin) => brandPath(origin, 'view', bookingId),

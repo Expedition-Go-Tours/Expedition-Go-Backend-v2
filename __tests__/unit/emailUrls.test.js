@@ -4,7 +4,12 @@ process.env.CLIENT_URL = 'https://travioafrica.com';
 // file, and without this the default dashboard would collapse to CLIENT_URL.
 process.env.SUPPLIER_DASHBOARD_URL = 'https://supplier.travioafrica.com';
 process.env.GHANA_SUPPLIER_DASHBOARD_URL = 'https://supplier.travioghana.com';
-process.env.ALLOWED_ORIGINS = 'https://expeditiongotours.vercel.app';
+process.env.ADMIN_DASHBOARD_URL = 'https://admin.travioafrica.com';
+process.env.GHANA_ADMIN_DASHBOARD_URL = 'https://admin.travioghana.com';
+process.env.GHANA_STOREFRONT_URL = 'https://www.travioghana.com';
+process.env.AFRICA_STOREFRONT_URL = 'https://travioafrica.com';
+process.env.EXPEDITION_STOREFRONT_URL = 'https://www.expeditiongotours.com';
+process.env.ALLOWED_ORIGINS = 'https://expeditiongotours.vercel.app,https://www.travioghana.com';
 
 const emailUrls = require('../../config/emailUrls');
 
@@ -95,5 +100,66 @@ describe('dashboardBaseForBrand — brand-key dashboard resolution', () => {
     expect(emailUrls.dashboardBaseForBrand(null)).toEqual(AFRICA);
     expect(emailUrls.dashboardBaseForBrand(undefined)).toEqual(AFRICA);
     expect(emailUrls.dashboardBaseForBrand('unknown')).toEqual(AFRICA);
+  });
+});
+
+describe('chat deep links — customer storefront and admin app resolution', () => {
+  it('routes a Ghana customer to the Ghana storefront', () => {
+    expect(emailUrls.customerChatLink({
+      brandKey: 'ghana',
+      type: 'USER_SUPPORT',
+      conversationId: 'c-1',
+    })).toBe('https://www.travioghana.com/dashboard/chat?conversation=c-1');
+  });
+
+  it('routes an Expedition support thread to Expedition even though it is branded Ghana', () => {
+    expect(emailUrls.customerChatLink({
+      brandKey: 'ghana',
+      type: 'EXPEDITION_CUSTOMER',
+      conversationId: 'c-1',
+    })).toBe('https://www.expeditiongotours.com/dashboard/chat?conversation=c-1');
+  });
+
+  it('routes an Africa customer to the Africa storefront', () => {
+    expect(emailUrls.customerChatLink({
+      brandKey: 'africa',
+      type: 'USER_SUPPORT',
+      conversationId: 'c-1',
+    })).toBe('https://travioafrica.com/dashboard/chat?conversation=c-1');
+  });
+
+  it('uses the booking origin when it is explicit and allow-listed', () => {
+    expect(emailUrls.customerChatLink({
+      brandKey: 'ghana',
+      type: 'SUPPLIER_CUSTOMER',
+      conversationId: 'c-1',
+      bookingOrigin: 'https://expeditiongotours.vercel.app',
+    })).toBe('https://expeditiongotours.vercel.app/dashboard/chat?conversation=c-1');
+  });
+
+  it('ignores an unlisted booking origin and falls back to the brand', () => {
+    expect(emailUrls.customerChatLink({
+      brandKey: 'ghana',
+      type: 'SUPPLIER_CUSTOMER',
+      conversationId: 'c-1',
+      bookingOrigin: 'https://evil.example',
+    })).toBe('https://www.travioghana.com/dashboard/chat?conversation=c-1');
+  });
+
+  it('only returns an explicit allow-listed booking origin', () => {
+    expect(emailUrls.bookingClientOriginOrNull({
+      clientOrigin: 'https://www.travioghana.com',
+    })).toBe('https://www.travioghana.com');
+    expect(emailUrls.bookingClientOriginOrNull({
+      clientOrigin: 'https://evil.example',
+    })).toBeNull();
+    expect(emailUrls.bookingClientOriginOrNull(null)).toBeNull();
+  });
+
+  it('routes Ghana admin chat to the Ghana admin app, others to the default', () => {
+    expect(emailUrls.adminBaseForBrand('ghana')).toBe('https://admin.travioghana.com');
+    expect(emailUrls.adminBaseForBrand('expedition')).toBe('https://admin.travioghana.com');
+    expect(emailUrls.adminBaseForBrand('africa')).toBe('https://admin.travioafrica.com');
+    expect(emailUrls.adminBaseForBrand(null)).toBe('https://admin.travioafrica.com');
   });
 });

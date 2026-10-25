@@ -1993,7 +1993,11 @@ async function sendChatMessageEmail(booking, data = {}) {
   const senderMessageHtml = htmlEscape(messagePlain).replace(/\n/g, '<br/>');
   const preheader = htmlEscape((String(data.preheader || messagePlain) || 'New message').slice(0, 140));
   const subject = `New message from ${senderName}`;
-  const chatUrl = data.link || `${emailUrls.dashboardBaseForBrand(data.brandKey || null)}/dashboard`;
+  const chatUrl = data.link || emailUrls.customerChatLink({
+    brandKey: data.brandKey || null,
+    type: data.conversationType || null,
+    conversationId: data.conversationId,
+  });
 
   return sendEmail({
     to: data.to,

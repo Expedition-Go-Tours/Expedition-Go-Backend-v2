@@ -681,18 +681,31 @@ async function getUnreadCount(userId, types = null, brandKey = null) {
 
 const EMAIL_ENABLED_TYPES = ['SUPPLIER_CUSTOMER', 'EXPEDITION_CUSTOMER', 'USER_SUPPORT', 'SUPPLIER_ADMIN'];
 
-/** Expedition (customer storefront) origin used for customer chat deep links. */
-function customerStorefrontBase() {
-  return (process.env.EXPEDITION_STOREFRONT_URL || 'https://expeditiongotours.vercel.app').replace(/\/+$/, '');
-}
-
-function chatLinkFor(recipientRoles, conversationId) {
+function chatLinkFor(recipientRoles, conversationId, { brandKey = null, type = null, bookingOrigin = null } = {}) {
   const q = `?conversation=${encodeURIComponent(conversationId)}`;
   const roles = Array.isArray(recipientRoles) ? recipientRoles : [];
-  if (roles.includes('supplier')) return `${emailUrls.supplierDashboardForUser({ roles })}/chat${q}`;
-  const adminBase = process.env.ADMIN_DASHBOARD_URL || emailUrls.DASHBOARD_URL;
-  if (roles.includes('admin') || roles.includes('expedition')) return `${adminBase}/chat${q}`;
-  return `${customerStorefrontBase()}/dashboard/chat${q}`;
+  if (roles.includes('supplier')) {
+    // The brand is more reliable than the recipient's role list: a supplier
+    // can also hold a customer role, and legacy rows may have no role brand.
+    const base = brandKey
+      ? emailUrls.dashboardBaseForBrand(brandKey)
+      : emailUrls.supplierDashboardForUser({ roles });
+    return `${base}/chat${q}`;
+  }
+  if (roles.includes('admin') || roles.includes('expedition')) {
+    // Expedition's support inbox lives in the Ghana admin app even though its
+    // conversations are stored with the Ghana brand for isolation.
+    const adminBrand = brandKey
+      || (type === 'EXPEDITION_CUSTOMER' ? 'ghana' : null)
+      || brandKeyFromRoles(roles);
+    return `${emailUrls.adminBaseForBrand(adminBrand)}/chat${q}`;
+  }
+  return emailUrls.customerChatLink({
+    brandKey,
+    type,
+    conversationId,
+    bookingOrigin,
+  });
 }
 
 function senderRoleLabel(type, roles, brandName = 'Travio Africa') {
@@ -725,6 +738,23 @@ async function notifyConversationByEmail({ conversationId, type, senderId, sende
   ]);
   const effectiveType = conversation?.type || type;
   const brandName = getBrandEmail(conversation?.brand).brandName;
+
+  // The booking's stored storefront is the most precise destination: a Ghana
+  // supplier can message a customer whose booking was made on Expedition.
+  // Only an explicit allow-listed origin is used here; old bookings without
+  // one fall back to the conversation brand/type below.
+  let bookingOrigin = null;
+  if (conversation?.bookingId) {
+    try {
+      const booking = await prisma.booking.findUnique({
+        where: { id: conversation.bookingId },
+        select: { clientOrigin: true },
+      });
+      bookingOrigin = emailUrls.bookingClientOriginOrNull(booking);
+    } catch (err) {
+      logger.warn(`[ChatService] could not resolve booking origin for ${conversation.bookingId}: ${err.message}`);
+    }
+  }
 
   const participants = await prisma.conversationParticipant.findMany({
     where: { conversationId, userId: { not: senderId } },
@@ -763,8 +793,13 @@ async function notifyConversationByEmail({ conversationId, type, senderId, sende
         preheader: preview,
         content: preview,
         conversationId,
+        conversationType: effectiveType,
         replyTo,
-        link: chatLinkFor(user.roles, conversationId),
+        link: chatLinkFor(user.roles, conversationId, {
+          brandKey: conversation?.brand || null,
+          type: effectiveType,
+          bookingOrigin,
+        }),
         // Conversation brand drives the email's shell/From: (Ghana/Africa/…).
         brandKey: conversation?.brand || null,
       },
