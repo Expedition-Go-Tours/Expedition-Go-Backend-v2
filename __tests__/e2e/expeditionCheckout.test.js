@@ -329,7 +329,17 @@ describe('E2E: Expedition Checkout Flow', () => {
         }),
       }),
     );
-    expect(webhookTx.booking.findMany).not.toHaveBeenCalled();
+    // The settlement path now reads the unsettled candidates first so it can
+    // validate the PaymentIntent total (single booking or multi-tour cart)
+    // before claiming any row. The PI-ID fallback is still the update guard.
+    expect(webhookTx.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [{ stripePaymentIntentId: 'pi_exp_e2e' }],
+          paymentStatus: { in: ['PENDING', 'PROCESSING'] },
+        }),
+      }),
+    );
   });
 
   // ── Step 4: Full journey (calculate → confirm → webhook) ──────────
@@ -434,12 +444,14 @@ describe('E2E: Stripe Webhook Idempotency', () => {
     const first = await processStripeWebhook(processedEvent);
     expect(first.success).toBe(true);
     expect(webhookTx.booking.updateMany).toHaveBeenCalledTimes(1);
-    expect(webhookTx.booking.findMany).toHaveBeenCalledTimes(1);
+    // One read validates the amount before claiming; one reads the claimed
+    // rows for post-commit notifications.
+    expect(webhookTx.booking.findMany).toHaveBeenCalledTimes(2);
 
     const second = await processStripeWebhook(processedEvent);
     expect(second.success).toBe(true);
     expect(webhookTx.booking.updateMany).toHaveBeenCalledTimes(1);
-    expect(webhookTx.booking.findMany).toHaveBeenCalledTimes(1);
+    expect(webhookTx.booking.findMany).toHaveBeenCalledTimes(2);
   });
 
   it('handles concurrent duplicate webhook events gracefully', async () => {
