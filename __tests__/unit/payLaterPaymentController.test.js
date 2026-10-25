@@ -21,6 +21,16 @@ const prisma = require('../../src/core/services/prismaClient');
 const { createCheckoutSession } = require('../../src/core/services/stripeHelpers');
 const { startPayNow } = require('../../src/core/domain/payLaterPaymentController');
 
+const originalClientUrl = process.env.CLIENT_URL;
+const originalAllowedOrigins = process.env.ALLOWED_ORIGINS;
+
+afterAll(() => {
+  if (originalClientUrl === undefined) delete process.env.CLIENT_URL;
+  else process.env.CLIENT_URL = originalClientUrl;
+  if (originalAllowedOrigins === undefined) delete process.env.ALLOWED_ORIGINS;
+  else process.env.ALLOWED_ORIGINS = originalAllowedOrigins;
+});
+
 function booking(overrides = {}) {
   return {
     id: 'booking_1',
