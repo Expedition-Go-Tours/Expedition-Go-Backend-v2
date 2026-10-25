@@ -31,6 +31,9 @@ const { shouldCountTourView } = require('../../core/services/viewTracking');
 const eventEmitter = require('../../core/services/eventEmitter');
 const { sanitizeBookingPaymentInternals } = require('../../core/services/sanitizeBookings');
 const { bookingRefundState } = require('../../core/services/bookingRefundState');
+const { attachBookingAttention } = require('../../core/services/bookingAttentionService');
+const paymentLinkService = require('../../core/services/paymentLinkService');
+const { hasTeamPermission, toRoleArray } = require('../../../config/teamPermissions');
 const { tourMatchWhere, isTourIdParam } = require('../../core/services/tourLookup');
 
 const { getBrand, eventNamespaceForSource } = require('../../../config/brands');
@@ -1513,6 +1516,24 @@ function buildSupplierBookingsFilter(supplierId, query = {}) {
   return { where, orderBy };
 }
 
+function canManageSupplierBookings(req) {
+  if (!req?.user) return false;
+  if (Array.isArray(req.user.roles) && req.user.roles.includes('admin')) return true;
+  if (req.isOwner) return true;
+  const roles = toRoleArray(req.teamRoles || req.teamRole);
+  return roles.some((role) => hasTeamPermission(role, 'bookings.manage'));
+}
+
+async function supplierPaymentLinkFlags() {
+  const [base, supplier, recovery, chat] = await Promise.all([
+    paymentLinkService.flagEnabled(paymentLinkService.FLAGS.base),
+    paymentLinkService.flagEnabled(paymentLinkService.FLAGS.supplier),
+    paymentLinkService.flagEnabled(paymentLinkService.FLAGS.recovery),
+    paymentLinkService.flagEnabled(paymentLinkService.FLAGS.chat),
+  ]);
+  return { base, supplier, recovery, chat };
+}
+
 const getSupplierBookings = catchAsync(async (req, res, next) => {
   // The supplier is whoever the caller acts FOR: their own account when they
   // are the owner, the owner of the team they belong to when they are a member
@@ -1586,12 +1607,17 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
   // services/supplierContact). Masking happens here at the API boundary, not
   // in the UI: the real address must not reach the supplier's browser at all.
   const contacts = await supplierContact.contactAddressesForBookings(bookings, supplierId);
+  const flags = await supplierPaymentLinkFlags();
+  const bookingsWithAttention = await attachBookingAttention(bookings, {
+    canManage: canManageSupplierBookings(req),
+    flags,
+  });
 
   res.status(200).json({
     status: 'success',
     data: {
       bookings: sanitizeBookingPaymentInternals(
-        bookings.map((b) =>
+        bookingsWithAttention.map((b) =>
           supplierContact.withSupplierContact(
             { ...b, pendingCancellation: pendingMap.get(b.id) || null },
             contacts.get(b.id) || null,
@@ -1853,19 +1879,165 @@ const getSupplierBookingDetail = catchAsync(async (req, res, next) => {
   // and "Message customer" both work through it, and a supplier who copies it
   // still reaches the guest (and the reply lands in the app thread).
   const contact = await supplierContact.contactAddressForBooking(booking);
+  const flags = await supplierPaymentLinkFlags();
+  const [bookingWithAttention] = await attachBookingAttention([booking], {
+    canManage: canManageSupplierBookings(req),
+    flags,
+  });
 
   res.status(200).json({
     status: 'success',
     data: {
       booking: sanitizeBookingPaymentInternals(
         supplierContact.withSupplierContact(
-          { ...booking, pendingCancellation: pendingMap.get(booking.id) || null },
+          { ...bookingWithAttention, pendingCancellation: pendingMap.get(booking.id) || null },
           contact,
         ),
       ),
     },
   });
 });
+
+function requireIdempotencyKey(req) {
+  const raw = req.get ? req.get('Idempotency-Key') : req.headers?.['idempotency-key'];
+  const key = typeof raw === 'string' ? raw.trim() : '';
+  if (!key) {
+    throw new AppError('An Idempotency-Key header is required for payment-link actions.', 400, {
+      code: 'IDEMPOTENCY_KEY_REQUIRED',
+      reasonCode: 'IDEMPOTENCY_KEY_REQUIRED',
+    });
+  }
+  if (key.length > 200) {
+    throw new AppError('The Idempotency-Key header is too long.', 400, {
+      code: 'IDEMPOTENCY_KEY_INVALID',
+      reasonCode: 'IDEMPOTENCY_KEY_TOO_LONG',
+    });
+  }
+  return key;
+}
+
+async function loadOwnedBookingForAttention(supplierId, id) {
+  return prisma.booking.findFirst({
+    where: { id, tour: { supplierId } },
+    include: {
+      tour: {
+        select: {
+          id: true,
+          title: true,
+          coverPhoto: true,
+          photos: true,
+          bookingAndTickets: true,
+        },
+      },
+      customer: { select: { id: true, name: true, email: true } },
+      guest: { select: { id: true, name: true, email: true } },
+    },
+  });
+}
+
+async function runSupplierPaymentLinkAction(req, res, next, mode) {
+  const supplierId = req.supplierId;
+  const { id } = req.params;
+  const idempotencyKey = requireIdempotencyKey(req);
+
+  const owned = await loadOwnedBookingForAttention(supplierId, id);
+  if (!owned) {
+    return next(new AppError('Booking not found or not yours', 404, {
+      code: 'BOOKING_NOT_FOUND',
+      reasonCode: 'BOOKING_NOT_FOUND',
+    }));
+  }
+
+  const result = await paymentLinkService.sendPaymentLink({
+    bookingId: id,
+    source: paymentLinkService.SOURCE.SUPPLIER_LINK,
+    mode,
+    actor: {
+      id: req.user.id,
+      role: req.isOwner ? 'supplier' : 'team_member',
+    },
+    sendInChat: Boolean(req.body?.sendInChat),
+    idempotencyKey,
+  });
+
+  const refreshed = await loadOwnedBookingForAttention(supplierId, id);
+  if (!refreshed) {
+    logActivity({
+      userId: req.user.id,
+      action: `booking.payment_link_${mode}`,
+      resource: 'Booking',
+      resourceId: id,
+      metadata: {
+        source: 'supplier_dashboard',
+        sourceAttempt: result.attempt?.source || null,
+        emailState: result.emailStatus || null,
+        outcome: 'BOOKING_DISAPPEARED_AFTER_SEND',
+      },
+    }).catch(() => {});
+    return next(new AppError('The booking is no longer available for this supplier.', 409, {
+      code: 'BOOKING_NOT_FOUND',
+      reasonCode: 'BOOKING_NOT_FOUND',
+    }));
+  }
+  const flags = await supplierPaymentLinkFlags();
+  const [withAttention] = await attachBookingAttention([refreshed], {
+    canManage: true,
+    flags,
+  });
+
+  logActivity({
+    userId: req.user.id,
+    action: `booking.payment_link_${mode}`,
+    resource: 'Booking',
+    resourceId: id,
+    metadata: {
+      source: 'supplier_dashboard',
+      sendInChat: Boolean(req.body?.sendInChat),
+      sourceAttempt: result.attempt?.source || null,
+      emailState: result.emailStatus || null,
+      chatSent: Boolean(result.chatSend?.sent),
+    },
+  }).catch(() => {});
+
+  const emailState = result.emailStatus || result.emailSend?.status || 'QUEUED';
+  const safeMessage = emailState === 'SENT'
+    ? 'Secure payment link accepted by the email provider.'
+    : emailState === 'FAILED'
+      ? 'The secure payment link could not be emailed. Please try again.'
+      : 'Secure payment link queued for email.';
+
+  res.status(mode === paymentLinkService.MODE.RESEND ? 200 : 201).json({
+    status: 'success',
+    data: {
+      booking: {
+        id: withAttention.id,
+        bookingNumber: withAttention.bookingNumber,
+        status: withAttention.status,
+        paymentStatus: withAttention.paymentStatus,
+        paymentTiming: withAttention.paymentTiming,
+      },
+      attention: withAttention.attention,
+      paymentLink: {
+        active: withAttention.attention.link.active,
+        expiresAt: withAttention.attention.link.expiresAt,
+        emailState: withAttention.attention.link.emailState,
+        lastEmailedAt: withAttention.attention.link.lastEmailedAt,
+        chatSent: Boolean(result.chatSend?.sent),
+        chatUnavailableReason: result.chatSend && !result.chatSend.sent ? result.chatSend.code : null,
+      },
+    },
+    message: safeMessage,
+  });
+}
+
+const sendSupplierPaymentLink = catchAsync(async (req, res, next) =>
+  runSupplierPaymentLinkAction(req, res, next, paymentLinkService.MODE.CREATE));
+
+const resendSupplierPaymentLink = catchAsync(async (req, res, next) =>
+  runSupplierPaymentLinkAction(req, res, next, paymentLinkService.MODE.RESEND));
+
+const regenerateSupplierPaymentLink = catchAsync(async (req, res, next) =>
+  runSupplierPaymentLinkAction(req, res, next, paymentLinkService.MODE.REGENERATE));
 
 const updateBookingStatus = catchAsync(async (req, res, next) => {
   // The supplier is whoever the caller acts FOR: their own account when they
@@ -1902,7 +2074,11 @@ const updateBookingStatus = catchAsync(async (req, res, next) => {
   }
 
   if (status === 'COMPLETED' && new Date(booking.travelDate) >= new Date()) {
-    return next(new AppError('Cannot mark a future booking as COMPLETED', 400));
+    return next(new AppError(
+      'Cannot mark a future booking as COMPLETED',
+      400,
+      { code: 'BOOKING_COMPLETION_NOT_ALLOWED', reasonCode: 'ACTIVITY_NOT_STARTED' },
+    ));
   }
 
   const validTransitions = {
@@ -1913,7 +2089,24 @@ const updateBookingStatus = catchAsync(async (req, res, next) => {
 
   const allowed = validTransitions[booking.status];
   if (!allowed || !allowed.includes(status)) {
-    return next(new AppError(`Cannot transition from ${booking.status} to ${status}`, 400));
+    return next(new AppError(
+      `Cannot transition from ${booking.status} to ${status}`,
+      400,
+      { code: 'INVALID_BOOKING_TRANSITION', details: { from: booking.status, to: status } },
+    ));
+  }
+
+  // Payment is server-authoritative. The UI already hides "Accept" for an
+  // unpaid pay-later reservation, but the API must enforce it too: accepting
+  // is not a settlement event, and only the Stripe webhook may flip
+  // paymentStatus. This closes the path where a direct API call could turn an
+  // unpaid reservation into a "confirmed" booking with no money behind it.
+  if (status === 'CONFIRMED' && booking.paymentTiming === 'later' && booking.paymentStatus !== 'SUCCEEDED') {
+    return next(new AppError(
+      'Payment has not been confirmed for this booking yet. The customer must complete payment before it can be confirmed.',
+      409,
+      { code: 'PAYMENT_CONFIRMATION_REQUIRED', reasonCode: 'PAYMENT_NOT_CONFIRMED' },
+    ));
   }
 
   // ── Supplier cancellation → the shared GetYourGuide-style structured flow ──
@@ -2024,5 +2217,8 @@ module.exports = {
   exportSupplierBookings,
   getSupplierBookingDetail,
   rescheduleSupplierBooking,
+  sendSupplierPaymentLink,
+  resendSupplierPaymentLink,
+  regenerateSupplierPaymentLink,
   updateBookingStatus,
 };

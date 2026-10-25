@@ -778,14 +778,42 @@ function isLastMinuteEnabled(bookingAndTickets) {
  */
 function activityStartUtc(bookingAndTickets, dateObj, selectedTime) {
   const d = dateObj instanceof Date ? dateObj : new Date(dateObj);
-  const fallback = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  if (!bookingAndTickets || typeof bookingAndTickets !== 'object') return fallback;
+  const utcMidnight = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  if (!bookingAndTickets || typeof bookingAndTickets !== 'object') return utcMidnight;
+  const tz = getTourTimezone(bookingAndTickets);
+  const localDate = zonedDateKey(toDateKey(d), tz);
   if (typeof selectedTime === 'string' && selectedTime && bookingAndTickets.perSlotCutoff) {
-    const tz = getTourTimezone(bookingAndTickets);
-    const s = zonedTimeToUtc(`${zonedDateKey(toDateKey(d), tz)} ${selectedTime}`, tz);
+    const s = zonedTimeToUtc(`${localDate} ${selectedTime}`, tz);
     if (Number.isFinite(s.getTime())) return s;
   }
-  return fallback;
+  // Date-only tours have no clock time, so the activity day starts at local
+  // midnight in the tour's timezone. Using UTC midnight would shift the cutoff
+  // for suppliers outside UTC and make the 2-hour rule wrong.
+  const localMidnight = zonedTimeToUtc(`${localDate} 00:00`, tz);
+  return Number.isFinite(localMidnight.getTime()) ? localMidnight : utcMidnight;
+}
+
+/**
+ * The actual instant the booked activity starts.
+ *
+ * Unlike `activityStartUtc` (the cutoff anchor, which intentionally counts from
+ * midnight when a tour uses a day-level cutoff), a booking WITH a selected time
+ * starts at that clock time. Pay-later settlement and payment-link cutoffs must
+ * use this exact instant: a 6pm activity remains payable/settleable at noon the
+ * same day, while a date-only booking has already started at local midnight.
+ */
+function activityStartExactUtc(bookingAndTickets, dateObj, selectedTime) {
+  const d = dateObj instanceof Date ? dateObj : new Date(dateObj);
+  const utcMidnight = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  if (!bookingAndTickets || typeof bookingAndTickets !== 'object') return utcMidnight;
+  const tz = getTourTimezone(bookingAndTickets);
+  const localDate = zonedDateKey(toDateKey(d), tz);
+  if (typeof selectedTime === 'string' && selectedTime) {
+    const s = zonedTimeToUtc(`${localDate} ${selectedTime}`, tz);
+    if (Number.isFinite(s.getTime())) return s;
+  }
+  const localMidnight = zonedTimeToUtc(`${localDate} 00:00`, tz);
+  return Number.isFinite(localMidnight.getTime()) ? localMidnight : utcMidnight;
 }
 
 /**
@@ -846,5 +874,6 @@ module.exports = {
   resolveCutoffMinutes,
   isLastMinuteEnabled,
   activityStartUtc,
+  activityStartExactUtc,
   slotCutoffVerdict,
 };

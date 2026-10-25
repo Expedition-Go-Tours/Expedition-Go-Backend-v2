@@ -119,6 +119,7 @@ const SCHEDULES = [
   { jobName: 'expire-checkout-holds',       queue: 'cleanup',      everyMs: 5 * 60 * 1000 },
   { jobName: 'expire-modify-topups',        queue: 'cleanup',      everyMs: 5 * 60 * 1000 },
   { jobName: 'charge-pay-later-bookings',   queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
+  { jobName: 'recover-pay-later-payments',  queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
   { jobName: 'resolve-cancellation-choices', queue: 'cleanup',     everyMs: 5 * 60 * 1000 },
   { jobName: 'cancellation-request-reminder', queue: 'cleanup',    everyMs: 60 * 60 * 1000 },
   { jobName: 'earnings-eligibility-sweep',  queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
@@ -451,6 +452,7 @@ const EMAIL_JOB_DISPATCH = {
   'pay-later-charged': ['sendPayLaterChargedEmail', true],
   'awaiting-confirmation': ['sendAwaitingConfirmationEmail', true],
   'payment-unsuccessful': ['sendPaymentUnsuccessfulEmail', true],
+  'payment-link': ['sendPaymentLinkEmail', true],
   'customer-booking-changed': ['sendCustomerBookingChangedEmail', true],
   'pickup-details-updated': ['sendPickupDetailsUpdatedEmail', true],
   'pickup-location-required': ['sendPickupLocationRequiredEmail', true],
@@ -483,6 +485,51 @@ const EMAIL_JOB_DISPATCH = {
 };
 
 /**
+ * Persist the outcome of a payment-link email without ever claiming more than
+ * the provider returned. SENT means the provider accepted the message, not
+ * that it was delivered, opened, or paid.
+ */
+async function recordPaymentLinkSendResult(job, result, error = null) {
+  if (!job?.paymentLinkSendId) return;
+  const prisma = require('./prismaClient');
+  const sendId = job.paymentLinkSendId;
+  try {
+    if (error) {
+      // The queue retries. Keep QUEUED visible until the final failure is
+      // reaped, but record the provider error for operations. Never expose it
+      // to the customer or supplier.
+      await prisma.bookingPaymentLinkSend.update({
+        where: { id: sendId },
+        data: {
+          failureCode: 'EMAIL_PROVIDER_ERROR',
+          errorMessage: String(error.message || error).slice(0, 500),
+        },
+      });
+      return;
+    }
+    const rejected = result && result.success === false;
+    await prisma.bookingPaymentLinkSend.update({
+      where: { id: sendId },
+      data: rejected
+        ? {
+            status: 'FAILED',
+            failureCode: 'EMAIL_PROVIDER_REJECTED',
+            errorMessage: String(result.reason || 'Provider did not accept the message').slice(0, 500),
+          }
+        : {
+            status: 'SENT',
+            sentAt: new Date(),
+            providerMessageId: result?.messageId || null,
+            failureCode: null,
+            errorMessage: null,
+          },
+    });
+  } catch (err) {
+    console.error('[Queue] Could not record payment-link delivery:', err.message);
+  }
+}
+
+/**
  * Process an email job directly (used by both the worker and the fallback
  * when Redis/BullMQ is unavailable).  This mirrors the logic in the EMAIL
  * WORKER section below so there is a single source of truth.
@@ -508,7 +555,14 @@ async function processEmailJob(job) {
     if (job.brandName && !emailData.brandName) {
       emailData.brandName = job.brandName;
     }
-    await emailService[fnName](booking, emailData);
+    let result;
+    try {
+      result = await emailService[fnName](booking, emailData);
+    } catch (err) {
+      await recordPaymentLinkSendResult(job, null, err);
+      throw err;
+    }
+    await recordPaymentLinkSendResult(job, result);
     return;
   }
 
@@ -668,10 +722,20 @@ async function enqueueCleanup(jobName, payload = {}) {
  * Optional delivery extras (sendEmail / emailTemplate) are forwarded to the
  * worker so callers can opt into an email without the flag being dropped.
  */
-async function enqueueNotification({ userId, type, title, message, data, sendEmail, emailTemplate }) {
+async function enqueueNotification({
+  userId,
+  type,
+  title,
+  message,
+  data,
+  sendEmail,
+  emailTemplate,
+  dedupeKey,
+}) {
   const job = { userId, type, title, message, data };
   if (sendEmail) job.sendEmail = sendEmail;
   if (emailTemplate) job.emailTemplate = emailTemplate;
+  if (dedupeKey) job.dedupeKey = dedupeKey;
   try {
     return await notificationQueue().add('notify', job);
   } catch {
@@ -1137,6 +1201,11 @@ function registerWorkers() {
         case 'charge-pay-later-bookings': {
           const { chargePayLaterBookings } = require('./payLaterSweep');
           await chargePayLaterBookings();
+          break;
+        }
+        case 'recover-pay-later-payments': {
+          const { runPayLaterRecoverySweep } = require('./payLaterRecoveryService');
+          await runPayLaterRecoverySweep();
           break;
         }
         case 'resolve-cancellation-choices': {

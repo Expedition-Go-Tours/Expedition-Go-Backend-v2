@@ -218,6 +218,38 @@ enum PaymentStatus {
   REFUNDED
 }
 
+// One hosted Checkout Session per attempt. The booking-level hold is derived
+// from ACTIVE attempts; only CREATING/ACTIVE may exist per booking (enforced by
+// a partial unique index, not application code alone).
+enum BookingPaymentAttemptStatus {
+  CREATING
+  ACTIVE
+  COMPLETED
+  EXPIRED
+  SUPERSEDED
+  FAILED
+  CANCELLED
+}
+
+enum BookingPaymentAttemptSource {
+  CUSTOMER_PAY_NOW
+  SUPPLIER_LINK
+  AUTO_RECOVERY
+}
+
+enum BookingPaymentLinkChannel {
+  EMAIL
+  CHAT
+}
+
+// Delivery is only ever claimed as SENT when the email provider accepted it.
+// It never means delivered, opened, or paid.
+enum BookingPaymentLinkSendStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
 enum NotificationType {
   BOOKING_CONFIRMED
   BOOKING_CANCELLED
@@ -990,6 +1022,12 @@ model Booking {
   // authority for what the supplier actually holds — never `paymentStatus`.
   collections BookingCollection[]
 
+  // Hosted payment-link history and delivery attempts. At most one row may be
+  // CREATING/ACTIVE at a time (partial unique index in the migration).
+  paymentAttempts BookingPaymentAttempt[]
+  paymentLinkSends BookingPaymentLinkSend[]
+  paymentReconciliations BookingPaymentReconciliation[]
+
   // Who created this booking: online checkout (MARKETPLACE, the default for
   // every existing row) or a supplier recording one (SUPPLIER_CREATED).
   origin BookingOrigin @default(MARKETPLACE)
@@ -1052,6 +1090,31 @@ model Booking {
   // customer must complete payment manually (update card / pay now). While set,
   // the pay-later sweep stops auto-confirming this booking. Cleared on settle.
   requiresPaymentActionAt DateTime?
+
+  // Pay-later hosted payment attempts. A live Checkout Session holds the sweep
+  // independently of the manual-action flag: the customer may be mid-redirect
+  // on a perfectly healthy card, and auto-charging the original PaymentIntent
+  // at the same time would risk a duplicate. Cleared when the current session
+  // settles or expires.
+  paymentLinkHoldAt DateTime?
+
+  // Automatic recovery episode. A supplier or the sweep opens an episode when
+  // the customer needs a hosted link; the scheduler may send at most two
+  // automatic emails per episode (initial link + one replacement after expiry).
+  // An episode closes permanently on settlement, terminal state, supplier
+  // intervention, or cutoff. These fields never replace paymentStatus.
+  recoveryEpisodeKey     String?
+  recoveryEpisodeStartedAt DateTime?
+  recoveryEmailCount     Int       @default(0)
+  recoveryLastSentAt     DateTime?
+  recoveryClosedAt       DateTime?
+  recoveryClosedReason   String?
+
+  // Latest safe, customer/supplier-facing payment failure classification. The
+  // raw Stripe decline message never leaves the server; this is a stable code
+  // mapped by payLaterSweep / the webhook.
+  paymentFailureCode String?
+  paymentFailureAt   DateTime?
 
   // Card on file for a reserve-now-pay-later booking, captured at checkout from
   // the Stripe PaymentMethod (brand + last4 only; Stripe never exposes the PAN).
@@ -1167,6 +1230,131 @@ model Booking {
   @@index([cancellationChoiceDeadline]) // Choice-window expiry sweep
   @@index([refundStatus]) // Stuck-refund retry/alert sweep
   @@index([origin, createdAt]) // Supplier-created reporting + origin filters
+}
+
+// A single hosted Stripe Checkout Session created to collect an outstanding
+// pay-later balance. Every entry point (customer Pay now, supplier link,
+// automatic recovery) goes through the same service so only one session can be
+// live for a booking. The hosted URL and Stripe ids stay server-side.
+model BookingPaymentAttempt {
+  id        String @id @default(cuid())
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  source BookingPaymentAttemptSource
+  status BookingPaymentAttemptStatus @default(CREATING)
+
+  amount   Decimal @db.Decimal(10, 2)
+  currency String  @default("USD")
+
+  // Stripe identifiers. Never serialized to a supplier-facing response.
+  stripeCheckoutSessionId String? @unique
+  stripePaymentIntentId   String?
+  // Needed to resend the same link and to render the customer email. Server-
+  // only; sanitizeBookingPaymentInternals and the attention projector strip it.
+  checkoutUrl String?
+
+  expiresAt DateTime
+
+  // Actor/audit context. Plain ids on purpose: an admin/system attempt has no
+  // supplier user row, and this is history, not an authorization relation.
+  createdByUserId String?
+  createdByRole   String?
+  sendInChat      Boolean @default(false)
+
+  failureCode   String?
+  failureReason String?
+  requiresAction Boolean @default(false)
+
+  supersededByAttemptId String?
+  settledAt             DateTime?
+  expiredAt             DateTime?
+  cancelledAt           DateTime?
+
+  // A late/duplicate charge can be refunded against the attempt that received
+  // it. The booking-level refundStatus remains the source for legacy charges.
+  refundStatus   String?
+  stripeRefundId String?
+  refundedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sends BookingPaymentLinkSend[]
+
+  @@index([bookingId, createdAt])
+  @@index([bookingId, status])
+  @@index([status, expiresAt])
+  @@index([stripePaymentIntentId])
+}
+
+// One delivery action for a payment link. A resend is a new row, never an
+// overwrite, so "was the customer emailed?" and "did the provider accept it?"
+// remain auditable. SENT means the provider accepted the message; delivered,
+// opened, clicked and paid are deliberately not claimed.
+// One row per unclaimed/late/duplicate charge that needs a refund. The unique
+// PaymentIntent is the idempotency anchor: webhook retries and duplicate events
+// can never create a second refund instruction. REFUNDED is written only after
+// Stripe confirms the refund succeeded.
+model BookingPaymentReconciliation {
+  id        String  @id @default(cuid())
+  bookingId String?
+  booking   Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  stripePaymentIntentId   String @unique
+  stripeCheckoutSessionId String?
+  amount   Decimal? @db.Decimal(10, 2)
+  currency String   @default("USD")
+
+  reason String // BOOKING_TERMINAL | DUPLICATE_CHARGE | PAYMENT_TOO_LATE | AMOUNT_MISMATCH
+  status String @default("REFUND_PENDING") // REFUND_PENDING | REFUNDED | REFUND_FAILED
+
+  stripeRefundId String?
+  failureCode    String?
+  // Raw provider error is internal only. Never serialize to a supplier.
+  errorMessage   String?
+
+  retryCount Int       @default(0)
+  refundedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([bookingId])
+  @@index([status])
+  @@index([stripeRefundId])
+}
+
+model BookingPaymentLinkSend {
+  id        String @id @default(cuid())
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  attemptId String?
+  attempt   BookingPaymentAttempt? @relation(fields: [attemptId], references: [id], onDelete: SetNull)
+
+  channel BookingPaymentLinkChannel
+  status  BookingPaymentLinkSendStatus @default(QUEUED)
+
+  // Internal delivery address/recipient. Never exposed to a supplier.
+  recipient String?
+  // Request idempotency for a supplier double-click or a retried HTTP call.
+  idempotencyKey String?
+  requestedByUserId String?
+  requestedByRole   String?
+
+  providerMessageId String?
+  failureCode       String?
+  // Raw provider error is internal-only and never serialized.
+  errorMessage      String?
+  sentAt            DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([bookingId, channel, idempotencyKey])
+  @@index([bookingId, createdAt])
+  @@index([attemptId])
+  @@index([status, createdAt])
 }
 
 model BookingReminder {
@@ -1936,6 +2124,11 @@ model Notification {
   message String
   data    Json? // Additional structured data
 
+  // Optional idempotency key for operational alerts (for example
+  // booking:<id>:payment-failed:<attemptId>). Nullable so every existing
+  // notification type keeps its current behaviour.
+  dedupeKey String?
+
   // Status
   read   Boolean   @default(false)
   readAt DateTime?
@@ -1948,6 +2141,7 @@ model Notification {
 
   createdAt DateTime @default(now())
 
+  @@unique([userId, dedupeKey])
   @@index([userId])
   @@index([type])
   @@index([read])

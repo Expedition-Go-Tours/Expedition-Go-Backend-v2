@@ -43,7 +43,8 @@ function assertPayLaterLeadTime({ paymentTiming, startAt }) {
   if (hoursUntil < minHours) {
     throw new AppError(
       `Reserve now, pay later is only available when you book at least ${minHours} hours before the activity. For sooner dates, pay now at checkout.`,
-      400
+      400,
+      { code: 'PAY_LATER_LEAD_TIME', reasonCode: 'TOO_CLOSE_TO_ACTIVITY', details: { minimumHours: minHours } },
     );
   }
 }

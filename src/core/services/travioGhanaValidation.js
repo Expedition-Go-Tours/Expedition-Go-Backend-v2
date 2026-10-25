@@ -443,6 +443,16 @@ const updateBookingStatusSchema = z.object({
   }),
 });
 
+const supplierPaymentLinkSchema = z.object({
+  // Deliberately narrow: the server decides the amount, currency, expiry and
+  // Stripe metadata. The supplier may only opt into the optional chat copy.
+  body: z.object({
+    sendInChat: z.boolean().optional().default(false),
+  }),
+  query: z.any().optional(),
+  params: z.object({ id: z.string().min(1).max(100) }),
+});
+
 const analyticsOverviewSchema = z.object({
   body: z.any().optional(),
   query: z.object({
@@ -499,6 +509,7 @@ module.exports = {
   recordCollectionSchema,
   rescheduleBookingSchema,
   updateBookingStatusSchema,
+  supplierPaymentLinkSchema,
   analyticsOverviewSchema,
   analyticsRevenueTrendSchema,
   analyticsFunnelSchema,

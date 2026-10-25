@@ -83,8 +83,52 @@ async function isFeatureEnabled(brandKey = 'ghana') {
 
 async function assertFeatureEnabled(brandKey) {
   if (!(await isFeatureEnabled(brandKey))) {
-    throw new AppError('Supplier-created bookings are not enabled for this brand', 403);
+    throw new AppError('Supplier-created bookings are not enabled for this brand', 403, {
+      code: 'FEATURE_DISABLED',
+      reasonCode: 'SUPPLIER_BOOKINGS_DISABLED',
+    });
   }
+}
+
+/**
+ * Stable, supplier-safe availability reason. The UI uses this to refresh the
+ * quote or point at another slot; it must never have to parse a human string
+ * (or, worse, treat any 409 as a generic failure).
+ */
+function availabilityReasonCode(availability) {
+  const text = String(availability?.reason || '');
+  if (/invalid date/i.test(text)) return 'INVALID_DATE';
+  if (/blocked/i.test(text)) return 'DATE_BLOCKED';
+  if (/not available on this date/i.test(text)) return 'DATE_UNAVAILABLE';
+  if (/time slot must be selected/i.test(text)) return 'TIME_SLOT_REQUIRED';
+  if (/selected time is not available/i.test(text)) return 'TIME_SLOT_UNAVAILABLE';
+  if (/no group slots/i.test(text)) return 'CAPACITY_EXHAUSTED';
+  if (/only .* spot/i.test(text)) return 'INSUFFICIENT_CAPACITY';
+  return 'AVAILABILITY_UNAVAILABLE';
+}
+
+function reservationUnavailableError(availability) {
+  const reasonCode = availabilityReasonCode(availability);
+  return new AppError(availability?.reason || 'That date or time is no longer available', 409, {
+    code: 'RESERVATION_UNAVAILABLE',
+    reasonCode,
+    details: {
+      availableSpots: availability?.availableSpots ?? null,
+      retry: reasonCode === 'TIME_SLOT_REQUIRED' ? 'CHOOSE_TIME' : 'REFRESH_QUOTE',
+    },
+  });
+}
+
+function pricingUnavailableError(pricing) {
+  return new AppError(
+    pricing?.error || 'This tour cannot be priced for the selected date and party',
+    422,
+    {
+      code: 'PRICE_UNAVAILABLE',
+      reasonCode: 'QUOTE_REQUIRED',
+      details: { retry: 'REFRESH_QUOTE' },
+    },
+  );
 }
 
 /**
@@ -109,7 +153,10 @@ async function loadTourForBooking(tx, tourId, supplierId) {
   // every field the engines need comes back with the row itself.
   const tour = await tx.tour.findUnique({ where: { id: tourId } });
   if (!tour || tour.supplierId !== supplierId) {
-    throw new AppError('Tour not found or not yours', 404);
+    throw new AppError('Tour not found or not yours', 404, {
+      code: 'TOUR_NOT_FOUND',
+      reasonCode: 'TOUR_NOT_FOUND',
+    });
   }
   return tour;
 }
@@ -124,7 +171,10 @@ async function loadTourForBooking(tx, tourId, supplierId) {
 function resolveOption(tour, optionId) {
   const applied = optionId ? applyOption(tour, optionId) : { tour, optionScope: null, optionId: null };
   if (optionId && !applied.optionId) {
-    throw new AppError('That tour option does not exist on this tour', 422);
+    throw new AppError('That tour option does not exist on this tour', 422, {
+      code: 'TOUR_OPTION_NOT_FOUND',
+      reasonCode: 'TOUR_OPTION_NOT_FOUND',
+    });
   }
   return applied;
 }
@@ -153,7 +203,7 @@ async function quoteBooking({ supplierId, brandKey, tourId, optionId, travelDate
     null,
   );
   if (!pricing || pricing.success === false) {
-    throw new AppError(pricing?.error || 'This tour cannot be priced for the selected date and party', 422);
+    throw pricingUnavailableError(pricing);
   }
 
   const availability = await evaluateBookingAvailability(
@@ -187,6 +237,8 @@ async function quoteBooking({ supplierId, brandKey, tourId, optionId, travelDate
     total: pricing.total,
     available: Boolean(availability.ok),
     unavailableReason: availability.ok ? null : availability.reason,
+    unavailableReasonCode: availability.ok ? null : availabilityReasonCode(availability),
+    retry: availability.ok ? null : (availabilityReasonCode(availability) === 'TIME_SLOT_REQUIRED' ? 'CHOOSE_TIME' : 'REFRESH_QUOTE'),
     commission: {
       policy,
       rate,
@@ -227,13 +279,22 @@ async function createBooking({
   await assertFeatureEnabled(brandKey);
 
   if (!idempotencyKey || String(idempotencyKey).trim().length < 8) {
-    throw new AppError('An idempotency key is required', 400);
+    throw new AppError('An idempotency key is required', 400, {
+      code: 'IDEMPOTENCY_KEY_REQUIRED',
+      reasonCode: 'IDEMPOTENCY_KEY_REQUIRED',
+    });
   }
   if (customerId && guest) {
-    throw new AppError('Provide either a registered customer or guest details, not both', 400);
+    throw new AppError('Provide either a registered customer or guest details, not both', 400, {
+      code: 'BOOKING_PARTY_INVALID',
+      reasonCode: 'CUSTOMER_AND_GUEST_CONFLICT',
+    });
   }
   if (!customerId && !guest?.name) {
-    throw new AppError('Guest name is required for a walk-in booking', 400);
+    throw new AppError('Guest name is required for a walk-in booking', 400, {
+      code: 'BOOKING_PARTY_INVALID',
+      reasonCode: 'GUEST_NAME_REQUIRED',
+    });
   }
 
   const requestHash = canonicalHash({
@@ -264,7 +325,10 @@ async function createBooking({
     });
     if (existing) {
       if (existing.requestHash !== requestHash) {
-        throw new AppError('This idempotency key was already used for a different request', 409);
+        throw new AppError('This idempotency key was already used for a different request', 409, {
+          code: 'IDEMPOTENCY_KEY_CONFLICT',
+          reasonCode: 'IDEMPOTENCY_KEY_REUSED',
+        });
       }
       if (existing.bookingId) {
         const prior = await tx.booking.findUnique({ where: { id: existing.bookingId } });
@@ -303,7 +367,7 @@ async function createBooking({
       applied.optionScope ? { optionScope: applied.optionScope } : {},
     );
     if (!availability.ok) {
-      throw new AppError(availability.reason || 'No availability for that date', 409);
+      throw reservationUnavailableError(availability);
     }
 
     // 5. Authoritative price. Never the client's number. The projected tour
@@ -311,7 +375,7 @@ async function createBooking({
     //    drives special-offer matching.
     const pricing = await calculateTourPrice(applied.tour, travelers, dateKey, selectedTime || null, optionId || null, null, null);
     if (!pricing || pricing.success === false) {
-      throw new AppError(pricing?.error || 'This tour cannot be priced for the selected date and party', 422);
+      throw pricingUnavailableError(pricing);
     }
 
     // 6. An offline collection is money in hand, so it cannot exceed what the

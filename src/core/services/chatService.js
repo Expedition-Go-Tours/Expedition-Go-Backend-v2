@@ -352,7 +352,7 @@ async function getMessages(conversationId, accessId, cursor, limit = 50, viewerI
     };
   }
 
-async function sendMessage(conversationId, accessId, actorId, content, attachment = null) {
+async function sendMessage(conversationId, accessId, actorId, content, attachment = null, options = {}) {
   // `accessId` owns the conversation (the supplier account a team member acts
   // through); `actorId` is the person actually typing and is stored as author.
   const accessUserId = await resolveChatUserId(accessId);
@@ -421,16 +421,20 @@ async function sendMessage(conversationId, accessId, actorId, content, attachmen
   }
 
   // Email every other participant with a reply-to address so they can respond
-  // from their inbox (best-effort — never blocks the chat write).
-  notifyConversationByEmail({
-    conversationId,
-    type: participant.conversation.type,
-    senderId,
-    senderName: message.sender?.name || 'Someone',
-    content,
-    attachmentThumbUrl: message.attachmentType === 'image' && message.attachmentUrl ? message.attachmentUrl : null,
-    attachmentDocLabel: message.attachmentType === 'document' ? 'Document attachment' : null,
-  }).catch((err) => console.error('[ChatService] chat email notification failed:', err));
+  // from their inbox (best-effort — never blocks the chat write). Payment-link
+  // system messages opt out: the customer already receives the dedicated
+  // payment-link email, and a second chat email would duplicate it.
+  if (!options.skipEmail) {
+    notifyConversationByEmail({
+      conversationId,
+      type: participant.conversation.type,
+      senderId,
+      senderName: message.sender?.name || 'Someone',
+      content,
+      attachmentThumbUrl: message.attachmentType === 'image' && message.attachmentUrl ? message.attachmentUrl : null,
+      attachmentDocLabel: message.attachmentType === 'document' ? 'Document attachment' : null,
+    }).catch((err) => console.error('[ChatService] chat email notification failed:', err));
+  }
 
   const sender = await prisma.user.findUnique({
     where: { id: senderId },

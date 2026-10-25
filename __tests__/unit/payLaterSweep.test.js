@@ -20,6 +20,11 @@ jest.mock('../../src/core/services/stripeHelpers', () => {
   };
 });
 
+jest.mock('../../src/core/services/paymentLinkService', () => ({
+  reapStalePaymentAttempts: jest.fn().mockResolvedValue({}),
+  reapStalePaymentLinkSends: jest.fn().mockResolvedValue({}),
+}));
+
 jest.mock('../../src/core/services/queue', () => ({
   enqueueNotification: jest.fn(() => Promise.resolve()),
   enqueueEvent: jest.fn(() => Promise.resolve()),
@@ -71,6 +76,7 @@ describe('chargePayLaterBookings', () => {
     prisma.booking.findMany.mockResolvedValue([]);
     prisma.booking.updateMany.mockResolvedValue({ count: 1 });
     getStripe().paymentIntents.confirm.mockResolvedValue({ status: 'succeeded', id: 'pi_later' });
+    handlePaymentSucceeded.mockResolvedValue({ bookings: [{ id: 'b-later-1' }], oversold: [] });
   });
 
   it('returns zeros when no bookings are due', async () => {
@@ -274,7 +280,7 @@ describe('chargePayLaterBookings', () => {
           color: 0xff4444,
           fields: expect.arrayContaining([
             expect.objectContaining({ name: 'Booking #', value: 'LAT-001' }),
-            expect.objectContaining({ name: 'Reason', value: 'card declined' }),
+            expect.objectContaining({ name: 'Reason', value: 'We could not charge your saved card. We will retry automatically.' }),
           ]),
         })
       );
@@ -295,7 +301,7 @@ describe('chargePayLaterBookings', () => {
           color: 0xffaa00,
           fields: expect.arrayContaining([
             expect.objectContaining({ name: 'Next Retry' }),
-            expect.objectContaining({ name: 'Reason', value: 'insufficient funds' }),
+            expect.objectContaining({ name: 'Reason', value: 'Automatic charge failed' }),
           ]),
         })
       );

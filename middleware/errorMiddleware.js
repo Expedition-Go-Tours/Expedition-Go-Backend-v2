@@ -120,6 +120,15 @@ module.exports = (err, req, res, next) => {
     res.status(err.statusCode).json({
       status: err.status,
       message: err.isOperational ? err.message : 'Something went wrong!',
+      // Stable, operational-only machine code. Never expose Prisma/Node error
+      // codes or raw provider messages as client branch points.
+      ...(err.isOperational && err.errorCode
+        ? {
+            code: err.errorCode,
+            ...(err.reasonCode ? { reasonCode: err.reasonCode } : {}),
+            ...(err.details ? { details: err.details } : {}),
+          }
+        : {}),
     });
   }
 

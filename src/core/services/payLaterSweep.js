@@ -46,10 +46,19 @@ const MAX_CHARGE_RETRIES = 3;
 const FINALIZE_AFTER_GRACE_HOURS = 6;
 
 async function settleBooking(booking, intent) {
+  let result;
   try {
-    await handlePaymentSucceeded(intent);
+    result = await handlePaymentSucceeded(intent);
   } catch (err) {
     console.error('[PayLater] Settlement failed for', booking.id, err.message);
+    return false;
+  }
+
+  // A succeeded PaymentIntent is not enough: THIS booking must have been
+  // claimable. If it was terminal/too-late/already paid, do not send a false
+  // "payment collected" notification. Reconciliation handles the money.
+  if (!result?.bookings?.some((b) => b.id === booking.id)) {
+    console.warn(`[PayLater] Booking ${booking.id} was not settled by ${intent.id} (terminal or already claimed)`);
     return false;
   }
 
@@ -57,7 +66,14 @@ async function settleBooking(booking, intent) {
   const prisma = require('./prismaClient');
   await prisma.booking.update({
     where: { id: booking.id },
-    data: { chargeRetries: 0, nextRetryAt: null, requiresPaymentActionAt: null },
+    data: {
+      chargeRetries: 0,
+      nextRetryAt: null,
+      requiresPaymentActionAt: null,
+      paymentLinkHoldAt: null,
+      recoveryClosedAt: new Date(),
+      recoveryClosedReason: 'PAYMENT_SETTLED',
+    },
   }).catch(() => {});
 
   // handlePaymentSucceeded runs the pay-later-charged emails (customer +
@@ -98,13 +114,30 @@ async function settleBooking(booking, intent) {
  * invalid/expired, or retries exhausted). Marks the row and emails the customer
  * once so the sweep never loops auto-confirm attempts on an un-actionable card.
  */
-async function escalateToManual(booking, reason) {
+async function escalateToManual(booking, reason, failureCode = 'PAYMENT_ACTION_REQUIRED') {
   const prisma = require('./prismaClient');
   // updateMany guards: only escalates when still unpaid + not already flagged,
   // so re-runs never double-email.
   const updated = await prisma.booking.updateMany({
-    where: { id: booking.id, paymentTiming: 'later', paymentStatus: 'PENDING', paidAt: null, requiresPaymentActionAt: null },
-    data: { requiresPaymentActionAt: new Date() },
+    where: {
+      id: booking.id,
+      status: { in: ['PENDING', 'CONFIRMED'] },
+      paymentTiming: 'later',
+      paymentStatus: 'PENDING',
+      paidAt: null,
+      requiresPaymentActionAt: null,
+      paymentLinkHoldAt: null,
+    },
+    data: {
+      requiresPaymentActionAt: new Date(),
+      paymentFailureCode: failureCode,
+      paymentFailureAt: new Date(),
+      // A future retry must not survive the escalation that replaced it.
+      // Recovery candidates require a clear retry slot; leaving a past value
+      // here would still satisfy a "not future" check but misleadingly suggests
+      // the sweep is still working the card.
+      nextRetryAt: null,
+    },
   });
   if (updated.count === 0) return false;
 
@@ -124,6 +157,22 @@ async function escalateToManual(booking, reason) {
     title: 'Complete your payment',
     message: `We could not automatically charge your card for "${booking.tour?.title || 'your tour'}" (${reason}). Complete your payment to keep your spot.`,
     data: { bookingId: booking.id },
+    dedupeKey: `booking:${booking.id}:payment-action-required`,
+  }).catch(() => {});
+
+  // The supplier needs a persistent, actionable signal. It is independent of
+  // the customer recovery email: a failed email must not hide the booking, and
+  // a notification retry must not resend the customer email.
+  enqueueNotification({
+    userId: booking.tour?.supplierId,
+    type: 'PAYMENT_ACTION_REQUIRED',
+    title: 'Payment not confirmed',
+    message: `Payment is still unconfirmed for a booking for "${booking.tour?.title || 'your tour'}". A secure payment link can be sent to the customer.`,
+    data: {
+      bookingId: booking.id,
+      reasonCode: failureCode,
+    },
+    dedupeKey: `booking:${booking.id}:supplier-payment-action:${failureCode}`,
   }).catch(() => {});
 
   notifyAdmin({
@@ -152,7 +201,21 @@ async function escalateToManual(booking, reason) {
   return true;
 }
 
-async function notifyPaymentFailed(booking, reason) {
+async function recordPaymentFailure(booking, failureCode) {
+  const prisma = require('./prismaClient');
+  await prisma.booking.updateMany({
+    where: {
+      id: booking.id,
+      paymentTiming: 'later',
+      paymentStatus: 'PENDING',
+      paidAt: null,
+    },
+    data: { paymentFailureCode: failureCode, paymentFailureAt: new Date() },
+  }).catch(() => {});
+}
+
+async function notifyPaymentFailed(booking, reason, failureCode = 'PAYMENT_DECLINED') {
+  await recordPaymentFailure(booking, failureCode);
   enqueueEmail({
     type: 'payment-unsuccessful',
     bookingId: booking.id,
@@ -167,16 +230,18 @@ async function notifyPaymentFailed(booking, reason) {
     userId: booking.customerId,
     type: 'PAYMENT_FAILED',
     title: 'Payment Declined',
-    message: `We could not charge your card for "${booking.tour?.title || 'your tour'}" (${reason}). Update your payment details to keep your booking.`,
+    message: `We could not charge your card for "${booking.tour?.title || 'your tour'}". We will retry automatically.`,
     data: { bookingId: booking.id },
+    dedupeKey: `booking:${booking.id}:payment-declined:${failureCode}`,
   }).catch(() => {});
 
   enqueueNotification({
     userId: booking.tour?.supplierId,
     type: 'BOOKING_PAYMENT_FAILED',
-    title: 'Booking Payment Failed',
-    message: `Payment failed for booking for "${booking.tour?.title || 'the tour'}". The reservation may be cancelled.`,
-    data: { bookingId: booking.id },
+    title: 'Payment failed, retrying',
+    message: `The saved card for a booking for "${booking.tour?.title || 'the tour'}" was declined. The system will retry automatically.`,
+    data: { bookingId: booking.id, reasonCode: failureCode },
+    dedupeKey: `booking:${booking.id}:supplier-payment-failed:${failureCode}`,
   }).catch(() => {});
 
   notifyAdmin({
@@ -269,6 +334,8 @@ async function finalizeBooking(booking, reason) {
       cancellationCode: 'PAYMENT_NOT_COLLECTED',
       countsTowardRate: false,
       refundStatus: 'NOT_APPLICABLE',
+      recoveryClosedAt: new Date(),
+      recoveryClosedReason: 'BOOKING_TERMINAL',
     },
   });
   if (updated.count === 0) return;
@@ -358,6 +425,9 @@ async function chargeBooking(booking) {
 
   // Never auto-charge a booking we have already asked the customer to settle.
   if (booking.requiresPaymentActionAt) return 'waiting';
+  // A live hosted Checkout Session owns collection. Never confirm the original
+  // reserved PaymentIntent while the customer may be paying the hosted link.
+  if (booking.paymentLinkHoldAt) return 'waiting';
 
   let intent;
   try {
@@ -374,7 +444,11 @@ async function chargeBooking(booking) {
 
     case 'requires_action':
       // 3DS — cannot complete server-side. Escalate to the customer once.
-      await escalateToManual(booking, 'Your bank requires extra verification (3D Secure) to complete the charge');
+      await escalateToManual(
+        booking,
+        'Your bank requires extra verification (3D Secure) to complete the charge',
+        'AUTHENTICATION_REQUIRED',
+      );
       return 'manual';
 
     case 'requires_payment_method': {
@@ -382,10 +456,18 @@ async function chargeBooking(booking) {
       // backoff; after MAX retries escalate to manual payment.
       const retried = await scheduleRetry(booking, 'Card could not be charged (invalid, expired or declined)');
       if (retried) {
-        await notifyPaymentFailed(booking, 'Card could not be charged — we will retry automatically');
+        await notifyPaymentFailed(
+          booking,
+          'We could not charge your saved card. We will retry automatically.',
+          'CARD_DECLINED_RETRYING',
+        );
         return 'retried';
       }
-      await escalateToManual(booking, 'We could not charge your card after several attempts');
+      await escalateToManual(
+        booking,
+        'We could not charge your saved card after several attempts',
+        'CARD_DECLINED',
+      );
       return 'manual';
     }
 
@@ -396,7 +478,7 @@ async function chargeBooking(booking) {
     case 'canceled': {
       const retried = await scheduleRetry(booking, 'Payment could not be collected (intent canceled)');
       if (retried) return 'retried';
-      await escalateToManual(booking, 'Payment could not be collected');
+      await escalateToManual(booking, 'Payment could not be collected', 'PAYMENT_INTENT_CANCELLED');
       return 'manual';
     }
 
@@ -411,11 +493,17 @@ async function chargeBooking(booking) {
           return_url: `${process.env.CLIENT_URL}/booking/complete`,
         });
       } catch (err) {
+        // Log the provider detail for operations; never put a raw Stripe error
+        // in customer/supplier copy or in an attention reason.
         console.error('[PayLater] Confirm failed', booking.stripePaymentIntentId, err.message);
-        await notifyPaymentFailed(booking, err.message);
-        const retried = await scheduleRetry(booking, err.message);
+        await notifyPaymentFailed(
+          booking,
+          'We could not charge your saved card. We will retry automatically.',
+          'AUTO_CHARGE_FAILED',
+        );
+        const retried = await scheduleRetry(booking, 'Automatic charge failed');
         if (retried) return 'retried';
-        await escalateToManual(booking, err.message);
+        await escalateToManual(booking, 'We could not charge your saved card', 'AUTO_CHARGE_FAILED');
         return 'manual';
       }
 
@@ -424,21 +512,28 @@ async function chargeBooking(booking) {
         return 'failed';
       }
       if (confirmed.status === 'requires_action') {
-        await escalateToManual(booking, 'Your bank requires extra verification (3D Secure) to complete the charge');
+        await escalateToManual(
+          booking,
+          'Your bank requires extra verification (3D Secure) to complete the charge',
+          'AUTHENTICATION_REQUIRED',
+        );
         return 'manual';
       }
       if (confirmed.status === 'requires_payment_method') {
-        // Confirm returned control to the payment method (declined).
-        await notifyPaymentFailed(booking, 'Your card was declined');
+        // Confirm returned control to the payment method (declined). Only tell
+        // the customer "we will retry" once the retry is actually scheduled.
         const retried = await scheduleRetry(booking, 'Card declined');
-        if (retried) return 'retried';
-        await escalateToManual(booking, 'Your card was declined after several attempts');
+        if (retried) {
+          await notifyPaymentFailed(booking, 'Your card was declined', 'CARD_DECLINED_RETRYING');
+          return 'retried';
+        }
+        await escalateToManual(booking, 'Your card was declined after several attempts', 'CARD_DECLINED');
         return 'manual';
       }
       if (confirmed.status === 'canceled') {
         const retried = await scheduleRetry(booking, 'Payment could not be collected');
         if (retried) return 'retried';
-        await escalateToManual(booking, 'Payment could not be collected');
+        await escalateToManual(booking, 'Payment could not be collected', 'PAYMENT_INTENT_CANCELLED');
         return 'manual';
       }
       // processing / requires_payment_method — retry on the next sweep.
@@ -449,6 +544,34 @@ async function chargeBooking(booking) {
 
 async function chargePayLaterBookings() {
   const prisma = require('./prismaClient');
+
+  // Release stale CREATING rows and expired hosted sessions before deciding
+  // which bookings are due. A dead hold must never block collection forever.
+  try {
+    const { reapStalePaymentAttempts } = require('./paymentLinkService');
+    await reapStalePaymentAttempts();
+  } catch (err) {
+    console.warn('[PayLater] Hosted-attempt reaper failed:', err.message);
+  }
+  // Email jobs that exhausted their retries leave a QUEUED send row. Reap it
+  // here, independent of the recovery feature flag, so the supplier never sees
+  // "Queued" for a message that will never be delivered.
+  try {
+    const { reapStalePaymentLinkSends } = require('./paymentLinkService');
+    await reapStalePaymentLinkSends();
+  } catch (err) {
+    console.warn('[PayLater] Payment-link send reaper failed:', err.message);
+  }
+
+  // Confirm/retry refunds for late or duplicate charges. This is independent
+  // of the recovery feature flag: money must be returned even when recovery is
+  // disabled.
+  try {
+    const { reconcilePendingRefunds } = require('./paymentReconciliationService');
+    await reconcilePendingRefunds();
+  } catch (err) {
+    console.warn('[PayLater] Refund reconciliation failed:', err.message);
+  }
 
   const now = new Date();
   // Charge window: bookings whose charge moment (travelDate − before-hours) has
@@ -468,6 +591,7 @@ async function chargePayLaterBookings() {
       paidAt: null,
       travelDate: { lte: windowEnd, gt: now },
       requiresPaymentActionAt: null,
+      paymentLinkHoldAt: null,
       OR: [
         { nextRetryAt: null },
         { nextRetryAt: { lte: now } },
@@ -492,6 +616,7 @@ async function chargePayLaterBookings() {
       status: { in: ['CONFIRMED', 'PENDING'] },
       paidAt: null,
       travelDate: { lt: finalizeCutoff },
+      paymentLinkHoldAt: null,
     },
     include: {
       tour: { select: { id: true, title: true, supplierId: true } },

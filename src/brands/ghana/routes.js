@@ -1,5 +1,5 @@
 const express = require('express');
-const { createLimiter } = require('../../../middleware/dynamicRateLimiter');
+const { createLimiter, createUserLimiter } = require('../../../middleware/dynamicRateLimiter');
 const { protect } = require('../../../middleware/authMiddleware');
 // Supplier-scoped routes resolve the supplier through the team membership
 // (`resolveSupplier`), not through `restrictTo('supplier')`: a team member's own
@@ -37,6 +37,7 @@ const {
   getSupplierBookingsSchema,
   supplierBookingParamsSchema,
   rescheduleBookingSchema,
+  supplierPaymentLinkSchema,
   analyticsOverviewSchema,
   analyticsRevenueTrendSchema,
   analyticsFunnelSchema,
@@ -58,6 +59,19 @@ const {
 const { updateBookingStatusSchema } = require('../../core/services/cancellationSchemas');
 
 const router = express.Router();
+
+// A supplier link can trigger a real customer email. Bound accidental
+// double-clicks and scripted abuse per authenticated user; the Idempotency-Key
+// requirement still makes an intentional retry safe.
+const paymentLinkLimiter = createUserLimiter({
+  name: 'supplier-payment-link',
+  defaultMax: 12,
+  defaultWindowMs: 10 * 60 * 1000,
+  message: {
+    status: 'fail',
+    message: 'Too many payment-link requests. Please wait a moment and try again.',
+  },
+});
 
 // Rate limiter for contact form (5 submissions per 15 min per IP, configurable via ratelimit.contact)
 const contactLimiter = createLimiter({
@@ -1100,6 +1114,9 @@ router.get('/supplier/bookings', protect, resolveSupplier, requireTeamPermission
 router.get('/supplier/bookings/export', protect, resolveSupplier, requireTeamPermission('bookings.view'), validate(getSupplierBookingsSchema), travioGhanaController.exportSupplierBookings);
 router.post('/supplier/bookings/:id/reschedule', protect, resolveSupplier, requireTeamPermission('bookings.manage'), validate(rescheduleBookingSchema), travioGhanaController.rescheduleSupplierBooking);
 router.get('/supplier/bookings/:id', protect, resolveSupplier, requireTeamPermission('bookings.view'), validate(supplierBookingParamsSchema), travioGhanaController.getSupplierBookingDetail);
+router.post('/supplier/bookings/:id/payment-link', protect, resolveSupplier, requireTeamPermission('bookings.manage'), paymentLinkLimiter, validate(supplierPaymentLinkSchema), travioGhanaController.sendSupplierPaymentLink);
+router.post('/supplier/bookings/:id/payment-link/resend', protect, resolveSupplier, requireTeamPermission('bookings.manage'), paymentLinkLimiter, validate(supplierPaymentLinkSchema), travioGhanaController.resendSupplierPaymentLink);
+router.post('/supplier/bookings/:id/payment-link/regenerate', protect, resolveSupplier, requireTeamPermission('bookings.manage'), paymentLinkLimiter, validate(supplierPaymentLinkSchema), travioGhanaController.regenerateSupplierPaymentLink);
 
 /**
  * @swagger

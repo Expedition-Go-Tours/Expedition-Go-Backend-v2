@@ -29,21 +29,41 @@ async function sendNotification({
   message,
   data = {},
   sendEmail: shouldSendEmail = false,
-  emailTemplate = null
+  emailTemplate = null,
+  dedupeKey = null,
 }) {
   try {
+    // Dedupe retries from the sweep/webhook before creating a second in-app
+    // notification. The unique index is the final race guard.
+    if (dedupeKey) {
+      const existing = await prisma.notification.findUnique({
+        where: { userId_dedupeKey: { userId, dedupeKey } },
+        select: { id: true },
+      });
+      if (existing) return { success: true, deduplicated: true, notification: existing };
+    }
+
     // Create notification in database
-    const notification = await prisma.notification.create({
-      data: {
-        userId,
-        type,
-        title,
-        message,
-        data,
-        emailSent: false,
-        pushSent: false
+    let notification;
+    try {
+      notification = await prisma.notification.create({
+        data: {
+          userId,
+          type,
+          title,
+          message,
+          data,
+          ...(dedupeKey ? { dedupeKey } : {}),
+          emailSent: false,
+          pushSent: false
+        }
+      });
+    } catch (createErr) {
+      if (dedupeKey && createErr?.code === 'P2002') {
+        return { success: true, deduplicated: true };
       }
-    });
+      throw createErr;
+    }
 
     // Get user details for WebSocket and email
     const user = await prisma.user.findUnique({

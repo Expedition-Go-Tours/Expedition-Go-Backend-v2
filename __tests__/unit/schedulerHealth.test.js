@@ -9,6 +9,7 @@ jest.mock('bullmq', () => ({
         'plan-doc-expiry-reminders', 'plan-doc-window-reminders', 'purge-stale-stripe-events', 'auto-complete-bookings',
         'cancel-stale-pending-bookings', 'cleanup-stale-bookings',
         'expire-checkout-holds', 'expire-modify-topups', 'charge-pay-later-bookings',
+        'recover-pay-later-payments',
         'resolve-cancellation-choices',
         'cancellation-request-reminder',
         'earnings-eligibility-sweep', 'generate-due-invoices', 'plan-booking-reminders',

@@ -293,7 +293,7 @@ describe('processStripeWebhook', () => {
       },
       booking: {
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-        findMany: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
       },
       notification: { create: jest.fn().mockResolvedValue({}) },
       payout: { create: jest.fn().mockResolvedValue({ id: 'payout-1', status: 'PENDING' }) },
@@ -316,7 +316,9 @@ describe('processStripeWebhook', () => {
         where: expect.objectContaining({ paymentStatus: { in: ['PENDING', 'PROCESSING'] } }),
       }),
     );
-    expect(tx.booking.findMany).not.toHaveBeenCalled();
+    // The activity-start prefilter is part of settlement now; it must not
+    // settle through the updateMany guard or send a charge email.
+    expect(tx.booking.findMany).toHaveBeenCalled();
     expect(enqueueEmail).not.toHaveBeenCalled();
   });
 
@@ -419,6 +421,58 @@ describe('processStripeWebhook', () => {
     );
     expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'booking.expired' }));
   });
+
+  it('leaves a tracked pay-later hold escalated when its hosted session expires', async () => {
+    tx = {
+      stripeEvent: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockResolvedValue({}),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      booking: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findMany: jest.fn().mockResolvedValue([{
+          id: 'booking-1',
+          paymentTiming: 'later',
+          status: 'CONFIRMED',
+          paymentStatus: 'PENDING',
+          paidAt: null,
+        }]),
+      },
+      bookingPaymentAttempt: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'attempt-1' }),
+      },
+      checkoutDraft: { findUnique: jest.fn().mockResolvedValue(null) },
+      notification: { create: jest.fn().mockResolvedValue({}) },
+    };
+    prisma.$transaction.mockImplementation(async (cb) => {
+      await cb(tx);
+    });
+    prisma.bookingPaymentAttempt = {
+      findFirst: jest.fn().mockResolvedValue({ id: 'attempt-1', bookingId: 'booking-1', status: 'ACTIVE' }),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    };
+    prisma.booking.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+
+    await processStripeWebhook({
+      id: `evt_${Date.now()}`,
+      type: 'checkout.session.expired',
+      data: {
+        object: {
+          id: 'cs_hosted_1',
+          metadata: { bookingIds: 'booking-1', source: 'ghana' },
+        },
+      },
+    });
+
+    const payLaterUpdate = tx.booking.updateMany.mock.calls
+      .map(([arg]) => arg)
+      .find((arg) => arg.where?.paymentTiming === 'later');
+    expect(payLaterUpdate).toBeTruthy();
+    expect(payLaterUpdate.data).not.toHaveProperty('requiresPaymentActionAt');
+    expect(payLaterUpdate.data).not.toHaveProperty('nextRetryAt');
+    expect(payLaterUpdate.data.paymentLinkHoldAt).toBeNull();
+  });
 });
 
 describe('handlePaymentSucceeded offer capacity guard', () => {
@@ -482,6 +536,65 @@ describe('handlePaymentSucceeded offer capacity guard', () => {
       data: { spotsSold: { increment: 2 } },
     });
     expect(result.oversold).toHaveLength(0);
+  });
+});
+
+describe('handlePaymentSucceeded cart amount guard', () => {
+  function cartClient(bookings) {
+    return {
+      booking: {
+        updateMany: jest.fn().mockResolvedValue({ count: bookings.length }),
+        findMany: jest.fn().mockResolvedValue(bookings),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      specialOffer: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      $executeRaw: jest.fn().mockResolvedValue(1),
+      notification: { create: jest.fn().mockResolvedValue({}) },
+      supplierProfile: { update: jest.fn().mockResolvedValue({}) },
+      tour: { update: jest.fn().mockResolvedValue({}) },
+    };
+  }
+
+  const cartBookings = [
+    { ...mockBooking, id: 'booking-cart-1', trip: undefined, grossAmount: 100, paymentStatus: 'PENDING', status: 'PENDING' },
+    { ...mockBooking, id: 'booking-cart-2', trip: undefined, grossAmount: 50, paymentStatus: 'PENDING', status: 'PENDING' },
+  ];
+
+  it('settles a multi-tour cart only when the intent equals the cart total', async () => {
+    const client = cartClient(cartBookings);
+
+    const result = await handlePaymentSucceeded({
+      id: 'pi_cart',
+      status: 'succeeded',
+      amount: 15000,
+      currency: 'usd',
+      metadata: { bookingIds: 'booking-cart-1,booking-cart-2' },
+    }, client);
+
+    expect(result.bookings).toHaveLength(2);
+    expect(client.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.not.objectContaining({ grossAmount: expect.anything() }),
+      }),
+    );
+  });
+
+  it('refuses to settle any cart booking when the intent total differs', async () => {
+    const client = cartClient(cartBookings);
+
+    const result = await handlePaymentSucceeded({
+      id: 'pi_cart',
+      status: 'succeeded',
+      amount: 14900,
+      currency: 'usd',
+      metadata: { bookingIds: 'booking-cart-1,booking-cart-2' },
+    }, client);
+
+    expect(result.bookings).toEqual([]);
+    expect(client.booking.updateMany).not.toHaveBeenCalled();
   });
 });
 

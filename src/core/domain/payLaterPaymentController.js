@@ -14,26 +14,45 @@
  *        wallet and card update with zero custom card UI; completion settles the
  *        booking through the existing checkout.session.completed webhook path.
  *
- * While a hosted session is open we set requiresPaymentActionAt so the sweep
- * never double-charges the original reserved PaymentIntent concurrently.
+ * While a hosted session is open we set paymentLinkHoldAt so the sweep never
+ * double-charges the original reserved PaymentIntent concurrently. The flag is
+ * intentionally separate from requiresPaymentActionAt: a hosted link is not a
+ * manual-action escalation.
  */
 const prisma = require('../services/prismaClient');
 const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
-const { createCheckoutSession } = require('../services/stripeHelpers');
+const { createCheckoutSession, getStripe } = require('../services/stripeHelpers');
 const { resolveAllowedClientUrl } = require('../services/clientOrigin');
+const paymentLinkService = require('../services/paymentLinkService');
 
 function paymentState(booking) {
   const isPayLater = booking.paymentTiming === 'later';
   const unpaid = booking.paymentStatus === 'PENDING';
   const reserved = booking.status === 'PENDING' || booking.status === 'CONFIRMED';
   const notCancelled = booking.status !== 'CANCELLED';
-  const activityInFuture = booking.travelDate && new Date(booking.travelDate).getTime() > Date.now();
+  // The activity-start cutoff, not the date-only travelDate. A 6pm activity
+  // remains payable earlier the same day; a date-only activity anchors to local
+  // midnight. Stripe still needs 30 minutes of session life.
+  const deadlineAt = paymentLinkService.paymentLinkDeadlineFor(booking);
+  const sessionWindowOpen = Boolean(
+    deadlineAt && deadlineAt.getTime() - Date.now() >= 30 * 60 * 1000,
+  );
+  const activityInFuture = Boolean(
+    deadlineAt && deadlineAt.getTime() + 2 * 60 * 60 * 1000 > Date.now(),
+  );
+  const heldByHostedLink = Boolean(booking.paymentLinkHoldAt);
 
   return {
-    canPayNow: Boolean(isPayLater && unpaid && reserved && notCancelled && activityInFuture),
-    requiresAction: Boolean(booking.requiresPaymentActionAt && unpaid),
-    autoChargeScheduled: Boolean(isPayLater && unpaid && reserved && activityInFuture && !booking.requiresPaymentActionAt),
+    canPayNow: Boolean(isPayLater && unpaid && reserved && notCancelled && sessionWindowOpen),
+    requiresAction: Boolean((booking.requiresPaymentActionAt || heldByHostedLink) && unpaid),
+    autoChargeScheduled: Boolean(
+      isPayLater && unpaid && reserved && activityInFuture
+        && !booking.requiresPaymentActionAt && !heldByHostedLink,
+    ),
+    hostedLinkActive: heldByHostedLink,
+    sessionWindowOpen,
+    deadlineAt: deadlineAt ? deadlineAt.toISOString() : null,
     bookingNumber: booking.bookingNumber,
     travelDate: booking.travelDate,
   };
@@ -56,9 +75,12 @@ exports.getPaymentState = catchAsync(async (req, res, next) => {
       paymentStatus: true,
       paidAt: true,
       travelDate: true,
+      selectedTime: true,
       stripePaymentIntentId: true,
       requiresPaymentActionAt: true,
+      paymentLinkHoldAt: true,
       stripeCheckoutSessionId: true,
+      tour: { select: { bookingAndTickets: true } },
     },
   });
 
@@ -85,6 +107,7 @@ exports.startPayNow = catchAsync(async (req, res, next) => {
           description: true,
           coverPhoto: true,
           photos: true,
+          bookingAndTickets: true,
           supplier: { select: { id: true, name: true } },
         },
       },
@@ -95,17 +118,114 @@ exports.startPayNow = catchAsync(async (req, res, next) => {
 
   const state = paymentState(booking);
   if (!state.canPayNow) {
+    const alreadyPaid = booking.paymentStatus === 'SUCCEEDED';
+    const windowClosed = state.sessionWindowOpen === false
+      && booking.paymentStatus === 'PENDING';
     return next(new AppError(
-      booking.paymentStatus === 'SUCCEEDED'
-        ? 'This booking is already paid'
-        : 'This booking cannot be paid online right now — please contact support',
-      400
+      alreadyPaid
+        ? 'This booking is already paid.'
+        : windowClosed
+          ? 'The secure payment window for this booking has closed. Please contact support.'
+          : 'This booking cannot be paid online right now. Please contact support.',
+      409,
+      {
+        code: alreadyPaid
+          ? 'BOOKING_ALREADY_PAID'
+          : windowClosed
+            ? 'PAYMENT_LINK_WINDOW_CLOSED'
+            : 'PAYMENT_NOT_AVAILABLE',
+        reasonCode: alreadyPaid
+          ? 'PAYMENT_ALREADY_SETTLED'
+          : windowClosed
+            ? 'PAYMENT_WINDOW_CLOSED'
+            : 'PAYMENT_NOT_ELIGIBLE',
+      },
     ));
   }
 
   const amount = Math.round(Number(booking.grossAmount) * 100);
   if (!Number.isFinite(amount) || amount <= 0) {
-    return next(new AppError('Could not determine the amount due for this booking', 400));
+    return next(new AppError('Could not determine the amount due for this booking', 400, {
+      code: 'PAYMENT_LINK_AMOUNT_UNAVAILABLE',
+      reasonCode: 'INVALID_BOOKING_TOTAL',
+    }));
+  }
+
+  // Shared attempt service: one active hosted session per booking, cutoff,
+  // idempotency, and the booking-level hold. The customer is redirected to the
+  // existing live session when one is already open (no duplicate Stripe
+  // PaymentIntent, no duplicate recovery email).
+  if (await paymentLinkService.flagEnabled(paymentLinkService.FLAGS.base)) {
+    const ensured = await paymentLinkService.ensurePaymentAttempt({
+      bookingId: booking.id,
+      source: paymentLinkService.SOURCE.CUSTOMER_PAY_NOW,
+      mode: paymentLinkService.MODE.CREATE,
+      actor: { id: req.user.id, role: 'customer' },
+      sendInChat: false,
+    });
+    const attempt = ensured.attempt;
+    if (!attempt?.checkoutUrl) {
+      return next(new AppError('Could not start secure payment. Please try again.', 502, {
+        code: 'PAYMENT_LINK_PROVIDER_ERROR',
+        reasonCode: 'PAYMENT_PROVIDER_UNAVAILABLE',
+      }));
+    }
+    return res.status(201).json({
+      status: 'success',
+      data: {
+        url: attempt.checkoutUrl,
+        sessionId: attempt.stripeCheckoutSessionId,
+        paymentState: { ...state, canPayNow: false, requiresAction: true, hostedLinkActive: true },
+      },
+      message: 'Redirecting to secure payment…',
+    });
+  }
+
+  // Legacy path (shared attempts disabled): never create a second hosted
+  // session while an earlier one is still open. Resume the existing Stripe
+  // session instead, and let an in-flight completed session land via webhook.
+  if (booking.paymentLinkHoldAt) {
+    if (booking.stripeCheckoutSessionId) {
+      let existing;
+      try {
+        existing = await getStripe().checkout.sessions.retrieve(booking.stripeCheckoutSessionId);
+      } catch (err) {
+        console.error('[PayLaterPayNow] Could not retrieve the existing session:', err.message);
+        return next(new AppError('We could not check the existing payment page. Please try again.', 502, {
+          code: 'PAYMENT_LINK_PROVIDER_ERROR',
+          reasonCode: 'PAYMENT_PROVIDER_UNAVAILABLE',
+        }));
+      }
+      if (existing?.status === 'open' && existing.url) {
+        return res.status(200).json({
+          status: 'success',
+          data: {
+            url: existing.url,
+            sessionId: existing.id,
+            paymentState: { ...state, canPayNow: false, requiresAction: true, hostedLinkActive: true },
+          },
+          message: 'Resuming your secure payment page.',
+        });
+      }
+      if (['complete', 'processing'].includes(existing?.status)) {
+        return next(new AppError(
+          'A payment for this booking is already being processed. Refresh in a moment to see the result.',
+          409,
+          { code: 'PAYMENT_LINK_COMPLETION_IN_PROGRESS', reasonCode: 'PAYMENT_COMPLETION_IN_PROGRESS' },
+        ));
+      }
+      // Stripe says the old session is expired. Release only that stale hold.
+      await prisma.booking.updateMany({
+        where: { id: booking.id, stripeCheckoutSessionId: booking.stripeCheckoutSessionId },
+        data: { paymentLinkHoldAt: null, stripeCheckoutSessionId: null },
+      }).catch(() => {});
+    } else {
+      return next(new AppError(
+        'A secure payment page is already being prepared for this booking. Please try again in a moment.',
+        409,
+        { code: 'PAYMENT_LINK_CREATING', reasonCode: 'ATTEMPT_IN_PROGRESS' },
+      ));
+    }
   }
 
   const tour = booking.tour || {};
@@ -123,29 +243,56 @@ exports.startPayNow = catchAsync(async (req, res, next) => {
     ? `/dashboard/bookings?booking=${encodeURIComponent(booking.id)}&paid=1`
     : `/booking/${encodeURIComponent(booking.id)}?paid=1`;
 
-  // Before we create the session, pause the auto-charge sweep for this booking
-  // so it cannot confirm the original reserved PI while the customer pays.
-  const session = await createCheckoutSession({
-    amount,
-    currency: booking.currency || 'USD',
-    bookingId: booking.id,
-    tourTitle: tour.title,
-    tourDescription: tour.description || null,
-    tourCoverPhoto: tour.coverPhoto || (Array.isArray(tour.photos) && tour.photos[0]) || null,
-    customerId: req.user.stripeCustomerId || undefined,
-    customerEmail: req.user.email || booking.customer?.email,
-    clientUrl: clientOrigin,
-    successPath,
-    source: isExpedition ? 'expedition' : 'ghana',
+  // Pause the sweep BEFORE Stripe is called. The old order created a payable
+  // session first and only then wrote the hold, leaving a window where the
+  // sweep could charge the original PaymentIntent at the same time.
+  await prisma.booking.update({
+    where: { id: booking.id },
+    data: {
+      paymentLinkHoldAt: new Date(),
+      chargeRetries: 0,
+      nextRetryAt: null,
+    },
   });
 
-  // Record the session + pause sweep. If the session expires without payment,
-  // checkout.session.expired clears the hold so the sweep may resume/requeue.
+  let session;
+  try {
+    const requestedKey = req.get ? req.get('Idempotency-Key') : req.headers?.['idempotency-key'];
+    session = await createCheckoutSession({
+      amount,
+      currency: booking.currency || 'USD',
+      bookingId: booking.id,
+      tourTitle: tour.title,
+      tourDescription: tour.description || null,
+      tourCoverPhoto: tour.coverPhoto || (Array.isArray(tour.photos) && tour.photos[0]) || null,
+      customerId: req.user.stripeCustomerId || undefined,
+      customerEmail: req.user.email || booking.customer?.email,
+      clientUrl: clientOrigin,
+      successPath,
+      source: isExpedition ? 'expedition' : 'ghana',
+      idempotencyKey: requestedKey
+        ? `paynow:${booking.id}:${req.user.id}:${requestedKey}`
+        : undefined,
+    });
+  } catch (err) {
+    await prisma.booking.update({
+      where: { id: booking.id },
+      data: { paymentLinkHoldAt: null },
+    }).catch(() => {});
+    console.error('[PayLaterPayNow] Stripe session creation failed:', err.message);
+    return next(new AppError('Could not start secure payment. Please try again.', 502, {
+      code: 'PAYMENT_LINK_PROVIDER_ERROR',
+      reasonCode: 'PAYMENT_PROVIDER_UNAVAILABLE',
+    }));
+  }
+
+  // Record the session. If the session expires without payment,
+  // checkout.session.expired clears this hold only when the session is current.
   await prisma.booking.update({
     where: { id: booking.id },
     data: {
       stripeCheckoutSessionId: session.id,
-      requiresPaymentActionAt: new Date(),
+      paymentLinkHoldAt: new Date(),
       chargeRetries: 0,
       nextRetryAt: null,
     },
@@ -156,7 +303,7 @@ exports.startPayNow = catchAsync(async (req, res, next) => {
     data: {
       url: session.url,
       sessionId: session.id,
-      paymentState: { ...state, canPayNow: false, requiresAction: true },
+      paymentState: { ...state, canPayNow: false, requiresAction: true, hostedLinkActive: true },
     },
     message: 'Redirecting to secure payment…',
   });

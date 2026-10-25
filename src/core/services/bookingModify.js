@@ -362,7 +362,21 @@ async function validateTargetCapacity(tx, tour, target, bookingId, extra = {}) {
       ...(extra.optionScope ? { optionScope: extra.optionScope } : {}),
     }
   );
-  if (!result.ok) throw new AppError(result.reason, 409);
+  if (!result.ok) {
+    const text = String(result.reason || '');
+    const reasonCode = /time slot must be selected/i.test(text) ? 'TIME_SLOT_REQUIRED'
+      : /selected time is not available/i.test(text) ? 'TIME_SLOT_UNAVAILABLE'
+        : /no group slots/i.test(text) ? 'CAPACITY_EXHAUSTED'
+          : /only .* spot/i.test(text) ? 'INSUFFICIENT_CAPACITY'
+            : /blocked/i.test(text) ? 'DATE_BLOCKED'
+              : /not available on this date/i.test(text) ? 'DATE_UNAVAILABLE'
+                : 'AVAILABILITY_UNAVAILABLE';
+    throw new AppError(result.reason || 'That date or time is no longer available', 409, {
+      code: 'RESERVATION_UNAVAILABLE',
+      reasonCode,
+      details: { availableSpots: result.availableSpots ?? null, retry: 'REFRESH_QUOTE' },
+    });
+  }
   return result;
 }
 
@@ -1141,13 +1155,23 @@ async function rescheduleBookingBySupplier({ bookingId, supplierId, travelDate, 
       customer: true,
     },
   });
-  if (!booking) throw new AppError('Booking not found or access denied', 404);
+  if (!booking) throw new AppError('Booking not found or access denied', 404, {
+    code: 'BOOKING_NOT_FOUND',
+    reasonCode: 'BOOKING_NOT_FOUND',
+  });
 
   if (!['PENDING', 'CONFIRMED'].includes(booking.status)) {
-    throw new AppError('Only pending or confirmed bookings can be moved to a new date', 400);
+    throw new AppError('Only pending or confirmed bookings can be moved to a new date', 400, {
+      code: 'INVALID_BOOKING_TRANSITION',
+      reasonCode: 'BOOKING_NOT_MODIFIABLE',
+      details: { from: booking.status },
+    });
   }
   if (booking.payoutStatus && booking.payoutStatus !== 'PENDING') {
-    throw new AppError('This booking can no longer be changed once payout has begun', 409);
+    throw new AppError('This booking can no longer be changed once payout has begun', 409, {
+      code: 'BOOKING_NOT_MODIFIABLE',
+      reasonCode: 'PAYOUT_STARTED',
+    });
   }
 
   const target = buildTarget(booking, {
@@ -1157,12 +1181,19 @@ async function rescheduleBookingBySupplier({ bookingId, supplierId, travelDate, 
 
   const start = targetStart(target.date, target.time);
   if (start.getTime() <= Date.now()) {
-    throw new AppError('The new activity date must be in the future', 400);
+    throw new AppError('The new activity date must be in the future', 400, {
+      code: 'RESERVATION_DATE_INVALID',
+      reasonCode: 'DATE_IN_PAST',
+    });
   }
 
   const maxAdvanceDays = parseInt(await getConfig('booking.max_advance_days', '365'), 10);
   if ((start.getTime() - Date.now()) / (24 * 60 * 60 * 1000) > maxAdvanceDays) {
-    throw new AppError(`Changes can only be made up to ${maxAdvanceDays} days before the activity`, 400);
+    throw new AppError(`Changes can only be made up to ${maxAdvanceDays} days before the activity`, 400, {
+      code: 'RESERVATION_DATE_INVALID',
+      reasonCode: 'DATE_TOO_FAR_AHEAD',
+      details: { maxAdvanceDays },
+    });
   }
 
   require('./payLaterLeadTime').assertPayLaterLeadTime({
@@ -1188,7 +1219,11 @@ async function rescheduleBookingBySupplier({ bookingId, supplierId, travelDate, 
     null
   );
   if (!pricing || pricing.success === false) {
-    throw new AppError((pricing && pricing.error) || 'Unable to price the new date', 400);
+    throw new AppError((pricing && pricing.error) || 'Unable to price the new date', 400, {
+      code: 'PRICE_UNAVAILABLE',
+      reasonCode: 'QUOTE_REQUIRED',
+      details: { retry: 'REFRESH_QUOTE' },
+    });
   }
 
   const previousTotal = round2(booking.grossAmount);
@@ -1201,7 +1236,8 @@ async function rescheduleBookingBySupplier({ bookingId, supplierId, travelDate, 
       `That date is priced ${money(newTotal)} instead of ${money(previousTotal)}. `
       + 'A supplier move never changes what the customer paid, so this move is refused — '
       + 'cancel this booking and take a new one for the new date instead.',
-      409
+      409,
+      { code: 'PRICE_CHANGED', reasonCode: 'NEW_DATE_PRICE_DIFFERS', details: { previousTotal, newTotal } },
     );
   }
 

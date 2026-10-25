@@ -10,15 +10,17 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   booking: {
     findFirst: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(),
   },
 }));
 
 jest.mock('../../src/core/services/stripeHelpers', () => ({
   createCheckoutSession: jest.fn(),
+  getStripe: jest.fn(),
 }));
 
 const prisma = require('../../src/core/services/prismaClient');
-const { createCheckoutSession } = require('../../src/core/services/stripeHelpers');
+const { createCheckoutSession, getStripe } = require('../../src/core/services/stripeHelpers');
 const { startPayNow } = require('../../src/core/domain/payLaterPaymentController');
 
 const originalClientUrl = process.env.CLIENT_URL;
@@ -71,6 +73,7 @@ describe('payLaterPaymentController.startPayNow', () => {
     };
     next = jest.fn();
     prisma.booking.update.mockResolvedValue({});
+    prisma.booking.updateMany.mockResolvedValue({ count: 1 });
     createCheckoutSession.mockResolvedValue({
       id: 'cs_test_1',
       url: 'https://checkout.stripe.com/c/pay/cs_test_1',
@@ -95,6 +98,66 @@ describe('payLaterPaymentController.startPayNow', () => {
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       status: 'success',
       data: expect.objectContaining({ url: 'https://checkout.stripe.com/c/pay/cs_test_1' }),
+    }));
+  });
+
+  it('returns a distinct error when the booking is already paid', async () => {
+    prisma.booking.findFirst.mockResolvedValue(booking({ paymentStatus: 'SUCCEEDED' }));
+
+    await startPayNow(request(), res, next);
+
+    expect(createCheckoutSession).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({
+      statusCode: 409,
+      errorCode: 'BOOKING_ALREADY_PAID',
+      reasonCode: 'PAYMENT_ALREADY_SETTLED',
+    }));
+  });
+
+  it('resumes an existing open hosted session instead of creating a second one', async () => {
+    prisma.booking.findFirst.mockResolvedValue(booking({
+      paymentLinkHoldAt: new Date(),
+      stripeCheckoutSessionId: 'cs_existing',
+    }));
+    getStripe.mockReturnValue({
+      checkout: {
+        sessions: {
+          retrieve: jest.fn().mockResolvedValue({
+            id: 'cs_existing',
+            status: 'open',
+            url: 'https://checkout.stripe.com/c/pay/cs_existing',
+          }),
+        },
+      },
+    });
+
+    await startPayNow(request(), res, next);
+
+    expect(createCheckoutSession).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Resuming your secure payment page.',
+      data: expect.objectContaining({ url: 'https://checkout.stripe.com/c/pay/cs_existing' }),
+    }));
+  });
+
+  it('does not create a second session while an existing one is completing', async () => {
+    prisma.booking.findFirst.mockResolvedValue(booking({
+      paymentLinkHoldAt: new Date(),
+      stripeCheckoutSessionId: 'cs_existing',
+    }));
+    getStripe.mockReturnValue({
+      checkout: {
+        sessions: { retrieve: jest.fn().mockResolvedValue({ id: 'cs_existing', status: 'complete' }) },
+      },
+    });
+
+    await startPayNow(request(), res, next);
+
+    expect(createCheckoutSession).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({
+      statusCode: 409,
+      errorCode: 'PAYMENT_LINK_COMPLETION_IN_PROGRESS',
     }));
   });
 

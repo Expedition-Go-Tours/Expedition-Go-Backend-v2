@@ -375,6 +375,26 @@ const paymentUnsuccessful = {
   },
 };
 
+const paymentLink = {
+  key: 'payment-link',
+  name: 'Customer · Secure payment link',
+  build() {
+    return B.shell('Complete your secure payment', `
+      ${B.hero({ heading: 'Your reservation is waiting for payment', badgeText: 'Payment required', badgeColor: 'warning', subtitle: 'Hello {{customerName}},<br>Your reservation for <strong>{{tourTitle}}</strong> is not paid yet. Use the secure link below to complete payment.' })}
+      ${B.detailCard([
+        { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Activity date', value: '{{dateLabel}}' },
+        { label: 'Booking reference', value: '{{bookingNumber}}' },
+        { label: 'Amount due', value: '{{paymentAmountLabel}}' },
+        { label: 'Secure link expires', value: '{{expiresAtLabel}}' },
+      ])}
+      ${B.callout('Payment is only confirmed after Stripe processes it. Sending or opening this email does not mark the booking as paid.', 'info')}
+      ${B.buttonPrimary('Pay securely', '{{paymentLinkUrl}}')}
+      ${B.paragraph('If the button does not work, open your booking from your dashboard and choose the payment action there.', { muted: true, small: true })}
+    `);
+  },
+};
+
 const customerBookingChanged = {
   key: 'customer-booking-changed',
   name: 'Customer · Changes confirmed',
@@ -1503,6 +1523,7 @@ const TEMPLATE_DEFS = [
   payLaterCharged,
   awaitingConfirmation,
   paymentUnsuccessful,
+  paymentLink,
   customerBookingChanged,
   pickupDetailsUpdated,
   pickupLocationRequired,

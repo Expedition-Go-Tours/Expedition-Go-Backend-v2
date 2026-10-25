@@ -1727,7 +1727,9 @@ exports.chargePayLaterBooking = catchAsync(async (req, res, next) => {
     const { logActivity } = require('../services/auditLogger');
 
     try {
-      await handlePaymentSucceeded(intent);
+      // `intent` was retrieved before confirm() and still carries the old
+      // requires_action status. Settle from the authoritative confirmed object.
+      await handlePaymentSucceeded(confirmed);
     } catch (err) {
       console.error('[AdminCharge] Settlement failed:', err.message);
     }

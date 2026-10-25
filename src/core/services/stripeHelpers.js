@@ -38,7 +38,7 @@ const getConfig = require('./getConfig');
 const { normalizeCommissionRate, DEFAULT_SURCHARGE_RATE } = require('./commission');
 const redis = require('./redisClient');
 const { invalidateUserCache } = require('../../../middleware/authMiddleware');
-const { travelerCount, parseBlob } = require('./availabilityCore');
+const { travelerCount, parseBlob, activityStartExactUtc } = require('./availabilityCore');
 
 /**
  * A valid Stripe Customer ID is a non-empty `cus_...` string.
@@ -252,6 +252,9 @@ async function createCustomCheckoutPaymentIntent({
  * @param {Date} [opts.expiresAt] - session expiry (pay-later payment links)
  * @param {string} [opts.clientUrl] - the caller's frontend origin (allow-listed);
  *   Stripe success/cancel redirects are built from this instead of CLIENT_URL
+ * @param {string} [opts.cancelPath] - where Stripe returns on cancel (default /booking)
+ * @param {string} [opts.idempotencyKey] - Stripe idempotency key for the create call
+ * @param {object} [opts.metadata] - extra metadata to copy onto the session and PI
  * @returns {Promise<object>} the Stripe Checkout Session
  */
 async function createCheckoutSession({
@@ -265,8 +268,11 @@ async function createCheckoutSession({
   customerEmail,
   expiresAt,
   successPath,
+  cancelPath,
   clientUrl,
   source = 'expedition',
+  idempotencyKey,
+  metadata = {},
 }) {
   if (!bookingId) throw new Error('bookingId is required to create a Checkout Session');
   if (!amount || amount <= 0) throw new Error('amount must be a positive value in minor units');
@@ -278,9 +284,9 @@ async function createCheckoutSession({
   const successUrl = successPath
     ? `${baseUrl}${successPath}`
     : `${baseUrl}/booking/confirmation/${bookingId}`;
-  const cancelUrl = `${baseUrl}/booking`;
+  const cancelUrl = `${baseUrl}${cancelPath || '/booking'}`;
 
-  return getStripe().checkout.sessions.create({
+  const request = {
     mode: 'payment',
     client_reference_id: bookingId,
     line_items: [
@@ -299,9 +305,9 @@ async function createCheckoutSession({
     ],
     success_url: successUrl,
     cancel_url: cancelUrl,
-    metadata: { bookingIds: bookingId, source },
+    metadata: { bookingIds: bookingId, source, paymentTiming: 'now', ...(metadata || {}) },
     payment_intent_data: {
-      metadata: { bookingIds: bookingId, source },
+      metadata: { bookingIds: bookingId, source, paymentTiming: 'now', ...(metadata || {}) },
       // Persist the card to the customer so Stripe can offer it as a saved
       // card on the next checkout. Only valid when a customer is attached.
       ...(customerId ? { setup_future_usage: 'off_session' } : {}),
@@ -309,7 +315,12 @@ async function createCheckoutSession({
     ...(customerId ? { customer: customerId } : {}),
     ...((!customerId && customerEmail) ? { customer_email: customerEmail } : {}),
     ...(expiresAt ? { expires_at: Math.floor(expiresAt.getTime() / 1000) } : {}),
-  });
+  };
+
+  const options = idempotencyKey ? { idempotencyKey } : undefined;
+  return options
+    ? getStripe().checkout.sessions.create(request, options)
+    : getStripe().checkout.sessions.create(request);
 }
 
 /**
@@ -772,6 +783,15 @@ async function processStripeWebhook(event) {
   // rows — yet the money did move and must be reported to GA exactly once.
   const gaRefundBookings = [];
   let reconciledPaymentIntentId = null;
+  // Hosted payment-attempt lifecycle, applied after the booking transaction
+  // commits. Kept out of the transaction because paymentLinkService writes the
+  // attempt/send tables through the global client.
+  let settledPaymentIntentForAttempt = null;
+  let settledHostedSessionForAttempt = null;
+  let expiredHostedSessionForAttempt = null;
+  // A success event that claimed no booking may still be real money. The
+  // money-side reconciliation runs after commit and never settles a booking.
+  let unclaimedPayment = null;
   // Set when a booking-topup PaymentIntent is settled (parked change applied);
   // its side-effect emails run after the transaction like every other branch.
   let modifyApplied = null;
@@ -895,6 +915,20 @@ async function processStripeWebhook(event) {
         bookings = result.bookings;
         oversoldBookings = result.oversold;
         reconciledPaymentIntentId = intent.id;
+        if (intent.metadata?.paymentAttemptId) {
+          settledPaymentIntentForAttempt = intent.id;
+        }
+        if (
+          bookings.length === 0
+          && !result.oversold?.length
+          && (intent.metadata?.paymentTiming === 'later' || intent.metadata?.paymentAttemptId)
+        ) {
+          unclaimedPayment = {
+            paymentIntentId: intent.id,
+            bookingIds: ((intent.metadata?.bookingIds) || '').split(',').filter(Boolean),
+            source: 'payment_intent.succeeded',
+          };
+        }
         break;
       }
 
@@ -909,10 +943,17 @@ async function processStripeWebhook(event) {
         // so "Payment failed" alerts always carry the booking reference. Only
         // skip bookings that are already settled as SUCCEEDED/REFUNDED.
         const unsettled = { notIn: ['SUCCEEDED', 'REFUNDED'] };
+        // Pay-later failures are handled by the pay-later sweep (retry then
+        // manual action). Sending the pay-now "booking cancelled" email here
+        // would be false, because the reservation is deliberately retained.
         failedPaymentBookings = await tx.booking.findMany({
-          where: failedIds.length > 0
-            ? { id: { in: failedIds }, paymentStatus: unsettled }
-            : { stripePaymentIntentId: intent.id, paymentStatus: unsettled },
+          where: {
+            ...(failedIds.length > 0
+              ? { id: { in: failedIds } }
+              : { stripePaymentIntentId: intent.id }),
+            paymentStatus: unsettled,
+            paymentTiming: { not: 'later' },
+          },
           include: WEBHOOK_BOOKING_INCLUDE,
         });
         break;
@@ -1033,6 +1074,16 @@ async function processStripeWebhook(event) {
 
       case 'checkout.session.completed': {
         const session = event.data.object;
+        // Hosted Checkout can complete before an asynchronous payment method
+        // has actually settled. Only a paid (or zero-due) session is authority
+        // to confirm a booking.
+        if (
+          session.payment_status &&
+          !['paid', 'no_payment_required'].includes(session.payment_status)
+        ) {
+          console.log(` checkout.session.completed — session ${session.id} is not paid yet (${session.payment_status}); waiting for payment_intent.succeeded`);
+          break;
+        }
         // ── Draft-based hold (pay-now) ──────────────────────────────
         // If the session's metadata.bookingIds refers to a CheckoutDraft
         // (not a Booking), materialize it into a real Booking.
@@ -1063,18 +1114,33 @@ async function processStripeWebhook(event) {
             },
           });
           const result = await handlePaymentSucceeded(
-            { id: session.payment_intent, metadata: { bookingIds: bookingIds.join(',') } },
+            {
+              id: session.payment_intent,
+              status: 'succeeded',
+              amount: session.amount_total,
+              currency: session.currency,
+              metadata: { bookingIds: bookingIds.join(',') },
+            },
             tx
           );
           bookings = result.bookings;
           oversoldBookings = result.oversold;
           reconciledPaymentIntentId = session.payment_intent;
+          if (session.id) settledHostedSessionForAttempt = session.id;
+          if (bookings.length === 0 && !result.oversold?.length) {
+            unclaimedPayment = {
+              paymentIntentId: session.payment_intent,
+              bookingIds,
+              source: 'checkout.session.completed',
+            };
+          }
         }
         break;
       }
 
       case 'checkout.session.expired': {
         const session = event.data.object;
+        if (session.id) expiredHostedSessionForAttempt = session.id;
         // ── Draft-based hold (pay-now) ──────────────────────────────
         // Release the hold (seats freed immediately).
         const draftId = resolveSessionBookingIds(session)[0];
@@ -1108,6 +1174,10 @@ async function processStripeWebhook(event) {
             const cancelled = await tx.booking.updateMany({
               where: {
                 id: { in: cancels.map((b) => b.id) },
+                // Only the session that is actually current may cancel the
+                // booking. A late expiry for an old session must not undo a
+                // newer payment attempt.
+                stripeCheckoutSessionId: session.id,
                 status: 'PENDING',
                 paymentStatus: 'PENDING',
                 paidAt: null,
@@ -1130,25 +1200,41 @@ async function processStripeWebhook(event) {
             }
           }
 
-          // Pay-later reservation survives session expiry — release the manual
-          // hold so the sweep can auto-charge again (it will re-escalate if the
-          // reserved card still fails, and finalize after the activity date).
+          // Pay-later reservation survives session expiry. For a tracked
+          // hosted attempt, recovery owns the next move: keep the escalation
+          // and its retry-ladder state intact so the replacement email can be
+          // sent. Only a legacy, untracked supplementary session falls back to
+          // releasing the manual hold for the original sweep.
           if (payLater.length > 0) {
+            const trackedAttempt = typeof tx.bookingPaymentAttempt?.findFirst === 'function'
+              ? await tx.bookingPaymentAttempt.findFirst({
+                where: { stripeCheckoutSessionId: session.id },
+                select: { id: true },
+              })
+              : null;
             await tx.booking.updateMany({
               where: {
                 id: { in: payLater.map((b) => b.id) },
+                // Current session only — see the pay-now guard above.
+                stripeCheckoutSessionId: session.id,
                 paymentTiming: 'later',
                 paymentStatus: 'PENDING',
                 paidAt: null,
               },
-              data: {
-                requiresPaymentActionAt: null,
-                chargeRetries: 0,
-                nextRetryAt: null,
-                stripeCheckoutSessionId: null,
-              },
+              data: trackedAttempt
+                ? {
+                    paymentLinkHoldAt: null,
+                    stripeCheckoutSessionId: null,
+                  }
+                : {
+                    requiresPaymentActionAt: null,
+                    paymentLinkHoldAt: null,
+                    chargeRetries: 0,
+                    nextRetryAt: null,
+                    stripeCheckoutSessionId: null,
+                  },
             });
-            console.log(`[Stripe] checkout.session.expired — kept ${payLater.length} pay-later reservation(s), cleared manual-payment hold`);
+            console.log(`[Stripe] checkout.session.expired — kept ${payLater.length} pay-later reservation(s)${trackedAttempt ? ' for recovery' : ', cleared manual-payment hold'}`);
           }
         }
         break;
@@ -1180,6 +1266,58 @@ async function processStripeWebhook(event) {
     paymentIntentId: reconciledPaymentIntentId || event.data.object?.id,
     source: 'webhook',
   });
+
+  // Close the hosted-attempt row for this session. The booking itself was
+  // settled above by handlePaymentSucceeded; this only keeps attention and the
+  // one-active-session invariant honest.
+  if (unclaimedPayment) {
+    try {
+      const { reconcileUnclaimedPayment } = require('./paymentReconciliationService');
+      await reconcileUnclaimedPayment(unclaimedPayment);
+    } catch (err) {
+      console.error('[Stripe] Unclaimed-payment reconciliation failed:', err.message);
+    }
+  }
+
+  if (settledHostedSessionForAttempt || settledPaymentIntentForAttempt || expiredHostedSessionForAttempt) {
+    try {
+      const {
+        markAttemptSettledForSession,
+        markAttemptSettledByPaymentIntent,
+        markAttemptUnclaimedForSession,
+        markAttemptUnclaimedByPaymentIntent,
+        expireCurrentAttemptForSession,
+      } = require('./paymentLinkService');
+      // A spent session that settled no booking must not leave an ACTIVE
+      // attempt (and its hold) behind. Close it first; reconciliation decides
+      // the refund independently.
+      if (settledHostedSessionForAttempt) {
+        if (unclaimedPayment) {
+          await markAttemptUnclaimedForSession(
+            settledHostedSessionForAttempt,
+            unclaimedPayment.reason || 'PAYMENT_UNCLAIMED',
+          );
+        } else {
+          await markAttemptSettledForSession(settledHostedSessionForAttempt);
+        }
+      }
+      if (settledPaymentIntentForAttempt) {
+        if (unclaimedPayment) {
+          await markAttemptUnclaimedByPaymentIntent(
+            settledPaymentIntentForAttempt,
+            unclaimedPayment.reason || 'PAYMENT_UNCLAIMED',
+          );
+        } else {
+          await markAttemptSettledByPaymentIntent(settledPaymentIntentForAttempt);
+        }
+      }
+      if (expiredHostedSessionForAttempt) {
+        await expireCurrentAttemptForSession(expiredHostedSessionForAttempt);
+      }
+    } catch (err) {
+      console.error('[Stripe] Hosted payment-attempt reconciliation failed:', err.message);
+    }
+  }
 
   // ── Oversold offer capacity: refund immediately ─────────────────────
   // The booking was cancelled inside the transaction; money must go back
@@ -1333,11 +1471,126 @@ async function processStripeWebhook(event) {
  * @returns {Promise<Array>} Array of booking records (for side effects)
  */
 async function handlePaymentSucceeded(paymentIntent, tx = null) {
-  const bookingIds = paymentIntent.metadata.bookingIds?.split(',') || [];
+  const bookingIds = paymentIntent.metadata?.bookingIds?.split(',') || [];
   let bookings;
   const oversoldBookings = [];
 
-      const dbWork = async (client) => {
+  // A payment intent that has not actually succeeded must never settle a
+  // booking. Stripe can deliver redirect/async events with a non-final status;
+  // the webhook caller also checks session.payment_status where applicable.
+  if (paymentIntent?.status && paymentIntent.status !== 'succeeded') {
+    return { bookings: [], oversold: [] };
+  }
+
+  // Amount and currency are part of settlement, not just metadata. A stale or
+  // mis-scoped PaymentIntent must not confirm a booking for a different total.
+  const expectedAmount = Number.isInteger(Number(paymentIntent?.amount))
+    ? Number(paymentIntent.amount)
+    : null;
+  const expectedCurrency = paymentIntent?.currency
+    ? String(paymentIntent.currency).toUpperCase()
+    : null;
+
+  const dbWork = async (client) => {
+    const candidateOr = [
+      ...(bookingIds.length > 0 ? [{ id: { in: bookingIds } }] : []),
+      { stripePaymentIntentId: paymentIntent.id },
+    ];
+    // One PaymentIntent can cover a multi-tour cart, so an exact per-booking
+    // amount guard would refuse to settle every cart. Read the unsettled
+    // candidates first and verify the PaymentIntent total against either the
+    // one booking or the sum of the whole cart.
+    const settlementCandidates = typeof client.booking?.findMany === 'function'
+      ? (await client.booking.findMany({
+        where: {
+          OR: candidateOr,
+          paymentStatus: { in: ['PENDING', 'PROCESSING'] },
+        },
+        select: {
+          id: true,
+          grossAmount: true,
+          currency: true,
+          paymentTiming: true,
+          status: true,
+          travelDate: true,
+          selectedTime: true,
+          tour: { select: { bookingAndTickets: true } },
+        },
+      })) || []
+      // Legacy transaction mocks predate the candidate query.
+      : [];
+
+    // Pay-later settlement is bounded by the activity start, not by the
+    // date-only travelDate. A 6pm activity booked for pay-later may legitimately
+    // complete its 3DS challenge at 9am the same day; a date-only activity
+    // starts at local midnight and is already past. Resolve the exact instant
+    // first, then exclude genuinely late rows from BOTH settlement paths.
+    const now = new Date();
+    const tooLateIds = settlementCandidates
+      .filter((b) => {
+        if (b.paymentTiming !== 'later') return false;
+        const start = activityStartExactUtc(
+          parseBlob(b.tour?.bookingAndTickets) || {},
+          b.travelDate,
+          b.selectedTime,
+        );
+        return !start || Number.isNaN(start.getTime()) || now.getTime() >= start.getTime();
+      })
+      .map((b) => b.id);
+    const notTooLate = tooLateIds.length > 0 ? { NOT: { id: { in: tooLateIds } } } : {};
+
+    // The amount check must cover exactly the rows this event may settle. If a
+    // cart contains a terminal or already-started row, the remaining sum no
+    // longer matches the PaymentIntent and we refuse the whole settlement: the
+    // webhook then routes the full charge to reconciliation rather than
+    // silently keeping the unfulfilled portion.
+    const settlementForAmount = settlementCandidates.filter((b) => {
+      if (tooLateIds.includes(b.id)) return false;
+      return b.status === 'PENDING'
+        || (b.paymentTiming === 'later' && b.status === 'CONFIRMED');
+    });
+    let amountMatches = true;
+    const amountGuard = {
+      ...(expectedCurrency ? { currency: expectedCurrency } : {}),
+    };
+    if (settlementForAmount.length === 1) {
+      const only = settlementForAmount[0];
+      const cents = Math.round(Number(only.grossAmount) * 100);
+      if (
+        (expectedAmount !== null && cents !== expectedAmount)
+        || (expectedCurrency && String(only.currency || '').toUpperCase() !== expectedCurrency)
+      ) {
+        amountMatches = false;
+      } else if (expectedAmount !== null) {
+        amountGuard.grossAmount = only.grossAmount;
+      }
+    } else if (settlementForAmount.length > 1) {
+      const totalCents = settlementForAmount.reduce(
+        (sum, b) => sum + Math.round(Number(b.grossAmount) * 100),
+        0,
+      );
+      const currenciesMatch = settlementForAmount.every(
+        (b) => String(b.currency || '').toUpperCase() === expectedCurrency,
+      );
+      if (
+        (expectedAmount !== null && totalCents !== expectedAmount)
+        || (expectedCurrency && !currenciesMatch)
+      ) {
+        amountMatches = false;
+      }
+    } else {
+      // No settleable candidate row was readable (or legacy mock client): keep
+      // the strict single-booking guard so a mis-scoped intent cannot settle.
+      if (expectedAmount !== null && expectedAmount > 0) {
+        amountGuard.grossAmount = expectedAmount / 100;
+      }
+    }
+
+    if (!amountMatches) {
+      console.warn(`[Stripe] Refusing settlement for ${paymentIntent.id}: amount/currency does not match persisted booking totals`);
+      return;
+    }
+
     // Try to find bookings by metadata.bookingIds (main flow: bookings exist before PI)
     if (bookingIds.length > 0) {
       const updatedBookings = await client.booking.updateMany({
@@ -1348,10 +1601,17 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
           //  - normal flow: status PENDING until the webhook settles it
           //  - reserve-now-pay-later: status CONFIRMED from creation but
           //    paymentStatus stays PENDING until the deferred charge lands.
-          // A booking the supplier already cancelled must never be
-          // resurrected by a late webhook, so we gate on paymentStatus.
+          // Terminal bookings are never resurrected by a late webhook: only a
+          // PENDING booking, or a still-unpaid CONFIRMED pay-later booking,
+          // may be settled. CANCELLED/COMPLETED/NO_SHOW/REFUNDED are excluded.
           paymentStatus: { in: ['PENDING', 'PROCESSING'] },
-          OR: [{ status: 'PENDING' }, { paymentTiming: 'later' }],
+          ...notTooLate,
+          OR: [
+            { status: 'PENDING', paymentTiming: { not: 'later' } },
+            { status: 'PENDING', paymentTiming: 'later' },
+            { status: 'CONFIRMED', paymentTiming: 'later' },
+          ],
+          ...amountGuard,
         },
         data: {
           status: 'CONFIRMED',
@@ -1359,8 +1619,11 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
           paidAt: new Date(),
           // Customer completed the deferred payment manually (3DS / card
           // update) or the sweep auto-charged — either way the manual-action
-          // hold is no longer needed.
+          // hold and the hosted-link hold are no longer needed.
           requiresPaymentActionAt: null,
+          paymentLinkHoldAt: null,
+          recoveryClosedAt: new Date(),
+          recoveryClosedReason: 'PAYMENT_SETTLED',
         }
       });
 
@@ -1389,13 +1652,22 @@ async function handlePaymentSucceeded(paymentIntent, tx = null) {
         where: {
           stripePaymentIntentId: paymentIntent.id,
           paymentStatus: { in: ['PENDING', 'PROCESSING'] },
-          OR: [{ status: 'PENDING' }, { paymentTiming: 'later' }]
+          ...notTooLate,
+          OR: [
+            { status: 'PENDING', paymentTiming: { not: 'later' } },
+            { status: 'PENDING', paymentTiming: 'later' },
+            { status: 'CONFIRMED', paymentTiming: 'later' },
+          ],
+          ...amountGuard,
         },
         data: {
           status: 'CONFIRMED',
           paymentStatus: 'SUCCEEDED',
           paidAt: new Date(),
           requiresPaymentActionAt: null,
+          paymentLinkHoldAt: null,
+          recoveryClosedAt: new Date(),
+          recoveryClosedReason: 'PAYMENT_SETTLED',
         }
       });
 
@@ -1577,13 +1849,24 @@ async function handlePaymentFailed(paymentIntent, tx = null) {
   const bookingIds = paymentIntent.metadata.bookingIds?.split(',') || [];
   const client = tx || prisma;
 
+  // A failed deferred charge does NOT cancel a reserve-now-pay-later
+  // reservation. The sweep owns that decision: it retries transient declines
+  // and eventually escalates to a manual payment action, while the activity is
+  // still ahead. Cancelling here would turn a retryable decline into a lost
+  // booking (and a false "no charge was made" email while the sweep may still
+  // be attempting the original PaymentIntent).
+  const payableNowWhere = {
+    paymentStatus: { in: ['PENDING', 'PROCESSING'] },
+    paymentTiming: { not: 'later' },
+    OR: [{ status: 'PENDING' }],
+  };
+
   if (bookingIds.length > 0) {
-    await client.booking.updateMany({
+    const failed = await client.booking.updateMany({
       where: {
         id: { in: bookingIds },
         stripePaymentIntentId: paymentIntent.id,
-        paymentStatus: { in: ['PENDING', 'PROCESSING'] },
-        OR: [{ status: 'PENDING' }, { paymentTiming: 'later' }]
+        ...payableNowWhere,
       },
       data: {
         status: 'CANCELLED',
@@ -1593,16 +1876,15 @@ async function handlePaymentFailed(paymentIntent, tx = null) {
       }
     });
 
-    console.log(` Marked ${bookingIds.length} bookings as CANCELLED due to payment failure`);
-    return { success: true, message: `${bookingIds.length} bookings cancelled` };
+    console.log(` Marked ${failed.count} pay-now booking(s) as CANCELLED due to payment failure`);
+    return { success: true, message: `${failed.count} bookings cancelled` };
   }
 
   // Fallback: find expedition booking by stripePaymentIntentId
   const updated = await client.booking.updateMany({
     where: {
       stripePaymentIntentId: paymentIntent.id,
-      paymentStatus: { in: ['PENDING', 'PROCESSING'] },
-      OR: [{ status: 'PENDING' }, { paymentTiming: 'later' }]
+      ...payableNowWhere,
     },
     data: {
       status: 'CANCELLED',
@@ -1613,7 +1895,7 @@ async function handlePaymentFailed(paymentIntent, tx = null) {
   });
 
   if (updated.count > 0) {
-    console.log(` Marked ${updated.count} expedition bookings as CANCELLED due to payment failure`);
+    console.log(` Marked ${updated.count} pay-now booking(s) as CANCELLED due to payment failure`);
   }
 
   return { success: true, message: `${updated.count} bookings cancelled` };

@@ -67,6 +67,12 @@ jest.mock('../../src/core/services/checkoutHold', () => ({ acquireHold: jest.fn(
 jest.mock('../../src/core/services/cancellationRequestService', () => ({
   pendingRequestsForBookingIds: jest.fn(async () => new Map()),
 }));
+jest.mock('../../src/core/services/bookingAttentionService', () => ({
+  attachBookingAttention: jest.fn(async (rows) => rows.map((row) => ({
+    ...row,
+    attention: { level: 'NONE', code: null, actions: [] },
+  }))),
+}));
 
 const prisma = require('../../src/core/services/prismaClient');
 const controller = require('../../src/brands/ghana/controller');

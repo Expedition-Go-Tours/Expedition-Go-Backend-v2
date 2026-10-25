@@ -1038,6 +1038,61 @@ async function sendPaymentUnsuccessfulEmail(booking, { deadline, amount } = {}) 
   });
 }
 
+/**
+ * Direct hosted-checkout link for an unpaid pay-later reservation.
+ *
+ * The URL lives on the BookingPaymentAttempt row and is only read here. Job
+ * payloads carry the attempt id, never the hosted URL, so queue logs and admin
+ * tooling cannot accidentally leak it to a supplier-facing surface.
+ */
+async function sendPaymentLinkEmail(booking, { paymentLinkAttemptId, amount, expiresAt } = {}) {
+  const b = await resolveBookingContext(booking);
+  const base = await buildBookingBase(b);
+  if (!paymentLinkAttemptId) throw new Error('paymentLinkAttemptId is required');
+  const attempt = await prisma.bookingPaymentAttempt.findUnique({
+    where: { id: paymentLinkAttemptId },
+    select: { checkoutUrl: true, expiresAt: true, amount: true, currency: true, status: true },
+  });
+  if (!attempt?.checkoutUrl) throw new Error('Payment link attempt has no hosted URL');
+  if (attempt.status !== 'ACTIVE') {
+    throw new Error('Payment link is no longer active');
+  }
+  if (attempt.expiresAt && new Date(attempt.expiresAt).getTime() <= Date.now()) {
+    throw new Error('Payment link has expired');
+  }
+  // The booking may have settled, been cancelled, or otherwise terminalized
+  // while this job sat in the queue. A queued email is never authorization to
+  // send a stale payment link.
+  if (b.paymentStatus !== 'PENDING' || !['PENDING', 'CONFIRMED'].includes(b.status)) {
+    throw new Error('Booking no longer needs a payment link');
+  }
+  const expires = expiresAt ? new Date(expiresAt) : attempt.expiresAt;
+  const paymentAmount = amount != null
+    ? Number(amount)
+    : attempt.amount != null
+      ? Number(attempt.amount)
+      : Number(b.grossAmount);
+  const data = {
+    ...base,
+    paymentAmountLabel: fmt.formatCurrency(
+      Number.isFinite(paymentAmount) ? paymentAmount : 0,
+      b.currency || attempt.currency || 'USD',
+    ),
+    expiresAtLabel: expires ? fmt.formatDateTime(expires) : '',
+    paymentLinkUrl: attempt.checkoutUrl,
+  };
+  return sendRendered({
+    to: base.customerEmail,
+    subject: `Complete your payment for ${base.tourTitle}`,
+    key: 'payment-link',
+    data,
+    opts: {
+      preheader: `Your reservation is not paid yet. Complete payment securely by ${data.expiresAtLabel}.`,
+      brandKey: base.brandKey,
+    },
+  });
+}
+
 async function sendCustomerBookingChangedEmail(booking, { changes = [], previousTotal, adjustment, newTotal } = {}) {
   const b = await resolveBookingContext(booking);
   const base = await buildBookingBase(b);
@@ -2508,6 +2563,7 @@ module.exports = {
   sendPayLaterChargedEmail,
   sendAwaitingConfirmationEmail,
   sendPaymentUnsuccessfulEmail,
+  sendPaymentLinkEmail,
   sendCustomerBookingChangedEmail,
   sendPickupDetailsUpdatedEmail,
   sendPickupLocationRequiredEmail,

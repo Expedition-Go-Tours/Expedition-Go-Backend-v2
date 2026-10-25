@@ -1,5 +1,5 @@
 jest.mock('../../src/core/services/prismaClient', () => ({
-  notification: { create: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), update: jest.fn(), updateMany: jest.fn(), deleteMany: jest.fn() },
+  notification: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), update: jest.fn(), updateMany: jest.fn(), deleteMany: jest.fn() },
   user: { findUnique: jest.fn() },
 }));
 
@@ -89,6 +89,58 @@ describe('sendNotification', () => {
   it('uses custom template when provided', async () => {
     await sendNotification({ userId: 'u-1', type: 'BOOKING_CONFIRMED', title: 'T', message: 'M', sendEmail: true, emailTemplate: 'custom-template' });
     expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ template: 'custom-template' }));
+  });
+
+  it('deduplicates a retried notification before creating another row', async () => {
+    prisma.notification.findUnique.mockResolvedValue({ id: 'n-existing' });
+
+    const result = await sendNotification({
+      userId: 'u-1',
+      type: 'PAYMENT_ACTION_REQUIRED',
+      title: 'Payment not confirmed',
+      message: 'msg',
+      dedupeKey: 'booking:b1:payment-action',
+      sendEmail: true,
+    });
+
+    expect(prisma.notification.findUnique).toHaveBeenCalledWith({
+      where: { userId_dedupeKey: { userId: 'u-1', dedupeKey: 'booking:b1:payment-action' } },
+      select: { id: true },
+    });
+    expect(prisma.notification.create).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(result).toEqual({ success: true, deduplicated: true, notification: { id: 'n-existing' } });
+  });
+
+  it('deduplicates when a concurrent request wins the unique index race', async () => {
+    prisma.notification.findUnique.mockResolvedValue(null);
+    const conflict = new Error('duplicate key');
+    conflict.code = 'P2002';
+    prisma.notification.create.mockRejectedValue(conflict);
+
+    const result = await sendNotification({
+      userId: 'u-1',
+      type: 'PAYMENT_ACTION_REQUIRED',
+      title: 'Payment not confirmed',
+      message: 'msg',
+      dedupeKey: 'booking:b1:payment-action',
+    });
+
+    expect(result).toEqual({ success: true, deduplicated: true });
+  });
+
+  it('does not query dedupe state when no key is supplied', async () => {
+    await sendNotification({
+      userId: 'u-1',
+      type: 'BOOKING_CONFIRMED',
+      title: 'Booking Confirmed',
+      message: 'msg',
+    });
+
+    expect(prisma.notification.findUnique).not.toHaveBeenCalled();
+    expect(prisma.notification.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.not.objectContaining({ dedupeKey: expect.anything() }),
+    }));
   });
 
   it('handles prisma error gracefully', async () => {
