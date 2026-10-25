@@ -1878,7 +1878,16 @@ const getSupplierBookingDetail = catchAsync(async (req, res, next) => {
   // Relay address in place of the customer's real email — the panel's mailto
   // and "Message customer" both work through it, and a supplier who copies it
   // still reaches the guest (and the reply lands in the app thread).
-  const contact = await supplierContact.contactAddressForBooking(booking);
+  //
+  // The acting supplier is passed explicitly: this query's `tour` select does
+  // not carry `supplierId`, and contactAddressForBooking reads it from there.
+  // Without it the helper bails out and returns null, which blanks the address
+  // by design — so the detail panel showed an empty Contact while the list
+  // (which passes req.supplierId) showed the relay.
+  const contact = await supplierContact.contactAddressForBooking({
+    ...booking,
+    tour: { ...booking.tour, supplierId },
+  });
   const flags = await supplierPaymentLinkFlags();
   const [bookingWithAttention] = await attachBookingAttention([booking], {
     canManage: canManageSupplierBookings(req),

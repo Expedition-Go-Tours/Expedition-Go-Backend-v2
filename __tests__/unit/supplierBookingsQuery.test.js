@@ -74,8 +74,22 @@ jest.mock('../../src/core/services/bookingAttentionService', () => ({
   }))),
 }));
 
+// Keep the REAL relay layer — the masking assertions below depend on it — but
+// record the arguments. contactAddressForBooking reads the supplier from
+// `tour.supplierId` and silently returns null when it is missing, so a caller
+// that forgets to inject it produces an empty Contact with no error anywhere.
+jest.mock('../../src/core/services/supplierContact', () => {
+  const actual = jest.requireActual('../../src/core/services/supplierContact');
+  return {
+    ...actual,
+    contactAddressForBooking: jest.fn((...args) => actual.contactAddressForBooking(...args)),
+    contactAddressesForBookings: jest.fn((...args) => actual.contactAddressesForBookings(...args)),
+  };
+});
+
 const prisma = require('../../src/core/services/prismaClient');
 const controller = require('../../src/brands/ghana/controller');
+const supplierContact = require('../../src/core/services/supplierContact');
 
 async function invoke(query = {}) {
   const req = { supplierId: 'supplier-1', query, user: { id: 'user-1' } };
@@ -196,6 +210,18 @@ describe('the detail endpoint behind the panel', () => {
     const serialized = JSON.stringify(payload);
     expect(serialized).not.toContain('kwame@example.com');
     expect(payload.customer.email === '' || /^c-[0-9a-f]{16}@/.test(payload.customer.email)).toBe(true);
+
+    // The acting supplier is injected explicitly. This query's `tour` select
+    // carries no `supplierId`, and the relay helper reads it from there —
+    // without the injection it returns null and the panel's Contact renders
+    // empty while the list endpoint (which passes req.supplierId) shows the
+    // address. That mismatch is the regression this pins.
+    expect(supplierContact.contactAddressForBooking).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'b-1',
+        tour: expect.objectContaining({ supplierId: 'supplier-1' }),
+      }),
+    );
   });
 });
 
