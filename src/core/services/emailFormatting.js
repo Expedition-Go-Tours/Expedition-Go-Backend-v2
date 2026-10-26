@@ -77,13 +77,19 @@ function formatCompactDate(date, timeZone = 'UTC') {
 }
 
 /**
- * Format a Date + time as "August 17, 2026, 9:00 AM".
+ * Format a Date + time as "August 17, 2026 at 9:00 AM UTC".
+ *
+ * The zone is part of the label on purpose. Every caller formats in UTC, and
+ * the label is read by customers who are not in UTC: an unlabelled payment
+ * deadline is an hour wrong for half the world, which is exactly the kind of
+ * detail that makes a payment email look untrustworthy.
  */
 function formatDateTime(date, timeZone = 'UTC') {
   if (!date) return '';
   const d = new Date(date);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone });
+  const value = d.toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone });
+  return `${value} ${timeZone}`;
 }
 
 /**

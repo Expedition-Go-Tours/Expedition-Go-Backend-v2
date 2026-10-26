@@ -1,4 +1,4 @@
-const { formatTravelers, getBookingTypeLabel, formatCompactDate, formatCardBrand, formatPaymentMethodLabel, emailPhotoUrl, HERO_TRANSFORM, CARD_TRANSFORM } = require('../../src/core/services/emailFormatting');
+const { formatTravelers, getBookingTypeLabel, formatCompactDate, formatDateTime, formatCardBrand, formatPaymentMethodLabel, emailPhotoUrl, HERO_TRANSFORM, CARD_TRANSFORM } = require('../../src/core/services/emailFormatting');
 
 /**
  * formatCompactDate — the "Reserved 9 Oct 2026" reference-bar form.
@@ -287,5 +287,36 @@ describe('emailPhotoUrl', () => {
       expect(spec).toContain('c_fill');
       expect(spec).toContain('g_auto');
     }
+  });
+});
+
+/**
+ * formatDateTime - the deadline label customers read to the minute.
+ * The zone is part of the value: every caller formats in UTC, and a customer
+ * in Amsterdam reading "11:38 AM" is an hour away from her real cutoff.
+ */
+describe('formatDateTime', () => {
+  it('labels the zone so a deadline is never an hour out', () => {
+    expect(formatDateTime(new Date('2026-10-27T11:38:00Z'))).toBe(
+      'October 27, 2026 at 11:38 AM UTC'
+    );
+  });
+
+  it('keeps a caller-supplied zone explicit', () => {
+    expect(formatDateTime(new Date('2026-10-27T11:38:00Z'), 'Africa/Accra')).toBe(
+      'October 27, 2026 at 11:38 AM Africa/Accra'
+    );
+  });
+
+  it('renders the UTC evening, not the host locale day', () => {
+    expect(formatDateTime(new Date('2026-10-27T23:30:00Z'))).toBe(
+      'October 27, 2026 at 11:30 PM UTC'
+    );
+  });
+
+  it('returns empty for missing or invalid input', () => {
+    expect(formatDateTime(null)).toBe('');
+    expect(formatDateTime(undefined)).toBe('');
+    expect(formatDateTime('nonsense')).toBe('');
   });
 });
