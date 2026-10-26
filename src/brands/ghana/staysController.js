@@ -17,6 +17,7 @@ const prisma = require('../../core/services/prismaClient');
 const AppError = require('../../core/services/appError');
 const catchAsync = require('../../core/services/catchAsync');
 const { cloudinary, isConfigured: cloudinaryConfigured } = require('../../../config/cloudinary');
+const { serializeStayBooking, stayBookingInclude } = require('./staysShared');
 
 const STATUS_TO_UI = {
   DRAFT: 'Draft',
@@ -219,50 +220,82 @@ function parseDateKey(value) {
 
 exports.getDashboard = catchAsync(async (req, res) => {
   const supplierId = supplierIdFor(req);
-  const rows = await prisma.stayProperty.findMany({
-    where: { supplierId, status: { not: 'ARCHIVED' } },
-    select: { id: true, name: true, status: true, data: true },
-    orderBy: { updatedAt: 'desc' },
-    take: MAX_PROPERTIES,
-  });
+  const [rows, bookings] = await Promise.all([
+    prisma.stayProperty.findMany({
+      where: { supplierId, status: { not: 'ARCHIVED' } },
+      select: { id: true, name: true, status: true, data: true },
+      orderBy: { updatedAt: 'desc' },
+      take: MAX_PROPERTIES,
+    }),
+    prisma.stayBooking.findMany({
+      where: { supplierId },
+      include: stayBookingInclude,
+      orderBy: { createdAt: 'desc' },
+      take: MAX_PROPERTIES,
+    }),
+  ]);
 
   const counts = rows.reduce((acc, row) => {
     acc[row.status] = (acc[row.status] || 0) + 1;
     return acc;
   }, {});
 
-  const topProperties = rows.slice(0, 5).map((row) => {
+  const activeBookings = bookings.filter(
+    (booking) => booking.status !== 'CANCELLED' && booking.status !== 'NO_SHOW',
+  );
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const byProperty = new Map();
+  for (const booking of activeBookings) {
+    const current = byProperty.get(booking.propertyId) || { bookings: 0, revenue: 0 };
+    current.bookings += 1;
+    current.revenue += Number(booking.amount || 0);
+    byProperty.set(booking.propertyId, current);
+  }
+
+  const topProperties = rows.map((row) => {
     const data = objectOrEmpty(row.data);
+    const stats = byProperty.get(row.id) || { bookings: 0, revenue: 0 };
     return {
       id: row.id,
       name: row.name,
-      bookings: 0,
+      bookings: stats.bookings,
       roomTypes: Array.isArray(data.rooms) ? data.rooms.length : 0,
-      revenue: 0,
+      revenue: stats.revenue,
     };
-  });
+  }).sort((a, b) => b.bookings - a.bookings).slice(0, 5);
 
   const currency = rows
     .map((row) => objectOrEmpty(row.data).currency)
-    .find((value) => typeof value === 'string' && value) || 'GHS';
+    .find((value) => typeof value === 'string' && value)
+    || bookings.find((booking) => booking.currency)?.currency
+    || 'GHS';
+
+  const cancelled = bookings.filter((booking) => booking.status === 'CANCELLED').length;
+  const newReservations = bookings.filter((booking) => booking.status === 'NEW').length;
 
   res.status(200).json({
     status: 'success',
     data: {
       stats: {
-        upcomingArrivals: 0,
-        newReservations: 0,
+        upcomingArrivals: activeBookings.filter((booking) => booking.checkIn >= today).length,
+        newReservations,
         liveProperties: counts.ACTIVE || 0,
-        grossBookingValue: 0,
+        grossBookingValue: activeBookings.reduce((sum, booking) => sum + Number(booking.amount || 0), 0),
       },
       currency,
-      cancellation: { rate: 0, cancelled: 0, total: 0 },
+      cancellation: {
+        rate: bookings.length ? Math.round((cancelled / bookings.length) * 1000) / 10 : 0,
+        cancelled,
+        total: bookings.length,
+      },
       actionRequired: {
         messagesAwaitingReply: 0,
-        bookingsToReview: 0,
+        bookingsToReview: newReservations,
         draftProperties: counts.DRAFT || 0,
       },
-      recentBookings: [],
+      recentBookings: bookings.slice(0, 5).map(serializeStayBooking),
       topProperties,
     },
   });

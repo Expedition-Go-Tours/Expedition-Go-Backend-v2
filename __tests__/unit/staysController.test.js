@@ -11,6 +11,33 @@ jest.mock('../../src/core/services/prismaClient', () => ({
     upsert: jest.fn(),
     deleteMany: jest.fn(),
   },
+  stayBooking: {
+    findMany: jest.fn(),
+    findFirst: jest.fn(),
+    create: jest.fn(),
+    update: jest.fn(),
+    count: jest.fn(),
+    aggregate: jest.fn(),
+    groupBy: jest.fn(),
+  },
+  stayReview: {
+    findMany: jest.fn(),
+    findFirst: jest.fn(),
+    update: jest.fn(),
+    aggregate: jest.fn(),
+  },
+  stayOffer: {
+    findMany: jest.fn(),
+    findFirst: jest.fn(),
+    create: jest.fn(),
+    update: jest.fn(),
+    deleteMany: jest.fn(),
+  },
+  stayOfferTarget: {
+    deleteMany: jest.fn(),
+    createMany: jest.fn(),
+  },
+  $transaction: jest.fn(),
 }));
 
 const prisma = require('../../src/core/services/prismaClient');
@@ -99,6 +126,7 @@ describe('staysController endpoints', () => {
     req = { supplierId: 'sup-1', body: {}, query: {}, params: {} };
     res = makeRes();
     next = jest.fn();
+    prisma.stayBooking.findMany.mockResolvedValue([]);
   });
 
   it('returns dashboard counts with zeroed booking data', async () => {

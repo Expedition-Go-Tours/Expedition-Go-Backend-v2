@@ -505,6 +505,11 @@ model User {
   wishlistItems                WishlistItem[]
   checkoutDrafts               CheckoutDraft[]
   stayProperties               StayProperty[]
+  stayOffers                   StayOffer[]
+  stayBookings                 StayBooking[] @relation("StaySupplierBookings")
+  stayCustomerBookings         StayBooking[] @relation("StayCustomerBookings")
+  stayReviews                  StayReview[] @relation("StaySupplierReviews")
+  stayCustomerReviews          StayReview[] @relation("StayCustomerReviews")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2877,6 +2882,9 @@ model StayProperty {
   data Json @default("{}")
 
   availabilityOverrides StayAvailabilityOverride[]
+  bookings              StayBooking[]
+  reviews               StayReview[]
+  offerTargets          StayOfferTarget[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2907,5 +2915,177 @@ model StayAvailabilityOverride {
 
   @@unique([propertyId, roomId, date])
   @@index([propertyId, date])
+}
+
+enum StayBookingStatus {
+  NEW
+  CONFIRMED
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+/// A reservation at one stay property. Separate from Booking (tours): a stay
+/// has room/night dates, no pickup, and its own supplier-created flow.
+model StayBooking {
+  id            String @id @default(cuid())
+  bookingNumber String @unique
+
+  supplierId String
+  supplier   User   @relation("StaySupplierBookings", fields: [supplierId], references: [id], onDelete: Cascade)
+
+  propertyId String
+  property   StayProperty @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  // Snapshot of the chosen room / rate plan so later edits cannot rewrite
+  // history.
+  roomId       String?
+  roomName     String?
+  ratePlanId   String?
+  ratePlanName String?
+
+  // Optional account link. Supplier walk-in bookings carry guest contact
+  // details only, so this stays nullable.
+  customerId String?
+  customer   User?   @relation("StayCustomerBookings", fields: [customerId], references: [id], onDelete: SetNull)
+
+  guestName  String
+  guestEmail String?
+  guestPhone String?
+
+  checkIn  DateTime @db.Date
+  checkOut DateTime @db.Date
+  nights   Int
+  guests   Int      @default(1)
+
+  amount   Decimal @db.Decimal(10, 2)
+  currency String  @default("GHS")
+
+  status        StayBookingStatus @default(NEW)
+  paymentStatus PaymentStatus     @default(PENDING)
+  origin        BookingOrigin     @default(SUPPLIER_CREATED)
+
+  specialRequests    String?
+  cancellationReason String?
+  cancellationNote   String?
+  refundAmount       Decimal? @db.Decimal(10, 2)
+  countsTowardRate   Boolean?
+
+  // Finance mirrors the tour booking columns so stays can be reported on
+  // without touching the tour ledger.
+  commissionRate     Decimal             @default(0.1500) @db.Decimal(5, 4)
+  platformCommission Decimal             @default(0) @db.Decimal(10, 2)
+  supplierPayout     Decimal             @default(0) @db.Decimal(10, 2)
+  payoutStatus       BookingPayoutStatus @default(PENDING)
+
+  reviews StayReview[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([supplierId, status])
+  @@index([propertyId, checkIn])
+  @@index([bookingNumber])
+  @@index([customerId])
+}
+
+enum StayOfferType {
+  LIMITED_TIME
+  EARLY_BIRD
+  LAST_MINUTE
+}
+
+/// Stays version of SpecialOffer. Deliberately a parallel model: tour offers
+/// target a Tour, stay offers target a StayProperty (and optionally one room).
+model StayOffer {
+  id         String @id @default(cuid())
+  supplierId String
+  supplier   User   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  name          String
+  offerType     StayOfferType
+  discountType  DiscountType @default(PERCENTAGE)
+
+  discountPercentage Int    @default(10)
+  fixedDiscountValue Float?
+
+  startDate DateTime?
+  endDate   DateTime?
+  isActive  Boolean   @default(true)
+
+  capacityType SpecialOfferCapacityType @default(UNLIMITED)
+  maxSpots     Int?
+  spotsSold    Int                      @default(0)
+
+  timeSlotMode     SpecialOfferTimeSlotMode @default(ALL_DAYS)
+  specificWeekdays String[]                 @default([])
+
+  earlyBirdAdvanceDays  Int?
+  lastMinuteWindowHours Int?
+
+  promoCode                 String? @unique
+  minQuantity               Int?
+  minSpendAmount            Float?
+  maxRedemptionsPerCustomer Int?
+  stackable                 Boolean @default(false)
+
+  targets StayOfferTarget[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([supplierId])
+  @@index([isActive, startDate, endDate])
+  @@index([offerType])
+}
+
+model StayOfferTarget {
+  id         String    @id @default(cuid())
+  stayOfferId String
+  stayOffer  StayOffer @relation(fields: [stayOfferId], references: [id], onDelete: Cascade)
+
+  propertyId   String
+  property     StayProperty @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  propertyName String?
+
+  roomId    String?
+  roomLabel String?
+
+  @@unique([stayOfferId, propertyId, roomId])
+  @@index([propertyId])
+}
+
+/// A review of a stay. Reviews are collected by the customer storefront (a
+/// separate project); this table lets the supplier workspace list and reply to
+/// them as soon as that flow exists.
+model StayReview {
+  id         String @id @default(cuid())
+  supplierId String
+  supplier   User   @relation("StaySupplierReviews", fields: [supplierId], references: [id], onDelete: Cascade)
+
+  propertyId String
+  property   StayProperty @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  bookingId String?      @unique
+  booking   StayBooking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  customerId String?
+  customer   User?   @relation("StayCustomerReviews", fields: [customerId], references: [id], onDelete: SetNull)
+
+  guestName String
+  rating    Int
+  text      String?
+  reply     String?
+  repliedAt DateTime?
+
+  status ReviewStatus @default(APPROVED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([supplierId, status])
+  @@index([propertyId])
+  @@index([rating])
 }
 

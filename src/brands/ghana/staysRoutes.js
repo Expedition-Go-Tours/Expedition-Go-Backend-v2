@@ -12,6 +12,9 @@ const { requireTeamPermission } = require('../../../middleware/teamRoleMiddlewar
 const validate = require('../../../middleware/validate');
 const { uploadTourPhotos } = require('../../../middleware/uploadMiddleware');
 const controller = require('./staysController');
+const offers = require('./staysOffersController');
+const bookings = require('./staysBookingsController');
+const analytics = require('./staysAnalyticsController');
 const schemas = require('../../core/services/staysValidation');
 
 const router = express.Router();
@@ -106,5 +109,33 @@ router.delete(
   validate(schemas.availabilityCellDelete),
   controller.clearAvailabilityCell,
 );
+
+// Offers
+router.get('/offers', requireTeamPermission('stays.offers'), validate(schemas.listQuery), offers.listOffers);
+router.get('/offers/:id', requireTeamPermission('stays.offers'), validate(schemas.idParams), offers.getOffer);
+router.post('/offers', requireTeamPermission('stays.offers'), validate(schemas.offerSaveSchema), offers.saveOffer);
+router.patch('/offers/:id', requireTeamPermission('stays.offers'), validate(schemas.offerSaveSchema), offers.saveOffer);
+router.post('/offers/:id/toggle', requireTeamPermission('stays.offers'), validate(schemas.idParams), offers.toggleOffer);
+router.delete('/offers/:id', requireTeamPermission('stays.offers'), validate(schemas.idParams), offers.deleteOffer);
+
+// Bookings + manual supplier creation
+router.get('/bookings', requireTeamPermission('stays.bookings'), validate(schemas.listQuery), bookings.listBookings);
+router.get('/bookings/:id', requireTeamPermission('stays.bookings'), validate(schemas.idParams), bookings.getBooking);
+router.post('/bookings', requireTeamPermission('stays.bookings'), validate(schemas.createBookingSchema), bookings.createBooking);
+router.patch('/bookings/:id/status', requireTeamPermission('stays.bookings'), validate(schemas.bookingStatusSchema), bookings.updateBookingStatus);
+
+// Cancellation reporting (read-only gauge open to every supplier member)
+router.get('/cancellation', validate(schemas.cancellationQuery), bookings.getCancellationSummary);
+router.get('/cancellation/records', validate(schemas.cancellationQuery), bookings.getCancellationRecords);
+
+// Analytics
+router.get('/analytics', requireTeamPermission('stays.analytics'), validate(schemas.analyticsQuery), analytics.getAnalytics);
+router.get('/analytics/summary', requireTeamPermission('stays.analytics'), validate(schemas.analyticsQuery), analytics.getAnalyticsSummary);
+router.get('/analytics/properties', requireTeamPermission('stays.analytics'), validate(schemas.analyticsQuery), analytics.getPropertyAnalytics);
+router.get('/analytics/monthly-revenue', requireTeamPermission('stays.analytics'), validate(schemas.analyticsQuery), analytics.getMonthlyRevenue);
+
+// Reviews
+router.get('/reviews', requireTeamPermission('stays.reviews'), validate(schemas.listQuery), analytics.listReviews);
+router.post('/reviews/:id/reply', requireTeamPermission('stays.reviews'), validate(schemas.reviewReplySchema), analytics.replyToReview);
 
 module.exports = router;
