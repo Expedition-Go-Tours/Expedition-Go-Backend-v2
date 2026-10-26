@@ -7,7 +7,8 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   notification: { updateMany: jest.fn() },
   adminNotification: { updateMany: jest.fn() },
   systemConfig: { findUnique: jest.fn() },
-  booking: { findUnique: jest.fn() },
+  booking: { findUnique: jest.fn(), findMany: jest.fn() },
+  supplierNotificationRecipient: { findMany: jest.fn() },
 }));
 
 jest.mock('../../src/core/services/queue', () => ({ enqueueNotification: jest.fn(), enqueueEmail: jest.fn() }));
@@ -835,5 +836,217 @@ describe('chatService', () => {
         expect(arg.where.conversation.OR).toEqual([{ brand: 'ghana' }, { brand: null }]);
       });
     });
+  });
+});
+
+/**
+ * Which participant a booking conversation's CUSTOMER is.
+ *
+ * A supplier colleague who replies by email becomes a third participant, and she
+ * may hold a customer role herself - so clients can classify the two sides by
+ * neither roles nor "not me". The service stamps `customerUserId` and the
+ * supplier dashboard renders side, header and read receipts off that.
+ */
+describe('getConversations - customer resolution', () => {
+  const supplierUser = { id: 'supplier-1', name: 'Expedition-Go Tours LTD', email: 'expedition@example.com', roles: ['supplier', 'ghana'], photoURL: null, lastLoginAt: null, firebaseUid: null };
+  const customerUser = { id: 'customer-1', name: 'Veronica Cavazos', email: 'veronica@example.com', roles: ['customer'], photoURL: null, lastLoginAt: null, firebaseUid: null };
+  // The colleague holds a CUSTOMER role: roles can never be the discriminator.
+  const staffUser = { id: 'staff-1', name: 'Emmanuella', email: 'secretary@example.com', roles: ['customer'], photoURL: null, lastLoginAt: null, firebaseUid: null };
+
+  const bookingConversation = {
+    id: 'c-booking',
+    type: 'SUPPLIER_CUSTOMER',
+    bookingId: 'booking-1',
+    brand: 'ghana',
+    participants: [
+      { userId: 'supplier-1', user: supplierUser },
+      { userId: 'customer-1', user: customerUser },
+      { userId: 'staff-1', user: staffUser },
+    ],
+    messages: [],
+  };
+
+  function primeRows(conversations, { bookings = [], recipients = [] } = {}) {
+    prisma.conversationParticipant.findMany.mockResolvedValue(
+      conversations.map((c, i) => ({
+        id: `p-${i}`,
+        userId: 'supplier-1',
+        conversationId: c.id,
+        lastReadAt: new Date(0),
+        conversation: c,
+      }))
+    );
+    prisma.booking.findMany.mockResolvedValue(bookings);
+    prisma.supplierNotificationRecipient.findMany.mockResolvedValue(recipients);
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.user.findUnique.mockResolvedValue(supplierUser);
+    prisma.message.count.mockResolvedValue(0);
+    prisma.booking.findMany.mockResolvedValue([]);
+    prisma.supplierNotificationRecipient.findMany.mockResolvedValue([]);
+  });
+
+  it('uses the booking customer when that account is in the thread', async () => {
+    primeRows([bookingConversation], {
+      bookings: [{ id: 'booking-1', customerId: 'customer-1', tour: { supplierId: 'supplier-1' } }],
+      recipients: [{ supplierId: 'supplier-1', email: 'secretary@example.com' }],
+    });
+
+    const [result] = await chatService.getConversations('supplier-1');
+
+    expect(result.customerUserId).toBe('customer-1');
+  });
+
+  it('excludes the supplier side for guest bookings, so the colleague never becomes the customer', async () => {
+    primeRows([bookingConversation], {
+      bookings: [{ id: 'booking-1', customerId: null, tour: { supplierId: 'supplier-1' } }],
+      recipients: [{ supplierId: 'supplier-1', email: 'secretary@example.com' }],
+    });
+
+    const [result] = await chatService.getConversations('supplier-1');
+
+    expect(result.customerUserId).toBe('customer-1');
+    expect(prisma.supplierNotificationRecipient.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { supplierId: { in: ['supplier-1'] }, status: 'VERIFIED', disabledAt: null },
+      })
+    );
+  });
+
+  it('returns null when every non-supplier participant is on the supplier side', async () => {
+    primeRows(
+      [
+        {
+          ...bookingConversation,
+          participants: [
+            { userId: 'supplier-1', user: supplierUser },
+            { userId: 'staff-1', user: staffUser },
+          ],
+        },
+      ],
+      {
+        bookings: [{ id: 'booking-1', customerId: null, tour: { supplierId: 'supplier-1' } }],
+        recipients: [{ supplierId: 'supplier-1', email: 'secretary@example.com' }],
+      }
+    );
+
+    const [result] = await chatService.getConversations('supplier-1');
+
+    expect(result.customerUserId).toBeNull();
+  });
+
+  it('leaves conversations without booking context unstamped', async () => {
+    primeRows([
+      {
+        id: 'c-support',
+        type: 'SUPPLIER_ADMIN',
+        bookingId: null,
+        brand: 'ghana',
+        participants: [
+          { userId: 'supplier-1', user: supplierUser },
+          { userId: 'customer-1', user: customerUser },
+        ],
+        messages: [],
+      },
+    ]);
+
+    const [result] = await chatService.getConversations('supplier-1');
+
+    expect(result.customerUserId).toBeNull();
+    expect(prisma.booking.findMany).not.toHaveBeenCalled();
+    expect(prisma.supplierNotificationRecipient.findMany).not.toHaveBeenCalled();
+  });
+
+  it('asks for participant emails, without which the colleague cannot be recognised', async () => {
+    primeRows([bookingConversation], {
+      bookings: [{ id: 'booking-1', customerId: null, tour: { supplierId: 'supplier-1' } }],
+      recipients: [{ supplierId: 'supplier-1', email: 'secretary@example.com' }],
+    });
+
+    await chatService.getConversations('supplier-1');
+
+    const arg = prisma.conversationParticipant.findMany.mock.calls[0][0];
+    const userSelect = arg.include.conversation.include.participants.include.user.select;
+    expect(userSelect.email).toBe(true);
+  });
+});
+
+/**
+ * The other path that hands a conversation to the dashboard: a notification
+ * deep-link opens the thread straight off findOrCreateConversation, so that
+ * return has to carry the same customer stamp as the list.
+ */
+describe('findOrCreateConversation - customer stamp', () => {
+  const supplierUser = { id: 'supplier-1', name: 'Expedition-Go Tours LTD', email: 'expedition@example.com', roles: ['supplier', 'ghana'], photoURL: null, lastLoginAt: null, firebaseUid: null };
+  const customerUser = { id: 'customer-1', name: 'Veronica Cavazos', email: 'veronica@example.com', roles: ['customer'], photoURL: null, lastLoginAt: null, firebaseUid: null };
+  const staffUser = { id: 'staff-1', name: 'Emmanuella', email: 'secretary@example.com', roles: ['customer'], photoURL: null, lastLoginAt: null, firebaseUid: null };
+
+  const thread = (id) => ({
+    id,
+    type: 'SUPPLIER_CUSTOMER',
+    bookingId: 'booking-1',
+    participants: [
+      { userId: 'supplier-1', user: supplierUser },
+      { userId: 'customer-1', user: customerUser },
+      { userId: 'staff-1', user: staffUser },
+    ],
+    messages: [],
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.user.findUnique.mockResolvedValue(supplierUser);
+    prisma.user.findMany.mockResolvedValue([]);
+    prisma.conversation.findFirst.mockResolvedValue(null);
+    prisma.conversation.update.mockResolvedValue({});
+    prisma.conversation.create.mockResolvedValue(thread('c-new'));
+    prisma.booking.findMany.mockResolvedValue([
+      { id: 'booking-1', customerId: null, tour: { supplierId: 'supplier-1' } },
+    ]);
+    prisma.supplierNotificationRecipient.findMany.mockResolvedValue([
+      { supplierId: 'supplier-1', email: 'secretary@example.com' },
+    ]);
+  });
+
+  it('stamps an existing thread before returning it to a deep link', async () => {
+    prisma.conversation.findFirst.mockResolvedValue(thread('c-existing'));
+
+    const result = await chatService.findOrCreateConversation(
+      'supplier-1', 'customer-1', 'SUPPLIER_CUSTOMER', { bookingId: 'booking-1' }
+    );
+
+    expect(result.customerUserId).toBe('customer-1');
+  });
+
+  it('stamps a freshly created thread too', async () => {
+    const result = await chatService.findOrCreateConversation(
+      'supplier-1', 'customer-1', 'SUPPLIER_CUSTOMER', { bookingId: 'booking-1' }
+    );
+
+    expect(result.id).toBe('c-new');
+    expect(result.customerUserId).toBe('customer-1');
+  });
+
+  it('asks for participant emails on this path as well', async () => {
+    prisma.conversation.findFirst.mockResolvedValue(thread('c-existing'));
+
+    await chatService.findOrCreateConversation(
+      'supplier-1', 'customer-1', 'SUPPLIER_CUSTOMER', { bookingId: 'booking-1' }
+    );
+
+    const arg = prisma.conversation.findFirst.mock.calls[0][0];
+    expect(arg.include.participants.include.user.select.email).toBe(true);
+  });
+
+  it('excludes the supplier colleague, so she is never stamped as the customer', async () => {
+    prisma.conversation.findFirst.mockResolvedValue(thread('c-existing'));
+
+    const result = await chatService.findOrCreateConversation(
+      'supplier-1', 'customer-1', 'SUPPLIER_CUSTOMER', { bookingId: 'booking-1' }
+    );
+
+    expect(result.customerUserId).not.toBe('staff-1');
   });
 });

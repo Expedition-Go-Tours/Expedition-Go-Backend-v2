@@ -182,7 +182,7 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
     },
     include: {
       participants: {
-        include: { user: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, roles: true, firebaseUid: true } } }
+        include: { user: { select: { id: true, name: true, email: true, photoURL: true, lastLoginAt: true, roles: true, firebaseUid: true } } }
       },
       messages: {
         orderBy: { createdAt: 'desc' },
@@ -210,6 +210,11 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
       Object.assign(existing, patch);
     }
     console.log('[ChatService] findOrCreateConversation: FOUND EXISTING', { conversationId: existing.id, existingParticipantIds: existing.participants.map(p => p.userId) });
+    // The notification deep-link opens a thread straight from this return, so it
+    // needs the same customer stamp as the list: without it the window falls
+    // back to "the first participant who isn't me" and names the colleague as
+    // the customer.
+    await attachCustomerUserIds([existing]);
     return existing;
   }
 
@@ -249,7 +254,7 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
     },
     include: {
       participants: {
-        include: { user: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, roles: true, firebaseUid: true } } }
+        include: { user: { select: { id: true, name: true, email: true, photoURL: true, lastLoginAt: true, roles: true, firebaseUid: true } } }
       },
       messages: {
         orderBy: { createdAt: 'desc' },
@@ -259,6 +264,7 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
     }
   });
 
+  await attachCustomerUserIds([conversation]);
   return conversation;
 }
 
@@ -271,7 +277,9 @@ async function getConversations(userId, brandKey = null) {
       conversation: {
         include: {
           participants: {
-            include: { user: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, roles: true, firebaseUid: true } } }
+            // `email` is needed to recognise the supplier's own notification
+            // recipients when resolving which participant is the customer.
+            include: { user: { select: { id: true, name: true, email: true, photoURL: true, lastLoginAt: true, roles: true, firebaseUid: true } } }
           },
           messages: {
             orderBy: { createdAt: 'desc' },
@@ -295,7 +303,7 @@ async function getConversations(userId, brandKey = null) {
     )
   );
 
-  const results = participants.map((p, i) => ({
+  let results = participants.map((p, i) => ({
     ...p.conversation,
     unreadCount: unreadCounts[i],
     lastReadAt: p.lastReadAt,
@@ -305,10 +313,75 @@ async function getConversations(userId, brandKey = null) {
   // Per-platform isolation: an admin only sees conversations tagged with their
   // brand. Expedition conversations are stamped 'ghana'. Legacy rows with a
   // null brand surface on Ghana (the platform home) so nothing is orphaned.
-  if (!brandKey || !BRAND_KEYS.includes(brandKey)) return results;
-  return results.filter(
-    (c) => c.brand === brandKey || (brandKey === 'ghana' && c.brand == null),
-  );
+  if (brandKey && BRAND_KEYS.includes(brandKey)) {
+    results = results.filter(
+      (c) => c.brand === brandKey || (brandKey === 'ghana' && c.brand == null),
+    );
+  }
+
+  // Only resolve customers for the conversations that actually ship.
+  await attachCustomerUserIds(results);
+  return results;
+}
+
+/**
+ * Stamp each booking conversation with the participant who is its customer.
+ *
+ * A thread is 1-on-1 only until a second supplier-side identity appears - a
+ * colleague replying by email becomes a third participant. Clients then cannot
+ * tell the two sides apart from roles (that colleague may hold a customer role)
+ * or from "not me", which put supplier replies on the customer's side and made
+ * the header pick between two non-viewer identities. The customer is whoever is
+ * left after removing the supplier's own side: the supplier account plus its
+ * verified notification recipients. Guests and walk-ins are covered because they
+ * have no `Booking.customerId` but do appear as a participant.
+ */
+async function attachCustomerUserIds(conversations) {
+  for (const c of conversations) c.customerUserId = null;
+  const withBooking = conversations.filter((c) => c && c.bookingId);
+  if (withBooking.length === 0) return;
+
+  const bookings = await prisma.booking.findMany({
+    where: { id: { in: withBooking.map((c) => c.bookingId) } },
+    select: { id: true, customerId: true, tour: { select: { supplierId: true } } },
+  });
+  const bookingById = new Map(bookings.map((b) => [b.id, b]));
+  const supplierIds = [...new Set(bookings.map((b) => b.tour?.supplierId).filter(Boolean))];
+
+  const staffEmailsBySupplier = new Map();
+  if (supplierIds.length > 0) {
+    const recipients = await prisma.supplierNotificationRecipient.findMany({
+      where: { supplierId: { in: supplierIds }, status: 'VERIFIED', disabledAt: null },
+      select: { supplierId: true, email: true },
+    });
+    for (const r of recipients) {
+      const key = r.supplierId;
+      const set = staffEmailsBySupplier.get(key) || new Set();
+      set.add(String(r.email || '').toLowerCase());
+      staffEmailsBySupplier.set(key, set);
+    }
+  }
+
+  for (const c of withBooking) {
+    const booking = bookingById.get(c.bookingId);
+    const supplierId = booking?.tour?.supplierId;
+    if (!supplierId) continue;
+
+    // Fast path: the booking's own customer account is a participant.
+    if (booking.customerId && c.participants?.some((p) => p.userId === booking.customerId)) {
+      c.customerUserId = booking.customerId;
+      continue;
+    }
+
+    const staff = staffEmailsBySupplier.get(supplierId) || new Set();
+    const customer = (c.participants || []).find((p) => {
+      if (p.userId === supplierId) return false;
+      const email = String(p.user?.email || '').toLowerCase();
+      if (email && staff.has(email)) return false;
+      return true;
+    });
+    c.customerUserId = customer?.userId || null;
+  }
 }
 
 async function getMessages(conversationId, accessId, cursor, limit = 50, viewerId = null) {
