@@ -15,6 +15,9 @@ const controller = require('./staysController');
 const offers = require('./staysOffersController');
 const bookings = require('./staysBookingsController');
 const analytics = require('./staysAnalyticsController');
+const finance = require('./staysFinanceController');
+const financeController = require('../../core/domain/financeController');
+const payoutMethodController = require('../../core/domain/payoutMethodController');
 const schemas = require('../../core/services/staysValidation');
 
 const router = express.Router();
@@ -137,5 +140,31 @@ router.get('/analytics/monthly-revenue', requireTeamPermission('stays.analytics'
 // Reviews
 router.get('/reviews', requireTeamPermission('stays.reviews'), validate(schemas.listQuery), analytics.listReviews);
 router.post('/reviews/:id/reply', requireTeamPermission('stays.reviews'), validate(schemas.reviewReplySchema), analytics.replyToReview);
+
+// Finance (parallel stays ledger)
+router.get('/finance/summary', requireTeamPermission('payouts.view'), finance.getSummary);
+router.get('/finance/earnings', requireTeamPermission('payouts.view'), validate(schemas.listQuery), finance.getEarnings);
+router.get('/finance/payouts/requests', requireTeamPermission('payouts.view'), validate(schemas.listQuery), finance.getPayoutRequests);
+router.post('/finance/payout/request', requireTeamPermission('payouts.request'), finance.createPayoutRequest);
+router.patch('/finance/payouts/requests/:id/cancel', requireTeamPermission('payouts.request'), validate(schemas.idParams), finance.cancelPayoutRequest);
+router.get('/finance/payout-settings', requireTeamPermission('payouts.view'), financeController.getPayoutSettings);
+router.patch('/finance/payout-settings', requireTeamPermission('payouts.request'), financeController.updatePayoutSettings);
+router.get('/finance/charges', requireTeamPermission('payouts.view'), finance.getCharges);
+
+// Refund requests / disputes
+router.get('/finance/disputes', requireTeamPermission('payouts.view'), validate(schemas.listQuery), finance.getDisputes);
+router.post('/disputes', requireTeamPermission('payouts.request'), finance.createDispute);
+router.patch('/disputes/:id/withdraw', requireTeamPermission('payouts.request'), validate(schemas.idParams), finance.withdrawDispute);
+
+// Payout methods are supplier-scoped and shared with the tour dashboard.
+router.get('/payout-methods/me', requireTeamPermission('payout-methods.view'), payoutMethodController.getMyMethods);
+router.post('/payout-methods', requireTeamPermission('payout-methods.manage'), payoutMethodController.addMethod);
+router.patch('/payout-methods/:id', requireTeamPermission('payout-methods.manage'), validate(schemas.idParams), payoutMethodController.updateMethod);
+router.delete('/payout-methods/:id', requireTeamPermission('payout-methods.manage'), validate(schemas.idParams), payoutMethodController.deleteMethod);
+
+// Refund claims raised by guests (customer storefront is a separate project).
+router.get('/refund-claims/supplier', requireTeamPermission('payouts.view'), validate(schemas.listQuery), finance.getRefundClaims);
+router.patch('/refund-claims/supplier/:id/approve', requireTeamPermission('payouts.request'), validate(schemas.idParams), finance.approveRefundClaim);
+router.patch('/refund-claims/supplier/:id/decline', requireTeamPermission('payouts.request'), validate(schemas.idParams), finance.declineRefundClaim);
 
 module.exports = router;
