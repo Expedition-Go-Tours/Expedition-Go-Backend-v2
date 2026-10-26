@@ -504,6 +504,7 @@ model User {
   keywordRequests              KeywordRequest[]
   wishlistItems                WishlistItem[]
   checkoutDrafts               CheckoutDraft[]
+  stayProperties               StayProperty[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2841,5 +2842,70 @@ model ConsentRecord {
 
   @@index([userId])
   @@index([decidedAt])
+}
+
+// ── Stays (accommodation) ───────────────────────────────────────────────────
+// A separate product vertical from Tour: properties have rooms, nightly rate
+// plans, availability and a different booking lifecycle. The whole 17-step
+// builder payload lives in `data` so drafts can be saved immediately; the
+// columns above it exist only for listing, filtering and scoping. Rooms,
+// rate plans and photos stay in `data` for now and can be normalised once
+// stays bookings go live.
+enum StayPropertyStatus {
+  DRAFT
+  PENDING_APPROVAL
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+model StayProperty {
+  id         String @id @default(cuid())
+  supplierId String
+  supplier   User   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  // Indexed projections of the builder payload.
+  name    String             @default("Untitled property")
+  type    String?
+  city    String?
+  country String?            @default("Ghana")
+  status  StayPropertyStatus @default(DRAFT)
+  step    Int                @default(0)
+
+  // Canonical builder state: rooms, ratePlans, photos, policies, host profile,
+  // payments, agreement, etc. Shallow-merged by the autosave endpoint.
+  data Json @default("{}")
+
+  availabilityOverrides StayAvailabilityOverride[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([supplierId, status])
+  @@index([supplierId, updatedAt])
+  @@index([name])
+}
+
+/// Room × date inventory override for the stays calendar. Defaults live on the
+/// room inside StayProperty.data; a row here means the supplier changed that
+/// specific room/date (count, closed, price, minStay).
+model StayAvailabilityOverride {
+  id         String       @id @default(cuid())
+  propertyId String
+  property   StayProperty @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  roomId String
+  date   DateTime @db.Date
+
+  count   Int?
+  closed  Boolean @default(false)
+  price   Decimal? @db.Decimal(10, 2)
+  minStay Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([propertyId, roomId, date])
+  @@index([propertyId, date])
 }
 

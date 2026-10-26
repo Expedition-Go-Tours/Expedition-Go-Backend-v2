@@ -44,6 +44,15 @@ const TEAM_ROLE_PERMISSIONS = {
       'products.delete',
       'analytics.view',
       'settings.business',
+      // Stays workspace (accommodation properties) — same editor scope as tours.
+      'stays.view',
+      'stays.manage',
+      'stays.bookings',
+      'stays.availability',
+      'stays.rates',
+      'stays.offers',
+      'stays.reviews',
+      'stays.analytics',
     ],
   },
   finance: {
@@ -57,6 +66,7 @@ const TEAM_ROLE_PERMISSIONS = {
       'payout-methods.view',
       'payout-methods.manage',
       'analytics.view',
+      'stays.analytics',
       'settings.tax',
     ],
   },
@@ -69,6 +79,7 @@ const TEAM_ROLE_PERMISSIONS = {
       'chat.respond',
       'reviews.view',
       'reviews.respond',
+      'stays.reviews',
     ],
   },
 };

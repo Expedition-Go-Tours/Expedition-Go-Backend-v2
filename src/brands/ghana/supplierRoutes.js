@@ -35,6 +35,7 @@ const financeController = require('../../core/domain/financeController');
 const payoutMethodController = require('../../core/domain/payoutMethodController');
 const specialOfferController = require('../../core/domain/specialOfferController');
 const notificationController = require('../../core/domain/notificationController');
+const staysRoutes = require('./staysRoutes');
 
 const router = express.Router();
 
@@ -57,6 +58,10 @@ router.get('/settings/team/my-role', protect, teamController.getMyTeamRole);
 // supplier's data instead of their own (previously req.user.id was assumed to
 // be the supplier, which made every member-scoped query return nothing).
 router.use(protect, resolveSupplier);
+
+// Stays workspace (properties, builder, rates, availability). The child router
+// declares its own stays.* permissions and inherits supplier scoping above.
+router.use('/stays', staysRoutes);
 
 // Dashboard
 router.get('/dashboard', ghanaSupplier.getDashboard);
