@@ -329,4 +329,66 @@ describe('adminSettingsController', () => {
       );
     });
   });
+
+  // ============================
+  // payment-link feature flags
+  // ============================
+  describe('payment-link feature flags', () => {
+    const flags = require('../../src/core/config/paymentLinkFlags');
+
+    it('pins the on-disk keys the payment service gates on', () => {
+      // These strings are the contract with `paymentLinkService.FLAGS` and the
+      // admin UI. Renaming one silently disables the feature, so pin them.
+      expect(flags).toEqual({
+        base: 'feature.payLaterPaymentAttempts.ghana',
+        supplier: 'feature.supplierPaymentLinks.ghana',
+        recovery: 'feature.payLaterPaymentRecovery.ghana',
+        chat: 'feature.paymentLinkChat.ghana',
+      });
+    });
+
+    it('normalizes every flag to a boolean string', async () => {
+      for (const key of Object.values(flags)) {
+        prisma.systemConfig.upsert.mockClear();
+        req.body = { settings: { [key]: true } };
+
+        await controller.updateSettings(req, res, next);
+
+        expect(next).not.toHaveBeenCalled();
+        expect(prisma.systemConfig.upsert).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { key },
+            update: expect.objectContaining({ value: 'true' }),
+            create: expect.objectContaining({ value: 'true' }),
+          })
+        );
+      }
+    });
+
+    it('accepts false', async () => {
+      req.body = { settings: { 'feature.supplierPaymentLinks.ghana': false } };
+
+      await controller.updateSettings(req, res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(prisma.systemConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ value: 'false' }),
+        })
+      );
+    });
+
+    it('rejects a non-boolean value instead of storing it', async () => {
+      // `asBool` reads "yes" as off, so storing it would leave the admin
+      // believing the feature was on while the runtime treated it as disabled.
+      req.body = { settings: { 'feature.payLaterPaymentAttempts.ghana': 'yes' } };
+
+      await controller.updateSettings(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 400 })
+      );
+      expect(prisma.systemConfig.upsert).not.toHaveBeenCalled();
+    });
+  });
 });

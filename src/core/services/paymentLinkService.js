@@ -58,12 +58,8 @@ const MODE = {
   REGENERATE: 'regenerate',
 };
 
-const FLAGS = {
-  base: 'feature.payLaterPaymentAttempts.ghana',
-  supplier: 'feature.supplierPaymentLinks.ghana',
-  recovery: 'feature.payLaterPaymentRecovery.ghana',
-  chat: 'feature.paymentLinkChat.ghana',
-};
+// Keys shared with the admin settings controller, which validates writes.
+const FLAGS = require('../config/paymentLinkFlags');
 
 function asBool(value) {
   return ['true', '1', 'yes', 'on'].includes(String(value || '').toLowerCase());

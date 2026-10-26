@@ -6,6 +6,7 @@ const { buildAuditMessage } = require('./adminController');
 const { clearCache: clearMaintCache } = require('../../../middleware/maintenanceMode');
 const getConfig = require('../services/getConfig');
 const { normalizeCommissionRate } = require('../services/commission');
+const PAYMENT_LINK_FLAGS = require('../config/paymentLinkFlags');
 
 // Settings keys that must be numeric (stored as strings). Values are coerced
 // and validated so a bad value can never be persisted.
@@ -21,7 +22,17 @@ const NUMERIC_KEYS = [
 ];
 
 // Settings keys that must be a boolean string.
-const BOOLEAN_KEYS = ['system.maintenance_mode', 'payout.auto_generate_enabled'];
+//
+// The payment-link flags belong here rather than in the pass-through path:
+// `getConfig` reads them with `asBool()`, which treats anything that is not
+// true/1/yes/on as off, so a stored "TRUE " or "on" would look enabled in the
+// admin UI and be dead at runtime. Rejecting those values at write time is the
+// only place a typo can still be caught.
+const BOOLEAN_KEYS = [
+  'system.maintenance_mode',
+  'payout.auto_generate_enabled',
+  ...Object.values(PAYMENT_LINK_FLAGS),
+];
 
 // Valid automated payout cadences (GetYourGuide-style schedules). WEEKLY was
 // retired with the v3 invoicing migration and is no longer offered.
