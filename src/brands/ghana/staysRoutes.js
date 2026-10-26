@@ -10,7 +10,7 @@
 const express = require('express');
 const { requireTeamPermission } = require('../../../middleware/teamRoleMiddleware');
 const validate = require('../../../middleware/validate');
-const { uploadTourPhotos } = require('../../../middleware/uploadMiddleware');
+const { uploadTourPhotos, uploadSupplierDocument } = require('../../../middleware/uploadMiddleware');
 const controller = require('./staysController');
 const offers = require('./staysOffersController');
 const bookings = require('./staysBookingsController');
@@ -18,6 +18,7 @@ const analytics = require('./staysAnalyticsController');
 const finance = require('./staysFinanceController');
 const financeController = require('../../core/domain/financeController');
 const payoutMethodController = require('../../core/domain/payoutMethodController');
+const verification = require('./staysVerificationController');
 const schemas = require('../../core/services/staysValidation');
 
 const router = express.Router();
@@ -166,5 +167,21 @@ router.delete('/payout-methods/:id', requireTeamPermission('payout-methods.manag
 router.get('/refund-claims/supplier', requireTeamPermission('payouts.view'), validate(schemas.listQuery), finance.getRefundClaims);
 router.patch('/refund-claims/supplier/:id/approve', requireTeamPermission('payouts.request'), validate(schemas.idParams), finance.approveRefundClaim);
 router.patch('/refund-claims/supplier/:id/decline', requireTeamPermission('payouts.request'), validate(schemas.idParams), finance.declineRefundClaim);
+
+// Stays-specific verification (never the tour/experience KYC routes)
+router.get('/verification', requireTeamPermission('settings.manage'), verification.getVerification);
+router.post(
+  '/verification/documents',
+  requireTeamPermission('settings.manage'),
+  uploadSupplierDocument,
+  verification.addDocument,
+);
+router.post(
+  '/verification/documents/:id/replace',
+  requireTeamPermission('settings.manage'),
+  validate(schemas.idParams),
+  uploadSupplierDocument,
+  verification.replaceDocument,
+);
 
 module.exports = router;

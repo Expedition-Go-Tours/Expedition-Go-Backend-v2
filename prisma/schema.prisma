@@ -515,6 +515,8 @@ model User {
   stayDisputesAgainst          StayDispute[] @relation("StayDisputeSupplier")
   stayRefundClaims             StayRefundClaim[]
   staySupplierCharges          StaySupplierCharge[]
+  stayVerificationProfile      StayVerificationProfile?
+  stayVerificationDocuments    StayVerificationDocument[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2891,6 +2893,7 @@ model StayProperty {
   bookings              StayBooking[]
   reviews               StayReview[]
   offerTargets          StayOfferTarget[]
+  verificationDocuments StayVerificationDocument[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3235,5 +3238,47 @@ model StaySupplierCharge {
 
   @@index([supplierId, status])
   @@index([stayBookingId])
+}
+
+// Stays verification is deliberately separate from the tour/experience KYC:
+// an accommodation provider can hold different documents and a different
+// documentation window than the same supplier's tour business.
+model StayVerificationProfile {
+  id         String @id @default(cuid())
+  supplierId String @unique
+  supplier   User   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  status                String    @default("PENDING")
+  documentationDeadline DateTime?
+  requirements          Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model StayVerificationDocument {
+  id         String @id @default(cuid())
+  supplierId String
+  supplier   User   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  propertyId String?
+  property   StayProperty? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  type      String
+  ownerType String  @default("SUPPLIER")
+  ownerId   String?
+
+  status      String  @default("PENDING")
+  url         String?
+  fileName    String?
+  expiryDate  DateTime?
+  reviewNote  String?
+  uploadedAt  DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([supplierId, status])
+  @@index([propertyId])
 }
 
