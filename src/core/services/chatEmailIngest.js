@@ -96,6 +96,50 @@ function keepAttachments(email) {
 }
 
 /**
+ * Authorise an inbound sender who is NOT a participant of this conversation.
+ *
+ * Customer threads are 1-on-1, so the supplier's own staff are never in
+ * `ConversationParticipant` — yet the supplier can invite colleagues to receive
+ * notifications, and that trust is already recorded (and double opt-in proven)
+ * in `SupplierNotificationRecipient`. A row for THIS conversation's supplier may
+ * therefore reply by email, but only when the message authenticates: the reply
+ * address is a bearer token and a `From:` header proves nothing on its own, so
+ * an aligned DMARC pass is required, not optional.
+ *
+ * Returns a participant-shaped author so the rest of the ingest path is
+ * unchanged, or null to keep the sender blocked exactly as before.
+ */
+async function verifiedRecipientAuthor(conversation, senderEmail, authentication = {}) {
+  // Booking context is what ties a conversation to a supplier at all; threads
+  // without one have no supplier to authorise against and stay participant-only.
+  if (!conversation?.bookingId || !senderEmail) return null;
+  if (authentication?.dmarc !== 'pass') return null;
+
+  const booking = await prisma.booking.findUnique({
+    where: { id: conversation.bookingId },
+    select: { tour: { select: { supplierId: true } } },
+  });
+  const supplierId = booking?.tour?.supplierId;
+  if (!supplierId) return null;
+
+  const recipient = await prisma.supplierNotificationRecipient.findFirst({
+    where: { supplierId, email: senderEmail, status: 'VERIFIED', disabledAt: null },
+  });
+  if (!recipient) return null;
+
+  const prefs = recipient.preferences && typeof recipient.preferences === 'object' ? recipient.preferences : {};
+  if (prefs.bookings !== true) return null;
+
+  const user = await prisma.user.findFirst({
+    where: { email: { equals: senderEmail, mode: 'insensitive' } },
+    select: { id: true, name: true, email: true, photoURL: true, roles: true },
+  });
+  if (!user) return null;
+
+  return { id: null, userId: user.id, conversationId: conversation.id, user };
+}
+
+/**
  * Ingest one received email into its conversation. Returns a status string.
  * Idempotent per Message-ID.
  */
@@ -131,17 +175,28 @@ async function ingestReceivedEmail(emailId) {
     return 'ignored';
   }
 
-  const author = await prisma.conversationParticipant.findFirst({
+  let author = await prisma.conversationParticipant.findFirst({
     where: {
       conversationId: conversation.id,
       user: { email: { equals: senderEmail, mode: 'insensitive' } },
     },
     include: { user: { select: { id: true, name: true, email: true, photoURL: true, roles: true } } },
   });
+  let acceptedAsRecipient = false;
   if (!author) {
-    console.log(`[ChatEmailIngest] sender ${senderEmail} is not a participant — ignoring`);
-    markIgnoredInbound(emailId, messageId);
-    return 'ignored';
+    // Not a participant: fall back to the supplier's own verified notification
+    // recipients. That narrower, authenticated path may post; everything else
+    // keeps the refusal below.
+    author = await verifiedRecipientAuthor(conversation, senderEmail, email?.authentication);
+    if (!author) {
+      console.log(`[ChatEmailIngest] sender ${senderEmail} is not a participant — ignoring`);
+      markIgnoredInbound(emailId, messageId);
+      return 'ignored';
+    }
+    acceptedAsRecipient = true;
+    console.log(
+      `[ChatEmailIngest] accepted verified supplier recipient ${senderEmail} on ${conversation.id} (dmarc pass)`
+    );
   }
 
   const text = chatInbound.extractReplyContent(email);
@@ -156,6 +211,36 @@ async function ingestReceivedEmail(emailId) {
   if (messageId) {
     const existing = await prisma.message.findUnique({ where: { inboundMessageId: messageId } }).catch(() => null);
     if (existing) return 'duplicate';
+  }
+
+  // A verified recipient who has just posted becomes a participant of this one
+  // thread: from there the colleague receives its notifications and clears the
+  // participant check directly. Joined only when a message is actually about to
+  // land, only for the thread they replied to, and never by role alone.
+  if (acceptedAsRecipient) {
+    await prisma.conversationParticipant
+      .create({
+        data: {
+          conversationId: conversation.id,
+          userId: author.user.id,
+          lastReadAt: new Date(),
+        },
+      })
+      .catch((err) => {
+        if (err?.code !== 'P2002') console.error(`[ChatEmailIngest] participant join failed: ${err.message}`);
+      });
+    try {
+      const { logActivity } = require('./auditLogger');
+      await logActivity({
+        userId: author.user.id,
+        action: 'chat.email_ingest.verified_recipient_reply',
+        resource: 'Conversation',
+        resourceId: conversation.id,
+        metadata: { senderEmail, bookingId: conversation.bookingId, dmarc: 'pass' },
+      });
+    } catch (err) {
+      console.error(`[ChatEmailIngest] audit write failed: ${err.message}`);
+    }
   }
 
   // Upload attachments (best effort per file — skip failures, keep the rest).

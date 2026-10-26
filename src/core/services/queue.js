@@ -490,9 +490,20 @@ const EMAIL_JOB_DISPATCH = {
  * that it was delivered, opened, or paid.
  */
 async function recordPaymentLinkSendResult(job, result, error = null) {
-  if (!job?.paymentLinkSendId) return;
+  // The worker hands processEmailJob the enqueued payload, where the send-row
+  // id sits under `payload.data` — the same object forwarded to the template as
+  // extras. Accepting only the top level returned silently here, so the row
+  // stayed QUEUED until the reaper marked a delivered email
+  // EMAIL_DELIVERY_TIMEOUT and told the supplier it had failed. Both shapes are
+  // read: direct/fallback callers have used the flat one.
+  const sendId = job?.paymentLinkSendId || job?.data?.paymentLinkSendId;
+  if (!sendId) {
+    if (job?.type === 'payment-link') {
+      console.error('[Queue] payment-link job carries no paymentLinkSendId; delivery cannot be recorded');
+    }
+    return;
+  }
   const prisma = require('./prismaClient');
-  const sendId = job.paymentLinkSendId;
   try {
     if (error) {
       // The queue retries. Keep QUEUED visible until the final failure is
