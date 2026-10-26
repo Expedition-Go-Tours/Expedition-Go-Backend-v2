@@ -972,3 +972,81 @@ describe('getConversations - customer resolution', () => {
     expect(userSelect.email).toBe(true);
   });
 });
+
+/**
+ * The other path that hands a conversation to the dashboard: a notification
+ * deep-link opens the thread straight off findOrCreateConversation, so that
+ * return has to carry the same customer stamp as the list.
+ */
+describe('findOrCreateConversation - customer stamp', () => {
+  const supplierUser = { id: 'supplier-1', name: 'Expedition-Go Tours LTD', email: 'expedition@example.com', roles: ['supplier', 'ghana'], photoURL: null, lastLoginAt: null, firebaseUid: null };
+  const customerUser = { id: 'customer-1', name: 'Veronica Cavazos', email: 'veronica@example.com', roles: ['customer'], photoURL: null, lastLoginAt: null, firebaseUid: null };
+  const staffUser = { id: 'staff-1', name: 'Emmanuella', email: 'secretary@example.com', roles: ['customer'], photoURL: null, lastLoginAt: null, firebaseUid: null };
+
+  const thread = (id) => ({
+    id,
+    type: 'SUPPLIER_CUSTOMER',
+    bookingId: 'booking-1',
+    participants: [
+      { userId: 'supplier-1', user: supplierUser },
+      { userId: 'customer-1', user: customerUser },
+      { userId: 'staff-1', user: staffUser },
+    ],
+    messages: [],
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.user.findUnique.mockResolvedValue(supplierUser);
+    prisma.user.findMany.mockResolvedValue([]);
+    prisma.conversation.findFirst.mockResolvedValue(null);
+    prisma.conversation.update.mockResolvedValue({});
+    prisma.conversation.create.mockResolvedValue(thread('c-new'));
+    prisma.booking.findMany.mockResolvedValue([
+      { id: 'booking-1', customerId: null, tour: { supplierId: 'supplier-1' } },
+    ]);
+    prisma.supplierNotificationRecipient.findMany.mockResolvedValue([
+      { supplierId: 'supplier-1', email: 'secretary@example.com' },
+    ]);
+  });
+
+  it('stamps an existing thread before returning it to a deep link', async () => {
+    prisma.conversation.findFirst.mockResolvedValue(thread('c-existing'));
+
+    const result = await chatService.findOrCreateConversation(
+      'supplier-1', 'customer-1', 'SUPPLIER_CUSTOMER', { bookingId: 'booking-1' }
+    );
+
+    expect(result.customerUserId).toBe('customer-1');
+  });
+
+  it('stamps a freshly created thread too', async () => {
+    const result = await chatService.findOrCreateConversation(
+      'supplier-1', 'customer-1', 'SUPPLIER_CUSTOMER', { bookingId: 'booking-1' }
+    );
+
+    expect(result.id).toBe('c-new');
+    expect(result.customerUserId).toBe('customer-1');
+  });
+
+  it('asks for participant emails on this path as well', async () => {
+    prisma.conversation.findFirst.mockResolvedValue(thread('c-existing'));
+
+    await chatService.findOrCreateConversation(
+      'supplier-1', 'customer-1', 'SUPPLIER_CUSTOMER', { bookingId: 'booking-1' }
+    );
+
+    const arg = prisma.conversation.findFirst.mock.calls[0][0];
+    expect(arg.include.participants.include.user.select.email).toBe(true);
+  });
+
+  it('excludes the supplier colleague, so she is never stamped as the customer', async () => {
+    prisma.conversation.findFirst.mockResolvedValue(thread('c-existing'));
+
+    const result = await chatService.findOrCreateConversation(
+      'supplier-1', 'customer-1', 'SUPPLIER_CUSTOMER', { bookingId: 'booking-1' }
+    );
+
+    expect(result.customerUserId).not.toBe('staff-1');
+  });
+});

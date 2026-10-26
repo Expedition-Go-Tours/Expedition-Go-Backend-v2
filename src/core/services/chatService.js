@@ -182,7 +182,7 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
     },
     include: {
       participants: {
-        include: { user: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, roles: true, firebaseUid: true } } }
+        include: { user: { select: { id: true, name: true, email: true, photoURL: true, lastLoginAt: true, roles: true, firebaseUid: true } } }
       },
       messages: {
         orderBy: { createdAt: 'desc' },
@@ -210,6 +210,11 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
       Object.assign(existing, patch);
     }
     console.log('[ChatService] findOrCreateConversation: FOUND EXISTING', { conversationId: existing.id, existingParticipantIds: existing.participants.map(p => p.userId) });
+    // The notification deep-link opens a thread straight from this return, so it
+    // needs the same customer stamp as the list: without it the window falls
+    // back to "the first participant who isn't me" and names the colleague as
+    // the customer.
+    await attachCustomerUserIds([existing]);
     return existing;
   }
 
@@ -249,7 +254,7 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
     },
     include: {
       participants: {
-        include: { user: { select: { id: true, name: true, photoURL: true, lastLoginAt: true, roles: true, firebaseUid: true } } }
+        include: { user: { select: { id: true, name: true, email: true, photoURL: true, lastLoginAt: true, roles: true, firebaseUid: true } } }
       },
       messages: {
         orderBy: { createdAt: 'desc' },
@@ -259,6 +264,7 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
     }
   });
 
+  await attachCustomerUserIds([conversation]);
   return conversation;
 }
 
