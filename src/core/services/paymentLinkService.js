@@ -42,6 +42,14 @@ const SESSION_MAX_MS = 24 * 60 * 60 * 1000;
 const SESSION_MIN_MS = 30 * 60 * 1000;
 const CREATING_STALE_MS = 2 * 60 * 1000;
 
+// Anti-spam policy for customer payment touches. A supplier can click Send as
+// often as the UI allows, so the ceiling is enforced here rather than in the
+// client: one customer EMAIL per booking per day, and a hard cap on touches per
+// booking (five is Shopify's own cap on deferred-payment reminders). Both are
+// policy, not mechanics, so they stay tunable in one place.
+const SEND_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const MAX_CUSTOMER_TOUCHES = 5;
+
 const ACTIVE_STATUSES = ['CREATING', 'ACTIVE'];
 const RESERVED_STATUSES = ['PENDING', 'CONFIRMED'];
 const TERMINAL_STATUSES = ['CANCELLED', 'COMPLETED', 'NO_SHOW', 'REFUNDED'];
@@ -781,6 +789,58 @@ async function dispatchChat(booking, attempt, send) {
   }
 }
 
+/**
+ * Refuse a customer touch that is too soon, or past the booking's ceiling.
+ *
+ * Counts real touches (QUEUED/SENT rows - a FAILED send never reached anyone),
+ * so a supplier cannot turn the button into a daily nag, and reports the wait
+ * rather than a dead end so the UI can show a countdown instead of a disabled
+ * button with no explanation. Callers must skip this when the idempotency key
+ * already produced a send, so a double-click is served its own row.
+ */
+async function assertCustomerTouchAllowed(booking) {
+  const recent = await prisma.bookingPaymentLinkSend.findMany({
+    where: { bookingId: booking.id, status: { in: ['QUEUED', 'SENT'] } },
+    orderBy: { createdAt: 'desc' },
+    take: MAX_CUSTOMER_TOUCHES + 1,
+    select: { channel: true, createdAt: true },
+  });
+
+  // The query already filters on status; filter again here so a provider row
+  // that slipped through (or a future caller reusing this helper) can never
+  // count a FAILED send - it never reached anyone.
+  const touches = recent.filter((s) => ['QUEUED', 'SENT'].includes(s.status));
+
+  if (touches.length >= MAX_CUSTOMER_TOUCHES) {
+    throw new AppError(
+      `This booking has already received ${touches.length} payment messages. Let the customer use the link they have, or collect payment another way.`,
+      409,
+      {
+        code: 'PAYMENT_LINK_SEND_LIMIT',
+        reasonCode: 'TOUCH_LIMIT_REACHED',
+        details: { touches: touches.length, limit: MAX_CUSTOMER_TOUCHES },
+      }
+    );
+  }
+
+  const lastEmail = touches.find((s) => s.channel !== 'CHAT');
+  if (!lastEmail) return;
+
+  const waitedMs = Date.now() - new Date(lastEmail.createdAt).getTime();
+  if (waitedMs < SEND_COOLDOWN_MS) {
+    const waitMs = SEND_COOLDOWN_MS - waitedMs;
+    throw new AppError(
+      `A payment email was already sent for this booking ${Math.max(1, Math.round(waitedMs / 3600000))}h ago. The customer needs ${Math.ceil(waitMs / 3600000)}h more before another one.`,
+      429,
+      {
+        code: 'PAYMENT_LINK_COOLDOWN',
+        reasonCode: 'TOO_SOON_TO_RESEND',
+        details: { retryAfterMinutes: Math.ceil(waitMs / 60000) },
+      }
+    );
+  }
+}
+
 async function deliverPaymentLink(booking, attempt, {
   sendInChat = false,
   actor = null,
@@ -817,11 +877,23 @@ async function deliverPaymentLink(booking, attempt, {
     }
   }
 
+  // The touch policy guards a genuinely new customer email, not a double-click:
+  // a retry carrying the idempotency key it already created a send with must be
+  // served that row instead of being refused.
+  const emailKey = idempotencyKey ? `${idempotencyKey}:email` : null;
+  const reusedSend = emailKey
+    ? await prisma.bookingPaymentLinkSend.findFirst({
+        where: { bookingId: booking.id, channel: 'EMAIL', idempotencyKey: emailKey },
+        select: { id: true },
+      })
+    : null;
+  if (!reusedSend) await assertCustomerTouchAllowed(booking);
+
   const emailRecord = await createSendRecord(booking, attempt, {
     channel: 'EMAIL',
     recipient: email,
     actor,
-    idempotencyKey: idempotencyKey ? `${idempotencyKey}:email` : null,
+    idempotencyKey: emailKey,
   });
   const emailSend = emailRecord.send;
 
@@ -1121,6 +1193,8 @@ module.exports = {
   FLAGS,
   SOURCE,
   MODE,
+  SEND_COOLDOWN_MS,
+  MAX_CUSTOMER_TOUCHES,
   flagEnabled,
   assessEligibility,
   paymentLinkDeadlineFor,

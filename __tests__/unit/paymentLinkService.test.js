@@ -21,6 +21,7 @@ jest.mock('../../src/core/services/prismaClient', () => {
     bookingPaymentLinkSend: {
       create: jest.fn(),
       findFirst: jest.fn(),
+      findMany: jest.fn(),
       update: jest.fn(),
     },
     $transaction: jest.fn(),
@@ -99,6 +100,7 @@ beforeEach(() => {
   prisma.booking.updateMany.mockResolvedValue({ count: 1 });
   prisma.bookingPaymentAttempt.updateMany.mockResolvedValue({ count: 1 });
   prisma.bookingPaymentLinkSend.update.mockResolvedValue({});
+  prisma.bookingPaymentLinkSend.findMany.mockResolvedValue([]);
   createCheckoutSession.mockResolvedValue({
     id: 'cs_new',
     url: 'https://checkout.stripe.com/c/pay/cs_new',
@@ -351,5 +353,161 @@ describe('deliverPaymentLink', () => {
         paymentLinkAttemptId: 'attempt_1',
       }),
     }));
+  });
+});
+
+/**
+ * Customer touch policy: one email per booking per day, and a ceiling on how
+ * often a supplier may ping a customer about the same reservation.
+ *
+ * A supplier can click Send as often as the button allows, so the ceiling has
+ * to live here. It counts real touches (QUEUED/SENT - a FAILED send never
+ * reached anyone), it lets a retried idempotency key through untouched, and it
+ * reports the wait rather than a dead end.
+ */
+describe('customer touch policy', () => {
+  const HOUR = 60 * 60 * 1000;
+
+  function touch(over = {}) {
+    return {
+      id: `send_${Math.random().toString(36).slice(2)}`,
+      bookingId: 'booking_1',
+      attemptId: 'attempt_1',
+      channel: 'EMAIL',
+      status: 'SENT',
+      createdAt: new Date(NOW - HOUR),
+      sentAt: new Date(NOW - HOUR),
+      ...over,
+    };
+  }
+
+  function prime({ history = [], reused = null } = {}) {
+    prisma.booking.findUnique.mockResolvedValue(booking());
+    prisma.bookingPaymentAttempt.findFirst.mockResolvedValue(liveAttempt());
+    prisma.bookingPaymentLinkSend.findFirst.mockResolvedValue(reused);
+    prisma.bookingPaymentLinkSend.findMany.mockResolvedValue(history);
+    prisma.bookingPaymentLinkSend.create.mockResolvedValue({
+      id: 'send_new',
+      status: 'QUEUED',
+      channel: 'EMAIL',
+      bookingId: 'booking_1',
+      attemptId: 'attempt_1',
+    });
+    enqueueEmail.mockResolvedValue({ id: 'job_1' });
+  }
+
+  const sendLink = (key = 'key-1') => service.sendPaymentLink({
+    bookingId: 'booking_1',
+    source: service.SOURCE.SUPPLIER_LINK,
+    mode: service.MODE.CREATE,
+    idempotencyKey: key,
+  });
+
+  it('allows the first send for a booking with no history', async () => {
+    prime({ history: [] });
+
+    const result = await sendLink();
+
+    expect(result.emailStatus).toBe('QUEUED');
+    expect(prisma.bookingPaymentLinkSend.create).toHaveBeenCalledTimes(1);
+    expect(enqueueEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a second email inside the 24h cooldown and reports the wait', async () => {
+    prime({ history: [touch({ createdAt: new Date(NOW - HOUR) })] });
+
+    await expect(sendLink()).rejects.toMatchObject({
+      statusCode: 429,
+      errorCode: 'PAYMENT_LINK_COOLDOWN',
+      reasonCode: 'TOO_SOON_TO_RESEND',
+    });
+
+    const err = await sendLink().catch((e) => e);
+    expect(err.details.retryAfterMinutes).toBeLessThanOrEqual(23 * 60);
+    expect(err.details.retryAfterMinutes).toBeGreaterThan(22 * 60);
+    // Nothing was queued and no session row was left behind.
+    expect(prisma.bookingPaymentLinkSend.create).not.toHaveBeenCalled();
+    expect(enqueueEmail).not.toHaveBeenCalled();
+  });
+
+  it('lets another email through once the cooldown has passed', async () => {
+    prime({ history: [touch({ createdAt: new Date(NOW - 25 * HOUR) })] });
+
+    const result = await sendLink();
+
+    expect(result.emailStatus).toBe('QUEUED');
+    expect(prisma.bookingPaymentLinkSend.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not count a failed email as a touch', async () => {
+    prime({ history: [touch({ status: 'FAILED', createdAt: new Date(NOW - HOUR) })] });
+
+    const result = await sendLink();
+
+    expect(result.emailStatus).toBe('QUEUED');
+  });
+
+  it('counts chat posts toward the ceiling without starting the email cooldown', async () => {
+    const twoDays = 2 * 24 * HOUR;
+    prime({
+      history: [
+        touch({ channel: 'CHAT', createdAt: new Date(NOW - HOUR) }),
+        touch({ createdAt: new Date(NOW - twoDays) }),
+        touch({ createdAt: new Date(NOW - twoDays - HOUR) }),
+        touch({ createdAt: new Date(NOW - twoDays - 2 * HOUR) }),
+      ],
+    });
+
+    const result = await sendLink();
+
+    // Four touches are on the books, the newest EMAIL is two days old, so both
+    // the ceiling and the cooldown allow this one.
+    expect(result.emailStatus).toBe('QUEUED');
+    expect(prisma.bookingPaymentLinkSend.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses once the booking has reached the customer-touch ceiling', async () => {
+    const twoDays = 2 * 24 * HOUR;
+    prime({
+      history: [
+        touch({ createdAt: new Date(NOW - twoDays) }),
+        touch({ createdAt: new Date(NOW - twoDays - HOUR) }),
+        touch({ channel: 'CHAT', createdAt: new Date(NOW - twoDays - 2 * HOUR) }),
+        touch({ createdAt: new Date(NOW - twoDays - 3 * HOUR) }),
+        touch({ createdAt: new Date(NOW - twoDays - 4 * HOUR) }),
+      ],
+    });
+
+    await expect(sendLink()).rejects.toMatchObject({
+      statusCode: 409,
+      errorCode: 'PAYMENT_LINK_SEND_LIMIT',
+      reasonCode: 'TOUCH_LIMIT_REACHED',
+    });
+    expect(prisma.bookingPaymentLinkSend.create).not.toHaveBeenCalled();
+  });
+
+  it('serves a retried idempotency key its own row instead of refusing it', async () => {
+    prime({ history: [touch({ createdAt: new Date(NOW - HOUR) })] });
+    prisma.bookingPaymentLinkSend.findFirst.mockResolvedValue({
+      id: 'send_existing',
+      status: 'QUEUED',
+      channel: 'EMAIL',
+      bookingId: 'booking_1',
+      attemptId: 'attempt_1',
+    });
+    // The unique index on (bookingId, channel, idempotencyKey) is what turns a
+    // retry into a reuse, so the mock has to raise it like Postgres would.
+    prisma.bookingPaymentLinkSend.create.mockImplementationOnce(async () => {
+      const err = new Error('duplicate');
+      err.code = 'P2002';
+      throw err;
+    });
+
+    const result = await sendLink('same-key-twice');
+
+    expect(result.emailStatus).toBe('QUEUED');
+    // The policy is not consulted for a key that already produced a send.
+    expect(prisma.bookingPaymentLinkSend.findMany).not.toHaveBeenCalled();
+    expect(enqueueEmail).not.toHaveBeenCalled();
   });
 });

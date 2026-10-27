@@ -11,7 +11,7 @@
  */
 
 const prisma = require('./prismaClient');
-const { assessEligibility, customerEmailFor } = require('./paymentLinkService');
+const { assessEligibility, customerEmailFor, SEND_COOLDOWN_MS, MAX_CUSTOMER_TOUCHES } = require('./paymentLinkService');
 
 const ACTIVE_ATTEMPT_STATUSES = ['CREATING', 'ACTIVE'];
 
@@ -81,6 +81,23 @@ function latestSendForBooking(sends, attempt) {
   return sends[0] || null;
 }
 
+/**
+ * One enum the supplier UI switches on, so a sent link, an expired one and a
+ * booking whose window closed each look different at a glance. Paid beats
+ * everything, then a live link, then an expired one, then a closed window.
+ */
+function linkStateFor({ paymentConfirmed, liveAttempt, relevantAttempt, deadlineAt, emailState, now }) {
+  if (paymentConfirmed) return 'PAID';
+  if (liveAttempt && liveAttempt.status === 'ACTIVE') {
+    return emailState === 'NOT_SENT' ? 'READY' : 'SENT';
+  }
+  if (relevantAttempt && new Date(relevantAttempt.expiresAt).getTime() <= now.getTime()) {
+    return 'EXPIRED';
+  }
+  if (deadlineAt && deadlineAt.getTime() <= now.getTime()) return 'WINDOW_CLOSED';
+  return 'NONE';
+}
+
 function action(code, label, extra = {}) {
   return { code, label, ...extra };
 }
@@ -107,7 +124,8 @@ function buildBookingAttention(booking, snapshot = {}, options = {}) {
       && new Date(a.expiresAt).getTime() > now.getTime(),
   ) || null;
   const relevantAttempt = liveAttempt || latestAttempt;
-  const lastSend = latestSendForBooking(sends, relevantAttempt);
+  // Chat rows share this table; the email state only considers EMAIL sends.
+  const lastSend = latestSendForBooking(sends.filter((s) => s.channel !== 'CHAT'), relevantAttempt);
   const emailState = emailStateFor(lastSend);
   // Session life, not merely "before the cutoff": the attempt service refuses
   // to open a Stripe session with less than 30 minutes of life left, so an
@@ -168,11 +186,42 @@ function buildBookingAttention(booking, snapshot = {}, options = {}) {
     lastAttemptAt: iso(relevantAttempt?.createdAt),
   };
 
+  // Customer touches so far, and when the next one is allowed. The service
+  // enforces one email per day and a hard ceiling; the projection only reports
+  // them, so the supplier UI can offer a countdown instead of a button that
+  // would come back as a 409/429.
+  const customerTouches = sends.filter((s) => ['QUEUED', 'SENT'].includes(s.status));
+  const emailTouches = customerTouches.filter((s) => s.channel !== 'CHAT');
+  const newestEmailTouch = emailTouches.reduce(
+    (newest, s) => (!newest || new Date(s.createdAt) > new Date(newest.createdAt) ? s : newest),
+    null,
+  );
+  const nextResendAtDate = newestEmailTouch
+    ? new Date(new Date(newestEmailTouch.createdAt).getTime() + SEND_COOLDOWN_MS)
+    : null;
+  const supersededAttempt = liveAttempt
+    ? attempts.find((a) => a.supersededByAttemptId === liveAttempt.id)
+    : null;
+
   const link = {
+    // One field the UI can switch on, instead of inferring the situation from
+    // the email row and the deadline separately.
+    state: linkStateFor({ paymentConfirmed, liveAttempt, relevantAttempt, deadlineAt, emailState, now }),
     active: Boolean(liveAttempt && liveAttempt.status === 'ACTIVE'),
     expiresAt: iso(relevantAttempt?.expiresAt),
     emailState,
     lastEmailedAt: iso(lastSend?.sentAt || lastSend?.createdAt),
+    // Customer touches so far, the channels they went out on, and when the next
+    // one is allowed: the supplier UI shows a countdown rather than a button
+    // that would be refused.
+    sentCount: customerTouches.length,
+    channels: {
+      email: emailTouches.length > 0,
+      chat: customerTouches.some((s) => s.channel === 'CHAT'),
+    },
+    nextResendAt: iso(nextResendAtDate),
+    supersededAt: iso(supersededAttempt?.updatedAt || supersededAttempt?.createdAt),
+    atTouchLimit: customerTouches.length >= MAX_CUSTOMER_TOUCHES,
     canSend,
     canResend,
     canRegenerate,
@@ -425,17 +474,22 @@ async function attachBookingAttention(bookings, options = {}) {
         status: true,
         expiresAt: true,
         createdAt: true,
+        updatedAt: true,
         settledAt: true,
         expiredAt: true,
+        supersededByAttemptId: true,
       },
     }),
+    // Every channel: the projection reports customer touches (email + chat) for
+    // the send ceiling, and picks the EMAIL row for the email state itself.
     prisma.bookingPaymentLinkSend.findMany({
-      where: { bookingId: { in: ids }, channel: 'EMAIL' },
+      where: { bookingId: { in: ids } },
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
         bookingId: true,
         attemptId: true,
+        channel: true,
         status: true,
         sentAt: true,
         createdAt: true,

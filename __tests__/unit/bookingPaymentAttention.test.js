@@ -365,3 +365,128 @@ describe('payment-link eligibility and session window', () => {
     expect(result.deadlineAt.toISOString()).toBe('2026-11-01T07:00:00.000Z');
   });
 });
+
+/**
+ * The link facts the supplier UI renders: one state enum, how many times the
+ * customer has been pinged, on which channels, when the next one is allowed,
+ * and whether a newer link killed an older one.
+ */
+describe('link state for the supplier UI', () => {
+  const HOUR = 60 * 60 * 1000;
+
+  function attempt(overrides = {}) {
+    return {
+      id: 'attempt_1',
+      bookingId: 'booking_1',
+      source: 'SUPPLIER_LINK',
+      status: 'ACTIVE',
+      amount: '120.00',
+      currency: 'USD',
+      stripeCheckoutSessionId: 'cs_1',
+      expiresAt: new Date(NOW.getTime() + 10 * HOUR),
+      createdAt: new Date(NOW.getTime() - 3 * HOUR),
+      updatedAt: new Date(NOW.getTime() - 3 * HOUR),
+      supersededByAttemptId: null,
+      ...overrides,
+    };
+  }
+
+  function send(overrides = {}) {
+    return {
+      id: 'send_1',
+      bookingId: 'booking_1',
+      attemptId: 'attempt_1',
+      channel: 'EMAIL',
+      status: 'SENT',
+      sentAt: new Date(NOW.getTime() - 3 * HOUR),
+      createdAt: new Date(NOW.getTime() - 3 * HOUR),
+      failureCode: null,
+      ...overrides,
+    };
+  }
+
+  it('reports a live, emailed link as SENT with its resend clock', () => {
+    const result = attention({}, { attempts: [attempt()], sends: [send()] });
+
+    expect(result.link.state).toBe('SENT');
+    expect(result.link.active).toBe(true);
+    expect(result.link.sentCount).toBe(1);
+    expect(result.link.channels).toEqual({ email: true, chat: false });
+    // Emailed 3h ago; the next one is allowed 24h after that.
+    expect(result.link.nextResendAt).toBe(new Date(NOW.getTime() + 21 * HOUR).toISOString());
+    expect(result.link.atTouchLimit).toBe(false);
+  });
+
+  it('counts a chat post as a customer touch and names both channels', () => {
+    const result = attention({}, {
+      attempts: [attempt()],
+      sends: [send({ id: 'send_chat', channel: 'CHAT' }), send()],
+    });
+
+    expect(result.link.sentCount).toBe(2);
+    expect(result.link.channels).toEqual({ email: true, chat: true });
+  });
+
+  it('does not let a chat post start the email cooldown', () => {
+    const result = attention({}, {
+      attempts: [attempt()],
+      sends: [send({ id: 'send_chat', channel: 'CHAT', createdAt: new Date(NOW.getTime() - 5 * 60 * 1000) })],
+    });
+
+    expect(result.link.nextResendAt).toBeNull();
+  });
+
+  it('reports a superseded link so the supplier can see the old one died', () => {
+    const old = attempt({
+      id: 'attempt_old',
+      status: 'SUPERSEDED',
+      supersededByAttemptId: 'attempt_1',
+      updatedAt: new Date(NOW.getTime() - 30 * 60 * 1000),
+    });
+
+    const result = attention({}, { attempts: [attempt(), old], sends: [send()] });
+
+    expect(result.link.supersededAt).toBe(new Date(NOW.getTime() - 30 * 60 * 1000).toISOString());
+  });
+
+  it('marks an expired link EXPIRED', () => {
+    const expired = attempt({
+      id: 'attempt_old',
+      status: 'EXPIRED',
+      expiresAt: new Date(NOW.getTime() - 2 * HOUR),
+      supersededByAttemptId: null,
+    });
+
+    const result = attention({}, { attempts: [expired], sends: [send({ attemptId: 'attempt_old' })] });
+
+    expect(result.link.state).toBe('EXPIRED');
+    expect(result.link.active).toBe(false);
+  });
+
+  it('marks a paid booking PAID regardless of the link history', () => {
+    const result = attention(
+      { paymentStatus: 'SUCCEEDED', paidAt: new Date(NOW.getTime() - 20 * 60 * 1000) },
+      { attempts: [attempt({ status: 'COMPLETED', settledAt: new Date(NOW.getTime() - 20 * 60 * 1000) })], sends: [send()] },
+    );
+
+    expect(result.link.state).toBe('PAID');
+    expect(result.payment.confirmed).toBe(true);
+  });
+
+  it('reports the window as closed once the cutoff has passed', () => {
+    const result = attention({}, {}, { now: new Date('2026-11-02T00:00:00.000Z') });
+
+    expect(result.link.state).toBe('WINDOW_CLOSED');
+  });
+
+  it('flags a booking that has reached the customer-touch ceiling', () => {
+    const twoDays = 2 * 24 * HOUR;
+    const sends = [0, 1, 2, 3, 4].map((i) =>
+      send({ id: `send_${i}`, createdAt: new Date(NOW.getTime() - twoDays - i * HOUR) }));
+
+    const result = attention({}, { attempts: [attempt()], sends });
+
+    expect(result.link.atTouchLimit).toBe(true);
+    expect(result.link.sentCount).toBe(5);
+  });
+});
