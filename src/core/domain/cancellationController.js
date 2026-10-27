@@ -39,29 +39,54 @@ function isSupplierCaused(booking) {
   return !LEGACY_EXCLUDED_KEYWORDS.some((kw) => lower.includes(kw));
 }
 
+// GetYourGuide's published bar is a single 1.0% pass/fail, so anything above
+// 1% must not be labelled "Good". The extra bands below exist to tell a
+// supplier how far past the standard they are, not to imply 1–2% is healthy.
+const STANDARD_RATE = 1;
+
 /**
  * GetYourGuide Performance Quality Standards thresholds:
  * - < 10 eligible bookings → "Building performance record" (not enough data)
- * - ≤ 1%  → Excellent
- * - ≤ 2%  → Good
- * - ≤ 5%  → Needs attention (warn)
+ * - ≤ 1%  → Excellent (meets the standard)
+ * - ≤ 2%  → Above standard (fails the 1% bar; warn)
+ * - ≤ 5%  → At risk (warn)
  * - > 5%  → High (warn — compute + notify only, never auto-delist)
  */
 function getStatus(rate, eligibleBookings) {
   if (eligibleBookings < 10) return 'Building performance record';
-  if (rate <= 1) return 'Excellent';
-  if (rate <= 2) return 'Good';
-  if (rate <= 5) return 'Needs attention';
+  if (rate <= STANDARD_RATE) return 'Excellent';
+  if (rate <= 2) return 'Above standard';
+  if (rate <= 5) return 'At risk';
   return 'High';
+}
+
+const CANCELLED_STATUSES = ['CANCELLED', 'REFUNDED'];
+
+function isCancelledBooking(booking) {
+  return CANCELLED_STATUSES.includes(booking.status);
+}
+
+/**
+ * When did the cancellation happen? GetYourGuide counts supplier
+ * cancellations by date of cancellation, not travel date. Rows written
+ * before `cancelledAt` existed fall back to the travel date so historical
+ * rates do not silently drop out of the window.
+ */
+function cancellationDate(booking) {
+  return booking.cancelledAt || booking.travelDate;
+}
+
+function withinWindow(date, start, end) {
+  return date >= start && date <= end;
 }
 
 // A supplier only hears about a threshold breach once a day (checked against
 // their notification bell before enqueueing).
 const BREACH_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
-async function alertRateBreachIfDue(supplierId, status, rate) {
+async function alertRateBreachIfDue(supplierId, status, rate, windowDays = 90) {
   if (!supplierId) return;
-  if (status !== 'Needs attention' && status !== 'High') return;
+  if (status !== 'Above standard' && status !== 'At risk' && status !== 'High') return;
 
   try {
     const recent = await prisma.notification.findFirst({
@@ -77,12 +102,12 @@ async function alertRateBreachIfDue(supplierId, status, rate) {
     await enqueueNotification({
       userId: supplierId,
       type: 'CANCELLATION_RATE_ALERT',
-      title: status === 'High' ? 'High cancellation rate' : 'Cancellation rate needs attention',
+      title: status === 'High' ? 'High cancellation rate' : 'Cancellation rate above the 1% standard',
       message:
         status === 'High'
-          ? `Your 90-day cancellation rate is ${rate}%. Above 5% is considered a high cancellation rate — please review why bookings are being cancelled.`
-          : `Your 90-day cancellation rate is ${rate}%. Between 2% and 5% needs attention — please review why bookings are being cancelled.`,
-      data: { rate, status, windowDays: 90 },
+          ? `Your ${windowDays}-day cancellation rate is ${rate}%. That is above 5% — please review why bookings are being cancelled.`
+          : `Your ${windowDays}-day cancellation rate is ${rate}%. The standard is 1% or lower — please review why bookings are being cancelled.`,
+      data: { rate, status, windowDays },
     });
   } catch (err) {
     console.error('[Cancellation] rate breach alert failed:', err.message);
@@ -103,7 +128,10 @@ exports.getCancellationSummary = catchAsync(async (req, res, next) => {
         cancellationRate: 0,
         status: 'Building performance record',
         confirmed: 0,
+        upcomingConfirmed: 0,
         cancelled: 0,
+        supplierCausedCount: 0,
+        excludedCancellations: 0,
         completed: 0,
         noShow: 0,
         noShowRate: 0,
@@ -112,17 +140,30 @@ exports.getCancellationSummary = catchAsync(async (req, res, next) => {
         bookingValueLost: 0,
         mostCommonReason: null,
         days: 90,
+        windowStart: null,
+        windowEnd: null,
       },
     });
   }
 
   const { productId, days = 90 } = req.query;
-  const sinceDate = new Date(Date.now() - parseInt(days) * 24 * 60 * 60 * 1000);
+  const windowDays = Math.max(1, parseInt(days, 10) || 90);
+  const windowEnd = new Date();
+  const windowStart = new Date(windowEnd.getTime() - windowDays * 24 * 60 * 60 * 1000);
 
+  // The rate measures the last N days, so:
+  //   * a booking that travelled in the window is at risk in this window;
+  //   * a cancellation that happened in the window is at risk in this window,
+  //     even if its travel date is later (customer/supplier cancelled ahead).
+  // Future travel dates are fetched only when the booking was already
+  // cancelled — otherwise they would dilute today's rate.
   const bookingWhere = {
     tour: { supplierId },
-    travelDate: { gte: sinceDate },
     status: { in: ['CONFIRMED', 'COMPLETED', 'CANCELLED', 'REFUNDED', 'NO_SHOW'] },
+    OR: [
+      { travelDate: { gte: windowStart, lte: windowEnd } },
+      { cancelledAt: { gte: windowStart, lte: windowEnd } },
+    ],
   };
   if (productId) bookingWhere.tourId = productId;
 
@@ -136,35 +177,59 @@ exports.getCancellationSummary = catchAsync(async (req, res, next) => {
       cancellationCategory: true,
       cancellationOrigin: true,
       countsTowardRate: true,
+      cancelledAt: true,
       grossAmount: true,
       travelDate: true,
     },
   });
 
-  const totalEligible = bookings.length;
+  // Operational context: confirmed bookings for future travel. They are not
+  // part of the rate denominator (that was the bug), but the card still shows
+  // how much upcoming business the supplier has.
+  const upcomingWhere = {
+    tour: { supplierId },
+    status: 'CONFIRMED',
+    travelDate: { gt: windowEnd },
+  };
+  if (productId) upcomingWhere.tourId = productId;
+  const upcomingConfirmed = await prisma.booking.count({ where: upcomingWhere });
 
-  const confirmedCount = bookings.filter((b) => b.status === 'CONFIRMED').length;
-  const completedCount = bookings.filter((b) => b.status === 'COMPLETED').length;
-
-  const supplierCancelled = bookings.filter(
-    (b) => (b.status === 'CANCELLED' || b.status === 'REFUNDED') && isSupplierCaused(b),
+  // Numerator: supplier-caused cancellations *by date of cancellation*.
+  const cancellationCohort = bookings.filter(
+    (b) => isCancelledBooking(b) && withinWindow(cancellationDate(b), windowStart, windowEnd),
   );
-  const cancelledCount = supplierCancelled.length;
-  const totalCancelled = bookings.filter(
-    (b) => b.status === 'CANCELLED' || b.status === 'REFUNDED',
-  ).length;
+  const supplierCancelled = cancellationCohort.filter(isSupplierCaused);
+  const supplierCausedCount = supplierCancelled.length;
 
-  // GYG's second supplier metric: no-shows must stay ≤ 0.2% of bookings.
-  const noShowCount = bookings.filter((b) => b.status === 'NO_SHOW').length;
+  // Denominator: bookings that travelled in the window plus cancellations
+  // made in the window, deduplicated. A supplier cancellation can therefore
+  // never account for more than 100% of the eligible bookings.
+  const travelled = bookings.filter((b) => {
+    if (!withinWindow(b.travelDate, windowStart, windowEnd)) return false;
+    // A cancellation made before this window was reported in that window;
+    // counting it again here would inflate today's denominator.
+    if (isCancelledBooking(b) && cancellationDate(b) < windowStart) return false;
+    return true;
+  });
 
-  const cancellationRate = totalEligible > 0 ? (cancelledCount / totalEligible) * 100 : 0;
+  const eligibleById = new Map();
+  [...travelled, ...cancellationCohort].forEach((b) => eligibleById.set(b.id, b));
+  const totalEligible = eligibleById.size;
+
+  const confirmedCount = travelled.filter((b) => b.status === 'CONFIRMED').length;
+  const completedCount = travelled.filter((b) => b.status === 'COMPLETED').length;
+
+  // `NO_SHOW` means the traveller did not turn up — the supplier is still
+  // paid. It is NOT GetYourGuide's supplier no-show (customer refunded
+  // because the supplier missed pickup), so it is reported separately and
+  // never graded against GYG's 0.2% target.
+  const noShowCount = travelled.filter((b) => b.status === 'NO_SHOW').length;
+
+  const cancellationRate = totalEligible > 0 ? (supplierCausedCount / totalEligible) * 100 : 0;
   const noShowRate = totalEligible > 0 ? (noShowCount / totalEligible) * 100 : 0;
 
-  const now = new Date();
-  const pastBookings = bookings.filter((b) => new Date(b.travelDate) < now);
-  const pastCompletedCount = pastBookings.filter((b) => b.status === 'COMPLETED').length;
-  const completionRate = pastBookings.length > 0
-    ? (pastCompletedCount / pastBookings.length) * 100
+  const completionRate = travelled.length > 0
+    ? (completedCount / travelled.length) * 100
     : 0;
 
   const bookingValueLost = supplierCancelled.reduce((sum, b) => sum + Number(b.grossAmount), 0);
@@ -187,7 +252,7 @@ exports.getCancellationSummary = catchAsync(async (req, res, next) => {
 
   // Warn-only breach alert (never auto-delist) — only for a real request.
   if (req.supplierId) {
-    alertRateBreachIfDue(supplierId, status, roundedRate);
+    alertRateBreachIfDue(supplierId, status, roundedRate, windowDays);
   }
 
   res.status(200).json({
@@ -196,8 +261,10 @@ exports.getCancellationSummary = catchAsync(async (req, res, next) => {
       cancellationRate: roundedRate,
       status,
       confirmed: confirmedCount,
-      cancelled: totalCancelled,
-      supplierCausedCount: cancelledCount,
+      upcomingConfirmed,
+      cancelled: cancellationCohort.length,
+      supplierCausedCount,
+      excludedCancellations: cancellationCohort.length - supplierCausedCount,
       completed: completedCount,
       noShow: noShowCount,
       noShowRate: Math.round(noShowRate * 100) / 100,
@@ -205,15 +272,23 @@ exports.getCancellationSummary = catchAsync(async (req, res, next) => {
       completionRate: Math.round(completionRate * 10) / 10,
       bookingValueLost: Math.round(bookingValueLost * 100) / 100,
       mostCommonReason,
-      days: parseInt(days),
+      days: windowDays,
+      windowStart: windowStart.toISOString(),
+      windowEnd: windowEnd.toISOString(),
     },
   });
 });
 
 /**
  * GET /suppliers/cancellation/records
- * Supplier-caused cancellations only — customer/system cancels and excluded
- * categories (force majeure, customer-requested) never appear here.
+ * Every cancellation made in the window — whether initiated by the supplier,
+ * the customer, or an external event. Customer-caused cancellations appear
+ * here too; they don't count toward the supplier's rate, but the supplier
+ * still needs to see that a booking was cancelled and why.
+ *
+ * Filtering and ordering use the cancellation date (falling back to travel
+ * date for legacy rows) so this table always lists exactly the cancellations
+ * the summary counted.
  */
 exports.getCancellationRecords = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId || req.user?.id;
@@ -225,29 +300,35 @@ exports.getCancellationRecords = catchAsync(async (req, res, next) => {
   }
 
   const { productId, page = 1, limit = 25, days = 90 } = req.query;
-  const pageSize = parseInt(limit);
-  const sinceDate = new Date(Date.now() - parseInt(days) * 24 * 60 * 60 * 1000);
+  const pageSize = Math.max(1, parseInt(limit, 10) || 25);
+  const windowDays = Math.max(1, parseInt(days, 10) || 90);
+  const windowEnd = new Date();
+  const windowStart = new Date(windowEnd.getTime() - windowDays * 24 * 60 * 60 * 1000);
 
   const where = {
     tour: { supplierId },
     status: { in: ['CANCELLED', 'REFUNDED'] },
-    travelDate: { gte: sinceDate },
+    OR: [
+      { cancelledAt: { gte: windowStart, lte: windowEnd } },
+      // Legacy rows have no cancellation timestamp — use the travel date,
+      // exactly as the summary does when it windows the numerator.
+      { cancelledAt: null, travelDate: { gte: windowStart, lte: windowEnd } },
+    ],
   };
   if (productId) where.tourId = productId;
 
-  // Fetch ALL matching cancelled bookings, not just supplier-caused.
-  // Customer-caused cancellations appear here too — they don't count toward
-  // the supplier's rate (countsTowardRate: false) but the supplier still
-  // needs to see that a booking was cancelled and why.
   const allCancelled = await prisma.booking.findMany({
     where,
-    orderBy: { travelDate: 'desc' },
     include: { tour: { select: { id: true, title: true } } },
   });
 
+  // Prisma cannot order by a fallback column, so sort on the same effective
+  // date the filter used. Newest cancellation first.
+  allCancelled.sort((a, b) => cancellationDate(b) - cancellationDate(a));
+
   const totalCount = allCancelled.length;
   const totalPages = Math.ceil(totalCount / pageSize);
-  const currentPage = Math.min(parseInt(page), Math.max(totalPages, 1));
+  const currentPage = Math.min(Math.max(1, parseInt(page, 10) || 1), Math.max(totalPages, 1));
   const skip = (currentPage - 1) * pageSize;
   const paged = allCancelled.slice(skip, skip + pageSize);
 
@@ -257,6 +338,7 @@ exports.getCancellationRecords = catchAsync(async (req, res, next) => {
       records: paged.map((r) => ({
         id: r.id,
         travelDate: r.travelDate.toISOString().split('T')[0],
+        cancelledOn: cancellationDate(r).toISOString().split('T')[0],
         reason:
           (r.cancellationCode && getReason(r.cancellationCode)?.label) ||
           r.cancellationReason ||
@@ -264,7 +346,9 @@ exports.getCancellationRecords = catchAsync(async (req, res, next) => {
         note: r.cancellationNote || null,
         category: r.cancellationCategory || null,
         origin: r.cancellationOrigin || null,
-        countsTowardRate: typeof r.countsTowardRate === 'boolean' ? r.countsTowardRate : null,
+        // Resolved through the same predicate as the summary so the badge in
+        // this table can never contradict the headline rate.
+        countsTowardRate: isSupplierCaused(r),
         cancellationFee: r.cancellationFee != null ? Number(r.cancellationFee) : null,
         refundStatus: r.refundStatus || null,
         bookingReference: r.bookingNumber,
@@ -309,3 +393,4 @@ exports.getCancellationProducts = catchAsync(async (req, res, next) => {
 // Exported for unit tests.
 exports.isSupplierCaused = isSupplierCaused;
 exports.getStatus = getStatus;
+exports.cancellationDate = cancellationDate;

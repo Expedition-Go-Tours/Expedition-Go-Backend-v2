@@ -253,10 +253,12 @@ describe('getStatus (GYG thresholds)', () => {
   it('applies ≤1 / ≤2 / ≤5 / >5 boundaries', () => {
     expect(getStatus(0.4, 50)).toBe('Excellent');
     expect(getStatus(1, 50)).toBe('Excellent');
-    expect(getStatus(1.1, 50)).toBe('Good');
-    expect(getStatus(2, 50)).toBe('Good');
-    expect(getStatus(2.1, 50)).toBe('Needs attention');
-    expect(getStatus(5, 50)).toBe('Needs attention');
+    // GYG's published bar is 1%. 1–2% is above that bar, so it must never be
+    // presented as a healthy ("Good") result.
+    expect(getStatus(1.1, 50)).toBe('Above standard');
+    expect(getStatus(2, 50)).toBe('Above standard');
+    expect(getStatus(2.1, 50)).toBe('At risk');
+    expect(getStatus(5, 50)).toBe('At risk');
     expect(getStatus(5.1, 50)).toBe('High');
   });
 });
