@@ -9,6 +9,9 @@ const {
   TRAVELER_COUNT_SQL,
   toUtcDate,
   toDateKey,
+  parseBlob,
+  isPerGroupTour,
+  getEffectiveCapacity,
 } = require('../services/availabilityCore');
 const { getOrSet, invalidateKeys } = require('../services/cacheHelper');
 const getConfig = require('../services/getConfig');
@@ -39,6 +42,39 @@ function validateCapacity(capacity) {
 /** Human pluralization helper for live-booking guard messages. */
 function plural(count, singular, pluralWord) {
   return count === 1 ? singular : pluralWord;
+}
+
+/**
+ * Validate an optional per-date minimum party size. Returns an error string or
+ * null.
+ * - undefined  = field not supplied (leave unchanged / use default on create)
+ * - null       = clear the override and inherit the product minimum
+ * - integer ≥1 = set the date floor
+ */
+function validateMinParticipants(minParticipants) {
+  if (minParticipants === undefined || minParticipants === null) return null;
+  if (typeof minParticipants !== 'number' && typeof minParticipants !== 'string') {
+    return 'minParticipants must be a positive integer or null';
+  }
+  const n = Number(minParticipants);
+  if (!Number.isInteger(n) || n < 1 || n > 100000) {
+    return 'Invalid minParticipants. Must be a positive integer up to 100000 (or null to inherit the tour minimum).';
+  }
+  return null;
+}
+
+/**
+ * Largest party minimum a date may declare: the date's own day limit when set,
+ * otherwise the tour's maximum participants. Per-group tours express capacity in
+ * group slots rather than people, so the ceiling does not apply there.
+ */
+function resolveMinParticipantsCeiling(parsed, capacity, fallbackCapacity) {
+  if (isPerGroupTour(parsed)) return null;
+  if (capacity != null) {
+    const n = Number(capacity);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  }
+  return getEffectiveCapacity(parsed || {}, fallbackCapacity);
 }
 
 /** UTC-midnight start of today — overrides can never target the past. */
@@ -189,7 +225,7 @@ exports.getPublicAvailability = catchAsync(async (req, res, next) => {
 
 exports.updateDateAvailability = catchAsync(async (req, res, next) => {
   const { tourId, date } = req.params;
-  const { status, timeSlotOverrides, notes, capacity } = req.body;
+  const { status, timeSlotOverrides, notes, capacity, minParticipants } = req.body;
 
   const parsedDate = toUtcDate(date);
   if (!parsedDate) {
@@ -210,12 +246,48 @@ exports.updateDateAvailability = catchAsync(async (req, res, next) => {
     return next(new AppError(capError, 400));
   }
 
+  const minError = validateMinParticipants(minParticipants);
+  if (minError) {
+    return next(new AppError(minError, 400));
+  }
+
   const tour = await prisma.tour.findFirst({
     where: { id: tourId, supplierId: req.supplierId },
   });
 
   if (!tour) {
     return next(new AppError('Tour not found or access denied', 404));
+  }
+
+  const parsed = parseBlob(tour.schedulesAndPricing) || {};
+  const fallbackCapacity = parseInt(await getConfig('booking.max_travelers', '50'), 10) || 50;
+  // Per-group tours price and sell by group band, not by headcount, so a
+  // party minimum has no meaning there. The supplier UI hides the control;
+  // reject it here too rather than persisting a value the storefront can't
+  // enforce (v1 deliberately excludes per-group tours).
+  if (minParticipants != null && isPerGroupTour(parsed)) {
+    return next(new AppError(
+      'Per-group tours set their party size with group size bands, not a per-date minimum.',
+      400
+    ));
+  }
+  // A day-limit override already on the date is the real ceiling; only when the
+  // request does not touch capacity do we need to look it up.
+  let capacityForCeiling = capacity;
+  if (minParticipants != null && capacity === undefined) {
+    const [existing] = await prisma.tourDateOverride.findMany({
+      where: { tourId, date: parsedDate },
+      select: { capacity: true },
+      take: 1,
+    });
+    capacityForCeiling = existing?.capacity ?? null;
+  }
+  const minCeiling = resolveMinParticipantsCeiling(parsed, capacityForCeiling, fallbackCapacity);
+  if (minParticipants != null && minCeiling != null && Number(minParticipants) > minCeiling) {
+    return next(new AppError(
+      `Cannot require ${minParticipants} travelers — this date can hold at most ${minCeiling}. Raise the day limit first, or set a lower minimum.`,
+      400
+    ));
   }
 
   const override = await prisma.$transaction(async (tx) => {
@@ -264,6 +336,7 @@ exports.updateDateAvailability = catchAsync(async (req, res, next) => {
     const data = {};
     if (status) data.status = status;
     if (capacity !== undefined) data.capacity = capacity;
+    if (minParticipants !== undefined) data.minParticipants = minParticipants;
     if (timeSlotOverrides) data.timeSlotOverrides = timeSlotOverrides;
     if (notes !== undefined) data.notes = notes;
 
@@ -277,6 +350,7 @@ exports.updateDateAvailability = catchAsync(async (req, res, next) => {
         date: parsedDate,
         status: status || 'AVAILABLE',
         ...(capacity !== undefined ? { capacity } : {}),
+        ...(minParticipants !== undefined && minParticipants !== null ? { minParticipants } : {}),
         timeSlotOverrides: timeSlotOverrides || undefined,
         notes: notes || null,
       },
@@ -348,8 +422,11 @@ exports.batchUpdateAvailability = catchAsync(async (req, res, next) => {
 
   // Validate every update up front so the transaction never partially applies
   // a malformed batch.
+  const parsed = parseBlob(tour.schedulesAndPricing) || {};
+  const fallbackCapacity = parseInt(await getConfig('booking.max_travelers', '50'), 10) || 50;
+
   const parsedUpdates = updates.map((update) => {
-    const { date, status, timeSlotOverrides, notes, capacity } = update;
+    const { date, status, timeSlotOverrides, notes, capacity, minParticipants } = update;
     const parsedDate = toUtcDate(date);
 
     if (!parsedDate) {
@@ -366,6 +443,16 @@ exports.batchUpdateAvailability = catchAsync(async (req, res, next) => {
     if (capError) {
       throw new AppError(`${capError} (date: ${date})`, 400);
     }
+    const minError = validateMinParticipants(minParticipants);
+    if (minError) {
+      throw new AppError(`${minError} (date: ${date})`, 400);
+    }
+    if (minParticipants != null && isPerGroupTour(parsed)) {
+      throw new AppError(
+        `Per-group tours set their party size with group size bands, not a per-date minimum (date: ${date}).`,
+        400
+      );
+    }
     if (isBefore(parsedDate, todayUtc())) {
       throw new AppError(`Cannot update availability for a past date: ${date}`, 400);
     }
@@ -379,8 +466,43 @@ exports.batchUpdateAvailability = catchAsync(async (req, res, next) => {
       // undefined = preserve existing day limit; number = set it. (Clearing via
       // batch isn't supported — use the single-date PATCH for that.)
       capacity: capacity === undefined ? null : (capacity === null ? null : Number(capacity)),
+      // undefined/null = preserve the current date minimum; number = set it.
+      // Clearing back to the product default uses the single-date PATCH.
+      minParticipants:
+        minParticipants === undefined || minParticipants === null
+          ? null
+          : Number(minParticipants),
     };
   });
+
+  // A date's existing day limit is the real ceiling when the batch sets a
+  // minimum but leaves capacity untouched. One lookup for the whole batch.
+  const minTargets = parsedUpdates.filter((u) => u.minParticipants != null && u.capacity == null);
+  if (minTargets.length > 0) {
+    const existingRows = await prisma.tourDateOverride.findMany({
+      where: {
+        tourId,
+        date: { in: minTargets.map((u) => toUtcDate(u.date)) },
+      },
+      select: { date: true, capacity: true },
+    });
+    const existingCapacityByDate = new Map(
+      existingRows.map((r) => [toDateKey(r.date), r.capacity])
+    );
+    for (const u of parsedUpdates) {
+      if (u.minParticipants == null) continue;
+      const capacityForCeiling = u.capacity != null
+        ? u.capacity
+        : (existingCapacityByDate.get(u.dateKey) ?? null);
+      const minCeiling = resolveMinParticipantsCeiling(parsed, capacityForCeiling, fallbackCapacity);
+      if (minCeiling != null && u.minParticipants > minCeiling) {
+        throw new AppError(
+          `Cannot require ${u.minParticipants} travelers on ${u.date} — the date can hold at most ${minCeiling}. Raise the day limit first, or set a lower minimum.`,
+          400
+        );
+      }
+    }
+  }
 
   // Live-count guards only fire when a date is being blocked or has a day limit
   // that could sit below what is already booked.
@@ -450,9 +572,10 @@ exports.batchUpdateAvailability = catchAsync(async (req, res, next) => {
     const slotJsons = parsedUpdates.map((u) => (u.timeSlotOverrides ? JSON.stringify(u.timeSlotOverrides) : null));
     const notes = parsedUpdates.map((u) => (u.notes === null ? null : JSON.stringify(u.notes)));
     const capacities = parsedUpdates.map((u) => u.capacity);
+    const minParticipants = parsedUpdates.map((u) => u.minParticipants);
 
     const rows = await tx.$queryRawUnsafe(
-      `INSERT INTO "TourDateOverride" ("id", "tourId", "date", "status", "timeSlotOverrides", "notes", "capacity")
+      `INSERT INTO "TourDateOverride" ("id", "tourId", "date", "status", "timeSlotOverrides", "notes", "capacity", "minParticipants")
        SELECT * FROM UNNEST(
          $1::text[],
          $2::text[],
@@ -460,14 +583,16 @@ exports.batchUpdateAvailability = catchAsync(async (req, res, next) => {
          $4::text[]::"OverrideStatus"[],
          $5::text[]::jsonb[],
          $6::text[],
-         $7::int[]
-       ) AS t("id", "tourId", "date", "status", "timeSlotOverrides", "notes", "capacity")
+         $7::int[],
+         $8::int[]
+       ) AS t("id", "tourId", "date", "status", "timeSlotOverrides", "notes", "capacity", "minParticipants")
        ON CONFLICT ("tourId", "date")
        DO UPDATE SET
          "status" = EXCLUDED."status",
          "timeSlotOverrides" = EXCLUDED."timeSlotOverrides",
          "notes" = EXCLUDED."notes",
-         "capacity" = COALESCE(EXCLUDED."capacity", "TourDateOverride"."capacity")
+         "capacity" = COALESCE(EXCLUDED."capacity", "TourDateOverride"."capacity"),
+         "minParticipants" = COALESCE(EXCLUDED."minParticipants", "TourDateOverride"."minParticipants")
        RETURNING "id", "date", "status"`,
       ids,
       tourIds,
@@ -475,7 +600,8 @@ exports.batchUpdateAvailability = catchAsync(async (req, res, next) => {
       statuses,
       slotJsons,
       notes,
-      capacities
+      capacities,
+      minParticipants
     );
 
     return rows.map((r) => ({

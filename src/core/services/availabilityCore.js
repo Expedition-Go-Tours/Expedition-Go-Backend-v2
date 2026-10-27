@@ -348,6 +348,34 @@ function getOverrideCapacity(override) {
 }
 
 /**
+ * Supplier's party minimum from the product blob (Step 14 capacity setting).
+ * Unset/invalid values mean "no minimum" (1 traveller), which is the historical
+ * behaviour for every listing that never configured one.
+ */
+function getDefaultMinParticipants(parsed) {
+  const n = Number(parsed?.travelerDetails?.minParticipants);
+  return Number.isInteger(n) && n >= 1 && n <= 100000 ? n : 1;
+}
+
+/** Normalize a date-level minimum override, or null when the date inherits. */
+function getOverrideMinParticipants(override) {
+  if (!override || override.minParticipants == null) return null;
+  const n = Number(override.minParticipants);
+  return Number.isInteger(n) && n >= 1 && n <= 100000 ? n : null;
+}
+
+/**
+ * Effective minimum party size for a date: the product minimum, raised by the
+ * date override when one is set. A date can never lower an option's own
+ * minimum, so a private/option-specific guarantee stays intact.
+ */
+function resolveEffectiveMinParticipants(parsed, override) {
+  const base = getDefaultMinParticipants(parsed);
+  const dateMin = getOverrideMinParticipants(override);
+  return dateMin != null ? Math.max(base, dateMin) : base;
+}
+
+/**
  * Per-slot list for a date. Override slots win when present; otherwise the
  * template slots each default to the effective day capacity.
  */
@@ -417,7 +445,7 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
 
   const override = await db.tourDateOverride.findFirst({
     where: { tourId: tour.id, date: dateObj },
-    select: { status: true, capacity: true, timeSlotOverrides: true },
+    select: { status: true, capacity: true, minParticipants: true, timeSlotOverrides: true },
   });
 
   const capOverride = getOverrideCapacity(override);
@@ -527,6 +555,21 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
   }
 
   const requestedTravelers = travelerCount(travelers);
+  const effectiveMin = resolveEffectiveMinParticipants(parsed, override);
+
+  // The supplier's minimum party size is a floor, not a capacity rule: a party
+  // below it is refused even when the date has plenty of rooms left. Checked
+  // here so checkout, booking changes and the supplier's own drawer all agree.
+  if (requestedTravelers > 0 && requestedTravelers < effectiveMin) {
+    return {
+      ok: false,
+      reason: `At least ${effectiveMin} traveler${effectiveMin === 1 ? '' : 's'} are required for this date`,
+      reasonCode: 'MIN_PARTICIPANTS_NOT_MET',
+      minParticipants: effectiveMin,
+      availableSpots: Math.max(0, effectiveCapacity - currentBookings),
+    };
+  }
+
   let groupsRemaining = null;
   if (isPerGroup) {
     groupsRemaining = dayWide
@@ -557,6 +600,7 @@ async function evaluateBookingAvailability(db, tour, dateKey, selectedTime, trav
     isPerGroup,
     maxGroups,
     daySlots,
+    minParticipants: effectiveMin,
   };
 }
 
@@ -590,6 +634,9 @@ function computeDayEntry(parsed, override, slotData, dateObj, options = {}) {
   // per-person day capacity with the capped value; per-group traveler-equivalent
   // stays as-is (the cap is applied to the group day capacity below).
   const capOverride = getOverrideCapacity(override);
+  const defaultMinParticipants = getDefaultMinParticipants(parsed);
+  const overrideMinParticipants = getOverrideMinParticipants(override);
+  const effectiveMinParticipants = resolveEffectiveMinParticipants(parsed, override);
   const maxCapacity = isPerGroup
     ? maxGroups * maxGroupSize
     : (capOverride ?? getEffectiveCapacity(parsed, maxTravelersFallback));
@@ -678,6 +725,13 @@ function computeDayEntry(parsed, override, slotData, dateObj, options = {}) {
     hasOverride: !!override,
     overrideStatus: override?.status || null,
     overrideCapacity: capOverride,
+    // Party-size floor for this date. `minParticipants` is always the effective
+    // value the storefront must enforce; `minParticipantsSource` says whether it
+    // came from the date override or the product default.
+    minParticipants: effectiveMinParticipants,
+    minParticipantsSource: overrideMinParticipants != null && overrideMinParticipants > defaultMinParticipants ? 'DATE' : 'TOUR',
+    defaultMinParticipants,
+    overrideMinParticipants,
     baseCapacity,
     isPast,
     ...(hasCutoffConfig ? { closedCutoff: dayClosedCutoff, closesAt: dayClosesAt } : {}),
@@ -859,6 +913,9 @@ module.exports = {
   getTemplateTimeSlots,
   getEffectiveCapacity,
   getOverrideCapacity,
+  getDefaultMinParticipants,
+  getOverrideMinParticipants,
+  resolveEffectiveMinParticipants,
   buildTimeSlots,
   computeStatus,
   computeDayEntry,

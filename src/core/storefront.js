@@ -1615,7 +1615,12 @@ controller.calculateCheckout = catchAsync(async (req, res, next) => {
       throw new AppError(mixResult.errors[0], 400);
     }
 
-    const availability = await checkTourAvailability(tourId, travelDate, null, optionScopeCalc ? { optionScope: optionScopeCalc } : {});
+    const availability = await checkTourAvailability(
+      tourId,
+      travelDate,
+      { travelers },
+      optionScopeCalc ? { optionScope: optionScopeCalc } : {}
+    );
     if (!availability.available) {
       throw new AppError(availability.reason || 'Tour is not available on the selected date', 400);
     }

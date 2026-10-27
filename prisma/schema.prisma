@@ -924,6 +924,9 @@ model TourDateOverride {
   date              DateTime       @db.Date
   status            OverrideStatus @default(AVAILABLE)
   capacity          Int?
+  // Minimum party size for this date. Null = inherit the product/option
+  // minimum. A date may raise that floor but never lower it.
+  minParticipants   Int?
   timeSlotOverrides Json? // [{ time: "09:00", capacity: 10, booked: 0 }, ...]
   notes             String?
 

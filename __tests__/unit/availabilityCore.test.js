@@ -315,6 +315,56 @@ describe('evaluateBookingAvailability', () => {
     expect(result.groupsRemaining).toBeNull();
   });
 
+  it('rejects a party below the tour minimum (MIN_PARTICIPANTS_NOT_MET)', async () => {
+    const tour = {
+      ...perPersonTour,
+      schedulesAndPricing: {
+        ...perPersonTour.schedulesAndPricing,
+        travelerDetails: { ...perPersonTour.schedulesAndPricing.travelerDetails, minParticipants: 3 },
+      },
+    };
+    const result = await core.evaluateBookingAvailability(makeDb(), tour, MONDAY, '10:00', { adults: 2 });
+    expect(result.ok).toBe(false);
+    expect(result.reasonCode).toBe('MIN_PARTICIPANTS_NOT_MET');
+    expect(result.minParticipants).toBe(3);
+    expect(result.reason).toContain('At least 3 travelers');
+  });
+
+  it('lets a date override raise the minimum above the tour default', async () => {
+    const db = makeDb({ override: { status: 'AVAILABLE', capacity: null, minParticipants: 5, timeSlotOverrides: null } });
+    const result = await core.evaluateBookingAvailability(db, perPersonTour, MONDAY, '10:00', { adults: 4 });
+    expect(result.ok).toBe(false);
+    expect(result.reasonCode).toBe('MIN_PARTICIPANTS_NOT_MET');
+    expect(result.minParticipants).toBe(5);
+  });
+
+  it('never lets a date override lower the tour minimum', async () => {
+    const tour = {
+      ...perPersonTour,
+      schedulesAndPricing: {
+        ...perPersonTour.schedulesAndPricing,
+        travelerDetails: { ...perPersonTour.schedulesAndPricing.travelerDetails, minParticipants: 4 },
+      },
+    };
+    const db = makeDb({ override: { status: 'AVAILABLE', capacity: null, minParticipants: 2, timeSlotOverrides: null } });
+    const result = await core.evaluateBookingAvailability(db, tour, MONDAY, '10:00', { adults: 3 });
+    expect(result.ok).toBe(false);
+    expect(result.minParticipants).toBe(4);
+  });
+
+  it('returns the effective minimum on a successful check', async () => {
+    const tour = {
+      ...perPersonTour,
+      schedulesAndPricing: {
+        ...perPersonTour.schedulesAndPricing,
+        travelerDetails: { ...perPersonTour.schedulesAndPricing.travelerDetails, minParticipants: 2 },
+      },
+    };
+    const result = await core.evaluateBookingAvailability(makeDb(), tour, MONDAY, '10:00', { adults: 3 });
+    expect(result.ok).toBe(true);
+    expect(result.minParticipants).toBe(2);
+  });
+
   it('enforces an override day limit across every slot (per-person)', async () => {
     // 4 travelers already booked in the 10:00 slot; day limit is 5 — a party of
     // 2 in the 14:00 slot must be rejected even though that slot is empty.
@@ -362,6 +412,50 @@ describe('evaluateBookingAvailability', () => {
     );
     expect(full.ok).toBe(false);
     expect(full.reason).toBe('No group slots remaining for this time');
+  });
+});
+
+describe('computeDayEntry minimum projection', () => {
+  const parsed = {
+    ...perPersonTour.schedulesAndPricing,
+    travelerDetails: { ...perPersonTour.schedulesAndPricing.travelerDetails, minParticipants: 2 },
+  };
+
+  it('inherits the tour minimum when the date has no override', () => {
+    const entry = core.computeDayEntry(parsed, null, {}, new Date(`${MONDAY}T00:00:00.000Z`), {
+      todayRef: FIXED_TODAY,
+      fallbackCapacity: 10,
+    });
+    expect(entry.minParticipants).toBe(2);
+    expect(entry.defaultMinParticipants).toBe(2);
+    expect(entry.overrideMinParticipants).toBeNull();
+    expect(entry.minParticipantsSource).toBe('TOUR');
+  });
+
+  it('projects a date override that raises the floor', () => {
+    const entry = core.computeDayEntry(
+      parsed,
+      { status: 'AVAILABLE', capacity: null, minParticipants: 4, timeSlotOverrides: null },
+      {},
+      new Date(`${MONDAY}T00:00:00.000Z`),
+      { todayRef: FIXED_TODAY, fallbackCapacity: 10 }
+    );
+    expect(entry.minParticipants).toBe(4);
+    expect(entry.defaultMinParticipants).toBe(2);
+    expect(entry.overrideMinParticipants).toBe(4);
+    expect(entry.minParticipantsSource).toBe('DATE');
+  });
+
+  it('keeps the tour floor when an override tries to lower it', () => {
+    const entry = core.computeDayEntry(
+      parsed,
+      { status: 'AVAILABLE', capacity: null, minParticipants: 1, timeSlotOverrides: null },
+      {},
+      new Date(`${MONDAY}T00:00:00.000Z`),
+      { todayRef: FIXED_TODAY, fallbackCapacity: 10 }
+    );
+    expect(entry.minParticipants).toBe(2);
+    expect(entry.minParticipantsSource).toBe('TOUR');
   });
 });
 
@@ -417,6 +511,40 @@ describe('checkTourAvailability', () => {
     const result = await checkTourAvailability('t1', MONDAY, { selectedTime: '10:00', travelers: { adults: 2 } });
     expect(result.available).toBe(false);
     expect(result.reason).toContain('Only 1 spot left, but 2 requested');
+  });
+
+  it('enforces the same minimum-party rule as the checkout engine', async () => {
+    const tour = {
+      ...perPersonTour,
+      schedulesAndPricing: {
+        ...perPersonTour.schedulesAndPricing,
+        travelerDetails: { ...perPersonTour.schedulesAndPricing.travelerDetails, minParticipants: 3 },
+      },
+    };
+    prisma.tour.findUnique.mockResolvedValue(tour);
+    const result = await checkTourAvailability('t1', MONDAY, { selectedTime: '10:00', travelers: { adults: 2 } });
+    expect(result.available).toBe(false);
+    expect(result.reasonCode).toBe('MIN_PARTICIPANTS_NOT_MET');
+    expect(result.minParticipants).toBe(3);
+  });
+
+  it('applies a date override minimum in the pre-check', async () => {
+    prisma.tourDateOverride.findFirst.mockResolvedValue({
+      status: 'AVAILABLE',
+      capacity: null,
+      minParticipants: 5,
+      timeSlotOverrides: null,
+    });
+    const result = await checkTourAvailability('t1', MONDAY, { selectedTime: '10:00', travelers: { adults: 4 } });
+    expect(result.available).toBe(false);
+    expect(result.reasonCode).toBe('MIN_PARTICIPANTS_NOT_MET');
+    expect(result.minParticipants).toBe(5);
+  });
+
+  it('returns the effective minimum on a successful pre-check', async () => {
+    const result = await checkTourAvailability('t1', MONDAY, { selectedTime: '10:00', travelers: { adults: 2 } });
+    expect(result.available).toBe(true);
+    expect(result.minParticipants).toBe(1);
   });
 
   it('accepts a party that fits within capacity', async () => {
@@ -519,6 +647,31 @@ describe('buildAvailabilityCalendar', () => {
     expect(calendar[0].hasOverride).toBe(true);
     // Slot ceilings default to the capped day capacity too.
     expect(calendar[0].timeSlots.every((s) => s.capacity === 3)).toBe(true);
+  });
+
+  it('projects the effective party minimum for every calendar day', async () => {
+    const parsed = {
+      ...perPersonTour.schedulesAndPricing,
+      travelerDetails: { ...perPersonTour.schedulesAndPricing.travelerDetails, minParticipants: 2 },
+    };
+    prisma.tourDateOverride.findMany.mockResolvedValue([
+      { date: new Date(`${TUESDAY}T00:00:00.000Z`), status: 'AVAILABLE', capacity: null, minParticipants: 4, timeSlotOverrides: null },
+    ]);
+    const calendar = await buildAvailabilityCalendar('t1', parsed, MONDAY, WEDNESDAY, FIXED_TODAY);
+
+    // Monday inherits the tour default; Tuesday's override raises it.
+    expect(calendar[0]).toMatchObject({
+      minParticipants: 2,
+      minParticipantsSource: 'TOUR',
+      defaultMinParticipants: 2,
+      overrideMinParticipants: null,
+    });
+    expect(calendar[1]).toMatchObject({
+      minParticipants: 4,
+      minParticipantsSource: 'DATE',
+      defaultMinParticipants: 2,
+      overrideMinParticipants: 4,
+    });
   });
 
   it('reports groups for perGroup tours with unit-aware day capacity', async () => {

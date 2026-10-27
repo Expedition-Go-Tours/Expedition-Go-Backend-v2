@@ -360,6 +360,90 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
 
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
     });
+
+    it('stores a per-date minimum on the override', async () => {
+      req.params = { tourId: 't1', date: futureDate() };
+      req.body = { minParticipants: 3 };
+
+      await controller.updateDateAvailability(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.tourDateOverride.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ minParticipants: 3 }),
+          create: expect.objectContaining({ minParticipants: 3 }),
+        })
+      );
+    });
+
+    it('clears a per-date minimum with null', async () => {
+      req.params = { tourId: 't1', date: futureDate() };
+      req.body = { minParticipants: null };
+
+      await controller.updateDateAvailability(req, res, next);
+
+      expect(prisma.tourDateOverride.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ minParticipants: null }),
+        })
+      );
+      const createArg = prisma.tourDateOverride.upsert.mock.calls[0][0].create;
+      expect(createArg).not.toHaveProperty('minParticipants');
+    });
+
+    it('rejects invalid per-date minimum values', async () => {
+      for (const minParticipants of [0, -1, 1.5, 'abc', 100001]) {
+        req.params = { tourId: 't1', date: futureDate() };
+        req.body = { minParticipants };
+        await controller.updateDateAvailability(req, res, next);
+        expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+        next.mockClear();
+      }
+    });
+
+    it('rejects a minimum above the day capacity', async () => {
+      req.params = { tourId: 't1', date: futureDate() };
+      // mockTour's maxParticipants is 10.
+      req.body = { minParticipants: 11 };
+
+      await controller.updateDateAvailability(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('accepts a minimum up to a raised day limit', async () => {
+      req.params = { tourId: 't1', date: futureDate() };
+      req.body = { capacity: 15, minParticipants: 12 };
+
+      await controller.updateDateAvailability(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.tourDateOverride.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ capacity: 15, minParticipants: 12 }),
+        })
+      );
+    });
+
+    it('rejects a per-date minimum on a per-group tour', async () => {
+      prisma.tour.findFirst.mockResolvedValue({
+        ...mockTour,
+        schedulesAndPricing: {
+          ...mockTour.schedulesAndPricing,
+          travelerDetails: {
+            ...mockTour.schedulesAndPricing.travelerDetails,
+            pricingModel: 'perGroup',
+          },
+        },
+      });
+      req.params = { tourId: 't1', date: futureDate() };
+      req.body = { minParticipants: 3 };
+
+      await controller.updateDateAvailability(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.tourDateOverride.upsert).not.toHaveBeenCalled();
+    });
   });
 
   // ============================
@@ -508,6 +592,67 @@ const makeTx = ({ hasTour = true, live = '0' } = {}) => ({
       await controller.batchUpdateAvailability(req, res, next);
 
       expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('persists per-date minimums in the batch upsert', async () => {
+      req.params = { tourId: 't1' };
+      req.body = {
+        updates: [
+          { date: futureDate(), minParticipants: 3 },
+          { date: futureDate(31), minParticipants: 4 },
+          { date: futureDate(32) },
+        ],
+      };
+      let captured;
+      prisma.$transaction.mockImplementation(async (cb) => {
+        const tx = makeTx();
+        await cb(tx);
+        captured = tx;
+        return [];
+      });
+
+      await controller.batchUpdateAvailability(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const insertCall = captured.$queryRawUnsafe.mock.calls.find(
+        (c) => c[0].includes('INSERT INTO "TourDateOverride"')
+      );
+      expect(insertCall).toBeTruthy();
+      // 8th argument is the per-date minimums array ($8::int[]); undefined and
+      // null both preserve the existing date value.
+      expect(insertCall[8]).toEqual([3, 4, null]);
+    });
+
+    it('rejects an invalid per-date minimum in batch', async () => {
+      req.params = { tourId: 't1' };
+      req.body = { updates: [{ date: futureDate(), minParticipants: 0 }] };
+      await controller.batchUpdateAvailability(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('rejects a batch minimum above the day capacity', async () => {
+      req.params = { tourId: 't1' };
+      req.body = { updates: [{ date: futureDate(), minParticipants: 11 }] };
+      await controller.batchUpdateAvailability(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('rejects a batch minimum on a per-group tour', async () => {
+      prisma.tour.findFirst.mockResolvedValue({
+        ...mockTour,
+        schedulesAndPricing: {
+          ...mockTour.schedulesAndPricing,
+          travelerDetails: {
+            ...mockTour.schedulesAndPricing.travelerDetails,
+            pricingModel: 'perGroup',
+          },
+        },
+      });
+      req.params = { tourId: 't1' };
+      req.body = { updates: [{ date: futureDate(), minParticipants: 3 }] };
+      await controller.batchUpdateAvailability(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
   });
 });

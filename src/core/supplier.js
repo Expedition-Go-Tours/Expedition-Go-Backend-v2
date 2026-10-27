@@ -17,6 +17,12 @@ const cache = require('./services/cacheHelper');
 const { invalidateKeys } = require('./services/cacheHelper');
 const { computeOfferStatus } = require('./services/offerStatus');
 const { getBrand } = require('../../config/brands');
+const getConfig = require('./services/getConfig');
+const {
+  parseBlob,
+  isPerGroupTour,
+  getEffectiveCapacity,
+} = require('./services/availabilityCore');
 
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -262,7 +268,7 @@ controller.getAvailability = catchAsync(async (req, res, next) => {
  */
 controller.setAvailability = catchAsync(async (req, res, next) => {
   const { tourId } = req.params;
-  const { date, available, maxBookings, note } = req.body;
+  const { date, available, maxBookings, note, minParticipants } = req.body;
 
   // Dates are stored `@db.Date`. Anchoring to UTC midnight keeps the day
   // stable regardless of the server's timezone (the same normalization
@@ -273,7 +279,7 @@ controller.setAvailability = catchAsync(async (req, res, next) => {
 
   const tour = await prisma.tour.findFirst({
     where: { id: tourId, supplierId: req.supplierId || req.user.id },
-    select: { id: true },
+    select: { id: true, schedulesAndPricing: true },
   });
   if (!tour) return next(new AppError('Tour not found', 404));
 
@@ -289,6 +295,49 @@ controller.setAvailability = catchAsync(async (req, res, next) => {
     data.capacity = capacity;
   }
   if (note !== undefined) data.notes = note === null ? null : String(note);
+
+  // Per-date party minimum. Accepting it here keeps the legacy supplier write
+  // path from silently dropping the field and becoming a second source of
+  // truth. null clears it (inherit the tour default).
+  if (minParticipants !== undefined) {
+    if (minParticipants === null || minParticipants === '') {
+      data.minParticipants = null;
+    } else {
+      const n = Number(minParticipants);
+      if (!Number.isInteger(n) || n < 1 || n > 100000) {
+        return next(new AppError('minParticipants must be a positive integer or null', 400));
+      }
+      const parsed = parseBlob(tour.schedulesAndPricing) || {};
+      if (isPerGroupTour(parsed)) {
+        return next(new AppError(
+          'Per-group tours set their party size with group size bands, not a per-date minimum.',
+          400
+        ));
+      }
+      const fallback = parseInt(await getConfig('booking.max_travelers', '50'), 10) || 50;
+      // Use the day limit this request sets; when it doesn't touch capacity,
+      // the date's existing limit is the real ceiling (mirrors the newer
+      // availability controller).
+      let ceilingCapacity;
+      if (maxBookings !== undefined) {
+        ceilingCapacity = data.capacity;
+      } else {
+        const existing = await prisma.tourDateOverride.findUnique({
+          where: { tourId_date: { tourId, date: parsedDate } },
+          select: { capacity: true },
+        });
+        ceilingCapacity = existing?.capacity ?? null;
+      }
+      const ceiling = ceilingCapacity != null ? Number(ceilingCapacity) : getEffectiveCapacity(parsed, fallback);
+      if (n > ceiling) {
+        return next(new AppError(
+          `Cannot require ${n} travelers — this date can hold at most ${ceiling}. Raise the day limit first, or set a lower minimum.`,
+          400
+        ));
+      }
+      data.minParticipants = n;
+    }
+  }
 
   const override = await prisma.tourDateOverride.upsert({
     where: { tourId_date: { tourId, date: parsedDate } },

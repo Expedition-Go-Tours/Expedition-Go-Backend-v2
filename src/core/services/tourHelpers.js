@@ -22,6 +22,7 @@ const {
   isClosedDate,
   getEffectiveCapacity,
   getOverrideCapacity,
+  resolveEffectiveMinParticipants,
   buildTimeSlots,
   toDateKey,
   toUtcDate,
@@ -765,7 +766,7 @@ async function checkTourAvailability(tourId, travelDate, selectedTimeOrOptions =
 
     const override = await prisma.tourDateOverride.findFirst({
       where: { tourId, date: dateObj },
-      select: { status: true, capacity: true, timeSlotOverrides: true },
+      select: { status: true, capacity: true, minParticipants: true, timeSlotOverrides: true },
     });
 
     // A day-limit override is a day-wide ceiling — occupancy must be counted
@@ -808,11 +809,13 @@ async function checkTourAvailability(tourId, travelDate, selectedTimeOrOptions =
     const operating = isOperatingDay(parsed, dateObj);
     const dayCapacity = capOverride ?? getEffectiveCapacity(parsed, maxTravelersFallback);
     const daySlots = buildTimeSlots(parsed, override, dayCapacity);
+    const minParticipants = resolveEffectiveMinParticipants(parsed, override);
 
     const base = {
       overrideStatus: override?.status || null,
       isPerGroup,
       maxGroups,
+      minParticipants,
       closedDate,
       isOperatingDay: operating,
       timeSlots: daySlots,
@@ -823,6 +826,22 @@ async function checkTourAvailability(tourId, travelDate, selectedTimeOrOptions =
     }
     if (override?.status === 'BLOCKED') {
       return { available: false, reason: 'Date is blocked', maxCapacity: dayCapacity, currentBookings: currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
+    }
+
+    // Supplier minimum party size for this date. A date override may raise the
+    // product floor but never lower it — parity with evaluateBookingAvailability.
+    if (requestedTravelers > 0 && requestedTravelers < minParticipants) {
+      return {
+        available: false,
+        reason: `At least ${minParticipants} traveler${minParticipants === 1 ? '' : 's'} are required for this date`,
+        reasonCode: 'MIN_PARTICIPANTS_NOT_MET',
+        minParticipants,
+        maxCapacity: dayCapacity,
+        currentBookings,
+        availableSpots: Math.max(0, dayCapacity - currentBookings),
+        groupsRemaining: isPerGroup ? 0 : null,
+        ...base,
+      };
     }
 
     // Fixed-slot tours must carry a concrete, valid time slot.
