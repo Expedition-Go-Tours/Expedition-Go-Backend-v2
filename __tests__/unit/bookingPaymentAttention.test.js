@@ -108,7 +108,10 @@ describe('booking attention projection', () => {
       'RESEND_PAYMENT_LINK',
       'REGENERATE_PAYMENT_LINK',
     ]);
-    expect(result.message).toMatch(/secure payment link was emailed/i);
+    // The panel renders the link's status, channel and expiry from link.state,
+    // so the copy must not repeat the same fact a third time.
+    expect(result.message).not.toMatch(/secure payment link was emailed/i);
+    expect(result.nextStep).not.toMatch(/Resend it if/i);
   });
 
   it('offers no action while Stripe is still creating the session', () => {

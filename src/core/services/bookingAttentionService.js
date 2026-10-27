@@ -315,8 +315,10 @@ function buildBookingAttention(booking, snapshot = {}, options = {}) {
     let message;
     let nextStep;
     if (emailedLiveLink) {
-      message = 'Payment is still unconfirmed. A secure payment link was emailed to the customer.';
-      nextStep = 'The customer can pay using the secure link. Resend it if they cannot find it.';
+      // The supplier panel states the link's status and expiry itself, so
+      // repeating it here put the same fact on the card three times.
+      message = '';
+      nextStep = '';
     } else if (liveAttempt?.status === 'CREATING') {
       message = 'Payment is still unconfirmed. A secure payment link is being prepared.';
       nextStep = 'Wait a moment and refresh the booking before taking another action.';
@@ -373,11 +375,13 @@ function buildBookingAttention(booking, snapshot = {}, options = {}) {
       code: windowClosesSoon ? 'RESERVATION_AT_RISK' : 'PAYMENT_ACTION_REQUIRED',
       reasonCode: emailState === 'SENT' ? 'PAYMENT_LINK_SENT' : 'PAYMENT_LINK_NOT_EMAILED',
       title: windowClosesSoon ? 'Payment window closing' : 'Payment not confirmed',
+      // Same rule as above: the panel carries the link's facts, so the copy
+      // only explains what the panel cannot show.
       message: emailState === 'SENT'
-        ? 'Payment is still unconfirmed. A secure payment link was emailed to the customer.'
+        ? ''
         : 'A secure payment link is active but the customer has not been notified successfully.',
       nextStep: emailState === 'SENT'
-        ? 'The customer can complete payment from the link. Resend it if needed.'
+        ? ''
         : 'Resend the link, or send it in chat if the customer cannot receive email.',
       actions,
     };
