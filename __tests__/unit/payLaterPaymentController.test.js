@@ -40,7 +40,11 @@ function booking(overrides = {}) {
     status: 'PENDING',
     paymentTiming: 'later',
     paymentStatus: 'PENDING',
-    travelDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    // Keep the fixture comfortably outside the payment-link window. The
+    // default cut-off is measured back from the activity start (2h before the
+    // travel day's local midnight); a next-day date flips this suite red late
+    // in the UTC day even though the return-path behaviour is unchanged.
+    travelDate: new Date(Date.now() + 72 * 60 * 60 * 1000),
     grossAmount: '90',
     currency: 'USD',
     source: 'GHANA',
