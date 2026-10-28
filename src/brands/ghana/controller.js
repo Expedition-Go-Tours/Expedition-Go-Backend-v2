@@ -13,7 +13,7 @@ const { withChoiceToken } = require('../../core/services/cancellationReasons');
 const { notifyDiscord } = require('../../core/services/discordNotifier');
 const { salesBookingCancelled } = require('../../core/services/channelEmbeds');
 const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../../core/services/tourHelpers');
-const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('../../core/services/availabilityCore');
+const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob, cutoffAnchorUtc } = require('../../core/services/availabilityCore');
 const { resolvePickupSelection } = require('../../core/services/geoUtils');
 const { validatePassengerMix } = require('../../core/services/passengerMix');
 const { createPaymentIntent, createCheckoutSession, calculateCommission, getStripe, ensureStripeCustomer } = require('../../core/services/stripeHelpers');
@@ -745,6 +745,7 @@ const confirmBooking = catchAsync(async (req, res, next) => {
   const parsedBt = typeof tour.bookingAndTickets === 'string'
     ? (() => { try { return JSON.parse(tour.bookingAndTickets); } catch { return null; } })()
     : tour.bookingAndTickets;
+  const parsedSchedule = parseBlob(tour.schedulesAndPricing);
   const perSlotCutoff = !!parsedBt?.perSlotCutoff;
   // Builder writes cutoffMinutes (minutes); resolveSlotCutoffHours handles
   // per-slot overrides (keyed by slot start time), legacy
@@ -755,16 +756,21 @@ const confirmBooking = catchAsync(async (req, res, next) => {
   const dateAt = new Date(travelDate);
   let startAt;
   if (selectedTime && perSlotCutoff) {
-    // Anchor the cutoff clock to the slot's local wall clock in the tour's
-    // timezone (default UTC keeps current behavior).
+    // Anchor the activity start to the slot's local wall clock in the tour's
+    // timezone (default UTC keeps current behavior). This remains the clock
+    // for the max-advance and pay-later rules.
     const localDate = zonedDateKey(toDateKey(dateAt), tourTz);
     startAt = zonedTimeToUtc(`${localDate} ${selectedTime}`, tourTz);
   } else {
     startAt = new Date(Date.UTC(dateAt.getUTCFullYear(), dateAt.getUTCMonth(), dateAt.getUTCDate()));
   }
 
+  // Booking cut-off clock: slot start for fixed-time tours, operating-window
+  // end for opening-hours tours (matches the supplier builder).
+  const cutoffAnchorAt = cutoffAnchorUtc(parsedSchedule, parsedBt, dateAt, selectedTime || null);
   const hoursUntilTour = (startAt - new Date()) / (1000 * 60 * 60);
-  if (hoursUntilTour < effectiveCutoff) {
+  const hoursUntilCutoff = (cutoffAnchorAt - new Date()) / (1000 * 60 * 60);
+  if (hoursUntilCutoff < effectiveCutoff) {
     return next(new AppError(`Bookings must be made at least ${cutoffLabel(effectiveCutoff)} before the tour`, 400));
   }
   if (hoursUntilTour / 24 > maxAdvanceDays) {

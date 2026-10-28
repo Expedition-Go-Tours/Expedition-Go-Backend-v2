@@ -733,7 +733,9 @@ function validateStoredPricing(blob) {
  * @param {object|string|null} selectedTimeOrOptions
  *   - string: the requested time slot (legacy positional arg)
  *   - object: { selectedTime, travelers } — travelers enables capacity pre-check
- * @param {object} [options] - { excludeBookingId } to drop a booking from occupancy
+ * @param {object} [options] - { excludeBookingId, skipTimeRequirement } —
+ *   excludeBookingId drops a booking from occupancy; skipTimeRequirement lets a
+ *   date-only price preview proceed before a fixed-slot time is chosen.
  */
 async function checkTourAvailability(tourId, travelDate, selectedTimeOrOptions = null, options = {}) {
   try {
@@ -825,12 +827,15 @@ async function checkTourAvailability(tourId, travelDate, selectedTimeOrOptions =
       return { available: false, reason: 'Date is blocked', maxCapacity: dayCapacity, currentBookings: currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
     }
 
-    // Fixed-slot tours must carry a concrete, valid time slot.
+    // Fixed-slot tours must carry a concrete, valid time slot. The price
+    // preview may ask about the date before a slot is chosen, so it can opt out
+    // of the requirement; the actual checkout always supplies the time.
     if (daySlots.length > 0) {
       if (!selectedTime) {
-        return { available: false, reason: 'A time slot must be selected', maxCapacity: dayCapacity, currentBookings: currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
-      }
-      if (!daySlots.some((s) => s.time === selectedTime)) {
+        if (!(options && options.skipTimeRequirement)) {
+          return { available: false, reason: 'A time slot must be selected', maxCapacity: dayCapacity, currentBookings: currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
+        }
+      } else if (!daySlots.some((s) => s.time === selectedTime)) {
         return { available: false, reason: 'Selected time is not available for this date', maxCapacity: dayCapacity, currentBookings: currentBookings, availableSpots: 0, groupsRemaining: isPerGroup ? 0 : null, ...base };
       }
     }
@@ -875,13 +880,13 @@ async function checkTourAvailability(tourId, travelDate, selectedTimeOrOptions =
         const hasSlotBooking = currentBookings > 0 || groupCount > 0;
         const nowRef = new Date();
         if (selectedTime) {
-          const verdict = slotCutoffVerdict(bt, dateObj, selectedTime, nowRef, hasSlotBooking);
+          const verdict = slotCutoffVerdict(bt, dateObj, selectedTime, nowRef, hasSlotBooking, parsed);
           if (verdict.closed) {
             available = false;
             reason = 'Bookings for this time are closed';
           }
         } else if (daySlots.length === 0) {
-          const verdict = slotCutoffVerdict(bt, dateObj, null, nowRef, hasSlotBooking);
+          const verdict = slotCutoffVerdict(bt, dateObj, null, nowRef, hasSlotBooking, parsed);
           if (verdict.closed) {
             available = false;
             reason = 'This date is no longer accepting bookings';

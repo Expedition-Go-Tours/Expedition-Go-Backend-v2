@@ -362,11 +362,15 @@ function buildTimeSlots(parsed, override, fallbackCapacity) {
       return { time, capacity: cap };
     });
   }
-  // Template slots may be stored as strings ("09:00") or objects ({ time, ... }).
-  // Normalize both so object-form entries can never leak `{ time: <object> }`
-  // into the calendar/checkout; invalid entries are dropped.
+  // Template slots may be stored as strings ("09:00") or objects in either the
+  // backend form ({ time }) or the supplier builder form ({ startTime }).
+  // Normalize all three so object-form entries can never leak
+  // `{ time: <object> }` into the calendar/checkout; invalid entries are dropped.
   return getTemplateTimeSlots(parsed)
-    .map((slot) => ({ time: typeof slot === 'string' ? slot : slot?.time, capacity: fallbackCapacity }))
+    .map((slot) => ({
+      time: typeof slot === 'string' ? slot : (slot?.time ?? slot?.startTime),
+      capacity: fallbackCapacity,
+    }))
     .filter((s) => typeof s.time === 'string' && s.time);
 }
 
@@ -625,7 +629,7 @@ function computeDayEntry(parsed, override, slotData, dateObj, options = {}) {
     // relaxes the cut-off once that slot already has a booking.
     if (hasCutoffConfig && !isPast && slot.time) {
       const verdict = slotCutoffVerdict(options.cutoffConfig, dateObj, slot.time, now,
-        (bookingsBySlot.get(slot.time) || 0) > 0 || (groupsBySlot.get(slot.time) || 0) > 0);
+        (bookingsBySlot.get(slot.time) || 0) > 0 || (groupsBySlot.get(slot.time) || 0) > 0, parsed);
       entry.closed = verdict.closed;
       entry.closesAt = verdict.closesAt && verdict.minutes > 0 ? verdict.closesAt.toISOString() : null;
       if (verdict.closed) {
@@ -654,13 +658,13 @@ function computeDayEntry(parsed, override, slotData, dateObj, options = {}) {
   const computedStatus = isPast ? 'PAST' : computeStatus(dayBooked, dayCapacity, override?.status || null, operating, options.limitedRatio, options.fullRatio);
 
   // Whole-day cut-off closure for operating-hours / flexible tours (no fixed
-  // slots): bookings anchor to the start of the activity day, so the "last
-  // booking" moment is (day start − cutoff). Only surfaced when the caller
+  // slots): the "last booking" moment is (end of the day's operating window −
+  // cutoff), matching the supplier builder. Only surfaced when the caller
   // passes bookingAndTickets.
   let dayClosedCutoff = false;
   let dayClosesAt = null;
   if (hasCutoffConfig && !isPast && operating && effectiveTimeSlots.length === 0) {
-    const verdict = slotCutoffVerdict(options.cutoffConfig, dateObj, null, now, bookedCount > 0);
+    const verdict = slotCutoffVerdict(options.cutoffConfig, dateObj, null, now, bookedCount > 0, parsed);
     dayClosedCutoff = verdict.closed;
     dayClosesAt = verdict.closesAt && verdict.minutes > 0 ? verdict.closesAt.toISOString() : null;
   }
@@ -771,10 +775,10 @@ function isLastMinuteEnabled(bookingAndTickets) {
 }
 
 /**
- * The exact start moment a booking cut-off counts down from. Mirrors the
- * checkout clock: per-slot cut-off tours anchor to the slot's wall-clock time
- * in the tour timezone; everything else anchors to the start of the activity
- * day (UTC midnight of the date).
+ * Legacy cut-off anchor retained for tours with no schedule data. Per-slot
+ * cut-off tours anchor to the slot's wall-clock time in the tour timezone;
+ * everything else anchors to the start of the activity day (local midnight).
+ * New bookings use `cutoffAnchorUtc`, which follows the supplier builder rule.
  */
 function activityStartUtc(bookingAndTickets, dateObj, selectedTime) {
   const d = dateObj instanceof Date ? dateObj : new Date(dateObj);
@@ -791,6 +795,91 @@ function activityStartUtc(bookingAndTickets, dateObj, selectedTime) {
   // for suppliers outside UTC and make the 2-hour rule wrong.
   const localMidnight = zonedTimeToUtc(`${localDate} 00:00`, tz);
   return Number.isFinite(localMidnight.getTime()) ? localMidnight : utcMidnight;
+}
+
+/** True when a weekly schedule object carries at least one non-empty day. */
+function hasAnyWeeklyHours(weeklySchedule) {
+  return !!weeklySchedule && typeof weeklySchedule === 'object' &&
+    Object.values(weeklySchedule).some((slots) => Array.isArray(slots) && slots.length > 0);
+}
+
+/**
+ * The weekly operating hours the supplier configured. The aggregate
+ * availability block is authoritative; older/partial tours keep the same data
+ * on the first pricing schedule, so fall back to it.
+ */
+function getWeeklySchedule(parsed) {
+  if (hasAnyWeeklyHours(parsed?.availability?.weeklySchedule)) {
+    return parsed.availability.weeklySchedule;
+  }
+  const firstSchedule = Array.isArray(parsed?.pricingSchedules?.schedules)
+    ? parsed.pricingSchedules.schedules[0]
+    : null;
+  return hasAnyWeeklyHours(firstSchedule?.weeklySchedule) ? firstSchedule.weeklySchedule : null;
+}
+
+/** Latest end time for a weekday's opening-hours entries (HH:MM), or null. */
+function getOperatingWindowEnd(parsed, dayName) {
+  const weekly = getWeeklySchedule(parsed);
+  if (weekly) {
+    const slots = Array.isArray(weekly[dayName]) ? weekly[dayName] : [];
+    const ends = slots
+      .map((slot) => (slot && typeof slot === 'object' ? slot.endTime : null))
+      .filter((value) => typeof value === 'string' && value)
+      .sort();
+    if (ends.length > 0) return ends[ends.length - 1];
+  }
+  const availabilityEnd = parsed?.availability?.operatingHoursEnd;
+  if (typeof availabilityEnd === 'string' && availabilityEnd) return availabilityEnd;
+  const firstSchedule = Array.isArray(parsed?.pricingSchedules?.schedules)
+    ? parsed.pricingSchedules.schedules[0]
+    : null;
+  const scheduleEnd = firstSchedule?.operatingHoursEnd;
+  return typeof scheduleEnd === 'string' && scheduleEnd ? scheduleEnd : null;
+}
+
+/**
+ * The instant a booking cut-off counts down from.
+ *
+ * This mirrors the supplier product builder's cut-off guidance:
+ *   - fixed time slots anchor to the selected slot's start time;
+ *   - opening-hours/flexible tours anchor to the end of that day's operating
+ *     window (e.g. 18:00 closes 2 hours before 16:00, not at midnight).
+ *
+ * The old UTC-midnight anchor is retained only as a fallback when no schedule
+ * information exists, so legacy or malformed tours keep their previous rule.
+ */
+function cutoffAnchorUtc(parsedSchedule, bookingAndTickets, dateObj, selectedTime) {
+  const d = dateObj instanceof Date ? dateObj : new Date(dateObj);
+  if (!Number.isFinite(d.getTime())) return d;
+
+  if (!parsedSchedule && !bookingAndTickets) {
+    return activityStartUtc(bookingAndTickets, d, selectedTime);
+  }
+
+  const scheduleTz = parsedSchedule?.availability?.timezone ?? parsedSchedule?.timezone;
+  const tz = typeof scheduleTz === 'string' && scheduleTz.trim() && isTzValid(scheduleTz)
+    ? scheduleTz
+    : getTourTimezone(bookingAndTickets);
+  const localDate = zonedDateKey(toDateKey(d), tz);
+
+  if (typeof selectedTime === 'string' && selectedTime) {
+    const slotStart = zonedTimeToUtc(`${localDate} ${selectedTime}`, tz);
+    if (Number.isFinite(slotStart.getTime())) return slotStart;
+  }
+
+  const dayName = weekdayInZone(d, tz);
+  const operatingEnd = getOperatingWindowEnd(parsedSchedule, dayName) ||
+    bookingAndTickets?.operatingHoursEnd ||
+    null;
+  if (operatingEnd) {
+    const windowEnd = zonedTimeToUtc(`${localDate} ${operatingEnd}`, tz);
+    if (Number.isFinite(windowEnd.getTime())) return windowEnd;
+  }
+
+  const localMidnight = zonedTimeToUtc(`${localDate} 00:00`, tz);
+  if (Number.isFinite(localMidnight.getTime())) return localMidnight;
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 }
 
 /**
@@ -819,15 +908,17 @@ function activityStartExactUtc(bookingAndTickets, dateObj, selectedTime) {
 /**
  * Cut-off verdict for one bookable moment (slot time or whole day when
  * slotTime is null). `hasBooking` relaxes the window to zero when the tour
- * enables lastMinuteBookings.
+ * enables lastMinuteBookings. `parsedSchedule` lets the anchor follow the
+ * supplier builder's rule (slot start / operating-window end); omitting it
+ * keeps the legacy midnight fallback.
  * Returns { minutes, closed, closesAt, anchor }.
  */
-function slotCutoffVerdict(bookingAndTickets, dateObj, selectedTime, now, hasBooking) {
+function slotCutoffVerdict(bookingAndTickets, dateObj, selectedTime, now, hasBooking, parsedSchedule = null) {
   const nowDate = now instanceof Date ? now : new Date(now || Date.now());
   const minutes = resolveCutoffMinutes(bookingAndTickets, selectedTime);
   if (minutes === null) return { minutes: null, closed: false, closesAt: null, anchor: null };
   const effective = isLastMinuteEnabled(bookingAndTickets) && hasBooking ? 0 : minutes;
-  const anchor = activityStartUtc(bookingAndTickets, dateObj, selectedTime);
+  const anchor = cutoffAnchorUtc(parsedSchedule, bookingAndTickets, dateObj, selectedTime);
   const closesAt = new Date(anchor.getTime() - effective * 60 * 1000);
   return {
     minutes: effective,
@@ -873,6 +964,9 @@ module.exports = {
   zonedTimeToUtc,
   resolveCutoffMinutes,
   isLastMinuteEnabled,
+  getWeeklySchedule,
+  getOperatingWindowEnd,
+  cutoffAnchorUtc,
   activityStartUtc,
   activityStartExactUtc,
   slotCutoffVerdict,
