@@ -7,7 +7,7 @@ const { sendEmail, sendSupplierCustomerCancelledFreeEmail, sendSupplierCustomerC
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('./services/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, evaluateModifyPolicy, isValidEmail } = require('./services/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('./services/tourHelpers');
-const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob } = require('./services/availabilityCore');
+const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob, cutoffAnchorUtc } = require('./services/availabilityCore');
 const { resolvePickupSelection, normalizePickupSnapshot } = require('./services/geoUtils');
 const { pickupChange } = require('./services/pickupChange');
 const { validatePassengerMix } = require('./services/passengerMix');
@@ -1570,13 +1570,13 @@ controller.getTourAvailability = catchAsync(async (req, res, next) => {
 // ================================
 
 controller.calculateCheckout = catchAsync(async (req, res, next) => {
-  const { tourId, travelDate, travelers, promoCode, optionId } = req.body;
+  const { tourId, travelDate, selectedTime, travelers, promoCode, optionId } = req.body;
 
   if (!tourId || !travelDate || !travelers) {
     return next(new AppError('tourId, travelDate, and travelers are required', 400));
   }
 
-  const cacheKey = `${CACHE_PREFIX}checkout:${crypto.createHash('md5').update(JSON.stringify({ tourId, travelDate, travelers, promoCode: promoCode || null, optionId: optionId || null })).digest('hex')}`;
+  const cacheKey = `${CACHE_PREFIX}checkout:${crypto.createHash('md5').update(JSON.stringify({ tourId, travelDate, selectedTime: selectedTime || null, travelers, promoCode: promoCode || null, optionId: optionId || null })).digest('hex')}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
     let tour = await prisma.tour.findFirst({
@@ -1615,12 +1615,13 @@ controller.calculateCheckout = catchAsync(async (req, res, next) => {
       throw new AppError(mixResult.errors[0], 400);
     }
 
-    const availability = await checkTourAvailability(
-      tourId,
-      travelDate,
-      { travelers },
-      optionScopeCalc ? { optionScope: optionScopeCalc } : {}
-    );
+    const availabilityOptions = {
+      ...(optionScopeCalc ? { optionScope: optionScopeCalc } : {}),
+      // The price preview may ask about a date before a time slot is picked;
+      // the actual checkout still requires and validates the chosen slot.
+      ...(!selectedTime ? { skipTimeRequirement: true } : {}),
+    };
+    const availability = await checkTourAvailability(tourId, travelDate, { selectedTime, travelers }, availabilityOptions);
     if (!availability.available) {
       throw new AppError(availability.reason || 'Tour is not available on the selected date', 400);
     }
@@ -1630,7 +1631,7 @@ controller.calculateCheckout = catchAsync(async (req, res, next) => {
       throw new AppError(`Only ${availability.availableSpots} spots available, but ${totalTravelers} travelers requested`, 400);
     }
 
-    const pricing = await calculateTourPrice(tour, travelers, travelDate, null, optionKeyCalc, req.user?.id, promoCode || null)
+    const pricing = await calculateTourPrice(tour, travelers, travelDate, selectedTime || null, optionKeyCalc, req.user?.id, promoCode || null)
       .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
 
     if (!pricing.success) {
@@ -1783,6 +1784,7 @@ controller.confirmBooking = catchAsync(async (req, res, next) => {
   const parsedBt = typeof tour.bookingAndTickets === 'string'
     ? (() => { try { return JSON.parse(tour.bookingAndTickets); } catch { return null; } })()
     : tour.bookingAndTickets;
+  const parsedSchedule = parseBlob(tour.schedulesAndPricing);
   const perSlotCutoff = !!parsedBt?.perSlotCutoff;
   // Builder writes cutoffMinutes (minutes); resolveSlotCutoffHours handles
   // per-slot overrides (keyed by slot start time), legacy
@@ -1806,16 +1808,21 @@ controller.confirmBooking = catchAsync(async (req, res, next) => {
   const dateAt = new Date(travelDate);
   let startAt;
   if (selectedTime && perSlotCutoff) {
-    // Anchor the cutoff clock to the slot's local wall clock in the tour's
-    // timezone (default UTC keeps current behavior).
+    // Anchor the activity start to the slot's local wall clock in the tour's
+    // timezone (default UTC keeps current behavior). This remains the clock
+    // for the max-advance and pay-later rules.
     const localDate = zonedDateKey(toDateKey(dateAt), tourTz);
     startAt = zonedTimeToUtc(`${localDate} ${selectedTime}`, tourTz);
   } else {
     startAt = new Date(Date.UTC(dateAt.getUTCFullYear(), dateAt.getUTCMonth(), dateAt.getUTCDate()));
   }
 
+  // The booking cut-off uses the supplier builder's clock: slot start for
+  // fixed-time tours, end of the operating window for opening-hours tours.
+  const cutoffAnchorAt = cutoffAnchorUtc(parsedSchedule, parsedBt, dateAt, selectedTime || null);
   const hoursUntilTour = (startAt - new Date()) / (1000 * 60 * 60);
-  if (hoursUntilTour < effectiveCutoff) {
+  const hoursUntilCutoff = (cutoffAnchorAt - new Date()) / (1000 * 60 * 60);
+  if (hoursUntilCutoff < effectiveCutoff) {
     return next(new AppError(`Bookings must be made at least ${cutoffLabel(effectiveCutoff)} before the tour`, 400));
   }
   if (hoursUntilTour / 24 > maxAdvanceDays) {
@@ -3111,7 +3118,7 @@ controller.updateMyPickup = catchAsync(async (req, res, next) => {
   const booking = await prisma.booking.findFirst({
     where: { id, customerId },
     include: {
-      tour: { select: { id: true, title: true, bookingAndTickets: true, supplierId: true } },
+      tour: { select: { id: true, title: true, bookingAndTickets: true, schedulesAndPricing: true, supplierId: true } },
     },
   });
 
@@ -3128,20 +3135,12 @@ controller.updateMyPickup = catchAsync(async (req, res, next) => {
   // Cutoff lock — mirror the checkout rule (per-tour advance cutoff wins;
   // slot-aware when the tour uses per-slot cutoffs).
   const parsedBt = parseBlob(booking.tour.bookingAndTickets) || {};
-  const perSlotCutoff = !!parsedBt.perSlotCutoff;
+  const parsedSchedule = parseBlob(booking.tour.schedulesAndPricing);
   const minAdvanceHours = parseInt(await getConfig('booking.min_advance_hours', '24'), 10);
   const effectiveCutoff = resolveSlotCutoffHours(parsedBt, booking.selectedTime || null, minAdvanceHours);
-  const tourTz = getTourTimezone(parsedBt);
-
-  let startAt;
-  if (booking.selectedTime && perSlotCutoff) {
-    const localDate = zonedDateKey(toDateKey(dateAt), tourTz);
-    startAt = zonedTimeToUtc(`${localDate} ${booking.selectedTime}`, tourTz);
-  } else {
-    startAt = new Date(Date.UTC(dateAt.getUTCFullYear(), dateAt.getUTCMonth(), dateAt.getUTCDate()));
-  }
-  const hoursUntilTour = (startAt - new Date()) / (1000 * 60 * 60);
-  if (hoursUntilTour < effectiveCutoff) {
+  const cutoffAnchorAt = cutoffAnchorUtc(parsedSchedule, parsedBt, dateAt, booking.selectedTime || null);
+  const hoursUntilCutoff = (cutoffAnchorAt - new Date()) / (1000 * 60 * 60);
+  if (hoursUntilCutoff < effectiveCutoff) {
     return next(new AppError(`Pickup can be updated until ${cutoffLabel(effectiveCutoff)} before the activity`, 400));
   }
 

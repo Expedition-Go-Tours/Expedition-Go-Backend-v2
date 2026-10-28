@@ -188,6 +188,15 @@ describe('buildTimeSlots', () => {
     ]);
   });
 
+  it('normalizes supplier-builder object slots (startTime)', () => {
+    const parsed = { availability: { timeSlots: [{ startTime: '09:00' }, { time: '14:00' }, '17:30'] } };
+    expect(core.buildTimeSlots(parsed, null, 50)).toEqual([
+      { time: '09:00', capacity: 50 },
+      { time: '14:00', capacity: 50 },
+      { time: '17:30', capacity: 50 },
+    ]);
+  });
+
   it('returns an empty list for a tour without slots', () => {
     expect(core.buildTimeSlots({}, null, 50)).toEqual([]);
   });
@@ -480,6 +489,13 @@ describe('checkTourAvailability', () => {
   it('requires a time slot for fixed-slot tours', async () => {
     const result = await checkTourAvailability('t1', MONDAY);
     expect(result).toMatchObject({ available: false, reason: 'A time slot must be selected' });
+  });
+
+  it('lets a date-only price preview skip the fixed-slot time requirement', async () => {
+    const result = await checkTourAvailability(
+      't1', MONDAY, { travelers: { adults: 1 } }, { skipTimeRequirement: true }
+    );
+    expect(result.available).toBe(true);
   });
 
   it('rejects a slot that is not offered', async () => {
@@ -878,11 +894,89 @@ describe('cut-off awareness', () => {
     expect(closed.closed).toBe(true);
   });
 
-  it('anchors non-per-slot cut-offs to the start of the activity day (confirm parity)', () => {
+  it('anchors a fixed-slot cut-off to the slot start even without per-slot overrides', () => {
     const bt = { cutoffMinutes: 60 };
-    const verdict = core.slotCutoffVerdict(bt, MON, '10:00', new Date('2026-06-15T08:30:00.000Z'), false);
-    // Without perSlotCutoff the engine counts down from midnight UTC, matching
-    // confirmBooking's clock, so a future-day slot is open.
+    const parsed = {
+      availability: {
+        scheduleType: 'fixedTimeSlot',
+        timezone: 'UTC',
+        timeSlots: [{ startTime: '10:00' }],
+      },
+    };
+    const verdict = core.slotCutoffVerdict(
+      bt, MON, '10:00', new Date('2026-06-15T08:30:00.000Z'), false, parsed
+    );
+    expect(verdict.closesAt.toISOString()).toBe('2026-06-15T09:00:00.000Z');
+    expect(verdict.closed).toBe(false);
+  });
+
+  it('anchors an operating-hours cut-off to the end of the operating window', () => {
+    const bt = { cutoffMinutes: 120 };
+    const parsed = {
+      availability: {
+        scheduleType: 'operatingHours',
+        timezone: 'UTC',
+        daysOfWeek: ['Monday'],
+        operatingHoursStart: '08:00',
+        operatingHoursEnd: '18:00',
+        weeklySchedule: { Monday: [{ startTime: '08:00', endTime: '18:00' }] },
+        timeSlots: [],
+      },
+    };
+    const open = core.slotCutoffVerdict(
+      bt, MON, null, new Date('2026-06-15T15:00:00.000Z'), false, parsed
+    );
+    expect(open.closesAt.toISOString()).toBe('2026-06-15T16:00:00.000Z');
+    expect(open.closed).toBe(false);
+
+    const closed = core.slotCutoffVerdict(
+      bt, MON, null, new Date('2026-06-15T16:30:00.000Z'), false, parsed
+    );
+    expect(closed.closed).toBe(true);
+  });
+
+  it('uses the tour timezone for the operating-window cut-off', () => {
+    const bt = { cutoffMinutes: 120 };
+    const parsed = {
+      availability: {
+        scheduleType: 'operatingHours',
+        timezone: 'Pacific/Auckland',
+        operatingHoursStart: '08:00',
+        operatingHoursEnd: '18:00',
+        weeklySchedule: { Monday: [{ startTime: '08:00', endTime: '18:00' }] },
+        timeSlots: [],
+      },
+    };
+    // Sunday 14 June UTC = Monday 15 June in Auckland (UTC+12).
+    const sundayUtc = core.toUtcDate('2026-06-14');
+    const verdict = core.slotCutoffVerdict(
+      bt, sundayUtc, null, new Date('2026-06-15T03:00:00.000Z'), false, parsed
+    );
+    // 18:00 Monday in Auckland = 06:00 UTC; 2h cut-off -> 04:00 UTC.
+    expect(verdict.closesAt.toISOString()).toBe('2026-06-15T04:00:00.000Z');
+  });
+
+  it('falls back to operatingHoursEnd when the weekly schedule is absent', () => {
+    const bt = { cutoffMinutes: 120 };
+    const parsed = {
+      availability: {
+        scheduleType: 'operatingHours',
+        timezone: 'UTC',
+        operatingHoursEnd: '17:00',
+        timeSlots: [],
+      },
+    };
+    const verdict = core.slotCutoffVerdict(
+      bt, MON, null, new Date('2026-06-15T14:00:00.000Z'), false, parsed
+    );
+    expect(verdict.closesAt.toISOString()).toBe('2026-06-15T15:00:00.000Z');
+  });
+
+  it('falls back to the start of the activity day when no schedule data exists', () => {
+    const bt = { cutoffMinutes: 60 };
+    const verdict = core.slotCutoffVerdict(
+      bt, MON, null, new Date('2026-06-15T08:30:00.000Z'), false
+    );
     expect(verdict.closesAt.toISOString()).toBe('2026-06-14T23:00:00.000Z');
   });
 
@@ -928,6 +1022,65 @@ describe('cut-off awareness', () => {
     const fourteen = slots.find((s) => s.time === '14:00');
     expect(fourteen.closed).toBe(false);
     expect(fourteen.remaining).toBeGreaterThan(0);
+  });
+
+  const operatingHoursTour = {
+    availability: {
+      scheduleType: 'operatingHours',
+      timezone: 'UTC',
+      daysOfWeek: ['Monday'],
+      operatingHoursStart: '08:00',
+      operatingHoursEnd: '18:00',
+      weeklySchedule: { Monday: [{ startTime: '08:00', endTime: '18:00' }] },
+      timeSlots: [],
+    },
+    travelerDetails: { maxParticipants: 10 },
+  };
+
+  it('annotates an operating-hours day as closed at the operating-window cut-off', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-15T16:30:00.000Z'));
+    prisma.tour.findUnique.mockResolvedValue({
+      bookingAndTickets: { cutoffMinutes: 120 },
+    });
+    prisma.booking.findMany.mockResolvedValue([]);
+    prisma.tourDateOverride.findMany.mockResolvedValue([]);
+
+    const calendar = await buildAvailabilityCalendar(
+      't1', operatingHoursTour, MONDAY, MONDAY, FIXED_TODAY
+    );
+    expect(calendar[0].closedCutoff).toBe(true);
+    expect(calendar[0].closesAt).toBe('2026-06-15T16:00:00.000Z');
+  });
+
+  it('keeps an operating-hours day open before the operating-window cut-off', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-15T15:00:00.000Z'));
+    prisma.tour.findUnique.mockResolvedValue({
+      bookingAndTickets: { cutoffMinutes: 120 },
+    });
+    prisma.booking.findMany.mockResolvedValue([]);
+    prisma.tourDateOverride.findMany.mockResolvedValue([]);
+
+    const calendar = await buildAvailabilityCalendar(
+      't1', operatingHoursTour, MONDAY, MONDAY, FIXED_TODAY
+    );
+    expect(calendar[0].closedCutoff).toBe(false);
+    expect(calendar[0].closesAt).toBe('2026-06-15T16:00:00.000Z');
+  });
+
+  it('rejects an operating-hours date after the operating-window cut-off', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-15T16:30:00.000Z'));
+    prisma.tour.findUnique.mockResolvedValue({
+      id: 't1',
+      status: 'ACTIVE',
+      schedulesAndPricing: operatingHoursTour,
+      bookingAndTickets: { cutoffMinutes: 120 },
+    });
+    prisma.tourDateOverride.findFirst.mockResolvedValue(null);
+    prisma.$queryRawUnsafe.mockResolvedValue([{ currentBookings: '0', groupCount: '0' }]);
+
+    const result = await checkTourAvailability('t1', MONDAY, { travelers: { adults: 1 } });
+    expect(result.available).toBe(false);
+    expect(result.reason).toBe('This date is no longer accepting bookings');
   });
 
   it('keeps a slot open after its first booking when last-minute is enabled', async () => {
