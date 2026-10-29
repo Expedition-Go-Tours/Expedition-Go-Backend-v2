@@ -2747,9 +2747,22 @@ controller.capturePaypalPayment = catchAsync(async (req, res, next) => {
   const orderId = req.body?.orderId || req.body?.token;
   if (!orderId) return next(new AppError('orderId is required', 400));
 
-  const result = await payments.captureAndSettlePaypal(String(orderId), {
-    customerId: req.user.id,
-  });
+  // A PayPal/DB failure here must never look like "nothing happened": the
+  // money may already have moved. The webhook is still the settler, so we tell
+  // the customer the payment is being confirmed rather than 500-ing.
+  let result;
+  try {
+    result = await payments.captureAndSettlePaypal(String(orderId), {
+      customerId: req.user.id,
+    });
+  } catch (err) {
+    console.error('[Expedition] PayPal capture failed:', orderId, err.message);
+    return next(new AppError(
+      'We could not confirm the PayPal payment just now. If money has left your account it is safe — we will either complete the booking or refund it in full. Quote this reference to support: ' + orderId,
+      502,
+      { code: 'PAYPAL_CAPTURE_UNCONFIRMED' },
+    ));
+  }
 
   switch (result.reason) {
     case 'missing_order':

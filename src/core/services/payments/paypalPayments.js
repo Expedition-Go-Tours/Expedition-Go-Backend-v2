@@ -120,20 +120,39 @@ async function captureOrder(orderId, { idempotencyKey } = {}) {
   if (!orderId) throw new Error('captureOrder requires an order id');
   if (!idempotencyKey) throw new Error('captureOrder requires an idempotency key');
 
-  let order;
+  // The POST is the ACTION; the GET is the source of truth.
+  //
+  // PayPal's capture response is a thin acknowledgement whose capture object
+  // does not reliably carry `amount` — seen live, for both COMPLETED and
+  // PENDING captures — which made normalisation throw *after* the money had
+  // already moved (the webhook then settled it, but the browser got a 500).
+  // Reading the order back costs one extra call and always returns the full
+  // capture, so every caller normalises the same authoritative shape.
+  let posted = null;
   try {
-    order = await request(`/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, {
+    posted = await request(`/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, {
       method: 'POST',
       body: {},
       idempotencyKey,
       config,
     });
   } catch (err) {
-    if (err instanceof PayPalApiError && /ORDER_ALREADY_CAPTURED/i.test(String(err.code || ''))) {
-      ({ order } = await getOrder(orderId));
-    } else {
-      throw err;
-    }
+    const alreadyCaptured = err instanceof PayPalApiError
+      && /ORDER_ALREADY_CAPTURED/i.test(String(err.code || ''));
+    // Anything else is a real failure (not approved, instrument declined, …)
+    // and must surface to the caller — never be mistaken for a payment.
+    if (!alreadyCaptured) throw err;
+  }
+
+  let order = posted;
+  try {
+    ({ order } = await getOrder(orderId));
+  } catch (err) {
+    // The capture already happened; never lose it because a read failed. The
+    // posted body is a valid fallback thanks to normalizeCapture's amount
+    // fallback, and the webhook will settle regardless.
+    if (!order) throw err;
+    console.warn('[PayPal] Could not re-read order after capture, using capture response:', orderId, err.message);
   }
 
   return { order, capture: normalizeCapture(order) };

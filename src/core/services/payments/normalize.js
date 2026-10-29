@@ -126,7 +126,15 @@ function normalizeCapture(order, capture = captureFromOrder(order)) {
     throw new Error(`PayPal order ${order.id} has no capture`);
   }
   const orderShape = normalizeOrder(order);
-  const { amountMinor, currency } = amountOf(capture);
+  // A capture echoed back by the capture RESPONSE can omit `amount` (observed
+  // live). The order's purchase unit always carries it, and this integration
+  // only ever captures the full amount, so the unit amount IS the captured
+  // amount. Anything else — a partial capture — carries its own amount and is
+  // never inferred.
+  const captureHasAmount = capture.amount && capture.amount.value !== undefined;
+  const { amountMinor, currency } = captureHasAmount
+    ? amountOf(capture)
+    : { amountMinor: orderShape.amountMinor, currency: orderShape.currency };
   return {
     ...orderShape,
     captureId: capture.id,

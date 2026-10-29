@@ -138,6 +138,60 @@ describe('captureOrder', () => {
       '/v2/checkout/orders/ORDER-1/capture',
       expect.objectContaining({ method: 'POST', idempotencyKey: 'paypal-capture-draft_1' })
     );
+    // The POST is the action; the order is then read back for its full shape.
+    expect(request).toHaveBeenLastCalledWith('/v2/checkout/orders/ORDER-1', expect.anything());
+  });
+
+  it('normalises the order it reads back, not the thin capture response', async () => {
+    // Exactly what PayPal returned live: a COMPLETED capture with no `amount`.
+    const THIN = {
+      id: 'ORDER-1',
+      status: 'COMPLETED',
+      purchase_units: [
+        {
+          custom_id: 'draft_1',
+          amount: { currency_code: 'USD', value: '120.00' },
+          payments: { captures: [{ id: 'CAP-1', status: 'COMPLETED' }] },
+        },
+      ],
+    };
+    request.mockResolvedValueOnce(THIN).mockResolvedValueOnce(CAPTURED_ORDER);
+
+    const result = await captureOrder('ORDER-1', { idempotencyKey: 'k' });
+
+    expect(result.capture).toMatchObject({ captureId: 'CAP-1', status: 'SUCCEEDED', amountMinor: 12000 });
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it('still returns the capture when the read-back fails (money already moved)', async () => {
+    const THIN = {
+      id: 'ORDER-1',
+      status: 'COMPLETED',
+      purchase_units: [
+        {
+          custom_id: 'draft_1',
+          amount: { currency_code: 'USD', value: '120.00' },
+          payments: { captures: [{ id: 'CAP-1', status: 'COMPLETED' }] },
+        },
+      ],
+    };
+    request
+      .mockResolvedValueOnce(THIN)
+      .mockRejectedValueOnce(new Error('network down'));
+
+    const result = await captureOrder('ORDER-1', { idempotencyKey: 'k' });
+
+    expect(result.capture.captureId).toBe('CAP-1');
+    expect(result.capture.amountMinor).toBe(12000); // from the order amount
+  });
+
+  it('surfaces a real capture failure instead of reading the order back', async () => {
+    const { PayPalApiError } = jest.requireActual('../../../src/core/services/payments/paypalClient');
+    request.mockRejectedValueOnce(new PayPalApiError('declined', { code: 'INSTRUMENT_DECLINED' }));
+
+    await expect(captureOrder('ORDER-1', { idempotencyKey: 'k' }))
+      .rejects.toThrow(/declined/);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it('reads the order back when it was already captured', async () => {

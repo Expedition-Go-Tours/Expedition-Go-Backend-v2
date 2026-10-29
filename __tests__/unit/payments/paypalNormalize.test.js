@@ -156,6 +156,30 @@ describe('normalizeCapture', () => {
     expect(() => normalizeCapture(order({ purchase_units: [{ amount: {} }] })))
       .toThrow(/has no capture/);
   });
+
+  it('falls back to the order amount when the capture omits one', () => {
+    // Live PayPal: the capture RESPONSE carries a COMPLETED capture with no
+    // `amount`. The order always has it, and we only capture in full.
+    const thin = order({
+      purchase_units: [
+        {
+          custom_id: 'draft_1',
+          amount: { currency_code: 'USD', value: '120.00' },
+          payments: { captures: [{ id: 'CAP-1', status: 'COMPLETED' }] },
+        },
+      ],
+    });
+
+    const result = normalizeCapture(thin);
+    expect(result).toMatchObject({ captureId: 'CAP-1', status: 'SUCCEEDED', amountMinor: 12000, currency: 'USD' });
+  });
+
+  it('never invents an amount when neither side has one', () => {
+    const thin = order({
+      purchase_units: [{ custom_id: 'draft_1', payments: { captures: [{ id: 'CAP-1', status: 'COMPLETED' }] } }],
+    });
+    expect(() => normalizeCapture(thin)).toThrow(/missing an amount/);
+  });
 });
 
 describe('normalizeRefund', () => {
