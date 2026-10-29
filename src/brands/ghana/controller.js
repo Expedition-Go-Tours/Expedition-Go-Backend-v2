@@ -16,7 +16,7 @@ const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = requi
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob, cutoffAnchorUtc } = require('../../core/services/availabilityCore');
 const { resolvePickupSelection } = require('../../core/services/geoUtils');
 const { validatePassengerMix } = require('../../core/services/passengerMix');
-const { createPaymentIntent, createCheckoutSession, calculateCommission, getStripe, ensureStripeCustomer } = require('../../core/services/stripeHelpers');
+const { createPaymentIntent, createCheckoutSession, createCustomCheckoutPaymentIntent, createCustomerSession, calculateCommission, getStripe, ensureStripeCustomer } = require('../../core/services/stripeHelpers');
 const payments = require('../../core/services/payments');
 const { cardSummaryFromIntent } = require('../../core/services/stripeCardSummary');
 const { refundCancelledBooking, rescheduleBookingBySupplier } = require('../../core/services/bookingModify');
@@ -1146,6 +1146,66 @@ const confirmBooking = catchAsync(async (req, res, next) => {
     });
   }
 
+  // ── Branded Payment Element checkout ──────────────────────────────
+  // The storefront's own checkout page (Stripe Elements inside OUR layout),
+  // which is what the card step has always been designed around. The server
+  // mints an unconfirmed PaymentIntent from the frozen draft price; success is
+  // settled ONLY by the payment_intent.succeeded webhook → materializeHold.
+  // Stripe keys never reach the browser.
+  if ((req.body.checkoutFlow || 'hosted') === 'payment-element') {
+    let customerId;
+    try {
+      customerId = await ensureStripeCustomer(req.user).catch(() => null);
+    } catch { customerId = null; }
+
+    let paymentIntent;
+    try {
+      paymentIntent = await createCustomCheckoutPaymentIntent({
+        amount: Math.round(pricing.total * 100),
+        currency: pricing.currency,
+        customerId,
+        draftId: holdResult.draftId,
+        source: 'ghana',
+        user: req.user,
+      });
+    } catch (err) {
+      console.error('[Travio Ghana] Failed to create checkout PaymentIntent:', err.message);
+      // Release the hold so the customer can retry.
+      await releaseHold(holdResult.draftId, 'expired').catch(() => {});
+      return next(new AppError('Payment could not be started. Please try again.', 500));
+    }
+
+    // The PI id becomes the draft's Stripe id, so by-session polling on the
+    // confirmation page and the expiry sweep reconcile this flow unchanged.
+    try {
+      await prisma.checkoutDraft.updateMany({
+        where: { id: holdResult.draftId, status: 'HOLDING' },
+        data: { stripeSessionId: paymentIntent.id },
+      });
+    } catch (err) {
+      console.error('[Travio Ghana] Failed to store PaymentIntent id on draft:', err.message);
+    }
+
+    cache.invalidateKeys([`${CACHE_PREFIX}checkout:*`]).catch(() => {});
+
+    return res.status(201).json({
+      status: 'success',
+      data: {
+        checkout: null,
+        payment: {
+          draftId: holdResult.draftId,
+          paymentIntentId: paymentIntent.id,
+          clientSecret: paymentIntent.client_secret,
+          expiresAt: holdResult.expiresAt,
+          amount: pricing.total,
+          currency: pricing.currency,
+        },
+        message: 'Redirecting to secure payment…',
+      },
+    });
+  }
+
+  // ── Legacy hosted Stripe Checkout (kept for callers that ask for it) ──
   let checkout;
   try {
     checkout = await createCheckoutSession({
@@ -1191,6 +1251,154 @@ const confirmBooking = catchAsync(async (req, res, next) => {
       message: 'Redirecting to secure payment…',
     },
   });
+});
+
+/**
+ * GET /travioghana/checkout/draft/:id
+ *
+ * Server-authoritative order summary for the branded Payment Element page,
+ * plus a fresh PaymentIntent client secret so a hard refresh mid-checkout can
+ * still mount Elements. Amounts always come from the frozen draft pricing.
+ *
+ * (Expedition has had this since its branded checkout shipped; Ghana returned
+ * only a hosted Stripe Checkout URL, which is why Travio Ghana fell back to
+ * Stripe's own page instead of our checkout.)
+ */
+const getCheckoutDraft = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const draft = await prisma.checkoutDraft.findFirst({
+    where: { id, customerId: req.user.id, status: 'HOLDING' },
+    include: {
+      tour: {
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          coverPhoto: true,
+          photos: true,
+          city: true,
+          country: true,
+          durationMinutes: true,
+          description: true,
+          productContent: true,
+        },
+      },
+    },
+  });
+
+  if (!draft) {
+    return next(new AppError('Checkout session not found or already completed', 404));
+  }
+
+  const travelers = draft.payload?.travelers || {};
+  const count = (v) => (typeof v === 'number' && v > 0 ? v : 0);
+  const adults = count(travelers.adults);
+  const children = count(travelers.children);
+  const infants = count(travelers.infants);
+  const details = Array.isArray(travelers.details) ? travelers.details : null;
+  const partyTotal = details && details.length > 0 ? details.length : adults + children + infants;
+
+  let paymentIntentId = null;
+  let clientSecret = null;
+  let customerSessionClientSecret = null;
+  if (draft.stripeSessionId && draft.stripeSessionId.startsWith('pi_')) {
+    paymentIntentId = draft.stripeSessionId;
+    try {
+      const pi = await getStripe().paymentIntents.retrieve(draft.stripeSessionId);
+      clientSecret = pi?.client_secret || null;
+      // The Payment Element only shows the customer's saved cards when given a
+      // Customer Session for the SAME customer the PaymentIntent belongs to.
+      if (pi?.customer && typeof pi.customer === 'string') {
+        customerSessionClientSecret = await createCustomerSession(pi.customer);
+      }
+    } catch { clientSecret = null; }
+  }
+
+  // Short tour copy for the order summary: prefer the supplier's concise
+  // shortDescription, fall back to the main description (trimmed).
+  let tourDescription = null;
+  if (draft.tour) {
+    const productContent = parseBlob(draft.tour.productContent) || {};
+    const short = typeof productContent.shortDescription === 'string' ? productContent.shortDescription.trim() : '';
+    tourDescription = short || (draft.tour.description || '').trim().slice(0, 400) || null;
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      draft: {
+        id: draft.id,
+        expiresAt: draft.expiresAt,
+        tour: {
+          id: draft.tour?.id,
+          title: draft.tour?.title,
+          slug: draft.tour?.slug,
+          coverPhoto: draft.tour?.coverPhoto || draft.tour?.photos?.[0] || null,
+          location: [draft.tour?.city, draft.tour?.country].filter(Boolean).join(', '),
+          durationMinutes: draft.tour?.durationMinutes ?? null,
+          description: tourDescription,
+        },
+        travelDate: draft.travelDate,
+        selectedTime: draft.selectedTime || null,
+        party: { adults, children, infants, total: partyTotal },
+        leadTraveler: {
+          name: draft.payload?.leadTraveler?.name || null,
+          email: draft.payload?.leadTraveler?.email || null,
+          phone: draft.payload?.leadTraveler?.phone || null,
+        },
+        promoCode: draft.payload?.promoCode || null,
+        currency: draft.pricing?.currency || 'USD',
+        pricing: {
+          subtotal: draft.pricing?.subtotal || 0,
+          total: draft.pricing?.total || 0,
+          discount: draft.pricing?.discount || 0,
+          fees: draft.pricing?.fees || 0,
+          taxes: draft.pricing?.taxes || 0,
+        },
+        paymentIntentId,
+        clientSecret,
+        customerSessionClientSecret,
+        // Which collector this draft is waiting on, plus that collector's own
+        // handle (a PayPal draft has no PaymentIntent).
+        payment: {
+          provider: String(draft.paymentProvider || 'STRIPE').toLowerCase(),
+          paypalOrderId: draft.paypalOrderId || null,
+        },
+      },
+    },
+  });
+});
+
+/**
+ * POST /travioghana/checkout/draft/:id/release
+ * Customer abandons the branded checkout — free the seat hold immediately and
+ * best-effort cancel the unconfirmed PaymentIntent (the sweep would otherwise
+ * reconcile it on expiry anyway).
+ */
+const releaseCheckoutDraft = catchAsync(async (req, res) => {
+  const { id } = req.params;
+  const draft = await prisma.checkoutDraft.findFirst({
+    where: { id, customerId: req.user.id, status: 'HOLDING' },
+  });
+
+  if (!draft) {
+    return res.status(200).json({ status: 'success', data: { released: false } });
+  }
+
+  if (draft.stripeSessionId && draft.stripeSessionId.startsWith('pi_')) {
+    try {
+      await getStripe().paymentIntents.cancel(draft.stripeSessionId);
+    } catch { /* unconfirmable/canceled already — fine */ }
+  }
+
+  await prisma.checkoutDraft.update({
+    where: { id: draft.id },
+    data: { status: 'EXPIRED' },
+  });
+
+  cache.invalidateKeys([`${CACHE_PREFIX}checkout:*`]).catch(() => {});
+
+  res.status(200).json({ status: 'success', data: { released: true } });
 });
 
 const getMyBookings = catchAsync(async (req, res, next) => {
@@ -1346,9 +1554,22 @@ const capturePaypalPayment = catchAsync(async (req, res, next) => {
   const orderId = req.body?.orderId || req.body?.token;
   if (!orderId) return next(new AppError('orderId is required', 400));
 
-  const result = await payments.captureAndSettlePaypal(String(orderId), {
-    customerId: req.user.id,
-  });
+  // A PayPal/Stripe/DB failure here must never look like "nothing happened":
+  // the money may already have moved. The webhook is still the settler, so we
+  // tell the customer the payment is being confirmed rather than 500-ing.
+  let result;
+  try {
+    result = await payments.captureAndSettlePaypal(String(orderId), {
+      customerId: req.user.id,
+    });
+  } catch (err) {
+    console.error('[Travio Ghana] PayPal capture failed:', orderId, err.message);
+    return next(new AppError(
+      'We could not confirm the PayPal payment just now. If money has left your account it is safe — we will either complete the booking or refund it in full. Quote this reference to support: ' + orderId,
+      502,
+      { code: 'PAYPAL_CAPTURE_UNCONFIRMED' },
+    ));
+  }
 
   switch (result.reason) {
     case 'missing_order':
@@ -2459,6 +2680,8 @@ module.exports = {
   getMyBookings,
   getBooking,
   getBookingBySession,
+  getCheckoutDraft,
+  releaseCheckoutDraft,
   getBookingByPaypalOrder,
   capturePaypalPayment,
   getPaypalApproval,

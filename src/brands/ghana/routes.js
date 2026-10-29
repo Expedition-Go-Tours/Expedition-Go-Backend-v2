@@ -744,6 +744,20 @@ router.post('/checkout/calculate', calculateLimiter, validate(calculateCheckoutS
 router.post('/checkout/confirm', confirmLimiter, protect, restrictTo('customer'), validate(confirmBookingSchema), travioGhanaController.confirmBooking);
 
 /**
+ * GET /api/travioghana/checkout/draft/:id
+ * Order summary + a fresh PaymentIntent client secret for the branded checkout
+ * page, so a refresh mid-payment can still mount the Payment Element.
+ */
+router.get('/checkout/draft/:id', protect, restrictTo('customer'), travioGhanaController.getCheckoutDraft);
+
+/**
+ * POST /api/travioghana/checkout/draft/:id/release
+ * Customer abandons the branded checkout — free the hold now, cancel the
+ * unconfirmed PaymentIntent best-effort.
+ */
+router.post('/checkout/draft/:id/release', protect, restrictTo('customer'), travioGhanaController.releaseCheckoutDraft);
+
+/**
  * POST /api/travioghana/checkout/paypal/capture
  * Captures an approved PayPal order and settles the booking. Idempotent:
  * the return page and the webhook may both call the settlement path.
