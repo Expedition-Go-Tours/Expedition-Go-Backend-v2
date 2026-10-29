@@ -37,4 +37,27 @@ describe('sanitizeBookingPaymentInternals', () => {
     expect(sanitizeBookingPaymentInternals(null)).toBeNull();
     expect(sanitizeBookingPaymentInternals(undefined)).toBeUndefined();
   });
+
+  it('strips PayPal ids from a supplier-facing booking', () => {
+    const booking = {
+      id: 'b1',
+      paymentProvider: 'PAYPAL',
+      paypalOrderId: 'ORDER-1',
+      paypalCaptureId: 'CAP-1',
+      paypalRefundId: 'REF-1',
+      paypalRefundStatus: 'PENDING',
+    };
+    const out = sanitizeBookingPaymentInternals(booking);
+    expect(out).toEqual({ id: 'b1', paymentProvider: 'PAYPAL' });
+    expect(STRIP_KEYS).toEqual(expect.arrayContaining([
+      'paypalOrderId',
+      'paypalCaptureId',
+      'paypalRefundId',
+    ]));
+  });
+
+  it('leaves the provider tag visible so the client can describe the payment', () => {
+    const out = sanitizeBookingPaymentInternals({ id: 'b1', paymentProvider: 'PAYPAL' });
+    expect(out.paymentProvider).toBe('PAYPAL');
+  });
 });

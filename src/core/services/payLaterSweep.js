@@ -573,6 +573,15 @@ async function chargePayLaterBookings() {
     console.warn('[PayLater] Refund reconciliation failed:', err.message);
   }
 
+  // Same duty for PayPal, which settles some refunds asynchronously (PENDING).
+  // A failure here must not stop the Stripe pass above or the sweep below.
+  try {
+    const { reconcilePendingPaypalRefunds } = require('./payments/paypalReconciliation');
+    await reconcilePendingPaypalRefunds();
+  } catch (err) {
+    console.warn('[PayLater] PayPal refund reconciliation failed:', err.message);
+  }
+
   const now = new Date();
   // Charge window: bookings whose charge moment (travelDate − before-hours) has
   // arrived. chargeWindowEnd() is the query form of payLaterChargeAt() <= now,

@@ -24,6 +24,9 @@
  */
 
 const { getStripe, handlePaymentSucceeded, createRefund } = require('./stripeHelpers');
+// Refunds must follow the provider that took the money. This path used to call
+// Stripe directly, which would have failed for a PayPal-settled booking.
+const { refundBookingPayment } = require('./payments');
 const { enqueueNotification, enqueueEvent, enqueueEmail } = require('./queue');
 const { notifyAdmin } = require('./adminNotificationService');
 const { logActivity } = require('./auditLogger');
@@ -322,7 +325,7 @@ async function cancelStalePendingAfterTravelDate() {
           if (refundAmount > 0) {
             try {
               const refundAmountCents = Math.round(refundAmount * 100);
-              await createRefund(booking.stripePaymentIntentId, refundAmountCents);
+              await refundBookingPayment(booking, refundAmountCents);
               updateData.paymentStatus = 'REFUNDED';
               updateData.refundAmount = refundAmount;
               updateData.refundedAt = new Date();
@@ -450,6 +453,34 @@ async function expireCheckoutHolds() {
   let released = 0;
 
   for (const draft of stale) {
+    // PayPal: the order is the source of truth. A capture means the customer
+    // paid even if the webhook was lost; no capture means they never did.
+    if (draft.paymentProvider === 'PAYPAL' || draft.paypalOrderId) {
+      if (!draft.paypalOrderId) {
+        await releaseHold(draft.id, 'expired').catch(() => {});
+        released += 1;
+        continue;
+      }
+      try {
+        const { readCapture } = require('./payments/paypalPayments');
+        const { capture } = await readCapture(draft.paypalOrderId);
+        if (capture?.status === 'SUCCEEDED') {
+          const { settlePaypalOrder } = require('./payments/settlePaypal');
+          const result = await settlePaypalOrder(draft.paypalOrderId, { source: 'sweep' });
+          if (result.ok) materialized += 1;
+          else released += 1;
+        } else {
+          await releaseHold(draft.id, 'expired').catch(() => {});
+          released += 1;
+        }
+      } catch (err) {
+        console.error('[BookingCleanup] Could not read PayPal order', draft.paypalOrderId, err.message);
+        // Leave the hold for the next sweep rather than releasing a hold that
+        // might already be paid.
+      }
+      continue;
+    }
+
     if (!draft.stripeSessionId) {
       // No session ever created — release directly.
       await releaseHold(draft.id, 'expired').catch(() => {});

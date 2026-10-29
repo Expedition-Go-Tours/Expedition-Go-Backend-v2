@@ -803,14 +803,22 @@ exports.resolveDispute = catchAsync(async (req, res, next) => {
       return next(new AppError(`refundAmount must be between 0 and ${grossAmount.toFixed(2)} (the booking gross amount)`, 400));
     }
     refundedAmount = amount;
-    if (dispute.booking.stripePaymentIntentId && dispute.booking.paymentStatus === 'SUCCEEDED') {
+    // Decide whether this booking actually has money on file with whichever
+    // processor settled it. A PayPal booking has no PaymentIntent, and the old
+    // Stripe-only guard here would have marked it refunded without moving a
+    // cent.
+    const paidWithPaypal = dispute.booking.paymentProvider === 'PAYPAL';
+    const hasRefundablePayment = paidWithPaypal
+      ? dispute.booking.paypalCaptureId
+      : dispute.booking.stripePaymentIntentId;
+    if (hasRefundablePayment && dispute.booking.paymentStatus === 'SUCCEEDED') {
       try {
-        const { createRefund } = require('../services/stripeHelpers');
-        const refund = await createRefund(dispute.booking.stripePaymentIntentId, Math.round(amount * 100));
+        const { refundBookingPayment } = require('../services/payments');
+        const refund = await refundBookingPayment(dispute.booking, Math.round(amount * 100));
         stripeRefundId = refund?.id || null;
       } catch (err) {
-        console.error(`[Dispute] Stripe refund failed for booking ${dispute.booking.id}:`, err.message);
-        return next(new AppError(`Stripe refund failed: ${err.message}. Resolve manually once refunded.`, 502));
+        console.error(`[Dispute] Refund failed for booking ${dispute.booking.id}:`, err.message);
+        return next(new AppError(`Refund failed: ${err.message}. Resolve manually once refunded.`, 502));
       }
     }
 

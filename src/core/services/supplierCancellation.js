@@ -23,7 +23,7 @@
 
 const prisma = require('./prismaClient');
 const AppError = require('./appError');
-const { createRefund } = require('./stripeHelpers');
+const { refundBookingPayment } = require('./payments');
 const { evaluateCancellationPolicy } = require('./bookingHelpers');
 const { evaluateBookingAvailability } = require('./availabilityCore');
 const { detachBookingFromActiveRequests } = require('./financeHelpers');
@@ -133,7 +133,7 @@ async function executeRefund(bookingOrId) {
   }
 
   try {
-    await createRefund(booking.stripePaymentIntentId, Math.round(amount * 100), {
+    await refundBookingPayment(booking, Math.round(amount * 100), {
       idempotencyKey: `supplier-cancel-refund:${booking.id}`,
     });
     await prisma.booking.update({

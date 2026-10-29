@@ -6,7 +6,14 @@
  * to a non-admin caller. Admins (refunds, finance) still receive the raw
  * rows from their own dedicated queries.
  */
-const STRIP_KEYS = ['stripePaymentIntentId', 'stripeCheckoutSessionId'];
+const STRIP_KEYS = [
+  'stripePaymentIntentId',
+  'stripeCheckoutSessionId',
+  'paypalOrderId',
+  'paypalCaptureId',
+  'paypalRefundId',
+  'paypalRefundStatus',
+];
 
 /**
  * @param {object|object[]|null} booking - a Booking row (or list)

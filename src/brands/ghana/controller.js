@@ -17,6 +17,7 @@ const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTou
 const { resolvePickupSelection } = require('../../core/services/geoUtils');
 const { validatePassengerMix } = require('../../core/services/passengerMix');
 const { createPaymentIntent, createCheckoutSession, calculateCommission, getStripe, ensureStripeCustomer } = require('../../core/services/stripeHelpers');
+const payments = require('../../core/services/payments');
 const { cardSummaryFromIntent } = require('../../core/services/stripeCardSummary');
 const { refundCancelledBooking, rescheduleBookingBySupplier } = require('../../core/services/bookingModify');
 const supplierContact = require('../../core/services/supplierContact');
@@ -1091,6 +1092,60 @@ const confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError(holdResult.reason || 'No longer available', 409));
   }
 
+  // PayPal: same hold and frozen price, collected by a different provider.
+  // The booking is materialized only after PayPal captures the money.
+  const provider = payments.resolveProvider({
+    requested: req.body.paymentProvider,
+    brand: 'ghana',
+    currency: pricing.currency,
+    paymentTiming: 'now',
+  });
+
+  if (provider === 'paypal') {
+    let order;
+    try {
+      order = await payments.startPaypalCheckout({
+        draftId: holdResult.draftId,
+        amountMinor: Math.round(pricing.total * 100),
+        currency: pricing.currency,
+        description: tour.title,
+        brand: BRAND,
+      });
+    } catch (err) {
+      console.error('[Travio Ghana] Failed to create PayPal order:', err.message);
+      await releaseHold(holdResult.draftId, 'expired').catch(() => {});
+      return next(new AppError('Payment could not be started. Please try again.', 502));
+    }
+
+    try {
+      await prisma.checkoutDraft.updateMany({
+        where: { id: holdResult.draftId, status: 'HOLDING' },
+        data: { paymentProvider: 'PAYPAL', paypalOrderId: order.orderId },
+      });
+    } catch (err) {
+      console.error('[Travio Ghana] Failed to store PayPal order id on draft:', err.message);
+    }
+
+    cache.invalidateKeys([`${CACHE_PREFIX}checkout:*`]).catch(() => {});
+
+    return res.status(201).json({
+      status: 'success',
+      data: {
+        checkout: null,
+        payment: {
+          provider: 'paypal',
+          draftId: holdResult.draftId,
+          orderId: order.orderId,
+          approvalUrl: order.approvalUrl,
+          expiresAt: holdResult.expiresAt,
+          amount: pricing.total,
+          currency: pricing.currency,
+        },
+        message: 'Redirecting to PayPal…',
+      },
+    });
+  }
+
   let checkout;
   try {
     checkout = await createCheckoutSession({
@@ -1278,6 +1333,183 @@ const getBookingBySession = catchAsync(async (req, res, next) => {
       expiresAt: draft.expiresAt,
       createdAt: draft.createdAt,
       booking,
+    },
+  });
+});
+
+/**
+ * POST /checkout/paypal/capture
+ * Body: { orderId }
+ * Captures the approved PayPal order and settles it. Safe to call twice.
+ */
+const capturePaypalPayment = catchAsync(async (req, res, next) => {
+  const orderId = req.body?.orderId || req.body?.token;
+  if (!orderId) return next(new AppError('orderId is required', 400));
+
+  const result = await payments.captureAndSettlePaypal(String(orderId), {
+    customerId: req.user.id,
+  });
+
+  switch (result.reason) {
+    case 'missing_order':
+      return next(new AppError('orderId is required', 400));
+    case 'not_found':
+    case 'not_owner':
+      return next(new AppError('Payment not found', 404));
+    case 'provider_mismatch':
+      return next(new AppError('This payment cannot be confirmed here', 409));
+    case 'declined':
+      return next(new AppError('PayPal declined the payment. Please try again with a different method.', 402));
+    case 'processing':
+    case 'not_captured':
+      return res.status(202).json({
+        status: 'success',
+        data: { status: 'PROCESSING', message: 'Payment is still being confirmed.' },
+      });
+    case 'refunded':
+      return next(new AppError('This booking hold ended before payment completed. You have been refunded in full.', 409));
+    case 'amount_mismatch':
+      return next(new AppError('The amount paid did not match this booking. You have been refunded in full.', 409));
+    case 'oversold':
+      return next(new AppError('That date sold out while you were paying. You have been refunded in full.', 409));
+    case 'unmapped':
+      return next(new AppError('Payment received but it could not be matched to a booking. Our team has been notified.', 409));
+    default:
+      break;
+  }
+
+  if (!result.ok) {
+    return res.status(202).json({
+      status: 'success',
+      data: { status: 'PROCESSING', message: 'Payment is still being confirmed.' },
+    });
+  }
+
+  let booking = result.booking || null;
+  if (!booking && result.bookingId) {
+    booking = await prisma.booking.findUnique({
+      where: { id: result.bookingId },
+      include: {
+        tour: {
+          include: { supplier: { select: { id: true, name: true, photoURL: true } } },
+        },
+      },
+    });
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: { status: 'PAID', booking },
+  });
+});
+
+/**
+ * GET /bookings/by-paypal-order/:orderId
+ * Polling counterpart to by-session for PayPal checkouts.
+ */
+const getBookingByPaypalOrder = catchAsync(async (req, res, next) => {
+  const { orderId } = req.params;
+  if (!orderId) return next(new AppError('orderId is required', 400));
+
+  const draft = await prisma.checkoutDraft.findFirst({
+    where: { paypalOrderId: orderId, customerId: req.user.id },
+    select: {
+      id: true,
+      status: true,
+      bookingId: true,
+      expiresAt: true,
+      createdAt: true,
+    },
+  });
+
+  if (!draft) return next(new AppError('Checkout session not found', 404));
+
+  let booking = null;
+  if (draft.status === 'PAID' && draft.bookingId) {
+    booking = await prisma.booking.findUnique({
+      where: { id: draft.bookingId },
+      include: {
+        tour: {
+          include: {
+            supplier: { select: { id: true, name: true, photoURL: true } },
+          },
+        },
+      },
+    });
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      status: draft.status,
+      expiresAt: draft.expiresAt,
+      createdAt: draft.createdAt,
+      booking,
+    },
+  });
+});
+
+/**
+ * GET /payments/capabilities?currency=USD&timing=now
+ *
+ * What the customer may actually pay with, on this brand, right now. The
+ * storefront renders the PayPal option ONLY when `paypal.available` is true,
+ * so a disabled or un-enrolled provider is never advertised and then swapped
+ * for Stripe at checkout — this shares the exact predicate with
+ * `resolveProvider`.
+ */
+const getPaymentCapabilities = catchAsync(async (req, res) => {
+  const capabilities = payments.capabilities({
+    brand: 'ghana',
+    currency: String(req.query?.currency || 'USD').toUpperCase(),
+    paymentTiming: String(req.query?.timing || 'now'),
+  });
+
+  res.status(200).json({ status: 'success', data: capabilities });
+});
+
+/**
+ * GET /checkout/paypal/approval/:orderId
+ *
+ * Re-issue the approval link for a PayPal hold that is still open, so a
+ * refreshed (or re-opened) checkout page can send the customer back to PayPal
+ * instead of dead-ending. Requires the same signed-in customer that owns the
+ * draft.
+ */
+const getPaypalApproval = catchAsync(async (req, res, next) => {
+  const orderId = String(req.params.orderId || '');
+  if (!orderId) return next(new AppError('orderId is required', 400));
+
+  const result = await payments.getPaypalApproval(orderId, { customerId: req.user.id });
+
+  switch (result.reason) {
+    case 'missing_order':
+      return next(new AppError('orderId is required', 400));
+    case 'not_found':
+    case 'not_owner':
+      return next(new AppError('Payment not found', 404));
+    case 'provider_mismatch':
+      return next(new AppError('This payment cannot be confirmed here', 409));
+    default:
+      break;
+  }
+
+  // No link is only an error when PayPal still considers the order
+  // approvable — a VOIDED/COMPLETED order legitimately has none, and the client
+  // needs `orderStatus` to explain that rather than a 502.
+  const approvable = ['CREATED', 'APPROVED', 'PAYER_ACTION_REQUIRED']
+    .includes(String(result.orderStatus || '').toUpperCase());
+  if (result.status === 'HOLDING' && !result.approvalUrl && approvable) {
+    return next(new AppError('PayPal did not return an approval link', 502));
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      status: result.status,
+      orderStatus: result.orderStatus,
+      approvalUrl: result.approvalUrl,
+      bookingId: result.bookingId,
     },
   });
 });
@@ -2227,6 +2459,10 @@ module.exports = {
   getMyBookings,
   getBooking,
   getBookingBySession,
+  getBookingByPaypalOrder,
+  capturePaypalPayment,
+  getPaypalApproval,
+  getPaymentCapabilities,
   cancelBooking,
   getSupplierBookings,
   exportSupplierBookings,

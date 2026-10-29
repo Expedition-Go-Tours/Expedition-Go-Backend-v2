@@ -183,18 +183,72 @@ function salesPaymentRecovered({ amount, currency, paymentIntentId, email }) {
   };
 }
 
-function salesRefundIssued({ amount, currency, chargeId, bookingNumber }) {
+function salesRefundIssued({ amount, currency, chargeId, bookingNumber, provider = 'Stripe' }) {
+  const isPaypal = String(provider).toLowerCase() === 'paypal';
+  const referenceLabel = isPaypal ? 'Capture' : 'Charge';
   return {
-    content: `Refund issued for Charge \`${chargeId || 'unknown'}\``,
+    content: `Refund issued for ${referenceLabel} \`${chargeId || 'unknown'}\``,
     opts: {
-      title: 'Refund Issued',
+      title: isPaypal ? 'PayPal Refund Issued' : 'Refund Issued',
       color: COLORS.amber,
       fields: [
         { name: 'Amount Refunded', value: money(amount, currency), inline: true },
         { name: 'Booking #', value: bookingNumber ? bookingLink(bookingNumber) : '—', inline: true },
-        { name: 'Charge', value: `\`${chargeId || 'unknown'}\``, inline: true },
+        { name: referenceLabel, value: `\`${chargeId || 'unknown'}\``, inline: true },
       ],
       cooldownKey: chargeId,
+    },
+  };
+}
+
+/**
+ * Posted when a PayPal capture settles a booking. Stripe's equivalent lives in
+ * the webhook controller because it has richer decline context; PayPal has no
+ * retryable-decline lifecycle here, so a single "paid" notice is enough.
+ */
+function salesPaymentReceived({ provider = 'PayPal', amount, currency, reference, email, bookingNumber, channel }) {
+  return {
+    content: `✅ Payment received via ${provider} for \`${reference || 'unknown'}\``,
+    opts: {
+      title: `${provider} Payment Received`,
+      color: COLORS.green,
+      fields: [
+        { name: 'Amount', value: money(amount, currency), inline: true },
+        { name: 'Booking #', value: bookingNumber ? bookingLink(bookingNumber) : '—', inline: true },
+        ...(channel ? [{ name: 'Funding', value: String(channel).replace('_', ' '), inline: true }] : []),
+        ...(email ? [{ name: 'Customer', value: email, inline: true }] : []),
+        { name: 'Reference', value: `\`${reference || 'unknown'}\``, inline: false },
+      ],
+      cooldownKey: `paid:${reference}`,
+    },
+  };
+}
+
+/**
+ * A live capture that no booking owns. This is the alert that was missing when
+ * a manually created Stripe Payment Link collected $900 with no database row:
+ * money must never sit outside the booking system without someone being told.
+ * Deliberately NOT auto-refunded — a human decides.
+ */
+function salesUnmappedPayment({ provider = 'PayPal', amount, currency, reference, email, orderId }) {
+  return {
+    content: `⚠️ ${provider} payment received with no matching booking: \`${reference || 'unknown'}\``,
+    opts: {
+      title: 'Unmapped Live Payment',
+      color: COLORS.red,
+      fields: [
+        { name: 'Provider', value: provider, inline: true },
+        { name: 'Amount', value: money(amount, currency), inline: true },
+        ...(email ? [{ name: 'Customer', value: email, inline: true }] : []),
+        { name: 'Reference', value: `\`${reference || 'unknown'}\``, inline: false },
+        ...(orderId ? [{ name: 'Order', value: `\`${orderId}\``, inline: false }] : []),
+        {
+          name: 'Action',
+          value: 'Find the customer and either record the sale manually or refund it. No booking was created.',
+          inline: false,
+        },
+      ],
+      cooldownKey: `unmapped:${reference}`,
     },
   };
 }
@@ -478,6 +532,8 @@ module.exports = {
   salesBookingCancelled,
   salesPaymentFailed,
   salesPaymentRecovered,
+  salesPaymentReceived,
+  salesUnmappedPayment,
   salesRefundIssued,
   // verification
   verificationSupplierApplication,

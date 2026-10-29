@@ -175,7 +175,8 @@ async function releaseHold(draftId, reason = 'expired') {
  *    If capacity vanished: release hold, return { ok: false, reason } so
  *    the caller can collect the PI for auto-refund.
  */
-async function materializeHold(draftId, session, paymentIntentId) {
+async function materializeHold(draftId, session, paymentIntentId, opts = {}) {
+  const provider = opts.provider === 'PAYPAL' ? 'PAYPAL' : 'STRIPE';
   let createdBooking = null;
   let oversold = false;
 
@@ -206,9 +207,19 @@ async function materializeHold(draftId, session, paymentIntentId) {
     if (!locked) throw new Error('Tour not found');
 
     // ── Amount guard ───────────────────────────────────────────
+    // Compare both the amount and the currency. Amount alone cannot tell a USD
+    // charge from a GHS one, and a second provider makes that distinction real
+    // rather than theoretical.
     const expectedCents = Math.round(Number(draftRecord.pricing.total) * 100);
     if (session.amount_total && session.amount_total !== expectedCents) {
       throw new Error(`Amount mismatch: expected ${expectedCents}, got ${session.amount_total}`);
+    }
+    const expectedCurrency = String(draftRecord.currency || draftRecord.pricing?.currency || 'USD').toUpperCase();
+    if (session.currency && String(session.currency).toUpperCase() !== expectedCurrency) {
+      throw new Error(`Currency mismatch: expected ${expectedCurrency}, got ${session.currency}`);
+    }
+    if (provider === 'PAYPAL' && !opts.captureId) {
+      throw new Error('PayPal settlement requires a capture id');
     }
 
     // ── Capacity re-check: exclude this hold ───────────────────
@@ -291,8 +302,13 @@ async function materializeHold(draftId, session, paymentIntentId) {
         commissionRate: draftRecord.commissionRate,
         platformCommission: draftRecord.platformCommission,
         supplierPayout: draftRecord.supplierPayout,
-        stripePaymentIntentId: paymentIntentId || null,
-        stripeCheckoutSessionId: session.id || null,
+        paymentProvider: provider,
+        // Only the identifier belonging to the settling provider is written.
+        // Writing a PayPal order id into a Stripe column (or vice versa) would
+        // make every refund lookup ambiguous.
+        ...(provider === 'PAYPAL'
+          ? { paypalOrderId: session.id || null, paypalCaptureId: opts.captureId || null }
+          : { stripePaymentIntentId: paymentIntentId || null, stripeCheckoutSessionId: session.id || null }),
         paymentTiming: 'now',
         appliedOfferId: draftRecord.pricing?.appliedOffer?.id || null,
         offerName: draftRecord.pricing?.appliedOffer?.name || null,

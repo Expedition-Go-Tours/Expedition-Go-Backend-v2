@@ -38,6 +38,7 @@ const {
   getStripe,
   ensureStripeCustomer,
 } = require('./stripeHelpers');
+const { refundBookingPayment } = require('./payments');
 const { enqueueEmail, enqueueNotification } = require('./queue');
 const { notifyAdmin } = require('./adminNotificationService');
 
@@ -671,6 +672,15 @@ async function applyBookingModification({ bookingId, customerId, body, user }) {
     return parkTopUpChange({ booking, snapshot, customerId, user });
   }
 
+  // A PayPal booking can be reduced (refunded) but not increased: a higher
+  // total needs a fresh payer approval, and PayPal has no card on file here.
+  if (booking.paymentProvider === 'PAYPAL') {
+    throw new AppError(
+      'This booking was paid with PayPal, so a price increase needs a new payment. Please contact support to modify it.',
+      400
+    );
+  }
+
   // Reserve-now-pay-later amount update happens BEFORE the DB transaction with
   // compensation on failure so Stripe and our stored total can never diverge.
   let previousPiAmount = null;
@@ -786,7 +796,7 @@ async function applyBookingModification({ bookingId, customerId, body, user }) {
   if (snapshotData.moneyMode.kind === 'refund') {
     const refundCents = Math.round(Math.abs(snapshotData.delta) * 100);
     try {
-      await createRefund(booking.stripePaymentIntentId, refundCents, {
+      await refundBookingPayment(booking, refundCents, {
         metadata: { reason: 'booking_modify', bookingId: booking.id },
       });
     } catch (err) {
@@ -1126,7 +1136,7 @@ async function refundCancelledBooking(booking, refundCents) {
   }
 
   if (hasTopUpIntents) return refundAcrossSources(booking, refundCents);
-  return createRefund(booking.stripePaymentIntentId, refundCents);
+  return refundBookingPayment(booking, refundCents);
 }
 
 /**

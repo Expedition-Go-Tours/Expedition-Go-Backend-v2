@@ -220,6 +220,9 @@ app.use(require('cookie-parser')());
   // consumes the stream. `express.json()` will then skip this path because the
   // body was already consumed.
   app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }));
+  // PayPal verification is an API round trip over the received event, so the
+  // raw bytes and content-type must survive until the handler parses them.
+  app.use('/api/webhooks/paypal', express.raw({ type: '*/*' }));
   // Match ANY content-type so the raw bytes are always preserved — a
   // parsed-then-stringified body breaks Svix HMAC verification, and senders
   // are not guaranteed to use application/json (Resend docs warn about this).

@@ -287,6 +287,7 @@ async function reconcileUnclaimedPayment({ paymentIntentId, bookingIds = [], sou
 async function reconcilePendingRefunds({ limit = 50 } = {}) {
   const rows = await prisma.bookingPaymentReconciliation.findMany({
     where: {
+      paymentProvider: 'STRIPE',
       OR: [
         { status: 'REFUND_PENDING' },
         { status: 'REFUND_FAILED', retryCount: { lt: 3 } },

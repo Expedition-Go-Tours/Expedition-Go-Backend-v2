@@ -809,6 +809,25 @@ async function enqueueWebhookRetry(event) {
 }
 
 /**
+ * PayPal retries use the same queue and backoff as Stripe but a distinct job
+ * name, so the worker can route the payload to the PayPal processor. A single
+ * job of `process-webhook` would be handed to processStripeWebhook and fail
+ * forever on a payload it does not understand.
+ */
+async function enqueuePaypalWebhookRetry(event) {
+  try {
+    await webhookRetryQueue().add('process-paypal-webhook', event, {
+      attempts: 5,
+      backoff: { type: 'exponential', delay: 60000 },
+      removeOnComplete: { age: 24 * 3600, count: 50 },
+      removeOnFail: { age: 7 * 24 * 3600 },
+    });
+  } catch (err) {
+    console.error('[Queue] Failed to enqueue PayPal webhook retry:', err.message);
+  }
+}
+
+/**
  * Enqueue a content sync job (blog article published/unpublished).
  * Used by the Sanity webhook handler to invalidate caches asynchronously.
  */
@@ -1030,6 +1049,11 @@ function registerWorkers() {
    * processed=false (rolled back) or doesn't exist yet.
    * ------------------------------------------------------------------ */
   createWorker(QUEUE_NAMES.WEBHOOK_RETRY, async (job) => {
+    if (job.name === 'process-paypal-webhook') {
+      const { persistAndProcess } = require('../domain/paypalWebhookController');
+      await persistAndProcess(job.data);
+      return;
+    }
     const { processStripeWebhook } = require('./stripeHelpers');
     await processStripeWebhook(job.data);
   }, 2);
@@ -1681,6 +1705,7 @@ module.exports = {
   enqueueCleanup,
   enqueueCreateStripeCustomer,
   enqueueWebhookRetry,
+  enqueuePaypalWebhookRetry,
   enqueueContentSync,
   enqueueHomepagePrecompute,
   enqueueAiScoring,

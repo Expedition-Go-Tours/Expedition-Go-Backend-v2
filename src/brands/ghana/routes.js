@@ -744,6 +744,27 @@ router.post('/checkout/calculate', calculateLimiter, validate(calculateCheckoutS
 router.post('/checkout/confirm', confirmLimiter, protect, restrictTo('customer'), validate(confirmBookingSchema), travioGhanaController.confirmBooking);
 
 /**
+ * POST /api/travioghana/checkout/paypal/capture
+ * Captures an approved PayPal order and settles the booking. Idempotent:
+ * the return page and the webhook may both call the settlement path.
+ */
+router.post('/checkout/paypal/capture', confirmLimiter, protect, restrictTo('customer'), travioGhanaController.capturePaypalPayment);
+
+/**
+ * GET /api/travioghana/checkout/paypal/approval/:orderId
+ * Re-issues the approval link for an open PayPal hold (page refresh mid-flow).
+ * Ownership is enforced — the draft must belong to the signed-in customer.
+ */
+router.get('/checkout/paypal/approval/:orderId', protect, restrictTo('customer'), travioGhanaController.getPaypalApproval);
+
+/**
+ * GET /api/travioghana/payments/capabilities?currency=USD&timing=now
+ * Public, cheap, and the single source of truth for which payment options the
+ * storefront may render. Shares its predicate with the checkout confirm path.
+ */
+router.get('/payments/capabilities', travioGhanaController.getPaymentCapabilities);
+
+/**
  * @swagger
  * /api/travioghana/wishlist:
  *   get:
@@ -896,6 +917,12 @@ router.get('/bookings', protect, restrictTo('customer'), validate(getBookingsSch
  *         description: Session not found
  */
 router.get('/bookings/by-session/:sessionId', protect, restrictTo('customer'), travioGhanaController.getBookingBySession);
+
+/**
+ * GET /api/travioghana/bookings/by-paypal-order/:orderId
+ * Polling counterpart to by-session for PayPal checkouts.
+ */
+router.get('/bookings/by-paypal-order/:orderId', protect, restrictTo('customer'), travioGhanaController.getBookingByPaypalOrder);
 
 /**
  * @swagger

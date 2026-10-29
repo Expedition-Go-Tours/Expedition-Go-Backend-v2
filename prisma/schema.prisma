@@ -218,6 +218,14 @@ enum PaymentStatus {
   REFUNDED
 }
 
+// Which processor actually moved the money for a row. Existing (and every
+// legacy) payment is Stripe; the default is forward-only and never rewritten.
+// A booking is settled by exactly one provider — there is no split payment.
+enum PaymentProvider {
+  STRIPE
+  PAYPAL
+}
+
 // One hosted Checkout Session per attempt. The booking-level hold is derived
 // from ACTIVE attempts; only CREATING/ACTIVE may exist per booking (enforced by
 // a partial unique index, not application code alone).
@@ -1093,9 +1101,24 @@ model Booking {
   payoutStatus BookingPayoutStatus @default(PENDING)
 
   // Payment Information
+  //
+  // `paymentProvider` names the processor that actually settled this booking.
+  // Stripe columns are retained untouched for legacy rows; PayPal identifiers
+  // are separate so no existing query or index has to change. Both provider
+  // reference columns are nullable, and only the one matching the provider is
+  // ever populated.
+  paymentProvider         PaymentProvider @default(STRIPE)
   stripePaymentIntentId   String?
   stripeCheckoutSessionId String?
-  paymentStatus           PaymentStatus @default(PENDING)
+  // PayPal Order id (created at checkout) and Capture id (proof of payment).
+  // The capture id is the refund anchor and is unique across the platform.
+  paypalOrderId           String?
+  paypalCaptureId         String?         @unique
+  // Latest refund instruction. PayPal refunds can settle asynchronously
+  // (PENDING), so the id is kept until the reconciliation sweep sees COMPLETED.
+  paypalRefundId          String?
+  paypalRefundStatus      String?
+  paymentStatus           PaymentStatus   @default(PENDING)
   paidAt                  DateTime?
   // 'now' = charged at booking (Pay now), 'later' = Reserve now, pay later
   paymentTiming           String        @default("now")
@@ -1265,8 +1288,12 @@ model BookingPaymentAttempt {
   currency String  @default("USD")
 
   // Stripe identifiers. Never serialized to a supplier-facing response.
+  paymentProvider         PaymentProvider @default(STRIPE)
   stripeCheckoutSessionId String? @unique
   stripePaymentIntentId   String?
+  // PayPal identifiers for a hosted payment attempt. Server-only, same rule.
+  paypalOrderId           String? @unique
+  paypalCaptureId         String?
   // Needed to resend the same link and to render the customer email. Server-
   // only; sanitizeBookingPaymentInternals and the attention projector strip it.
   checkoutUrl String?
@@ -1292,6 +1319,7 @@ model BookingPaymentAttempt {
   // it. The booking-level refundStatus remains the source for legacy charges.
   refundStatus   String?
   stripeRefundId String?
+  paypalRefundId String?
   refundedAt     DateTime?
 
   createdAt DateTime @default(now())
@@ -1318,8 +1346,13 @@ model BookingPaymentReconciliation {
   bookingId String?
   booking   Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
 
-  stripePaymentIntentId   String @unique
+  // Exactly one provider reference identifies the money that needs refunding.
+  // Both are nullable because a row is created by whichever provider received
+  // the charge; the matching column is populated and uniquely indexed.
+  paymentProvider         PaymentProvider @default(STRIPE)
+  stripePaymentIntentId   String? @unique
   stripeCheckoutSessionId String?
+  paypalCaptureId         String? @unique
   amount   Decimal? @db.Decimal(10, 2)
   currency String   @default("USD")
 
@@ -1327,6 +1360,7 @@ model BookingPaymentReconciliation {
   status String @default("REFUND_PENDING") // REFUND_PENDING | REFUNDED | REFUND_FAILED
 
   stripeRefundId String?
+  paypalRefundId String?
   failureCode    String?
   // Raw provider error is internal only. Never serialize to a supplier.
   errorMessage   String?
@@ -1448,6 +1482,13 @@ model CheckoutDraft {
   platformCommission Decimal @map("commissionAmount") @db.Decimal(10, 2)
   supplierPayout     Decimal @db.Decimal(10, 2)
   currency           String  @default("USD")
+
+  // Which processor is collecting, and the provider's checkout handle.
+  // Stripe keeps using stripeSessionId (PaymentIntent or Checkout Session id);
+  // PayPal stores its Order id here so the draft can be resolved from either
+  // the browser return or the webhook without trusting client input.
+  paymentProvider PaymentProvider @default(STRIPE)
+  paypalOrderId   String?         @unique
 
   stripeSessionId String?  @unique
   // HOLDING  — seats reserved, awaiting payment
@@ -2206,6 +2247,28 @@ model StripeEvent {
   @@index([stripeEventId])
   @@index([processed])
   @@index([eventType])
+}
+
+// PayPal webhook inbox. Mirrors StripeEvent deliberately rather than merging
+// the two: the providers have different ids, payload shapes and retry rules,
+// and a shared table would require rewriting the Stripe retry path.
+// `paypalEventId` is the idempotency anchor — a replayed delivery is a no-op.
+model PaypalEvent {
+  id            String  @id @default(cuid())
+  paypalEventId String  @unique
+  eventType     String
+  resourceId    String?
+  processed     Boolean @default(false)
+  error         String?
+  data          Json
+
+  createdAt   DateTime  @default(now())
+  processedAt DateTime?
+
+  @@index([paypalEventId])
+  @@index([processed])
+  @@index([eventType, createdAt])
+  @@index([resourceId])
 }
 
 model SystemConfig {

@@ -8,6 +8,7 @@
 
 const express = require('express');
 const webhookController = require('../src/core/domain/webhookController');
+const paypalWebhookController = require('../src/core/domain/paypalWebhookController');
 const discordApprovalController = require('../src/core/domain/discordApprovalController');
 
 const router = express.Router();
@@ -73,6 +74,14 @@ const router = express.Router();
  *                   example: Webhook signature verification failed
  */
 router.post('/stripe', express.raw({ type: 'application/json' }), webhookController.handleStripeWebhook);
+
+/**
+ * POST /webhooks/paypal
+ * PayPal verifies by API round trip (not HMAC), so the raw body is required and
+ * any content-type must be preserved. The handler rejects anything PayPal does
+ * not confirm.
+ */
+router.post('/paypal', express.raw({ type: '*/*' }), paypalWebhookController.handlePaypalWebhook);
 
 /**
  * POST /webhooks/discord/approvals

@@ -716,6 +716,24 @@ router.post('/checkout/calculate', calculateLimiter, validate(calculateCheckoutS
 router.post('/checkout/confirm', confirmLimiter, protect, restrictTo('customer'), validate(confirmBookingSchema), expeditionController.confirmBooking);
 
 /**
+ * POST /api/expedition/checkout/paypal/capture
+ * Captures an approved PayPal order and settles the booking. Idempotent.
+ */
+router.post('/checkout/paypal/capture', confirmLimiter, protect, restrictTo('customer'), expeditionController.capturePaypalPayment);
+
+/**
+ * GET /api/expedition/checkout/paypal/approval/:orderId
+ * Re-issues the approval link for an open PayPal hold (page refresh mid-flow).
+ */
+router.get('/checkout/paypal/approval/:orderId', protect, restrictTo('customer'), expeditionController.getPaypalApproval);
+
+/**
+ * GET /api/expedition/payments/capabilities?currency=USD&timing=now
+ * Public. Single source of truth for the payment options the UI may render.
+ */
+router.get('/payments/capabilities', expeditionController.getPaymentCapabilities);
+
+/**
  * GET /api/expedition/checkout/draft/:id
  * Returns the current customer's HOLDING checkout draft (order summary + a
  * fresh PaymentIntent client secret when the draft was started via the branded
@@ -883,6 +901,12 @@ router.get('/bookings', protect, restrictTo('customer'), validate(getBookingsSch
  *         description: Session not found
  */
 router.get('/bookings/by-session/:sessionId', protect, restrictTo('customer'), expeditionController.getBookingBySession);
+
+/**
+ * GET /api/expedition/bookings/by-paypal-order/:orderId
+ * Polling counterpart to by-session for PayPal checkouts.
+ */
+router.get('/bookings/by-paypal-order/:orderId', protect, restrictTo('customer'), expeditionController.getBookingByPaypalOrder);
 
 /**
  * @swagger

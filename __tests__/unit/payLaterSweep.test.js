@@ -25,6 +25,13 @@ jest.mock('../../src/core/services/paymentLinkService', () => ({
   reapStalePaymentLinkSends: jest.fn().mockResolvedValue({}),
 }));
 
+// A collaborator of the sweep, not the subject: with PAYPAL_* set in the
+// developer's `.env` the real module would query `prisma.booking.findMany`
+// here and consume the mocked queue the charge assertions depend on.
+jest.mock('../../src/core/services/payments/paypalReconciliation', () => ({
+  reconcilePendingPaypalRefunds: jest.fn().mockResolvedValue({ bookings: 0, unclaimed: 0, checked: 0 }),
+}));
+
 jest.mock('../../src/core/services/queue', () => ({
   enqueueNotification: jest.fn(() => Promise.resolve()),
   enqueueEvent: jest.fn(() => Promise.resolve()),

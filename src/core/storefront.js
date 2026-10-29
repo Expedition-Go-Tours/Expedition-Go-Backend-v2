@@ -12,6 +12,7 @@ const { resolvePickupSelection, normalizePickupSnapshot } = require('./services/
 const { pickupChange } = require('./services/pickupChange');
 const { validatePassengerMix } = require('./services/passengerMix');
 const { createPaymentIntent, createCheckoutSession, createCustomCheckoutPaymentIntent, createCustomerSession, calculateCommission, getStripe, ensureStripeCustomer } = require('./services/stripeHelpers');
+const payments = require('./services/payments');
 const { cardSummaryFromIntent } = require('./services/stripeCardSummary');
 const { resolveAllowedClientUrl } = require('./services/clientOrigin');
 const { acquireHold, releaseHold, HOLD_MINUTES } = require('./services/checkoutHold');
@@ -2140,6 +2141,65 @@ controller.confirmBooking = catchAsync(async (req, res, next) => {
     return next(new AppError(holdResult.reason || 'No longer available', 409));
   }
 
+  // ── PayPal (hosted approval page) ─────────────────────────────────
+  // Same hold, same frozen price, different collector. The customer leaves for
+  // PayPal and comes back to the confirmation route; the booking is only
+  // materialized once PayPal has actually captured the money, from either the
+  // return call or the webhook. No Booking row exists before that.
+  const provider = payments.resolveProvider({
+    requested: req.body.paymentProvider,
+    brand: BRAND.key,
+    currency: pricing.currency,
+    paymentTiming: 'now',
+  });
+
+  if (provider === 'paypal') {
+    let order;
+    try {
+      order = await payments.startPaypalCheckout({
+        draftId: holdResult.draftId,
+        amountMinor: Math.round(pricing.total * 100),
+        currency: pricing.currency,
+        description: tour.title,
+        brand: BRAND,
+      });
+    } catch (err) {
+      console.error('[PayPal] Failed to create order:', err.message);
+      await releaseHold(holdResult.draftId, 'expired').catch(() => {});
+      return next(new AppError('Payment could not be started. Please try again.', 502));
+    }
+
+    // Persist both handles: the order id resolves the draft from a webhook, and
+    // the provider tag makes sure a Stripe flow can never settle this draft.
+    try {
+      await prisma.checkoutDraft.updateMany({
+        where: { id: holdResult.draftId, status: 'HOLDING' },
+        data: { paymentProvider: 'PAYPAL', paypalOrderId: order.orderId },
+      });
+    } catch (err) {
+      console.error('[PayPal] Failed to store order id on draft:', err.message);
+    }
+
+    cache.invalidateKeys([`${CACHE_PREFIX}checkout:*`]).catch(() => {});
+
+    return res.status(201).json({
+      status: 'success',
+      data: {
+        checkout: null,
+        payment: {
+          provider: 'paypal',
+          draftId: holdResult.draftId,
+          orderId: order.orderId,
+          approvalUrl: order.approvalUrl,
+          expiresAt: holdResult.expiresAt,
+          amount: pricing.total,
+          currency: pricing.currency,
+        },
+        message: 'Redirecting to PayPal…',
+      },
+    });
+  }
+
   // ── Branded Payment Element checkout (new storefronts) ─────────────
   // The server mints an unconfirmed PaymentIntent from the frozen draft price;
   // the browser mounts the Stripe Payment Element + our own Pay button, then
@@ -2347,6 +2407,14 @@ controller.getCheckoutDraft = catchAsync(async (req, res, next) => {
         paymentIntentId,
         clientSecret,
         customerSessionClientSecret,
+        // Which collector this draft is waiting on, plus that collector's own
+        // handle. A PayPal draft has no PaymentIntent, so `paymentIntentId` and
+        // `clientSecret` are null here and the client uses `provider` /
+        // `paypalOrderId` to drive the PayPal flow instead of the Payment Element.
+        payment: {
+          provider: String(draft.paymentProvider || 'STRIPE').toLowerCase(),
+          paypalOrderId: draft.paypalOrderId || null,
+        },
       },
     },
   });
@@ -2663,6 +2731,181 @@ controller.getBookingBySession = catchAsync(async (req, res, next) => {
       expiresAt: draft.expiresAt,
       createdAt: draft.createdAt,
       booking: booking ? sanitizeBookingPaymentInternals(booking) : null,
+    },
+  });
+});
+
+/**
+ * POST /checkout/paypal/capture
+ * Body: { orderId }
+ *
+ * Called by the return page after PayPal sends the customer back. Captures the
+ * order and settles it through the same idempotent path as the webhook, so a
+ * refresh, a lost response or an early webhook all produce one booking.
+ */
+controller.capturePaypalPayment = catchAsync(async (req, res, next) => {
+  const orderId = req.body?.orderId || req.body?.token;
+  if (!orderId) return next(new AppError('orderId is required', 400));
+
+  const result = await payments.captureAndSettlePaypal(String(orderId), {
+    customerId: req.user.id,
+  });
+
+  switch (result.reason) {
+    case 'missing_order':
+      return next(new AppError('orderId is required', 400));
+    case 'not_found':
+    case 'not_owner':
+      return next(new AppError('Payment not found', 404));
+    case 'provider_mismatch':
+      return next(new AppError('This payment cannot be confirmed here', 409));
+    case 'declined':
+      return next(new AppError('PayPal declined the payment. Please try again with a different method.', 402));
+    case 'processing':
+    case 'not_captured':
+      return res.status(202).json({
+        status: 'success',
+        data: { status: 'PROCESSING', message: 'Payment is still being confirmed.' },
+      });
+    case 'refunded':
+      return next(new AppError('This booking hold ended before payment completed. You have been refunded in full.', 409));
+    case 'amount_mismatch':
+      return next(new AppError('The amount paid did not match this booking. You have been refunded in full.', 409));
+    case 'oversold':
+      return next(new AppError('That date sold out while you were paying. You have been refunded in full.', 409));
+    case 'unmapped':
+      return next(new AppError('Payment received but it could not be matched to a booking. Our team has been notified.', 409));
+    default:
+      break;
+  }
+
+  if (!result.ok) {
+    return res.status(202).json({
+      status: 'success',
+      data: { status: 'PROCESSING', message: 'Payment is still being confirmed.' },
+    });
+  }
+
+  let booking = result.booking || null;
+  if (!booking && result.bookingId) {
+    booking = await prisma.booking.findUnique({
+      where: { id: result.bookingId },
+      include: {
+        tour: {
+          include: { supplier: { select: { id: true, name: true, photoURL: true } } },
+        },
+      },
+    });
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      status: 'PAID',
+      booking: booking ? sanitizeBookingPaymentInternals(booking) : null,
+    },
+  });
+});
+
+/**
+ * GET /bookings/by-paypal-order/:orderId
+ *
+ * Polling counterpart to by-session for PayPal checkouts. Returns the same
+ * HOLDING / PAID / EXPIRED / REFUNDED shape the confirmation page already
+ * understands.
+ */
+controller.getBookingByPaypalOrder = catchAsync(async (req, res, next) => {
+  const { orderId } = req.params;
+  if (!orderId) return next(new AppError('orderId is required', 400));
+
+  const draft = await prisma.checkoutDraft.findFirst({
+    where: { paypalOrderId: orderId, customerId: req.user.id },
+    select: {
+      id: true,
+      status: true,
+      bookingId: true,
+      expiresAt: true,
+      createdAt: true,
+    },
+  });
+
+  if (!draft) return next(new AppError('Checkout session not found', 404));
+
+  let booking = null;
+  if (draft.status === 'PAID' && draft.bookingId) {
+    booking = await prisma.booking.findUnique({
+      where: { id: draft.bookingId },
+      include: {
+        tour: {
+          include: { supplier: { select: { id: true, name: true, photoURL: true } } },
+        },
+      },
+    });
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      status: draft.status,
+      expiresAt: draft.expiresAt,
+      createdAt: draft.createdAt,
+      booking: booking ? sanitizeBookingPaymentInternals(booking) : null,
+    },
+  });
+});
+
+/**
+ * GET /expedition/payments/capabilities?currency=USD&timing=now
+ *
+ * Public: what this storefront may actually offer. Shares its predicate with
+ * the confirm path, so the option can never be shown and then refused.
+ */
+controller.getPaymentCapabilities = catchAsync(async (req, res) => {
+  const capabilities = payments.capabilities({
+    brand: BRAND.key,
+    currency: String(req.query?.currency || 'USD').toUpperCase(),
+    paymentTiming: String(req.query?.timing || 'now'),
+  });
+
+  res.status(200).json({ status: 'success', data: capabilities });
+});
+
+/**
+ * GET /expedition/checkout/paypal/approval/:orderId
+ * Re-issue the approval link for an open PayPal hold (page refresh mid-flow),
+ * to the customer that owns it.
+ */
+controller.getPaypalApproval = catchAsync(async (req, res, next) => {
+  const orderId = String(req.params.orderId || '');
+  if (!orderId) return next(new AppError('orderId is required', 400));
+
+  const result = await payments.getPaypalApproval(orderId, { customerId: req.user.id });
+
+  switch (result.reason) {
+    case 'missing_order':
+      return next(new AppError('orderId is required', 400));
+    case 'not_found':
+    case 'not_owner':
+      return next(new AppError('Payment not found', 404));
+    case 'provider_mismatch':
+      return next(new AppError('This payment cannot be confirmed here', 409));
+    default:
+      break;
+  }
+
+  const approvable = ['CREATED', 'APPROVED', 'PAYER_ACTION_REQUIRED']
+    .includes(String(result.orderStatus || '').toUpperCase());
+  if (result.status === 'HOLDING' && !result.approvalUrl && approvable) {
+    return next(new AppError('PayPal did not return an approval link', 502));
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      status: result.status,
+      orderStatus: result.orderStatus,
+      approvalUrl: result.approvalUrl,
+      bookingId: result.bookingId,
     },
   });
 });

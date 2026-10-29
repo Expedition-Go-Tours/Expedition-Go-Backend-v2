@@ -23,7 +23,7 @@ const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
 const { enqueueNotification } = require('../services/queue');
 const { notifyAdmin } = require('../services/adminNotificationService');
-const { createRefund } = require('../services/stripeHelpers');
+const { refundBookingPayment } = require('../services/payments');
 const { sendEmail, resolveEmailBrand } = require('../services/emailService');
 const emailUrls = require('../../../config/emailUrls');
 
@@ -459,7 +459,19 @@ exports.adminRelease = catchAsync(async (req, res, next) => {
 
       const booking = await tx.booking.findUnique({
         where: { id: claim.bookingId },
-        select: { id: true, grossAmount: true, currency: true, refundedAt: true, paymentStatus: true, stripePaymentIntentId: true },
+        // Both provider references are selected: the guard below has to ask the
+        // processor that actually took the money, not Stripe by default.
+        select: {
+          id: true,
+          bookingNumber: true,
+          grossAmount: true,
+          currency: true,
+          refundedAt: true,
+          paymentStatus: true,
+          paymentProvider: true,
+          stripePaymentIntentId: true,
+          paypalCaptureId: true,
+        },
       });
       if (!booking || booking.refundedAt || booking.paymentStatus === 'REFUNDED') {
         throw new AppError('This booking has already been refunded', 409);
@@ -468,7 +480,9 @@ exports.adminRelease = catchAsync(async (req, res, next) => {
       if (releasedAmount > paidTotal) {
         throw new AppError(`Release amount cannot exceed ${paidTotal.toFixed(2)} ${booking.currency || 'USD'}`, 400);
       }
-      if (!booking.stripePaymentIntentId) {
+      const paidWithPaypal = booking.paymentProvider === 'PAYPAL';
+      const hasRefundablePayment = paidWithPaypal ? booking.paypalCaptureId : booking.stripePaymentIntentId;
+      if (!hasRefundablePayment) {
         throw new AppError('No payment method available to refund this booking', 502);
       }
 
@@ -483,7 +497,7 @@ exports.adminRelease = catchAsync(async (req, res, next) => {
 
       const cents = Math.round(releasedAmount * 100);
       try {
-        await createRefund(booking.stripePaymentIntentId, cents, {
+        await refundBookingPayment(booking, cents, {
           metadata: { reason: 'customer_refund_claim', claimId: claim.id, bookingId: booking.id },
         });
       } catch (refundErr) {

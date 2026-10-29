@@ -17,6 +17,7 @@ const prisma = require('../services/prismaClient');
 const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
 const { createPaymentIntent, createRefund, calculateCommission, getStripe, ensureStripeCustomer } = require('../services/stripeHelpers');
+const { refundBookingPayment } = require('../services/payments');
 const { resolveAllowedClientUrl } = require('../services/clientOrigin');
 const { generateBookingNumber, validateTravelerInfo, evaluateCancellationPolicy } = require('../services/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../services/tourHelpers');
@@ -1070,7 +1071,7 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
   if (needsRefund) {
     try {
       const refundAmountCents = Math.round(parseFloat(cancellationCheck.refundAmount) * 100);
-      await createRefund(booking.stripePaymentIntentId, refundAmountCents);
+      await refundBookingPayment(booking, refundAmountCents);
       refundSucceeded = true;
       await prisma.booking.update({
         where: { id },
