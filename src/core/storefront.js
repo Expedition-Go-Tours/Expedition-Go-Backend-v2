@@ -2162,6 +2162,7 @@ controller.confirmBooking = catchAsync(async (req, res, next) => {
         currency: pricing.currency,
         description: tour.title,
         brand: BRAND,
+        cancelPath: tour.slug ? `/${tour.id}/${tour.slug}/booking` : `/${tour.id}/booking`,
       });
     } catch (err) {
       console.error('[PayPal] Failed to create order:', err.message);
@@ -2919,6 +2920,9 @@ controller.getPaypalApproval = catchAsync(async (req, res, next) => {
       orderStatus: result.orderStatus,
       approvalUrl: result.approvalUrl,
       bookingId: result.bookingId,
+      // Tour + amount, so the return page shows the order it is confirming
+      // instead of an empty panel.
+      summary: result.summary || null,
     },
   });
 });

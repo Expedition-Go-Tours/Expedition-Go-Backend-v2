@@ -25,9 +25,15 @@ const normalize = require('./normalize');
  * the brand registry so Ghana and Expedition stay on their own domains, and
  * PayPal appends its own `token` (order id) when it sends the customer back.
  */
-async function startPaypalCheckout({ draftId, amountMinor, currency, description, brand }) {
+async function startPaypalCheckout({ draftId, amountMinor, currency, description, brand, cancelPath }) {
   const base = String(brand?.storefrontUrl || '').replace(/\/+$/, '');
   if (!base) throw new Error('startPaypalCheckout requires a brand storefront URL');
+
+  // A bare `/booking` has no tour context, so cancelling on PayPal's page landed
+  // the customer on an empty checkout ("How to pay: Pay now — $0.00"). Send
+  // them back to the tour's own booking page instead, where they can re-pick.
+  const cancel = String(cancelPath || '/booking');
+  const cancelUrl = `${base}${cancel.startsWith('/') ? cancel : `/${cancel}`}`;
 
   return paypalPayments.createOrder({
     draftId,
@@ -36,7 +42,7 @@ async function startPaypalCheckout({ draftId, amountMinor, currency, description
     description,
     brandName: brand?.brandName || brand?.key || 'Travio',
     returnUrl: `${base}/booking/paypal/return`,
-    cancelUrl: `${base}/booking`,
+    cancelUrl,
   });
 }
 
@@ -51,7 +57,10 @@ async function startPaypalCheckout({ draftId, amountMinor, currency, description
 async function captureAndSettlePaypal(orderId, { customerId } = {}) {
   if (!orderId) return { ok: false, reason: 'missing_order' };
 
-  const draft = await prisma.checkoutDraft.findUnique({ where: { paypalOrderId: orderId } });
+  const draft = await prisma.checkoutDraft.findUnique({
+    where: { paypalOrderId: orderId },
+    include: { tour: { select: { id: true, title: true, slug: true } } },
+  });
   if (!draft) return { ok: false, reason: 'not_found' };
   if (customerId && draft.customerId !== customerId) return { ok: false, reason: 'not_owner' };
   if (draft.paymentProvider !== 'PAYPAL') return { ok: false, reason: 'provider_mismatch' };
@@ -106,13 +115,23 @@ async function getPaypalApproval(orderId, { customerId } = {}) {
   if (customerId && draft.customerId !== customerId) return { ok: false, reason: 'not_owner' };
   if (draft.paymentProvider !== 'PAYPAL') return { ok: false, reason: 'provider_mismatch' };
 
+  const summary = {
+    tourTitle: draft.tour?.title || null,
+    tourId: draft.tour?.id || null,
+    tourSlug: draft.tour?.slug || null,
+    amount: Number(draft.pricing?.total || 0),
+    currency: draft.pricing?.currency || draft.currency || 'USD',
+    travelDate: draft.travelDate || null,
+    expiresAt: draft.expiresAt || null,
+  };
+
   if (draft.status === 'PAID') {
-    return { ok: true, status: 'PAID', orderStatus: 'COMPLETED', approvalUrl: null, bookingId: draft.bookingId };
+    return { ok: true, status: 'PAID', orderStatus: 'COMPLETED', approvalUrl: null, bookingId: draft.bookingId, summary };
   }
   if (draft.status !== 'HOLDING') {
     // EXPIRED / REFUNDED: the hold is gone, and approving now would land the
     // customer in the auto-refund path. Tell the client instead.
-    return { ok: true, status: draft.status, orderStatus: null, approvalUrl: null, bookingId: draft.bookingId };
+    return { ok: true, status: draft.status, orderStatus: null, approvalUrl: null, bookingId: draft.bookingId, summary };
   }
 
   const { order } = await paypalPayments.getOrder(orderId);
@@ -125,6 +144,7 @@ async function getPaypalApproval(orderId, { customerId } = {}) {
     orderStatus: order.status || null,
     approvalUrl: approve?.href || null,
     bookingId: null,
+    summary,
   };
 }
 

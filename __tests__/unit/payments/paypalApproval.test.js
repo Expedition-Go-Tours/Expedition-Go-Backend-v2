@@ -27,6 +27,21 @@ const DRAFT = {
   paymentProvider: 'PAYPAL',
   paypalOrderId: 'ORDER-1',
   bookingId: null,
+  currency: 'USD',
+  travelDate: new Date('2026-11-10T00:00:00Z'),
+  expiresAt: new Date('2026-11-10T12:00:00Z'),
+  pricing: { total: '120.00', currency: 'USD' },
+  tour: { id: 'tour_1', title: 'Cape Coast Castle', slug: 'cape-coast' },
+};
+
+const SUMMARY = {
+  tourTitle: 'Cape Coast Castle',
+  tourId: 'tour_1',
+  tourSlug: 'cape-coast',
+  amount: 120,
+  currency: 'USD',
+  travelDate: DRAFT.travelDate,
+  expiresAt: DRAFT.expiresAt,
 };
 
 const APPROVE_LINKS = [
@@ -67,12 +82,13 @@ describe('getPaypalApproval', () => {
   it('returns the booking instead of a link once the hold is paid', async () => {
     prisma.checkoutDraft.findUnique.mockResolvedValue({ ...DRAFT, status: 'PAID', bookingId: 'booking_1' });
 
-    expect(await getPaypalApproval('ORDER-1', { customerId: 'cus_1' })).toEqual({
+    expect(await getPaypalApproval('ORDER-1', { customerId: 'cus_1' })).toMatchObject({
       ok: true,
       status: 'PAID',
       orderStatus: 'COMPLETED',
       approvalUrl: null,
       bookingId: 'booking_1',
+      summary: SUMMARY,
     });
     // No PayPal round trip needed — the draft already knows the outcome.
     expect(getOrder).not.toHaveBeenCalled();
@@ -83,12 +99,13 @@ describe('getPaypalApproval', () => {
 
     const result = await getPaypalApproval('ORDER-1', { customerId: 'cus_1' });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       status: 'EXPIRED',
       orderStatus: null,
       approvalUrl: null,
       bookingId: null,
+      summary: SUMMARY,
     });
     expect(getOrder).not.toHaveBeenCalled();
   });
@@ -96,12 +113,13 @@ describe('getPaypalApproval', () => {
   it('re-issues the approval link for a still-open hold', async () => {
     const result = await getPaypalApproval('ORDER-1', { customerId: 'cus_1' });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       status: 'HOLDING',
       orderStatus: 'CREATED',
       approvalUrl: 'https://www.sandbox.paypal.com/checkoutnow?token=ORDER-1',
       bookingId: null,
+      summary: SUMMARY,
     });
     expect(getOrder).toHaveBeenCalledWith('ORDER-1');
   });
