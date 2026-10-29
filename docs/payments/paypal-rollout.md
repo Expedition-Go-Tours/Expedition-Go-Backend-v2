@@ -60,11 +60,33 @@ Two flags, deliberately:
 PayPal needs credentials (`PAYPAL_CLIENT_ID` + `PAYPAL_CLIENT_SECRET`) for
 anything to work, including reading a capture during reconciliation.
 
+### Production state (enabled 2026-10-29)
+
+The Hetzner app (`/home/deploy/Expedition-Go-Backend-v2/.env`, mode 0600) is
+configured with **live** credentials for the `ghana` and `expedition` brands:
+
+| Var | Value |
+| --- | --- |
+| `PAYPAL_ENABLED` | `true` |
+| `PAYPAL_MODE` | `live` (was unset before — it defaults to `sandbox`, which would have sent real customers to `sandbox.paypal.com`) |
+| `PAYPAL_CLIENT_ID` / `SECRET` | live app `APP-27X52500HP598483J` — values live **only** in the server `.env` |
+| `PAYPAL_WEBHOOK_ID` | `0K037196KU039041X` → `https://apiv1.travioafrica.com/api/webhooks/paypal` |
+| `PAYPAL_BRANDS` | `ghana,expedition` (`/api/africa/*` has no capabilities route, so Travio Africa cannot offer it) |
+
+All three API hostnames resolve to that one server, so a single webhook covers
+every brand. Pre-change backup: `.env.bak-paypal-20261029193820`.
+
+**Rollback:** set `PAYPAL_ENABLED=false` and `pm2 restart expedition-api`.
+In-flight captures, webhooks and refund reconciliation keep running either way.
+
 ---
 
 ## Rollout order
 
-1. **Deploy the migration.** It is additive and touches no Stripe column.
+Status: **steps 1–4 and 6–7 are done**; step 5 (a full end-to-end purchase
+against live PayPal) is the only one outstanding.
+
+1. **Deploy the migration.** It is additive and touches no Stripe column. ✓
 2. **Create a PayPal app** (Developer Dashboard → My Apps & Credentials →
    sandbox, then live). Copy the client id/secret. In the live app, set the
    redirect URL list to include
@@ -272,15 +294,19 @@ with `E2E_RESUME_ORDER_ID` instead of starting a second checkout.
 
 ## Open items
 
-- [x] Sandbox credentials provisioned and stored in `.env` (sandbox app only —
-      the same pair returns 401 against the live host).
-- [x] Sandbox webhook created: `3H327050B38880631` →
-      `https://apiv1.travioafrica.com/api/webhooks/paypal`
-      (6 events). The **live** app still needs its own webhook id per host, and
-      each API host needs its own: `api.travioghana.com`,
-      `api.expeditiongotours.com`, `apiv1.travioafrica.com`.
-- [ ] Capture + refund of a real sandbox order (needs a sandbox buyer login to
-      approve the order).
+- [x] Sandbox credentials provisioned (sandbox app; the same pair 401s live).
+- [x] Sandbox webhook `3H327050B38880631`.
+- [x] Live credentials provisioned and set on the server (`.env`, mode 0600,
+      with a pre-change backup).
+- [x] Live webhook `0K037196KU039041X` → `apiv1.travioafrica.com` — one hook,
+      because all three API hostnames are this one server.
+- [x] Production verified: capabilities report `available:true, mode:live` for
+      both brands, `unsupported_timing` for pay-later, `/api/africa/*` 404s, a
+      forged webhook delivery is rejected with 400, and a live order was created
+      (never captured) through the app's own code path.
+- [ ] **First real live transaction** — approve + capture + refund on a live
+      order. Needs a PayPal login; until it passes, the refund half of the live
+      path is proven only in sandbox and by unit tests.
 - [ ] Confirm the PayPal business account can receive **USD** and withdraw it
       (the whole catalogue is USD, so a GHS wallet would break settlement).
 - [ ] PayPal identifiers are stripped from supplier- and customer-facing
