@@ -292,6 +292,39 @@ with `E2E_RESUME_ORDER_ID` instead of starting a second checkout.
 
 ---
 
+## Live incidents (2026-10-29, first day enabled)
+
+**1. `POST /checkout/paypal/capture` returned 500 while the payment succeeded.**
+PayPal's capture *response* came back with a COMPLETED capture that had no
+`amount`, so `normalizeCapture` threw after the money had moved; the
+`PAYMENT.CAPTURE.COMPLETED` webhook settled the booking five seconds later
+(`TRG-06108087-2026-67`), which is the resilience working — but the browser saw
+a 500.
+Fix: `captureOrder` treats the POST as the action and re-reads the order as the
+source of truth; `normalizeCapture` falls back to the purchase-unit amount;
+the endpoints answer 502 with the order reference instead of a bare 500.
+
+**2. A cancellation refund was issued by PayPal but recorded as FAILED.**
+Identical defect on the refund response: refund `4P421243JD311645S` existed at
+PayPal (capture read `REFUNDED`) while the booking said `refundStatus: FAILED`
+with no refund id, because `normalizeRefund` threw on the missing `amount`.
+Fix: `refundCapture` re-reads the refund, then falls back to the requested
+amount (partial) or the capture's `refunded_amount` (full).
+Repair: the original `PayPal-Request-Id` was replayed, so PayPal returned the
+existing refund instead of creating a second one, and the booking row was
+corrected to REFUNDED / SUCCEEDED / $2.00 / `4P421243JD311645S`.
+
+Rule learned: **never normalise a PayPal mutation response** — POST mutates,
+GET is authoritative. Both bugs are now covered by unit tests
+(`paypalPayments.test.js`, `paypalNormalize.test.js`).
+
+**3. Travio Ghana now serves the branded Payment Element checkout** — it had
+never been migrated (only Expedition was), which is why Ghana redirected to
+Stripe's hosted page. `checkoutFlow: 'payment-element'` + `GET /checkout/draft/:id`
+now behave exactly like Expedition.
+
+---
+
 ## Open items
 
 - [x] Sandbox credentials provisioned (sandbox app; the same pair 401s live).
