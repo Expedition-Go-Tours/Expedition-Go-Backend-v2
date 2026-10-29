@@ -143,3 +143,40 @@ describe('getPaypalApproval', () => {
     expect(result).toMatchObject({ ok: true, status: 'HOLDING', orderStatus: 'VOIDED', approvalUrl: null });
   });
 });
+
+describe('startPaypalCheckout', () => {
+  it('sends a cancelled checkout back to the tour, not a bare /booking', async () => {
+    const paypalPayments = require('../../../src/core/services/payments/paypalPayments');
+    paypalPayments.createOrder = jest.fn().mockResolvedValue({
+      orderId: 'ORDER-1', approvalUrl: 'https://www.paypal.com/checkoutnow?token=ORDER-1',
+    });
+    const { startPaypalCheckout } = require('../../../src/core/services/payments');
+
+    await startPaypalCheckout({
+      draftId: 'draft_1',
+      amountMinor: 12000,
+      currency: 'USD',
+      description: 'Cape Coast Castle',
+      brand: { storefrontUrl: 'https://travioghana.com', brandName: 'Travio Ghana' },
+      cancelPath: '/tour_1/cape-coast/booking',
+    });
+
+    const args = paypalPayments.createOrder.mock.calls[0][0];
+    expect(args.returnUrl).toBe('https://travioghana.com/booking/paypal/return');
+    // A bare /booking has no tour context and rendered an empty checkout with
+    // "$0.00" — the cancel link must carry the tour.
+    expect(args.cancelUrl).toBe('https://travioghana.com/tour_1/cape-coast/booking');
+  });
+
+  it('falls back to /booking when no cancel path is supplied', async () => {
+    const paypalPayments = require('../../../src/core/services/payments/paypalPayments');
+    paypalPayments.createOrder = jest.fn().mockResolvedValue({ orderId: 'O', approvalUrl: 'u' });
+    const { startPaypalCheckout } = require('../../../src/core/services/payments');
+
+    await startPaypalCheckout({
+      draftId: 'd', amountMinor: 100, currency: 'USD', brand: { storefrontUrl: 'https://expeditiongotours.com/' },
+    });
+
+    expect(paypalPayments.createOrder.mock.calls[0][0].cancelUrl).toBe('https://expeditiongotours.com/booking');
+  });
+});
