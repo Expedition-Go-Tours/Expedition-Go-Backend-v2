@@ -194,14 +194,39 @@ async function refundCapture({
   if (note) body.note_to_payer = clamp(note, 255);
   if (invoiceId) body.invoice_id = clamp(invoiceId, MAX_INVOICE_ID);
 
-  const refund = await request(`/v2/payments/captures/${encodeURIComponent(captureId)}/refund`, {
+  const posted = await request(`/v2/payments/captures/${encodeURIComponent(captureId)}/refund`, {
     method: 'POST',
     body,
     idempotencyKey,
     config,
   });
 
-  return { refund, normalized: normalizeRefund(refund) };
+  // Same rule as captureOrder: the POST is the action, a GET is the source of
+  // truth. Live, the refund response came back without `amount`, which threw
+  // AFTER PayPal had already refunded the customer.
+  let refund = posted;
+  if (posted?.id && !(posted.amount && posted.amount.value !== undefined)) {
+    try {
+      const fresh = await request(`/v2/payments/refunds/${encodeURIComponent(posted.id)}`, { config });
+      if (fresh?.id) refund = fresh;
+    } catch { /* keep the POST body; the fallbacks below cover the amount */ }
+  }
+
+  let fallback = amountMinor !== null && amountMinor !== undefined
+    ? { amountMinor, currency }
+    : null;
+  if (!(refund.amount && refund.amount.value !== undefined) && !fallback) {
+    // A full refund: the capture knows what it refunded.
+    try {
+      const capture = await request(`/v2/payments/captures/${encodeURIComponent(captureId)}`, { config });
+      const refunded = capture?.seller_receivable_breakdown?.refunded_amount;
+      if (refunded && refunded.value !== undefined) {
+        fallback = { amountMinor: toMinorUnits(refunded.value), currency: refunded.currency_code };
+      }
+    } catch { /* leave the amount unknown — normalizeRefund will say so */ }
+  }
+
+  return { refund, normalized: normalizeRefund(refund, fallback) };
 }
 
 async function getRefund(refundId) {

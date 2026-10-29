@@ -148,9 +148,19 @@ function normalizeCapture(order, capture = captureFromOrder(order)) {
   };
 }
 
-function normalizeRefund(refund) {
+/**
+ * `fallback` carries the amount we know from the request when PayPal's response
+ * omits it — a partial refund always has one, a full refund gets it from the
+ * capture. Without either we still refuse to guess.
+ */
+function normalizeRefund(refund, fallback = null) {
   if (!refund || !refund.id) throw new Error('PayPal refund payload is missing an id');
-  const { amountMinor, currency } = amountOf(refund);
+  const hasAmount = refund.amount && refund.amount.value !== undefined;
+  const { amountMinor, currency } = hasAmount
+    ? amountOf(refund)
+    : fallback && fallback.amountMinor !== undefined
+      ? { amountMinor: fallback.amountMinor, currency: String(fallback.currency || 'USD').toUpperCase() }
+      : amountOf(refund);
   return {
     provider: 'PAYPAL',
     refundId: refund.id,

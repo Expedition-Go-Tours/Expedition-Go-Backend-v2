@@ -250,6 +250,38 @@ describe('refundCapture', () => {
   });
 });
 
+describe('refundCapture — thin responses', () => {
+  it('re-reads the refund when the response omits the amount', async () => {
+    request
+      .mockResolvedValueOnce({ id: 'REF-1', status: 'COMPLETED' })          // POST refund
+      .mockResolvedValueOnce({ id: 'REF-1', status: 'COMPLETED', amount: { currency_code: 'USD', value: '20.00' } }); // GET refund
+
+    const { normalized } = await refundCapture({
+      captureId: 'CAP-1', amountMinor: 2000, currency: 'USD', idempotencyKey: 'k',
+    });
+
+    expect(normalized).toMatchObject({ refundId: 'REF-1', status: 'SUCCEEDED', amountMinor: 2000 });
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenLastCalledWith('/v2/payments/refunds/REF-1', expect.anything());
+  });
+
+  it('falls back to the capture\'s refunded amount for a full refund', async () => {
+    request
+      .mockResolvedValueOnce({ id: 'REF-1', status: 'COMPLETED' })   // POST refund (no amount)
+      .mockRejectedValueOnce(new Error('read failed'))               // GET refund fails
+      .mockResolvedValueOnce({                                       // GET capture
+        id: 'CAP-1',
+        seller_receivable_breakdown: { refunded_amount: { currency_code: 'USD', value: '120.00' } },
+      });
+
+    const { normalized } = await refundCapture({
+      captureId: 'CAP-1', amountMinor: null, currency: 'USD', idempotencyKey: 'k',
+    });
+
+    expect(normalized).toMatchObject({ refundId: 'REF-1', amountMinor: 12000 });
+  });
+});
+
 describe('verifyWebhookSignature', () => {
   const headers = {
     'paypal-transmission-id': 't-1',

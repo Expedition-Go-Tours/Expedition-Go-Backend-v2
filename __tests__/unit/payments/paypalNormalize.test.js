@@ -200,6 +200,20 @@ describe('normalizeRefund', () => {
   });
 });
 
+describe('normalizeRefund — thin responses', () => {
+  it('uses the known amount when PayPal omits it', () => {
+    const result = normalizeRefund(
+      { id: 'REF-1', status: 'COMPLETED' },
+      { amountMinor: 12000, currency: 'USD' }
+    );
+    expect(result).toMatchObject({ refundId: 'REF-1', status: 'SUCCEEDED', amountMinor: 12000, currency: 'USD' });
+  });
+
+  it('still refuses to guess when nothing knows the amount', () => {
+    expect(() => normalizeRefund({ id: 'REF-1', status: 'COMPLETED' })).toThrow(/missing an amount/);
+  });
+});
+
 describe('toSettlementSession', () => {
   it('adapts a capture to the Stripe-shaped session materializeHold expects', () => {
     const session = toSettlementSession(normalizeCapture(order()));
