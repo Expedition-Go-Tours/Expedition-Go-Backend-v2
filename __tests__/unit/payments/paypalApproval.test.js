@@ -164,8 +164,11 @@ describe('startPaypalCheckout', () => {
     const args = paypalPayments.createOrder.mock.calls[0][0];
     expect(args.returnUrl).toBe('https://travioghana.com/booking/paypal/return');
     // A bare /booking has no tour context and rendered an empty checkout with
-    // "$0.00" — the cancel link must carry the tour.
-    expect(args.cancelUrl).toBe('https://travioghana.com/tour_1/cape-coast/booking');
+    // "$0.00" — the cancel link must carry the tour. The marker + draft id let
+    // that page say "nothing was charged" and release the hold immediately.
+    expect(args.cancelUrl).toBe(
+      'https://travioghana.com/tour_1/cape-coast/booking?paypal=cancelled&draft=draft_1'
+    );
   });
 
   it('falls back to /booking when no cancel path is supplied', async () => {
@@ -177,6 +180,8 @@ describe('startPaypalCheckout', () => {
       draftId: 'd', amountMinor: 100, currency: 'USD', brand: { storefrontUrl: 'https://expeditiongotours.com/' },
     });
 
-    expect(paypalPayments.createOrder.mock.calls[0][0].cancelUrl).toBe('https://expeditiongotours.com/booking');
+    expect(paypalPayments.createOrder.mock.calls[0][0].cancelUrl).toBe(
+      'https://expeditiongotours.com/booking?paypal=cancelled&draft=d'
+    );
   });
 });

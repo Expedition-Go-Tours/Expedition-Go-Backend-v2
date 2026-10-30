@@ -37,6 +37,13 @@ jest.mock('../../src/core/services/bookingHelpers', () => ({
   generateBookingNumber: jest.fn(async (prefix) => `${prefix}-MINTED`),
 }));
 
+// Pickup validation is exercised by its own tests; here it just needs to be
+// observable so the ordering of the hold-supersede can be pinned.
+jest.mock('../../src/core/services/geoUtils', () => ({
+  resolvePickupSelection: jest.fn(() => ({ ok: true })),
+  normalizePickupSnapshot: jest.fn(() => null),
+}));
+
 jest.mock('../../src/core/services/prismaClient', () => {
   const tx = {
     $queryRawUnsafe: jest.fn().mockResolvedValue([{ id: 'tour-1' }]),
@@ -228,5 +235,104 @@ describe('booking reference prefix', () => {
       expect(src).toMatch(/generateBookingNumber\(\s*BRAND\.bookingPrefix\s*\)/);
       expect(src).toMatch(/bookingPrefix:\s*BRAND\.bookingPrefix/);
     });
+  });
+});
+
+/**
+ * Retrying a checkout.
+ *
+ * Cancelling on PayPal (or closing the tab, or the back button) leaves a
+ * HOLDING draft behind. Answering the next attempt with "you already have an
+ * active checkout" strands the customer for the hold's full 30 minutes, which
+ * is exactly what happened the first time a real customer cancelled on PayPal.
+ */
+describe('acquireHold supersedes the customer\'s previous hold', () => {
+  const { evaluateBookingAvailability } = require('../../src/core/services/availabilityCore');
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    evaluateBookingAvailability.mockResolvedValue({ ok: true });
+    tx.checkoutDraft.findFirst.mockResolvedValue(null);
+    tx.checkoutDraft.create.mockImplementation(async ({ data }) => ({ id: 'draft-new', expiresAt: new Date(), ...data }));
+    tx.checkoutDraft.update.mockResolvedValue({});
+    tx.tour.findUnique.mockResolvedValue({ id: 'tour-1', bookingAndTickets: null });
+    tx.bookingCounter.upsert.mockResolvedValue({ count: 7 });
+    tx.$queryRawUnsafe.mockResolvedValue([{ id: 'tour-1' }]);
+  });
+
+  it('expires the old hold and excludes its seats from the capacity check', async () => {
+    tx.checkoutDraft.findFirst.mockResolvedValue({ id: 'draft-old' });
+
+    const result = await acquireHold(holdArgs({ source: 'GHANA' }));
+
+    // The customer's own seats must never block their own retry.
+    expect(evaluateBookingAvailability).toHaveBeenCalledWith(
+      tx,
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ excludeDraftId: 'draft-old' }),
+    );
+    // The stale draft is retired before the replacement is written, so its old
+    // pricing snapshot and provider handles cannot be mistaken for the new one.
+    expect(tx.checkoutDraft.update).toHaveBeenCalledWith({
+      where: { id: 'draft-old' },
+      data: { status: 'EXPIRED' },
+    });
+    expect(tx.checkoutDraft.create).toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+  });
+
+  it('does not touch another customer\'s or another slot\'s hold', async () => {
+    // The dedupe query is scoped to the customer + tour + date + slot, so a
+    // null result means there is nothing to supersede.
+    tx.checkoutDraft.findFirst.mockResolvedValue(null);
+
+    await acquireHold(holdArgs());
+
+    expect(tx.checkoutDraft.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'EXPIRED' } }),
+    );
+    expect(evaluateBookingAvailability).toHaveBeenCalledWith(
+      tx, expect.anything(), expect.anything(), expect.anything(), expect.anything(), {},
+    );
+  });
+
+  it('still refuses a slot that is genuinely full', async () => {
+    tx.checkoutDraft.findFirst.mockResolvedValue({ id: 'draft-old' });
+    evaluateBookingAvailability.mockResolvedValue({ ok: false, reason: 'Not enough spots left' });
+
+    await expect(acquireHold(holdArgs())).rejects.toThrow(/Not enough spots left/);
+    expect(tx.checkoutDraft.update).not.toHaveBeenCalled();
+  });
+
+  it('serializes concurrent attempts for the same customer and slot', async () => {
+    await acquireHold(holdArgs({ source: 'GHANA' }));
+
+    const lock = tx.$queryRawUnsafe.mock.calls
+      .find(([sql]) => /pg_advisory_xact_lock/.test(sql));
+    expect(lock).toBeTruthy();
+    // Scoped to the customer + tour + date + time, so it cannot serialize an
+    // unrelated customer's checkout.
+    expect(lock[1]).toContain('cust-1');
+    expect(lock[1]).toContain('tour-1');
+    expect(lock[1]).toContain('2026-11-01');
+    expect(lock[1]).toContain('09:00');
+  });
+
+  it('keeps the existing hold when the new attempt is rejected', async () => {
+    // An invalid pickup must not cost the customer the hold they already have:
+    // every check runs before the old draft is retired.
+    const { resolvePickupSelection } = require('../../src/core/services/geoUtils');
+    tx.checkoutDraft.findFirst.mockResolvedValue({ id: 'draft-old' });
+    resolvePickupSelection.mockReturnValueOnce({ ok: false, error: 'Pickup area not available' });
+
+    await expect(
+      acquireHold({ ...holdArgs(), payload: { pickup: { mode: 'pickup' } } }),
+    ).rejects.toThrow(/Pickup area not available/);
+
+    expect(tx.checkoutDraft.update).not.toHaveBeenCalled();
+    expect(tx.checkoutDraft.create).not.toHaveBeenCalled();
   });
 });

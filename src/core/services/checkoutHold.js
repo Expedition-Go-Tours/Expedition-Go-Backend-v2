@@ -65,10 +65,51 @@ async function acquireHold({
     );
     if (!locked) throw new Error('Tour not found');
 
+    // ── Serialize this customer's attempts for this slot ────────────────
+    // Two submits in flight at once (double click, a retry while the first
+    // request is still open) would otherwise both find no hold, both pass the
+    // capacity check and both create one — two seat holds, only one of which
+    // can ever be paid. An advisory lock is transaction-scoped and releases
+    // on commit/rollback, so it serializes just this customer+slot and takes
+    // no row locks that another path could deadlock against.
+    const holdKey = `checkout-hold:${customerId}:${tourId}`
+      + `:${new Date(travelDate).toISOString().slice(0, 10)}:${selectedTime || 'any'}`;
+    await tx.$queryRawUnsafe(
+      'SELECT pg_advisory_xact_lock(hashtext($1)::bigint)',
+      holdKey
+    );
+
+    // ── Supersede this customer's previous hold for the same slot ──────
+    // A retry must never dead-end: cancelling on PayPal, closing the tab, the
+    // browser back button or a double submit all leave a HOLDING draft behind,
+    // and answering "you already have an active checkout" strands the customer
+    // until the hold expires 30 minutes later.
+    //
+    // The old draft is *replaced*, not reused: it carries the pricing snapshot
+    // and provider handles from the previous attempt, and settlement compares
+    // the captured amount against that snapshot — a stale one would look like
+    // an amount mismatch and be auto-refunded.
+    const existingHold = await tx.checkoutDraft.findFirst({
+      where: {
+        customerId,
+        tourId,
+        travelDate: new Date(travelDate),
+        ...(selectedTime ? { selectedTime } : {}),
+        status: 'HOLDING',
+        expiresAt: { gt: new Date() },
+      },
+      select: { id: true },
+    });
+
     // ── Capacity check: bookings + other active holds (option-scoped) ──
+    // This customer's own hold is excluded so their seats do not block their
+    // own retry; it is expired below, once the new hold is ready to be written.
     const evalResult = await evaluateBookingAvailability(
       tx, tour, travelDate, selectedTime, travelers,
-      scope ? { optionScope: scope } : {}
+      {
+        ...(scope ? { optionScope: scope } : {}),
+        ...(existingHold ? { excludeDraftId: existingHold.id } : {}),
+      }
     );
     if (!evalResult.ok) throw new Error(evalResult.reason);
 
@@ -82,20 +123,14 @@ async function acquireHold({
       if (!pickupResult.ok) throw new Error(pickupResult.error);
     }
 
-    // ── Dedup: one active hold per customer per slot ─────────────
-    const existing = await tx.checkoutDraft.findFirst({
-      where: {
-        customerId,
-        tourId,
-        travelDate: new Date(travelDate),
-        ...(selectedTime ? { selectedTime } : {}),
-        status: 'HOLDING',
-        expiresAt: { gt: new Date() },
-      },
-      select: { id: true },
-    });
-    if (existing) {
-      throw new Error('You already have an active checkout for this tour on this date');
+    // Retire the previous hold only now: every check that can still reject
+    // this attempt has passed, so a validation error above cannot cost the
+    // customer a hold they already had.
+    if (existingHold) {
+      await tx.checkoutDraft.update({
+        where: { id: existingHold.id },
+        data: { status: 'EXPIRED' },
+      });
     }
 
     const commissionRate = commission.rate;

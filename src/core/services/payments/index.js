@@ -32,8 +32,14 @@ async function startPaypalCheckout({ draftId, amountMinor, currency, description
   // A bare `/booking` has no tour context, so cancelling on PayPal's page landed
   // the customer on an empty checkout ("How to pay: Pay now — $0.00"). Send
   // them back to the tour's own booking page instead, where they can re-pick.
+  //
+  // The marker plus the draft id let that page free the hold immediately and
+  // say "cancelled, nothing was charged" — otherwise the seats stay held for
+  // the full 30 minutes and the customer is left guessing.
   const cancel = String(cancelPath || '/booking');
-  const cancelUrl = `${base}${cancel.startsWith('/') ? cancel : `/${cancel}`}`;
+  const cancelUrl = new URL(`${base}${cancel.startsWith('/') ? cancel : `/${cancel}`}`);
+  cancelUrl.searchParams.set('paypal', 'cancelled');
+  cancelUrl.searchParams.set('draft', String(draftId));
 
   return paypalPayments.createOrder({
     draftId,
@@ -42,7 +48,7 @@ async function startPaypalCheckout({ draftId, amountMinor, currency, description
     description,
     brandName: brand?.brandName || brand?.key || 'Travio',
     returnUrl: `${base}/booking/paypal/return`,
-    cancelUrl,
+    cancelUrl: cancelUrl.toString(),
   });
 }
 
