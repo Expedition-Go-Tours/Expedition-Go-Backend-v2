@@ -74,8 +74,11 @@ async function acquireHold({
     // no row locks that another path could deadlock against.
     const holdKey = `checkout-hold:${customerId}:${tourId}`
       + `:${new Date(travelDate).toISOString().slice(0, 10)}:${selectedTime || 'any'}`;
+    // The ::text cast is required: the lock function returns `void`, and
+    // Prisma's $queryRaw cannot deserialize a void column (it fails at
+    // runtime, not at review time — which is why this is called out).
     await tx.$queryRawUnsafe(
-      'SELECT pg_advisory_xact_lock(hashtext($1)::bigint)',
+      'SELECT pg_advisory_xact_lock(hashtext($1)::bigint)::text AS locked',
       holdKey
     );
 

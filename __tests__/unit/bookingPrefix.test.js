@@ -313,6 +313,9 @@ describe('acquireHold supersedes the customer\'s previous hold', () => {
     const lock = tx.$queryRawUnsafe.mock.calls
       .find(([sql]) => /pg_advisory_xact_lock/.test(sql));
     expect(lock).toBeTruthy();
+    // The lock function returns `void`, which Prisma cannot deserialize — the
+    // ::text cast is load-bearing, not cosmetic.
+    expect(lock[0]).toContain('::text');
     // Scoped to the customer + tour + date + time, so it cannot serialize an
     // unrelated customer's checkout.
     expect(lock[1]).toContain('cust-1');
