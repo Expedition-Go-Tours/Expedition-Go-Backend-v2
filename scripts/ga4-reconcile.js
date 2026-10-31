@@ -223,7 +223,12 @@ async function main() {
     try {
       const ledger = await ga4Reporting.fetchPurchaseLedger({ from: window.since, to: window.until });
       const inGa = new Map(ledger.map((r) => [r.transactionId, r]));
-      const inDb = new Set(settled.map((b) => b.bookingNumber));
+      // Only consented bookings were ever supposed to reach GA. Diffing against
+      // every settled booking would report every declined and every
+      // no-consent booking as "absent from GA", which is a correct omission,
+      // not a discrepancy — that is what made the first run say 41 missing
+      // when the real answer was 10.
+      const inDb = new Set(bucket.consented.map((b) => b.bookingNumber));
       report.ga = {
         revenue: ledger.reduce((acc, r) => acc + r.revenue, 0),
         transactions: ledger.length,
@@ -231,8 +236,13 @@ async function main() {
         // In GA with no matching booking: a manual test, a duplicate, or a
         // booking deleted from the database.
         unknownToDb: ledger.filter((r) => !inDb.has(r.transactionId)).map((r) => ({ transactionId: r.transactionId, revenue: r.revenue })),
-        // In the database, consented, but absent from GA.
+        // Consent was granted, so these were supposed to be in GA and are not.
         absentFromGa: [...inDb].filter((num) => !inGa.has(num)),
+        // Declined or never captured: GA must NOT have them. Present here only
+        // so a report that reads clean on both sides is unambiguous.
+        correctlyExcluded: [...bucket.declined, ...bucket['not-captured']]
+          .filter((b) => inGa.has(b.bookingNumber))
+          .map((b) => b.bookingNumber),
       };
     } catch (err) {
       report.errors.push(`GA4 read failed: ${err.message}`);
@@ -315,7 +325,11 @@ async function main() {
       for (const r of report.ga.unknownToDb) console.log(`  ${r.transactionId || '(no transaction_id)'}  ${money(r.revenue)}`);
     }
     if (report.ga.absentFromGa.length) {
-      console.log(`in the database but absent from GA: ${report.ga.absentFromGa.length}`);
+      console.log(`consented but absent from GA: ${report.ga.absentFromGa.length}`);
+      for (const num of report.ga.absentFromGa) console.log(`  ${num}`);
+    }
+    if (report.ga.correctlyExcluded.length) {
+      console.log(`in GA despite no consent (should be empty): ${report.ga.correctlyExcluded.join(', ')}`);
     }
   } else {
     console.log('\nGA read side not configured — set GA4_PROPERTY_ID and GA4_SERVICE_ACCOUNT_JSON to diff both sides.');
