@@ -1,22 +1,16 @@
+// The names registered in the fake scheduler list. Filled from queue.js's own
+// SCHEDULES after it loads, so adding a schedule does not silently break this
+// file (which is exactly what happened when `check-ga4-delivery` was added and
+// the hardcoded list here said it was missing, taking the health check from
+// `degraded` to `unhealthy`).
+const mockSchedulerNames = [];
+
 jest.mock('bullmq', () => ({
   Queue: jest.fn(() => ({
-    getJobSchedulers: jest.fn().mockResolvedValue(
+    getJobSchedulers: jest.fn(() => Promise.resolve(
       // Return all expected schedulers so verifySchedules() sees 0 missing.
-      // These are the schedulers from SCHEDULES in queue.js.
-      [
-        'cleanup-expired-cart', 'cleanup-notifications', 'cleanup-audit-logs',
-        'purge-archived-tours', 'expire-special-offers', 'expire-supplier-documents',
-        'plan-doc-expiry-reminders', 'plan-doc-window-reminders', 'purge-stale-stripe-events', 'auto-complete-bookings',
-        'cancel-stale-pending-bookings', 'cleanup-stale-bookings',
-        'expire-checkout-holds', 'expire-modify-topups', 'charge-pay-later-bookings',
-        'recover-pay-later-payments',
-        'resolve-cancellation-choices',
-        'cancellation-request-reminder',
-        'earnings-eligibility-sweep', 'generate-due-invoices', 'plan-booking-reminders',
-        'dispatch-booking-reminders', 'reconcile-ghana', 'reconcile-travioafrica',
-        'refresh-popularity', 'cleanup-events', 'aggregate-daily-views',
-      ].map((jobName) => ({ key: `sched:${jobName}` }))
-    ),
+      mockSchedulerNames.map((jobName) => ({ key: `sched:${jobName}` }))
+    )),
     upsertJobScheduler: jest.fn().mockResolvedValue({}),
   })),
   Worker: jest.fn(() => ({ close: jest.fn().mockResolvedValue() })),
@@ -64,6 +58,11 @@ process.env.REDIS_URL = 'redis://localhost:6379';
 
 const queueModule = require('../../src/core/services/queue');
 const fakeStore = global.__fakeExecStore;
+
+// Seed the fake scheduler list from the real registry: every registered
+// schedule counts as present, so these tests measure health logic rather than
+// how well this file keeps up with queue.js.
+mockSchedulerNames.push(...queueModule.SCHEDULES.map((s) => s.jobName));
 
 describe('scheduler execution health — cluster-safe (Redis-backed)', () => {
   beforeEach(() => {
