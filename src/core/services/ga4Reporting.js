@@ -32,7 +32,6 @@
  */
 
 const fs = require('fs');
-const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -286,6 +285,76 @@ async function fetchItemFunnel({ from, to }, { fetchImpl = fetch } = {}) {
   return flattenReport(payload);
 }
 
+/**
+ * Purchase-level ledger, keyed by `transaction_id`.
+ *
+ * The item report cannot answer "which bookings did GA actually receive?" —
+ * three bookings that share a product are one row there. This one names every
+ * transaction, which is exactly what a database-vs-GA reconciliation needs.
+ */
+const PURCHASE_DIMENSIONS = ['transactionId'];
+const PURCHASE_METRICS = ['purchaseRevenue', 'transactions', 'itemsPurchased'];
+
+/** The `runReport` request body for the transaction ledger over one date range. */
+function buildPurchaseLedgerRequest({ from, to }) {
+  return {
+    dateRanges: [{ startDate: from, endDate: to }],
+    dimensions: PURCHASE_DIMENSIONS.map((name) => ({ name })),
+    metrics: PURCHASE_METRICS.map((name) => ({ name })),
+    orderBys: [{ metric: { metricName: 'purchaseRevenue' }, desc: true }],
+    limit: 100000,
+  };
+}
+
+/** Flatten the ledger matrix. Pure, so the tests own the shape. */
+function flattenPurchaseLedger(report) {
+  const rows = report?.rows || [];
+  return rows.map((row) => {
+    const dims = row.dimensionValues || [];
+    const mets = row.metricValues || [];
+    return {
+      transactionId: dims[0]?.value || '',
+      revenue: round2(Number(mets[0]?.value || 0)),
+      transactions: Number(mets[1]?.value || 0),
+      itemsPurchased: Number(mets[2]?.value || 0),
+    };
+  });
+}
+
+/**
+ * Fetch every purchase GA4 recorded in a window, one row per transaction.
+ *
+ * @param {{from: string, to: string}} range YYYY-MM-DD, inclusive
+ * @param {{fetchImpl?: Function}} [opts]    injectable for tests
+ * @returns {Promise<Array>} [{ transactionId, revenue, transactions, itemsPurchased }]
+ */
+async function fetchPurchaseLedger({ from, to }, { fetchImpl = fetch } = {}) {
+  if (!isConfigured()) {
+    const err = new Error('GA4 reporting is not configured');
+    err.code = 'GA4_NOT_CONFIGURED';
+    throw err;
+  }
+
+  const token = await getAccessToken(fetchImpl);
+  const res = await fetchImpl(`${DATA_API}/${propertyId()}:runReport`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(buildPurchaseLedgerRequest({ from, to })),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    const err = new Error(`GA4 runReport failed (${res.status}): ${text.slice(0, 300)}`);
+    err.code = 'GA4_REPORT_FAILED';
+    throw err;
+  }
+
+  return flattenPurchaseLedger(await res.json());
+}
+
 module.exports = {
   isConfigured,
   getAccessToken,
@@ -294,6 +363,9 @@ module.exports = {
   flattenReport,
   shapeRows,
   fetchItemFunnel,
+  fetchPurchaseLedger,
+  buildPurchaseLedgerRequest,
+  flattenPurchaseLedger,
   FUNNEL_DIMENSIONS,
   FUNNEL_METRICS,
 };

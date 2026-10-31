@@ -8,6 +8,12 @@
  * revenue to a booking (transaction_id, value, currency, items).
  */
 
+jest.mock('../../src/core/services/prismaClient', () => ({
+  booking: { update: jest.fn() },
+}));
+
+const prisma = require('../../src/core/services/prismaClient');
+
 const {
   buildPurchaseEvent,
   buildRefundEvent,
@@ -39,6 +45,7 @@ describe('ga4Measurement', () => {
   let errorSpy;
 
   beforeEach(() => {
+    prisma.booking.update.mockReset();
     delete process.env.GA4_MEASUREMENT_ID;
     delete process.env.GA4_API_SECRET;
     // Every outcome now logs one line; silence it unless a test re-arms the
@@ -198,12 +205,37 @@ describe('ga4Measurement', () => {
       expect(JSON.parse(options.body).events[0].name).toBe('purchase');
     });
 
+    it('resolves with ok only when GA accepted the event', async () => {
+      process.env.GA4_MEASUREMENT_ID = 'G-TEST';
+      process.env.GA4_API_SECRET = TEST_SECRET;
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '' });
+
+      await expect(sendPurchase(baseBooking)).resolves.toEqual({ ok: true });
+
+      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 400, text: async () => 'nope' });
+      await expect(sendPurchase(baseBooking)).resolves.toEqual({ ok: false, reason: 'http-400' });
+    });
+
+    it('carries extra params, so a backfill can explain its own timestamp', async () => {
+      process.env.GA4_MEASUREMENT_ID = 'G-TEST';
+      process.env.GA4_API_SECRET = TEST_SECRET;
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '' });
+
+      await sendPurchase(baseBooking, { extraParams: { reconciled: true, original_paid_at: '2026-10-21T17:00:00.000Z' } });
+
+      const params = JSON.parse(global.fetch.mock.calls[0][1].body).events[0].params;
+      expect(params.reconciled).toBe(true);
+      expect(params.original_paid_at).toBe('2026-10-21T17:00:00.000Z');
+      // The booking's identity is never displaced.
+      expect(params.transaction_id).toBe('GH-12345');
+    });
+
     it('never throws when the network fails', async () => {
       process.env.GA4_MEASUREMENT_ID = 'G-TEST';
       process.env.GA4_API_SECRET = TEST_SECRET;
       global.fetch = jest.fn().mockRejectedValue(new Error('network down'));
 
-      await expect(sendPurchase(baseBooking)).resolves.toBeUndefined();
+      await expect(sendPurchase(baseBooking)).resolves.toEqual({ ok: false, reason: 'network' });
     });
   });
 
@@ -329,6 +361,47 @@ describe('ga4Measurement', () => {
       const body = JSON.parse(global.fetch.mock.calls[0][1].body);
       expect(body.events[0].name).toBe('refund');
       expect(body.events[0].params.timestamp_micros).toBe(1760880000000000);
+    });
+  });
+
+  describe('delivery ledger', () => {
+    beforeEach(() => {
+      process.env.GA4_MEASUREMENT_ID = 'G-TEST';
+      process.env.GA4_API_SECRET = TEST_SECRET;
+    });
+
+    it('records the delivery on the booking when GA accepts it', async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '' });
+
+      await sendPurchase({ ...baseBooking, id: 'bk_1' });
+
+      expect(prisma.booking.update).toHaveBeenCalledTimes(1);
+      const call = prisma.booking.update.mock.calls[0][0];
+      expect(call.where).toEqual({ id: 'bk_1' });
+      expect(call.data.ga4ReportedAt).toBeInstanceOf(Date);
+    });
+
+    it('leaves the ledger empty when GA rejects the event', async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 500, text: async () => 'boom' });
+
+      await sendPurchase({ ...baseBooking, id: 'bk_2' });
+
+      expect(prisma.booking.update).not.toHaveBeenCalled();
+    });
+
+    it('never touches the database when the caller passed no booking id', async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '' });
+
+      await sendPurchase(baseBooking);
+
+      expect(prisma.booking.update).not.toHaveBeenCalled();
+    });
+
+    it('does not let a ledger write failure break the send', async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '' });
+      prisma.booking.update.mockRejectedValue(new Error('db down'));
+
+      await expect(sendPurchase({ ...baseBooking, id: 'bk_3' })).resolves.toEqual({ ok: true });
     });
   });
 

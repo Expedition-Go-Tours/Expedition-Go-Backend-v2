@@ -1220,6 +1220,12 @@ model Booking {
   gaClientId       String?
   analyticsConsent Boolean?
 
+  // Set only when GA4's Measurement Protocol accepted the purchase event (2xx).
+  // A null here means "never confirmed delivered" — Google answers 204 for a
+  // bad secret, so this column is the only durable record that a booking made
+  // it into GA. scripts/ga4-reconcile.js diffs it against settled bookings.
+  ga4ReportedAt DateTime?
+
   // Customer-selected pickup snapshot (mode, area/location, address, time).
   // Null when the tour has no pickup service.
   pickup Json?

@@ -15,6 +15,11 @@
  * exact reason) leaves ONE `[ga4Measurement] ...` line in the pm2 logs, so a
  * delivered or dropped money event is always diagnosable after the fact.
  *
+ * A delivered purchase is also stamped on the booking (`Booking.ga4ReportedAt`).
+ * Logs rotate; the column does not. That is what scripts/ga4-reconcile.js reads
+ * to answer "which settled bookings never reached GA?", which is the question
+ * nobody could answer after the secret incident.
+ *
  * Safe by design, like discordNotifier:
  *  - No-op (resolves immediately) when GA4_MEASUREMENT_ID / GA4_API_SECRET unset.
  *  - Never throws — every failure is caught and logged.
@@ -269,39 +274,74 @@ async function deliver(body, { kind, ref } = {}) {
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       console.error(`[ga4Measurement] ${label} send failed booking=${bookingRef} HTTP ${res.status}: ${text.slice(0, 300)}`);
-    } else {
-      console.log(`[ga4Measurement] ${label} sent booking=${bookingRef} ${tail}`);
+      return { ok: false, reason: `http-${res.status}` };
     }
+    console.log(`[ga4Measurement] ${label} sent booking=${bookingRef} ${tail}`);
+    return { ok: true };
   } catch (err) {
     console.error(`[ga4Measurement] ${label} send failed booking=${bookingRef}: ${err.message}`);
+    return { ok: false, reason: 'network' };
   } finally {
     clearTimeout(timer);
   }
 }
 
 /**
+ * Record that GA accepted the purchase for this booking.
+ *
+ * "Sent" used to mean only "the HTTP call resolved", which is not the same as
+ * "GA kept it". Persisting the acknowledgement turns the question "did this
+ * booking reach GA?" into one indexed lookup instead of a grep through rotated
+ * logs. Best-effort: a database hiccup must never fail or delay a booking.
+ */
+async function markReported(booking) {
+  if (!booking || !booking.id) return;
+  try {
+    const prisma = require('./prismaClient');
+    await prisma.booking.update({
+      where: { id: booking.id },
+      data: { ga4ReportedAt: new Date() },
+    });
+  } catch (err) {
+    console.warn(
+      `[ga4Measurement] could not record delivery booking=${booking.bookingNumber || booking.id}: ${err.message}`
+    );
+  }
+}
+
+
+/**
  * Report a settled booking as a purchase. Fire-and-forget. Exactly one log line
  * per call: either the `sent` line (with tx + value) or a `skipped` line naming
- * the reason.
+ * the reason. Resolves with `{ ok, reason }` so a caller that wants to know can
+ * find out; the settlement hook ignores it.
  * @param {object} booking a booking with gaClientId + analyticsConsent + tour included
- * @param {{ timestampMicros?: number }} [opts] `timestamp_micros` for historical
- *   re-reports: GA4 accepts events up to 72h in the past, so a backfill can stamp
- *   the booking's original paidAt. Omit for a live send.
+ * @param {{ timestampMicros?: number, extraParams?: object }} [opts]
+ *   `timestamp_micros` stamps historical re-reports (GA4 accepts at most 72h
+ *   back). `extraParams` adds custom parameters, e.g. the reconciliation
+ *   markers a backfill carries so a wrongly-dated event can still be explained.
  */
-function sendPurchase(booking, { timestampMicros } = {}) {
+function sendPurchase(booking, { timestampMicros, extraParams } = {}) {
   const ref = (booking && booking.bookingNumber) || 'unknown';
   if (!isEnabled()) {
     logSkip('purchase', booking, 'not-configured');
-    return Promise.resolve();
+    return Promise.resolve({ ok: false, reason: 'not-configured' });
   }
-  if (refuseIfBadSecret('purchase', booking)) return Promise.resolve();
+  if (refuseIfBadSecret('purchase', booking)) {
+    return Promise.resolve({ ok: false, reason: 'invalid-secret' });
+  }
   const body = buildPurchaseEvent(booking);
   if (!body) {
-    logSkip('purchase', booking, skipReason(booking));
-    return Promise.resolve();
+    const reason = skipReason(booking);
+    logSkip('purchase', booking, reason);
+    return Promise.resolve({ ok: false, reason });
   }
   if (timestampMicros) body.events[0].params.timestamp_micros = timestampMicros;
-  return deliver(body, { kind: 'purchase', ref });
+  if (extraParams) Object.assign(body.events[0].params, extraParams);
+  return deliver(body, { kind: 'purchase', ref }).then(async (outcome) => {
+    if (outcome.ok) await markReported(booking);
+    return outcome;
+  });
 }
 
 /**
@@ -315,13 +355,14 @@ function sendRefund(booking, { value, timestampMicros } = {}) {
   const ref = (booking && booking.bookingNumber) || 'unknown';
   if (!isEnabled()) {
     logSkip('refund', booking, 'not-configured');
-    return Promise.resolve();
+    return Promise.resolve({ ok: false, reason: 'not-configured' });
   }
-  if (refuseIfBadSecret('refund', booking)) return Promise.resolve();
+  if (refuseIfBadSecret('refund', booking)) return Promise.resolve({ ok: false, reason: 'invalid-secret' });
   const body = buildRefundEvent(booking, value);
   if (!body) {
-    logSkip('refund', booking, skipReason(booking));
-    return Promise.resolve();
+    const reason = skipReason(booking);
+    logSkip('refund', booking, reason);
+    return Promise.resolve({ ok: false, reason });
   }
   if (timestampMicros) body.events[0].params.timestamp_micros = timestampMicros;
   return deliver(body, { kind: 'refund', ref });

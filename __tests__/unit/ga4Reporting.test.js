@@ -258,3 +258,86 @@ describe('shapeRows — supplier scoping and shares', () => {
     expect(shaped.totals).toEqual({ itemsViewed: 180, itemsAddedToCart: 11, itemsPurchased: 3, itemRevenue: 222 });
   });
 });
+
+describe('fetchPurchaseLedger — which transactions reached GA', () => {
+  /** A fetch double for the transaction ledger (one dimension, three metrics). */
+  function ledgerFetch(rows = []) {
+    const calls = [];
+    const impl = async (url, options = {}) => {
+      calls.push({ url, options });
+      if (String(url).includes('oauth2.googleapis.com/token')) {
+        return { ok: true, status: 200, json: async () => ({ access_token: 'tok-123', expires_in: 3600 }) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          rows: rows.map((r) => ({
+            dimensionValues: [{ value: r.transactionId }],
+            metricValues: [
+              { value: String(r.revenue) },
+              { value: String(r.transactions == null ? 1 : r.transactions) },
+              { value: String(r.itemsPurchased == null ? 1 : r.itemsPurchased) },
+            ],
+          })),
+        }),
+      };
+    };
+    impl.calls = calls;
+    return impl;
+  }
+
+  it('asks for one row per transaction, not per item', async () => {
+    const fetchImpl = ledgerFetch([]);
+
+    await GA4.fetchPurchaseLedger({ from: '2026-10-03', to: '2026-10-31' }, { fetchImpl });
+
+    const call = fetchImpl.calls.find((c) => c.url.includes('runReport'));
+    expect(call.url).toBe('https://analyticsdata.googleapis.com/v1beta/properties/123456789:runReport');
+    const body = JSON.parse(call.options.body);
+    expect(body.dimensions.map((d) => d.name)).toEqual(['transactionId']);
+    expect(body.metrics.map((m) => m.name)).toEqual([
+      'purchaseRevenue',
+      'transactions',
+      'itemsPurchased',
+    ]);
+    expect(body.dateRanges).toEqual([{ startDate: '2026-10-03', endDate: '2026-10-31' }]);
+  });
+
+  it('flattens the matrix into transaction-shaped rows', () => {
+    const rows = GA4.flattenPurchaseLedger({
+      rows: [
+        { dimensionValues: [{ value: 'TRG-1' }], metricValues: [{ value: '160' }, { value: '1' }, { value: '1' }] },
+        { dimensionValues: [{ value: 'TRG-2' }], metricValues: [{ value: '90.5' }, { value: '1' }, { value: '2' }] },
+      ],
+    });
+
+    expect(rows).toEqual([
+      { transactionId: 'TRG-1', revenue: 160, transactions: 1, itemsPurchased: 1 },
+      { transactionId: 'TRG-2', revenue: 90.5, transactions: 1, itemsPurchased: 2 },
+    ]);
+  });
+
+  it('refuses with GA4_NOT_CONFIGURED instead of returning an empty ledger', async () => {
+    clearEnv();
+
+    await expect(
+      GA4.fetchPurchaseLedger({ from: '2026-10-03', to: '2026-10-31' }, { fetchImpl: ledgerFetch([]) })
+    )
+      .rejects
+      .toMatchObject({ code: 'GA4_NOT_CONFIGURED' });
+  });
+
+  it('surfaces a report failure instead of a silently empty list', async () => {
+    const fetchImpl = jest.fn(async (url) => {
+      if (String(url).includes('oauth2.googleapis.com/token')) {
+        return { ok: true, status: 200, json: async () => ({ access_token: 'tok-123', expires_in: 3600 }) };
+      }
+      return { ok: false, status: 429, text: async () => 'quota exceeded' };
+    });
+
+    await expect(GA4.fetchPurchaseLedger({ from: '2026-10-03', to: '2026-10-31' }, { fetchImpl }))
+      .rejects
+      .toMatchObject({ code: 'GA4_REPORT_FAILED' });
+  });
+});
