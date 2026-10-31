@@ -639,6 +639,12 @@ const confirmBooking = catchAsync(async (req, res, next) => {
   // Booking (pay-later, directly; pay-now, through the checkout draft payload)
   // so the backend can report the settled purchase/refund server-side.
   const gaClientId = typeof req.body.gaClientId === 'string' ? req.body.gaClientId.slice(0, 128) : null;
+  // GA4 session id: lets the server-side purchase join the session that
+  // produced it, so the session-scoped purchase funnel can count it. Digits
+  // only — anything else is dropped rather than forwarded.
+  const gaSessionId = typeof req.body.gaSessionId === 'string' && /^[0-9]{1,32}$/.test(req.body.gaSessionId)
+    ? req.body.gaSessionId
+    : null;
   const analyticsConsent = typeof req.body.analyticsConsent === 'boolean' ? req.body.analyticsConsent : null;
 
   if (!tourId || !travelDate || !travelers) {
@@ -932,6 +938,7 @@ const confirmBooking = catchAsync(async (req, res, next) => {
          paymentMethodLast4: cardSummary.last4,
          // GA4 attribution captured at checkout (null when consent was absent).
          gaClientId,
+         gaSessionId,
          analyticsConsent,
          appliedOfferId: appliedOffer?.id || null,
          offerName: appliedOffer?.name || null,
@@ -1070,6 +1077,7 @@ const confirmBooking = catchAsync(async (req, res, next) => {
         promoCode: req.body.promoCode || null,
         // GA4 attribution for the materialized booking (pay-now).
         gaClientId,
+        gaSessionId,
         analyticsConsent,
       },
       pricing: {

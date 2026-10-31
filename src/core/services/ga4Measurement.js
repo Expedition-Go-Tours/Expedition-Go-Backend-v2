@@ -148,6 +148,26 @@ function resolveClientId(booking) {
 }
 
 /**
+ * The GA4 session the checkout happened in, when the storefront managed to
+ * capture one. Digits only; anything else is dropped rather than forwarded.
+ *
+ * This is what lets GA4 attribute the server-side purchase to the session that
+ * actually ran view_item → add_to_cart → begin_checkout. Without it the event
+ * still counts revenue and transactions, but it opens a session of its own, so
+ * the session-scoped purchase journey funnel reports zero purchases.
+ */
+function resolveSessionId(booking) {
+  const raw = booking && booking.gaSessionId;
+  if (typeof raw === 'number' && Number.isSafeInteger(raw) && raw > 0) return raw;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!/^[0-9]{1,32}$/.test(trimmed) || trimmed === '0') return null;
+  // GA4's session_id is numeric; keep it inside the safe-integer range.
+  const n = Number(trimmed);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+/**
  * GA4 ecommerce item for a booking. `quantity` is 1 and the whole booking value
  * sits on `price` so `value` and the item total always reconcile.
  */
@@ -170,6 +190,7 @@ function buildPurchaseEvent(booking) {
   if (!clientId) return null;
   const value = toAmount(booking.grossAmount);
   if (value === null) return null;
+  const sessionId = resolveSessionId(booking);
 
   return {
     client_id: clientId,
@@ -183,6 +204,9 @@ function buildPurchaseEvent(booking) {
           // 'later' distinguishes a deferred reservation charge from a pay-now
           // purchase without needing a separate revenue event.
           payment_timing: booking.paymentTiming === 'later' ? 'later' : 'now',
+          // Only when captured: a missing session_id is not an error, it just
+          // means GA4 cannot join this purchase to the browsing session.
+          ...(sessionId ? { session_id: sessionId } : {}),
           items: [buildItem(booking, value)],
         },
       },

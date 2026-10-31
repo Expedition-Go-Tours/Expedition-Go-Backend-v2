@@ -324,6 +324,9 @@ async function materializeHold(draftId, session, paymentIntentId, opts = {}) {
         paidAt: new Date(),
         // GA4 attribution forwarded from the checkout draft (see confirmBooking).
         gaClientId: typeof draftRecord.payload?.gaClientId === 'string' ? draftRecord.payload.gaClientId.slice(0, 128) : null,
+        gaSessionId: typeof draftRecord.payload?.gaSessionId === 'string' && /^[0-9]{1,32}$/.test(draftRecord.payload.gaSessionId)
+          ? draftRecord.payload.gaSessionId
+          : null,
         analyticsConsent: typeof draftRecord.payload?.analyticsConsent === 'boolean' ? draftRecord.payload.analyticsConsent : null,
         travelers: draftRecord.payload.travelers,
         travelDate: draftRecord.travelDate,

@@ -155,6 +155,34 @@ describe('ga4Measurement', () => {
       expect(buildPurchaseEvent({ ...baseBooking, grossAmount: 'not-a-number' })).toBeNull();
       expect(buildPurchaseEvent({ ...baseBooking, grossAmount: -5 })).toBeNull();
     });
+
+    describe('session attribution', () => {
+      it('sends session_id so GA4 joins the purchase to the browsing session', () => {
+        const body = buildPurchaseEvent({ ...baseBooking, gaSessionId: '1759876543' });
+        // Numeric, not a string: GA4's session_id parameter is a number.
+        expect(body.events[0].params.session_id).toBe(1759876543);
+      });
+
+      it('omits session_id rather than failing when it was never captured', () => {
+        for (const gaSessionId of [undefined, null, '', '   ']) {
+          const body = buildPurchaseEvent({ ...baseBooking, gaSessionId });
+          expect(body).not.toBeNull();
+          expect(body.events[0].params).not.toHaveProperty('session_id');
+        }
+      });
+
+      it('drops a session id that is not digits instead of forwarding garbage', () => {
+        for (const gaSessionId of ['abc', '12.5', '-1', '0', '1e9', '1759876543;drop']) {
+          const body = buildPurchaseEvent({ ...baseBooking, gaSessionId });
+          expect(body.events[0].params).not.toHaveProperty('session_id');
+        }
+      });
+
+      it('keeps a session id that arrives as a number', () => {
+        const body = buildPurchaseEvent({ ...baseBooking, gaSessionId: 1759876543 });
+        expect(body.events[0].params.session_id).toBe(1759876543);
+      });
+    });
   });
 
   describe('buildRefundEvent', () => {

@@ -1216,8 +1216,13 @@ model Booking {
   // analytics consent was never granted). `analyticsConsent` is the choice made
   // at checkout; the backend only reports purchase/refund events server-side
   // when it is true — Consent Mode cannot be applied by the Measurement
-  // Protocol, so the stored flag is the gate.
+  // Protocol, so the stored flag is the gate. `gaSessionId` is the GA4 session
+  // the checkout happened in; sending it with the server-side purchase lets GA4
+  // attribute the revenue to that session, which is what the session-scoped
+  // purchase funnel reads. Without it the purchase opens a session of its own
+  // and the funnel reports zero purchases.
   gaClientId       String?
+  gaSessionId      String?
   analyticsConsent Boolean?
 
   // Set only when GA4's Measurement Protocol accepted the purchase event (2xx).
