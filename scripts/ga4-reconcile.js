@@ -90,6 +90,16 @@ async function main() {
   // Inclusive of the whole `until` day.
   const to = new Date(`${window.until}T23:59:59.999Z`);
 
+  // Record known-good deliveries BEFORE reading, so this same run reports the
+  // state the operator just told us about instead of re-listing them.
+  if (args.markReported.length) {
+    const { count } = await prisma.booking.updateMany({
+      where: { bookingNumber: { in: args.markReported }, ga4ReportedAt: null },
+      data: { ga4ReportedAt: new Date() },
+    });
+    console.log(`marked ${count} booking(s) as already delivered to GA: ${args.markReported.join(', ')}\n`);
+  }
+
   const bookings = await prisma.booking.findMany({
     where: { paidAt: { gte: from, lte: to } },
     select: {
@@ -110,14 +120,6 @@ async function main() {
   });
 
   const settled = bookings.filter((b) => SETTLED.has(String(b.paymentStatus)));
-
-  if (args.markReported.length) {
-    const { count } = await prisma.booking.updateMany({
-      where: { bookingNumber: { in: args.markReported }, ga4ReportedAt: null },
-      data: { ga4ReportedAt: new Date() },
-    });
-    console.log(`marked ${count} booking(s) as already delivered to GA: ${args.markReported.join(', ')}\n`);
-  }
 
   const bucket = { consented: [], declined: [], 'not-captured': [] };
   for (const b of settled) bucket[consentBucket(b)].push(b);
