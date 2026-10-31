@@ -9,7 +9,10 @@
  *
  * There is now: `Booking.ga4ReportedAt` is written only after Google accepted
  * the purchase, so the answer is one query. This script prints that ledger and,
- * with `--backfill`, delivers the bookings GA is missing.
+ * with `--backfill`, delivers the bookings GA is missing. `--mark-reported`
+ * and `--mark-refund-reported` record deliveries known to be in GA already
+ * (from before the ledger existed) so they are not listed as missing and never
+ * double-delivered.
  *
  * Usage (from the app directory, so it can read .env):
  *
@@ -17,6 +20,7 @@
  *   node scripts/ga4-reconcile.js --since 2026-10-01   # explicit window
  *   node scripts/ga4-reconcile.js --backfill          # deliver what is missing
  *   node scripts/ga4-reconcile.js --mark-reported TRG-1,TRG-2
+ *   node scripts/ga4-reconcile.js --mark-refund-reported TRG-1  # refunds GA already has
  *   node scripts/ga4-reconcile.js --json
  *
  * `--backfill` sends an event with the CURRENT timestamp. The Measurement
@@ -44,7 +48,7 @@ const ga4Reporting = require('../src/core/services/ga4Reporting');
 const SETTLED = new Set(['SUCCEEDED', 'REFUNDED']);
 
 function parseArgs(argv) {
-  const args = { since: null, until: null, backfill: false, json: false, markReported: [] };
+  const args = { since: null, until: null, backfill: false, json: false, markReported: [], markRefundReported: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--backfill') args.backfill = true;
@@ -53,9 +57,12 @@ function parseArgs(argv) {
     else if (arg === '--until') args.until = argv[++i];
     else if (arg.startsWith('--mark-reported=')) args.markReported.push(...arg.slice(16).split(','));
     else if (arg === '--mark-reported') args.markReported.push(...String(argv[++i] || '').split(','));
+    else if (arg.startsWith('--mark-refund-reported=')) args.markRefundReported.push(...arg.slice(23).split(','));
+    else if (arg === '--mark-refund-reported') args.markRefundReported.push(...String(argv[++i] || '').split(','));
     else if (arg === '--help' || arg === '-h') args.help = true;
   }
   args.markReported = args.markReported.map((s) => s.trim()).filter(Boolean);
+  args.markRefundReported = args.markRefundReported.map((s) => s.trim()).filter(Boolean);
   return args;
 }
 
@@ -83,7 +90,7 @@ function money(n) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
-    console.log('Usage: node scripts/ga4-reconcile.js [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--backfill] [--mark-reported TRG-..,TRG-..] [--json]');
+    console.log('Usage: node scripts/ga4-reconcile.js [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--backfill] [--mark-reported TRG-..] [--mark-refund-reported TRG-..] [--json]');
     return;
   }
 
@@ -103,6 +110,28 @@ async function main() {
       data: { ga4ReportedAt: new Date() },
     });
     console.log(`marked ${count} booking(s) as already delivered to GA: ${args.markReported.join(', ')}\n`);
+  }
+
+  // Same for refunds delivered before the refund ledger existed. Without this
+  // they would read as missing, and a backfill would subtract money GA has
+  // already reversed.
+  if (args.markRefundReported.length) {
+    const targets = await prisma.booking.findMany({
+      where: { bookingNumber: { in: args.markRefundReported }, refundAmount: { gt: 0 } },
+      select: { id: true, bookingNumber: true, refundAmount: true, ga4RefundReportedAmount: true },
+    });
+    let marked = 0;
+    for (const row of targets) {
+      const reported = row.ga4RefundReportedAmount != null ? Number(row.ga4RefundReportedAmount) : 0;
+      if (reported >= Number(row.refundAmount)) continue;
+      // Sequential on purpose: a handful of rows, and it keeps the log honest.
+      await prisma.booking.update({
+        where: { id: row.id },
+        data: { ga4RefundReportedAt: new Date(), ga4RefundReportedAmount: Number(row.refundAmount) },
+      });
+      marked += 1;
+    }
+    console.log(`marked ${marked}/${targets.length} booking(s) as having their refund already delivered to GA: ${args.markRefundReported.join(', ')}\n`);
   }
 
   const bookings = await prisma.booking.findMany({
