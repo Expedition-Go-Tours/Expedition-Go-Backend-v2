@@ -12,7 +12,14 @@
  * with `--backfill`, delivers the bookings GA is missing. `--mark-reported`
  * and `--mark-refund-reported` record deliveries known to be in GA already
  * (from before the ledger existed) so they are not listed as missing and never
- * double-delivered.
+ * double-delivered. `--forget-reported` is the inverse: the first run of this
+ * script was handed four bookings whose only evidence was a `purchase sent` log
+ * line from the period when a bad secret made GA discard everything silently,
+ * and the read side then proved GA never received them. A mark you cannot
+ * unmark is a mark that stays wrong.
+ *
+ * The read side is also the only independent check on the write side: it is how
+ * "we sent it" gets corrected to "GA has it".
  *
  * Usage (from the app directory, so it can read .env):
  *
@@ -21,6 +28,7 @@
  *   node scripts/ga4-reconcile.js --backfill          # deliver what is missing
  *   node scripts/ga4-reconcile.js --mark-reported TRG-1,TRG-2
  *   node scripts/ga4-reconcile.js --mark-refund-reported TRG-1  # refunds GA already has
+ *   node scripts/ga4-reconcile.js --forget-reported TRG-1        # a mark that was wrong
  *   node scripts/ga4-reconcile.js --json
  *
  * `--backfill` sends an event with the CURRENT timestamp. The Measurement
@@ -48,7 +56,7 @@ const ga4Reporting = require('../src/core/services/ga4Reporting');
 const SETTLED = new Set(['SUCCEEDED', 'REFUNDED']);
 
 function parseArgs(argv) {
-  const args = { since: null, until: null, backfill: false, json: false, markReported: [], markRefundReported: [] };
+  const args = { since: null, until: null, backfill: false, json: false, markReported: [], markRefundReported: [], forgetReported: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--backfill') args.backfill = true;
@@ -59,10 +67,13 @@ function parseArgs(argv) {
     else if (arg === '--mark-reported') args.markReported.push(...String(argv[++i] || '').split(','));
     else if (arg.startsWith('--mark-refund-reported=')) args.markRefundReported.push(...arg.slice(23).split(','));
     else if (arg === '--mark-refund-reported') args.markRefundReported.push(...String(argv[++i] || '').split(','));
+    else if (arg.startsWith('--forget-reported=')) args.forgetReported.push(...arg.slice(18).split(','));
+    else if (arg === '--forget-reported') args.forgetReported.push(...String(argv[++i] || '').split(','));
     else if (arg === '--help' || arg === '-h') args.help = true;
   }
   args.markReported = args.markReported.map((s) => s.trim()).filter(Boolean);
   args.markRefundReported = args.markRefundReported.map((s) => s.trim()).filter(Boolean);
+  args.forgetReported = args.forgetReported.map((s) => s.trim()).filter(Boolean);
   return args;
 }
 
@@ -90,7 +101,7 @@ function money(n) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
-    console.log('Usage: node scripts/ga4-reconcile.js [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--backfill] [--mark-reported TRG-..] [--mark-refund-reported TRG-..] [--json]');
+    console.log('Usage: node scripts/ga4-reconcile.js [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--backfill] [--mark-reported TRG-..] [--mark-refund-reported TRG-..] [--forget-reported TRG-..] [--json]');
     return;
   }
 
@@ -101,6 +112,19 @@ async function main() {
   const from = new Date(`${window.since}T00:00:00.000Z`);
   // Inclusive of the whole `until` day.
   const to = new Date(`${window.until}T23:59:59.999Z`);
+
+  // Clear marks that turned out to be wrong. `--mark-reported` was once handed
+  // four bookings whose only evidence was a `purchase sent` log line from the
+  // period when the bad secret meant GA discarded everything silently. GA's own
+  // ledger disagreed, and a mark that cannot be unmarked is a mark that will be
+  // trusted for the wrong booking forever.
+  if (args.forgetReported.length) {
+    const { count } = await prisma.booking.updateMany({
+      where: { bookingNumber: { in: args.forgetReported } },
+      data: { ga4ReportedAt: null, ga4RefundReportedAt: null, ga4RefundReportedAmount: null },
+    });
+    console.log(`cleared ${count} booking(s) from the delivery ledger: ${args.forgetReported.join(', ')}\n`);
+  }
 
   // Record known-good deliveries BEFORE reading, so this same run reports the
   // state the operator just told us about instead of re-listing them.
@@ -266,14 +290,31 @@ async function main() {
       // Missing purchases first. A refunded booking must carry its refund in the
       // same pass, or backfilling the purchase would add revenue GA never had.
       for (const b of missing) {
+        // GA4 accepts timestamp_micros up to 72h back, so a recent booking can be
+        // reported on the day it was actually paid instead of today. Older ones
+        // cannot, and the current timestamp is the only option — the total still
+        // becomes right, the day does not.
+        const ageMs = Date.now() - b.paidAt.getTime();
+        const withinWindow = ageMs >= 0 && ageMs < 72 * 60 * 60 * 1000;
+        const opts = { extraParams: reconciledParams(b) };
+        if (withinWindow) opts.timestampMicros = Math.floor(b.paidAt.getTime() * 1000);
+
         // Sequential on purpose: keeps the log readable and GA calm.
-        const outcome = await sendPurchase(b, { extraParams: reconciledParams(b) });
-        delivered.push({ kind: 'purchase', bookingNumber: b.bookingNumber, amount: Number(b.grossAmount), ...outcome });
+        const outcome = await sendPurchase(b, opts);
+        delivered.push({
+          kind: 'purchase',
+          bookingNumber: b.bookingNumber,
+          amount: Number(b.grossAmount),
+          datedOriginal: withinWindow,
+          ...outcome,
+        });
 
         const due = refunded(b);
         if (outcome.ok && due > 0) {
-          const refund = await sendRefund(b, { value: due, extraParams: reconciledParams(b) });
-          delivered.push({ kind: 'refund', bookingNumber: b.bookingNumber, amount: due, ...refund });
+          const refundOpts = { value: due, extraParams: reconciledParams(b) };
+          if (withinWindow) refundOpts.timestampMicros = Math.floor(b.paidAt.getTime() * 1000);
+          const refund = await sendRefund(b, refundOpts);
+          delivered.push({ kind: 'refund', bookingNumber: b.bookingNumber, amount: due, datedOriginal: withinWindow, ...refund });
         }
       }
 
