@@ -28,8 +28,14 @@
  * Docs: https://developers.google.com/analytics/devguides/collection/protocol/ga4
  */
 
+const fs = require('fs');
+const path = require('path');
+
 const MEASUREMENT_ENDPOINT = 'https://www.google-analytics.com/mp/collect';
 const REQUEST_TIMEOUT_MS = 5000;
+
+/** The only two keys whose deployed .env value must win over the process env. */
+const ENV_KEYS = ['GA4_MEASUREMENT_ID', 'GA4_API_SECRET'];
 
 /** Measurement Protocol is only usable when both the id and the secret are set. */
 function isEnabled() {
@@ -62,6 +68,62 @@ function warnIfMisconfigured() {
 }
 
 warnIfMisconfigured();
+
+/**
+ * Make the deployed `.env` the source of truth for the GA4 credentials.
+ *
+ * Why this exists: on 2026-10-30 the API was running with the numeric
+ * data-stream ID as `GA4_API_SECRET` while `.env` on disk already held the real
+ * secret. `dotenv` never overwrites a key that is already in `process.env`, and
+ * pm2 keeps its own copy of the environment across restarts, so editing `.env`
+ * and bouncing the app was not enough — the stale (silently rejected) value won
+ * every time, and GA discarded a week of purchase events.
+ *
+ * These two keys are therefore re-read from the file and applied over whatever
+ * the process inherited, with one warning when they disagree. Values are never
+ * printed, only lengths. Missing keys in `.env` leave the process env alone, so
+ * a secret manager can still supply them.
+ *
+ * @param {string} [envPath] defaults to `.env` in the working directory
+ * @returns {{ applied: string[], shadowed: string[] }} keys taken from the file
+ *   (absent from the process env) and keys that overrode a different value
+ */
+function reconcileEnvFromFile(envPath) {
+  const report = { applied: [], shadowed: [] };
+  const file = envPath || path.resolve(process.cwd(), '.env');
+
+  let fileEnv;
+  try {
+    fileEnv = require('dotenv').parse(fs.readFileSync(file));
+  } catch {
+    // No readable .env: whatever the process carries is all we have.
+    return report;
+  }
+
+  for (const key of ENV_KEYS) {
+    const fromFile = String(fileEnv[key] == null ? '' : fileEnv[key]).trim();
+    if (!fromFile) continue;
+
+    const fromProcess = String(process.env[key] == null ? '' : process.env[key]).trim();
+    if (fromProcess === fromFile) continue;
+
+    process.env[key] = fromFile;
+    if (!fromProcess) {
+      report.applied.push(key);
+      continue;
+    }
+
+    report.shadowed.push(key);
+    console.warn(
+      `[ga4Measurement] ${key} in the process environment differed from .env ` +
+        `(${fromProcess.length} vs ${fromFile.length} chars); using the .env value. ` +
+        'pm2 keeps its own copy of the environment — after editing .env restart with ' +
+        '`pm2 restart <app> --update-env` (or let the deploy pipeline do it).'
+    );
+  }
+
+  return report;
+}
 
 /** Money must be a finite, non-negative number before it reaches GA. */
 function toAmount(value) {
@@ -169,6 +231,23 @@ function logSkip(kind, booking, reason) {
   console.log(`[ga4Measurement] ${kind} skipped booking=${ref} reason=${reason}`);
 }
 
+/**
+ * GA accepts a request with an unusable secret and still answers 204, so a
+ * wrong secret is indistinguishable from success at the transport layer. The
+ * shape check is therefore the gate: without it we would keep logging `sent`
+ * for events Google had already thrown away.
+ */
+function refuseIfBadSecret(kind, booking) {
+  if (isPlausibleApiSecret(process.env.GA4_API_SECRET)) return false;
+  console.error(
+    '[ga4Measurement] GA4_API_SECRET is not a Measurement Protocol secret (all digits or too short). ' +
+      'Refusing to send: GA would answer 204 and discard the event. ' +
+      'Create one under Admin > Data Streams > (stream) > Measurement Protocol API secrets.'
+  );
+  logSkip(kind, booking, 'invalid-secret');
+  return true;
+}
+
 /** POST one Measurement Protocol body. Always resolves; never throws. */
 async function deliver(body, { kind, ref } = {}) {
   const label = kind || 'event';
@@ -215,6 +294,7 @@ function sendPurchase(booking, { timestampMicros } = {}) {
     logSkip('purchase', booking, 'not-configured');
     return Promise.resolve();
   }
+  if (refuseIfBadSecret('purchase', booking)) return Promise.resolve();
   const body = buildPurchaseEvent(booking);
   if (!body) {
     logSkip('purchase', booking, skipReason(booking));
@@ -237,6 +317,7 @@ function sendRefund(booking, { value, timestampMicros } = {}) {
     logSkip('refund', booking, 'not-configured');
     return Promise.resolve();
   }
+  if (refuseIfBadSecret('refund', booking)) return Promise.resolve();
   const body = buildRefundEvent(booking, value);
   if (!body) {
     logSkip('refund', booking, skipReason(booking));
@@ -253,4 +334,5 @@ module.exports = {
   sendRefund,
   isEnabled,
   isPlausibleApiSecret,
+  reconcileEnvFromFile,
 };

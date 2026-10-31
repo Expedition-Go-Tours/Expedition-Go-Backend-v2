@@ -15,7 +15,12 @@ const {
   sendRefund,
   isEnabled,
   isPlausibleApiSecret,
+  reconcileEnvFromFile,
 } = require('../../src/core/services/ga4Measurement');
+
+// A realistic secret shape. Short placeholders like 'secret' are correctly
+// rejected by the transport gate now, so fixtures must look like GA's tokens.
+const TEST_SECRET = 'Zm9vYmFyYmF6cXV4MTIzNA';
 
 const baseBooking = {
   bookingNumber: 'GH-12345',
@@ -52,7 +57,7 @@ describe('ga4Measurement', () => {
       expect(isEnabled()).toBe(false);
       process.env.GA4_MEASUREMENT_ID = 'G-TEST';
       expect(isEnabled()).toBe(false);
-      process.env.GA4_API_SECRET = 'secret';
+      process.env.GA4_API_SECRET = TEST_SECRET;
       expect(isEnabled()).toBe(true);
     });
   });
@@ -180,7 +185,7 @@ describe('ga4Measurement', () => {
 
     it('posts a purchase to the Measurement Protocol endpoint', async () => {
       process.env.GA4_MEASUREMENT_ID = 'G-TEST';
-      process.env.GA4_API_SECRET = 'secret';
+      process.env.GA4_API_SECRET = TEST_SECRET;
       global.fetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '' });
 
       await sendPurchase(baseBooking);
@@ -188,14 +193,14 @@ describe('ga4Measurement', () => {
       expect(global.fetch).toHaveBeenCalledTimes(1);
       const [url, options] = global.fetch.mock.calls[0];
       expect(url).toContain('measurement_id=G-TEST');
-      expect(url).toContain('api_secret=secret');
+      expect(url).toContain(`api_secret=${TEST_SECRET}`);
       expect(options.method).toBe('POST');
       expect(JSON.parse(options.body).events[0].name).toBe('purchase');
     });
 
     it('never throws when the network fails', async () => {
       process.env.GA4_MEASUREMENT_ID = 'G-TEST';
-      process.env.GA4_API_SECRET = 'secret';
+      process.env.GA4_API_SECRET = TEST_SECRET;
       global.fetch = jest.fn().mockRejectedValue(new Error('network down'));
 
       await expect(sendPurchase(baseBooking)).resolves.toBeUndefined();
@@ -212,7 +217,7 @@ describe('ga4Measurement', () => {
       logSpy.mockImplementation((...args) => logs.push(args.join(' ')));
       errorSpy.mockImplementation((...args) => errors.push(args.join(' ')));
       process.env.GA4_MEASUREMENT_ID = 'G-TEST';
-      process.env.GA4_API_SECRET = 'secret';
+      process.env.GA4_API_SECRET = TEST_SECRET;
       global.fetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '' });
     });
 
@@ -255,6 +260,23 @@ describe('ga4Measurement', () => {
       expect(stream(logs)).toContain('purchase skipped booking=GH-12345 reason=not-configured');
     });
 
+    // The failure that cost a week of revenue: a numeric data-stream id is
+    // accepted with 204, so the old code logged `sent` for an event GA had
+    // already discarded. A wrong-shaped secret must never look delivered.
+    it('refuses to send a data-stream id and never claims it was sent', async () => {
+      process.env.GA4_API_SECRET = '16142161530';
+      global.fetch = jest.fn();
+
+      await sendPurchase(baseBooking);
+      await sendRefund(baseBooking);
+
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(stream(logs)).toContain('purchase skipped booking=GH-12345 reason=invalid-secret');
+      expect(stream(logs)).toContain('refund skipped booking=GH-12345 reason=invalid-secret');
+      expect(stream(logs)).not.toContain('sent');
+      expect(stream(errors)).toContain('Refusing to send');
+    });
+
     it('reports refund outcomes the same way', async () => {
       await sendRefund({ ...baseBooking, analyticsConsent: false });
       expect(stream(logs)).toContain('refund skipped booking=GH-12345 reason=no-consent');
@@ -282,7 +304,7 @@ describe('ga4Measurement', () => {
   describe('historical backfill (timestamp override)', () => {
     beforeEach(() => {
       process.env.GA4_MEASUREMENT_ID = 'G-TEST';
-      process.env.GA4_API_SECRET = 'secret';
+      process.env.GA4_API_SECRET = TEST_SECRET;
       global.fetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '' });
     });
 
@@ -307,6 +329,95 @@ describe('ga4Measurement', () => {
       const body = JSON.parse(global.fetch.mock.calls[0][1].body);
       expect(body.events[0].name).toBe('refund');
       expect(body.events[0].params.timestamp_micros).toBe(1760880000000000);
+    });
+  });
+
+  // The incident this guards: pm2 kept its own copy of GA4_API_SECRET, so the
+  // running process held the data-stream id while .env on disk already had the
+  // real secret. dotenv never overwrites, so restarting did not help.
+  describe('reconcileEnvFromFile', () => {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+
+    let dir;
+    let warnSpy;
+
+    beforeEach(() => {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ga4-env-'));
+      warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    const writeEnv = (contents) => {
+      const file = path.join(dir, '.env');
+      fs.writeFileSync(file, contents);
+      return file;
+    };
+
+    it('takes the .env secret over a stale process value and points at pm2', () => {
+      process.env.GA4_MEASUREMENT_ID = 'G-TEST';
+      process.env.GA4_API_SECRET = '16142161530';
+      const warnings = [];
+      warnSpy.mockImplementation((...args) => warnings.push(args.join(' ')));
+      const file = writeEnv(`GA4_MEASUREMENT_ID=G-TEST\nGA4_API_SECRET=${TEST_SECRET}\n`);
+
+      const report = reconcileEnvFromFile(file);
+
+      expect(process.env.GA4_API_SECRET).toBe(TEST_SECRET);
+      expect(report.shadowed).toEqual(['GA4_API_SECRET']);
+      expect(warnings.join('\n')).toContain('pm2 restart');
+      // Values are never logged, not even the broken one.
+      expect(warnings.join('\n')).not.toContain(TEST_SECRET);
+      expect(warnings.join('\n')).not.toContain('16142161530');
+    });
+
+    it('is silent when the file and the process agree', () => {
+      process.env.GA4_MEASUREMENT_ID = 'G-TEST';
+      process.env.GA4_API_SECRET = TEST_SECRET;
+      const file = writeEnv(`GA4_MEASUREMENT_ID=G-TEST\nGA4_API_SECRET=${TEST_SECRET}\n`);
+
+      const report = reconcileEnvFromFile(file);
+
+      expect(report.shadowed).toEqual([]);
+      expect(report.applied).toEqual([]);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('fills in a key that only .env has', () => {
+      delete process.env.GA4_MEASUREMENT_ID;
+      process.env.GA4_API_SECRET = TEST_SECRET;
+      const file = writeEnv(`GA4_MEASUREMENT_ID=G-TEST\nGA4_API_SECRET=${TEST_SECRET}\n`);
+
+      const report = reconcileEnvFromFile(file);
+
+      expect(process.env.GA4_MEASUREMENT_ID).toBe('G-TEST');
+      expect(report.applied).toEqual(['GA4_MEASUREMENT_ID']);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('leaves the process env alone when .env omits the key', () => {
+      process.env.GA4_MEASUREMENT_ID = 'G-TEST';
+      process.env.GA4_API_SECRET = TEST_SECRET;
+      const file = writeEnv('GA4_MEASUREMENT_ID=G-TEST\n');
+
+      const report = reconcileEnvFromFile(file);
+
+      // A secret manager can still supply it at runtime.
+      expect(process.env.GA4_API_SECRET).toBe(TEST_SECRET);
+      expect(report).toEqual({ applied: [], shadowed: [] });
+    });
+
+    it('is a no-op without a readable .env', () => {
+      process.env.GA4_API_SECRET = TEST_SECRET;
+
+      const report = reconcileEnvFromFile(path.join(dir, 'missing.env'));
+
+      expect(report).toEqual({ applied: [], shadowed: [] });
+      expect(process.env.GA4_API_SECRET).toBe(TEST_SECRET);
     });
   });
 });

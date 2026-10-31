@@ -105,6 +105,12 @@ process.on('uncaughtException', (err) => {
 
 dotenv.config({ path: './.env' });
 
+// The GA4 credentials are the one pair where a stale process environment has
+// already cost a week of purchase events: pm2 keeps its own copy of the env and
+// dotenv never overwrites an existing key, so `.env` (the deployed source of
+// truth) must be re-applied explicitly. Required before anything can send.
+require('./src/core/services/ga4Measurement').reconcileEnvFromFile();
+
 const { validateEnv } = require('./config/validateEnv');
 validateEnv();
 
